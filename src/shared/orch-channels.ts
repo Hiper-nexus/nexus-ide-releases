@@ -9,6 +9,8 @@ export const ORCH_CHANNELS = {
   panesSync: 'orch:panes.sync',
   paneSpawnResult: 'orch:pane.spawnResult',
   missionsList: 'orch:missions.list',
+  missionPanesList: 'orch:missions.panes',
+  missionRebind: 'orch:missions.rebind',
   handoffsList: 'orch:handoffs.list',
   todosGet: 'orch:todos.get',
   squadsList: 'orch:squads.list',

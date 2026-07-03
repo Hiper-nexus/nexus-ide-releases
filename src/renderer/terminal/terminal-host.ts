@@ -128,6 +128,7 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
         resume,
         adapterId: pane.adapterId,
         model: pane.model,
+        effort: pane.effort,
         orchRequestId: pane.orchRequestId,
       });
       if (host.disposed) {
@@ -420,7 +421,22 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
     // Slot not measurable yet; the ResizeObserver will retry.
   }
 
-  if (!host.spawnStarted) startSpawn(pane, host);
+  if (!host.spawnStarted) {
+    startSpawn(pane, host, resumeOnFirstSpawn.delete(pane.id));
+  }
+}
+
+/**
+ * Panes flagged here spawn their FIRST session with the adapter's resume
+ * flags (claude --resume etc.). Consumed on spawn — transient by design, so
+ * the flag never persists into the saved layout. Used by the mission reopen
+ * flow: mark before setPanes(), and every restored CLI continues its
+ * previous conversation.
+ */
+const resumeOnFirstSpawn = new Set<string>();
+
+export function markResumeOnSpawn(paneId: string): void {
+  resumeOnFirstSpawn.add(paneId);
 }
 
 export function focusHost(paneId: string): void {

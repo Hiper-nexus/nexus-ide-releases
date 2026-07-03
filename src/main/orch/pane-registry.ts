@@ -202,6 +202,8 @@ export function waitForIdle(
 export interface PaneSpawnOptions {
   adapterId: string;
   model?: string;
+  /** Per-spawn reasoning effort (task-router decision). */
+  effort?: string;
   cwd?: string;
   title?: string;
   missionId?: string;
@@ -237,6 +239,7 @@ export function requestPaneSpawn(
     requestId,
     adapterId: options.adapterId,
     model: options.model,
+    effort: options.effort,
     cwd: options.cwd,
     title: options.title,
     missionId: options.missionId,

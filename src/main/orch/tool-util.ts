@@ -5,6 +5,7 @@ import {
 } from './pane-registry';
 import { orchWriteSession } from '../pty/pty-manager';
 import { getAdapter } from '../adapters/adapter-registry';
+import { recordMissionPane } from './mission-pane-store';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
@@ -68,6 +69,8 @@ export async function injectPrompt(
 export interface SpawnToolOptions {
   adapterId: string;
   model?: string;
+  /** Per-spawn reasoning effort (task-router decision). */
+  effort?: string;
   cwd?: string;
   title?: string;
   missionId?: string;
@@ -86,6 +89,18 @@ export async function spawnPaneAndMaybePrompt(
   const result = await requestPaneSpawn(options);
   if (!result.ok || !result.paneId || !result.sessionId) {
     throw new Error(result.error ?? 'pane spawn failed');
+  }
+  // Remember the mission's composition so it can be reopened from history.
+  if (options.missionId) {
+    recordMissionPane({
+      missionId: options.missionId,
+      adapterId: options.adapterId,
+      model: options.model,
+      cwd: options.cwd,
+      title: options.title,
+      agentName: options.agentName,
+      role: options.role ?? 'worker',
+    });
   }
   if (options.prompt) {
     // Let the CLI finish booting before typing (first idle or timeout).

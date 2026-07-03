@@ -112,6 +112,27 @@ export function listMissions(status?: MissionStatus): Mission[] {
   return status ? all.filter((m) => m.status === status) : all;
 }
 
+/**
+ * Point handoff delivery at a NEW orchestrator session — used when a mission
+ * is reopened from history and its original session is long gone.
+ */
+export function setMissionOrchestratorSession(
+  id: string,
+  sessionId: string,
+): Mission | null {
+  const existing = missions.get(id);
+  if (!existing) return null;
+  const updated: Mission = {
+    ...existing,
+    orchestratorSessionId: sessionId,
+    updatedAt: Date.now(),
+  };
+  missions.set(id, updated);
+  persist(updated);
+  hub.emit();
+  return updated;
+}
+
 export function setMissionStatus(
   id: string,
   status: MissionStatus,

@@ -17,6 +17,7 @@ import type {
   Handoff,
   McpRuntimeInfo,
   Mission,
+  MissionPaneSpec,
   OrchPaneSpawnRequest,
   OrchPaneSpawnResult,
   PaneRegistryEntry,
@@ -103,6 +104,12 @@ export interface PaneModel {
   adapterId?: string;
   /** The model selected for this agent pane (e.g. "claude-sonnet-4-5"). */
   model?: string;
+  /**
+   * Per-pane reasoning effort override (task-router decision). Falls back to
+   * the provider's configured effort when absent; silently ignored by CLIs
+   * whose adapter declares no effort levels.
+   */
+  effort?: string;
   /** User renamed this pane → ignore the shell's OSC title escapes. */
   titlePinned?: boolean;
   /**
@@ -162,6 +169,8 @@ export interface SpawnRequest {
   orchRequestId?: string;
   /** Re-spawn continuing the previous conversation (adapter resumeArgs). */
   resume?: boolean;
+  /** Per-spawn reasoning effort override (wins over the provider setting). */
+  effort?: string;
 }
 
 export type SpawnResult =
@@ -235,6 +244,13 @@ export interface NexusApi {
     onPaneSpawnRequest(cb: (req: OrchPaneSpawnRequest) => void): Unsubscribe;
     onPaneCloseRequest(cb: (paneId: string) => void): Unsubscribe;
     listMissions(): Promise<Mission[]>;
+    /** Recorded pane composition of a mission (for 1-click reopen). */
+    listMissionPanes(missionId: string): Promise<MissionPaneSpec[]>;
+    /** Point handoff delivery at the reopened orchestrator's new session. */
+    rebindMissionOrchestrator(
+      missionId: string,
+      sessionId: string,
+    ): Promise<{ ok: boolean }>;
     listHandoffs(): Promise<Handoff[]>;
     getTodos(): Promise<TodoList[]>;
     listSquads(): Promise<Squad[]>;

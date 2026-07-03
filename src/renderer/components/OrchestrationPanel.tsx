@@ -7,6 +7,7 @@ import type {
   TodoList,
 } from '../../shared/orch-types';
 import { useOrchStore, type OrchPanelTab } from '../state/orch-store';
+import { reopenMission } from '../orch/mission-reopen';
 
 /**
  * Orchestration drawer — the mission/handoff/todo/squad debug view that
@@ -26,7 +27,13 @@ function timeLabel(ts: number): string {
   return new Date(ts).toLocaleTimeString();
 }
 
-function MissionRow({ mission }: { mission: Mission }) {
+function MissionRow({
+  mission,
+  onReopen,
+}: {
+  mission: Mission;
+  onReopen: (mission: Mission) => void;
+}) {
   return (
     <li className="orch-item">
       <div className="orch-item__head">
@@ -34,6 +41,13 @@ function MissionRow({ mission }: { mission: Mission }) {
           {mission.status}
         </span>
         <span className="orch-item__title">{mission.title}</span>
+        <button
+          className="orch-panel__btn"
+          onClick={() => onReopen(mission)}
+          title="Reabrir esta missão restaurando os panes (as CLIs retomam a conversa com --resume)"
+        >
+          ↻
+        </button>
       </div>
       {mission.description && (
         <p className="orch-item__detail">{mission.description}</p>
@@ -158,6 +172,17 @@ export function OrchestrationPanel() {
     void window.nexus.orch.deleteSquad(id);
   }
 
+  function onReopenMission(mission: Mission) {
+    void (async () => {
+      const result = await reopenMission(mission);
+      setNotice(
+        result.ok
+          ? `Missão reaberta: ${result.panes} pane(s) restaurado(s), retomando as conversas.`
+          : result.error ?? 'Falha ao reabrir a missão.',
+      );
+    })();
+  }
+
   const visibleTodoLists = todoLists.filter((l) => l.items.length > 0);
 
   return (
@@ -191,18 +216,22 @@ export function OrchestrationPanel() {
       </nav>
 
       <div className="orch-panel__body">
-        {tab === 'missions' &&
-          (missions.length === 0 ? (
-            <p className="orch-panel__empty">
-              No missions yet. Agents create them via nexus_mission_create.
-            </p>
-          ) : (
-            <ul className="orch-list">
-              {missions.map((m) => (
-                <MissionRow key={m.id} mission={m} />
-              ))}
-            </ul>
-          ))}
+        {tab === 'missions' && (
+          <>
+            {notice && <p className="orch-panel__notice">{notice}</p>}
+            {missions.length === 0 ? (
+              <p className="orch-panel__empty">
+                No missions yet. Agents create them via nexus_mission_create.
+              </p>
+            ) : (
+              <ul className="orch-list">
+                {missions.map((m) => (
+                  <MissionRow key={m.id} mission={m} onReopen={onReopenMission} />
+                ))}
+              </ul>
+            )}
+          </>
+        )}
 
         {tab === 'handoffs' &&
           (handoffs.length === 0 ? (

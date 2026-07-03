@@ -98,6 +98,18 @@ function kickoffPrompt(squad: Squad): string {
       'finalizar com nexus_handoff_submit. Comece perguntando ao usuário qual ' +
       'é a missão, caso ainda não tenha sido informada.',
   );
+  parts.push(
+    '## Roteamento inteligente (economia de tokens)\n' +
+      'Uma das suas missões é POUPAR tokens e acelerar o trabalho. Antes de ' +
+      'CADA delegação, chame nexus_route_task {task} e use o adapterId/model/' +
+      'effort retornados no nexus_pane_spawn: tarefa fácil vai para modelo ' +
+      'barato e rápido (grok, haiku, gpt-5.4-mini), tarefa média para sonnet/' +
+      'gpt-5.4, e só o que é realmente difícil/crítico (arquitetura, auth, ' +
+      'pagamentos, migração) vai para opus/fable/gpt-5.5 com effort alto. ' +
+      'Nunca gaste um modelo caro em tarefa trivial; nunca entregue tarefa ' +
+      'crítica a um modelo fraco. Quebre missões grandes em tarefas pequenas ' +
+      'e roteie cada uma individualmente.',
+  );
   return parts.join('\n\n');
 }
 

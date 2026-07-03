@@ -46,6 +46,7 @@ interface LayoutState {
   spawnOrchPane(req: {
     adapterId: string;
     model?: string;
+    effort?: string;
     cwd?: string;
     title?: string;
     orchRequestId: string;
@@ -172,6 +173,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const newPane: PaneModel = {
       ...base,
       title: req.title ?? base.title,
+      effort: req.effort,
       orchRequestId: req.orchRequestId,
     };
     const pivotId = targetId ?? firstPaneId(currentRoot);

@@ -35,6 +35,12 @@ const paneSpawn: McpToolDef = {
       adapterId: { type: 'string', description: 'Adapter id (cli) to run' },
       agentName: { type: 'string', description: 'Squad agent name or id' },
       model: { type: 'string' },
+      effort: {
+        type: 'string',
+        description:
+          'Reasoning effort for this spawn (low|medium|high|xhigh) — use ' +
+          'the value returned by nexus_route_task',
+      },
       cwd: { type: 'string' },
       title: { type: 'string' },
       missionId: { type: 'string' },
@@ -51,6 +57,7 @@ const paneSpawn: McpToolDef = {
       options = {
         adapterId: agent.cli,
         model: str(args, 'model') ?? agent.model,
+        effort: str(args, 'effort') ?? agent.effort,
         cwd: str(args, 'cwd'),
         title: str(args, 'title') ?? agent.agentName,
         missionId: str(args, 'missionId') ?? ctx.missionId,
@@ -64,6 +71,7 @@ const paneSpawn: McpToolDef = {
       options = {
         adapterId: requireStr(args, 'adapterId'),
         model: str(args, 'model'),
+        effort: str(args, 'effort'),
         cwd: str(args, 'cwd'),
         title: str(args, 'title'),
         missionId: str(args, 'missionId') ?? ctx.missionId,

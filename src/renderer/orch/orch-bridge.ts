@@ -63,6 +63,7 @@ export function useOrchBridge(): void {
             const paneId = useLayoutStore.getState().spawnOrchPane({
               adapterId: req.adapterId,
               model: req.model,
+              effort: req.effort,
               cwd: req.cwd,
               title: req.title,
               orchRequestId: req.requestId,

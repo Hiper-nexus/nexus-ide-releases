@@ -1,6 +1,9 @@
 import { markHandoffSubmitted } from './gate';
 import type { McpToolDef } from './mcp-protocol';
-import { readSessionOutput, waitForIdle } from './pane-registry';
+import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
+import { recordMissionPane } from './mission-pane-store';
+import { listAdapterInfos } from '../adapters/adapter-registry';
+import { routeTask, type TaskTier } from './task-router';
 import {
   handoffStatusSchema,
   missionStatusSchema,
@@ -181,6 +184,18 @@ const missionCreateTool: McpToolDef = {
       orchestratorSessionId: ctx.sessionId,
     });
     ctx.missionId = mission.id;
+    // The creator's own pane is part of the mission composition too, so a
+    // history reopen restores the orchestrator alongside the workers.
+    const orchPane = ctx.sessionId ? findPane(ctx.sessionId) : null;
+    if (orchPane?.adapterId) {
+      recordMissionPane({
+        missionId: mission.id,
+        adapterId: orchPane.adapterId,
+        model: orchPane.model,
+        title: orchPane.title,
+        role: 'orchestrator',
+      });
+    }
     return mission;
   },
 };
@@ -429,8 +444,52 @@ const todoManagerTool: McpToolDef = {
   },
 };
 
+const TIERS: TaskTier[] = ['trivial', 'easy', 'medium', 'hard', 'critical'];
+
+const routeTaskTool: McpToolDef = {
+  name: 'nexus_route_task',
+  description:
+    'Decide the CHEAPEST capable agent for a task BEFORE spawning it — this ' +
+    'is how missions save tokens and finish faster. Classifies the task ' +
+    '(trivial|easy|medium|hard|critical) and returns {tier, adapterId, ' +
+    'model, effort, reason, alternatives}: pass adapterId/model/effort ' +
+    'straight into nexus_pane_spawn. Easy work goes to fast cheap models ' +
+    '(grok/haiku/gpt-5.4-mini), hard work to the strong ones ' +
+    '(opus/fable/gpt-5.5). Call it for EVERY delegation.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      task: {
+        type: 'string',
+        description: 'What the worker will be asked to do',
+      },
+      tier: {
+        type: 'string',
+        enum: TIERS,
+        description: 'Optional override when you already know the complexity',
+      },
+    },
+    required: ['task'],
+  },
+  handler: async (args) => {
+    const task = requireStr(args, 'task');
+    const tierRaw = str(args, 'tier');
+    const tier = TIERS.includes(tierRaw as TaskTier)
+      ? (tierRaw as TaskTier)
+      : undefined;
+    const adapters = listAdapterInfos().map((a) => ({
+      id: a.id,
+      installed: a.installed,
+    }));
+    const decision = routeTask(task, adapters, undefined, tier);
+    if (!decision) throw new Error('no installed adapters to route to');
+    return decision;
+  },
+};
+
 export function buildDomainTools(): McpToolDef[] {
   return [
+    routeTaskTool,
     handoffSubmitTool,
     handoffListTool,
     agentInvokeTool,

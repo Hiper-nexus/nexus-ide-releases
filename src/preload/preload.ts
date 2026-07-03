@@ -217,6 +217,10 @@ const api: NexusApi = {
     onPaneSpawnRequest: (cb) => addListener(paneSpawnRequestListeners, cb),
     onPaneCloseRequest: (cb) => addListener(paneCloseRequestListeners, cb),
     listMissions: () => ipcRenderer.invoke(ORCH_CHANNELS.missionsList),
+    listMissionPanes: (missionId: string) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionPanesList, missionId),
+    rebindMissionOrchestrator: (missionId: string, sessionId: string) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionRebind, { missionId, sessionId }),
     listHandoffs: () => ipcRenderer.invoke(ORCH_CHANNELS.handoffsList),
     getTodos: () => ipcRenderer.invoke(ORCH_CHANNELS.todosGet),
     listSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadsList),

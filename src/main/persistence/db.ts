@@ -53,6 +53,18 @@ CREATE TABLE IF NOT EXISTS missions (
   updated_at      INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS mission_panes (
+  id         TEXT PRIMARY KEY,
+  mission_id TEXT NOT NULL,
+  adapter_id TEXT NOT NULL,
+  model      TEXT,
+  cwd        TEXT,
+  title      TEXT NOT NULL,
+  agent_name TEXT,
+  role       TEXT NOT NULL DEFAULT 'worker',
+  created_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS handoffs (
   id             TEXT PRIMARY KEY,
   mission_id     TEXT,

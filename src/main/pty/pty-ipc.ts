@@ -51,7 +51,9 @@ export function registerPtyIpc(): void {
           error: `${adapter.label} is disabled in Settings → Providers.`,
         };
       }
-      const overrides = providerSpawnOverrides(adapter.id);
+      const overrides = providerSpawnOverrides(adapter.id, {
+        effort: req.effort,
+      });
       // node-pty does not throw for a missing binary on macOS: it spawns and exits
       // 1 with no output, so the pane would show a bare "process exited (code 1)".
       // Gate on install status here to surface the actionable install command.

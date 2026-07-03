@@ -9,7 +9,13 @@ import {
 } from '../../shared/orch-types';
 import { getDb } from '../persistence/db';
 import { initSquadStore, listSquads, saveSquad, deleteSquad, onSquadsChange, exportSquadsJson, importSquadsJson } from './squad-store';
-import { initMissionStore, listMissions, onMissionsChange } from './mission-store';
+import {
+  initMissionStore,
+  listMissions,
+  onMissionsChange,
+  setMissionOrchestratorSession,
+} from './mission-store';
+import { initMissionPaneStore, listMissionPanes } from './mission-pane-store';
 import { initHandoffStore, listHandoffs, onHandoffsChange } from './handoff-store';
 import { initTodoStore, listTodoLists, onTodosChange } from './todo-store';
 import { initTaskStore } from './task-store';
@@ -64,6 +70,7 @@ export async function initOrchestration(): Promise<void> {
   const db = getDb();
   initSquadStore(db);
   initMissionStore(db);
+  initMissionPaneStore(db);
   initHandoffStore(db);
   initTodoStore(db);
   initTaskStore(db);
@@ -100,6 +107,26 @@ export function registerOrchIpc(): void {
   });
 
   ipcMain.handle(ORCH_CHANNELS.missionsList, () => listMissions());
+  ipcMain.handle(ORCH_CHANNELS.missionPanesList, (_event, raw) => {
+    if (typeof raw !== 'string' || raw.length === 0 || raw.length > 128) {
+      return [];
+    }
+    return listMissionPanes(raw);
+  });
+
+  const missionRebindSchema = z.object({
+    missionId: z.string().min(1).max(128),
+    sessionId: z.string().min(1).max(128),
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionRebind, (_event, raw) => {
+    const parsed = missionRebindSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false };
+    const mission = setMissionOrchestratorSession(
+      parsed.data.missionId,
+      parsed.data.sessionId,
+    );
+    return { ok: mission !== null };
+  });
   ipcMain.handle(ORCH_CHANNELS.handoffsList, () =>
     listHandoffs({ includeDelivered: true }),
   );

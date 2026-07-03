@@ -118,13 +118,14 @@ function configFor(adapterId: string): ProviderConfig {
 }
 
 /** Control-flag args (permission mode, effort, verbose) chosen for an adapter. */
-function controlArgsFor(adapterId: string): string[] {
+function controlArgsFor(adapterId: string, effortOverride?: string): string[] {
   const adapter = getAdapter(adapterId);
   if (!adapter || adapter.kind !== 'cli-pty') return [];
   const cfg = configFor(adapterId);
   return buildControlArgs(adapter, {
     permissionMode: cfg.permissionMode,
-    effort: cfg.effort,
+    // A per-spawn effort (task-router decision) wins over the hub setting.
+    effort: effortOverride || cfg.effort,
     verbose: cfg.verbose,
   });
 }
@@ -177,7 +178,10 @@ function authDecision(adapterId: string) {
   });
 }
 
-export function providerSpawnOverrides(adapterId: string): ProviderSpawnOverrides {
+export function providerSpawnOverrides(
+  adapterId: string,
+  perSpawn: { effort?: string } = {},
+): ProviderSpawnOverrides {
   const cfg = configFor(adapterId);
   const adapter = getAdapter(adapterId);
   const key = getKey(adapterId);
@@ -186,7 +190,7 @@ export function providerSpawnOverrides(adapterId: string): ProviderSpawnOverride
   const base = {
     binPath: cfg.binPath || null,
     defaultModel: cfg.defaultModel || null,
-    extraArgs: [...controlArgsFor(adapterId), ...cfg.extraArgs],
+    extraArgs: [...controlArgsFor(adapterId, perSpawn.effort), ...cfg.extraArgs],
   };
 
   // Multi-account: when accounts exist for this adapter, the ACTIVE account

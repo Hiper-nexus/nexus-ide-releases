@@ -36,6 +36,9 @@ export const spawnRequestSchema = z.object({
   // Re-spawn continuing the previous session (failover switches accounts and
   // re-launches the CLI with its resumeArgs).
   resume: z.boolean().optional(),
+  // Per-spawn reasoning effort (task-router decision). Validated against the
+  // adapter's declared levels at arg-build time; unknown values are dropped.
+  effort: z.string().min(1).max(32).optional(),
 });
 
 export const writeSchema = z.object({
@@ -60,6 +63,7 @@ const paneModelSchema = z.object({
   cwd: z.string().max(4096).optional(),
   adapterId: z.string().min(1).max(64).optional(),
   model: z.string().min(1).max(128).optional(),
+  effort: z.string().min(1).max(32).optional(),
   titlePinned: z.boolean().optional(),
   orchRequestId: z.string().min(1).max(128).optional(),
 });

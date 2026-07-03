@@ -48,7 +48,7 @@ export const squadAgentSchema = z.preprocess(
     cli: z.string().min(1).max(64),
     providerId: z.string().max(128).optional(),
     model: z.string().max(128).optional(),
-    effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
+    effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
     /** null/absent = unrestricted (Overclock semantics). */
     allowedSkills: z.array(z.string().max(128)).nullable().optional(),
     allowedTools: z.array(z.string().max(128)).nullable().optional(),
@@ -144,6 +144,24 @@ export interface TaskRecord {
   updatedAt: number;
 }
 
+/**
+ * Recorded composition of a mission: one entry per pane that took part in it
+ * (orchestrator + every worker spawned with that missionId). Persisted so a
+ * mission can be reopened from history with its panes restored — the CLIs
+ * re-spawn with their adapter's resume flags to continue the conversations.
+ */
+export interface MissionPaneSpec {
+  id: string;
+  missionId: string;
+  adapterId: string;
+  model?: string;
+  cwd?: string;
+  title: string;
+  agentName?: string;
+  role: 'orchestrator' | 'worker';
+  createdAt: number;
+}
+
 /** One pane as mirrored into the main-process registry by the renderer. */
 export interface PaneRegistryEntry {
   paneId: string;
@@ -166,6 +184,8 @@ export interface OrchPaneSpawnRequest {
   requestId: string;
   adapterId: string;
   model?: string;
+  /** Per-spawn reasoning effort (task-router decision). */
+  effort?: string;
   cwd?: string;
   title?: string;
   missionId?: string;
