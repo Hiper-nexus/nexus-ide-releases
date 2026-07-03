@@ -16,6 +16,9 @@ import { launchLibrePanes, launchSquadMission } from '../orch/mission-launcher';
  * SQUADS with "orq + N workers") mirror the real app.
  */
 
+/** The orchestrator always runs on Claude (only CLI with reliable MCP tool use). */
+const ORCHESTRATOR_CLI = 'claude';
+
 type Mode = 'libre' | 'squad';
 type Step =
   | 'new-ws'
@@ -114,10 +117,23 @@ export function MissionWizard() {
   const userSquads = squads.filter((s) => !s.builtin);
   const selectedSquad = squads.find((s) => s.id === squadId) ?? null;
 
-  // Load the selected squad's roster into an editable copy.
+  // Load the selected squad's roster into an editable copy. The orchestrator is
+  // FORCED onto Claude: only Claude Code reliably drives the embedded nexus MCP
+  // server (spawning + coordinating worker panes via nexus_pane_* tools). Codex,
+  // Grok, Gemini et al. boot fine as WORKERS, but as the orchestrator they don't
+  // call the MCP tools, so the squad "opens but nothing starts". Workers stay
+  // fully editable (any CLI/model/effort).
   useEffect(() => {
     const sq = squads.find((s) => s.id === squadId);
-    setRoster(sq ? sq.agents.map((a) => ({ ...a })) : []);
+    setRoster(
+      sq
+        ? sq.agents.map((a) =>
+            a.category === 'orchestrator' && a.cli !== ORCHESTRATOR_CLI
+              ? { ...a, cli: ORCHESTRATOR_CLI, model: undefined }
+              : { ...a },
+          )
+        : [],
+    );
     setRosterSaved(false);
   }, [squadId, squads]);
 
@@ -496,8 +512,15 @@ export function MissionWizard() {
                 Edite a LLM de cada agente. As mudanças valem para esta missão;
                 salve para persistir no squad.
               </p>
+              <p className="wizard__hint-sm">
+                🧭 O <strong>orquestrador roda no Claude</strong> — é o único CLI
+                que dirige o servidor MCP do Nexus de forma confiável (spawna e
+                coordena os panes). Os <strong>workers</strong> podem ser qualquer
+                CLI.
+              </p>
               <ul className="wizard__roster wizard__roster--edit">
                 {roster.map((a) => {
+                  const isOrchestrator = a.category === 'orchestrator';
                   const cliAdapter = adapters.find((x) => x.id === a.cli);
                   const models = cliAdapter?.models.list ?? [];
                   return (
@@ -506,26 +529,35 @@ export function MissionWizard() {
                       <span className="wizard__roster-name" title={a.agentName}>
                         {a.agentName}
                       </span>
-                      <select
-                        className="wizard__mini-select"
-                        value={a.cli}
-                        onChange={(e) =>
-                          updateAgent(a.id, {
-                            cli: e.target.value,
-                            model: undefined,
-                          })
-                        }
-                      >
-                        {adapters.map((x) => (
-                          <option key={x.id} value={x.id}>
-                            {x.icon} {x.label}
-                            {x.installed ? '' : ' ⚠'}
-                          </option>
-                        ))}
-                        {!adapters.some((x) => x.id === a.cli) && (
-                          <option value={a.cli}>{a.cli}</option>
-                        )}
-                      </select>
+                      {isOrchestrator ? (
+                        <span
+                          className="wizard__mini-select wizard__mini-select--locked"
+                          title="O orquestrador é sempre Claude (suporte a MCP tools)."
+                        >
+                          ◆ Claude 🔒
+                        </span>
+                      ) : (
+                        <select
+                          className="wizard__mini-select"
+                          value={a.cli}
+                          onChange={(e) =>
+                            updateAgent(a.id, {
+                              cli: e.target.value,
+                              model: undefined,
+                            })
+                          }
+                        >
+                          {adapters.map((x) => (
+                            <option key={x.id} value={x.id}>
+                              {x.icon} {x.label}
+                              {x.installed ? '' : ' ⚠'}
+                            </option>
+                          ))}
+                          {!adapters.some((x) => x.id === a.cli) && (
+                            <option value={a.cli}>{a.cli}</option>
+                          )}
+                        </select>
+                      )}
                       <select
                         className="wizard__mini-select"
                         value={a.model ?? cliAdapter?.models.default ?? ''}

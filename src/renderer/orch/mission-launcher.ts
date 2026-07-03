@@ -107,6 +107,9 @@ export interface SquadLaunchResult {
   error?: string;
 }
 
+/** Only Claude Code reliably drives the embedded nexus MCP orchestration. */
+const ORCHESTRATOR_CLI = 'claude';
+
 export function launchSquadMission(
   squad: Squad,
   adapters: AdapterInfo[],
@@ -117,16 +120,26 @@ export function launchSquadMission(
     return { ok: false, error: 'Este squad não tem agentes.' };
   }
 
-  // Resolve the orchestrator's CLI: prefer its declared adapter (installed or
-  // not — a not-installed one still opens the pane and shows the install hint,
-  // which beats silently doing nothing). If the declared CLI is unknown, fall
-  // back to an installed agent CLI, else keep the id and let the spawn report.
-  const declared = adapters.find((a) => a.id === orchestrator.cli);
-  const fallback =
-    declared ?? adapters.find((a) => a.installed) ?? adapters[0] ?? null;
-  const cli = declared ? orchestrator.cli : fallback?.id ?? orchestrator.cli;
+  // The orchestrator ALWAYS runs on Claude — it is the only CLI that reliably
+  // calls the nexus_pane_* MCP tools to spawn and coordinate workers. A codex /
+  // grok / gemini orchestrator boots but never delegates (the "squad opens but
+  // nothing starts" bug). Workers keep their own CLI. If a legacy squad declared
+  // a different orchestrator CLI we override it here as a safety net; the wizard
+  // already locks the picker to Claude.
+  const claudeAdapter = adapters.find((a) => a.id === ORCHESTRATOR_CLI);
+  const cli = ORCHESTRATOR_CLI;
   const model =
-    orchestrator.model ?? declared?.models.default ?? fallback?.models.default ?? '';
+    (orchestrator.cli === ORCHESTRATOR_CLI ? orchestrator.model : undefined) ??
+    claudeAdapter?.models.default ??
+    '';
+  if (!claudeAdapter?.installed) {
+    return {
+      ok: false,
+      error:
+        'O orquestrador roda no Claude, mas a CLI `claude` não foi detectada. ' +
+        'Instale/entre no Claude Code (ou ajuste o binário em Configurações › Providers) e tente de novo.',
+    };
+  }
 
   // Start the mission in a clean grid with just the orchestrator pane (a
   // squad opens its own workspace, same as Overclock). Workers are added by

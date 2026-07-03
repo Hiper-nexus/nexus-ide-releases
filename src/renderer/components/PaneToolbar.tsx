@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { respawnWithResume } from '../terminal/terminal-host';
 import { CostBadge } from './CostBadge';
 
 interface Props {
@@ -93,6 +94,18 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       {pane.kind === 'cli-agent' && <StateIndicator paneId={pane.id} />}
       {pane.kind === 'cli-agent' && <CostBadge paneId={pane.id} />}
       <div className="toolbar__spacer" />
+      {pane.kind === 'cli-agent' && (
+        <button
+          className="toolbar__btn"
+          title="Retomar a conversa anterior (re-inicia a CLI com --resume, útil após reiniciar o app)"
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            respawnWithResume(pane, '[nexus] retomando a sessão anterior…');
+          }}
+        >
+          ↻
+        </button>
+      )}
       {!isCanvas && (
         <>
           <button

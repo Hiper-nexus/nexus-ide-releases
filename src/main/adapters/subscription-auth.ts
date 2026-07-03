@@ -28,24 +28,21 @@ export function resolveAuthStrategy(input: {
   hasStoredKey: boolean;
   subscriptionAuthed: boolean;
 }): AuthDecision {
-  const subscriptionCapable =
-    input.authMethod === 'oauth' ||
-    input.authMethod === 'subscription' ||
-    input.authMethod === 'device_code';
-
-  if (!subscriptionCapable) {
-    // Pure API-key CLIs (codex api mode, glm, fugu…).
-    return input.hasStoredKey
-      ? { strategy: 'api-key', injectKey: true, suppressKeyEnv: false }
-      : { strategy: 'login-needed', injectKey: false, suppressKeyEnv: false };
-  }
+  // A live CLI-managed login session ALWAYS wins, regardless of the adapter's
+  // declared auth.method. Every CLI here (claude/codex/grok/agy/kimi/gemini…)
+  // logs in on its own — codex via ChatGPT, grok via ~/.grok/auth.json, etc. —
+  // so if we detect that session we must honor it and never inject a key over
+  // it (that would divert billing from the plan to the API). Gating on
+  // authMethod==='api_key' first (the old bug) made codex/grok show a false
+  // "login pendente" even while fully signed in.
   if (input.subscriptionAuthed) {
     return { strategy: 'subscription', injectKey: false, suppressKeyEnv: true };
   }
+  // No detected session but we hold a stored key → use it as the fallback.
   if (input.hasStoredKey) {
     return { strategy: 'api-key', injectKey: true, suppressKeyEnv: false };
   }
-  // No subscription session and no key: the CLI itself will prompt /login.
+  // Nothing detected: the CLI itself will prompt /login on first run.
   return { strategy: 'login-needed', injectKey: false, suppressKeyEnv: false };
 }
 
@@ -102,6 +99,9 @@ function detect(adapterId: string): boolean {
     case 'codex':
       // ChatGPT session file (the launcher's xconta model swaps this file).
       return exists('.codex', 'auth.json');
+    case 'grok':
+      // grok-cli stores its own login blob.
+      return exists('.grok', 'auth.json') || exists('.grok');
     case 'agy':
       return (
         exists('.gemini', 'antigravity') ||

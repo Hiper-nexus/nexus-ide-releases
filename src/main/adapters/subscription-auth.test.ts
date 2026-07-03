@@ -49,11 +49,27 @@ describe('resolveAuthStrategy', () => {
     ).toBe('subscription');
   });
 
-  it('pure api_key CLIs inject the key and never suppress', () => {
+  it('api_key CLI with its OWN login session is honored as subscription (codex/grok)', () => {
+    // Regression: codex (auth.method api_key, but signed in via ChatGPT) and
+    // grok (~/.grok/auth.json) used to show a false "login pendente" because the
+    // api_key branch short-circuited before checking subscriptionAuthed. A live
+    // CLI-managed session must win regardless of the declared auth.method, and
+    // we must NOT inject a key over it.
     const decision = resolveAuthStrategy({
       authMethod: 'api_key',
       hasStoredKey: true,
-      subscriptionAuthed: true, // irrelevant for api_key CLIs
+      subscriptionAuthed: true,
+    });
+    expect(decision.strategy).toBe('subscription');
+    expect(decision.injectKey).toBe(false);
+    expect(decision.suppressKeyEnv).toBe(true);
+  });
+
+  it('api_key CLI with a stored key but NO session uses the key', () => {
+    const decision = resolveAuthStrategy({
+      authMethod: 'api_key',
+      hasStoredKey: true,
+      subscriptionAuthed: false,
     });
     expect(decision.strategy).toBe('api-key');
     expect(decision.injectKey).toBe(true);

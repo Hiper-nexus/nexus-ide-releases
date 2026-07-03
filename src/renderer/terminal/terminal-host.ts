@@ -428,11 +428,17 @@ export function focusHost(paneId: string): void {
 }
 
 /**
- * Failover re-spawn: kill the pane's current CLI session and start a fresh one
- * with --resume in the SAME xterm, so the conversation continues on the newly
- * activated account. The old output stays as scrollback.
+ * Re-spawn a cli-agent pane with the adapter's --resume flags in the SAME
+ * xterm, so the conversation continues (old output stays as scrollback). Used
+ * for two flows:
+ *  - failover (limit hit → new account), with the default note, and
+ *  - user-initiated "retomar" after an app restart / crash, with a custom note.
+ * For a CLI with no resumeArgs (e.g. codex) this simply restarts the session.
  */
-export function respawnWithResume(pane: PaneModel): void {
+export function respawnWithResume(
+  pane: PaneModel,
+  note = '[nexus] limite atingido — trocando de conta e retomando…',
+): void {
   const host = hosts.get(pane.id);
   if (!host || host.disposed) return;
   host.cleanups.forEach((fn) => fn());
@@ -440,9 +446,7 @@ export function respawnWithResume(pane: PaneModel): void {
   if (host.sessionId) window.nexus.pty.kill(host.sessionId);
   host.sessionId = null;
   host.spawnStarted = false;
-  host.term.writeln(
-    '\r\n\x1b[33m[nexus] limite atingido — trocando de conta e retomando…\x1b[0m',
-  );
+  host.term.writeln(`\r\n\x1b[33m${note}\x1b[0m`);
   startSpawn(pane, host, true);
 }
 
