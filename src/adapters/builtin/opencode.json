@@ -35,11 +35,15 @@
   "models": {
     "flag": "--model",
     "list": [
+      "claude-sonnet-5",
+      "claude-opus-4-8",
+      "gpt-5.5",
+      "gemini-3.1-pro",
+      "kimi-k2.6",
       "claude-sonnet-4-5",
-      "claude-opus-4-5",
       "gpt-4o"
     ],
-    "default": "claude-sonnet-4-5"
+    "default": "claude-sonnet-5"
   },
   "promptInjection": {
     "method": "arg",

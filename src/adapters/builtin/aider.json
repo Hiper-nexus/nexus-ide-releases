@@ -36,13 +36,17 @@
   "models": {
     "flag": "--model",
     "list": [
+      "claude-sonnet-5",
+      "claude-opus-4-8",
+      "claude-haiku-4-5",
+      "gpt-5.5",
+      "o3",
+      "deepseek/deepseek-chat",
+      "deepseek/deepseek-coder",
       "claude-sonnet-4-5",
-      "claude-opus-4-5",
-      "gpt-4o",
-      "o3-mini",
-      "deepseek/deepseek-coder"
+      "gpt-4o"
     ],
-    "default": "claude-sonnet-4-5"
+    "default": "claude-sonnet-5"
   },
   "promptInjection": {
     "method": "flag",
