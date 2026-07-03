@@ -3,104 +3,261 @@ import os from 'node:os';
 import path from 'node:path';
 
 /**
- * aitmpl.com community catalog (davila7/claude-code-templates, 70+ agents) —
- * Overclock parity for `catalog_install`. Search hits the public catalog API;
- * install writes the component into ~/.nexus/plugins/catalog/<kind>/.
- * Fully network-optional: failures return a structured error, never throw
- * into the MCP transport.
+ * aitmpl catalog (davila7/claude-code-templates) — EXACT port of the real
+ * Overclock v0.7.5 mechanism (reverse-engineered from the shipped bundle):
+ *
+ *  - agents: GET raw.githubusercontent.com/.../cli-tool/components/agents/
+ *    <slug>.md → written to ~/.claude/agents/<name>.md
+ *  - skills: BFS over the GitHub Contents API starting at
+ *    cli-tool/components/skills/<slug> → directory tree written to
+ *    ~/.claude/skills/<name>
+ *  - both skip silently when the target already exists
+ *
+ * Browsing/search uses a single git-tree fetch cached on disk (the "skills
+ * cache"/"agents cache" the Overclock sidebar refers to).
  */
 
-const SEARCH_URL = 'https://www.aitmpl.com/api/catalog/search';
-const RAW_BASE =
-  'https://raw.githubusercontent.com/davila7/claude-code-templates/main';
-const FETCH_TIMEOUT_MS = 15_000;
-const DEFAULT_LIMIT = 10;
+const REPO = 'davila7/claude-code-templates';
+const RAW_BASE = `https://raw.githubusercontent.com/${REPO}/main`;
+const API_BASE = `https://api.github.com/repos/${REPO}`;
+const USER_AGENT = 'nexus-ide';
+const FETCH_TIMEOUT_MS = 20_000;
+const CACHE_FILE = path.join(os.homedir(), '.nexus', 'catalog-cache.json');
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_SKILL_FILES = 200;
 
-export type CatalogKind = 'agent' | 'skill' | 'command';
+export type CatalogKind = 'agent' | 'skill';
 
-export interface CatalogInstallInput {
-  query?: string;
-  kind?: CatalogKind;
-  limit?: number;
-  item?: string;
+export interface CatalogEntry {
+  kind: CatalogKind;
+  /** Repo slug, e.g. "ai-research/ai-agents-architect". */
+  slug: string;
+  name: string;
+  category: string;
 }
 
-interface CatalogItem {
-  name?: string;
-  kind?: string;
-  description?: string;
-  path?: string;
-  content?: string;
-  [key: string]: unknown;
-}
-
-function catalogDir(): string {
-  return path.join(os.homedir(), '.nexus', 'plugins', 'catalog');
+export interface CatalogIndex {
+  fetchedAt: number;
+  agents: CatalogEntry[];
+  skills: CatalogEntry[];
 }
 
 async function fetchWithTimeout(url: string): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    return await fetch(url, { signal: controller.signal });
+    return await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': USER_AGENT },
+    });
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function searchCatalog(
-  query: string,
-  kind?: CatalogKind,
-  limit = DEFAULT_LIMIT,
-): Promise<CatalogItem[]> {
-  const url = new URL(SEARCH_URL);
-  url.searchParams.set('q', query);
-  if (kind) url.searchParams.set('kind', kind);
-  url.searchParams.set('limit', String(limit));
-  const res = await fetchWithTimeout(url.toString());
-  if (!res.ok) throw new Error(`catalog search failed: HTTP ${res.status}`);
-  const body = (await res.json()) as unknown;
-  if (Array.isArray(body)) return body as CatalogItem[];
-  const items = (body as { items?: unknown; results?: unknown }).items ??
-    (body as { results?: unknown }).results;
-  return Array.isArray(items) ? (items as CatalogItem[]) : [];
-}
+// ---------------------------------------------------------------------------
+// Catalog index (browse/search cache)
+// ---------------------------------------------------------------------------
 
-/** Only allow simple relative component names — no traversal, no absolutes. */
-function safeName(name: string): string {
-  const cleaned = name.replace(/[^a-zA-Z0-9._\/-]/g, '-');
-  if (cleaned.includes('..') || path.isAbsolute(cleaned)) {
-    throw new Error(`unsafe catalog item name: ${name}`);
-  }
-  return cleaned;
-}
-
-async function installItem(item: CatalogItem): Promise<{ installedTo: string }> {
-  const name = safeName(String(item.name ?? 'component'));
-  const kind = typeof item.kind === 'string' ? item.kind : 'agent';
-
-  let content = typeof item.content === 'string' ? item.content : null;
-  let ext = '.md';
-  if (!content && typeof item.path === 'string') {
-    const rawPath = safeName(item.path);
-    const res = await fetchWithTimeout(`${RAW_BASE}/${rawPath}`);
-    if (!res.ok) {
-      throw new Error(`failed to download ${rawPath}: HTTP ${res.status}`);
+function parseTreePaths(paths: string[]): Omit<CatalogIndex, 'fetchedAt'> {
+  const agents: CatalogEntry[] = [];
+  const skills: CatalogEntry[] = [];
+  for (const p of paths) {
+    const agentMatch = /^cli-tool\/components\/agents\/(.+)\.md$/.exec(p);
+    if (agentMatch) {
+      const slug = agentMatch[1];
+      const parts = slug.split('/');
+      agents.push({
+        kind: 'agent',
+        slug,
+        name: parts[parts.length - 1],
+        category: parts.length > 1 ? parts[0] : 'general',
+      });
+      continue;
     }
-    content = await res.text();
-    ext = path.extname(rawPath) || '.md';
+    const skillMatch = /^cli-tool\/components\/skills\/(.+)\/SKILL\.md$/.exec(p);
+    if (skillMatch) {
+      const slug = skillMatch[1];
+      const parts = slug.split('/');
+      skills.push({
+        kind: 'skill',
+        slug,
+        name: parts[parts.length - 1],
+        category: parts.length > 1 ? parts[0] : 'general',
+      });
+    }
   }
-  if (!content) {
-    throw new Error('catalog item has neither inline content nor a repo path');
-  }
-
-  const dir = path.join(catalogDir(), kind);
-  fs.mkdirSync(dir, { recursive: true });
-  const base = path.basename(name, path.extname(name));
-  const target = path.join(dir, `${base}${ext}`);
-  fs.writeFileSync(target, content, 'utf8');
-  return { installedTo: target };
+  return { agents, skills };
 }
+
+function readCache(): CatalogIndex | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+    if (Array.isArray(raw?.agents) && Array.isArray(raw?.skills)) {
+      return raw as CatalogIndex;
+    }
+  } catch {
+    // Missing/corrupt cache.
+  }
+  return null;
+}
+
+function writeCache(index: CatalogIndex): void {
+  try {
+    fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(index));
+  } catch (err) {
+    console.warn('[catalog] failed to write cache:', err);
+  }
+}
+
+/** The browsable catalog index (cached 24h; refresh forces a re-fetch). */
+export async function getCatalogIndex(refresh = false): Promise<{
+  ok: boolean;
+  index?: CatalogIndex;
+  error?: string;
+}> {
+  const cached = readCache();
+  if (!refresh && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    return { ok: true, index: cached };
+  }
+  try {
+    const res = await fetchWithTimeout(
+      `${API_BASE}/git/trees/main?recursive=1`,
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = (await res.json()) as { tree?: Array<{ path?: string }> };
+    const paths = (body.tree ?? [])
+      .map((t) => t.path)
+      .filter((p): p is string => typeof p === 'string');
+    const index: CatalogIndex = { fetchedAt: Date.now(), ...parseTreePaths(paths) };
+    writeCache(index);
+    return { ok: true, index };
+  } catch (err) {
+    // Offline / rate limited — serve the stale cache when we have one.
+    if (cached) return { ok: true, index: cached };
+    const detail = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `catálogo indisponível: ${detail}` };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Install (exact Overclock behavior)
+// ---------------------------------------------------------------------------
+
+/** Slugs come from the catalog: path segments only, no traversal. */
+function isSafeSlug(slug: string): boolean {
+  return /^[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)*$/.test(slug) && !slug.includes('..');
+}
+
+export interface InstallResult {
+  ok: boolean;
+  skipped?: boolean;
+  installed?: { name: string; path: string };
+  error?: string;
+}
+
+async function installAgent(slug: string): Promise<InstallResult> {
+  const home = os.homedir();
+  const slugBase = path.basename(slug);
+  const destName = slugBase.endsWith('.md') ? slugBase : `${slugBase}.md`;
+  const targetPath = path.join(home, '.claude', 'agents', destName);
+  if (fs.existsSync(targetPath)) return { ok: true, skipped: true };
+
+  const resp = await fetchWithTimeout(
+    `${RAW_BASE}/cli-tool/components/agents/${slug}.md`,
+  );
+  if (!resp.ok) {
+    return { ok: false, error: `fetch failed: ${resp.status} ${resp.statusText}` };
+  }
+  await fs.promises.mkdir(path.join(home, '.claude', 'agents'), {
+    recursive: true,
+  });
+  await fs.promises.writeFile(targetPath, await resp.text(), 'utf8');
+  return { ok: true, installed: { name: destName, path: targetPath } };
+}
+
+interface ContentsEntry {
+  type: string;
+  name: string;
+  path: string;
+  download_url: string | null;
+}
+
+async function installSkill(slug: string): Promise<InstallResult> {
+  const home = os.homedir();
+  const slugBase = path.basename(slug);
+  const targetDir = path.join(home, '.claude', 'skills', slugBase);
+  if (fs.existsSync(targetDir)) return { ok: true, skipped: true };
+
+  const queue = [
+    {
+      apiUrl: `${API_BASE}/contents/cli-tool/components/skills/${slug}`,
+      localDir: targetDir,
+    },
+  ];
+  let written = 0;
+  while (queue.length > 0) {
+    const { apiUrl, localDir } = queue.shift()!;
+    const res = await fetchWithTimeout(apiUrl);
+    if (!res.ok) {
+      return { ok: false, error: `fetch failed: ${res.status} ${res.statusText}` };
+    }
+    const entries = (await res.json()) as ContentsEntry[];
+    if (!Array.isArray(entries)) {
+      return { ok: false, error: 'unexpected contents response' };
+    }
+    await fs.promises.mkdir(localDir, { recursive: true });
+    for (const entry of entries) {
+      // Names come from the GitHub API but are written locally — keep them
+      // strictly inside the target dir.
+      if (!entry.name || entry.name.includes('/') || entry.name.includes('..')) {
+        continue;
+      }
+      if (entry.type === 'dir') {
+        queue.push({
+          apiUrl: `${API_BASE}/contents/${entry.path}`,
+          localDir: path.join(localDir, entry.name),
+        });
+      } else if (entry.type === 'file' && entry.download_url) {
+        if (++written > MAX_SKILL_FILES) {
+          return { ok: false, error: 'skill too large (file cap exceeded)' };
+        }
+        const fileRes = await fetchWithTimeout(entry.download_url);
+        if (!fileRes.ok) {
+          return { ok: false, error: `fetch failed: ${fileRes.status}` };
+        }
+        const buffer = Buffer.from(await fileRes.arrayBuffer());
+        await fs.promises.writeFile(path.join(localDir, entry.name), buffer);
+      }
+    }
+  }
+  return { ok: true, installed: { name: slugBase, path: targetDir } };
+}
+
+/**
+ * Install an agent (.md → ~/.claude/agents/) or a skill (dir →
+ * ~/.claude/skills/) from the aitmpl catalog. Skips silently when the target
+ * already exists — same contract as overclock_catalog_install.
+ */
+export async function installCatalogItem(input: {
+  kind: CatalogKind;
+  slug: string;
+}): Promise<InstallResult> {
+  if (!isSafeSlug(input.slug)) return { ok: false, error: 'invalid slug' };
+  try {
+    return input.kind === 'agent'
+      ? await installAgent(input.slug)
+      : await installSkill(input.slug);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: detail };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Installed listings (settings drawer AGENTS/SKILLS/PLUGINS/HOOKS)
+// ---------------------------------------------------------------------------
 
 /** One locally installed catalog component (or user plugin file). */
 export interface InstalledItem {
@@ -111,19 +268,30 @@ export interface InstalledItem {
   modifiedAt: number;
 }
 
-function scanDir(dir: string, kind: string): InstalledItem[] {
+function scanDir(
+  dir: string,
+  kind: string,
+  opts: { dirs?: boolean; ext?: string } = {},
+): InstalledItem[] {
   try {
     return fs
       .readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && !entry.name.startsWith('.'))
+      .filter((entry) => {
+        if (entry.name.startsWith('.')) return false;
+        if (opts.dirs) return entry.isDirectory();
+        if (opts.ext) return entry.isFile() && entry.name.endsWith(opts.ext);
+        return entry.isFile();
+      })
       .map((entry) => {
         const file = path.join(dir, entry.name);
         const stat = fs.statSync(file);
         return {
           kind,
-          name: path.basename(entry.name, path.extname(entry.name)),
+          name: entry.isDirectory()
+            ? entry.name
+            : path.basename(entry.name, path.extname(entry.name)),
           file,
-          size: stat.size,
+          size: entry.isDirectory() ? 0 : stat.size,
           modifiedAt: stat.mtimeMs,
         };
       });
@@ -132,17 +300,30 @@ function scanDir(dir: string, kind: string): InstalledItem[] {
   }
 }
 
-/** Everything installed under ~/.nexus/plugins/catalog/<kind>/. */
+/**
+ * Installed catalog components. Overclock installs into the CLI's real
+ * namespace (~/.claude) — that's what we scan; the legacy
+ * ~/.nexus/plugins/catalog dir is included for anything installed by older
+ * builds.
+ */
 export function listInstalledCatalogItems(): InstalledItem[] {
-  const root = catalogDir();
-  try {
-    return fs
-      .readdirSync(root, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .flatMap((entry) => scanDir(path.join(root, entry.name), entry.name));
-  } catch {
-    return [];
-  }
+  const home = os.homedir();
+  const legacyRoot = path.join(home, '.nexus', 'plugins', 'catalog');
+  const legacy = (() => {
+    try {
+      return fs
+        .readdirSync(legacyRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .flatMap((entry) => scanDir(path.join(legacyRoot, entry.name), entry.name));
+    } catch {
+      return [];
+    }
+  })();
+  return [
+    ...scanDir(path.join(home, '.claude', 'agents'), 'agent', { ext: '.md' }),
+    ...scanDir(path.join(home, '.claude', 'skills'), 'skill', { dirs: true }),
+    ...legacy,
+  ];
 }
 
 /** User plugin files (declarative adapters + voice configs). */
@@ -158,57 +339,7 @@ export function listPluginFiles(): InstalledItem[] {
 
 /** Generated skill-gate hook homes (one per gated worker session). */
 export function listHookHomes(): InstalledItem[] {
-  const root = path.join(os.homedir(), '.nexus', 'ephemeral');
-  try {
-    return fs
-      .readdirSync(root, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => {
-        const dir = path.join(root, entry.name);
-        const stat = fs.statSync(dir);
-        return {
-          kind: 'hook-home',
-          name: entry.name,
-          file: dir,
-          size: 0,
-          modifiedAt: stat.mtimeMs,
-        };
-      });
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Search and/or install. With only `query`: returns matches. With `item`
- * (exact name from a previous search): installs it.
- */
-export async function catalogInstall(input: CatalogInstallInput): Promise<{
-  ok: boolean;
-  results?: CatalogItem[];
-  installedTo?: string;
-  error?: string;
-}> {
-  try {
-    if (input.item) {
-      const matches = await searchCatalog(input.item, input.kind, 5);
-      const exact =
-        matches.find((m) => m.name === input.item) ?? matches[0] ?? null;
-      if (!exact) return { ok: false, error: `no catalog item: ${input.item}` };
-      const { installedTo } = await installItem(exact);
-      return { ok: true, installedTo };
-    }
-    if (input.query) {
-      const results = await searchCatalog(
-        input.query,
-        input.kind,
-        input.limit ?? DEFAULT_LIMIT,
-      );
-      return { ok: true, results };
-    }
-    return { ok: false, error: 'provide query (search) or item (install)' };
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: `catalog unavailable: ${detail}` };
-  }
+  return scanDir(path.join(os.homedir(), '.nexus', 'ephemeral'), 'hook-home', {
+    dirs: true,
+  });
 }

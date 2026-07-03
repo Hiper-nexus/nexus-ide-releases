@@ -193,8 +193,8 @@ const api: NexusApi = {
     exportSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadExport),
     importSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadImport),
     getMcpInfo: () => ipcRenderer.invoke(ORCH_CHANNELS.mcpInfo),
-    searchCatalog: (query) =>
-      ipcRenderer.invoke(ORCH_CHANNELS.catalogSearch, query),
+    getCatalogIndex: (refresh?: boolean) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.catalogIndex, { refresh }),
     installCatalogItem: (req) =>
       ipcRenderer.invoke(ORCH_CHANNELS.catalogInstall, req),
     listInstalledCatalog: () =>

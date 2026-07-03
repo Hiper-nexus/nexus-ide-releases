@@ -45,11 +45,29 @@ export interface InstalledItemInfo {
   modifiedAt: number;
 }
 
-/** Result envelope of catalog search/install calls. */
-export interface CatalogResult {
+/** One browsable aitmpl catalog component. */
+export interface CatalogEntryInfo {
+  kind: 'agent' | 'skill';
+  slug: string;
+  name: string;
+  category: string;
+}
+
+export interface CatalogIndexResult {
   ok: boolean;
-  results?: Array<Record<string, unknown>>;
-  installedTo?: string;
+  index?: {
+    fetchedAt: number;
+    agents: CatalogEntryInfo[];
+    skills: CatalogEntryInfo[];
+  };
+  error?: string;
+}
+
+/** Same contract as overclock_catalog_install (skip-if-exists). */
+export interface CatalogInstallResult {
+  ok: boolean;
+  skipped?: boolean;
+  installed?: { name: string; path: string };
   error?: string;
 }
 
@@ -211,15 +229,11 @@ export interface NexusApi {
     exportSquads(): Promise<{ ok: boolean; path?: string; error?: string }>;
     importSquads(): Promise<{ ok: boolean; count?: number; error?: string }>;
     getMcpInfo(): Promise<McpRuntimeInfo>;
-    searchCatalog(query: {
-      query: string;
-      kind?: 'agent' | 'skill' | 'command';
-      limit?: number;
-    }): Promise<CatalogResult>;
+    getCatalogIndex(refresh?: boolean): Promise<CatalogIndexResult>;
     installCatalogItem(req: {
-      item: string;
-      kind?: 'agent' | 'skill' | 'command';
-    }): Promise<CatalogResult>;
+      kind: 'agent' | 'skill';
+      slug: string;
+    }): Promise<CatalogInstallResult>;
     listInstalledCatalog(): Promise<InstalledItemInfo[]>;
     listNativeTools(): Promise<NativeToolInfo[]>;
     listPluginFiles(): Promise<InstalledItemInfo[]>;

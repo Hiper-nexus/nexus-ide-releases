@@ -58,6 +58,12 @@ export interface ProviderSettingsInfo {
   loginHint?: string;
   /** True when safeStorage encryption is available on this machine. */
   secureStorageAvailable: boolean;
+  /**
+   * How this CLI will authenticate at spawn (subscription-first directive):
+   * subscription = signed-in OAuth/plan session; api-key = keychain fallback;
+   * login-needed = neither present, the CLI will prompt.
+   */
+  authStrategy: 'subscription' | 'api-key' | 'login-needed';
   /** Active upstream routing (ai-launcher port). */
   upstream: string;
   /** Whether this adapter is Claude-compatible and can be routed. */

@@ -28,11 +28,11 @@ import {
   stopMcpServer,
 } from './mcp-server';
 import {
-  catalogInstall,
+  getCatalogIndex,
+  installCatalogItem,
   listHookHomes,
   listInstalledCatalogItems,
   listPluginFiles,
-  type CatalogKind,
 } from './catalog';
 import { z } from 'zod';
 
@@ -148,32 +148,23 @@ export function registerOrchIpc(): void {
     }
   });
 
-  const catalogQuerySchema = z.object({
-    query: z.string().min(1).max(256).optional(),
-    kind: z.enum(['agent', 'skill', 'command']).optional(),
-    limit: z.number().int().min(1).max(50).optional(),
-    item: z.string().min(1).max(256).optional(),
+  const catalogIndexSchema = z.object({ refresh: z.boolean().optional() });
+  const catalogInstallSchema = z.object({
+    kind: z.enum(['agent', 'skill']),
+    slug: z.string().min(1).max(256),
   });
 
-  ipcMain.handle(ORCH_CHANNELS.catalogSearch, async (_event, raw) => {
-    const parsed = catalogQuerySchema.safeParse(raw);
-    if (!parsed.success) return { ok: false, error: 'invalid catalog query' };
-    return catalogInstall({
-      query: parsed.data.query,
-      kind: parsed.data.kind as CatalogKind | undefined,
-      limit: parsed.data.limit,
-    });
+  ipcMain.handle(ORCH_CHANNELS.catalogIndex, async (_event, raw) => {
+    const parsed = catalogIndexSchema.safeParse(raw ?? {});
+    return getCatalogIndex(parsed.success ? parsed.data.refresh : false);
   });
 
   ipcMain.handle(ORCH_CHANNELS.catalogInstall, async (_event, raw) => {
-    const parsed = catalogQuerySchema.safeParse(raw);
-    if (!parsed.success || !parsed.data.item) {
+    const parsed = catalogInstallSchema.safeParse(raw);
+    if (!parsed.success) {
       return { ok: false, error: 'invalid catalog install request' };
     }
-    return catalogInstall({
-      item: parsed.data.item,
-      kind: parsed.data.kind as CatalogKind | undefined,
-    });
+    return installCatalogItem(parsed.data);
   });
 
   ipcMain.handle(ORCH_CHANNELS.catalogInstalled, () =>

@@ -118,6 +118,22 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
         >
           {provider.installed ? 'detectado' : 'ausente'}
         </span>
+        <span
+          className={`settings-chip ${
+            provider.authStrategy === 'subscription'
+              ? 'settings-chip--ok'
+              : provider.authStrategy === 'api-key'
+                ? ''
+                : 'settings-chip--warn'
+          }`}
+          title="Prioridade: assinatura (OAuth/plano). API key é só fallback."
+        >
+          {provider.authStrategy === 'subscription'
+            ? 'assinatura'
+            : provider.authStrategy === 'api-key'
+              ? 'via API key'
+              : 'login pendente'}
+        </span>
         <label className="prov__toggle" title="Habilitar/desabilitar">
           <input
             type="checkbox"

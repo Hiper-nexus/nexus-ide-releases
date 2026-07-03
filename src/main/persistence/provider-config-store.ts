@@ -29,6 +29,10 @@ import {
   buildProviderRoutingEnv,
   listUpstreamProviders,
 } from '../adapters/launcher-provider-manager';
+import {
+  hasSubscriptionAuth,
+  resolveAuthStrategy,
+} from '../adapters/subscription-auth';
 
 /**
  * Provider configuration hub: per-adapter enable/disable, binary-path
@@ -106,36 +110,72 @@ export interface ProviderSpawnOverrides {
   extraArgs: string[];
   /** { ENV_VAR: key } to inject, or empty when no key is stored. */
   keyEnv: Record<string, string>;
+  /** Env vars to strip so nothing hijacks an active subscription session. */
+  suppressEnv: string[];
+}
+
+/** Key/token env vars an adapter could pick up from the parent environment. */
+function keyEnvVarsOf(adapterId: string): string[] {
+  const adapter = getAdapter(adapterId);
+  if (!adapter) return [];
+  const vars = new Set<string>();
+  const primary = primaryKeyEnvVar(adapter);
+  if (primary) vars.add(primary);
+  if (adapter.kind === 'cli-pty') {
+    for (const name of adapter.env.passthrough) {
+      if (/(_API_KEY|_AUTH_TOKEN)$/.test(name)) vars.add(name);
+    }
+  }
+  return [...vars];
+}
+
+function authDecision(adapterId: string) {
+  const adapter = getAdapter(adapterId);
+  const authMethod =
+    adapter?.kind === 'cli-pty' ? adapter.auth.method : 'api_key';
+  return resolveAuthStrategy({
+    authMethod,
+    hasStoredKey: hasKey(adapterId),
+    subscriptionAuthed: hasSubscriptionAuth(adapterId),
+  });
 }
 
 export function providerSpawnOverrides(adapterId: string): ProviderSpawnOverrides {
   const cfg = configFor(adapterId);
   const adapter = getAdapter(adapterId);
   const key = getKey(adapterId);
+  const base = {
+    binPath: cfg.binPath || null,
+    defaultModel: cfg.defaultModel || null,
+    extraArgs: cfg.extraArgs,
+  };
 
   // Upstream routing (ai-launcher port): when a Claude-compatible CLI is
   // pointed at a non-native upstream (GLM, Fugu, …), inject the launcher's
   // ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN + extras and DROP the native
   // API-key env (the launcher unsets ANTHROPIC_API_KEY for third parties).
+  // An explicit route is the user's choice — it wins over subscription auth.
   if (cfg.upstream && cfg.upstream !== 'anthropic' && isRoutable(adapterId)) {
     return {
-      binPath: cfg.binPath || null,
-      defaultModel: cfg.defaultModel || null,
-      extraArgs: cfg.extraArgs,
+      ...base,
       keyEnv: buildProviderRoutingEnv(cfg.upstream, key),
+      suppressEnv: [],
     };
   }
 
+  // Subscription-first (user directive): an authenticated subscription CLI
+  // never receives an API key — and inherited key vars are stripped so they
+  // cannot hijack billing. The key only flows when there is no subscription.
+  const decision = authDecision(adapterId);
   const keyEnv: Record<string, string> = {};
-  if (adapter) {
+  if (decision.injectKey && adapter && key) {
     const envVar = primaryKeyEnvVar(adapter);
-    if (envVar && key) keyEnv[envVar] = key;
+    if (envVar) keyEnv[envVar] = key;
   }
   return {
-    binPath: cfg.binPath || null,
-    defaultModel: cfg.defaultModel || null,
-    extraArgs: cfg.extraArgs,
+    ...base,
     keyEnv,
+    suppressEnv: decision.suppressKeyEnv ? keyEnvVarsOf(adapterId) : [],
   };
 }
 
@@ -166,6 +206,7 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
     loginHint:
       adapter.kind === 'cli-pty' ? adapter.auth.loginHint : undefined,
     secureStorageAvailable: isSecureStorageAvailable(),
+    authStrategy: authDecision(adapterId).strategy,
     upstream: cfg.upstream || 'anthropic',
     routable: isRoutable(adapterId),
     upstreams: listUpstreamProviders().map((p) => ({

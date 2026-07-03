@@ -22,7 +22,7 @@ import {
   setTasks,
 } from './todo-store';
 import { createTask, listTasks, updateTask } from './task-store';
-import { catalogInstall } from './catalog';
+import { installCatalogItem } from './catalog';
 import { onHandoffSubmitted } from './idle-delivery';
 import { paneSpawnTool } from './tools-panes';
 import {
@@ -283,28 +283,50 @@ const squadSaveTool: McpToolDef = {
   },
 };
 
+// Schema mirrors the real overclock_catalog_install 1:1.
 const catalogInstallTool: McpToolDef = {
   name: 'nexus_catalog_install',
   description:
-    'Search the aitmpl.com community catalog (70+ agents/skills/commands) ' +
-    'and install an item into ~/.nexus/plugins/catalog. Pass query to ' +
-    'search; pass item (exact name from a previous search) to install.',
+    'Install an agent or skill from the aitmpl catalog ' +
+    '(davila7/claude-code-templates) into ~/.claude. Skips silently when ' +
+    'the target already exists. After install the component appears in the ' +
+    'settings catalog immediately.',
   inputSchema: {
     type: 'object',
     properties: {
-      query: { type: 'string' },
-      kind: { type: 'string', enum: ['agent', 'skill', 'command'] },
-      limit: { type: 'number' },
-      item: { type: 'string', description: 'Exact item name to install' },
+      kind: {
+        type: 'string',
+        enum: ['agent', 'skill'],
+        description:
+          'Whether to install an agent (.md → ~/.claude/agents/) or a ' +
+          'skill (dir → ~/.claude/skills/).',
+      },
+      slug: {
+        type: 'string',
+        description:
+          'Catalog slug, e.g. "deep-research-team" or ' +
+          '"ai-research/ai-agents-architect".',
+      },
+      source: {
+        type: 'string',
+        enum: ['aitmpl'],
+        description: 'Source catalog. Currently only "aitmpl".',
+      },
+      targetCli: {
+        type: 'string',
+        enum: ['claude'],
+        description: 'Target CLI namespace. Currently only "claude".',
+      },
     },
+    required: ['kind', 'slug'],
   },
-  handler: async (args) =>
-    catalogInstall({
-      query: str(args, 'query'),
-      kind: str(args, 'kind') as 'agent' | 'skill' | 'command' | undefined,
-      limit: num(args, 'limit'),
-      item: str(args, 'item'),
-    }),
+  handler: async (args) => {
+    const kind = str(args, 'kind');
+    if (kind !== 'agent' && kind !== 'skill') {
+      throw new Error('kind must be "agent" or "skill"');
+    }
+    return installCatalogItem({ kind, slug: requireStr(args, 'slug') });
+  },
 };
 
 const taskTool: McpToolDef = {

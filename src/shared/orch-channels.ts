@@ -17,7 +17,7 @@ export const ORCH_CHANNELS = {
   squadExport: 'orch:squads.export',
   squadImport: 'orch:squads.import',
   mcpInfo: 'orch:mcp.info',
-  catalogSearch: 'orch:catalog.search',
+  catalogIndex: 'orch:catalog.index',
   catalogInstall: 'orch:catalog.install',
   catalogInstalled: 'orch:catalog.installed',
   toolsList: 'orch:tools.list',

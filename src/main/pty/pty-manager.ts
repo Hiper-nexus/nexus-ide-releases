@@ -288,6 +288,12 @@ export interface AgentSpawnOverrides {
   defaultModel?: string | null;
   extraArgs?: string[];
   keyEnv?: Record<string, string>;
+  /**
+   * Env vars stripped AFTER the adapter env is built — an authenticated
+   * subscription CLI must not inherit e.g. ANTHROPIC_API_KEY, which would
+   * silently divert billing from the plan to the API.
+   */
+  suppressEnv?: string[];
 }
 
 /** Spawn a cli-agent PTY from a validated adapter. */
@@ -314,6 +320,10 @@ export function spawnAgentSession(
     args.push(...overrides.extraArgs);
   }
   const env = agentEnv(adapter);
+  // Subscription-first: strip inherited key/token vars before any injection.
+  for (const name of overrides.suppressEnv ?? []) {
+    delete env[name];
+  }
   // Inject the keychain-stored API key as the adapter's auth env var. Linker
   // vars are still refused (isDangerousEnvKey) as a defense-in-depth check.
   for (const [key, value] of Object.entries(overrides.keyEnv ?? {})) {
