@@ -94,6 +94,10 @@ export function MissionWizard() {
     () => adapters.filter((a) => a.installed),
     [adapters],
   );
+  // Every adapter is selectable per pane (installed or not) — an uninstalled
+  // pick still opens the pane and surfaces its install hint, so the user can
+  // always choose the LLM for each slot.
+  const defaultSlot = installed[0]?.id ?? adapters[0]?.id ?? 'shell';
 
   const steps: Step[] = useMemo(() => {
     const prefix: Step[] = hasNewWsStep ? ['new-ws'] : [];
@@ -113,18 +117,20 @@ export function MissionWizard() {
     if (picked) setWsPath(picked);
   }
 
+  function fillSlots(prev: string[], n: number): string[] {
+    const next = [...prev];
+    next.length = n;
+    for (let i = 0; i < n; i++) {
+      if (!next[i]) next[i] = defaultSlot;
+    }
+    return next;
+  }
+
   function chooseMode(next: Mode) {
     setMode(next);
     if (next === 'libre') {
       setStep('libre-count');
-      setSlots((prev) => {
-        const filled = [...prev];
-        filled.length = count;
-        for (let i = 0; i < count; i++) {
-          if (!filled[i]) filled[i] = installed[0]?.id ?? 'shell';
-        }
-        return filled;
-      });
+      setSlots((prev) => fillSlots(prev, count));
     } else {
       if (!squadId) setSquadId(squads[0]?.id ?? '');
       setStep('squad-select');
@@ -133,14 +139,7 @@ export function MissionWizard() {
 
   function goCount(n: number) {
     setCount(n);
-    setSlots((prev) => {
-      const next = [...prev];
-      next.length = n;
-      for (let i = 0; i < n; i++) {
-        if (!next[i]) next[i] = installed[0]?.id ?? 'shell';
-      }
-      return next;
-    });
+    setSlots((prev) => fillSlots(prev, n));
   }
 
   async function ensureWorkspaceOpen(): Promise<boolean> {
@@ -170,7 +169,7 @@ export function MissionWizard() {
     setError(null);
     try {
       if (!(await ensureWorkspaceOpen())) return;
-      launchLibrePanes(slots, installed);
+      launchLibrePanes(slots.slice(0, count), adapters);
       close();
     } finally {
       setSpawning(false);
@@ -344,17 +343,18 @@ export function MissionWizard() {
                     <span>Pane {i + 1}</span>
                     <select
                       className="wizard__select"
-                      value={slots[i] ?? 'shell'}
+                      value={slots[i] ?? defaultSlot}
                       onChange={(e) =>
                         setSlots((prev) =>
                           prev.map((s, j) => (j === i ? e.target.value : s)),
                         )
                       }
                     >
-                      <option value="shell">shell</option>
-                      {installed.map((a) => (
+                      <option value="shell">shell (terminal)</option>
+                      {adapters.map((a) => (
                         <option key={a.id} value={a.id}>
                           {a.icon} {a.label}
+                          {a.installed ? '' : ' — não instalado'}
                         </option>
                       ))}
                     </select>

@@ -35,6 +35,27 @@ export function initialTree(): LayoutNode {
 }
 
 /**
+ * Lay out N panes as a balanced grid (recursively bisecting the list,
+ * alternating row/column by depth). Guarantees EXACTLY `panes.length` leaves —
+ * used by Modo Livre so "2 panes" reliably opens two, "4 panes" a 2×2, etc.
+ */
+export function buildGridTree(panes: PaneModel[], depth = 0): LayoutNode {
+  if (panes.length === 0) return createLeaf(createPane('shell'));
+  if (panes.length === 1) return createLeaf(panes[0]);
+  const mid = Math.ceil(panes.length / 2);
+  const direction: SplitDirection = depth % 2 === 0 ? 'row' : 'column';
+  return {
+    kind: 'split',
+    id: id('split'),
+    direction,
+    children: [
+      buildGridTree(panes.slice(0, mid), depth + 1),
+      buildGridTree(panes.slice(mid), depth + 1),
+    ],
+  };
+}
+
+/**
  * Split the leaf hosting `paneId` along `direction`, inserting a fresh pane as
  * the second child. Returns a new tree (unchanged if the pane isn't found).
  */

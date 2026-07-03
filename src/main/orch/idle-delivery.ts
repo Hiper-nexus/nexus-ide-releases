@@ -18,15 +18,35 @@ import { markDelivered } from './handoff-store';
 const queues = new Map<string, Handoff[]>(); // orchestrator sessionId → queue
 let tapInstalled = false;
 
+const MAX_DELIVERY_SUMMARY = 4000;
+
+/**
+ * A worker controls its own handoff `summary`; it is injected into the
+ * orchestrator's PTY, so raw CR/LF or control bytes would let a lower-trust
+ * worker forge extra input lines / auto-submit in the orchestrator (terminal
+ * injection). Strip control chars, collapse newlines to spaces, and cap length
+ * BEFORE it ever reaches the terminal. (artifacts are JSON.stringify'd, safe.)
+ */
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\x00-\x1f\x7f]/g;
+
+function sanitizeForTerminal(text: string): string {
+  return text.replace(/[\r\n]+/g, ' ').replace(CONTROL_CHARS, '').trim();
+}
+
 function formatDelivery(handoff: Handoff): string {
-  const from = handoff.fromAgent ?? 'worker';
+  const from = sanitizeForTerminal(handoff.fromAgent ?? 'worker').slice(0, 128);
+  const summary = sanitizeForTerminal(handoff.summary).slice(
+    0,
+    MAX_DELIVERY_SUMMARY,
+  );
   const artifacts =
     handoff.artifacts.length > 0
-      ? ` artifacts: ${JSON.stringify(handoff.artifacts)}`
+      ? ` artifacts: ${sanitizeForTerminal(JSON.stringify(handoff.artifacts)).slice(0, MAX_DELIVERY_SUMMARY)}`
       : '';
   return (
     `[nexus handoff] from=${from} status=${handoff.status} ` +
-    `summary: ${handoff.summary}${artifacts}`
+    `summary: ${summary}${artifacts}`
   );
 }
 

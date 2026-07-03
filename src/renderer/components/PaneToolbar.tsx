@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
@@ -38,17 +39,49 @@ function StateIndicator({ paneId }: { paneId: string }) {
 export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const split = useLayoutStore((s) => s.split);
   const close = useLayoutStore((s) => s.close);
+  const renameTitle = useLayoutStore((s) => s.renameTitle);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(pane.title);
 
   const adapterLabel = pane.adapterId
     ? `${pane.adapterId}${pane.model ? ` · ${pane.model}` : ''}`
     : null;
 
+  function commit() {
+    const clean = draft.trim();
+    if (clean && clean !== pane.title) renameTitle(pane.id, clean);
+    setEditing(false);
+  }
+
   return (
     <div className="toolbar" data-focused={isFocused}>
       <span className={`toolbar__dot ${isFocused ? 'toolbar__dot--on' : ''}`} />
-      <span className="toolbar__title" title={pane.title}>
-        {pane.title}
-      </span>
+      {editing ? (
+        <input
+          className="toolbar__rename"
+          value={draft}
+          autoFocus
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit();
+            if (e.key === 'Escape') setEditing(false);
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        />
+      ) : (
+        <span
+          className="toolbar__title"
+          title={`${pane.title} — duplo-clique para renomear`}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            setDraft(pane.title);
+            setEditing(true);
+          }}
+        >
+          {pane.title}
+        </span>
+      )}
       {adapterLabel ? (
         <span className="toolbar__badge toolbar__badge--agent" title={adapterLabel}>
           {adapterLabel}

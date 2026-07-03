@@ -17,6 +17,7 @@ import {
   isToolAllowed,
   mintToken,
   releaseSession,
+  releaseSessionByToken,
   type AgentGateContext,
 } from './gate';
 import {
@@ -266,6 +267,12 @@ function installSpawnHook(): void {
       onSpawned: (sessionId) => {
         bindTokenToSession(ctx.token, sessionId);
         sessionTokens.set(sessionId, ctx.token);
+      },
+      onSpawnFailed: () => {
+        // No session will ever exist for this token — drop it from the auth
+        // registry and remove any token-bearing files we wrote.
+        releaseSessionByToken(ctx.token);
+        cleanupSessionArtifacts(ctx.token);
       },
     };
     return decoration;

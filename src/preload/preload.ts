@@ -8,6 +8,7 @@ import { WORKSPACE_CHANNELS } from '../shared/workspace-types';
 import type { WorkspaceState } from '../shared/workspace-types';
 import { PROVIDER_CHANNELS } from '../shared/provider-settings-types';
 import type { ProviderSettingsInfo } from '../shared/provider-settings-types';
+import { FILES_CHANNELS } from '../shared/files-types';
 import type {
   NexusApi,
   SpawnRequest,
@@ -228,6 +229,12 @@ const api: NexusApi = {
     testKey: (adapterId) =>
       ipcRenderer.invoke(PROVIDER_CHANNELS.testKey, { adapterId }),
     onChanged: (cb) => addListener(providersChangedListeners, cb),
+  },
+  files: {
+    list: (relPath: string) => ipcRenderer.invoke(FILES_CHANNELS.list, { relPath }),
+    read: (relPath: string) => ipcRenderer.invoke(FILES_CHANNELS.read, { relPath }),
+    write: (relPath: string, content: string) =>
+      ipcRenderer.invoke(FILES_CHANNELS.write, { relPath, content }),
   },
   platform: process.platform,
 };

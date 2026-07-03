@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { closePane, createLeaf, createPane, splitPane, updatePane } from './split-tree';
+import {
+  buildGridTree,
+  closePane,
+  createLeaf,
+  createPane,
+  listPanes,
+  splitPane,
+  updatePane,
+} from './split-tree';
 import type { LayoutNode } from '../../shared/types';
 
 /**
@@ -68,5 +76,43 @@ describe('split-tree', () => {
     expect(next).not.toBe(leaf); // fresh node
     expect(next.kind === 'leaf' && next.pane.title).toBe('renamed');
     expect(leaf.kind === 'leaf' && leaf.pane.title).toBe(originalTitle); // original untouched
+  });
+});
+
+describe('buildGridTree (Modo Livre)', () => {
+  it('builds EXACTLY N leaves for N panes', () => {
+    for (const n of [1, 2, 3, 4, 6]) {
+      const panes = Array.from({ length: n }, () => createPane('shell'));
+      const tree = buildGridTree(panes);
+      expect(listPanes(tree)).toHaveLength(n);
+    }
+  });
+
+  it('preserves each pane identity and order', () => {
+    const panes = [
+      createPane('cli-agent', undefined, 'claude', 'm'),
+      createPane('shell'),
+      createPane('cli-agent', undefined, 'codex', 'm'),
+    ];
+    const ids = listPanes(buildGridTree(panes)).map((p) => p.id);
+    expect(ids).toEqual(panes.map((p) => p.id));
+  });
+
+  it('alternates split direction by depth for a grid feel', () => {
+    const tree = buildGridTree(
+      Array.from({ length: 4 }, () => createPane('shell')),
+    );
+    expect(tree.kind).toBe('split');
+    if (tree.kind === 'split') {
+      expect(tree.direction).toBe('row');
+      expect(tree.children[0].kind).toBe('split');
+      if (tree.children[0].kind === 'split') {
+        expect(tree.children[0].direction).toBe('column');
+      }
+    }
+  });
+
+  it('never produces an empty tree', () => {
+    expect(listPanes(buildGridTree([])).length).toBe(1);
   });
 });

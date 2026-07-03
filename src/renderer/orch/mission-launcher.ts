@@ -1,7 +1,9 @@
-import type { AdapterInfo } from '../../shared/types';
+import type { AdapterInfo, PaneModel } from '../../shared/types';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
+import { createPane } from '../lib/split-tree';
+import { getActiveWorkspacePath } from '../state/active-workspace';
 import { getPaneSessionId } from '../terminal/terminal-host';
 
 /**
@@ -19,22 +21,22 @@ const SESSION_TIMEOUT_MS = 20_000;
 const BOOT_IDLE_TIMEOUT_MS = 15_000;
 const PASTE_SETTLE_MS = 250;
 
+/**
+ * Modo Livre: build a fresh grid of EXACTLY one pane per slot, each backed by
+ * the chosen provider (or a plain shell). Replaces the current grid so "2
+ * panes" reliably shows two — no fragile iterative splitting.
+ */
 export function launchLibrePanes(
   slots: string[],
-  installed: AdapterInfo[],
+  adapters: AdapterInfo[],
 ): void {
-  const layout = useLayoutStore.getState();
-  for (const adapterId of slots) {
-    if (adapterId === 'shell') {
-      const { focusedPaneId } = useLayoutStore.getState();
-      if (focusedPaneId) {
-        useLayoutStore.getState().split(focusedPaneId, 'row');
-      }
-      continue;
-    }
-    const adapter = installed.find((a) => a.id === adapterId);
-    layout.spawnAgent(adapterId, adapter?.models.default ?? '');
-  }
+  const cwd = getActiveWorkspacePath() ?? undefined;
+  const panes: PaneModel[] = slots.map((slot) => {
+    if (slot === 'shell') return createPane('shell', cwd);
+    const adapter = adapters.find((a) => a.id === slot);
+    return createPane('cli-agent', cwd, slot, adapter?.models.default ?? '');
+  });
+  useLayoutStore.getState().setPanes(panes);
 }
 
 function waitForSession(paneId: string): Promise<string | null> {
@@ -122,17 +124,26 @@ export function launchSquadMission(
     };
   }
 
-  const paneId = useLayoutStore.getState().spawnOrchPane({
-    adapterId: orchestrator.cli,
-    model: orchestrator.model ?? adapter.models.default,
+  // Start the mission in a clean grid with just the orchestrator pane (a
+  // squad opens its own workspace, same as Overclock). Workers are added by
+  // the orchestrator via the MCP tools as it delegates.
+  const cwd = getActiveWorkspacePath() ?? undefined;
+  const orchPane: PaneModel = {
+    ...createPane(
+      'cli-agent',
+      cwd,
+      orchestrator.cli,
+      orchestrator.model ?? adapter.models.default,
+    ),
     title: `${squad.name} · orq`,
     orchRequestId: `squad-${squad.id}-${Date.now().toString(36)}`,
-  });
+  };
+  useLayoutStore.getState().setPanes([orchPane]);
 
   // Kickoff injection runs async — the wizard closes immediately, the
   // instructions land as soon as the CLI is booted and idle.
   void (async () => {
-    const sessionId = await waitForSession(paneId);
+    const sessionId = await waitForSession(orchPane.id);
     if (!sessionId) return;
     await waitFirstIdle(sessionId);
     const prompt = kickoffPrompt(squad);
@@ -141,6 +152,6 @@ export function launchSquadMission(
     setTimeout(() => window.nexus.pty.write(sessionId, '\r'), PASTE_SETTLE_MS);
   })();
 
-  useOrchStore.getState().bindPaneMission(paneId, undefined);
-  return { ok: true, paneId };
+  useOrchStore.getState().bindPaneMission(orchPane.id, undefined);
+  return { ok: true, paneId: orchPane.id };
 }

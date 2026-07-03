@@ -72,8 +72,12 @@ export function prepareEphemeralHome(
     'ephemeral',
     tokenId.slice(0, 12),
   );
+  // 0700: the ephemeral home holds the MCP bearer token — no other user on a
+  // shared machine may read it (a leaked token grants the full toolset →
+  // shell-pane spawn = RCE).
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const claudeDir = path.join(dir, '.claude');
-  fs.mkdirSync(claudeDir, { recursive: true });
+  fs.mkdirSync(claudeDir, { recursive: true, mode: 0o700 });
 
   const scriptPath = path.join(dir, 'nexus-gate.mjs');
   fs.writeFileSync(scriptPath, HOOK_SCRIPT, { mode: 0o700 });
@@ -108,15 +112,20 @@ export function prepareEphemeralHome(
   fs.writeFileSync(
     path.join(claudeDir, 'settings.json'),
     JSON.stringify(settings, null, 2),
+    { mode: 0o600 },
   );
   // Skip the first-run onboarding flow inside the ephemeral home.
   fs.writeFileSync(
     path.join(dir, '.claude.json'),
     JSON.stringify({ hasCompletedOnboarding: true }),
+    { mode: 0o600 },
   );
 
+  // Contains the bearer token — 0600.
   const mcpConfigPath = path.join(dir, 'nexus-mcp.json');
-  fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+  fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), {
+    mode: 0o600,
+  });
   return { dir, mcpConfigPath };
 }
 
@@ -126,9 +135,10 @@ export function prepareEphemeralHome(
  */
 export function writeMcpConfigFile(tokenId: string, mcpConfig: object): string {
   const dir = path.join(os.homedir(), '.nexus', 'mcp-configs');
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = path.join(dir, `${tokenId.slice(0, 12)}.json`);
-  fs.writeFileSync(file, JSON.stringify(mcpConfig, null, 2));
+  // Contains the bearer token — 0600 so it isn't world-readable.
+  fs.writeFileSync(file, JSON.stringify(mcpConfig, null, 2), { mode: 0o600 });
   return file;
 }
 

@@ -57,6 +57,7 @@ const paneModelSchema = z.object({
   cwd: z.string().max(4096).optional(),
   adapterId: z.string().min(1).max(64).optional(),
   model: z.string().min(1).max(128).optional(),
+  titlePinned: z.boolean().optional(),
   orchRequestId: z.string().min(1).max(128).optional(),
 });
 

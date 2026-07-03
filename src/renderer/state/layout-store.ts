@@ -8,6 +8,7 @@ import type {
   WorkspaceLayout,
 } from '../../shared/types';
 import {
+  buildGridTree,
   closePane,
   createPane,
   initialTree,
@@ -33,6 +34,8 @@ interface LayoutState {
 
   split(paneId: string, direction: SplitDirection): void;
   spawnAgent(adapterId: string, model: string): void;
+  /** Replace the whole grid with an explicit set of panes (Modo Livre). */
+  setPanes(panes: PaneModel[]): void;
   /**
    * Orchestration-requested agent pane (MCP pane_spawn). Returns the new
    * paneId; the orchRequestId rides along into the PTY spawn so the main
@@ -48,6 +51,8 @@ interface LayoutState {
   close(paneId: string): void;
   focus(paneId: string): void;
   setTitle(paneId: string, title: string): void;
+  /** User rename — pins the title so shell escapes stop overriding it. */
+  renameTitle(paneId: string, title: string): void;
   hydrate(layout: WorkspaceLayout | null): void;
   toggleView(): void;
   updateCanvasNodeLayout(paneId: string, patch: Partial<CanvasNodeLayout>): void;
@@ -183,6 +188,25 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     return newPane.id;
   },
 
+  setPanes: (panes) => {
+    if (panes.length === 0) return;
+    const root = buildGridTree(panes);
+    const focusedPaneId = panes[0].id;
+    const { viewKind, canvasNodeLayouts } = get();
+    const updatedLayouts =
+      viewKind === 'canvas'
+        ? panes.reduce(
+            (acc, pane, index) => ({
+              ...acc,
+              [pane.id]: defaultCanvasLayout(index),
+            }),
+            {} as Record<string, CanvasNodeLayout>,
+          )
+        : canvasNodeLayouts;
+    set({ root, focusedPaneId, canvasNodeLayouts: updatedLayouts });
+    persist({ ...get(), root, focusedPaneId, canvasNodeLayouts: updatedLayouts });
+  },
+
   spawnAgent: (adapterId, model) => {
     const { focusedPaneId: targetId, root: currentRoot, viewKind, canvasNodeLayouts } = get();
     const newPane: PaneModel = createPane(
@@ -226,7 +250,21 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   setTitle: (paneId, title) => {
     const clean = title.trim();
     if (!clean) return;
+    // Shell OSC-title escapes must not overwrite a user-pinned pane name.
+    const pane = listPanes(get().root).find((p) => p.id === paneId);
+    if (pane?.titlePinned) return;
     const root = updatePane(get().root, paneId, { title: clean });
+    set({ root });
+    persist({ ...get(), root });
+  },
+
+  renameTitle: (paneId, title) => {
+    const clean = title.trim();
+    if (!clean) return;
+    const root = updatePane(get().root, paneId, {
+      title: clean,
+      titlePinned: true,
+    });
     set({ root });
     persist({ ...get(), root });
   },

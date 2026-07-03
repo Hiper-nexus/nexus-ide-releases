@@ -28,6 +28,10 @@ import type {
 } from './settings-types';
 import type { WorkspaceState } from './workspace-types';
 import type {
+  FileTreeResult,
+  ReadFileResult,
+} from './files-types';
+import type {
   ProviderConfigPatch,
   ProviderSettingsInfo,
   SetKeyRequest,
@@ -94,6 +98,8 @@ export interface PaneModel {
   adapterId?: string;
   /** The model selected for this agent pane (e.g. "claude-sonnet-4-5"). */
   model?: string;
+  /** User renamed this pane → ignore the shell's OSC title escapes. */
+  titlePinned?: boolean;
   /**
    * Present when the pane was requested by the orchestration layer (MCP
    * pane_spawn). Correlates the eventual PTY spawn with the pending skill-gate
@@ -264,6 +270,11 @@ export interface NexusApi {
     setKey(req: SetKeyRequest): Promise<{ ok: boolean; error?: string }>;
     testKey(adapterId: string): Promise<TestConnectionResult>;
     onChanged(cb: (list: ProviderSettingsInfo[]) => void): Unsubscribe;
+  };
+  files: {
+    list(relPath: string): Promise<FileTreeResult>;
+    read(relPath: string): Promise<ReadFileResult>;
+    write(relPath: string, content: string): Promise<{ ok: boolean; error?: string }>;
   };
   platform: NodeJS.Platform;
 }

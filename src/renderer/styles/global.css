@@ -2145,3 +2145,283 @@ body {
   gap: 6px;
   flex: 1;
 }
+
+/* ---- Workspace bar buttons + pane rename ---- */
+.workspace-bar__ws-btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-bar__ws-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.workspace-bar__ws-btn--close:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: transparent;
+}
+
+.toolbar__rename {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 11px;
+  padding: 1px 6px;
+  font-family: inherit;
+}
+
+.toolbar__rename:focus {
+  outline: none;
+}
+
+/* ---- Confirm dialog (close workspace) ---- */
+.confirm__overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 6, 10, 0.6);
+  z-index: 60;
+}
+
+.confirm__panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(440px, 92vw);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 22px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  z-index: 61;
+}
+
+.confirm__title {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.confirm__body {
+  margin: 0 0 20px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.confirm__btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 12px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.confirm__btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.confirm__btn--danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.confirm__btn--danger:hover {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+}
+
+/* ---- Files panel (explorer + editor) ---- */
+.files {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  bottom: 8px;
+  width: 620px;
+  max-width: 70vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  z-index: 25;
+}
+
+.files__header {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.files__title {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+
+.files__close {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.files__body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.files__tree {
+  flex: 0 0 220px;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  padding: 6px 0;
+}
+
+.files-node {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 8px;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-mono);
+}
+
+.files-node:hover {
+  background: var(--accent-soft);
+}
+
+.files-node--active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.files-node__glyph {
+  width: 10px;
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.files-node__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-node__empty {
+  display: block;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.files-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.files-editor--empty {
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 20px;
+  text-align: center;
+}
+
+.files-editor__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.files-editor__path {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-editor__save {
+  background: var(--accent);
+  color: #04121f;
+  border: none;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.files-editor__save:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.files-editor__area {
+  flex: 1;
+  background: var(--bg);
+  border: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  resize: none;
+}
+
+.files-editor__area:focus {
+  outline: none;
+}
+
+.files-editor__notice {
+  padding: 20px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.files-editor__error {
+  color: var(--danger);
+  font-size: 11px;
+  padding: 6px 10px;
+  margin: 0;
+}

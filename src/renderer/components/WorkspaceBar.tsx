@@ -4,6 +4,8 @@ import { useOrchStore } from '../state/orch-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
+import { useCloseWorkspaceStore } from './CloseWorkspaceDialog';
+import { useFilesStore } from '../state/files-store';
 import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
 import type { AdapterInfo } from '../../shared/types';
@@ -27,8 +29,11 @@ export function WorkspaceBar() {
   const toggleOrchPanel = useOrchStore((s) => s.togglePanel);
   const toggleSettings = useSettingsStore((s) => s.toggleDrawer);
   const workspace = useWorkspaceStore((s) => s.current);
-  const closeWorkspace = useWorkspaceStore((s) => s.close);
   const openWizard = useMissionWizardStore((s) => s.openForMission);
+  const openNewWorkspace = useMissionWizardStore((s) => s.openForNewWorkspace);
+  const askCloseWorkspace = useCloseWorkspaceStore((s) => s.ask);
+  const filesOpen = useFilesStore((s) => s.open);
+  const toggleFiles = useFilesStore((s) => s.togglePanel);
   const activeTodo = useOrchStore((s) => {
     for (const list of s.todoLists) {
       const current = list.items.find((item) => item.status === 'in_progress');
@@ -90,14 +95,25 @@ export function WorkspaceBar() {
       <div className="workspace-bar__brand">
         <span className="workspace-bar__logo">◈</span>
         {workspace ? (
-          <button
-            className="workspace-bar__ws"
-            onClick={() => void closeWorkspace()}
-            title={`${workspace.path}\nTrocar workspace`}
-          >
-            <span className="workspace-bar__name">{workspace.name}</span>
-            <span className="workspace-bar__tag">trocar ⌄</span>
-          </button>
+          <>
+            <span className="workspace-bar__name" title={workspace.path}>
+              {workspace.name}
+            </span>
+            <button
+              className="workspace-bar__ws-btn"
+              onClick={openNewWorkspace}
+              title="Abrir/criar outro workspace"
+            >
+              ＋ novo
+            </button>
+            <button
+              className="workspace-bar__ws-btn workspace-bar__ws-btn--close"
+              onClick={askCloseWorkspace}
+              title="Fechar este workspace"
+            >
+              ✕ fechar
+            </button>
+          </>
         ) : (
           <span className="workspace-bar__name">NexusIDE</span>
         )}
@@ -134,6 +150,13 @@ export function WorkspaceBar() {
           title={viewKind === 'grid' ? 'Switch to canvas (free drag)' : 'Switch to grid (split panes)'}
         >
           {viewLabel(viewKind)}
+        </button>
+        <button
+          className={`workspace-bar__btn ${filesOpen ? 'workspace-bar__btn--view-active' : ''}`}
+          onClick={toggleFiles}
+          title="Arquivos do workspace (ver/editar)"
+        >
+          🗂 Files
         </button>
         <button
           className={`workspace-bar__btn ${orchPanelOpen ? 'workspace-bar__btn--view-active' : ''}`}

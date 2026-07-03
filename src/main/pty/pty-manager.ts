@@ -78,6 +78,8 @@ export interface AgentSpawnDecoration {
   env: Record<string, string>;
   extraArgs: string[];
   onSpawned?: (sessionId: string) => void;
+  /** Called if the PTY fails to spawn, so minted tokens/artifacts are freed. */
+  onSpawnFailed?: () => void;
 }
 
 export type AgentSpawnHook = (
@@ -338,13 +340,21 @@ export function spawnAgentSession(
     args.push(...decoration.extraArgs);
   }
 
-  const proc = nodePty.spawn(bin, args, {
-    name: 'xterm-256color',
-    cols: req.cols,
-    rows: req.rows,
-    cwd,
-    env,
-  });
+  let proc: nodePty.IPty;
+  try {
+    proc = nodePty.spawn(bin, args, {
+      name: 'xterm-256color',
+      cols: req.cols,
+      rows: req.rows,
+      cwd,
+      env,
+    });
+  } catch (err) {
+    // Spawn failed → onSpawned never runs, so free the minted token + files
+    // here (otherwise a valid bearer token leaks in memory and on disk).
+    decoration?.onSpawnFailed?.();
+    throw err;
+  }
 
   const idleMs =
     adapter.stateParsing.idle.type === 'timeout'

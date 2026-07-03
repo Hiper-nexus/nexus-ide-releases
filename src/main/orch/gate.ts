@@ -124,6 +124,14 @@ export function releaseSession(sessionId: string): void {
   contexts.delete(ctx.token);
 }
 
+/**
+ * Drop a token that never bound to a session (its PTY failed to spawn) so it
+ * cannot authorize MCP calls forever.
+ */
+export function releaseSessionByToken(token: string): void {
+  contexts.delete(token);
+}
+
 export function markHandoffSubmitted(ctx: AgentGateContext): void {
   ctx.handoffSubmitted = true;
 }

@@ -13,12 +13,16 @@ import { OrchestrationPanel } from './components/OrchestrationPanel';
 import { SettingsDrawer } from './components/settings/SettingsDrawer';
 import { LaunchScreen } from './components/LaunchScreen';
 import { MissionWizard } from './components/MissionWizard';
+import { CloseWorkspaceDialog } from './components/CloseWorkspaceDialog';
+import { FilesPanel } from './components/FilesPanel';
 import { useVoiceController } from './voice/voice-controller';
 import { useOrchBridge } from './orch/orch-bridge';
 import { useSettingsController } from './state/settings-store';
 import { useWorkspaceController, useWorkspaceStore } from './state/workspace-store';
 import { useProviderController } from './state/provider-store';
 import { useMissionWizardStore } from './state/mission-wizard-store';
+import { reconcileHosts } from './terminal/terminal-host';
+import { useFilesStore } from './state/files-store';
 
 /**
  * App root: hydrates the saved layout on boot and wires global keyboard
@@ -47,12 +51,17 @@ export function App() {
     const path = currentWorkspace?.path ?? null;
     if (!path) {
       detachWorkspaceLayout();
+      // Closing the workspace terminates every live pane/session (the user was
+      // warned). Disposing all hosts kills their PTYs.
+      reconcileHosts(new Set());
       lastWorkspacePath.current = path;
       return;
     }
     const isUserSwitch =
       lastWorkspacePath.current !== undefined &&
       path !== lastWorkspacePath.current;
+    // A new workspace root invalidates the file tree cache.
+    if (path !== lastWorkspacePath.current) useFilesStore.getState().reset();
     lastWorkspacePath.current = path;
     void switchWorkspaceLayout(path).then((hadSavedLayout) => {
       if (!isUserSwitch || hadSavedLayout) return;
@@ -108,6 +117,7 @@ export function App() {
     <div className="app">
       <WorkspaceBar />
       <main className="app__body">
+        <FilesPanel />
         {viewKind === 'canvas' ? <CanvasView /> : <PaneGrid />}
         <OrchestrationPanel />
       </main>
@@ -115,6 +125,7 @@ export function App() {
       <VoiceSettings />
       <SettingsDrawer />
       <MissionWizard />
+      <CloseWorkspaceDialog />
     </div>
   );
 }

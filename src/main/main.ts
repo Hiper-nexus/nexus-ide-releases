@@ -34,6 +34,7 @@ import {
   registerProviderListener,
   unregisterProviderListener,
 } from './persistence/provider-config-store';
+import { registerFilesIpc } from './persistence/files-ipc';
 
 // Windows installer housekeeping (no-op elsewhere).
 if (process.platform === 'win32') {
@@ -57,6 +58,7 @@ function bootstrap(): void {
   registerSettingsIpc();
   registerWorkspaceIpc();
   registerProviderIpc();
+  registerFilesIpc();
   // Orchestration boots async (MCP server binds a localhost port); the window
   // opens immediately and orchestration attaches when ready.
   void initOrchestration().catch((err) =>
