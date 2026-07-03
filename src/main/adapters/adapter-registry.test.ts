@@ -37,6 +37,7 @@ const MINIMAL_CLI_PTY = {
     exitCodes: {},
   },
   quirks: { altScreen: false, requiresNoAutoUpdate: false, mcpAutoload: false },
+  control: {},
 };
 
 // ── Schema validation tests ──────────────────────────────────────────────────

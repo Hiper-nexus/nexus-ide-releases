@@ -17,20 +17,36 @@
     "loginHint": "Run `kimi` and sign in, or set MOONSHOT_API_KEY."
   },
   "spawn": {
-    "interactive": ["kimi"],
-    "headless": ["kimi", "-p", "{{PROMPT}}"],
+    "interactive": [
+      "kimi"
+    ],
+    "headless": [
+      "kimi",
+      "-p",
+      "{{PROMPT}}"
+    ],
     "ptyRequired": true,
-    "resumeArgs": ["--resume"],
+    "resumeArgs": [
+      "--resume"
+    ],
     "extraArgs": []
   },
   "env": {
     "static": {},
-    "passthrough": ["MOONSHOT_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"],
+    "passthrough": [
+      "MOONSHOT_API_KEY",
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_BASE_URL"
+    ],
     "ephemeralHome": false
   },
   "models": {
     "flag": "--model",
-    "list": ["kimi-k2", "kimi-k2-turbo", "moonshot-v1-128k"],
+    "list": [
+      "kimi-k2",
+      "kimi-k2-turbo",
+      "moonshot-v1-128k"
+    ],
     "default": "kimi-k2"
   },
   "promptInjection": {
@@ -39,13 +55,34 @@
     "bracketedPaste": false
   },
   "stateParsing": {
-    "idle": { "type": "timeout", "ms": 800 },
+    "idle": {
+      "type": "timeout",
+      "ms": 800
+    },
     "shellIntegration": false,
-    "exitCodes": { "0": "ok", "1": "error" }
+    "exitCodes": {
+      "0": "ok",
+      "1": "error"
+    }
   },
   "quirks": {
     "altScreen": true,
     "requiresNoAutoUpdate": false,
     "mcpAutoload": false
+  },
+  "control": {
+    "permission": {
+      "arg": "--permission-mode",
+      "modes": {
+        "default": "default",
+        "auto": "acceptEdits",
+        "plan": "plan",
+        "bypass": "bypassPermissions"
+      },
+      "yolo": [
+        "--dangerously-skip-permissions"
+      ],
+      "default": ""
+    }
   }
 }

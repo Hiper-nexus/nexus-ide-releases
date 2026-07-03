@@ -17,15 +17,26 @@
     "loginHint": "Set OPENAI_API_KEY in your environment or run `codex login`."
   },
   "spawn": {
-    "interactive": ["codex", "--ask-for-approval", "never"],
-    "headless": ["codex", "--ask-for-approval", "never", "-q", "{{PROMPT}}"],
+    "interactive": [
+      "codex"
+    ],
+    "headless": [
+      "codex",
+      "--ask-for-approval",
+      "never",
+      "-q",
+      "{{PROMPT}}"
+    ],
     "ptyRequired": true,
     "resumeArgs": [],
     "extraArgs": []
   },
   "env": {
     "static": {},
-    "passthrough": ["OPENAI_API_KEY", "OPENAI_BASE_URL"],
+    "passthrough": [
+      "OPENAI_API_KEY",
+      "OPENAI_BASE_URL"
+    ],
     "ephemeralHome": false
   },
   "models": {
@@ -45,14 +56,38 @@
     "bracketedPaste": false
   },
   "stateParsing": {
-    "idle": { "type": "timeout", "ms": 800 },
+    "idle": {
+      "type": "timeout",
+      "ms": 800
+    },
     "shellIntegration": false,
-    "exitCodes": { "0": "ok", "1": "error" }
+    "exitCodes": {
+      "0": "ok",
+      "1": "error"
+    }
   },
   "quirks": {
     "altScreen": true,
     "requiresNoAutoUpdate": false,
     "approvalFlag": "--ask-for-approval",
     "mcpAutoload": false
+  },
+  "control": {
+    "permission": {
+      "arg": "--ask-for-approval",
+      "modes": {
+        "auto": "never",
+        "default": "on-request",
+        "untrusted": "untrusted"
+      },
+      "yolo": [
+        "--dangerously-bypass-approvals-and-sandbox"
+      ],
+      "default": ""
+    },
+    "effort": {
+      "arg": "-c model_reasoning_effort=",
+      "levels": []
+    }
   }
 }

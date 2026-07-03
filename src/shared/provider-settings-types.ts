@@ -16,6 +16,11 @@ export const providerConfigPatchSchema = z.object({
   extraArgs: z.array(z.string().max(512)).max(64).optional(),
   /** Upstream routing (ai-launcher port): anthropic|glm|sakana|… */
   upstream: z.string().max(32).optional(),
+  /** Permission mode key ('' = CLI default; 'yolo'|'bypass'|'auto'|'plan'…). */
+  permissionMode: z.string().max(32).optional(),
+  /** Reasoning effort level ('' = CLI default). */
+  effort: z.string().max(32).optional(),
+  verbose: z.boolean().optional(),
 });
 export type ProviderConfigPatch = z.infer<typeof providerConfigPatchSchema>;
 
@@ -27,6 +32,10 @@ export interface ProviderConfig {
   extraArgs: string[];
   /** Which upstream this Claude-compatible CLI routes to (default anthropic). */
   upstream: string;
+  /** Auto-operation flags (bypass/yolo/auto/plan), reasoning effort, verbose. */
+  permissionMode: string;
+  effort: string;
+  verbose: boolean;
 }
 
 export interface UpstreamOption {
@@ -70,6 +79,13 @@ export interface ProviderSettingsInfo {
   routable: boolean;
   /** Available upstreams to route to. */
   upstreams: UpstreamOption[];
+  /** Current auto-operation settings + what this CLI supports. */
+  permissionMode: string;
+  permissionModes: string[];
+  effort: string;
+  efforts: string[];
+  verbose: boolean;
+  supportsVerbose: boolean;
 }
 
 export const setKeySchema = z.object({

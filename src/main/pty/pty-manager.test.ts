@@ -31,6 +31,7 @@ function makeAdapter(env: CliPtyAdapter['env']): CliPtyAdapter {
       exitCodes: {},
     },
     quirks: { altScreen: false, requiresNoAutoUpdate: false, mcpAutoload: false },
+    control: {},
   } as CliPtyAdapter;
 }
 

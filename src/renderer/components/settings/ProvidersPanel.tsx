@@ -100,6 +100,103 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
   );
 }
 
+const PERMISSION_LABEL: Record<string, string> = {
+  default: 'Default',
+  auto: 'Auto',
+  plan: 'Plan',
+  bypass: 'Bypass',
+  yolo: 'YOLO',
+  untrusted: 'Untrusted',
+};
+
+/**
+ * Auto-operation controls per CLI: permission mode (turn on bypass/yolo so the
+ * agent runs without asking), reasoning effort and verbose. Only the options
+ * the adapter actually declares are shown, so no CLI gets a flag it can't
+ * parse. "CLI default" = leave it to the CLI (no flag).
+ */
+function ControlFlags({
+  provider,
+  patch,
+}: {
+  provider: ProviderSettingsInfo;
+  patch: (p: Partial<Parameters<ReturnType<typeof useProviderStore.getState>['setConfig']>[0]>) => void;
+}) {
+  const hasPerm = provider.permissionModes.length > 0;
+  const hasEffort = provider.efforts.length > 0;
+  if (!hasPerm && !hasEffort && !provider.supportsVerbose) return null;
+
+  return (
+    <div className="prov__control">
+      {hasPerm && (
+        <div className="prov__ctl-row">
+          <span className="prov__ctl-label" title="Como o agente pede permissão. YOLO/Bypass = roda sozinho sem perguntar.">
+            Permissão
+          </span>
+          <div className="prov__ctl-btns">
+            <button
+              className={`prov__ctl-btn ${provider.permissionMode === '' ? 'prov__ctl-btn--on' : ''}`}
+              onClick={() => patch({ permissionMode: '' })}
+            >
+              CLI default
+            </button>
+            {provider.permissionModes.map((m) => (
+              <button
+                key={m}
+                className={`prov__ctl-btn ${provider.permissionMode === m ? 'prov__ctl-btn--on' : ''} ${m === 'yolo' || m === 'bypass' ? 'prov__ctl-btn--danger' : ''}`}
+                onClick={() => patch({ permissionMode: m })}
+              >
+                {PERMISSION_LABEL[m] ?? m}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {hasEffort && (
+        <div className="prov__ctl-row">
+          <span className="prov__ctl-label">Effort</span>
+          <div className="prov__ctl-btns">
+            <button
+              className={`prov__ctl-btn ${provider.effort === '' ? 'prov__ctl-btn--on' : ''}`}
+              onClick={() => patch({ effort: '' })}
+            >
+              CLI default
+            </button>
+            {provider.efforts.map((e) => (
+              <button
+                key={e}
+                className={`prov__ctl-btn ${provider.effort === e ? 'prov__ctl-btn--on' : ''}`}
+                onClick={() => patch({ effort: e })}
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {provider.supportsVerbose && (
+        <div className="prov__ctl-row">
+          <span className="prov__ctl-label">Verbose</span>
+          <div className="prov__ctl-btns">
+            <button
+              className={`prov__ctl-btn ${!provider.verbose ? 'prov__ctl-btn--on' : ''}`}
+              onClick={() => patch({ verbose: false })}
+            >
+              Off
+            </button>
+            <button
+              className={`prov__ctl-btn ${provider.verbose ? 'prov__ctl-btn--on' : ''}`}
+              onClick={() => patch({ verbose: true })}
+            >
+              On
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
   const setConfig = useProviderStore((s) => s.setConfig);
   const [binDraft, setBinDraft] = useState(provider.binPath);
@@ -205,6 +302,8 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
           </label>
         )}
       </div>
+
+      <ControlFlags provider={provider} patch={patch} />
 
       <KeyField provider={provider} />
 

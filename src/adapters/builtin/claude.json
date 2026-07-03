@@ -16,15 +16,31 @@
     "loginHint": "Run `claude` in a terminal to authenticate via browser OAuth. Your session will be stored securely in the macOS Keychain."
   },
   "spawn": {
-    "interactive": ["claude", "--model", "{{MODEL}}"],
-    "headless": ["claude", "--model", "{{MODEL}}", "-p", "{{PROMPT}}"],
+    "interactive": [
+      "claude",
+      "--model",
+      "{{MODEL}}"
+    ],
+    "headless": [
+      "claude",
+      "--model",
+      "{{MODEL}}",
+      "-p",
+      "{{PROMPT}}"
+    ],
     "ptyRequired": true,
-    "resumeArgs": ["--resume"],
+    "resumeArgs": [
+      "--resume"
+    ],
     "extraArgs": []
   },
   "env": {
     "static": {},
-    "passthrough": ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_API_KEY"],
+    "passthrough": [
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_BASE_URL",
+      "CLAUDE_API_KEY"
+    ],
     "ephemeralHome": false
   },
   "models": {
@@ -44,13 +60,36 @@
     "bracketedPaste": false
   },
   "stateParsing": {
-    "idle": { "type": "timeout", "ms": 800 },
+    "idle": {
+      "type": "timeout",
+      "ms": 800
+    },
     "shellIntegration": false,
-    "exitCodes": { "0": "ok", "1": "error", "2": "usage" }
+    "exitCodes": {
+      "0": "ok",
+      "1": "error",
+      "2": "usage"
+    }
   },
   "quirks": {
     "altScreen": true,
     "requiresNoAutoUpdate": false,
     "mcpAutoload": true
+  },
+  "control": {
+    "permission": {
+      "arg": "--permission-mode",
+      "modes": {
+        "default": "default",
+        "auto": "acceptEdits",
+        "plan": "plan",
+        "bypass": "bypassPermissions"
+      },
+      "yolo": [
+        "--dangerously-skip-permissions"
+      ],
+      "default": ""
+    },
+    "verbose": "--verbose"
   }
 }

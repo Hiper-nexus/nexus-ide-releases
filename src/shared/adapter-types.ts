@@ -70,6 +70,37 @@ const quirksSchema = z.object({
   mcpAutoload: z.boolean().default(false),
 });
 
+/**
+ * Declarative control flags — how THIS CLI expresses permission mode, reasoning
+ * effort and verbose output. Each CLI differs, so the mapping lives per adapter
+ * and the settings UI only offers the modes an adapter actually supports.
+ * Lets the user turn on "operate automatically" (yolo/bypass) per provider.
+ */
+const controlSchema = z
+  .object({
+    permission: z
+      .object({
+        /** Flag taking a mode value, e.g. "--permission-mode". */
+        arg: z.string().optional(),
+        /** Selectable mode → concrete value (e.g. { bypass:"bypassPermissions" }). */
+        modes: z.record(z.string(), z.string()).default({}),
+        /** Standalone full-auto args (e.g. ["--dangerously-skip-permissions"]). */
+        yolo: z.array(z.string()).default([]),
+        /** Default mode key applied when the user hasn't chosen (''=CLI default). */
+        default: z.string().default(''),
+      })
+      .optional(),
+    effort: z
+      .object({
+        arg: z.string(),
+        levels: z.array(z.string()).default([]),
+      })
+      .optional(),
+    /** Flag enabling verbose output (e.g. "--verbose"). */
+    verbose: z.string().optional(),
+  })
+  .default({});
+
 export const cliPtyAdapterSchema = z.object({
   kind: z.literal('cli-pty'),
   id: z
@@ -90,6 +121,7 @@ export const cliPtyAdapterSchema = z.object({
   promptInjection: promptInjectionSchema,
   stateParsing: stateParsingSchema,
   quirks: quirksSchema,
+  control: controlSchema,
 });
 
 export const apiProviderAdapterSchema = z.object({

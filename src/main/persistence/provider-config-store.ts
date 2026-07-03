@@ -18,6 +18,12 @@ import {
   primaryKeyEnvVar,
 } from '../adapters/adapter-registry';
 import {
+  availableEfforts,
+  availablePermissionModes,
+  buildControlArgs,
+  supportsVerbose,
+} from '../adapters/control-args';
+import {
   getKey,
   hasKey,
   isSecureStorageAvailable,
@@ -67,6 +73,9 @@ function load(): void {
         defaultModel: cfg.defaultModel ?? '',
         extraArgs: Array.isArray(cfg.extraArgs) ? cfg.extraArgs : [],
         upstream: cfg.upstream ?? 'anthropic',
+        permissionMode: cfg.permissionMode ?? '',
+        effort: cfg.effort ?? '',
+        verbose: cfg.verbose ?? false,
       });
     }
   } catch {
@@ -94,8 +103,23 @@ function configFor(adapterId: string): ProviderConfig {
       defaultModel: '',
       extraArgs: [],
       upstream: 'anthropic',
+      permissionMode: '',
+      effort: '',
+      verbose: false,
     }
   );
+}
+
+/** Control-flag args (permission mode, effort, verbose) chosen for an adapter. */
+function controlArgsFor(adapterId: string): string[] {
+  const adapter = getAdapter(adapterId);
+  if (!adapter || adapter.kind !== 'cli-pty') return [];
+  const cfg = configFor(adapterId);
+  return buildControlArgs(adapter, {
+    permissionMode: cfg.permissionMode,
+    effort: cfg.effort,
+    verbose: cfg.verbose,
+  });
 }
 
 /** A Claude-compatible cli-pty adapter can be routed to another upstream. */
@@ -150,10 +174,12 @@ export function providerSpawnOverrides(adapterId: string): ProviderSpawnOverride
   const cfg = configFor(adapterId);
   const adapter = getAdapter(adapterId);
   const key = getKey(adapterId);
+  // Control flags (permission mode / effort / verbose) always apply, whatever
+  // the auth/routing path — they're how the user turns on auto-operation.
   const base = {
     binPath: cfg.binPath || null,
     defaultModel: cfg.defaultModel || null,
-    extraArgs: cfg.extraArgs,
+    extraArgs: [...controlArgsFor(adapterId), ...cfg.extraArgs],
   };
 
   // Multi-account: when accounts exist for this adapter, the ACTIVE account
@@ -250,6 +276,13 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
       label: p.label,
       requiresToken: p.requiresToken,
     })),
+    permissionMode: cfg.permissionMode,
+    permissionModes:
+      adapter.kind === 'cli-pty' ? availablePermissionModes(adapter) : [],
+    effort: cfg.effort,
+    efforts: adapter.kind === 'cli-pty' ? availableEfforts(adapter) : [],
+    verbose: cfg.verbose,
+    supportsVerbose: adapter.kind === 'cli-pty' ? supportsVerbose(adapter) : false,
   };
 }
 
@@ -289,6 +322,9 @@ export function registerProviderIpc(): void {
     if (patch.defaultModel !== undefined) merged.defaultModel = patch.defaultModel;
     if (patch.extraArgs !== undefined) merged.extraArgs = patch.extraArgs;
     if (patch.upstream !== undefined) merged.upstream = patch.upstream;
+    if (patch.permissionMode !== undefined) merged.permissionMode = patch.permissionMode;
+    if (patch.effort !== undefined) merged.effort = patch.effort;
+    if (patch.verbose !== undefined) merged.verbose = patch.verbose;
     configs.set(adapterId, merged);
     persist();
     broadcast();

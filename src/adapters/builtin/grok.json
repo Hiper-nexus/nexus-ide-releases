@@ -17,20 +17,34 @@
     "loginHint": "Set GROK_API_KEY (xAI) in the provider settings."
   },
   "spawn": {
-    "interactive": ["grok", "--always-approve"],
-    "headless": ["grok", "--always-approve", "-p", "{{PROMPT}}"],
+    "interactive": [
+      "grok"
+    ],
+    "headless": [
+      "grok",
+      "--always-approve",
+      "-p",
+      "{{PROMPT}}"
+    ],
     "ptyRequired": true,
     "resumeArgs": [],
     "extraArgs": []
   },
   "env": {
     "static": {},
-    "passthrough": ["GROK_API_KEY", "XAI_API_KEY"],
+    "passthrough": [
+      "GROK_API_KEY",
+      "XAI_API_KEY"
+    ],
     "ephemeralHome": false
   },
   "models": {
     "flag": "--model",
-    "list": ["grok-4", "grok-4-fast", "grok-code-fast-1"],
+    "list": [
+      "grok-4",
+      "grok-4-fast",
+      "grok-code-fast-1"
+    ],
     "default": "grok-4-fast"
   },
   "promptInjection": {
@@ -39,14 +53,30 @@
     "bracketedPaste": false
   },
   "stateParsing": {
-    "idle": { "type": "timeout", "ms": 800 },
+    "idle": {
+      "type": "timeout",
+      "ms": 800
+    },
     "shellIntegration": false,
-    "exitCodes": { "0": "ok", "1": "error" }
+    "exitCodes": {
+      "0": "ok",
+      "1": "error"
+    }
   },
   "quirks": {
     "altScreen": true,
     "requiresNoAutoUpdate": true,
     "approvalFlag": "--always-approve",
     "mcpAutoload": false
+  },
+  "control": {
+    "permission": {
+      "arg": "",
+      "modes": {},
+      "yolo": [
+        "--always-approve"
+      ],
+      "default": ""
+    }
   }
 }

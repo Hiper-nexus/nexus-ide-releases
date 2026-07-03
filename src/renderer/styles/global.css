@@ -2556,3 +2556,53 @@ body {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* ---- Provider control flags (permission / effort / verbose) ---- */
+.prov__control {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+  padding-top: 10px;
+}
+.prov__ctl-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.prov__ctl-label {
+  flex: 0 0 72px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.prov__ctl-btns {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.prov__ctl-btn {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  padding: 3px 9px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+.prov__ctl-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.prov__ctl-btn--on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.prov__ctl-btn--danger.prov__ctl-btn--on {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: rgba(247, 118, 142, 0.1);
+}

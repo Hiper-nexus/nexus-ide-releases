@@ -16,15 +16,24 @@
     "loginHint": "Run `agy login` to authenticate via browser OAuth."
   },
   "spawn": {
-    "interactive": ["agy"],
-    "headless": ["agy", "--print", "{{PROMPT}}"],
+    "interactive": [
+      "agy"
+    ],
+    "headless": [
+      "agy",
+      "--print",
+      "{{PROMPT}}"
+    ],
     "ptyRequired": true,
     "resumeArgs": [],
     "extraArgs": []
   },
   "env": {
     "static": {},
-    "passthrough": ["ANTHROPIC_API_KEY", "AGY_API_KEY"],
+    "passthrough": [
+      "ANTHROPIC_API_KEY",
+      "AGY_API_KEY"
+    ],
     "ephemeralHome": false
   },
   "models": {
@@ -42,13 +51,29 @@
     "bracketedPaste": false
   },
   "stateParsing": {
-    "idle": { "type": "timeout", "ms": 1000 },
+    "idle": {
+      "type": "timeout",
+      "ms": 1000
+    },
     "shellIntegration": false,
-    "exitCodes": { "0": "ok", "1": "error" }
+    "exitCodes": {
+      "0": "ok",
+      "1": "error"
+    }
   },
   "quirks": {
     "altScreen": true,
     "requiresNoAutoUpdate": false,
     "mcpAutoload": false
+  },
+  "control": {
+    "permission": {
+      "arg": "",
+      "modes": {},
+      "yolo": [
+        "--yolo"
+      ],
+      "default": ""
+    }
   }
 }
