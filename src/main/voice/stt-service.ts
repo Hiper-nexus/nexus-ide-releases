@@ -9,6 +9,7 @@ import type {
   SttAttempt,
 } from '../../shared/voice-ipc';
 import { classifyKind, flattenChain, type ProviderProbes } from './provider-select';
+import { resolveVoiceApiKey } from './voice-secrets';
 
 /**
  * Speech-to-text with resilient, error-driven fallback. Walks the whole STT
@@ -50,7 +51,7 @@ const defaultDeps: SttDeps = {
   },
   fileExists: (file) => fs.existsSync(file),
   findBin: findBinDefault,
-  getEnv: (name) => process.env[name],
+  getEnv: resolveVoiceApiKey,
 };
 
 // ── Outcome of a single provider attempt ─────────────────────────────────────

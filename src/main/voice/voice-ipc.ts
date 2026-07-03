@@ -4,6 +4,7 @@ import {
   transcribeRequestSchema,
   speakRequestSchema,
   setConfigRequestSchema,
+  setVoiceKeyRequestSchema,
   type VoiceRuntimeInfo,
   type TranscribeResult,
   type SpeakResult,
@@ -15,6 +16,7 @@ import {
   buildRuntimeInfo,
   currentProbes,
   setHotkeyMode,
+  storeVoiceApiKey,
 } from './voice-config-store';
 import { transcribe } from './stt-service';
 import { speak } from './tts-service';
@@ -60,12 +62,28 @@ export function registerVoiceIpc(): void {
     const parsed = setConfigRequestSchema.safeParse(raw);
     if (!parsed.success) return buildRuntimeInfo();
     const before = getVoiceConfig().input.shortcut;
+    const beforeKey = getVoiceConfig().input.pushToTalkKey?.code;
     applyConfigPatch(parsed.data);
     // Re-register the accelerator only if it actually changed.
-    if (getVoiceConfig().input.shortcut !== before) wireHotkey();
+    const nextInput = getVoiceConfig().input;
+    if (
+      nextInput.shortcut !== before ||
+      nextInput.pushToTalkKey?.code !== beforeKey
+    ) {
+      wireHotkey();
+    }
     const info = buildRuntimeInfo();
     broadcast(VOICE_CHANNELS.infoChanged, info);
     return info;
+  });
+
+  ipcMain.handle(VOICE_CHANNELS.setKey, (_event, raw): { ok: boolean; error?: string } => {
+    const parsed = setVoiceKeyRequestSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: 'invalid key request' };
+    const result = storeVoiceApiKey(parsed.data.envVar, parsed.data.key);
+    const info = buildRuntimeInfo();
+    broadcast(VOICE_CHANNELS.infoChanged, info);
+    return result;
   });
 
   ipcMain.handle(

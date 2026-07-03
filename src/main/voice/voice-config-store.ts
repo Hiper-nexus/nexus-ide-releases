@@ -4,17 +4,33 @@ import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import {
   DEFAULT_VOICE_CONFIG,
+  keyCodeFromAccelerator,
+  normalizeKeyCode,
   voiceConfigSchema,
   clockVoiceConfigSchema,
   migrateClockVoiceConfig,
   type VoiceConfig,
+  type VoicePlugin,
 } from '../../shared/voice-config';
 import type {
   HotkeyMode,
+  VoiceApiKeyStatus,
   SetConfigRequest,
   VoiceRuntimeInfo,
 } from '../../shared/voice-ipc';
-import { resolveChain, promoteProvider, type ProviderProbes } from './provider-select';
+import {
+  flattenChain,
+  resolveChain,
+  promoteProvider,
+  type ProviderProbes,
+} from './provider-select';
+import {
+  hasStoredVoiceApiKey,
+  hasVoiceCredential,
+  isVoiceSecretStorageAvailable,
+  maskedVoiceApiKey,
+  setVoiceApiKey,
+} from './voice-secrets';
 
 /**
  * Owns the live voice config: loads user JSON / migrates a ClockVoice
@@ -38,8 +54,7 @@ let hotkeyMode: HotkeyMode = 'toggle';
 
 /** Env var present and non-empty. */
 function hasEnv(name: string): boolean {
-  const v = process.env[name];
-  return typeof v === 'string' && v.trim().length > 0;
+  return hasVoiceCredential(name);
 }
 
 /** Binary resolvable: absolute path exists+executable, or found on PATH. */
@@ -139,6 +154,10 @@ export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
   let tts = current.tts;
   if (patch.sttProvider) stt = promoteProvider(stt, patch.sttProvider);
   if (patch.ttsProvider) tts = promoteProvider(tts, patch.ttsProvider);
+  const shortcut = patch.shortcut ?? current.input.shortcut;
+  const pushToTalkKeyCode = normalizeKeyCode(
+    patch.pushToTalkKeyCode ?? keyCodeFromAccelerator(shortcut),
+  );
 
   const next: VoiceConfig = {
     ...current,
@@ -147,7 +166,8 @@ export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
     speakMode: patch.speakMode ?? current.speakMode,
     input: {
       ...current.input,
-      shortcut: patch.shortcut ?? current.input.shortcut,
+      shortcut,
+      pushToTalkKey: { code: pushToTalkKeyCode },
     },
     stt,
     tts,
@@ -156,6 +176,42 @@ export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
   current = next;
   persist(next);
   return next;
+}
+
+function collectVoiceEnvVars(...heads: VoicePlugin[]): VoiceApiKeyStatus[] {
+  const byEnv = new Map<string, Set<string>>();
+  for (const head of heads) {
+    for (const plugin of flattenChain(head)) {
+      const authType = plugin.auth?.type ?? 'api_key';
+      const envVar = plugin.auth?.envVar;
+      if (authType === 'none' || !envVar) continue;
+      const providers = byEnv.get(envVar) ?? new Set<string>();
+      providers.add(plugin.provider);
+      byEnv.set(envVar, providers);
+    }
+  }
+  return [...byEnv.entries()].map(([envVar, providers]) => ({
+    envVar,
+    providers: [...providers],
+    hasEnv: typeof process.env[envVar] === 'string' && process.env[envVar]!.trim().length > 0,
+    hasStoredKey: hasStoredVoiceApiKey(envVar),
+    keyMasked: maskedVoiceApiKey(envVar),
+    secureStorageAvailable: isVoiceSecretStorageAvailable(),
+  }));
+}
+
+export function knownVoiceEnvVars(): Set<string> {
+  return new Set(collectVoiceEnvVars(current.stt, current.tts).map((key) => key.envVar));
+}
+
+export function storeVoiceApiKey(
+  envVar: string,
+  key: string,
+): { ok: boolean; error?: string } {
+  if (!knownVoiceEnvVars().has(envVar)) {
+    return { ok: false, error: `Unsupported voice key: ${envVar}` };
+  }
+  return setVoiceApiKey(envVar, key);
 }
 
 function persist(config: VoiceConfig): void {
@@ -170,12 +226,16 @@ function persist(config: VoiceConfig): void {
 /** Build the secret-free snapshot for the renderer. */
 export function buildRuntimeInfo(): VoiceRuntimeInfo {
   const probes = currentProbes();
+  const pushToTalkKeyCode =
+    current.input.pushToTalkKey?.code ?? keyCodeFromAccelerator(current.input.shortcut);
   return {
     enabled: current.enabled,
     routing: current.routing,
     speakMode: current.speakMode,
     shortcut: current.input.shortcut,
+    pushToTalkKeyCode,
     hotkeyMode,
+    keys: collectVoiceEnvVars(current.stt, current.tts),
     stt: resolveChain(current.stt, probes),
     tts: resolveChain(current.tts, probes),
   };

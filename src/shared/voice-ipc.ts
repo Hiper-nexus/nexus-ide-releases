@@ -31,6 +31,8 @@ export const setConfigRequestSchema = z.object({
   routing: z.enum(['focused-pane', 'orchestrator', 'ask']).optional(),
   speakMode: z.enum(['summary', 'full', 'off']).optional(),
   shortcut: z.string().min(1).max(64).optional(),
+  /** Bare trigger key used for keyup detection, e.g. Space, F8, J. */
+  pushToTalkKeyCode: z.string().min(1).max(32).optional(),
   /** Force a specific provider id to the head of the STT chain. */
   sttProvider: z.string().min(1).max(64).optional(),
   /** Force a specific provider id to the head of the TTS chain. */
@@ -38,6 +40,18 @@ export const setConfigRequestSchema = z.object({
 });
 
 export type SetConfigRequest = z.infer<typeof setConfigRequestSchema>;
+
+export const setVoiceKeyRequestSchema = z.object({
+  envVar: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Z][A-Z0-9_]*$/),
+  /** Empty string clears the stored key. */
+  key: z.string().max(4096),
+});
+
+export type SetVoiceKeyRequest = z.infer<typeof setVoiceKeyRequestSchema>;
 
 // ── main → renderer results ──────────────────────────────────────────────────
 
@@ -61,13 +75,24 @@ export interface ResolvedChain {
 /** Whether the PTT hotkey does true hold (uiohook keyup) or press-to-toggle. */
 export type HotkeyMode = 'hold' | 'toggle';
 
+export interface VoiceApiKeyStatus {
+  envVar: string;
+  providers: string[];
+  hasEnv: boolean;
+  hasStoredKey: boolean;
+  keyMasked: string | null;
+  secureStorageAvailable: boolean;
+}
+
 /** Secret-free runtime snapshot the renderer renders from. Never carries keys. */
 export interface VoiceRuntimeInfo {
   enabled: boolean;
   routing: VoiceRouting;
   speakMode: VoiceSpeakMode;
   shortcut: string;
+  pushToTalkKeyCode: string;
   hotkeyMode: HotkeyMode;
+  keys: VoiceApiKeyStatus[];
   stt: ResolvedChain;
   tts: ResolvedChain;
 }

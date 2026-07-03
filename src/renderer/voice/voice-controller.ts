@@ -5,6 +5,7 @@ import { useSessionStateStore } from '../state/session-state-store';
 import { VoiceCapture } from './voice-capture';
 import { stripPromptEcho } from './response-echo';
 import { getPaneSessionId, writeToPane } from '../terminal/terminal-host';
+import { listPanes } from '../lib/split-tree';
 import type { VoiceRuntimeInfo } from '../../shared/voice-ipc';
 
 /**
@@ -127,10 +128,23 @@ async function finishAndProcess(
  * arrives with the MCP squad work in a later phase).
  */
 function routePrompt(text: string): string | null {
-  const { focusedPaneId } = useLayoutStore.getState();
-  if (!focusedPaneId) return null;
-  const ok = writeToPane(focusedPaneId, `${text}\n`);
-  return ok ? focusedPaneId : null;
+  const { focusedPaneId, root } = useLayoutStore.getState();
+  const routing = useVoiceStore.getState().info?.routing ?? 'focused-pane';
+  const targetPaneId =
+    routing === 'orchestrator'
+      ? findOrchestratorPane(root) ?? focusedPaneId
+      : focusedPaneId;
+  if (!targetPaneId) return null;
+  const ok = writeToPane(targetPaneId, `${text}\n`);
+  return ok ? targetPaneId : null;
+}
+
+function findOrchestratorPane(root: ReturnType<typeof useLayoutStore.getState>['root']): string | null {
+  const panes = listPanes(root);
+  const pane = panes.find(
+    (p) => p.orchRequestId?.startsWith('squad-') || /(^|[ ·])orq\b/i.test(p.title),
+  );
+  return pane?.id ?? null;
 }
 
 /**

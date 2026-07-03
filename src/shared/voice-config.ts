@@ -264,3 +264,21 @@ export function accelFromCode(code: string): string {
   const key = code === 'Space' ? 'Space' : code;
   return `CommandOrControl+Shift+${key}`;
 }
+
+export function keyCodeFromAccelerator(accelerator: string): string {
+  const parts = accelerator
+    .split('+')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return normalizeKeyCode(parts[parts.length - 1] ?? 'Space');
+}
+
+export function normalizeKeyCode(code: string): string {
+  const clean = code.trim();
+  if (!clean) return 'Space';
+  const lower = clean.toLowerCase();
+  if (lower === 'space' || lower === 'spacebar') return 'Space';
+  if (/^f\d{1,2}$/i.test(clean)) return clean.toUpperCase();
+  if (/^[a-z]$/i.test(clean)) return clean.toUpperCase();
+  return clean.length === 1 ? clean.toUpperCase() : clean;
+}

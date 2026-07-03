@@ -5,6 +5,8 @@ import {
   DEFAULT_VOICE_CONFIG,
   migrateClockVoiceConfig,
   accelFromCode,
+  keyCodeFromAccelerator,
+  normalizeKeyCode,
   clockVoiceConfigSchema,
 } from './voice-config';
 
@@ -101,5 +103,18 @@ describe('accelFromCode', () => {
   it('prefixes a modifier so the hotkey does not collide with typing', () => {
     expect(accelFromCode('Space')).toBe('CommandOrControl+Shift+Space');
     expect(accelFromCode('F5')).toBe('CommandOrControl+Shift+F5');
+  });
+});
+
+describe('push-to-talk key helpers', () => {
+  it('extracts the bare trigger key from an accelerator', () => {
+    expect(keyCodeFromAccelerator('CommandOrControl+Shift+Space')).toBe('Space');
+    expect(keyCodeFromAccelerator('Ctrl+Alt+j')).toBe('J');
+  });
+
+  it('normalizes common key names', () => {
+    expect(normalizeKeyCode('spacebar')).toBe('Space');
+    expect(normalizeKeyCode('f8')).toBe('F8');
+    expect(normalizeKeyCode('j')).toBe('J');
   });
 });

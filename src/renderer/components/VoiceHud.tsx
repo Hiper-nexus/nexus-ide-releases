@@ -7,10 +7,10 @@ import { useVoiceStore, type VoiceUiStatus } from '../voice/voice-store';
  */
 
 const PHASE_LABEL: Record<Exclude<VoiceUiStatus, 'idle'>, string> = {
-  listening: 'Listening…',
-  transcribing: 'Transcribing…',
-  routing: 'Routing to pane…',
-  speaking: 'Speaking…',
+  listening: 'Listening',
+  transcribing: 'Transcribing',
+  routing: 'Sending to pane',
+  speaking: 'Speaking',
   error: 'Voice error',
 };
 
@@ -31,17 +31,32 @@ export function VoiceHud() {
       role="status"
       aria-live="polite"
     >
-      <span className={`voice-hud__pulse ${isError ? 'voice-hud__pulse--error' : ''}`} />
-      <div className="voice-hud__body">
-        <span className="voice-hud__label">{label}</span>
-        {isError && error ? (
-          <span className="voice-hud__detail voice-hud__detail--error">{error}</span>
-        ) : (
-          <>
-            {transcript && <span className="voice-hud__detail">“{transcript}”</span>}
-            {note && <span className="voice-hud__detail voice-hud__detail--note">↳ {note}</span>}
-          </>
-        )}
+      <div className="voice-hud__shell">
+        <div className="voice-orb" aria-hidden="true">
+          <span className="voice-orb__ring voice-orb__ring--outer" />
+          <span className="voice-orb__ring voice-orb__ring--middle" />
+          <span className="voice-orb__ring voice-orb__ring--inner" />
+          <span className="voice-orb__core" />
+          <span className="voice-orb__scan voice-orb__scan--a" />
+          <span className="voice-orb__scan voice-orb__scan--b" />
+        </div>
+        <div className="voice-hud__body">
+          <span className="voice-hud__eyebrow">JARVIS</span>
+          <span className="voice-hud__label">{label}</span>
+          {isError && error ? (
+            <span className="voice-hud__detail voice-hud__detail--error">{error}</span>
+          ) : (
+            <>
+              {transcript && <span className="voice-hud__detail">"{transcript}"</span>}
+              {note && (
+                <span className="voice-hud__detail voice-hud__detail--note">
+                  {'-> '}
+                  {note}
+                </span>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -8,6 +8,8 @@ export const VOICE_CHANNELS = {
   getInfo: 'voice:getInfo',
   /** invoke: renderer → main. Persist a partial config patch, returns fresh info. */
   setConfig: 'voice:setConfig',
+  /** invoke: renderer → main. Store/clear one voice API key in secure storage. */
+  setKey: 'voice:setKey',
   /** invoke: renderer → main. Audio buffer → transcribed English text. */
   transcribe: 'voice:transcribe',
   /** invoke: renderer → main. Text → spoken (main plays `say`, or returns audio). */

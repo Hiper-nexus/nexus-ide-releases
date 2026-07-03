@@ -3,6 +3,7 @@ import type { VoiceConfig, VoicePlugin } from '../../shared/voice-config';
 import type { SpeakRequest, SpeakResult } from '../../shared/voice-ipc';
 import { toSpeakable } from './speakable';
 import { classifyKind, flattenChain, type ProviderProbes } from './provider-select';
+import { resolveVoiceApiKey } from './voice-secrets';
 
 /**
  * Text-to-speech — the Jarvis "talk back" step. Condenses the agent's output to
@@ -35,7 +36,7 @@ const defaultDeps: TtsDeps = {
   fetchImpl: (...args) => fetch(...args),
   speakViaSay,
   runPiper: runPiperLocal,
-  getEnv: (name) => process.env[name],
+  getEnv: resolveVoiceApiKey,
 };
 
 /**
