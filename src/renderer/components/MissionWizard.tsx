@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AdapterInfo } from '../../shared/types';
-import type { Squad } from '../../shared/orch-types';
+import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { useOrchStore } from '../state/orch-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { switchWorkspaceLayout } from '../state/layout-store';
+import { useToastStore } from '../state/toast-store';
 import { launchLibrePanes, launchSquadMission } from '../orch/mission-launcher';
 
 /**
@@ -77,6 +78,9 @@ export function MissionWizard() {
   const [squadId, setSquadId] = useState('');
   const [spawning, setSpawning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Editable copy of the selected squad's roster (cli/model/effort per agent).
+  const [roster, setRoster] = useState<SquadAgent[]>([]);
+  const [rosterSaved, setRosterSaved] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -109,6 +113,32 @@ export function MissionWizard() {
   const originals = squads.filter((s) => s.builtin);
   const userSquads = squads.filter((s) => !s.builtin);
   const selectedSquad = squads.find((s) => s.id === squadId) ?? null;
+
+  // Load the selected squad's roster into an editable copy.
+  useEffect(() => {
+    const sq = squads.find((s) => s.id === squadId);
+    setRoster(sq ? sq.agents.map((a) => ({ ...a })) : []);
+    setRosterSaved(false);
+  }, [squadId, squads]);
+
+  function updateAgent(id: string, patch: Partial<SquadAgent>) {
+    setRoster((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+    setRosterSaved(false);
+  }
+
+  async function saveRoster() {
+    if (!selectedSquad) return;
+    const res = await window.nexus.orch.saveSquad({
+      ...selectedSquad,
+      agents: roster,
+    });
+    setRosterSaved(res.ok);
+    if (!res.ok) {
+      useToastStore
+        .getState()
+        .push('error', 'Não deu pra salvar', res.error);
+    }
+  }
 
   if (!open) return null;
 
@@ -182,9 +212,16 @@ export function MissionWizard() {
     setError(null);
     try {
       if (!(await ensureWorkspaceOpen())) return;
-      const result = launchSquadMission(selectedSquad, installed);
+      // Launch with the EDITED roster (the user may have changed the
+      // orchestrator's CLI/model in the review step). Pass ALL adapters so the
+      // orchestrator pane always opens (install hint shows in-pane if needed).
+      const effectiveSquad: Squad = { ...selectedSquad, agents: roster };
+      const result = launchSquadMission(effectiveSquad, adapters);
       if (!result.ok) {
         setError(result.error ?? 'Falha ao iniciar o squad.');
+        useToastStore
+          .getState()
+          .push('error', 'Não deu pra iniciar o squad', result.error);
         return;
       }
       close();
@@ -445,19 +482,81 @@ export function MissionWizard() {
 
           {step === 'squad-review' && selectedSquad && (
             <div className="wizard__section">
-              <p className="wizard__label">{selectedSquad.name}</p>
-              <ul className="wizard__roster">
-                {selectedSquad.agents.map((a) => (
-                  <li key={a.id} className="wizard__roster-item">
-                    <span className="wizard__roster-role">{a.category}</span>
-                    <span className="wizard__roster-name">{a.agentName}</span>
-                    <span className="wizard__roster-cli">
-                      {a.cli}
-                      {a.model ? ` · ${a.model}` : ''}
-                      {a.effort ? ` · ${a.effort}` : ''}
-                    </span>
-                  </li>
-                ))}
+              <div className="wizard__review-head">
+                <p className="wizard__label">{selectedSquad.name}</p>
+                <button
+                  className="wizard__btn"
+                  onClick={() => void saveRoster()}
+                  title="Salvar as mudanças de CLI/modelo/effort no squad"
+                >
+                  {rosterSaved ? '✓ salvo' : '💾 salvar edições'}
+                </button>
+              </div>
+              <p className="wizard__hint-sm">
+                Edite a LLM de cada agente. As mudanças valem para esta missão;
+                salve para persistir no squad.
+              </p>
+              <ul className="wizard__roster wizard__roster--edit">
+                {roster.map((a) => {
+                  const cliAdapter = adapters.find((x) => x.id === a.cli);
+                  const models = cliAdapter?.models.list ?? [];
+                  return (
+                    <li key={a.id} className="wizard__roster-row">
+                      <span className="wizard__roster-role">{a.category}</span>
+                      <span className="wizard__roster-name" title={a.agentName}>
+                        {a.agentName}
+                      </span>
+                      <select
+                        className="wizard__mini-select"
+                        value={a.cli}
+                        onChange={(e) =>
+                          updateAgent(a.id, {
+                            cli: e.target.value,
+                            model: undefined,
+                          })
+                        }
+                      >
+                        {adapters.map((x) => (
+                          <option key={x.id} value={x.id}>
+                            {x.icon} {x.label}
+                            {x.installed ? '' : ' ⚠'}
+                          </option>
+                        ))}
+                        {!adapters.some((x) => x.id === a.cli) && (
+                          <option value={a.cli}>{a.cli}</option>
+                        )}
+                      </select>
+                      <select
+                        className="wizard__mini-select"
+                        value={a.model ?? cliAdapter?.models.default ?? ''}
+                        onChange={(e) => updateAgent(a.id, { model: e.target.value })}
+                      >
+                        {models.length === 0 && (
+                          <option value={a.model ?? ''}>{a.model ?? '—'}</option>
+                        )}
+                        {models.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        className="wizard__mini-select wizard__mini-select--effort"
+                        value={a.effort ?? 'medium'}
+                        onChange={(e) =>
+                          updateAgent(a.id, {
+                            effort: e.target.value as SquadAgent['effort'],
+                          })
+                        }
+                      >
+                        <option value="low">low</option>
+                        <option value="medium">medium</option>
+                        <option value="high">high</option>
+                        <option value="xhigh">xhigh</option>
+                      </select>
+                    </li>
+                  );
+                })}
               </ul>
               {error && <p className="wizard__error">{error}</p>}
               <div className="wizard__actions">

@@ -21,6 +21,12 @@
   box-sizing: border-box;
 }
 
+/* Buttons don't inherit text color by default (the UA uses a dark canvastext),
+   which can render dark-on-dark. Inherit unless a component sets its own. */
+button {
+  color: inherit;
+}
+
 html,
 body,
 #root {
@@ -1635,6 +1641,7 @@ body {
   border: 1px solid var(--border-strong);
   border-radius: 12px;
   background: var(--bg);
+  color: var(--text);
   cursor: pointer;
   transition: border-color 120ms ease, transform 120ms ease;
 }
@@ -1651,11 +1658,13 @@ body {
 
 .wizard__mode-icon {
   font-size: 24px;
+  color: var(--accent);
 }
 
 .wizard__mode-title {
   font-size: 15px;
   font-weight: 600;
+  color: var(--text);
 }
 
 .wizard__mode-desc {
@@ -2494,4 +2503,56 @@ body {
 .toast__close {
   background: transparent; border: none; color: var(--text-dim);
   cursor: pointer; font-size: 12px; flex: 0 0 auto;
+}
+
+/* ---- Editable squad roster (Revisar) ---- */
+.wizard__review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.wizard__hint-sm {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: -6px 0 4px;
+  line-height: 1.45;
+}
+.wizard__roster--edit {
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.wizard__roster-row {
+  display: grid;
+  grid-template-columns: 84px 1fr 130px 130px 84px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.wizard__roster-row .wizard__roster-role {
+  justify-self: start;
+}
+.wizard__mini-select {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 11px;
+  padding: 5px 6px;
+  min-width: 0;
+  width: 100%;
+}
+.wizard__mini-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.wizard__mini-select--effort {
+  font-family: var(--font-mono);
+}
+@media (max-width: 620px) {
+  .wizard__roster-row {
+    grid-template-columns: 1fr 1fr;
+  }
 }

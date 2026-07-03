@@ -22,6 +22,7 @@ export function WorkspaceBar() {
   const viewKind = useLayoutStore((s) => s.viewKind);
   const split = useLayoutStore((s) => s.split);
   const spawnAgent = useLayoutStore((s) => s.spawnAgent);
+  const addShellPane = useLayoutStore((s) => s.addShellPane);
   const toggleView = useLayoutStore((s) => s.toggleView);
   const paneCount = listPanes(root).length;
 
@@ -130,6 +131,13 @@ export function WorkspaceBar() {
           title="Nova missão (livre ou squad)"
         >
           ＋ Missão
+        </button>
+        <button
+          className="workspace-bar__btn"
+          onClick={addShellPane}
+          title="Abrir um terminal shell novo (rode qualquer CLI; os agentes leem/escrevem nele)"
+        >
+          ＋ Terminal
         </button>
         <span className="workspace-bar__count">
           {paneCount} pane{paneCount === 1 ? '' : 's'}

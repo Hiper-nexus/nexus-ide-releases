@@ -36,6 +36,8 @@ interface LayoutState {
   spawnAgent(adapterId: string, model: string): void;
   /** Replace the whole grid with an explicit set of panes (Modo Livre). */
   setPanes(panes: PaneModel[]): void;
+  /** Add a fresh shell terminal pane (＋ Terminal) alongside the others. */
+  addShellPane(): void;
   /**
    * Orchestration-requested agent pane (MCP pane_spawn). Returns the new
    * paneId; the orchRequestId rides along into the PTY spawn so the main
@@ -186,6 +188,17 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     set({ root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
     persist({ ...get(), root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
     return newPane.id;
+  },
+
+  addShellPane: () => {
+    const { root: currentRoot, focusedPaneId } = get();
+    const newPane = createPane('shell', getActiveWorkspacePath() ?? undefined);
+    const pivot = focusedPaneId ?? firstPaneId(currentRoot);
+    const root = pivot
+      ? splitPane(currentRoot, pivot, 'row', newPane)
+      : buildGridTree([newPane]);
+    set({ root, focusedPaneId: newPane.id });
+    persist({ ...get(), root, focusedPaneId: newPane.id });
   },
 
   setPanes: (panes) => {

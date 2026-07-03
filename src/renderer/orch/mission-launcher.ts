@@ -109,32 +109,32 @@ export interface SquadLaunchResult {
 
 export function launchSquadMission(
   squad: Squad,
-  installed: AdapterInfo[],
+  adapters: AdapterInfo[],
 ): SquadLaunchResult {
   const orchestrator =
     squad.agents.find((a) => a.category === 'orchestrator') ?? squad.agents[0];
   if (!orchestrator) {
     return { ok: false, error: 'Este squad não tem agentes.' };
   }
-  const adapter = installed.find((a) => a.id === orchestrator.cli);
-  if (!adapter) {
-    return {
-      ok: false,
-      error: `CLI "${orchestrator.cli}" do orquestrador não está instalada.`,
-    };
-  }
+
+  // Resolve the orchestrator's CLI: prefer its declared adapter (installed or
+  // not — a not-installed one still opens the pane and shows the install hint,
+  // which beats silently doing nothing). If the declared CLI is unknown, fall
+  // back to an installed agent CLI, else keep the id and let the spawn report.
+  const declared = adapters.find((a) => a.id === orchestrator.cli);
+  const fallback =
+    declared ?? adapters.find((a) => a.installed) ?? adapters[0] ?? null;
+  const cli = declared ? orchestrator.cli : fallback?.id ?? orchestrator.cli;
+  const model =
+    orchestrator.model ?? declared?.models.default ?? fallback?.models.default ?? '';
 
   // Start the mission in a clean grid with just the orchestrator pane (a
   // squad opens its own workspace, same as Overclock). Workers are added by
-  // the orchestrator via the MCP tools as it delegates.
+  // the orchestrator via the MCP tools as it delegates. Always replaces the
+  // grid so something starts — no silent no-op.
   const cwd = getActiveWorkspacePath() ?? undefined;
   const orchPane: PaneModel = {
-    ...createPane(
-      'cli-agent',
-      cwd,
-      orchestrator.cli,
-      orchestrator.model ?? adapter.models.default,
-    ),
+    ...createPane('cli-agent', cwd, cli, model),
     title: `${squad.name} · orq`,
     orchRequestId: `squad-${squad.id}-${Date.now().toString(36)}`,
   };
