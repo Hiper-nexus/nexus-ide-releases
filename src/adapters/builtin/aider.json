@@ -1,0 +1,63 @@
+{
+  "kind": "cli-pty",
+  "id": "aider",
+  "label": "Aider",
+  "version": "1.0.0",
+  "icon": "⚙",
+  "bin": "aider",
+  "detect": "aider --version",
+  "install": {
+    "method": "pip",
+    "command": "pip install aider-chat"
+  },
+  "auth": {
+    "method": "api_key",
+    "envVarFallback": "ANTHROPIC_API_KEY",
+    "credentialStore": "env",
+    "loginHint": "Set ANTHROPIC_API_KEY or OPENAI_API_KEY in your environment. Aider supports multiple providers."
+  },
+  "spawn": {
+    "interactive": ["aider"],
+    "headless": ["aider", "--message", "{{PROMPT}}", "--yes-always", "--no-auto-commits"],
+    "ptyRequired": false,
+    "resumeArgs": [],
+    "extraArgs": []
+  },
+  "env": {
+    "static": {},
+    "passthrough": [
+      "ANTHROPIC_API_KEY",
+      "OPENAI_API_KEY",
+      "OPENAI_BASE_URL",
+      "ANTHROPIC_BASE_URL"
+    ],
+    "ephemeralHome": false
+  },
+  "models": {
+    "flag": "--model",
+    "list": [
+      "claude-sonnet-4-5",
+      "claude-opus-4-5",
+      "gpt-4o",
+      "o3-mini",
+      "deepseek/deepseek-coder"
+    ],
+    "default": "claude-sonnet-4-5"
+  },
+  "promptInjection": {
+    "method": "flag",
+    "flag": "--message",
+    "trailingNewline": false,
+    "bracketedPaste": false
+  },
+  "stateParsing": {
+    "idle": { "type": "regex", "pattern": "^aider>" },
+    "shellIntegration": false,
+    "exitCodes": { "0": "ok", "1": "error" }
+  },
+  "quirks": {
+    "altScreen": false,
+    "requiresNoAutoUpdate": false,
+    "mcpAutoload": false
+  }
+}

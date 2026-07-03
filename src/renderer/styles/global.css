@@ -293,3 +293,148 @@ body {
   background: var(--border-strong);
   border-radius: 5px;
 }
+
+/* ---- Toolbar agent extensions ---- */
+.toolbar__badge--agent {
+  color: var(--accent);
+  border-color: var(--accent);
+  opacity: 0.8;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar__state {
+  font-size: 10px;
+  flex: 0 0 auto;
+}
+
+/* ---- Workspace bar agent button ---- */
+.workspace-bar__btn--agent {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.workspace-bar__btn--agent:hover {
+  background: rgba(110, 168, 254, 0.25);
+}
+
+/* ---- Agent picker dialog ---- */
+.agent-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-picker__overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.agent-picker__panel {
+  position: relative;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 20px;
+  min-width: 320px;
+  max-width: 420px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+
+.agent-picker__title {
+  margin: 0 0 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.agent-picker__empty {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.agent-picker__empty code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.agent-picker__label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+
+.agent-picker__select {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+  width: 100%;
+}
+
+.agent-picker__select:focus {
+  border-color: var(--accent);
+}
+
+.agent-picker__hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 4px 0 12px;
+  line-height: 1.5;
+}
+
+.agent-picker__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.agent-picker__btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.agent-picker__btn:hover {
+  background: var(--accent-soft);
+}
+
+.agent-picker__btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0b0e14;
+  font-weight: 600;
+}
+
+.agent-picker__btn--primary:hover {
+  background: #8cbdff;
+  border-color: #8cbdff;
+}
+
+.agent-picker__btn--primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

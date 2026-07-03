@@ -26,6 +26,7 @@ interface LayoutState {
   hydrated: boolean;
 
   split(paneId: string, direction: SplitDirection): void;
+  spawnAgent(adapterId: string, model: string): void;
   close(paneId: string): void;
   focus(paneId: string): void;
   setTitle(paneId: string, title: string): void;
@@ -45,11 +46,6 @@ function persist(state: Pick<LayoutState, 'root' | 'focusedPaneId'>): void {
   }, 300);
 }
 
-/**
- * Synchronously persist the current layout, bypassing the debounce. Called on
- * `beforeunload` so a structural change made <300ms before the window closes is
- * never lost when the debounced timer dies with the renderer.
- */
 export function flushLayout(): void {
   if (persistTimer) {
     clearTimeout(persistTimer);
@@ -80,9 +76,20 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     persist({ root, focusedPaneId: newPane.id });
   },
 
+  spawnAgent: (adapterId, model) => {
+    const { focusedPaneId: targetId, root: currentRoot } = get();
+    const newPane: PaneModel = createPane('cli-agent', undefined, adapterId, model);
+    const pivotId = targetId ?? firstPaneId(currentRoot);
+    const root = pivotId
+      ? splitPane(currentRoot, pivotId, 'row', newPane)
+      : splitPane(initialTree(), firstPaneId(initialTree()) ?? '', 'row', newPane);
+    const focusedPaneId = newPane.id;
+    set({ root, focusedPaneId });
+    persist({ root, focusedPaneId });
+  },
+
   close: (paneId) => {
     const next = closePane(get().root, paneId);
-    // Never allow an empty workspace — reseed with a fresh pane.
     const root = next ?? initialTree();
     const focusedPaneId =
       get().focusedPaneId === paneId ? firstPaneId(root) : get().focusedPaneId;

@@ -14,13 +14,15 @@ function id(prefix: string): string {
   return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
-export function createPane(kind: SessionKind = 'shell', cwd?: string): PaneModel {
-  return {
-    id: id('pane'),
-    kind,
-    title: kind === 'shell' ? 'shell' : 'agent',
-    cwd,
-  };
+export function createPane(
+  kind: SessionKind = 'shell',
+  cwd?: string,
+  adapterId?: string,
+  model?: string,
+): PaneModel {
+  const title =
+    kind === 'cli-agent' && adapterId ? adapterId : kind === 'shell' ? 'shell' : 'agent';
+  return { id: id('pane'), kind, title, cwd, adapterId, model };
 }
 
 export function createLeaf(pane: PaneModel): LayoutNode {

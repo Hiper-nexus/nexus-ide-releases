@@ -1,0 +1,54 @@
+{
+  "kind": "cli-pty",
+  "id": "agy",
+  "label": "Antigravity (agy)",
+  "version": "1.0.0",
+  "icon": "◉",
+  "bin": "agy",
+  "detect": "agy --version",
+  "install": {
+    "method": "npm",
+    "command": "npm install -g @antigravity/cli"
+  },
+  "auth": {
+    "method": "oauth",
+    "credentialStore": "keychain",
+    "loginHint": "Run `agy login` to authenticate via browser OAuth."
+  },
+  "spawn": {
+    "interactive": ["agy"],
+    "headless": ["agy", "--print", "{{PROMPT}}"],
+    "ptyRequired": true,
+    "resumeArgs": [],
+    "extraArgs": []
+  },
+  "env": {
+    "static": {},
+    "passthrough": ["ANTHROPIC_API_KEY", "AGY_API_KEY"],
+    "ephemeralHome": false
+  },
+  "models": {
+    "flag": "--model",
+    "list": [
+      "claude-sonnet-4-5",
+      "claude-opus-4-5",
+      "claude-haiku-4-5"
+    ],
+    "default": "claude-sonnet-4-5"
+  },
+  "promptInjection": {
+    "method": "arg",
+    "trailingNewline": false,
+    "bracketedPaste": false
+  },
+  "stateParsing": {
+    "idle": { "type": "timeout", "ms": 1000 },
+    "shellIntegration": false,
+    "exitCodes": { "0": "ok", "1": "error" }
+  },
+  "quirks": {
+    "altScreen": true,
+    "requiresNoAutoUpdate": false,
+    "mcpAutoload": false
+  }
+}

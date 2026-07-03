@@ -26,6 +26,10 @@ export const spawnRequestSchema = z.object({
   cols: DIMENSION,
   rows: DIMENSION,
   kind: z.enum(['shell', 'cli-agent']),
+  // cli-agent only: the renderer supplies an adapterId and optional model;
+  // the main process looks up the full adapter config (including auth) locally.
+  adapterId: z.string().min(1).max(64).optional(),
+  model: z.string().min(1).max(128).optional(),
 });
 
 export const writeSchema = z.object({
@@ -48,6 +52,8 @@ const paneModelSchema = z.object({
   kind: z.enum(['shell', 'cli-agent']),
   title: z.string().max(512),
   cwd: z.string().max(4096).optional(),
+  adapterId: z.string().min(1).max(64).optional(),
+  model: z.string().min(1).max(128).optional(),
 });
 
 // Recursive layout tree schema (leaf | split with two children).

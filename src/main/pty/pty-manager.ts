@@ -3,26 +3,26 @@ import os from 'node:os';
 import type { WebContents } from 'electron';
 import * as nodePty from '@lydell/node-pty';
 import { PTY_CHANNELS } from '../../shared/channels';
-import type { SpawnRequest } from '../../shared/types';
+import type { SpawnRequest, PaneSessionState } from '../../shared/types';
+import type { CliPtyAdapter } from '../../shared/adapter-types';
+import { resolvePlaceholders } from '../../shared/adapter-types';
 
 /**
  * Owns every live PTY. One session per pane, addressed by an opaque id. Data is
  * streamed main -> renderer over IPC events; input flows renderer -> main.
- *
- * Runs in the main process (VS Code style "pty host" split is deferred to a
- * later phase — documented in the handoff). All process handles live here so
- * shutdown can reliably reap them.
  */
 
 interface Session {
   proc: nodePty.IPty;
   wc: WebContents;
+  idleTimer: ReturnType<typeof setTimeout> | null;
+  idleTimeoutMs: number;
+  state: PaneSessionState;
 }
 
 const sessions = new Map<string, Session>();
 let counter = 0;
 
-/** Resolve the user's shell with sane cross-platform fallbacks. */
 function resolveShell(requested?: string): string {
   if (requested) return requested;
   if (process.platform === 'win32') {
@@ -31,11 +31,6 @@ function resolveShell(requested?: string): string {
   return process.env.SHELL || '/bin/zsh';
 }
 
-/**
- * Resolve the working directory, falling back to the home dir when the requested
- * path is missing or not a directory. A persisted layout can point at a folder
- * that has since been deleted — that must never fail the spawn.
- */
 function resolveCwd(requested?: string): string {
   if (requested && requested.length > 0) {
     try {
@@ -49,77 +44,28 @@ function resolveCwd(requested?: string): string {
 
 /**
  * Env vars that are safe (and expected) for an interactive dev shell. This is an
- * *allowlist*, not a denylist: the main process may hold secrets (API keys for
- * CLI-agent adapters landing in phase 2b) in its own `process.env`, and those
- * must never be inherited by every child shell. Only names matched here — plus
- * the `LC_*` locale prefix — are forwarded.
+ * *allowlist*, not a denylist: the main process may hold API keys for CLI-agent
+ * adapters in its own `process.env`, and those must never be inherited by every
+ * child shell. Only names matched here — plus the `LC_*` locale prefix — are
+ * forwarded to shell panes.
  */
 const ENV_ALLOWLIST = new Set<string>([
-  // POSIX / shell essentials
-  'PATH',
-  'HOME',
-  'SHELL',
-  'USER',
-  'LOGNAME',
-  'PWD',
-  'TMPDIR',
-  'TZ',
-  'LANG',
-  'LANGUAGE',
-  'LC_ALL',
-  'TERM',
-  'TERM_PROGRAM',
-  'TERM_PROGRAM_VERSION',
-  'COLORTERM',
-  'EDITOR',
-  'VISUAL',
-  'PAGER',
-  'MANPATH',
-  'INFOPATH',
-  'LSCOLORS',
-  'LS_COLORS',
-  // X11 / Wayland + ssh-agent so GUI/git-over-ssh keep working (paths, not secrets)
-  'DISPLAY',
-  'WAYLAND_DISPLAY',
-  'XAUTHORITY',
-  'XDG_RUNTIME_DIR',
-  'XDG_DATA_DIRS',
-  'XDG_CONFIG_DIRS',
-  'SSH_AUTH_SOCK',
-  'SSH_AGENT_PID',
-  // Windows shell essentials
-  'SystemRoot',
-  'SystemDrive',
-  'windir',
-  'WINDIR',
-  'COMSPEC',
-  'ComSpec',
-  'PATHEXT',
-  'USERPROFILE',
-  'USERNAME',
-  'HOMEDRIVE',
-  'HOMEPATH',
-  'APPDATA',
-  'LOCALAPPDATA',
-  'ALLUSERSPROFILE',
-  'ProgramData',
-  'ProgramFiles',
-  'ProgramFiles(x86)',
-  'CommonProgramFiles',
-  'TEMP',
-  'TMP',
-  'NUMBER_OF_PROCESSORS',
-  'PROCESSOR_ARCHITECTURE',
+  'PATH', 'HOME', 'SHELL', 'USER', 'LOGNAME', 'PWD', 'TMPDIR', 'TZ',
+  'LANG', 'LANGUAGE', 'LC_ALL', 'TERM', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION',
+  'COLORTERM', 'EDITOR', 'VISUAL', 'PAGER', 'MANPATH', 'INFOPATH',
+  'LSCOLORS', 'LS_COLORS', 'DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY',
+  'XDG_RUNTIME_DIR', 'XDG_DATA_DIRS', 'XDG_CONFIG_DIRS',
+  'SSH_AUTH_SOCK', 'SSH_AGENT_PID',
+  'SystemRoot', 'SystemDrive', 'windir', 'WINDIR', 'COMSPEC', 'ComSpec',
+  'PATHEXT', 'USERPROFILE', 'USERNAME', 'HOMEDRIVE', 'HOMEPATH',
+  'APPDATA', 'LOCALAPPDATA', 'ALLUSERSPROFILE', 'ProgramData',
+  'ProgramFiles', 'ProgramFiles(x86)', 'CommonProgramFiles',
+  'TEMP', 'TMP', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE',
 ]);
 
 const ENV_ALLOW_PREFIXES = ['LC_'];
 
-/**
- * Build a minimal child environment from the allowlist and force a sensible TERM
- * so ANSI/color output works. Anything not explicitly permitted (including
- * secrets and Electron-specific vars) is dropped.
- */
-function childEnv(): NodeJS.ProcessEnv {
+function baseChildEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined) continue;
@@ -133,15 +79,80 @@ function childEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
+/**
+ * Build the env for a cli-agent session. Starts from the base allowlist, then
+ * adds adapter-declared passthrough vars and static vars. Auth env vars enter
+ * ONLY this specific PTY — not all shells.
+ */
+function agentEnv(adapter: CliPtyAdapter): NodeJS.ProcessEnv {
+  const env = baseChildEnv();
+  for (const key of adapter.env.passthrough) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  for (const [key, value] of Object.entries(adapter.env.static)) {
+    env[key] = value;
+  }
+  return env;
+}
+
+function emitStateChange(
+  wc: WebContents,
+  sessionId: string,
+  state: PaneSessionState,
+): void {
+  if (!wc.isDestroyed()) {
+    wc.send(PTY_CHANNELS.stateChange, { sessionId, state });
+  }
+}
+
+function armIdleTimer(sessionId: string, session: Session): void {
+  if (session.idleTimer) clearTimeout(session.idleTimer);
+  if (session.idleTimeoutMs <= 0) return;
+  session.idleTimer = setTimeout(() => {
+    session.idleTimer = null;
+    if (!sessions.has(sessionId)) return;
+    session.state = 'idle';
+    emitStateChange(session.wc, sessionId, 'idle');
+  }, session.idleTimeoutMs);
+}
+
+function makeSessionId(): string {
+  return `pty-${Date.now().toString(36)}-${++counter}`;
+}
+
+function attachProc(
+  proc: nodePty.IPty,
+  sessionId: string,
+  session: Session,
+): void {
+  proc.onData((data) => {
+    if (!session.wc.isDestroyed()) {
+      session.wc.send(PTY_CHANNELS.data, { sessionId, data });
+    }
+    if (session.state !== 'busy') {
+      session.state = 'busy';
+      emitStateChange(session.wc, sessionId, 'busy');
+    }
+    if (session.idleTimeoutMs > 0) armIdleTimer(sessionId, session);
+  });
+
+  proc.onExit(({ exitCode, signal }) => {
+    if (!sessions.has(sessionId)) return;
+    const s = sessions.get(sessionId)!;
+    if (s.idleTimer) clearTimeout(s.idleTimer);
+    sessions.delete(sessionId);
+    if (!session.wc.isDestroyed()) {
+      session.wc.send(PTY_CHANNELS.exit, { sessionId, exitCode, signal });
+    }
+  });
+}
+
 export interface SpawnedSession {
   sessionId: string;
 }
 
-/**
- * Spawn a shell PTY for the given renderer. Throws if the shell binary cannot
- * be launched (missing/invalid shell) — callers must translate that into a
- * structured IPC error.
- */
+/** Spawn a shell PTY. */
 export function spawnSession(wc: WebContents, req: SpawnRequest): SpawnedSession {
   const shell = resolveShell(req.shell);
   const cwd = resolveCwd(req.cwd);
@@ -150,46 +161,76 @@ export function spawnSession(wc: WebContents, req: SpawnRequest): SpawnedSession
     cols: req.cols,
     rows: req.rows,
     cwd,
-    env: childEnv(),
+    env: baseChildEnv(),
   });
 
-  const sessionId = `pty-${Date.now().toString(36)}-${++counter}`;
-  sessions.set(sessionId, { proc, wc });
-
-  proc.onData((data) => {
-    if (!wc.isDestroyed()) {
-      wc.send(PTY_CHANNELS.data, { sessionId, data });
-    }
-  });
-
-  proc.onExit(({ exitCode, signal }) => {
-    // An explicit kill deletes the session from the map *before* proc.kill(), so
-    // a still-present entry here means the process exited on its own — only then
-    // do we surface the exit to the renderer (no ghost message after kill).
-    if (!sessions.has(sessionId)) return;
-    sessions.delete(sessionId);
-    if (!wc.isDestroyed()) {
-      wc.send(PTY_CHANNELS.exit, { sessionId, exitCode, signal });
-    }
-  });
-
+  const sessionId = makeSessionId();
+  const session: Session = {
+    proc,
+    wc,
+    idleTimer: null,
+    idleTimeoutMs: 0,
+    state: 'spawning',
+  };
+  sessions.set(sessionId, session);
+  attachProc(proc, sessionId, session);
   return { sessionId };
 }
 
-/**
- * Look up a session, enforcing that `wc` is the renderer that owns it. Session
- * ids are guessable (`pty-<time>-<counter>`), so without this an untrusted or
- * compromised renderer could drive another window's PTY. Returns null when the
- * session is missing or owned by a different sender.
- */
+/** Spawn a cli-agent PTY from a validated adapter. */
+export function spawnAgentSession(
+  wc: WebContents,
+  req: SpawnRequest,
+  adapter: CliPtyAdapter,
+): SpawnedSession {
+  const cwd = resolveCwd(req.cwd);
+  const model = req.model ?? adapter.models.default;
+  const argv = resolvePlaceholders(adapter.spawn.interactive, {
+    MODEL: model,
+    CWD: cwd,
+    SESSION_ID: '',
+    PROMPT: '',
+  }).filter((a) => a.length > 0);
+
+  const bin = argv[0];
+  const args = argv.slice(1);
+  const env = agentEnv(adapter);
+
+  const proc = nodePty.spawn(bin, args, {
+    name: 'xterm-256color',
+    cols: req.cols,
+    rows: req.rows,
+    cwd,
+    env,
+  });
+
+  const idleMs =
+    adapter.stateParsing.idle.type === 'timeout'
+      ? adapter.stateParsing.idle.ms
+      : 800;
+
+  const sessionId = makeSessionId();
+  const session: Session = {
+    proc,
+    wc,
+    idleTimer: null,
+    idleTimeoutMs: idleMs,
+    state: 'spawning',
+  };
+  sessions.set(sessionId, session);
+  emitStateChange(wc, sessionId, 'spawning');
+  attachProc(proc, sessionId, session);
+  return { sessionId };
+}
+
 function ownedSession(wc: WebContents, sessionId: string): Session | null {
   const session = sessions.get(sessionId);
   if (!session || session.wc !== wc) return null;
   return session;
 }
 
-/** Delete from the map *before* killing so the onExit handler stays silent. */
 function destroySession(sessionId: string, session: Session): void {
+  if (session.idleTimer) clearTimeout(session.idleTimer);
   sessions.delete(sessionId);
   try {
     session.proc.kill();
@@ -199,7 +240,15 @@ function destroySession(sessionId: string, session: Session): void {
 }
 
 export function writeSession(wc: WebContents, sessionId: string, data: string): void {
-  ownedSession(wc, sessionId)?.proc.write(data);
+  const session = ownedSession(wc, sessionId);
+  if (!session) return;
+  // User wrote input → re-arm the idle timer if applicable.
+  if (session.state === 'idle') {
+    session.state = 'busy';
+    emitStateChange(wc, sessionId, 'busy');
+  }
+  if (session.idleTimeoutMs > 0) armIdleTimer(sessionId, session);
+  session.proc.write(data);
 }
 
 export function resizeSession(
@@ -223,16 +272,12 @@ export function killSession(wc: WebContents, sessionId: string): void {
   destroySession(sessionId, session);
 }
 
-/** Kill every session owned by a renderer (called when its window closes). */
 export function killSessionsFor(wc: WebContents): void {
   for (const [id, session] of sessions) {
-    if (session.wc === wc) {
-      destroySession(id, session);
-    }
+    if (session.wc === wc) destroySession(id, session);
   }
 }
 
-/** Reap everything on app shutdown. */
 export function killAllSessions(): void {
   for (const [id, session] of [...sessions]) {
     destroySession(id, session);

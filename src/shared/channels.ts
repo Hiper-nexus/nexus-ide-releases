@@ -11,9 +11,15 @@ export const PTY_CHANNELS = {
   kill: 'pty:kill',
   data: 'pty:data',
   exit: 'pty:exit',
+  stateChange: 'pty:stateChange',
 } as const;
 
 export const LAYOUT_CHANNELS = {
   save: 'layout:save',
   load: 'layout:load',
+} as const;
+
+export const ADAPTER_CHANNELS = {
+  list: 'adapter:list',
+  changed: 'adapter:changed',
 } as const;

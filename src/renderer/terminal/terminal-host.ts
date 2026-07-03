@@ -6,6 +6,7 @@ import { SerializeAddon } from '@xterm/addon-serialize';
 import '@xterm/xterm/css/xterm.css';
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
+import { useSessionStateStore } from '../state/session-state-store';
 import { TERMINAL_THEME } from '../styles/terminal-theme';
 
 /**
@@ -18,9 +19,6 @@ import { TERMINAL_THEME } from '../styles/terminal-theme';
  * reshapes the grid without resetting any shell — the terminal survives the
  * DOM move. Disposal happens only via `reconcileHosts` when a pane truly
  * leaves the tree.
- *
- * This is the extension seam for later phases: a `cli-agent` pane will create
- * its host here the same way a shell does, just with a different backing PTY.
  */
 
 interface Host {
@@ -39,57 +37,12 @@ interface Host {
 
 const hosts = new Map<string, Host>();
 
-function startSpawn(pane: PaneModel, host: Host): void {
-  host.spawnStarted = true;
-  void (async () => {
-    try {
-      const res = await window.nexus.pty.spawn({
-        cwd: pane.cwd,
-        cols: host.term.cols,
-        rows: host.term.rows,
-        kind: pane.kind,
-      });
-      if (host.disposed) {
-        if (res.ok) window.nexus.pty.kill(res.sessionId);
-        return;
-      }
-      if (!res.ok) {
-        host.term.writeln(
-          `\r\n\x1b[31m[nexus] failed to start shell: ${res.error}\x1b[0m`,
-        );
-        return;
-      }
-      host.sessionId = res.sessionId;
-      host.cleanups.push(
-        window.nexus.pty.onData(res.sessionId, (data) => host.term.write(data)),
-      );
-      host.cleanups.push(
-        window.nexus.pty.onExit(res.sessionId, ({ exitCode }) =>
-          host.term.writeln(
-            `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
-          ),
-        ),
-      );
-      const input = host.term.onData((data) => {
-        if (host.sessionId) window.nexus.pty.write(host.sessionId, data);
-      });
-      host.cleanups.push(() => input.dispose());
-    } catch (err) {
-      // A rejected IPC invoke (bridge torn down, main crash) would otherwise be
-      // swallowed silently — surface it in the same format as the !res.ok path.
-      if (host.disposed) return;
-      const message = err instanceof Error ? err.message : String(err);
-      host.term.writeln(
-        `\r\n\x1b[31m[nexus] failed to start shell: ${message}\x1b[0m`,
-      );
-    }
-  })();
-}
-
-function createShellHost(pane: PaneModel): Host {
-  const element = document.createElement('div');
-  element.className = 'term-host';
-
+function buildTerminal(): {
+  term: Terminal;
+  fit: FitAddon;
+  search: SearchAddon;
+  serialize: SerializeAddon;
+} {
   const term = new Terminal({
     fontFamily:
       'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, monospace',
@@ -100,13 +53,85 @@ function createShellHost(pane: PaneModel): Host {
     theme: TERMINAL_THEME,
     scrollback: 10_000,
   });
-
   const fit = new FitAddon();
   const search = new SearchAddon();
   const serialize = new SerializeAddon();
   term.loadAddon(fit);
   term.loadAddon(search);
   term.loadAddon(serialize);
+  return { term, fit, search, serialize };
+}
+
+function startSpawn(pane: PaneModel, host: Host): void {
+  host.spawnStarted = true;
+  void (async () => {
+    try {
+      const res = await window.nexus.pty.spawn({
+        cwd: pane.cwd,
+        cols: host.term.cols,
+        rows: host.term.rows,
+        kind: pane.kind,
+        adapterId: pane.adapterId,
+        model: pane.model,
+      });
+      if (host.disposed) {
+        if (res.ok) window.nexus.pty.kill(res.sessionId);
+        return;
+      }
+      if (!res.ok) {
+        host.term.writeln(
+          `\r\n\x1b[31m[nexus] failed to start: ${res.error}\x1b[0m`,
+        );
+        if (pane.kind === 'cli-agent') {
+          useSessionStateStore.getState().clearPaneState(pane.id);
+        }
+        return;
+      }
+      host.sessionId = res.sessionId;
+
+      if (pane.kind === 'cli-agent') {
+        host.cleanups.push(
+          window.nexus.pty.onStateChange(res.sessionId, (state) => {
+            useSessionStateStore.getState().setPaneState(pane.id, state);
+          }),
+        );
+      }
+
+      host.cleanups.push(
+        window.nexus.pty.onData(res.sessionId, (data) => host.term.write(data)),
+      );
+      host.cleanups.push(
+        window.nexus.pty.onExit(res.sessionId, ({ exitCode }) => {
+          host.term.writeln(
+            `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
+          );
+          if (pane.kind === 'cli-agent') {
+            useSessionStateStore.getState().clearPaneState(pane.id);
+          }
+        }),
+      );
+      const input = host.term.onData((data) => {
+        if (host.sessionId) window.nexus.pty.write(host.sessionId, data);
+      });
+      host.cleanups.push(() => input.dispose());
+    } catch (err) {
+      if (host.disposed) return;
+      const message = err instanceof Error ? err.message : String(err);
+      host.term.writeln(
+        `\r\n\x1b[31m[nexus] failed to start: ${message}\x1b[0m`,
+      );
+      if (pane.kind === 'cli-agent') {
+        useSessionStateStore.getState().clearPaneState(pane.id);
+      }
+    }
+  })();
+}
+
+function createShellHost(pane: PaneModel): Host {
+  const element = document.createElement('div');
+  element.className = 'term-host';
+
+  const { term, fit, search, serialize } = buildTerminal();
 
   const host: Host = {
     element,
@@ -122,21 +147,55 @@ function createShellHost(pane: PaneModel): Host {
     cleanups: [],
   };
 
-  // Keep the PTY sized to whatever slot currently holds this terminal.
   host.ro = new ResizeObserver(() => {
     if (host.disposed || !host.opened) return;
-    try {
-      fit.fit();
-    } catch {
-      return;
-    }
+    try { fit.fit(); } catch { return; }
     if (host.sessionId) {
       window.nexus.pty.resize(host.sessionId, term.cols, term.rows);
     }
   });
   host.ro.observe(element);
 
-  // Reflect shell title escape sequences and focus-on-click into the store.
+  term.onTitleChange((title) =>
+    useLayoutStore.getState().setTitle(pane.id, title),
+  );
+  element.addEventListener('mousedown', () =>
+    useLayoutStore.getState().focus(pane.id),
+  );
+  return host;
+}
+
+/** Build a cli-agent host. The backing terminal is the same as a shell host but
+ *  the spawn request routes through the adapter registry in the main process. */
+function createCliAgentHost(pane: PaneModel): Host {
+  const element = document.createElement('div');
+  element.className = 'term-host term-host--agent';
+
+  const { term, fit, search, serialize } = buildTerminal();
+
+  const host: Host = {
+    element,
+    term,
+    fit,
+    search,
+    serialize,
+    ro: null as unknown as ResizeObserver,
+    sessionId: null,
+    opened: false,
+    spawnStarted: false,
+    disposed: false,
+    cleanups: [],
+  };
+
+  host.ro = new ResizeObserver(() => {
+    if (host.disposed || !host.opened) return;
+    try { fit.fit(); } catch { return; }
+    if (host.sessionId) {
+      window.nexus.pty.resize(host.sessionId, term.cols, term.rows);
+    }
+  });
+  host.ro.observe(element);
+
   term.onTitleChange((title) =>
     useLayoutStore.getState().setTitle(pane.id, title),
   );
@@ -144,22 +203,18 @@ function createShellHost(pane: PaneModel): Host {
     useLayoutStore.getState().focus(pane.id),
   );
 
+  useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
   return host;
 }
 
 /**
- * Build the backing host for a pane, dispatched on its session kind. Today every
- * kind resolves to a shell-backed terminal; phase 2b plugs a dedicated
- * `cli-agent` host in here without touching the grid/attach plumbing.
+ * Build the backing host for a pane, dispatched on its session kind.
  */
 function createHostForKind(pane: PaneModel): Host {
   switch (pane.kind) {
-    case 'shell':
-      return createShellHost(pane);
     case 'cli-agent':
-      // Extension seam for 2b: a cli-agent adapter will build its own host here.
-      // Until then it falls back to a plain shell so the pane still works.
-      return createShellHost(pane);
+      return createCliAgentHost(pane);
+    case 'shell':
     default:
       return createShellHost(pane);
   }
@@ -206,20 +261,21 @@ export function focusHost(paneId: string): void {
   hosts.get(paneId)?.term.focus();
 }
 
-function disposeHost(host: Host): void {
+function disposeHost(host: Host, paneId: string): void {
   host.disposed = true;
   host.ro.disconnect();
   host.cleanups.forEach((fn) => fn());
   if (host.sessionId) window.nexus.pty.kill(host.sessionId);
   host.term.dispose();
   host.element.remove();
+  useSessionStateStore.getState().clearPaneState(paneId);
 }
 
 /** Dispose every terminal whose pane id is no longer present in the layout. */
 export function reconcileHosts(liveIds: Set<string>): void {
   for (const [id, host] of hosts) {
     if (!liveIds.has(id)) {
-      disposeHost(host);
+      disposeHost(host, id);
       hosts.delete(id);
     }
   }

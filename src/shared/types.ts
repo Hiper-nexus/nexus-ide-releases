@@ -3,10 +3,13 @@
  * Everything here must be JSON-serializable (it crosses the IPC boundary).
  */
 
+import type { AdapterInfo } from './adapter-types';
+
+export type { AdapterInfo };
+
 /**
- * The kind of process backing a pane. Today only `shell` is implemented, but
- * the pane abstraction is intentionally session-kind aware so later phases can
- * plug an AI CLI adapter (`cli-agent`) into the exact same grid/PTY plumbing.
+ * The kind of process backing a pane. `shell` uses the user's default shell;
+ * `cli-agent` spawns an AI CLI via a declarative adapter JSON.
  */
 export type SessionKind = 'shell' | 'cli-agent';
 
@@ -18,6 +21,10 @@ export interface PaneModel {
   kind: SessionKind;
   title: string;
   cwd?: string;
+  /** Set for cli-agent panes — identifies which adapter backs this pane. */
+  adapterId?: string;
+  /** The model selected for this agent pane (e.g. "claude-sonnet-4-5"). */
+  model?: string;
 }
 
 /**
@@ -46,6 +53,10 @@ export interface SpawnRequest {
   cols: number;
   rows: number;
   kind: SessionKind;
+  /** Present when kind === 'cli-agent'. */
+  adapterId?: string;
+  /** Present when kind === 'cli-agent'. Falls back to adapter's default model. */
+  model?: string;
 }
 
 export type SpawnResult =
@@ -61,6 +72,13 @@ export interface PtyExitEvent {
   sessionId: string;
   exitCode: number;
   signal?: number;
+}
+
+export type PaneSessionState = 'spawning' | 'busy' | 'idle';
+
+export interface PtyStateChangeEvent {
+  sessionId: string;
+  state: PaneSessionState;
 }
 
 /** Unsubscribe handle returned by the event subscription helpers. */
@@ -81,10 +99,18 @@ export interface NexusApi {
       sessionId: string,
       cb: (event: { exitCode: number; signal?: number }) => void,
     ): Unsubscribe;
+    onStateChange(
+      sessionId: string,
+      cb: (state: PaneSessionState) => void,
+    ): Unsubscribe;
   };
   layout: {
     save(layout: WorkspaceLayout): Promise<{ ok: boolean }>;
     load(): Promise<WorkspaceLayout | null>;
+  };
+  adapters: {
+    list(): Promise<AdapterInfo[]>;
+    onChanged(cb: (adapters: AdapterInfo[]) => void): Unsubscribe;
   };
   platform: NodeJS.Platform;
 }

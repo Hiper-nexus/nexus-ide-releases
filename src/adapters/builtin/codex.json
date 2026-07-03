@@ -1,0 +1,58 @@
+{
+  "kind": "cli-pty",
+  "id": "codex",
+  "label": "Codex",
+  "version": "1.0.0",
+  "icon": "⬡",
+  "bin": "codex",
+  "detect": "codex --version",
+  "install": {
+    "method": "npm",
+    "command": "npm install -g @openai/codex"
+  },
+  "auth": {
+    "method": "api_key",
+    "envVarFallback": "OPENAI_API_KEY",
+    "credentialStore": "keychain",
+    "loginHint": "Set OPENAI_API_KEY in your environment or run `codex login`."
+  },
+  "spawn": {
+    "interactive": ["codex", "--ask-for-approval", "never"],
+    "headless": ["codex", "--ask-for-approval", "never", "-q", "{{PROMPT}}"],
+    "ptyRequired": true,
+    "resumeArgs": [],
+    "extraArgs": []
+  },
+  "env": {
+    "static": {},
+    "passthrough": ["OPENAI_API_KEY", "OPENAI_BASE_URL"],
+    "ephemeralHome": false
+  },
+  "models": {
+    "flag": "--model",
+    "list": [
+      "o4-mini",
+      "o3",
+      "o3-mini",
+      "gpt-4o",
+      "gpt-4.1"
+    ],
+    "default": "o4-mini"
+  },
+  "promptInjection": {
+    "method": "arg",
+    "trailingNewline": false,
+    "bracketedPaste": false
+  },
+  "stateParsing": {
+    "idle": { "type": "timeout", "ms": 800 },
+    "shellIntegration": false,
+    "exitCodes": { "0": "ok", "1": "error" }
+  },
+  "quirks": {
+    "altScreen": true,
+    "requiresNoAutoUpdate": false,
+    "approvalFlag": "--ask-for-approval",
+    "mcpAutoload": false
+  }
+}

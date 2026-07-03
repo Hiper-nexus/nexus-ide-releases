@@ -1,0 +1,59 @@
+{
+  "kind": "cli-pty",
+  "id": "opencode",
+  "label": "OpenCode",
+  "version": "1.0.0",
+  "icon": "◌",
+  "bin": "opencode",
+  "detect": "opencode --version",
+  "install": {
+    "method": "npm",
+    "command": "npm install -g opencode-ai"
+  },
+  "auth": {
+    "method": "api_key",
+    "envVarFallback": "ANTHROPIC_API_KEY",
+    "credentialStore": "env",
+    "loginHint": "Set ANTHROPIC_API_KEY or OPENAI_API_KEY in your environment."
+  },
+  "spawn": {
+    "interactive": ["opencode"],
+    "headless": ["opencode", "run", "{{PROMPT}}"],
+    "ptyRequired": true,
+    "resumeArgs": [],
+    "extraArgs": []
+  },
+  "env": {
+    "static": {},
+    "passthrough": [
+      "ANTHROPIC_API_KEY",
+      "OPENAI_API_KEY",
+      "OPENAI_BASE_URL"
+    ],
+    "ephemeralHome": false
+  },
+  "models": {
+    "flag": "--model",
+    "list": [
+      "claude-sonnet-4-5",
+      "claude-opus-4-5",
+      "gpt-4o"
+    ],
+    "default": "claude-sonnet-4-5"
+  },
+  "promptInjection": {
+    "method": "arg",
+    "trailingNewline": false,
+    "bracketedPaste": false
+  },
+  "stateParsing": {
+    "idle": { "type": "timeout", "ms": 800 },
+    "shellIntegration": false,
+    "exitCodes": { "0": "ok", "1": "error" }
+  },
+  "quirks": {
+    "altScreen": true,
+    "requiresNoAutoUpdate": false,
+    "mcpAutoload": false
+  }
+}

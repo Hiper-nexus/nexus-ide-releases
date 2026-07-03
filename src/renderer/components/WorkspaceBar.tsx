@@ -1,16 +1,63 @@
+import { useEffect, useState } from 'react';
 import { useLayoutStore } from '../state/layout-store';
 import { listPanes } from '../lib/split-tree';
+import type { AdapterInfo } from '../../shared/types';
 
-/** Slim top chrome: brand, live pane count, and split shortcuts hint. */
+/** Slim top chrome: brand, pane count, split shortcuts, and the agent launcher. */
 export function WorkspaceBar() {
   const root = useLayoutStore((s) => s.root);
   const focusedPaneId = useLayoutStore((s) => s.focusedPaneId);
   const split = useLayoutStore((s) => s.split);
+  const spawnAgent = useLayoutStore((s) => s.spawnAgent);
   const paneCount = listPanes(root).length;
+
+  const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [selectedAdapter, setSelectedAdapter] = useState<AdapterInfo | null>(null);
+  const [selectedModel, setSelectedModel] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.nexus.adapters.list().then((list) => {
+      if (!cancelled) setAdapters(list);
+    });
+    const unsub = window.nexus.adapters.onChanged((list) => {
+      setAdapters(list);
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, []);
 
   const onSplit = (direction: 'row' | 'column') => {
     if (focusedPaneId) split(focusedPaneId, direction);
   };
+
+  const installedAdapters = adapters.filter((a) => a.installed);
+
+  function openPicker() {
+    const first = installedAdapters[0] ?? null;
+    setSelectedAdapter(first);
+    setSelectedModel(first?.models.default ?? '');
+    setPickerOpen(true);
+  }
+
+  function closePicker() {
+    setPickerOpen(false);
+  }
+
+  function confirmSpawn() {
+    if (!selectedAdapter) return;
+    spawnAgent(selectedAdapter.id, selectedModel || selectedAdapter.models.default);
+    closePicker();
+  }
+
+  function handleAdapterChange(id: string) {
+    const a = installedAdapters.find((x) => x.id === id) ?? null;
+    setSelectedAdapter(a);
+    setSelectedModel(a?.models.default ?? '');
+  }
 
   return (
     <header className="workspace-bar">
@@ -29,7 +76,85 @@ export function WorkspaceBar() {
         <button className="workspace-bar__btn" onClick={() => onSplit('column')}>
           Split ↓
         </button>
+        <button
+          className="workspace-bar__btn workspace-bar__btn--agent"
+          onClick={openPicker}
+          title="Launch an AI CLI agent in a new pane"
+        >
+          + Agent
+        </button>
       </div>
+
+      {pickerOpen && (
+        <div className="agent-picker" role="dialog" aria-label="Launch agent">
+          <div className="agent-picker__overlay" onClick={closePicker} />
+          <div className="agent-picker__panel">
+            <h3 className="agent-picker__title">Launch Agent</h3>
+
+            {installedAdapters.length === 0 ? (
+              <p className="agent-picker__empty">
+                No CLI adapters found. Install one to get started.
+                {adapters.length > 0 && (
+                  <span>
+                    {' '}Try: <code>{adapters[0].installCommand}</code>
+                  </span>
+                )}
+              </p>
+            ) : (
+              <>
+                <label className="agent-picker__label">
+                  Adapter
+                  <select
+                    className="agent-picker__select"
+                    value={selectedAdapter?.id ?? ''}
+                    onChange={(e) => handleAdapterChange(e.target.value)}
+                  >
+                    {installedAdapters.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.icon} {a.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {selectedAdapter && selectedAdapter.models.list.length > 0 && (
+                  <label className="agent-picker__label">
+                    Model
+                    <select
+                      className="agent-picker__select"
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                    >
+                      {selectedAdapter.models.list.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
+                {selectedAdapter?.loginHint && (
+                  <p className="agent-picker__hint">{selectedAdapter.loginHint}</p>
+                )}
+
+                <div className="agent-picker__actions">
+                  <button className="agent-picker__btn" onClick={closePicker}>
+                    Cancel
+                  </button>
+                  <button
+                    className="agent-picker__btn agent-picker__btn--primary"
+                    onClick={confirmSpawn}
+                    disabled={!selectedAdapter}
+                  >
+                    Launch
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </header>
   );
 }

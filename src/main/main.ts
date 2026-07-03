@@ -2,6 +2,13 @@ import { app, BrowserWindow } from 'electron';
 import { createMainWindow } from './window';
 import { registerPtyIpc } from './pty/pty-ipc';
 import { registerLayoutIpc } from './persistence/layout-ipc';
+import { registerAdapterIpc } from './adapters/adapter-ipc';
+import {
+  initAdapterRegistry,
+  registerAdapterListener,
+  unregisterAdapterListener,
+  closeAdapterRegistry,
+} from './adapters/adapter-registry';
 import { killAllSessions } from './pty/pty-manager';
 import { closeDb } from './persistence/db';
 
@@ -18,8 +25,10 @@ if (process.platform === 'win32') {
 }
 
 function bootstrap(): void {
+  initAdapterRegistry();
   registerPtyIpc();
   registerLayoutIpc();
+  registerAdapterIpc();
   createMainWindow();
 }
 
@@ -31,6 +40,11 @@ app.on('activate', () => {
   }
 });
 
+app.on('browser-window-created', (_event, win) => {
+  registerAdapterListener(win.webContents);
+  win.on('closed', () => unregisterAdapterListener(win.webContents));
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
@@ -39,5 +53,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   killAllSessions();
+  closeAdapterRegistry();
   closeDb();
 });
