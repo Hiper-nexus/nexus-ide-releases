@@ -183,6 +183,35 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
   })();
 }
 
+/**
+ * Debounced fit-on-resize. An interactive node resize (or a canvas pan that
+ * re-parents the terminal) fires the ResizeObserver in a tight burst; calling
+ * fit()+pty.resize on each frame floods the child with SIGWINCH and thrashes
+ * the renderer (the resize storm Maestri hit). Coalesce to one fit ~60ms after
+ * the last resize.
+ */
+const RESIZE_DEBOUNCE_MS = 60;
+
+function makeResizeObserver(host: Host): ResizeObserver {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return new ResizeObserver(() => {
+    if (host.disposed || !host.opened) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      if (host.disposed || !host.opened) return;
+      try {
+        host.fit.fit();
+      } catch {
+        return;
+      }
+      if (host.sessionId) {
+        window.nexus.pty.resize(host.sessionId, host.term.cols, host.term.rows);
+      }
+    }, RESIZE_DEBOUNCE_MS);
+  });
+}
+
 function createShellHost(pane: PaneModel): Host {
   const element = document.createElement('div');
   element.className = 'term-host';
@@ -203,13 +232,7 @@ function createShellHost(pane: PaneModel): Host {
     cleanups: [],
   };
 
-  host.ro = new ResizeObserver(() => {
-    if (host.disposed || !host.opened) return;
-    try { fit.fit(); } catch { return; }
-    if (host.sessionId) {
-      window.nexus.pty.resize(host.sessionId, term.cols, term.rows);
-    }
-  });
+  host.ro = makeResizeObserver(host);
   host.ro.observe(element);
 
   term.onTitleChange((title) =>
@@ -244,13 +267,7 @@ function createCliAgentHost(pane: PaneModel): Host {
     cleanups: [],
   };
 
-  host.ro = new ResizeObserver(() => {
-    if (host.disposed || !host.opened) return;
-    try { fit.fit(); } catch { return; }
-    if (host.sessionId) {
-      window.nexus.pty.resize(host.sessionId, term.cols, term.rows);
-    }
-  });
+  host.ro = makeResizeObserver(host);
   host.ro.observe(element);
 
   term.onTitleChange((title) =>
