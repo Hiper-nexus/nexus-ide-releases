@@ -1,18 +1,33 @@
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
+import { MakerDMG } from '@electron-forge/maker-dmg';
 import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerRpm } from '@electron-forge/maker-rpm';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
-import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-natives';
 
 const config: ForgeConfig = {
   packagerConfig: {
-    // asar keeps app source packed; native .node files are unpacked by the
-    // AutoUnpackNativesPlugin so @lydell/node-pty and better-sqlite3 can load.
-    asar: true,
+    // Natives cannot execute from inside the asar: unpack .node binaries and
+    // node-pty's spawn-helper executable. Using packager's own asar.unpack
+    // (instead of the AutoUnpackNativesPlugin) keeps the ElectronAsarIntegrity
+    // hash in Info.plist consistent — the plugin repacks the asar AFTER the
+    // hash is computed, which trips the integrity fuse into a silent hang.
+    asar: {
+      unpack: '**/{*.node,spawn-helper}',
+    },
+    // plugin-vite's default ignore ships ONLY the .vite bundles, silently
+    // dropping the runtime externals (@lydell/node-pty, better-sqlite3, …).
+    // Ship node_modules too; packager's prune keeps production deps only.
+    ignore: (file: string) => {
+      if (!file) return false;
+      if (file === '/package.json') return false;
+      if (file.startsWith('/.vite')) return false;
+      if (file.startsWith('/node_modules')) return false;
+      return true;
+    },
     // Voice capture: macOS shows this string on the first mic-permission prompt.
     // The matching hardened-runtime entitlement (com.apple.security.device.microphone)
     // lives in build/entitlements.mac.plist and is applied when code signing is
@@ -24,13 +39,17 @@ const config: ForgeConfig = {
   },
   rebuildConfig: {},
   makers: [
+    // .dmg is the installable macOS artifact; ZIP doubles as the
+    // Squirrel.Mac auto-update payload (same layout Overclock ships).
+    // Code signing/notarization (osxSign/osxNotarize in packagerConfig)
+    // activates when a Developer ID identity is present on the build machine.
+    new MakerDMG({ format: 'ULFO' }, ['darwin']),
     new MakerSquirrel({}),
     new MakerZIP({}, ['darwin']),
     new MakerRpm({}),
     new MakerDeb({}),
   ],
   plugins: [
-    new AutoUnpackNativesPlugin({}),
     new VitePlugin({
       build: [
         { entry: 'src/main/main.ts', config: 'vite.main.config.ts', target: 'main' },
