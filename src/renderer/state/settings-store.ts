@@ -6,6 +6,13 @@ import type {
 } from '../../shared/settings-types';
 import { DEFAULT_TERMINAL_SETTINGS } from '../../shared/settings-types';
 import { applyTerminalSettings } from '../terminal/terminal-host';
+import { applyUiTheme } from '../styles/ui-theme';
+
+/** One entry point: restyle terminals AND the whole app UI. */
+function applyEverywhere(settings: TerminalSettings): void {
+  applyTerminalSettings(settings);
+  applyUiTheme(settings.themeId);
+}
 
 /**
  * Renderer mirror of the terminal settings plus the settings-drawer open
@@ -33,7 +40,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   hydrate: async () => {
     try {
       const settings = await window.nexus.settings.get();
-      applyTerminalSettings(settings);
+      applyEverywhere(settings);
       set({ terminal: settings, hydrated: true });
     } catch (err) {
       console.warn('[settings] failed to hydrate:', err);
@@ -43,12 +50,12 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   update: async (patch) => {
     const settings = await window.nexus.settings.set(patch);
-    applyTerminalSettings(settings);
+    applyEverywhere(settings);
     set({ terminal: settings });
   },
 
   receive: (settings) => {
-    applyTerminalSettings(settings);
+    applyEverywhere(settings);
     set({ terminal: settings });
   },
 

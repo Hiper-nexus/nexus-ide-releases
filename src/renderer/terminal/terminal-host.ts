@@ -67,6 +67,13 @@ export function applyTerminalSettings(settings: TerminalSettings): void {
     host.term.options.fontFamily = fontFamilyOf(settings);
     host.term.options.fontSize = settings.fontSize;
     try {
+      // Force an immediate repaint — the WebGL renderer can otherwise defer
+      // recoloring until the next data write.
+      host.term.refresh(0, Math.max(0, host.term.rows - 1));
+    } catch {
+      // Terminal not opened yet.
+    }
+    try {
       host.fit.fit();
       if (host.sessionId) {
         window.nexus.pty.resize(host.sessionId, host.term.cols, host.term.rows);
