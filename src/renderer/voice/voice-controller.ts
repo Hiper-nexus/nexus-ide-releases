@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { useVoiceStore } from './voice-store';
 import { useLayoutStore } from '../state/layout-store';
+import { useSessionStateStore } from '../state/session-state-store';
 import { VoiceCapture } from './voice-capture';
+import { stripPromptEcho } from './response-echo';
 import { getPaneSessionId, writeToPane } from '../terminal/terminal-host';
 import type { VoiceRuntimeInfo } from '../../shared/voice-ipc';
 
@@ -96,8 +98,9 @@ async function finishAndProcess(
       return;
     }
 
-    // Jarvis: capture the agent's reply, then speak a condensed summary.
-    const reply = await captureResponse(paneId);
+    // Jarvis: capture the agent's reply, then speak a condensed summary. The
+    // transcribed prompt is passed so its PTY echo is stripped before speaking.
+    const reply = await captureResponse(paneId, stt.text);
     if (reply.trim()) {
       store.setStatus('speaking');
       const spoken = await window.nexus.voice.speak({ text: reply });
@@ -131,10 +134,20 @@ function routePrompt(text: string): string | null {
 }
 
 /**
- * Accumulate the pane's PTY output after injection and resolve once it has been
- * quiet for RESPONSE_QUIET_MS (agent finished) or RESPONSE_MAX_MS elapses.
+ * Accumulate the pane's PTY output after injection and resolve with the agent's
+ * reply. End-of-turn is detected by three signals, strongest first:
+ *   1. The pane returns from 'busy' → 'idle' (tracked by phase 2b via
+ *      useSessionStateStore). This is the reliable signal for TUI agents like
+ *      Claude Code / Codex that continuously redraw a spinner and so never fall
+ *      quiet — pure silence detection would always hit the hard cap and speak a
+ *      truncated dump.
+ *   2. The PTY has been quiet for RESPONSE_QUIET_MS (non-agent panes that emit no
+ *      idle/busy state events).
+ *   3. RESPONSE_MAX_MS hard cap.
+ * The captured buffer starts with the PTY echo of the injected prompt (plus
+ * spinner); `promptEcho` is stripped so we speak the RESPONSE, not the command.
  */
-function captureResponse(paneId: string): Promise<string> {
+function captureResponse(paneId: string, promptEcho: string): Promise<string> {
   return new Promise((resolve) => {
     const sessionId = getPaneSessionId(paneId);
     if (!sessionId) {
@@ -143,6 +156,7 @@ function captureResponse(paneId: string): Promise<string> {
     }
     let buffer = '';
     let quietTimer: ReturnType<typeof setTimeout> | null = null;
+    let sawBusy = false;
     let done = false;
 
     const finish = () => {
@@ -150,8 +164,9 @@ function captureResponse(paneId: string): Promise<string> {
       done = true;
       if (quietTimer) clearTimeout(quietTimer);
       clearTimeout(hardCap);
-      unsub();
-      resolve(buffer);
+      unsubData();
+      unsubState();
+      resolve(stripPromptEcho(buffer, promptEcho));
     };
 
     const armQuiet = () => {
@@ -159,9 +174,17 @@ function captureResponse(paneId: string): Promise<string> {
       quietTimer = setTimeout(finish, RESPONSE_QUIET_MS);
     };
 
-    const unsub = window.nexus.pty.onData(sessionId, (data) => {
+    const unsubData = window.nexus.pty.onData(sessionId, (data) => {
       buffer += data;
       armQuiet();
+    });
+    // Strong end-of-turn signal: finish as soon as the pane goes back to 'idle'
+    // after having been 'busy'. Falls back to the quiet timer for panes that
+    // never report state (no cli-agent adapter tracking them).
+    const unsubState = useSessionStateStore.subscribe((s) => {
+      const state = s.paneStates.get(paneId);
+      if (state === 'busy') sawBusy = true;
+      else if (state === 'idle' && sawBusy) finish();
     });
     const hardCap = setTimeout(finish, RESPONSE_MAX_MS);
     armQuiet();

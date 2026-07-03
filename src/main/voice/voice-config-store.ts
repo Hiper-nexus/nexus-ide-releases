@@ -106,7 +106,22 @@ export function loadVoiceConfig(): VoiceConfig {
   } catch {
     // Non-fatal; we can still run off in-memory defaults.
   }
-  current = readUserConfig() ?? readClockVoiceConfig() ?? DEFAULT_VOICE_CONFIG;
+  const userConfig = readUserConfig();
+  if (userConfig) {
+    current = userConfig;
+    return current;
+  }
+
+  const migrated = readClockVoiceConfig();
+  if (migrated) {
+    current = migrated;
+    // Materialize the migrated config to the editable user file so we don't
+    // re-derive it from the ClockVoice source on every boot. Idempotent.
+    persist(migrated);
+    return current;
+  }
+
+  current = DEFAULT_VOICE_CONFIG;
   return current;
 }
 

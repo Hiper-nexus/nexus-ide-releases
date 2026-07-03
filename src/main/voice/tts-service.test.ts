@@ -51,6 +51,105 @@ describe('speak', () => {
     expect(speakViaSay).not.toHaveBeenCalled();
   });
 
+  it('falls through a throttled cloud provider (429) to macOS say', async () => {
+    // openai (cloud) → macos-say. The cloud provider is strangled (429), so the
+    // chain must land on keyless `say` instead of returning {ok:false}.
+    const tts: VoicePlugin = {
+      type: 'tts',
+      provider: 'openai',
+      endpoint: 'https://api.openai.com/v1/audio/speech',
+      auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
+      model: 'tts-1',
+      voice: 'onyx',
+      format: 'mp3',
+      fallback: { type: 'tts', provider: 'macos-say', localBin: '/usr/bin/say', voice: 'Luciana' },
+    };
+    const config: VoiceConfig = { ...DEFAULT_VOICE_CONFIG, tts };
+    const fetchImpl = vi.fn(
+      async () => new Response('rate limit exceeded', { status: 429 }),
+    ) as unknown as typeof fetch;
+    const speakViaSay = vi.fn(async () => undefined);
+
+    const result = await speak(
+      { text: 'Tell me the build result, please.', speakMode: 'full' },
+      config,
+      { ...PROBES, hasEnv: () => true },
+      deps({ fetchImpl, getEnv: () => 'key', speakViaSay }),
+    );
+
+    expect(fetchImpl).toHaveBeenCalledOnce(); // cloud was actually attempted
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.mode).toBe('played'); // spoken via say
+    expect(speakViaSay).toHaveBeenCalledOnce();
+  });
+
+  it('walks openai(429) → piper(broken) → say to keep the guarantee', async () => {
+    const tts: VoicePlugin = {
+      type: 'tts',
+      provider: 'openai',
+      endpoint: 'https://api.openai.com/v1/audio/speech',
+      auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
+      fallback: {
+        type: 'tts',
+        provider: 'piper',
+        localBin: 'piper',
+        fallback: { type: 'tts', provider: 'macos-say', localBin: '/usr/bin/say' },
+      },
+    };
+    const config: VoiceConfig = { ...DEFAULT_VOICE_CONFIG, tts };
+    const fetchImpl = vi.fn(
+      async () => new Response('quota', { status: 429 }),
+    ) as unknown as typeof fetch;
+    const runPiper = vi.fn(() => {
+      throw new Error('piper binary missing');
+    });
+    const speakViaSay = vi.fn(async () => undefined);
+
+    const result = await speak(
+      { text: 'Please read the summary aloud now.', speakMode: 'full' },
+      config,
+      { ...PROBES, hasEnv: () => true },
+      deps({ fetchImpl, getEnv: () => 'key', runPiper, speakViaSay }),
+    );
+
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(runPiper).toHaveBeenCalledOnce();
+    expect(speakViaSay).toHaveBeenCalledOnce();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.mode).toBe('played');
+  });
+
+  it('reports every attempt when the whole chain fails', async () => {
+    // openai(429) → piper(broken); no `say` terminal. Error must name both.
+    const tts: VoicePlugin = {
+      type: 'tts',
+      provider: 'openai',
+      endpoint: 'https://api.openai.com/v1/audio/speech',
+      auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
+      fallback: { type: 'tts', provider: 'piper', localBin: 'piper' },
+    };
+    const config: VoiceConfig = { ...DEFAULT_VOICE_CONFIG, tts };
+    const fetchImpl = vi.fn(
+      async () => new Response('rate limit', { status: 429 }),
+    ) as unknown as typeof fetch;
+    const runPiper = vi.fn(() => {
+      throw new Error('no piper');
+    });
+
+    const result = await speak(
+      { text: 'Read this back to me.', speakMode: 'full' },
+      config,
+      { ...PROBES, hasEnv: () => true },
+      deps({ fetchImpl, getEnv: () => 'key', runPiper }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('openai');
+      expect(result.error).toContain('piper');
+    }
+  });
+
   it('returns audio bytes when a cloud TTS provider is active', async () => {
     const config: VoiceConfig = {
       ...DEFAULT_VOICE_CONFIG,

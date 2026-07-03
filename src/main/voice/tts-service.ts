@@ -2,7 +2,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import type { VoiceConfig, VoicePlugin } from '../../shared/voice-config';
 import type { SpeakRequest, SpeakResult } from '../../shared/voice-ipc';
 import { toSpeakable } from './speakable';
-import { selectPlugin, classifyKind, type ProviderProbes } from './provider-select';
+import { classifyKind, flattenChain, type ProviderProbes } from './provider-select';
 
 /**
  * Text-to-speech — the Jarvis "talk back" step. Condenses the agent's output to
@@ -11,8 +11,13 @@ import { selectPlugin, classifyKind, type ProviderProbes } from './provider-sele
  *   → Piper (local, returns wav bytes)
  *   → macOS `say` (system, plays directly on the main process — always available).
  *
- * `say` needs no key and no install, so the pipeline can always speak. Network /
- * subprocess boundaries are injected via `deps` for testability.
+ * Fallback is error-driven, mirroring the STT chain: we don't just pick the first
+ * available link, we walk the whole chain and move to the NEXT provider whenever
+ * one fails at runtime — a throttled/quota'd/failing cloud provider (429, 401/402/
+ * 403, 5xx, network error) or a broken local binary. That preserves the core
+ * guarantee: because the chain ends in keyless `say`, the pipeline can always
+ * speak even when the cloud provider is strangled. Network / subprocess
+ * boundaries are injected via `deps` for testability.
  */
 
 const SAY_BIN = '/usr/bin/say';
@@ -130,22 +135,49 @@ async function speakLocalOrSystem(
   }
 }
 
-/** Speak a request against the configured TTS chain. */
+/** Attempt a single provider, dispatching to the cloud or local/system path. */
+function speakVia(
+  plugin: VoicePlugin,
+  text: string,
+  deps: TtsDeps,
+): Promise<SpeakResult> {
+  return classifyKind(plugin) === 'cloud'
+    ? speakCloud(plugin, text, deps)
+    : speakLocalOrSystem(plugin, text, deps);
+}
+
+/**
+ * Speak a request against the configured TTS chain. Walks the whole chain and
+ * falls through to the next provider on any runtime failure, so a throttled or
+ * failing cloud provider (429/401/402/403/5xx/network) still lands on Piper or
+ * macOS `say`. `probes` is unused here — availability is decided by actually
+ * attempting each provider (a missing key / binary fails and falls through),
+ * mirroring the STT chain.
+ */
 export async function speak(
   req: SpeakRequest,
   config: VoiceConfig,
-  probes: ProviderProbes,
+  _probes: ProviderProbes,
   deps: TtsDeps = defaultDeps,
 ): Promise<SpeakResult> {
   const mode = req.speakMode ?? config.speakMode;
   const text = toSpeakable(req.text, mode);
   if (!text) return { ok: true, provider: '-', mode: 'silent' };
 
-  const plugin = selectPlugin(config.tts, probes);
-  if (!plugin) {
-    return { ok: false, error: 'No text-to-speech provider available.' };
+  const chain = flattenChain(config.tts);
+  const failures: string[] = [];
+
+  for (const plugin of chain) {
+    const result = await speakVia(plugin, text, deps);
+    if (result.ok) return result;
+    failures.push(`${plugin.provider}: ${result.error}`);
   }
-  const kind = classifyKind(plugin);
-  if (kind === 'cloud') return speakCloud(plugin, text, deps);
-  return speakLocalOrSystem(plugin, text, deps);
+
+  return {
+    ok: false,
+    error:
+      failures.length > 0
+        ? `No text-to-speech provider succeeded. Tried — ${failures.join(' · ')}.`
+        : 'No text-to-speech provider available.',
+  };
 }
