@@ -1,0 +1,51 @@
+{
+  "kind": "cli-pty",
+  "id": "kimi",
+  "label": "Kimi",
+  "version": "1.0.0",
+  "icon": "🌙",
+  "bin": "kimi",
+  "detect": "kimi --version",
+  "install": {
+    "method": "manual",
+    "command": "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash"
+  },
+  "auth": {
+    "method": "subscription",
+    "credentialStore": "keychain",
+    "envVarFallback": "MOONSHOT_API_KEY",
+    "loginHint": "Run `kimi` and sign in, or set MOONSHOT_API_KEY."
+  },
+  "spawn": {
+    "interactive": ["kimi"],
+    "headless": ["kimi", "-p", "{{PROMPT}}"],
+    "ptyRequired": true,
+    "resumeArgs": ["--resume"],
+    "extraArgs": []
+  },
+  "env": {
+    "static": {},
+    "passthrough": ["MOONSHOT_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"],
+    "ephemeralHome": false
+  },
+  "models": {
+    "flag": "--model",
+    "list": ["kimi-k2", "kimi-k2-turbo", "moonshot-v1-128k"],
+    "default": "kimi-k2"
+  },
+  "promptInjection": {
+    "method": "arg",
+    "trailingNewline": false,
+    "bracketedPaste": false
+  },
+  "stateParsing": {
+    "idle": { "type": "timeout", "ms": 800 },
+    "shellIntegration": false,
+    "exitCodes": { "0": "ok", "1": "error" }
+  },
+  "quirks": {
+    "altScreen": true,
+    "requiresNoAutoUpdate": false,
+    "mcpAutoload": false
+  }
+}

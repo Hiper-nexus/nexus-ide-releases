@@ -1,4 +1,5 @@
 import { app, BrowserWindow } from 'electron';
+import { resolveUserPath } from './path-resolver';
 import { createMainWindow } from './window';
 import { registerPtyIpc } from './pty/pty-ipc';
 import { registerLayoutIpc } from './persistence/layout-ipc';
@@ -49,6 +50,9 @@ if (process.platform === 'win32') {
 }
 
 function bootstrap(): void {
+  // MUST run before the adapter registry probes for installed CLIs: a
+  // Finder/dmg launch has a minimal PATH that hides claude/codex/kimi/grok.
+  resolveUserPath();
   initAdapterRegistry();
   registerPtyIpc();
   registerLayoutIpc();

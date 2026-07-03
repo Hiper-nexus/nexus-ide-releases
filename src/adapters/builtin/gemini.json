@@ -1,0 +1,51 @@
+{
+  "kind": "cli-pty",
+  "id": "gemini",
+  "label": "Gemini",
+  "version": "1.0.0",
+  "icon": "✦",
+  "bin": "gemini",
+  "detect": "gemini --version",
+  "install": {
+    "method": "npm",
+    "command": "npm install -g @google/gemini-cli"
+  },
+  "auth": {
+    "method": "oauth",
+    "credentialStore": "keychain",
+    "envVarFallback": "GEMINI_API_KEY",
+    "loginHint": "Run `gemini` and sign in with Google, or set GEMINI_API_KEY."
+  },
+  "spawn": {
+    "interactive": ["gemini"],
+    "headless": ["gemini", "-p", "{{PROMPT}}"],
+    "ptyRequired": true,
+    "resumeArgs": [],
+    "extraArgs": []
+  },
+  "env": {
+    "static": {},
+    "passthrough": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+    "ephemeralHome": false
+  },
+  "models": {
+    "flag": "--model",
+    "list": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+    "default": "gemini-2.5-pro"
+  },
+  "promptInjection": {
+    "method": "arg",
+    "trailingNewline": false,
+    "bracketedPaste": false
+  },
+  "stateParsing": {
+    "idle": { "type": "timeout", "ms": 800 },
+    "shellIntegration": false,
+    "exitCodes": { "0": "ok", "1": "error" }
+  },
+  "quirks": {
+    "altScreen": true,
+    "requiresNoAutoUpdate": false,
+    "mcpAutoload": false
+  }
+}

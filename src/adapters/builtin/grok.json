@@ -1,0 +1,52 @@
+{
+  "kind": "cli-pty",
+  "id": "grok",
+  "label": "Grok",
+  "version": "1.0.0",
+  "icon": "𝕏",
+  "bin": "grok",
+  "detect": "grok --version",
+  "install": {
+    "method": "npm",
+    "command": "npm install -g @vibe-kit/grok-cli"
+  },
+  "auth": {
+    "method": "api_key",
+    "credentialStore": "keychain",
+    "envVarFallback": "GROK_API_KEY",
+    "loginHint": "Set GROK_API_KEY (xAI) in the provider settings."
+  },
+  "spawn": {
+    "interactive": ["grok", "--always-approve"],
+    "headless": ["grok", "--always-approve", "-p", "{{PROMPT}}"],
+    "ptyRequired": true,
+    "resumeArgs": [],
+    "extraArgs": []
+  },
+  "env": {
+    "static": {},
+    "passthrough": ["GROK_API_KEY", "XAI_API_KEY"],
+    "ephemeralHome": false
+  },
+  "models": {
+    "flag": "--model",
+    "list": ["grok-4", "grok-4-fast", "grok-code-fast-1"],
+    "default": "grok-4-fast"
+  },
+  "promptInjection": {
+    "method": "arg",
+    "trailingNewline": false,
+    "bracketedPaste": false
+  },
+  "stateParsing": {
+    "idle": { "type": "timeout", "ms": 800 },
+    "shellIntegration": false,
+    "exitCodes": { "0": "ok", "1": "error" }
+  },
+  "quirks": {
+    "altScreen": true,
+    "requiresNoAutoUpdate": true,
+    "approvalFlag": "--always-approve",
+    "mcpAutoload": false
+  }
+}
