@@ -41,13 +41,15 @@
   "models": {
     "flag": "--model",
     "list": [
+      "grok-build",
+      "grok-composer-2.5-fast",
       "grok-4.1",
       "grok-4",
       "grok-4-fast",
       "grok-code-fast-1",
       "grok-3"
     ],
-    "default": "grok-4-fast"
+    "default": "grok-build"
   },
   "promptInjection": {
     "method": "arg",
