@@ -11,9 +11,13 @@ import { useAccountStore } from '../../state/account-store';
 
 const UPSTREAMS = [
   { id: 'anthropic', label: 'Anthropic (key nativa)' },
+  { id: 'mimo', label: 'MIMO / Xiaomi' },
   { id: 'glm', label: 'GLM / z.ai' },
-  { id: 'sakana', label: 'Sakana Fugu' },
+  { id: 'moonshot', label: 'Kimi / Moonshot' },
   { id: 'deepseek', label: 'DeepSeek' },
+  { id: 'minimax', label: 'MiniMax' },
+  { id: 'qwen', label: 'Qwen / Alibaba' },
+  { id: 'sakana', label: 'Sakana Fugu' },
   { id: 'openrouter', label: 'OpenRouter' },
 ];
 
