@@ -33,6 +33,9 @@ export const spawnRequestSchema = z.object({
   // Correlates an orchestration-requested spawn (MCP pane_spawn) with its
   // pending skill-gate context. Opaque to the renderer.
   orchRequestId: z.string().min(1).max(128).optional(),
+  // Re-spawn continuing the previous session (failover switches accounts and
+  // re-launches the CLI with its resumeArgs).
+  resume: z.boolean().optional(),
 });
 
 export const writeSchema = z.object({

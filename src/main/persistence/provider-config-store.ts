@@ -33,6 +33,12 @@ import {
   hasSubscriptionAuth,
   resolveAuthStrategy,
 } from '../adapters/subscription-auth';
+import {
+  accountKey,
+  ensureSubscriptionActive,
+  getActiveAccount,
+  listAccounts,
+} from './account-store';
 
 /**
  * Provider configuration hub: per-adapter enable/disable, binary-path
@@ -149,6 +155,36 @@ export function providerSpawnOverrides(adapterId: string): ProviderSpawnOverride
     defaultModel: cfg.defaultModel || null,
     extraArgs: cfg.extraArgs,
   };
+
+  // Multi-account: when accounts exist for this adapter, the ACTIVE account
+  // decides auth + routing (this is how a GLM account — adapter=claude,
+  // upstream=glm, z.ai key — runs through the Claude CLI).
+  if (listAccounts(adapterId).length > 0) {
+    const account = getActiveAccount(adapterId);
+    if (account) {
+      if (account.mode === 'subscription') {
+        // Restore its Claude keychain credential; inject NO key and strip
+        // inherited key vars (subscription-first).
+        ensureSubscriptionActive(account);
+        return {
+          ...base,
+          keyEnv: {},
+          suppressEnv: keyEnvVarsOf(adapterId),
+        };
+      }
+      // api-key account: route to its upstream (GLM/Fugu/…) or inject native.
+      const accKey = accountKey(account);
+      if (account.upstream && account.upstream !== 'anthropic') {
+        return { ...base, keyEnv: buildProviderRoutingEnv(account.upstream, accKey), suppressEnv: [] };
+      }
+      const keyEnv: Record<string, string> = {};
+      if (adapter && accKey) {
+        const envVar = primaryKeyEnvVar(adapter);
+        if (envVar) keyEnv[envVar] = accKey;
+      }
+      return { ...base, keyEnv, suppressEnv: [] };
+    }
+  }
 
   // Upstream routing (ai-launcher port): when a Claude-compatible CLI is
   // pointed at a non-native upstream (GLM, Fugu, …), inject the launcher's

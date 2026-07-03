@@ -80,6 +80,19 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS accounts (
+  id             TEXT PRIMARY KEY,
+  adapter_id     TEXT NOT NULL,
+  label          TEXT NOT NULL,
+  mode           TEXT NOT NULL,
+  upstream       TEXT NOT NULL DEFAULT 'anthropic',
+  email          TEXT,
+  cooldown_until INTEGER,
+  last_error     TEXT,
+  active          INTEGER NOT NULL DEFAULT 0,
+  created_at     INTEGER NOT NULL
+);
 `;
 
 let db: Db | null = null;

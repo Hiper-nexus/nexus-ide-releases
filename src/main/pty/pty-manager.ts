@@ -318,6 +318,11 @@ export function spawnAgentSession(
   // A user-set absolute binary path overrides the adapter's declared command.
   const bin = overrides.binPath || argv[0];
   const args = argv.slice(1);
+  // Failover re-spawn: continue the prior conversation via the adapter's
+  // resume flags (e.g. claude --resume).
+  if (req.resume && adapter.spawn.resumeArgs.length > 0) {
+    args.push(...adapter.spawn.resumeArgs);
+  }
   if (overrides.extraArgs && overrides.extraArgs.length > 0) {
     args.push(...overrides.extraArgs);
   }

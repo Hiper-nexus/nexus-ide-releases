@@ -109,7 +109,7 @@ function buildTerminal(): {
   return { term, fit, search, serialize };
 }
 
-function startSpawn(pane: PaneModel, host: Host): void {
+function startSpawn(pane: PaneModel, host: Host, resume = false): void {
   host.spawnStarted = true;
   void (async () => {
     try {
@@ -125,6 +125,7 @@ function startSpawn(pane: PaneModel, host: Host): void {
         cols: host.term.cols,
         rows: host.term.rows,
         kind: pane.kind,
+        resume,
         adapterId: pane.adapterId,
         model: pane.model,
         orchRequestId: pane.orchRequestId,
@@ -314,6 +315,25 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
 
 export function focusHost(paneId: string): void {
   hosts.get(paneId)?.term.focus();
+}
+
+/**
+ * Failover re-spawn: kill the pane's current CLI session and start a fresh one
+ * with --resume in the SAME xterm, so the conversation continues on the newly
+ * activated account. The old output stays as scrollback.
+ */
+export function respawnWithResume(pane: PaneModel): void {
+  const host = hosts.get(pane.id);
+  if (!host || host.disposed) return;
+  host.cleanups.forEach((fn) => fn());
+  host.cleanups = [];
+  if (host.sessionId) window.nexus.pty.kill(host.sessionId);
+  host.sessionId = null;
+  host.spawnStarted = false;
+  host.term.writeln(
+    '\r\n\x1b[33m[nexus] limite atingido — trocando de conta e retomando…\x1b[0m',
+  );
+  startSpawn(pane, host, true);
 }
 
 /** The live PTY session id backing a pane, or null if not spawned yet. */

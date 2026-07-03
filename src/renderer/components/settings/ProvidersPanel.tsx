@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ProviderSettingsInfo } from '../../../shared/provider-settings-types';
 import { useProviderStore } from '../../state/provider-store';
+import { AccountsManager } from './AccountsManager';
 
 /**
  * Providers/CLIs + Keys hub — the central place to enable/disable each CLI,
@@ -206,6 +207,8 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
       </div>
 
       <KeyField provider={provider} />
+
+      <AccountsManager adapterId={provider.adapterId} />
 
       {provider.loginHint && (
         <p className="prov__hint">{provider.loginHint}</p>

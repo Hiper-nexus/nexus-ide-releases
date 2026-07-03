@@ -70,6 +70,43 @@ function persist(): void {
   }
 }
 
+// ── Generic secret vault (arbitrary keys) ───────────────────────────────────
+// Used for per-account secrets: `acctkey:<id>` (api keys) and
+// `acctcred:<id>` (Claude subscription credential blobs). Same encrypted file.
+
+export function getSecret(key: string): string | null {
+  return ensureCache().get(key) ?? null;
+}
+
+export function hasSecret(key: string): boolean {
+  return ensureCache().has(key);
+}
+
+export function setSecret(key: string, value: string): { ok: boolean; error?: string } {
+  const store = ensureCache();
+  if (value === '') {
+    store.delete(key);
+    persist();
+    return { ok: true };
+  }
+  if (!isSecureStorageAvailable()) {
+    return {
+      ok: false,
+      error:
+        'OS secure storage (Keychain) unavailable — refusing to store in ' +
+        'plaintext. Kept for this session only.',
+    };
+  }
+  store.set(key, value);
+  persist();
+  return { ok: true };
+}
+
+export function deleteSecret(key: string): void {
+  ensureCache().delete(key);
+  persist();
+}
+
 export function hasKey(adapterId: string): boolean {
   return ensureCache().has(adapterId);
 }

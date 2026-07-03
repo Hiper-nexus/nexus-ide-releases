@@ -23,6 +23,9 @@ import { useProviderController } from './state/provider-store';
 import { useMissionWizardStore } from './state/mission-wizard-store';
 import { reconcileHosts } from './terminal/terminal-host';
 import { useFilesStore } from './state/files-store';
+import { useAccountController } from './state/account-store';
+import { useFailoverController } from './orch/failover-controller';
+import { Toasts } from './components/Toasts';
 
 /**
  * App root: hydrates the saved layout on boot and wires global keyboard
@@ -39,6 +42,8 @@ export function App() {
   useSettingsController();
   useWorkspaceController();
   useProviderController();
+  useAccountController();
+  useFailoverController();
 
   // Each workspace owns its pane layout (Overclock parity): entering one
   // loads ITS saved tree; leaving to the launcher detaches. Entering a folder
@@ -104,6 +109,7 @@ export function App() {
         <LaunchScreen />
         <SettingsDrawer />
         <MissionWizard />
+        <Toasts />
       </div>
     );
   }
@@ -126,6 +132,7 @@ export function App() {
       <SettingsDrawer />
       <MissionWizard />
       <CloseWorkspaceDialog />
+      <Toasts />
     </div>
   );
 }

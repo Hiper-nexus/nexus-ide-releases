@@ -9,6 +9,8 @@ import type { WorkspaceState } from '../shared/workspace-types';
 import { PROVIDER_CHANNELS } from '../shared/provider-settings-types';
 import type { ProviderSettingsInfo } from '../shared/provider-settings-types';
 import { FILES_CHANNELS } from '../shared/files-types';
+import { ACCOUNT_CHANNELS } from '../shared/account-types';
+import type { AccountInfo, FailoverEvent } from '../shared/account-types';
 import type {
   NexusApi,
   SpawnRequest,
@@ -144,6 +146,15 @@ ipcRenderer.on(PROVIDER_CHANNELS.changed, (_e, list: ProviderSettingsInfo[]) =>
   providersChangedListeners.forEach((cb) => cb(list)),
 );
 
+const accountsChangedListeners = new Set<(list: AccountInfo[]) => void>();
+const failoverListeners = new Set<(event: FailoverEvent) => void>();
+ipcRenderer.on(ACCOUNT_CHANNELS.changed, (_e, list: AccountInfo[]) =>
+  accountsChangedListeners.forEach((cb) => cb(list)),
+);
+ipcRenderer.on(ACCOUNT_CHANNELS.failover, (_e, event: FailoverEvent) =>
+  failoverListeners.forEach((cb) => cb(event)),
+);
+
 const api: NexusApi = {
   pty: {
     spawn: (req: SpawnRequest): Promise<SpawnResult> =>
@@ -235,6 +246,18 @@ const api: NexusApi = {
     read: (relPath: string) => ipcRenderer.invoke(FILES_CHANNELS.read, { relPath }),
     write: (relPath: string, content: string) =>
       ipcRenderer.invoke(FILES_CHANNELS.write, { relPath, content }),
+  },
+  accounts: {
+    list: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.list),
+    add: (req) => ipcRenderer.invoke(ACCOUNT_CHANNELS.add, req),
+    addActiveClaude: (label: string) =>
+      ipcRenderer.invoke(ACCOUNT_CHANNELS.addActiveClaude, { label }),
+    rename: (id: string, label: string) =>
+      ipcRenderer.invoke(ACCOUNT_CHANNELS.rename, { id, label }),
+    remove: (id: string) => ipcRenderer.invoke(ACCOUNT_CHANNELS.remove, { id }),
+    activate: (id: string) => ipcRenderer.invoke(ACCOUNT_CHANNELS.activate, { id }),
+    onChanged: (cb) => addListener(accountsChangedListeners, cb),
+    onFailover: (cb) => addListener(failoverListeners, cb),
   },
   platform: process.platform,
 };

@@ -36,6 +36,11 @@ import {
   unregisterProviderListener,
 } from './persistence/provider-config-store';
 import { registerFilesIpc } from './persistence/files-ipc';
+import {
+  registerAccountIpc,
+  registerAccountListener,
+  unregisterAccountListener,
+} from './persistence/account-ipc';
 
 // Windows installer housekeeping (no-op elsewhere).
 if (process.platform === 'win32') {
@@ -63,6 +68,7 @@ function bootstrap(): void {
   registerWorkspaceIpc();
   registerProviderIpc();
   registerFilesIpc();
+  registerAccountIpc();
   // Orchestration boots async (MCP server binds a localhost port); the window
   // opens immediately and orchestration attaches when ready.
   void initOrchestration().catch((err) =>
@@ -90,12 +96,14 @@ app.on('browser-window-created', (_event, win) => {
   registerSettingsListener(wc);
   registerWorkspaceListener(wc);
   registerProviderListener(wc);
+  registerAccountListener(wc);
   win.once('closed', () => {
     unregisterAdapterListener(wc);
     unregisterOrchListener(wc);
     unregisterSettingsListener(wc);
     unregisterWorkspaceListener(wc);
     unregisterProviderListener(wc);
+    unregisterAccountListener(wc);
   });
 });
 

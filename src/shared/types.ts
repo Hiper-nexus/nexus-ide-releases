@@ -31,6 +31,7 @@ import type {
   FileTreeResult,
   ReadFileResult,
 } from './files-types';
+import type { AccountInfo, AddAccountRequest, FailoverEvent } from './account-types';
 import type {
   ProviderConfigPatch,
   ProviderSettingsInfo,
@@ -155,6 +156,8 @@ export interface SpawnRequest {
   model?: string;
   /** Correlates an orchestration-requested spawn with its gate context. */
   orchRequestId?: string;
+  /** Re-spawn continuing the previous conversation (adapter resumeArgs). */
+  resume?: boolean;
 }
 
 export type SpawnResult =
@@ -275,6 +278,16 @@ export interface NexusApi {
     list(relPath: string): Promise<FileTreeResult>;
     read(relPath: string): Promise<ReadFileResult>;
     write(relPath: string, content: string): Promise<{ ok: boolean; error?: string }>;
+  };
+  accounts: {
+    list(): Promise<AccountInfo[]>;
+    add(req: AddAccountRequest): Promise<{ ok: boolean; id?: string; error?: string }>;
+    addActiveClaude(label: string): Promise<{ ok: boolean; id?: string; email?: string; error?: string }>;
+    rename(id: string, label: string): Promise<{ ok: boolean }>;
+    remove(id: string): Promise<{ ok: boolean }>;
+    activate(id: string): Promise<{ ok: boolean }>;
+    onChanged(cb: (list: AccountInfo[]) => void): Unsubscribe;
+    onFailover(cb: (event: FailoverEvent) => void): Unsubscribe;
   };
   platform: NodeJS.Platform;
 }
