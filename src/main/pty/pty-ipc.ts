@@ -14,7 +14,7 @@ import {
   resizeSession,
   killSession,
 } from './pty-manager';
-import { getAdapter } from '../adapters/adapter-registry';
+import { getAdapter, isAdapterInstalled } from '../adapters/adapter-registry';
 
 /**
  * Registers the PTY IPC surface. Every handler validates its payload with zod
@@ -39,6 +39,15 @@ export function registerPtyIpc(): void {
       }
       if (adapter.kind !== 'cli-pty') {
         return { ok: false, error: `adapter ${req.adapterId} is not a cli-pty adapter` };
+      }
+      // node-pty does not throw for a missing binary on macOS: it spawns and exits
+      // 1 with no output, so the pane would show a bare "process exited (code 1)".
+      // Gate on install status here to surface the actionable install command.
+      if (!isAdapterInstalled(adapter.id)) {
+        return {
+          ok: false,
+          error: `${adapter.label} not found. Install: ${adapter.install.command}`,
+        };
       }
       try {
         const { sessionId } = spawnAgentSession(event.sender, req, adapter);

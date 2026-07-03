@@ -80,20 +80,54 @@ function baseChildEnv(): NodeJS.ProcessEnv {
 }
 
 /**
+ * Dynamic-linker injection vars. An adapter is loaded from the user plugin dir
+ * (`~/.nexus/plugins/adapters`), which is a TRUST BOUNDARY: a malicious or
+ * compromised plugin must not be able to set `DYLD_INSERT_LIBRARIES` (macOS) or
+ * `LD_PRELOAD`/`LD_LIBRARY_PATH` (Linux) on the child PTY to load arbitrary code
+ * into the agent process. Any adapter-declared env key matching these prefixes is
+ * dropped, regardless of whether it came from `static` or `passthrough`.
+ */
+const DANGEROUS_ENV_PREFIXES = ['DYLD_', 'LD_'];
+
+function isDangerousEnvKey(key: string): boolean {
+  return DANGEROUS_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
+/**
  * Build the env for a cli-agent session. Starts from the base allowlist, then
  * adds adapter-declared passthrough vars and static vars. Auth env vars enter
- * ONLY this specific PTY — not all shells.
+ * ONLY this specific PTY — not all shells. Linker-injection keys from the plugin
+ * are refused as a trust-boundary control (see DANGEROUS_ENV_PREFIXES).
  */
-function agentEnv(adapter: CliPtyAdapter): NodeJS.ProcessEnv {
+export function agentEnv(adapter: CliPtyAdapter): NodeJS.ProcessEnv {
   const env = baseChildEnv();
   for (const key of adapter.env.passthrough) {
+    if (isDangerousEnvKey(key)) {
+      console.warn(`[pty-manager] refusing linker-injection passthrough env "${key}" from adapter "${adapter.id}"`);
+      continue;
+    }
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
   for (const [key, value] of Object.entries(adapter.env.static)) {
+    if (isDangerousEnvKey(key)) {
+      console.warn(`[pty-manager] refusing linker-injection static env "${key}" from adapter "${adapter.id}"`);
+      continue;
+    }
     env[key] = value;
   }
   return env;
+}
+
+/**
+ * Whether it is safe to push an IPC event to this webContents. Guards against a
+ * PTY event (data/exit/state) arriving after the owning window closed or its
+ * renderer crashed. `isDestroyed()` alone is insufficient: a freshly crashed
+ * renderer still reports false, and send() would then log "Render frame was
+ * disposed". Such late events are silently dropped, never crash the main process.
+ */
+function canSend(wc: WebContents): boolean {
+  return !wc.isDestroyed() && !wc.isCrashed();
 }
 
 function emitStateChange(
@@ -101,7 +135,7 @@ function emitStateChange(
   sessionId: string,
   state: PaneSessionState,
 ): void {
-  if (!wc.isDestroyed()) {
+  if (canSend(wc)) {
     wc.send(PTY_CHANNELS.stateChange, { sessionId, state });
   }
 }
@@ -127,7 +161,7 @@ function attachProc(
   session: Session,
 ): void {
   proc.onData((data) => {
-    if (!session.wc.isDestroyed()) {
+    if (canSend(session.wc)) {
       session.wc.send(PTY_CHANNELS.data, { sessionId, data });
     }
     if (session.state !== 'busy') {
@@ -142,7 +176,7 @@ function attachProc(
     const s = sessions.get(sessionId)!;
     if (s.idleTimer) clearTimeout(s.idleTimer);
     sessions.delete(sessionId);
-    if (!session.wc.isDestroyed()) {
+    if (canSend(session.wc)) {
       session.wc.send(PTY_CHANNELS.exit, { sessionId, exitCode, signal });
     }
   });

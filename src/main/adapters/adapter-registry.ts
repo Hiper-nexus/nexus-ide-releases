@@ -70,8 +70,10 @@ export function mergeAdapters(
 
 /** Check whether the CLI binary for an adapter is available on PATH. */
 function isBinInstalled(bin: string): boolean {
+  // `which` doesn't exist on Windows; `where` is the equivalent lookup.
+  const lookup = process.platform === 'win32' ? 'where' : 'which';
   try {
-    execFileSync('which', [bin], { stdio: 'pipe', encoding: 'utf-8' });
+    execFileSync(lookup, [bin], { stdio: 'pipe', encoding: 'utf-8' });
     return true;
   } catch {
     return false;
@@ -109,6 +111,12 @@ let registry = new Map<string, Adapter>();
 let installedCache = new Map<string, boolean>();
 const listeners = new Set<WebContents>();
 let watcher: fs.FSWatcher | null = null;
+let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Atomic saves (write-temp + rename) fire 2-4 fs.watch events per file change,
+// and each reload() shells out `which <bin>` for every adapter — enough to stall
+// the main thread. Collapse the burst into one reload after a short quiet period.
+const WATCH_DEBOUNCE_MS = 100;
 
 function refreshInstalledCache(): void {
   const next = new Map<string, boolean>();
@@ -124,11 +132,33 @@ function reload(): void {
   refreshInstalledCache();
 }
 
-function broadcast(): void {
-  const info = listAdapterInfos();
-  for (const wc of listeners) {
-    if (!wc.isDestroyed()) wc.send(ADAPTER_CHANNELS.changed, info);
+/**
+ * Send a payload to every live listener, pruning any whose webContents has
+ * already been destroyed. Exported so the destroyed-window guard can be tested
+ * without booting Electron. The registry must never hold references to dead
+ * webContents — this is both the send guard and the leak sweep.
+ */
+export function broadcastToListeners(
+  targets: Set<WebContents>,
+  channel: string,
+  payload: unknown,
+): void {
+  for (const wc of [...targets]) {
+    // Destroyed is permanent → prune. Crashed is transient (the renderer may
+    // reload the same webContents) → skip this send but keep the listener.
+    // isDestroyed() alone is insufficient: right after a renderer crash it still
+    // reports false, yet send() would log "Render frame was disposed".
+    if (wc.isDestroyed()) {
+      targets.delete(wc);
+      continue;
+    }
+    if (wc.isCrashed()) continue;
+    wc.send(channel, payload);
   }
+}
+
+function broadcast(): void {
+  broadcastToListeners(listeners, ADAPTER_CHANNELS.changed, listAdapterInfos());
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -139,8 +169,12 @@ export function initAdapterRegistry(): void {
 
   try {
     watcher = fs.watch(USER_ADAPTER_DIR, { persistent: false }, () => {
-      reload();
-      broadcast();
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => {
+        reloadTimer = null;
+        reload();
+        broadcast();
+      }, WATCH_DEBOUNCE_MS);
     });
     watcher.on('error', (err) => {
       console.error('[adapter-registry] watcher error:', err);
@@ -164,6 +198,16 @@ export function getAdapter(id: string): Adapter | null {
   return registry.get(id) ?? null;
 }
 
+/**
+ * Whether an adapter's CLI binary is currently resolvable on PATH. node-pty does
+ * not throw for a missing bin on macOS — it spawns and immediately exits 1 — so
+ * the spawn IPC must gate on this to surface an install hint instead of a bare
+ * "process exited (code 1)".
+ */
+export function isAdapterInstalled(id: string): boolean {
+  return installedCache.get(id) ?? false;
+}
+
 export function listAdapterInfos(): AdapterInfo[] {
   return [...registry.values()].map((a) =>
     toAdapterInfo(a, installedCache.get(a.id) ?? false),
@@ -171,6 +215,10 @@ export function listAdapterInfos(): AdapterInfo[] {
 }
 
 export function closeAdapterRegistry(): void {
+  if (reloadTimer) {
+    clearTimeout(reloadTimer);
+    reloadTimer = null;
+  }
   watcher?.close();
   watcher = null;
   listeners.clear();

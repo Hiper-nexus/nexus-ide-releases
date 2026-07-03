@@ -80,7 +80,10 @@ export function createMainWindow(): BrowserWindow {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event) => event.preventDefault());
 
-  win.webContents.on('destroyed', () => killSessionsFor(win.webContents));
+  // Capture the reference up front: inside the 'destroyed' handler the
+  // `win.webContents` getter can already throw "Object has been destroyed".
+  const wc = win.webContents;
+  wc.once('destroyed', () => killSessionsFor(wc));
 
   if (devServerUrl) {
     win.loadURL(devServerUrl);

@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { WebContents } from 'electron';
 import {
   cliPtyAdapterSchema,
   adapterSchema,
@@ -6,7 +7,7 @@ import {
 } from '../../shared/adapter-types';
 import type { Adapter } from '../../shared/adapter-types';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
-import { mergeAdapters } from './adapter-registry';
+import { mergeAdapters, broadcastToListeners } from './adapter-registry';
 
 // ── Minimal valid cli-pty adapter for reuse across tests ────────────────────
 
@@ -165,6 +166,56 @@ describe('resolvePlaceholders', () => {
 
   it('handles empty args array', () => {
     expect(resolvePlaceholders([], { MODEL: 'x' })).toEqual([]);
+  });
+});
+
+// ── broadcastToListeners (destroyed-window guard) ────────────────────────────
+
+describe('broadcastToListeners', () => {
+  const fakeWc = (destroyed: boolean, crashed = false) =>
+    ({
+      isDestroyed: () => destroyed,
+      isCrashed: () => crashed,
+      send: vi.fn(),
+    }) as unknown as WebContents;
+
+  it('sends to a live listener', () => {
+    const wc = fakeWc(false);
+    const targets = new Set<WebContents>([wc]);
+    broadcastToListeners(targets, 'ch', { a: 1 });
+    expect(wc.send).toHaveBeenCalledWith('ch', { a: 1 });
+  });
+
+  it('does not send to a destroyed listener (no throw)', () => {
+    const wc = fakeWc(true);
+    const targets = new Set<WebContents>([wc]);
+    expect(() => broadcastToListeners(targets, 'ch', {})).not.toThrow();
+    expect(wc.send).not.toHaveBeenCalled();
+  });
+
+  it('skips a crashed listener but keeps it (renderer may reload)', () => {
+    const wc = fakeWc(false, true);
+    const targets = new Set<WebContents>([wc]);
+    expect(() => broadcastToListeners(targets, 'ch', {})).not.toThrow();
+    expect(wc.send).not.toHaveBeenCalled();
+    expect(targets.has(wc)).toBe(true);
+  });
+
+  it('prunes destroyed listeners from the set', () => {
+    const dead = fakeWc(true);
+    const live = fakeWc(false);
+    const targets = new Set<WebContents>([dead, live]);
+    broadcastToListeners(targets, 'ch', {});
+    expect(targets.has(dead)).toBe(false);
+    expect(targets.has(live)).toBe(true);
+  });
+
+  it('delivers to live listeners even when a destroyed one is present', () => {
+    const dead = fakeWc(true);
+    const live = fakeWc(false);
+    const targets = new Set<WebContents>([dead, live]);
+    broadcastToListeners(targets, 'ch', { ok: true });
+    expect(live.send).toHaveBeenCalledWith('ch', { ok: true });
   });
 });
 

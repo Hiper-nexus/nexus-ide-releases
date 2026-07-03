@@ -41,8 +41,13 @@ app.on('activate', () => {
 });
 
 app.on('browser-window-created', (_event, win) => {
-  registerAdapterListener(win.webContents);
-  win.on('closed', () => unregisterAdapterListener(win.webContents));
+  // Capture the webContents reference NOW, while the window is alive. By the time
+  // the 'closed' event fires the native BrowserWindow is already destroyed, and
+  // the `win.webContents` getter throws "Object has been destroyed" — which, as an
+  // uncaught exception inside the event emit, crashes the whole main process.
+  const wc = win.webContents;
+  registerAdapterListener(wc);
+  win.once('closed', () => unregisterAdapterListener(wc));
 });
 
 app.on('window-all-closed', () => {
