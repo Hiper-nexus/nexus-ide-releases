@@ -282,14 +282,24 @@ export function spawnSession(wc: WebContents, req: SpawnRequest): SpawnedSession
   return { sessionId };
 }
 
+/** User overrides from the provider settings hub, applied at spawn time. */
+export interface AgentSpawnOverrides {
+  binPath?: string | null;
+  defaultModel?: string | null;
+  extraArgs?: string[];
+  keyEnv?: Record<string, string>;
+}
+
 /** Spawn a cli-agent PTY from a validated adapter. */
 export function spawnAgentSession(
   wc: WebContents,
   req: SpawnRequest,
   adapter: CliPtyAdapter,
+  overrides: AgentSpawnOverrides = {},
 ): SpawnedSession {
   const cwd = resolveCwd(req.cwd);
-  const model = req.model ?? adapter.models.default;
+  const model =
+    req.model ?? overrides.defaultModel ?? adapter.models.default;
   const argv = resolvePlaceholders(adapter.spawn.interactive, {
     MODEL: model,
     CWD: cwd,
@@ -297,9 +307,18 @@ export function spawnAgentSession(
     PROMPT: '',
   }).filter((a) => a.length > 0);
 
-  const bin = argv[0];
+  // A user-set absolute binary path overrides the adapter's declared command.
+  const bin = overrides.binPath || argv[0];
   const args = argv.slice(1);
+  if (overrides.extraArgs && overrides.extraArgs.length > 0) {
+    args.push(...overrides.extraArgs);
+  }
   const env = agentEnv(adapter);
+  // Inject the keychain-stored API key as the adapter's auth env var. Linker
+  // vars are still refused (isDangerousEnvKey) as a defense-in-depth check.
+  for (const [key, value] of Object.entries(overrides.keyEnv ?? {})) {
+    if (!isDangerousEnvKey(key)) env[key] = value;
+  }
 
   // Orchestration decoration: MCP endpoint env, skill-gate ephemeral HOME and
   // extra argv (e.g. --mcp-config). The hook is trusted main-process code.

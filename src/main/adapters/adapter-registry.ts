@@ -198,6 +198,36 @@ export function getAdapter(id: string): Adapter | null {
   return registry.get(id) ?? null;
 }
 
+/** Every loaded adapter (full config) — used by the provider settings hub. */
+export function listAdapters(): Adapter[] {
+  return [...registry.values()];
+}
+
+/**
+ * The env var an adapter's API key should be injected as. cli-pty prefers its
+ * declared auth fallback, else the first passthrough var; api-provider uses its
+ * declared envVar. Returns null for adapters that don't take a key (oauth-only).
+ */
+export function primaryKeyEnvVar(adapter: Adapter): string | null {
+  if (adapter.kind === 'api-provider') return adapter.auth.envVar;
+  if (adapter.auth.method === 'oauth' || adapter.auth.method === 'subscription') {
+    return null;
+  }
+  return adapter.auth.envVarFallback ?? adapter.env.passthrough[0] ?? null;
+}
+
+/** Whether a bin path (absolute or bare command) resolves on this machine. */
+export function isBinResolvable(bin: string): boolean {
+  if (bin.includes('/')) {
+    try {
+      return fs.statSync(bin).isFile();
+    } catch {
+      return false;
+    }
+  }
+  return isBinInstalled(bin);
+}
+
 /**
  * Whether an adapter's CLI binary is currently resolvable on PATH. node-pty does
  * not throw for a missing bin on macOS — it spawns and immediately exits 1 — so

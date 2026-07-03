@@ -1,0 +1,87 @@
+import { z } from 'zod';
+
+/**
+ * Per-provider (CLI/API adapter) user configuration and secrets surface for
+ * the settings hub. Config (enable/disable, binary path, default model, extra
+ * args) is non-secret and lives in ~/.nexus/providers.json. API keys are
+ * secret and live ONLY in the OS keychain via Electron safeStorage — never in
+ * versioned JSON, never on any IPC snapshot (the UI sees masked state only).
+ */
+
+export const providerConfigPatchSchema = z.object({
+  adapterId: z.string().min(1).max(64),
+  enabled: z.boolean().optional(),
+  binPath: z.string().max(4096).optional(),
+  defaultModel: z.string().max(128).optional(),
+  extraArgs: z.array(z.string().max(512)).max(64).optional(),
+  /** Upstream routing (ai-launcher port): anthropic|glm|sakana|… */
+  upstream: z.string().max(32).optional(),
+});
+export type ProviderConfigPatch = z.infer<typeof providerConfigPatchSchema>;
+
+export interface ProviderConfig {
+  adapterId: string;
+  enabled: boolean;
+  binPath: string;
+  defaultModel: string;
+  extraArgs: string[];
+  /** Which upstream this Claude-compatible CLI routes to (default anthropic). */
+  upstream: string;
+}
+
+export interface UpstreamOption {
+  id: string;
+  label: string;
+  requiresToken: boolean;
+}
+
+/** Secret-free runtime view of a provider for the settings UI. */
+export interface ProviderSettingsInfo {
+  adapterId: string;
+  label: string;
+  icon: string;
+  kind: 'cli-pty' | 'api-provider';
+  enabled: boolean;
+  installed: boolean;
+  binPath: string;
+  detectedBin: string;
+  defaultModel: string;
+  models: string[];
+  extraArgs: string[];
+  /** Env var the key is injected as (e.g. ANTHROPIC_API_KEY). */
+  keyEnvVar: string | null;
+  /** Whether a key is stored in the keychain (value never leaves main). */
+  hasKey: boolean;
+  /** Masked preview like "sk-…4a2f", or null when unset. */
+  keyMasked: string | null;
+  authMethod: string;
+  loginHint?: string;
+  /** True when safeStorage encryption is available on this machine. */
+  secureStorageAvailable: boolean;
+  /** Active upstream routing (ai-launcher port). */
+  upstream: string;
+  /** Whether this adapter is Claude-compatible and can be routed. */
+  routable: boolean;
+  /** Available upstreams to route to. */
+  upstreams: UpstreamOption[];
+}
+
+export const setKeySchema = z.object({
+  adapterId: z.string().min(1).max(64),
+  /** Empty string clears the stored key. */
+  key: z.string().max(4096),
+});
+export type SetKeyRequest = z.infer<typeof setKeySchema>;
+
+export interface TestConnectionResult {
+  ok: boolean;
+  detail: string;
+}
+
+export const PROVIDER_CHANNELS = {
+  list: 'provider:list',
+  setConfig: 'provider:setConfig',
+  setKey: 'provider:setKey',
+  testKey: 'provider:testKey',
+  changed: 'provider:changed',
+} as const;

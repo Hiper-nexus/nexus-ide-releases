@@ -5,10 +5,10 @@ import { useSettingsStore } from '../../state/settings-store';
 import {
   ClockVoiceSection,
   MarketplaceSection,
-  ProvidersSection,
   SquadsSection,
   TerminalSection,
 } from './ModuleSections';
+import { ProvidersPanel } from './ProvidersPanel';
 import {
   AgentsSection,
   HooksSection,
@@ -157,7 +157,7 @@ export function SettingsDrawer() {
         <div className="settings-detail">
           {section === 'terminal' && <TerminalSection />}
           {section === 'clockvoice' && <ClockVoiceSection onNavigate={close} />}
-          {section === 'providers' && <ProvidersSection adapters={adapters} />}
+          {section === 'providers' && <ProvidersPanel />}
           {section === 'squads' && <SquadsSection onNavigate={close} />}
           {section === 'marketplace' && <MarketplaceSection />}
           {section === 'agents' && <AgentsSection />}

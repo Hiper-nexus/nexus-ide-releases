@@ -26,6 +26,13 @@ import type {
   TerminalSettings,
   TerminalSettingsPatch,
 } from './settings-types';
+import type { WorkspaceState } from './workspace-types';
+import type {
+  ProviderConfigPatch,
+  ProviderSettingsInfo,
+  SetKeyRequest,
+  TestConnectionResult,
+} from './provider-settings-types';
 
 export type { AdapterInfo };
 
@@ -225,6 +232,21 @@ export interface NexusApi {
     get(): Promise<TerminalSettings>;
     set(patch: TerminalSettingsPatch): Promise<TerminalSettings>;
     onChanged(cb: (settings: TerminalSettings) => void): Unsubscribe;
+  };
+  workspace: {
+    get(): Promise<WorkspaceState>;
+    pick(): Promise<WorkspaceState>;
+    open(path: string): Promise<WorkspaceState>;
+    close(): Promise<WorkspaceState>;
+    remove(path: string): Promise<WorkspaceState>;
+    onChanged(cb: (state: WorkspaceState) => void): Unsubscribe;
+  };
+  providers: {
+    list(): Promise<ProviderSettingsInfo[]>;
+    setConfig(patch: ProviderConfigPatch): Promise<ProviderSettingsInfo[]>;
+    setKey(req: SetKeyRequest): Promise<{ ok: boolean; error?: string }>;
+    testKey(adapterId: string): Promise<TestConnectionResult>;
+    onChanged(cb: (list: ProviderSettingsInfo[]) => void): Unsubscribe;
   };
   platform: NodeJS.Platform;
 }

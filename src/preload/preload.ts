@@ -4,6 +4,10 @@ import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { ORCH_CHANNELS } from '../shared/orch-channels';
 import { SETTINGS_CHANNELS } from '../shared/settings-types';
 import type { TerminalSettings } from '../shared/settings-types';
+import { WORKSPACE_CHANNELS } from '../shared/workspace-types';
+import type { WorkspaceState } from '../shared/workspace-types';
+import { PROVIDER_CHANNELS } from '../shared/provider-settings-types';
+import type { ProviderSettingsInfo } from '../shared/provider-settings-types';
 import type {
   NexusApi,
   SpawnRequest,
@@ -127,6 +131,18 @@ ipcRenderer.on(SETTINGS_CHANNELS.changed, (_e, settings: TerminalSettings) =>
   settingsChangedListeners.forEach((cb) => cb(settings)),
 );
 
+const workspaceChangedListeners = new Set<(state: WorkspaceState) => void>();
+ipcRenderer.on(WORKSPACE_CHANNELS.changed, (_e, state: WorkspaceState) =>
+  workspaceChangedListeners.forEach((cb) => cb(state)),
+);
+
+const providersChangedListeners = new Set<
+  (list: ProviderSettingsInfo[]) => void
+>();
+ipcRenderer.on(PROVIDER_CHANNELS.changed, (_e, list: ProviderSettingsInfo[]) =>
+  providersChangedListeners.forEach((cb) => cb(list)),
+);
+
 const api: NexusApi = {
   pty: {
     spawn: (req: SpawnRequest): Promise<SpawnResult> =>
@@ -194,6 +210,22 @@ const api: NexusApi = {
     get: () => ipcRenderer.invoke(SETTINGS_CHANNELS.get),
     set: (patch) => ipcRenderer.invoke(SETTINGS_CHANNELS.set, patch),
     onChanged: (cb) => addListener(settingsChangedListeners, cb),
+  },
+  workspace: {
+    get: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.get),
+    pick: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.pick),
+    open: (path) => ipcRenderer.invoke(WORKSPACE_CHANNELS.open, { path }),
+    close: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.close),
+    remove: (path) => ipcRenderer.invoke(WORKSPACE_CHANNELS.remove, { path }),
+    onChanged: (cb) => addListener(workspaceChangedListeners, cb),
+  },
+  providers: {
+    list: () => ipcRenderer.invoke(PROVIDER_CHANNELS.list),
+    setConfig: (patch) => ipcRenderer.invoke(PROVIDER_CHANNELS.setConfig, patch),
+    setKey: (req) => ipcRenderer.invoke(PROVIDER_CHANNELS.setKey, req),
+    testKey: (adapterId) =>
+      ipcRenderer.invoke(PROVIDER_CHANNELS.testKey, { adapterId }),
+    onChanged: (cb) => addListener(providersChangedListeners, cb),
   },
   platform: process.platform,
 };

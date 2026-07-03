@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import type { AdapterInfo } from '../../../shared/types';
 import {
   TERMINAL_THEME_IDS,
   type TerminalThemeId,
@@ -101,42 +100,6 @@ export function ClockVoiceSection({ onNavigate }: { onNavigate: () => void }) {
       >
         Abrir configurações de voz
       </button>
-    </section>
-  );
-}
-
-export function ProvidersSection({ adapters }: { adapters: AdapterInfo[] }) {
-  return (
-    <section>
-      <h3 className="settings-detail__title">Providers</h3>
-      <p className="settings-detail__hint">
-        Adapters de CLI/API detectados ({adapters.length}). Tokens ficam no
-        ambiente/Keychain — nunca no banco.
-      </p>
-      <ul className="settings-list">
-        {adapters.map((a) => (
-          <li key={a.id} className="settings-list__item">
-            <div className="settings-list__head">
-              <span className="settings-list__title">
-                {a.icon} {a.label}
-              </span>
-              <span
-                className={`settings-chip ${a.installed ? 'settings-chip--ok' : 'settings-chip--warn'}`}
-              >
-                {a.installed ? 'instalado' : 'ausente'}
-              </span>
-            </div>
-            <p className="settings-list__detail">
-              {a.models.list.length} modelo(s) · default {a.models.default}
-            </p>
-            {!a.installed && (
-              <p className="settings-list__detail">
-                <code>{a.installCommand}</code>
-              </p>
-            )}
-          </li>
-        ))}
-      </ul>
     </section>
   );
 }

@@ -19,6 +19,7 @@ import {
   defaultCanvasLayout,
   ensureCanvasLayouts,
 } from '../lib/canvas-layout';
+import { getActiveWorkspacePath } from './active-workspace';
 
 const DEFAULT_CANVAS_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 
@@ -108,7 +109,10 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   canvasViewport: DEFAULT_CANVAS_VIEWPORT,
 
   split: (paneId, direction) => {
-    const newPane: PaneModel = createPane('shell');
+    const newPane: PaneModel = createPane(
+      'shell',
+      getActiveWorkspacePath() ?? undefined,
+    );
     const root = splitPane(get().root, paneId, direction, newPane);
     const s = { ...get(), root, focusedPaneId: newPane.id };
     set({ root, focusedPaneId: newPane.id });
@@ -117,7 +121,12 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
 
   spawnOrchPane: (req) => {
     const { focusedPaneId: targetId, root: currentRoot, viewKind, canvasNodeLayouts } = get();
-    const base = createPane('cli-agent', req.cwd, req.adapterId, req.model);
+    const base = createPane(
+      'cli-agent',
+      req.cwd ?? getActiveWorkspacePath() ?? undefined,
+      req.adapterId,
+      req.model,
+    );
     const newPane: PaneModel = {
       ...base,
       title: req.title ?? base.title,
@@ -141,7 +150,12 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
 
   spawnAgent: (adapterId, model) => {
     const { focusedPaneId: targetId, root: currentRoot, viewKind, canvasNodeLayouts } = get();
-    const newPane: PaneModel = createPane('cli-agent', undefined, adapterId, model);
+    const newPane: PaneModel = createPane(
+      'cli-agent',
+      getActiveWorkspacePath() ?? undefined,
+      adapterId,
+      model,
+    );
     const pivotId = targetId ?? firstPaneId(currentRoot);
     const root = pivotId
       ? splitPane(currentRoot, pivotId, 'row', newPane)

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSettingsStore } from '../state/settings-store';
+import { useWorkspaceStore } from '../state/workspace-store';
+import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
 import type { AdapterInfo } from '../../shared/types';
@@ -24,6 +26,9 @@ export function WorkspaceBar() {
   const orchPanelOpen = useOrchStore((s) => s.panelOpen);
   const toggleOrchPanel = useOrchStore((s) => s.togglePanel);
   const toggleSettings = useSettingsStore((s) => s.toggleDrawer);
+  const workspace = useWorkspaceStore((s) => s.current);
+  const closeWorkspace = useWorkspaceStore((s) => s.close);
+  const openWizard = useMissionWizardStore((s) => s.openWizard);
   const activeTodo = useOrchStore((s) => {
     for (const list of s.todoLists) {
       const current = list.items.find((item) => item.status === 'in_progress');
@@ -84,8 +89,18 @@ export function WorkspaceBar() {
     <header className="workspace-bar">
       <div className="workspace-bar__brand">
         <span className="workspace-bar__logo">◈</span>
-        <span className="workspace-bar__name">NexusIDE</span>
-        <span className="workspace-bar__tag">{viewKind === 'canvas' ? 'canvas' : 'terminal grid'}</span>
+        {workspace ? (
+          <button
+            className="workspace-bar__ws"
+            onClick={() => void closeWorkspace()}
+            title={`${workspace.path}\nTrocar workspace`}
+          >
+            <span className="workspace-bar__name">{workspace.name}</span>
+            <span className="workspace-bar__tag">trocar ⌄</span>
+          </button>
+        ) : (
+          <span className="workspace-bar__name">NexusIDE</span>
+        )}
       </div>
       <div className="workspace-bar__actions">
         {activeTodo && (
@@ -93,6 +108,13 @@ export function WorkspaceBar() {
             ▸ {activeTodo}
           </span>
         )}
+        <button
+          className="workspace-bar__btn workspace-bar__btn--agent"
+          onClick={openWizard}
+          title="Nova missão (livre ou squad)"
+        >
+          ＋ Missão
+        </button>
         <span className="workspace-bar__count">
           {paneCount} pane{paneCount === 1 ? '' : 's'}
         </span>
