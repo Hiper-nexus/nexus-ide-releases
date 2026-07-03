@@ -2606,3 +2606,60 @@ body {
   border-color: var(--danger);
   background: rgba(247, 118, 142, 0.1);
 }
+
+/* ---- Cost tracker (badge por pane + resumo no topo) ---- */
+.cost-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: var(--bg-elevated);
+  white-space: nowrap;
+}
+.cost-badge--paused {
+  border-color: #e5534b;
+  color: #e5534b;
+}
+.cost-badge__usd {
+  font-variant-numeric: tabular-nums;
+}
+.cost-badge__bar {
+  width: 34px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+.cost-badge__fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition: width 300ms ease;
+}
+.cost-badge__fill--ok { background: var(--accent); }
+.cost-badge__fill--warn { background: #ff9800; }
+.cost-badge__fill--over { background: #e5534b; }
+.cost-badge__paused {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.cost-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-bar);
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.cost-summary__item--total {
+  color: var(--text);
+  font-weight: 600;
+}

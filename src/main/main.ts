@@ -41,6 +41,11 @@ import {
   registerAccountListener,
   unregisterAccountListener,
 } from './persistence/account-ipc';
+import {
+  registerCostIpc,
+  registerCostListener,
+  unregisterCostListener,
+} from './orch/cost-ipc';
 
 // Windows installer housekeeping (no-op elsewhere).
 if (process.platform === 'win32') {
@@ -69,6 +74,7 @@ function bootstrap(): void {
   registerProviderIpc();
   registerFilesIpc();
   registerAccountIpc();
+  registerCostIpc();
   // Orchestration boots async (MCP server binds a localhost port); the window
   // opens immediately and orchestration attaches when ready.
   void initOrchestration().catch((err) =>
@@ -97,6 +103,7 @@ app.on('browser-window-created', (_event, win) => {
   registerWorkspaceListener(wc);
   registerProviderListener(wc);
   registerAccountListener(wc);
+  registerCostListener(wc);
   win.once('closed', () => {
     unregisterAdapterListener(wc);
     unregisterOrchListener(wc);
@@ -104,6 +111,7 @@ app.on('browser-window-created', (_event, win) => {
     unregisterWorkspaceListener(wc);
     unregisterProviderListener(wc);
     unregisterAccountListener(wc);
+    unregisterCostListener(wc);
   });
 });
 

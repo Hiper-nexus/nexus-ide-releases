@@ -32,6 +32,7 @@ import type {
   ReadFileResult,
 } from './files-types';
 import type { AccountInfo, AddAccountRequest, FailoverEvent } from './account-types';
+import type { CostSnapshot } from './cost-types';
 import type {
   ProviderConfigPatch,
   ProviderSettingsInfo,
@@ -291,6 +292,11 @@ export interface NexusApi {
     activate(id: string): Promise<{ ok: boolean }>;
     onChanged(cb: (list: AccountInfo[]) => void): Unsubscribe;
     onFailover(cb: (event: FailoverEvent) => void): Unsubscribe;
+  };
+  cost: {
+    snapshot(): Promise<CostSnapshot>;
+    setCap(paneId: string, capUsd: number | null): Promise<{ ok: boolean; error?: string }>;
+    onChanged(cb: (snapshot: CostSnapshot) => void): Unsubscribe;
   };
   platform: NodeJS.Platform;
 }

@@ -6,6 +6,7 @@ import { useWorkspaceStore } from '../state/workspace-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useCloseWorkspaceStore } from './CloseWorkspaceDialog';
 import { useFilesStore } from '../state/files-store';
+import { CostSummary } from './CostBadge';
 import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
 import type { AdapterInfo } from '../../shared/types';
@@ -120,6 +121,7 @@ export function WorkspaceBar() {
         )}
       </div>
       <div className="workspace-bar__actions">
+        <CostSummary />
         {activeTodo && (
           <span className="workspace-bar__todo" title="Current orchestration task">
             ▸ {activeTodo}

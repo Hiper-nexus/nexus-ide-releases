@@ -11,6 +11,8 @@ import type { ProviderSettingsInfo } from '../shared/provider-settings-types';
 import { FILES_CHANNELS } from '../shared/files-types';
 import { ACCOUNT_CHANNELS } from '../shared/account-types';
 import type { AccountInfo, FailoverEvent } from '../shared/account-types';
+import { COST_CHANNELS } from '../shared/cost-types';
+import type { CostSnapshot } from '../shared/cost-types';
 import type {
   NexusApi,
   SpawnRequest,
@@ -148,11 +150,15 @@ ipcRenderer.on(PROVIDER_CHANNELS.changed, (_e, list: ProviderSettingsInfo[]) =>
 
 const accountsChangedListeners = new Set<(list: AccountInfo[]) => void>();
 const failoverListeners = new Set<(event: FailoverEvent) => void>();
+const costChangedListeners = new Set<(snapshot: CostSnapshot) => void>();
 ipcRenderer.on(ACCOUNT_CHANNELS.changed, (_e, list: AccountInfo[]) =>
   accountsChangedListeners.forEach((cb) => cb(list)),
 );
 ipcRenderer.on(ACCOUNT_CHANNELS.failover, (_e, event: FailoverEvent) =>
   failoverListeners.forEach((cb) => cb(event)),
+);
+ipcRenderer.on(COST_CHANNELS.changed, (_e, snapshot: CostSnapshot) =>
+  costChangedListeners.forEach((cb) => cb(snapshot)),
 );
 
 const api: NexusApi = {
@@ -269,6 +275,13 @@ const api: NexusApi = {
     activate: (id: string) => ipcRenderer.invoke(ACCOUNT_CHANNELS.activate, { id }),
     onChanged: (cb) => addListener(accountsChangedListeners, cb),
     onFailover: (cb) => addListener(failoverListeners, cb),
+  },
+  cost: {
+    snapshot: () => ipcRenderer.invoke(COST_CHANNELS.snapshot),
+    setCap: (paneId: string, capUsd: number | null) =>
+      ipcRenderer.invoke(COST_CHANNELS.setCap, { paneId, capUsd }),
+    onChanged: (cb: (snapshot: CostSnapshot) => void) =>
+      addListener(costChangedListeners, cb),
   },
   platform: process.platform,
 };

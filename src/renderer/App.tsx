@@ -24,6 +24,7 @@ import { useMissionWizardStore } from './state/mission-wizard-store';
 import { reconcileHosts } from './terminal/terminal-host';
 import { useFilesStore } from './state/files-store';
 import { useAccountController } from './state/account-store';
+import { useCostController } from './state/cost-store';
 import { useFailoverController } from './orch/failover-controller';
 import { Toasts } from './components/Toasts';
 
@@ -43,6 +44,7 @@ export function App() {
   useWorkspaceController();
   useProviderController();
   useAccountController();
+  useCostController();
   useFailoverController();
 
   // Each workspace owns its pane layout (Overclock parity): entering one

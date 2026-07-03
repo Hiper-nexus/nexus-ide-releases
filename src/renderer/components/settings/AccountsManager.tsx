@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { AccountInfo } from '../../../shared/account-types';
 import { useAccountStore } from '../../state/account-store';
 
@@ -28,8 +28,13 @@ function cooldownLabel(a: AccountInfo): string {
 }
 
 export function AccountsManager({ adapterId }: { adapterId: string }) {
-  const accounts = useAccountStore((s) =>
-    s.accounts.filter((a) => a.adapterId === adapterId),
+  // Select the whole array (stable reference) and filter in a memo — a
+  // selector that returns `.filter(...)` makes a NEW array every render, which
+  // sends zustand's useSyncExternalStore into an infinite loop (white screen).
+  const allAccounts = useAccountStore((s) => s.accounts);
+  const accounts = useMemo(
+    () => allAccounts.filter((a) => a.adapterId === adapterId),
+    [allAccounts, adapterId],
   );
   const add = useAccountStore((s) => s.add);
   const addActiveClaude = useAccountStore((s) => s.addActiveClaude);

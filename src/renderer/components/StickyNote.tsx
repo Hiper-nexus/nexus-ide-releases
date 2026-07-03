@@ -139,7 +139,10 @@ export function StickyNote({ note, onChange, onRemove, onMove }: StickyNoteProps
         className="note-text nodrag"
         value={draft}
         placeholder="Escreva algo…"
+        // Maestri 0.30: o autocorretor do macOS estragava o Markdown das notas.
         spellCheck={false}
+        autoCorrect="off"
+        autoCapitalize="off"
         onPointerDown={(e) => e.stopPropagation()}
         onChange={(e) => handleTextChange(e.target.value)}
         onBlur={commitText}

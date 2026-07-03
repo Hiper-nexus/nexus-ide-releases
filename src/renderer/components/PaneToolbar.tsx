@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { CostBadge } from './CostBadge';
 
 interface Props {
   pane: PaneModel;
@@ -90,6 +91,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         <span className="toolbar__badge">{pane.kind}</span>
       )}
       {pane.kind === 'cli-agent' && <StateIndicator paneId={pane.id} />}
+      {pane.kind === 'cli-agent' && <CostBadge paneId={pane.id} />}
       <div className="toolbar__spacer" />
       {!isCanvas && (
         <>
