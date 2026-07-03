@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { z } from 'zod';
 import type { LayoutNode, WorkspaceLayout } from './types';
 
@@ -11,7 +12,17 @@ const DIMENSION = z.number().int().positive().max(2000);
 
 export const spawnRequestSchema = z.object({
   cwd: z.string().min(1).max(4096).optional(),
-  shell: z.string().min(1).max(4096).optional(),
+  // A caller-supplied shell must be an absolute path — never a bare command name
+  // resolved against PATH — so the renderer cannot coax the main process into
+  // launching an arbitrary binary off the search path.
+  shell: z
+    .string()
+    .min(1)
+    .max(4096)
+    .refine((value) => path.isAbsolute(value), {
+      message: 'shell must be an absolute path',
+    })
+    .optional(),
   cols: DIMENSION,
   rows: DIMENSION,
   kind: z.enum(['shell', 'cli-agent']),

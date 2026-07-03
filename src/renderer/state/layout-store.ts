@@ -37,11 +37,30 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null;
 function persist(state: Pick<LayoutState, 'root' | 'focusedPaneId'>): void {
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
+    persistTimer = null;
     void window.nexus.layout.save({
       root: state.root,
       focusedPaneId: state.focusedPaneId,
     });
   }, 300);
+}
+
+/**
+ * Synchronously persist the current layout, bypassing the debounce. Called on
+ * `beforeunload` so a structural change made <300ms before the window closes is
+ * never lost when the debounced timer dies with the renderer.
+ */
+export function flushLayout(): void {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  const { root, focusedPaneId } = useLayoutStore.getState();
+  void window.nexus.layout.save({ root, focusedPaneId });
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', flushLayout);
 }
 
 function firstPaneId(root: LayoutNode): string | null {

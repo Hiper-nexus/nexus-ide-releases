@@ -34,24 +34,29 @@ export function registerPtyIpc(): void {
     }
   });
 
-  ipcMain.on(PTY_CHANNELS.write, (_event, raw) => {
+  ipcMain.on(PTY_CHANNELS.write, (event, raw) => {
     const parsed = writeSchema.safeParse(raw);
     if (parsed.success) {
-      writeSession(parsed.data.sessionId, parsed.data.data);
+      writeSession(event.sender, parsed.data.sessionId, parsed.data.data);
     }
   });
 
-  ipcMain.on(PTY_CHANNELS.resize, (_event, raw) => {
+  ipcMain.on(PTY_CHANNELS.resize, (event, raw) => {
     const parsed = resizeSchema.safeParse(raw);
     if (parsed.success) {
-      resizeSession(parsed.data.sessionId, parsed.data.cols, parsed.data.rows);
+      resizeSession(
+        event.sender,
+        parsed.data.sessionId,
+        parsed.data.cols,
+        parsed.data.rows,
+      );
     }
   });
 
-  ipcMain.on(PTY_CHANNELS.kill, (_event, raw) => {
+  ipcMain.on(PTY_CHANNELS.kill, (event, raw) => {
     const parsed = killSchema.safeParse(raw);
     if (parsed.success) {
-      killSession(parsed.data.sessionId);
+      killSession(event.sender, parsed.data.sessionId);
     }
   });
 }

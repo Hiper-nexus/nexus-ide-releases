@@ -42,41 +42,51 @@ const hosts = new Map<string, Host>();
 function startSpawn(pane: PaneModel, host: Host): void {
   host.spawnStarted = true;
   void (async () => {
-    const res = await window.nexus.pty.spawn({
-      cwd: pane.cwd,
-      cols: host.term.cols,
-      rows: host.term.rows,
-      kind: pane.kind,
-    });
-    if (host.disposed) {
-      if (res.ok) window.nexus.pty.kill(res.sessionId);
-      return;
-    }
-    if (!res.ok) {
-      host.term.writeln(
-        `\r\n\x1b[31m[nexus] failed to start shell: ${res.error}\x1b[0m`,
-      );
-      return;
-    }
-    host.sessionId = res.sessionId;
-    host.cleanups.push(
-      window.nexus.pty.onData(res.sessionId, (data) => host.term.write(data)),
-    );
-    host.cleanups.push(
-      window.nexus.pty.onExit(res.sessionId, ({ exitCode }) =>
+    try {
+      const res = await window.nexus.pty.spawn({
+        cwd: pane.cwd,
+        cols: host.term.cols,
+        rows: host.term.rows,
+        kind: pane.kind,
+      });
+      if (host.disposed) {
+        if (res.ok) window.nexus.pty.kill(res.sessionId);
+        return;
+      }
+      if (!res.ok) {
         host.term.writeln(
-          `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
+          `\r\n\x1b[31m[nexus] failed to start shell: ${res.error}\x1b[0m`,
+        );
+        return;
+      }
+      host.sessionId = res.sessionId;
+      host.cleanups.push(
+        window.nexus.pty.onData(res.sessionId, (data) => host.term.write(data)),
+      );
+      host.cleanups.push(
+        window.nexus.pty.onExit(res.sessionId, ({ exitCode }) =>
+          host.term.writeln(
+            `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
+          ),
         ),
-      ),
-    );
-    const input = host.term.onData((data) => {
-      if (host.sessionId) window.nexus.pty.write(host.sessionId, data);
-    });
-    host.cleanups.push(() => input.dispose());
+      );
+      const input = host.term.onData((data) => {
+        if (host.sessionId) window.nexus.pty.write(host.sessionId, data);
+      });
+      host.cleanups.push(() => input.dispose());
+    } catch (err) {
+      // A rejected IPC invoke (bridge torn down, main crash) would otherwise be
+      // swallowed silently — surface it in the same format as the !res.ok path.
+      if (host.disposed) return;
+      const message = err instanceof Error ? err.message : String(err);
+      host.term.writeln(
+        `\r\n\x1b[31m[nexus] failed to start shell: ${message}\x1b[0m`,
+      );
+    }
   })();
 }
 
-function createHost(pane: PaneModel): Host {
+function createShellHost(pane: PaneModel): Host {
   const element = document.createElement('div');
   element.className = 'term-host';
 
@@ -137,10 +147,28 @@ function createHost(pane: PaneModel): Host {
   return host;
 }
 
+/**
+ * Build the backing host for a pane, dispatched on its session kind. Today every
+ * kind resolves to a shell-backed terminal; phase 2b plugs a dedicated
+ * `cli-agent` host in here without touching the grid/attach plumbing.
+ */
+function createHostForKind(pane: PaneModel): Host {
+  switch (pane.kind) {
+    case 'shell':
+      return createShellHost(pane);
+    case 'cli-agent':
+      // Extension seam for 2b: a cli-agent adapter will build its own host here.
+      // Until then it falls back to a plain shell so the pane still works.
+      return createShellHost(pane);
+    default:
+      return createShellHost(pane);
+  }
+}
+
 export function getOrCreateHost(pane: PaneModel): Host {
   const existing = hosts.get(pane.id);
   if (existing) return existing;
-  const host = createHost(pane);
+  const host = createHostForKind(pane);
   hosts.set(pane.id, host);
   return host;
 }
