@@ -10,6 +10,9 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 
 const config: ForgeConfig = {
   packagerConfig: {
+    // App icon (Matrix-hacker mark): packager appends .icns on macOS. Read at
+    // build time from the project root — not shipped inside the asar.
+    icon: 'assets/icon',
     // Natives cannot execute from inside the asar: unpack .node binaries and
     // node-pty's spawn-helper executable. Using packager's own asar.unpack
     // (instead of the AutoUnpackNativesPlugin) keeps the ElectronAsarIntegrity
@@ -43,7 +46,7 @@ const config: ForgeConfig = {
     // Squirrel.Mac auto-update payload (same layout Overclock ships).
     // Code signing/notarization (osxSign/osxNotarize in packagerConfig)
     // activates when a Developer ID identity is present on the build machine.
-    new MakerDMG({ format: 'ULFO' }, ['darwin']),
+    new MakerDMG({ format: 'ULFO', icon: 'assets/icon.icns' }, ['darwin']),
     new MakerSquirrel({}),
     new MakerZIP({}, ['darwin']),
     new MakerRpm({}),
