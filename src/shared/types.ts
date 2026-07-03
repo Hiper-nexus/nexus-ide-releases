@@ -4,6 +4,14 @@
  */
 
 import type { AdapterInfo } from './adapter-types';
+import type {
+  VoiceRuntimeInfo,
+  TranscribeRequest,
+  TranscribeResult,
+  SpeakRequest,
+  SpeakResult,
+  SetConfigRequest,
+} from './voice-ipc';
 
 export type { AdapterInfo };
 
@@ -126,6 +134,15 @@ export interface NexusApi {
   adapters: {
     list(): Promise<AdapterInfo[]>;
     onChanged(cb: (adapters: AdapterInfo[]) => void): Unsubscribe;
+  };
+  voice: {
+    getInfo(): Promise<VoiceRuntimeInfo>;
+    setConfig(patch: SetConfigRequest): Promise<VoiceRuntimeInfo>;
+    transcribe(req: TranscribeRequest): Promise<TranscribeResult>;
+    speak(req: SpeakRequest): Promise<SpeakResult>;
+    onPttStart(cb: () => void): Unsubscribe;
+    onPttStop(cb: () => void): Unsubscribe;
+    onInfoChanged(cb: (info: VoiceRuntimeInfo) => void): Unsubscribe;
   };
   platform: NodeJS.Platform;
 }

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { PTY_CHANNELS, LAYOUT_CHANNELS, ADAPTER_CHANNELS } from '../shared/channels';
+import { VOICE_CHANNELS } from '../shared/voice-channels';
 import type {
   NexusApi,
   SpawnRequest,
@@ -11,6 +12,7 @@ import type {
   PaneSessionState,
   AdapterInfo,
 } from '../shared/types';
+import type { VoiceRuntimeInfo } from '../shared/voice-ipc';
 
 /**
  * Preload bridge. The renderer NEVER receives raw ipcRenderer — only the typed
@@ -66,6 +68,23 @@ ipcRenderer.on(ADAPTER_CHANNELS.changed, (_event, payload: AdapterInfo[]) => {
   adapterChangedListeners.forEach((cb) => cb(payload));
 });
 
+// Voice event fan-out. Kept as plain listener sets so callbacks stay scoped and
+// unsubscribe cleanly — no raw ipcRenderer ever reaches the renderer.
+const pttStartListeners = new Set<() => void>();
+const pttStopListeners = new Set<() => void>();
+const voiceInfoListeners = new Set<(info: VoiceRuntimeInfo) => void>();
+
+ipcRenderer.on(VOICE_CHANNELS.pttStart, () => pttStartListeners.forEach((cb) => cb()));
+ipcRenderer.on(VOICE_CHANNELS.pttStop, () => pttStopListeners.forEach((cb) => cb()));
+ipcRenderer.on(VOICE_CHANNELS.infoChanged, (_event, info: VoiceRuntimeInfo) =>
+  voiceInfoListeners.forEach((cb) => cb(info)),
+);
+
+function addListener<T>(set: Set<T>, cb: T): () => void {
+  set.add(cb);
+  return () => set.delete(cb);
+}
+
 const api: NexusApi = {
   pty: {
     spawn: (req: SpawnRequest): Promise<SpawnResult> =>
@@ -90,6 +109,15 @@ const api: NexusApi = {
       adapterChangedListeners.add(cb);
       return () => adapterChangedListeners.delete(cb);
     },
+  },
+  voice: {
+    getInfo: () => ipcRenderer.invoke(VOICE_CHANNELS.getInfo),
+    setConfig: (patch) => ipcRenderer.invoke(VOICE_CHANNELS.setConfig, patch),
+    transcribe: (req) => ipcRenderer.invoke(VOICE_CHANNELS.transcribe, req),
+    speak: (req) => ipcRenderer.invoke(VOICE_CHANNELS.speak, req),
+    onPttStart: (cb) => addListener(pttStartListeners, cb),
+    onPttStop: (cb) => addListener(pttStopListeners, cb),
+    onInfoChanged: (cb) => addListener(voiceInfoListeners, cb),
   },
   platform: process.platform,
 };

@@ -261,6 +261,23 @@ export function focusHost(paneId: string): void {
   hosts.get(paneId)?.term.focus();
 }
 
+/** The live PTY session id backing a pane, or null if not spawned yet. */
+export function getPaneSessionId(paneId: string): string | null {
+  return hosts.get(paneId)?.sessionId ?? null;
+}
+
+/**
+ * Write text into a pane's PTY as if the user typed it — the exact same path as
+ * keyboard input. Used by voice routing to inject the transcribed prompt into
+ * the focused pane. Returns false when the pane has no live session.
+ */
+export function writeToPane(paneId: string, data: string): boolean {
+  const sessionId = getPaneSessionId(paneId);
+  if (!sessionId) return false;
+  window.nexus.pty.write(sessionId, data);
+  return true;
+}
+
 function disposeHost(host: Host, paneId: string): void {
   host.disposed = true;
   host.ro.disconnect();

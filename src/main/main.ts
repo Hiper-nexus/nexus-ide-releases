@@ -3,6 +3,7 @@ import { createMainWindow } from './window';
 import { registerPtyIpc } from './pty/pty-ipc';
 import { registerLayoutIpc } from './persistence/layout-ipc';
 import { registerAdapterIpc } from './adapters/adapter-ipc';
+import { registerVoiceIpc, closeVoiceIpc } from './voice/voice-ipc';
 import {
   initAdapterRegistry,
   registerAdapterListener,
@@ -29,6 +30,7 @@ function bootstrap(): void {
   registerPtyIpc();
   registerLayoutIpc();
   registerAdapterIpc();
+  registerVoiceIpc();
   createMainWindow();
 }
 
@@ -59,5 +61,6 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   killAllSessions();
   closeAdapterRegistry();
+  closeVoiceIpc();
   closeDb();
 });

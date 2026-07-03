@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLayoutStore } from '../state/layout-store';
 import { listPanes } from '../lib/split-tree';
+import { VoiceButton } from './VoiceButton';
 import type { AdapterInfo } from '../../shared/types';
 
 /** Brief label identifying the active view mode. */
@@ -94,6 +95,7 @@ export function WorkspaceBar() {
         >
           {viewLabel(viewKind)}
         </button>
+        <VoiceButton />
         <button
           className="workspace-bar__btn workspace-bar__btn--agent"
           onClick={openPicker}

@@ -3,6 +3,9 @@ import { useLayoutStore } from './state/layout-store';
 import { WorkspaceBar } from './components/WorkspaceBar';
 import { PaneGrid } from './components/PaneGrid';
 import { CanvasView } from './components/CanvasView';
+import { VoiceHud } from './components/VoiceHud';
+import { VoiceSettings } from './components/VoiceSettings';
+import { useVoiceController } from './voice/voice-controller';
 
 /**
  * App root: hydrates the saved layout on boot and wires global keyboard
@@ -12,6 +15,8 @@ export function App() {
   const hydrated = useLayoutStore((s) => s.hydrated);
   const hydrate = useLayoutStore((s) => s.hydrate);
   const viewKind = useLayoutStore((s) => s.viewKind);
+
+  useVoiceController();
 
   useEffect(() => {
     let cancelled = false;
@@ -53,6 +58,8 @@ export function App() {
       <main className="app__body">
         {viewKind === 'canvas' ? <CanvasView /> : <PaneGrid />}
       </main>
+      <VoiceHud />
+      <VoiceSettings />
     </div>
   );
 }

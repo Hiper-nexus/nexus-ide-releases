@@ -6,7 +6,16 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   build: {
     rollupOptions: {
-      external: ['@lydell/node-pty', 'better-sqlite3'],
+      // uiohook-napi / onnxruntime-node are OPTIONAL native modules for voice
+      // (PTT keyup + Silero VAD). They may not be installed; marking them external
+      // keeps them out of the Rollup graph so the build never tries to resolve
+      // them — a runtime require() in a try/catch handles their absence.
+      external: [
+        '@lydell/node-pty',
+        'better-sqlite3',
+        'uiohook-napi',
+        'onnxruntime-node',
+      ],
     },
   },
   resolve: {

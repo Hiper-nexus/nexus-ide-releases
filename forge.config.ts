@@ -13,6 +13,14 @@ const config: ForgeConfig = {
     // asar keeps app source packed; native .node files are unpacked by the
     // AutoUnpackNativesPlugin so @lydell/node-pty and better-sqlite3 can load.
     asar: true,
+    // Voice capture: macOS shows this string on the first mic-permission prompt.
+    // The matching hardened-runtime entitlement (com.apple.security.device.microphone)
+    // lives in build/entitlements.mac.plist and is applied when code signing is
+    // configured (osxSign). Present here so an unsigned dev build still prompts.
+    extendInfo: {
+      NSMicrophoneUsageDescription:
+        'NexusIDE uses the microphone for push-to-talk voice commands (Jarvis mode).',
+    },
   },
   rebuildConfig: {},
   makers: [
