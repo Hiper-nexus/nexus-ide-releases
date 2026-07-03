@@ -1938,3 +1938,203 @@ body {
   margin: 8px 0 0;
   line-height: 1.5;
 }
+
+/* ---- Launcher fixed top bar ---- */
+.launch {
+  display: flex;
+  flex-direction: column;
+  place-items: unset;
+  padding: 0;
+}
+
+.launch__topbar {
+  height: var(--bar-height);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px 0 84px; /* traffic lights */
+  background: var(--bg-bar);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+}
+
+.launch__topbar .workspace-bar__btn {
+  -webkit-app-region: no-drag;
+}
+
+.launch__panel {
+  margin: auto;
+}
+
+/* ---- Wizard v2 (Overclock parity) ---- */
+.wizard__logo {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 2px 6px;
+  background: var(--accent-soft);
+}
+
+.wizard__steps {
+  display: flex;
+  align-items: center;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--border);
+  justify-content: flex-start;
+}
+
+.wizard__step-wrap {
+  display: flex;
+  align-items: center;
+}
+
+.wizard__step-line {
+  width: 22px;
+  height: 1px;
+  background: var(--border-strong);
+  margin: 0 6px;
+}
+
+.wizard__step {
+  border: none;
+  padding: 2px 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+}
+
+.wizard__step--active {
+  color: var(--accent);
+  border: none;
+}
+
+.wizard__pasta {
+  display: flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.wizard__input {
+  flex: 1;
+  background: var(--bg);
+  border: none;
+  color: var(--text);
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.wizard__input:focus {
+  outline: none;
+}
+
+.wizard__browse {
+  background: var(--bg);
+  border: none;
+  border-left: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  padding: 0 16px;
+  cursor: pointer;
+}
+
+.wizard__browse:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.wizard__recent-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.wizard__chip-recent {
+  background: var(--accent-soft);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+
+.wizard__chip-recent:hover {
+  border-color: var(--accent);
+}
+
+.wizard__label--originals {
+  color: var(--danger);
+  letter-spacing: 0.16em;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.wizard__label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.wizard__mode--active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.wizard__squad {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.wizard__squad-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.wizard__badge-original {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--danger);
+  border: 1px solid rgba(247, 118, 142, 0.5);
+  background: rgba(247, 118, 142, 0.08);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+.wizard__actions-right {
+  display: flex;
+  gap: 8px;
+}
+
+.wizard__btn--ghost {
+  border-color: transparent;
+  color: var(--text-dim);
+}
+
+.wizard__btn--ghost:hover:not(:disabled) {
+  color: var(--text);
+  background: transparent;
+  border-color: var(--border-strong);
+}
+
+.wizard__error {
+  color: var(--danger);
+  font-size: 11.5px;
+  margin: 0;
+}

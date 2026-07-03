@@ -96,6 +96,15 @@ export function getDb(): Db | null {
     const file = path.join(app.getPath('userData'), 'nexus.db');
     db = new Database(file);
     db.exec(SCHEMA);
+    // Additive migrations: ALTER fails when the column already exists — safe
+    // to ignore (CREATE TABLE IF NOT EXISTS never retrofits new columns).
+    try {
+      db.exec(
+        "ALTER TABLE squads ADD COLUMN native_instructions TEXT NOT NULL DEFAULT ''",
+      );
+    } catch {
+      // Column already present.
+    }
   } catch (err) {
     console.warn('[nexus] SQLite unavailable, falling back to JSON only:', err);
     db = null;

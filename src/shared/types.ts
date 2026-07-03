@@ -236,6 +236,8 @@ export interface NexusApi {
   workspace: {
     get(): Promise<WorkspaceState>;
     pick(): Promise<WorkspaceState>;
+    /** Folder picker that returns the path without opening the workspace. */
+    pickPath(): Promise<string | null>;
     open(path: string): Promise<WorkspaceState>;
     close(): Promise<WorkspaceState>;
     remove(path: string): Promise<WorkspaceState>;

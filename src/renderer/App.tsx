@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useLayoutStore } from './state/layout-store';
 import { WorkspaceBar } from './components/WorkspaceBar';
 import { PaneGrid } from './components/PaneGrid';
@@ -14,6 +14,7 @@ import { useOrchBridge } from './orch/orch-bridge';
 import { useSettingsController } from './state/settings-store';
 import { useWorkspaceController, useWorkspaceStore } from './state/workspace-store';
 import { useProviderController } from './state/provider-store';
+import { useMissionWizardStore } from './state/mission-wizard-store';
 
 /**
  * App root: hydrates the saved layout on boot and wires global keyboard
@@ -31,6 +32,26 @@ export function App() {
   useSettingsController();
   useWorkspaceController();
   useProviderController();
+
+  // Entering a folder asks Livre/Squad (Overclock parity). Only on a change
+  // the user made in this session — a restart restoring the saved workspace
+  // must NOT re-ask, so the first hydrated value is treated as baseline.
+  const lastWorkspacePath = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!workspaceHydrated) return;
+    const path = currentWorkspace?.path ?? null;
+    if (lastWorkspacePath.current === undefined) {
+      lastWorkspacePath.current = path; // baseline from persisted state
+      return;
+    }
+    if (path && path !== lastWorkspacePath.current) {
+      const wizard = useMissionWizardStore.getState();
+      // The "Novo workspace" wizard opens the folder itself mid-flow; don't
+      // stack a second wizard on top of it.
+      if (!wizard.open) wizard.openForMission();
+    }
+    lastWorkspacePath.current = path;
+  }, [workspaceHydrated, currentWorkspace]);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,11 +88,13 @@ export function App() {
   }
 
   // No workspace open → onboarding launcher (first screen, Overclock parity).
+  // The wizard renders here too: "Novo workspace" starts from this screen.
   if (!currentWorkspace) {
     return (
       <div className="app">
         <LaunchScreen />
         <SettingsDrawer />
+        <MissionWizard />
       </div>
     );
   }

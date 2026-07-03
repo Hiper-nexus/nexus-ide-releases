@@ -28,7 +28,7 @@ export function WorkspaceBar() {
   const toggleSettings = useSettingsStore((s) => s.toggleDrawer);
   const workspace = useWorkspaceStore((s) => s.current);
   const closeWorkspace = useWorkspaceStore((s) => s.close);
-  const openWizard = useMissionWizardStore((s) => s.openWizard);
+  const openWizard = useMissionWizardStore((s) => s.openForMission);
   const activeTodo = useOrchStore((s) => {
     for (const list of s.todoLists) {
       const current = list.items.find((item) => item.status === 'in_progress');
@@ -147,7 +147,7 @@ export function WorkspaceBar() {
           onClick={toggleSettings}
           title="Módulos e catálogo (terminal, voz, providers, marketplace…)"
         >
-          ⚙
+          ⚙ Configurações
         </button>
         <VoiceButton />
         <button

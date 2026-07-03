@@ -24,6 +24,7 @@ export const openWorkspaceSchema = z.object({
 export const WORKSPACE_CHANNELS = {
   get: 'workspace:get',
   pick: 'workspace:pick',
+  pickPath: 'workspace:pickPath',
   open: 'workspace:open',
   close: 'workspace:close',
   remove: 'workspace:remove',

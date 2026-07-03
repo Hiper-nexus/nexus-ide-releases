@@ -115,6 +115,17 @@ export function registerWorkspaceIpc(): void {
     return openWorkspace(result.filePaths[0]);
   });
 
+  // Folder picker WITHOUT opening the workspace — the "Novo workspace" wizard
+  // uses it for the PASTA step (the workspace only opens on the final launch).
+  ipcMain.handle(WORKSPACE_CHANNELS.pickPath, async (): Promise<string | null> => {
+    const result = await dialog.showOpenDialog({
+      title: 'Escolher pasta do workspace',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
   ipcMain.handle(WORKSPACE_CHANNELS.open, (_event, raw) => {
     const parsed = openWorkspaceSchema.safeParse(raw);
     if (!parsed.success) return state;

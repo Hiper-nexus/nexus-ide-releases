@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { Db } from '../persistence/db';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { squadSchema, squadsFileSchema } from '../../shared/orch-types';
@@ -16,6 +19,7 @@ interface SquadRow {
   created_at: string;
   builtin: number;
   orchestrator_instructions: string;
+  native_instructions?: string;
   roster_json: string;
 }
 
@@ -23,27 +27,57 @@ const squads = new Map<string, Squad>();
 const hub = new ChangeHub();
 let db: Db | null = null;
 
+/** Candidate squads.json files migrated on first run (Overclock compat). */
+const MIGRATION_CANDIDATES = [
+  path.join(os.homedir(), '.nexus', 'squads.json'),
+  path.join(os.homedir(), '.overclock-app', 'squads.json'),
+];
+
+/**
+ * First-run migration: with an empty store, import the user's existing
+ * Overclock squads.json (originals + custom squads) so the squad picker is
+ * populated on day one. Same spirit as the ClockVoice audio-config migration.
+ */
+function migrateFromDiskIfEmpty(): void {
+  if (squads.size > 0) return;
+  for (const candidate of MIGRATION_CANDIDATES) {
+    try {
+      const json = fs.readFileSync(candidate, 'utf8');
+      const count = importSquadsJson(json);
+      if (count > 0) {
+        console.log(`[orch] migrated ${count} squad(s) from ${candidate}`);
+        return;
+      }
+    } catch {
+      // Missing or invalid — try the next candidate.
+    }
+  }
+}
+
 export function initSquadStore(database: Db | null): void {
   db = database;
   squads.clear();
-  if (!db) return;
-  try {
-    const rows = db.prepare('SELECT * FROM squads').all() as SquadRow[];
-    for (const row of rows) {
-      const candidate = {
-        id: row.id,
-        name: row.name,
-        createdAt: row.created_at,
-        builtin: row.builtin === 1,
-        orchestratorInstructions: row.orchestrator_instructions,
-        agents: parseJsonColumn<SquadAgent[]>(row.roster_json, []),
-      };
-      const parsed = squadSchema.safeParse(candidate);
-      if (parsed.success) squads.set(parsed.data.id, parsed.data);
+  if (db) {
+    try {
+      const rows = db.prepare('SELECT * FROM squads').all() as SquadRow[];
+      for (const row of rows) {
+        const candidate = {
+          id: row.id,
+          name: row.name,
+          createdAt: row.created_at,
+          builtin: row.builtin === 1,
+          orchestratorInstructions: row.orchestrator_instructions,
+          nativeInstructions: row.native_instructions || undefined,
+          agents: parseJsonColumn<SquadAgent[]>(row.roster_json, []),
+        };
+        const parsed = squadSchema.safeParse(candidate);
+        if (parsed.success) squads.set(parsed.data.id, parsed.data);
+      }
+    } catch (err) {
+      console.warn('[orch] failed to hydrate squads:', err);
     }
-  } catch (err) {
-    console.warn('[orch] failed to hydrate squads:', err);
   }
+  migrateFromDiskIfEmpty();
 }
 
 function persist(squad: Squad): void {
@@ -51,14 +85,16 @@ function persist(squad: Squad): void {
   try {
     db.prepare(
       `INSERT OR REPLACE INTO squads
-         (id, name, created_at, builtin, orchestrator_instructions, roster_json)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+         (id, name, created_at, builtin, orchestrator_instructions,
+          native_instructions, roster_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       squad.id,
       squad.name,
       squad.createdAt,
       squad.builtin ? 1 : 0,
       squad.orchestratorInstructions,
+      squad.nativeInstructions ?? '',
       JSON.stringify(squad.agents),
     );
   } catch (err) {

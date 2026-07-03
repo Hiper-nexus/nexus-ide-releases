@@ -1,23 +1,32 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AdapterInfo } from '../../shared/types';
 import type { Squad } from '../../shared/orch-types';
-import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
+import { useWorkspaceStore } from '../state/workspace-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
+import { launchLibrePanes, launchSquadMission } from '../orch/mission-launcher';
 
 /**
- * Mission wizard — mirrors the Overclock flow:
- *   mode → LIVRE (libre-count → libre-slots) | SQUAD (squad-select → review).
- * LIVRE spawns N agent panes in the workspace; SQUAD creates a mission and
- * launches the squad's orchestrator (which then delegates via the MCP tools).
+ * "Novo workspace" / "Nova Missão" wizard — true Overclock v0.7.5 parity:
+ *   PASTA (novo workspace) → MODO → Livre: PANES → PROVIDERS
+ *                                 → Squad: SQUAD → REVISAR
+ * Copy, step breadcrumb, mode cards and the squad list (ORIGINALS + YOUR
+ * SQUADS with "orq + N workers") mirror the real app.
  */
 
 type Mode = 'libre' | 'squad';
-type Step = 'mode' | 'libre-count' | 'libre-slots' | 'squad-select' | 'squad-review';
+type Step =
+  | 'new-ws'
+  | 'mode'
+  | 'libre-count'
+  | 'libre-slots'
+  | 'squad-select'
+  | 'squad-review';
 
 const PANE_COUNTS = [1, 2, 3, 4, 6];
 
 const STEP_LABELS: Record<Step, string> = {
+  'new-ws': 'Pasta',
   mode: 'Modo',
   'libre-count': 'Panes',
   'libre-slots': 'Providers',
@@ -27,44 +36,58 @@ const STEP_LABELS: Record<Step, string> = {
 
 function StepsBar({ steps, current }: { steps: Step[]; current: Step }) {
   return (
-    <div className="wizard__steps">
-      {steps.map((s) => (
-        <span
-          key={s}
-          className={`wizard__step ${s === current ? 'wizard__step--active' : ''}`}
-        >
-          {STEP_LABELS[s]}
+    <div className="wizard__steps" aria-label="Etapas">
+      {steps.map((s, i) => (
+        <span key={s} className="wizard__step-wrap">
+          {i > 0 && <span className="wizard__step-line" />}
+          <span
+            className={`wizard__step ${s === current ? 'wizard__step--active' : ''}`}
+          >
+            {STEP_LABELS[s].toUpperCase()}
+          </span>
         </span>
       ))}
     </div>
   );
 }
 
+function workerCount(squad: Squad): string {
+  const workers = squad.agents.filter((a) => a.category !== 'orchestrator').length;
+  const hasOrch = squad.agents.some((a) => a.category === 'orchestrator');
+  return hasOrch ? `orq + ${workers} worker${workers === 1 ? '' : 's'}` : `${workers} agentes`;
+}
+
 export function MissionWizard() {
   const open = useMissionWizardStore((s) => s.open);
+  const variant = useMissionWizardStore((s) => s.variant);
   const close = useMissionWizardStore((s) => s.close);
   const squads = useOrchStore((s) => s.squads);
-  const spawnOrchPane = useLayoutStore((s) => s.spawnOrchPane);
-  const spawnAgent = useLayoutStore((s) => s.spawnAgent);
+  const recents = useWorkspaceStore((s) => s.recents);
+  const openWorkspace = useWorkspaceStore((s) => s.open);
+
+  const hasNewWsStep = variant === 'workspace';
 
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
-  const [mode, setMode] = useState<Mode | null>(null);
   const [step, setStep] = useState<Step>('mode');
-  const [count, setCount] = useState(1);
+  const [mode, setMode] = useState<Mode | null>(null);
+  const [wsPath, setWsPath] = useState('');
+  const [count, setCount] = useState(2);
   const [slots, setSlots] = useState<string[]>([]);
-  const [squadId, setSquadId] = useState<string>('');
+  const [squadId, setSquadId] = useState('');
   const [spawning, setSpawning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     void window.nexus.adapters.list().then(setAdapters);
-    // Reset wizard state each time it opens.
+    setStep(hasNewWsStep ? 'new-ws' : 'mode');
     setMode(null);
-    setStep('mode');
-    setCount(1);
+    setWsPath('');
+    setCount(2);
     setSlots([]);
-    setSquadId(squads[0]?.id ?? '');
-  }, [open, squads]);
+    setSquadId('');
+    setError(null);
+  }, [open, hasNewWsStep]);
 
   const installed = useMemo(
     () => adapters.filter((a) => a.installed),
@@ -72,25 +95,39 @@ export function MissionWizard() {
   );
 
   const steps: Step[] = useMemo(() => {
-    if (mode === 'squad') return ['mode', 'squad-select', 'squad-review'];
-    if (mode === 'libre') return ['mode', 'libre-count', 'libre-slots'];
-    return ['mode'];
-  }, [mode]);
+    const prefix: Step[] = hasNewWsStep ? ['new-ws'] : [];
+    if (mode === 'squad') return [...prefix, 'mode', 'squad-select', 'squad-review'];
+    if (mode === 'libre') return [...prefix, 'mode', 'libre-count', 'libre-slots'];
+    return [...prefix, 'mode'];
+  }, [mode, hasNewWsStep]);
+
+  const originals = squads.filter((s) => s.builtin);
+  const userSquads = squads.filter((s) => !s.builtin);
+  const selectedSquad = squads.find((s) => s.id === squadId) ?? null;
 
   if (!open) return null;
+
+  async function browse() {
+    const picked = await window.nexus.workspace.pickPath();
+    if (picked) setWsPath(picked);
+  }
 
   function chooseMode(next: Mode) {
     setMode(next);
     if (next === 'libre') {
       setStep('libre-count');
-      setSlots(Array.from({ length: count }, () => installed[0]?.id ?? 'shell'));
+      setSlots((prev) => {
+        const filled = [...prev];
+        filled.length = count;
+        for (let i = 0; i < count; i++) {
+          if (!filled[i]) filled[i] = installed[0]?.id ?? 'shell';
+        }
+        return filled;
+      });
     } else {
+      if (!squadId) setSquadId(squads[0]?.id ?? '');
       setStep('squad-select');
     }
-  }
-
-  function setSlot(index: number, adapterId: string) {
-    setSlots((prev) => prev.map((s, i) => (i === index ? adapterId : s)));
   }
 
   function goCount(n: number) {
@@ -105,89 +142,155 @@ export function MissionWizard() {
     });
   }
 
-  async function launchLibre() {
+  async function ensureWorkspaceOpen(): Promise<boolean> {
+    if (!hasNewWsStep) return true;
+    const target = wsPath.trim();
+    if (!target) return false;
+    if (target.startsWith('ssh://')) {
+      setError('Workspaces SSH chegam na próxima versão — use uma pasta local.');
+      return false;
+    }
+    await openWorkspace(target);
+    const opened = useWorkspaceStore.getState().current?.path === target;
+    if (!opened) setError('Pasta inválida ou inacessível.');
+    return opened;
+  }
+
+  async function handleLaunchLibre() {
+    if (spawning) return;
     setSpawning(true);
+    setError(null);
     try {
-      for (const adapterId of slots) {
-        if (adapterId === 'shell') {
-          // Split a plain shell pane in the workspace.
-          const { focusedPaneId, split } = useLayoutStore.getState();
-          if (focusedPaneId) split(focusedPaneId, 'row');
-        } else {
-          const adapter = installed.find((a) => a.id === adapterId);
-          spawnAgent(adapterId, adapter?.models.default ?? '');
-        }
-      }
+      if (!(await ensureWorkspaceOpen())) return;
+      launchLibrePanes(slots, installed);
       close();
     } finally {
       setSpawning(false);
     }
   }
 
-  async function launchSquad(squad: Squad) {
+  async function handleLaunchSquad() {
+    if (spawning || !selectedSquad) return;
     setSpawning(true);
+    setError(null);
     try {
-      const orchestrator =
-        squad.agents.find((a) => a.category === 'orchestrator') ??
-        squad.agents[0];
-      if (!orchestrator) {
-        close();
+      if (!(await ensureWorkspaceOpen())) return;
+      const result = launchSquadMission(selectedSquad, installed);
+      if (!result.ok) {
+        setError(result.error ?? 'Falha ao iniciar o squad.');
         return;
       }
-      // Spawn the orchestrator pane; it will create the mission + delegate via
-      // the embedded MCP tools. Model/instructions come from the squad agent.
-      spawnOrchPane({
-        adapterId: orchestrator.cli,
-        model: orchestrator.model,
-        title: `${squad.name} · ${orchestrator.agentName}`,
-        orchRequestId: `squad-${squad.id}-${Date.now().toString(36)}`,
-      });
       close();
     } finally {
       setSpawning(false);
     }
   }
 
-  const selectedSquad = squads.find((s) => s.id === squadId) ?? null;
-
   return (
-    <div className="wizard" role="dialog" aria-label="Nova missão">
+    <div className="wizard" role="dialog" aria-label={hasNewWsStep ? 'Novo workspace' : 'Nova missão'}>
       <div className="wizard__overlay" onClick={close} />
       <div className="wizard__panel">
         <header className="wizard__header">
-          <span className="wizard__title">Nova Missão</span>
-          <StepsBar steps={steps} current={step} />
+          <span className="wizard__logo">&gt;_</span>
+          <span className="wizard__title">
+            {hasNewWsStep ? 'Novo workspace' : 'Nova Missão'}
+          </span>
           <button className="wizard__close" onClick={close} aria-label="Fechar">
             ✕
           </button>
         </header>
+        <StepsBar steps={steps} current={step} />
 
         <div className="wizard__body">
+          {step === 'new-ws' && (
+            <div className="wizard__section">
+              <p className="wizard__label">PASTA / SSH</p>
+              <div className="wizard__pasta">
+                <input
+                  className="wizard__input"
+                  value={wsPath}
+                  placeholder="/Users/…, ssh://host/path ou Procurar"
+                  onChange={(e) => setWsPath(e.target.value)}
+                  onKeyDown={(e) =>
+                    e.key === 'Enter' && wsPath.trim() && setStep('mode')
+                  }
+                  autoFocus
+                />
+                <button className="wizard__browse" onClick={() => void browse()}>
+                  PROCURAR
+                </button>
+              </div>
+              {recents.length > 0 && (
+                <div className="wizard__recent-chips">
+                  {recents.slice(0, 5).map((ws) => (
+                    <button
+                      key={ws.path}
+                      className="wizard__chip-recent"
+                      onClick={() => setWsPath(ws.path)}
+                      title={ws.path}
+                    >
+                      {ws.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="wizard__actions">
+                <span />
+                <div className="wizard__actions-right">
+                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                    Cancelar
+                  </button>
+                  <button
+                    className="wizard__btn wizard__btn--primary"
+                    onClick={() => setStep('mode')}
+                    disabled={!wsPath.trim()}
+                  >
+                    Próximo ›
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {step === 'mode' && (
-            <div className="wizard__modes">
-              <button
-                className="wizard__mode"
-                onClick={() => chooseMode('libre')}
-              >
-                <span className="wizard__mode-icon">⚡</span>
-                <span className="wizard__mode-title">Livre</span>
-                <span className="wizard__mode-desc">
-                  Agentes solo — abra N panes livres neste workspace, sem
-                  orquestração.
-                </span>
-              </button>
-              <button
-                className="wizard__mode"
-                onClick={() => chooseMode('squad')}
-                disabled={squads.length === 0}
-              >
-                <span className="wizard__mode-icon">👥</span>
-                <span className="wizard__mode-title">Iniciar Squad</span>
-                <span className="wizard__mode-desc">
-                  Time orquestrado — um orquestrador delega para workers via MCP.
-                  {squads.length === 0 && ' (salve um squad primeiro)'}
-                </span>
-              </button>
+            <div className="wizard__section">
+              <p className="wizard__label">ESCOLHA O MODO</p>
+              <div className="wizard__modes">
+                <button
+                  className={`wizard__mode ${mode === 'libre' ? 'wizard__mode--active' : ''}`}
+                  onClick={() => chooseMode('libre')}
+                >
+                  <span className="wizard__mode-icon">&gt;_</span>
+                  <span className="wizard__mode-title">Modo Livre</span>
+                  <span className="wizard__mode-desc">
+                    Escolha providers e quantidade de panes
+                  </span>
+                </button>
+                <button
+                  className={`wizard__mode ${mode === 'squad' ? 'wizard__mode--active' : ''}`}
+                  onClick={() => chooseMode('squad')}
+                  disabled={squads.length === 0}
+                >
+                  <span className="wizard__mode-icon">👥</span>
+                  <span className="wizard__mode-title">Modo Squad</span>
+                  <span className="wizard__mode-desc">
+                    Use um preset de squad salvo
+                    {squads.length === 0 && ' (nenhum squad salvo)'}
+                  </span>
+                </button>
+              </div>
+              <div className="wizard__actions">
+                {hasNewWsStep ? (
+                  <button className="wizard__btn" onClick={() => setStep('new-ws')}>
+                    ‹ Voltar
+                  </button>
+                ) : (
+                  <span />
+                )}
+                <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                  Cancelar
+                </button>
+              </div>
             </div>
           )}
 
@@ -207,14 +310,19 @@ export function MissionWizard() {
               </div>
               <div className="wizard__actions">
                 <button className="wizard__btn" onClick={() => setStep('mode')}>
-                  ← Voltar
+                  ‹ Voltar
                 </button>
-                <button
-                  className="wizard__btn wizard__btn--primary"
-                  onClick={() => setStep('libre-slots')}
-                >
-                  Próximo →
-                </button>
+                <div className="wizard__actions-right">
+                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                    Cancelar
+                  </button>
+                  <button
+                    className="wizard__btn wizard__btn--primary"
+                    onClick={() => setStep('libre-slots')}
+                  >
+                    Próximo ›
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -229,7 +337,11 @@ export function MissionWizard() {
                     <select
                       className="wizard__select"
                       value={slots[i] ?? 'shell'}
-                      onChange={(e) => setSlot(i, e.target.value)}
+                      onChange={(e) =>
+                        setSlots((prev) =>
+                          prev.map((s, j) => (j === i ? e.target.value : s)),
+                        )
+                      }
                     >
                       <option value="shell">shell</option>
                       {installed.map((a) => (
@@ -241,52 +353,84 @@ export function MissionWizard() {
                   </label>
                 ))}
               </div>
+              {error && <p className="wizard__error">{error}</p>}
               <div className="wizard__actions">
-                <button
-                  className="wizard__btn"
-                  onClick={() => setStep('libre-count')}
-                >
-                  ← Voltar
+                <button className="wizard__btn" onClick={() => setStep('libre-count')}>
+                  ‹ Voltar
                 </button>
-                <button
-                  className="wizard__btn wizard__btn--primary"
-                  onClick={() => void launchLibre()}
-                  disabled={spawning}
-                >
-                  {spawning ? 'Iniciando…' : 'Iniciar Missão'}
-                </button>
+                <div className="wizard__actions-right">
+                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                    Cancelar
+                  </button>
+                  <button
+                    className="wizard__btn wizard__btn--primary"
+                    onClick={() => void handleLaunchLibre()}
+                    disabled={spawning}
+                  >
+                    {spawning ? 'Iniciando…' : 'Iniciar Missão'}
+                  </button>
+                </div>
               </div>
             </div>
           )}
 
           {step === 'squad-select' && (
             <div className="wizard__section">
-              <p className="wizard__label">Escolha um squad</p>
-              <div className="wizard__squads">
-                {squads.map((s) => (
-                  <button
-                    key={s.id}
-                    className={`wizard__squad ${squadId === s.id ? 'wizard__squad--active' : ''}`}
-                    onClick={() => setSquadId(s.id)}
-                  >
-                    <span className="wizard__squad-name">{s.name}</span>
-                    <span className="wizard__squad-desc">
-                      {s.agents.length} agente(s)
-                    </span>
-                  </button>
-                ))}
-              </div>
+              {originals.length > 0 && (
+                <>
+                  <p className="wizard__label wizard__label--originals">
+                    ✦ NEXUS ORIGINALS
+                  </p>
+                  <div className="wizard__squads">
+                    {originals.map((s) => (
+                      <button
+                        key={s.id}
+                        className={`wizard__squad ${squadId === s.id ? 'wizard__squad--active' : ''}`}
+                        onClick={() => setSquadId(s.id)}
+                      >
+                        <span className="wizard__squad-name">
+                          {s.name}{' '}
+                          <span className="wizard__badge-original">ORIGINAL</span>
+                        </span>
+                        <span className="wizard__squad-count">{workerCount(s)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {userSquads.length > 0 && (
+                <>
+                  <p className="wizard__label">YOUR SQUADS</p>
+                  <div className="wizard__squads">
+                    {userSquads.map((s) => (
+                      <button
+                        key={s.id}
+                        className={`wizard__squad ${squadId === s.id ? 'wizard__squad--active' : ''}`}
+                        onClick={() => setSquadId(s.id)}
+                      >
+                        <span className="wizard__squad-name">👥 {s.name}</span>
+                        <span className="wizard__squad-count">{workerCount(s)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
               <div className="wizard__actions">
                 <button className="wizard__btn" onClick={() => setStep('mode')}>
-                  ← Voltar
+                  ‹ Voltar
                 </button>
-                <button
-                  className="wizard__btn wizard__btn--primary"
-                  onClick={() => setStep('squad-review')}
-                  disabled={!squadId}
-                >
-                  Próximo →
-                </button>
+                <div className="wizard__actions-right">
+                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                    Cancelar
+                  </button>
+                  <button
+                    className="wizard__btn wizard__btn--primary"
+                    onClick={() => setStep('squad-review')}
+                    disabled={!squadId}
+                  >
+                    Revisar ›
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -302,24 +446,28 @@ export function MissionWizard() {
                     <span className="wizard__roster-cli">
                       {a.cli}
                       {a.model ? ` · ${a.model}` : ''}
+                      {a.effort ? ` · ${a.effort}` : ''}
                     </span>
                   </li>
                 ))}
               </ul>
+              {error && <p className="wizard__error">{error}</p>}
               <div className="wizard__actions">
-                <button
-                  className="wizard__btn"
-                  onClick={() => setStep('squad-select')}
-                >
-                  ← Voltar
+                <button className="wizard__btn" onClick={() => setStep('squad-select')}>
+                  ‹ Voltar
                 </button>
-                <button
-                  className="wizard__btn wizard__btn--primary"
-                  onClick={() => void launchSquad(selectedSquad)}
-                  disabled={spawning}
-                >
-                  {spawning ? 'Iniciando…' : 'Iniciar Squad'}
-                </button>
+                <div className="wizard__actions-right">
+                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                    Cancelar
+                  </button>
+                  <button
+                    className="wizard__btn wizard__btn--primary"
+                    onClick={() => void handleLaunchSquad()}
+                    disabled={spawning}
+                  >
+                    {spawning ? 'Iniciando…' : 'Iniciar Squad'}
+                  </button>
+                </div>
               </div>
             </div>
           )}

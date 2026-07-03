@@ -214,6 +214,7 @@ const api: NexusApi = {
   workspace: {
     get: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.get),
     pick: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.pick),
+    pickPath: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.pickPath),
     open: (path) => ipcRenderer.invoke(WORKSPACE_CHANNELS.open, { path }),
     close: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.close),
     remove: (path) => ipcRenderer.invoke(WORKSPACE_CHANNELS.remove, { path }),

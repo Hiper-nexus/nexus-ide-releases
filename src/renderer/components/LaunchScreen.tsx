@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useSettingsStore } from '../state/settings-store';
+import { useMissionWizardStore } from '../state/mission-wizard-store';
 
 /**
  * Launch / onboarding screen — the first surface when no workspace is open,
@@ -19,21 +20,12 @@ function timeAgo(ts: number): string {
 
 export function LaunchScreen() {
   const recents = useWorkspaceStore((s) => s.recents);
-  const pick = useWorkspaceStore((s) => s.pick);
   const open = useWorkspaceStore((s) => s.open);
   const remove = useWorkspaceStore((s) => s.remove);
   const openSettings = useSettingsStore((s) => s.toggleDrawer);
+  const openWizard = useMissionWizardStore((s) => s.openForNewWorkspace);
   const [manual, setManual] = useState('');
   const [busy, setBusy] = useState(false);
-
-  async function choose() {
-    setBusy(true);
-    try {
-      await pick();
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function openManual() {
     const path = manual.trim();
@@ -48,6 +40,19 @@ export function LaunchScreen() {
 
   return (
     <div className="launch">
+      <header className="launch__topbar">
+        <div className="workspace-bar__brand">
+          <span className="workspace-bar__logo">◈</span>
+          <span className="workspace-bar__name">NexusIDE</span>
+        </div>
+        <button
+          className="workspace-bar__btn"
+          onClick={openSettings}
+          title="Providers, keys, catálogo e temas"
+        >
+          ⚙ Configurações
+        </button>
+      </header>
       <div className="launch__panel">
         <header className="launch__head">
           <span className="launch__logo">◈</span>
@@ -62,10 +67,10 @@ export function LaunchScreen() {
         <div className="launch__actions">
           <button
             className="launch__primary"
-            onClick={choose}
+            onClick={openWizard}
             disabled={busy}
           >
-            {busy ? 'Abrindo…' : '＋ Novo workspace (escolher pasta)'}
+            ＋ Novo workspace
           </button>
           <div className="launch__manual">
             <input
@@ -121,11 +126,9 @@ export function LaunchScreen() {
         </section>
 
         <footer className="launch__footer">
-          <button className="launch__link" onClick={openSettings}>
-            ⚙ Configurações
-          </button>
           <span className="launch__hint">
-            Providers, keys, catálogo e temas
+            Configure providers, keys, catálogo e temas em ⚙ Configurações (barra
+            superior).
           </span>
         </footer>
       </div>
