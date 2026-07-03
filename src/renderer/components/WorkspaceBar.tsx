@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
+import { useSettingsStore } from '../state/settings-store';
 import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
 import type { AdapterInfo } from '../../shared/types';
@@ -22,6 +23,7 @@ export function WorkspaceBar() {
 
   const orchPanelOpen = useOrchStore((s) => s.panelOpen);
   const toggleOrchPanel = useOrchStore((s) => s.togglePanel);
+  const toggleSettings = useSettingsStore((s) => s.toggleDrawer);
   const activeTodo = useOrchStore((s) => {
     for (const list of s.todoLists) {
       const current = list.items.find((item) => item.status === 'in_progress');
@@ -117,6 +119,13 @@ export function WorkspaceBar() {
           title="Missions, handoffs, todos and squads"
         >
           ⛭ Orch
+        </button>
+        <button
+          className="workspace-bar__btn"
+          onClick={toggleSettings}
+          title="Módulos e catálogo (terminal, voz, providers, marketplace…)"
+        >
+          ⚙
         </button>
         <VoiceButton />
         <button

@@ -1,0 +1,78 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { ipcMain } from 'electron';
+import type { WebContents } from 'electron';
+import {
+  DEFAULT_TERMINAL_SETTINGS,
+  SETTINGS_CHANNELS,
+  terminalSettingsPatchSchema,
+  terminalSettingsSchema,
+  type TerminalSettings,
+} from '../../shared/settings-types';
+
+/**
+ * Terminal settings store: ~/.nexus/settings.json (same user-dir convention
+ * as the voice config). Invalid or missing files fall back to defaults —
+ * settings must never block the terminal from opening.
+ */
+
+const SETTINGS_FILE = path.join(os.homedir(), '.nexus', 'settings.json');
+
+let current: TerminalSettings = DEFAULT_TERMINAL_SETTINGS;
+const listeners = new Set<WebContents>();
+
+function load(): void {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+    const parsed = terminalSettingsSchema.safeParse(raw?.terminal ?? raw);
+    if (parsed.success) current = parsed.data;
+  } catch {
+    // Missing/corrupt file — keep defaults.
+  }
+}
+
+function persist(): void {
+  try {
+    fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
+    fs.writeFileSync(
+      SETTINGS_FILE,
+      JSON.stringify({ terminal: current }, null, 2),
+    );
+  } catch (err) {
+    console.warn('[settings] failed to persist settings:', err);
+  }
+}
+
+function broadcast(): void {
+  for (const wc of listeners) {
+    if (!wc.isDestroyed()) wc.send(SETTINGS_CHANNELS.changed, current);
+  }
+}
+
+export function getTerminalSettings(): TerminalSettings {
+  return current;
+}
+
+export function registerSettingsListener(wc: WebContents): void {
+  listeners.add(wc);
+}
+
+export function unregisterSettingsListener(wc: WebContents): void {
+  listeners.delete(wc);
+}
+
+export function registerSettingsIpc(): void {
+  load();
+
+  ipcMain.handle(SETTINGS_CHANNELS.get, () => current);
+
+  ipcMain.handle(SETTINGS_CHANNELS.set, (_event, raw) => {
+    const parsed = terminalSettingsPatchSchema.safeParse(raw);
+    if (!parsed.success) return current;
+    current = { ...current, ...parsed.data };
+    persist();
+    broadcast();
+    return current;
+  });
+}

@@ -6,7 +6,7 @@ import type {
   TodoItem,
   TodoList,
 } from '../../shared/orch-types';
-import { useOrchStore } from '../state/orch-store';
+import { useOrchStore, type OrchPanelTab } from '../state/orch-store';
 
 /**
  * Orchestration drawer — the mission/handoff/todo/squad debug view that
@@ -15,9 +15,7 @@ import { useOrchStore } from '../state/orch-store';
  * export/import.
  */
 
-type Tab = 'missions' | 'handoffs' | 'todos' | 'squads';
-
-const TABS: Array<{ id: Tab; label: string }> = [
+const TABS: Array<{ id: OrchPanelTab; label: string }> = [
   { id: 'missions', label: 'Missions' },
   { id: 'handoffs', label: 'Handoffs' },
   { id: 'todos', label: 'Todos' },
@@ -134,7 +132,8 @@ export function OrchestrationPanel() {
   const todoLists = useOrchStore((s) => s.todoLists);
   const squads = useOrchStore((s) => s.squads);
   const mcpInfo = useOrchStore((s) => s.mcpInfo);
-  const [tab, setTab] = useState<Tab>('missions');
+  const tab = useOrchStore((s) => s.panelTab);
+  const setTab = useOrchStore((s) => s.setPanelTab);
   const [notice, setNotice] = useState<string | null>(null);
 
   if (!panelOpen) return null;

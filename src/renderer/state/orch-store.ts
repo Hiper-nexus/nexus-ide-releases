@@ -13,6 +13,8 @@ import type {
  * and kept fresh by main-process change events.
  */
 
+export type OrchPanelTab = 'missions' | 'handoffs' | 'todos' | 'squads';
+
 interface OrchState {
   missions: Mission[];
   handoffs: Handoff[];
@@ -20,11 +22,14 @@ interface OrchState {
   squads: Squad[];
   mcpInfo: McpRuntimeInfo | null;
   panelOpen: boolean;
+  panelTab: OrchPanelTab;
   /** paneId → missionId for panes spawned by the orchestration layer. */
   paneMissions: Record<string, string>;
 
   hydrate(): Promise<void>;
   togglePanel(): void;
+  openPanel(tab: OrchPanelTab): void;
+  setPanelTab(tab: OrchPanelTab): void;
   bindPaneMission(paneId: string, missionId: string | undefined): void;
 
   setMissions(missions: Mission[]): void;
@@ -40,6 +45,7 @@ export const useOrchStore = create<OrchState>((set) => ({
   squads: [],
   mcpInfo: null,
   panelOpen: false,
+  panelTab: 'missions',
   paneMissions: {},
 
   hydrate: async () => {
@@ -59,6 +65,8 @@ export const useOrchStore = create<OrchState>((set) => ({
   },
 
   togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
+  openPanel: (tab) => set({ panelOpen: true, panelTab: tab }),
+  setPanelTab: (tab) => set({ panelTab: tab }),
 
   bindPaneMission: (paneId, missionId) =>
     set((s) => {

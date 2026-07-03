@@ -359,3 +359,12 @@ export function getMcpRuntimeInfo(): McpRuntimeInfo {
     toolCount: registry?.tools.length ?? 0,
   };
 }
+
+/** Names + descriptions of the native MCP toolset (settings drawer TOOLS). */
+export function getToolCatalog(): Array<{ name: string; description: string }> {
+  const tools = registry?.tools ?? buildToolset();
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+  }));
+}

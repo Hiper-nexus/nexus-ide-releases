@@ -102,6 +102,83 @@ async function installItem(item: CatalogItem): Promise<{ installedTo: string }> 
   return { installedTo: target };
 }
 
+/** One locally installed catalog component (or user plugin file). */
+export interface InstalledItem {
+  kind: string;
+  name: string;
+  file: string;
+  size: number;
+  modifiedAt: number;
+}
+
+function scanDir(dir: string, kind: string): InstalledItem[] {
+  try {
+    return fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && !entry.name.startsWith('.'))
+      .map((entry) => {
+        const file = path.join(dir, entry.name);
+        const stat = fs.statSync(file);
+        return {
+          kind,
+          name: path.basename(entry.name, path.extname(entry.name)),
+          file,
+          size: stat.size,
+          modifiedAt: stat.mtimeMs,
+        };
+      });
+  } catch {
+    return []; // Directory absent — nothing installed.
+  }
+}
+
+/** Everything installed under ~/.nexus/plugins/catalog/<kind>/. */
+export function listInstalledCatalogItems(): InstalledItem[] {
+  const root = catalogDir();
+  try {
+    return fs
+      .readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .flatMap((entry) => scanDir(path.join(root, entry.name), entry.name));
+  } catch {
+    return [];
+  }
+}
+
+/** User plugin files (declarative adapters + voice configs). */
+export function listPluginFiles(): InstalledItem[] {
+  const pluginsRoot = path.join(os.homedir(), '.nexus', 'plugins');
+  return [
+    ...scanDir(path.join(pluginsRoot, 'adapters'), 'adapter'),
+    ...scanDir(path.join(pluginsRoot, 'voice'), 'voice'),
+    ...scanDir(path.join(pluginsRoot, 'themes'), 'theme'),
+    ...scanDir(path.join(pluginsRoot, 'keybindings'), 'keybinding'),
+  ];
+}
+
+/** Generated skill-gate hook homes (one per gated worker session). */
+export function listHookHomes(): InstalledItem[] {
+  const root = path.join(os.homedir(), '.nexus', 'ephemeral');
+  try {
+    return fs
+      .readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => {
+        const dir = path.join(root, entry.name);
+        const stat = fs.statSync(dir);
+        return {
+          kind: 'hook-home',
+          name: entry.name,
+          file: dir,
+          size: 0,
+          modifiedAt: stat.mtimeMs,
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Search and/or install. With only `query`: returns matches. With `item`
  * (exact name from a previous search): installs it.

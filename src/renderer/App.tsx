@@ -6,8 +6,10 @@ import { CanvasView } from './components/CanvasView';
 import { VoiceHud } from './components/VoiceHud';
 import { VoiceSettings } from './components/VoiceSettings';
 import { OrchestrationPanel } from './components/OrchestrationPanel';
+import { SettingsDrawer } from './components/settings/SettingsDrawer';
 import { useVoiceController } from './voice/voice-controller';
 import { useOrchBridge } from './orch/orch-bridge';
+import { useSettingsController } from './state/settings-store';
 
 /**
  * App root: hydrates the saved layout on boot and wires global keyboard
@@ -20,6 +22,7 @@ export function App() {
 
   useVoiceController();
   useOrchBridge();
+  useSettingsController();
 
   useEffect(() => {
     let cancelled = false;
@@ -64,6 +67,7 @@ export function App() {
       </main>
       <VoiceHud />
       <VoiceSettings />
+      <SettingsDrawer />
     </div>
   );
 }

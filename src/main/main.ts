@@ -19,6 +19,11 @@ import {
 } from './orch/orch-ipc';
 import { killAllSessions } from './pty/pty-manager';
 import { closeDb } from './persistence/db';
+import {
+  registerSettingsIpc,
+  registerSettingsListener,
+  unregisterSettingsListener,
+} from './persistence/settings-store';
 
 // Windows installer housekeeping (no-op elsewhere).
 if (process.platform === 'win32') {
@@ -39,6 +44,7 @@ function bootstrap(): void {
   registerAdapterIpc();
   registerVoiceIpc();
   registerOrchIpc();
+  registerSettingsIpc();
   // Orchestration boots async (MCP server binds a localhost port); the window
   // opens immediately and orchestration attaches when ready.
   void initOrchestration().catch((err) =>
@@ -63,9 +69,11 @@ app.on('browser-window-created', (_event, win) => {
   const wc = win.webContents;
   registerAdapterListener(wc);
   registerOrchListener(wc);
+  registerSettingsListener(wc);
   win.once('closed', () => {
     unregisterAdapterListener(wc);
     unregisterOrchListener(wc);
+    unregisterSettingsListener(wc);
   });
 });
 

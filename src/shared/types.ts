@@ -22,8 +22,34 @@ import type {
   Squad,
   TodoList,
 } from './orch-types';
+import type {
+  TerminalSettings,
+  TerminalSettingsPatch,
+} from './settings-types';
 
 export type { AdapterInfo };
+
+/** One locally installed catalog component / plugin file / hook home. */
+export interface InstalledItemInfo {
+  kind: string;
+  name: string;
+  file: string;
+  size: number;
+  modifiedAt: number;
+}
+
+/** Result envelope of catalog search/install calls. */
+export interface CatalogResult {
+  ok: boolean;
+  results?: Array<Record<string, unknown>>;
+  installedTo?: string;
+  error?: string;
+}
+
+export interface NativeToolInfo {
+  name: string;
+  description: string;
+}
 
 /**
  * The kind of process backing a pane. `shell` uses the user's default shell;
@@ -177,10 +203,28 @@ export interface NexusApi {
     exportSquads(): Promise<{ ok: boolean; path?: string; error?: string }>;
     importSquads(): Promise<{ ok: boolean; count?: number; error?: string }>;
     getMcpInfo(): Promise<McpRuntimeInfo>;
+    searchCatalog(query: {
+      query: string;
+      kind?: 'agent' | 'skill' | 'command';
+      limit?: number;
+    }): Promise<CatalogResult>;
+    installCatalogItem(req: {
+      item: string;
+      kind?: 'agent' | 'skill' | 'command';
+    }): Promise<CatalogResult>;
+    listInstalledCatalog(): Promise<InstalledItemInfo[]>;
+    listNativeTools(): Promise<NativeToolInfo[]>;
+    listPluginFiles(): Promise<InstalledItemInfo[]>;
+    listHookHomes(): Promise<InstalledItemInfo[]>;
     onMissionsChanged(cb: (missions: Mission[]) => void): Unsubscribe;
     onHandoffsChanged(cb: (handoffs: Handoff[]) => void): Unsubscribe;
     onTodosChanged(cb: (lists: TodoList[]) => void): Unsubscribe;
     onSquadsChanged(cb: (squads: Squad[]) => void): Unsubscribe;
+  };
+  settings: {
+    get(): Promise<TerminalSettings>;
+    set(patch: TerminalSettingsPatch): Promise<TerminalSettings>;
+    onChanged(cb: (settings: TerminalSettings) => void): Unsubscribe;
   };
   platform: NodeJS.Platform;
 }

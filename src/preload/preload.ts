@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { PTY_CHANNELS, LAYOUT_CHANNELS, ADAPTER_CHANNELS } from '../shared/channels';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { ORCH_CHANNELS } from '../shared/orch-channels';
+import { SETTINGS_CHANNELS } from '../shared/settings-types';
+import type { TerminalSettings } from '../shared/settings-types';
 import type {
   NexusApi,
   SpawnRequest,
@@ -120,6 +122,11 @@ ipcRenderer.on(ORCH_CHANNELS.squadsChanged, (_e, squads: Squad[]) =>
   squadsChangedListeners.forEach((cb) => cb(squads)),
 );
 
+const settingsChangedListeners = new Set<(settings: TerminalSettings) => void>();
+ipcRenderer.on(SETTINGS_CHANNELS.changed, (_e, settings: TerminalSettings) =>
+  settingsChangedListeners.forEach((cb) => cb(settings)),
+);
+
 const api: NexusApi = {
   pty: {
     spawn: (req: SpawnRequest): Promise<SpawnResult> =>
@@ -169,10 +176,24 @@ const api: NexusApi = {
     exportSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadExport),
     importSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadImport),
     getMcpInfo: () => ipcRenderer.invoke(ORCH_CHANNELS.mcpInfo),
+    searchCatalog: (query) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.catalogSearch, query),
+    installCatalogItem: (req) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.catalogInstall, req),
+    listInstalledCatalog: () =>
+      ipcRenderer.invoke(ORCH_CHANNELS.catalogInstalled),
+    listNativeTools: () => ipcRenderer.invoke(ORCH_CHANNELS.toolsList),
+    listPluginFiles: () => ipcRenderer.invoke(ORCH_CHANNELS.pluginsList),
+    listHookHomes: () => ipcRenderer.invoke(ORCH_CHANNELS.hooksList),
     onMissionsChanged: (cb) => addListener(missionsChangedListeners, cb),
     onHandoffsChanged: (cb) => addListener(handoffsChangedListeners, cb),
     onTodosChanged: (cb) => addListener(todosChangedListeners, cb),
     onSquadsChanged: (cb) => addListener(squadsChangedListeners, cb),
+  },
+  settings: {
+    get: () => ipcRenderer.invoke(SETTINGS_CHANNELS.get),
+    set: (patch) => ipcRenderer.invoke(SETTINGS_CHANNELS.set, patch),
+    onChanged: (cb) => addListener(settingsChangedListeners, cb),
   },
   platform: process.platform,
 };

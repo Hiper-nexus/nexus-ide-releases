@@ -21,7 +21,20 @@ import {
   unregisterOrchRenderer,
 } from './pane-registry';
 import { initIdleDelivery } from './idle-delivery';
-import { getMcpRuntimeInfo, startMcpServer, stopMcpServer } from './mcp-server';
+import {
+  getMcpRuntimeInfo,
+  getToolCatalog,
+  startMcpServer,
+  stopMcpServer,
+} from './mcp-server';
+import {
+  catalogInstall,
+  listHookHomes,
+  listInstalledCatalogItems,
+  listPluginFiles,
+  type CatalogKind,
+} from './catalog';
+import { z } from 'zod';
 
 /**
  * Renderer-facing IPC for the orchestration domain, plus the domain
@@ -134,6 +147,41 @@ export function registerOrchIpc(): void {
       };
     }
   });
+
+  const catalogQuerySchema = z.object({
+    query: z.string().min(1).max(256).optional(),
+    kind: z.enum(['agent', 'skill', 'command']).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+    item: z.string().min(1).max(256).optional(),
+  });
+
+  ipcMain.handle(ORCH_CHANNELS.catalogSearch, async (_event, raw) => {
+    const parsed = catalogQuerySchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: 'invalid catalog query' };
+    return catalogInstall({
+      query: parsed.data.query,
+      kind: parsed.data.kind as CatalogKind | undefined,
+      limit: parsed.data.limit,
+    });
+  });
+
+  ipcMain.handle(ORCH_CHANNELS.catalogInstall, async (_event, raw) => {
+    const parsed = catalogQuerySchema.safeParse(raw);
+    if (!parsed.success || !parsed.data.item) {
+      return { ok: false, error: 'invalid catalog install request' };
+    }
+    return catalogInstall({
+      item: parsed.data.item,
+      kind: parsed.data.kind as CatalogKind | undefined,
+    });
+  });
+
+  ipcMain.handle(ORCH_CHANNELS.catalogInstalled, () =>
+    listInstalledCatalogItems(),
+  );
+  ipcMain.handle(ORCH_CHANNELS.toolsList, () => getToolCatalog());
+  ipcMain.handle(ORCH_CHANNELS.pluginsList, () => listPluginFiles());
+  ipcMain.handle(ORCH_CHANNELS.hooksList, () => listHookHomes());
 
   ipcMain.handle(ORCH_CHANNELS.squadImport, async () => {
     const result = await dialog.showOpenDialog({

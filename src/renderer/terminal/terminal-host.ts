@@ -5,9 +5,11 @@ import { SearchAddon } from '@xterm/addon-search';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import '@xterm/xterm/css/xterm.css';
 import type { PaneModel } from '../../shared/types';
+import type { TerminalSettings } from '../../shared/settings-types';
+import { DEFAULT_TERMINAL_SETTINGS } from '../../shared/settings-types';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
-import { TERMINAL_THEME } from '../styles/terminal-theme';
+import { TERMINAL_THEMES } from '../styles/terminal-theme';
 
 /**
  * Persistent terminal manager.
@@ -37,6 +39,44 @@ interface Host {
 
 const hosts = new Map<string, Host>();
 
+const DEFAULT_FONT_STACK =
+  'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, monospace';
+
+// Live user settings (theme/font/shell) pushed in by the settings controller.
+// New terminals read them at build time; applyTerminalSettings restyles the
+// already-open ones.
+let currentSettings: TerminalSettings = DEFAULT_TERMINAL_SETTINGS;
+
+function fontFamilyOf(settings: TerminalSettings): string {
+  return settings.fontFamily.trim() !== ''
+    ? settings.fontFamily
+    : DEFAULT_FONT_STACK;
+}
+
+function themeOf(settings: TerminalSettings) {
+  return (TERMINAL_THEMES[settings.themeId] ?? TERMINAL_THEMES['nexus-dark'])
+    .theme;
+}
+
+/** Apply user settings: restyle every live terminal, remember for new ones. */
+export function applyTerminalSettings(settings: TerminalSettings): void {
+  currentSettings = settings;
+  for (const host of hosts.values()) {
+    if (host.disposed) continue;
+    host.term.options.theme = themeOf(settings);
+    host.term.options.fontFamily = fontFamilyOf(settings);
+    host.term.options.fontSize = settings.fontSize;
+    try {
+      host.fit.fit();
+      if (host.sessionId) {
+        window.nexus.pty.resize(host.sessionId, host.term.cols, host.term.rows);
+      }
+    } catch {
+      // Not measurable yet — the ResizeObserver will settle it.
+    }
+  }
+}
+
 function buildTerminal(): {
   term: Terminal;
   fit: FitAddon;
@@ -44,13 +84,12 @@ function buildTerminal(): {
   serialize: SerializeAddon;
 } {
   const term = new Terminal({
-    fontFamily:
-      'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, monospace',
-    fontSize: 13,
+    fontFamily: fontFamilyOf(currentSettings),
+    fontSize: currentSettings.fontSize,
     lineHeight: 1.2,
     cursorBlink: true,
     allowProposedApi: true,
-    theme: TERMINAL_THEME,
+    theme: themeOf(currentSettings),
     scrollback: 10_000,
   });
   const fit = new FitAddon();
@@ -68,6 +107,10 @@ function startSpawn(pane: PaneModel, host: Host): void {
     try {
       const res = await window.nexus.pty.spawn({
         cwd: pane.cwd,
+        shell:
+          pane.kind === 'shell' && currentSettings.shell !== ''
+            ? currentSettings.shell
+            : undefined,
         cols: host.term.cols,
         rows: host.term.rows,
         kind: pane.kind,

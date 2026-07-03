@@ -17,6 +17,12 @@ export const ORCH_CHANNELS = {
   squadExport: 'orch:squads.export',
   squadImport: 'orch:squads.import',
   mcpInfo: 'orch:mcp.info',
+  catalogSearch: 'orch:catalog.search',
+  catalogInstall: 'orch:catalog.install',
+  catalogInstalled: 'orch:catalog.installed',
+  toolsList: 'orch:tools.list',
+  pluginsList: 'orch:plugins.list',
+  hooksList: 'orch:hooks.list',
 
   // Main → renderer
   paneSpawnRequest: 'orch:pane.spawnRequest',
