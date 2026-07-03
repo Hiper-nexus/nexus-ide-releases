@@ -32,6 +32,18 @@ interface LayoutState {
 
   split(paneId: string, direction: SplitDirection): void;
   spawnAgent(adapterId: string, model: string): void;
+  /**
+   * Orchestration-requested agent pane (MCP pane_spawn). Returns the new
+   * paneId; the orchRequestId rides along into the PTY spawn so the main
+   * process can bind the pane to its skill-gate context.
+   */
+  spawnOrchPane(req: {
+    adapterId: string;
+    model?: string;
+    cwd?: string;
+    title?: string;
+    orchRequestId: string;
+  }): string;
   close(paneId: string): void;
   focus(paneId: string): void;
   setTitle(paneId: string, title: string): void;
@@ -101,6 +113,30 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const s = { ...get(), root, focusedPaneId: newPane.id };
     set({ root, focusedPaneId: newPane.id });
     persist(s);
+  },
+
+  spawnOrchPane: (req) => {
+    const { focusedPaneId: targetId, root: currentRoot, viewKind, canvasNodeLayouts } = get();
+    const base = createPane('cli-agent', req.cwd, req.adapterId, req.model);
+    const newPane: PaneModel = {
+      ...base,
+      title: req.title ?? base.title,
+      orchRequestId: req.orchRequestId,
+    };
+    const pivotId = targetId ?? firstPaneId(currentRoot);
+    const root = pivotId
+      ? splitPane(currentRoot, pivotId, 'row', newPane)
+      : splitPane(initialTree(), firstPaneId(initialTree()) ?? '', 'row', newPane);
+
+    const paneCount = listPanes(root).length;
+    const updatedLayouts =
+      viewKind === 'canvas'
+        ? { ...canvasNodeLayouts, [newPane.id]: defaultCanvasLayout(paneCount - 1) }
+        : canvasNodeLayouts;
+
+    set({ root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
+    persist({ ...get(), root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
+    return newPane.id;
   },
 
   spawnAgent: (adapterId, model) => {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLayoutStore } from '../state/layout-store';
+import { useOrchStore } from '../state/orch-store';
 import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
 import type { AdapterInfo } from '../../shared/types';
@@ -18,6 +19,16 @@ export function WorkspaceBar() {
   const spawnAgent = useLayoutStore((s) => s.spawnAgent);
   const toggleView = useLayoutStore((s) => s.toggleView);
   const paneCount = listPanes(root).length;
+
+  const orchPanelOpen = useOrchStore((s) => s.panelOpen);
+  const toggleOrchPanel = useOrchStore((s) => s.togglePanel);
+  const activeTodo = useOrchStore((s) => {
+    for (const list of s.todoLists) {
+      const current = list.items.find((item) => item.status === 'in_progress');
+      if (current) return current.name;
+    }
+    return null;
+  });
 
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -75,6 +86,11 @@ export function WorkspaceBar() {
         <span className="workspace-bar__tag">{viewKind === 'canvas' ? 'canvas' : 'terminal grid'}</span>
       </div>
       <div className="workspace-bar__actions">
+        {activeTodo && (
+          <span className="workspace-bar__todo" title="Current orchestration task">
+            ▸ {activeTodo}
+          </span>
+        )}
         <span className="workspace-bar__count">
           {paneCount} pane{paneCount === 1 ? '' : 's'}
         </span>
@@ -94,6 +110,13 @@ export function WorkspaceBar() {
           title={viewKind === 'grid' ? 'Switch to canvas (free drag)' : 'Switch to grid (split panes)'}
         >
           {viewLabel(viewKind)}
+        </button>
+        <button
+          className={`workspace-bar__btn ${orchPanelOpen ? 'workspace-bar__btn--view-active' : ''}`}
+          onClick={toggleOrchPanel}
+          title="Missions, handoffs, todos and squads"
+        >
+          ⛭ Orch
         </button>
         <VoiceButton />
         <button

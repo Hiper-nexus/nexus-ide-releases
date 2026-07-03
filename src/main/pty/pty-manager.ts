@@ -23,6 +23,74 @@ interface Session {
 const sessions = new Map<string, Session>();
 let counter = 0;
 
+/**
+ * Orchestration taps. The orchestration layer (embedded MCP server, handoff
+ * parser, idle delivery) observes every session without owning any: data
+ * chunks feed ring buffers + the legacy handoff parser, state changes feed
+ * pane_wait_idle and idle delivery, exits clean the registries up.
+ */
+export type SessionDataTap = (sessionId: string, data: string) => void;
+export type SessionStateTap = (
+  sessionId: string,
+  state: PaneSessionState,
+) => void;
+export type SessionExitTap = (sessionId: string) => void;
+
+const dataTaps = new Set<SessionDataTap>();
+const stateTaps = new Set<SessionStateTap>();
+const exitTaps = new Set<SessionExitTap>();
+
+export function tapSessionData(cb: SessionDataTap): () => void {
+  dataTaps.add(cb);
+  return () => dataTaps.delete(cb);
+}
+
+export function tapSessionState(cb: SessionStateTap): () => void {
+  stateTaps.add(cb);
+  return () => stateTaps.delete(cb);
+}
+
+export function tapSessionExit(cb: SessionExitTap): () => void {
+  exitTaps.add(cb);
+  return () => exitTaps.delete(cb);
+}
+
+function fireTaps<T extends (...args: never[]) => void>(
+  taps: Set<T>,
+  ...args: Parameters<T>
+): void {
+  for (const tap of taps) {
+    try {
+      tap(...args);
+    } catch (err) {
+      console.warn('[pty-manager] orchestration tap threw:', err);
+    }
+  }
+}
+
+/**
+ * Decoration applied to a cli-agent spawn by the orchestration layer: extra
+ * env (MCP endpoint + auth token, ephemeral HOME), extra argv entries
+ * (e.g. --mcp-config), and a callback binding the minted token to the
+ * concrete sessionId once the PTY exists.
+ */
+export interface AgentSpawnDecoration {
+  env: Record<string, string>;
+  extraArgs: string[];
+  onSpawned?: (sessionId: string) => void;
+}
+
+export type AgentSpawnHook = (
+  adapter: CliPtyAdapter,
+  req: SpawnRequest,
+) => AgentSpawnDecoration | null;
+
+let agentSpawnHook: AgentSpawnHook | null = null;
+
+export function setAgentSpawnHook(hook: AgentSpawnHook | null): void {
+  agentSpawnHook = hook;
+}
+
 function resolveShell(requested?: string): string {
   if (requested) return requested;
   if (process.platform === 'win32') {
@@ -138,6 +206,7 @@ function emitStateChange(
   if (canSend(wc)) {
     wc.send(PTY_CHANNELS.stateChange, { sessionId, state });
   }
+  fireTaps(stateTaps, sessionId, state);
 }
 
 function armIdleTimer(sessionId: string, session: Session): void {
@@ -164,6 +233,7 @@ function attachProc(
     if (canSend(session.wc)) {
       session.wc.send(PTY_CHANNELS.data, { sessionId, data });
     }
+    fireTaps(dataTaps, sessionId, data);
     if (session.state !== 'busy') {
       session.state = 'busy';
       emitStateChange(session.wc, sessionId, 'busy');
@@ -179,6 +249,7 @@ function attachProc(
     if (canSend(session.wc)) {
       session.wc.send(PTY_CHANNELS.exit, { sessionId, exitCode, signal });
     }
+    fireTaps(exitTaps, sessionId);
   });
 }
 
@@ -230,6 +301,14 @@ export function spawnAgentSession(
   const args = argv.slice(1);
   const env = agentEnv(adapter);
 
+  // Orchestration decoration: MCP endpoint env, skill-gate ephemeral HOME and
+  // extra argv (e.g. --mcp-config). The hook is trusted main-process code.
+  const decoration = agentSpawnHook ? agentSpawnHook(adapter, req) : null;
+  if (decoration) {
+    Object.assign(env, decoration.env);
+    args.push(...decoration.extraArgs);
+  }
+
   const proc = nodePty.spawn(bin, args, {
     name: 'xterm-256color',
     cols: req.cols,
@@ -254,6 +333,7 @@ export function spawnAgentSession(
   sessions.set(sessionId, session);
   emitStateChange(wc, sessionId, 'spawning');
   attachProc(proc, sessionId, session);
+  decoration?.onSpawned?.(sessionId);
   return { sessionId };
 }
 
@@ -316,4 +396,34 @@ export function killAllSessions(): void {
   for (const [id, session] of [...sessions]) {
     destroySession(id, session);
   }
+}
+
+/**
+ * Trusted main-process write used by the orchestration layer (MCP pane_write,
+ * idle handoff delivery, voice→orchestrator routing). Bypasses WebContents
+ * ownership — the caller is the main process itself, not a renderer.
+ */
+export function orchWriteSession(sessionId: string, data: string): boolean {
+  const session = sessions.get(sessionId);
+  if (!session) return false;
+  if (session.state === 'idle') {
+    session.state = 'busy';
+    emitStateChange(session.wc, sessionId, 'busy');
+  }
+  if (session.idleTimeoutMs > 0) armIdleTimer(sessionId, session);
+  session.proc.write(data);
+  return true;
+}
+
+/** Trusted main-process kill (MCP pane_close on a session-only target). */
+export function orchKillSession(sessionId: string): boolean {
+  const session = sessions.get(sessionId);
+  if (!session) return false;
+  destroySession(sessionId, session);
+  return true;
+}
+
+/** Current lifecycle state of a session, or null if it is gone. */
+export function getSessionState(sessionId: string): PaneSessionState | null {
+  return sessions.get(sessionId)?.state ?? null;
 }

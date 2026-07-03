@@ -73,6 +73,7 @@ function startSpawn(pane: PaneModel, host: Host): void {
         kind: pane.kind,
         adapterId: pane.adapterId,
         model: pane.model,
+        orchRequestId: pane.orchRequestId,
       });
       if (host.disposed) {
         if (res.ok) window.nexus.pty.kill(res.sessionId);

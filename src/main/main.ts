@@ -10,6 +10,13 @@ import {
   unregisterAdapterListener,
   closeAdapterRegistry,
 } from './adapters/adapter-registry';
+import {
+  initOrchestration,
+  registerOrchIpc,
+  registerOrchListener,
+  unregisterOrchListener,
+  closeOrchestration,
+} from './orch/orch-ipc';
 import { killAllSessions } from './pty/pty-manager';
 import { closeDb } from './persistence/db';
 
@@ -31,6 +38,12 @@ function bootstrap(): void {
   registerLayoutIpc();
   registerAdapterIpc();
   registerVoiceIpc();
+  registerOrchIpc();
+  // Orchestration boots async (MCP server binds a localhost port); the window
+  // opens immediately and orchestration attaches when ready.
+  void initOrchestration().catch((err) =>
+    console.warn('[nexus] orchestration failed to start:', err),
+  );
   createMainWindow();
 }
 
@@ -49,7 +62,11 @@ app.on('browser-window-created', (_event, win) => {
   // uncaught exception inside the event emit, crashes the whole main process.
   const wc = win.webContents;
   registerAdapterListener(wc);
-  win.once('closed', () => unregisterAdapterListener(wc));
+  registerOrchListener(wc);
+  win.once('closed', () => {
+    unregisterAdapterListener(wc);
+    unregisterOrchListener(wc);
+  });
 });
 
 app.on('window-all-closed', () => {
@@ -60,6 +77,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   killAllSessions();
+  closeOrchestration();
   closeAdapterRegistry();
   closeVoiceIpc();
   closeDb();

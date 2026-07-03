@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { PTY_CHANNELS, LAYOUT_CHANNELS, ADAPTER_CHANNELS } from '../shared/channels';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
+import { ORCH_CHANNELS } from '../shared/orch-channels';
 import type {
   NexusApi,
   SpawnRequest,
@@ -13,6 +14,13 @@ import type {
   AdapterInfo,
 } from '../shared/types';
 import type { VoiceRuntimeInfo } from '../shared/voice-ipc';
+import type {
+  Handoff,
+  Mission,
+  OrchPaneSpawnRequest,
+  Squad,
+  TodoList,
+} from '../shared/orch-types';
 
 /**
  * Preload bridge. The renderer NEVER receives raw ipcRenderer — only the typed
@@ -85,6 +93,33 @@ function addListener<T>(set: Set<T>, cb: T): () => void {
   return () => set.delete(cb);
 }
 
+// Orchestration event fan-out (same pattern as voice above).
+const paneSpawnRequestListeners = new Set<(req: OrchPaneSpawnRequest) => void>();
+const paneCloseRequestListeners = new Set<(paneId: string) => void>();
+const missionsChangedListeners = new Set<(missions: Mission[]) => void>();
+const handoffsChangedListeners = new Set<(handoffs: Handoff[]) => void>();
+const todosChangedListeners = new Set<(lists: TodoList[]) => void>();
+const squadsChangedListeners = new Set<(squads: Squad[]) => void>();
+
+ipcRenderer.on(ORCH_CHANNELS.paneSpawnRequest, (_e, req: OrchPaneSpawnRequest) =>
+  paneSpawnRequestListeners.forEach((cb) => cb(req)),
+);
+ipcRenderer.on(ORCH_CHANNELS.paneCloseRequest, (_e, paneId: string) =>
+  paneCloseRequestListeners.forEach((cb) => cb(paneId)),
+);
+ipcRenderer.on(ORCH_CHANNELS.missionsChanged, (_e, missions: Mission[]) =>
+  missionsChangedListeners.forEach((cb) => cb(missions)),
+);
+ipcRenderer.on(ORCH_CHANNELS.handoffsChanged, (_e, handoffs: Handoff[]) =>
+  handoffsChangedListeners.forEach((cb) => cb(handoffs)),
+);
+ipcRenderer.on(ORCH_CHANNELS.todosChanged, (_e, lists: TodoList[]) =>
+  todosChangedListeners.forEach((cb) => cb(lists)),
+);
+ipcRenderer.on(ORCH_CHANNELS.squadsChanged, (_e, squads: Squad[]) =>
+  squadsChangedListeners.forEach((cb) => cb(squads)),
+);
+
 const api: NexusApi = {
   pty: {
     spawn: (req: SpawnRequest): Promise<SpawnResult> =>
@@ -118,6 +153,26 @@ const api: NexusApi = {
     onPttStart: (cb) => addListener(pttStartListeners, cb),
     onPttStop: (cb) => addListener(pttStopListeners, cb),
     onInfoChanged: (cb) => addListener(voiceInfoListeners, cb),
+  },
+  orch: {
+    syncPanes: (entries) => ipcRenderer.send(ORCH_CHANNELS.panesSync, entries),
+    sendPaneSpawnResult: (result) =>
+      ipcRenderer.send(ORCH_CHANNELS.paneSpawnResult, result),
+    onPaneSpawnRequest: (cb) => addListener(paneSpawnRequestListeners, cb),
+    onPaneCloseRequest: (cb) => addListener(paneCloseRequestListeners, cb),
+    listMissions: () => ipcRenderer.invoke(ORCH_CHANNELS.missionsList),
+    listHandoffs: () => ipcRenderer.invoke(ORCH_CHANNELS.handoffsList),
+    getTodos: () => ipcRenderer.invoke(ORCH_CHANNELS.todosGet),
+    listSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadsList),
+    saveSquad: (squad) => ipcRenderer.invoke(ORCH_CHANNELS.squadSave, squad),
+    deleteSquad: (id) => ipcRenderer.invoke(ORCH_CHANNELS.squadDelete, id),
+    exportSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadExport),
+    importSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadImport),
+    getMcpInfo: () => ipcRenderer.invoke(ORCH_CHANNELS.mcpInfo),
+    onMissionsChanged: (cb) => addListener(missionsChangedListeners, cb),
+    onHandoffsChanged: (cb) => addListener(handoffsChangedListeners, cb),
+    onTodosChanged: (cb) => addListener(todosChangedListeners, cb),
+    onSquadsChanged: (cb) => addListener(squadsChangedListeners, cb),
   },
   platform: process.platform,
 };

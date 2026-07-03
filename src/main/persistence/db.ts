@@ -14,11 +14,12 @@ import { app } from 'electron';
 
 // Minimal structural type — we avoid importing better-sqlite3 types so a load
 // failure never breaks the build.
-interface Statement {
+export interface Statement {
   run(...params: unknown[]): unknown;
   get(...params: unknown[]): unknown;
+  all(...params: unknown[]): unknown[];
 }
-interface Db {
+export interface Db {
   exec(sql: string): unknown;
   prepare(sql: string): Statement;
   close(): void;
@@ -29,6 +30,55 @@ CREATE TABLE IF NOT EXISTS workspace (
   id          INTEGER PRIMARY KEY,
   layout_json TEXT NOT NULL,
   updated_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS squads (
+  id                        TEXT PRIMARY KEY,
+  name                      TEXT NOT NULL,
+  created_at                TEXT NOT NULL,
+  builtin                   INTEGER NOT NULL DEFAULT 0,
+  orchestrator_instructions TEXT NOT NULL DEFAULT '',
+  roster_json               TEXT NOT NULL DEFAULT '[]'
+);
+
+CREATE TABLE IF NOT EXISTS missions (
+  id              TEXT PRIMARY KEY,
+  title           TEXT NOT NULL,
+  description     TEXT NOT NULL DEFAULT '',
+  status          TEXT NOT NULL,
+  squad_id        TEXT,
+  milestones_json TEXT NOT NULL DEFAULT '[]',
+  orch_session_id TEXT,
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS handoffs (
+  id             TEXT PRIMARY KEY,
+  mission_id     TEXT,
+  session_id     TEXT,
+  from_agent     TEXT,
+  status         TEXT NOT NULL,
+  summary        TEXT NOT NULL,
+  artifacts_json TEXT NOT NULL DEFAULT '[]',
+  delivered      INTEGER NOT NULL DEFAULT 0,
+  created_at     INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS todo_lists (
+  id         TEXT PRIMARY KEY,
+  items_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id         TEXT PRIMARY KEY,
+  mission_id TEXT,
+  title      TEXT NOT NULL,
+  detail     TEXT NOT NULL DEFAULT '',
+  status     TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
 );
 `;
 

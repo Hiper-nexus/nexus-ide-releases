@@ -12,6 +12,16 @@ import type {
   SpeakResult,
   SetConfigRequest,
 } from './voice-ipc';
+import type {
+  Handoff,
+  McpRuntimeInfo,
+  Mission,
+  OrchPaneSpawnRequest,
+  OrchPaneSpawnResult,
+  PaneRegistryEntry,
+  Squad,
+  TodoList,
+} from './orch-types';
 
 export type { AdapterInfo };
 
@@ -33,6 +43,12 @@ export interface PaneModel {
   adapterId?: string;
   /** The model selected for this agent pane (e.g. "claude-sonnet-4-5"). */
   model?: string;
+  /**
+   * Present when the pane was requested by the orchestration layer (MCP
+   * pane_spawn). Correlates the eventual PTY spawn with the pending skill-gate
+   * context minted for that request.
+   */
+  orchRequestId?: string;
 }
 
 /**
@@ -80,6 +96,8 @@ export interface SpawnRequest {
   adapterId?: string;
   /** Present when kind === 'cli-agent'. Falls back to adapter's default model. */
   model?: string;
+  /** Correlates an orchestration-requested spawn with its gate context. */
+  orchRequestId?: string;
 }
 
 export type SpawnResult =
@@ -143,6 +161,26 @@ export interface NexusApi {
     onPttStart(cb: () => void): Unsubscribe;
     onPttStop(cb: () => void): Unsubscribe;
     onInfoChanged(cb: (info: VoiceRuntimeInfo) => void): Unsubscribe;
+  };
+  orch: {
+    /** Mirror the current pane set into the main-process registry. */
+    syncPanes(entries: PaneRegistryEntry[]): void;
+    sendPaneSpawnResult(result: OrchPaneSpawnResult): void;
+    onPaneSpawnRequest(cb: (req: OrchPaneSpawnRequest) => void): Unsubscribe;
+    onPaneCloseRequest(cb: (paneId: string) => void): Unsubscribe;
+    listMissions(): Promise<Mission[]>;
+    listHandoffs(): Promise<Handoff[]>;
+    getTodos(): Promise<TodoList[]>;
+    listSquads(): Promise<Squad[]>;
+    saveSquad(squad: Squad): Promise<{ ok: boolean; error?: string }>;
+    deleteSquad(id: string): Promise<{ ok: boolean }>;
+    exportSquads(): Promise<{ ok: boolean; path?: string; error?: string }>;
+    importSquads(): Promise<{ ok: boolean; count?: number; error?: string }>;
+    getMcpInfo(): Promise<McpRuntimeInfo>;
+    onMissionsChanged(cb: (missions: Mission[]) => void): Unsubscribe;
+    onHandoffsChanged(cb: (handoffs: Handoff[]) => void): Unsubscribe;
+    onTodosChanged(cb: (lists: TodoList[]) => void): Unsubscribe;
+    onSquadsChanged(cb: (squads: Squad[]) => void): Unsubscribe;
   };
   platform: NodeJS.Platform;
 }

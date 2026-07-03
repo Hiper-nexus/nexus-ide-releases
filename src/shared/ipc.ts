@@ -30,6 +30,9 @@ export const spawnRequestSchema = z.object({
   // the main process looks up the full adapter config (including auth) locally.
   adapterId: z.string().min(1).max(64).optional(),
   model: z.string().min(1).max(128).optional(),
+  // Correlates an orchestration-requested spawn (MCP pane_spawn) with its
+  // pending skill-gate context. Opaque to the renderer.
+  orchRequestId: z.string().min(1).max(128).optional(),
 });
 
 export const writeSchema = z.object({
@@ -54,6 +57,7 @@ const paneModelSchema = z.object({
   cwd: z.string().max(4096).optional(),
   adapterId: z.string().min(1).max(64).optional(),
   model: z.string().min(1).max(128).optional(),
+  orchRequestId: z.string().min(1).max(128).optional(),
 });
 
 // Recursive layout tree schema (leaf | split with two children).

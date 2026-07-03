@@ -5,7 +5,9 @@ import { PaneGrid } from './components/PaneGrid';
 import { CanvasView } from './components/CanvasView';
 import { VoiceHud } from './components/VoiceHud';
 import { VoiceSettings } from './components/VoiceSettings';
+import { OrchestrationPanel } from './components/OrchestrationPanel';
 import { useVoiceController } from './voice/voice-controller';
+import { useOrchBridge } from './orch/orch-bridge';
 
 /**
  * App root: hydrates the saved layout on boot and wires global keyboard
@@ -17,6 +19,7 @@ export function App() {
   const viewKind = useLayoutStore((s) => s.viewKind);
 
   useVoiceController();
+  useOrchBridge();
 
   useEffect(() => {
     let cancelled = false;
@@ -57,6 +60,7 @@ export function App() {
       <WorkspaceBar />
       <main className="app__body">
         {viewKind === 'canvas' ? <CanvasView /> : <PaneGrid />}
+        <OrchestrationPanel />
       </main>
       <VoiceHud />
       <VoiceSettings />
