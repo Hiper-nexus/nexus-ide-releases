@@ -1,0 +1,295 @@
+:root {
+  --bg: #0b0e14;
+  --bg-elevated: #10141d;
+  --bg-bar: #0d1119;
+  --border: #1c2333;
+  --border-strong: #273049;
+  --text: #c9d1e0;
+  --text-dim: #6b7690;
+  --accent: #6ea8fe;
+  --accent-soft: rgba(110, 168, 254, 0.14);
+  --danger: #f7768e;
+  --radius: 8px;
+  --bar-height: 40px;
+  --toolbar-height: 28px;
+  --font-ui: ui-sans-serif, -apple-system, "SF Pro Text", Segoe UI, system-ui,
+    sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.boot {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--text-dim);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ---- Top workspace bar ---- */
+.workspace-bar {
+  height: var(--bar-height);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px 0 84px; /* leave room for macOS traffic lights */
+  background: var(--bg-bar);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.workspace-bar__brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.workspace-bar__logo {
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.workspace-bar__name {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.workspace-bar__tag {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.workspace-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-bar__count {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-bar__btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.workspace-bar__btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* ---- Grid + panels ---- */
+.app__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px;
+}
+
+.grid,
+.panel-group {
+  height: 100%;
+  width: 100%;
+}
+
+/* Panel inner div (library applies our class to the nested element). */
+.panel {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.resize-handle {
+  position: relative;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.resize-handle--horizontal {
+  width: 8px;
+  cursor: col-resize;
+}
+
+.resize-handle--vertical {
+  height: 8px;
+  cursor: row-resize;
+}
+
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  background: var(--border);
+  border-radius: 2px;
+  transition: background 120ms ease;
+}
+
+.resize-handle--horizontal::after {
+  width: 2px;
+  height: 32px;
+}
+
+.resize-handle--vertical::after {
+  height: 2px;
+  width: 32px;
+}
+
+.resize-handle:hover::after {
+  background: var(--accent);
+}
+
+/* ---- Pane ---- */
+.pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.pane--focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft), 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+
+.toolbar {
+  height: var(--toolbar-height);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  background: var(--bg-bar);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  user-select: none;
+}
+
+.toolbar__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  flex: 0 0 auto;
+}
+
+.toolbar__dot--on {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.toolbar__title {
+  font-family: var(--font-mono);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
+}
+
+.toolbar__badge {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.toolbar__spacer {
+  flex: 1 1 auto;
+}
+
+.toolbar__btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.toolbar__btn:hover {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.toolbar__btn--close:hover {
+  color: var(--danger);
+  background: rgba(247, 118, 142, 0.14);
+}
+
+.pane__terminal {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  padding: 4px 6px 2px;
+}
+
+/* The persistent xterm host node re-parented into each pane slot. */
+.term-host {
+  position: absolute;
+  inset: 4px 6px 2px;
+}
+
+.term-host .xterm,
+.term-host .xterm-viewport {
+  height: 100% !important;
+}
+
+.xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 5px;
+}

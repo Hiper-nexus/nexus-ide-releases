@@ -1,0 +1,63 @@
+import path from 'node:path';
+import { app } from 'electron';
+
+/**
+ * SQLite persistence layer.
+ *
+ * This phase (2a) uses a JSON file as the authoritative layout store (see
+ * layout-store.ts). The SQLite schema is created here so later phases can grow
+ * real workspace/session persistence without a migration scramble.
+ *
+ * better-sqlite3 is a native module; if it fails to load or rebuild we degrade
+ * gracefully to null so the terminal app still runs.
+ */
+
+// Minimal structural type — we avoid importing better-sqlite3 types so a load
+// failure never breaks the build.
+interface Statement {
+  run(...params: unknown[]): unknown;
+  get(...params: unknown[]): unknown;
+}
+interface Db {
+  exec(sql: string): unknown;
+  prepare(sql: string): Statement;
+  close(): void;
+}
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS workspace (
+  id          INTEGER PRIMARY KEY,
+  layout_json TEXT NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+`;
+
+let db: Db | null = null;
+let initialized = false;
+
+/** Lazily open the DB and create the schema. Returns null if unavailable. */
+export function getDb(): Db | null {
+  if (initialized) return db;
+  initialized = true;
+  try {
+    // Required lazily so a missing/broken native binary is contained here.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Database = require('better-sqlite3') as new (file: string) => Db;
+    const file = path.join(app.getPath('userData'), 'nexus.db');
+    db = new Database(file);
+    db.exec(SCHEMA);
+  } catch (err) {
+    console.warn('[nexus] SQLite unavailable, falling back to JSON only:', err);
+    db = null;
+  }
+  return db;
+}
+
+export function closeDb(): void {
+  try {
+    db?.close();
+  } catch {
+    // ignore
+  }
+  db = null;
+}
