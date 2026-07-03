@@ -42,13 +42,18 @@
   "models": {
     "flag": "--model",
     "list": [
+      "gpt-5.5",
+      "gpt-5.4",
+      "gpt-5.4-mini",
+      "gpt-5.3-codex",
+      "gpt-5.2",
       "o4-mini",
       "o3",
       "o3-mini",
-      "gpt-4o",
-      "gpt-4.1"
+      "gpt-4.1",
+      "gpt-4o"
     ],
-    "default": "o4-mini"
+    "default": "gpt-5.5"
   },
   "promptInjection": {
     "method": "arg",

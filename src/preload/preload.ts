@@ -245,6 +245,10 @@ const api: NexusApi = {
     setKey: (req) => ipcRenderer.invoke(PROVIDER_CHANNELS.setKey, req),
     testKey: (adapterId) =>
       ipcRenderer.invoke(PROVIDER_CHANNELS.testKey, { adapterId }),
+    addModel: (adapterId: string, model: string) =>
+      ipcRenderer.invoke(PROVIDER_CHANNELS.addModel, { adapterId, model }),
+    removeModel: (adapterId: string, model: string) =>
+      ipcRenderer.invoke(PROVIDER_CHANNELS.removeModel, { adapterId, model }),
     onChanged: (cb) => addListener(providersChangedListeners, cb),
   },
   files: {

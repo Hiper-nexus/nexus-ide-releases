@@ -2663,3 +2663,41 @@ body {
   color: var(--text);
   font-weight: 600;
 }
+
+/* ---- Custom models ---- */
+.prov__models-add {
+  display: flex;
+  gap: 6px;
+}
+.prov__models-add .settings-input {
+  flex: 1;
+}
+.prov__models-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+.prov__model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--accent);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  padding: 2px 4px 2px 8px;
+  background: var(--accent-soft);
+}
+.prov__model-chip-x {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0 2px;
+}
+.prov__model-chip-x:hover {
+  color: var(--danger);
+}

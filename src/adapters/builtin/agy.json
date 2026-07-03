@@ -39,11 +39,15 @@
   "models": {
     "flag": "--model",
     "list": [
-      "claude-sonnet-4-5",
-      "claude-opus-4-5",
-      "claude-haiku-4-5"
+      "gemini-3.5-flash-high",
+      "gemini-3.5-flash-low",
+      "gemini-3.1-pro-high",
+      "gemini-3.1-pro-low",
+      "claude-opus-4-6-thinking",
+      "claude-sonnet-4-6-thinking",
+      "gpt-oss-120b-medium"
     ],
-    "default": "claude-sonnet-4-5"
+    "default": "gemini-3.1-pro-high"
   },
   "promptInjection": {
     "method": "arg",

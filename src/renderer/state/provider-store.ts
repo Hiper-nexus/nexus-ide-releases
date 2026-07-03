@@ -17,6 +17,8 @@ interface ProviderStore {
   setConfig(patch: ProviderConfigPatch): Promise<void>;
   setKey(adapterId: string, key: string): Promise<{ ok: boolean; error?: string }>;
   testKey(adapterId: string): Promise<{ ok: boolean; detail: string }>;
+  addModel(adapterId: string, model: string): Promise<void>;
+  removeModel(adapterId: string, model: string): Promise<void>;
 }
 
 export const useProviderStore = create<ProviderStore>((set) => ({
@@ -44,6 +46,13 @@ export const useProviderStore = create<ProviderStore>((set) => ({
   },
 
   testKey: (adapterId) => window.nexus.providers.testKey(adapterId),
+
+  addModel: async (adapterId, model) => {
+    set({ providers: await window.nexus.providers.addModel(adapterId, model) });
+  },
+  removeModel: async (adapterId, model) => {
+    set({ providers: await window.nexus.providers.removeModel(adapterId, model) });
+  },
 }));
 
 export function useProviderController(): void {

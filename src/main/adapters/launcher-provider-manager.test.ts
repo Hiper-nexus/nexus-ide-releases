@@ -30,7 +30,7 @@ describe('launcher provider routing (ported from ~/ai-launcher)', () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('zai-token');
     // Extra env ported verbatim from PROVIDER_EXTRA_ENV[glm].
     expect(env.API_TIMEOUT_MS).toBe('600000');
-    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4.6');
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.2');
     // Third parties use AUTH_TOKEN, never API_KEY.
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });

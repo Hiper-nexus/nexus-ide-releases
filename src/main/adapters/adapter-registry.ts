@@ -7,6 +7,7 @@ import { adapterSchema } from '../../shared/adapter-types';
 import type { Adapter, AdapterInfo } from '../../shared/adapter-types';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { ADAPTER_CHANNELS } from '../../shared/channels';
+import { getCustomModels } from './custom-models';
 
 const USER_ADAPTER_DIR = path.join(os.homedir(), '.nexus', 'plugins', 'adapters');
 
@@ -92,12 +93,20 @@ function toAdapterInfo(adapter: Adapter, installed: boolean): AdapterInfo {
     adapter.kind === 'cli-pty' ? adapter.install.command : '';
   const loginHint =
     adapter.kind === 'cli-pty' ? adapter.auth.loginHint : undefined;
+  // Merge user-added custom models so a CLI's newest models (added by hand)
+  // appear everywhere the adapter's models show.
+  const custom = getCustomModels(adapter.id).filter(
+    (m) => !adapter.models.list.includes(m),
+  );
   return {
     id: adapter.id,
     kind: adapter.kind,
     label: adapter.label,
     icon: adapter.icon,
-    models: adapter.models,
+    models: {
+      ...adapter.models,
+      list: [...adapter.models.list, ...custom],
+    },
     installed,
     installCommand,
     loginHint,
@@ -159,6 +168,11 @@ export function broadcastToListeners(
 
 function broadcast(): void {
   broadcastToListeners(listeners, ADAPTER_CHANNELS.changed, listAdapterInfos());
+}
+
+/** Push the (possibly custom-model-updated) adapter list to the renderer. */
+export function notifyAdaptersChanged(): void {
+  broadcast();
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────

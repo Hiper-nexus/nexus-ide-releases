@@ -34,8 +34,8 @@ const GLM_EXTRA: Record<string, string> = {
   API_TIMEOUT_MS: '600000',
   CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
   ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.5-air',
-  ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-4.6',
-  ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-4.6',
+  ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5.2',
+  ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5.2',
 };
 
 const THIRD_PARTY_EXTRA: Record<string, string> = {
@@ -67,7 +67,12 @@ export const UPSTREAM_PROVIDERS: Record<string, UpstreamProvider> = {
     label: 'MIMO / Xiaomi',
     baseUrl: 'https://api.mimo.xiaomi.com/anthropic',
     defaultModel: 'mimo-2.5-pro',
-    extraEnv: THIRD_PARTY_EXTRA,
+    extraEnv: {
+      ...THIRD_PARTY_EXTRA,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'mimo-2.5-pro',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'mimo-2.5-pro',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'mimo-2.5',
+    },
     requiresToken: true,
     local: false,
   },

@@ -43,11 +43,13 @@
   "models": {
     "flag": "--model",
     "list": [
-      "kimi-k2",
+      "kimi-k2.6",
       "kimi-k2-turbo",
-      "moonshot-v1-128k"
+      "kimi-k2",
+      "moonshot-v1-128k",
+      "moonshot-v1-32k"
     ],
-    "default": "kimi-k2"
+    "default": "kimi-k2.6"
   },
   "promptInjection": {
     "method": "arg",

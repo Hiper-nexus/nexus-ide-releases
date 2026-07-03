@@ -86,6 +86,8 @@ export interface ProviderSettingsInfo {
   efforts: string[];
   verbose: boolean;
   supportsVerbose: boolean;
+  /** User-added custom models (removable in the UI). `models` already merges them. */
+  customModels: string[];
 }
 
 export const setKeySchema = z.object({
@@ -100,10 +102,18 @@ export interface TestConnectionResult {
   detail: string;
 }
 
+export const addModelSchema = z.object({
+  adapterId: z.string().min(1).max(64),
+  model: z.string().min(1).max(128),
+});
+export type AddModelRequest = z.infer<typeof addModelSchema>;
+
 export const PROVIDER_CHANNELS = {
   list: 'provider:list',
   setConfig: 'provider:setConfig',
   setKey: 'provider:setKey',
   testKey: 'provider:testKey',
+  addModel: 'provider:addModel',
+  removeModel: 'provider:removeModel',
   changed: 'provider:changed',
 } as const;

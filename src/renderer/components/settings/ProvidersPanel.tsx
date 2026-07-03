@@ -100,6 +100,58 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
   );
 }
 
+/**
+ * Add any model the provider offers that we didn't bundle (e.g. a brand-new
+ * "glm-5.2" or "gpt-5.6"). Custom models appear everywhere the adapter's models
+ * do — provider default, Modo Livre picker, squad roster.
+ */
+function CustomModels({ provider }: { provider: ProviderSettingsInfo }) {
+  const addModel = useProviderStore((s) => s.addModel);
+  const removeModel = useProviderStore((s) => s.removeModel);
+  const [draft, setDraft] = useState('');
+
+  function add() {
+    const clean = draft.trim();
+    if (!clean) return;
+    void addModel(provider.adapterId, clean);
+    setDraft('');
+  }
+
+  return (
+    <>
+      Adicionar modelo (qualquer id que a LLM ofertar)
+      <div className="prov__models-add">
+        <input
+          className="settings-input"
+          value={draft}
+          placeholder="ex.: glm-5.2, gpt-5.6, claude-sonnet-5…"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && add()}
+        />
+        <button className="settings-btn" onClick={add} disabled={!draft.trim()}>
+          + Adicionar
+        </button>
+      </div>
+      {provider.customModels.length > 0 && (
+        <div className="prov__models-chips">
+          {provider.customModels.map((m) => (
+            <span key={m} className="prov__model-chip">
+              {m}
+              <button
+                className="prov__model-chip-x"
+                onClick={() => void removeModel(provider.adapterId, m)}
+                title="Remover"
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 const PERMISSION_LABEL: Record<string, string> = {
   default: 'Default',
   auto: 'Auto',
@@ -264,10 +316,15 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
             {provider.models.map((m) => (
               <option key={m} value={m}>
                 {m}
+                {provider.customModels.includes(m) ? ' (custom)' : ''}
               </option>
             ))}
           </select>
         </label>
+
+        <div className="prov__field prov__field--wide">
+          <CustomModels provider={provider} />
+        </div>
 
         <label className="prov__field prov__field--wide">
           Args extras

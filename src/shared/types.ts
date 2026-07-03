@@ -273,6 +273,8 @@ export interface NexusApi {
     setConfig(patch: ProviderConfigPatch): Promise<ProviderSettingsInfo[]>;
     setKey(req: SetKeyRequest): Promise<{ ok: boolean; error?: string }>;
     testKey(adapterId: string): Promise<TestConnectionResult>;
+    addModel(adapterId: string, model: string): Promise<ProviderSettingsInfo[]>;
+    removeModel(adapterId: string, model: string): Promise<ProviderSettingsInfo[]>;
     onChanged(cb: (list: ProviderSettingsInfo[]) => void): Unsubscribe;
   };
   files: {

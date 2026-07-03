@@ -5,6 +5,7 @@ import { ipcMain } from 'electron';
 import type { WebContents } from 'electron';
 import {
   PROVIDER_CHANNELS,
+  addModelSchema,
   providerConfigPatchSchema,
   setKeySchema,
   type ProviderConfig,
@@ -15,6 +16,7 @@ import {
   getAdapter,
   isBinResolvable,
   listAdapters,
+  notifyAdaptersChanged,
   primaryKeyEnvVar,
 } from '../adapters/adapter-registry';
 import {
@@ -23,6 +25,11 @@ import {
   buildControlArgs,
   supportsVerbose,
 } from '../adapters/control-args';
+import {
+  addCustomModel,
+  getCustomModels,
+  removeCustomModel,
+} from '../adapters/custom-models';
 import {
   getKey,
   hasKey,
@@ -259,7 +266,13 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
     binPath: cfg.binPath,
     detectedBin,
     defaultModel: cfg.defaultModel || adapter.models.default,
-    models: adapter.models.list,
+    models: [
+      ...adapter.models.list,
+      ...getCustomModels(adapterId).filter(
+        (m) => !adapter.models.list.includes(m),
+      ),
+    ],
+    customModels: getCustomModels(adapterId),
     extraArgs: cfg.extraArgs,
     keyEnvVar: primaryKeyEnvVar(adapter),
     hasKey: hasKey(adapterId),
@@ -337,6 +350,26 @@ export function registerProviderIpc(): void {
     const result = setKey(parsed.data.adapterId, parsed.data.key);
     broadcast();
     return result;
+  });
+
+  ipcMain.handle(PROVIDER_CHANNELS.addModel, (_event, raw) => {
+    const parsed = addModelSchema.safeParse(raw);
+    if (parsed.success) {
+      addCustomModel(parsed.data.adapterId, parsed.data.model);
+      broadcast();
+      notifyAdaptersChanged(); // refresh roster + Modo Livre picker
+    }
+    return listProviderSettings();
+  });
+
+  ipcMain.handle(PROVIDER_CHANNELS.removeModel, (_event, raw) => {
+    const parsed = addModelSchema.safeParse(raw);
+    if (parsed.success) {
+      removeCustomModel(parsed.data.adapterId, parsed.data.model);
+      broadcast();
+      notifyAdaptersChanged();
+    }
+    return listProviderSettings();
   });
 
   ipcMain.handle(
