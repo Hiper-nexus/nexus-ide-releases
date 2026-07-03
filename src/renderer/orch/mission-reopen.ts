@@ -70,7 +70,9 @@ export async function reopenMission(
     );
     // Mark BEFORE the panes mount so the first spawn picks up the resume flag.
     markResumeOnSpawn(base.id);
-    return { ...base, title: spec.title };
+    // Restore the pane's reasoning effort (task-router decision) so the
+    // reopened pane re-spawns at the same effort it originally ran with.
+    return { ...base, title: spec.title, effort: spec.effort };
   });
 
   useLayoutStore.getState().setPanes(panes);

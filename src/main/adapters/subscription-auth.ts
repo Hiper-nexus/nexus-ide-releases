@@ -102,6 +102,12 @@ function detect(adapterId: string): boolean {
     case 'grok':
       // grok-cli stores its own login blob.
       return exists('.grok', 'auth.json') || exists('.grok');
+    case 'glm':
+      // GLM has no CLI-managed OAuth session — it authenticates purely with a
+      // z.ai token injected as ANTHROPIC_AUTH_TOKEN. Force api-key strategy so
+      // the token is actually injected (never suppressed as if a subscription
+      // existed). Uses the Claude binary, but NOT the Claude subscription.
+      return false;
     case 'agy':
       return (
         exists('.gemini', 'antigravity') ||

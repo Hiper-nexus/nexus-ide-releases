@@ -96,6 +96,7 @@ export async function spawnPaneAndMaybePrompt(
       missionId: options.missionId,
       adapterId: options.adapterId,
       model: options.model,
+      effort: options.effort,
       cwd: options.cwd,
       title: options.title,
       agentName: options.agentName,

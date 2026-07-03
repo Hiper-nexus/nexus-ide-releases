@@ -3,6 +3,7 @@ import type { McpToolDef } from './mcp-protocol';
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
 import { recordMissionPane } from './mission-pane-store';
 import { listAdapterInfos } from '../adapters/adapter-registry';
+import { hasKey } from '../persistence/secrets-store';
 import { routeTask, type TaskTier } from './task-router';
 import {
   handoffStatusSchema,
@@ -453,9 +454,10 @@ const routeTaskTool: McpToolDef = {
     'is how missions save tokens and finish faster. Classifies the task ' +
     '(trivial|easy|medium|hard|critical) and returns {tier, adapterId, ' +
     'model, effort, reason, alternatives}: pass adapterId/model/effort ' +
-    'straight into nexus_pane_spawn. Easy work goes to fast cheap models ' +
-    '(grok/haiku/gpt-5.4-mini), hard work to the strong ones ' +
-    '(opus/fable/gpt-5.5). Call it for EVERY delegation.',
+    'straight into nexus_pane_spawn. Work is spread across ALL installed LLMs: ' +
+    'trivial/easy → fast cheap models (grok/kimi/gemini-flash), medium → ' +
+    'GLM 5.2/kimi (cheap + strong), hard/critical → opus/fable/gpt-5.5. ' +
+    'Call it for EVERY delegation.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -479,7 +481,9 @@ const routeTaskTool: McpToolDef = {
       : undefined;
     const adapters = listAdapterInfos().map((a) => ({
       id: a.id,
-      installed: a.installed,
+      // GLM rides the Claude binary but authenticates with a z.ai token — it is
+      // only routable once that key is stored, otherwise the spawn would fail.
+      installed: a.id === 'glm' ? a.installed && hasKey('glm') : a.installed,
     }));
     const decision = routeTask(task, adapters, undefined, tier);
     if (!decision) throw new Error('no installed adapters to route to');

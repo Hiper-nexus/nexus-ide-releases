@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS mission_panes (
   title      TEXT NOT NULL,
   agent_name TEXT,
   role       TEXT NOT NULL DEFAULT 'worker',
+  effort     TEXT,
   created_at INTEGER NOT NULL
 );
 
@@ -127,6 +128,11 @@ export function getDb(): Db | null {
       db.exec(
         "ALTER TABLE squads ADD COLUMN native_instructions TEXT NOT NULL DEFAULT ''",
       );
+    } catch {
+      // Column already present.
+    }
+    try {
+      db.exec('ALTER TABLE mission_panes ADD COLUMN effort TEXT');
     } catch {
       // Column already present.
     }

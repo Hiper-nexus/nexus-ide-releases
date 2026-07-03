@@ -18,37 +18,53 @@ export interface RouteCandidate {
 export type RoutingTable = Record<TaskTier, RouteCandidate[]>;
 
 /**
- * Default ladder, cheapest-first inside each tier. Model ids match the
- * builtin adapter catalogs; a missing/uninstalled adapter falls through to
- * the next candidate. GLM/Fugu ride the `claude` adapter via account
- * upstream, so they are selected by the active account, not listed here.
+ * Default ladder, cheapest-first inside each tier — and deliberately spread
+ * across every installed LLM so work isn't dumped on one provider: the LEAD
+ * model per tier rotates (grok → kimi → glm → claude) for real diversity.
+ * Model ids match the builtin adapter catalogs; a missing/uninstalled adapter
+ * (or GLM without its z.ai key) falls through to the next candidate.
+ *
+ * GLM (z.ai, model 5.2) is a first-class `glm` adapter now — strong AND cheap,
+ * so it LEADS the medium tier and is an early option on hard. It runs on the
+ * Claude binary pointed at the z.ai endpoint (see glm.json).
  */
 export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   trivial: [
     { adapterId: 'grok', model: 'grok-code-fast-1', effort: 'low' },
     { adapterId: 'gemini', model: 'gemini-3.5-flash', effort: 'low' },
+    { adapterId: 'kimi', model: 'kimi-for-coding', effort: 'low' },
     { adapterId: 'claude', model: 'claude-haiku-4-5', effort: 'low' },
   ],
   easy: [
+    { adapterId: 'kimi', model: 'kimi-for-coding', effort: 'low' },
     { adapterId: 'grok', model: 'grok-4-fast', effort: 'low' },
+    { adapterId: 'gemini', model: 'gemini-3-flash', effort: 'low' },
     { adapterId: 'codex', model: 'gpt-5.4-mini', effort: 'low' },
+    { adapterId: 'agy', model: 'gemini-3.5-flash-high', effort: 'low' },
     { adapterId: 'claude', model: 'claude-sonnet-4-6', effort: 'low' },
   ],
   medium: [
-    { adapterId: 'claude', model: 'claude-sonnet-5', effort: 'medium' },
-    { adapterId: 'codex', model: 'gpt-5.4', effort: 'medium' },
-    { adapterId: 'gemini', model: 'gemini-3.1-pro', effort: 'medium' },
+    { adapterId: 'glm', model: 'glm-5.2', effort: 'medium' },
     { adapterId: 'kimi', model: 'kimi-for-coding', effort: 'medium' },
+    { adapterId: 'grok', model: 'grok-4.1', effort: 'medium' },
+    { adapterId: 'gemini', model: 'gemini-3.1-pro', effort: 'medium' },
+    { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'medium' },
+    { adapterId: 'codex', model: 'gpt-5.4', effort: 'medium' },
+    { adapterId: 'claude', model: 'claude-sonnet-5', effort: 'medium' },
   ],
   hard: [
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'high' },
+    { adapterId: 'glm', model: 'glm-5.2', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.5', effort: 'high' },
     { adapterId: 'gemini', model: 'gemini-3.1-pro', effort: 'high' },
+    { adapterId: 'kimi', model: 'kimi-for-coding', effort: 'high' },
+    { adapterId: 'grok', model: 'grok-4.1', effort: 'high' },
   ],
   critical: [
     { adapterId: 'claude', model: 'claude-fable-5', effort: 'xhigh' },
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'xhigh' },
     { adapterId: 'codex', model: 'gpt-5.5', effort: 'xhigh' },
+    { adapterId: 'glm', model: 'glm-5.2', effort: 'xhigh' },
   ],
 };
 

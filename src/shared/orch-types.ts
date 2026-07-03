@@ -155,6 +155,8 @@ export interface MissionPaneSpec {
   missionId: string;
   adapterId: string;
   model?: string;
+  /** Reasoning effort the pane ran with (task-router decision) — restored on reopen. */
+  effort?: string;
   cwd?: string;
   title: string;
   agentName?: string;

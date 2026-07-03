@@ -1,0 +1,94 @@
+{
+  "kind": "cli-pty",
+  "id": "glm",
+  "label": "GLM (z.ai)",
+  "version": "1.0.0",
+  "icon": "◈",
+  "bin": "claude",
+  "detect": "claude --version",
+  "install": {
+    "method": "npm",
+    "command": "npm install -g @anthropic-ai/claude-code"
+  },
+  "auth": {
+    "method": "api_key",
+    "credentialStore": "keychain",
+    "envVarFallback": "ANTHROPIC_AUTH_TOKEN",
+    "loginHint": "Cole seu token da z.ai/GLM (é injetado como ANTHROPIC_AUTH_TOKEN; nunca em plaintext). GLM roda na CLI do Claude apontada para o endpoint z.ai."
+  },
+  "spawn": {
+    "interactive": [
+      "claude",
+      "--model",
+      "{{MODEL}}"
+    ],
+    "headless": [
+      "claude",
+      "--model",
+      "{{MODEL}}",
+      "-p",
+      "{{PROMPT}}"
+    ],
+    "ptyRequired": true,
+    "resumeArgs": [
+      "--resume"
+    ],
+    "extraArgs": []
+  },
+  "env": {
+    "static": {
+      "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
+      "API_TIMEOUT_MS": "600000"
+    },
+    "passthrough": [
+      "ANTHROPIC_AUTH_TOKEN"
+    ],
+    "ephemeralHome": false
+  },
+  "models": {
+    "flag": "--model",
+    "list": [
+      "glm-5.2",
+      "glm-4.6",
+      "glm-4.5-air"
+    ],
+    "default": "glm-5.2"
+  },
+  "promptInjection": {
+    "method": "arg",
+    "trailingNewline": false,
+    "bracketedPaste": true
+  },
+  "stateParsing": {
+    "idle": {
+      "type": "timeout",
+      "ms": 800
+    },
+    "shellIntegration": false,
+    "exitCodes": {
+      "0": "ok",
+      "1": "error"
+    }
+  },
+  "quirks": {
+    "altScreen": true,
+    "requiresNoAutoUpdate": false,
+    "mcpAutoload": true
+  },
+  "control": {
+    "permission": {
+      "arg": "--permission-mode",
+      "modes": {
+        "default": "default",
+        "auto": "acceptEdits",
+        "plan": "plan",
+        "bypass": "bypassPermissions"
+      },
+      "yolo": [
+        "--dangerously-skip-permissions"
+      ],
+      "default": ""
+    },
+    "verbose": "--verbose"
+  }
+}

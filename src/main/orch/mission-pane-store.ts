@@ -15,6 +15,7 @@ interface MissionPaneRow {
   mission_id: string;
   adapter_id: string;
   model: string | null;
+  effort: string | null;
   cwd: string | null;
   title: string | null;
   agent_name: string | null;
@@ -40,6 +41,7 @@ export function initMissionPaneStore(database: Db | null): void {
         missionId: row.mission_id,
         adapterId: row.adapter_id,
         model: row.model ?? undefined,
+        effort: row.effort ?? undefined,
         cwd: row.cwd ?? undefined,
         title: row.title ?? row.adapter_id,
         agentName: row.agent_name ?? undefined,
@@ -58,14 +60,15 @@ function persist(spec: MissionPaneSpec): void {
   try {
     db.prepare(
       `INSERT OR REPLACE INTO mission_panes
-         (id, mission_id, adapter_id, model, cwd, title, agent_name, role,
-          created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, mission_id, adapter_id, model, effort, cwd, title, agent_name,
+          role, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       spec.id,
       spec.missionId,
       spec.adapterId,
       spec.model ?? null,
+      spec.effort ?? null,
       spec.cwd ?? null,
       spec.title,
       spec.agentName ?? null,
@@ -81,6 +84,7 @@ export interface RecordMissionPaneInput {
   missionId: string;
   adapterId: string;
   model?: string;
+  effort?: string;
   cwd?: string;
   title?: string;
   agentName?: string;
@@ -110,6 +114,7 @@ export function recordMissionPane(input: RecordMissionPaneInput): void {
     missionId: input.missionId,
     adapterId: input.adapterId,
     model: input.model,
+    effort: input.effort,
     cwd: input.cwd,
     title,
     agentName: input.agentName,

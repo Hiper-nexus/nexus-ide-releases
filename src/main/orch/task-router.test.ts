@@ -7,7 +7,7 @@ import {
 } from './task-router';
 
 function adapters(...installed: string[]): AdapterAvailability[] {
-  const all = ['claude', 'codex', 'gemini', 'grok', 'kimi', 'agy'];
+  const all = ['claude', 'codex', 'gemini', 'grok', 'kimi', 'agy', 'glm'];
   return all.map((id) => ({ id, installed: installed.includes(id) }));
 }
 
@@ -101,13 +101,25 @@ describe('routeTask', () => {
   });
 
   it('borrows from another tier when the target tier has nothing installed', () => {
-    // Only kimi installed: easy tier has no kimi — should still route.
+    // Only glm installed: glm isn't a trivial/easy candidate, so an easy task
+    // borrows it from the medium tier (where GLM 5.2 leads).
     const decision = routeTask(
       'corrigir typo no README do projeto agora',
-      adapters('kimi'),
+      adapters('glm'),
     );
-    expect(decision!.adapterId).toBe('kimi');
+    expect(decision!.adapterId).toBe('glm');
     expect(decision!.reason).toContain('melhor opção instalada');
+  });
+
+  it('leads the medium tier with GLM 5.2 (cheap + strong)', () => {
+    const decision = routeTask(
+      'tarefa de complexidade média',
+      adapters('claude', 'glm', 'codex'),
+      DEFAULT_ROUTING_TABLE,
+      'medium',
+    );
+    expect(decision!.adapterId).toBe('glm');
+    expect(decision!.model).toBe('glm-5.2');
   });
 
   it('respects an explicit tier override', () => {
