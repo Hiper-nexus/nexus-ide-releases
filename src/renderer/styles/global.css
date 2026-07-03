@@ -438,3 +438,139 @@ body {
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* ---- Canvas view toggle button ---- */
+.workspace-bar__btn--view {
+  border-color: var(--border-strong);
+  min-width: 76px;
+  text-align: center;
+}
+
+.workspace-bar__btn--view-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---- Canvas container ---- */
+.canvas-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* xyflow wrapper fills the container */
+.canvas-container .react-flow {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+
+/* xyflow pane (the viewport scroller) */
+.canvas-container .react-flow__pane {
+  cursor: default;
+}
+
+/* xyflow background dots */
+.canvas-container .react-flow__background {
+  background: transparent;
+}
+
+/* xyflow minimap */
+.canvas-container .react-flow__minimap {
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* xyflow controls */
+.canvas-container .react-flow__controls {
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.canvas-container .react-flow__controls-button {
+  background: var(--bg-bar);
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  fill: var(--text-dim);
+}
+
+.canvas-container .react-flow__controls-button:hover {
+  background: var(--accent-soft);
+  fill: var(--accent);
+}
+
+/* ---- Canvas pane node ---- */
+.canvas-pane {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+  cursor: default;
+  width: 100%;
+  height: 100%;
+}
+
+.canvas-pane--focused {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent-soft),
+    0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.canvas-pane .canvas-pane__terminal {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  padding: 4px 6px 2px;
+}
+
+/* The terminal host element lives inside the canvas slot, same as grid. */
+.canvas-pane .term-host {
+  position: absolute;
+  inset: 4px 6px 2px;
+}
+
+/* ---- Canvas snapshot placeholder (zoom-out mode) ---- */
+.canvas-pane__snapshot {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--bg);
+  opacity: 0.6;
+}
+
+.canvas-pane__snapshot-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 90%;
+}
+
+.canvas-pane__snapshot-meta {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+/* xyflow node wrapper — disable the default border/shadow; our .canvas-pane handles it */
+.canvas-container .react-flow__node {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.canvas-container .react-flow__node-canvasPane {
+  width: fit-content;
+  height: fit-content;
+}

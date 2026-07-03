@@ -3,12 +3,19 @@ import { useLayoutStore } from '../state/layout-store';
 import { listPanes } from '../lib/split-tree';
 import type { AdapterInfo } from '../../shared/types';
 
-/** Slim top chrome: brand, pane count, split shortcuts, and the agent launcher. */
+/** Brief label identifying the active view mode. */
+function viewLabel(kind: 'grid' | 'canvas'): string {
+  return kind === 'canvas' ? '⬡ Canvas' : '⊞ Grid';
+}
+
+/** Slim top chrome: brand, pane count, split shortcuts, view toggle, and the agent launcher. */
 export function WorkspaceBar() {
   const root = useLayoutStore((s) => s.root);
   const focusedPaneId = useLayoutStore((s) => s.focusedPaneId);
+  const viewKind = useLayoutStore((s) => s.viewKind);
   const split = useLayoutStore((s) => s.split);
   const spawnAgent = useLayoutStore((s) => s.spawnAgent);
+  const toggleView = useLayoutStore((s) => s.toggleView);
   const paneCount = listPanes(root).length;
 
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
@@ -64,17 +71,28 @@ export function WorkspaceBar() {
       <div className="workspace-bar__brand">
         <span className="workspace-bar__logo">◈</span>
         <span className="workspace-bar__name">NexusIDE</span>
-        <span className="workspace-bar__tag">terminal grid</span>
+        <span className="workspace-bar__tag">{viewKind === 'canvas' ? 'canvas' : 'terminal grid'}</span>
       </div>
       <div className="workspace-bar__actions">
         <span className="workspace-bar__count">
           {paneCount} pane{paneCount === 1 ? '' : 's'}
         </span>
-        <button className="workspace-bar__btn" onClick={() => onSplit('row')}>
-          Split →
-        </button>
-        <button className="workspace-bar__btn" onClick={() => onSplit('column')}>
-          Split ↓
+        {viewKind === 'grid' && (
+          <>
+            <button className="workspace-bar__btn" onClick={() => onSplit('row')}>
+              Split →
+            </button>
+            <button className="workspace-bar__btn" onClick={() => onSplit('column')}>
+              Split ↓
+            </button>
+          </>
+        )}
+        <button
+          className={`workspace-bar__btn workspace-bar__btn--view ${viewKind === 'canvas' ? 'workspace-bar__btn--view-active' : ''}`}
+          onClick={toggleView}
+          title={viewKind === 'grid' ? 'Switch to canvas (free drag)' : 'Switch to grid (split panes)'}
+        >
+          {viewLabel(viewKind)}
         </button>
         <button
           className="workspace-bar__btn workspace-bar__btn--agent"

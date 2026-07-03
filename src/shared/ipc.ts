@@ -73,7 +73,22 @@ export const layoutNodeSchema: z.ZodType<LayoutNode> = z.lazy(() =>
   ]),
 );
 
+const canvasNodeLayoutSchema = z.object({
+  position: z.object({ x: z.number(), y: z.number() }),
+  size: z.object({ width: z.number().positive(), height: z.number().positive() }),
+  z: z.number().int(),
+});
+
+const canvasViewportSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  zoom: z.number().positive(),
+});
+
 export const workspaceLayoutSchema: z.ZodType<WorkspaceLayout> = z.object({
   root: layoutNodeSchema,
   focusedPaneId: z.string().min(1).max(128).nullable(),
+  viewKind: z.enum(['grid', 'canvas']).optional(),
+  canvasNodeLayouts: z.record(z.string(), canvasNodeLayoutSchema).optional(),
+  canvasViewport: canvasViewportSchema.optional(),
 });

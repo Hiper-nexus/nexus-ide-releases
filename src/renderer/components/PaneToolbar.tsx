@@ -5,6 +5,8 @@ import { useSessionStateStore } from '../state/session-state-store';
 interface Props {
   pane: PaneModel;
   isFocused: boolean;
+  /** When true, hides grid-specific split buttons (canvas panes float freely). */
+  isCanvas?: boolean;
 }
 
 function StateIndicator({ paneId }: { paneId: string }) {
@@ -33,7 +35,7 @@ function StateIndicator({ paneId }: { paneId: string }) {
  * Per-pane header: focus indicator, title, session-kind badge, agent state
  * indicator for cli-agent panes, and the split/close controls.
  */
-export function PaneToolbar({ pane, isFocused }: Props) {
+export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const split = useLayoutStore((s) => s.split);
   const close = useLayoutStore((s) => s.close);
 
@@ -56,26 +58,30 @@ export function PaneToolbar({ pane, isFocused }: Props) {
       )}
       {pane.kind === 'cli-agent' && <StateIndicator paneId={pane.id} />}
       <div className="toolbar__spacer" />
-      <button
-        className="toolbar__btn"
-        title="Split right (⌘D)"
-        onMouseDown={(e) => {
-          e.stopPropagation();
-          split(pane.id, 'row');
-        }}
-      >
-        ▯▮
-      </button>
-      <button
-        className="toolbar__btn"
-        title="Split down (⌘⇧D)"
-        onMouseDown={(e) => {
-          e.stopPropagation();
-          split(pane.id, 'column');
-        }}
-      >
-        ▭▬
-      </button>
+      {!isCanvas && (
+        <>
+          <button
+            className="toolbar__btn"
+            title="Split right (⌘D)"
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              split(pane.id, 'row');
+            }}
+          >
+            ▯▮
+          </button>
+          <button
+            className="toolbar__btn"
+            title="Split down (⌘⇧D)"
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              split(pane.id, 'column');
+            }}
+          >
+            ▭▬
+          </button>
+        </>
+      )}
       <button
         className="toolbar__btn toolbar__btn--close"
         title="Close pane (⌘W)"

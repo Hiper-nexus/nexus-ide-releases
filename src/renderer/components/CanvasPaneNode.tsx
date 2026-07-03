@@ -1,0 +1,82 @@
+import { memo, useEffect, useRef } from 'react';
+import { NodeResizer, useViewport, type NodeProps, type Node } from '@xyflow/react';
+import { attachHost, focusHost } from '../terminal/terminal-host';
+import { PaneToolbar } from './PaneToolbar';
+import { useLayoutStore } from '../state/layout-store';
+import type { PaneModel } from '../../shared/types';
+
+/**
+ * When the user zooms the canvas out below this threshold the live xterm is
+ * hidden behind a lightweight placeholder — keeping GPU load low when many
+ * terminals are in view at once.  Above the threshold the real terminal is
+ * shown and interactable.
+ */
+const SNAPSHOT_THRESHOLD = 0.45;
+
+export type CanvasPaneNodeData = {
+  pane: PaneModel;
+};
+
+export type CanvasPaneNodeType = Node<CanvasPaneNodeData, 'canvasPane'>;
+
+/**
+ * A xyflow custom node that hosts a real xterm terminal.
+ *
+ * Re-parenting mechanics: the terminal DOM node (host.element) lives in the
+ * module-level hosts Map inside terminal-host.ts.  On mount this component
+ * appends that node into its slot div.  Switching views (canvas↔grid) just
+ * moves the same element to a different slot — zero PTY restart.
+ */
+export const CanvasPaneNode = memo(function CanvasPaneNode({
+  data,
+  id,
+}: NodeProps<CanvasPaneNodeType>) {
+  const { pane } = data;
+  const slotRef = useRef<HTMLDivElement>(null);
+  const { zoom } = useViewport();
+  const isFocused = useLayoutStore((s) => s.focusedPaneId === id);
+  const focus = useLayoutStore((s) => s.focus);
+  const isSnapshot = zoom < SNAPSHOT_THRESHOLD;
+
+  // Attach (or re-attach after snapshot) the terminal into this slot.
+  useEffect(() => {
+    const slot = slotRef.current;
+    if (slot && !isSnapshot) {
+      attachHost(pane, slot);
+    }
+    // pane.id is the stable identity; isSnapshot controls live vs. frozen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pane.id, isSnapshot]);
+
+  useEffect(() => {
+    if (isFocused && !isSnapshot) focusHost(id);
+  }, [isFocused, id, isSnapshot]);
+
+  return (
+    <div
+      className={`canvas-pane ${isFocused ? 'canvas-pane--focused' : ''}`}
+      onMouseDown={() => focus(id)}
+      style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}
+    >
+      <NodeResizer
+        minWidth={280}
+        minHeight={200}
+        isVisible={isFocused}
+        lineStyle={{ borderColor: 'var(--accent)' }}
+        handleStyle={{ borderColor: 'var(--accent)', background: 'var(--bg)' }}
+      />
+      <PaneToolbar pane={pane} isFocused={isFocused} isCanvas />
+
+      {isSnapshot ? (
+        <div className="canvas-pane__snapshot">
+          <span className="canvas-pane__snapshot-label">{pane.title}</span>
+          <span className="canvas-pane__snapshot-meta">
+            {pane.adapterId ?? pane.kind}
+          </span>
+        </div>
+      ) : (
+        <div ref={slotRef} className="canvas-pane__terminal" />
+      )}
+    </div>
+  );
+});
