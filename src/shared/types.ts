@@ -278,6 +278,9 @@ export interface NexusApi {
     list(relPath: string): Promise<FileTreeResult>;
     read(relPath: string): Promise<ReadFileResult>;
     write(relPath: string, content: string): Promise<{ ok: boolean; error?: string }>;
+    saveDropped(name: string, base64: string): Promise<{ ok: boolean; path?: string; error?: string }>;
+    /** Resolve a dragged File to its absolute filesystem path (webUtils). */
+    pathForFile(file: File): string;
   };
   accounts: {
     list(): Promise<AccountInfo[]>;

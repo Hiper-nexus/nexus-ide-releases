@@ -218,6 +218,7 @@ function createShellHost(pane: PaneModel): Host {
   element.addEventListener('mousedown', () =>
     useLayoutStore.getState().focus(pane.id),
   );
+  wireInteractions(host);
   return host;
 }
 
@@ -258,9 +259,101 @@ function createCliAgentHost(pane: PaneModel): Host {
   element.addEventListener('mousedown', () =>
     useLayoutStore.getState().focus(pane.id),
   );
+  wireInteractions(host);
 
   useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
   return host;
+}
+
+/** Shell-quote a path only if it contains characters that need it. */
+function shellQuote(p: string): string {
+  return /[\s'"\\$`(){}[\]!*?&;|<>]/.test(p) ? `'${p.replace(/'/g, "'\\''")}'` : p;
+}
+
+function bufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+/** Save a pasted/dropped binary blob into ~/.nexus/dropped, inject its path. */
+async function injectSavedBlob(host: Host, file: File): Promise<void> {
+  try {
+    const base64 = bufferToBase64(await file.arrayBuffer());
+    const res = await window.nexus.files.saveDropped(file.name || 'pasted', base64);
+    if (res.ok && res.path && host.sessionId) {
+      window.nexus.pty.write(host.sessionId, `${shellQuote(res.path)} `);
+    }
+  } catch {
+    // Ignore — a failed drop should never break the terminal.
+  }
+}
+
+/**
+ * Make a terminal fully operable: copy the selection (⌘/Ctrl+C when text is
+ * selected), paste text (native xterm) or an image (saved to disk, path
+ * injected), and accept drag-and-dropped files (real path injected as if
+ * typed). Nothing here can break the terminal — every branch is guarded.
+ */
+function wireInteractions(host: Host): void {
+  const { element, term } = host;
+
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown') return true;
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === 'c' && term.hasSelection()) {
+      void navigator.clipboard.writeText(term.getSelection());
+      return false; // handled — don't send ^C to the pty
+    }
+    return true;
+  });
+
+  element.addEventListener(
+    'paste',
+    (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/')) {
+          e.preventDefault();
+          const file = items[i].getAsFile();
+          if (file) void injectSavedBlob(host, file);
+          return;
+        }
+      }
+      // Plain text → let xterm's native paste handle it.
+    },
+    true,
+  );
+
+  element.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  });
+
+  element.addEventListener('drop', (e: DragEvent) => {
+    e.preventDefault();
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+    const paths: string[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const p = window.nexus.files.pathForFile(files[i]);
+      if (p) paths.push(p);
+    }
+    if (paths.length > 0 && host.sessionId) {
+      window.nexus.pty.write(
+        host.sessionId,
+        paths.map(shellQuote).join(' ') + ' ',
+      );
+    } else {
+      // No real path (e.g. an image dragged from a browser) → save + inject.
+      for (let i = 0; i < files.length; i++) void injectSavedBlob(host, files[i]);
+    }
+  });
 }
 
 /**

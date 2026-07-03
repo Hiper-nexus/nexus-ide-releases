@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { ipcMain } from 'electron';
 import {
@@ -109,7 +110,38 @@ function writeFile(relPath: string, content: string): { ok: boolean; error?: str
   }
 }
 
+/**
+ * Save pasted/dropped binary data (e.g. an image from the clipboard) into
+ * ~/.nexus/dropped and return its absolute path, so it can be injected into a
+ * pane's terminal — parity with Overclock's files:saveDropped.
+ */
+function saveDropped(name: string, base64: string): { ok: boolean; path?: string; error?: string } {
+  try {
+    const dir = path.join(os.homedir(), '.nexus', 'dropped');
+    fs.mkdirSync(dir, { recursive: true });
+    const safeName = name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80) || 'pasted';
+    const stamped = `${Date.now().toString(36)}-${safeName}`;
+    const file = path.join(dir, stamped);
+    fs.writeFileSync(file, Buffer.from(base64, 'base64'));
+    return { ok: true, path: file };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'save failed' };
+  }
+}
+
 export function registerFilesIpc(): void {
+  ipcMain.handle(FILES_CHANNELS.saveDropped, (_e, raw) => {
+    if (
+      !raw ||
+      typeof raw.name !== 'string' ||
+      typeof raw.base64 !== 'string' ||
+      raw.base64.length > 20_000_000
+    ) {
+      return { ok: false, error: 'invalid payload' };
+    }
+    return saveDropped(raw.name, raw.base64);
+  });
+
   ipcMain.handle(FILES_CHANNELS.list, (_e, raw) => {
     const parsed = listDirSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid path' };

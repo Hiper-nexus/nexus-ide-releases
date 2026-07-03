@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { PTY_CHANNELS, LAYOUT_CHANNELS, ADAPTER_CHANNELS } from '../shared/channels';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { ORCH_CHANNELS } from '../shared/orch-channels';
@@ -246,6 +246,17 @@ const api: NexusApi = {
     read: (relPath: string) => ipcRenderer.invoke(FILES_CHANNELS.read, { relPath }),
     write: (relPath: string, content: string) =>
       ipcRenderer.invoke(FILES_CHANNELS.write, { relPath, content }),
+    saveDropped: (name: string, base64: string) =>
+      ipcRenderer.invoke(FILES_CHANNELS.saveDropped, { name, base64 }),
+    // webUtils resolves a dragged File to its real filesystem path — the only
+    // sandbox-safe way to get it (File.path was removed).
+    pathForFile: (file: File): string => {
+      try {
+        return webUtils.getPathForFile(file);
+      } catch {
+        return '';
+      }
+    },
   },
   accounts: {
     list: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.list),

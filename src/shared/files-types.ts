@@ -42,4 +42,5 @@ export const FILES_CHANNELS = {
   list: 'files:list',
   read: 'files:read',
   write: 'files:write',
+  saveDropped: 'files:saveDropped',
 } as const;
