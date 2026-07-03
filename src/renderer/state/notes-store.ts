@@ -15,11 +15,8 @@ import { getActiveWorkspacePath } from './active-workspace';
  * subscribes to main-process broadcasts.
  */
 
-// TODO(types): `notes` is not on NexusApi yet — shared/types.ts and
-// preload.ts are integrated separately. Remove this cast once NexusApi
-// gains the `notes: NotesApi` namespace (see NotesApi in shared/note-types.ts).
 function notesApi(): NotesApi {
-  return (window.nexus as unknown as { notes: NotesApi }).notes;
+  return window.nexus.notes;
 }
 
 let counter = 0;

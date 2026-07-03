@@ -13,6 +13,10 @@ import { ACCOUNT_CHANNELS } from '../shared/account-types';
 import type { AccountInfo, FailoverEvent } from '../shared/account-types';
 import { COST_CHANNELS } from '../shared/cost-types';
 import type { CostSnapshot } from '../shared/cost-types';
+import { NOTE_CHANNELS } from '../shared/note-types';
+import type { Note, NotesChangedEvent } from '../shared/note-types';
+import { PIPE_CHANNELS } from '../shared/pipe-types';
+import type { Pipe, PipeMode } from '../shared/pipe-types';
 import type {
   NexusApi,
   SpawnRequest,
@@ -161,6 +165,15 @@ ipcRenderer.on(COST_CHANNELS.changed, (_e, snapshot: CostSnapshot) =>
   costChangedListeners.forEach((cb) => cb(snapshot)),
 );
 
+const notesChangedListeners = new Set<(event: NotesChangedEvent) => void>();
+ipcRenderer.on(NOTE_CHANNELS.changed, (_e, event: NotesChangedEvent) =>
+  notesChangedListeners.forEach((cb) => cb(event)),
+);
+const pipesChangedListeners = new Set<(pipes: Pipe[]) => void>();
+ipcRenderer.on(PIPE_CHANNELS.changed, (_e, pipes: Pipe[]) =>
+  pipesChangedListeners.forEach((cb) => cb(pipes)),
+);
+
 const api: NexusApi = {
   pty: {
     spawn: (req: SpawnRequest): Promise<SpawnResult> =>
@@ -190,6 +203,7 @@ const api: NexusApi = {
   voice: {
     getInfo: () => ipcRenderer.invoke(VOICE_CHANNELS.getInfo),
     setConfig: (patch) => ipcRenderer.invoke(VOICE_CHANNELS.setConfig, patch),
+    setKey: (req) => ipcRenderer.invoke(VOICE_CHANNELS.setKey, req),
     transcribe: (req) => ipcRenderer.invoke(VOICE_CHANNELS.transcribe, req),
     speak: (req) => ipcRenderer.invoke(VOICE_CHANNELS.speak, req),
     onPttStart: (cb) => addListener(pttStartListeners, cb),
@@ -286,6 +300,21 @@ const api: NexusApi = {
       ipcRenderer.invoke(COST_CHANNELS.setCap, { paneId, capUsd }),
     onChanged: (cb: (snapshot: CostSnapshot) => void) =>
       addListener(costChangedListeners, cb),
+  },
+  notes: {
+    list: (workspacePath: string) =>
+      ipcRenderer.invoke(NOTE_CHANNELS.list, { workspacePath }),
+    save: (workspacePath: string, note: Note) =>
+      ipcRenderer.invoke(NOTE_CHANNELS.save, { workspacePath, note }),
+    remove: (id: string) => ipcRenderer.invoke(NOTE_CHANNELS.remove, { id }),
+    onChanged: (cb) => addListener(notesChangedListeners, cb),
+  },
+  pipes: {
+    list: () => ipcRenderer.invoke(PIPE_CHANNELS.list),
+    add: (sourcePaneId: string, targetPaneId: string, mode: PipeMode) =>
+      ipcRenderer.invoke(PIPE_CHANNELS.add, { sourcePaneId, targetPaneId, mode }),
+    remove: (id: string) => ipcRenderer.invoke(PIPE_CHANNELS.remove, { id }),
+    onChanged: (cb) => addListener(pipesChangedListeners, cb),
   },
   platform: process.platform,
 };

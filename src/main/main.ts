@@ -46,6 +46,16 @@ import {
   registerCostListener,
   unregisterCostListener,
 } from './orch/cost-ipc';
+import {
+  registerNotesIpc,
+  registerNotesListener,
+  unregisterNotesListener,
+} from './persistence/notes-ipc';
+import {
+  registerPipeIpc,
+  registerPipeListener,
+  unregisterPipeListener,
+} from './orch/pane-pipe-ipc';
 
 // Windows installer housekeeping (no-op elsewhere).
 if (process.platform === 'win32') {
@@ -75,6 +85,8 @@ function bootstrap(): void {
   registerFilesIpc();
   registerAccountIpc();
   registerCostIpc();
+  registerNotesIpc();
+  registerPipeIpc(); // also calls initPanePipes()
   // Orchestration boots async (MCP server binds a localhost port); the window
   // opens immediately and orchestration attaches when ready.
   void initOrchestration().catch((err) =>
@@ -104,6 +116,8 @@ app.on('browser-window-created', (_event, win) => {
   registerProviderListener(wc);
   registerAccountListener(wc);
   registerCostListener(wc);
+  registerNotesListener(wc);
+  registerPipeListener(wc);
   win.once('closed', () => {
     unregisterAdapterListener(wc);
     unregisterOrchListener(wc);
@@ -112,6 +126,8 @@ app.on('browser-window-created', (_event, win) => {
     unregisterProviderListener(wc);
     unregisterAccountListener(wc);
     unregisterCostListener(wc);
+    unregisterNotesListener(wc);
+    unregisterPipeListener(wc);
   });
 });
 

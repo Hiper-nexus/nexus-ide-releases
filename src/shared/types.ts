@@ -11,6 +11,7 @@ import type {
   SpeakRequest,
   SpeakResult,
   SetConfigRequest,
+  SetVoiceKeyRequest,
 } from './voice-ipc';
 import type {
   Handoff,
@@ -33,6 +34,8 @@ import type {
 } from './files-types';
 import type { AccountInfo, AddAccountRequest, FailoverEvent } from './account-types';
 import type { CostSnapshot } from './cost-types';
+import type { NotesApi } from './note-types';
+import type { PipeApi } from './pipe-types';
 import type {
   ProviderConfigPatch,
   ProviderSettingsInfo,
@@ -218,6 +221,7 @@ export interface NexusApi {
   voice: {
     getInfo(): Promise<VoiceRuntimeInfo>;
     setConfig(patch: SetConfigRequest): Promise<VoiceRuntimeInfo>;
+    setKey(req: SetVoiceKeyRequest): Promise<{ ok: boolean; error?: string }>;
     transcribe(req: TranscribeRequest): Promise<TranscribeResult>;
     speak(req: SpeakRequest): Promise<SpeakResult>;
     onPttStart(cb: () => void): Unsubscribe;
@@ -300,5 +304,7 @@ export interface NexusApi {
     setCap(paneId: string, capUsd: number | null): Promise<{ ok: boolean; error?: string }>;
     onChanged(cb: (snapshot: CostSnapshot) => void): Unsubscribe;
   };
+  notes: NotesApi;
+  pipes: PipeApi;
   platform: NodeJS.Platform;
 }

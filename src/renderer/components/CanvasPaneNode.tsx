@@ -1,5 +1,12 @@
 import { memo, useEffect, useRef } from 'react';
-import { NodeResizer, useViewport, type NodeProps, type Node } from '@xyflow/react';
+import {
+  NodeResizer,
+  Handle,
+  Position,
+  useViewport,
+  type NodeProps,
+  type Node,
+} from '@xyflow/react';
 import { attachHost, focusHost } from '../terminal/terminal-host';
 import { PaneToolbar } from './PaneToolbar';
 import { useLayoutStore } from '../state/layout-store';
@@ -64,6 +71,20 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
         isVisible={isFocused}
         lineStyle={{ borderColor: 'var(--accent)' }}
         handleStyle={{ borderColor: 'var(--accent)', background: 'var(--bg)' }}
+      />
+      {/* "Edges que conversam": drag from the right handle of one pane to the
+          left handle of another to pipe its output into that pane's input. */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="canvas-pane__handle canvas-pane__handle--in"
+        title="Receber saída de outro pane"
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="canvas-pane__handle canvas-pane__handle--out"
+        title="Enviar saída para outro pane"
       />
       <PaneToolbar pane={pane} isFocused={isFocused} isCanvas />
 
