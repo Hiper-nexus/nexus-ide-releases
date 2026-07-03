@@ -9,6 +9,7 @@ import type { TerminalSettings } from '../../shared/settings-types';
 import { DEFAULT_TERMINAL_SETTINGS } from '../../shared/settings-types';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { getActiveWorkspacePath } from '../state/active-workspace';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
 
 /**
@@ -113,7 +114,10 @@ function startSpawn(pane: PaneModel, host: Host): void {
   void (async () => {
     try {
       const res = await window.nexus.pty.spawn({
-        cwd: pane.cwd,
+        // Panes always live inside the active workspace: restored panes from
+        // older sessions (or the fresh initial tree) may lack a cwd — they
+        // must open in the workspace folder, never the user's home.
+        cwd: pane.cwd ?? getActiveWorkspacePath() ?? undefined,
         shell:
           pane.kind === 'shell' && currentSettings.shell !== ''
             ? currentSettings.shell

@@ -4,6 +4,7 @@ import type { Squad } from '../../shared/orch-types';
 import { useOrchStore } from '../state/orch-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
+import { switchWorkspaceLayout } from '../state/layout-store';
 import { launchLibrePanes, launchSquadMission } from '../orch/mission-launcher';
 
 /**
@@ -152,8 +153,15 @@ export function MissionWizard() {
     }
     await openWorkspace(target);
     const opened = useWorkspaceStore.getState().current?.path === target;
-    if (!opened) setError('Pasta inválida ou inacessível.');
-    return opened;
+    if (!opened) {
+      setError('Pasta inválida ou inacessível.');
+      return false;
+    }
+    // The pane tree must belong to the new workspace BEFORE we spawn into it
+    // (the App effect also switches, but asynchronously — this await removes
+    // the race between hydration and the spawns below).
+    await switchWorkspaceLayout(target);
+    return true;
   }
 
   async function handleLaunchLibre() {

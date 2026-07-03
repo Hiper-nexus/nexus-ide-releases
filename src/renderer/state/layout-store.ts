@@ -56,16 +56,25 @@ interface LayoutState {
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Layouts are keyed per workspace folder (Overclock parity). `persistKey`
+ * pins which workspace the CURRENT in-memory tree belongs to, so a debounced
+ * save that fires mid-switch can never write panes into the wrong workspace.
+ */
+let persistKey: string | null = null;
+
 type PersistPayload = Pick<
   LayoutState,
   'root' | 'focusedPaneId' | 'viewKind' | 'canvasNodeLayouts' | 'canvasViewport'
 >;
 
 function persist(state: PersistPayload): void {
+  if (!persistKey) return; // No workspace open — nothing to persist against.
+  const key = persistKey;
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = null;
-    void window.nexus.layout.save({
+    void window.nexus.layout.save(key, {
       root: state.root,
       focusedPaneId: state.focusedPaneId,
       viewKind: state.viewKind,
@@ -80,15 +89,41 @@ export function flushLayout(): void {
     clearTimeout(persistTimer);
     persistTimer = null;
   }
+  if (!persistKey) return;
   const { root, focusedPaneId, viewKind, canvasNodeLayouts, canvasViewport } =
     useLayoutStore.getState();
-  void window.nexus.layout.save({
+  void window.nexus.layout.save(persistKey, {
     root,
     focusedPaneId,
     viewKind,
     canvasNodeLayouts,
     canvasViewport,
   });
+}
+
+/**
+ * Swap the pane tree to another workspace: flush the outgoing layout, load
+ * the target's saved layout (or a fresh single-shell tree) and hydrate.
+ * Idempotent per workspace. Returns whether a saved layout existed — a fresh
+ * folder (no layout) is what triggers the Livre/Squad question.
+ */
+export async function switchWorkspaceLayout(
+  workspacePath: string,
+): Promise<boolean> {
+  if (persistKey === workspacePath) return true;
+  flushLayout();
+  persistKey = workspacePath;
+  const layout = await window.nexus.layout.load(workspacePath);
+  // A stale response from a slower earlier switch must not clobber the tree.
+  if (persistKey !== workspacePath) return true;
+  useLayoutStore.getState().hydrate(layout);
+  return layout !== null;
+}
+
+/** Leaving to the launcher: flush and stop persisting. */
+export function detachWorkspaceLayout(): void {
+  flushLayout();
+  persistKey = null;
 }
 
 if (typeof window !== 'undefined') {

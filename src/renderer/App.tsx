@@ -1,5 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { useLayoutStore } from './state/layout-store';
+import {
+  useLayoutStore,
+  switchWorkspaceLayout,
+  detachWorkspaceLayout,
+} from './state/layout-store';
 import { WorkspaceBar } from './components/WorkspaceBar';
 import { PaneGrid } from './components/PaneGrid';
 import { CanvasView } from './components/CanvasView';
@@ -22,7 +26,6 @@ import { useMissionWizardStore } from './state/mission-wizard-store';
  */
 export function App() {
   const hydrated = useLayoutStore((s) => s.hydrated);
-  const hydrate = useLayoutStore((s) => s.hydrate);
   const viewKind = useLayoutStore((s) => s.viewKind);
   const workspaceHydrated = useWorkspaceStore((s) => s.hydrated);
   const currentWorkspace = useWorkspaceStore((s) => s.current);
@@ -33,35 +36,32 @@ export function App() {
   useWorkspaceController();
   useProviderController();
 
-  // Entering a folder asks Livre/Squad (Overclock parity). Only on a change
-  // the user made in this session — a restart restoring the saved workspace
-  // must NOT re-ask, so the first hydrated value is treated as baseline.
+  // Each workspace owns its pane layout (Overclock parity): entering one
+  // loads ITS saved tree; leaving to the launcher detaches. Entering a folder
+  // WITHOUT saved panes asks Livre/Squad — a folder with a saved mission
+  // restores silently, and a restart restoring the persisted workspace never
+  // re-asks (the first hydrated value is the baseline).
   const lastWorkspacePath = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     if (!workspaceHydrated) return;
     const path = currentWorkspace?.path ?? null;
-    if (lastWorkspacePath.current === undefined) {
-      lastWorkspacePath.current = path; // baseline from persisted state
+    if (!path) {
+      detachWorkspaceLayout();
+      lastWorkspacePath.current = path;
       return;
     }
-    if (path && path !== lastWorkspacePath.current) {
+    const isUserSwitch =
+      lastWorkspacePath.current !== undefined &&
+      path !== lastWorkspacePath.current;
+    lastWorkspacePath.current = path;
+    void switchWorkspaceLayout(path).then((hadSavedLayout) => {
+      if (!isUserSwitch || hadSavedLayout) return;
       const wizard = useMissionWizardStore.getState();
       // The "Novo workspace" wizard opens the folder itself mid-flow; don't
       // stack a second wizard on top of it.
       if (!wizard.open) wizard.openForMission();
-    }
-    lastWorkspacePath.current = path;
-  }, [workspaceHydrated, currentWorkspace]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void window.nexus.layout.load().then((layout) => {
-      if (!cancelled) hydrate(layout);
     });
-    return () => {
-      cancelled = true;
-    };
-  }, [hydrate]);
+  }, [workspaceHydrated, currentWorkspace]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -83,7 +83,7 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  if (!hydrated || !workspaceHydrated) {
+  if (!workspaceHydrated) {
     return <div className="boot">Starting NexusIDE…</div>;
   }
 
@@ -97,6 +97,11 @@ export function App() {
         <MissionWizard />
       </div>
     );
+  }
+
+  // Workspace chosen but its layout still loading.
+  if (!hydrated) {
+    return <div className="boot">Starting NexusIDE…</div>;
   }
 
   return (

@@ -157,9 +157,10 @@ const api: NexusApi = {
     onStateChange: (sessionId, cb) => subscribe(stateSubs, sessionId, cb),
   },
   layout: {
-    save: (layout: WorkspaceLayout) =>
-      ipcRenderer.invoke(LAYOUT_CHANNELS.save, layout),
-    load: () => ipcRenderer.invoke(LAYOUT_CHANNELS.load),
+    save: (workspacePath: string, layout: WorkspaceLayout) =>
+      ipcRenderer.invoke(LAYOUT_CHANNELS.save, { workspacePath, layout }),
+    load: (workspacePath: string) =>
+      ipcRenderer.invoke(LAYOUT_CHANNELS.load, { workspacePath }),
   },
   adapters: {
     list: () => ipcRenderer.invoke(ADAPTER_CHANNELS.list),

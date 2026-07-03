@@ -179,8 +179,9 @@ export interface NexusApi {
     ): Unsubscribe;
   };
   layout: {
-    save(layout: WorkspaceLayout): Promise<{ ok: boolean }>;
-    load(): Promise<WorkspaceLayout | null>;
+    /** Layouts are keyed per workspace folder (Overclock parity). */
+    save(workspacePath: string, layout: WorkspaceLayout): Promise<{ ok: boolean }>;
+    load(workspacePath: string): Promise<WorkspaceLayout | null>;
   };
   adapters: {
     list(): Promise<AdapterInfo[]>;
