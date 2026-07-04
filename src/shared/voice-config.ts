@@ -87,7 +87,7 @@ export const voicePluginSchema: z.ZodType<VoicePlugin> = z.lazy(() =>
 
 // ── Top-level voice config ───────────────────────────────────────────────────
 
-export type VoiceRouting = 'focused-pane' | 'orchestrator' | 'ask';
+export type VoiceRouting = 'jarvis' | 'focused-pane' | 'orchestrator' | 'ask';
 export type VoiceSpeakMode = 'summary' | 'full' | 'off';
 
 const inputSchema = z.object({
@@ -104,8 +104,12 @@ export const voiceConfigSchema = z.object({
     mode: 'push-to-talk',
     shortcut: 'CommandOrControl+Shift+Space',
   }),
-  routing: z.enum(['focused-pane', 'orchestrator', 'ask']).default('focused-pane'),
+  routing: z.enum(['jarvis', 'focused-pane', 'orchestrator', 'ask']).default('jarvis'),
   speakMode: z.enum(['summary', 'full', 'off']).default('summary'),
+  /** Wake word ("Jarvis") — always-on local detection via Porcupine. */
+  wakeWord: z
+    .object({ enabled: z.boolean().default(false) })
+    .default({ enabled: false }),
   stt: voicePluginSchema,
   tts: voicePluginSchema,
 });
@@ -126,8 +130,9 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
     shortcut: 'CommandOrControl+Shift+Space',
     pushToTalkKey: { code: 'Space' },
   },
-  routing: 'focused-pane',
+  routing: 'jarvis',
   speakMode: 'summary',
+  wakeWord: { enabled: false },
   stt: {
     type: 'stt',
     provider: 'groq',
@@ -167,8 +172,8 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
     provider: 'openai',
     endpoint: 'https://api.openai.com/v1/audio/speech',
     auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
-    model: 'tts-1',
-    voice: 'onyx',
+    model: 'gpt-4o-mini-tts',
+    voice: 'nova',
     speed: 1.0,
     streaming: true,
     format: 'mp3',

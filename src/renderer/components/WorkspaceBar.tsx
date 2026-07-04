@@ -19,9 +19,7 @@ function viewLabel(kind: 'grid' | 'canvas'): string {
 /** Slim top chrome: brand, pane count, split shortcuts, view toggle, and the agent launcher. */
 export function WorkspaceBar() {
   const root = useLayoutStore((s) => s.root);
-  const focusedPaneId = useLayoutStore((s) => s.focusedPaneId);
   const viewKind = useLayoutStore((s) => s.viewKind);
-  const split = useLayoutStore((s) => s.split);
   const spawnAgent = useLayoutStore((s) => s.spawnAgent);
   const addShellPane = useLayoutStore((s) => s.addShellPane);
   const toggleView = useLayoutStore((s) => s.toggleView);
@@ -62,10 +60,6 @@ export function WorkspaceBar() {
       unsub();
     };
   }, []);
-
-  const onSplit = (direction: 'row' | 'column') => {
-    if (focusedPaneId) split(focusedPaneId, direction);
-  };
 
   const installedAdapters = adapters.filter((a) => a.installed);
 
@@ -128,36 +122,31 @@ export function WorkspaceBar() {
           </span>
         )}
         <button
-          className="workspace-bar__btn workspace-bar__btn--agent"
+          className="workspace-bar__btn workspace-bar__btn--primary"
           onClick={openWizard}
           title="Nova missão (livre ou squad)"
         >
-          ＋ Missão
+          ▸ Missão
+        </button>
+        <button
+          className="workspace-bar__btn workspace-bar__btn--agent"
+          onClick={openPicker}
+          title="Abrir um agente de IA em um pane novo"
+        >
+          ＋ Agent
         </button>
         <button
           className="workspace-bar__btn"
           onClick={addShellPane}
-          title="Abrir um terminal shell novo (rode qualquer CLI; os agentes leem/escrevem nele)"
+          title={`Abrir um terminal shell novo (${paneCount} pane${paneCount === 1 ? '' : 's'} aberto${paneCount === 1 ? '' : 's'} · ⌘D divide o pane focado)`}
         >
           ＋ Terminal
         </button>
-        <span className="workspace-bar__count">
-          {paneCount} pane{paneCount === 1 ? '' : 's'}
-        </span>
-        {viewKind === 'grid' && (
-          <>
-            <button className="workspace-bar__btn" onClick={() => onSplit('row')}>
-              Split →
-            </button>
-            <button className="workspace-bar__btn" onClick={() => onSplit('column')}>
-              Split ↓
-            </button>
-          </>
-        )}
+        <span className="workspace-bar__sep" aria-hidden="true" />
         <button
           className={`workspace-bar__btn workspace-bar__btn--view ${viewKind === 'canvas' ? 'workspace-bar__btn--view-active' : ''}`}
           onClick={toggleView}
-          title={viewKind === 'grid' ? 'Switch to canvas (free drag)' : 'Switch to grid (split panes)'}
+          title={viewKind === 'grid' ? 'Mudar para canvas (arrastar livre)' : 'Mudar para grid (panes divididos)'}
         >
           {viewLabel(viewKind)}
         </button>
@@ -171,24 +160,18 @@ export function WorkspaceBar() {
         <button
           className={`workspace-bar__btn ${orchPanelOpen ? 'workspace-bar__btn--view-active' : ''}`}
           onClick={toggleOrchPanel}
-          title="Missions, handoffs, todos and squads"
+          title="Missões, handoffs, todos e squads"
         >
           ⛭ Orch
         </button>
+        <span className="workspace-bar__sep" aria-hidden="true" />
+        <VoiceButton />
         <button
           className="workspace-bar__btn"
           onClick={toggleSettings}
-          title="Módulos e catálogo (terminal, voz, providers, marketplace…)"
+          title="Conta, plano, módulos e catálogo (⌘,)"
         >
-          ⚙ Configurações
-        </button>
-        <VoiceButton />
-        <button
-          className="workspace-bar__btn workspace-bar__btn--agent"
-          onClick={openPicker}
-          title="Launch an AI CLI agent in a new pane"
-        >
-          + Agent
+          ⚙ Config
         </button>
       </div>
 

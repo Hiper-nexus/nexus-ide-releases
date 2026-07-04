@@ -108,6 +108,10 @@ function detect(adapterId: string): boolean {
       // the token is actually injected (never suppressed as if a subscription
       // existed). Uses the Claude binary, but NOT the Claude subscription.
       return false;
+    case 'longcat':
+      // Same model as GLM: pure API-key route on the Claude binary, pointed
+      // at the LongCat Anthropic-compatible endpoint. Never a subscription.
+      return false;
     case 'agy':
       return (
         exists('.gemini', 'antigravity') ||

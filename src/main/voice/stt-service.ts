@@ -104,14 +104,23 @@ async function attemptCloud(
     return { ok: false, needsKey: true, reason: `${envVar ?? 'API key'} not set` };
   }
 
-  const translate = plugin.translate ?? false;
+  const translate = req.translate ?? plugin.translate ?? false;
   const endpoint = resolveEndpoint(plugin, translate);
   const audio = base64ToBuffer(req.audioBase64);
 
+  // Groq's /audio/translations endpoint rejects the turbo model (400) — only
+  // whisper-large-v3 supports translation. Swap it transparently when the
+  // request is a translate call.
+  let model = plugin.model ?? 'whisper-large-v3-turbo';
+  if (translate && model === 'whisper-large-v3-turbo') {
+    model = 'whisper-large-v3';
+  }
+
   const form = new FormData();
-  form.append('model', plugin.model ?? 'whisper-large-v3-turbo');
+  form.append('model', model);
   form.append('response_format', 'json');
-  if (!translate && plugin.language) form.append('language', plugin.language);
+  const language = req.language ?? plugin.language;
+  if (!translate && language) form.append('language', language);
   const ext = req.mime === 'audio/webm' ? 'webm' : 'wav';
   form.append('file', new Blob([new Uint8Array(audio)], { type: req.mime }), `audio.${ext}`);
 
@@ -130,7 +139,14 @@ async function attemptCloud(
 
   if (!res.ok) {
     const { reason, needsKey } = describeHttpFailure(res.status);
-    return { ok: false, needsKey, reason };
+    // Surface the provider's own message — a bare "error (400)" is undebuggable.
+    const body = await res.text().catch(() => '');
+    const detail = body.replace(/\s+/g, ' ').trim().slice(0, 160);
+    return {
+      ok: false,
+      needsKey,
+      reason: detail ? `${reason}: ${detail}` : reason,
+    };
   }
   const json = (await res.json().catch(() => ({}))) as { text?: string };
   const text = (json.text ?? '').trim();

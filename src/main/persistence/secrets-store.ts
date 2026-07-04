@@ -52,19 +52,45 @@ function ensureCache(): Map<string, string> {
   return cache;
 }
 
-function persist(): void {
-  if (!isSecureStorageAvailable() || !cache) return;
-  const out: Record<string, string> = {};
-  for (const [adapterId, plain] of cache) {
+/** Raw (still-encrypted) disk map — used to merge writes without decrypting. */
+function readRawFromDisk(): Record<string, string> {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf8')) as unknown;
+    return parsed && typeof parsed === 'object'
+      ? (parsed as Record<string, string>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Persist ONE key's change by merging over the CURRENT disk contents (raw
+ * blobs, no decryption), then writing atomically (tmp + rename).
+ *
+ * Never dump the in-memory cache wholesale: with two app instances alive
+ * (dev restarts!), the stale one would rewrite the file without keys the
+ * newer one saved — that bug silently ate stored API keys. Merging at the
+ * raw level also preserves entries this instance cannot decrypt.
+ */
+function persistDelta(key: string, plainValue: string | null): void {
+  if (!isSecureStorageAvailable()) return;
+  const raw = readRawFromDisk();
+  if (plainValue === null) {
+    delete raw[key];
+  } else {
     try {
-      out[adapterId] = safeStorage.encryptString(plain).toString('base64');
-    } catch {
-      // Skip values that fail to encrypt rather than write plaintext.
+      raw[key] = safeStorage.encryptString(plainValue).toString('base64');
+    } catch (err) {
+      console.warn('[secrets] failed to encrypt value:', err);
+      return;
     }
   }
   try {
     fs.mkdirSync(path.dirname(SECRETS_FILE), { recursive: true });
-    fs.writeFileSync(SECRETS_FILE, JSON.stringify(out), { mode: 0o600 });
+    const tmp = `${SECRETS_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(raw), { mode: 0o600 });
+    fs.renameSync(tmp, SECRETS_FILE);
   } catch (err) {
     console.warn('[secrets] failed to persist encrypted secrets:', err);
   }
@@ -86,7 +112,7 @@ export function setSecret(key: string, value: string): { ok: boolean; error?: st
   const store = ensureCache();
   if (value === '') {
     store.delete(key);
-    persist();
+    persistDelta(key, null);
     return { ok: true };
   }
   if (!isSecureStorageAvailable()) {
@@ -98,13 +124,13 @@ export function setSecret(key: string, value: string): { ok: boolean; error?: st
     };
   }
   store.set(key, value);
-  persist();
+  persistDelta(key, value);
   return { ok: true };
 }
 
 export function deleteSecret(key: string): void {
   ensureCache().delete(key);
-  persist();
+  persistDelta(key, null);
 }
 
 export function hasKey(adapterId: string): boolean {
@@ -128,7 +154,7 @@ export function setKey(adapterId: string, key: string): { ok: boolean; error?: s
   const store = ensureCache();
   if (key === '') {
     store.delete(adapterId);
-    persist();
+    persistDelta(adapterId, null);
     return { ok: true };
   }
   if (!isSecureStorageAvailable()) {
@@ -140,7 +166,7 @@ export function setKey(adapterId: string, key: string): { ok: boolean; error?: s
     };
   }
   store.set(adapterId, key);
-  persist();
+  persistDelta(adapterId, key);
   return { ok: true };
 }
 

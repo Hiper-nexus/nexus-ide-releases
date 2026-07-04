@@ -130,6 +130,21 @@ export const UPSTREAM_PROVIDERS: Record<string, UpstreamProvider> = {
     requiresToken: true,
     local: false,
   },
+  longcat: {
+    id: 'longcat',
+    label: 'LongCat (Meituan)',
+    baseUrl: 'https://api.longcat.chat/anthropic',
+    defaultModel: 'LongCat-2.0',
+    extraEnv: {
+      ...THIRD_PARTY_EXTRA,
+      // Official Claude Code mapping (longcat.chat/platform/docs/ClaudeCode.html)
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'LongCat-2.0',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'LongCat-2.0',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'LongCat-2.0',
+    },
+    requiresToken: true,
+    local: false,
+  },
   ollama: {
     id: 'ollama',
     label: 'Ollama (local)',

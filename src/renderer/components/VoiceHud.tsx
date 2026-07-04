@@ -19,11 +19,21 @@ export function VoiceHud() {
   const transcript = useVoiceStore((s) => s.lastTranscript);
   const note = useVoiceStore((s) => s.note);
   const error = useVoiceStore((s) => s.error);
+  const info = useVoiceStore((s) => s.info);
 
   if (status === 'idle') return null;
 
   const label = PHASE_LABEL[status];
   const isError = status === 'error';
+
+  // In toggle mode the send edge is a SECOND keypress — say so, or users
+  // hold-release and think voice broke.
+  const listeningHint =
+    status === 'listening' && info
+      ? info.hotkeyMode === 'hold'
+        ? `solte ${info.shortcut} para enviar`
+        : `pressione ${info.shortcut} de novo para enviar`
+      : null;
 
   return (
     <div
@@ -48,6 +58,11 @@ export function VoiceHud() {
           ) : (
             <>
               {transcript && <span className="voice-hud__detail">"{transcript}"</span>}
+              {listeningHint && (
+                <span className="voice-hud__detail voice-hud__detail--note">
+                  {listeningHint}
+                </span>
+              )}
               {note && (
                 <span className="voice-hud__detail voice-hud__detail--note">
                   {'-> '}

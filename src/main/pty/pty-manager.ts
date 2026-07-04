@@ -318,6 +318,17 @@ export function spawnAgentSession(
   // A user-set absolute binary path overrides the adapter's declared command.
   const bin = overrides.binPath || argv[0];
   const args = argv.slice(1);
+  // Adapters whose interactive argv has no {{MODEL}} placeholder would
+  // silently DROP the requested model (route_task picks grok-code-fast-1,
+  // grok boots on its default). When a model was explicitly requested and the
+  // adapter declares a model flag, append it.
+  const explicitModel = req.model ?? overrides.defaultModel;
+  const templateHasModel = adapter.spawn.interactive.some((a) =>
+    a.includes('{{MODEL}}'),
+  );
+  if (explicitModel && !templateHasModel && adapter.models.flag) {
+    args.push(adapter.models.flag, explicitModel);
+  }
   // Failover re-spawn: continue the prior conversation via the adapter's
   // resume flags (e.g. claude --resume).
   if (req.resume && adapter.spawn.resumeArgs.length > 0) {

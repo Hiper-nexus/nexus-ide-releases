@@ -26,7 +26,9 @@ export type RoutingTable = Record<TaskTier, RouteCandidate[]>;
  *
  * GLM (z.ai, model 5.2) is a first-class `glm` adapter now — strong AND cheap,
  * so it LEADS the medium tier and is an early option on hard. It runs on the
- * Claude binary pointed at the z.ai endpoint (see glm.json).
+ * Claude binary pointed at the z.ai endpoint (see glm.json). LongCat
+ * (Meituan, 1M ctx, agentic) follows the same pattern (longcat.json) and sits
+ * right behind GLM on medium/hard — comparable price, extra diversity.
  */
 export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   trivial: [
@@ -45,6 +47,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   ],
   medium: [
     { adapterId: 'glm', model: 'glm-5.2', effort: 'medium' },
+    { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'medium' },
     { adapterId: 'kimi', model: 'kimi-for-coding', effort: 'medium' },
     { adapterId: 'grok', model: 'grok-4.1', effort: 'medium' },
     { adapterId: 'gemini', model: 'gemini-3.1-pro', effort: 'medium' },
@@ -55,6 +58,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   hard: [
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'high' },
     { adapterId: 'glm', model: 'glm-5.2', effort: 'high' },
+    { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.5', effort: 'high' },
     { adapterId: 'gemini', model: 'gemini-3.1-pro', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-for-coding', effort: 'high' },

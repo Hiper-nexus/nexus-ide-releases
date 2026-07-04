@@ -14,6 +14,10 @@ export const transcribeRequestSchema = z.object({
   audioBase64: z.string().min(1).max(50_000_000),
   mime: z.enum(['audio/wav', 'audio/pcm', 'audio/webm']).default('audio/wav'),
   sampleRate: z.number().int().positive().max(192_000).default(16_000),
+  /** Override the plugin's translate flag (Jarvis mode wants raw PT, not EN). */
+  translate: z.boolean().optional(),
+  /** Hint the spoken language when not translating (e.g. 'pt'). */
+  language: z.string().min(2).max(8).optional(),
 });
 
 export type TranscribeRequest = z.infer<typeof transcribeRequestSchema>;
@@ -28,7 +32,7 @@ export type SpeakRequest = z.infer<typeof speakRequestSchema>;
 
 export const setConfigRequestSchema = z.object({
   enabled: z.boolean().optional(),
-  routing: z.enum(['focused-pane', 'orchestrator', 'ask']).optional(),
+  routing: z.enum(['jarvis', 'focused-pane', 'orchestrator', 'ask']).optional(),
   speakMode: z.enum(['summary', 'full', 'off']).optional(),
   shortcut: z.string().min(1).max(64).optional(),
   /** Bare trigger key used for keyup detection, e.g. Space, F8, J. */
@@ -37,6 +41,8 @@ export const setConfigRequestSchema = z.object({
   sttProvider: z.string().min(1).max(64).optional(),
   /** Force a specific provider id to the head of the TTS chain. */
   ttsProvider: z.string().min(1).max(64).optional(),
+  /** Toggle the "Jarvis" wake word (Porcupine local detection). */
+  wakeWordEnabled: z.boolean().optional(),
 });
 
 export type SetConfigRequest = z.infer<typeof setConfigRequestSchema>;
@@ -92,6 +98,15 @@ export interface VoiceRuntimeInfo {
   shortcut: string;
   pushToTalkKeyCode: string;
   hotkeyMode: HotkeyMode;
+  /**
+   * Whether the global accelerator actually registered with the OS (false =
+   * conflict with another app or invalid combo). Optional: composed at the
+   * IPC layer; pure builders may omit it.
+   */
+  hotkeyArmed?: boolean;
+  /** Wake word ("Jarvis") toggle + whether its Picovoice key is present. */
+  wakeWordEnabled: boolean;
+  hasWakeKey: boolean;
   keys: VoiceApiKeyStatus[];
   stt: ResolvedChain;
   tts: ResolvedChain;
@@ -113,6 +128,55 @@ export type TranscribeResult =
       attempts: SttAttempt[];
     }
   | { ok: false; error: string; needsKey: boolean; attempts: SttAttempt[] };
+
+// ── JARVIS (assistente conversacional) ───────────────────────────────────────
+
+export interface JarvisContext {
+  workspace: string | null;
+  squads: string[];
+  panes: string[];
+  focusedPane: string | null;
+}
+
+export interface JarvisTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export type JarvisAction =
+  | { type: 'none' }
+  | { type: 'open_squad'; squadName: string }
+  | { type: 'new_mission' }
+  | { type: 'send_to_pane'; text: string }
+  | { type: 'run_command'; command: string };
+
+export interface JarvisReply {
+  say: string;
+  /** O cérebro sinaliza que espera resposta → a escuta reabre sozinha. */
+  expectReply?: boolean;
+  action: JarvisAction;
+}
+
+export const jarvisRequestSchema = z.object({
+  transcript: z.string().min(1).max(4000),
+  context: z.object({
+    workspace: z.string().nullable(),
+    squads: z.array(z.string().max(128)).max(50),
+    panes: z.array(z.string().max(128)).max(50),
+    focusedPane: z.string().max(128).nullable(),
+  }),
+  history: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string().max(2000),
+      }),
+    )
+    .max(12)
+    .default([]),
+});
+
+export type JarvisRequest = z.infer<typeof jarvisRequestSchema>;
 
 export type SpeakResult =
   | { ok: true; provider: string; mode: 'played' }

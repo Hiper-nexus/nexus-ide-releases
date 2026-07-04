@@ -6,6 +6,7 @@ import {
 import { orchWriteSession } from '../pty/pty-manager';
 import { getAdapter } from '../adapters/adapter-registry';
 import { recordMissionPane } from './mission-pane-store';
+import { LEGACY_MARKER } from './legacy-handoff';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
@@ -81,6 +82,29 @@ export interface SpawnToolOptions {
   prompt?: string;
 }
 
+/**
+ * Append the handoff contract a WORKER must fulfil, matched to what its CLI
+ * can actually do: MCP-wired adapters (quirks.mcpAutoload) get the
+ * nexus_handoff_submit tool; every other CLI has NO route to the embedded MCP
+ * server, so its only completion signal is printing the legacy marker block —
+ * without this instruction those workers finish silently and the orchestrator
+ * waits forever.
+ */
+function withHandoffContract(
+  prompt: string,
+  adapter: { quirks: Record<string, unknown> },
+): string {
+  const viaMcp = adapter.quirks.mcpAutoload === true;
+  const contract = viaMcp
+    ? 'Ao concluir sua tarefa, finalize chamando a tool nexus_handoff_submit ' +
+      'com {status: "success"|"partial"|"failed", summary, artifacts}.'
+    : 'Ao concluir sua tarefa, imprima EXATAMENTE este bloco como texto no ' +
+      'terminal (é seu sinal de conclusão para o orquestrador):\n' +
+      `${LEGACY_MARKER}\n` +
+      '{"status":"success","summary":"<resumo objetivo do que fez>","artifacts":[]}';
+  return `${prompt}\n\n${contract}`;
+}
+
 export async function spawnPaneAndMaybePrompt(
   options: SpawnToolOptions,
 ): Promise<{ paneId: string; sessionId: string }> {
@@ -106,7 +130,11 @@ export async function spawnPaneAndMaybePrompt(
   if (options.prompt) {
     // Let the CLI finish booting before typing (first idle or timeout).
     await waitForIdle(result.sessionId, AGENT_BOOT_TIMEOUT_MS);
-    await injectPrompt(result.sessionId, options.prompt);
+    const prompt =
+      options.role === 'orchestrator'
+        ? options.prompt
+        : withHandoffContract(options.prompt, adapter);
+    await injectPrompt(result.sessionId, prompt);
   }
   return { paneId: result.paneId, sessionId: result.sessionId };
 }

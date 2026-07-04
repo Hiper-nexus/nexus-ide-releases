@@ -122,6 +122,36 @@ export function loadVoiceConfig(): VoiceConfig {
   }
   const userConfig = readUserConfig();
   if (userConfig) {
+    let migrated = false;
+    // Upgrade one-time: quem ficou nos defaults antigos de TTS (tts-1/onyx)
+    // ganha a voz natural nova (gpt-4o-mini-tts/nova) sem perder customização.
+    if (
+      userConfig.tts.provider === 'openai' &&
+      userConfig.tts.model === 'tts-1' &&
+      userConfig.tts.voice === 'onyx'
+    ) {
+      userConfig.tts = {
+        ...userConfig.tts,
+        model: 'gpt-4o-mini-tts',
+        voice: 'nova',
+      };
+      migrated = true;
+    }
+    // Saves antigos promoviam o fallback macos-say para o TOPO da chain — a
+    // voz ficava robótica para sempre, mesmo com key OpenAI. Restaure a chain
+    // natural (openai → piper → say).
+    if (userConfig.tts.provider === 'macos-say') {
+      userConfig.tts = DEFAULT_VOICE_CONFIG.tts;
+      migrated = true;
+      console.log('[voice] TTS destravado do macos-say → chain natural (openai→piper→say)');
+    }
+    // A JARVIS conversacional virou o modo padrão do produto.
+    if (userConfig.routing === 'focused-pane') {
+      userConfig.routing = 'jarvis';
+      migrated = true;
+      console.log('[voice] routing migrado para o modo JARVIS (assistente)');
+    }
+    if (migrated) persist(userConfig);
     current = userConfig;
     return current;
   }
@@ -163,6 +193,9 @@ export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
     enabled: patch.enabled ?? current.enabled,
     routing: patch.routing ?? current.routing,
     speakMode: patch.speakMode ?? current.speakMode,
+    wakeWord: {
+      enabled: patch.wakeWordEnabled ?? current.wakeWord.enabled,
+    },
     input: {
       ...current.input,
       shortcut,
@@ -234,6 +267,9 @@ export function buildRuntimeInfo(): VoiceRuntimeInfo {
     shortcut: current.input.shortcut,
     pushToTalkKeyCode,
     hotkeyMode,
+    wakeWordEnabled: current.wakeWord.enabled,
+    // openWakeWord roda local e sem key — o campo fica por compat de UI.
+    hasWakeKey: true,
     keys: collectVoiceEnvVars(current.stt, current.tts),
     stt: resolveChain(current.stt, probes),
     tts: resolveChain(current.tts, probes),

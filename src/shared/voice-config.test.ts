@@ -22,7 +22,7 @@ describe('voiceConfigSchema', () => {
       tts: { type: 'tts', provider: 'macos-say', localBin: '/usr/bin/say' },
     });
     expect(parsed.enabled).toBe(true);
-    expect(parsed.routing).toBe('focused-pane');
+    expect(parsed.routing).toBe('jarvis');
     expect(parsed.speakMode).toBe('summary');
     expect(parsed.input.shortcut).toBe('CommandOrControl+Shift+Space');
   });

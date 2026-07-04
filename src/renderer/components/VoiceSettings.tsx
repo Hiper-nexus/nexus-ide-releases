@@ -33,6 +33,49 @@ function keyPlaceholder(key: VoiceApiKeyStatus): string {
   return `Paste ${key.envVar}`;
 }
 
+/**
+ * Map a physical KeyboardEvent to a config key code. Strict on purpose:
+ * letters, digits, F-keys and Space only — punctuation varies wildly across
+ * layouts (ABNT2!) and bare modifiers are not a key. Returns null for
+ * anything unsupported so the capture keeps listening.
+ */
+function codeFromKeyboardEvent(e: KeyboardEvent): string | null {
+  const c = e.code;
+  if (!c) return null;
+  const letter = /^Key([A-Z])$/.exec(c);
+  if (letter) return letter[1];
+  const digit = /^Digit(\d)$/.exec(c);
+  if (digit) return digit[1];
+  if (/^F\d{1,2}$/.test(c)) return c;
+  if (c === 'Space') return 'Space';
+  return null;
+}
+
+/**
+ * Turn the EXACT pressed combo into an Electron accelerator. Safety rails:
+ * F-keys may be bare (F6 alone can't collide with typing); any other key
+ * needs ⌘/⌃/⌥ — otherwise pressing it in a terminal would both type AND
+ * trigger voice. Returns null (with a hint) while the combo is unsafe.
+ */
+function comboFromKeyboardEvent(
+  e: KeyboardEvent,
+): { accel: string; key: string } | { hint: string } | null {
+  const key = codeFromKeyboardEvent(e);
+  if (!key) return null;
+  const mods: string[] = [];
+  if (e.metaKey || e.ctrlKey) mods.push('CommandOrControl');
+  if (e.altKey) mods.push('Alt');
+  if (e.shiftKey) mods.push('Shift');
+  const isFKey = /^F\d{1,2}$/.test(key);
+  const hasStrongMod = e.metaKey || e.ctrlKey || e.altKey;
+  if (!isFKey && !hasStrongMod) {
+    return {
+      hint: 'Combine com ⌘, ⌃ ou ⌥ (ex.: ⌘⇧Space) — ou use uma tecla F sozinha (ex.: F6).',
+    };
+  }
+  return { accel: [...mods, key].join('+'), key };
+}
+
 export function VoiceSettings() {
   const open = useVoiceStore((s) => s.settingsOpen);
   const info = useVoiceStore((s) => s.info);
@@ -44,18 +87,57 @@ export function VoiceSettings() {
   const [speakMode, setSpeakMode] = useState('summary');
   const [routing, setRouting] = useState('focused-pane');
   const [triggerKey, setTriggerKey] = useState('Space');
+  const [wakeWordOn, setWakeWordOn] = useState(false);
+  const [triggerAccel, setTriggerAccel] = useState('CommandOrControl+Shift+Space');
+  const [captureHint, setCaptureHint] = useState<string | null>(null);
+  const [capturingKey, setCapturingKey] = useState(false);
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Combo capture: while armed, the next SAFE pressed combo (⌘⇧Space, ⌥F,
+  // F6 alone…) becomes the trigger exactly as pressed. Esc cancels. Listens
+  // in the capture phase so the drawer's own shortcuts never swallow it.
   useEffect(() => {
-    if (!open || !info) return;
+    if (!capturingKey) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.code === 'Escape') {
+        setCapturingKey(false);
+        setCaptureHint(null);
+        return;
+      }
+      const combo = comboFromKeyboardEvent(e);
+      if (!combo) return; // bare modifier / unsupported key — keep listening
+      if ('hint' in combo) {
+        setCaptureHint(combo.hint);
+        return; // unsafe combo — explain and keep listening
+      }
+      setTriggerKey(combo.key);
+      setTriggerAccel(combo.accel);
+      setCaptureHint(null);
+      setCapturingKey(false);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [capturingKey]);
+
+  useEffect(() => {
+    if (!open) {
+      setCapturingKey(false);
+      return;
+    }
+    if (!info) return;
     setSttProvider(info.stt.active?.provider ?? info.stt.chain[0]?.provider ?? '');
     setTtsProvider(info.tts.active?.provider ?? info.tts.chain[0]?.provider ?? '');
     setSpeakMode(info.speakMode);
     setRouting(info.routing);
     setTriggerKey(info.pushToTalkKeyCode);
+    setTriggerAccel(info.shortcut);
+    setWakeWordOn(info.wakeWordEnabled);
+    setCaptureHint(null);
     setKeyInputs(
       Object.fromEntries(info.keys.map((key) => [key.envVar, ''])),
     );
@@ -82,13 +164,19 @@ export function VoiceSettings() {
         }
       }
       const normalizedKey = normalizeKeyCode(triggerKey);
+      // Só envia provider se o USUÁRIO mudou o dropdown — reenviar o "ativo"
+      // re-fixava o fallback (say) no topo da chain para sempre.
+      const sttInitial = info.stt.active?.provider ?? info.stt.chain[0]?.provider ?? '';
+      const ttsInitial = info.tts.active?.provider ?? info.tts.chain[0]?.provider ?? '';
       const next = await window.nexus.voice.setConfig({
-        sttProvider,
-        ttsProvider,
+        ...(sttProvider !== sttInitial ? { sttProvider } : {}),
+        ...(ttsProvider !== ttsInitial ? { ttsProvider } : {}),
         speakMode: speakMode as 'summary' | 'full' | 'off',
-        routing: routing as 'focused-pane' | 'orchestrator' | 'ask',
-        shortcut: accelFromCode(normalizedKey),
+        routing: routing as 'jarvis' | 'focused-pane' | 'orchestrator' | 'ask',
+        // The captured combo IS the accelerator (F6 alone, ⌥Space, ⌘⇧J…).
+        shortcut: triggerAccel || accelFromCode(normalizedKey),
         pushToTalkKeyCode: normalizedKey,
+        wakeWordEnabled: wakeWordOn,
       });
       setInfo(next);
       close();
@@ -218,6 +306,7 @@ export function VoiceSettings() {
                 value={routing}
                 onChange={(e) => setRouting(e.target.value)}
               >
+                <option value="jarvis">JARVIS (assistente conversacional)</option>
                 <option value="focused-pane">focused pane</option>
                 <option value="orchestrator">orchestrator</option>
                 <option value="ask">ask</option>
@@ -226,22 +315,62 @@ export function VoiceSettings() {
 
             <div className="voice-settings__shortcut-row">
               <label className="agent-picker__label">
-                Jarvis trigger key
-                <input
-                  className="agent-picker__select"
-                  value={triggerKey}
-                  onChange={(e) => setTriggerKey(e.target.value)}
-                  spellCheck={false}
-                />
+                Atalho do Jarvis
+                <button
+                  type="button"
+                  className={`agent-picker__select voice-settings__keycap ${capturingKey ? 'voice-settings__keycap--capturing' : ''}`}
+                  onClick={() => {
+                    setCaptureHint(null);
+                    setCapturingKey((v) => !v);
+                  }}
+                  title="Clique e pressione o COMBO desejado (ex.: ⌘⇧Space, ⌥J) ou uma tecla F sozinha (ex.: F6). Esc cancela."
+                >
+                  {capturingKey
+                    ? 'Pressione o atalho… (Esc cancela)'
+                    : triggerAccel}
+                </button>
               </label>
               <span className="voice-settings__shortcut-preview">
-                {accelFromCode(normalizeKeyCode(triggerKey))}
+                {info.hotkeyArmed === false ? (
+                  <span
+                    className="voice-settings__shortcut-warn"
+                    title="O atalho global não registrou no sistema — provável conflito com outro app. Escolha outro combo."
+                  >
+                    ⚠ não registrado
+                  </span>
+                ) : (
+                  'ativo ✓'
+                )}
               </span>
             </div>
+            {captureHint && (
+              <p className="agent-picker__hint voice-settings__capture-hint">
+                {captureHint}
+              </p>
+            )}
+
+            <label className="agent-picker__label voice-settings__wake-row">
+              <span>
+                Acionar por voz: diga <strong>"Hey Jarvis"</strong>
+                <span className="voice-settings__key-meta">
+                  {' '}
+                  detecção 100% local e offline (openWakeWord) · sem conta,
+                  sem key — é só ligar
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={wakeWordOn}
+                onChange={(e) => setWakeWordOn(e.target.checked)}
+              />
+            </label>
 
             <p className="agent-picker__hint">
-              Hold {info.shortcut} ({info.hotkeyMode}) to talk. Jarvis sends the
-              transcript to the focused pane and speaks the agent response.
+              {info.hotkeyMode === 'hold'
+                ? `Segure ${info.shortcut} para falar e solte para enviar.`
+                : `Pressione ${info.shortcut} para começar a falar e pressione DE NOVO para enviar.`}{' '}
+              O Jarvis manda a transcrição para o pane focado e fala a resposta
+              do agente.
             </p>
 
             {error && <p className="agent-picker__error">{error}</p>}

@@ -19,6 +19,7 @@ const UPSTREAMS = [
   { id: 'qwen', label: 'Qwen / Alibaba' },
   { id: 'sakana', label: 'Sakana Fugu' },
   { id: 'openrouter', label: 'OpenRouter' },
+  { id: 'longcat', label: 'LongCat (Meituan)' },
 ];
 
 function cooldownLabel(a: AccountInfo): string {

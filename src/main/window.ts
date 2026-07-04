@@ -12,6 +12,11 @@ function buildCsp(devServerUrl: string | undefined): string {
   const fontSrc = "font-src 'self' data:";
   const imgSrc = "img-src 'self' data:";
 
+  // Wake word (Porcupine) runs bundled WASM inside a blob: Web Worker /
+  // AudioWorklet — hence 'wasm-unsafe-eval' + worker-src blob:. Both refer to
+  // code WE bundle (no remote origins); everything else stays strict.
+  const workerSrc = "worker-src 'self' blob:";
+
   if (devServerUrl) {
     const origin = new URL(devServerUrl).origin;
     const ws = origin.replace(/^http/, 'ws');
@@ -20,7 +25,8 @@ function buildCsp(devServerUrl: string | undefined): string {
     // stays strict with script-src 'self' only.
     return [
       "default-src 'self'",
-      `script-src 'self' 'unsafe-inline' ${origin}`,
+      `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: ${origin}`,
+      workerSrc,
       styleSrc,
       fontSrc,
       imgSrc,
@@ -33,7 +39,8 @@ function buildCsp(devServerUrl: string | undefined): string {
 
   return [
     "default-src 'self'",
-    "script-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval' blob:",
+    workerSrc,
     styleSrc,
     fontSrc,
     imgSrc,
@@ -84,6 +91,15 @@ export function createMainWindow(): BrowserWindow {
   // `win.webContents` getter can already throw "Object has been destroyed".
   const wc = win.webContents;
   wc.once('destroyed', () => killSessionsFor(wc));
+  // Dev only: surface tagged renderer logs ([wake]/[voice]/[orch]) in the
+  // terminal — voice/wake issues are invisible without DevTools otherwise.
+  if (devServerUrl) {
+    wc.on('console-message', (_e, _level, message) => {
+      if (/^\[(wake|voice|orch|diag)\]/.test(message)) {
+        console.log('[renderer]', message);
+      }
+    });
+  }
 
   if (devServerUrl) {
     win.loadURL(devServerUrl);

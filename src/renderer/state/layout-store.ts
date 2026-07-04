@@ -21,6 +21,7 @@ import {
   ensureCanvasLayouts,
 } from '../lib/canvas-layout';
 import { getActiveWorkspacePath } from './active-workspace';
+import { useHomeStore } from './home-store';
 
 const DEFAULT_CANVAS_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 
@@ -110,22 +111,49 @@ export function flushLayout(): void {
 }
 
 /**
+ * Monotonic counter bumped by every LOCAL structural tree mutation (setPanes,
+ * split, spawn, close). A workspace-layout load captures it before its await;
+ * if it moved, a user action raced the load and IS the newer truth — the
+ * loaded layout must not clobber it (that clobber killed and respawned the
+ * squad orchestrator's PTY: the "claude opens twice" bug).
+ */
+let treeVersion = 0;
+export function bumpTreeVersion(): void {
+  treeVersion += 1;
+}
+
+let inFlightSwitch: { path: string; promise: Promise<boolean> } | null = null;
+
+/**
  * Swap the pane tree to another workspace: flush the outgoing layout, load
  * the target's saved layout (or a fresh single-shell tree) and hydrate.
- * Idempotent per workspace. Returns whether a saved layout existed — a fresh
- * folder (no layout) is what triggers the Livre/Squad question.
+ * Concurrent calls for the SAME path share one promise, so every awaiter
+ * really waits for the one hydrate (the old early-return resolved before the
+ * in-flight hydrate landed, letting mission launches race it). Returns whether
+ * a saved layout existed.
  */
-export async function switchWorkspaceLayout(
-  workspacePath: string,
-): Promise<boolean> {
-  if (persistKey === workspacePath) return true;
-  flushLayout();
-  persistKey = workspacePath;
-  const layout = await window.nexus.layout.load(workspacePath);
-  // A stale response from a slower earlier switch must not clobber the tree.
-  if (persistKey !== workspacePath) return true;
-  useLayoutStore.getState().hydrate(layout);
-  return layout !== null;
+export function switchWorkspaceLayout(workspacePath: string): Promise<boolean> {
+  if (inFlightSwitch?.path === workspacePath) return inFlightSwitch.promise;
+  if (persistKey === workspacePath && !inFlightSwitch) {
+    return Promise.resolve(true);
+  }
+  const run = (async () => {
+    flushLayout();
+    persistKey = workspacePath;
+    const versionAtStart = treeVersion;
+    const layout = await window.nexus.layout.load(workspacePath);
+    // A stale response from a slower earlier switch must not clobber the tree.
+    if (persistKey !== workspacePath) return true;
+    // A local mutation landed while we were loading — it wins; don't hydrate.
+    if (treeVersion !== versionAtStart) return layout !== null;
+    useLayoutStore.getState().hydrate(layout);
+    return layout !== null;
+  })();
+  inFlightSwitch = { path: workspacePath, promise: run };
+  void run.finally(() => {
+    if (inFlightSwitch?.promise === run) inFlightSwitch = null;
+  });
+  return run;
 }
 
 /** Leaving to the launcher: flush and stop persisting. */
@@ -157,6 +185,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       getActiveWorkspacePath() ?? undefined,
     );
     const root = splitPane(get().root, paneId, direction, newPane);
+    bumpTreeVersion();
     const s = { ...get(), root, focusedPaneId: newPane.id };
     set({ root, focusedPaneId: newPane.id });
     persist(s);
@@ -187,6 +216,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
         ? { ...canvasNodeLayouts, [newPane.id]: defaultCanvasLayout(paneCount - 1) }
         : canvasNodeLayouts;
 
+    bumpTreeVersion();
     set({ root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
     persist({ ...get(), root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
     return newPane.id;
@@ -199,6 +229,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const root = pivot
       ? splitPane(currentRoot, pivot, 'row', newPane)
       : buildGridTree([newPane]);
+    bumpTreeVersion();
     set({ root, focusedPaneId: newPane.id });
     persist({ ...get(), root, focusedPaneId: newPane.id });
   },
@@ -218,6 +249,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
             {} as Record<string, CanvasNodeLayout>,
           )
         : canvasNodeLayouts;
+    bumpTreeVersion();
     set({ root, focusedPaneId, canvasNodeLayouts: updatedLayouts });
     persist({ ...get(), root, focusedPaneId, canvasNodeLayouts: updatedLayouts });
   },
@@ -242,6 +274,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
         : canvasNodeLayouts;
 
     const focusedPaneId = newPane.id;
+    bumpTreeVersion();
     set({ root, focusedPaneId, canvasNodeLayouts: updatedLayouts });
     persist({ ...get(), root, focusedPaneId, canvasNodeLayouts: updatedLayouts });
   },
@@ -251,9 +284,13 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const root = next ?? initialTree();
     const focusedPaneId =
       get().focusedPaneId === paneId ? firstPaneId(root) : get().focusedPaneId;
+    bumpTreeVersion();
     const s = { ...get(), root, focusedPaneId };
     set({ root, focusedPaneId });
     persist(s);
+    // Closing the LAST pane replaces it with a fresh shell — visually a no-op.
+    // Surface the Home deck so the click has feedback and a next step.
+    if (next === null) useHomeStore.getState().show();
   },
 
   focus: (paneId) => {

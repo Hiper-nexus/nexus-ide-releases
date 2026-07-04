@@ -34,6 +34,8 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   glm: { inputPerM: 0.6, outputPerM: 2.2 },
   grok: { inputPerM: 3, outputPerM: 15 },
   qwen: { inputPerM: 0.4, outputPerM: 1.2 },
+  // longcat.chat/platform list price (promo atual: 0.30 in / 1.20 out).
+  longcat: { inputPerM: 0.75, outputPerM: 2.95 },
 };
 
 /** Heuristic: ~4 chars per token (used when no real usage counts exist). */

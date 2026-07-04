@@ -19,7 +19,9 @@ const config: ForgeConfig = {
     // hash in Info.plist consistent — the plugin repacks the asar AFTER the
     // hash is computed, which trips the integrity fuse into a silent hang.
     asar: {
-      unpack: '**/{*.node,spawn-helper}',
+      // *.dylib: onnxruntime-node (wake word) dlopens libonnxruntime beside
+      // its .node binding — both must live outside the asar.
+      unpack: '**/{*.node,*.dylib,spawn-helper}',
     },
     // plugin-vite's default ignore ships ONLY the .vite bundles, silently
     // dropping the runtime externals (@lydell/node-pty, better-sqlite3, …).

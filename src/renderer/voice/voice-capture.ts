@@ -17,6 +17,21 @@ export interface CaptureResult {
   durationSec: number;
 }
 
+/**
+ * Silence-based auto-stop (the wake-word flow has no key-release edge): once
+ * speech was heard, `silenceMs` of quiet — or `maxMs` total — fires
+ * `onAutoStop` exactly once. The caller still calls stop() to collect audio.
+ */
+export interface AutoStopOptions {
+  /** Quiet time after speech that ends the utterance. */
+  silenceMs: number;
+  /** Hard cap on the whole capture. */
+  maxMs: number;
+  onAutoStop: () => void;
+}
+
+const SPEECH_RMS = 0.015; // above = speech (16 kHz mono, normalized floats)
+
 export class VoiceCapture {
   private ctx: AudioContext | null = null;
   private stream: MediaStream | null = null;
@@ -26,14 +41,24 @@ export class VoiceCapture {
   private chunks: Float32Array[] = [];
   private inputSampleRate = TARGET_SAMPLE_RATE;
   private capturing = false;
+  private autoStop: AutoStopOptions | null = null;
+  private autoStopFired = false;
+  private heardSpeech = false;
+  private lastSpeechAt = 0;
+  private startedAt = 0;
 
   isCapturing(): boolean {
     return this.capturing;
   }
 
-  async start(): Promise<void> {
+  async start(autoStop?: AutoStopOptions): Promise<void> {
     if (this.capturing) return;
     this.chunks = [];
+    this.autoStop = autoStop ?? null;
+    this.autoStopFired = false;
+    this.heardSpeech = false;
+    this.startedAt = Date.now();
+    this.lastSpeechAt = this.startedAt;
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -47,7 +72,9 @@ export class VoiceCapture {
     this.source = this.ctx.createMediaStreamSource(this.stream);
 
     const onFrame = (frame: Float32Array) => {
-      if (this.capturing) this.chunks.push(frame);
+      if (!this.capturing) return;
+      this.chunks.push(frame);
+      if (this.autoStop && !this.autoStopFired) this.trackSilence(frame);
     };
 
     try {
@@ -87,6 +114,29 @@ export class VoiceCapture {
       sampleRate: TARGET_SAMPLE_RATE,
       durationSec: downsampled.length / TARGET_SAMPLE_RATE,
     };
+  }
+
+  /** RMS-based end-of-utterance detection for wake-word captures. */
+  private trackSilence(frame: Float32Array): void {
+    const opts = this.autoStop;
+    if (!opts) return;
+    let sum = 0;
+    for (let i = 0; i < frame.length; i += 1) sum += frame[i] * frame[i];
+    const rms = Math.sqrt(sum / Math.max(1, frame.length));
+    const now = Date.now();
+    if (rms >= SPEECH_RMS) {
+      this.heardSpeech = true;
+      this.lastSpeechAt = now;
+    }
+    const quietFor = now - this.lastSpeechAt;
+    const total = now - this.startedAt;
+    if (
+      (this.heardSpeech && quietFor >= opts.silenceMs) ||
+      total >= opts.maxMs
+    ) {
+      this.autoStopFired = true;
+      opts.onAutoStop();
+    }
   }
 
   private teardown(): void {

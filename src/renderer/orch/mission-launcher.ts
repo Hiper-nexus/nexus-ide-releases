@@ -1,6 +1,7 @@
 import type { AdapterInfo, PaneModel } from '../../shared/types';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { useLayoutStore } from '../state/layout-store';
+import { useHomeStore } from '../state/home-store';
 import { useOrchStore } from '../state/orch-store';
 import { createPane } from '../lib/split-tree';
 import { getActiveWorkspacePath } from '../state/active-workspace';
@@ -36,6 +37,7 @@ export function launchLibrePanes(
     const adapter = adapters.find((a) => a.id === slot);
     return createPane('cli-agent', cwd, slot, adapter?.models.default ?? '');
   });
+  useHomeStore.getState().hide();
   useLayoutStore.getState().setPanes(panes);
 }
 
@@ -163,6 +165,7 @@ export function launchSquadMission(
     title: `${squad.name} · orq`,
     orchRequestId: `squad-${squad.id}-${Date.now().toString(36)}`,
   };
+  useHomeStore.getState().hide();
   useLayoutStore.getState().setPanes([orchPane]);
 
   // Kickoff injection runs async — the wizard closes immediately, the

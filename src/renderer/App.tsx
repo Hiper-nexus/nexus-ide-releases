@@ -12,16 +12,19 @@ import { VoiceSettings } from './components/VoiceSettings';
 import { OrchestrationPanel } from './components/OrchestrationPanel';
 import { SettingsDrawer } from './components/settings/SettingsDrawer';
 import { LaunchScreen } from './components/LaunchScreen';
+import { HomeDeck } from './components/HomeDeck';
 import { MissionWizard } from './components/MissionWizard';
 import { CloseWorkspaceDialog } from './components/CloseWorkspaceDialog';
 import { FilesPanel } from './components/FilesPanel';
 import { useVoiceController } from './voice/voice-controller';
 import { useOrchBridge } from './orch/orch-bridge';
-import { useSettingsController } from './state/settings-store';
+import { useSettingsController, useSettingsStore } from './state/settings-store';
 import { useWorkspaceController, useWorkspaceStore } from './state/workspace-store';
 import { useProviderController } from './state/provider-store';
 import { useMissionWizardStore } from './state/mission-wizard-store';
+import { useHomeStore } from './state/home-store';
 import { reconcileHosts } from './terminal/terminal-host';
+import { listPanes } from './lib/split-tree';
 import { useFilesStore } from './state/files-store';
 import { useAccountController } from './state/account-store';
 import { useCostController } from './state/cost-store';
@@ -47,11 +50,10 @@ export function App() {
   useCostController();
   useFailoverController();
 
-  // Each workspace owns its pane layout: entering one
-  // loads ITS saved tree; leaving to the launcher detaches. Entering a folder
-  // WITHOUT saved panes asks Livre/Squad — a folder with a saved mission
-  // restores silently, and a restart restoring the persisted workspace never
-  // re-asks (the first hydrated value is the baseline).
+  // Each workspace owns its pane layout: entering one loads ITS saved tree;
+  // leaving to the launcher detaches. A real mission layout restores silently;
+  // anything that amounts to a single bare shell gets the Home deck instead
+  // (see below).
   const lastWorkspacePath = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     if (!workspaceHydrated) return;
@@ -64,18 +66,21 @@ export function App() {
       lastWorkspacePath.current = path;
       return;
     }
-    const isUserSwitch =
-      lastWorkspacePath.current !== undefined &&
-      path !== lastWorkspacePath.current;
     // A new workspace root invalidates the file tree cache.
     if (path !== lastWorkspacePath.current) useFilesStore.getState().reset();
     lastWorkspacePath.current = path;
-    void switchWorkspaceLayout(path).then((hadSavedLayout) => {
-      if (!isUserSwitch || hadSavedLayout) return;
-      const wizard = useMissionWizardStore.getState();
-      // The "Novo workspace" wizard opens the folder itself mid-flow; don't
-      // stack a second wizard on top of it.
-      if (!wizard.open) wizard.openForMission();
+    void switchWorkspaceLayout(path).then(() => {
+      // Show the (non-modal) Home deck whenever what loaded is just a single
+      // bare shell — a fresh folder AND a trivially-restored one look the same
+      // to the user (an empty prompt), so both get the deck. A real mission
+      // layout (agents, splits) restores silently. If the "Novo workspace"
+      // wizard is mid-flow it owns the launch; the deck would get in its way.
+      const panes = listPanes(useLayoutStore.getState().root);
+      const loneBarShell =
+        panes.length === 1 && panes[0].kind === 'shell' && !panes[0].orchRequestId;
+      if (loneBarShell && !useMissionWizardStore.getState().open) {
+        useHomeStore.getState().show();
+      }
     });
   }, [workspaceHydrated, currentWorkspace]);
 
@@ -83,6 +88,12 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
+      // ⌘, — macOS-standard settings shortcut (works with no pane focused).
+      if (e.key === ',') {
+        e.preventDefault();
+        useSettingsStore.getState().toggleDrawer();
+        return;
+      }
       const { focusedPaneId, split, close, viewKind: vk } = useLayoutStore.getState();
       if (!focusedPaneId) return;
 
@@ -127,6 +138,7 @@ export function App() {
       <main className="app__body">
         <FilesPanel />
         {viewKind === 'canvas' ? <CanvasView /> : <PaneGrid />}
+        <HomeDeck />
         <OrchestrationPanel />
       </main>
       <VoiceHud />

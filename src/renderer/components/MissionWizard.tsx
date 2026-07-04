@@ -65,6 +65,7 @@ function workerCount(squad: Squad): string {
 export function MissionWizard() {
   const open = useMissionWizardStore((s) => s.open);
   const variant = useMissionWizardStore((s) => s.variant);
+  const presetSquadId = useMissionWizardStore((s) => s.presetSquadId);
   const close = useMissionWizardStore((s) => s.close);
   const squads = useOrchStore((s) => s.squads);
   const recents = useWorkspaceStore((s) => s.recents);
@@ -88,14 +89,21 @@ export function MissionWizard() {
   useEffect(() => {
     if (!open) return;
     void window.nexus.adapters.list().then(setAdapters);
-    setStep(hasNewWsStep ? 'new-ws' : 'mode');
-    setMode(null);
+    // A preset squad (Home deck shortcut) skips MODO/SQUAD straight to review.
+    if (presetSquadId) {
+      setMode('squad');
+      setSquadId(presetSquadId);
+      setStep('squad-review');
+    } else {
+      setStep(hasNewWsStep ? 'new-ws' : 'mode');
+      setMode(null);
+      setSquadId('');
+    }
     setWsPath('');
     setCount(2);
     setSlots([]);
-    setSquadId('');
     setError(null);
-  }, [open, hasNewWsStep]);
+  }, [open, hasNewWsStep, presetSquadId]);
 
   const installed = useMemo(
     () => adapters.filter((a) => a.installed),

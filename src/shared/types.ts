@@ -12,6 +12,8 @@ import type {
   SpeakResult,
   SetConfigRequest,
   SetVoiceKeyRequest,
+  JarvisRequest,
+  JarvisReply,
 } from './voice-ipc';
 import type {
   Handoff,
@@ -202,7 +204,14 @@ export type Unsubscribe = () => void;
  * The typed surface exposed on `window.nexus` by the preload script.
  * The renderer NEVER sees raw ipcRenderer — only this contract.
  */
+import type { LicenseInfo, PlanId } from './billing-types';
+
 export interface NexusApi {
+  billing: {
+    get(): Promise<LicenseInfo>;
+    openCheckout(plan: PlanId): Promise<{ ok: boolean }>;
+    openPortal(): Promise<{ ok: boolean }>;
+  };
   pty: {
     spawn(req: SpawnRequest): Promise<SpawnResult>;
     write(sessionId: string, data: string): void;
@@ -233,7 +242,11 @@ export interface NexusApi {
     setKey(req: SetVoiceKeyRequest): Promise<{ ok: boolean; error?: string }>;
     transcribe(req: TranscribeRequest): Promise<TranscribeResult>;
     speak(req: SpeakRequest): Promise<SpeakResult>;
+    sendWakeAudio(chunk: ArrayBuffer): void;
+    onWakeDetected(cb: () => void): Unsubscribe;
+    jarvis(req: JarvisRequest): Promise<JarvisReply>;
     onPttStart(cb: () => void): Unsubscribe;
+    onPttToggle(cb: () => void): Unsubscribe;
     onPttStop(cb: () => void): Unsubscribe;
     onInfoChanged(cb: (info: VoiceRuntimeInfo) => void): Unsubscribe;
   };

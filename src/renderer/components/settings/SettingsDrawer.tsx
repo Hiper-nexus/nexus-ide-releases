@@ -9,6 +9,7 @@ import {
   TerminalSection,
 } from './ModuleSections';
 import { ProvidersPanel } from './ProvidersPanel';
+import { AccountSection } from './AccountSection';
 import {
   AgentsSection,
   HooksSection,
@@ -27,6 +28,7 @@ import {
  */
 
 export type SettingsSection =
+  | 'account'
   | 'terminal'
   | 'voice'
   | 'providers'
@@ -47,6 +49,10 @@ interface NavItem {
   title: string;
   subtitle: string;
 }
+
+const ACCOUNT_ITEMS: NavItem[] = [
+  { id: 'account', icon: '👤', title: 'MINHA CONTA', subtitle: 'plano · assinatura' },
+];
 
 const MODULE_ITEMS: NavItem[] = [
   { id: 'terminal', icon: '>_', title: 'TERMINAL', subtitle: 'tema · fonte · shell' },
@@ -129,6 +135,15 @@ export function SettingsDrawer() {
       <div className="settings__overlay" onClick={close} />
       <div className="settings__drawer">
         <nav className="settings-nav" aria-label="Módulos">
+          <p className="settings-nav__section">CONTA</p>
+          {ACCOUNT_ITEMS.map((item) => (
+            <NavRow
+              key={item.id}
+              item={item}
+              active={section === item.id}
+              onSelect={setSection}
+            />
+          ))}
           <p className="settings-nav__section">MÓDULOS</p>
           {MODULE_ITEMS.map((item) => (
             <NavRow
@@ -155,6 +170,7 @@ export function SettingsDrawer() {
         </nav>
 
         <div className="settings-detail">
+          {section === 'account' && <AccountSection />}
           {section === 'terminal' && <TerminalSection />}
           {section === 'voice' && <VoiceSection onNavigate={close} />}
           {section === 'providers' && <ProvidersPanel />}

@@ -3,10 +3,15 @@ import { useVoiceStore } from './voice-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { VoiceCapture } from './voice-capture';
+import { WakeMic } from './wake-mic';
 import { stripPromptEcho } from './response-echo';
 import { getPaneSessionId, writeToPane } from '../terminal/terminal-host';
 import { listPanes } from '../lib/split-tree';
-import type { VoiceRuntimeInfo } from '../../shared/voice-ipc';
+import { useWorkspaceStore } from '../state/workspace-store';
+import { useOrchStore } from '../state/orch-store';
+import { useMissionWizardStore } from '../state/mission-wizard-store';
+import type { AutoStopOptions } from './voice-capture';
+import type { JarvisTurn, VoiceRuntimeInfo } from '../../shared/voice-ipc';
 
 /**
  * The Jarvis pipeline, renderer side. Wires the global PTT edges to:
@@ -20,6 +25,50 @@ import type { VoiceRuntimeInfo } from '../../shared/voice-ipc';
 const RESPONSE_QUIET_MS = 1_500; // speak once the pane has been quiet this long
 const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
 const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
+const WAKE_SILENCE_MS = 700; // wake-word capture: quiet time that ends the utterance
+const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
+const JARVIS_MEMORY_MS = 90_000; // conversa esfria depois disso → história zera
+
+// Memória curta da conversa com a JARVIS (renderer-local, por janela).
+let jarvisHistory: JarvisTurn[] = [];
+const wakeMic = new WakeMic();
+let jarvisLastTurnAt = 0;
+
+const WAKE_ACKS = ['Pois não?', 'Sim?', 'Às ordens.', 'Diga.'];
+
+// Acks pré-sintetizados (LiveKit playbook: cached greetings) — a resposta ao
+// chamado sai INSTANTÂNEA, sem HTTP de TTS por wake.
+const ackCache = new Map<string, { audioBase64: string; format: string }>();
+let ackWarmed = false;
+
+function warmAckCache(): void {
+  if (ackWarmed) return;
+  ackWarmed = true;
+  for (const text of WAKE_ACKS) {
+    void window.nexus.voice
+      .speak({ text, speakMode: 'full' })
+      .then((r) => {
+        if (r.ok && r.mode === 'audio') {
+          ackCache.set(text, { audioBase64: r.audioBase64, format: r.format });
+        }
+      })
+      .catch(() => {});
+  }
+}
+
+/** Auto-stop padrão das capturas iniciadas por voz (sem tecla de soltar). */
+function wakeAutoStop(
+  capture: VoiceCapture,
+  busy: React.MutableRefObject<boolean>,
+): AutoStopOptions {
+  return {
+    silenceMs: WAKE_SILENCE_MS,
+    maxMs: WAKE_MAX_MS,
+    onAutoStop: () => {
+      if (isListening(capture)) void finishAndProcess(capture, busy);
+    },
+  };
+}
 
 export function useVoiceController(): void {
   const capture = useRef<VoiceCapture | null>(null);
@@ -29,40 +78,104 @@ export function useVoiceController(): void {
     capture.current = new VoiceCapture();
     const store = useVoiceStore.getState();
 
-    void window.nexus.voice.getInfo().then((info) => store.setInfo(info));
-    const unsubInfo = window.nexus.voice.onInfoChanged((info: VoiceRuntimeInfo) =>
-      useVoiceStore.getState().setInfo(info),
-    );
+    // Wake word ("Jarvis"): detection → ela RESPONDE ao chamado ("Pois não?")
+    // e então abre a escuta hands-free (auto-stop por silêncio).
+    const onWake = () => {
+      if (busy.current || isListening(capture.current)) return;
+      // Fluidez: a escuta abre IMEDIATAMENTE; o ack toca em paralelo (o
+      // echoCancellation do mic filtra a própria voz dela).
+      void beginListening(capture.current!, wakeAutoStop(capture.current!, busy));
+      const ack = WAKE_ACKS[Math.floor(Math.random() * WAKE_ACKS.length)];
+      const cached = ackCache.get(ack);
+      if (cached) {
+        void playAudioBase64(cached.audioBase64, cached.format).catch(() => {});
+      } else {
+        void window.nexus.voice
+          .speak({ text: ack, speakMode: 'full' })
+          .then((r) => {
+            if (r.ok && r.mode === 'audio') {
+              ackCache.set(ack, { audioBase64: r.audioBase64, format: r.format });
+              void playAudioBase64(r.audioBase64, r.format).catch(() => {});
+            }
+          })
+          .catch(() => {});
+      }
+    };
+    const syncWakeWord = (info: VoiceRuntimeInfo) => {
+      if (info.enabled && info.wakeWordEnabled) {
+        warmAckCache();
+        void wakeMic.start().catch((err) => {
+          useVoiceStore
+            .getState()
+            .setError(`Wake word indisponível: ${errMsg(err)}`);
+        });
+      } else {
+        wakeMic.stop();
+      }
+    };
+
+    void window.nexus.voice.getInfo().then((info) => {
+      store.setInfo(info);
+      syncWakeWord(info);
+    });
+    const unsubInfo = window.nexus.voice.onInfoChanged((info: VoiceRuntimeInfo) => {
+      useVoiceStore.getState().setInfo(info);
+      syncWakeWord(info);
+    });
 
     const onStart = () => {
       if (busy.current) return;
       void beginListening(capture.current!);
     };
     const onStop = () => {
-      if (!capture.current?.isCapturing()) return;
-      void finishAndProcess(capture.current, busy);
+      if (!isListening(capture.current)) return;
+      void finishAndProcess(capture.current!, busy);
+    };
+
+    // Toggle: o renderer decide — capturando? envia. Senão, começa a ouvir.
+    const onToggle = () => {
+      if (isListening(capture.current)) onStop();
+      else onStart();
     };
 
     const unsubStart = window.nexus.voice.onPttStart(onStart);
     const unsubStop = window.nexus.voice.onPttStop(onStop);
+    const unsubToggle = window.nexus.voice.onPttToggle(onToggle);
+    const unsubWake = window.nexus.voice.onWakeDetected(onWake);
 
     return () => {
       unsubInfo();
       unsubStart();
       unsubStop();
+      unsubToggle();
+      unsubWake();
+      wakeMic.stop();
     };
   }, []);
 }
 
-async function beginListening(capture: VoiceCapture): Promise<void> {
+async function beginListening(
+  capture: VoiceCapture,
+  autoStop?: import('./voice-capture').AutoStopOptions,
+): Promise<void> {
   const store = useVoiceStore.getState();
   try {
     store.setNote(null);
-    await capture.start();
+    if (wakeMic.isRunning()) {
+      // Stream do wake já está quente → escuta INSTANTÂNEA, sem getUserMedia.
+      wakeMic.beginUtterance(autoStop);
+    } else {
+      await capture.start(autoStop);
+    }
     store.setStatus('listening');
   } catch (err) {
     store.setError(`Mic unavailable: ${errMsg(err)}`);
   }
+}
+
+/** Está escutando por QUALQUER backend (mic quente do wake ou captura própria)? */
+function isListening(capture: VoiceCapture | null): boolean {
+  return Boolean(capture?.isCapturing() || wakeMic.isUtteranceActive());
 }
 
 async function finishAndProcess(
@@ -72,17 +185,23 @@ async function finishAndProcess(
   const store = useVoiceStore.getState();
   busy.current = true;
   try {
-    const result = await capture.stop();
+    const result = wakeMic.isUtteranceActive()
+      ? wakeMic.finishUtterance()
+      : await capture.stop();
     if (!result.wavBase64 || result.durationSec < MIN_SPEECH_SEC) {
       store.setStatus('idle');
       return;
     }
+
+    const routing = store.info?.routing ?? 'focused-pane';
 
     store.setStatus('transcribing');
     const stt = await window.nexus.voice.transcribe({
       audioBase64: result.wavBase64,
       mime: 'audio/wav',
       sampleRate: result.sampleRate,
+      // Modo JARVIS conversa em PT — transcreve cru, sem traduzir para EN.
+      ...(routing === 'jarvis' ? { translate: false, language: 'pt' } : {}),
     });
     if (!stt.ok) {
       store.setError(stt.error);
@@ -91,6 +210,11 @@ async function finishAndProcess(
     store.setTranscript(stt.text);
     // Surface throttle/quota fallbacks instead of failing silently.
     store.setNote(stt.fallbackNote ?? null);
+
+    if (routing === 'jarvis') {
+      await runJarvisTurn(stt.text, capture, busy);
+      return;
+    }
 
     store.setStatus('routing');
     const paneId = routePrompt(stt.text);
@@ -119,6 +243,109 @@ async function finishAndProcess(
   } finally {
     busy.current = false;
   }
+}
+
+/**
+ * Um turno da conversa com a JARVIS: fala transcrita → cérebro (main) →
+ * executa a ação no app → fala a resposta → se ela terminou perguntando,
+ * reabre a escuta sozinha (o loop "viva").
+ */
+async function runJarvisTurn(
+  transcript: string,
+  capture: VoiceCapture,
+  busy: React.MutableRefObject<boolean>,
+): Promise<void> {
+  const store = useVoiceStore.getState();
+  const now = Date.now();
+  if (now - jarvisLastTurnAt > JARVIS_MEMORY_MS) jarvisHistory = [];
+  jarvisLastTurnAt = now;
+
+  const { root, focusedPaneId } = useLayoutStore.getState();
+  const panes = listPanes(root);
+  const context = {
+    workspace: useWorkspaceStore.getState().current?.name ?? null,
+    squads: useOrchStore.getState().squads.map((s) => s.name),
+    panes: panes
+      .map((p) => `${p.kind === 'shell' ? '[shell] ' : '[agente] '}${p.title}`)
+      .slice(0, 20),
+    focusedPane: panes.find((p) => p.id === focusedPaneId)?.title ?? null,
+  };
+
+  store.setStatus('routing');
+  const reply = await window.nexus.voice.jarvis({
+    transcript,
+    context,
+    history: jarvisHistory,
+  });
+  jarvisHistory.push({ role: 'user', content: transcript });
+  jarvisHistory.push({ role: 'assistant', content: reply.say });
+  if (jarvisHistory.length > 12) jarvisHistory = jarvisHistory.slice(-12);
+
+  // Executa a ação decidida pelo cérebro.
+  let sayText = reply.say;
+  if (reply.action.type === 'open_squad') {
+    const wanted = reply.action.squadName.toLowerCase();
+    const squads = useOrchStore.getState().squads;
+    const match =
+      squads.find((s) => s.name.toLowerCase() === wanted) ??
+      squads.find(
+        (s) =>
+          s.name.toLowerCase().includes(wanted) ||
+          wanted.includes(s.name.toLowerCase()),
+      );
+    if (match) {
+      useMissionWizardStore.getState().openForSquad(match.id);
+    } else {
+      sayText = `Não achei o squad "${reply.action.squadName}". Os disponíveis são: ${context.squads.join(', ')}.`;
+    }
+  } else if (reply.action.type === 'new_mission') {
+    useMissionWizardStore.getState().openForMission();
+  } else if (reply.action.type === 'send_to_pane') {
+    const paneId = routePrompt(reply.action.text);
+    if (!paneId) sayText = 'Não tem nenhum pane focado para eu mandar a tarefa.';
+  } else if (reply.action.type === 'run_command') {
+    const { focusedPaneId: fp } = useLayoutStore.getState();
+    const ok = fp ? writeToPane(fp, `${reply.action.command}\n`) : false;
+    if (!ok) sayText = 'Não tem um terminal focado para eu rodar o comando.';
+  }
+
+  store.setStatus('speaking');
+  // Pipelining por sentença (LiveKit playbook): sintetiza e toca a PRIMEIRA
+  // frase enquanto o resto ainda está sendo gerado — corta o time-to-first-audio.
+  const split = splitFirstSentence(sayText);
+  const restPromise = split.rest
+    ? window.nexus.voice.speak({ text: split.rest, speakMode: 'full' })
+    : null;
+  const first = await window.nexus.voice.speak({ text: split.first, speakMode: 'full' });
+  if (first.ok) {
+    if (first.mode === 'audio') await playAudioBase64(first.audioBase64, first.format);
+  } else {
+    store.setError(first.error);
+    return;
+  }
+  if (restPromise) {
+    const rest = await restPromise;
+    if (rest.ok && rest.mode === 'audio') {
+      await playAudioBase64(rest.audioBase64, rest.format);
+    }
+  }
+  store.setSpoken(sayText);
+  store.setStatus('idle');
+
+  // O cérebro sinalizou que espera resposta → escuta reabre sozinha.
+  if (reply.expectReply ?? sayText.trim().endsWith('?')) {
+    busy.current = false;
+    void beginListening(capture, wakeAutoStop(capture, busy));
+  }
+}
+
+/** Primeira sentença (mín. 12 chars) + resto — para o TTS pipelined. */
+function splitFirstSentence(text: string): { first: string; rest: string } {
+  const t = text.trim();
+  const m = /[.!?…](\s|$)/.exec(t.slice(12));
+  if (!m || m.index + 13 >= t.length) return { first: t, rest: '' };
+  const cut = 12 + m.index + 1;
+  return { first: t.slice(0, cut).trim(), rest: t.slice(cut).trim() };
 }
 
 /**

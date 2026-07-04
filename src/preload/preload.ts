@@ -12,6 +12,8 @@ import { FILES_CHANNELS } from '../shared/files-types';
 import { ACCOUNT_CHANNELS } from '../shared/account-types';
 import type { AccountInfo, FailoverEvent } from '../shared/account-types';
 import { COST_CHANNELS } from '../shared/cost-types';
+import { BILLING_CHANNELS } from '../shared/billing-types';
+import type { PlanId } from '../shared/billing-types';
 import type { CostSnapshot } from '../shared/cost-types';
 import { NOTE_CHANNELS } from '../shared/note-types';
 import type { Note, NotesChangedEvent } from '../shared/note-types';
@@ -95,6 +97,16 @@ ipcRenderer.on(ADAPTER_CHANNELS.changed, (_event, payload: AdapterInfo[]) => {
 // unsubscribe cleanly — no raw ipcRenderer ever reaches the renderer.
 const pttStartListeners = new Set<() => void>();
 const pttStopListeners = new Set<() => void>();
+const pttToggleListeners = new Set<() => void>();
+ipcRenderer.on(VOICE_CHANNELS.pttToggle, () =>
+  pttToggleListeners.forEach((cb) => cb()),
+);
+
+const wakeDetectedListeners = new Set<() => void>();
+ipcRenderer.on(VOICE_CHANNELS.wakeDetected, () =>
+  wakeDetectedListeners.forEach((cb) => cb()),
+);
+
 const voiceInfoListeners = new Set<(info: VoiceRuntimeInfo) => void>();
 
 ipcRenderer.on(VOICE_CHANNELS.pttStart, () => pttStartListeners.forEach((cb) => cb()));
@@ -206,6 +218,11 @@ const api: NexusApi = {
     setKey: (req) => ipcRenderer.invoke(VOICE_CHANNELS.setKey, req),
     transcribe: (req) => ipcRenderer.invoke(VOICE_CHANNELS.transcribe, req),
     speak: (req) => ipcRenderer.invoke(VOICE_CHANNELS.speak, req),
+    sendWakeAudio: (chunk: ArrayBuffer) =>
+      ipcRenderer.send(VOICE_CHANNELS.wakeAudio, chunk),
+    jarvis: (req) => ipcRenderer.invoke(VOICE_CHANNELS.jarvis, req),
+    onPttToggle: (cb: () => void) => addListener(pttToggleListeners, cb),
+    onWakeDetected: (cb: () => void) => addListener(wakeDetectedListeners, cb),
     onPttStart: (cb) => addListener(pttStartListeners, cb),
     onPttStop: (cb) => addListener(pttStopListeners, cb),
     onInfoChanged: (cb) => addListener(voiceInfoListeners, cb),
@@ -319,6 +336,11 @@ const api: NexusApi = {
       ipcRenderer.invoke(PIPE_CHANNELS.add, { sourcePaneId, targetPaneId, mode }),
     remove: (id: string) => ipcRenderer.invoke(PIPE_CHANNELS.remove, { id }),
     onChanged: (cb) => addListener(pipesChangedListeners, cb),
+  },
+  billing: {
+    get: () => ipcRenderer.invoke(BILLING_CHANNELS.get),
+    openCheckout: (plan: PlanId) => ipcRenderer.invoke(BILLING_CHANNELS.checkout, plan),
+    openPortal: () => ipcRenderer.invoke(BILLING_CHANNELS.portal),
   },
   platform: process.platform,
 };

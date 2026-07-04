@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { Db } from '../persistence/db';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { squadSchema, squadsFileSchema } from '../../shared/orch-types';
+import { BUILTIN_SQUADS } from './builtin-squads';
 import { ChangeHub, parseJsonColumn } from './store-util';
 
 /**
@@ -76,6 +77,25 @@ export function initSquadStore(database: Db | null): void {
     }
   }
   migrateFromDiskIfEmpty();
+  seedBuiltinsIfEmpty();
+}
+
+/**
+ * First-run seed of the NEXUS ORIGINALS. Runs only when the store is still
+ * empty after hydration + migration, so a returning user (or one who removed
+ * some originals) is never overwritten. Guarantees the Squad mode has presets
+ * out-of-the-box.
+ */
+function seedBuiltinsIfEmpty(): void {
+  if (squads.size > 0) return;
+  for (const squad of BUILTIN_SQUADS) {
+    const parsed = squadSchema.safeParse(squad);
+    if (parsed.success) {
+      squads.set(parsed.data.id, parsed.data);
+      persist(parsed.data);
+    }
+  }
+  if (squads.size > 0) console.log(`[orch] seeded ${squads.size} built-in squad(s)`);
 }
 
 function persist(squad: Squad): void {

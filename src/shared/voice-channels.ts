@@ -14,9 +14,17 @@ export const VOICE_CHANNELS = {
   transcribe: 'voice:transcribe',
   /** invoke: renderer → main. Text → spoken (main plays `say`, or returns audio). */
   speak: 'voice:speak',
+  /** send: renderer → main. Frames PCM 16 kHz para o detector de wake word. */
+  wakeAudio: 'voice:wakeAudio',
+  /** event: main → renderer. "Hey Jarvis" detectado pelo openWakeWord. */
+  wakeDetected: 'voice:wake.detected',
+  /** invoke: renderer → main. Fala transcrita → resposta JARVIS {say, action}. */
+  jarvis: 'voice:jarvis',
 
   /** event: main → renderer. Global push-to-talk key pressed. */
   pttStart: 'voice:ptt.start',
+  /** event: main → renderer. Toggle-mode press — renderer decide start/stop. */
+  pttToggle: 'voice:ptt.toggle',
   /** event: main → renderer. Push-to-talk key released (hold mode only). */
   pttStop: 'voice:ptt.stop',
   /** event: main → renderer. Runtime info changed (config reload / hot-reload). */

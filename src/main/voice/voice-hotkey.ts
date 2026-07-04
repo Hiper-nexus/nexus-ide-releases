@@ -16,6 +16,9 @@ import type { HotkeyMode } from '../../shared/voice-ipc';
 export interface HotkeyCallbacks {
   onStart: () => void;
   onStop: () => void;
+  /** Toggle-mode press: the RENDERER decides start vs stop (it owns the
+   *  capture state; main-side toggle flags desync when capture auto-stops). */
+  onToggle: () => void;
 }
 
 interface UiohookLike {
@@ -33,7 +36,6 @@ interface UiohookModule {
 let registeredAccel: string | null = null;
 let uiohook: UiohookLike | null = null;
 let mode: HotkeyMode = 'toggle';
-let toggleActive = false;
 
 /** Best-effort load of the optional native uiohook module. */
 function tryLoadUiohook(): UiohookModule | null {
@@ -56,6 +58,11 @@ function resolveUiohookKeycode(mod: UiohookModule, code: string): number | null 
 
 export function currentHotkeyMode(): HotkeyMode {
   return mode;
+}
+
+/** Whether the global accelerator is actually registered with the OS. */
+export function isVoiceHotkeyArmed(): boolean {
+  return registeredAccel !== null;
 }
 
 /**
@@ -90,17 +97,26 @@ export function registerVoiceHotkey(
     mode = 'toggle';
   }
 
-  const ok = globalShortcut.register(accelerator, () => {
-    if (mode === 'hold') {
-      callbacks.onStart();
-    } else {
-      toggleActive = !toggleActive;
-      if (toggleActive) callbacks.onStart();
-      else callbacks.onStop();
-    }
-  });
-
-  if (ok) registeredAccel = accelerator;
+  // register() THROWS on a malformed accelerator and returns false on an OS
+  // conflict — both must degrade to "not armed", never break the caller (a
+  // bad persisted combo aborting bootstrap would take the whole app down).
+  let ok = false;
+  try {
+    ok = globalShortcut.register(accelerator, () => {
+      if (mode === 'hold') callbacks.onStart();
+      else callbacks.onToggle();
+    });
+  } catch (err) {
+    console.warn(`[voice] invalid accelerator "${accelerator}":`, err);
+  }
+  if (ok) {
+    registeredAccel = accelerator;
+  } else {
+    console.warn(
+      `[voice] global hotkey "${accelerator}" did not register` +
+        ' (conflict with another app or invalid combo)',
+    );
+  }
   return mode;
 }
 
@@ -122,6 +138,5 @@ export function disposeVoiceHotkey(): void {
     }
     uiohook = null;
   }
-  toggleActive = false;
   mode = 'toggle';
 }
