@@ -5,14 +5,15 @@ CLIs de IA, canvas infinito arrastável, adapters multi-CLI plugáveis e
 orquestração nativa de squads, missões e handoffs — tudo num único ambiente de
 desenvolvimento orientado a agentes.
 
-> **Status:** paridade com o Overclock v0.7.5 + diferenciais (canvas, voz falada,
-> multi-conta com failover). macOS-first (Apple Silicon).
+> **Status:** core completo — grid de terminais, canvas infinito, orquestração
+> de squads/missões, voz falada e multi-conta com failover. macOS-first
+> (Apple Silicon).
 
 ## Instalar (usuário)
 
 Baixe o `.dmg` mais recente em **[Releases](https://github.com/cleofasvolarehost/nexus-ide/releases)**,
-abra e arraste para Aplicativos. Na primeira abertura, clique-direito → **Abrir**
-(o build é unsigned; o macOS pede confirmação só na 1ª vez).
+abra e arraste para Aplicativos. O app é **assinado com Developer ID e
+notarizado pela Apple** — abre com um duplo-clique, sem avisos de segurança.
 
 As CLIs de IA que você já tem instaladas no Mac (`claude`, `codex`, `gemini`,
 `kimi`, `grok`, `agy`…) são **detectadas automaticamente** — o app lê o PATH do
@@ -34,9 +35,8 @@ seu shell de login, então funciona já na primeira execução.
   CLI do Claude.
 - **Auth subscription-first**: assinatura autenticada sempre vence; a API key é
   fallback; keys guardadas no **macOS Keychain** (nunca em plaintext).
-- **Orquestração**: servidor MCP embutido com 24 tools, squads (schema
-  compatível com o Overclock), missões, handoffs (SQLite + IPC) e skill-gate
-  duplo.
+- **Orquestração**: servidor MCP embutido com 24 tools, squads (schema JSON
+  portável), missões, handoffs (SQLite + IPC) e skill-gate duplo.
 - **Marketplace real** (catálogo aitmpl: 423 agents + 872 skills, install para
   `~/.claude`), **file explorer** com editor, e **voz Jarvis** (push-to-talk,
   STT + tradução PT→EN, resposta falada).

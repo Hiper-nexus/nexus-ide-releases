@@ -113,7 +113,7 @@ function writeFile(relPath: string, content: string): { ok: boolean; error?: str
 /**
  * Save pasted/dropped binary data (e.g. an image from the clipboard) into
  * ~/.nexus/dropped and return its absolute path, so it can be injected into a
- * pane's terminal — parity with Overclock's files:saveDropped.
+ * pane's terminal.
  */
 function saveDropped(name: string, base64: string): { ok: boolean; path?: string; error?: string } {
   try {

@@ -1,9 +1,9 @@
 # Onboarding, Settings Hub & Provider Routing
 
-Mirrors the Overclock v0.7.5 UX for startup, configuration and the multi-CLI
+How NexusIDE handles startup, configuration and the multi-CLI
 provider model.
 
-## Startup flow (Overclock parity)
+## Startup flow
 
 1. **Launch screen** (`LaunchScreen.tsx`) — the first surface when no workspace
    is open: "Novo workspace" (folder picker), open by path, and a **recent
@@ -11,7 +11,7 @@ provider model.
 2. **Inside the workspace** — the active workspace root becomes the cwd of every
    new pane/agent. The bar shows the workspace name + "trocar" and a
    **＋ Missão** button.
-3. **Mission wizard** (`MissionWizard.tsx`) — mirrors the Overclock steps:
+3. **Mission wizard** (`MissionWizard.tsx`) — walks through these steps:
    - **Modo**: `LIVRE` (solo agents) or `SQUAD` (orchestrated preset).
    - LIVRE → `Panes` (count) → `Providers` (per-pane CLI) → launch.
    - SQUAD → `Squad` (pick preset) → `Revisar` → launches the squad's
@@ -20,9 +20,8 @@ provider model.
 ## Settings hub (`SettingsDrawer.tsx`)
 
 Reached via **⚙** in the bar or **⚙ Configurações** on the launch screen.
-Left rail = **MÓDULOS** (Terminal, ClockVoice, Providers, Squads, Marketplace)
-+ **CATALOG** (Agents, Skills, MCPs, Tools, Plugins, Hooks, Rules, Atalhos) —
-matching the Overclock settings-catalog section ids.
+Left rail = **MÓDULOS** (Terminal, Voice, Providers, Squads, Marketplace)
++ **CATALOG** (Agents, Skills, MCPs, Tools, Plugins, Hooks, Rules, Atalhos).
 
 ### Providers / CLIs + Keys (`ProvidersPanel.tsx`)
 

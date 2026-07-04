@@ -3,8 +3,8 @@ import { z } from 'zod';
 /**
  * Cost tracker types shared across main / preload / renderer. Everything is
  * JSON-serializable. Token counts are heuristic estimates from the PTY stream
- * (no provider usage API), so treat costUsd as an order-of-magnitude gauge —
- * parity with Overclock's per-pane cost accounting.
+ * (no provider usage API), so treat costUsd as an order-of-magnitude gauge
+ * for per-pane cost accounting.
  */
 
 /** Accumulated token/cost accounting for one cli-agent pane. */

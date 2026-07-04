@@ -1,14 +1,14 @@
 import { handoffStatusSchema, type HandoffStatus } from '../../shared/orch-types';
 
 /**
- * Legacy handoff parsing (Overclock compat): agents that predate the MCP
- * tool print a `### OVERCLOCK_HANDOFF v1` block followed by a JSON object
- * into their terminal. This streaming parser watches per-session output for
- * that marker and extracts {status, summary, artifacts} as a fallback path
- * into the handoff store. Input must already be ANSI-stripped.
+ * Legacy handoff parsing: agents that predate the MCP tool print a
+ * `### NEXUS_HANDOFF v1` block followed by a JSON object into their terminal.
+ * This streaming parser watches per-session output for that marker and
+ * extracts {status, summary, artifacts} as a fallback path into the handoff
+ * store. Input must already be ANSI-stripped.
  */
 
-export const LEGACY_MARKER = '### OVERCLOCK_HANDOFF v1';
+export const LEGACY_MARKER = '### NEXUS_HANDOFF v1';
 
 const MAX_BLOCK_CHARS = 16_384;
 const TAIL_KEEP = LEGACY_MARKER.length - 1;

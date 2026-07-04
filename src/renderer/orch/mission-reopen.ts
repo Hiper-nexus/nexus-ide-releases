@@ -7,7 +7,7 @@ import { getActiveWorkspacePath } from '../state/active-workspace';
 import { getPaneSessionId, markResumeOnSpawn } from '../terminal/terminal-host';
 
 /**
- * One-click mission reopen (Overclock parity): rebuild the grid from the
+ * One-click mission reopen: rebuild the grid from the
  * mission's recorded pane composition — orchestrator first, then workers —
  * with every CLI re-spawned using its adapter's resume flags so the previous
  * conversations continue.

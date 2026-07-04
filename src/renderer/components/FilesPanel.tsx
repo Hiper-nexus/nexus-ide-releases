@@ -4,7 +4,7 @@ import { useWorkspaceStore } from '../state/workspace-store';
 
 /**
  * FILES tab — a workspace file explorer with a lazy tree and an inline text
- * editor with save (Overclock parity: view/edit workspace files). All reads
+ * editor with save (view/edit workspace files). All reads
  * and writes are sandboxed to the workspace root in main.
  */
 

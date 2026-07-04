@@ -73,7 +73,7 @@ export interface CatalogIndexResult {
   error?: string;
 }
 
-/** Same contract as overclock_catalog_install (skip-if-exists). */
+/** Contract for the catalog-install tool (skip-if-exists). */
 export interface CatalogInstallResult {
   ok: boolean;
   skipped?: boolean;
@@ -219,7 +219,7 @@ export interface NexusApi {
     ): Unsubscribe;
   };
   layout: {
-    /** Layouts are keyed per workspace folder (Overclock parity). */
+    /** Layouts are keyed per workspace folder. */
     save(workspacePath: string, layout: WorkspaceLayout): Promise<{ ok: boolean }>;
     load(workspacePath: string): Promise<WorkspaceLayout | null>;
   };

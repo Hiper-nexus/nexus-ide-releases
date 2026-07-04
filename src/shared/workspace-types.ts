@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 /**
  * Workspace = the root folder a set of panes/missions operate in (the cwd for
- * new sessions). Mirrors the Overclock onboarding: launch → choose/open a
+ * new sessions). The onboarding flow: launch → choose/open a
  * workspace (recent list) → work inside it.
  */
 

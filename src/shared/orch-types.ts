@@ -4,9 +4,8 @@ import { z } from 'zod';
  * Orchestration domain types shared across main / preload / renderer and the
  * embedded MCP server. Everything is JSON-serializable.
  *
- * The Squad schema replicates the REAL Overclock v0.7.5 squads.json shape
- * (confirmed by reverse engineering — see docs/ARCHITECTURE.md §E.1) so squads
- * can be imported/exported 1:1.
+ * The Squad schema defines the squads.json shape (see docs/ARCHITECTURE.md
+ * §E.1) so squads can be imported/exported 1:1.
  */
 
 export const agentCategorySchema = z.enum([
@@ -18,7 +17,7 @@ export const agentCategorySchema = z.enum([
 ]);
 export type AgentCategory = z.infer<typeof agentCategorySchema>;
 
-/** Overclock providerId → adapter id (from the real app's builtin mapping). */
+/** providerId → adapter id (builtin mapping). */
 const PROVIDER_ID_TO_CLI: Record<string, string> = {
   'claude-cli': 'claude',
   'codex-cli': 'codex',
@@ -28,8 +27,8 @@ const PROVIDER_ID_TO_CLI: Record<string, string> = {
 };
 
 export const squadAgentSchema = z.preprocess(
-  // Real Overclock squads.json rosters may omit `cli` (workers inherit the
-  // default CLI) or carry only a providerId — normalize before validating.
+  // Some squads.json rosters may omit `cli` (workers inherit the default CLI)
+  // or carry only a providerId — normalize before validating.
   (raw) => {
     if (raw && typeof raw === 'object' && !(raw as { cli?: unknown }).cli) {
       const agent = raw as { providerId?: string };
@@ -49,7 +48,7 @@ export const squadAgentSchema = z.preprocess(
     providerId: z.string().max(128).optional(),
     model: z.string().max(128).optional(),
     effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
-    /** null/absent = unrestricted (Overclock semantics). */
+    /** null/absent = unrestricted. */
     allowedSkills: z.array(z.string().max(128)).nullable().optional(),
     allowedTools: z.array(z.string().max(128)).nullable().optional(),
   }),
@@ -59,19 +58,19 @@ export type SquadAgent = z.infer<typeof squadAgentSchema>;
 export const squadSchema = z.object({
   id: z.string().min(1).max(128),
   name: z.string().min(1).max(256),
-  // Overclock writes epoch-ms numbers here; older exports use ISO strings.
+  // Some exports write epoch-ms numbers here; others use ISO strings.
   createdAt: z
     .union([z.string().max(64), z.number()])
     .transform((value) => String(value)),
   builtin: z.boolean().default(false),
   orchestratorInstructions: z.string().max(65_536).default(''),
-  /** Overclock also ships per-squad native instructions — preserved as-is. */
+  /** Optional per-squad native instructions — preserved as-is. */
   nativeInstructions: z.string().max(65_536).optional(),
   agents: z.array(squadAgentSchema).default([]),
 });
 export type Squad = z.infer<typeof squadSchema>;
 
-/** Wire format of an Overclock-compatible squads file. */
+/** Wire format of a squads file. */
 export const squadsFileSchema = z.object({ squads: z.array(squadSchema) });
 
 export const missionStatusSchema = z.enum([

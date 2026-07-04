@@ -8,7 +8,7 @@ import { safeStorage } from 'electron';
  * by the macOS Keychain) and written as opaque base64 blobs to
  * ~/.nexus/secrets.enc — NEVER as plaintext, NEVER in versioned config.
  *
- * This supersedes Overclock's OC1-v10 home-rolled crypto (which broke twice
+ * This supersedes an earlier home-rolled crypto scheme (which broke twice
  * and leaked a JWT in plaintext — see docs/ARCHITECTURE.md §E.6). If
  * safeStorage is unavailable we refuse to store rather than degrade to
  * plaintext; the value simply lives only for the process lifetime.

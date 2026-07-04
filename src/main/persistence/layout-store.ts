@@ -6,9 +6,9 @@ import { workspaceLayoutSchema } from '../../shared/ipc';
 import { getDb } from './db';
 
 /**
- * Persists pane layouts PER WORKSPACE (Overclock keeps rawWorkspaceLayouts —
- * each workspace folder owns its pane arrangement; switching workspaces swaps
- * layouts instead of dragging panes across projects). A JSON map in userData
+ * Persists pane layouts PER WORKSPACE (each workspace folder owns its pane
+ * arrangement; switching workspaces swaps layouts instead of dragging panes
+ * across projects). A JSON map in userData
  * is the source of truth; a best-effort mirror is written into SQLite so the
  * schema stays warm for later phases.
  */

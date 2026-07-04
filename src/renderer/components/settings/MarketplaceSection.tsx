@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CatalogEntryInfo } from '../../../shared/types';
 
 /**
- * Marketplace — real clone of the Overclock catalog surface: the full
+ * Marketplace — the catalog surface: the full
  * browsable aitmpl index (davila7/claude-code-templates; 400+ agents, 800+
  * skills) with search, category filter, installed state and 1-click install
- * into ~/.claude (skip-if-exists, same contract as the real app).
+ * into ~/.claude (skip-if-exists).
  */
 
 type Kind = 'agent' | 'skill';
@@ -96,7 +96,7 @@ export function MarketplaceSection() {
       <p className="settings-detail__hint">
         Catálogo aitmpl (davila7/claude-code-templates): {agents.length} agents
         · {skills.length} skills. Instalação em 1 clique para ~/.claude
-        (agents/.md, skills/pasta) — igual ao Overclock, pulando o que já
+        (agents/.md, skills/pasta), pulando o que já
         existe.
       </p>
 

@@ -47,7 +47,7 @@ export function App() {
   useCostController();
   useFailoverController();
 
-  // Each workspace owns its pane layout (Overclock parity): entering one
+  // Each workspace owns its pane layout: entering one
   // loads ITS saved tree; leaving to the launcher detaches. Entering a folder
   // WITHOUT saved panes asks Livre/Squad — a folder with a saved mission
   // restores silently, and a restart restoring the persisted workspace never
@@ -103,7 +103,7 @@ export function App() {
     return <div className="boot">Starting NexusIDE…</div>;
   }
 
-  // No workspace open → onboarding launcher (first screen, Overclock parity).
+  // No workspace open → onboarding launcher (first screen).
   // The wizard renders here too: "Novo workspace" starts from this screen.
   if (!currentWorkspace) {
     return (

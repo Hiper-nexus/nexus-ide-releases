@@ -137,7 +137,7 @@ export function ToolsSection() {
       <h3 className="settings-detail__title">Tools</h3>
       <p className="settings-detail__hint">
         {tools.length} tools nativas do servidor MCP embutido (aliases
-        overclock_* aceitos).
+        nexus_* e nomes diretos aceitos).
       </p>
       <ul className="settings-list">
         {tools.map((tool) => (
@@ -261,7 +261,7 @@ const SHORTCUTS: Array<{ keys: string; action: string }> = [
   { keys: '⌘W', action: 'Fechar pane focado' },
   { keys: 'clique', action: 'Focar pane' },
   { keys: '⬡ Canvas', action: 'Alternar grid ↔ canvas (barra)' },
-  { keys: 'Space (segurar)', action: 'Push-to-talk ClockVoice (configurável)' },
+  { keys: 'Space (segurar)', action: 'Push-to-talk de voz (configurável)' },
 ];
 
 export function ShortcutsSection() {

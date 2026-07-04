@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Hardened-runtime entitlements for the notarized macOS build.
+      Electron's V8 engine JITs, so it needs executable-memory permissions
+      that the hardened runtime denies by default. Native modules
+      (@lydell/node-pty, better-sqlite3) are signed with our Developer ID,
+      but library validation is disabled as a safety net for the spawn-helper
+      and any dlopen'd dylibs that ship inside the asar unpack directory.
+    -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- Push-to-talk voice capture (Jarvis mode). Pairs with the
+         NSMicrophoneUsageDescription string set in forge.config.ts. -->
+    <key>com.apple.security.device.microphone</key>
+    <true/>
+    <!-- Terminal panes spawn CLIs that may read/write anywhere the user
+         points them; the app is a developer tool, so it is not sandboxed. -->
+    <key>com.apple.security.cs.disable-executable-page-protection</key>
+    <true/>
+</dict>
+</plist>

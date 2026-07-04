@@ -20,7 +20,7 @@ import {
   type SpawnToolOptions,
 } from './tool-util';
 
-/** The 10 pane tools of the embedded MCP server (Overclock parity group 1). */
+/** The 10 pane tools of the embedded MCP server (tool group 1). */
 
 const paneSpawn: McpToolDef = {
   name: 'nexus_pane_spawn',

@@ -1,10 +1,10 @@
 # NexusIDE — Documento de Arquitetura (Fase 1)
 
-> **Produto:** Terminal IDE multi-agente para macOS. Clone-e-supere do Overclock (baseline v0.7.5, engenharia reversa confirmada).
+> **Produto:** Terminal IDE multi-agente para macOS.
 > **Status:** DESIGN ONLY — nenhum código de produto nesta fase.
 > **Data:** 2026-07-03
 > **Audiência:** executores das fases 2+ (`typescript-pro`, `electron-pro`, `frontend-developer`).
-> **Fontes:** `recon-oss-multi-agent-terminal.md` (OSS/CLIs) + `voice-pipeline-report.md` (Jarvis) + **Adendo de engenharia reversa do Overclock v0.7.5** (fatos de primeira mão, incorporados em §E).
+> **Fontes:** `recon-oss-multi-agent-terminal.md` (OSS/CLIs) + `voice-pipeline-report.md` (Jarvis).
 
 Este documento é **prescritivo e decisivo**. Onde há trade-off, a decisão está tomada e justificada.
 
@@ -14,13 +14,13 @@ Este documento é **prescritivo e decisivo**. Onde há trade-off, a decisão est
 
 | # | Decisão | Escolha | Justificativa curta |
 |---|---|---|---|
-| A | Runtime | **Electron + Electron Forge** | Overclock v0.7.5 é Electron/macOS 11+ (validação de primeira mão); node-pty/xterm/uiohook/onnx todos Node-native; Forge faz .dmg signing+notarization |
+| A | Runtime | **Electron + Electron Forge** | node-pty/xterm/uiohook/onnx todos Node-native; Forge faz .dmg signing+notarization; alvo macOS 11+ |
 | B | Processos | **Main + Renderer + PTY Host (utilityProcess) + MCP embutido** | isola crash de PTY nativo; separa orquestração da UI |
-| C | Panes | **Workspace → View(grid\|canvas) → Pane → Session**; grid = split-tree, canvas = `@xyflow/react`; ambos referenciam a MESMA Session | grid↔canvas sem re-spawn do PTY; supera o grid fixo do Overclock |
-| D | Adapters | **JSON declarativo tipado: `cli-pty`, `api-provider`, `voice`**; hot-reload; substitui o hack 'shell' wrapper do Overclock | usuário adiciona CLI nova sem tocar código |
-| E | Orquestração | **Domínio squads/missões/handoffs/catálogo + MCP embutido (24 tools, namespace `nexus_*`)**; skill-gate client+server | paridade exata Overclock + melhorias |
-| F | Voz | **Jarvis v1: estende o audio-config real do ClockVoice + Silero VAD + Groq translate + TTS streaming + resposta falada** | supera o ditado-só do Overclock |
-| G | Persistência/Segurança | **better-sqlite3 + Keychain (supera OC1 v10 que vazou JWT) + CSP + contextIsolation** | corrige fraqueza crítica do baseline |
+| C | Panes | **Workspace → View(grid\|canvas) → Pane → Session**; grid = split-tree, canvas = `@xyflow/react`; ambos referenciam a MESMA Session | grid↔canvas sem re-spawn do PTY; canvas arrastável além do grid |
+| D | Adapters | **JSON declarativo tipado: `cli-pty`, `api-provider`, `voice`**; hot-reload | usuário adiciona CLI nova sem tocar código; handoff/estado/modelos de primeira classe |
+| E | Orquestração | **Domínio squads/missões/handoffs/catálogo + MCP embutido (24 tools, namespace `nexus_*`)**; skill-gate client+server | orquestração multi-agente completa, auditável |
+| F | Voz | **Jarvis v1: STT + Silero VAD + Groq translate + TTS streaming + resposta falada** | ditado E resposta falada de volta |
+| G | Persistência/Segurança | **better-sqlite3 + Keychain + CSP + contextIsolation** | secrets fora do DB; sem cripto caseira |
 | H | Build | **2a shell/grid → 2b adapters → 2c canvas → 2d orquestração → 2e voz → 3 QA/.dmg** | cada fase com entregável verificável |
 
 ---
@@ -31,18 +31,18 @@ Este documento é **prescritivo e decisivo**. Onde há trade-off, a decisão est
 
 | Critério | Electron | Tauri | Peso |
 |---|---|---|---|
-| PTY nativo | `@lydell/node-pty` / `node-pty` maduro (Overclock usa @lydell/node-pty v1.2.0-beta.12) | `portable-pty` (Rust) menos provado desktop | 🔴 Crítico |
+| PTY nativo | `@lydell/node-pty` / `node-pty` maduro (v1.2.0-beta.12) | `portable-pty` (Rust) menos provado desktop | 🔴 Crítico |
 | Terminal render | xterm.js em Chromium consistente + webgl garantido | xterm.js em WKWebView (quirks WebGL) | 🔴 Crítico |
 | Hotkey global keyup | uiohook-napi (N-API) direto no main | crate Rust + bridge | 🟠 Alto |
 | ONNX (Silero VAD) | onnxruntime-node no main | ort crate (duplica pipeline em Rust) | 🟠 Alto |
 | .dmg signing+notarization | Electron Forge out-of-box | tauri build menos documentado macOS multi-binário | 🟠 Alto |
 | RAM/bundle | ~150–250MB / ~120–200MB | ~40–80MB / ~10–40MB | 🟡 Médio (é dev tool) |
 | 1 linguagem (TS) | Main+renderer+PTY+MCP todos TS | Rust + TS (2 toolchains) | 🟠 Alto |
-| Paridade/reuso Overclock | **Overclock v0.7.5 É Electron** — mental model e porte direto | reescrita conceitual | 🔴 Crítico |
+| Ecossistema Node-native | os 4 pilares (pty/webgl/uiohook/onnx) já são N-API/Node | cada um exige ponte Rust↔JS | 🔴 Crítico |
 
 ### A.2 Decisão: **Electron + Electron Forge**
 
-O adendo de engenharia reversa **confirma de primeira mão** que o Overclock v0.7.5 roda em Electron (bundle `sh.overclock.app`, macOS 11+, URL scheme `overclock://`, auto-update via Squirrel, DB `better-sqlite3`). Isso valida a direção: herdamos mental model, padrões e potencial porte direto. Os quatro pilares (node-pty, xterm+webgl, uiohook-napi, onnxruntime-node) são todos Node-native maduros; em Tauri cada um exigiria ponte Rust↔JS. Footprint do Chromium é aceitável para dev tool desktop. **Electron decidido.** Ver §I para descartados.
+Os quatro pilares técnicos do NexusIDE — `node-pty` (PTY nativo), `xterm.js`+WebGL (render do terminal), `uiohook-napi` (hotkey global com keyup) e `onnxruntime-node` (Silero VAD) — são todos Node-native/N-API maduros. Em Electron rodam direto no processo main; em Tauri cada um exigiria uma ponte Rust↔JS e, em vários casos, duplicar o pipeline em Rust. O footprint do Chromium (~150–250MB) é plenamente aceitável para uma dev tool desktop. Electron ainda entrega, via Electron Forge, signing + notarization do `.dmg` out-of-box e um único toolchain TypeScript em todos os processos (main, renderer, PTY host, MCP). Parâmetros de plataforma decididos: alvo macOS 11+, bundle assinado com Developer ID, URL scheme `nexus://`, auto-update via Squirrel.Mac, persistência em `better-sqlite3`. **Electron decidido.** Ver §I para descartados.
 
 ### A.3 Stack canônico (pinado)
 
@@ -51,10 +51,10 @@ Runtime .............. Electron + Electron Forge (packaging/signing/notarization
 Linguagem ............ TypeScript (strict) em TODOS os processos
 Frontend ............. React 18+ + TypeScript; Zustand (client state); zod (boundaries)
 Terminal ............. @xterm/xterm + addons fit/webgl/search/serialize
-PTY .................. @lydell/node-pty v1.2.0-beta.12 (fork usado pelo Overclock) — PRIMÁRIO;
+PTY .................. @lydell/node-pty v1.2.0-beta.12 — PRIMÁRIO;
                        node-pty-prebuilt-multiarch como alternativa se build nativo problemático
 Canvas ............... @xyflow/react (MIT)  — NÃO tldraw (licença comercial)
-Persistência ......... better-sqlite3 (síncrono, no main) — mesmo do Overclock
+Persistência ......... better-sqlite3 (síncrono, no main)
 Voz — VAD ............ onnxruntime-node + Silero VAD (ONNX ~2MB)
 Voz — hotkey ......... uiohook-napi (keydown/keyup global)
 Secrets .............. Electron safeStorage / keytar → macOS Keychain (ou libsodium fallback)
@@ -128,9 +128,9 @@ Interfaces (design): `Workspace{id,name,views,activeViewId}`; `View = {kind:'gri
 
 Árvore binária (row/col + ratio, mental model tmux/VS Code). Ops: splitPane/resizeSplit/closePane(colapsa irmão)/focusPane. Render CSS flex recursivo; divisores arrastáveis animando só flex-basis/transform (nunca width/height em loop). Cada leaf hospeda `<TerminalPane sessionId>` com addon-fit + ResizeObserver → `session:resize` (cols/rows ao PTY).
 
-### C.3 Canvas infinito (@xyflow/react) — DIFERENCIAL sobre Overclock
+### C.3 Canvas infinito (@xyflow/react)
 
-Overclock tem **grid fixo, sem canvas arrastável**. NexusIDE adiciona modo canvas: pane = custom node xyflow arrastável livremente, redimensionável, z-order; `<MiniMap/>`, `<Controls/>`, `<Background/>` (dots), pan/zoom trackpad. Edges representam relações de orquestração (orquestrador→worker, missão→panes), animadas em handoff. Performance: em zoom-out, nós abaixo de threshold renderizam **snapshot congelado** (canvas image do serialize) em vez de xterm ativo; `onlyRenderVisibleElements`.
+Além do grid split-tree, o NexusIDE oferece um modo **canvas infinito**: cada pane é um custom node do xyflow, arrastável livremente, redimensionável, com z-order; `<MiniMap/>`, `<Controls/>`, `<Background/>` (dots), pan/zoom por trackpad. Edges representam relações de orquestração (orquestrador→worker, missão→panes), animadas em handoff. Performance: em zoom-out, nós abaixo de um threshold renderizam **snapshot congelado** (canvas image do serialize) em vez de xterm ativo; `onlyRenderVisibleElements`.
 
 ### C.4 Grid ↔ Canvas compartilhando sessão
 
@@ -141,7 +141,7 @@ Overclock tem **grid fixo, sem canvas arrastável**. NexusIDE adiciona modo canv
 
 ## D. Adapter System (Plugins Declarativos JSON)
 
-Três tipos, todos declarativos, em `~/.nexus/plugins/`, zod-validados, hot-reload. **Substituem explicitamente o hack 'shell' do Overclock** (que roda QUALQUER CLI via wrapper `~/ai-launcher/ai gr|fugu` SEM handoff nativo). Nossos adapters tipados dão handoff/estado/modelos de primeira classe a qualquer CLI.
+Três tipos, todos declarativos, em `~/.nexus/plugins/`, zod-validados, hot-reload. Adapters tipados dão **handoff, estado e modelos de primeira classe a qualquer CLI**: em vez de um wrapper 'shell' genérico que roda a CLI sem handoff nativo, cada adapter descreve spawn, auth, modelos, injeção de prompt e parsing de estado de forma declarativa. Usuário adiciona uma CLI nova dropando um JSON — sem tocar código.
 
 ### D.1 Adapter `cli-pty`
 
@@ -149,7 +149,7 @@ Campos: `kind:'cli-pty'`, `id`, `label`, `version`, `icon`, `bin`, `detect`, `in
 
 **Adapters iniciais (do recon):** claude, codex, agy (Antigravity — substitui gemini descontinuada), kimi, grok, aider (único ptyRequired:false em headless), opencode → `cli-pty`. fugu, glm → `api-provider`.
 
-**Quirks pinados:** grok `requiresNoAutoUpdate:true`+`approvalFlag:'--always-approve'`; aider `ptyRequired:false`,`altScreen:false`; claude/agy/kimi `altScreen:true`; agy sem `--max-turns` (usar `--print-timeout`). Nota: os cli-types nativos do Overclock são claude|codex|kimi|antigravity|shell — cobrimos todos e generalizamos via JSON.
+**Quirks pinados:** grok `requiresNoAutoUpdate:true`+`approvalFlag:'--always-approve'`; aider `ptyRequired:false`,`altScreen:false`; claude/agy/kimi `altScreen:true`; agy sem `--max-turns` (usar `--print-timeout`). Os tipos claude/codex/kimi/antigravity são cobertos como adapters `cli-pty` concretos; o JSON generaliza para qualquer outra CLI sem tocar código.
 
 ### D.2 Adapter `api-provider`
 
@@ -157,7 +157,7 @@ Campos: `kind:'api-provider'`, `id`, `label`, `endpoint`, `protocol:openai-chat|
 
 ### D.3 Adapter `voice`
 
-Schema já no voice-pipeline-report (Entregável 3), adotado e ESTENDIDO do audio-config real do ClockVoice (ver §F). STT: groq(default), openai, deepgram, assemblyai, local-whisper, mlx-whisper. TTS: openai(default), elevenlabs, piper, kokoro, macos-say. VAD: silero(default), webrtc.
+Schema já no voice-pipeline-report (Entregável 3), adotado e estendido a partir do formato base de audio-config (ver §F). STT: groq(default), openai, deepgram, assemblyai, local-whisper, mlx-whisper. TTS: openai(default), elevenlabs, piper, kokoro, macos-say. VAD: silero(default), webrtc.
 
 ### D.4 Diretório, hot-reload, validação
 
@@ -168,17 +168,17 @@ Schema já no voice-pipeline-report (Entregável 3), adotado e ESTENDIDO do audi
 ├── bin/     (piper, whisper-cpp)
 └── nexus.db (SQLite)
 ```
-(Espelha a organização do Overclock em `~/.overclock-app/`: squads.json, audio-config.json, plugins/cache/.)
+(Toda a configuração — `squads.json`, `audio-config.json`, `plugins/`, `cache/` — vive sob `~/.nexus/`; a migração de configs legadas lê apenas esse diretório.)
 
 Registry (main) varre no boot, valida cada JSON com zod do seu `kind`; inválido → rejeitado fail-fast. Hot-reload via chokidar → `adapter:changed`. Sessions vivas mantêm snapshot do adapter (imutabilidade). Plugin do usuário sobrescreve built-in por `id`. Versionamento via `$schema`+`version`.
 
 ---
 
-## E. Camada de Orquestração + MCP Embutido (Paridade Overclock v0.7.5)
+## E. Camada de Orquestração + MCP Embutido
 
-### E.1 Domínio squads (replicando o schema REAL do Overclock)
+### E.1 Domínio squads
 
-Formato de squad JSON confirmado por engenharia reversa — replicado para compatibilidade conceitual:
+Formato de squad JSON do NexusIDE:
 
 ```jsonc
 { "squads": [ {
@@ -194,13 +194,13 @@ Formato de squad JSON confirmado por engenharia reversa — replicado para compa
 } ] }
 ```
 
-Notas de paridade: `category` inclui **orchestrator** (não só os 4 worker roles); `orchestratorInstructions` é markdown; `effort` pinado por agente; allowlists por agente alimentam o skill-gate (§E.4). **Melhoria nossa:** export/import de squads (JSON), que o Overclock NÃO tem.
+Notas de design: `category` inclui **orchestrator** (não só os 4 worker roles); `orchestratorInstructions` é markdown; `effort` pinado por agente; allowlists por agente alimentam o skill-gate (§E.4). Squads têm **export/import em JSON** nativo do schema.
 
-### E.2 Servidor MCP embutido — 24 tools (paridade EXATA, namespace `nexus_*`)
+### E.2 Servidor MCP embutido — 24 tools (namespace `nexus_*`)
 
-Main hospeda MCP server (@modelcontextprotocol/sdk); cada CLI-agente conecta via stdio/socket local injetado no spawn. As 24 tools do Overclock, renomeadas mantendo semântica:
+Main hospeda MCP server (@modelcontextprotocol/sdk); cada CLI-agente conecta via stdio/socket local injetado no spawn. As 24 tools, no namespace `nexus_*`:
 
-| Grupo | Tools (semântica idêntica) |
+| Grupo | Tools |
 |---|---|
 | Panes (10) | `nexus_pane_spawn`, `nexus_pane_list`, `nexus_pane_list_providers`, `nexus_pane_read`, `nexus_pane_read_many`, `nexus_pane_write`, `nexus_pane_write_many`, `nexus_pane_close`, `nexus_pane_wait_idle`, `nexus_pane_wait_many` |
 | Handoffs (2) | `nexus_handoff_submit`, `nexus_handoff_list` |
@@ -209,58 +209,57 @@ Main hospeda MCP server (@modelcontextprotocol/sdk); cada CLI-agente conecta via
 | Squad/Catálogo/Task (3) | `nexus_squad_save`, `nexus_catalog_install`, `nexus_task` |
 | Todos (1) | `nexus_todo_manager` |
 
-Aliases `overclock_*`/`pane_*`/`handoff_*` mantidos no registry (namespace duplo) para compat de agentes/prompts existentes. **Sempre permitidos independente de allowlist:** `ToolSearch`, `nexus_handoff_submit`, `nexus_handoff_list`.
+Aliases curtos `pane_*`/`handoff_*` mantidos no registry (namespace duplo) para prompts/agentes que usam nomes não-prefixados. **Sempre permitidos independente de allowlist:** `ToolSearch`, `nexus_handoff_submit`, `nexus_handoff_list`.
 
-### E.3 Handoffs — mecanismo real + MELHORIA
+### E.3 Handoffs — mecanismo durável
 
-**Mecanismo do Overclock (confirmado):** 3 hooks `.mjs` gerados por sessão+pane — PostToolUse (escreve **marker file**), Stop (bloqueia saída se marker ausente, máx 3 tentativas), PreToolUse (whitelist skill-gate, exit 2 se fora da allowlist; `ALLOWED_TOOLS`/`ALLOWED_SKILLS` null = irrestrito). Worker chama `handoff_submit({status,summary,artifacts})`; orquestrador coleta via `handoff_list`.
+O NexusIDE controla handoffs por **3 hooks `.mjs` gerados por sessão+pane**: PostToolUse (registra o handoff), Stop (bloqueia a saída do worker se não houver handoff pendente, máx 3 tentativas), PreToolUse (skill-gate por whitelist, exit 2 se a tool/skill estiver fora da allowlist; `ALLOWED_TOOLS`/`ALLOWED_SKILLS` null = irrestrito). O worker chama `handoff_submit({status,summary,artifacts})`; o orquestrador coleta via `handoff_list`.
 
-**MELHORIA NexusIDE:** substituir **marker files temporários** por **SQLite + IPC tipado**. Handoff gravado numa tabela `handoffs`; evento `orch:handoff.received` ao orquestrador; Stop-gate consulta o DB (não o filesystem). Elimina corrida/lixo de arquivos e dá durabilidade + auditabilidade. Entrega automática quando o orquestrador fica ocioso (paridade). Formato legado `### OVERCLOCK_HANDOFF v1` no terminal suportado como fallback de parsing. `outputSchema` valida artifacts no submit.
+**Substrato durável:** em vez de marker files temporários no filesystem, o handoff é gravado numa tabela `handoffs` (SQLite) e um evento `orch:handoff.received` é emitido ao orquestrador; o Stop-gate consulta o DB, não o filesystem. Isso elimina corrida e lixo de arquivos e dá durabilidade + auditabilidade. Entrega automática quando o orquestrador fica ocioso. Como fallback de parsing no terminal, o marker `### NEXUS_HANDOFF v1` também é reconhecido. `outputSchema` valida `artifacts` no submit.
 
 ### E.4 Skill-gate (enforcement duplo)
 
 Ao spawnar worker, injeta hook PreToolUse + `$HOME` efêmero (isola config/skills). Hook consulta `allowedSkills`/`allowedTools` do agente e bloqueia fora da allowlist (exit 2). **Defesa em profundidade:** o MCP server TAMBÉM recusa server-side chamadas fora da allowlist do worker chamador — não confiar só no hook client-side. (Este próprio worker está sob esse gate: Write/Bash bloqueados.)
 
-### E.5 Paridade Overclock — Matriz (adendo v0.7.5 INCORPORADO)
+### E.5 Matriz de capacidades
 
-| Feature Overclock v0.7.5 | Coberta por | Detalhe de impl. observado |
+| Capacidade | Seção | Detalhe |
 |---|---|---|
-| Grid de panes (CLI/shell por pane) | §C.2, §B.4 | Grid fixo; layout em LevelDB (`~/Library/Application Support/Overclock/`). Nós usamos SQLite/Zustand + adicionamos canvas |
-| Spawn agent/providerId/model/cwd | §B.4 | cli-types: claude\|codex\|kimi\|antigravity\|shell |
-| Provider 'shell' (wrapper `~/ai-launcher/ai gr\|fugu`) | §D.1 | Hack sem handoff nativo → SUBSTITUÍDO por adapters cli-pty/api-provider tipados |
-| Providers + `pane_list_providers` | §D.2, §E.2 | — |
-| Squads (schema real: id/name/createdAt/builtin/orchestratorInstructions/agents[]) | §E.1 | category inclui orchestrator; effort low\|high\|xhigh; allowedSkills/allowedTools por agente |
+| Grid de panes (CLI/shell por pane) | §C.2, §B.4 | split-tree; layout em SQLite/Zustand |
+| Spawn de agente (providerId/model/cwd) | §B.4 | adapters cli-pty: claude\|codex\|kimi\|antigravity + qualquer CLI via JSON |
+| Providers HTTP + `pane_list_providers` | §D.2, §E.2 | api-provider (glm/fugu) |
+| Squads (id/name/createdAt/builtin/orchestratorInstructions/agents[]) | §E.1 | category inclui orchestrator; effort low\|high\|xhigh; allowedSkills/allowedTools por agente; export/import JSON |
 | Skill-gate (`$HOME` efêmero + hooks .mjs) | §E.4 | PreToolUse exit 2; null=irrestrito; sempre: ToolSearch/handoff_submit/handoff_list |
-| Missões (create/get/list/set_status/spawn_pane) | §E.1, §E.2 | Estado em `~/.overclock-app/messages.db` (better-sqlite3) |
+| Missões (create/get/list/set_status/spawn_pane) | §E.1, §E.2 | Estado em `~/.nexus/nexus.db` (better-sqlite3) |
 | `todo_manager` + milestones visíveis | §E.2 | — |
-| Handoffs (submit/list; 3 hooks .mjs; marker+Stop máx 3; artifacts/outputSchema) | §E.3 | MELHORADO: marker files → SQLite+IPC |
-| Entrega auto quando ocioso + legado `### OVERCLOCK_HANDOFF v1` | §E.3 | — |
+| Handoffs (submit/list; 3 hooks .mjs; Stop máx 3; artifacts/outputSchema) | §E.3 | SQLite + IPC tipado (durável, auditável) |
+| Entrega auto quando ocioso + marker `### NEXUS_HANDOFF v1` | §E.3 | — |
 | Catálogo (aitmpl 70+ agentes, davila7/claude-code-templates) | §E.6 | API `GET /api/catalog/search?q=&kind=agent\|skill\|command&limit=`; plugin `.claude-plugin/plugin.json` |
-| Voice/ditado ClockVoice (audio-config real) | §F | groq/whisper-large-v3/pt→english/hold/Space/coding/190wpm/4700ms — ESTENDIDO p/ Jarvis (TTS) |
-| 24 MCP tools | §E.2 | Renomeadas `nexus_*`, semântica idêntica |
+| Voz/ditado (audio-config) | §F | groq/whisper-large-v3/pt→english/hold/Space/coding/190wpm/4700ms — estendido p/ Jarvis (TTS) |
+| 24 MCP tools | §E.2 | namespace `nexus_*` |
 | Auth backend (Supabase + Google OAuth) | opcional | NexusIDE v1 é local-first — auth de nuvem é OPCIONAL, não requisito |
-| Config dirs (`~/.overclock-app/`: squads.json, audio-config.json, dropped/, plugins/cache/) | §D.4 | Espelhado em `~/.nexus/` |
+| Config dirs (`~/.nexus/`: squads.json, audio-config.json, plugins/, cache/) | §D.4 | tudo unificado sob `~/.nexus/` |
 | Auto-update (Squirrel) | §G.4 | Forge maker ZIP + Squirrel.Mac |
-| **Novo:** canvas infinito arrastável | §C.3 | 🚀 supera grid fixo |
-| **Novo:** multi-CLI universal declarativo | §D | 🚀 supera hack 'shell' |
-| **Novo:** resposta falada TTS (Jarvis) | §F | 🚀 supera ditado-só |
-| **Novo:** UI de debug de missões/handoffs | §E.6 | 🚀 Overclock não tem |
+| Canvas infinito arrastável | §C.3 | 🚀 além do grid split-tree |
+| Multi-CLI universal declarativo | §D | 🚀 adapters JSON tipados p/ qualquer CLI |
+| Resposta falada TTS (Jarvis) | §F | 🚀 ditado E fala de volta |
+| UI de debug de missões/handoffs | §E.6 | 🚀 timeline + edges animadas |
 
-### E.6 Melhorias sobre o Overclock (fraquezas superadas)
+### E.6 Decisões de robustez e diferenciais
 
-1. **Criptografia OC1 v10 (quebrou 2x, vazou JWT em plaintext)** → NÃO reimplementar cripto caseira. Usar **macOS Keychain** via `safeStorage`/`keytar`; se indisponível, **libsodium** (secretbox) com **fallback gracioso** e nunca degradar para plaintext. Secrets jamais em SQLite/logs.
-2. **Handoffs por marker files temporários** → **SQLite + IPC tipado** (§E.3): durável, auditável, sem corrida.
-3. **Sem export/import de squads** → export/import JSON nativo do squad schema (§E.1).
-4. **Grid fixo sem canvas** → modo canvas @xyflow/react arrastável (§C.3).
-5. **Sem UI de debug de missões** → view dedicada: timeline de missões, estado de workers, handoffs em voo como edges animadas no canvas, inspeção de artifacts.
+1. **Secrets sem cripto caseira:** nunca implementar criptografia própria. Usar **macOS Keychain** via `safeStorage`/`keytar`; se indisponível, **libsodium** (secretbox) com **fallback gracioso** e nunca degradar para plaintext. Secrets jamais em SQLite/logs.
+2. **Handoffs duráveis:** **SQLite + IPC tipado** (§E.3) em vez de marker files temporários — durável, auditável, sem corrida.
+3. **Export/import de squads:** JSON nativo do squad schema (§E.1).
+4. **Modo canvas:** @xyflow/react arrastável além do grid split-tree (§C.3).
+5. **UI de debug de missões:** view dedicada — timeline de missões, estado de workers, handoffs em voo como edges animadas no canvas, inspeção de artifacts.
 
-**Catálogo (paridade + detalhe real):** integração aitmpl (davila7/claude-code-templates, 70+ agentes). `nexus_catalog_install` chama `GET https://.../api/catalog/search?q=<termo>&kind=agent|skill|command&limit=<n>` e instala plugins no formato `.claude-plugin/plugin.json` em `~/.nexus/plugins/`.
+**Catálogo (integração aitmpl):** davila7/claude-code-templates, 70+ agentes. `nexus_catalog_install` chama `GET https://.../api/catalog/search?q=<termo>&kind=agent|skill|command&limit=<n>` e instala plugins no formato `.claude-plugin/plugin.json` em `~/.nexus/plugins/`.
 
 ---
 
-## F. Pipeline de Voz Jarvis (estende o ClockVoice real)
+## F. Pipeline de Voz Jarvis
 
-### F.0 Ponto de partida: audio-config REAL do Overclock (ClockVoice)
+### F.0 Config base de áudio (JSON)
 
 ```jsonc
 { "provider":"groq", "baseUrl":"https://api.groq.com/openai/v1", "model":"whisper-large-v3",
@@ -268,7 +267,7 @@ Ao spawnar worker, injeta hook PreToolUse + `$HOME` efêmero (isola config/skill
   "pushToTalkKey":{"code":"Space"}, "interactionMode":"coding", "targetWpm":190, "chunkMs":4700 }
 ```
 
-NexusIDE **usa o MESMO formato base** e o ESTENDE com: bloco `stt.vad` (Silero), `stt.fallback` (whisper.cpp local), bloco `tts` completo (OpenAI tts-1 streaming → Piper → macOS say) e **resposta falada** (o diferencial Jarvis). Migração de config do Overclock é trivial (superset).
+NexusIDE parte deste **formato base** e o estende com: bloco `stt.vad` (Silero), `stt.fallback` (whisper.cpp local), bloco `tts` completo (OpenAI tts-1 streaming → Piper → macOS say) e **resposta falada** (o diferencial Jarvis). O formato estendido é um superset compatível; a migração de configs legadas lê apenas `~/.nexus/`.
 
 ### F.1 Fluxo integrado à topologia de processos
 
@@ -289,8 +288,8 @@ Latência v1 cloud: ~2.5–5s ponta-a-ponta (aceitável p/ IDE).
 ### F.2 Roteamento
 `voice.routing: 'focused-pane'(default) | 'orchestrator' | 'ask'`. Voz vira texto injetado via `session:write` (idêntico a digitar). Com Squad ativo, pode ir ao orquestrador que delega via MCP.
 
-### F.3 Resposta falada (Jarvis — supera Overclock)
-Overclock só dita→injeta. NexusIDE fala de volta: fonte = summary de `handoff_submit` ou última resposta idle (via pane_read); passo de condensação leve → 1–3 frases faláveis; código/texto longo NÃO é falado na íntegra. `voice.speakMode: 'summary'(default)|'full'|'off'`. TTS streaming: 1ª palavra ~500ms.
+### F.3 Resposta falada (Jarvis)
+Além de ditar→injetar, o NexusIDE **fala de volta**: fonte = summary de `handoff_submit` ou última resposta idle (via pane_read); passo de condensação leve → 1–3 frases faláveis; código/texto longo NÃO é falado na íntegra. `voice.speakMode: 'summary'(default)|'full'|'off'`. TTS streaming: 1ª palavra ~500ms.
 
 ### F.4 Decisões v1 pinadas
 ✅ Push-to-talk (não wake word) ✅ STT batch (Groq rápido) ✅ tradução no ASR (task=translate) ✅ TTS streaming. ❌ Realtime full-duplex → v2. Wake word (openWakeWord Apache-2.0 / Porcupine comercial) → v2.
@@ -300,7 +299,7 @@ Overclock só dita→injeta. NexusIDE fala de volta: fonte = summary de `handoff
 ## G. Persistência, Modularidade, Segurança, Empacotamento
 
 ### G.1 Persistência (better-sqlite3, `~/.nexus/nexus.db`)
-Síncrono no main; migrations versionadas. Tabelas (design): workspaces, views(kind, layout_json, viewport_json), sessions(adapter_id, provider_id, model, cwd, status, serialized_buffer), missions(status, milestones_json), handoffs(from_worker, summary, status, artifacts_json, output_schema_json), squads(orchestrator_instructions, roster_json), configs(key, value_json), adapters_meta(kind, version, source, enabled). **Secrets NÃO ficam aqui** — Keychain (§G.3). (Overclock separa messages.db + LevelDB para layout; nós unificamos em SQLite.)
+Síncrono no main; migrations versionadas. Tabelas (design): workspaces, views(kind, layout_json, viewport_json), sessions(adapter_id, provider_id, model, cwd, status, serialized_buffer), missions(status, milestones_json), handoffs(from_worker, summary, status, artifacts_json, output_schema_json), squads(orchestrator_instructions, roster_json), configs(key, value_json), adapters_meta(kind, version, source, enabled). Layout, sessões, missões e handoffs ficam unificados neste único SQLite. **Secrets NÃO ficam aqui** — Keychain (§G.3).
 
 ### G.2 Modularidade
 Temas (JSON, CSS custom properties `--color/*text/*space/*duration` — sem palette hardcoded; terminal 16-ANSI + UI; light E dark ambos intencionais). Keybindings (JSON command→key, chords, command registry central). Layouts (workspaces salvos reabríveis, templates instaláveis). Plugins (adapters/voice/themes/keybindings, hot-reload). Sistema de plugins inspirado em Tabby (DI→React context) e Hyper (composição) — referência, não porte (Hyper abandonado).
@@ -312,14 +311,14 @@ Temas (JSON, CSS custom properties `--color/*text/*space/*duration` — sem pale
 | IPC | zod no receptor; contextBridge mínimo; sem ipcRenderer cru |
 | CSP | estrita (default-src 'self', sem unsafe-eval, sem remote scripts) |
 | Spawn | node-pty só no PTY Host; argv array (sem shell-string concat); $HOME efêmero p/ skill-gated |
-| **Secrets** | **macOS Keychain (safeStorage/keytar) ou libsodium fallback gracioso — SUPERA o OC1 v10 que quebrou 2x e vazou JWT plaintext**. Nunca em SQLite/logs; resolução on-demand no spawn |
+| **Secrets** | **macOS Keychain (safeStorage/keytar) ou libsodium (secretbox) como fallback gracioso — sem cripto caseira, nunca plaintext.** Nunca em SQLite/logs; resolução on-demand no spawn |
 | Skill-gate | client (hook) + server (MCP) — defesa em profundidade |
 | Plugins untrusted | JSON fail-fast; adapters não executam código arbitrário (só declaram argv/env) |
 | Mic | entitlement microphone + NSMicrophoneUsageDescription; captura só sob PTT |
-| Auth nuvem (opcional) | Supabase/Google OAuth do Overclock NÃO é requisito v1 (local-first); se adicionado, tokens no Keychain |
+| Auth nuvem (opcional) | Auth de nuvem (Supabase/Google OAuth) NÃO é requisito v1 (local-first); se adicionada, tokens no Keychain |
 
 ### G.4 Empacotamento (.dmg)
-Electron Forge: maker-dmg (final) + ZIP (auto-update Squirrel.Mac, como Overclock). Signing `@electron/osx-sign` (Developer ID). Notarization `@electron/notarize`. Entitlements: microfone + hardened runtime + allow-jit (V8). Native rebuilds: @lydell/node-pty, better-sqlite3, onnxruntime-node, uiohook-napi, keytar (prebuilt multiarch; universal arm64+x64). macOS-only. URL scheme `nexus://`.
+Electron Forge: maker-dmg (final) + ZIP (auto-update Squirrel.Mac). Signing `@electron/osx-sign` (Developer ID). Notarization `@electron/notarize`. Entitlements: microfone + hardened runtime + allow-jit (V8). Native rebuilds: @lydell/node-pty, better-sqlite3, onnxruntime-node, uiohook-napi, keytar (prebuilt multiarch; universal arm64+x64). macOS-only. URL scheme `nexus://`.
 
 ---
 
@@ -331,7 +330,7 @@ Electron Forge: maker-dmg (final) + ZIP (auto-update Squirrel.Mac, como Overcloc
 
 **2c — Canvas:** @xyflow/react; pane=custom node; pan/zoom/minimap; SessionSurfacePool (reparent grid↔canvas sem re-spawn); frozen em zoom-out; edges de orquestração. *Verificável:* alternar grid↔canvas mantém MESMO PTY vivo; fluido com ≥6 terminais.
 
-**2d — Orquestração+MCP:** MCP server 24 tools (nexus_*); domínio squads(schema real)/missões/handoffs (SQLite+IPC, não marker files); todo_manager; skill-gate duplo; entrega auto ocioso; parser legado; catálogo aitmpl. *Verificável:* Squad orquestrador+2 workers delega via pane_spawn/write; worker handoff_submit; entregue ao ficar ocioso; skill fora da allowlist BLOQUEADA; export/import de squad funciona.
+**2d — Orquestração+MCP:** MCP server 24 tools (nexus_*); domínio squads(schema)/missões/handoffs (SQLite+IPC, não marker files); todo_manager; skill-gate duplo; entrega auto ocioso; parser do marker `### NEXUS_HANDOFF v1` (fallback); catálogo aitmpl. *Verificável:* Squad orquestrador+2 workers delega via pane_spawn/write; worker handoff_submit; entregue ao ficar ocioso; skill fora da allowlist BLOQUEADA; export/import de squad funciona.
 
 **2e — Voz Jarvis:** PTT (globalShortcut+uiohook keyup); getUserMedia+AudioWorklet; Silero VAD; STT multi (Groq+whisper.cpp); roteamento; TTS streaming (OpenAI→Piper→say); sumário falável; voice plugin estendendo audio-config. *Verificável:* segurar PTT, falar PT, ver EN injetado, agente responde, **NexusIDE fala resumo**; sem key → whisper.cpp+Piper/say.
 
@@ -344,15 +343,15 @@ Electron Forge: maker-dmg (final) + ZIP (auto-update Squirrel.Mac, como Overcloc
 ### I.1 Descartados
 | Descartado | Em favor de | Razão |
 |---|---|---|
-| Tauri (Rust) | Electron | node-pty/xterm-webgl/uiohook/onnx Node-native; WKWebView quirks; 2 linguagens; **Overclock v0.7.5 é Electron (confirmado)** |
+| Tauri (Rust) | Electron | node-pty/xterm-webgl/uiohook/onnx Node-native; WKWebView quirks; 2 linguagens/toolchains |
 | tldraw | @xyflow/react | Licença SDK comercial paga |
 | Gemini CLI | Antigravity (agy) | Descontinuada 18/jun/2026 |
 | electron-builder | Electron Forge | Oficial; signing/notarization out-of-box |
 | Realtime duplex voz | Batch v1 | Complexidade WebSocket+sync = risco alto; v2 |
 | Wake word em v1 | Push-to-talk | Porcupine comercial; PTT zero falso-positivo; v2 |
-| Backend Go (Wave) | Node/TS no main | 1 linguagem (Overclock também é Node/Electron) |
-| Hack 'shell' wrapper | Adapters JSON tipados | 'shell' do Overclock não tem handoff nativo |
-| Cripto caseira (OC1 v10) | Keychain/libsodium | OC1 quebrou 2x e vazou JWT plaintext |
+| Backend Go (Wave) | Node/TS no main | 1 linguagem (TS em todos os processos) |
+| Wrapper 'shell' genérico | Adapters JSON tipados | wrapper genérico não dá handoff/estado/modelos nativos |
+| Cripto caseira | Keychain/libsodium | risco de vazamento; Keychain é o padrão macOS |
 | Marker files p/ handoff | SQLite+IPC | Corrida/lixo/frágil |
 | Copiar Claude Squad | Só ref UX | AGPL-3.0 copyleft |
 
@@ -367,8 +366,8 @@ Electron Forge: maker-dmg (final) + ZIP (auto-update Squirrel.Mac, como Overcloc
 | Pricing STT/TTS incerto | Baixa | Providers plugáveis; default Groq barato; fallback local |
 | Notarization falha em native modules | Média | Prebuilt multiarch; hardened runtime; testar signing cedo |
 | Skill-gate contornável | Alta | Enforcement duplo (hook + MCP server-side) |
-| Secrets vazando (como OC1) | Alta | Só Keychain/libsodium; nunca SQLite/logs |
-| @lydell/node-pty é beta (v1.2.0-beta.12) | Média | Overclock roda em produção com ele; fallback node-pty-prebuilt-multiarch |
+| Secrets vazando | Alta | Só Keychain/libsodium; nunca SQLite/logs |
+| @lydell/node-pty é beta (v1.2.0-beta.12) | Média | maduro na prática; fallback node-pty-prebuilt-multiarch |
 
 ---
 
@@ -384,4 +383,4 @@ Electron Forge: maker-dmg (final) + ZIP (auto-update Squirrel.Mac, como Overcloc
 | Claude Squad | AGPL-3.0 | Só UX (não copiar código) |
 | tldraw | Comercial | ❌ não usar |
 
-*Fim. Adendo Overclock v0.7.5 incorporado (§E, §F.0, §G.3, §I). Nenhuma decisão estrutural mudou — o adendo validou a direção Electron e refinou detalhes de paridade, handoff, voz e segurança.*
+*Fim. Documento prescritivo — decisões de stack, processos, panes, adapters, orquestração, voz e segurança tomadas e justificadas nos próprios termos do NexusIDE.*

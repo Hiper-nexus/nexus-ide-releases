@@ -39,11 +39,32 @@ const config: ForgeConfig = {
       NSMicrophoneUsageDescription:
         'NexusIDE uses the microphone for push-to-talk voice commands (Jarvis mode).',
     },
+    // Code signing + notarization activate ONLY when the build machine exports
+    // the credentials (APPLE_TEAM_ID present). A dev `npm start`/`make` on a
+    // machine without a Developer ID still produces an unsigned local build.
+    // Release builds must export: APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD,
+    // APPLE_TEAM_ID (see build/notarize.md).
+    ...(process.env.APPLE_TEAM_ID
+      ? {
+          osxSign: {
+            // Hardened runtime is on by default in @electron/osx-sign; apply
+            // our entitlements to every Mach-O it signs (app + nested natives).
+            optionsForFile: () => ({
+              entitlements: 'build/entitlements.mac.plist',
+            }),
+          },
+          osxNotarize: {
+            appleId: process.env.APPLE_ID as string,
+            appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD as string,
+            teamId: process.env.APPLE_TEAM_ID as string,
+          },
+        }
+      : {}),
   },
   rebuildConfig: {},
   makers: [
     // .dmg is the installable macOS artifact; ZIP doubles as the
-    // Squirrel.Mac auto-update payload (same layout Overclock ships).
+    // Squirrel.Mac auto-update payload.
     // Code signing/notarization (osxSign/osxNotarize in packagerConfig)
     // activates when a Developer ID identity is present on the build machine.
     new MakerDMG({ format: 'ULFO', icon: 'assets/icon.icns' }, ['darwin']),

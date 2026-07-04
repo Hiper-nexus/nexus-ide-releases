@@ -3,7 +3,7 @@ import type { Handoff, HandoffStatus } from '../../shared/orch-types';
 import { ChangeHub, makeId, parseJsonColumn } from './store-util';
 
 /**
- * Handoff store. Replaces Overclock's temp marker files with durable SQLite
+ * Handoff store. Replaces temp marker files with durable SQLite
  * rows + typed IPC (docs/ARCHITECTURE.md §E.3): no filesystem races, full
  * audit trail, and the Stop-gate queries the store instead of the disk.
  */

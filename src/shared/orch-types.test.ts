@@ -2,12 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { squadSchema, squadsFileSchema } from './orch-types';
 
 /**
- * Guards compatibility with the REAL Overclock squads.json shape (verified
- * against the user's ~/.overclock-app/squads.json): epoch-ms createdAt,
- * workers without a `cli` field, nativeInstructions, providerId mapping.
+ * Guards the squads.json shape: epoch-ms createdAt, workers without a `cli`
+ * field, nativeInstructions, providerId mapping.
  */
 
-describe('squadSchema (Overclock squads.json compat)', () => {
+describe('squadSchema (squads.json compat)', () => {
   it('accepts epoch-ms createdAt and coerces it to string', () => {
     const squad = squadSchema.parse({
       id: 's1',
@@ -70,7 +69,7 @@ describe('squadSchema (Overclock squads.json compat)', () => {
           agents: [
             {
               id: 'orchestrator',
-              agentName: 'overclock-orchestrator',
+              agentName: 'nexus-orchestrator',
               category: 'orchestrator',
               cli: 'claude',
               model: 'claude-opus-4-8',

@@ -6,8 +6,8 @@ import path from 'node:path';
  * Client-side half of the dual skill-gate (docs/ARCHITECTURE.md §E.4).
  * For gated workers we generate an ephemeral $HOME containing Claude-style
  * hooks (PreToolUse / PostToolUse / Stop) that consult the embedded gate over
- * localhost HTTP — replacing Overclock's marker-file mechanism with
- * SQLite-backed decisions. The server-side gate in the MCP server remains the
+ * localhost HTTP, using SQLite-backed decisions rather than marker files.
+ * The server-side gate in the MCP server remains the
  * hard enforcement; these hooks give in-CLI feedback and Stop-blocking.
  */
 

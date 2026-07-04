@@ -279,7 +279,7 @@ function installSpawnHook(): void {
   });
 }
 
-/** Legacy `### OVERCLOCK_HANDOFF v1` stream fallback (ARCHITECTURE §E.3). */
+/** Legacy `### NEXUS_HANDOFF v1` stream fallback (ARCHITECTURE §E.3). */
 function installLegacyParser(): void {
   const parser = new LegacyHandoffParser((sessionId, payload) => {
     const ctx = getContextBySession(sessionId);

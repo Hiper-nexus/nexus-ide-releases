@@ -10,8 +10,8 @@ import { useOrchStore, type OrchPanelTab } from '../state/orch-store';
 import { reopenMission } from '../orch/mission-reopen';
 
 /**
- * Orchestration drawer — the mission/handoff/todo/squad debug view that
- * Overclock lacks (docs/ARCHITECTURE.md §E.6): live mission timeline, handoff
+ * Orchestration drawer — the mission/handoff/todo/squad debug view
+ * (docs/ARCHITECTURE.md §E.6): live mission timeline, handoff
  * audit trail, visible todo milestones and squad management with
  * export/import.
  */
@@ -276,8 +276,8 @@ export function OrchestrationPanel() {
             {notice && <p className="orch-panel__notice">{notice}</p>}
             {squads.length === 0 ? (
               <p className="orch-panel__empty">
-                No squads saved. Save one via nexus_squad_save or import an
-                Overclock squads.json.
+                No squads saved. Save one via nexus_squad_save or import a
+                squads.json.
               </p>
             ) : (
               <ul className="orch-list">

@@ -3,7 +3,7 @@ import type { AdapterInfo } from '../../../shared/types';
 import { useOrchStore } from '../../state/orch-store';
 import { useSettingsStore } from '../../state/settings-store';
 import {
-  ClockVoiceSection,
+  VoiceSection,
   MarketplaceSection,
   SquadsSection,
   TerminalSection,
@@ -21,14 +21,14 @@ import {
 } from './CatalogSections';
 
 /**
- * Settings drawer — Overclock v0.7.5 modules sidebar parity: MÓDULOS
- * (Terminal, ClockVoice, Providers, Squads, Marketplace) and CATALOG
+ * Settings drawer — modules sidebar: MÓDULOS
+ * (Terminal, Voice, Providers, Squads, Marketplace) and CATALOG
  * (Agents, Skills, MCPs, Tools, Plugins, Hooks, Rules, Atalhos).
  */
 
 export type SettingsSection =
   | 'terminal'
-  | 'clockvoice'
+  | 'voice'
   | 'providers'
   | 'squads'
   | 'marketplace'
@@ -50,7 +50,7 @@ interface NavItem {
 
 const MODULE_ITEMS: NavItem[] = [
   { id: 'terminal', icon: '>_', title: 'TERMINAL', subtitle: 'tema · fonte · shell' },
-  { id: 'clockvoice', icon: '🎙', title: 'CLOCKVOICE', subtitle: 'voz · captura' },
+  { id: 'voice', icon: '🎙', title: 'VOICE', subtitle: 'voz · captura' },
   { id: 'providers', icon: '🔑', title: 'PROVIDERS', subtitle: 'tokens · modelos' },
   { id: 'squads', icon: '👥', title: 'SQUADS', subtitle: 'orquestração' },
   { id: 'marketplace', icon: '✦', title: 'MARKETPLACE', subtitle: 'Catálogo · 1 clique' },
@@ -156,7 +156,7 @@ export function SettingsDrawer() {
 
         <div className="settings-detail">
           {section === 'terminal' && <TerminalSection />}
-          {section === 'clockvoice' && <ClockVoiceSection onNavigate={close} />}
+          {section === 'voice' && <VoiceSection onNavigate={close} />}
           {section === 'providers' && <ProvidersPanel />}
           {section === 'squads' && <SquadsSection onNavigate={close} />}
           {section === 'marketplace' && <MarketplaceSection />}

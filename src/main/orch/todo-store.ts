@@ -4,7 +4,7 @@ import { ChangeHub, makeId, parseJsonColumn } from './store-util';
 
 /**
  * Todo store backing nexus_todo_manager — user-visible task lists with
- * milestones, mirroring the Overclock todo_manager semantics:
+ * milestones. Supported operations:
  * set_tasks / move_to_task / add_task / read_list / mark_all_done.
  * Lists are keyed (default 'global'; missions get their own list).
  */
@@ -74,7 +74,7 @@ function newItem(name: string, status: TodoItem['status'] = 'todo'): TodoItem {
   return { id: makeId('todo'), name, status, createdAt: Date.now() };
 }
 
-/** Replace the whole list; the first task starts in_progress (Overclock UX). */
+/** Replace the whole list; the first task starts in_progress. */
 export function setTasks(names: string[], listId = DEFAULT_TODO_LIST): TodoList {
   const items = names.map((name, index) =>
     newItem(name, index === 0 ? 'in_progress' : 'todo'),

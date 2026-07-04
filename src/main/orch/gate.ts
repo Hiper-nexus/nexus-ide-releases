@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
  * The embedded MCP server refuses out-of-allowlist calls HERE, regardless of
  * whether the client-side PreToolUse hook was bypassed.
  *
- * Overclock semantics preserved: `null` allowlist = unrestricted, and
+ * Allowlist semantics: `null` = unrestricted, and
  * handoff_submit / handoff_list / ToolSearch are always allowed.
  */
 
@@ -30,14 +30,14 @@ export interface AgentGateContext {
 
 export const MAX_STOP_ATTEMPTS = 3;
 
-/** Tools that must work regardless of any allowlist (Overclock parity). */
+/** Tools that must work regardless of any allowlist. */
 const ALWAYS_ALLOWED = new Set([
   'handoff_submit',
   'handoff_list',
   'toolsearch',
 ]);
 
-const NAMESPACE_PREFIXES = ['nexus_', 'overclock_'];
+const NAMESPACE_PREFIXES = ['nexus_'];
 
 /** Normalize a tool name to its namespace-free canonical form. */
 export function canonicalToolName(name: string): string {
@@ -138,7 +138,7 @@ export function markHandoffSubmitted(ctx: AgentGateContext): void {
 
 /**
  * Stop-gate decision: a worker may only stop after submitting a handoff, or
- * after MAX_STOP_ATTEMPTS blocked attempts (Overclock parity — never trap an
+ * after MAX_STOP_ATTEMPTS blocked attempts (never trap an
  * agent forever). Non-workers are never blocked.
  */
 export function evaluateStop(ctx: AgentGateContext): {

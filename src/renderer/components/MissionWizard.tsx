@@ -9,11 +9,11 @@ import { useToastStore } from '../state/toast-store';
 import { launchLibrePanes, launchSquadMission } from '../orch/mission-launcher';
 
 /**
- * "Novo workspace" / "Nova Missão" wizard — true Overclock v0.7.5 parity:
+ * "Novo workspace" / "Nova Missão" wizard — the full flow:
  *   PASTA (novo workspace) → MODO → Livre: PANES → PROVIDERS
  *                                 → Squad: SQUAD → REVISAR
  * Copy, step breadcrumb, mode cards and the squad list (ORIGINALS + YOUR
- * SQUADS with "orq + N workers") mirror the real app.
+ * SQUADS with "orq + N workers") drive the mission setup.
  */
 
 /** The orchestrator always runs on Claude (only CLI with reliable MCP tool use). */

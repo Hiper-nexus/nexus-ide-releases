@@ -8,7 +8,7 @@ import { getMission } from './mission-store';
 import { markDelivered } from './handoff-store';
 
 /**
- * Automatic handoff delivery (Overclock parity): when a worker submits a
+ * Automatic handoff delivery: when a worker submits a
  * handoff, the orchestrator session receives it as an injected message — but
  * only once that session is IDLE, so we never type into the middle of a
  * running response. Non-idle deliveries queue and flush on the next idle

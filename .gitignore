@@ -4,7 +4,10 @@ node_modules/
 # Build outputs
 dist/
 out/
-build/
+build/*
+# ...but keep the macOS signing config (entitlements + notarization guide)
+!build/entitlements.mac.plist
+!build/notarize.md
 .next/
 .nuxt/
 

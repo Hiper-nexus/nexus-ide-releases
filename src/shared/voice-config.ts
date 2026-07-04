@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
 /**
- * Declarative voice pipeline config (Jarvis mode). Superset of the Overclock
- * ClockVoice `audio-config.json` — the same base fields (provider, baseUrl,
+ * Declarative voice pipeline config (Jarvis mode). Superset of a legacy
+ * voice `audio-config.json` — the same base fields (provider, baseUrl,
  * model, language, outputMode, captureMode, pushToTalkKey, chunkMs) plus a
  * recursive `fallback` chain, a full `tts` block, VAD, and routing/speakMode.
  *
@@ -47,7 +47,7 @@ export interface VoicePlugin {
   translateTo?: string;
   streaming?: boolean;
   chunkMs?: number;
-  /** ClockVoice parity fields. */
+  /** Legacy audio-config compatibility fields. */
   language?: string;
   outputMode?: string;
   /** TTS-only. */
@@ -94,7 +94,7 @@ const inputSchema = z.object({
   mode: z.enum(['push-to-talk']).default('push-to-talk'),
   /** Electron accelerator for keydown (globalShortcut). */
   shortcut: z.string().min(1).max(64).default('CommandOrControl+Shift+Space'),
-  /** ClockVoice-style key code for the uiohook keyup match (e.g. "Space"). */
+  /** Bare key code for the uiohook keyup match (e.g. "Space"). */
   pushToTalkKey: z.object({ code: z.string().max(32) }).optional(),
 });
 
@@ -187,10 +187,10 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
   },
 };
 
-// ── ClockVoice migration ─────────────────────────────────────────────────────
+// ── Legacy audio-config migration ─────────────────────────────────────────────────────
 
-/** The Overclock ClockVoice `audio-config.json` shape (subset we consume). */
-export const clockVoiceConfigSchema = z.object({
+/** The legacy `audio-config.json` shape (subset we consume). */
+export const legacyVoiceConfigSchema = z.object({
   provider: z.string().optional(),
   baseUrl: z.string().optional(),
   model: z.string().optional(),
@@ -203,7 +203,7 @@ export const clockVoiceConfigSchema = z.object({
   chunkMs: z.number().optional(),
 });
 
-export type ClockVoiceConfig = z.infer<typeof clockVoiceConfigSchema>;
+export type LegacyVoiceConfig = z.infer<typeof legacyVoiceConfigSchema>;
 
 const KNOWN_ENV_VAR: Record<string, string> = {
   groq: 'GROQ_API_KEY',
@@ -212,11 +212,11 @@ const KNOWN_ENV_VAR: Record<string, string> = {
 };
 
 /**
- * Migrate a ClockVoice `audio-config.json` into a full NexusIDE voice config.
- * The STT block is derived from the ClockVoice fields; the TTS block and local
+ * Migrate a legacy `audio-config.json` into a full NexusIDE voice config.
+ * The STT block is derived from the legacy fields; the TTS block and local
  * fallbacks come from {@link DEFAULT_VOICE_CONFIG}. Pure — no I/O.
  */
-export function migrateClockVoiceConfig(raw: ClockVoiceConfig): VoiceConfig {
+export function migrateLegacyVoiceConfig(raw: LegacyVoiceConfig): VoiceConfig {
   const provider = raw.provider ?? DEFAULT_VOICE_CONFIG.stt.provider;
   const baseUrl = raw.baseUrl?.replace(/\/$/, '');
   const endpoint = baseUrl
@@ -257,7 +257,7 @@ export function migrateClockVoiceConfig(raw: ClockVoiceConfig): VoiceConfig {
 }
 
 /**
- * Turn a bare ClockVoice key code (e.g. "Space") into an Electron accelerator,
+ * Turn a bare key code (e.g. "Space") into an Electron accelerator,
  * defaulting the modifier so a global hotkey doesn't collide with plain typing.
  */
 export function accelFromCode(code: string): string {

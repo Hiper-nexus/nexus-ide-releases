@@ -2323,7 +2323,7 @@ body {
   margin: auto;
 }
 
-/* ---- Wizard v2 (Overclock parity) ---- */
+/* ---- Wizard v2 ---- */
 .wizard__logo {
   color: var(--accent);
   font-family: var(--font-mono);

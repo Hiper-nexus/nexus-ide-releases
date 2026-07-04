@@ -6,7 +6,7 @@ import { listPanes } from '../lib/split-tree';
 /**
  * Confirmation before leaving a workspace. Closing kills every pane/session in
  * this workspace and returns to the launcher — so we warn explicitly that the
- * running terminals will be terminated, mirroring the Overclock
+ * running terminals will be terminated — the
  * "Fechar workspace?" guard.
  */
 

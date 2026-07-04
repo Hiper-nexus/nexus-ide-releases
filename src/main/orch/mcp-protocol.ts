@@ -51,7 +51,7 @@ export interface McpRegistry {
   serverVersion: string;
 }
 
-/** Resolve a tool by canonical or aliased name (nexus_/overclock_/bare). */
+/** Resolve a tool by canonical or aliased name (nexus_/bare). */
 export function resolveTool(
   registry: McpRegistry,
   name: string,

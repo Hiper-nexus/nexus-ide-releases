@@ -39,7 +39,7 @@ import {
 
 /**
  * MCP tools for handoffs (2), agents (3), missions (5), squad/catalog/task
- * (3) and todos (1) — Overclock parity groups 2-6.
+ * (3) and todos (1) — orchestration tool groups 2-6.
  */
 
 const handoffSubmitTool: McpToolDef = {
@@ -286,7 +286,7 @@ const missionSpawnPaneTool: McpToolDef = {
 const squadSaveTool: McpToolDef = {
   name: 'nexus_squad_save',
   description:
-    'Save a squad definition (Overclock-compatible schema: {id, name, ' +
+    'Save a squad definition (JSON schema: {id, name, ' +
     'createdAt, builtin, orchestratorInstructions, agents[]}).',
   inputSchema: {
     type: 'object',
@@ -299,7 +299,7 @@ const squadSaveTool: McpToolDef = {
   },
 };
 
-// Schema mirrors the real overclock_catalog_install 1:1.
+// Schema for the catalog-install tool.
 const catalogInstallTool: McpToolDef = {
   name: 'nexus_catalog_install',
   description:

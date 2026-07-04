@@ -59,8 +59,8 @@ note like `groq throttled (429 rate limit) → openai` instead of failing silent
 
 ## Changing the default provider (no rebuild)
 
-Config lives at `~/.nexus/plugins/voice/nexus-voice.json` (a superset of the
-Overclock ClockVoice `audio-config.json`, which is auto-migrated on first run).
+Config lives at `~/.nexus/plugins/voice/nexus-voice.json` (a superset of a
+legacy `audio-config.json`, which is auto-migrated on first run).
 To make OpenAI or local the primary STT, either:
 
 - **UI:** the voice button in the WorkspaceBar → *Voice · Jarvis Mode* → pick the

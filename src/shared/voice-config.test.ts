@@ -3,11 +3,11 @@ import {
   voiceConfigSchema,
   voicePluginSchema,
   DEFAULT_VOICE_CONFIG,
-  migrateClockVoiceConfig,
+  migrateLegacyVoiceConfig,
   accelFromCode,
   keyCodeFromAccelerator,
   normalizeKeyCode,
-  clockVoiceConfigSchema,
+  legacyVoiceConfigSchema,
 } from './voice-config';
 
 describe('voiceConfigSchema', () => {
@@ -50,8 +50,8 @@ describe('voiceConfigSchema', () => {
   });
 });
 
-describe('migrateClockVoiceConfig', () => {
-  const clockVoice = {
+describe('migrateLegacyVoiceConfig', () => {
+  const legacyVoice = {
     provider: 'groq',
     baseUrl: 'https://api.groq.com/openai/v1',
     model: 'whisper-large-v3',
@@ -64,12 +64,12 @@ describe('migrateClockVoiceConfig', () => {
     chunkMs: 4700,
   };
 
-  it('parses a real ClockVoice audio-config', () => {
-    expect(clockVoiceConfigSchema.safeParse(clockVoice).success).toBe(true);
+  it('parses a real legacy audio-config', () => {
+    expect(legacyVoiceConfigSchema.safeParse(legacyVoice).success).toBe(true);
   });
 
-  it('derives the STT endpoint and translate flag from ClockVoice fields', () => {
-    const config = migrateClockVoiceConfig(clockVoice);
+  it('derives the STT endpoint and translate flag from legacy fields', () => {
+    const config = migrateLegacyVoiceConfig(legacyVoice);
     expect(config.stt.provider).toBe('groq');
     expect(config.stt.endpoint).toBe(
       'https://api.groq.com/openai/v1/audio/transcriptions',
@@ -79,8 +79,8 @@ describe('migrateClockVoiceConfig', () => {
     expect(config.stt.chunkMs).toBe(4700);
   });
 
-  it('carries the ClockVoice fallback + tts blocks from defaults', () => {
-    const config = migrateClockVoiceConfig(clockVoice);
+  it('carries the fallback + tts blocks from defaults', () => {
+    const config = migrateLegacyVoiceConfig(legacyVoice);
     // Groq → OpenAI → local-whisper.
     expect(config.stt.fallback?.provider).toBe('openai');
     expect(config.stt.fallback?.fallback?.provider).toBe('local-whisper');
@@ -89,12 +89,12 @@ describe('migrateClockVoiceConfig', () => {
   });
 
   it('maps outputMode !== english to translate false', () => {
-    const config = migrateClockVoiceConfig({ ...clockVoice, outputMode: 'raw' });
+    const config = migrateLegacyVoiceConfig({ ...legacyVoice, outputMode: 'raw' });
     expect(config.stt.translate).toBe(false);
   });
 
   it('builds an accelerator from the push-to-talk key code', () => {
-    const config = migrateClockVoiceConfig(clockVoice);
+    const config = migrateLegacyVoiceConfig(legacyVoice);
     expect(config.input.shortcut).toBe('CommandOrControl+Shift+Space');
   });
 });

@@ -72,7 +72,7 @@ function buildNodes(
 }
 
 /**
- * Infinite draggable canvas view — the NexusIDE differentiator over Overclock.
+ * Infinite draggable canvas view.
  *
  * Hosts every pane as a freely positionable, resizable xyflow node.  The
  * terminal inside each node is the *same* xterm+PTY instance as the grid view,

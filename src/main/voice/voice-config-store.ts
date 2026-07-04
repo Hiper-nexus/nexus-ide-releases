@@ -7,8 +7,8 @@ import {
   keyCodeFromAccelerator,
   normalizeKeyCode,
   voiceConfigSchema,
-  clockVoiceConfigSchema,
-  migrateClockVoiceConfig,
+  legacyVoiceConfigSchema,
+  migrateLegacyVoiceConfig,
   type VoiceConfig,
   type VoicePlugin,
 } from '../../shared/voice-config';
@@ -33,7 +33,7 @@ import {
 } from './voice-secrets';
 
 /**
- * Owns the live voice config: loads user JSON / migrates a ClockVoice
+ * Owns the live voice config: loads user JSON / migrates a legacy
  * audio-config on boot, applies settings patches, and builds the secret-free
  * runtime snapshot the renderer consumes. Secrets (API keys) are read from
  * `process.env` HERE, in main, and never placed on the snapshot.
@@ -43,10 +43,9 @@ const NEXUS_DIR = path.join(os.homedir(), '.nexus');
 const USER_VOICE_DIR = path.join(NEXUS_DIR, 'plugins', 'voice');
 const USER_VOICE_FILE = path.join(USER_VOICE_DIR, 'nexus-voice.json');
 
-// Where a migratable ClockVoice audio-config may live (Overclock or Nexus dir).
-const CLOCKVOICE_CANDIDATES = [
+// Where a migratable audio-config may live (Nexus dir).
+const LEGACY_VOICE_CANDIDATES = [
   path.join(NEXUS_DIR, 'audio-config.json'),
-  path.join(os.homedir(), '.overclock-app', 'audio-config.json'),
 ];
 
 let current: VoiceConfig = DEFAULT_VOICE_CONFIG;
@@ -97,15 +96,15 @@ function readUserConfig(): VoiceConfig | null {
   return null;
 }
 
-function readClockVoiceConfig(): VoiceConfig | null {
-  for (const file of CLOCKVOICE_CANDIDATES) {
+function readLegacyVoiceConfig(): VoiceConfig | null {
+  for (const file of LEGACY_VOICE_CANDIDATES) {
     if (!fs.existsSync(file)) continue;
     try {
       const raw: unknown = JSON.parse(fs.readFileSync(file, 'utf-8'));
-      const parsed = clockVoiceConfigSchema.safeParse(raw);
+      const parsed = legacyVoiceConfigSchema.safeParse(raw);
       if (parsed.success) {
-        console.log(`[voice-config] migrated ClockVoice config from ${file}`);
-        return migrateClockVoiceConfig(parsed.data);
+        console.log(`[voice-config] migrated legacy voice config from ${file}`);
+        return migrateLegacyVoiceConfig(parsed.data);
       }
     } catch (err) {
       console.error(`[voice-config] failed to migrate ${file}:`, err);
@@ -114,7 +113,7 @@ function readClockVoiceConfig(): VoiceConfig | null {
   return null;
 }
 
-/** Load config: user JSON wins, else a migrated ClockVoice config, else defaults. */
+/** Load config: user JSON wins, else a migrated legacy config, else defaults. */
 export function loadVoiceConfig(): VoiceConfig {
   try {
     fs.mkdirSync(USER_VOICE_DIR, { recursive: true });
@@ -127,11 +126,11 @@ export function loadVoiceConfig(): VoiceConfig {
     return current;
   }
 
-  const migrated = readClockVoiceConfig();
+  const migrated = readLegacyVoiceConfig();
   if (migrated) {
     current = migrated;
     // Materialize the migrated config to the editable user file so we don't
-    // re-derive it from the ClockVoice source on every boot. Idempotent.
+    // re-derive it from the legacy source on every boot. Idempotent.
     persist(migrated);
     return current;
   }

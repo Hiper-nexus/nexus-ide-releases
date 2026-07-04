@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 /**
- * aitmpl catalog (davila7/claude-code-templates) — EXACT port of the real
- * Overclock v0.7.5 mechanism (reverse-engineered from the shipped bundle):
+ * aitmpl catalog (davila7/claude-code-templates) — the catalog install
+ * mechanism:
  *
  *  - agents: GET raw.githubusercontent.com/.../cli-tool/components/agents/
  *    <slug>.md → written to ~/.claude/agents/<name>.md
@@ -14,7 +14,7 @@ import path from 'node:path';
  *  - both skip silently when the target already exists
  *
  * Browsing/search uses a single git-tree fetch cached on disk (the "skills
- * cache"/"agents cache" the Overclock sidebar refers to).
+ * cache"/"agents cache").
  */
 
 const REPO = 'davila7/claude-code-templates';
@@ -142,7 +142,7 @@ export async function getCatalogIndex(refresh = false): Promise<{
 }
 
 // ---------------------------------------------------------------------------
-// Install (exact Overclock behavior)
+// Install
 // ---------------------------------------------------------------------------
 
 /** Slugs come from the catalog: path segments only, no traversal. */
@@ -238,7 +238,7 @@ async function installSkill(slug: string): Promise<InstallResult> {
 /**
  * Install an agent (.md → ~/.claude/agents/) or a skill (dir →
  * ~/.claude/skills/) from the aitmpl catalog. Skips silently when the target
- * already exists — same contract as overclock_catalog_install.
+ * already exists.
  */
 export async function installCatalogItem(input: {
   kind: CatalogKind;
@@ -301,7 +301,7 @@ function scanDir(
 }
 
 /**
- * Installed catalog components. Overclock installs into the CLI's real
+ * Installed catalog components. Components install into the CLI's real
  * namespace (~/.claude) — that's what we scan; the legacy
  * ~/.nexus/plugins/catalog dir is included for anything installed by older
  * builds.

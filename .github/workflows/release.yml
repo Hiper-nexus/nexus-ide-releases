@@ -1,0 +1,85 @@
+name: Release (macOS · signed + notarized)
+
+# Dispara ao dar push numa tag de versão, ex.:
+#   npm version patch   # bump + tag v0.1.5
+#   git push --follow-tags
+# O CI builda em Node 22 LTS (Node 26 quebra o @electron/packager), assina com
+# Developer ID, notariza na Apple e publica o Release com o .dmg + o .zip
+# (payload do auto-update Squirrel.Mac).
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # necessário para criar o Release
+
+jobs:
+  release:
+    runs-on: macos-14 # runner Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Importar certificado Developer ID
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          CERT="$RUNNER_TEMP/devid.p12"
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$CERT"
+
+          # Keychain temporária isolada só para este build.
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          # Importa cert + chave privada e autoriza o codesign sem prompt.
+          security import "$CERT" -k "$KEYCHAIN" -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          # Torna a keychain visível para o codesign.
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          security default-keychain -s "$KEYCHAIN"
+          security find-identity -v -p codesigning
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Build + assinatura + notarização
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run make
+
+      - name: Publicar Release com o .dmg + .zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          DMG="$(find out/make -name '*.dmg' | head -1)"
+          ZIP="$(find out/make -name '*.zip' | head -1)"
+          echo "dmg: $DMG"
+          echo "zip: $ZIP"
+          test -n "$DMG" || { echo 'nenhum .dmg gerado'; exit 1; }
+          # Idempotente: cria o Release, ou (se a tag já tiver Release) só
+          # anexa/atualiza os artefatos — evita falha em re-execuções.
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "$DMG" ${ZIP:+"$ZIP"} --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "NexusIDE ${GITHUB_REF_NAME}" \
+              --generate-notes \
+              "$DMG" ${ZIP:+"$ZIP"}
+          fi

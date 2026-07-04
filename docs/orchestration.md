@@ -1,6 +1,6 @@
 # Orquestração + MCP embutido (Fase 2d)
 
-Paridade exata com o Overclock v0.7.5 (ver `ARCHITECTURE.md` §E): squads,
+Orquestração completa (ver `ARCHITECTURE.md` §E): squads,
 missões, handoffs, todos e um servidor MCP embutido com **24 tools** no
 namespace `nexus_*`.
 
@@ -13,8 +13,8 @@ Cada pane de agente recebe no spawn:
 - `--mcp-config <arquivo>` quando o adapter tem `quirks.mcpAutoload` (Claude);
 - `NEXUS_GATE_URL` / `NEXUS_GATE_TOKEN` — endpoints do skill-gate client.
 
-Aliases aceitos em `tools/call`: `nexus_pane_spawn` ≡ `overclock_pane_spawn` ≡
-`pane_spawn` (o `tools/list` expõe apenas os canônicos `nexus_*`).
+Aliases aceitos em `tools/call`: `nexus_pane_spawn` ≡ `pane_spawn` (o
+`tools/list` expõe apenas os canônicos `nexus_*`).
 
 ## As 24 tools
 
@@ -32,7 +32,7 @@ Aliases aceitos em `tools/call`: `nexus_pane_spawn` ≡ `overclock_pane_spawn` �
 Worker chama `nexus_handoff_submit({status, summary, artifacts})` → linha
 durável na tabela `handoffs` → entrega automática no PTY do orquestrador da
 missão **quando ele fica idle** (nunca no meio de uma resposta). O formato
-legado `### OVERCLOCK_HANDOFF v1` + JSON impresso no terminal também é
+legado `### NEXUS_HANDOFF v1` + JSON impresso no terminal também é
 reconhecido (parser de stream com ANSI-strip).
 
 ## Skill-gate (enforcement duplo)
@@ -45,14 +45,14 @@ Agentes de squad com `allowedTools`/`allowedSkills` (null = irrestrito):
 2. **Client-side (feedback):** workers gated recebem `$HOME` efêmero em
    `~/.nexus/ephemeral/<token>/` com hooks Claude (PreToolUse/PostToolUse/
    Stop) que consultam `POST /gate/*`. O Stop-gate bloqueia a saída sem
-   handoff (máx. 3 tentativas, paridade Overclock).
+   handoff (máx. 3 tentativas).
 
 ## Squads
 
-Schema idêntico ao `squads.json` real do Overclock (`id`, `name`, `createdAt`,
+Schema do `squads.json` (`id`, `name`, `createdAt`,
 `builtin`, `orchestratorInstructions`, `agents[]` com `category` incluindo
 `orchestrator`, `effort`, allowlists). Export/import nativo de JSON no painel
-de orquestração (⛭ Orch na barra) — capacidade que o Overclock não tem.
+de orquestração (⛭ Orch na barra).
 
 ## UI
 

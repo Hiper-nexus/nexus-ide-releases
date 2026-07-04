@@ -7,10 +7,9 @@ import { squadSchema, squadsFileSchema } from '../../shared/orch-types';
 import { ChangeHub, parseJsonColumn } from './store-util';
 
 /**
- * Squad store. Replicates the real Overclock v0.7.5 squads.json schema so
- * squads round-trip through export/import unchanged (a capability Overclock
- * itself lacks). In-memory map is authoritative; SQLite is a write-through
- * mirror hydrated at init.
+ * Squad store. Squads round-trip through export/import unchanged (JSON). The
+ * in-memory map is authoritative; SQLite is a write-through mirror hydrated at
+ * init.
  */
 
 interface SquadRow {
@@ -27,16 +26,15 @@ const squads = new Map<string, Squad>();
 const hub = new ChangeHub();
 let db: Db | null = null;
 
-/** Candidate squads.json files migrated on first run (Overclock compat). */
+/** Candidate squads.json files migrated on first run. */
 const MIGRATION_CANDIDATES = [
   path.join(os.homedir(), '.nexus', 'squads.json'),
-  path.join(os.homedir(), '.overclock-app', 'squads.json'),
 ];
 
 /**
  * First-run migration: with an empty store, import the user's existing
- * Overclock squads.json (originals + custom squads) so the squad picker is
- * populated on day one. Same spirit as the ClockVoice audio-config migration.
+ * squads.json (originals + custom squads) so the squad picker is populated on
+ * day one. Same spirit as the voice audio-config migration.
  */
 function migrateFromDiskIfEmpty(): void {
   if (squads.size > 0) return;
@@ -158,12 +156,12 @@ export function listAgents(): Array<SquadAgent & { squadId: string }> {
   return out;
 }
 
-/** Serialize all squads in the Overclock-compatible file format. */
+/** Serialize all squads in the JSON file format. */
 export function exportSquadsJson(): string {
   return JSON.stringify({ squads: listSquads() }, null, 2);
 }
 
-/** Import an Overclock-compatible squads file. Returns how many were saved. */
+/** Import a squads file. Returns how many were saved. */
 export function importSquadsJson(json: string): number {
   const parsed = squadsFileSchema.parse(JSON.parse(json));
   for (const squad of parsed.squads) {

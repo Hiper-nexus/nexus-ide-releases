@@ -37,10 +37,9 @@ function userCtx() {
 }
 
 describe('resolveTool', () => {
-  it('resolves canonical, overclock_ and bare alias names', () => {
+  it('resolves canonical and bare alias names', () => {
     const registry = makeRegistry();
     expect(resolveTool(registry, 'nexus_pane_read')?.name).toBe('nexus_pane_read');
-    expect(resolveTool(registry, 'overclock_pane_read')?.name).toBe('nexus_pane_read');
     expect(resolveTool(registry, 'pane_read')?.name).toBe('nexus_pane_read');
     expect(resolveTool(registry, 'nope')).toBeNull();
   });
@@ -95,7 +94,7 @@ describe('handleMcpMessage', () => {
     const res = await handleMcpMessage(
       makeRegistry(),
       userCtx(),
-      req('tools/call', { name: 'overclock_pane_read', arguments: { x: 1 } }),
+      req('tools/call', { name: 'pane_read', arguments: { x: 1 } }),
     );
     const result = res?.result as {
       content: Array<{ type: string; text: string }>;

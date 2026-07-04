@@ -7,7 +7,7 @@ import { useSettingsStore } from '../../state/settings-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useVoiceStore } from '../../voice/voice-store';
 
-/** MÓDULOS sections: Terminal, ClockVoice, Providers, Squads, Marketplace. */
+/** MÓDULOS sections: Terminal, Voice, Providers, Squads, Marketplace. */
 
 export function TerminalSection() {
   const terminal = useSettingsStore((s) => s.terminal);
@@ -81,11 +81,11 @@ export function TerminalSection() {
   );
 }
 
-export function ClockVoiceSection({ onNavigate }: { onNavigate: () => void }) {
+export function VoiceSection({ onNavigate }: { onNavigate: () => void }) {
   const openVoice = useVoiceStore((s) => s.openSettings);
   return (
     <section>
-      <h3 className="settings-detail__title">ClockVoice</h3>
+      <h3 className="settings-detail__title">Voice</h3>
       <p className="settings-detail__hint">
         Voz e captura: push-to-talk, STT (Groq/whisper), tradução PT→EN e
         resposta falada (Jarvis). Config em ~/.nexus/plugins/voice.
@@ -111,7 +111,7 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
       <h3 className="settings-detail__title">Squads</h3>
       <p className="settings-detail__hint">
         {squads.length} squad(s) salvos — schema compatível com o
-        squads.json do Overclock, com export/import nativo.
+        squads.json, com export/import nativo.
       </p>
       <ul className="settings-list">
         {squads.map((s) => (

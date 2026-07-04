@@ -7,7 +7,7 @@ import { getActiveWorkspacePath } from '../state/active-workspace';
 import { getPaneSessionId } from '../terminal/terminal-host';
 
 /**
- * Launch logic behind the wizard, mirroring what Overclock does when a
+ * Launch logic behind the wizard when a
  * mission starts:
  *  - LIVRE: open N solo panes (shell or agent CLI) in the workspace;
  *  - SQUAD: spawn the squad's orchestrator CLI and, once it finishes booting,
@@ -154,7 +154,7 @@ export function launchSquadMission(
   }
 
   // Start the mission in a clean grid with just the orchestrator pane (a
-  // squad opens its own workspace, same as Overclock). Workers are added by
+  // squad opens its own workspace). Workers are added by
   // the orchestrator via the MCP tools as it delegates. Always replaces the
   // grid so something starts — no silent no-op.
   const cwd = getActiveWorkspacePath() ?? undefined;

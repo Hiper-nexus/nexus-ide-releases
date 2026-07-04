@@ -15,9 +15,8 @@ import {
 } from './gate';
 
 describe('canonicalToolName', () => {
-  it('strips the nexus_ and overclock_ namespaces', () => {
+  it('strips the nexus_ namespace', () => {
     expect(canonicalToolName('nexus_pane_spawn')).toBe('pane_spawn');
-    expect(canonicalToolName('overclock_pane_spawn')).toBe('pane_spawn');
     expect(canonicalToolName('pane_spawn')).toBe('pane_spawn');
   });
 
@@ -27,7 +26,7 @@ describe('canonicalToolName', () => {
 });
 
 describe('isToolAllowed', () => {
-  it('treats a null allowlist as unrestricted (Overclock semantics)', () => {
+  it('treats a null allowlist as unrestricted', () => {
     expect(isToolAllowed(null, 'nexus_pane_spawn')).toBe(true);
     expect(isToolAllowed(null, 'Bash')).toBe(true);
   });
@@ -37,8 +36,8 @@ describe('isToolAllowed', () => {
     expect(isToolAllowed([], 'nexus_pane_spawn')).toBe(false);
   });
 
-  it('matches across namespaces', () => {
-    expect(isToolAllowed(['nexus_pane_read'], 'overclock_pane_read')).toBe(true);
+  it('matches across the nexus_ namespace and bare names', () => {
+    expect(isToolAllowed(['nexus_pane_read'], 'pane_read')).toBe(true);
     expect(isToolAllowed(['pane_read'], 'nexus_pane_read')).toBe(true);
   });
 

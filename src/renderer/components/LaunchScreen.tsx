@@ -4,8 +4,8 @@ import { useSettingsStore } from '../state/settings-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 
 /**
- * Launch / onboarding screen — the first surface when no workspace is open,
- * mirroring Overclock: open a folder (picker), or reopen a recent workspace.
+ * Launch / onboarding screen — the first surface when no workspace is open:
+ * open a folder (picker), or reopen a recent workspace.
  * Choosing a workspace roots every new pane/mission at that folder.
  */
 

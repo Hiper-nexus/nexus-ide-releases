@@ -65,7 +65,7 @@ interface LayoutState {
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
- * Layouts are keyed per workspace folder (Overclock parity). `persistKey`
+ * Layouts are keyed per workspace folder. `persistKey`
  * pins which workspace the CURRENT in-memory tree belongs to, so a debounced
  * save that fires mid-switch can never write panes into the wrong workspace.
  */
