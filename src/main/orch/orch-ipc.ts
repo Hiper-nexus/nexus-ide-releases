@@ -17,6 +17,7 @@ import {
   onMissionsChange,
   setMissionOrchestratorSession,
   updateMission,
+  removeMission,
 } from './mission-store';
 import { initMissionPaneStore, listMissionPanes } from './mission-pane-store';
 import { initHandoffStore, listHandoffs, onHandoffsChange } from './handoff-store';
@@ -150,6 +151,12 @@ export function registerOrchIpc(): void {
       throw new Error('mission not found');
     }
     return mission;
+  });
+
+  ipcMain.handle(ORCH_CHANNELS.missionRemove, (_event, raw) => {
+    const missionId = typeof raw === 'string' ? raw : '';
+    if (!missionId) throw new Error('invalid mission id');
+    return { removed: removeMission(missionId) };
   });
 
   ipcMain.handle(ORCH_CHANNELS.handoffsList, () =>

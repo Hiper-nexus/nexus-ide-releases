@@ -12,6 +12,7 @@ export const ORCH_CHANNELS = {
   missionPanesList: 'orch:missions.panes',
   missionRebind: 'orch:missions.rebind',
   missionUpdate: 'orch:missions.update',
+  missionRemove: 'orch:missions.remove',
   handoffsList: 'orch:handoffs.list',
   todosGet: 'orch:todos.get',
   todoSetStatus: 'orch:todos.setStatus',

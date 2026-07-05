@@ -1346,6 +1346,38 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Fechar/remover a missão da lista — discreto, acende no hover do item. */
+.orch-item__remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  opacity: 0;
+  cursor: pointer;
+  transition:
+    opacity 120ms var(--ease-out-quart),
+    background-color 120ms var(--ease-out-quart),
+    color 120ms var(--ease-out-quart);
+}
+.orch-item:hover .orch-item__remove,
+.orch-item__remove:focus-visible {
+  opacity: 1;
+}
+.orch-item__remove:hover {
+  background: var(--accent-soft);
+  color: var(--danger);
+}
+@media (prefers-reduced-motion: reduce) {
+  .orch-item__remove { transition: none; }
+}
+
 .orch-badge {
   font-size: 9px;
   text-transform: uppercase;
@@ -3286,12 +3318,21 @@ body {
 .home-deck {
   position: absolute;
   inset: 8px; /* anchored to .app__body (position: relative), inside its padding */
-  z-index: 30; /* above panes, below wizard/drawers */
+  z-index: 30; /* above panes, below the side columns + wizard/drawers */
   display: grid;
   place-items: center;
   background: color-mix(in srgb, var(--bg) 72%, transparent);
   backdrop-filter: blur(2px);
   border-radius: var(--radius);
+}
+
+/* O Home é o empty-state da ÁREA DE PANES, não da app inteira: as colunas
+   laterais ficam ACIMA do overlay para continuarem clicáveis — o usuário pode
+   sempre abrir uma missão pelo rail ou um arquivo sem antes dispensar o Home. */
+.app__body > .mission-rail,
+.app__body > .files {
+  position: relative;
+  z-index: 31;
 }
 
 .home-deck__panel {
@@ -3325,6 +3366,34 @@ body {
   display: flex;
   align-items: center;
   gap: 14px;
+}
+
+.home-deck__close {
+  margin-left: auto;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    border-color 120ms var(--ease-out-quart),
+    color 120ms var(--ease-out-quart),
+    background-color 120ms var(--ease-out-quart);
+}
+.home-deck__close:hover {
+  border-color: var(--border-strong);
+  background: var(--bg);
+  color: var(--text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-deck__close { transition: none; }
 }
 
 .home-deck__logo {

@@ -43,10 +43,12 @@ function MissionRow({
   mission,
   handoffCount,
   onReopen,
+  onRemove,
 }: {
   mission: Mission;
   handoffCount: number;
   onReopen: (mission: Mission) => void;
+  onRemove: (mission: Mission) => void;
 }) {
   return (
     <li className="orch-item">
@@ -66,6 +68,14 @@ function MissionRow({
           title="Restaura os panes da missão; as CLIs retomam a conversa com --resume"
         >
           Reabrir
+        </button>
+        <button
+          className="orch-item__remove"
+          onClick={() => onRemove(mission)}
+          title="Remover esta missão da lista"
+          aria-label={`Remover missão ${mission.title}`}
+        >
+          <CloseIcon />
         </button>
       </div>
       {mission.description && (
@@ -231,6 +241,19 @@ export function OrchestrationPanel() {
     })();
   }
 
+  function onRemoveMission(mission: Mission) {
+    if (
+      !window.confirm(
+        `Remover a missão "${mission.title}" da lista? Os panes abertos continuam; só o registro sai.`,
+      )
+    ) {
+      return;
+    }
+    void window.nexus.orch.removeMission(mission.id).then((r) => {
+      if (!r.removed) setNotice('Missão já não estava na lista.');
+    });
+  }
+
   const visibleTodoLists = todoLists.filter((l) => l.items.length > 0);
   const handoffCountByMission = new Map<string, number>();
   for (const h of handoffs) {
@@ -289,6 +312,7 @@ export function OrchestrationPanel() {
                     mission={m}
                     handoffCount={handoffCountByMission.get(m.id) ?? 0}
                     onReopen={onReopenMission}
+                    onRemove={onRemoveMission}
                   />
                 ))}
               </ul>

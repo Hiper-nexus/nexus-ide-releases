@@ -154,6 +154,20 @@ export function updateMission(id: string, patch: MissionPatch): Mission | null {
   return updated;
 }
 
+/** Remove a missão da lista e do disco. Idempotente (false se não existia). */
+export function removeMission(id: string): boolean {
+  if (!missions.delete(id)) return false;
+  if (db) {
+    try {
+      db.prepare('DELETE FROM missions WHERE id = ?').run(id);
+    } catch (err) {
+      console.warn('[orch] failed to delete mission:', err);
+    }
+  }
+  hub.emit();
+  return true;
+}
+
 export function setMissionStatus(
   id: string,
   status: MissionStatus,

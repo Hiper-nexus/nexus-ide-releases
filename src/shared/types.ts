@@ -293,6 +293,7 @@ export interface NexusApi {
     ): Promise<{ ok: boolean }>;
     /** Patch a mission's editable fields (title/description/status/milestones). */
     updateMission(missionId: string, patch: MissionPatch): Promise<Mission>;
+    removeMission(missionId: string): Promise<{ removed: boolean }>;
     listHandoffs(): Promise<Handoff[]>;
     getTodos(): Promise<TodoList[]>;
     /** Set a single todo item's status. */

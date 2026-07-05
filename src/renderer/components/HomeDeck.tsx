@@ -46,6 +46,16 @@ export function HomeDeck() {
     if (visible && paneCount > 1) hide();
   }, [visible, paneCount, hide]);
 
+  // Escape dispensa o Home para o terminal ao fundo — saída sempre à mão.
+  useEffect(() => {
+    if (!visible) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') hide();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [visible, hide]);
+
   const installed = useMemo(
     () => adapters.filter((a) => a.installed),
     [adapters],
@@ -73,6 +83,21 @@ export function HomeDeck() {
               {workspace?.name ?? 'workspace'}
             </p>
           </div>
+          <button
+            className="home-deck__close"
+            onClick={hide}
+            title="Fechar (Esc) — usa o terminal ao fundo"
+            aria-label="Fechar o painel inicial"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+              <path
+                d="M3 3 L11 11 M11 3 L3 11"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
         </header>
 
         <div className="home-deck__status" aria-label="Status operacional">
