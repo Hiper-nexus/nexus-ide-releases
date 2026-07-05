@@ -15,6 +15,7 @@ import {
   listPanes,
   splitPane,
   updatePane,
+  pickBalancedTarget,
 } from '../lib/split-tree';
 import {
   defaultCanvasLayout,
@@ -194,7 +195,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   },
 
   spawnOrchPane: (req) => {
-    const { focusedPaneId: targetId, root: currentRoot, viewKind, canvasNodeLayouts } = get();
+    const { root: currentRoot, viewKind, canvasNodeLayouts } = get();
     const base = createPane(
       'cli-agent',
       req.cwd ?? getActiveWorkspacePath() ?? undefined,
@@ -209,9 +210,10 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       agentName: req.agentName,
       role: req.role,
     };
-    const pivotId = targetId ?? firstPaneId(currentRoot);
-    const root = pivotId
-      ? splitPane(currentRoot, pivotId, 'row', newPane)
+    // Alvo balanceado: workers de squad em grade ~quadrada, nunca em tira.
+    const target = pickBalancedTarget(currentRoot);
+    const root = target.paneId
+      ? splitPane(currentRoot, target.paneId, target.direction, newPane)
       : splitPane(initialTree(), firstPaneId(initialTree()) ?? '', 'row', newPane);
 
     const paneCount = listPanes(root).length;

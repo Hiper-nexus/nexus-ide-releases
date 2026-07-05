@@ -36,7 +36,16 @@ interface Host {
   spawnStarted: boolean;
   disposed: boolean;
   cleanups: Array<() => void>;
+  /** Devolve o slot de WebGL ao pool quando o host morre. */
+  webglRelease?: () => void;
 }
+
+// Chromium limita contextos WebGL por página (~8-16); um squad grande +
+// respawns estourava o pool e os terminais mais antigos ficavam EM BRANCO.
+// Acima do teto, novos terminais usam o renderer DOM (mais lento, sempre
+// legível).
+const WEBGL_MAX = 4;
+let webglInUse = 0;
 
 const hosts = new Map<string, Host>();
 
@@ -405,12 +414,25 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
 
   if (!host.opened) {
     host.term.open(host.element);
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      host.term.loadAddon(webgl);
-    } catch {
-      // Canvas/DOM renderer fallback.
+    if (webglInUse < WEBGL_MAX) {
+      try {
+        const webgl = new WebglAddon();
+        webglInUse += 1;
+        let released = false;
+        const release = () => {
+          if (released) return;
+          released = true;
+          webglInUse -= 1;
+        };
+        host.webglRelease = release;
+        webgl.onContextLoss(() => {
+          release();
+          webgl.dispose();
+        });
+        host.term.loadAddon(webgl);
+      } catch {
+        // Canvas/DOM renderer fallback.
+      }
     }
     host.opened = true;
   }
@@ -485,6 +507,7 @@ export function writeToPane(paneId: string, data: string): boolean {
 
 function disposeHost(host: Host, paneId: string): void {
   host.disposed = true;
+  host.webglRelease?.();
   host.ro.disconnect();
   host.cleanups.forEach((fn) => fn());
   if (host.sessionId) window.nexus.pty.kill(host.sessionId);

@@ -76,15 +76,10 @@
   },
   "control": {
     "permission": {
-      "arg": "--permission-mode",
-      "modes": {
-        "default": "default",
-        "auto": "acceptEdits",
-        "plan": "plan",
-        "bypass": "bypassPermissions"
-      },
+      "arg": "",
+      "modes": {},
       "yolo": [
-        "--dangerously-skip-permissions"
+        "--yolo"
       ],
       "default": ""
     }

@@ -56,6 +56,46 @@ export function buildGridTree(panes: PaneModel[], depth = 0): LayoutNode {
 }
 
 /**
+ * Onde um pane spawnado pela ORQUESTRAÇÃO deve nascer: no maior leaf, cortado
+ * no eixo mais comprido. Sem isso cada worker fatiava o pane focado em 'row'
+ * e um squad de 6 virava uma tira de colunas ilegíveis.
+ */
+export function pickBalancedTarget(
+  root: LayoutNode,
+): { paneId: string; direction: SplitDirection } {
+  let best: { paneId: string; direction: SplitDirection; area: number } = {
+    paneId: '',
+    direction: 'row',
+    area: -1,
+  };
+  const walk = (node: LayoutNode, w: number, h: number): void => {
+    if (node.kind === 'leaf') {
+      const area = w * h;
+      if (area > best.area) {
+        best = {
+          paneId: node.pane.id,
+          direction: w >= h ? 'row' : 'column',
+          area,
+        };
+      }
+      return;
+    }
+    const [a, b] = node.children;
+    if (node.direction === 'row') {
+      walk(a, w / 2, h);
+      walk(b, w / 2, h);
+    } else {
+      walk(a, w, h / 2);
+      walk(b, w, h / 2);
+    }
+  };
+  // Proporção típica da área de panes — o desempate direcional considera a
+  // tela larga.
+  walk(root, 16, 9);
+  return { paneId: best.paneId, direction: best.direction };
+}
+
+/**
  * Split the leaf hosting `paneId` along `direction`, inserting a fresh pane as
  * the second child. Returns a new tree (unchanged if the pane isn't found).
  */
