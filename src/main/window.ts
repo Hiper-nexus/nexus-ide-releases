@@ -136,10 +136,16 @@ export function createMainWindow(): BrowserWindow {
       if (!win.isDestroyed()) load();
     }, 400);
   });
-  // Watchdog: cobre o caso que NÃO emite did-fail-load (conexão pendurada,
-  // Vite compilando frio, resolução localhost→IPv4 com servidor só em ::1).
-  // Sem teto: em dev o certo é insistir até o dev server responder.
+  // Watchdog em DUAS fases. Fase 1 (load): cobre falha sem did-fail-load
+  // (conexão pendurada, Vite frio, localhost→IPv4 com servidor só em ::1).
+  // Fase 2 (mount): did-finish-load NÃO garante React montado — no primeiro
+  // load com Vite frio o grafo de módulos às vezes pendura e a janela fica
+  // preta para sempre; o renderer emite '[diag] app montado' no render() e,
+  // se o sinal não chegar em 4s, recarregamos. Só em dev (packaged carrega
+  // arquivo local, sem corrida).
   let finished = false;
+  let mounted = false;
+  let mountReloads = 0;
   const watchdog = setInterval(() => {
     if (win.isDestroyed()) {
       clearInterval(watchdog);
@@ -150,11 +156,28 @@ export function createMainWindow(): BrowserWindow {
       load();
     }
   }, 3_000);
+  if (devServerUrl) {
+    wc.on('console-message', (evt: { message?: string }, _l?: number, legacy?: string) => {
+      if ((evt?.message ?? legacy ?? '').startsWith('[diag] app montado')) {
+        mounted = true;
+      }
+    });
+  }
   wc.on('did-finish-load', () => {
     finished = true;
     loadRetries = 0;
     clearInterval(watchdog);
     console.log('[window] renderer carregado');
+    if (!devServerUrl) return;
+    setTimeout(function checkMount() {
+      if (win.isDestroyed() || mounted || mountReloads >= 30) return;
+      mountReloads += 1;
+      console.warn(`[window] página carregou mas o app não montou — reload ${mountReloads}`);
+      wc.reload();
+    }, 4_000);
+  });
+  wc.on('did-start-loading', () => {
+    mounted = false;
   });
   load();
 

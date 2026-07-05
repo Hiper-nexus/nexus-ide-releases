@@ -1,6 +1,12 @@
 import { app, BrowserWindow } from 'electron';
 import { resolveUserPath } from './path-resolver';
 import { createMainWindow } from './window';
+
+// Dev only: CDP na porta 9223 (loopback) — permite inspecionar DOM/console da
+// janela de fora quando "tela preta" não deixa rastro nos logs.
+if (!app.isPackaged) {
+  app.commandLine.appendSwitch('remote-debugging-port', '9223');
+}
 import { registerPtyIpc } from './pty/pty-ipc';
 import { registerLayoutIpc } from './persistence/layout-ipc';
 import { registerAdapterIpc } from './adapters/adapter-ipc';
