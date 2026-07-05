@@ -10,6 +10,7 @@ import { CanvasView } from './components/CanvasView';
 import { VoiceHud } from './components/VoiceHud';
 import { VoiceSettings } from './components/VoiceSettings';
 import { OrchestrationPanel } from './components/OrchestrationPanel';
+import { MissionRail } from './components/MissionRail';
 import { SettingsDrawer } from './components/settings/SettingsDrawer';
 import { LaunchScreen } from './components/LaunchScreen';
 import { HomeDeck } from './components/HomeDeck';
@@ -141,6 +142,7 @@ export function App() {
     <div className="app">
       <WorkspaceBar />
       <main className="app__body">
+        <MissionRail />
         <FilesPanel />
         {viewKind === 'canvas' ? <CanvasView /> : <PaneGrid />}
         <HomeDeck />

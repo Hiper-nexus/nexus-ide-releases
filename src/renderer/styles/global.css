@@ -3596,3 +3596,69 @@ body {
   background: rgba(239, 83, 80, 0.16);
   border-color: #ef5350;
 }
+
+/* ── Trilha de missões (lateral esquerda) ────────────────────────────── */
+.mission-rail {
+  width: 208px;
+  flex: 0 0 208px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.02));
+  overflow-y: auto;
+}
+.mission-rail__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.mission-rail__title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  flex: 1;
+}
+.mission-rail__new {
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.mission-rail__new:hover { border-color: var(--accent); }
+.mission-rail__list { list-style: none; margin: 0; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.mission-rail__item {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+.mission-rail__item:hover:not(:disabled) { background: rgba(255, 255, 255, 0.04); }
+.mission-rail__item--active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.mission-rail__item:disabled { opacity: 0.6; cursor: default; }
+.mission-rail__dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: 0 0 8px; }
+.mission-rail__dot--running { background: #ff9800; }
+.mission-rail__dot--done { background: #4caf50; }
+.mission-rail__dot--failed { background: #ef5350; }
+.mission-rail__dot--blocked { background: #ef5350; }
+.mission-rail__dot--pending { background: #9e9e9e; }
+.mission-rail__item-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mission-rail__item-title { font-size: 13px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; }
+.mission-rail__item-meta { font-size: 11px; color: var(--text-dim); }
+.mission-rail__note { font-size: 11px; color: #ef5350; padding: 6px 12px; }

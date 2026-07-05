@@ -5,6 +5,7 @@ import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { getPaneSessionId, markResumeOnSpawn } from '../terminal/terminal-host';
+import { killLiveAgents } from './mission-launcher';
 
 /**
  * One-click mission reopen: rebuild the grid from the
@@ -59,6 +60,9 @@ export async function reopenMission(
 
   // listMissionPanes already orders orchestrator-first; the cap keeps a
   // runaway mission from exploding the grid.
+  // Preserva a missão atual e garante 1 orquestrador Claude vivo por vez:
+  // mata os agentes do grid antes de restaurar esta (protege o login).
+  killLiveAgents();
   const ordered = specs.slice(0, MAX_REOPEN_PANES);
   const fallbackCwd = getActiveWorkspacePath() ?? undefined;
   const panes: PaneModel[] = ordered.map((spec) => {

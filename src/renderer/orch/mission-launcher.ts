@@ -3,7 +3,7 @@ import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { useLayoutStore } from '../state/layout-store';
 import { useHomeStore } from '../state/home-store';
 import { useOrchStore } from '../state/orch-store';
-import { createPane } from '../lib/split-tree';
+import { listPanes, createPane } from '../lib/split-tree';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { getPaneSessionId } from '../terminal/terminal-host';
 
@@ -19,6 +19,23 @@ import { getPaneSessionId } from '../terminal/terminal-host';
 
 const SESSION_POLL_MS = 150;
 const SESSION_TIMEOUT_MS = 20_000;
+
+/**
+ * Mata as sessões dos agentes CLI vivos no grid antes de subir outra missão.
+ * Sem isso, abrir uma 2ª missão deixava DOIS orquestradores Claude vivos ao
+ * mesmo tempo — eles reescrevem o mesmo item de keychain e zeram o login de
+ * todos. A missão anterior continua salva (mission-pane-store) e volta pela
+ * trilha com --continue.
+ */
+export function killLiveAgents(): void {
+  const { root } = useLayoutStore.getState();
+  for (const pane of listPanes(root)) {
+    if (pane.kind === 'cli-agent') {
+      const sid = getPaneSessionId(pane.id);
+      if (sid) window.nexus.pty.kill(sid);
+    }
+  }
+}
 const BOOT_IDLE_TIMEOUT_MS = 15_000;
 const PASTE_SETTLE_MS = 250;
 
@@ -236,6 +253,8 @@ export function launchSquadMission(
     role: 'orchestrator' as const,
     agentName: orchestrator.agentName,
   };
+  // Preserva a missão anterior (fica na trilha) e garante 1 orquestrador só.
+  killLiveAgents();
   useHomeStore.getState().hide();
   useLayoutStore.getState().setPanes([orchPane]);
 
