@@ -24,6 +24,12 @@ const seen = new Set<string>();
 let pending: Handoff[] = [];
 let burstTimer: ReturnType<typeof setTimeout> | null = null;
 let unsubscribe: (() => void) | null = null;
+// Baseline TEMPORAL: só narramos handoffs criados DEPOIS de o narrador ligar.
+// O handoff-store hidrata do SQLite depois do bootstrap e pode emitir em vários
+// eventos; um flag de "primeira vez" não basta. Comparar createdAt com o
+// instante do init é à prova de ordem: história (createdAt no passado) nunca é
+// falada. (Sem isso, a JARVIS lê o histórico inteiro em voz alta ao abrir.)
+let startedAt = 0;
 
 function phraseFor(handoff: Handoff): string {
   const from = (handoff.fromAgent ?? 'um worker').slice(0, 60);
@@ -59,10 +65,13 @@ function flush(broadcast: Broadcast): void {
 }
 
 function onChange(broadcast: Broadcast): void {
-  if (getVoiceConfig().routing !== 'jarvis') return;
+  const jarvis = getVoiceConfig().routing === 'jarvis';
   for (const handoff of listHandoffs({ includeDelivered: true })) {
     if (seen.has(handoff.id)) continue;
     seen.add(handoff.id);
+    // História (criada antes do narrador ligar) ou fora do modo jarvis: só
+    // marca como visto, nunca fala.
+    if (!jarvis || handoff.createdAt <= startedAt) continue;
     pending.push(handoff);
   }
   if (pending.length > 0 && !burstTimer) {
@@ -73,7 +82,9 @@ function onChange(broadcast: Broadcast): void {
 
 export function initJarvisNarrator(broadcast: Broadcast): void {
   if (unsubscribe) return;
-  // Seed: handoffs já existentes são história, não notícia.
+  startedAt = Date.now();
+  // Seed do que já existe (caso a store já esteja hidratada); o corte temporal
+  // por createdAt cobre o caso em que ela hidrata depois, no primeiro onChange.
   for (const handoff of listHandoffs({ includeDelivered: true })) {
     seen.add(handoff.id);
   }
@@ -87,4 +98,5 @@ export function shutdownJarvisNarrator(): void {
   burstTimer = null;
   pending = [];
   seen.clear();
+  startedAt = 0;
 }
