@@ -94,6 +94,9 @@ function wakeAutoStop(
 export function useVoiceController(): void {
   const capture = useRef<VoiceCapture | null>(null);
   const busy = useRef(false);
+  // Trava de narração proativa: garante uma fala ambiente por vez (anti-eco de
+  // duas vozes sobrepostas).
+  const narratingRef = useRef(false);
 
   useEffect(() => {
     capture.current = new VoiceCapture();
@@ -179,18 +182,35 @@ export function useVoiceController(): void {
     const unsubToggle = window.nexus.voice.onPttToggle(onToggle);
     const unsubWake = window.nexus.voice.onWakeDetected(onWake);
     // Narração proativa (handoff entregue/travado): fala só quando não há
-    // turno de voz em andamento — aviso ambiente nunca atropela a conversa.
+    // turno de voz em andamento — aviso ambiente nunca atropela a conversa. É
+    // SERIALIZADA (narratingRef): uma narração por vez, nunca duas vozes
+    // sobrepostas. Marca 'speaking' enquanto fala para bloquear turnos e
+    // narrações concorrentes; cancela qualquer playback pendente antes.
     const unsubNarrate = window.nexus.voice.onNarrate(({ text }) => {
-      if (useVoiceStore.getState().status !== 'idle') {
-        console.log('[voice] narração pulada (turno ativo):', text.slice(0, 60));
+      const status = useVoiceStore.getState().status;
+      if (status !== 'idle' || narratingRef.current) {
+        console.log('[voice] narração pulada (ocupado):', text.slice(0, 60));
         return;
       }
+      narratingRef.current = true;
+      const store = useVoiceStore.getState();
+      store.setStatus('speaking');
+      stopAllPlayback();
       void (async () => {
-        const spoken = await window.nexus.voice.speak({ text, speakMode: 'full' });
-        if (spoken.ok && spoken.mode === 'audio') {
-          await playAudioBase64(spoken.audioBase64, spoken.format);
+        try {
+          const spoken = await window.nexus.voice.speak({ text, speakMode: 'full' });
+          if (spoken.ok && spoken.mode === 'audio') {
+            await playAudioBase64(spoken.audioBase64, spoken.format);
+          }
+        } catch (err) {
+          console.warn('[voice] narração falhou:', err);
+        } finally {
+          narratingRef.current = false;
+          if (useVoiceStore.getState().status === 'speaking') {
+            useVoiceStore.getState().setStatus('idle');
+          }
         }
-      })().catch((err) => console.warn('[voice] narração falhou:', err));
+      })();
     });
 
     return () => {

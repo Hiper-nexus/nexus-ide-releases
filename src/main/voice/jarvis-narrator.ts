@@ -17,6 +17,11 @@ import type { Handoff } from '../../shared/orch-types';
 
 const BURST_MS = 1_500;
 const MAX_SPOKEN_SUMMARY = 140;
+// Silêncio total nos primeiros segundos após ligar: além do corte por
+// createdAt, isto blinda contra qualquer rajada de handoffs disparada pela
+// reabertura de missões/panes no boot (re-submits com createdAt novo). Nada
+// de fala proativa até o app assentar.
+const BOOT_GRACE_MS = 6_000;
 
 type Broadcast = (channel: string, payload?: unknown) => void;
 
@@ -66,12 +71,13 @@ function flush(broadcast: Broadcast): void {
 
 function onChange(broadcast: Broadcast): void {
   const jarvis = getVoiceConfig().routing === 'jarvis';
+  const withinBootGrace = Date.now() - startedAt < BOOT_GRACE_MS;
   for (const handoff of listHandoffs({ includeDelivered: true })) {
     if (seen.has(handoff.id)) continue;
     seen.add(handoff.id);
-    // História (criada antes do narrador ligar) ou fora do modo jarvis: só
-    // marca como visto, nunca fala.
-    if (!jarvis || handoff.createdAt <= startedAt) continue;
+    // História (criada antes do narrador ligar), boot grace, ou fora do modo
+    // jarvis: só marca como visto, nunca fala.
+    if (!jarvis || withinBootGrace || handoff.createdAt <= startedAt) continue;
     pending.push(handoff);
   }
   if (pending.length > 0 && !burstTimer) {

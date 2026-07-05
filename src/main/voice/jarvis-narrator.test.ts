@@ -46,8 +46,8 @@ describe('jarvis-narrator — baseline não é falado', () => {
     vi.advanceTimersByTime(2000);
     expect(spoken).toEqual([]);
 
-    // Entrega nova (futuro) = notícia falada.
-    vi.setSystemTime(9000);
+    // Entrega nova, já FORA da graça de boot (init em 5000 + 6000 = 11000).
+    vi.setSystemTime(12000);
     submitHandoff({ status: 'success', summary: 'Fresh delivery the user should hear about', fromAgent: 'builder' });
     vi.advanceTimersByTime(2000);
     expect(spoken).toHaveLength(1);
