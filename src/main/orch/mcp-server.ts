@@ -294,9 +294,23 @@ function installLegacyParser(): void {
     if (ctx) ctx.handoffSubmitted = true;
     onHandoffSubmitted(handoff);
   });
-  tapSessionData((sessionId, data) => parser.feed(sessionId, stripAnsi(data)));
+  // Prefiltro: stripAnsi + parse custam ~104ms/10k chunks e rodavam em TODO
+  // output de PTY. Só paga quando o chunk pode conter o marker (tail cru curto
+  // cobre marker dividido entre chunks) ou quando um bloco já está aberto.
+  const rawTails = new Map<string, string>();
+  const MARKER_HINT = 'NEXUS_HANDOFF';
+  tapSessionData((sessionId, data) => {
+    const tail = rawTails.get(sessionId) ?? '';
+    const probe = tail + data;
+    rawTails.set(sessionId, probe.slice(-32));
+    if (!parser.isCollecting(sessionId) && !probe.includes(MARKER_HINT)) {
+      return;
+    }
+    parser.feed(sessionId, stripAnsi(data));
+  });
   tapSessionExit((sessionId) => {
     parser.dropSession(sessionId);
+    rawTails.delete(sessionId);
     const token = sessionTokens.get(sessionId);
     if (token) {
       sessionTokens.delete(sessionId);

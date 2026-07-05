@@ -29,7 +29,24 @@ interface RingBuffer {
   chunks: string[];
   size: number;
   exited: boolean;
+  /** Quando a sessão morreu — buffers encerrados expiram por TTL. */
+  exitedAt?: number;
+  /** Memo do stripAnsi: pane_read reprocessava 256 KB a cada chamada. */
+  stripCache?: { key: string; text: string };
 }
+
+// Sessão morta ainda pode ser lida por uns minutos (handoff atrasado, tail de
+// pane_wait_idle); depois o buffer expira — sem TTL, 256 KB por sessão
+// encerrada acumulavam para sempre no main process.
+const EXITED_BUFFER_TTL_MS = 5 * 60_000;
+setInterval(() => {
+  const cutoff = Date.now() - EXITED_BUFFER_TTL_MS;
+  for (const [sessionId, buffer] of buffers) {
+    if (buffer.exited && (buffer.exitedAt ?? 0) < cutoff) {
+      buffers.delete(sessionId);
+    }
+  }
+}, 60_000).unref();
 
 interface OrchMeta {
   missionId?: string;
@@ -48,6 +65,8 @@ const orchMetaByPane = new Map<string, OrchMeta>();
 interface IdleWaiter {
   sessionId: string;
   resolve: (state: 'idle' | 'exited') => void;
+  /** Limpo ao resolver — waits longos deixavam timers de 120-300s vivos. */
+  timer?: ReturnType<typeof setTimeout>;
 }
 const idleWaiters = new Set<IdleWaiter>();
 
@@ -67,10 +86,25 @@ export function registerOrchRenderer(wc: WebContents): void {
 
 export function unregisterOrchRenderer(wc: WebContents): void {
   if (orchRenderer === wc) orchRenderer = null;
+  // Sem renderer não há como o spawn completar — resolver já, senão cada
+  // nexus_pane_spawn pendura o orquestrador por 30s até o timeout.
+  for (const [requestId, pending] of [...pendingSpawns]) {
+    clearTimeout(pending.timer);
+    pendingSpawns.delete(requestId);
+    pending.resolve({
+      requestId,
+      ok: false,
+      error: 'renderer window closed during spawn',
+    });
+  }
 }
 
 function rendererAvailable(): boolean {
-  return orchRenderer !== null && !orchRenderer.isDestroyed();
+  return (
+    orchRenderer !== null &&
+    !orchRenderer.isDestroyed() &&
+    !orchRenderer.isCrashed()
+  );
 }
 
 export function initPaneRegistry(): void {
@@ -94,6 +128,7 @@ export function initPaneRegistry(): void {
       for (const waiter of [...idleWaiters]) {
         if (waiter.sessionId === sessionId) {
           idleWaiters.delete(waiter);
+          if (waiter.timer) clearTimeout(waiter.timer);
           waiter.resolve('idle');
         }
       }
@@ -103,10 +138,14 @@ export function initPaneRegistry(): void {
   tapSessionExit((sessionId) => {
     sessionStates.delete(sessionId);
     const buffer = buffers.get(sessionId);
-    if (buffer) buffer.exited = true;
+    if (buffer) {
+      buffer.exited = true;
+      buffer.exitedAt = Date.now();
+    }
     for (const waiter of [...idleWaiters]) {
       if (waiter.sessionId === sessionId) {
         idleWaiters.delete(waiter);
+        if (waiter.timer) clearTimeout(waiter.timer);
         waiter.resolve('exited');
       }
     }
@@ -114,7 +153,14 @@ export function initPaneRegistry(): void {
 }
 
 /** Renderer → main: replace the pane mirror (payload already zod-validated). */
+let panesVersion = 0;
+/** Bumped a cada sync — invalida índices derivados (ex.: pipes por sessão). */
+export function getPanesVersion(): number {
+  return panesVersion;
+}
+
 export function syncPanes(entries: PaneRegistryEntry[]): void {
+  panesVersion += 1;
   panes = entries;
   const liveIds = new Set(entries.map((entry) => entry.paneId));
   for (const paneId of [...orchMetaByPane.keys()]) {
@@ -175,8 +221,11 @@ export function stripAnsi(raw: string): string {
 export function readSessionOutput(sessionId: string, lines = 200): string {
   const buffer = buffers.get(sessionId);
   if (!buffer) return '';
-  const text = stripAnsi(buffer.chunks.join(''));
-  const allLines = text.split('\n');
+  const key = `${buffer.chunks.length}:${buffer.size}`;
+  if (buffer.stripCache?.key !== key) {
+    buffer.stripCache = { key, text: stripAnsi(buffer.chunks.join('')) };
+  }
+  const allLines = buffer.stripCache.text.split('\n');
   return allLines.slice(Math.max(0, allLines.length - lines)).join('\n');
 }
 
@@ -193,7 +242,7 @@ export function waitForIdle(
   return new Promise((resolve) => {
     const waiter: IdleWaiter = { sessionId, resolve };
     idleWaiters.add(waiter);
-    setTimeout(() => {
+    waiter.timer = setTimeout(() => {
       if (idleWaiters.delete(waiter)) resolve('timeout');
     }, timeoutMs);
   });

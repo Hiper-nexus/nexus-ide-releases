@@ -16,20 +16,23 @@ function StateIndicator({ paneId }: { paneId: string }) {
   const state = useSessionStateStore((s) => s.paneStates.get(paneId));
   if (!state) return null;
 
-  const dot =
-    state === 'idle' ? '●' : state === 'busy' ? '◌' : '○';
-  const color =
-    state === 'idle' ? '#4caf50' : state === 'busy' ? '#ff9800' : '#9e9e9e';
-  const label =
-    state === 'idle' ? 'idle' : state === 'busy' ? 'busy' : 'spawning';
+  const view =
+    state === 'idle'
+      ? { dot: '●', color: '#4caf50', label: 'pronto' }
+      : state === 'busy'
+        ? { dot: '◌', color: '#ff9800', label: 'trabalhando' }
+        : state === 'exited'
+          ? { dot: '✕', color: '#ef5350', label: 'encerrado — use ↻ para reabrir' }
+          : { dot: '○', color: '#9e9e9e', label: 'iniciando' };
 
   return (
     <span
       className="toolbar__state"
-      style={{ color }}
-      title={`agent state: ${label}`}
+      style={{ color: view.color }}
+      title={`agente: ${view.label}`}
+      aria-label={`estado do agente: ${view.label}`}
     >
-      {dot}
+      {view.dot}
     </span>
   );
 }
@@ -60,7 +63,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       <span className={`toolbar__dot ${isFocused ? 'toolbar__dot--on' : ''}`} />
       {editing ? (
         <input
-          className="toolbar__rename"
+          className="toolbar__rename nodrag"
           value={draft}
           autoFocus
           onChange={(e) => setDraft(e.target.value)}
@@ -115,9 +118,10 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       <div className="toolbar__spacer" />
       {pane.kind === 'cli-agent' && (
         <button
-          className="toolbar__btn"
+          className="toolbar__btn nodrag"
           title="Retomar a conversa anterior (re-inicia a CLI com --resume, útil após reiniciar o app)"
-          onMouseDown={(e) => {
+          aria-label="Retomar conversa anterior"
+          onClick={(e) => {
             e.stopPropagation();
             respawnWithResume(pane, '[nexus] retomando a sessão anterior…');
           }}
@@ -128,9 +132,10 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       {!isCanvas && (
         <>
           <button
-            className="toolbar__btn"
+            className="toolbar__btn nodrag"
             title="Split right (⌘D)"
-            onMouseDown={(e) => {
+            aria-label="Dividir à direita"
+            onClick={(e) => {
               e.stopPropagation();
               split(pane.id, 'row');
             }}
@@ -138,9 +143,10 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
             ▯▮
           </button>
           <button
-            className="toolbar__btn"
+            className="toolbar__btn nodrag"
             title="Split down (⌘⇧D)"
-            onMouseDown={(e) => {
+            aria-label="Dividir para baixo"
+            onClick={(e) => {
               e.stopPropagation();
               split(pane.id, 'column');
             }}
@@ -150,9 +156,10 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         </>
       )}
       <button
-        className="toolbar__btn toolbar__btn--close"
+        className="toolbar__btn toolbar__btn--close nodrag"
         title="Close pane (⌘W)"
-        onMouseDown={(e) => {
+        aria-label="Fechar pane"
+        onClick={(e) => {
           e.stopPropagation();
           close(pane.id);
         }}

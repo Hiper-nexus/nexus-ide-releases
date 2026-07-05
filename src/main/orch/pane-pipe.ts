@@ -5,7 +5,7 @@ import {
   tapSessionExit,
   tapSessionState,
 } from '../pty/pty-manager';
-import { findPane, readSessionOutput, stripAnsi } from './pane-registry';
+import { getPanesVersion, findPane, readSessionOutput, stripAnsi } from './pane-registry';
 import { ChangeHub, makeId } from './store-util';
 import {
   InjectionGuard,
@@ -194,6 +194,35 @@ function deliverIdle(pipe: Pipe, sourceSessionId: string): void {
   lastIdleDeliveryText.set(pipe.id, text);
 }
 
+let pipesVersion = 0;
+let sourceIndex: {
+  panesV: number;
+  pipesV: number;
+  map: Map<string, Pipe[]>;
+} | null = null;
+
+/**
+ * Índice sessionId→pipes, reconstruído só quando panes ou pipes mudam. O tap
+ * de dados varria pipes×panes (com findPane linear) em TODO chunk de TODO
+ * PTY — 87ms/10k chunks a 64 panes, no main process.
+ */
+function pipesBySource(): Map<string, Pipe[]> {
+  const panesV = getPanesVersion();
+  if (sourceIndex && sourceIndex.panesV === panesV && sourceIndex.pipesV === pipesVersion) {
+    return sourceIndex.map;
+  }
+  const map = new Map<string, Pipe[]>();
+  for (const pipe of pipes.values()) {
+    const source = findPane(pipe.sourcePaneId);
+    if (!source?.sessionId) continue;
+    const list = map.get(source.sessionId) ?? [];
+    list.push(pipe);
+    map.set(source.sessionId, list);
+  }
+  sourceIndex = { panesV, pipesV: pipesVersion, map };
+  return map;
+}
+
 /** Install the PTY taps. Idempotent — safe to call from multiple boot paths. */
 export function initPanePipes(): void {
   if (tapsInstalled) return;
@@ -201,9 +230,9 @@ export function initPanePipes(): void {
 
   tapSessionData((sessionId, data) => {
     if (pipes.size === 0) return;
-    for (const pipe of pipes.values()) {
-      const source = findPane(pipe.sourcePaneId);
-      if (!source || source.sessionId !== sessionId) continue;
+    const attached = pipesBySource().get(sessionId);
+    if (!attached) return;
+    for (const pipe of attached) {
       if (pipe.mode === 'stream') handleStreamChunk(pipe, sessionId, data);
       else idleDirty.add(pipe.id);
     }
@@ -255,12 +284,14 @@ export function addPipe(
   if (pipes.size >= MAX_PIPES) return null;
   const pipe: Pipe = { id: makeId('pipe'), sourcePaneId, targetPaneId, mode };
   pipes.set(pipe.id, pipe);
+  pipesVersion += 1;
   hub.emit();
   return pipe;
 }
 
 export function removePipe(id: string): boolean {
   if (!pipes.delete(id)) return false;
+  pipesVersion += 1;
   clearPipeState(id);
   hub.emit();
   return true;

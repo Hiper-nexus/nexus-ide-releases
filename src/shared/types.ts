@@ -198,7 +198,9 @@ export interface PtyExitEvent {
   signal?: number;
 }
 
-export type PaneSessionState = 'spawning' | 'busy' | 'idle';
+// 'exited' é setado só pelo renderer (evento pty:exit) — o agente morreu e o
+// usuário precisa VER isso no toolbar, não descobrir pelo terminal mudo.
+export type PaneSessionState = 'spawning' | 'busy' | 'idle' | 'exited';
 
 export interface PtyStateChangeEvent {
   sessionId: string;

@@ -120,12 +120,16 @@ export function createMainWindow(): BrowserWindow {
   // backoff curto cobre o boot do Vite sem atrasar o caso saudável.
   let loadRetries = 0;
   const load = () => {
+    // Rejeições são esperadas durante o boot do Vite (ERR_ABORTED em reload
+    // concorrente) — o watchdog cuida do retry; nunca deixar virar unhandled.
     if (devServerUrl) {
-      void win.loadURL(devServerUrl);
+      win.loadURL(devServerUrl).catch(() => {});
     } else {
-      void win.loadFile(
-        path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
-      );
+      win
+        .loadFile(
+          path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
+        )
+        .catch(() => {});
     }
   };
   wc.on('did-fail-load', (_e, code, desc) => {

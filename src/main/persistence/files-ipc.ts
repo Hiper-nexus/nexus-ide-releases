@@ -11,7 +11,7 @@ import {
   type FileTreeResult,
   type ReadFileResult,
 } from '../../shared/files-types';
-import { activeWorkspacePath } from './workspace-store';
+import { activeWorkspaceOrNull } from './workspace-store';
 
 /**
  * File explorer backend — sandboxed to the active workspace. Every relPath is
@@ -33,7 +33,10 @@ const IGNORED = new Set([
 
 /** Resolve a workspace-relative path to an absolute one, or null if it escapes. */
 function safeResolve(relPath: string): { abs: string; root: string } | null {
-  const root = activeWorkspacePath();
+  // Fail-closed: sem workspace aberto NÃO existe sandbox válida — cair para
+  // o home dir daria a um renderer comprometido ~/.ssh, ~/.zshrc etc.
+  const root = activeWorkspaceOrNull();
+  if (!root) return null;
   const abs = path.resolve(root, relPath);
   const rel = path.relative(root, abs);
   if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
@@ -44,8 +47,19 @@ function safeResolve(relPath: string): { abs: string; root: string } | null {
     const realRel = path.relative(realRoot, realAbs);
     if (realRel.startsWith('..') || path.isAbsolute(realRel)) return null;
   } catch {
-    // Target doesn't exist yet (e.g. a new file being written) — the
-    // non-realpath check above already confirmed it's within root.
+    // Alvo ainda não existe (arquivo novo): o check lexical acima não pega
+    // symlink em diretório PAI. Valide o realpath do pai existente mais
+    // próximo antes de permitir a escrita.
+    try {
+      let parent = path.dirname(abs);
+      while (!fs.existsSync(parent)) parent = path.dirname(parent);
+      const realRoot = fs.realpathSync(root);
+      const realParent = fs.realpathSync(parent);
+      const relParent = path.relative(realRoot, realParent);
+      if (relParent.startsWith('..') || path.isAbsolute(relParent)) return null;
+    } catch {
+      return null;
+    }
   }
   return { abs, root };
 }

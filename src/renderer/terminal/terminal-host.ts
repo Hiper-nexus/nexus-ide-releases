@@ -172,7 +172,7 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
             `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
           );
           if (pane.kind === 'cli-agent') {
-            useSessionStateStore.getState().clearPaneState(pane.id);
+            useSessionStateStore.getState().setPaneState(pane.id, 'exited');
           }
         }),
       );

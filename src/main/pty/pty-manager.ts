@@ -244,15 +244,29 @@ function attachProc(
   });
 
   proc.onExit(({ exitCode, signal }) => {
-    if (!sessions.has(sessionId)) return;
-    const s = sessions.get(sessionId)!;
-    if (s.idleTimer) clearTimeout(s.idleTimer);
-    sessions.delete(sessionId);
-    if (canSend(session.wc)) {
-      session.wc.send(PTY_CHANNELS.exit, { sessionId, exitCode, signal });
-    }
-    fireTaps(exitTaps, sessionId);
+    finalizeSession(sessionId, exitCode, signal);
   });
+}
+
+/**
+ * Teardown idempotente: notifica renderer + exit taps EXATAMENTE uma vez.
+ * destroySession removia a sessão do Map antes do onExit, que então retornava
+ * cedo — pty:exit nunca chegava ao renderer, waitForIdle pendurava até o
+ * timeout e artefatos do gate (~/.nexus/ephemeral, mcp-configs) vazavam.
+ */
+function finalizeSession(
+  sessionId: string,
+  exitCode: number,
+  signal?: number,
+): void {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  sessions.delete(sessionId);
+  if (s.idleTimer) clearTimeout(s.idleTimer);
+  if (canSend(s.wc)) {
+    s.wc.send(PTY_CHANNELS.exit, { sessionId, exitCode, signal });
+  }
+  fireTaps(exitTaps, sessionId);
 }
 
 export interface SpawnedSession {
@@ -399,8 +413,7 @@ function ownedSession(wc: WebContents, sessionId: string): Session | null {
 }
 
 function destroySession(sessionId: string, session: Session): void {
-  if (session.idleTimer) clearTimeout(session.idleTimer);
-  sessions.delete(sessionId);
+  finalizeSession(sessionId, 0);
   try {
     session.proc.kill();
   } catch {

@@ -76,6 +76,11 @@ export function activeWorkspacePath(): string {
   return state.current?.path ?? os.homedir();
 }
 
+/** Sandbox de arquivos exige workspace REAL — nunca cair para o home. */
+export function activeWorkspaceOrNull(): string | null {
+  return state.current?.path ?? null;
+}
+
 function toInfo(dir: string): WorkspaceInfo {
   return { path: dir, name: path.basename(dir) || dir, lastOpenedAt: Date.now() };
 }

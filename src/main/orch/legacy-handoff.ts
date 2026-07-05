@@ -83,6 +83,11 @@ export class LegacyHandoffParser {
     ) => void,
   ) {}
 
+  /** Está no meio de um bloco deste session? (gate do prefiltro barato) */
+  isCollecting(sessionId: string): boolean {
+    return this.collecting.has(sessionId);
+  }
+
   feed(sessionId: string, chunk: string): void {
     if (this.collecting.has(sessionId)) {
       this.collect(sessionId, chunk);
