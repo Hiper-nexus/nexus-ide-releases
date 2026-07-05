@@ -290,6 +290,7 @@ const api: NexusApi = {
     setKey: (req) => ipcRenderer.invoke(PROVIDER_CHANNELS.setKey, req),
     testKey: (adapterId) =>
       ipcRenderer.invoke(PROVIDER_CHANNELS.testKey, { adapterId }),
+    authStatus: () => ipcRenderer.invoke(PROVIDER_CHANNELS.authStatus),
     addModel: (adapterId: string, model: string) =>
       ipcRenderer.invoke(PROVIDER_CHANNELS.addModel, { adapterId, model }),
     removeModel: (adapterId: string, model: string) =>

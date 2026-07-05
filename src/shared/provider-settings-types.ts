@@ -108,6 +108,15 @@ export const addModelSchema = z.object({
 });
 export type AddModelRequest = z.infer<typeof addModelSchema>;
 
+/** Estado de login local de uma CLI (sonda sem navegador). */
+export type AuthState = 'ok' | 'missing' | 'unknown';
+
+export interface AdapterAuthStatus {
+  adapterId: string;
+  state: AuthState;
+  detail: string;
+}
+
 export const PROVIDER_CHANNELS = {
   list: 'provider:list',
   setConfig: 'provider:setConfig',
@@ -116,4 +125,5 @@ export const PROVIDER_CHANNELS = {
   addModel: 'provider:addModel',
   removeModel: 'provider:removeModel',
   changed: 'provider:changed',
+  authStatus: 'provider:authStatus',
 } as const;

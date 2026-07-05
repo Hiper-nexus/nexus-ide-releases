@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import { resolveUserPath } from './path-resolver';
 import { createMainWindow } from './window';
+import { registerAuthProbeIpc } from './adapters/auth-probe';
 
 // Dev only: CDP na porta 9223 (loopback) — permite inspecionar DOM/console da
 // janela de fora quando "tela preta" não deixa rastro nos logs.
@@ -87,6 +88,7 @@ function bootstrap(): void {
   registerVoiceIpc();
   registerOrchIpc();
   registerSettingsIpc();
+  registerAuthProbeIpc();
   registerWorkspaceIpc();
   registerProviderIpc();
   registerFilesIpc();

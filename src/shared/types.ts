@@ -43,6 +43,7 @@ import type { CostSnapshot } from './cost-types';
 import type { NotesApi } from './note-types';
 import type { PipeApi } from './pipe-types';
 import type {
+  AdapterAuthStatus,
   ProviderConfigPatch,
   ProviderSettingsInfo,
   SetKeyRequest,
@@ -324,6 +325,7 @@ export interface NexusApi {
     setConfig(patch: ProviderConfigPatch): Promise<ProviderSettingsInfo[]>;
     setKey(req: SetKeyRequest): Promise<{ ok: boolean; error?: string }>;
     testKey(adapterId: string): Promise<TestConnectionResult>;
+    authStatus(): Promise<AdapterAuthStatus[]>;
     addModel(adapterId: string, model: string): Promise<ProviderSettingsInfo[]>;
     removeModel(adapterId: string, model: string): Promise<ProviderSettingsInfo[]>;
     onChanged(cb: (list: ProviderSettingsInfo[]) => void): Unsubscribe;

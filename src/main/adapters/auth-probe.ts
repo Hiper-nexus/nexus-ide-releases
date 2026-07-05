@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
+import { ipcMain } from 'electron';
+import { PROVIDER_CHANNELS } from '../../shared/provider-settings-types';
 import type { AdapterAuthStatus, AuthState } from '../../shared/provider-settings-types';
 import { listProviderSettings } from '../persistence/provider-config-store';
 
@@ -96,4 +98,8 @@ export async function probeAdapterAuth(): Promise<AdapterAuthStatus[]> {
       };
     }),
   );
+}
+
+export function registerAuthProbeIpc(): void {
+  ipcMain.handle(PROVIDER_CHANNELS.authStatus, () => probeAdapterAuth());
 }

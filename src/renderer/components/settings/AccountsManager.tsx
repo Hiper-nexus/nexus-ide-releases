@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { AccountInfo } from '../../../shared/account-types';
 import { useAccountStore } from '../../state/account-store';
 
@@ -54,6 +54,18 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
   const [upstream, setUpstream] = useState('anthropic');
   const [key, setKey] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
+  const [auth, setAuth] = useState<{ state: string; detail: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void window.nexus.providers.authStatus().then((list) => {
+      if (!alive) return;
+      const mine = list.find((s) => s.adapterId === adapterId);
+      setAuth(mine ? { state: mine.state, detail: mine.detail } : null);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [adapterId]);
   const [busy, setBusy] = useState(false);
 
   const isClaude = adapterId === 'claude';
@@ -102,6 +114,26 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
     <div className="acct">
       <div className="acct__head">
         <span className="acct__title">Contas &amp; failover</span>
+        {auth && (
+          <span
+            className="acct__badge"
+            title={auth.detail}
+            style={{
+              color:
+                auth.state === 'ok'
+                  ? '#4caf50'
+                  : auth.state === 'missing'
+                    ? '#ef5350'
+                    : 'var(--text-dim)',
+            }}
+          >
+            {auth.state === 'ok'
+              ? '● logada'
+              : auth.state === 'missing'
+                ? '● sem login'
+                : '○ sem sonda'}
+          </span>
+        )}
       </div>
 
       {/* Quem está em uso AGORA — sempre visível, inclusive a conta implícita. */}
