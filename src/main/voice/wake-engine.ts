@@ -43,7 +43,9 @@ const MEL_WINDOW = 76;
 const MEL_MAX = 400;
 const EMB_WINDOW = 16;
 const FEAT_MAX = 120;
-const THRESHOLD = 0.35;
+// Ambiente marca picos de 0.2-0.4 (um falso disparo real registrado a 0.39);
+// um "hey jarvis" de verdade marca ~0.97. 0.60 corta o ruído com folga dupla.
+const THRESHOLD = 0.6;
 const DEBOUNCE_MS = 2_500;
 
 function fromB64(b64: string): Uint8Array {

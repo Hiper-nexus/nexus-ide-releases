@@ -72,13 +72,12 @@ export class WakeMic {
       wavBase64: bytesToBase64(encodeWav(down, TARGET_SAMPLE_RATE)),
       sampleRate: TARGET_SAMPLE_RATE,
       durationSec: down.length / TARGET_SAMPLE_RATE,
+      heardSpeech: this.uttHeardSpeech,
     };
   }
 
   private trackUtterance(frame: Float32Array): void {
     this.uttChunks.push(Float32Array.from(frame));
-    const opts = this.uttAutoStop;
-    if (!opts || this.uttFired) return;
     let sum = 0;
     for (let i = 0; i < frame.length; i += 1) sum += frame[i] * frame[i];
     const rms = Math.sqrt(sum / Math.max(1, frame.length));
@@ -87,6 +86,8 @@ export class WakeMic {
       this.uttHeardSpeech = true;
       this.uttLastSpeechAt = now;
     }
+    const opts = this.uttAutoStop;
+    if (!opts || this.uttFired) return;
     if (
       (this.uttHeardSpeech && now - this.uttLastSpeechAt >= opts.silenceMs) ||
       now - this.uttStartedAt >= opts.maxMs

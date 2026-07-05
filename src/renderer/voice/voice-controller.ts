@@ -210,7 +210,14 @@ async function finishAndProcess(
     const result = wakeMic.isUtteranceActive()
       ? wakeMic.finishUtterance()
       : await capture.stop();
-    if (!result.wavBase64 || result.durationSec < MIN_SPEECH_SEC) {
+    if (
+      !result.wavBase64 ||
+      result.durationSec < MIN_SPEECH_SEC ||
+      result.heardSpeech === false
+    ) {
+      if (result.heardSpeech === false) {
+        console.log('[voice] captura sem fala real (silêncio/ruído) — descartada');
+      }
       store.setStatus('idle');
       return;
     }

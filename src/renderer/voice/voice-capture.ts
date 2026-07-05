@@ -11,6 +11,12 @@ import pcmWorkletUrl from './pcm-processor.js?url';
 const TARGET_SAMPLE_RATE = 16_000;
 
 export interface CaptureResult {
+  /**
+   * false = nenhum frame cruzou o piso de RMS de fala — captura de puro
+   * silêncio/ruído. Sem isso o Whisper ALUCINA ("E aí") e a JARVIS conversa
+   * sozinha em loop. undefined = backend não mede (segue o fluxo normal).
+   */
+  heardSpeech?: boolean;
   wavBase64: string;
   sampleRate: number;
   /** Total captured audio in seconds (0 when nothing was recorded). */
