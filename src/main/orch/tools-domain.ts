@@ -61,9 +61,18 @@ const handoffSubmitTool: McpToolDef = {
     required: ['status', 'summary'],
   },
   handler: async (args, ctx) => {
+    const summary = requireStr(args, 'summary').trim();
+    // Workers ocasionalmente colam o TEMPLATE do contrato como resumo
+    // ("<resumo objetivo do que fez>") — rejeitar força uma reentrega real.
+    if (summary.length < 20 || /^<.*>$/.test(summary)) {
+      throw new Error(
+        'summary inválido: descreva de verdade o que foi feito (mínimo 20 ' +
+          'caracteres, sem placeholders como "<resumo...>").',
+      );
+    }
     const handoff = submitHandoff({
       status: handoffStatusSchema.parse(args.status),
-      summary: requireStr(args, 'summary'),
+      summary,
       artifacts: Array.isArray(args.artifacts) ? args.artifacts : [],
       missionId: ctx.missionId,
       sessionId: ctx.sessionId,
