@@ -100,6 +100,22 @@ export function moveToTask(taskId: string, listId = DEFAULT_TODO_LIST): TodoList
   return save(listId, items);
 }
 
+/** Renderer-facing single-item status update. Returns null if list/item missing. */
+export function setItemStatus(
+  listId: string,
+  itemId: string,
+  status: TodoItem['status'],
+): TodoList | null {
+  const list = lists.get(listId);
+  if (!list) return null;
+  const exists = list.items.some((item) => item.id === itemId);
+  if (!exists) return null;
+  const items = list.items.map((item): TodoItem =>
+    item.id === itemId ? { ...item, status } : item,
+  );
+  return save(listId, items);
+}
+
 export function addTask(name: string, listId = DEFAULT_TODO_LIST): TodoList {
   const list = getTodoList(listId);
   return save(listId, [...list.items, newItem(name)]);

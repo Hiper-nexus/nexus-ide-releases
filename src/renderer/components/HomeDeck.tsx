@@ -34,6 +34,8 @@ export function HomeDeck() {
   const paneCount = useLayoutStore((s) => listPanes(s.root).length);
 
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
+  const [designing, setDesigning] = useState(false);
+  const [designNote, setDesignNote] = useState<string | null>(null);
   useEffect(() => {
     if (!visible) return;
     void window.nexus.adapters.list().then(setAdapters);
@@ -84,6 +86,29 @@ export function HomeDeck() {
           </button>
           <button
             className="home-deck__btn"
+            disabled={designing}
+            title="Analisa a stack e os arquivos deste projeto e gera um squad com os papéis certos"
+            onClick={() => {
+              if (!workspace?.path) return;
+              setDesigning(true);
+              setDesignNote('Analisando o projeto…');
+              void window.nexus.orch
+                .designSquad(workspace.path)
+                .then((res) => {
+                  setDesigning(false);
+                  if (res.ok && res.squad) {
+                    setDesignNote(null);
+                    openForSquad(res.squad.id);
+                  } else {
+                    setDesignNote(res.error ?? 'Não consegui gerar o squad.');
+                  }
+                });
+            }}
+          >
+            {designing ? '✨ Analisando…' : '✨ Squad sob medida'}
+          </button>
+          <button
+            className="home-deck__btn"
             onClick={() => {
               hide();
               addShellPane();
@@ -92,6 +117,7 @@ export function HomeDeck() {
             ＋ Terminal
           </button>
         </div>
+        {designNote && <p className="home-deck__ws">{designNote}</p>}
 
         {featured.length > 0 && (
           <section className="home-deck__squads" aria-label="Squads prontos">

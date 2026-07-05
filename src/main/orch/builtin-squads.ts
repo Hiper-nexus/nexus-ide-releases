@@ -24,9 +24,11 @@ export const BUILTIN_SQUADS: Squad[] = [
       'integre os handoffs. Só finalize quando o reviewer aprovar.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
-      { id: 'frontend', agentName: 'Frontend', category: 'executor', cli: 'claude', effort: 'medium' },
-      { id: 'backend', agentName: 'Backend', category: 'executor', cli: 'claude', effort: 'medium' },
-      { id: 'reviewer', agentName: 'Reviewer', category: 'reviewer', cli: 'claude', effort: 'high' },
+      // Workers em CLIs DIFERENTES (defaults editáveis no review): diversidade
+      // de modelos = custo menor e sem sobrecarregar um provedor só.
+      { id: 'frontend', agentName: 'Frontend', category: 'executor', cli: 'codex', effort: 'medium' },
+      { id: 'backend', agentName: 'Backend', category: 'executor', cli: 'gemini', effort: 'medium' },
+      { id: 'reviewer', agentName: 'Reviewer', category: 'reviewer', cli: 'kimi', effort: 'high' },
     ],
   },
   {
@@ -41,7 +43,7 @@ export const BUILTIN_SQUADS: Squad[] = [
       'único, priorizando os achados por severidade.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
-      { id: 'correctness', agentName: 'Correctness', category: 'reviewer', cli: 'claude', effort: 'high' },
+      { id: 'correctness', agentName: 'Correctness', category: 'reviewer', cli: 'kimi', effort: 'high' },
       { id: 'security', agentName: 'Security', category: 'reviewer', cli: 'claude', effort: 'high' },
     ],
   },
@@ -57,8 +59,8 @@ export const BUILTIN_SQUADS: Squad[] = [
       'implementação com trade-offs antes de escrever código.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
-      { id: 'scout-a', agentName: 'Scout A', category: 'scout', cli: 'claude', effort: 'medium' },
-      { id: 'scout-b', agentName: 'Scout B', category: 'scout', cli: 'claude', effort: 'medium' },
+      { id: 'scout-a', agentName: 'Scout A', category: 'scout', cli: 'gemini', effort: 'medium' },
+      { id: 'scout-b', agentName: 'Scout B', category: 'scout', cli: 'grok', effort: 'medium' },
       { id: 'architect', agentName: 'Architect', category: 'architect', cli: 'claude', effort: 'high' },
     ],
   },

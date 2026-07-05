@@ -25,9 +25,10 @@ import {
 const paneSpawn: McpToolDef = {
   name: 'nexus_pane_spawn',
   description:
-    'Open a new terminal pane running an AI CLI. Provide adapterId (e.g. ' +
-    '"claude", "codex", "agy") or agentName (a squad agent — inherits its ' +
-    'cli/model/allowlists). Optional prompt is typed into the CLI once it ' +
+    'Open a new terminal pane running an AI CLI. Provide agentName (a squad ' +
+    'agent — inherits allowlists/title) and ALSO adapterId/model/effort from ' +
+    'nexus_route_task: the explicit adapterId/model WIN over the roster ' +
+    'defaults (cost routing). Optional prompt is typed into the CLI once it ' +
     'boots. Returns {paneId, sessionId}.',
   inputSchema: {
     type: 'object',
@@ -55,7 +56,9 @@ const paneSpawn: McpToolDef = {
       if (!found) throw new Error(`unknown squad agent: ${agentRef}`);
       const { agent } = found;
       options = {
-        adapterId: agent.cli,
+        // Roteamento de custo: o adapterId vindo do route_task vence o
+        // default do roster — senão o squad inteiro cai num modelo só.
+        adapterId: str(args, 'adapterId') ?? agent.cli,
         model: str(args, 'model') ?? agent.model,
         effort: str(args, 'effort') ?? agent.effort,
         cwd: str(args, 'cwd'),

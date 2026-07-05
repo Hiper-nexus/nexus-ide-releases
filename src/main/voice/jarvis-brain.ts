@@ -32,13 +32,23 @@ Tipos de action:
   (os agentes sobem na hora; escolha o nome mais próximo do contexto).
 - {"type":"open_workspace","workspaceName":"<nome aproximado>"} — abrir um
   projeto/workspace (use os nomes em "workspaces recentes").
+- {"type":"design_squad"} — quando pedirem um squad SOB MEDIDA para o projeto
+  atual ("cria um squad pra esse projeto", "monta um time pra esse app").
 - {"type":"new_mission"} — nova missão sem citar squad.
 - {"type":"run_command","command":"<comando exato>"} — quando pedirem para
   EXECUTAR/RODAR um comando, programa ou CLI no terminal (o pane focado é um
   shell de verdade). Use o comando literal, sem explicação.
-- {"type":"send_to_pane","text":"<prompt em inglês para o agente>"} — quando a
-  fala for uma TAREFA para um AGENTE DE IA já aberto no pane focado (codar,
-  explicar, corrigir...). Traduza a tarefa para inglês claro.
+- {"type":"send_to_pane","text":"<prompt de engenharia em INGLÊS>"} — quando a
+  fala for uma TAREFA/MISSÃO para um agente de IA (codar, corrigir, construir).
+  NÃO traduza literalmente: COMPONHA um prompt profissional em inglês com:
+  objetivo claro, requisitos concretos inferidos do pedido, e critério de
+  aceite. Uma fala casual vira um prompt que um engenheiro sênior escreveria.
+  Exemplo: "cria uma tela de login com google e senha" →
+  text: "Build a login screen with two auth methods: Google OAuth and
+  email/password. Include form validation, loading and error states, and
+  session persistence. Follow the project's existing stack and UI patterns.
+  Acceptance: the user signs in via either method and lands on the main
+  screen." O say continua CURTO em PT (ex.: "Missão enviada ao squad.").
 
 REGRA DE OURO: NUNCA diga que fez/vai fazer algo sem retornar a action
 correspondente — sem action, nada acontece no app.
@@ -66,12 +76,12 @@ Se o usuário só te chamou ("Jarvis?", "você está aí?"), responda presente e
 pergunte o que ele quer, citando 1-2 opções reais do contexto.
 Termine com pergunta apenas quando fizer sentido continuar a conversa.`;
 
-interface BrainDeps {
+export interface BrainDeps {
   fetchImpl: typeof fetch;
   getKey: (envVar: string) => string | undefined;
 }
 
-const defaultDeps: BrainDeps = {
+export const defaultBrainDeps: BrainDeps = {
   fetchImpl: (...args) => fetch(...args),
   getKey: (envVar) => resolveVoiceApiKey(envVar),
 };
@@ -107,6 +117,7 @@ function parseReply(raw: string): JarvisReply {
     if (type === 'open_workspace' && typeof obj.action?.workspaceName === 'string') {
       return { say, expectReply, action: { type, workspaceName: obj.action.workspaceName } };
     }
+    if (type === 'design_squad') return { say, expectReply, action: { type } };
     if (type === 'new_mission') return { say, expectReply, action: { type } };
     if (type === 'send_to_pane' && typeof obj.action?.text === 'string') {
       return { say, expectReply, action: { type, text: obj.action.text } };
@@ -120,7 +131,7 @@ function parseReply(raw: string): JarvisReply {
   }
 }
 
-async function chatOnce(
+export async function chatOnce(
   endpoint: string,
   key: string,
   model: string,
@@ -132,7 +143,7 @@ async function chatOnce(
     model,
     messages,
     temperature: 0.4,
-    max_tokens: 160,
+    max_tokens: 420,
   };
   if (jsonMode) body.response_format = { type: 'json_object' };
   const res = await deps.fetchImpl(endpoint, {
@@ -162,7 +173,7 @@ export async function jarvisThink(
   transcript: string,
   ctx: JarvisContext,
   history: JarvisTurn[],
-  deps: BrainDeps = defaultDeps,
+  deps: BrainDeps = defaultBrainDeps,
 ): Promise<JarvisReply> {
   const messages: Array<{ role: string; content: string }> = [
     { role: 'system', content: SYSTEM_PROMPT },

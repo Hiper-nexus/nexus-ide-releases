@@ -382,6 +382,28 @@ async function runJarvisTurn(
     } else {
       sayText = `Não achei o projeto "${reply.action.workspaceName}" nos recentes.`;
     }
+  } else if (reply.action.type === 'design_squad') {
+    const ws = useWorkspaceStore.getState().current;
+    if (!ws) {
+      sayText = 'Abre um projeto primeiro que eu monto o squad dele.';
+    } else {
+      console.log('[voice] ação design_squad → analisando workspace');
+      void window.nexus.orch.designSquad(ws.path).then((res) => {
+        if (res.ok && res.squad) {
+          useMissionWizardStore.getState().openForSquad(res.squad.id);
+          void window.nexus.voice.speak({
+            text: `Squad ${res.squad.name} pronto — revise e inicie.`,
+            speakMode: 'full',
+          });
+        } else {
+          void window.nexus.voice.speak({
+            text: `Não consegui montar o squad: ${res.error ?? 'erro'}.`,
+            speakMode: 'full',
+          });
+        }
+      });
+      sayText = 'Deixa comigo — analisando o projeto para montar o time.';
+    }
   } else if (reply.action.type === 'new_mission') {
     console.log('[voice] ação new_mission → abrindo wizard');
     useMissionWizardStore.getState().openForMission();

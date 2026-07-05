@@ -34,9 +34,11 @@ import type { VoiceRuntimeInfo } from '../shared/voice-ipc';
 import type {
   Handoff,
   Mission,
+  MissionPatch,
   OrchPaneSpawnRequest,
   Squad,
   TodoList,
+  TodoStatus,
 } from '../shared/orch-types';
 
 /**
@@ -238,9 +240,15 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.missionPanesList, missionId),
     rebindMissionOrchestrator: (missionId: string, sessionId: string) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionRebind, { missionId, sessionId }),
+    updateMission: (missionId: string, patch: MissionPatch) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionUpdate, { missionId, patch }),
     listHandoffs: () => ipcRenderer.invoke(ORCH_CHANNELS.handoffsList),
     getTodos: () => ipcRenderer.invoke(ORCH_CHANNELS.todosGet),
+    setTodoStatus: (listId: string, itemId: string, status: TodoStatus) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.todoSetStatus, { listId, itemId, status }),
     listSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadsList),
+    designSquad: (workspacePath: string) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.squadDesign, workspacePath),
     saveSquad: (squad) => ipcRenderer.invoke(ORCH_CHANNELS.squadSave, squad),
     deleteSquad: (id) => ipcRenderer.invoke(ORCH_CHANNELS.squadDelete, id),
     exportSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadExport),

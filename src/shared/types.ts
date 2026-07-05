@@ -20,11 +20,13 @@ import type {
   McpRuntimeInfo,
   Mission,
   MissionPaneSpec,
+  MissionPatch,
   OrchPaneSpawnRequest,
   OrchPaneSpawnResult,
   PaneRegistryEntry,
   Squad,
   TodoList,
+  TodoStatus,
 } from './orch-types';
 import type {
   TerminalSettings,
@@ -264,9 +266,18 @@ export interface NexusApi {
       missionId: string,
       sessionId: string,
     ): Promise<{ ok: boolean }>;
+    /** Patch a mission's editable fields (title/description/status/milestones). */
+    updateMission(missionId: string, patch: MissionPatch): Promise<Mission>;
     listHandoffs(): Promise<Handoff[]>;
     getTodos(): Promise<TodoList[]>;
+    /** Set a single todo item's status. */
+    setTodoStatus(
+      listId: string,
+      itemId: string,
+      status: TodoStatus,
+    ): Promise<TodoList>;
     listSquads(): Promise<Squad[]>;
+    designSquad(workspacePath: string): Promise<{ ok: boolean; squad?: Squad; error?: string }>;
     saveSquad(squad: Squad): Promise<{ ok: boolean; error?: string }>;
     deleteSquad(id: string): Promise<{ ok: boolean }>;
     exportSquads(): Promise<{ ok: boolean; path?: string; error?: string }>;

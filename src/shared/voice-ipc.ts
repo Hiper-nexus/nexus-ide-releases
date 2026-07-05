@@ -153,6 +153,7 @@ export type JarvisAction =
   | { type: 'none' }
   | { type: 'open_squad'; squadName: string }
   | { type: 'open_workspace'; workspaceName: string }
+  | { type: 'design_squad' }
   | { type: 'new_mission' }
   | { type: 'send_to_pane'; text: string }
   | { type: 'run_command'; command: string };

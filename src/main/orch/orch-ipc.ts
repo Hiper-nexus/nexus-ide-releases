@@ -3,21 +3,24 @@ import type { WebContents } from 'electron';
 import fs from 'node:fs';
 import { ORCH_CHANNELS } from '../../shared/orch-channels';
 import {
+  missionPatchSchema,
   orchPaneSpawnResultSchema,
   panesSyncSchema,
   squadSchema,
 } from '../../shared/orch-types';
 import { getDb } from '../persistence/db';
 import { initSquadStore, listSquads, saveSquad, deleteSquad, onSquadsChange, exportSquadsJson, importSquadsJson } from './squad-store';
+import { designSquadForWorkspace } from './squad-architect';
 import {
   initMissionStore,
   listMissions,
   onMissionsChange,
   setMissionOrchestratorSession,
+  updateMission,
 } from './mission-store';
 import { initMissionPaneStore, listMissionPanes } from './mission-pane-store';
 import { initHandoffStore, listHandoffs, onHandoffsChange } from './handoff-store';
-import { initTodoStore, listTodoLists, onTodosChange } from './todo-store';
+import { initTodoStore, listTodoLists, onTodosChange, setItemStatus } from './todo-store';
 import { initTaskStore } from './task-store';
 import {
   initPaneRegistry,
@@ -127,11 +130,58 @@ export function registerOrchIpc(): void {
     );
     return { ok: mission !== null };
   });
+
+  const missionUpdateSchema = z.object({
+    missionId: z.string().min(1).max(128),
+    patch: missionPatchSchema,
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionUpdate, (_event, raw) => {
+    const parsed = missionUpdateSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error('invalid mission update payload');
+    }
+    const mission = updateMission(parsed.data.missionId, parsed.data.patch);
+    if (!mission) {
+      throw new Error('mission not found');
+    }
+    return mission;
+  });
+
   ipcMain.handle(ORCH_CHANNELS.handoffsList, () =>
     listHandoffs({ includeDelivered: true }),
   );
   ipcMain.handle(ORCH_CHANNELS.todosGet, () => listTodoLists());
+
+  const todoSetStatusSchema = z.object({
+    listId: z.string().min(1).max(128),
+    itemId: z.string().min(1).max(128),
+    status: z.enum(['todo', 'in_progress', 'done']),
+  });
+  ipcMain.handle(ORCH_CHANNELS.todoSetStatus, (_event, raw) => {
+    const parsed = todoSetStatusSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error('invalid todo status payload');
+    }
+    const list = setItemStatus(
+      parsed.data.listId,
+      parsed.data.itemId,
+      parsed.data.status,
+    );
+    if (!list) {
+      throw new Error('todo list or item not found');
+    }
+    return list;
+  });
   ipcMain.handle(ORCH_CHANNELS.squadsList, () => listSquads());
+  ipcMain.handle(ORCH_CHANNELS.squadDesign, async (_event, raw: unknown) => {
+    const wsPath = typeof raw === 'string' && raw.length > 0 && raw.length < 1024 ? raw : null;
+    if (!wsPath) return { ok: false, error: 'workspace inválido' };
+    try {
+      return await designSquadForWorkspace(wsPath);
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
   ipcMain.handle(ORCH_CHANNELS.mcpInfo, () => getMcpRuntimeInfo());
 
   ipcMain.handle(ORCH_CHANNELS.squadSave, (_event, raw) => {

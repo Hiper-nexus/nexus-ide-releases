@@ -95,6 +95,15 @@ export interface Mission {
   updatedAt: number;
 }
 
+/** Renderer-editable subset of a Mission. Any subset of fields may be patched. */
+export const missionPatchSchema = z.object({
+  title: z.string().min(1).max(512).optional(),
+  description: z.string().max(65_536).optional(),
+  status: missionStatusSchema.optional(),
+  milestones: z.array(z.string().max(1024)).max(256).optional(),
+});
+export type MissionPatch = z.infer<typeof missionPatchSchema>;
+
 export const handoffStatusSchema = z.enum([
   'success',
   'partial',

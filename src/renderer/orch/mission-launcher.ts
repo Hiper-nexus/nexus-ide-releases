@@ -101,6 +101,13 @@ function kickoffPrompt(squad: Squad): string {
       'é a missão, caso ainda não tenha sido informada.',
   );
   parts.push(
+    '## VELOCIDADE (time is money)\n' +
+      'Spawne TODOS os workers necessários EM PARALELO no primeiro turno ' +
+      '(várias chamadas de nexus_pane_spawn de uma vez) — nunca um por vez ' +
+      'esperando o anterior. Não recite o plano nem peça confirmações: ' +
+      'recebida a missão, EXECUTE. Respostas suas no chat: curtas.',
+  );
+  parts.push(
     '## REGRA INEGOCIÁVEL: você DELEGA, não executa\n' +
       'Você NÃO escreve código nem edita arquivos você mesmo. Recebida a ' +
       'missão, IMEDIATAMENTE: (1) nexus_mission_create; (2) quebre em tarefas; ' +

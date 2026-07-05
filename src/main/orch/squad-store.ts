@@ -87,15 +87,21 @@ export function initSquadStore(database: Db | null): void {
  * out-of-the-box.
  */
 function seedBuiltinsIfEmpty(): void {
-  if (squads.size > 0) return;
+  // Builtin squads são gerenciados pelo app: sempre re-sincronizados no boot
+  // (rosters/instruções evoluem com o produto). Squads do usuário (ids
+  // próprios / builtin=false) nunca são tocados.
+  let refreshed = 0;
   for (const squad of BUILTIN_SQUADS) {
     const parsed = squadSchema.safeParse(squad);
-    if (parsed.success) {
+    if (!parsed.success) continue;
+    const existing = squads.get(parsed.data.id);
+    if (!existing || existing.builtin) {
       squads.set(parsed.data.id, parsed.data);
       persist(parsed.data);
+      refreshed += 1;
     }
   }
-  if (squads.size > 0) console.log(`[orch] seeded ${squads.size} built-in squad(s)`);
+  if (refreshed > 0) console.log(`[orch] built-in squads sincronizados: ${refreshed}`);
 }
 
 function persist(squad: Squad): void {

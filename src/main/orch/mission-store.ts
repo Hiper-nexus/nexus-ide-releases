@@ -1,5 +1,5 @@
 import type { Db } from '../persistence/db';
-import type { Mission, MissionStatus } from '../../shared/orch-types';
+import type { Mission, MissionPatch, MissionStatus } from '../../shared/orch-types';
 import { ChangeHub, makeId, parseJsonColumn } from './store-util';
 
 /**
@@ -125,6 +125,27 @@ export function setMissionOrchestratorSession(
   const updated: Mission = {
     ...existing,
     orchestratorSessionId: sessionId,
+    updatedAt: Date.now(),
+  };
+  missions.set(id, updated);
+  persist(updated);
+  hub.emit();
+  return updated;
+}
+
+/**
+ * Renderer-facing patch mutator — applies any subset of title/description/
+ * status/milestones. Returns null when the mission doesn't exist.
+ */
+export function updateMission(id: string, patch: MissionPatch): Mission | null {
+  const existing = missions.get(id);
+  if (!existing) return null;
+  const updated: Mission = {
+    ...existing,
+    ...(patch.title !== undefined ? { title: patch.title } : {}),
+    ...(patch.description !== undefined ? { description: patch.description } : {}),
+    ...(patch.status !== undefined ? { status: patch.status } : {}),
+    ...(patch.milestones !== undefined ? { milestones: patch.milestones } : {}),
     updatedAt: Date.now(),
   };
   missions.set(id, updated);
