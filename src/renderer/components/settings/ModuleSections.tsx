@@ -185,15 +185,40 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
         </span>
       </label>
       <ul className="settings-list">
-        {squads.map((s) => (
-          <li key={s.id} className="settings-list__item">
-            <div className="settings-list__head">
-              <span className="settings-list__title">{s.name}</span>
-              <span className="settings-chip">{s.agents.length} agentes</span>
-            </div>
-          </li>
-        ))}
+        {[...squads]
+          .sort((a, b) => Number(a.builtin ?? false) - Number(b.builtin ?? false))
+          .map((s) => (
+            <li key={s.id} className="settings-list__item">
+              <div className="settings-list__head">
+                <span className="settings-list__title">{s.name}</span>
+                <span className="settings-chip">
+                  {s.builtin ? 'original' : 'seu'}
+                </span>
+                <span className="settings-chip">{s.agents.length} agentes</span>
+                <div className="settings-list__spacer" />
+                {!s.builtin && (
+                  <button
+                    className="settings-btn settings-btn--danger"
+                    title="Apagar este squad (não pode desfazer)"
+                    onClick={() => {
+                      if (
+                        window.confirm(`Apagar o squad "${s.name}"? Não dá para desfazer.`)
+                      ) {
+                        void window.nexus.orch.deleteSquad(s.id);
+                      }
+                    }}
+                  >
+                    Apagar
+                  </button>
+                )}
+              </div>
+            </li>
+          ))}
       </ul>
+      <p className="settings-field__note">
+        Squads que você cria (manuais ou &quot;sob medida&quot;) ficam salvos
+        para sempre. Os originais voltam sozinhos a cada início.
+      </p>
       <button
         className="settings-btn settings-btn--primary"
         onClick={() => {

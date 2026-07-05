@@ -25,7 +25,24 @@ import type { JarvisTurn, VoiceRuntimeInfo } from '../../shared/voice-ipc';
 
 const RESPONSE_QUIET_MS = 1_500; // speak once the pane has been quiet this long
 const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
-const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
+const MIN_SPEECH_SEC = 0.25;
+
+/**
+ * Frases que o Whisper cospe em áudio SEM fala (créditos de YouTube no corpus
+ * de treino). Sozinhas, são quase sempre alucinação de silêncio — não turno.
+ */
+const WHISPER_GHOSTS = new Set([
+  'you', 'thank you', 'thanks', 'thank you.', 'thanks for watching',
+  'thanks for watching!', 'you.', 'bye', 'bye.', '.', 'obrigado',
+  'obrigado.', 'obrigado por assistir', 'valeu', 'tchau', 'até a próxima',
+  'legendas pela comunidade amara.org', 'amara.org',
+]);
+
+function isWhisperHallucination(text: string): boolean {
+  const clean = text.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (clean.length === 0) return true;
+  return WHISPER_GHOSTS.has(clean);
+} // ignore accidental taps shorter than this
 const WAKE_SILENCE_MS = 700; // wake-word capture: quiet time that ends the utterance
 const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
 const JARVIS_MEMORY_MS = 45_000; // conversa esfria depois disso → história zera
@@ -246,6 +263,14 @@ async function finishAndProcess(
       return;
     }
     const tStt = Date.now() - tTurn;
+    // Whisper ALUCINA frases fixas em silêncio/ruído ("you", "thank you",
+    // "obrigado por assistir"…). Elas passam o gate de RMS quando há um
+    // sussurro — descarta antes de virar turno (a JARVIS falando sozinha).
+    if (isWhisperHallucination(stt.text)) {
+      console.log(`[voice] transcrição-lixo do Whisper descartada: "${stt.text}"`);
+      store.setStatus('idle');
+      return;
+    }
     store.setTranscript(stt.text);
     console.log(`[voice] transcrito (${tStt}ms): "${stt.text}"`);
     // Surface throttle/quota fallbacks instead of failing silently.

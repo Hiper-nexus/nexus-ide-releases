@@ -50,7 +50,15 @@ export function HomeDeck() {
     () => adapters.filter((a) => a.installed),
     [adapters],
   );
-  const featured = useMemo(() => squads.slice(0, 3), [squads]);
+  // Seus squads (custom) primeiro — os originais re-semeiam sozinhos, então
+  // nunca podem empurrar um squad seu para fora da lista.
+  const featured = useMemo(
+    () =>
+      [...squads]
+        .sort((a, b) => Number(a.builtin ?? false) - Number(b.builtin ?? false))
+        .slice(0, 6),
+    [squads],
+  );
 
   if (!visible) return null;
 

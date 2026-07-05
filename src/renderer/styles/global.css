@@ -3584,3 +3584,15 @@ body {
   border-color: var(--border-strong);
   background: rgba(255, 255, 255, 0.04);
 }
+
+/* Ação destrutiva na lista de squads + empurra o botão para a direita. */
+.settings-list__spacer { flex: 1; }
+.settings-btn--danger {
+  color: #ef5350;
+  border-color: rgba(239, 83, 80, 0.5);
+  background: rgba(239, 83, 80, 0.08);
+}
+.settings-btn--danger:hover {
+  background: rgba(239, 83, 80, 0.16);
+  border-color: #ef5350;
+}
