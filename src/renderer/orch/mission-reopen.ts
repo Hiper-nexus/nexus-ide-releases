@@ -72,7 +72,13 @@ export async function reopenMission(
     markResumeOnSpawn(base.id);
     // Restore the pane's reasoning effort (task-router decision) so the
     // reopened pane re-spawns at the same effort it originally ran with.
-    return { ...base, title: spec.title, effort: spec.effort };
+    return {
+      ...base,
+      title: spec.title,
+      effort: spec.effort,
+      role: spec.role,
+      agentName: spec.agentName,
+    };
   });
 
   useLayoutStore.getState().setPanes(panes);

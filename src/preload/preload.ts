@@ -272,6 +272,8 @@ const api: NexusApi = {
     get: () => ipcRenderer.invoke(SETTINGS_CHANNELS.get),
     set: (patch) => ipcRenderer.invoke(SETTINGS_CHANNELS.set, patch),
     onChanged: (cb) => addListener(settingsChangedListeners, cb),
+    orchGet: () => ipcRenderer.invoke(SETTINGS_CHANNELS.orchGet),
+    orchSet: (patch) => ipcRenderer.invoke(SETTINGS_CHANNELS.orchSet, patch),
   },
   workspace: {
     get: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.get),

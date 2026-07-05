@@ -4,10 +4,13 @@ import path from 'node:path';
 import { ipcMain } from 'electron';
 import type { WebContents } from 'electron';
 import {
+  DEFAULT_ORCH_SETTINGS,
   DEFAULT_TERMINAL_SETTINGS,
   SETTINGS_CHANNELS,
+  orchSettingsSchema,
   terminalSettingsPatchSchema,
   terminalSettingsSchema,
+  type OrchSettings,
   type TerminalSettings,
 } from '../../shared/settings-types';
 
@@ -20,6 +23,7 @@ import {
 const SETTINGS_FILE = path.join(os.homedir(), '.nexus', 'settings.json');
 
 let current: TerminalSettings = DEFAULT_TERMINAL_SETTINGS;
+let orchSettings: OrchSettings = DEFAULT_ORCH_SETTINGS;
 const listeners = new Set<WebContents>();
 
 function load(): void {
@@ -27,6 +31,8 @@ function load(): void {
     const raw = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
     const parsed = terminalSettingsSchema.safeParse(raw?.terminal ?? raw);
     if (parsed.success) current = parsed.data;
+    const orchParsed = orchSettingsSchema.safeParse(raw?.orch ?? {});
+    if (orchParsed.success) orchSettings = orchParsed.data;
   } catch {
     // Missing/corrupt file — keep defaults.
   }
@@ -37,7 +43,7 @@ function persist(): void {
     fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
     fs.writeFileSync(
       SETTINGS_FILE,
-      JSON.stringify({ terminal: current }, null, 2),
+      JSON.stringify({ terminal: current, orch: orchSettings }, null, 2),
     );
   } catch (err) {
     console.warn('[settings] failed to persist settings:', err);
@@ -52,6 +58,10 @@ function broadcast(): void {
 
 export function getTerminalSettings(): TerminalSettings {
   return current;
+}
+
+export function getOrchSettings(): OrchSettings {
+  return orchSettings;
 }
 
 export function registerSettingsListener(wc: WebContents): void {
@@ -74,5 +84,16 @@ export function registerSettingsIpc(): void {
     persist();
     broadcast();
     return current;
+  });
+
+  ipcMain.handle(SETTINGS_CHANNELS.orchGet, () => orchSettings);
+
+  ipcMain.handle(SETTINGS_CHANNELS.orchSet, (_event, raw) => {
+    const parsed = orchSettingsSchema.safeParse({ ...orchSettings, ...(raw ?? {}) });
+    if (parsed.success) {
+      orchSettings = parsed.data;
+      persist();
+    }
+    return orchSettings;
   });
 }

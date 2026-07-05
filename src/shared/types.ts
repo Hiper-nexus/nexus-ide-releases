@@ -30,6 +30,7 @@ import type {
 } from './orch-types';
 import type {
   TerminalSettings,
+  OrchSettings,
   TerminalSettingsPatch,
 } from './settings-types';
 import type { WorkspaceState } from './workspace-types';
@@ -108,6 +109,10 @@ export interface PaneModel {
   adapterId?: string;
   /** The model selected for this agent pane (e.g. "claude-sonnet-4-5"). */
   model?: string;
+  /** Papel na missão (orquestração) — vira o badge de identidade do pane. */
+  role?: 'orchestrator' | 'worker';
+  /** Agente do squad operando este pane (ex.: "Frontend"). */
+  agentName?: string;
   /**
    * Per-pane reasoning effort override (task-router decision). Falls back to
    * the provider's configured effort when absent; silently ignored by CLIs
@@ -301,6 +306,8 @@ export interface NexusApi {
     get(): Promise<TerminalSettings>;
     set(patch: TerminalSettingsPatch): Promise<TerminalSettings>;
     onChanged(cb: (settings: TerminalSettings) => void): Unsubscribe;
+    orchGet(): Promise<OrchSettings>;
+    orchSet(patch: Partial<OrchSettings>): Promise<OrchSettings>;
   };
   workspace: {
     get(): Promise<WorkspaceState>;

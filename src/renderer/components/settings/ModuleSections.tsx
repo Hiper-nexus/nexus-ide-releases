@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   TERMINAL_THEME_IDS,
   type TerminalThemeId,
@@ -106,6 +107,10 @@ export function VoiceSection({ onNavigate }: { onNavigate: () => void }) {
 export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
   const squads = useOrchStore((s) => s.squads);
   const openPanel = useOrchStore((s) => s.openPanel);
+  const [leanCode, setLeanCode] = useState(true);
+  useEffect(() => {
+    void window.nexus.settings.orchGet().then((o) => setLeanCode(o.leanCode));
+  }, []);
   return (
     <section>
       <h3 className="settings-detail__title">Squads</h3>
@@ -113,6 +118,26 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
         {squads.length} squad(s) salvos — schema compatível com o
         squads.json, com export/import nativo.
       </p>
+
+      <label className="settings-field">
+        <span>
+          <input
+            type="checkbox"
+            checked={leanCode}
+            onChange={(e) => {
+              setLeanCode(e.target.checked);
+              void window.nexus.settings.orchSet({ leanCode: e.target.checked });
+            }}
+          />{' '}
+          Código enxuto (ponytail)
+        </span>
+        <span className="settings-field__note">
+          Injeta em todo worker as regras &quot;lazy senior dev&quot; do
+          ponytail (MIT): mínimo código que funciona, reuso antes de escrever,
+          sem over-engineering. −54% de código e −20% de custo medidos pelo
+          autor.
+        </span>
+      </label>
       <ul className="settings-list">
         {squads.map((s) => (
           <li key={s.id} className="settings-list__item">

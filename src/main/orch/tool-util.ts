@@ -7,6 +7,8 @@ import { orchWriteSession } from '../pty/pty-manager';
 import { getAdapter } from '../adapters/adapter-registry';
 import { recordMissionPane } from './mission-pane-store';
 import { LEGACY_MARKER } from './legacy-handoff';
+import { PONYTAIL_RULES } from './ponytail';
+import { getOrchSettings } from '../persistence/settings-store';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
@@ -102,7 +104,10 @@ function withHandoffContract(
       'terminal (é seu sinal de conclusão para o orquestrador):\n' +
       `${LEGACY_MARKER}\n` +
       '{"status":"success","summary":"<resumo objetivo do que fez>","artifacts":[]}';
-  return `${prompt}\n\n${contract}`;
+  // Código enxuto: as regras ponytail entram em TODO worker (qualquer CLI)
+  // enquanto o toggle estiver ligado — menos código, menos custo, menos lixo.
+  const lean = getOrchSettings().leanCode ? `\n\n${PONYTAIL_RULES}` : '';
+  return `${prompt}${lean}\n\n${contract}`;
 }
 
 export async function spawnPaneAndMaybePrompt(

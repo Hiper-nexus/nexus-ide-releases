@@ -84,8 +84,27 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
           {pane.title}
         </span>
       )}
+      {pane.role === 'orchestrator' && (
+        <span
+          className="toolbar__badge toolbar__badge--orch"
+          title="Orquestrador da missão — coordena e delega para os workers"
+        >
+          ⬢ orq
+        </span>
+      )}
+      {pane.role === 'worker' && pane.agentName && (
+        <span
+          className="toolbar__badge toolbar__badge--worker"
+          title={`Worker do squad: ${pane.agentName}`}
+        >
+          ⬡ {pane.agentName}
+        </span>
+      )}
       {adapterLabel ? (
-        <span className="toolbar__badge toolbar__badge--agent" title={adapterLabel}>
+        <span
+          className="toolbar__badge toolbar__badge--agent"
+          title={`CLI/modelo operando este pane: ${adapterLabel}`}
+        >
           {adapterLabel}
         </span>
       ) : (

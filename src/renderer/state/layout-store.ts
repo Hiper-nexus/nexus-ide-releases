@@ -51,6 +51,8 @@ interface LayoutState {
     cwd?: string;
     title?: string;
     orchRequestId: string;
+    agentName?: string;
+    role?: 'orchestrator' | 'worker';
   }): string;
   close(paneId: string): void;
   focus(paneId: string): void;
@@ -204,6 +206,8 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       title: req.title ?? base.title,
       effort: req.effort,
       orchRequestId: req.orchRequestId,
+      agentName: req.agentName,
+      role: req.role,
     };
     const pivotId = targetId ?? firstPaneId(currentRoot);
     const root = pivotId

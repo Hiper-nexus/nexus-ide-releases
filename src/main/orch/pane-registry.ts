@@ -243,6 +243,8 @@ export function requestPaneSpawn(
     cwd: options.cwd,
     title: options.title,
     missionId: options.missionId,
+    agentName: options.agentName,
+    role: options.role,
   };
   return new Promise((resolve) => {
     const timer = setTimeout(() => {

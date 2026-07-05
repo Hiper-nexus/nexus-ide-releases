@@ -58,8 +58,21 @@ export const terminalSettingsPatchSchema = z.object({
 });
 export type TerminalSettingsPatch = z.infer<typeof terminalSettingsPatchSchema>;
 
+/**
+ * Configurações de orquestração (seção `orch` do ~/.nexus/settings.json).
+ * leanCode = injetar as regras ponytail (lazy senior dev, MIT —
+ * github.com/DietrichGebert/ponytail) no prompt de todo worker de squad.
+ */
+export const orchSettingsSchema = z.object({
+  leanCode: z.boolean().default(true),
+});
+export type OrchSettings = z.infer<typeof orchSettingsSchema>;
+export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});
+
 export const SETTINGS_CHANNELS = {
   get: 'settings:get',
   set: 'settings:set',
   changed: 'settings:changed',
+  orchGet: 'settings:orch:get',
+  orchSet: 'settings:orch:set',
 } as const;

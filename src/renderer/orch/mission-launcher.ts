@@ -118,6 +118,13 @@ function kickoffPrompt(squad: Squad): string {
       'seu próprio pane é FALHA de orquestração.',
   );
   parts.push(
+    '## Código enxuto (ponytail)\n' +
+      'Os workers operam em modo "lazy senior dev": mínimo código que ' +
+      'funciona, reuso antes de escrever, zero abstração especulativa. Dê ' +
+      'tarefas com escopo MÍNIMO e, ao revisar handoffs, REJEITE ' +
+      'over-engineering — exija a versão mais curta que resolve.',
+  );
+  parts.push(
     '## Roteamento inteligente (economia de tokens)\n' +
       'Uma das suas missões é POUPAR tokens e acelerar o trabalho. Antes de ' +
       'CADA delegação, chame nexus_route_task {task} e use o adapterId/model/' +
@@ -181,6 +188,8 @@ export function launchSquadMission(
     ...createPane('cli-agent', cwd, cli, model),
     title: `${squad.name} · orq`,
     orchRequestId: `squad-${squad.id}-${Date.now().toString(36)}`,
+    role: 'orchestrator' as const,
+    agentName: orchestrator.agentName,
   };
   useHomeStore.getState().hide();
   useLayoutStore.getState().setPanes([orchPane]);

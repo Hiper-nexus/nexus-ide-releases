@@ -67,6 +67,8 @@ export function useOrchBridge(): void {
               cwd: req.cwd,
               title: req.title,
               orchRequestId: req.requestId,
+              agentName: req.agentName,
+              role: req.role ?? 'worker',
             });
             useOrchStore.getState().bindPaneMission(paneId, req.missionId);
             const sessionId = await waitForSession(paneId);

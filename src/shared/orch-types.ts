@@ -199,6 +199,9 @@ export interface OrchPaneSpawnRequest {
   cwd?: string;
   title?: string;
   missionId?: string;
+  /** Agente do squad que este pane representa — exibido no badge do pane. */
+  agentName?: string;
+  role?: 'orchestrator' | 'worker';
 }
 
 /** Renderer → main: outcome of an OrchPaneSpawnRequest. */

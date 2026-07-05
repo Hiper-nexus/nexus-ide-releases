@@ -3570,3 +3570,17 @@ body {
   color: var(--text-dim);
   font-size: 12px;
 }
+
+/* Identidade do pane: quem opera aqui (orquestrador × worker do squad). */
+.toolbar__badge--orch {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 700;
+}
+
+.toolbar__badge--worker {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.04);
+}
