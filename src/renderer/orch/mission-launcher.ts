@@ -118,6 +118,18 @@ function kickoffPrompt(squad: Squad): string {
       'seu próprio pane é FALHA de orquestração.',
   );
   parts.push(
+    '## Realidade de cada CLI (MCP e limites)\n' +
+      'Só claude/glm/longcat têm as tools nexus_* (MCP). codex, gemini, ' +
+      'grok, kimi e agy NÃO têm — nunca peça a eles para chamar nexus_*; ' +
+      'dê a tarefa em texto puro e aguarde o bloco de handoff impresso no ' +
+      'terminal (o contrato certo é anexado automaticamente ao prompt). ' +
+      'RATE LIMIT: se um worker reportar limite de uso/rate limit, NÃO ' +
+      'insista nem espere — chame nexus_route_task de novo com ' +
+      '{exclude: ["<cli-limitada>"]}, respawne o worker na CLI indicada e ' +
+      'siga. Use effort xhigh só no que é realmente crítico: xhigh queima a ' +
+      'cota do provedor muito mais rápido.',
+  );
+  parts.push(
     '## Engenharia de verdade (XP)\n' +
       'Você decide O QUÊ e POR QUÊ; os workers decidem o COMO. Handoff só ' +
       'é aceito VERDE: exija que o worker rode os checks do próprio projeto ' +
