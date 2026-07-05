@@ -45,13 +45,10 @@ function isWhisperHallucination(text: string): boolean {
 } // ignore accidental taps shorter than this
 const WAKE_SILENCE_MS = 700; // wake-word capture: quiet time that ends the utterance
 const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
-const JARVIS_MEMORY_MS = 45_000; // conversa esfria depois disso → história zera
+const JARVIS_MEMORY_MS = 240_000; // 4 min: conversa continua sem recomeçar do zero
 
 // Memória curta da conversa com a JARVIS (renderer-local, por janela).
 let jarvisHistory: JarvisTurn[] = [];
-// Follow-ups seguidos SEM ação: acima do limite, exige "Hey Jarvis" de novo
-// (senão a escuta fica presa transcrevendo conversa ambiente).
-let idleFollowUps = 0;
 const wakeMic = new WakeMic();
 let jarvisLastTurnAt = 0;
 
@@ -363,7 +360,7 @@ async function runJarvisTurn(
   console.log(`[voice] cérebro: ${Date.now() - tBrain}ms`);
   jarvisHistory.push({ role: 'user', content: transcript });
   jarvisHistory.push({ role: 'assistant', content: reply.say });
-  if (jarvisHistory.length > 12) jarvisHistory = jarvisHistory.slice(-12);
+  if (jarvisHistory.length > 20) jarvisHistory = jarvisHistory.slice(-20);
 
   // Executa a ação decidida pelo cérebro.
   let sayText = reply.say;
@@ -481,13 +478,13 @@ async function runJarvisTurn(
   store.setSpoken(sayText);
   store.setStatus('idle');
 
-  // O cérebro sinalizou que espera resposta → escuta reabre sozinha — mas
-  // com trava: 2 turnos seguidos sem AÇÃO real e a conversa encerra (senão
-  // ela fica presa ouvindo papo ambiente).
-  if (reply.action.type !== 'none') idleFollowUps = 0;
-  else idleFollowUps += 1;
+  // A fala chegou até aqui = passou pelo wake (≥0.6), pelo gate de silêncio e
+  // pelo filtro de alucinação, então é conversa REAL. Reabre a escuta sempre
+  // que ela quiser resposta — sem teto de turnos (a trava antiga cortava a
+  // conversa na 2ª troca). O silêncio encerra sozinho: se o usuário não
+  // responder, a próxima captura vem sem fala (heardSpeech=false) e não reabre.
   const wantsReply = reply.expectReply ?? sayText.trim().endsWith('?');
-  if (wantsReply && idleFollowUps < 2) {
+  if (wantsReply) {
     busy.current = false;
     void beginListening(capture, wakeAutoStop(capture, busy));
   }
