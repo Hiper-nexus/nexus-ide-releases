@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { attachHost, focusHost } from '../terminal/terminal-host';
+import { BrowserPane } from './BrowserPane';
 import { PaneToolbar } from './PaneToolbar';
 
 interface Props {
@@ -15,6 +16,13 @@ interface Props {
  * behind the pane never resets on split/close.
  */
 export function PaneLeaf({ pane }: Props) {
+  if (pane.kind === 'browser') {
+    return <BrowserPane pane={pane} />;
+  }
+  return <TerminalPaneLeaf pane={pane} />;
+}
+
+function TerminalPaneLeaf({ pane }: Props) {
   const slotRef = useRef<HTMLDivElement>(null);
   const isFocused = useLayoutStore((s) => s.focusedPaneId === pane.id);
 

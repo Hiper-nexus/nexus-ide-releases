@@ -38,7 +38,7 @@ import {
 
 /**
  * Embedded MCP server (docs/ARCHITECTURE.md §E.2): a localhost HTTP endpoint
- * speaking MCP streamable-HTTP JSON-RPC, exposing the 27 nexus_* tools to the
+ * speaking MCP streamable-HTTP JSON-RPC, exposing the nexus_* tools to the
  * CLI agents running inside PTY panes. The same server hosts the /gate/*
  * endpoints used by the client-side skill-gate hooks.
  *

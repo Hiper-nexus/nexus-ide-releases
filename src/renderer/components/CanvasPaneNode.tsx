@@ -9,6 +9,7 @@ import {
 } from '@xyflow/react';
 import { attachHost, focusHost } from '../terminal/terminal-host';
 import { PaneToolbar } from './PaneToolbar';
+import { BrowserPane } from './BrowserPane';
 import { useLayoutStore } from '../state/layout-store';
 import type { PaneModel } from '../../shared/types';
 
@@ -47,6 +48,7 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
 
   // Attach (or re-attach after snapshot) the terminal into this slot.
   useEffect(() => {
+    if (pane.kind === 'browser') return;
     const slot = slotRef.current;
     if (slot && !isSnapshot) {
       attachHost(pane, slot);
@@ -56,8 +58,8 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
   }, [pane.id, isSnapshot]);
 
   useEffect(() => {
-    if (isFocused && !isSnapshot) focusHost(id);
-  }, [isFocused, id, isSnapshot]);
+    if (pane.kind !== 'browser' && isFocused && !isSnapshot) focusHost(id);
+  }, [isFocused, id, isSnapshot, pane.kind]);
 
   return (
     <div
@@ -86,9 +88,9 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
         className="canvas-pane__handle canvas-pane__handle--out"
         title="Enviar saída para outro pane"
       />
-      <PaneToolbar pane={pane} isFocused={isFocused} isCanvas />
-
-      {isSnapshot ? (
+      {pane.kind === 'browser' ? (
+        <BrowserPane pane={pane} isCanvas />
+      ) : isSnapshot ? (
         <div className="canvas-pane__snapshot">
           <span className="canvas-pane__snapshot-label">{pane.title}</span>
           <span className="canvas-pane__snapshot-meta">
@@ -96,7 +98,10 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
           </span>
         </div>
       ) : (
-        <div ref={slotRef} className="canvas-pane__terminal" />
+        <>
+          <PaneToolbar pane={pane} isFocused={isFocused} isCanvas />
+          <div ref={slotRef} className="canvas-pane__terminal" />
+        </>
       )}
     </div>
   );

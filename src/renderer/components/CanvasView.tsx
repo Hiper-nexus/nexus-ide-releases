@@ -17,6 +17,7 @@ import { useLayoutStore } from '../state/layout-store';
 import { listPanes } from '../lib/split-tree';
 import { defaultCanvasLayout } from '../lib/canvas-layout';
 import { reconcileHosts } from '../terminal/terminal-host';
+import { reconcileBrowserPanes } from '../browser/browser-host';
 import {
   CanvasPaneNode,
   type CanvasPaneNodeData,
@@ -158,6 +159,7 @@ export function CanvasView() {
   useEffect(() => {
     const liveIds = new Set(panes.map((p) => p.id));
     reconcileHosts(liveIds);
+    reconcileBrowserPanes(liveIds);
   }, [panes]);
 
   const onNodesChange = useCallback(

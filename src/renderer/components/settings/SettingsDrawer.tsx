@@ -15,6 +15,7 @@ import {
   HooksSection,
   McpsSection,
   PluginsSection,
+  RecipesSection,
   RulesSection,
   ShortcutsSection,
   SkillsSection,
@@ -39,6 +40,7 @@ export type SettingsSection =
   | 'mcps'
   | 'tools'
   | 'plugins'
+  | 'recipes'
   | 'hooks'
   | 'rules'
   | 'shortcuts';
@@ -67,6 +69,7 @@ const CATALOG_ITEMS: NavItem[] = [
   { id: 'skills', icon: '✦', title: 'SKILLS', subtitle: 'skills cache' },
   { id: 'mcps', icon: '☁', title: 'MCPS', subtitle: 'servers cache' },
   { id: 'tools', icon: '🔧', title: 'TOOLS', subtitle: 'native tools' },
+  { id: 'recipes', icon: '✓', title: 'RECIPES', subtitle: 'lint · stacks' },
   { id: 'plugins', icon: '⬡', title: 'PLUGINS', subtitle: 'plugin bundles' },
   { id: 'hooks', icon: '⚡', title: 'HOOKS', subtitle: 'lifecycle scripts' },
   { id: 'rules', icon: '🛡', title: 'RULES', subtitle: 'permissions' },
@@ -180,6 +183,7 @@ export function SettingsDrawer() {
           {section === 'skills' && <SkillsSection />}
           {section === 'mcps' && <McpsSection />}
           {section === 'tools' && <ToolsSection />}
+          {section === 'recipes' && <RecipesSection />}
           {section === 'plugins' && <PluginsSection adapters={adapters} />}
           {section === 'hooks' && <HooksSection />}
           {section === 'rules' && <RulesSection />}

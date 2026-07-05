@@ -55,6 +55,7 @@ const paneSpawn: McpToolDef = {
       const found = findAgent(agentRef);
       if (!found) throw new Error(`unknown squad agent: ${agentRef}`);
       const { agent } = found;
+      const role = agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
       options = {
         // Roteamento de custo: o adapterId vindo do route_task vence o
         // default do roster — senão o squad inteiro cai num modelo só.
@@ -65,9 +66,9 @@ const paneSpawn: McpToolDef = {
         title: str(args, 'title') ?? agent.agentName,
         missionId: str(args, 'missionId') ?? ctx.missionId,
         agentName: agent.agentName,
-        allowedTools: agent.allowedTools ?? null,
+        allowedTools: agent.allowedTools ?? (role === 'orchestrator' ? null : []),
         allowedSkills: agent.allowedSkills ?? null,
-        role: agent.category === 'orchestrator' ? 'orchestrator' : 'worker',
+        role,
         prompt: str(args, 'prompt'),
       };
     } else {

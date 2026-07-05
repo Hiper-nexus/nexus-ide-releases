@@ -34,6 +34,7 @@ interface Host {
   sessionId: string | null;
   opened: boolean;
   spawnStarted: boolean;
+  hibernated: boolean;
   disposed: boolean;
   cleanups: Array<() => void>;
   /** Devolve o slot de WebGL ao pool quando o host morre. */
@@ -148,8 +149,10 @@ function buildTerminal(): {
 
 function startSpawn(pane: PaneModel, host: Host, resume = false): void {
   host.spawnStarted = true;
+  host.hibernated = false;
   void (async () => {
     try {
+      const spawnKind = pane.kind === 'cli-agent' ? 'cli-agent' : 'shell';
       const res = await window.nexus.pty.spawn({
         // Panes always live inside the active workspace: restored panes from
         // older sessions (or the fresh initial tree) may lack a cwd — they
@@ -161,7 +164,7 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
             : undefined,
         cols: host.term.cols,
         rows: host.term.rows,
-        kind: pane.kind,
+        kind: spawnKind,
         resume,
         // paneId estável (layout persistido): com resume, o main retoma a
         // sessão de provider CAPTURADA deste pane (`--resume <id>`).
@@ -269,6 +272,7 @@ function createShellHost(pane: PaneModel): Host {
     sessionId: null,
     opened: false,
     spawnStarted: false,
+    hibernated: false,
     disposed: false,
     cleanups: [],
   };
@@ -304,6 +308,7 @@ function createCliAgentHost(pane: PaneModel): Host {
     sessionId: null,
     opened: false,
     spawnStarted: false,
+    hibernated: false,
     disposed: false,
     cleanups: [],
   };
@@ -483,7 +488,7 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
     // Slot not measurable yet; the ResizeObserver will retry.
   }
 
-  if (!host.spawnStarted) {
+  if (!host.spawnStarted && !host.hibernated) {
     startSpawn(pane, host, resumeOnFirstSpawn.delete(pane.id));
   }
 }
@@ -544,8 +549,47 @@ export function respawnWithResume(
   if (host.sessionId) window.nexus.pty.kill(host.sessionId);
   setHostSession(host, pane.id, null);
   host.spawnStarted = false;
+  host.hibernated = false;
   host.term.writeln(`\r\n\x1b[33m${note}\x1b[0m`);
   startSpawn(pane, host, true);
+}
+
+export function hibernateHost(paneId: string): boolean {
+  const host = hosts.get(paneId);
+  if (!host || host.disposed) return false;
+  host.cleanups.forEach((fn) => fn());
+  host.cleanups = [];
+  if (host.sessionId) window.nexus.pty.kill(host.sessionId);
+  host.spawnStarted = false;
+  host.hibernated = true;
+  useSessionStateStore.getState().setPaneState(paneId, 'hibernated');
+  setHostSession(host, paneId, null);
+  try {
+    host.term.writeln(
+      '\r\n\x1b[36m[nexus] pane dormindo — processo encerrado, buffer preservado. Use ☀ para acordar.\x1b[0m',
+    );
+  } catch {
+    // Terminal may not be open yet.
+  }
+  return true;
+}
+
+export function wakeHost(pane: PaneModel): boolean {
+  const host = hosts.get(pane.id);
+  if (!host || host.disposed || host.sessionId) return false;
+  if (pane.kind === 'browser') return false;
+  host.hibernated = false;
+  host.spawnStarted = false;
+  try {
+    host.term.writeln('\r\n\x1b[36m[nexus] acordando pane…\x1b[0m');
+  } catch {
+    // Terminal may not be open yet.
+  }
+  if (pane.kind === 'cli-agent') {
+    useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
+  }
+  startSpawn(pane, host, pane.kind === 'cli-agent');
+  return true;
 }
 
 /** The live PTY session id backing a pane, or null if not spawned yet. */

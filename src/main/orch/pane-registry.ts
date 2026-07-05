@@ -3,6 +3,8 @@ import type { PaneSessionState } from '../../shared/types';
 import type {
   OrchPaneSpawnRequest,
   OrchPaneSpawnResult,
+  BrowserPaneOpenRequest,
+  BrowserPaneOpenResult,
   PaneRegistryEntry,
   PaneSnapshot,
 } from '../../shared/orch-types';
@@ -78,6 +80,13 @@ interface PendingSpawn {
 }
 const pendingSpawns = new Map<string, PendingSpawn>();
 
+interface PendingBrowserOpen {
+  resolve: (result: BrowserPaneOpenResult) => void;
+  timer: ReturnType<typeof setTimeout>;
+  meta: OrchMeta;
+}
+const pendingBrowserOpens = new Map<string, PendingBrowserOpen>();
+
 let orchRenderer: WebContents | null = null;
 
 /** The window that hosts the pane grid — target of orchestration requests. */
@@ -96,6 +105,15 @@ export function unregisterOrchRenderer(wc: WebContents): void {
       requestId,
       ok: false,
       error: 'renderer window closed during spawn',
+    });
+  }
+  for (const [requestId, pending] of [...pendingBrowserOpens]) {
+    clearTimeout(pending.timer);
+    pendingBrowserOpens.delete(requestId);
+    pending.resolve({
+      requestId,
+      ok: false,
+      error: 'renderer window closed during browser open',
     });
   }
 }
@@ -174,10 +192,10 @@ export function attachOrchMeta(paneId: string, meta: OrchMeta): void {
 }
 
 function paneState(entry: PaneRegistryEntry): PaneSnapshot['state'] {
-  if (!entry.sessionId) return 'unknown';
+  if (!entry.sessionId) return entry.state ?? 'unknown';
   const live = sessionStates.get(entry.sessionId) ?? getSessionState(entry.sessionId);
   if (live) return live;
-  return buffers.get(entry.sessionId)?.exited ? 'exited' : 'unknown';
+  return buffers.get(entry.sessionId)?.exited ? 'exited' : entry.state ?? 'unknown';
 }
 
 function snapshotOf(entry: PaneRegistryEntry): PaneSnapshot {
@@ -345,12 +363,61 @@ export function requestPaneSpawn(
   });
 }
 
+export function requestBrowserPane(options: {
+  url: string;
+  title?: string;
+  missionId?: string;
+  agentName?: string;
+  role?: 'orchestrator' | 'worker';
+}): Promise<BrowserPaneOpenResult> {
+  if (!rendererAvailable()) {
+    return Promise.resolve({
+      requestId: '',
+      ok: false,
+      error: 'no renderer window available',
+    });
+  }
+  const requestId = makeId('browseropen');
+  const request: BrowserPaneOpenRequest = {
+    requestId,
+    url: options.url,
+    title: options.title,
+  };
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      pendingBrowserOpens.delete(requestId);
+      resolve({ requestId, ok: false, error: 'browser open timed out' });
+    }, SPAWN_TIMEOUT_MS);
+    pendingBrowserOpens.set(requestId, {
+      resolve,
+      timer,
+      meta: {
+        missionId: options.missionId,
+        agentName: options.agentName,
+        role: options.role,
+      },
+    });
+    orchRenderer!.send(ORCH_CHANNELS.browserOpenRequest, request);
+  });
+}
+
 /** Renderer → main: outcome of a pane spawn request. */
 export function resolvePaneSpawn(result: OrchPaneSpawnResult): void {
   const pending = pendingSpawns.get(result.requestId);
   if (!pending) return;
   clearTimeout(pending.timer);
   pendingSpawns.delete(result.requestId);
+  if (result.ok && result.paneId) {
+    attachOrchMeta(result.paneId, pending.meta);
+  }
+  pending.resolve(result);
+}
+
+export function resolveBrowserOpen(result: BrowserPaneOpenResult): void {
+  const pending = pendingBrowserOpens.get(result.requestId);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingBrowserOpens.delete(result.requestId);
   if (result.ok && result.paneId) {
     attachOrchMeta(result.paneId, pending.meta);
   }

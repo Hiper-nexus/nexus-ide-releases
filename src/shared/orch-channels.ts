@@ -8,6 +8,7 @@ export const ORCH_CHANNELS = {
   // Renderer → main
   panesSync: 'orch:panes.sync',
   paneSpawnResult: 'orch:pane.spawnResult',
+  browserOpenResult: 'orch:browser.openResult',
   missionsList: 'orch:missions.list',
   missionPanesList: 'orch:missions.panes',
   missionRebind: 'orch:missions.rebind',
@@ -25,6 +26,7 @@ export const ORCH_CHANNELS = {
   mcpInfo: 'orch:mcp.info',
   catalogIndex: 'orch:catalog.index',
   catalogInstall: 'orch:catalog.install',
+  recipeOverlay: 'orch:recipe.overlay',
   catalogInstalled: 'orch:catalog.installed',
   toolsList: 'orch:tools.list',
   pluginsList: 'orch:plugins.list',
@@ -32,6 +34,7 @@ export const ORCH_CHANNELS = {
 
   // Main → renderer
   paneSpawnRequest: 'orch:pane.spawnRequest',
+  browserOpenRequest: 'orch:browser.openRequest',
   paneCloseRequest: 'orch:pane.closeRequest',
   missionsChanged: 'orch:missions.changed',
   handoffsChanged: 'orch:handoffs.changed',

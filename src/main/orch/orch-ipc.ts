@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { ORCH_CHANNELS } from '../../shared/orch-channels';
 import {
   missionPatchSchema,
+  browserPaneOpenResultSchema,
   orchPaneSpawnResultSchema,
   panesSyncSchema,
   squadSchema,
@@ -26,6 +27,7 @@ import { initTaskStore } from './task-store';
 import {
   initPaneRegistry,
   registerOrchRenderer,
+  resolveBrowserOpen,
   resolvePaneSpawn,
   syncPanes,
   unregisterOrchRenderer,
@@ -33,6 +35,7 @@ import {
 import { initIdleDelivery } from './idle-delivery';
 import { initStallWatchdog, shutdownStallWatchdog } from './stall-watchdog';
 import { stopAllPreviews } from './preview-server';
+import { buildRecipeOverlay } from './recipe-overlay';
 import {
   getMcpRuntimeInfo,
   getToolCatalog,
@@ -113,6 +116,11 @@ export function registerOrchIpc(): void {
   ipcMain.on(ORCH_CHANNELS.paneSpawnResult, (_event, raw) => {
     const parsed = orchPaneSpawnResultSchema.safeParse(raw);
     if (parsed.success) resolvePaneSpawn(parsed.data);
+  });
+
+  ipcMain.on(ORCH_CHANNELS.browserOpenResult, (_event, raw) => {
+    const parsed = browserPaneOpenResultSchema.safeParse(raw);
+    if (parsed.success) resolveBrowserOpen(parsed.data);
   });
 
   ipcMain.handle(ORCH_CHANNELS.missionsList, () => listMissions());
@@ -254,6 +262,14 @@ export function registerOrchIpc(): void {
       return { ok: false, error: 'invalid catalog install request' };
     }
     return installCatalogItem(parsed.data);
+  });
+
+  const recipeOverlaySchema = z.object({
+    workspacePath: z.string().min(1).max(4096).optional(),
+  });
+  ipcMain.handle(ORCH_CHANNELS.recipeOverlay, (_event, raw) => {
+    const parsed = recipeOverlaySchema.safeParse(raw ?? {});
+    return buildRecipeOverlay(parsed.success ? parsed.data.workspacePath : undefined);
   });
 
   ipcMain.handle(ORCH_CHANNELS.catalogInstalled, () =>

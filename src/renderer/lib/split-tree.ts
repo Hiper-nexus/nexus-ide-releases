@@ -1,7 +1,7 @@
 import type {
   LayoutNode,
+  PaneKind,
   PaneModel,
-  SessionKind,
   SplitDirection,
 } from '../../shared/types';
 
@@ -15,13 +15,17 @@ function id(prefix: string): string {
 }
 
 export function createPane(
-  kind: SessionKind = 'shell',
+  kind: PaneKind = 'shell',
   cwd?: string,
   adapterId?: string,
   model?: string,
 ): PaneModel {
   const title =
-    kind === 'cli-agent' && adapterId ? adapterId : kind === 'shell' ? 'shell' : 'agent';
+    kind === 'cli-agent' && adapterId
+      ? adapterId
+      : kind === 'browser'
+        ? 'browser'
+        : 'shell';
   return { id: id('pane'), kind, title, cwd, adapterId, model };
 }
 

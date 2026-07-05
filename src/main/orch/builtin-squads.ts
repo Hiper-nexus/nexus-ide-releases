@@ -11,6 +11,12 @@ import type { Squad, SquadAgent } from '../../shared/orch-types';
 
 const SEED_TS = '1704067200000'; // 2024-01-01, estável
 
+const SPEAK_HUMAN =
+  '\n\n## Comunicação com o usuário\n' +
+  'Fale humano: traduza estado interno em linguagem natural e acionável. ' +
+  'Não leia nomes de tools, JSON, IDs longos, stacks de erro ou jargão de ' +
+  'orquestração quando falar com o usuário; resuma impacto, decisão e próximo passo.';
+
 /**
  * Allowlist mínima e explícita por papel (SEC#5 — antes `null` = irrestrito em
  * todos). O orquestrador é o dono da missão e usa o toolset completo; todo
@@ -99,5 +105,6 @@ const RAW_SQUADS: Squad[] = [
 /** Built-in squads with the per-role tool allowlists applied (SEC#5). */
 export const BUILTIN_SQUADS: Squad[] = RAW_SQUADS.map((squad) => ({
   ...squad,
+  orchestratorInstructions: `${squad.orchestratorInstructions}${SPEAK_HUMAN}`,
   agents: withAllowlists(squad.agents),
 }));

@@ -15,7 +15,10 @@ import { SettingsDrawer } from './components/settings/SettingsDrawer';
 import { LaunchScreen } from './components/LaunchScreen';
 import { HomeDeck } from './components/HomeDeck';
 import { MissionWizard } from './components/MissionWizard';
-import { CloseWorkspaceDialog } from './components/CloseWorkspaceDialog';
+import {
+  CloseWorkspaceDialog,
+  useCloseWorkspaceStore,
+} from './components/CloseWorkspaceDialog';
 import { FilesPanel } from './components/FilesPanel';
 import { useVoiceController } from './voice/voice-controller';
 import { useOrchBridge } from './orch/orch-bridge';
@@ -25,15 +28,20 @@ import { useProviderController } from './state/provider-store';
 import { useMissionWizardStore } from './state/mission-wizard-store';
 import { useHomeStore } from './state/home-store';
 import { reconcileHosts, markResumeOnSpawn } from './terminal/terminal-host';
+import {
+  reconcileBrowserPanes,
+  setBrowserPaneSuppression,
+} from './browser/browser-host';
 import { listPanes } from './lib/split-tree';
 import { useFilesStore } from './state/files-store';
 import { useAccountController } from './state/account-store';
 import { useCostController } from './state/cost-store';
 import { useUsageSync } from './state/usage-store';
-import { useOnboardingSync } from './state/onboarding-store';
+import { useOnboardingStore, useOnboardingSync } from './state/onboarding-store';
 import { Onboarding } from './components/Onboarding';
 import { useFailoverController } from './orch/failover-controller';
 import { Toasts } from './components/Toasts';
+import { useVoiceStore } from './voice/voice-store';
 
 /**
  * App root: hydrates the saved layout on boot and wires global keyboard
@@ -44,6 +52,19 @@ export function App() {
   const viewKind = useLayoutStore((s) => s.viewKind);
   const workspaceHydrated = useWorkspaceStore((s) => s.hydrated);
   const currentWorkspace = useWorkspaceStore((s) => s.current);
+  const settingsDrawerOpen = useSettingsStore((s) => s.drawerOpen);
+  const missionWizardOpen = useMissionWizardStore((s) => s.open);
+  const closeWorkspaceOpen = useCloseWorkspaceStore((s) => s.open);
+  const voiceSettingsOpen = useVoiceStore((s) => s.settingsOpen);
+  const onboardingVisible = useOnboardingStore(
+    (s) => s.loaded && !s.state.completed && !s.state.skipped,
+  );
+  const suppressBrowserPanes =
+    settingsDrawerOpen ||
+    missionWizardOpen ||
+    closeWorkspaceOpen ||
+    voiceSettingsOpen ||
+    onboardingVisible;
 
   useVoiceController();
   useOrchBridge();
@@ -69,6 +90,7 @@ export function App() {
       // Closing the workspace terminates every live pane/session (the user was
       // warned). Disposing all hosts kills their PTYs.
       reconcileHosts(new Set());
+      reconcileBrowserPanes(new Set());
       lastWorkspacePath.current = path;
       return;
     }
@@ -119,6 +141,14 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  useEffect(() => {
+    setBrowserPaneSuppression('modal-overlay', suppressBrowserPanes);
+  }, [suppressBrowserPanes]);
+
+  useEffect(() => {
+    return () => setBrowserPaneSuppression('modal-overlay', false);
   }, []);
 
   if (!workspaceHydrated) {

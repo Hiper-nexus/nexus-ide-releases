@@ -10,6 +10,7 @@ import { CostSummary } from './CostBadge';
 import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
 import type { AdapterInfo } from '../../shared/types';
+import { setBrowserPaneSuppression } from '../browser/browser-host';
 
 /** Botão de view mostra a AÇÃO (para onde vai), não o estado atual —
  *  usuários procuram a palavra "Canvas" para ENTRAR no canvas. */
@@ -23,6 +24,7 @@ export function WorkspaceBar() {
   const viewKind = useLayoutStore((s) => s.viewKind);
   const spawnAgent = useLayoutStore((s) => s.spawnAgent);
   const addShellPane = useLayoutStore((s) => s.addShellPane);
+  const addBrowserPane = useLayoutStore((s) => s.addBrowserPane);
   const toggleView = useLayoutStore((s) => s.toggleView);
   const paneCount = listPanes(root).length;
 
@@ -61,6 +63,11 @@ export function WorkspaceBar() {
       unsub();
     };
   }, []);
+
+  useEffect(() => {
+    setBrowserPaneSuppression('agent-picker', pickerOpen);
+    return () => setBrowserPaneSuppression('agent-picker', false);
+  }, [pickerOpen]);
 
   const installedAdapters = adapters.filter((a) => a.installed);
 
@@ -142,6 +149,13 @@ export function WorkspaceBar() {
           title={`Abrir um terminal shell novo (${paneCount} pane${paneCount === 1 ? '' : 's'} aberto${paneCount === 1 ? '' : 's'} · ⌘D divide o pane focado)`}
         >
           ＋ Terminal
+        </button>
+        <button
+          className="workspace-bar__btn"
+          onClick={() => addBrowserPane()}
+          title="Abrir um browser embutido em um pane novo"
+        >
+          ＋ Browser
         </button>
         <span className="workspace-bar__sep" aria-hidden="true" />
         <button

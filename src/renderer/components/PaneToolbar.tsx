@@ -2,7 +2,12 @@ import { useState } from 'react';
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
-import { respawnWithResume, scrollPaneToBottom } from '../terminal/terminal-host';
+import {
+  hibernateHost,
+  respawnWithResume,
+  scrollPaneToBottom,
+  wakeHost,
+} from '../terminal/terminal-host';
 import { CostBadge } from './CostBadge';
 
 interface Props {
@@ -23,7 +28,9 @@ function StateIndicator({ paneId }: { paneId: string }) {
         ? { dot: '◌', mod: 'busy', label: 'trabalhando' }
         : state === 'exited'
           ? { dot: '✕', mod: 'exited', label: 'encerrado — use ↻ para reabrir' }
-          : { dot: '○', mod: 'spawning', label: 'iniciando' };
+          : state === 'hibernated'
+            ? { dot: '◍', mod: 'hibernated', label: 'dormindo — use ☀ para acordar' }
+            : { dot: '○', mod: 'spawning', label: 'iniciando' };
 
   return (
     <span
@@ -44,6 +51,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const split = useLayoutStore((s) => s.split);
   const close = useLayoutStore((s) => s.close);
   const renameTitle = useLayoutStore((s) => s.renameTitle);
+  const paneState = useSessionStateStore((s) => s.paneStates.get(pane.id));
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(pane.title);
 
@@ -115,17 +123,46 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       {pane.kind === 'cli-agent' && <StateIndicator paneId={pane.id} />}
       {pane.kind === 'cli-agent' && <CostBadge paneId={pane.id} />}
       <div className="toolbar__spacer" />
-      <button
-        className="toolbar__btn nodrag"
-        title="Descer até a última mensagem"
-        aria-label="Descer até a última mensagem"
-        onClick={(e) => {
-          e.stopPropagation();
-          scrollPaneToBottom(pane.id, pane.kind === 'cli-agent');
-        }}
-      >
-        ⤓
-      </button>
+      {pane.kind !== 'browser' && (
+        <button
+          className="toolbar__btn nodrag"
+          title="Descer até a última mensagem"
+          aria-label="Descer até a última mensagem"
+          onClick={(e) => {
+            e.stopPropagation();
+            scrollPaneToBottom(pane.id, pane.kind === 'cli-agent');
+          }}
+        >
+          ⤓
+        </button>
+      )}
+      {pane.kind !== 'browser' && (
+        <button
+          className="toolbar__btn nodrag"
+          title={
+            paneState === 'hibernated'
+              ? 'Acordar este pane e reabrir o processo'
+              : 'Dormir este pane: encerra o processo e preserva o buffer'
+          }
+          aria-label={paneState === 'hibernated' ? 'Acordar pane' : 'Dormir pane'}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (paneState === 'hibernated') {
+              wakeHost(pane);
+            } else if (
+              pane.kind !== 'cli-agent' ||
+              paneState !== 'busy' ||
+              window.confirm(
+                'O agente está trabalhando agora. Dormir o pane encerra o processo atual. Continuar?',
+              )
+            ) {
+              hibernateHost(pane.id);
+            }
+          }}
+        >
+          {paneState === 'hibernated' ? '☀' : '☾'}
+        </button>
+      )}
       {pane.kind === 'cli-agent' && (
         <button
           className="toolbar__btn nodrag"

@@ -205,10 +205,14 @@ export function createMainWindow(): BrowserWindow {
   // Watchdog em DUAS fases. Fase 1 (load): cobre falha sem did-fail-load
   // (conexão pendurada, Vite frio, localhost→IPv4 com servidor só em ::1).
   // Fase 2 (mount): did-finish-load NÃO garante React montado — o grafo de
-  // módulos pode pendurar, ou um crash de boot deixa a janela preta. O renderer
-  // sinaliza renderer:mounted num effect PÓS-commit; se não chegar em 4s,
-  // recarregamos — AGORA também em produção (o packaged carrega do disco, onde
-  // um crash de boot ficava preto sem recuperação). Após MAX, tela de recuperação.
+  // módulos pode pendurar, ou um crash de boot deixa a janela preta. O antigo
+  // prazo único de 4s recarregava a janela enquanto o React ainda estava
+  // CARREGANDO (Vite frio transformando o grafo, máquina ocupada): a tela
+  // pintava e era recarregada em seguida, em loop — o bug das "várias
+  // piscadas" na tela inicial/onboarding. Agora a fase 2 faz polling: #root
+  // com conteúdo conta como montado mesmo que o sinal IPC se perca, e o
+  // reload só acontece se o root continuar VAZIO por ~20s (janela morta de
+  // verdade). Após MAX, tela de recuperação.
   const watchdog = setInterval(() => {
     if (win.isDestroyed()) {
       clearInterval(watchdog);
@@ -219,24 +223,58 @@ export function createMainWindow(): BrowserWindow {
       load();
     }
   }, 3_000);
+  const MOUNT_POLL_MS = 2_000;
+  const MOUNT_EMPTY_CHECKS = 10; // ~20s de root vazio antes de recarregar
+  let mountPoll: NodeJS.Timeout | null = null;
   wc.on('did-finish-load', () => {
     finished = true;
     loadRetries = 0;
     clearInterval(watchdog);
     console.log('[window] renderer carregado');
-    setTimeout(function checkMount() {
-      if (win.isDestroyed() || mounted) return;
-      if (mountReloads >= MAX_MOUNT_RELOADS) {
-        showRecoveryScreen(wc);
+    if (mountPoll) clearInterval(mountPoll);
+    let emptyChecks = 0;
+    const poll = setInterval(() => {
+      if (win.isDestroyed() || mounted) {
+        clearInterval(poll);
         return;
       }
-      mountReloads += 1;
-      console.warn(`[window] página carregou mas o app não montou — reload ${mountReloads}`);
-      wc.reload();
-    }, 4_000);
+      wc.executeJavaScript(
+        '!!document.getElementById("root")?.childElementCount',
+      )
+        .then((hasContent) => {
+          // Resposta atrasada de um load anterior não decide pelo atual.
+          if (win.isDestroyed() || mounted || mountPoll !== poll) return;
+          if (hasContent) {
+            mounted = true;
+            clearInterval(poll);
+            return;
+          }
+          emptyChecks += 1;
+          if (emptyChecks < MOUNT_EMPTY_CHECKS) return;
+          clearInterval(poll);
+          if (mountReloads >= MAX_MOUNT_RELOADS) {
+            showRecoveryScreen(wc);
+            return;
+          }
+          mountReloads += 1;
+          console.warn(
+            `[window] root vazio após ${(MOUNT_POLL_MS * MOUNT_EMPTY_CHECKS) / 1000}s — reload ${mountReloads}`,
+          );
+          wc.reload();
+        })
+        .catch(() => {
+          // Página em transição (navegação/reload em curso) — a próxima
+          // checagem decide.
+        });
+    }, MOUNT_POLL_MS);
+    mountPoll = poll;
   });
   wc.on('did-start-loading', () => {
     mounted = false;
+    if (mountPoll) {
+      clearInterval(mountPoll);
+      mountPoll = null;
+    }
   });
   load();
 

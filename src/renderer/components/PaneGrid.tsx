@@ -4,6 +4,7 @@ import type { LayoutNode } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { listPanes } from '../lib/split-tree';
 import { reconcileHosts } from '../terminal/terminal-host';
+import { reconcileBrowserPanes } from '../browser/browser-host';
 import { PaneLeaf } from './PaneLeaf';
 
 /**
@@ -40,6 +41,7 @@ export function PaneGrid() {
   useEffect(() => {
     const liveIds = new Set(listPanes(root).map((p) => p.id));
     reconcileHosts(liveIds);
+    reconcileBrowserPanes(liveIds);
   }, [root]);
 
   return <div className="grid">{renderNode(root)}</div>;

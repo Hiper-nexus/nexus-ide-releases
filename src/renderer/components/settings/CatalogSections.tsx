@@ -3,8 +3,10 @@ import type {
   AdapterInfo,
   InstalledItemInfo,
   NativeToolInfo,
+  RecipeOverlayResult,
 } from '../../../shared/types';
 import { useOrchStore } from '../../state/orch-store';
+import { useWorkspaceStore } from '../../state/workspace-store';
 
 /**
  * CATALOG sections: locally installed components (agents/skills), the
@@ -255,12 +257,109 @@ export function RulesSection() {
   );
 }
 
+export function RecipesSection() {
+  const workspace = useWorkspaceStore((s) => s.current);
+  const squads = useOrchStore((s) => s.squads);
+  const [overlay, setOverlay] = useState<RecipeOverlayResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void window.nexus.orch
+      .getRecipeOverlay(workspace?.path)
+      .then((result) => {
+        if (!cancelled) setOverlay(result);
+      })
+      .catch(() => {
+        if (!cancelled) setOverlay(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace?.path, squads, refreshTick]);
+
+  const issues = overlay?.issues ?? [];
+  const categories = Object.entries(overlay?.categories ?? {}).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+
+  return (
+    <section>
+      <h3 className="settings-detail__title">Recipes</h3>
+      <p className="settings-detail__hint">
+        Lint de squads/recipes contra catálogo local. Referências inexistentes
+        precisam de gap explícito no formato <code>gap:nome: motivo</code>.
+      </p>
+
+      <div className="settings-pill-row">
+        <button
+          className="settings-btn"
+          onClick={() => setRefreshTick((tick) => tick + 1)}
+          disabled={loading}
+        >
+          {loading ? 'Atualizando…' : 'Atualizar lint'}
+        </button>
+        {(overlay?.stacks.length ? overlay.stacks : ['workspace']).map((stack) => (
+          <span key={stack} className="settings-chip">
+            {stack}
+          </span>
+        ))}
+        <span className={`settings-chip ${overlay?.ok ? 'settings-chip--ok' : 'settings-chip--warn'}`}>
+          {overlay?.ok ? 'lint ok' : `${issues.length} issue(s)`}
+        </span>
+      </div>
+
+      {categories.length > 0 && (
+        <ul className="settings-list settings-list--compact">
+          {categories.map(([category, count]) => (
+            <li key={category} className="settings-list__item">
+              <div className="settings-list__head">
+                <span className="settings-list__title">{category}</span>
+                <span className="settings-chip">{count}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {issues.length === 0 ? (
+        <p className="settings-detail__hint">
+          Nenhum problema encontrado em allowedTools/allowedSkills.
+        </p>
+      ) : (
+        <ul className="settings-list">
+          {issues.map((issue, index) => (
+            <li key={`${issue.squadId}-${issue.agentId}-${issue.ref}-${index}`} className="settings-list__item">
+              <div className="settings-list__head">
+                <span className="settings-list__title">
+                  {issue.agentName ?? issue.squadName}
+                </span>
+                <span className="settings-chip settings-chip--warn">{issue.field}</span>
+              </div>
+              <p className="settings-list__detail">{issue.message}</p>
+              <p className="settings-list__detail">
+                {issue.squadName} · {issue.ref}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 const SHORTCUTS: Array<{ keys: string; action: string }> = [
   { keys: '⌘D', action: 'Split à direita' },
   { keys: '⌘⇧D', action: 'Split abaixo' },
   { keys: '⌘W', action: 'Fechar pane focado' },
   { keys: 'clique', action: 'Focar pane' },
   { keys: '⬡ Canvas', action: 'Alternar grid ↔ canvas (barra)' },
+  { keys: '☾ / ☀', action: 'Dormir/acordar pane' },
   { keys: 'Space (segurar)', action: 'Push-to-talk de voz (configurável)' },
 ];
 

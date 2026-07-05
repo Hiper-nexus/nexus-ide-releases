@@ -150,8 +150,37 @@ export function MissionWizard() {
     setRosterSaved(false);
   }
 
+  function specValue(list: string[] | null | undefined): string {
+    if (list == null) return '*';
+    return list.join(', ');
+  }
+
+  function parseSpecList(value: string, allowUnrestricted: boolean): string[] | null {
+    const clean = value.trim();
+    if (clean === '*') return allowUnrestricted ? null : [];
+    if (!clean) return [];
+    return clean
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function validateWorkerToolScopes(agents: SquadAgent[]): boolean {
+    const unsafe = agents.find(
+      (agent) => agent.category !== 'orchestrator' && agent.allowedTools == null,
+    );
+    if (!unsafe) return true;
+    const message =
+      `Worker ${unsafe.agentName} não pode usar tools irrestritas. ` +
+      'Preencha tools explícitas ou deixe vazio para bloquear todas.';
+    setError(message);
+    useToastStore.getState().push('error', 'Allowlist insegura', message);
+    return false;
+  }
+
   async function saveRoster() {
     if (!selectedSquad) return;
+    if (!validateWorkerToolScopes(roster)) return;
     const res = await window.nexus.orch.saveSquad({
       ...selectedSquad,
       agents: roster,
@@ -235,11 +264,12 @@ export function MissionWizard() {
     setSpawning(true);
     setError(null);
     try {
+      const effectiveSquad: Squad = { ...selectedSquad, agents: roster };
+      if (!validateWorkerToolScopes(effectiveSquad.agents)) return;
       if (!(await ensureWorkspaceOpen())) return;
       // Launch with the EDITED roster (the user may have changed the
       // orchestrator's CLI/model in the review step). Pass ALL adapters so the
       // orchestrator pane always opens (install hint shows in-pane if needed).
-      const effectiveSquad: Squad = { ...selectedSquad, agents: roster };
       const result = launchSquadMission(effectiveSquad, adapters);
       if (!result.ok) {
         setError(result.error ?? 'Falha ao iniciar o squad.');
@@ -517,8 +547,9 @@ export function MissionWizard() {
                 </button>
               </div>
               <p className="wizard__hint-sm">
-                Edite a LLM de cada agente. As mudanças valem para esta missão;
-                salve para persistir no squad.
+                Edite CLI, modelo, effort e allowlists. Use * para irrestrito
+                só no orquestrador; workers precisam de tools explícitas ou
+                vazio. Gaps explícitos seguem o formato gap:nome: motivo.
               </p>
               <p className="wizard__hint-sm">
                 🧭 O <strong>orquestrador roda no Claude</strong> — é o único CLI
@@ -595,6 +626,42 @@ export function MissionWizard() {
                         <option value="xhigh">xhigh</option>
                         <option value="max">max</option>
                       </select>
+                      <div className="wizard__agent-spec">
+                        <label className="wizard__agent-spec-label">
+                          tools
+                          <input
+                            className="wizard__agent-spec-input"
+                            value={specValue(a.allowedTools)}
+                            spellCheck={false}
+                            onChange={(e) => {
+                              if (!isOrchestrator && e.target.value.trim() === '*') {
+                                setError(
+                                  'Workers não podem usar * em tools; deixe vazio ou liste tools explícitas.',
+                                );
+                              }
+                              updateAgent(a.id, {
+                                allowedTools: parseSpecList(
+                                  e.target.value,
+                                  isOrchestrator,
+                                ),
+                              });
+                            }}
+                          />
+                        </label>
+                        <label className="wizard__agent-spec-label">
+                          skills
+                          <input
+                            className="wizard__agent-spec-input"
+                            value={specValue(a.allowedSkills)}
+                            spellCheck={false}
+                            onChange={(e) =>
+                              updateAgent(a.id, {
+                                allowedSkills: parseSpecList(e.target.value, true),
+                              })
+                            }
+                          />
+                        </label>
+                      </div>
                     </li>
                   );
                 })}

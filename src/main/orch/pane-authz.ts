@@ -29,7 +29,7 @@ export interface CallerCtx {
 export interface PaneAuthzInfo {
   paneId: string;
   sessionId: string | null;
-  kind: 'shell' | 'cli-agent';
+  kind: 'shell' | 'cli-agent' | 'browser';
   missionId?: string;
   role?: 'orchestrator' | 'worker';
 }
@@ -53,11 +53,12 @@ export function authorizePaneAccess(
   // The user's directly-opened agents act on the user's behalf.
   if (caller.role === 'user') return { allow: true };
 
-  // A worker must never reach the user's shell — read (secret capture) or write.
-  if (caller.role === 'worker' && pane.kind === 'shell') {
+  // A worker must never reach the user's shell/browser — read (secret capture)
+  // or write/navigate.
+  if (caller.role === 'worker' && (pane.kind === 'shell' || pane.kind === 'browser')) {
     return {
       allow: false,
-      reason: 'workers cannot access shell panes (user terminal)',
+      reason: 'workers cannot access shell/browser panes (user surface)',
     };
   }
 

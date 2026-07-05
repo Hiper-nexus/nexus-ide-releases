@@ -2,12 +2,14 @@ import { useEffect } from 'react';
 import type { PaneRegistryEntry } from '../../shared/orch-types';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
+import { useSessionStateStore } from '../state/session-state-store';
 import { listPanes } from '../lib/split-tree';
 import {
   getPaneSessionId,
   onPaneSessionChange,
   waitForSession,
 } from '../terminal/terminal-host';
+import { waitForBrowserPaneCreated } from '../browser/browser-host';
 
 /**
  * Renderer half of the orchestration bridge:
@@ -20,6 +22,7 @@ import {
 
 function snapshotPanes(): PaneRegistryEntry[] {
   const { root } = useLayoutStore.getState();
+  const paneStates = useSessionStateStore.getState().paneStates;
   return listPanes(root).map((pane) => ({
     paneId: pane.id,
     sessionId: getPaneSessionId(pane.id),
@@ -27,6 +30,7 @@ function snapshotPanes(): PaneRegistryEntry[] {
     kind: pane.kind,
     adapterId: pane.adapterId,
     model: pane.model,
+    state: paneStates.get(pane.id),
   }));
 }
 
@@ -70,6 +74,32 @@ export function useOrchBridge(): void {
             });
           } catch (err) {
             window.nexus.orch.sendPaneSpawnResult({
+              requestId: req.requestId,
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        })();
+      }),
+
+      window.nexus.orch.onBrowserOpenRequest((req) => {
+        void (async () => {
+          let paneId: string | null = null;
+          try {
+            paneId = useLayoutStore.getState().addBrowserPane(req.url);
+            await waitForBrowserPaneCreated(paneId);
+            window.nexus.orch.syncPanes(snapshotPanes());
+            window.nexus.orch.sendBrowserOpenResult({
+              requestId: req.requestId,
+              ok: true,
+              paneId,
+            });
+          } catch (err) {
+            if (paneId) {
+              useLayoutStore.getState().close(paneId);
+              window.nexus.orch.syncPanes(snapshotPanes());
+            }
+            window.nexus.orch.sendBrowserOpenResult({
               requestId: req.requestId,
               ok: false,
               error: err instanceof Error ? err.message : String(err),

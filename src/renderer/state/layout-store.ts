@@ -40,6 +40,8 @@ interface LayoutState {
   setPanes(panes: PaneModel[]): void;
   /** Add a fresh shell terminal pane (＋ Terminal) alongside the others. */
   addShellPane(): void;
+  /** Add an embedded browser pane. */
+  addBrowserPane(url?: string): string;
   /**
    * Orchestration-requested agent pane (MCP pane_spawn). Returns the new
    * paneId; the orchRequestId rides along into the PTY spawn so the main
@@ -60,6 +62,7 @@ interface LayoutState {
   setTitle(paneId: string, title: string): void;
   /** User rename — pins the title so shell escapes stop overriding it. */
   renameTitle(paneId: string, title: string): void;
+  setBrowserUrl(paneId: string, url: string): void;
   hydrate(layout: WorkspaceLayout | null): void;
   toggleView(): void;
   updateCanvasNodeLayout(paneId: string, patch: Partial<CanvasNodeLayout>): void;
@@ -299,6 +302,28 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     if (next === null) useHomeStore.getState().show();
   },
 
+  addBrowserPane: (url) => {
+    const { root: currentRoot, focusedPaneId, viewKind, canvasNodeLayouts } = get();
+    const newPane: PaneModel = {
+      ...createPane('browser', getActiveWorkspacePath() ?? undefined),
+      title: 'browser',
+      browserUrl: url,
+    };
+    const pivot = focusedPaneId ?? firstPaneId(currentRoot);
+    const root = pivot
+      ? splitPane(currentRoot, pivot, 'row', newPane)
+      : buildGridTree([newPane]);
+    const paneCount = listPanes(root).length;
+    const updatedLayouts =
+      viewKind === 'canvas'
+        ? { ...canvasNodeLayouts, [newPane.id]: defaultCanvasLayout(paneCount - 1) }
+        : canvasNodeLayouts;
+    bumpTreeVersion();
+    set({ root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
+    persist({ ...get(), root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
+    return newPane.id;
+  },
+
   focus: (paneId) => {
     if (get().focusedPaneId === paneId) return;
     set({ focusedPaneId: paneId });
@@ -323,6 +348,12 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       title: clean,
       titlePinned: true,
     });
+    set({ root });
+    persist({ ...get(), root });
+  },
+
+  setBrowserUrl: (paneId, url) => {
+    const root = updatePane(get().root, paneId, { browserUrl: url });
     set({ root });
     persist({ ...get(), root });
   },

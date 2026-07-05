@@ -612,3 +612,7 @@ export function orchKillSession(sessionId: string): boolean {
 export function getSessionState(sessionId: string): PaneSessionState | null {
   return sessions.get(sessionId)?.state ?? null;
 }
+
+export function getLiveSessionCount(): number {
+  return sessions.size;
+}

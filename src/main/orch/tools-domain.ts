@@ -28,9 +28,13 @@ import {
 import { createTask, listTasks, updateTask } from './task-store';
 import { installCatalogItem } from './catalog';
 import { startPreview, stopPreview, listPreviews } from './preview-server';
+import { requestBrowserPane } from './pane-registry';
+import { loadBrowser } from '../browser/browser-manager';
+import { collectPerfSnapshot } from '../perf/perf-ipc';
 import { onHandoffSubmitted } from './idle-delivery';
 import { paneSpawnTool } from './tools-panes';
 import {
+  authorizePaneRef,
   num,
   requireStr,
   spawnPaneAndMaybePrompt,
@@ -146,6 +150,7 @@ const agentInvokeTool: McpToolDef = {
     const found = findAgent(requireStr(args, 'agent'));
     if (!found) throw new Error('agent not found');
     const { agent } = found;
+    const role = agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
     const { paneId, sessionId } = await spawnPaneAndMaybePrompt({
       adapterId: agent.cli,
       model: agent.model,
@@ -153,9 +158,9 @@ const agentInvokeTool: McpToolDef = {
       title: agent.agentName,
       missionId: ctx.missionId,
       agentName: agent.agentName,
-      allowedTools: agent.allowedTools ?? null,
+      allowedTools: agent.allowedTools ?? (role === 'orchestrator' ? null : []),
       allowedSkills: agent.allowedSkills ?? null,
-      role: 'worker',
+      role,
       prompt: requireStr(args, 'prompt'),
     });
     const state = await waitForIdle(
@@ -556,6 +561,66 @@ const previewStopTool: McpToolDef = {
   },
 };
 
+const browserOpenTool: McpToolDef = {
+  name: 'nexus_browser_open',
+  description:
+    'Open an embedded browser pane at a URL. Use with nexus_preview_start URLs ' +
+    'for in-app previews.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      url: { type: 'string' },
+      title: { type: 'string' },
+    },
+    required: ['url'],
+  },
+  handler: async (args, ctx) => {
+    if (ctx.role === 'worker') {
+      throw new Error('not authorized: workers cannot open browser panes');
+    }
+    const result = await requestBrowserPane({
+      url: requireStr(args, 'url'),
+      title: str(args, 'title'),
+      missionId: ctx.missionId,
+      agentName: ctx.agentName ?? ctx.label,
+      ...(ctx.role === 'orchestrator' ? { role: 'orchestrator' as const } : {}),
+    });
+    if (!result.ok || !result.paneId) {
+      throw new Error(result.error ?? 'browser open failed');
+    }
+    return { ok: true, paneId: result.paneId };
+  },
+};
+
+const browserNavigateTool: McpToolDef = {
+  name: 'nexus_browser_navigate',
+  description:
+    'Navigate an existing embedded browser pane to a new URL. The paneId must ' +
+    'come from nexus_browser_open or nexus_pane_list.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paneId: { type: 'string' },
+      url: { type: 'string' },
+    },
+    required: ['paneId', 'url'],
+  },
+  handler: async (args, ctx) => {
+    const paneId = requireStr(args, 'paneId');
+    authorizePaneRef(ctx, paneId, 'write');
+    return loadBrowser(paneId, requireStr(args, 'url'));
+  },
+};
+
+const perfSnapshotTool: McpToolDef = {
+  name: 'nexus_perf_snapshot',
+  description:
+    'Return a performance snapshot: process memory, Electron app metrics, live ' +
+    'PTY session count and browser view count.',
+  inputSchema: { type: 'object', properties: {} },
+  handler: async () => collectPerfSnapshot(),
+};
+
 export function buildDomainTools(): McpToolDef[] {
   return [
     routeTaskTool,
@@ -575,5 +640,8 @@ export function buildDomainTools(): McpToolDef[] {
     todoManagerTool,
     previewStartTool,
     previewStopTool,
+    browserOpenTool,
+    browserNavigateTool,
+    perfSnapshotTool,
   ];
 }

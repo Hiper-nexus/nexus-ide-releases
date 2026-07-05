@@ -18,6 +18,8 @@ import type {
 } from './voice-ipc';
 import type {
   Handoff,
+  BrowserPaneOpenRequest,
+  BrowserPaneOpenResult,
   McpRuntimeInfo,
   Mission,
   MissionPaneSpec,
@@ -94,10 +96,81 @@ export interface NativeToolInfo {
   description: string;
 }
 
+export interface BrowserPaneBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  visible?: boolean;
+}
+
+export interface BrowserPaneState {
+  paneId: string;
+  url: string;
+  title: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  loading: boolean;
+  error?: string;
+}
+
+export interface PerfSnapshot {
+  capturedAt: number;
+  process: {
+    pid: number;
+    platform: NodeJS.Platform;
+    arch: string;
+    uptimeSec: number;
+    rssBytes: number;
+    heapUsedBytes: number;
+    heapTotalBytes: number;
+    externalBytes: number;
+  };
+  appMetrics: Array<{
+    pid: number;
+    type: string;
+    memory: {
+      workingSetSize: number;
+      peakWorkingSetSize: number;
+      privateBytes: number;
+      sharedBytes: number;
+    };
+    cpu: {
+      percentCPUUsage: number;
+      idleWakeupsPerSecond: number;
+    };
+  }>;
+  panes: {
+    livePtySessions: number;
+    browserViews: number;
+  };
+}
+
+export interface RecipeLintIssue {
+  severity: 'error' | 'warning';
+  squadId: string;
+  squadName: string;
+  agentId?: string;
+  agentName?: string;
+  field: 'allowedTools' | 'allowedSkills';
+  ref: string;
+  message: string;
+}
+
+export interface RecipeOverlayResult {
+  ok: boolean;
+  checkedAt: number;
+  stacks: string[];
+  categories: Record<string, number>;
+  issues: RecipeLintIssue[];
+}
+
 /**
  * The kind of process backing a pane. `shell` uses the user's default shell;
- * `cli-agent` spawns an AI CLI via a declarative adapter JSON.
+ * `cli-agent` spawns an AI CLI via a declarative adapter JSON; `browser`
+ * is a main-process WebContentsView, never a PTY session.
  */
+export type PaneKind = 'shell' | 'cli-agent' | 'browser';
 export type SessionKind = 'shell' | 'cli-agent';
 
 export type SplitDirection = 'row' | 'column';
@@ -105,9 +178,11 @@ export type SplitDirection = 'row' | 'column';
 /** A single terminal pane (a leaf in the layout tree). */
 export interface PaneModel {
   id: string;
-  kind: SessionKind;
+  kind: PaneKind;
   title: string;
   cwd?: string;
+  /** Initial/current URL for browser panes. */
+  browserUrl?: string;
   /** Set for cli-agent panes — identifies which adapter backs this pane. */
   adapterId?: string;
   /** The model selected for this agent pane (e.g. "claude-sonnet-4-5"). */
@@ -207,9 +282,14 @@ export interface PtyExitEvent {
   signal?: number;
 }
 
-// 'exited' é setado só pelo renderer (evento pty:exit) — o agente morreu e o
+// 'exited'/'hibernated' são setados pelo renderer — o agente morreu/dormiu e o
 // usuário precisa VER isso no toolbar, não descobrir pelo terminal mudo.
-export type PaneSessionState = 'spawning' | 'busy' | 'idle' | 'exited';
+export type PaneSessionState =
+  | 'spawning'
+  | 'busy'
+  | 'idle'
+  | 'exited'
+  | 'hibernated';
 
 export interface PtyStateChangeEvent {
   sessionId: string;
@@ -251,6 +331,17 @@ export interface NexusApi {
       cb: (state: PaneSessionState) => void,
     ): Unsubscribe;
   };
+  browser: {
+    create(paneId: string, url?: string): Promise<BrowserPaneState>;
+    destroy(paneId: string): void;
+    setBounds(paneId: string, bounds: BrowserPaneBounds): void;
+    load(paneId: string, url: string): Promise<BrowserPaneState>;
+    back(paneId: string): Promise<BrowserPaneState>;
+    forward(paneId: string): Promise<BrowserPaneState>;
+    reload(paneId: string): Promise<BrowserPaneState>;
+    stop(paneId: string): Promise<BrowserPaneState>;
+    onState(cb: (state: BrowserPaneState) => void): Unsubscribe;
+  };
   layout: {
     /** Layouts are keyed per workspace folder. */
     save(workspacePath: string, layout: WorkspaceLayout): Promise<{ ok: boolean }>;
@@ -287,6 +378,8 @@ export interface NexusApi {
     syncPanes(entries: PaneRegistryEntry[]): void;
     sendPaneSpawnResult(result: OrchPaneSpawnResult): void;
     onPaneSpawnRequest(cb: (req: OrchPaneSpawnRequest) => void): Unsubscribe;
+    sendBrowserOpenResult(result: BrowserPaneOpenResult): void;
+    onBrowserOpenRequest(cb: (req: BrowserPaneOpenRequest) => void): Unsubscribe;
     onPaneCloseRequest(cb: (paneId: string) => void): Unsubscribe;
     listMissions(): Promise<Mission[]>;
     /** Recorded pane composition of a mission (for 1-click reopen). */
@@ -319,6 +412,7 @@ export interface NexusApi {
       kind: 'agent' | 'skill';
       slug: string;
     }): Promise<CatalogInstallResult>;
+    getRecipeOverlay(workspacePath?: string): Promise<RecipeOverlayResult>;
     listInstalledCatalog(): Promise<InstalledItemInfo[]>;
     listNativeTools(): Promise<NativeToolInfo[]>;
     listPluginFiles(): Promise<InstalledItemInfo[]>;
@@ -382,6 +476,9 @@ export interface NexusApi {
   usage: {
     snapshot(): Promise<UsageSnapshot>;
     onChanged(cb: (snapshot: UsageSnapshot) => void): Unsubscribe;
+  };
+  perf: {
+    snapshot(): Promise<PerfSnapshot>;
   };
   notes: NotesApi;
   pipes: PipeApi;

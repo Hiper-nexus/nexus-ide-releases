@@ -46,6 +46,23 @@ describe('authorizePaneAccess', () => {
     expect(decision.reason).toMatch(/shell/);
   });
 
+  it("blocks a worker from the user's browser pane", () => {
+    const browser = pane({ sessionId: null, kind: 'browser', missionId: undefined, role: undefined });
+    const decision = authorizePaneAccess(worker, browser, 'write');
+    expect(decision.allow).toBe(false);
+    expect(decision.reason).toMatch(/browser/);
+  });
+
+  it('blocks cross-mission browser navigation', () => {
+    const browser = pane({ sessionId: null, kind: 'browser', missionId: 'm2', role: undefined });
+    expect(authorizePaneAccess(orchestrator, browser, 'write').allow).toBe(false);
+  });
+
+  it('lets the orchestrator navigate browser panes in its own mission', () => {
+    const browser = pane({ sessionId: null, kind: 'browser', missionId: 'm1', role: undefined });
+    expect(authorizePaneAccess(orchestrator, browser, 'write').allow).toBe(true);
+  });
+
   it('lets a worker observe but not drive the orchestrator pane', () => {
     const orch = pane({ sessionId: 'o', role: 'orchestrator', missionId: 'm1' });
     expect(authorizePaneAccess(worker, orch, 'read').allow).toBe(true);

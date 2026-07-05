@@ -297,6 +297,9 @@ body {
 .toolbar__state--exited {
   color: #ef5350;
 }
+.toolbar__state--hibernated {
+  color: #5fc6d7;
+}
 @keyframes state-breathe {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
@@ -363,6 +366,77 @@ body {
   min-height: 0;
   position: relative;
   padding: 4px 6px 2px;
+}
+
+.browser-bar {
+  height: 34px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-bar) 72%, var(--bg) 28%);
+}
+
+.browser-bar__btn {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.browser-bar__btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.browser-bar__btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.browser-bar__url {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 0 8px;
+  outline: none;
+}
+
+.browser-bar__url:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+
+.browser-pane__surface {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  background: #ffffff;
+}
+
+.browser-pane__error {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(247, 118, 142, 0.25);
+  color: #ff9aa8;
+  background: rgba(247, 118, 142, 0.10);
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 /* The persistent xterm host node re-parented into each pane slot. */
@@ -1812,6 +1886,12 @@ body {
   gap: 6px;
 }
 
+.settings-list--compact {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  margin: 10px 0;
+}
+
 .settings-list__item {
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1867,6 +1947,13 @@ body {
 .settings-chip--warn {
   color: #e5c07b;
   border-color: rgba(229, 192, 123, 0.55);
+}
+
+.settings-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0;
 }
 
 /* ---- Launch / onboarding screen ---- */
@@ -3123,9 +3210,42 @@ body {
   cursor: default;
   white-space: nowrap;
 }
+.wizard__agent-spec {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.wizard__agent-spec-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.wizard__agent-spec-input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 5px 6px;
+  outline: none;
+}
+.wizard__agent-spec-input:focus {
+  border-color: var(--accent);
+}
 @media (max-width: 620px) {
   .wizard__roster-row {
     grid-template-columns: 1fr 1fr;
+  }
+  .wizard__agent-spec {
+    grid-template-columns: 1fr;
   }
 }
 

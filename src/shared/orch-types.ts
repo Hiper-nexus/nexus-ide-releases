@@ -175,19 +175,28 @@ export interface MissionPaneSpec {
   createdAt: number;
 }
 
+export type PaneRuntimeState =
+  | 'spawning'
+  | 'busy'
+  | 'idle'
+  | 'exited'
+  | 'hibernated'
+  | 'unknown';
+
 /** One pane as mirrored into the main-process registry by the renderer. */
 export interface PaneRegistryEntry {
   paneId: string;
   sessionId: string | null;
   title: string;
-  kind: 'shell' | 'cli-agent';
+  kind: 'shell' | 'cli-agent' | 'browser';
   adapterId?: string;
   model?: string;
+  state?: PaneRuntimeState;
 }
 
 /** Pane snapshot returned by nexus_pane_list (registry + live state). */
 export interface PaneSnapshot extends PaneRegistryEntry {
-  state: 'spawning' | 'busy' | 'idle' | 'exited' | 'unknown';
+  state: PaneRuntimeState;
   missionId?: string;
   agentName?: string;
 }
@@ -217,13 +226,31 @@ export const orchPaneSpawnResultSchema = z.object({
 });
 export type OrchPaneSpawnResult = z.infer<typeof orchPaneSpawnResultSchema>;
 
+/** Main → renderer: open a browser pane in the user's layout. */
+export interface BrowserPaneOpenRequest {
+  requestId: string;
+  url: string;
+  title?: string;
+}
+
+export const browserPaneOpenResultSchema = z.object({
+  requestId: z.string().min(1).max(128),
+  ok: z.boolean(),
+  paneId: z.string().max(128).optional(),
+  error: z.string().max(1024).optional(),
+});
+export type BrowserPaneOpenResult = z.infer<typeof browserPaneOpenResultSchema>;
+
 export const paneRegistryEntrySchema = z.object({
   paneId: z.string().min(1).max(128),
   sessionId: z.string().max(128).nullable(),
   title: z.string().max(512),
-  kind: z.enum(['shell', 'cli-agent']),
+  kind: z.enum(['shell', 'cli-agent', 'browser']),
   adapterId: z.string().max(64).optional(),
   model: z.string().max(128).optional(),
+  state: z
+    .enum(['spawning', 'busy', 'idle', 'exited', 'hibernated', 'unknown'])
+    .optional(),
 });
 
 export const panesSyncSchema = z.array(paneRegistryEntrySchema).max(256);

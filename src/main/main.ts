@@ -25,6 +25,11 @@ if (!app.isPackaged && remoteDebug) {
   );
 }
 import { registerPtyIpc } from './pty/pty-ipc';
+import {
+  registerBrowserIpc,
+  destroyBrowsersFor,
+} from './browser/browser-manager';
+import { registerPerfIpc } from './perf/perf-ipc';
 import { registerLayoutIpc } from './persistence/layout-ipc';
 import { registerAdapterIpc } from './adapters/adapter-ipc';
 import { registerVoiceIpc, closeVoiceIpc } from './voice/voice-ipc';
@@ -102,6 +107,8 @@ function bootstrap(): void {
   resolveUserPath();
   initAdapterRegistry();
   registerPtyIpc();
+  registerBrowserIpc();
+  registerPerfIpc();
   registerLayoutIpc();
   registerAdapterIpc();
   registerVoiceIpc();
@@ -161,6 +168,7 @@ app.on('browser-window-created', (_event, win) => {
     unregisterCostListener(wc);
     unregisterNotesListener(wc);
     unregisterPipeListener(wc);
+    destroyBrowsersFor(wc);
   });
 });
 

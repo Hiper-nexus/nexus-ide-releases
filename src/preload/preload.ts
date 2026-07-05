@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import {
   PTY_CHANNELS,
+  BROWSER_CHANNELS,
+  PERF_CHANNELS,
   LAYOUT_CHANNELS,
   ADAPTER_CHANNELS,
   WINDOW_CHANNELS,
@@ -30,6 +32,7 @@ import { ONBOARDING_CHANNELS } from '../shared/onboarding-types';
 import type { OnboardingPatch } from '../shared/onboarding-types';
 import type {
   NexusApi,
+  BrowserPaneState,
   SpawnRequest,
   SpawnResult,
   WorkspaceLayout,
@@ -42,6 +45,7 @@ import type {
 import type { VoiceRuntimeInfo } from '../shared/voice-ipc';
 import type {
   Handoff,
+  BrowserPaneOpenRequest,
   Mission,
   MissionPatch,
   OrchPaneSpawnRequest,
@@ -64,6 +68,7 @@ type AdapterChangedCb = (adapters: AdapterInfo[]) => void;
 const dataSubs = new Map<string, Set<DataCb>>();
 const exitSubs = new Map<string, Set<ExitCb>>();
 const stateSubs = new Map<string, Set<StateCb>>();
+const browserStateListeners = new Set<(state: BrowserPaneState) => void>();
 
 ipcRenderer.on(PTY_CHANNELS.data, (_event, payload: PtyDataEvent) => {
   dataSubs.get(payload.sessionId)?.forEach((cb) => cb(payload.data));
@@ -77,6 +82,10 @@ ipcRenderer.on(PTY_CHANNELS.exit, (_event, payload: PtyExitEvent) => {
 
 ipcRenderer.on(PTY_CHANNELS.stateChange, (_event, payload: PtyStateChangeEvent) => {
   stateSubs.get(payload.sessionId)?.forEach((cb) => cb(payload.state));
+});
+
+ipcRenderer.on(BROWSER_CHANNELS.state, (_event, payload: BrowserPaneState) => {
+  browserStateListeners.forEach((cb) => cb(payload));
 });
 
 function subscribe<T>(
@@ -137,6 +146,7 @@ function addListener<T>(set: Set<T>, cb: T): () => void {
 
 // Orchestration event fan-out (same pattern as voice above).
 const paneSpawnRequestListeners = new Set<(req: OrchPaneSpawnRequest) => void>();
+const browserOpenRequestListeners = new Set<(req: BrowserPaneOpenRequest) => void>();
 const paneCloseRequestListeners = new Set<(paneId: string) => void>();
 const missionsChangedListeners = new Set<(missions: Mission[]) => void>();
 const handoffsChangedListeners = new Set<(handoffs: Handoff[]) => void>();
@@ -145,6 +155,9 @@ const squadsChangedListeners = new Set<(squads: Squad[]) => void>();
 
 ipcRenderer.on(ORCH_CHANNELS.paneSpawnRequest, (_e, req: OrchPaneSpawnRequest) =>
   paneSpawnRequestListeners.forEach((cb) => cb(req)),
+);
+ipcRenderer.on(ORCH_CHANNELS.browserOpenRequest, (_e, req: BrowserPaneOpenRequest) =>
+  browserOpenRequestListeners.forEach((cb) => cb(req)),
 );
 ipcRenderer.on(ORCH_CHANNELS.paneCloseRequest, (_e, paneId: string) =>
   paneCloseRequestListeners.forEach((cb) => cb(paneId)),
@@ -221,6 +234,23 @@ const api: NexusApi = {
     onExit: (sessionId, cb) => subscribe(exitSubs, sessionId, cb),
     onStateChange: (sessionId, cb) => subscribe(stateSubs, sessionId, cb),
   },
+  browser: {
+    create: (paneId: string, url?: string) =>
+      ipcRenderer.invoke(BROWSER_CHANNELS.create, { paneId, url }),
+    destroy: (paneId: string) =>
+      ipcRenderer.send(BROWSER_CHANNELS.destroy, { paneId }),
+    setBounds: (paneId, bounds) =>
+      ipcRenderer.send(BROWSER_CHANNELS.bounds, { paneId, bounds }),
+    load: (paneId, url) =>
+      ipcRenderer.invoke(BROWSER_CHANNELS.load, { paneId, url }),
+    back: (paneId) => ipcRenderer.invoke(BROWSER_CHANNELS.back, { paneId }),
+    forward: (paneId) =>
+      ipcRenderer.invoke(BROWSER_CHANNELS.forward, { paneId }),
+    reload: (paneId) =>
+      ipcRenderer.invoke(BROWSER_CHANNELS.reload, { paneId }),
+    stop: (paneId) => ipcRenderer.invoke(BROWSER_CHANNELS.stop, { paneId }),
+    onState: (cb) => addListener(browserStateListeners, cb),
+  },
   layout: {
     save: (workspacePath: string, layout: WorkspaceLayout) =>
       ipcRenderer.invoke(LAYOUT_CHANNELS.save, { workspacePath, layout }),
@@ -262,6 +292,10 @@ const api: NexusApi = {
     syncPanes: (entries) => ipcRenderer.send(ORCH_CHANNELS.panesSync, entries),
     sendPaneSpawnResult: (result) =>
       ipcRenderer.send(ORCH_CHANNELS.paneSpawnResult, result),
+    onBrowserOpenRequest: (cb) =>
+      addListener(browserOpenRequestListeners, cb),
+    sendBrowserOpenResult: (result) =>
+      ipcRenderer.send(ORCH_CHANNELS.browserOpenResult, result),
     onPaneSpawnRequest: (cb) => addListener(paneSpawnRequestListeners, cb),
     onPaneCloseRequest: (cb) => addListener(paneCloseRequestListeners, cb),
     listMissions: () => ipcRenderer.invoke(ORCH_CHANNELS.missionsList),
@@ -289,6 +323,8 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.catalogIndex, { refresh }),
     installCatalogItem: (req) =>
       ipcRenderer.invoke(ORCH_CHANNELS.catalogInstall, req),
+    getRecipeOverlay: (workspacePath?: string) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.recipeOverlay, { workspacePath }),
     listInstalledCatalog: () =>
       ipcRenderer.invoke(ORCH_CHANNELS.catalogInstalled),
     listNativeTools: () => ipcRenderer.invoke(ORCH_CHANNELS.toolsList),
@@ -368,6 +404,9 @@ const api: NexusApi = {
     snapshot: () => ipcRenderer.invoke(USAGE_CHANNELS.snapshot),
     onChanged: (cb: (snapshot: UsageSnapshot) => void) =>
       addListener(usageChangedListeners, cb),
+  },
+  perf: {
+    snapshot: () => ipcRenderer.invoke(PERF_CHANNELS.snapshot),
   },
   notes: {
     list: (workspacePath: string) =>

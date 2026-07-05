@@ -14,6 +14,22 @@ export const PTY_CHANNELS = {
   stateChange: 'pty:stateChange',
 } as const;
 
+export const BROWSER_CHANNELS = {
+  create: 'browser:create',
+  destroy: 'browser:destroy',
+  bounds: 'browser:bounds',
+  load: 'browser:load',
+  back: 'browser:back',
+  forward: 'browser:forward',
+  reload: 'browser:reload',
+  stop: 'browser:stop',
+  state: 'browser:state',
+} as const;
+
+export const PERF_CHANNELS = {
+  snapshot: 'perf:snapshot',
+} as const;
+
 export const LAYOUT_CHANNELS = {
   save: 'layout:save',
   load: 'layout:load',

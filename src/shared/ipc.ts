@@ -59,9 +59,10 @@ export const killSchema = z.object({
 
 const paneModelSchema = z.object({
   id: z.string().min(1).max(128),
-  kind: z.enum(['shell', 'cli-agent']),
+  kind: z.enum(['shell', 'cli-agent', 'browser']),
   title: z.string().max(512),
   cwd: z.string().max(4096).optional(),
+  browserUrl: z.string().max(4096).optional(),
   adapterId: z.string().min(1).max(64).optional(),
   model: z.string().min(1).max(128).optional(),
   effort: z.string().min(1).max(32).optional(),
