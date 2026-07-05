@@ -93,11 +93,25 @@ export function createMainWindow(): BrowserWindow {
   wc.once('destroyed', () => killSessionsFor(wc));
   // Dev only: surface tagged renderer logs ([wake]/[voice]/[orch]) in the
   // terminal — voice/wake issues are invisible without DevTools otherwise.
+  // Electron novo entrega os dados no objeto do evento (args posicionais
+  // deprecados); aceita os dois formatos. Erros passam SEMPRE (sem filtro
+  // de tag): um crash de boot do React era invisível e a janela só "ficava
+  // preta".
   if (devServerUrl) {
-    wc.on('console-message', (_e, _level, message) => {
-      if (/^\[(wake|voice|orch|diag)\]/.test(message)) {
-        console.log('[renderer]', message);
-      }
+    type ConsoleEvt = { message?: string; level?: string | number };
+    wc.on(
+      'console-message',
+      (evt: ConsoleEvt, legacyLevel?: number, legacyMessage?: string) => {
+        const message = evt?.message ?? legacyMessage ?? '';
+        const level = evt?.level ?? legacyLevel;
+        const isError = level === 'error' || level === 3;
+        if (isError || /^\[(wake|voice|orch|diag)\]/.test(message)) {
+          console.log(isError ? '[renderer:ERRO]' : '[renderer]', message);
+        }
+      },
+    );
+    wc.on('render-process-gone', (_e, details) => {
+      console.warn('[window] renderer morreu:', details.reason);
     });
   }
 
@@ -115,15 +129,32 @@ export function createMainWindow(): BrowserWindow {
     }
   };
   wc.on('did-fail-load', (_e, code, desc) => {
-    if (win.isDestroyed() || loadRetries >= 40) return;
+    if (win.isDestroyed()) return;
     loadRetries += 1;
     console.warn(`[window] load falhou (${code} ${desc}) — retry ${loadRetries}`);
     setTimeout(() => {
       if (!win.isDestroyed()) load();
     }, 400);
   });
+  // Watchdog: cobre o caso que NÃO emite did-fail-load (conexão pendurada,
+  // Vite compilando frio, resolução localhost→IPv4 com servidor só em ::1).
+  // Sem teto: em dev o certo é insistir até o dev server responder.
+  let finished = false;
+  const watchdog = setInterval(() => {
+    if (win.isDestroyed()) {
+      clearInterval(watchdog);
+      return;
+    }
+    if (!finished) {
+      console.warn('[window] renderer ainda não carregou — recarregando');
+      load();
+    }
+  }, 3_000);
   wc.on('did-finish-load', () => {
+    finished = true;
     loadRetries = 0;
+    clearInterval(watchdog);
+    console.log('[window] renderer carregado');
   });
   load();
 
