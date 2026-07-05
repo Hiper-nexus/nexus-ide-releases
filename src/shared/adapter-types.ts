@@ -28,6 +28,19 @@ const spawnConfigSchema = z.object({
   ptyRequired: z.boolean(),
   resumeArgs: z.array(z.string()).default([]),
   extraArgs: z.array(z.string()).default([]),
+  /**
+   * Flag que aceita um session id DITADO pelo Nexus no spawn (ex.:
+   * "--session-id" no claude). Com ele, a telemetria real de tokens atribui o
+   * transcript ao pane deterministicamente, sem heurística de "spawn mais
+   * recente". Omitido = o CLI gera o próprio id e a atribuição é por fallback.
+   */
+  sessionIdArg: z.string().optional(),
+  /**
+   * Flags de resume DIRECIONADO a uma sessão específica (ex.: ["--resume"] no
+   * claude → `--resume <id capturado>`). Preferido sobre resumeArgs quando o
+   * Nexus tem o session id real do pane; sem id capturado cai no resumeArgs.
+   */
+  resumeIdArgs: z.array(z.string()).optional(),
 });
 
 const envConfigSchema = z.object({

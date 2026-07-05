@@ -40,6 +40,7 @@ import type {
 } from './files-types';
 import type { AccountInfo, AddAccountRequest, FailoverEvent } from './account-types';
 import type { CostSnapshot } from './cost-types';
+import type { UsageSnapshot } from './usage-types';
 import type { NotesApi } from './note-types';
 import type { PipeApi } from './pipe-types';
 import type {
@@ -179,6 +180,13 @@ export interface SpawnRequest {
   orchRequestId?: string;
   /** Re-spawn continuing the previous conversation (adapter resumeArgs). */
   resume?: boolean;
+  /**
+   * Pane dono do spawn (estável entre boots — vem do layout persistido).
+   * Com ele + resume, o main retoma a sessão de provider CAPTURADA daquele
+   * pane (`--resume <id>`) em vez do genérico `--continue`, que faria todos
+   * os panes do workspace retomarem a MESMA última conversa.
+   */
+  paneId?: string;
   /** Per-spawn reasoning effort override (wins over the provider setting). */
   effort?: string;
 }
@@ -266,6 +274,8 @@ export interface NexusApi {
     onPttToggle(cb: () => void): Unsubscribe;
     onPttStop(cb: () => void): Unsubscribe;
     onInfoChanged(cb: (info: VoiceRuntimeInfo) => void): Unsubscribe;
+    /** Narração proativa (handoff/travamento) — falar se não houver turno ativo. */
+    onNarrate(cb: (event: { text: string }) => void): Unsubscribe;
   };
   orch: {
     /** Mirror the current pane set into the main-process registry. */
@@ -361,6 +371,11 @@ export interface NexusApi {
     snapshot(): Promise<CostSnapshot>;
     setCap(paneId: string, capUsd: number | null): Promise<{ ok: boolean; error?: string }>;
     onChanged(cb: (snapshot: CostSnapshot) => void): Unsubscribe;
+  };
+  /** Telemetria REAL de tokens (transcript watchers → SQLite). */
+  usage: {
+    snapshot(): Promise<UsageSnapshot>;
+    onChanged(cb: (snapshot: UsageSnapshot) => void): Unsubscribe;
   };
   notes: NotesApi;
   pipes: PipeApi;

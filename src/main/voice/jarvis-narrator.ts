@@ -1,0 +1,90 @@
+import { listHandoffs, onHandoffsChange } from '../orch/handoff-store';
+import { getVoiceConfig } from './voice-config-store';
+import { toSpeakable } from './speakable';
+import type { Handoff } from '../../shared/orch-types';
+
+/**
+ * Narração proativa (benchmark §3): quando um worker entrega, trava ou falha,
+ * a JARVIS AVISA em voz alta em vez de esperar ser perguntada — o usuário fica
+ * de olho no código, não na timeline. Espelha o poll de narração do Overclock,
+ * mas dirigido a evento (onHandoffsChange), sem polling.
+ *
+ * Anti-tagarelice: só narra em modo jarvis; nunca narra histórico (seed no
+ * boot); junta rajadas num único aviso (debounce 1,5s); dedupe por handoff; e
+ * o texto passa pelo toSpeakable (código/JSON nunca são lidos em voz alta).
+ * Quem decide se PODE falar agora é o renderer (não interrompe turno ativo).
+ */
+
+const BURST_MS = 1_500;
+const MAX_SPOKEN_SUMMARY = 140;
+
+type Broadcast = (channel: string, payload?: unknown) => void;
+
+const seen = new Set<string>();
+let pending: Handoff[] = [];
+let burstTimer: ReturnType<typeof setTimeout> | null = null;
+let unsubscribe: (() => void) | null = null;
+
+function phraseFor(handoff: Handoff): string {
+  const from = (handoff.fromAgent ?? 'um worker').slice(0, 60);
+  const short = toSpeakable(handoff.summary, 'summary').slice(0, MAX_SPOKEN_SUMMARY);
+  switch (handoff.status) {
+    case 'stalled':
+      return `Atenção: ${from} parece travado. ${short}`;
+    case 'failed':
+      return `${from} falhou na tarefa. ${short}`;
+    case 'blocked':
+      return `${from} está bloqueado e precisa de você. ${short}`;
+    case 'partial':
+      return `${from} entregou parcialmente: ${short}`;
+    default:
+      return `${from} entregou: ${short}`;
+  }
+}
+
+function flush(broadcast: Broadcast): void {
+  burstTimer = null;
+  if (pending.length === 0) return;
+  const batch = pending;
+  pending = [];
+  // Rajada (vários workers terminando juntos) vira UM aviso curto.
+  const text =
+    batch.length === 1
+      ? phraseFor(batch[0])
+      : `${batch.length} atualizações do squad. ${batch.map(phraseFor).join(' ')}`.slice(
+          0,
+          400,
+        );
+  broadcast('voice:narrate', { text });
+}
+
+function onChange(broadcast: Broadcast): void {
+  if (getVoiceConfig().routing !== 'jarvis') return;
+  for (const handoff of listHandoffs({ includeDelivered: true })) {
+    if (seen.has(handoff.id)) continue;
+    seen.add(handoff.id);
+    pending.push(handoff);
+  }
+  if (pending.length > 0 && !burstTimer) {
+    burstTimer = setTimeout(() => flush(broadcast), BURST_MS);
+    burstTimer.unref?.();
+  }
+}
+
+export function initJarvisNarrator(broadcast: Broadcast): void {
+  if (unsubscribe) return;
+  // Seed: handoffs já existentes são história, não notícia.
+  for (const handoff of listHandoffs({ includeDelivered: true })) {
+    seen.add(handoff.id);
+  }
+  unsubscribe = onHandoffsChange(() => onChange(broadcast));
+}
+
+export function shutdownJarvisNarrator(): void {
+  unsubscribe?.();
+  unsubscribe = null;
+  if (burstTimer) clearTimeout(burstTimer);
+  burstTimer = null;
+  pending = [];
+  seen.clear();
+}

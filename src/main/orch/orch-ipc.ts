@@ -30,6 +30,8 @@ import {
   unregisterOrchRenderer,
 } from './pane-registry';
 import { initIdleDelivery } from './idle-delivery';
+import { initStallWatchdog, shutdownStallWatchdog } from './stall-watchdog';
+import { stopAllPreviews } from './preview-server';
 import {
   getMcpRuntimeInfo,
   getToolCatalog,
@@ -79,6 +81,7 @@ export async function initOrchestration(): Promise<void> {
   initTaskStore(db);
   initPaneRegistry();
   initIdleDelivery();
+  initStallWatchdog();
   await startMcpServer();
 
   onMissionsChange(() =>
@@ -95,6 +98,8 @@ export async function initOrchestration(): Promise<void> {
 }
 
 export function closeOrchestration(): void {
+  shutdownStallWatchdog();
+  stopAllPreviews();
   stopMcpServer();
 }
 

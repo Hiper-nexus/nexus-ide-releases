@@ -17,6 +17,10 @@
   --font-ui: ui-sans-serif, -apple-system, "SF Pro Text", Segoe UI, system-ui,
     sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  /* Curvas de easing do sistema de motion — desaceleração natural, nunca
+     bounce/elastic. Estado muda em 150–250ms; feedback em ~120ms. */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 * {
@@ -235,7 +239,9 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition:
+    border-color 150ms var(--ease-out-quart),
+    box-shadow 150ms var(--ease-out-quart);
 }
 
 .pane--focused {
@@ -267,6 +273,44 @@ body {
 .toolbar__dot--on {
   background: var(--accent);
   box-shadow: 0 0 8px var(--accent);
+}
+
+/* Estado do agente no toolbar: o glifo COMUNICA (busy respira, spawning pisca
+   devagar, idle assenta com um pop único). Sinal operacional, não decoração. */
+.toolbar__state {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1;
+}
+.toolbar__state--idle {
+  color: #4caf50;
+  animation: state-settle 250ms var(--ease-out-quart);
+}
+.toolbar__state--busy {
+  color: #ff9800;
+  animation: state-breathe 1.4s ease-in-out infinite;
+}
+.toolbar__state--spawning {
+  color: #9e9e9e;
+  animation: state-breathe 0.9s ease-in-out infinite;
+}
+.toolbar__state--exited {
+  color: #ef5350;
+}
+@keyframes state-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@keyframes state-settle {
+  from { transform: scale(1.4); }
+  to { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toolbar__state--busy,
+  .toolbar__state--spawning,
+  .toolbar__state--idle {
+    animation: none;
+  }
 }
 
 .toolbar__title {
@@ -1255,6 +1299,22 @@ body {
   border-radius: 6px;
   padding: 8px 10px;
   background: var(--bg);
+  /* Item novo na timeline (handoff chegou, missão criada) entra assentando —
+     o olho é puxado para a novidade sem coreografia. */
+  animation: orch-item-in 200ms var(--ease-out-quart);
+}
+@keyframes orch-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .orch-item { animation: none; }
 }
 
 .orch-item__head {
@@ -1317,6 +1377,21 @@ body {
 .orch-badge--failed {
   color: var(--danger);
   border-color: var(--danger);
+}
+
+/* Handoff sintético do watchdog: worker em silêncio prolongado. Âmbar pulsante
+   — pede diagnóstico, não é falha consumada. */
+.orch-badge--stalled {
+  color: #e5a556;
+  border-color: rgba(229, 165, 86, 0.55);
+  animation: orch-stalled-pulse 2.4s ease-in-out infinite;
+}
+@keyframes orch-stalled-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .orch-badge--stalled { animation: none; }
 }
 
 .orch-todo-list {
@@ -3088,6 +3163,24 @@ body {
 .cost-badge--paused {
   border-color: #e5534b;
   color: #e5534b;
+}
+/* Custo REAL (transcript watcher): ponto de status verde à esquerda distingue
+   o número auditável da estimativa por bytes, sem mudar o layout. */
+.cost-badge--real::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+  animation: cost-real-in 200ms var(--ease-out-quart);
+}
+@keyframes cost-real-in {
+  from { transform: scale(0); }
+  to { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cost-badge--real::before { animation: none; }
 }
 .cost-badge__usd {
   font-variant-numeric: tabular-nums;

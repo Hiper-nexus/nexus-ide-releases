@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
-import { respawnWithResume } from '../terminal/terminal-host';
+import { respawnWithResume, scrollPaneToBottom } from '../terminal/terminal-host';
 import { CostBadge } from './CostBadge';
 
 interface Props {
@@ -18,17 +18,16 @@ function StateIndicator({ paneId }: { paneId: string }) {
 
   const view =
     state === 'idle'
-      ? { dot: '●', color: '#4caf50', label: 'pronto' }
+      ? { dot: '●', mod: 'idle', label: 'pronto' }
       : state === 'busy'
-        ? { dot: '◌', color: '#ff9800', label: 'trabalhando' }
+        ? { dot: '◌', mod: 'busy', label: 'trabalhando' }
         : state === 'exited'
-          ? { dot: '✕', color: '#ef5350', label: 'encerrado — use ↻ para reabrir' }
-          : { dot: '○', color: '#9e9e9e', label: 'iniciando' };
+          ? { dot: '✕', mod: 'exited', label: 'encerrado — use ↻ para reabrir' }
+          : { dot: '○', mod: 'spawning', label: 'iniciando' };
 
   return (
     <span
-      className="toolbar__state"
-      style={{ color: view.color }}
+      className={`toolbar__state toolbar__state--${view.mod}`}
       title={`agente: ${view.label}`}
       aria-label={`estado do agente: ${view.label}`}
     >
@@ -116,13 +115,33 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       {pane.kind === 'cli-agent' && <StateIndicator paneId={pane.id} />}
       {pane.kind === 'cli-agent' && <CostBadge paneId={pane.id} />}
       <div className="toolbar__spacer" />
+      <button
+        className="toolbar__btn nodrag"
+        title="Descer até a última mensagem"
+        aria-label="Descer até a última mensagem"
+        onClick={(e) => {
+          e.stopPropagation();
+          scrollPaneToBottom(pane.id, pane.kind === 'cli-agent');
+        }}
+      >
+        ⤓
+      </button>
       {pane.kind === 'cli-agent' && (
         <button
           className="toolbar__btn nodrag"
-          title="Retomar a conversa anterior (re-inicia a CLI com --resume, útil após reiniciar o app)"
-          aria-label="Retomar conversa anterior"
+          title="Reiniciar a CLI e retomar a conversa anterior (--resume). NÃO é scroll — encerra o processo atual."
+          aria-label="Reiniciar a CLI e retomar conversa anterior"
           onClick={(e) => {
             e.stopPropagation();
+            const state = useSessionStateStore.getState().paneStates.get(pane.id);
+            if (
+              state === 'busy' &&
+              !window.confirm(
+                'O agente está trabalhando agora. Reiniciar a CLI interrompe a tarefa em andamento. Continuar?',
+              )
+            ) {
+              return;
+            }
             respawnWithResume(pane, '[nexus] retomando a sessão anterior…');
           }}
         >

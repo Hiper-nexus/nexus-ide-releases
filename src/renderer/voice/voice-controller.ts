@@ -178,6 +178,20 @@ export function useVoiceController(): void {
     const unsubStop = window.nexus.voice.onPttStop(onStop);
     const unsubToggle = window.nexus.voice.onPttToggle(onToggle);
     const unsubWake = window.nexus.voice.onWakeDetected(onWake);
+    // Narração proativa (handoff entregue/travado): fala só quando não há
+    // turno de voz em andamento — aviso ambiente nunca atropela a conversa.
+    const unsubNarrate = window.nexus.voice.onNarrate(({ text }) => {
+      if (useVoiceStore.getState().status !== 'idle') {
+        console.log('[voice] narração pulada (turno ativo):', text.slice(0, 60));
+        return;
+      }
+      void (async () => {
+        const spoken = await window.nexus.voice.speak({ text, speakMode: 'full' });
+        if (spoken.ok && spoken.mode === 'audio') {
+          await playAudioBase64(spoken.audioBase64, spoken.format);
+        }
+      })().catch((err) => console.warn('[voice] narração falhou:', err));
+    });
 
     return () => {
       unsubInfo();
@@ -185,6 +199,7 @@ export function useVoiceController(): void {
       unsubStop();
       unsubToggle();
       unsubWake();
+      unsubNarrate();
       wakeMic.stop();
     };
   }, []);
@@ -257,6 +272,13 @@ async function finishAndProcess(
     });
     if (!stt.ok) {
       store.setError(stt.error);
+      return;
+    }
+    // Eco do próprio TTS captado pelo mic (detectado no main via janela do que
+    // acabou de ser falado) — descarte silencioso, mesmo tratamento do ghost.
+    if (stt.discarded === 'echo') {
+      console.log(`[voice] eco do TTS descartado: "${stt.text}"`);
+      store.setStatus('idle');
       return;
     }
     const tStt = Date.now() - tTurn;

@@ -29,6 +29,7 @@ import { listPanes } from './lib/split-tree';
 import { useFilesStore } from './state/files-store';
 import { useAccountController } from './state/account-store';
 import { useCostController } from './state/cost-store';
+import { useUsageSync } from './state/usage-store';
 import { useFailoverController } from './orch/failover-controller';
 import { Toasts } from './components/Toasts';
 
@@ -49,6 +50,7 @@ export function App() {
   useProviderController();
   useAccountController();
   useCostController();
+  useUsageSync();
   useFailoverController();
 
   // Each workspace owns its pane layout: entering one loads ITS saved tree;

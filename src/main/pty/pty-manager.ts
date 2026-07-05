@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
+import { randomUUID } from 'node:crypto';
 import type { WebContents } from 'electron';
 import { PTY_CHANNELS } from '../../shared/channels';
 import type { SpawnRequest, PaneSessionState } from '../../shared/types';
@@ -125,6 +126,40 @@ let agentSpawnHook: AgentSpawnHook | null = null;
 
 export function setAgentSpawnHook(hook: AgentSpawnHook | null): void {
   agentSpawnHook = hook;
+}
+
+/**
+ * Sessão de provider DITADA pelo Nexus no spawn (adapter.spawn.sessionIdArg):
+ * a camada de telemetria real usa este id para atribuir o transcript do CLI ao
+ * pane deterministicamente. Hook injetado (mesmo padrão do agentSpawnHook)
+ * para o pty-manager continuar livre de dependências de cima.
+ */
+export interface DictatedSessionInfo {
+  providerSessionId: string;
+  ptySessionId: string;
+  adapterId: string;
+  cwd: string;
+}
+
+export type SessionDictationHook = (info: DictatedSessionInfo) => void;
+
+let sessionDictationHook: SessionDictationHook | null = null;
+
+export function setSessionDictationHook(hook: SessionDictationHook | null): void {
+  sessionDictationHook = hook;
+}
+
+/**
+ * Lookup injetado de sessão de provider capturada (workspace, paneId) →
+ * session id real — permite resume DIRECIONADO (`--resume <id>`) em vez do
+ * genérico `--continue`. Injetado pelo usage-service (dono do store).
+ */
+export type ResumeSessionLookup = (cwd: string, paneId: string) => string | null;
+
+let resumeSessionLookup: ResumeSessionLookup | null = null;
+
+export function setResumeSessionLookup(lookup: ResumeSessionLookup | null): void {
+  resumeSessionLookup = lookup;
 }
 
 function resolveShell(requested?: string): string {
@@ -389,10 +424,26 @@ export function spawnAgentSession(
   if (explicitModel && !templateHasModel && adapter.models.flag) {
     args.push(adapter.models.flag, explicitModel);
   }
-  // Failover re-spawn: continue the prior conversation via the adapter's
-  // resume flags (e.g. claude --resume).
-  if (req.resume && adapter.spawn.resumeArgs.length > 0) {
-    args.push(...adapter.spawn.resumeArgs);
+  // Failover re-spawn: retoma a conversa anterior. Com session id CAPTURADO
+  // para este pane, o resume é direcionado (`--resume <id>` — cada pane volta
+  // para a SUA conversa); sem captura, cai no genérico (`--continue`).
+  if (req.resume) {
+    const captured =
+      req.paneId && adapter.spawn.resumeIdArgs?.length
+        ? resumeSessionLookup?.(cwd, req.paneId) ?? null
+        : null;
+    if (captured) {
+      args.push(...adapter.spawn.resumeIdArgs!, captured);
+    } else if (adapter.spawn.resumeArgs.length > 0) {
+      args.push(...adapter.spawn.resumeArgs);
+    }
+  }
+  // Telemetria real: dita o session id do provider em spawns FRESCOS (num
+  // resume o CLI decide o id — a atribuição fica com o watcher de transcript).
+  let dictatedSessionId: string | null = null;
+  if (adapter.spawn.sessionIdArg && !req.resume) {
+    dictatedSessionId = randomUUID();
+    args.push(adapter.spawn.sessionIdArg, dictatedSessionId);
   }
   if (overrides.extraArgs && overrides.extraArgs.length > 0) {
     args.push(...overrides.extraArgs);
@@ -457,6 +508,18 @@ export function spawnAgentSession(
   sessions.set(sessionId, session);
   emitStateChange(wc, sessionId, 'spawning');
   decoration?.onSpawned?.(sessionId);
+  if (dictatedSessionId && sessionDictationHook) {
+    try {
+      sessionDictationHook({
+        providerSessionId: dictatedSessionId,
+        ptySessionId: sessionId,
+        adapterId: adapter.id,
+        cwd,
+      });
+    } catch (err) {
+      console.warn('[pty-manager] session dictation hook threw:', err);
+    }
+  }
   return { sessionId };
 }
 

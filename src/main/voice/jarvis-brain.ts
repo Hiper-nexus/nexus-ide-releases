@@ -1,4 +1,6 @@
 import { resolveVoiceApiKey } from './voice-secrets';
+import { jarvisMemory } from './jarvis-memory';
+import { jarvisFastPath } from './jarvis-fastpath';
 import type {
   JarvisContext,
   JarvisReply,
@@ -97,7 +99,17 @@ CONSCIÊNCIA DE ESTADO (o mais importante):
 
 Se o usuário só te chamou ("Jarvis?", "você está aí?"), responda presente e
 pergunte o que ele quer, citando 1-2 opções reais do contexto.
-Termine com pergunta apenas quando fizer sentido continuar a conversa.`;
+Termine com pergunta apenas quando fizer sentido continuar a conversa.
+
+MEMÓRIA PERSISTENTE: você tem memória de longo prazo entre sessões. Os fatos já
+lembrados chegam num bloco "Fatos lembrados" do contexto — USE-OS (nome, gostos,
+projetos, rotinas) sem pedir de novo. Quando o usuário declarar um fato DURÁVEL
+sobre ele, o projeto ou uma preferência ("prefiro respostas curtas", "o deploy é
+sempre na sexta", "me chama de chefe"), inclua no JSON um campo extra:
+"remember": {"key":"<slug-curto-estavel>","fact":"<o fato em uma frase>"}.
+Para apagar um fato a pedido dele: "forget":"<slug>". NÃO salve conversa
+passageira, tarefas do momento ou segredos (chaves, senhas) — só fatos que
+continuam verdade amanhã.`;
 
 export interface BrainDeps {
   fetchImpl: typeof fetch;
@@ -122,6 +134,29 @@ function contextBlock(ctx: JarvisContext): string {
     `- orquestrador ativo: ${ctx.orchestrator ?? 'nenhum'}\n` +
     `- missões ativas: ${ctx.missions.join('; ') || 'nenhuma'}`
   );
+}
+
+/**
+ * Efeitos de memória vêm como campos extras do JSON do cérebro
+ * ("remember"/"forget") e são aplicados aqui no main — o renderer nunca vê.
+ */
+function applyMemoryOps(raw: string): void {
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return;
+  try {
+    const obj = JSON.parse(match[0]) as {
+      remember?: { key?: string; fact?: string };
+      forget?: string;
+    };
+    if (typeof obj.remember?.fact === 'string' && obj.remember.fact.trim()) {
+      jarvisMemory.remember(obj.remember.key ?? '', obj.remember.fact);
+    }
+    if (typeof obj.forget === 'string' && obj.forget.trim()) {
+      jarvisMemory.forget(obj.forget);
+    }
+  } catch {
+    // JSON inválido já é tratado por parseReply; memória é best-effort.
+  }
 }
 
 function parseReply(raw: string): JarvisReply {
@@ -201,9 +236,17 @@ export async function jarvisThink(
   history: JarvisTurn[],
   deps: BrainDeps = defaultBrainDeps,
 ): Promise<JarvisReply> {
+  // Fast-path: consulta de estado responde do contexto em ~0ms, sem LLM.
+  const fast = jarvisFastPath(transcript, ctx);
+  if (fast) return fast;
+
+  const facts = jarvisMemory.factsBlock();
   const messages: Array<{ role: string; content: string }> = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'system', content: contextBlock(ctx) },
+    ...(facts
+      ? [{ role: 'system', content: `Fatos lembrados (memória persistente):\n${facts}` }]
+      : []),
     ...history.slice(-8).map((t) => ({ role: t.role, content: t.content })),
     { role: 'user', content: transcript },
   ];
@@ -222,6 +265,7 @@ export async function jarvisThink(
         deps,
         true,
       );
+      applyMemoryOps(raw);
       return parseReply(raw);
     } catch (err) {
       attempts.push(`groq: ${err instanceof Error ? err.message : String(err)}`);
@@ -237,6 +281,7 @@ export async function jarvisThink(
         deps,
         true,
       );
+      applyMemoryOps(raw);
       return parseReply(raw);
     } catch (err) {
       attempts.push(`openai: ${err instanceof Error ? err.message : String(err)}`);

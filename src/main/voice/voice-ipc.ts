@@ -24,11 +24,13 @@ import { jarvisThink } from './jarvis-brain';
 import { WakeEngine } from './wake-engine';
 import { transcribe } from './stt-service';
 import { speak } from './tts-service';
+import { echoSuppressor } from './echo-suppress';
 import {
   registerVoiceHotkey,
   disposeVoiceHotkey,
   isVoiceHotkeyArmed,
 } from './voice-hotkey';
+import { initJarvisNarrator, shutdownJarvisNarrator } from './jarvis-narrator';
 
 /**
  * Wires the voice pipeline into IPC. Every renderer payload is zod-validated
@@ -69,6 +71,9 @@ function fullInfo(): VoiceRuntimeInfo {
 export function registerVoiceIpc(): void {
   loadVoiceConfig();
   wireHotkey();
+  // Narração proativa: handoff novo (entrega/travamento/falha) vira aviso de
+  // voz — o renderer fala quando não houver turno ativo.
+  initJarvisNarrator(broadcast);
 
   ipcMain.handle(VOICE_CHANNELS.getInfo, (): VoiceRuntimeInfo => fullInfo());
 
@@ -108,7 +113,15 @@ export function registerVoiceIpc(): void {
         return { ok: false, needsKey: false, error: 'invalid transcribe request', attempts: [] };
       }
       try {
-        return await transcribe(parsed.data, getVoiceConfig(), currentProbes());
+        const res = await transcribe(parsed.data, getVoiceConfig(), currentProbes());
+        // Terceira camada anti-eco (após o AEC do mic e antes do filtro de
+        // fantasmas do renderer): transcrição que é o próprio TTS recente
+        // vazando do alto-falante volta marcada para descarte silencioso.
+        if (res.ok && echoSuppressor.isEcho(res.text)) {
+          console.log(`[voice] eco do TTS descartado: "${res.text.slice(0, 80)}"`);
+          return { ...res, discarded: 'echo' };
+        }
+        return res;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return { ok: false, needsKey: false, error: message, attempts: [] };
@@ -214,4 +227,5 @@ export function registerVoiceIpc(): void {
 
 export function closeVoiceIpc(): void {
   disposeVoiceHotkey();
+  shutdownJarvisNarrator();
 }

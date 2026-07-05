@@ -32,4 +32,7 @@ export const VOICE_CHANNELS = {
   pttStop: 'voice:ptt.stop',
   /** event: main → renderer. Runtime info changed (config reload / hot-reload). */
   infoChanged: 'voice:info.changed',
+  /** event: main → renderer. Narração proativa da JARVIS (handoff chegou,
+   * worker travou) — o renderer fala o texto se não houver turno de voz ativo. */
+  narrate: 'voice:narrate',
 } as const;

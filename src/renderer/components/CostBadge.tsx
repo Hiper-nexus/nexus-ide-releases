@@ -1,4 +1,5 @@
 import { useCostStore } from '../state/cost-store';
+import { useUsageStore } from '../state/usage-store';
 
 /**
  * Cost tracker UI. Not mounted anywhere yet — the integration layer plugs
@@ -21,21 +22,30 @@ export function CostBadge({ paneId }: { paneId: string }) {
   const pane = useCostStore((s) =>
     s.snapshot.panes.find((p) => p.paneId === paneId),
   );
-  if (!pane) return null;
+  // Telemetria REAL (transcript watcher) tem precedência sobre a estimativa
+  // por bytes — quando existe, o badge mostra o número auditável.
+  const real = useUsageStore((s) => s.snapshot.byPane[paneId]);
+  if (!pane && !real) return null;
 
-  const hasCap = pane.capUsd !== undefined && pane.capUsd > 0;
-  const ratio = hasCap ? Math.min(1, pane.costUsd / pane.capUsd!) : 0;
-  const level = pane.paused ? 'over' : ratio >= 0.8 ? 'warn' : 'ok';
+  const hasCap = !!pane && pane.capUsd !== undefined && pane.capUsd > 0;
+  const estimated = pane?.costUsd ?? 0;
+  const shownUsd = real ? real.costUsd : estimated;
+  const paused = pane?.paused ?? false;
+  const ratio = hasCap ? Math.min(1, estimated / pane!.capUsd!) : 0;
+  const level = paused ? 'over' : ratio >= 0.8 ? 'warn' : 'ok';
+  const sourceNote = real
+    ? `custo REAL (transcript, ${real.turns} turnos; cache read ${Math.round(real.cacheReadTokens / 1000)}k tok)`
+    : 'custo estimado (heurística por bytes)';
   const capTitle = hasCap
-    ? `${formatUsd(pane.costUsd)} de ${formatUsd(pane.capUsd!)} (cap)`
-    : `${formatUsd(pane.costUsd)} — sem cap`;
+    ? `${formatUsd(shownUsd)} de ${formatUsd(pane!.capUsd!)} (cap) — ${sourceNote}`
+    : `${formatUsd(shownUsd)} — ${sourceNote}`;
 
   return (
     <span
-      className={`cost-badge${pane.paused ? ' cost-badge--paused' : ''}`}
+      className={`cost-badge${paused ? ' cost-badge--paused' : ''}${real ? ' cost-badge--real' : ''}`}
       title={capTitle}
     >
-      <span className="cost-badge__usd">{formatUsd(pane.costUsd)}</span>
+      <span className="cost-badge__usd">{formatUsd(shownUsd)}</span>
       {hasCap && (
         <span className="cost-badge__bar">
           {/* scaleX (not width) so the fill animates on the compositor — no
@@ -46,7 +56,7 @@ export function CostBadge({ paneId }: { paneId: string }) {
           />
         </span>
       )}
-      {pane.paused && <span className="cost-badge__paused">pausado</span>}
+      {paused && <span className="cost-badge__paused">pausado</span>}
     </span>
   );
 }

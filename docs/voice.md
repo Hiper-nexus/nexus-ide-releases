@@ -1,5 +1,13 @@
 # Voice (Jarvis Mode)
 
+> **Nota (2026-07-05):** o modo de roteamento **padrão hoje é `jarvis`** — o áudio
+> é transcrito cru em PT-BR (`translate: false`) e vai para o cérebro LLM
+> (`jarvis-brain.ts`), que decide fala + ação (`open_squad`, `new_mission`,
+> `run_command`, `send_to_pane`, …). Configs antigas são migradas automaticamente
+> para `jarvis` em `voice-config-store.ts`. O pipeline descrito abaixo
+> (transcribe+translate → pane focado → resumo falado) é o modo **`focused-pane`**,
+> mantido como alternativa. As cadeias de STT/TTS e providers valem para os dois.
+
 Push-to-talk speech → transcribe+translate to English → inject into the focused
 pane → speak a condensed summary back. Multi-provider, declarative, with a
 keyless local fallback so it keeps working when cloud APIs are throttled.

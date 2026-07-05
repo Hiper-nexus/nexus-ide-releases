@@ -27,6 +27,7 @@ import {
 } from './todo-store';
 import { createTask, listTasks, updateTask } from './task-store';
 import { installCatalogItem } from './catalog';
+import { startPreview, stopPreview, listPreviews } from './preview-server';
 import { onHandoffSubmitted } from './idle-delivery';
 import { paneSpawnTool } from './tools-panes';
 import {
@@ -513,6 +514,48 @@ const routeTaskTool: McpToolDef = {
   },
 };
 
+const previewStartTool: McpToolDef = {
+  name: 'nexus_preview_start',
+  description:
+    'Serve a static directory (a built web app) on a local preview URL ' +
+    '(127.0.0.1, random port). Returns { url }. Idempotent per directory. ' +
+    'Use after building so the user can click the result.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      dir: { type: 'string', description: 'Absolute path of the directory to serve' },
+    },
+    required: ['dir'],
+  },
+  handler: async (args) => {
+    const dir = requireStr(args, 'dir');
+    if (!dir.startsWith('/')) throw new Error('dir deve ser um caminho absoluto');
+    try {
+      return await startPreview(dir);
+    } catch (err) {
+      throw new Error(
+        `preview falhou para ${dir}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  },
+};
+
+const previewStopTool: McpToolDef = {
+  name: 'nexus_preview_stop',
+  description:
+    'Stop a running preview server. Pass the same dir used in ' +
+    'nexus_preview_start; omit dir to list what is running.',
+  inputSchema: {
+    type: 'object',
+    properties: { dir: { type: 'string' } },
+  },
+  handler: async (args) => {
+    const dir = str(args, 'dir');
+    if (!dir) return { running: listPreviews() };
+    return { stopped: stopPreview(dir) };
+  },
+};
+
 export function buildDomainTools(): McpToolDef[] {
   return [
     routeTaskTool,
@@ -530,5 +573,7 @@ export function buildDomainTools(): McpToolDef[] {
     catalogInstallTool,
     taskTool,
     todoManagerTool,
+    previewStartTool,
+    previewStopTool,
   ];
 }

@@ -17,6 +17,8 @@ import { FILES_CHANNELS } from '../shared/files-types';
 import { ACCOUNT_CHANNELS } from '../shared/account-types';
 import type { AccountInfo, FailoverEvent } from '../shared/account-types';
 import { COST_CHANNELS } from '../shared/cost-types';
+import { USAGE_CHANNELS } from '../shared/usage-types';
+import type { UsageSnapshot } from '../shared/usage-types';
 import { BILLING_CHANNELS } from '../shared/billing-types';
 import type { PlanId } from '../shared/billing-types';
 import type { CostSnapshot } from '../shared/cost-types';
@@ -113,6 +115,10 @@ const wakeDetectedListeners = new Set<() => void>();
 ipcRenderer.on(VOICE_CHANNELS.wakeDetected, () =>
   wakeDetectedListeners.forEach((cb) => cb()),
 );
+const narrateListeners = new Set<(event: { text: string }) => void>();
+ipcRenderer.on(VOICE_CHANNELS.narrate, (_e, event: { text: string }) =>
+  narrateListeners.forEach((cb) => cb(event)),
+);
 
 const voiceInfoListeners = new Set<(info: VoiceRuntimeInfo) => void>();
 
@@ -183,6 +189,10 @@ ipcRenderer.on(ACCOUNT_CHANNELS.failover, (_e, event: FailoverEvent) =>
 ipcRenderer.on(COST_CHANNELS.changed, (_e, snapshot: CostSnapshot) =>
   costChangedListeners.forEach((cb) => cb(snapshot)),
 );
+const usageChangedListeners = new Set<(snapshot: UsageSnapshot) => void>();
+ipcRenderer.on(USAGE_CHANNELS.changed, (_e, snapshot: UsageSnapshot) =>
+  usageChangedListeners.forEach((cb) => cb(snapshot)),
+);
 
 const notesChangedListeners = new Set<(event: NotesChangedEvent) => void>();
 ipcRenderer.on(NOTE_CHANNELS.changed, (_e, event: NotesChangedEvent) =>
@@ -238,6 +248,8 @@ const api: NexusApi = {
     onPttStart: (cb) => addListener(pttStartListeners, cb),
     onPttStop: (cb) => addListener(pttStopListeners, cb),
     onInfoChanged: (cb) => addListener(voiceInfoListeners, cb),
+    onNarrate: (cb: (event: { text: string }) => void) =>
+      addListener(narrateListeners, cb),
   },
   orch: {
     syncPanes: (entries) => ipcRenderer.send(ORCH_CHANNELS.panesSync, entries),
@@ -342,6 +354,11 @@ const api: NexusApi = {
       ipcRenderer.invoke(COST_CHANNELS.setCap, { paneId, capUsd }),
     onChanged: (cb: (snapshot: CostSnapshot) => void) =>
       addListener(costChangedListeners, cb),
+  },
+  usage: {
+    snapshot: () => ipcRenderer.invoke(USAGE_CHANNELS.snapshot),
+    onChanged: (cb: (snapshot: UsageSnapshot) => void) =>
+      addListener(usageChangedListeners, cb),
   },
   notes: {
     list: (workspacePath: string) =>

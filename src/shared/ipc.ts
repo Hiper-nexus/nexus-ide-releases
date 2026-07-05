@@ -36,6 +36,7 @@ export const spawnRequestSchema = z.object({
   // Re-spawn continuing the previous session (failover switches accounts and
   // re-launches the CLI with its resumeArgs).
   resume: z.boolean().optional(),
+  paneId: z.string().max(64).optional(),
   // Per-spawn reasoning effort (task-router decision). Validated against the
   // adapter's declared levels at arg-build time; unknown values are dropped.
   effort: z.string().min(1).max(32).optional(),

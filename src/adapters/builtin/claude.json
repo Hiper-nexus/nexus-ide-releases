@@ -32,7 +32,11 @@
     "resumeArgs": [
       "--continue"
     ],
-    "extraArgs": []
+    "resumeIdArgs": [
+      "--resume"
+    ],
+    "extraArgs": [],
+    "sessionIdArg": "--session-id"
   },
   "env": {
     "static": {},

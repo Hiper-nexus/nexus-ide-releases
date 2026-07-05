@@ -109,6 +109,9 @@ export const handoffStatusSchema = z.enum([
   'partial',
   'blocked',
   'failed',
+  // Sintético (nexus-watchdog): worker busy em silêncio prolongado sem
+  // handoff — o orquestrador é acordado para diagnosticar o pane.
+  'stalled',
 ]);
 export type HandoffStatus = z.infer<typeof handoffStatusSchema>;
 

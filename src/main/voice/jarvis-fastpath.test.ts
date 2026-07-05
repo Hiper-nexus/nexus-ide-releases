@@ -1,0 +1,52 @@
+import { describe, expect, it } from 'vitest';
+import { jarvisFastPath } from './jarvis-fastpath';
+import type { JarvisContext } from '../../shared/voice-ipc';
+
+const CTX: JarvisContext = {
+  workspace: 'nexus-ide',
+  recents: ['nexus-ide', 'saasbarbearia'],
+  squads: ['Code Review', 'QA Swarm'],
+  panes: ['pane-1 [shell]', 'pane-2 [agente]'],
+  focusedPane: 'pane-2 [agente]',
+  orchestrator: 'pane-3 [orquestrador]',
+  missions: ['Landing page'],
+};
+
+describe('jarvisFastPath', () => {
+  it('responde consultas de panes sem LLM', () => {
+    const reply = jarvisFastPath('quais panes estão abertos?', CTX);
+    expect(reply?.say).toContain('2 panes');
+    expect(reply?.action.type).toBe('none');
+  });
+
+  it('responde squads e missões', () => {
+    expect(jarvisFastPath('quais squads eu tenho?', CTX)?.say).toContain('Code Review');
+    expect(jarvisFastPath('quantas missões ativas?', CTX)?.say).toContain('Landing page');
+  });
+
+  it('responde workspace e orquestrador', () => {
+    expect(jarvisFastPath('qual projeto está aberto agora?', CTX)?.say).toContain(
+      'nexus-ide',
+    );
+    expect(jarvisFastPath('tem orquestrador ativo?', CTX)?.say).toContain('pane-3');
+  });
+
+  it('NUNCA intercepta pedidos de ação — mesmo citando squad/pane', () => {
+    expect(jarvisFastPath('abre o squad de code review', CTX)).toBeNull();
+    expect(jarvisFastPath('roda npm test no pane', CTX)).toBeNull();
+    expect(jarvisFastPath('cria uma missão nova', CTX)).toBeNull();
+    expect(jarvisFastPath('fecha esses panes ai', CTX)).toBeNull();
+  });
+
+  it('conversa aberta vai para o LLM', () => {
+    expect(jarvisFastPath('vamos dominar o mundo', CTX)).toBeNull();
+    expect(jarvisFastPath('o que você acha desse projeto?', CTX)).toBeNull();
+  });
+
+  it('lista vazia responde com fallback honesto', () => {
+    const empty: JarvisContext = { ...CTX, panes: [], squads: [], missions: [] };
+    expect(jarvisFastPath('quais panes abertos?', empty)?.say).toContain('Nenhum');
+    const squads = jarvisFastPath('quais squads tem?', empty);
+    expect(squads?.expectReply).toBe(true);
+  });
+});

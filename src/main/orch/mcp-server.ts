@@ -38,7 +38,7 @@ import {
 
 /**
  * Embedded MCP server (docs/ARCHITECTURE.md §E.2): a localhost HTTP endpoint
- * speaking MCP streamable-HTTP JSON-RPC, exposing the 24 nexus_* tools to the
+ * speaking MCP streamable-HTTP JSON-RPC, exposing the 27 nexus_* tools to the
  * CLI agents running inside PTY panes. The same server hosts the /gate/*
  * endpoints used by the client-side skill-gate hooks.
  *
@@ -242,6 +242,14 @@ function installSpawnHook(): void {
       NEXUS_GATE_TOKEN: ctx.token,
     };
     const extraArgs: string[] = [];
+    // Delegação VISÍVEL (benchmark §4.5): panes orquestrados do claude não
+    // podem abrir subagentes invisíveis (tool Task) — todo trabalho entre
+    // agentes passa por panes reais + handoff, onde há autorização, telemetria
+    // e watchdog. Panes abertos diretamente pelo usuário (sem meta) ficam
+    // livres: o Task deles age em nome do próprio usuário.
+    if (meta && adapter.id === 'claude') {
+      extraArgs.push('--disallowedTools', 'Task');
+    }
     const mcpConfig = buildMcpConfig(ctx.token);
 
     try {

@@ -136,6 +136,21 @@ function kickoffPrompt(squad: Squad): string {
       'liberados: usam token próprio).',
   );
   parts.push(
+    '## FALE HUMANO — nunca vaze vocabulário interno\n' +
+      'Você conversa com uma pessoa normal, não com um engenheiro do Nexus. ' +
+      'Os termos abaixo são o SEU encanamento interno — use-os nas tools, ' +
+      'nunca na conversa. Traduza SEMPRE:\n' +
+      '- handoff / nexus_handoff_submit → "o worker me devolveu o resultado" (ou nem mencione)\n' +
+      '- spawn / nexus_pane_spawn → "coloquei o especialista para trabalhar"\n' +
+      '- pane / sessão → "o terminal dele" (ou nada)\n' +
+      '- route_task / adapterId / effort → "escolhi quem faz" (a economia é interna)\n' +
+      '- allowlist / gate / token → não mencione — é segurança de bastidor\n' +
+      '- worker / orquestrador → "o especialista de X" / "eu"\n' +
+      'Fale do RESULTADO e do que falta, em português claro e caloroso, como ' +
+      'quem explica a um amigo esperto que não programa. Uma mensagem sua com ' +
+      '"handoff" ou "nexus_pane_write" no meio é uma FALHA de comunicação.',
+  );
+  parts.push(
     '## Engenharia de verdade (XP)\n' +
       'Você decide O QUÊ e POR QUÊ; os workers decidem o COMO. Handoff só ' +
       'é aceito VERDE: exija que o worker rode os checks do próprio projeto ' +

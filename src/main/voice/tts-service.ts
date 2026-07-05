@@ -2,6 +2,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import type { VoiceConfig, VoicePlugin } from '../../shared/voice-config';
 import type { SpeakRequest, SpeakResult } from '../../shared/voice-ipc';
 import { toSpeakable } from './speakable';
+import { echoSuppressor } from './echo-suppress';
 import { classifyKind, flattenChain, type ProviderProbes } from './provider-select';
 import { resolveVoiceApiKey } from './voice-secrets';
 
@@ -178,7 +179,12 @@ export async function speak(
 
   for (const plugin of chain) {
     const result = await speakVia(plugin, text, deps);
-    if (result.ok) return result;
+    if (result.ok) {
+      // Janela de eco: registra o que foi falado para o fluxo de STT poder
+      // descartar transcrições que são o alto-falante vazando no microfone.
+      echoSuppressor.record(text);
+      return result;
+    }
     failures.push(`${plugin.provider}: ${result.error}`);
   }
 

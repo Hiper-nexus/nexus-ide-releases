@@ -163,6 +163,9 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
         rows: host.term.rows,
         kind: pane.kind,
         resume,
+        // paneId estável (layout persistido): com resume, o main retoma a
+        // sessão de provider CAPTURADA deste pane (`--resume <id>`).
+        paneId: pane.id,
         adapterId: pane.adapterId,
         model: pane.model,
         effort: pane.effort,

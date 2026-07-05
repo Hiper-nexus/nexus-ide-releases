@@ -43,6 +43,7 @@ import {
 } from './orch/orch-ipc';
 import { killAllSessions } from './pty/pty-manager';
 import { shutdownPtyHost } from './pty/pty-host-client';
+import { initUsageTelemetry, shutdownUsageTelemetry } from './usage/usage-service';
 import { closeDb } from './persistence/db';
 import {
   registerSettingsIpc,
@@ -111,6 +112,9 @@ function bootstrap(): void {
   registerFilesIpc();
   registerAccountIpc();
   registerCostIpc();
+  // Telemetria REAL de tokens (transcript watchers → SQLite). Convive com o
+  // cost-tracker heurístico: a UI prefere o real quando ele existe.
+  initUsageTelemetry();
   registerNotesIpc();
   registerBillingIpc();
   registerPipeIpc(); // also calls initPanePipes()
@@ -170,5 +174,6 @@ app.on('before-quit', () => {
   closeOrchestration();
   closeAdapterRegistry();
   closeVoiceIpc();
+  shutdownUsageTelemetry();
   closeDb();
 });

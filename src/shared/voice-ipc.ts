@@ -125,6 +125,12 @@ export type TranscribeResult =
       provider: string;
       /** Set when earlier providers were skipped, e.g. "groq throttled (429) → openai". */
       fallbackNote?: string;
+      /**
+       * Transcrição válida porém descartável: 'echo' = é o próprio TTS vazando
+       * do alto-falante para o mic (echo-suppress). O renderer deve ignorar em
+       * silêncio, como faz com as alucinações do Whisper.
+       */
+      discarded?: 'echo';
       attempts: SttAttempt[];
     }
   | { ok: false; error: string; needsKey: boolean; attempts: SttAttempt[] };
