@@ -26,6 +26,16 @@ export function MissionRail() {
   const openMissionWizard = useMissionWizardStore((s) => s.openForMission);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+
+  function removeMission(m: Mission, active: boolean) {
+    const warn = active
+      ? `A missão "${m.title}" está aberta. Remover da lista? Os panes continuam abertos.`
+      : `Remover a missão "${m.title}" da lista?`;
+    if (!window.confirm(warn)) return;
+    void window.nexus.orch.removeMission(m.id).then((r) => {
+      if (!r.removed) setNote('Missão já não estava na lista.');
+    });
+  }
   // Uma missão está ABERTA se algum pane vivo no grid pertence a ela.
   const openMissionIds = new Set(Object.values(paneMissions));
 
@@ -51,7 +61,7 @@ export function MissionRail() {
         {ordered.map((m) => {
           const active = openMissionIds.has(m.id);
           return (
-            <li key={m.id}>
+            <li key={m.id} className="mission-rail__row">
               <button
                 className={`mission-rail__item ${active ? 'mission-rail__item--active' : ''}`}
                 disabled={busy !== null}
@@ -74,6 +84,16 @@ export function MissionRail() {
                     {busy === m.id ? ' · retomando…' : ''}
                   </span>
                 </span>
+              </button>
+              <button
+                className="mission-rail__remove"
+                title="Remover esta missão da lista"
+                aria-label={`Remover missão ${m.title}`}
+                onClick={() => removeMission(m, active)}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+                  <path d="M2.5 2.5 L9.5 9.5 M9.5 2.5 L2.5 9.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                </svg>
               </button>
             </li>
           );

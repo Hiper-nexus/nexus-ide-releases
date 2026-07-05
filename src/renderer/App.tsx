@@ -30,6 +30,8 @@ import { useFilesStore } from './state/files-store';
 import { useAccountController } from './state/account-store';
 import { useCostController } from './state/cost-store';
 import { useUsageSync } from './state/usage-store';
+import { useOnboardingSync } from './state/onboarding-store';
+import { Onboarding } from './components/Onboarding';
 import { useFailoverController } from './orch/failover-controller';
 import { Toasts } from './components/Toasts';
 
@@ -51,6 +53,7 @@ export function App() {
   useAccountController();
   useCostController();
   useUsageSync();
+  useOnboardingSync();
   useFailoverController();
 
   // Each workspace owns its pane layout: entering one loads ITS saved tree;
@@ -155,6 +158,7 @@ export function App() {
       <SettingsDrawer />
       <MissionWizard />
       <CloseWorkspaceDialog />
+      <Onboarding />
       <Toasts />
     </div>
   );

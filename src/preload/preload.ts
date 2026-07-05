@@ -26,6 +26,8 @@ import { NOTE_CHANNELS } from '../shared/note-types';
 import type { Note, NotesChangedEvent } from '../shared/note-types';
 import { PIPE_CHANNELS } from '../shared/pipe-types';
 import type { Pipe, PipeMode } from '../shared/pipe-types';
+import { ONBOARDING_CHANNELS } from '../shared/onboarding-types';
+import type { OnboardingPatch } from '../shared/onboarding-types';
 import type {
   NexusApi,
   SpawnRequest,
@@ -231,6 +233,11 @@ const api: NexusApi = {
       adapterChangedListeners.add(cb);
       return () => adapterChangedListeners.delete(cb);
     },
+  },
+  onboarding: {
+    get: () => ipcRenderer.invoke(ONBOARDING_CHANNELS.get),
+    set: (patch: OnboardingPatch) =>
+      ipcRenderer.invoke(ONBOARDING_CHANNELS.set, patch),
   },
   voice: {
     getInfo: () => ipcRenderer.invoke(VOICE_CHANNELS.getInfo),

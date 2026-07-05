@@ -6,6 +6,7 @@ import type {
   Squad,
   TodoList,
 } from '../../shared/orch-types';
+import { markVictory } from './onboarding-store';
 
 /**
  * Renderer mirror of the orchestration domain (missions / handoffs / todos /
@@ -74,8 +75,14 @@ export const useOrchStore = create<OrchState>((set) => ({
       return { paneMissions: { ...s.paneMissions, [paneId]: missionId } };
     }),
 
-  setMissions: (missions) => set({ missions }),
-  setHandoffs: (handoffs) => set({ handoffs }),
+  setMissions: (missions) => {
+    if (missions.length > 0) markVictory('firstMission');
+    set({ missions });
+  },
+  setHandoffs: (handoffs) => {
+    if (handoffs.length > 0) markVictory('firstHandoff');
+    set({ handoffs });
+  },
   setTodoLists: (todoLists) => set({ todoLists }),
   setSquads: (squads) => set({ squads }),
 }));

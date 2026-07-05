@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useVoiceStore } from './voice-store';
+import { markVictory } from '../state/onboarding-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { VoiceCapture } from './voice-capture';
@@ -105,6 +106,7 @@ export function useVoiceController(): void {
     // Wake word ("Jarvis"): detection → ela RESPONDE ao chamado ("Pois não?")
     // e então abre a escuta hands-free (auto-stop por silêncio).
     const onWake = () => {
+      markVictory('voiceEnabled'); // usou a voz ao menos uma vez
       if (isListening(capture.current)) return; // já ouvindo você
       // BARGE-IN: corta qualquer fala/fila dela na hora do chamado.
       stopAllPlayback();

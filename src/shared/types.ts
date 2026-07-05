@@ -4,6 +4,7 @@
  */
 
 import type { AdapterInfo } from './adapter-types';
+import type { OnboardingState, OnboardingPatch } from './onboarding-types';
 import type {
   VoiceRuntimeInfo,
   TranscribeRequest,
@@ -258,6 +259,10 @@ export interface NexusApi {
   adapters: {
     list(): Promise<AdapterInfo[]>;
     onChanged(cb: (adapters: AdapterInfo[]) => void): Unsubscribe;
+  };
+  onboarding: {
+    get(): Promise<OnboardingState>;
+    set(patch: OnboardingPatch): Promise<OnboardingState>;
   };
   voice: {
     getInfo(): Promise<VoiceRuntimeInfo>;

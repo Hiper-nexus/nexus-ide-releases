@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CatalogEntryInfo } from '../../../shared/types';
+import { markVictory } from '../../state/onboarding-store';
 
 /**
  * Marketplace — the catalog surface: the full
@@ -82,6 +83,7 @@ export function MarketplaceSection() {
       setNotice(`✗ ${entry.name}: ${res.error ?? 'falhou'}`);
       return;
     }
+    markVictory('catalogInstalled');
     setNotice(
       res.skipped
         ? `✓ ${entry.name} já estava instalado`

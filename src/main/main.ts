@@ -72,6 +72,7 @@ import {
   unregisterCostListener,
 } from './orch/cost-ipc';
 import { registerBillingIpc } from './persistence/billing-ipc';
+import { registerOnboardingIpc } from './persistence/onboarding-store';
 import {
   registerNotesIpc,
   registerNotesListener,
@@ -117,6 +118,7 @@ function bootstrap(): void {
   initUsageTelemetry();
   registerNotesIpc();
   registerBillingIpc();
+  registerOnboardingIpc();
   registerPipeIpc(); // also calls initPanePipes()
   // Orchestration boots async (MCP server binds a localhost port); the window
   // opens immediately and orchestration attaches when ready.
