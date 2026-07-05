@@ -129,6 +129,15 @@ function kickoffPrompt(squad: Squad): string {
       'pedra no caminho descoberta na missão deve ser documentada lá.',
   );
   parts.push(
+    '## Design fora do padrão IA\n' +
+      'Entrega com UI só finaliza após crítica do UX Designer. Rejeite o ' +
+      '"look de IA": sparkles ✨/emoji como ícone, gradiente roxo, ' +
+      'glassmorphism default, card grids idênticos, eyebrow uppercase em ' +
+      'toda seção. Exija: design system do projeto, hierarquia tipográfica ' +
+      'real, estados completos (hover/focus/empty/error) e, se a skill ' +
+      'impeccable estiver disponível, `impeccable detect` rodado na entrega.',
+  );
+  parts.push(
     '## Roster é um MENU, não obrigação\n' +
       'Spawne SOMENTE os workers que a missão realmente pede: missão de um ' +
       'arquivo não precisa do squad inteiro; missão grande usa todos. QA e ' +

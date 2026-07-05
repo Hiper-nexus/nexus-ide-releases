@@ -9,6 +9,7 @@ import { recordMissionPane } from './mission-pane-store';
 import { LEGACY_MARKER } from './legacy-handoff';
 import { PONYTAIL_RULES } from './ponytail';
 import { ENGINEERING_CHARTER } from './engineering-charter';
+import { DESIGN_CHARTER } from './design-charter';
 import { getOrchSettings } from '../persistence/settings-store';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
@@ -110,8 +111,9 @@ function withHandoffContract(
   // segurança, spec viva); o ponytail dita o tamanho do diff.
   const orch = getOrchSettings();
   const charter = orch.seniorMode ? `\n\n${ENGINEERING_CHARTER}` : '';
+  const design = orch.designPro ? `\n\n${DESIGN_CHARTER}` : '';
   const lean = orch.leanCode ? `\n\n${PONYTAIL_RULES}` : '';
-  return `${prompt}${charter}${lean}\n\n${contract}`;
+  return `${prompt}${charter}${design}${lean}\n\n${contract}`;
 }
 
 export async function spawnPaneAndMaybePrompt(

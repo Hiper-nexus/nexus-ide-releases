@@ -38,7 +38,10 @@ Regras:
   pagamentos, APIs expostas, rede ou dados de usuário.
 - Inclua um UX/UI Designer (category reviewer, cli claude) sempre que o
   projeto tiver interface (web, mobile, desktop): ele critica hierarquia,
-  acessibilidade, estados vazios e polish das entregas de UI.
+  acessibilidade, estados vazios e polish das entregas de UI, com mandato
+  explícito de rejeitar o visual genérico de IA (sparkles, gradiente roxo,
+  glassmorphism, card grids idênticos) e usar a skill impeccable quando
+  disponível.
 - NÃO inclua o orquestrador na lista (ele é adicionado automaticamente).
 - DISTRIBUA os workers entre as CLIs INSTALADAS listadas no perfil (custo e
   diversidade): executores em CLIs rápidas/baratas; reviewer/architect nas

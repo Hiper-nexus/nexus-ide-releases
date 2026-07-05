@@ -109,10 +109,12 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
   const openPanel = useOrchStore((s) => s.openPanel);
   const [leanCode, setLeanCode] = useState(true);
   const [seniorMode, setSeniorMode] = useState(true);
+  const [designPro, setDesignPro] = useState(true);
   useEffect(() => {
     void window.nexus.settings.orchGet().then((o) => {
       setLeanCode(o.leanCode);
       setSeniorMode(o.seniorMode);
+      setDesignPro(o.designPro);
     });
   }, []);
   return (
@@ -140,6 +142,26 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
           Ruby, Rust… não só Node/React), handoff só VERDE (testes/lint do
           projeto), segurança como hábito, refactoring contínuo e spec viva
           (CLAUDE.md/AGENTS.md evolui a cada missão).
+        </span>
+      </label>
+
+      <label className="settings-field">
+        <span>
+          <input
+            type="checkbox"
+            checked={designPro}
+            onChange={(e) => {
+              setDesignPro(e.target.checked);
+              void window.nexus.settings.orchSet({ designPro: e.target.checked });
+            }}
+          />{' '}
+          Design anti-genérico (Impeccable)
+        </span>
+        <span className="settings-field__note">
+          Carta de Design em tarefas com UI: bane a &quot;cara de IA&quot;
+          (✨ sparkles, gradiente roxo, glassmorphism, grids idênticos),
+          exige design system do projeto, estados completos e roda
+          impeccable detect quando disponível.
         </span>
       </label>
 
