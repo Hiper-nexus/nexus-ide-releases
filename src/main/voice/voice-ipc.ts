@@ -156,11 +156,16 @@ export function registerVoiceIpc(): void {
       return { say: 'Não entendi o pedido.', action: { type: 'none' } };
     }
     try {
-      return await jarvisThink(
+      const reply = await jarvisThink(
         parsed.data.transcript,
         parsed.data.context,
         parsed.data.history,
       );
+      console.log(
+        `[voice] jarvis: "${parsed.data.transcript}" → ${reply.action.type}` +
+          ` | say="${reply.say.slice(0, 80)}"`,
+      );
+      return reply;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { say: `Deu erro ao pensar: ${message}`, action: { type: 'none' } };

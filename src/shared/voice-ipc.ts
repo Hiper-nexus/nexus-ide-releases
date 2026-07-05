@@ -133,6 +133,8 @@ export type TranscribeResult =
 
 export interface JarvisContext {
   workspace: string | null;
+  /** Workspaces recentes (nomes) — para open_workspace. */
+  recents: string[];
   squads: string[];
   panes: string[];
   focusedPane: string | null;
@@ -146,6 +148,7 @@ export interface JarvisTurn {
 export type JarvisAction =
   | { type: 'none' }
   | { type: 'open_squad'; squadName: string }
+  | { type: 'open_workspace'; workspaceName: string }
   | { type: 'new_mission' }
   | { type: 'send_to_pane'; text: string }
   | { type: 'run_command'; command: string };
@@ -161,6 +164,7 @@ export const jarvisRequestSchema = z.object({
   transcript: z.string().min(1).max(4000),
   context: z.object({
     workspace: z.string().nullable(),
+    recents: z.array(z.string().max(128)).max(20).default([]),
     squads: z.array(z.string().max(128)).max(50),
     panes: z.array(z.string().max(128)).max(50),
     focusedPane: z.string().max(128).nullable(),

@@ -11,9 +11,10 @@ import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
 import type { AdapterInfo } from '../../shared/types';
 
-/** Brief label identifying the active view mode. */
+/** Botão de view mostra a AÇÃO (para onde vai), não o estado atual —
+ *  usuários procuram a palavra "Canvas" para ENTRAR no canvas. */
 function viewLabel(kind: 'grid' | 'canvas'): string {
-  return kind === 'canvas' ? '⬡ Canvas' : '⊞ Grid';
+  return kind === 'canvas' ? '⊞ Grid' : '⬡ Canvas';
 }
 
 /** Slim top chrome: brand, pane count, split shortcuts, view toggle, and the agent launcher. */

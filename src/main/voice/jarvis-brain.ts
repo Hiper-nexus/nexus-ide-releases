@@ -28,8 +28,10 @@ sem repetir "Hey Jarvis". false quando o assunto encerrou.
 
 Tipos de action:
 - {"type":"none"} — só conversa (perguntas, status, brincadeira).
-- {"type":"open_squad","squadName":"<nome aproximado>"} — abrir/iniciar um
-  squad ou equipe.
+- {"type":"open_squad","squadName":"<nome aproximado>"} — INICIAR um squad
+  (os agentes sobem na hora; escolha o nome mais próximo do contexto).
+- {"type":"open_workspace","workspaceName":"<nome aproximado>"} — abrir um
+  projeto/workspace (use os nomes em "workspaces recentes").
 - {"type":"new_mission"} — nova missão sem citar squad.
 - {"type":"run_command","command":"<comando exato>"} — quando pedirem para
   EXECUTAR/RODAR um comando, programa ou CLI no terminal (o pane focado é um
@@ -38,10 +40,14 @@ Tipos de action:
   fala for uma TAREFA para um AGENTE DE IA já aberto no pane focado (codar,
   explicar, corrigir...). Traduza a tarefa para inglês claro.
 
+REGRA DE OURO: NUNCA diga que fez/vai fazer algo sem retornar a action
+correspondente — sem action, nada acontece no app.
+
 VOCÊ PODE executar coisas — nunca diga que não pode. Exemplos:
 - "executa o comando ai" → {"say":"Rodando o ai no terminal.","action":{"type":"run_command","command":"ai"}}
 - "roda npm test" → {"say":"Rodando os testes.","action":{"type":"run_command","command":"npm test"}}
-- "abre o squad de review" → {"say":"Abrindo o Code Review.","action":{"type":"open_squad","squadName":"Code Review"}}
+- "abre o squad de review" → {"say":"Subindo o Code Review.","action":{"type":"open_squad","squadName":"Code Review"}}
+- "abre o projeto saasbarbearia" → {"say":"Abrindo o saasbarbearia.","action":{"type":"open_workspace","workspaceName":"saasbarbearia"}}
 - "pede pro agente corrigir o bug do login" → send_to_pane com o prompt em inglês.
 
 Os panes no contexto vêm marcados: [shell] = terminal (use run_command);
@@ -67,6 +73,7 @@ function contextBlock(ctx: JarvisContext): string {
   return (
     `Contexto do app agora:\n` +
     `- workspace: ${ctx.workspace ?? 'nenhum aberto'}\n` +
+    `- workspaces recentes: ${ctx.recents.join(', ') || 'nenhum'}\n` +
     `- squads disponíveis: ${squads}\n` +
     `- panes abertos: ${panes}\n` +
     `- pane focado: ${ctx.focusedPane ?? 'nenhum'}`
@@ -85,6 +92,9 @@ function parseReply(raw: string): JarvisReply {
     const type = obj.action?.type;
     if (type === 'open_squad' && typeof obj.action?.squadName === 'string') {
       return { say, expectReply, action: { type, squadName: obj.action.squadName } };
+    }
+    if (type === 'open_workspace' && typeof obj.action?.workspaceName === 'string') {
+      return { say, expectReply, action: { type, workspaceName: obj.action.workspaceName } };
     }
     if (type === 'new_mission') return { say, expectReply, action: { type } };
     if (type === 'send_to_pane' && typeof obj.action?.text === 'string') {

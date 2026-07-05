@@ -10,6 +10,7 @@ import { listPanes } from '../lib/split-tree';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useOrchStore } from '../state/orch-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
+import { launchSquadMission } from '../orch/mission-launcher';
 import type { AutoStopOptions } from './voice-capture';
 import type { JarvisTurn, VoiceRuntimeInfo } from '../../shared/voice-ipc';
 
@@ -31,10 +32,16 @@ const JARVIS_MEMORY_MS = 90_000; // conversa esfria depois disso → história z
 
 // Memória curta da conversa com a JARVIS (renderer-local, por janela).
 let jarvisHistory: JarvisTurn[] = [];
+// Follow-ups seguidos SEM ação: acima do limite, exige "Hey Jarvis" de novo
+// (senão a escuta fica presa transcrevendo conversa ambiente).
+let idleFollowUps = 0;
 const wakeMic = new WakeMic();
 let jarvisLastTurnAt = 0;
 
 const WAKE_ACKS = ['Pois não?', 'Sim?', 'Às ordens.', 'Diga.'];
+// Micro-fillers ditos NA HORA em que você termina de falar (enquanto STT +
+// cérebro rodam) — latência percebida ~zero, estilo "Right away, sir".
+const THINK_FILLERS = ['Deixa comigo.', 'Um instante.', 'Certo.', 'Já vejo.'];
 
 // Acks pré-sintetizados (LiveKit playbook: cached greetings) — a resposta ao
 // chamado sai INSTANTÂNEA, sem HTTP de TTS por wake.
@@ -44,7 +51,7 @@ let ackWarmed = false;
 function warmAckCache(): void {
   if (ackWarmed) return;
   ackWarmed = true;
-  for (const text of WAKE_ACKS) {
+  for (const text of [...WAKE_ACKS, ...THINK_FILLERS]) {
     void window.nexus.voice
       .speak({ text, speakMode: 'full' })
       .then((r) => {
@@ -195,6 +202,15 @@ async function finishAndProcess(
 
     const routing = store.info?.routing ?? 'focused-pane';
 
+    // Feedback INSTANTÂNEO: um micro-filler do cache cobre o tempo de
+    // STT+cérebro (fire-and-forget; echoCancellation filtra do próximo turno).
+    if (routing === 'jarvis') {
+      const filler = THINK_FILLERS[Math.floor(Math.random() * THINK_FILLERS.length)];
+      const cached = ackCache.get(filler);
+      if (cached) void playAudioBase64(cached.audioBase64, cached.format).catch(() => {});
+    }
+
+    const tTurn = Date.now();
     store.setStatus('transcribing');
     const stt = await window.nexus.voice.transcribe({
       audioBase64: result.wavBase64,
@@ -207,7 +223,9 @@ async function finishAndProcess(
       store.setError(stt.error);
       return;
     }
+    const tStt = Date.now() - tTurn;
     store.setTranscript(stt.text);
+    console.log(`[voice] transcrito (${tStt}ms): "${stt.text}"`);
     // Surface throttle/quota fallbacks instead of failing silently.
     store.setNote(stt.fallbackNote ?? null);
 
@@ -264,6 +282,7 @@ async function runJarvisTurn(
   const panes = listPanes(root);
   const context = {
     workspace: useWorkspaceStore.getState().current?.name ?? null,
+    recents: useWorkspaceStore.getState().recents.map((r) => r.name).slice(0, 10),
     squads: useOrchStore.getState().squads.map((s) => s.name),
     panes: panes
       .map((p) => `${p.kind === 'shell' ? '[shell] ' : '[agente] '}${p.title}`)
@@ -272,11 +291,13 @@ async function runJarvisTurn(
   };
 
   store.setStatus('routing');
+  const tBrain = Date.now();
   const reply = await window.nexus.voice.jarvis({
     transcript,
     context,
     history: jarvisHistory,
   });
+  console.log(`[voice] cérebro: ${Date.now() - tBrain}ms`);
   jarvisHistory.push({ role: 'user', content: transcript });
   jarvisHistory.push({ role: 'assistant', content: reply.say });
   if (jarvisHistory.length > 12) jarvisHistory = jarvisHistory.slice(-12);
@@ -293,19 +314,54 @@ async function runJarvisTurn(
           s.name.toLowerCase().includes(wanted) ||
           wanted.includes(s.name.toLowerCase()),
       );
-    if (match) {
-      useMissionWizardStore.getState().openForSquad(match.id);
+    console.log(
+      `[voice] ação open_squad "${reply.action.squadName}" → ${match ? `match: ${match.name}` : 'SEM MATCH'}`,
+    );
+    if (match && !useWorkspaceStore.getState().current) {
+      sayText =
+        'Antes eu preciso de um projeto aberto. Quer que eu abra um dos ' +
+        'recentes? Diga o nome.';
+      reply.expectReply = true;
+    } else if (match) {
+      // Voz = intenção de EXECUTAR: lança a missão na hora (orquestrador
+      // spawna e recebe o kickoff), nada de wizard esperando clique.
+      const adapters = await window.nexus.adapters.list();
+      const res = launchSquadMission(match, adapters);
+      console.log(`[voice] launch squad "${match.name}" → ${res.ok ? 'NO AR' : `falhou: ${res.error}`}`);
+      if (!res.ok) sayText = res.error ?? 'Não consegui subir o squad.';
     } else {
       sayText = `Não achei o squad "${reply.action.squadName}". Os disponíveis são: ${context.squads.join(', ')}.`;
     }
+  } else if (reply.action.type === 'open_workspace') {
+    const wanted = reply.action.workspaceName.toLowerCase();
+    const ws = useWorkspaceStore.getState();
+    const all = [...ws.recents];
+    const match =
+      all.find((r) => r.name.toLowerCase() === wanted) ??
+      all.find(
+        (r) =>
+          r.name.toLowerCase().includes(wanted) ||
+          wanted.includes(r.name.toLowerCase()),
+      );
+    console.log(
+      `[voice] ação open_workspace "${reply.action.workspaceName}" → ${match ? `match: ${match.name}` : 'SEM MATCH'}`,
+    );
+    if (match) {
+      void ws.open(match.path);
+    } else {
+      sayText = `Não achei o projeto "${reply.action.workspaceName}" nos recentes.`;
+    }
   } else if (reply.action.type === 'new_mission') {
+    console.log('[voice] ação new_mission → abrindo wizard');
     useMissionWizardStore.getState().openForMission();
   } else if (reply.action.type === 'send_to_pane') {
     const paneId = routePrompt(reply.action.text);
+    console.log(`[voice] ação send_to_pane → pane=${paneId ?? 'NENHUM'}`);
     if (!paneId) sayText = 'Não tem nenhum pane focado para eu mandar a tarefa.';
   } else if (reply.action.type === 'run_command') {
     const { focusedPaneId: fp } = useLayoutStore.getState();
     const ok = fp ? writeToPane(fp, `${reply.action.command}\n`) : false;
+    console.log(`[voice] ação run_command "${reply.action.command}" → ${ok ? 'escrito' : 'FALHOU (sem pane focado)'}`);
     if (!ok) sayText = 'Não tem um terminal focado para eu rodar o comando.';
   }
 
@@ -313,10 +369,12 @@ async function runJarvisTurn(
   // Pipelining por sentença (LiveKit playbook): sintetiza e toca a PRIMEIRA
   // frase enquanto o resto ainda está sendo gerado — corta o time-to-first-audio.
   const split = splitFirstSentence(sayText);
+  const tTts = Date.now();
   const restPromise = split.rest
     ? window.nexus.voice.speak({ text: split.rest, speakMode: 'full' })
     : null;
   const first = await window.nexus.voice.speak({ text: split.first, speakMode: 'full' });
+  console.log(`[voice] tts 1ª frase: ${Date.now() - tTts}ms`);
   if (first.ok) {
     if (first.mode === 'audio') await playAudioBase64(first.audioBase64, first.format);
   } else {
@@ -332,8 +390,13 @@ async function runJarvisTurn(
   store.setSpoken(sayText);
   store.setStatus('idle');
 
-  // O cérebro sinalizou que espera resposta → escuta reabre sozinha.
-  if (reply.expectReply ?? sayText.trim().endsWith('?')) {
+  // O cérebro sinalizou que espera resposta → escuta reabre sozinha — mas
+  // com trava: 2 turnos seguidos sem AÇÃO real e a conversa encerra (senão
+  // ela fica presa ouvindo papo ambiente).
+  if (reply.action.type !== 'none') idleFollowUps = 0;
+  else idleFollowUps += 1;
+  const wantsReply = reply.expectReply ?? sayText.trim().endsWith('?');
+  if (wantsReply && idleFollowUps < 2) {
     busy.current = false;
     void beginListening(capture, wakeAutoStop(capture, busy));
   }

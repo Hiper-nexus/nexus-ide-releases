@@ -252,12 +252,16 @@ export function CanvasView() {
         elementsSelectable={false}
         deleteKeyCode={null}
       >
-        <Background gap={20} size={1} color="var(--border)" />
+        <Background gap={20} size={1.4} color="var(--border-strong)" />
         <AddNoteButton />
         <MiniMap
-          nodeColor="var(--bg-elevated)"
-          maskColor="rgba(11,14,20,0.7)"
-          style={{ background: 'var(--bg-bar)', border: '1px solid var(--border)' }}
+          nodeColor="rgba(110, 168, 254, 0.45)"
+          nodeStrokeColor="var(--accent)"
+          nodeStrokeWidth={2}
+          maskColor="rgba(11, 14, 20, 0.55)"
+          pannable
+          zoomable
+          style={{ background: 'var(--bg-bar)', border: '1px solid var(--border-strong)' }}
         />
         <Controls
           style={{ background: 'var(--bg-bar)', border: '1px solid var(--border)' }}
