@@ -191,6 +191,12 @@ export function routeTask(
   adapters: AdapterAvailability[],
   table: RoutingTable = DEFAULT_ROUTING_TABLE,
   tierOverride?: TaskTier,
+  // Contexto de WORKER (o handler passa true): reserva o binário `claude`
+  // OAuth para o orquestrador. N instâncias claude concorrentes reescrevem o
+  // MESMO item de keychain "Claude Code-credentials" e o corrompem (tokens
+  // zerados → todos deslogam). glm/longcat usam o mesmo binário mas autenticam
+  // por ANTHROPIC_AUTH_TOKEN, então não disputam o keychain e seguem elegíveis.
+  reserveClaude = false,
 ): RouteDecision | null {
   const installed = new Set(
     adapters.filter((a) => a.installed).map((a) => a.id),
@@ -211,21 +217,34 @@ export function routeTask(
     ...TIER_ORDER.slice(0, tierIndex).reverse(),
     ...TIER_ORDER.slice(tierIndex + 1),
   ];
+  // Achata os candidatos instalados na ordem de busca (guardando o tier de
+  // origem para o motivo "melhor opção instalada").
+  const ranked: Array<{ c: RouteCandidate; fromTier: TaskTier }> = [];
   for (const candidateTier of searchOrder) {
-    const available = table[candidateTier].filter((c) =>
-      installed.has(c.adapterId),
-    );
-    if (available.length === 0) continue;
-    const [pick, ...alternatives] = available;
+    for (const c of table[candidateTier]) {
+      if (installed.has(c.adapterId)) ranked.push({ c, fromTier: candidateTier });
+    }
+  }
+  if (ranked.length > 0) {
+    let chosen = ranked[0];
+    if (reserveClaude && chosen.c.adapterId === 'claude') {
+      const alt = ranked.find((r) => r.c.adapterId !== 'claude');
+      // ponytail: só claude instalado → sem alternativa, mantém claude (o
+      // orquestrador serializa os workers claude nesse caso raro).
+      if (alt) chosen = alt;
+    }
+    const pick = chosen.c;
     const borrowed =
-      candidateTier === tier ? '' : ` (tier ${candidateTier} — melhor opção instalada)`;
+      chosen.fromTier === tier
+        ? ''
+        : ` (tier ${chosen.fromTier} — melhor opção instalada)`;
     return {
       tier,
       adapterId: pick.adapterId,
       model: pick.model,
       effort: pick.effort,
       reason: `${tier}${borrowed}; ${why}`,
-      alternatives,
+      alternatives: ranked.filter((r) => r.c !== pick).map((r) => r.c),
     };
   }
 

@@ -127,7 +127,12 @@ function kickoffPrompt(squad: Squad): string {
       'insista nem espere — chame nexus_route_task de novo com ' +
       '{exclude: ["<cli-limitada>"]}, respawne o worker na CLI indicada e ' +
       'siga. Use effort xhigh só no que é realmente crítico: xhigh queima a ' +
-      'cota do provedor muito mais rápido.',
+      'cota do provedor muito mais rápido.\n' +
+      'LOGIN: o binário `claude` (assinatura) é SEU, exclusivo do ' +
+      'orquestrador. NUNCA spawne worker no adapter claude — o route_task já ' +
+      'devolve alternativas não-claude. Vários claude ao mesmo tempo corrompem ' +
+      'a credencial compartilhada e derrubam o login de todos (glm/longcat são ' +
+      'liberados: usam token próprio).',
   );
   parts.push(
     '## Engenharia de verdade (XP)\n' +

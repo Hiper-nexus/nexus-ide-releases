@@ -122,6 +122,36 @@ describe('routeTask', () => {
     expect(decision!.model).toBe('glm-5.2');
   });
 
+  it('reserva o claude OAuth para o orquestrador (reserveClaude)', () => {
+    // Sem reserva: crítico vai para claude-fable-5 (comportamento base).
+    const base = routeTask(
+      'auditar a segurança da autenticação e dos pagamentos',
+      adapters('claude', 'codex', 'grok'),
+    );
+    expect(base!.adapterId).toBe('claude');
+    // Com reserva (contexto de worker): cai para a melhor alternativa não-claude.
+    const reserved = routeTask(
+      'auditar a segurança da autenticação e dos pagamentos',
+      adapters('claude', 'codex', 'grok'),
+      DEFAULT_ROUTING_TABLE,
+      undefined,
+      true,
+    );
+    expect(reserved!.adapterId).not.toBe('claude');
+    expect(reserved!.tier).toBe('critical');
+  });
+
+  it('mantém claude quando é a ÚNICA CLI instalada, mesmo reservando', () => {
+    const only = routeTask(
+      'auditar a segurança da autenticação',
+      adapters('claude'),
+      DEFAULT_ROUTING_TABLE,
+      undefined,
+      true,
+    );
+    expect(only!.adapterId).toBe('claude');
+  });
+
   it('respects an explicit tier override', () => {
     const decision = routeTask(
       'tarefa qualquer sem sinais',

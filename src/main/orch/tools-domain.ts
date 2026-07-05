@@ -505,7 +505,9 @@ const routeTaskTool: McpToolDef = {
         !excluded.has(a.id) &&
         (a.id === 'glm' ? a.installed && hasKey('glm') : a.installed),
     }));
-    const decision = routeTask(task, adapters, undefined, tier);
+    // reserveClaude=true: workers nunca no binário claude OAuth — evita
+    // corromper o keychain compartilhado com o orquestrador.
+    const decision = routeTask(task, adapters, undefined, tier, true);
     if (!decision) throw new Error('no installed adapters to route to');
     return decision;
   },
