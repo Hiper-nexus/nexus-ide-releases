@@ -118,6 +118,17 @@ function kickoffPrompt(squad: Squad): string {
       'seu próprio pane é FALHA de orquestração.',
   );
   parts.push(
+    '## Engenharia de verdade (XP)\n' +
+      'Você decide O QUÊ e POR QUÊ; os workers decidem o COMO. Handoff só ' +
+      'é aceito VERDE: exija que o worker rode os checks do próprio projeto ' +
+      '(testes/lint/typecheck/build) e recuse entrega vermelha ou sem teste ' +
+      'para mudança não-trivial. Incrementos pequenos e reversíveis — a ' +
+      'árvore fica production-ready após cada handoff. SPEC VIVA: se o ' +
+      'workspace não tiver CLAUDE.md/AGENTS.md, inclua na primeira tarefa ' +
+      'criar um starter (stack, comandos de build/test, convenções); toda ' +
+      'pedra no caminho descoberta na missão deve ser documentada lá.',
+  );
+  parts.push(
     '## Roster é um MENU, não obrigação\n' +
       'Spawne SOMENTE os workers que a missão realmente pede: missão de um ' +
       'arquivo não precisa do squad inteiro; missão grande usa todos. QA e ' +

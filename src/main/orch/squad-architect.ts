@@ -44,7 +44,10 @@ Regras:
   diversidade): executores em CLIs rápidas/baratas; reviewer/architect nas
   mais capazes. Nunca coloque todos na mesma CLI.
 - effort baixo para tarefas mecânicas, high para revisão/arquitetura.
-- Instruções: cite a stack e os diretórios REAIS do perfil.`;
+- Instruções: cite a stack e os diretórios REAIS do perfil, e SEMPRE inclua
+  os comandos reais de build/test/lint do projeto (extraia dos manifests,
+  ex.: scripts do package.json, Makefile, rake, go test ./...) — são os
+  gates que o orquestrador vai cobrar em cada handoff.`;
 
 function readSafe(file: string): string {
   try {

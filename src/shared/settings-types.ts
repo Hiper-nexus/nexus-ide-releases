@@ -65,6 +65,8 @@ export type TerminalSettingsPatch = z.infer<typeof terminalSettingsPatchSchema>;
  */
 export const orchSettingsSchema = z.object({
   leanCode: z.boolean().default(true),
+  /** Carta de Engenharia (XP/sênior) injetada em todo worker de squad. */
+  seniorMode: z.boolean().default(true),
 });
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});

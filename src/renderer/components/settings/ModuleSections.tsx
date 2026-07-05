@@ -108,8 +108,12 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
   const squads = useOrchStore((s) => s.squads);
   const openPanel = useOrchStore((s) => s.openPanel);
   const [leanCode, setLeanCode] = useState(true);
+  const [seniorMode, setSeniorMode] = useState(true);
   useEffect(() => {
-    void window.nexus.settings.orchGet().then((o) => setLeanCode(o.leanCode));
+    void window.nexus.settings.orchGet().then((o) => {
+      setLeanCode(o.leanCode);
+      setSeniorMode(o.seniorMode);
+    });
   }, []);
   return (
     <section>
@@ -118,6 +122,26 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
         {squads.length} squad(s) salvos — schema compatível com o
         squads.json, com export/import nativo.
       </p>
+
+      <label className="settings-field">
+        <span>
+          <input
+            type="checkbox"
+            checked={seniorMode}
+            onChange={(e) => {
+              setSeniorMode(e.target.checked);
+              void window.nexus.settings.orchSet({ seniorMode: e.target.checked });
+            }}
+          />{' '}
+          Disciplina sênior (XP)
+        </span>
+        <span className="settings-field__note">
+          Carta de Engenharia em todo worker: stack certa para o projeto (Go,
+          Ruby, Rust… não só Node/React), handoff só VERDE (testes/lint do
+          projeto), segurança como hábito, refactoring contínuo e spec viva
+          (CLAUDE.md/AGENTS.md evolui a cada missão).
+        </span>
+      </label>
 
       <label className="settings-field">
         <span>
