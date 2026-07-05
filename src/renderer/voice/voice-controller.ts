@@ -28,7 +28,7 @@ const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
 const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
 const WAKE_SILENCE_MS = 700; // wake-word capture: quiet time that ends the utterance
 const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
-const JARVIS_MEMORY_MS = 90_000; // conversa esfria depois disso → história zera
+const JARVIS_MEMORY_MS = 45_000; // conversa esfria depois disso → história zera
 
 // Memória curta da conversa com a JARVIS (renderer-local, por janela).
 let jarvisHistory: JarvisTurn[] = [];
@@ -88,7 +88,15 @@ export function useVoiceController(): void {
     // Wake word ("Jarvis"): detection → ela RESPONDE ao chamado ("Pois não?")
     // e então abre a escuta hands-free (auto-stop por silêncio).
     const onWake = () => {
-      if (busy.current || isListening(capture.current)) return;
+      if (isListening(capture.current)) return; // já ouvindo você
+      // BARGE-IN: corta qualquer fala/fila dela na hora do chamado.
+      stopAllPlayback();
+      if (busy.current) {
+        // Estava FALANDO? Interrompe e volta a ouvir. Pensando (stt/cérebro,
+        // <1s)? Deixa terminar — chame de novo em seguida.
+        if (useVoiceStore.getState().status !== 'speaking') return;
+        busy.current = false;
+      }
       // Fluidez: a escuta abre IMEDIATAMENTE; o ack toca em paralelo (o
       // echoCancellation do mic filtra a própria voz dela).
       void beginListening(capture.current!, wakeAutoStop(capture.current!, busy));
@@ -141,8 +149,15 @@ export function useVoiceController(): void {
 
     // Toggle: o renderer decide — capturando? envia. Senão, começa a ouvir.
     const onToggle = () => {
-      if (isListening(capture.current)) onStop();
-      else onStart();
+      if (isListening(capture.current)) {
+        onStop();
+      } else {
+        stopAllPlayback();
+        if (busy.current && useVoiceStore.getState().status === 'speaking') {
+          busy.current = false;
+        }
+        onStart();
+      }
     };
 
     const unsubStart = window.nexus.voice.onPttStart(onStart);
@@ -280,14 +295,30 @@ async function runJarvisTurn(
 
   const { root, focusedPaneId } = useLayoutStore.getState();
   const panes = listPanes(root);
+  const orchPaneId = findOrchestratorPane(root);
+  const orchPane = panes.find((p) => p.id === orchPaneId) ?? null;
   const context = {
     workspace: useWorkspaceStore.getState().current?.name ?? null,
     recents: useWorkspaceStore.getState().recents.map((r) => r.name).slice(0, 10),
     squads: useOrchStore.getState().squads.map((s) => s.name),
     panes: panes
-      .map((p) => `${p.kind === 'shell' ? '[shell] ' : '[agente] '}${p.title}`)
+      .map((p) => {
+        const tag =
+          p.id === orchPaneId
+            ? '[orquestrador] '
+            : p.kind === 'shell'
+              ? '[shell] '
+              : '[agente] ';
+        return `${tag}${p.title}`;
+      })
       .slice(0, 20),
     focusedPane: panes.find((p) => p.id === focusedPaneId)?.title ?? null,
+    orchestrator: orchPane?.title ?? null,
+    missions: useOrchStore
+      .getState()
+      .missions.filter((m) => m.status !== 'done')
+      .map((m) => `${m.title} (${m.status})`)
+      .slice(0, 10),
   };
 
   store.setStatus('routing');
@@ -355,9 +386,15 @@ async function runJarvisTurn(
     console.log('[voice] ação new_mission → abrindo wizard');
     useMissionWizardStore.getState().openForMission();
   } else if (reply.action.type === 'send_to_pane') {
-    const paneId = routePrompt(reply.action.text);
-    console.log(`[voice] ação send_to_pane → pane=${paneId ?? 'NENHUM'}`);
-    if (!paneId) sayText = 'Não tem nenhum pane focado para eu mandar a tarefa.';
+    // Missão dita por voz vai pro ORQUESTRADOR quando ele existe; senão, pro
+    // pane focado.
+    const { root: r2, focusedPaneId: f2 } = useLayoutStore.getState();
+    const target = findOrchestratorPane(r2) ?? f2;
+    const ok = target ? writeToPane(target, `${reply.action.text}\n`) : false;
+    console.log(
+      `[voice] ação send_to_pane → ${target ? (target === f2 ? 'pane focado' : 'ORQUESTRADOR') : 'NENHUM'}`,
+    );
+    if (!ok) sayText = 'Não tem nenhum pane para eu mandar a tarefa.';
   } else if (reply.action.type === 'run_command') {
     const { focusedPaneId: fp } = useLayoutStore.getState();
     const ok = fp ? writeToPane(fp, `${reply.action.command}\n`) : false;
@@ -496,20 +533,43 @@ function captureResponse(paneId: string, promptEcho: string): Promise<string> {
 }
 
 /** Decode + play TTS audio bytes via Web Audio. */
+// ── Controlador central de reprodução (barge-in) ────────────────────────────
+// Toda fala dela passa por aqui. Um novo "Hey Jarvis" corta o áudio atual E
+// invalida reproduções pendentes (geração) — sem isso, respostas antigas
+// enfileiradas vazavam no chamado seguinte ("ela chega agradecendo").
+let playbackGen = 0;
+let liveSources: AudioBufferSourceNode[] = [];
+
+function stopAllPlayback(): void {
+  playbackGen += 1;
+  for (const src of liveSources) {
+    try {
+      src.stop();
+    } catch {
+      // já parado
+    }
+  }
+  liveSources = [];
+}
+
 async function playAudioBase64(base64: string, _format: string): Promise<void> {
+  const gen = playbackGen;
   const bytes = base64ToBytes(base64);
   const ctx = new AudioContext();
   try {
     // Fresh Uint8Array → its buffer is a plain ArrayBuffer (not shared).
     const arrayBuffer = bytes.buffer.slice(0) as ArrayBuffer;
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    if (gen !== playbackGen) return; // barge-in aconteceu enquanto decodificava
     const source = ctx.createBufferSource();
+    liveSources.push(source);
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
     await new Promise<void>((resolve) => {
       source.onended = () => resolve();
       source.start();
     });
+    liveSources = liveSources.filter((s) => s !== source);
   } finally {
     void ctx.close();
   }

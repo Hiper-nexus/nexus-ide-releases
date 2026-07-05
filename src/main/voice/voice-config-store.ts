@@ -127,15 +127,17 @@ export function loadVoiceConfig(): VoiceConfig {
     // ganha a voz natural nova (gpt-4o-mini-tts/nova) sem perder customização.
     if (
       userConfig.tts.provider === 'openai' &&
-      userConfig.tts.model === 'tts-1' &&
-      userConfig.tts.voice === 'onyx'
+      ((userConfig.tts.model === 'tts-1' && userConfig.tts.voice === 'onyx') ||
+        // gpt-4o-mini-tts media 1.3s/frase — tts-1 é o modelo low-latency.
+        userConfig.tts.model === 'gpt-4o-mini-tts')
     ) {
       userConfig.tts = {
         ...userConfig.tts,
-        model: 'gpt-4o-mini-tts',
+        model: 'tts-1',
         voice: 'nova',
       };
       migrated = true;
+      console.log('[voice] TTS migrado para tts-1 (latência)');
     }
     // Saves antigos promoviam o fallback macos-say para o TOPO da chain — a
     // voz ficava robótica para sempre, mesmo com key OpenAI. Restaure a chain

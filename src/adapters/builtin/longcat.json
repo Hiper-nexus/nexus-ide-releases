@@ -31,7 +31,7 @@
     ],
     "ptyRequired": true,
     "resumeArgs": [
-      "--resume"
+      "--continue"
     ],
     "extraArgs": []
   },

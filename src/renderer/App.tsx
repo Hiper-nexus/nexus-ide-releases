@@ -23,7 +23,7 @@ import { useWorkspaceController, useWorkspaceStore } from './state/workspace-sto
 import { useProviderController } from './state/provider-store';
 import { useMissionWizardStore } from './state/mission-wizard-store';
 import { useHomeStore } from './state/home-store';
-import { reconcileHosts } from './terminal/terminal-host';
+import { reconcileHosts, markResumeOnSpawn } from './terminal/terminal-host';
 import { listPanes } from './lib/split-tree';
 import { useFilesStore } from './state/files-store';
 import { useAccountController } from './state/account-store';
@@ -76,6 +76,11 @@ export function App() {
       // layout (agents, splits) restores silently. If the "Novo workspace"
       // wizard is mid-flow it owns the launch; the deck would get in its way.
       const panes = listPanes(useLayoutStore.getState().root);
+      // Retomada de sessão: panes de AGENTE restaurados voltam com --continue
+      // (a mesma conversa de onde pararam), em vez de um agente zerado.
+      for (const p of panes) {
+        if (p.kind === 'cli-agent') markResumeOnSpawn(p.id);
+      }
       const loneBarShell =
         panes.length === 1 && panes[0].kind === 'shell' && !panes[0].orchRequestId;
       if (loneBarShell && !useMissionWizardStore.getState().open) {

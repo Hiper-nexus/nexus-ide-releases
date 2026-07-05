@@ -80,7 +80,7 @@ async function speakCloud(
       ...(key ? { Authorization: `Bearer ${key}` } : {}),
     },
     body: JSON.stringify({
-      model: plugin.model ?? 'gpt-4o-mini-tts',
+      model: plugin.model ?? 'tts-1',
       voice: plugin.voice ?? 'nova',
       // Persona JARVIS — só o gpt-4o-mini-tts aceita instructions.
       ...((plugin.model ?? 'gpt-4o-mini-tts').startsWith('gpt-4o-mini-tts')

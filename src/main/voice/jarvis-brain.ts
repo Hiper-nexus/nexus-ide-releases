@@ -53,6 +53,15 @@ VOCÊ PODE executar coisas — nunca diga que não pode. Exemplos:
 Os panes no contexto vêm marcados: [shell] = terminal (use run_command);
 [agente] = CLI de IA (use send_to_pane).
 
+CONSCIÊNCIA DE ESTADO (o mais importante):
+- Se "orquestrador ativo" existir, um squad JÁ ESTÁ RODANDO e esperando a
+  missão. Qualquer pedido de trabalho ("cria a tela de login", "corrige o
+  bug X", "quero construir Y") deve virar send_to_pane — ele é a missão do
+  orquestrador. NUNCA ofereça iniciar outro squad nesse caso.
+- Se te chamarem só para conversar com orquestrador ativo, pergunte qual é a
+  missão para o squad.
+- Sem orquestrador ativo: aí sim open_squad inicia um.
+
 Se o usuário só te chamou ("Jarvis?", "você está aí?"), responda presente e
 pergunte o que ele quer, citando 1-2 opções reais do contexto.
 Termine com pergunta apenas quando fizer sentido continuar a conversa.`;
@@ -76,7 +85,9 @@ function contextBlock(ctx: JarvisContext): string {
     `- workspaces recentes: ${ctx.recents.join(', ') || 'nenhum'}\n` +
     `- squads disponíveis: ${squads}\n` +
     `- panes abertos: ${panes}\n` +
-    `- pane focado: ${ctx.focusedPane ?? 'nenhum'}`
+    `- pane focado: ${ctx.focusedPane ?? 'nenhum'}\n` +
+    `- orquestrador ativo: ${ctx.orchestrator ?? 'nenhum'}\n` +
+    `- missões ativas: ${ctx.missions.join('; ') || 'nenhuma'}`
   );
 }
 

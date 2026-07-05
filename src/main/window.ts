@@ -101,11 +101,31 @@ export function createMainWindow(): BrowserWindow {
     });
   }
 
-  if (devServerUrl) {
-    win.loadURL(devServerUrl);
-  } else {
-    win.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
-  }
+  // O load pode disparar ANTES do dev server do Vite aceitar conexões (a
+  // janela abria preta e exigia fechar/reabrir). Auto-retry até carregar; o
+  // backoff curto cobre o boot do Vite sem atrasar o caso saudável.
+  let loadRetries = 0;
+  const load = () => {
+    if (devServerUrl) {
+      void win.loadURL(devServerUrl);
+    } else {
+      void win.loadFile(
+        path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
+      );
+    }
+  };
+  wc.on('did-fail-load', (_e, code, desc) => {
+    if (win.isDestroyed() || loadRetries >= 40) return;
+    loadRetries += 1;
+    console.warn(`[window] load falhou (${code} ${desc}) — retry ${loadRetries}`);
+    setTimeout(() => {
+      if (!win.isDestroyed()) load();
+    }, 400);
+  });
+  wc.on('did-finish-load', () => {
+    loadRetries = 0;
+  });
+  load();
 
   return win;
 }

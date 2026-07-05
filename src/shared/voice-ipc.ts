@@ -138,6 +138,10 @@ export interface JarvisContext {
   squads: string[];
   panes: string[];
   focusedPane: string | null;
+  /** Título do pane do ORQUESTRADOR ativo (null = nenhum squad rodando). */
+  orchestrator: string | null;
+  /** Missões ativas (nomes/status). */
+  missions: string[];
 }
 
 export interface JarvisTurn {
@@ -168,6 +172,8 @@ export const jarvisRequestSchema = z.object({
     squads: z.array(z.string().max(128)).max(50),
     panes: z.array(z.string().max(128)).max(50),
     focusedPane: z.string().max(128).nullable(),
+    orchestrator: z.string().max(128).nullable().default(null),
+    missions: z.array(z.string().max(160)).max(20).default([]),
   }),
   history: z
     .array(

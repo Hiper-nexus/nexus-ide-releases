@@ -101,6 +101,16 @@ function kickoffPrompt(squad: Squad): string {
       'é a missão, caso ainda não tenha sido informada.',
   );
   parts.push(
+    '## REGRA INEGOCIÁVEL: você DELEGA, não executa\n' +
+      'Você NÃO escreve código nem edita arquivos você mesmo. Recebida a ' +
+      'missão, IMEDIATAMENTE: (1) nexus_mission_create; (2) quebre em tarefas; ' +
+      '(3) para CADA tarefa, nexus_route_task e nexus_pane_spawn do worker ' +
+      'correspondente do seu time; (4) coordene e cobre handoffs. Se uma tool ' +
+      'falhar, mostre o erro EXATO no chat e tente uma vez de novo — nunca ' +
+      'silencie a falha resolvendo a tarefa você mesmo. Fazer o trabalho no ' +
+      'seu próprio pane é FALHA de orquestração.',
+  );
+  parts.push(
     '## Roteamento inteligente (economia de tokens)\n' +
       'Uma das suas missões é POUPAR tokens e acelerar o trabalho. Antes de ' +
       'CADA delegação, chame nexus_route_task {task} e use o adapterId/model/' +

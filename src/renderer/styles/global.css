@@ -3493,3 +3493,80 @@ body {
   color: var(--text-dim) !important;
   opacity: 0.5;
 }
+
+/* ---- Contas & failover v2: "EM USO" sempre visível ---- */
+.acct__inuse {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  margin: 10px 0 6px;
+}
+
+.acct__inuse-pill {
+  background: var(--accent);
+  color: #0b0e14;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.acct__inuse-pill--sm {
+  margin-left: 8px;
+  font-size: 9px;
+  padding: 2px 6px;
+}
+
+.acct__inuse-name {
+  font-weight: 650;
+  font-size: 13px;
+}
+
+.acct__inuse-name--implicit {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.acct__use {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.acct__use:hover {
+  background: var(--accent-soft);
+}
+
+.acct__add-choices {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.acct__form {
+  margin-top: 10px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.acct__form-title {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}

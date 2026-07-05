@@ -164,9 +164,11 @@ export async function handleMcpMessage(
         (message.params?.arguments as Record<string, unknown>) ?? {};
       try {
         const result = await tool.handler(args, ctx);
+        console.log(`[orch] tool ${tool.name} ok (${ctx.label})`);
         return ok(id, toolText(result));
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
+        console.warn(`[orch] tool ${tool.name} FALHOU (${ctx.label}): ${detail}`);
         return ok(id, toolError(`${tool.name} failed: ${detail}`));
       }
     }
