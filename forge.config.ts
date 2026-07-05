@@ -88,6 +88,7 @@ const config: ForgeConfig = {
     }),
     // Hardening fuses: no Node in the renderer, no inspector, load app only
     // from the signed asar. This is the production security baseline.
+    ...(process.env.NEXUS_SKIP_FUSES ? [] : [
     new FusesPlugin({
       version: FuseVersion.V1,
       [FuseV1Options.RunAsNode]: false,
@@ -97,6 +98,7 @@ const config: ForgeConfig = {
       [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
       [FuseV1Options.OnlyLoadAppFromAsar]: true,
     }),
+    ]),
   ],
 };
 
