@@ -138,12 +138,15 @@ export async function chatOnce(
   messages: Array<{ role: string; content: string }>,
   deps: BrainDeps,
   jsonMode: boolean,
+  // 420 serve às respostas faladas da JARVIS; consumidores de JSON longo
+  // (ex.: squad-architect) DEVEM subir — JSON truncado = erro de parse.
+  maxTokens = 420,
 ): Promise<string> {
   const body: Record<string, unknown> = {
     model,
     messages,
     temperature: 0.4,
-    max_tokens: 420,
+    max_tokens: maxTokens,
   };
   if (jsonMode) body.response_format = { type: 'json_object' };
   const res = await deps.fetchImpl(endpoint, {

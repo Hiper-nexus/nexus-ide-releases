@@ -126,6 +126,7 @@ export async function designSquadForWorkspace(
           messages,
           defaultBrainDeps,
           true,
+          2_000,
         );
       } catch {
         // cai para o Groq
@@ -139,6 +140,7 @@ export async function designSquadForWorkspace(
         messages,
         defaultBrainDeps,
         true,
+        2_000,
       );
     }
     throw new Error('nenhuma key de modelo (OPENAI_API_KEY ou GROQ_API_KEY)');
@@ -156,7 +158,8 @@ export async function designSquadForWorkspace(
   try {
     parsed = JSON.parse(match[0]);
   } catch {
-    return { ok: false, error: 'JSON inválido do modelo' };
+    console.warn('[orch] arquiteto devolveu JSON inválido:', raw.slice(-200));
+    return { ok: false, error: 'JSON inválido do modelo (resposta truncada?)' };
   }
   if (!parsed.name || !Array.isArray(parsed.agents) || parsed.agents.length === 0) {
     return { ok: false, error: 'squad gerado incompleto' };
