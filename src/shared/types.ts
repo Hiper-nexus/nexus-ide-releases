@@ -217,6 +217,11 @@ export type Unsubscribe = () => void;
 import type { LicenseInfo, PlanId } from './billing-types';
 
 export interface NexusApi {
+  /** App-shell lifecycle signals to the main process. */
+  app: {
+    /** Tell main that React committed its first frame (mount watchdog). */
+    signalMounted(): void;
+  };
   billing: {
     get(): Promise<LicenseInfo>;
     openCheckout(plan: PlanId): Promise<{ ok: boolean }>;
@@ -255,6 +260,8 @@ export interface NexusApi {
     sendWakeAudio(chunk: ArrayBuffer): void;
     onWakeDetected(cb: () => void): Unsubscribe;
     jarvis(req: JarvisRequest): Promise<JarvisReply>;
+    /** Native confirmation before a voice-issued shell command runs (SEC#6). */
+    confirmCommand(command: string): Promise<boolean>;
     onPttStart(cb: () => void): Unsubscribe;
     onPttToggle(cb: () => void): Unsubscribe;
     onPttStop(cb: () => void): Unsubscribe;

@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles/global.css';
 
 // No StrictMode: its dev-time double-mount would spawn/kill PTYs twice per pane.
@@ -7,9 +8,11 @@ const container = document.getElementById('root');
 if (!container) {
   throw new Error('#root element missing from index.html');
 }
-createRoot(container).render(<App />);
-// Sinal de vida para o watchdog do main (via console forward, só dev): o
-// primeiro load com Vite frio às vezes pendura o grafo de módulos e o React
-// nunca monta ("tela preta") — sem este sinal o main não sabe distinguir
-// página carregada de app montado.
-console.log('[diag] app montado');
+// The ErrorBoundary both renders a readable screen on a boot crash (instead of a
+// black window) and fires the main-process mount signal from its post-commit
+// lifecycle — see ErrorBoundary for why this replaces the old `[diag]` log.
+createRoot(container).render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>,
+);

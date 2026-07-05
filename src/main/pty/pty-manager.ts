@@ -1,19 +1,31 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import type { WebContents } from 'electron';
-import * as nodePty from '@lydell/node-pty';
 import { PTY_CHANNELS } from '../../shared/channels';
 import type { SpawnRequest, PaneSessionState } from '../../shared/types';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
 import { resolvePlaceholders } from '../../shared/adapter-types';
+import type {
+  PtyHost,
+  PtyProcHandle,
+  PtySessionHandlers,
+  PtySpawnSpec,
+} from './pty-host-core';
 
 /**
- * Owns every live PTY. One session per pane, addressed by an opaque id. Data is
- * streamed main -> renderer over IPC events; input flows renderer -> main.
+ * Owns every live PTY session — one per pane, addressed by an opaque id. The
+ * native node-pty handles live in a separate utilityProcess (pty-host-*.ts); a
+ * session's `proc` is a proxy that posts control messages there. All the
+ * security-relevant work (env allowlist, argv, ownership, idle state machine,
+ * orchestration taps) stays HERE, in trusted main-process code. Data streams
+ * main -> renderer over IPC events; input flows renderer -> main.
+ *
+ * The concrete host is INJECTED (setPtyHost) rather than imported so this module
+ * never pulls electron into its graph and stays unit-testable.
  */
 
 interface Session {
-  proc: nodePty.IPty;
+  proc: PtyProcHandle;
   wc: WebContents;
   idleTimer: ReturnType<typeof setTimeout> | null;
   idleTimeoutMs: number;
@@ -22,6 +34,28 @@ interface Session {
 
 const sessions = new Map<string, Session>();
 let counter = 0;
+
+let ptyHost: PtyHost | null = null;
+
+/** Wire the utilityProcess-backed host (called once at IPC bootstrap). */
+export function setPtyHost(host: PtyHost): void {
+  ptyHost = host;
+}
+
+function requireHost(): PtyHost {
+  if (!ptyHost) throw new Error('PTY host not initialized');
+  return ptyHost;
+}
+
+/** node-pty accepts `string | undefined` values; the host protocol wants a
+ * plain, structured-cloneable string map — drop undefined entries. */
+function cleanEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined) out[key] = value;
+  }
+  return out;
+}
 
 /**
  * Orchestration taps. The orchestration layer (embedded MCP server, handoff
@@ -226,26 +260,33 @@ function makeSessionId(): string {
   return `pty-${Date.now().toString(36)}-${++counter}`;
 }
 
-function attachProc(
-  proc: nodePty.IPty,
-  sessionId: string,
-  session: Session,
-): void {
-  proc.onData((data) => {
-    if (canSend(session.wc)) {
-      session.wc.send(PTY_CHANNELS.data, { sessionId, data });
-    }
-    fireTaps(dataTaps, sessionId, data);
-    if (session.state !== 'busy') {
-      session.state = 'busy';
-      emitStateChange(session.wc, sessionId, 'busy');
-    }
-    if (session.idleTimeoutMs > 0) armIdleTimer(sessionId, session);
-  });
+/**
+ * Handle one data chunk from the host: push to the renderer, feed the
+ * orchestration taps, and drive the busy/idle state machine. Extracted from the
+ * old attachProc so a spawn path can build the host session handlers without
+ * ever holding a live node-pty handle.
+ */
+function onSessionData(session: Session, sessionId: string, data: string): void {
+  if (canSend(session.wc)) {
+    session.wc.send(PTY_CHANNELS.data, { sessionId, data });
+  }
+  fireTaps(dataTaps, sessionId, data);
+  if (session.state !== 'busy') {
+    session.state = 'busy';
+    emitStateChange(session.wc, sessionId, 'busy');
+  }
+  if (session.idleTimeoutMs > 0) armIdleTimer(sessionId, session);
+}
 
-  proc.onExit(({ exitCode, signal }) => {
-    finalizeSession(sessionId, exitCode, signal);
-  });
+/** Session lifecycle callbacks handed to the host at spawn time. */
+function sessionHandlers(
+  sessionId: string,
+  getSession: () => Session,
+): PtySessionHandlers {
+  return {
+    onData: (data) => onSessionData(getSession(), sessionId, data),
+    onExit: (exitCode, signal) => finalizeSession(sessionId, exitCode, signal),
+  };
 }
 
 /**
@@ -277,16 +318,22 @@ export interface SpawnedSession {
 export function spawnSession(wc: WebContents, req: SpawnRequest): SpawnedSession {
   const shell = resolveShell(req.shell);
   const cwd = resolveCwd(req.cwd);
-  const proc = nodePty.spawn(shell, [], {
-    name: 'xterm-256color',
+  const sessionId = makeSessionId();
+  const spec: PtySpawnSpec = {
+    sessionId,
+    file: shell,
+    args: [],
+    cwd,
     cols: req.cols,
     rows: req.rows,
-    cwd,
-    env: baseChildEnv(),
-  });
-
-  const sessionId = makeSessionId();
-  const session: Session = {
+    env: cleanEnv(baseChildEnv()),
+  };
+  let session!: Session;
+  const proc = requireHost().spawn(
+    spec,
+    sessionHandlers(sessionId, () => session),
+  );
+  session = {
     proc,
     wc,
     idleTimer: null,
@@ -294,7 +341,6 @@ export function spawnSession(wc: WebContents, req: SpawnRequest): SpawnedSession
     state: 'spawning',
   };
   sessions.set(sessionId, session);
-  attachProc(proc, sessionId, session);
   return { sessionId };
 }
 
@@ -370,29 +416,38 @@ export function spawnAgentSession(
     args.push(...decoration.extraArgs);
   }
 
-  let proc: nodePty.IPty;
-  try {
-    proc = nodePty.spawn(bin, args, {
-      name: 'xterm-256color',
-      cols: req.cols,
-      rows: req.rows,
-      cwd,
-      env,
-    });
-  } catch (err) {
-    // Spawn failed → onSpawned never runs, so free the minted token + files
-    // here (otherwise a valid bearer token leaks in memory and on disk).
-    decoration?.onSpawnFailed?.();
-    throw err;
-  }
-
   const idleMs =
     adapter.stateParsing.idle.type === 'timeout'
       ? adapter.stateParsing.idle.ms
       : 800;
 
   const sessionId = makeSessionId();
-  const session: Session = {
+  const spec: PtySpawnSpec = {
+    sessionId,
+    file: bin,
+    args,
+    cwd,
+    cols: req.cols,
+    rows: req.rows,
+    env: cleanEnv(env),
+  };
+  let session!: Session;
+  let proc: PtyProcHandle;
+  try {
+    proc = requireHost().spawn(
+      spec,
+      sessionHandlers(sessionId, () => session),
+    );
+  } catch (err) {
+    // The host itself is unavailable (never initialized / failed to fork), so
+    // no session will exist — free the minted token + on-disk artifacts here,
+    // otherwise a valid bearer token leaks in memory and on disk. A spawn that
+    // fails INSIDE the host instead arrives as an async exit, and the exit tap
+    // runs the very same cleanup.
+    decoration?.onSpawnFailed?.();
+    throw err;
+  }
+  session = {
     proc,
     wc,
     idleTimer: null,
@@ -401,7 +456,6 @@ export function spawnAgentSession(
   };
   sessions.set(sessionId, session);
   emitStateChange(wc, sessionId, 'spawning');
-  attachProc(proc, sessionId, session);
   decoration?.onSpawned?.(sessionId);
   return { sessionId };
 }

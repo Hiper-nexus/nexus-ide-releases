@@ -20,6 +20,9 @@ export const VOICE_CHANNELS = {
   wakeDetected: 'voice:wake.detected',
   /** invoke: renderer → main. Fala transcrita → resposta JARVIS {say, action}. */
   jarvis: 'voice:jarvis',
+  /** invoke: renderer → main. Confirmação nativa antes de rodar um comando de
+   * voz (SEC#6 — anti prompt-injection voz→shell). Retorna boolean. */
+  confirmCommand: 'voice:confirmCommand',
 
   /** event: main → renderer. Global push-to-talk key pressed. */
   pttStart: 'voice:ptt.start',

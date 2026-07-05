@@ -1,4 +1,4 @@
-import type { Squad } from '../../shared/orch-types';
+import type { Squad, SquadAgent } from '../../shared/orch-types';
 
 /**
  * NEXUS ORIGINALS — squads embutidos, semeados no primeiro run (marcados
@@ -11,7 +11,24 @@ import type { Squad } from '../../shared/orch-types';
 
 const SEED_TS = '1704067200000'; // 2024-01-01, estável
 
-export const BUILTIN_SQUADS: Squad[] = [
+/**
+ * Allowlist mínima e explícita por papel (SEC#5 — antes `null` = irrestrito em
+ * todos). O orquestrador é o dono da missão e usa o toolset completo; todo
+ * worker é uma folha que só precisa entregar o handoff (nexus_handoff_submit é
+ * sempre permitido), então seu `allowedTools` é `[]` — sem pane cross-access,
+ * sem spawnar panes, sem controlar a missão. `allowedSkills` fica aberto de
+ * propósito: skills rodam no contexto do próprio worker (não é vetor de escape
+ * lateral) e workers legítimos precisam delas (ex.: impeccable no UX Designer).
+ */
+function withAllowlists(agents: SquadAgent[]): SquadAgent[] {
+  return agents.map((agent) => ({
+    ...agent,
+    allowedTools:
+      agent.allowedTools ?? (agent.category === 'orchestrator' ? null : []),
+  }));
+}
+
+const RAW_SQUADS: Squad[] = [
   {
     id: 'nexus-fullstack',
     name: 'Full-Stack',
@@ -78,3 +95,9 @@ export const BUILTIN_SQUADS: Squad[] = [
     ],
   },
 ];
+
+/** Built-in squads with the per-role tool allowlists applied (SEC#5). */
+export const BUILTIN_SQUADS: Squad[] = RAW_SQUADS.map((squad) => ({
+  ...squad,
+  agents: withAllowlists(squad.agents),
+}));

@@ -13,7 +13,9 @@ import {
   writeSession,
   resizeSession,
   killSession,
+  setPtyHost,
 } from './pty-manager';
+import { createRealPtyHost } from './pty-host-client';
 import { getAdapter, isAdapterInstalled } from '../adapters/adapter-registry';
 import {
   isProviderEnabled,
@@ -26,6 +28,10 @@ import {
  * shell or agent path based on the request kind.
  */
 export function registerPtyIpc(): void {
+  // Route every PTY through the isolated utilityProcess host (node-pty never
+  // loads in the main process — docs/ARCHITECTURE.md §B.2).
+  setPtyHost(createRealPtyHost());
+
   ipcMain.handle(PTY_CHANNELS.spawn, (event, raw): SpawnResult => {
     const parsed = spawnRequestSchema.safeParse(raw);
     if (!parsed.success) {

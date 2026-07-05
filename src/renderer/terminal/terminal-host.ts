@@ -49,6 +49,34 @@ let webglInUse = 0;
 
 const hosts = new Map<string, Host>();
 
+// Notified when a pane's PTY sessionId is assigned or cleared. A session
+// materializes ASYNCHRONOUSLY after spawn — not on a layout change — so this
+// event is what lets consumers react without polling. It replaces three
+// identical 150ms waitForSession copies AND the 1s syncPanes heartbeat.
+type PaneSessionListener = (paneId: string, sessionId: string | null) => void;
+const paneSessionListeners = new Set<PaneSessionListener>();
+
+export function onPaneSessionChange(cb: PaneSessionListener): () => void {
+  paneSessionListeners.add(cb);
+  return () => paneSessionListeners.delete(cb);
+}
+
+/** Assign (or clear) a host's sessionId and notify subscribers. */
+function setHostSession(
+  host: Host,
+  paneId: string,
+  sessionId: string | null,
+): void {
+  host.sessionId = sessionId;
+  for (const cb of [...paneSessionListeners]) {
+    try {
+      cb(paneId, sessionId);
+    } catch {
+      // A listener must never break the spawn/session path.
+    }
+  }
+}
+
 const DEFAULT_FONT_STACK =
   'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, monospace';
 
@@ -153,7 +181,7 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
         }
         return;
       }
-      host.sessionId = res.sessionId;
+      setHostSession(host, pane.id, res.sessionId);
 
       if (pane.kind === 'cli-agent') {
         host.cleanups.push(
@@ -286,7 +314,7 @@ function createCliAgentHost(pane: PaneModel): Host {
   element.addEventListener('mousedown', () =>
     useLayoutStore.getState().focus(pane.id),
   );
-  wireInteractions(host);
+  wireInteractions(host, true);
 
   useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
   return host;
@@ -326,7 +354,7 @@ async function injectSavedBlob(host: Host, file: File): Promise<void> {
  * injected), and accept drag-and-dropped files (real path injected as if
  * typed). Nothing here can break the terminal — every branch is guarded.
  */
-function wireInteractions(host: Host): void {
+function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
   const { element, term } = host;
 
   term.attachCustomKeyEventHandler((e) => {
@@ -335,6 +363,15 @@ function wireInteractions(host: Host): void {
     if (mod && e.key.toLowerCase() === 'c' && term.hasSelection()) {
       void navigator.clipboard.writeText(term.getSelection());
       return false; // handled — don't send ^C to the pty
+    }
+    // ⌘+End / ⌘+↓ — "descer até a última mensagem" (macOS não tem tecla End
+    // física; o ctrl+End que o TUI do Claude anuncia fica inalcançável).
+    if (e.metaKey && (e.key === 'End' || e.key === 'ArrowDown')) {
+      term.scrollToBottom();
+      if (sendJumpKeyOnScroll && host.sessionId) {
+        window.nexus.pty.write(host.sessionId, '\x1b[1;5F');
+      }
+      return false;
     }
     return true;
   });
@@ -466,6 +503,26 @@ export function focusHost(paneId: string): void {
 }
 
 /**
+ * Rola o pane até a última mensagem e devolve o foco.
+ *
+ * Dois níveis de scroll coexistem: o scrollback do xterm E o transcript
+ * interno de TUIs como o Claude Code (o pill "Jump to bottom (ctrl+End)").
+ * Para panes de agente enviamos também a sequência do ctrl+End (CSI 1;5F)
+ * ao PTY — é o atalho que o próprio TUI anuncia, inalcançável em teclados
+ * Mac sem tecla End. Shells comuns não recebem a sequência (viraria lixo
+ * no prompt).
+ */
+export function scrollPaneToBottom(paneId: string, sendJumpKey = false): void {
+  const host = hosts.get(paneId);
+  if (!host || host.disposed || !host.opened) return;
+  host.term.scrollToBottom();
+  if (sendJumpKey && host.sessionId) {
+    window.nexus.pty.write(host.sessionId, '\x1b[1;5F');
+  }
+  host.term.focus();
+}
+
+/**
  * Re-spawn a cli-agent pane with the adapter's --resume flags in the SAME
  * xterm, so the conversation continues (old output stays as scrollback). Used
  * for two flows:
@@ -482,7 +539,7 @@ export function respawnWithResume(
   host.cleanups.forEach((fn) => fn());
   host.cleanups = [];
   if (host.sessionId) window.nexus.pty.kill(host.sessionId);
-  host.sessionId = null;
+  setHostSession(host, pane.id, null);
   host.spawnStarted = false;
   host.term.writeln(`\r\n\x1b[33m${note}\x1b[0m`);
   startSpawn(pane, host, true);
@@ -491,6 +548,36 @@ export function respawnWithResume(
 /** The live PTY session id backing a pane, or null if not spawned yet. */
 export function getPaneSessionId(paneId: string): string | null {
   return hosts.get(paneId)?.sessionId ?? null;
+}
+
+const SESSION_WAIT_TIMEOUT_MS = 20_000;
+
+/**
+ * Resolve with a pane's PTY session id once it materializes (spawn is async),
+ * or null on timeout. Event-driven via onPaneSessionChange — the single shared
+ * implementation that replaced three identical 150ms polling copies in the
+ * orchestration modules.
+ */
+export function waitForSession(
+  paneId: string,
+  timeoutMs = SESSION_WAIT_TIMEOUT_MS,
+): Promise<string | null> {
+  const existing = getPaneSessionId(paneId);
+  if (existing) return Promise.resolve(existing);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
+      unsub();
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const unsub = onPaneSessionChange((id, sessionId) => {
+      if (id === paneId && sessionId) finish(sessionId);
+    });
+    const timer = setTimeout(() => finish(getPaneSessionId(paneId)), timeoutMs);
+  });
 }
 
 /**

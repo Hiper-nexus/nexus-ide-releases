@@ -447,10 +447,28 @@ async function runJarvisTurn(
     );
     if (!ok) sayText = 'Não tem nenhum pane para eu mandar a tarefa.';
   } else if (reply.action.type === 'run_command') {
-    const { focusedPaneId: fp } = useLayoutStore.getState();
-    const ok = fp ? writeToPane(fp, `${reply.action.command}\n`) : false;
-    console.log(`[voice] ação run_command "${reply.action.command}" → ${ok ? 'escrito' : 'FALHOU (sem pane focado)'}`);
-    if (!ok) sayText = 'Não tem um terminal focado para eu rodar o comando.';
+    const command = reply.action.command;
+    const { focusedPaneId: fp, root: rc } = useLayoutStore.getState();
+    const focused = fp ? listPanes(rc).find((p) => p.id === fp) : undefined;
+    if (!focused) {
+      sayText = 'Não tem um terminal focado para eu rodar o comando.';
+    } else if (focused.kind !== 'shell') {
+      // SEC#6: run_command targets a real shell only, never an AI-agent pane.
+      sayText = 'Foca um terminal shell que aí eu rodo o comando.';
+    } else {
+      // A shell command decided by the (LLM) brain NEVER auto-runs: a poisoned
+      // transcript could inject one. Require an explicit, un-spoofable native
+      // confirmation showing the exact command before it executes.
+      const approved = await window.nexus.voice.confirmCommand(command);
+      if (approved) {
+        const ok = writeToPane(focused.id, `${command}\n`);
+        if (!ok) sayText = 'Não consegui escrever no terminal.';
+        console.log(`[voice] run_command "${command}" → ${ok ? 'confirmado + executado' : 'FALHOU'}`);
+      } else {
+        sayText = 'Cancelei, não rodei o comando.';
+        console.log(`[voice] run_command "${command}" → RECUSADO pelo usuário`);
+      }
+    }
   }
 
   store.setStatus('speaking');

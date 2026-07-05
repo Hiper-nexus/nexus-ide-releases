@@ -79,6 +79,9 @@ const config: ForgeConfig = {
     new VitePlugin({
       build: [
         { entry: 'src/main/main.ts', config: 'vite.main.config.ts', target: 'main' },
+        // PTY host: separate utilityProcess entry, built beside main.js as
+        // .vite/build/pty-host-entry.js (docs/ARCHITECTURE.md §B.2).
+        { entry: 'src/main/pty/pty-host-entry.ts', config: 'vite.pty-host.config.ts', target: 'main' },
         { entry: 'src/preload/preload.ts', config: 'vite.preload.config.ts', target: 'preload' },
       ],
       renderer: [{ name: 'main_window', config: 'vite.renderer.config.ts' }],

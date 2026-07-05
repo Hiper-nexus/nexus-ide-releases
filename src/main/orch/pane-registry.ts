@@ -13,6 +13,7 @@ import {
   tapSessionExit,
   tapSessionState,
 } from '../pty/pty-manager';
+import { canListPane, type CallerCtx, type PaneAuthzInfo } from './pane-authz';
 import { makeId } from './store-util';
 
 /**
@@ -179,12 +180,24 @@ function paneState(entry: PaneRegistryEntry): PaneSnapshot['state'] {
   return buffers.get(entry.sessionId)?.exited ? 'exited' : 'unknown';
 }
 
-export function listPaneSnapshots(): PaneSnapshot[] {
-  return panes.map((entry) => ({
+function snapshotOf(entry: PaneRegistryEntry): PaneSnapshot {
+  return {
     ...entry,
     state: paneState(entry),
     ...orchMetaByPane.get(entry.paneId),
-  }));
+  };
+}
+
+export function listPaneSnapshots(): PaneSnapshot[] {
+  return panes.map(snapshotOf);
+}
+
+/** nexus_pane_list scoped to what the caller may see (SEC#5 info disclosure):
+ * a worker sees only its own mission's panes, never the user's shells. */
+export function listVisiblePaneSnapshots(caller: CallerCtx): PaneSnapshot[] {
+  return panes
+    .filter((entry) => canListPane(caller, authzInfoOf(entry)))
+    .map(snapshotOf);
 }
 
 export function findPane(paneIdOrSessionId: string): PaneRegistryEntry | null {
@@ -195,6 +208,23 @@ export function findPane(paneIdOrSessionId: string): PaneRegistryEntry | null {
         entry.sessionId === paneIdOrSessionId,
     ) ?? null
   );
+}
+
+function authzInfoOf(entry: PaneRegistryEntry): PaneAuthzInfo {
+  const meta = orchMetaByPane.get(entry.paneId);
+  return {
+    paneId: entry.paneId,
+    sessionId: entry.sessionId,
+    kind: entry.kind,
+    missionId: meta?.missionId,
+    role: meta?.role,
+  };
+}
+
+/** Resolve a pane (by paneId or sessionId) to the info the authz check needs. */
+export function getPaneAuthzInfo(paneRef: string): PaneAuthzInfo | null {
+  const pane = findPane(paneRef);
+  return pane ? authzInfoOf(pane) : null;
 }
 
 // CSI sequences (colors, cursor moves), OSC sequences (titles; BEL or ST

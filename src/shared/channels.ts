@@ -23,3 +23,11 @@ export const ADAPTER_CHANNELS = {
   list: 'adapter:list',
   changed: 'adapter:changed',
 } as const;
+
+export const WINDOW_CHANNELS = {
+  /** send: renderer → main. React committed its first frame (fired from a
+   * post-commit effect). The main-process mount watchdog waits for this to
+   * distinguish "page loaded" from "app actually rendered" — in dev AND in
+   * the packaged app, where a boot crash used to leave a black window. */
+  mounted: 'renderer:mounted',
+} as const;

@@ -1,8 +1,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ipcMain } from 'electron';
+import { BrowserWindow, dialog, ipcMain } from 'electron';
 import type { WebContents } from 'electron';
+import {
+  hasSensitiveChange,
+  sensitiveChanges,
+  validateBinPath,
+  type SensitiveChange,
+} from './provider-bin-trust';
 import {
   PROVIDER_CHANNELS,
   addModelSchema,
@@ -188,7 +194,11 @@ export function providerSpawnOverrides(
   // Control flags (permission mode / effort / verbose) always apply, whatever
   // the auth/routing path — they're how the user turns on auto-operation.
   const base = {
-    binPath: cfg.binPath || null,
+    // Defense in depth (SEC#4): only an ABSOLUTE path is ever used as the
+    // executable. A bare/relative binPath (e.g. from a hand-edited config) is
+    // dropped so it can never resolve to an arbitrary binary off PATH; the
+    // setConfig confirmation is the primary control.
+    binPath: cfg.binPath && path.isAbsolute(cfg.binPath) ? cfg.binPath : null,
     defaultModel: cfg.defaultModel || null,
     extraArgs: [...controlArgsFor(adapterId, perSpawn.effort), ...cfg.extraArgs],
   };
@@ -324,16 +334,89 @@ export function unregisterProviderListener(wc: WebContents): void {
   listeners.delete(wc);
 }
 
+/** Native, un-spoofable confirmation before trusting a renderer-supplied
+ * binary/args as the thing the app will execute (SEC#4). */
+async function confirmExecConfig(
+  adapterId: string,
+  change: SensitiveChange,
+): Promise<boolean> {
+  const label = getAdapter(adapterId)?.label ?? adapterId;
+  const lines: string[] = [];
+  if (change.binPath !== undefined) lines.push(`Binário: ${change.binPath}`);
+  if (change.extraArgs !== undefined) {
+    lines.push(`Argumentos extras: ${change.extraArgs.join(' ')}`);
+  }
+  const opts = {
+    type: 'warning' as const,
+    buttons: ['Cancelar', 'Confiar e salvar'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Confirmar execução de binário',
+    message: `Confiar nesta configuração de execução para ${label}?`,
+    detail:
+      `${lines.join('\n')}\n\n` +
+      'O NexusIDE passará a EXECUTAR exatamente isto ao abrir este provider. ' +
+      'Confirme apenas se você reconhece este caminho/estes argumentos.',
+    noLink: true,
+  };
+  const win = BrowserWindow.getFocusedWindow();
+  const result = win
+    ? await dialog.showMessageBox(win, opts)
+    : await dialog.showMessageBox(opts);
+  return result.response === 1;
+}
+
+async function warnInvalidBin(
+  adapterId: string,
+  binPath: string,
+  reason: string,
+): Promise<void> {
+  const opts = {
+    type: 'error' as const,
+    buttons: ['OK'],
+    title: 'Caminho de binário inválido',
+    message: `Caminho rejeitado para ${getAdapter(adapterId)?.label ?? adapterId}`,
+    detail: `${binPath}\n\n${reason}`,
+    noLink: true,
+  };
+  const win = BrowserWindow.getFocusedWindow();
+  if (win) await dialog.showMessageBox(win, opts);
+  else await dialog.showMessageBox(opts);
+}
+
 export function registerProviderIpc(): void {
   load();
 
   ipcMain.handle(PROVIDER_CHANNELS.list, () => listProviderSettings());
 
-  ipcMain.handle(PROVIDER_CHANNELS.setConfig, (_event, raw) => {
+  ipcMain.handle(PROVIDER_CHANNELS.setConfig, async (_event, raw) => {
     const parsed = providerConfigPatchSchema.safeParse(raw);
     if (!parsed.success) return listProviderSettings();
     const { adapterId, ...patch } = parsed.data;
-    const merged: ProviderConfig = { ...configFor(adapterId), adapterId };
+    const current = configFor(adapterId);
+
+    // SEC#4: binPath/extraArgs become the executed binary + argv at spawn. A
+    // NEW value must pass validation AND an explicit native confirmation the
+    // renderer cannot forge, before it is ever persisted/trusted.
+    const sensitive = sensitiveChanges(patch, current);
+    if (sensitive.binPath !== undefined) {
+      const check = validateBinPath(sensitive.binPath);
+      if (!check.ok) {
+        await warnInvalidBin(adapterId, sensitive.binPath, check.error ?? '');
+        delete patch.binPath;
+        delete sensitive.binPath;
+      }
+    }
+    if (hasSensitiveChange(sensitive)) {
+      const approved = await confirmExecConfig(adapterId, sensitive);
+      if (!approved) {
+        // Declined → keep the previously-trusted values, apply the rest.
+        delete patch.binPath;
+        delete patch.extraArgs;
+      }
+    }
+
+    const merged: ProviderConfig = { ...current, adapterId };
     if (patch.enabled !== undefined) merged.enabled = patch.enabled;
     if (patch.binPath !== undefined) merged.binPath = patch.binPath;
     if (patch.defaultModel !== undefined) merged.defaultModel = patch.defaultModel;

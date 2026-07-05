@@ -10,16 +10,17 @@ import { useOrchStore, type OrchPanelTab } from '../state/orch-store';
 import { reopenMission } from '../orch/mission-reopen';
 
 /**
- * Orchestration drawer — the mission/handoff/todo/squad debug view
- * (docs/ARCHITECTURE.md §E.6): live mission timeline, handoff
- * audit trail, visible todo milestones and squad management with
- * export/import.
+ * Orchestration drawer — the mission control surface (docs/ARCHITECTURE.md
+ * §E.6). Reads as a mission timeline, not a debug dump: each mission shows how
+ * many worker deliveries it has collected; the handoff feed shows who reported
+ * to the orchestrator, whether the delivery is still pending, and its
+ * artifacts. Todos and squad management round it out.
  */
 
 const TABS: Array<{ id: OrchPanelTab; label: string }> = [
-  { id: 'missions', label: 'Missions' },
-  { id: 'handoffs', label: 'Handoffs' },
-  { id: 'todos', label: 'Todos' },
+  { id: 'missions', label: 'Missões' },
+  { id: 'handoffs', label: 'Entregas' },
+  { id: 'todos', label: 'Tarefas' },
   { id: 'squads', label: 'Squads' },
 ];
 
@@ -27,11 +28,24 @@ function timeLabel(ts: number): string {
   return new Date(ts).toLocaleTimeString();
 }
 
+const CloseIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+    <path
+      d="M2.5 2.5 L9.5 9.5 M9.5 2.5 L2.5 9.5"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
 function MissionRow({
   mission,
+  handoffCount,
   onReopen,
 }: {
   mission: Mission;
+  handoffCount: number;
   onReopen: (mission: Mission) => void;
 }) {
   return (
@@ -41,12 +55,17 @@ function MissionRow({
           {mission.status}
         </span>
         <span className="orch-item__title">{mission.title}</span>
+        {handoffCount > 0 && (
+          <span className="orch-tag">
+            {handoffCount} entrega{handoffCount === 1 ? '' : 's'}
+          </span>
+        )}
         <button
           className="orch-panel__btn"
           onClick={() => onReopen(mission)}
-          title="Reabrir esta missão restaurando os panes (as CLIs retomam a conversa com --resume)"
+          title="Restaura os panes da missão; as CLIs retomam a conversa com --resume"
         >
-          ↻
+          Reabrir
         </button>
       </div>
       {mission.description && (
@@ -54,17 +73,28 @@ function MissionRow({
       )}
       {mission.milestones.length > 0 && (
         <p className="orch-item__detail">
-          milestones: {mission.milestones.join(' · ')}
+          Marcos: {mission.milestones.join(' · ')}
         </p>
       )}
-      <span className="orch-item__meta">
-        {mission.id} · {timeLabel(mission.createdAt)}
-      </span>
+      <span className="orch-item__meta">{timeLabel(mission.createdAt)}</span>
     </li>
   );
 }
 
+/** A best-effort human label for one handoff artifact (path/name/url or JSON). */
+function artifactLabel(artifact: unknown): string {
+  if (typeof artifact === 'string') return artifact;
+  if (artifact && typeof artifact === 'object') {
+    const o = artifact as Record<string, unknown>;
+    for (const key of ['path', 'name', 'file', 'url', 'title']) {
+      if (typeof o[key] === 'string') return o[key] as string;
+    }
+  }
+  return JSON.stringify(artifact).slice(0, 100);
+}
+
 function HandoffRow({ handoff }: { handoff: Handoff }) {
+  const artifacts = Array.isArray(handoff.artifacts) ? handoff.artifacts : [];
   return (
     <li className="orch-item">
       <div className="orch-item__head">
@@ -72,23 +102,34 @@ function HandoffRow({ handoff }: { handoff: Handoff }) {
           {handoff.status}
         </span>
         <span className="orch-item__title">
-          {handoff.fromAgent ?? 'worker'}
+          {(handoff.fromAgent ?? 'worker') + ' → orquestrador'}
         </span>
-        {handoff.delivered && (
-          <span className="orch-item__meta">delivered</span>
-        )}
+        <span
+          className={`orch-tag ${handoff.delivered ? 'orch-tag--done' : 'orch-tag--pending'}`}
+        >
+          {handoff.delivered ? 'entregue' : 'pendente'}
+        </span>
       </div>
       <p className="orch-item__detail">{handoff.summary}</p>
+      {artifacts.length > 0 && (
+        <ul className="orch-artifacts" aria-label="Artefatos">
+          {artifacts.map((artifact, i) => (
+            <li key={i} className="orch-artifacts__item">
+              {artifactLabel(artifact)}
+            </li>
+          ))}
+        </ul>
+      )}
       <span className="orch-item__meta">{timeLabel(handoff.createdAt)}</span>
     </li>
   );
 }
 
-function todoGlyph(status: TodoItem['status']): string {
-  if (status === 'done') return '✓';
-  if (status === 'in_progress') return '▸';
-  return '○';
-}
+const TODO_STATUS_LABEL: Record<TodoItem['status'], string> = {
+  done: 'feito',
+  in_progress: 'em andamento',
+  todo: 'a fazer',
+};
 
 function TodoListBlock({ list }: { list: TodoList }) {
   if (list.items.length === 0) return null;
@@ -99,9 +140,16 @@ function TodoListBlock({ list }: { list: TodoList }) {
       </div>
       <ul className="orch-todo-list">
         {list.items.map((item) => (
-          <li key={item.id} className={`orch-todo orch-todo--${item.status}`}>
-            <span className="orch-todo__glyph">{todoGlyph(item.status)}</span>
-            {item.name}
+          <li
+            key={item.id}
+            className={`orch-todo orch-todo--${item.status}`}
+            aria-label={`${TODO_STATUS_LABEL[item.status]}: ${item.name}`}
+          >
+            <span
+              className={`orch-todo__dot orch-todo__dot--${item.status}`}
+              aria-hidden="true"
+            />
+            <span className="orch-todo__label">{item.name}</span>
           </li>
         ))}
       </ul>
@@ -123,13 +171,13 @@ function SquadRow({
         <button
           className="orch-panel__btn orch-panel__btn--danger"
           onClick={() => onDelete(squad.id)}
-          title="Delete squad"
+          title="Remover este squad"
         >
-          ✕
+          Remover
         </button>
       </div>
       <p className="orch-item__detail">
-        {squad.agents.length} agent{squad.agents.length === 1 ? '' : 's'}:{' '}
+        {squad.agents.length} agente{squad.agents.length === 1 ? '' : 's'}:{' '}
         {squad.agents
           .map((a) => `${a.agentName} (${a.category}/${a.cli})`)
           .join(', ') || '—'}
@@ -155,7 +203,7 @@ export function OrchestrationPanel() {
   async function onExport() {
     const result = await window.nexus.orch.exportSquads();
     setNotice(
-      result.ok ? `Exported to ${result.path}` : result.error ?? 'Export cancelled',
+      result.ok ? `Exportado para ${result.path}` : result.error ?? 'Exportação cancelada',
     );
   }
 
@@ -163,8 +211,8 @@ export function OrchestrationPanel() {
     const result = await window.nexus.orch.importSquads();
     setNotice(
       result.ok
-        ? `Imported ${result.count} squad(s)`
-        : result.error ?? 'Import cancelled',
+        ? `Importado: ${result.count} squad(s)`
+        : result.error ?? 'Importação cancelada',
     );
   }
 
@@ -184,26 +232,35 @@ export function OrchestrationPanel() {
   }
 
   const visibleTodoLists = todoLists.filter((l) => l.items.length > 0);
+  const handoffCountByMission = new Map<string, number>();
+  for (const h of handoffs) {
+    if (h.missionId) {
+      handoffCountByMission.set(
+        h.missionId,
+        (handoffCountByMission.get(h.missionId) ?? 0) + 1,
+      );
+    }
+  }
 
   return (
-    <aside className="orch-panel" aria-label="Orchestration">
+    <aside className="orch-panel" aria-label="Orquestração">
       <header className="orch-panel__header">
-        <span className="orch-panel__title">Orchestration</span>
+        <span className="orch-panel__title">Orquestração</span>
         <span className="orch-panel__mcp">
           {mcpInfo?.running
             ? `MCP · ${mcpInfo.toolCount} tools`
             : 'MCP offline'}
         </span>
         <button
-          className="orch-panel__btn"
+          className="orch-panel__btn orch-panel__icon-btn"
           onClick={togglePanel}
-          aria-label="Close orchestration panel"
+          aria-label="Fechar painel de orquestração"
         >
-          ✕
+          <CloseIcon />
         </button>
       </header>
 
-      <nav className="orch-panel__tabs" aria-label="Orchestration sections">
+      <nav className="orch-panel__tabs" aria-label="Seções da orquestração">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -221,12 +278,18 @@ export function OrchestrationPanel() {
             {notice && <p className="orch-panel__notice">{notice}</p>}
             {missions.length === 0 ? (
               <p className="orch-panel__empty">
-                No missions yet. Agents create them via nexus_mission_create.
+                Nenhuma missão ainda. Inicie um squad na barra de missões — o
+                orquestrador abre a missão e começa a delegar aos workers.
               </p>
             ) : (
               <ul className="orch-list">
                 {missions.map((m) => (
-                  <MissionRow key={m.id} mission={m} onReopen={onReopenMission} />
+                  <MissionRow
+                    key={m.id}
+                    mission={m}
+                    handoffCount={handoffCountByMission.get(m.id) ?? 0}
+                    onReopen={onReopenMission}
+                  />
                 ))}
               </ul>
             )}
@@ -236,7 +299,8 @@ export function OrchestrationPanel() {
         {tab === 'handoffs' &&
           (handoffs.length === 0 ? (
             <p className="orch-panel__empty">
-              No handoffs submitted. Workers report via nexus_handoff_submit.
+              Nenhuma entrega ainda. Cada worker publica aqui o resultado assim
+              que conclui a tarefa que recebeu.
             </p>
           ) : (
             <ul className="orch-list">
@@ -249,7 +313,8 @@ export function OrchestrationPanel() {
         {tab === 'todos' &&
           (visibleTodoLists.length === 0 ? (
             <p className="orch-panel__empty">
-              No task lists. Agents publish milestones via nexus_todo_manager.
+              Sem tarefas publicadas. Elas aparecem aqui conforme o orquestrador
+              divide a missão em passos.
             </p>
           ) : (
             <ul className="orch-list">
@@ -263,21 +328,21 @@ export function OrchestrationPanel() {
           <>
             <div className="orch-panel__toolbar">
               <button className="orch-panel__btn" onClick={onImport}>
-                Import…
+                Importar…
               </button>
               <button
                 className="orch-panel__btn"
                 onClick={onExport}
                 disabled={squads.length === 0}
               >
-                Export…
+                Exportar…
               </button>
             </div>
             {notice && <p className="orch-panel__notice">{notice}</p>}
             {squads.length === 0 ? (
               <p className="orch-panel__empty">
-                No squads saved. Save one via nexus_squad_save or import a
-                squads.json.
+                Nenhum squad salvo. Importe um arquivo de squads ou monte um
+                pela barra de missões.
               </p>
             ) : (
               <ul className="orch-list">

@@ -1,6 +1,33 @@
 import path from 'node:path';
-import { BrowserWindow, session } from 'electron';
+import { BrowserWindow, ipcMain, session } from 'electron';
+import type { IpcMainEvent, WebContents } from 'electron';
+import { WINDOW_CHANNELS } from '../shared/channels';
 import { killSessionsFor } from './pty/pty-manager';
+
+/**
+ * Last-resort recovery screen: if React never mounts after repeated reloads (or
+ * the renderer keeps crashing), inject a readable message so the user sees
+ * something actionable instead of a permanent black window. Injected via
+ * executeJavaScript (privileged, CSP-exempt); the retry listener is attached
+ * programmatically, never as an inline handler the CSP would block.
+ */
+function showRecoveryScreen(wc: WebContents): void {
+  console.error('[window] app não montou após várias tentativas — tela de recuperação');
+  const script = `(() => {
+    document.documentElement.innerHTML =
+      '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0e14;color:#e6e9ef;font-family:system-ui,sans-serif">' +
+      '<div style="max-width:520px;text-align:center;padding:24px">' +
+      '<h1 style="font-size:18px;font-weight:600;margin:0 0 12px">NexusIDE não iniciou</h1>' +
+      '<p style="font-size:13px;line-height:1.5;color:#9aa4b2;margin:0 0 20px">A interface não carregou após várias tentativas. Recarregue ou reinicie o app.</p>' +
+      '<button id="nexus-retry" style="padding:8px 20px;font-size:13px;color:#e6e9ef;background:#2a3346;border:1px solid #3a4560;border-radius:8px;cursor:pointer">Recarregar</button>' +
+      '</div></body>';
+    var b = document.getElementById('nexus-retry');
+    if (b) b.addEventListener('click', function () { location.reload(); });
+  })();`;
+  wc.executeJavaScript(script).catch(() => {
+    // Renderer process itself is gone — nothing to inject into.
+  });
+}
 
 /**
  * Builds the Content-Security-Policy. Production is strict (`'self'` only). Dev
@@ -90,13 +117,33 @@ export function createMainWindow(): BrowserWindow {
   // Capture the reference up front: inside the 'destroyed' handler the
   // `win.webContents` getter can already throw "Object has been destroyed".
   const wc = win.webContents;
-  wc.once('destroyed', () => killSessionsFor(wc));
-  // Dev only: surface tagged renderer logs ([wake]/[voice]/[orch]) in the
-  // terminal — voice/wake issues are invisible without DevTools otherwise.
-  // Electron novo entrega os dados no objeto do evento (args posicionais
-  // deprecados); aceita os dois formatos. Erros passam SEMPRE (sem filtro
-  // de tag): um crash de boot do React era invisível e a janela só "ficava
-  // preta".
+
+  // Boot watchdog state, shared by the load + mount phases below.
+  let finished = false;
+  let mounted = false;
+  let mountReloads = 0;
+  let crashReloads = 0;
+  const MAX_MOUNT_RELOADS = 5;
+  const MAX_CRASH_RELOADS = 3;
+
+  // Renderer → main mount signal, fired from a post-commit effect and scoped to
+  // THIS window's sender. This — not a console log — is how the mount watchdog
+  // knows React actually painted, in dev AND in the packaged app.
+  const onMounted = (event: IpcMainEvent) => {
+    if (event.sender === wc) mounted = true;
+  };
+  ipcMain.on(WINDOW_CHANNELS.mounted, onMounted);
+  // Capture wc up front: inside 'destroyed' the win.webContents getter can
+  // already throw "Object has been destroyed".
+  wc.once('destroyed', () => {
+    ipcMain.removeListener(WINDOW_CHANNELS.mounted, onMounted);
+    killSessionsFor(wc);
+  });
+
+  // Dev only: surface tagged renderer logs ([wake]/[voice]/[orch]) + errors in
+  // the terminal — otherwise voice/wake/boot issues are invisible without
+  // DevTools. Electron novo entrega os dados no objeto do evento (args
+  // posicionais deprecados); aceita os dois formatos.
   if (devServerUrl) {
     type ConsoleEvt = { message?: string; level?: string | number };
     wc.on(
@@ -110,10 +157,25 @@ export function createMainWindow(): BrowserWindow {
         }
       },
     );
-    wc.on('render-process-gone', (_e, details) => {
-      console.warn('[window] renderer morreu:', details.reason);
-    });
   }
+
+  // A renderer crash used to only log (dev), leaving a black window in
+  // production. Reload a crashed renderer — capped, in dev AND prod; after the
+  // cap, show the recovery screen instead of looping forever.
+  wc.on('render-process-gone', (_e, details) => {
+    console.warn('[window] renderer morreu:', details.reason);
+    if (win.isDestroyed()) return;
+    if (details.reason === 'clean-exit' || details.reason === 'killed') return;
+    if (crashReloads >= MAX_CRASH_RELOADS) {
+      showRecoveryScreen(wc);
+      return;
+    }
+    crashReloads += 1;
+    win.reload();
+  });
+  win.on('unresponsive', () => {
+    console.warn('[window] renderer travado (unresponsive)');
+  });
 
   // O load pode disparar ANTES do dev server do Vite aceitar conexões (a
   // janela abria preta e exigia fechar/reabrir). Auto-retry até carregar; o
@@ -142,14 +204,11 @@ export function createMainWindow(): BrowserWindow {
   });
   // Watchdog em DUAS fases. Fase 1 (load): cobre falha sem did-fail-load
   // (conexão pendurada, Vite frio, localhost→IPv4 com servidor só em ::1).
-  // Fase 2 (mount): did-finish-load NÃO garante React montado — no primeiro
-  // load com Vite frio o grafo de módulos às vezes pendura e a janela fica
-  // preta para sempre; o renderer emite '[diag] app montado' no render() e,
-  // se o sinal não chegar em 4s, recarregamos. Só em dev (packaged carrega
-  // arquivo local, sem corrida).
-  let finished = false;
-  let mounted = false;
-  let mountReloads = 0;
+  // Fase 2 (mount): did-finish-load NÃO garante React montado — o grafo de
+  // módulos pode pendurar, ou um crash de boot deixa a janela preta. O renderer
+  // sinaliza renderer:mounted num effect PÓS-commit; se não chegar em 4s,
+  // recarregamos — AGORA também em produção (o packaged carrega do disco, onde
+  // um crash de boot ficava preto sem recuperação). Após MAX, tela de recuperação.
   const watchdog = setInterval(() => {
     if (win.isDestroyed()) {
       clearInterval(watchdog);
@@ -160,21 +219,17 @@ export function createMainWindow(): BrowserWindow {
       load();
     }
   }, 3_000);
-  if (devServerUrl) {
-    wc.on('console-message', (evt: { message?: string }, _l?: number, legacy?: string) => {
-      if ((evt?.message ?? legacy ?? '').startsWith('[diag] app montado')) {
-        mounted = true;
-      }
-    });
-  }
   wc.on('did-finish-load', () => {
     finished = true;
     loadRetries = 0;
     clearInterval(watchdog);
     console.log('[window] renderer carregado');
-    if (!devServerUrl) return;
     setTimeout(function checkMount() {
-      if (win.isDestroyed() || mounted || mountReloads >= 30) return;
+      if (win.isDestroyed() || mounted) return;
+      if (mountReloads >= MAX_MOUNT_RELOADS) {
+        showRecoveryScreen(wc);
+        return;
+      }
       mountReloads += 1;
       console.warn(`[window] página carregou mas o app não montou — reload ${mountReloads}`);
       wc.reload();

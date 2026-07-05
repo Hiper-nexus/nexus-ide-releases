@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { PTY_CHANNELS, LAYOUT_CHANNELS, ADAPTER_CHANNELS } from '../shared/channels';
+import {
+  PTY_CHANNELS,
+  LAYOUT_CHANNELS,
+  ADAPTER_CHANNELS,
+  WINDOW_CHANNELS,
+} from '../shared/channels';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { ORCH_CHANNELS } from '../shared/orch-channels';
 import { SETTINGS_CHANNELS } from '../shared/settings-types';
@@ -189,6 +194,9 @@ ipcRenderer.on(PIPE_CHANNELS.changed, (_e, pipes: Pipe[]) =>
 );
 
 const api: NexusApi = {
+  app: {
+    signalMounted: () => ipcRenderer.send(WINDOW_CHANNELS.mounted),
+  },
   pty: {
     spawn: (req: SpawnRequest): Promise<SpawnResult> =>
       ipcRenderer.invoke(PTY_CHANNELS.spawn, req),
@@ -223,6 +231,8 @@ const api: NexusApi = {
     sendWakeAudio: (chunk: ArrayBuffer) =>
       ipcRenderer.send(VOICE_CHANNELS.wakeAudio, chunk),
     jarvis: (req) => ipcRenderer.invoke(VOICE_CHANNELS.jarvis, req),
+    confirmCommand: (command: string) =>
+      ipcRenderer.invoke(VOICE_CHANNELS.confirmCommand, command),
     onPttToggle: (cb: () => void) => addListener(pttToggleListeners, cb),
     onWakeDetected: (cb: () => void) => addListener(wakeDetectedListeners, cb),
     onPttStart: (cb) => addListener(pttStartListeners, cb),

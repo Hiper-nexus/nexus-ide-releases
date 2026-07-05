@@ -3,10 +3,26 @@ import { resolveUserPath } from './path-resolver';
 import { createMainWindow } from './window';
 import { registerAuthProbeIpc } from './adapters/auth-probe';
 
-// Dev only: CDP na porta 9223 (loopback) — permite inspecionar DOM/console da
-// janela de fora quando "tela preta" não deixa rastro nos logs.
-if (!app.isPackaged) {
-  app.commandLine.appendSwitch('remote-debugging-port', '9223');
+// Remote debugging (Chrome DevTools Protocol) is a full local-RCE surface: any
+// process that connects to the port can run JS in the renderer, and the preload
+// exposes PTY/file APIs. It used to be ON for every dev run on a fixed 9223;
+// now it is OPT-IN via NEXUS_REMOTE_DEBUG and never available in a packaged
+// build (SEC#8). Set the env var to a port (1024–65535) to pin one, or to any
+// other value to let Chromium pick a FREE port, written to
+// <userData>/DevToolsActivePort. Enable only on a trusted machine.
+const remoteDebug = process.env.NEXUS_REMOTE_DEBUG;
+if (!app.isPackaged && remoteDebug) {
+  const requested = Number(remoteDebug);
+  const port =
+    Number.isInteger(requested) && requested >= 1024 && requested <= 65535
+      ? String(requested)
+      : '0';
+  app.commandLine.appendSwitch('remote-debugging-port', port);
+  console.warn(
+    '[main] AVISO: remote debugging (CDP) habilitado na porta ' +
+      (port === '0' ? 'aleatória (ver DevToolsActivePort)' : port) +
+      '. Qualquer processo local pode executar JS no renderer — use só em máquina confiável.',
+  );
 }
 import { registerPtyIpc } from './pty/pty-ipc';
 import { registerLayoutIpc } from './persistence/layout-ipc';
@@ -26,6 +42,7 @@ import {
   closeOrchestration,
 } from './orch/orch-ipc';
 import { killAllSessions } from './pty/pty-manager';
+import { shutdownPtyHost } from './pty/pty-host-client';
 import { closeDb } from './persistence/db';
 import {
   registerSettingsIpc,
@@ -149,6 +166,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   killAllSessions();
+  shutdownPtyHost();
   closeOrchestration();
   closeAdapterRegistry();
   closeVoiceIpc();

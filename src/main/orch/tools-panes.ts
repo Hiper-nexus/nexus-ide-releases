@@ -1,7 +1,6 @@
 import type { McpToolDef } from './mcp-protocol';
 import {
-  findPane,
-  listPaneSnapshots,
+  listVisiblePaneSnapshots,
   readSessionOutput,
   requestPaneClose,
   waitForIdle,
@@ -10,10 +9,11 @@ import { orchWriteSession } from '../pty/pty-manager';
 import { listAdapterInfos } from '../adapters/adapter-registry';
 import { findAgent } from './squad-store';
 import {
+  authorizePaneRef,
+  authorizedSessionIdOf,
   injectPrompt,
   num,
   requireStr,
-  sessionIdOf,
   spawnPaneAndMaybePrompt,
   str,
   strArray,
@@ -78,6 +78,10 @@ const paneSpawn: McpToolDef = {
         cwd: str(args, 'cwd'),
         title: str(args, 'title'),
         missionId: str(args, 'missionId') ?? ctx.missionId,
+        // An MCP-initiated spawn is the orchestrator delegating: default to a
+        // WORKER (gated) so an ad-hoc spawn without agentName never lands as an
+        // unrestricted 'user'-role token (SEC#5).
+        role: 'worker',
         prompt: str(args, 'prompt'),
       };
     }
@@ -91,7 +95,7 @@ const paneList: McpToolDef = {
     'List every pane in the workspace with its live state ' +
     '(spawning|busy|idle|exited), adapter, model and mission binding.',
   inputSchema: { type: 'object', properties: {} },
-  handler: async () => listPaneSnapshots(),
+  handler: async (_args, ctx) => listVisiblePaneSnapshots(ctx),
 };
 
 const paneListProviders: McpToolDef = {
@@ -119,8 +123,8 @@ const paneRead: McpToolDef = {
     },
     required: ['paneId'],
   },
-  handler: async (args) => {
-    const sessionId = sessionIdOf(requireStr(args, 'paneId'));
+  handler: async (args, ctx) => {
+    const sessionId = authorizedSessionIdOf(ctx, requireStr(args, 'paneId'), 'read');
     return readSessionOutput(sessionId, num(args, 'lines') ?? 200);
   },
 };
@@ -136,13 +140,13 @@ const paneReadMany: McpToolDef = {
     },
     required: ['paneIds'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const lines = num(args, 'lines') ?? 200;
     return strArray(args, 'paneIds').map((paneId) => {
       try {
         return {
           paneId,
-          output: readSessionOutput(sessionIdOf(paneId), lines),
+          output: readSessionOutput(authorizedSessionIdOf(ctx, paneId, 'read'), lines),
         };
       } catch (err) {
         return {
@@ -171,8 +175,8 @@ const paneWrite: McpToolDef = {
     },
     required: ['paneId', 'text'],
   },
-  handler: async (args) => {
-    const sessionId = sessionIdOf(requireStr(args, 'paneId'));
+  handler: async (args, ctx) => {
+    const sessionId = authorizedSessionIdOf(ctx, requireStr(args, 'paneId'), 'write');
     const text = typeof args.text === 'string' ? args.text : '';
     if (args.submit === false) {
       orchWriteSession(sessionId, text);
@@ -206,7 +210,7 @@ const paneWriteMany: McpToolDef = {
     },
     required: ['writes'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const writes = Array.isArray(args.writes) ? args.writes : [];
     const results: Array<{ paneId: string; ok: boolean; error?: string }> = [];
     for (const raw of writes) {
@@ -220,7 +224,7 @@ const paneWriteMany: McpToolDef = {
         continue;
       }
       try {
-        const sessionId = sessionIdOf(write.paneId);
+        const sessionId = authorizedSessionIdOf(ctx, write.paneId, 'write');
         if (write.submit === false) {
           orchWriteSession(sessionId, write.text);
         } else {
@@ -247,11 +251,9 @@ const paneClose: McpToolDef = {
     properties: { paneId: { type: 'string' } },
     required: ['paneId'],
   },
-  handler: async (args) => {
-    const paneRef = requireStr(args, 'paneId');
-    const pane = findPane(paneRef);
-    if (!pane) throw new Error(`unknown pane: ${paneRef}`);
-    if (!requestPaneClose(pane.paneId)) {
+  handler: async (args, ctx) => {
+    const info = authorizePaneRef(ctx, requireStr(args, 'paneId'), 'close');
+    if (!requestPaneClose(info.paneId)) {
       throw new Error('no renderer window available');
     }
     return { ok: true };
@@ -272,8 +274,8 @@ const paneWaitIdle: McpToolDef = {
     },
     required: ['paneId'],
   },
-  handler: async (args) => {
-    const sessionId = sessionIdOf(requireStr(args, 'paneId'));
+  handler: async (args, ctx) => {
+    const sessionId = authorizedSessionIdOf(ctx, requireStr(args, 'paneId'), 'wait');
     const state = await waitForIdle(
       sessionId,
       num(args, 'timeoutMs') ?? 120_000,
@@ -299,12 +301,15 @@ const paneWaitMany: McpToolDef = {
     },
     required: ['paneIds'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const paneIds = strArray(args, 'paneIds');
     const timeoutMs = num(args, 'timeoutMs') ?? 300_000;
     const waits = paneIds.map(async (paneId) => {
       try {
-        const state = await waitForIdle(sessionIdOf(paneId), timeoutMs);
+        const state = await waitForIdle(
+          authorizedSessionIdOf(ctx, paneId, 'wait'),
+          timeoutMs,
+        );
         return { paneId, state };
       } catch (err) {
         return {

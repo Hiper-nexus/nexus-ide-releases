@@ -3,7 +3,11 @@ import type { PaneRegistryEntry } from '../../shared/orch-types';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { listPanes } from '../lib/split-tree';
-import { getPaneSessionId } from '../terminal/terminal-host';
+import {
+  getPaneSessionId,
+  onPaneSessionChange,
+  waitForSession,
+} from '../terminal/terminal-host';
 
 /**
  * Renderer half of the orchestration bridge:
@@ -13,10 +17,6 @@ import { getPaneSessionId } from '../terminal/terminal-host';
  *    process registry that backs nexus_pane_list / nexus_pane_read;
  *  - keeps the orchestration store hydrated via change events.
  */
-
-const SESSION_POLL_MS = 150;
-const SESSION_POLL_TIMEOUT_MS = 20_000;
-const SYNC_INTERVAL_MS = 1_000;
 
 function snapshotPanes(): PaneRegistryEntry[] {
   const { root } = useLayoutStore.getState();
@@ -28,26 +28,6 @@ function snapshotPanes(): PaneRegistryEntry[] {
     adapterId: pane.adapterId,
     model: pane.model,
   }));
-}
-
-/** Wait for the pane's PTY session to materialize (spawn is async). */
-function waitForSession(paneId: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const startedAt = Date.now();
-    const poll = () => {
-      const sessionId = getPaneSessionId(paneId);
-      if (sessionId) {
-        resolve(sessionId);
-        return;
-      }
-      if (Date.now() - startedAt > SESSION_POLL_TIMEOUT_MS) {
-        resolve(null);
-        return;
-      }
-      setTimeout(poll, SESSION_POLL_MS);
-    };
-    poll();
-  });
 }
 
 export function useOrchBridge(): void {
@@ -117,21 +97,21 @@ export function useOrchBridge(): void {
       ),
     ];
 
-    // Pane mirror: push on every layout change and on a slow heartbeat (the
-    // heartbeat catches sessionIds that resolve after the layout settled).
+    // Pane mirror, fully event-driven (no heartbeat): push on every layout
+    // change AND when a pane's sessionId materializes after its async spawn —
+    // the exact event the old 1s setInterval was polling for.
     const unsubLayout = useLayoutStore.subscribe(() => {
       window.nexus.orch.syncPanes(snapshotPanes());
     });
-    const interval = setInterval(
-      () => window.nexus.orch.syncPanes(snapshotPanes()),
-      SYNC_INTERVAL_MS,
-    );
+    const unsubSession = onPaneSessionChange(() => {
+      window.nexus.orch.syncPanes(snapshotPanes());
+    });
     window.nexus.orch.syncPanes(snapshotPanes());
 
     return () => {
       un.forEach((fn) => fn());
       unsubLayout();
-      clearInterval(interval);
+      unsubSession();
     };
   }, [hydrate]);
 }

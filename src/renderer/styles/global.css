@@ -5,7 +5,9 @@
   --border: #1c2333;
   --border-strong: #273049;
   --text: #c9d1e0;
-  --text-dim: #6b7690;
+  /* Secondary text. Lifted from #6b7690 (~4.25:1 on --bg, fails WCAG AA) to
+     ~5.3:1 so small meta/detail/empty-state copy clears AA everywhere. */
+  --text-dim: #7c869e;
   --accent: #6ea8fe;
   --accent-soft: rgba(110, 168, 254, 0.14);
   --danger: #f7768e;
@@ -149,16 +151,31 @@ body {
 }
 
 /* ---- Grid + panels ---- */
+/* Linha flex: trilha de missões (coluna fixa à esquerda) + grid/canvas.
+   Sem o display:flex a trilha empilhava ACIMA do grid e empurrava o
+   height:100% do grid para fora da janela — as últimas linhas do terminal
+   ficavam abaixo da borda e o xterm "não rolava até embaixo". */
 .app__body {
   flex: 1 1 auto;
   min-height: 0;
   padding: 8px;
+  display: flex;
+  gap: 8px;
 }
 
 .grid,
 .panel-group {
   height: 100%;
   width: 100%;
+}
+
+/* Filhos no fluxo do body ocupam o restante da linha; min-width: 0 permite
+   encolher abaixo do conteúdo do terminal. */
+.app__body > .grid,
+.app__body > .canvas-container {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
 }
 
 /* Panel inner div (library applies our class to the nested element). */
@@ -1327,9 +1344,90 @@ body {
   opacity: 0.6;
 }
 
-.orch-todo__glyph {
-  width: 12px;
+.orch-todo__dot {
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
   flex: 0 0 auto;
+  border-radius: 999px;
+  border: 1.5px solid var(--text-dim);
+  box-sizing: border-box;
+}
+
+.orch-todo__dot--in_progress {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.orch-todo__dot--done {
+  border-color: #7ee2a8;
+  background: #7ee2a8;
+}
+
+.orch-todo__label {
+  flex: 1;
+}
+
+/* Small status pill (pending/delivered on a handoff, delivery count on a
+   mission). Distinct from --badge: neutral by default, colored by modifier. */
+.orch-tag {
+  flex: 0 0 auto;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.orch-tag--pending {
+  color: #e5c07b;
+  border-color: rgba(229, 192, 123, 0.5);
+}
+
+.orch-tag--done {
+  color: #7ee2a8;
+  border-color: rgba(126, 226, 168, 0.5);
+}
+
+/* Handoff artifacts: a compact, monospaced bulleted list of file paths / names. */
+.orch-artifacts {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.orch-artifacts__item {
+  position: relative;
+  padding-left: 12px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.orch-artifacts__item::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 6px;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--text-dim);
+}
+
+.orch-panel__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  line-height: 0;
 }
 
 /* ---- Settings drawer (módulos + catálogo) ---- */
@@ -2839,22 +2937,28 @@ body {
 .toast {
   display: flex; align-items: flex-start; gap: 10px;
   background: var(--bg-elevated); border: 1px solid var(--border-strong);
-  border-left: 3px solid var(--accent); border-radius: 9px;
+  border-radius: 9px;
   padding: 11px 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.4);
   animation: toast-in 200ms cubic-bezier(0.16,1,0.3,1);
 }
 @keyframes toast-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
-.toast--success { border-left-color: #7ee2a8; }
-.toast--error { border-left-color: var(--danger); }
-.toast--warn { border-left-color: #e5c07b; }
+.toast__dot {
+  flex: 0 0 auto; width: 8px; height: 8px; margin-top: 5px;
+  border-radius: 999px; background: var(--accent);
+}
+.toast--success .toast__dot { background: #7ee2a8; }
+.toast--error .toast__dot { background: var(--danger); }
+.toast--warn .toast__dot { background: #e5c07b; }
 .toast__body { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .toast__title { font-size: 12.5px; font-weight: 600; }
 .toast__detail { font-size: 11px; color: var(--text-dim); line-height: 1.45; }
 .toast__close {
+  display: inline-flex; align-items: center; justify-content: center;
   background: transparent; border: none; color: var(--text-dim);
-  cursor: pointer; font-size: 12px; flex: 0 0 auto;
+  cursor: pointer; flex: 0 0 auto; padding: 2px;
 }
+.toast__close:hover { color: var(--text); }
 
 /* ---- Editable squad roster (Revisar) ---- */
 .wizard__review-head {
@@ -2998,8 +3102,10 @@ body {
 .cost-badge__fill {
   display: block;
   height: 100%;
+  width: 100%;
+  transform-origin: left;
   border-radius: 2px;
-  transition: width 300ms ease;
+  transition: transform 300ms ease;
 }
 .cost-badge__fill--ok { background: var(--accent); }
 .cost-badge__fill--warn { background: #ff9800; }
@@ -3597,15 +3703,18 @@ body {
   border-color: #ef5350;
 }
 
-/* ── Trilha de missões (lateral esquerda) ────────────────────────────── */
+/* ── Trilha de missões (coluna vertical, altura total à esquerda) ────── */
 .mission-rail {
   width: 208px;
   flex: 0 0 208px;
+  align-self: stretch;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   background: var(--bg-elevated, rgba(255, 255, 255, 0.02));
-  overflow-y: auto;
+  overflow: hidden;
 }
 .mission-rail__head {
   display: flex;
@@ -3632,7 +3741,17 @@ body {
   cursor: pointer;
 }
 .mission-rail__new:hover { border-color: var(--accent); }
-.mission-rail__list { list-style: none; margin: 0; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.mission-rail__list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
 .mission-rail__item {
   width: 100%;
   display: flex;

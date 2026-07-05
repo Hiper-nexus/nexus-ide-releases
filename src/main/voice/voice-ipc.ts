@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, BrowserWindow, dialog } from 'electron';
 import { VOICE_CHANNELS } from '../../shared/voice-channels';
 import {
   transcribeRequestSchema,
@@ -182,6 +182,34 @@ export function registerVoiceIpc(): void {
       return { ok: false, error: message };
     }
   });
+
+  // SEC#6: a shell command produced by the (LLM) Jarvis brain must never run
+  // without an explicit, un-spoofable human OK. A poisoned transcript /
+  // prompt-injection can emit run_command; this native dialog — which the
+  // renderer cannot fake — shows the exact command and defaults to Cancel.
+  ipcMain.handle(
+    VOICE_CHANNELS.confirmCommand,
+    async (_event, raw): Promise<boolean> => {
+      if (typeof raw !== 'string' || raw.trim() === '' || raw.length > 4096) {
+        return false;
+      }
+      const opts = {
+        type: 'warning' as const,
+        buttons: ['Cancelar', 'Executar'],
+        defaultId: 0,
+        cancelId: 0,
+        title: 'Rodar comando por voz?',
+        message: 'A JARVIS quer executar este comando no terminal:',
+        detail: `${raw}\n\nExecute apenas se você reconhece este comando.`,
+        noLink: true,
+      };
+      const win = BrowserWindow.getFocusedWindow();
+      const result = win
+        ? await dialog.showMessageBox(win, opts)
+        : await dialog.showMessageBox(opts);
+      return result.response === 1;
+    },
+  );
 }
 
 export function closeVoiceIpc(): void {

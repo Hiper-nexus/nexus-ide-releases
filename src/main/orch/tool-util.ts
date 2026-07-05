@@ -1,8 +1,14 @@
 import {
-  findPane,
+  getPaneAuthzInfo,
   requestPaneSpawn,
   waitForIdle,
 } from './pane-registry';
+import {
+  authorizePaneAccess,
+  type PaneAction,
+  type PaneAuthzInfo,
+} from './pane-authz';
+import type { AgentGateContext } from './gate';
 import { orchWriteSession } from '../pty/pty-manager';
 import { getAdapter } from '../adapters/adapter-registry';
 import { recordMissionPane } from './mission-pane-store';
@@ -52,11 +58,35 @@ export function strArray(args: Record<string, unknown>, key: string): string[] {
     : [];
 }
 
-export function sessionIdOf(paneRef: string): string {
-  const pane = findPane(paneRef);
-  if (!pane) throw new Error(`unknown pane: ${paneRef}`);
-  if (!pane.sessionId) throw new Error(`pane ${paneRef} has no live session`);
-  return pane.sessionId;
+/**
+ * Object-level authorization gate for the pane tools (SEC#5): resolve a pane
+ * ref and confirm `ctx` may perform `action` on it. A worker cannot
+ * read/write/close another agent's or the user's pane. Throws on unknown pane
+ * or refusal. Returns the pane info (session may be dead — fine for `close`).
+ */
+export function authorizePaneRef(
+  ctx: AgentGateContext,
+  paneRef: string,
+  action: PaneAction,
+): PaneAuthzInfo {
+  const info = getPaneAuthzInfo(paneRef);
+  if (!info) throw new Error(`unknown pane: ${paneRef}`);
+  const decision = authorizePaneAccess(ctx, info, action);
+  if (!decision.allow) {
+    throw new Error(`not authorized: ${decision.reason}`);
+  }
+  return info;
+}
+
+/** As authorizePaneRef, but also require a live session (read/write/wait). */
+export function authorizedSessionIdOf(
+  ctx: AgentGateContext,
+  paneRef: string,
+  action: PaneAction,
+): string {
+  const info = authorizePaneRef(ctx, paneRef, action);
+  if (!info.sessionId) throw new Error(`pane ${paneRef} has no live session`);
+  return info.sessionId;
 }
 
 /** Type text into a pane's PTY, then press Enter (as a user would). */

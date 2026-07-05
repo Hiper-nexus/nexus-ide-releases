@@ -38,13 +38,15 @@ export function CostBadge({ paneId }: { paneId: string }) {
       <span className="cost-badge__usd">{formatUsd(pane.costUsd)}</span>
       {hasCap && (
         <span className="cost-badge__bar">
+          {/* scaleX (not width) so the fill animates on the compositor — no
+              layout thrash on the progress bar. */}
           <span
             className={`cost-badge__fill cost-badge__fill--${level}`}
-            style={{ width: `${Math.round(ratio * 100)}%` }}
+            style={{ transform: `scaleX(${ratio})` }}
           />
         </span>
       )}
-      {pane.paused && <span className="cost-badge__paused">⏸ cap</span>}
+      {pane.paused && <span className="cost-badge__paused">pausado</span>}
     </span>
   );
 }

@@ -5,7 +5,7 @@ import { useHomeStore } from '../state/home-store';
 import { useOrchStore } from '../state/orch-store';
 import { listPanes, createPane } from '../lib/split-tree';
 import { getActiveWorkspacePath } from '../state/active-workspace';
-import { getPaneSessionId } from '../terminal/terminal-host';
+import { getPaneSessionId, waitForSession } from '../terminal/terminal-host';
 
 /**
  * Launch logic behind the wizard when a
@@ -16,9 +16,6 @@ import { getPaneSessionId } from '../terminal/terminal-host';
  *    (bracketed paste, then Enter) so it immediately starts delegating via
  *    the embedded MCP tools.
  */
-
-const SESSION_POLL_MS = 150;
-const SESSION_TIMEOUT_MS = 20_000;
 
 /**
  * Mata as sessões dos agentes CLI vivos no grid antes de subir outra missão.
@@ -56,19 +53,6 @@ export function launchLibrePanes(
   });
   useHomeStore.getState().hide();
   useLayoutStore.getState().setPanes(panes);
-}
-
-function waitForSession(paneId: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const startedAt = Date.now();
-    const poll = () => {
-      const sessionId = getPaneSessionId(paneId);
-      if (sessionId) return resolve(sessionId);
-      if (Date.now() - startedAt > SESSION_TIMEOUT_MS) return resolve(null);
-      setTimeout(poll, SESSION_POLL_MS);
-    };
-    poll();
-  });
 }
 
 /** Resolve on the CLI's first idle (booted, waiting for input) or timeout. */

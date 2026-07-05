@@ -4,7 +4,7 @@ import { createPane } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
-import { getPaneSessionId, markResumeOnSpawn } from '../terminal/terminal-host';
+import { markResumeOnSpawn, waitForSession } from '../terminal/terminal-host';
 import { killLiveAgents } from './mission-launcher';
 
 /**
@@ -15,22 +15,6 @@ import { killLiveAgents } from './mission-launcher';
  */
 
 const MAX_REOPEN_PANES = 12;
-const SESSION_POLL_MS = 150;
-const SESSION_TIMEOUT_MS = 20_000;
-
-/** Wait for the pane's PTY session to materialize (spawn is async). */
-function waitForSession(paneId: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const startedAt = Date.now();
-    const poll = () => {
-      const sessionId = getPaneSessionId(paneId);
-      if (sessionId) return resolve(sessionId);
-      if (Date.now() - startedAt > SESSION_TIMEOUT_MS) return resolve(null);
-      setTimeout(poll, SESSION_POLL_MS);
-    };
-    poll();
-  });
-}
 
 export interface MissionReopenResult {
   ok: boolean;
