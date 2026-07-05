@@ -21,13 +21,19 @@ export const BUILTIN_SQUADS: Squad[] = [
       '# Full-Stack\n' +
       'Você é o orquestrador. Quebre a tarefa em frente, back e revisão; ' +
       'delegue cada parte ao worker correspondente via nexus_pane_* e ' +
-      'integre os handoffs. Só finalize quando o reviewer aprovar.',
+      'integre os handoffs. O roster é um MENU: spawne só os agentes que a ' +
+      'missão pede. Antes de finalizar: QA roda os testes/o app de verdade e ' +
+      'tenta quebrar a entrega; Security revisa qualquer coisa que toque ' +
+      'auth, pagamentos, rede ou dados de usuário. Só finalize com QA e ' +
+      'Reviewer aprovando.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
       // Workers em CLIs DIFERENTES (defaults editáveis no review): diversidade
       // de modelos = custo menor e sem sobrecarregar um provedor só.
       { id: 'frontend', agentName: 'Frontend', category: 'executor', cli: 'codex', effort: 'medium' },
       { id: 'backend', agentName: 'Backend', category: 'executor', cli: 'gemini', effort: 'medium' },
+      { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'grok', effort: 'medium' },
+      { id: 'security', agentName: 'Security', category: 'reviewer', cli: 'claude', effort: 'high' },
       { id: 'reviewer', agentName: 'Reviewer', category: 'reviewer', cli: 'kimi', effort: 'high' },
     ],
   },
@@ -39,12 +45,13 @@ export const BUILTIN_SQUADS: Squad[] = [
     orchestratorInstructions:
       '# Code Review\n' +
       'Você é o orquestrador. Envie o diff para os revisores em paralelo ' +
-      '(correção e segurança), colete os handoffs e consolide um veredito ' +
-      'único, priorizando os achados por severidade.',
+      '(correção, segurança e performance), colete os handoffs e consolide ' +
+      'um veredito único, priorizando os achados por severidade.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
       { id: 'correctness', agentName: 'Correctness', category: 'reviewer', cli: 'kimi', effort: 'high' },
       { id: 'security', agentName: 'Security', category: 'reviewer', cli: 'claude', effort: 'high' },
+      { id: 'performance', agentName: 'Performance', category: 'reviewer', cli: 'gemini', effort: 'high' },
     ],
   },
   {
@@ -56,12 +63,15 @@ export const BUILTIN_SQUADS: Squad[] = [
       '# Research & Arquitetura\n' +
       'Você é o orquestrador. Mande os scouts levantarem o terreno em ' +
       'paralelo, sintetize os achados e peça ao arquiteto um plano de ' +
-      'implementação com trade-offs antes de escrever código.',
+      'implementação com trade-offs. Depois passe o plano ao Contrarian ' +
+      'para ele atacar (custos ocultos, riscos, alternativa mais simples) ' +
+      'antes de qualquer código.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
       { id: 'scout-a', agentName: 'Scout A', category: 'scout', cli: 'gemini', effort: 'medium' },
       { id: 'scout-b', agentName: 'Scout B', category: 'scout', cli: 'grok', effort: 'medium' },
       { id: 'architect', agentName: 'Architect', category: 'architect', cli: 'claude', effort: 'high' },
+      { id: 'contrarian', agentName: 'Contrarian', category: 'reviewer', cli: 'kimi', effort: 'high' },
     ],
   },
 ];

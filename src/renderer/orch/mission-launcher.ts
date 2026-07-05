@@ -118,6 +118,14 @@ function kickoffPrompt(squad: Squad): string {
       'seu próprio pane é FALHA de orquestração.',
   );
   parts.push(
+    '## Roster é um MENU, não obrigação\n' +
+      'Spawne SOMENTE os workers que a missão realmente pede: missão de um ' +
+      'arquivo não precisa do squad inteiro; missão grande usa todos. QA e ' +
+      'Security entram antes de finalizar sempre que houver entrega de ' +
+      'código (QA) ou superfície sensível — auth, pagamentos, rede, dados ' +
+      'de usuário (Security).',
+  );
+  parts.push(
     '## Código enxuto (ponytail)\n' +
       'Os workers operam em modo "lazy senior dev": mínimo código que ' +
       'funciona, reuso antes de escrever, zero abstração especulativa. Dê ' +

@@ -29,8 +29,13 @@ Responda APENAS com JSON neste formato:
 }
 
 Regras:
-- 2 a 4 workers, papéis DERIVADOS do projeto real (ex.: projeto Django+React →
-  worker backend Django, worker frontend React, reviewer).
+- 3 a 6 workers, escalando com o tamanho/complexidade do projeto; papéis
+  DERIVADOS do projeto real (ex.: Django+React → backend Django, frontend
+  React, QA, security, reviewer).
+- SEMPRE inclua um agente de QA (category reviewer) cujo papel é RODAR o
+  app/os testes de verdade e tentar quebrar as entregas — não só ler código.
+- Inclua um reviewer de Segurança sempre que o projeto tocar auth,
+  pagamentos, APIs expostas, rede ou dados de usuário.
 - NÃO inclua o orquestrador na lista (ele é adicionado automaticamente).
 - DISTRIBUA os workers entre as CLIs INSTALADAS listadas no perfil (custo e
   diversidade): executores em CLIs rápidas/baratas; reviewer/architect nas
@@ -163,7 +168,7 @@ export async function designSquadForWorkspace(
         cli: 'claude',
         effort: 'high',
       },
-      ...parsed.agents.slice(0, 4),
+      ...parsed.agents.slice(0, 6),
     ],
   };
   try {
