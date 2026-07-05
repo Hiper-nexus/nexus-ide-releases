@@ -24,14 +24,17 @@ export const BUILTIN_SQUADS: Squad[] = [
       'integre os handoffs. O roster é um MENU: spawne só os agentes que a ' +
       'missão pede. Antes de finalizar: QA roda os testes/o app de verdade e ' +
       'tenta quebrar a entrega; Security revisa qualquer coisa que toque ' +
-      'auth, pagamentos, rede ou dados de usuário. Só finalize com QA e ' +
-      'Reviewer aprovando.',
+      'auth, pagamentos, rede ou dados de usuário; UX Designer critica e ' +
+      'refina toda entrega com interface (hierarquia, estados vazios, ' +
+      'acessibilidade, polish — use a skill impeccable se disponível). Só ' +
+      'finalize com QA e Reviewer aprovando.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
       // Workers em CLIs DIFERENTES (defaults editáveis no review): diversidade
       // de modelos = custo menor e sem sobrecarregar um provedor só.
       { id: 'frontend', agentName: 'Frontend', category: 'executor', cli: 'codex', effort: 'medium' },
       { id: 'backend', agentName: 'Backend', category: 'executor', cli: 'gemini', effort: 'medium' },
+      { id: 'ux', agentName: 'UX Designer', category: 'reviewer', cli: 'claude', effort: 'medium' },
       { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'grok', effort: 'medium' },
       { id: 'security', agentName: 'Security', category: 'reviewer', cli: 'claude', effort: 'high' },
       { id: 'reviewer', agentName: 'Reviewer', category: 'reviewer', cli: 'kimi', effort: 'high' },
