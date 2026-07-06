@@ -161,6 +161,13 @@ export function usageTotalsByWorkspace(db: Db, workspacePath: string): UsageTota
   return toTotals(row);
 }
 
+export function usageTotalsByMission(db: Db, missionId: string): UsageTotals {
+  const row = db
+    .prepare(`${TOTALS_SELECT} WHERE mission_id = ?`)
+    .get(missionId) as TotalsRow | undefined;
+  return toTotals(row);
+}
+
 export function usageTotalsGlobal(db: Db): UsageTotals {
   const row = db.prepare(TOTALS_SELECT).get() as TotalsRow | undefined;
   return toTotals(row);

@@ -6,6 +6,7 @@ import {
   initUsageStore,
   recordUsage,
   usageBreakdownByModel,
+  usageTotalsByMission,
   usageTotalsBySession,
   usageTotalsGlobal,
 } from './usage-store';
@@ -91,6 +92,21 @@ describe.skipIf(!sqlite)('usage-store (SQLite real)', () => {
     recordUsage(db, makeEvent({ messageId: null, outputTokens: 1 }), 1);
     recordUsage(db, makeEvent({ messageId: null, outputTokens: 2 }), 2);
     expect(usageTotalsBySession(db, 'sess-1').turns).toBe(2);
+    db.close();
+  });
+
+  it('agrega uso por missão', () => {
+    const db = makeDb();
+    recordUsage(db, { ...makeEvent(), workspacePath: '/ws', missionId: 'm-1' }, 1);
+    recordUsage(
+      db,
+      { ...makeEvent({ messageId: 'msg-2', sessionId: 's2' }), workspacePath: '/ws', missionId: 'm-2' },
+      2,
+    );
+    const m1 = usageTotalsByMission(db, 'm-1');
+    expect(m1.turns).toBe(1);
+    expect(m1.costUsd).toBeGreaterThan(0);
+    expect(usageTotalsByMission(db, 'm-x').turns).toBe(0);
     db.close();
   });
 
