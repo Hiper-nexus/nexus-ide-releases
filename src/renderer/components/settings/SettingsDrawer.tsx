@@ -10,6 +10,7 @@ import {
 } from './ModuleSections';
 import { ProvidersPanel } from './ProvidersPanel';
 import { AccountSection } from './AccountSection';
+import { MediaSection } from './MediaSection';
 import {
   AgentsSection,
   HooksSection,
@@ -33,6 +34,7 @@ export type SettingsSection =
   | 'account'
   | 'terminal'
   | 'voice'
+  | 'media'
   | 'providers'
   | 'squads'
   | 'marketplace'
@@ -61,6 +63,7 @@ const ACCOUNT_ITEMS: NavItem[] = [
 const MODULE_ITEMS: NavItem[] = [
   { id: 'terminal', icon: '>_', title: 'TERMINAL', subtitle: 'tema · fonte · shell' },
   { id: 'voice', icon: '🎙', title: 'VOICE', subtitle: 'voz · captura' },
+  { id: 'media', icon: '🎬', title: 'MÍDIA', subtitle: 'imagem · vídeo · voz' },
   { id: 'providers', icon: '🔑', title: 'PROVIDERS', subtitle: 'tokens · modelos' },
   { id: 'squads', icon: '👥', title: 'SQUADS', subtitle: 'orquestração' },
   { id: 'marketplace', icon: '✦', title: 'MARKETPLACE', subtitle: 'Catálogo · 1 clique' },
@@ -179,6 +182,7 @@ export function SettingsDrawer() {
           {section === 'account' && <AccountSection />}
           {section === 'terminal' && <TerminalSection />}
           {section === 'voice' && <VoiceSection onNavigate={close} />}
+          {section === 'media' && <MediaSection />}
           {section === 'providers' && <ProvidersPanel />}
           {section === 'squads' && <SquadsSection onNavigate={close} />}
           {section === 'marketplace' && <MarketplaceSection />}

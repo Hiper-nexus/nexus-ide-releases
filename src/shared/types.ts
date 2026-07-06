@@ -51,6 +51,11 @@ import type {
 import type { AccountInfo, AddAccountRequest, FailoverEvent } from './account-types';
 import type { CostSnapshot } from './cost-types';
 import type { UsageSnapshot } from './usage-types';
+import type {
+  MediaProviderId,
+  MediaProviderInfo,
+  MediaUsageTotals,
+} from './media-types';
 import type { NotesApi } from './note-types';
 import type { PipeApi } from './pipe-types';
 import type {
@@ -483,7 +488,10 @@ export interface NexusApi {
       status: TodoStatus,
     ): Promise<TodoList>;
     listSquads(): Promise<Squad[]>;
-    designSquad(workspacePath: string): Promise<{ ok: boolean; squad?: Squad; error?: string }>;
+    designSquad(
+      workspacePath: string,
+      intent?: string,
+    ): Promise<{ ok: boolean; squad?: Squad; error?: string }>;
     saveSquad(squad: Squad): Promise<{ ok: boolean; error?: string }>;
     deleteSquad(id: string): Promise<{ ok: boolean }>;
     exportSquads(): Promise<{ ok: boolean; path?: string; error?: string }>;
@@ -574,6 +582,14 @@ export interface NexusApi {
   };
   perf: {
     snapshot(): Promise<PerfSnapshot>;
+  };
+  media: {
+    listProviders(): Promise<MediaProviderInfo[]>;
+    setKey(
+      providerId: MediaProviderId,
+      key: string,
+    ): Promise<{ ok: boolean; error?: string }>;
+    usageTotals(): Promise<MediaUsageTotals>;
   };
   notes: NotesApi;
   pipes: PipeApi;

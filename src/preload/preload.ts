@@ -22,6 +22,8 @@ import type { AccountInfo, FailoverEvent } from '../shared/account-types';
 import { COST_CHANNELS } from '../shared/cost-types';
 import { USAGE_CHANNELS } from '../shared/usage-types';
 import type { UsageSnapshot } from '../shared/usage-types';
+import { MEDIA_CHANNELS } from '../shared/media-types';
+import type { MediaProviderId } from '../shared/media-types';
 import { BILLING_CHANNELS } from '../shared/billing-types';
 import type { PlanId } from '../shared/billing-types';
 import type { CostSnapshot } from '../shared/cost-types';
@@ -361,8 +363,11 @@ const api: NexusApi = {
     setTodoStatus: (listId: string, itemId: string, status: TodoStatus) =>
       ipcRenderer.invoke(ORCH_CHANNELS.todoSetStatus, { listId, itemId, status }),
     listSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadsList),
-    designSquad: (workspacePath: string) =>
-      ipcRenderer.invoke(ORCH_CHANNELS.squadDesign, workspacePath),
+    designSquad: (workspacePath: string, intent?: string) =>
+      ipcRenderer.invoke(
+        ORCH_CHANNELS.squadDesign,
+        intent ? { workspacePath, intent } : workspacePath,
+      ),
     saveSquad: (squad) => ipcRenderer.invoke(ORCH_CHANNELS.squadSave, squad),
     deleteSquad: (id) => ipcRenderer.invoke(ORCH_CHANNELS.squadDelete, id),
     exportSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadExport),
@@ -477,6 +482,12 @@ const api: NexusApi = {
   },
   perf: {
     snapshot: () => ipcRenderer.invoke(PERF_CHANNELS.snapshot),
+  },
+  media: {
+    listProviders: () => ipcRenderer.invoke(MEDIA_CHANNELS.listProviders),
+    setKey: (providerId: MediaProviderId, key: string) =>
+      ipcRenderer.invoke(MEDIA_CHANNELS.setKey, { providerId, key }),
+    usageTotals: () => ipcRenderer.invoke(MEDIA_CHANNELS.usageTotals),
   },
   notes: {
     list: (workspacePath: string) =>

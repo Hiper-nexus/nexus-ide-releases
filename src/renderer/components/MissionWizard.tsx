@@ -12,20 +12,24 @@ import { launchLibrePanes, launchSquadMission } from '../orch/mission-launcher';
  * "Novo workspace" / "Nova Missão" wizard — the full flow:
  *   PASTA (novo workspace) → MODO → Livre: PANES → PROVIDERS
  *                                 → Squad: SQUAD → REVISAR
+ *                                 → Agêntico: OBJETIVO → REVISAR
  * Copy, step breadcrumb, mode cards and the squad list (ORIGINALS + YOUR
- * SQUADS with "orq + N workers") drive the mission setup.
+ * SQUADS with "orq + N workers") drive the mission setup. No modo Agêntico o
+ * usuário descreve o objetivo, o Squad Architect monta o time sob medida e o
+ * wizard cai direto na revisão do roster para disparar.
  */
 
 /** The orchestrator always runs on Claude (only CLI with reliable MCP tool use). */
 const ORCHESTRATOR_CLI = 'claude';
 
-type Mode = 'libre' | 'squad';
+type Mode = 'libre' | 'squad' | 'agentic';
 type Step =
   | 'new-ws'
   | 'mode'
   | 'libre-count'
   | 'libre-slots'
   | 'squad-select'
+  | 'agentic-intent'
   | 'squad-review';
 
 const PANE_COUNTS = [1, 2, 3, 4, 6];
@@ -36,6 +40,7 @@ const STEP_LABELS: Record<Step, string> = {
   'libre-count': 'Panes',
   'libre-slots': 'Providers',
   'squad-select': 'Squad',
+  'agentic-intent': 'Objetivo',
   'squad-review': 'Revisar',
 };
 
@@ -82,6 +87,9 @@ export function MissionWizard() {
   const [squadId, setSquadId] = useState('');
   const [spawning, setSpawning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Modo Agêntico: intenção em linguagem natural + estado do arquiteto.
+  const [intent, setIntent] = useState('');
+  const [designing, setDesigning] = useState(false);
   // Editable copy of the selected squad's roster (cli/model/effort per agent).
   const [roster, setRoster] = useState<SquadAgent[]>([]);
   const [rosterSaved, setRosterSaved] = useState(false);
@@ -117,6 +125,7 @@ export function MissionWizard() {
   const steps: Step[] = useMemo(() => {
     const prefix: Step[] = hasNewWsStep ? ['new-ws'] : [];
     if (mode === 'squad') return [...prefix, 'mode', 'squad-select', 'squad-review'];
+    if (mode === 'agentic') return [...prefix, 'mode', 'agentic-intent', 'squad-review'];
     if (mode === 'libre') return [...prefix, 'mode', 'libre-count', 'libre-slots'];
     return [...prefix, 'mode'];
   }, [mode, hasNewWsStep]);
@@ -214,9 +223,39 @@ export function MissionWizard() {
     if (next === 'libre') {
       setStep('libre-count');
       setSlots((prev) => fillSlots(prev, count));
+    } else if (next === 'agentic') {
+      setStep('agentic-intent');
     } else {
       if (!squadId) setSquadId(squads[0]?.id ?? '');
       setStep('squad-select');
+    }
+  }
+
+  /** Modo Agêntico: intenção → arquiteto monta o time → revisão do roster. */
+  async function handleDesignFromIntent() {
+    if (designing || !intent.trim()) return;
+    setDesigning(true);
+    setError(null);
+    try {
+      const workspacePath = hasNewWsStep
+        ? wsPath.trim()
+        : useWorkspaceStore.getState().current?.path ?? wsPath.trim();
+      if (!workspacePath) {
+        setError('Abra (ou informe) um workspace antes de montar o time.');
+        return;
+      }
+      const res = await window.nexus.orch.designSquad(workspacePath, intent.trim());
+      if (!res.ok || !res.squad) {
+        setError(res.error ?? 'Não consegui montar o time.');
+        return;
+      }
+      // O squad já foi salvo no main — garantir que a lista local o contém
+      // antes de renderizar a revisão.
+      await useOrchStore.getState().hydrate();
+      setSquadId(res.squad.id);
+      setStep('squad-review');
+    } finally {
+      setDesigning(false);
     }
   }
 
@@ -376,6 +415,16 @@ export function MissionWizard() {
                     {squads.length === 0 && ' (nenhum squad salvo)'}
                   </span>
                 </button>
+                <button
+                  className={`wizard__mode ${mode === 'agentic' ? 'wizard__mode--active' : ''}`}
+                  onClick={() => chooseMode('agentic')}
+                >
+                  <span className="wizard__mode-icon">⚡</span>
+                  <span className="wizard__mode-title">Modo Agêntico</span>
+                  <span className="wizard__mode-desc">
+                    Descreva o que quer — a IA monta o time e dispara
+                  </span>
+                </button>
               </div>
               <div className="wizard__actions">
                 {hasNewWsStep ? (
@@ -388,6 +437,46 @@ export function MissionWizard() {
                 <button className="wizard__btn wizard__btn--ghost" onClick={close}>
                   Cancelar
                 </button>
+              </div>
+            </div>
+          )}
+
+          {step === 'agentic-intent' && (
+            <div className="wizard__section">
+              <p className="wizard__label">O QUE VOCÊ QUER?</p>
+              <textarea
+                className="wizard__input wizard__intent"
+                value={intent}
+                rows={4}
+                placeholder={
+                  'ex.: "landing page premium espelhando o site X" · ' +
+                  '"auditar segurança da API de pagamentos" · ' +
+                  '"corrigir todos os testes quebrados"'
+                }
+                onChange={(e) => setIntent(e.target.value)}
+                autoFocus
+              />
+              <p className="wizard__hint-sm">
+                O arquiteto lê seu objetivo + a stack do workspace e monta o
+                time sob medida (QA, security e UX entram quando o objetivo
+                pede). Você revisa o roster antes de disparar.
+              </p>
+              <div className="wizard__actions">
+                <button className="wizard__btn" onClick={() => setStep('mode')}>
+                  ‹ Voltar
+                </button>
+                <div className="wizard__actions-right">
+                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                    Cancelar
+                  </button>
+                  <button
+                    className="wizard__btn wizard__btn--primary"
+                    onClick={() => void handleDesignFromIntent()}
+                    disabled={designing || !intent.trim()}
+                  >
+                    {designing ? '✨ Montando o time…' : 'Montar time ⚡'}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -668,7 +757,12 @@ export function MissionWizard() {
               </ul>
               {error && <p className="wizard__error">{error}</p>}
               <div className="wizard__actions">
-                <button className="wizard__btn" onClick={() => setStep('squad-select')}>
+                <button
+                  className="wizard__btn"
+                  onClick={() =>
+                    setStep(mode === 'agentic' ? 'agentic-intent' : 'squad-select')
+                  }
+                >
                   ‹ Voltar
                 </button>
                 <div className="wizard__actions-right">

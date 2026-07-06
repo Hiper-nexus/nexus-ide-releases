@@ -27,4 +27,9 @@ export interface UsageSnapshot {
     outputTokens: number;
     turns: number;
   };
+  /** Custo acumulado de geração de mídia (imagem/vídeo/áudio) — SQLite. */
+  media: {
+    generations: number;
+    costUsd: number;
+  };
 }

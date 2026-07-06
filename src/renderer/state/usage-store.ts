@@ -20,6 +20,7 @@ function usageApi(): UsageApi | undefined {
 export const EMPTY_USAGE_SNAPSHOT: UsageSnapshot = {
   byPane: {},
   global: { costUsd: 0, inputTokens: 0, outputTokens: 0, turns: 0 },
+  media: { generations: 0, costUsd: 0 },
 };
 
 interface UsageStore {

@@ -18,6 +18,7 @@ import {
   recordUsage,
   usageTotalsGlobal,
 } from './usage-store';
+import { initMediaUsageStore, mediaUsageTotalsGlobal } from './media-usage-store';
 import { USAGE_CHANNELS, type UsageSnapshot, type PaneUsage } from '../../shared/usage-types';
 import type { UsageEvent } from './claude-transcript';
 import type { Db } from '../persistence/db';
@@ -55,6 +56,14 @@ function buildSnapshot(): UsageSnapshot {
   const global = db
     ? usageTotalsGlobal(db)
     : { costUsd: 0, inputTokens: 0, outputTokens: 0, turns: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  let media = { generations: 0, costUsd: 0 };
+  if (db) {
+    try {
+      media = mediaUsageTotalsGlobal(db);
+    } catch {
+      // tabela de mídia ainda não criada — sem gerações, totais zerados
+    }
+  }
   return {
     byPane: Object.fromEntries(paneTotals),
     global: {
@@ -63,7 +72,13 @@ function buildSnapshot(): UsageSnapshot {
       outputTokens: global.outputTokens,
       turns: global.turns,
     },
+    media,
   };
+}
+
+/** Poke externo (geração de mídia gravada) — reaproveita o broadcast coalescido. */
+export function notifyMediaGenerated(): void {
+  scheduleBroadcast();
 }
 
 /** Broadcast coalescido (máx. 1/s) — o transcript chega em rajadas. */
@@ -181,6 +196,7 @@ export function initUsageTelemetry(): void {
   }
   try {
     initUsageStore(db);
+    initMediaUsageStore(db);
   } catch (err) {
     console.warn('[usage] schema falhou — telemetria real desativada:', err);
     db = null;

@@ -11,7 +11,10 @@ import {
 } from '../../shared/orch-types';
 import { getDb } from '../persistence/db';
 import { initSquadStore, listSquads, saveSquad, deleteSquad, onSquadsChange, exportSquadsJson, importSquadsJson } from './squad-store';
-import { designSquadForWorkspace } from './squad-architect';
+import {
+  designSquadForWorkspace,
+  designSquadFromIntent,
+} from './squad-architect';
 import {
   initMissionStore,
   listMissions,
@@ -201,10 +204,30 @@ export function registerOrchIpc(): void {
   });
   ipcMain.handle(ORCH_CHANNELS.squadsList, () => listSquads());
   ipcMain.handle(ORCH_CHANNELS.squadDesign, async (_event, raw: unknown) => {
-    const wsPath = typeof raw === 'string' && raw.length > 0 && raw.length < 1024 ? raw : null;
+    // Aceita string (legado: workspace-driven) ou {workspacePath, intent?}
+    // (modo Agêntico: intenção em linguagem natural).
+    let wsPath: string | null = null;
+    let intent: string | undefined;
+    if (typeof raw === 'string') {
+      wsPath = raw.length > 0 && raw.length < 1024 ? raw : null;
+    } else if (raw && typeof raw === 'object') {
+      const obj = raw as { workspacePath?: unknown; intent?: unknown };
+      if (
+        typeof obj.workspacePath === 'string' &&
+        obj.workspacePath.length > 0 &&
+        obj.workspacePath.length < 1024
+      ) {
+        wsPath = obj.workspacePath;
+      }
+      if (typeof obj.intent === 'string' && obj.intent.trim().length > 0) {
+        intent = obj.intent.slice(0, 4_000);
+      }
+    }
     if (!wsPath) return { ok: false, error: 'workspace inválido' };
     try {
-      return await designSquadForWorkspace(wsPath);
+      return intent
+        ? await designSquadFromIntent(intent, wsPath)
+        : await designSquadForWorkspace(wsPath);
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

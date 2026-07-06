@@ -12,6 +12,10 @@ import type { Squad } from '../../shared/orch-types';
  * sob medida: papéis certos para o projeto, instruções de orquestração
  * específicas e CLIs/modelos adequados. Cada projeto pede um time diferente;
  * este módulo monta o time.
+ *
+ * Duas entradas: workspace-driven (perfil do projeto) e intent-driven (modo
+ * Agêntico — o usuário descreve o objetivo em linguagem natural e o time sai
+ * desenhado PARA aquele objetivo, com o workspace como contexto).
  */
 
 const MAX_FILE_CHARS = 4_000;
@@ -104,11 +108,40 @@ export interface ArchitectResult {
 export async function designSquadForWorkspace(
   workspacePath: string,
 ): Promise<ArchitectResult> {
+  return designSquad({ workspacePath });
+}
+
+/**
+ * Modo Agêntico: o usuário descreve O QUE QUER; o arquiteto monta o time
+ * para ESSE objetivo (workspace como contexto, não como fonte da missão).
+ */
+export async function designSquadFromIntent(
+  intent: string,
+  workspacePath: string,
+): Promise<ArchitectResult> {
+  const clean = intent.trim();
+  if (!clean) return { ok: false, error: 'descreva o objetivo da missão' };
+  return designSquad({ workspacePath, intent: clean.slice(0, 4_000) });
+}
+
+async function designSquad(opts: {
+  workspacePath: string;
+  intent?: string;
+}): Promise<ArchitectResult> {
+  const { workspacePath, intent } = opts;
   const installed = listAdapterInfos()
     .filter((a) => a.installed && a.id !== 'shell')
     .map((a) => a.id)
     .join(', ');
+  const intentBlock = intent
+    ? `OBJETIVO DO USUÁRIO (a missão deste squad — desenhe o time PARA isto):\n` +
+      `"""${intent}"""\n\n` +
+      `Regra extra: as orchestratorInstructions DEVEM abrir declarando este ` +
+      `objetivo como a missão, e o primeiro passo do orquestrador é decompô-lo ` +
+      `e delegar — sem re-perguntar o que fazer.\n\n`
+    : '';
   const profile =
+    intentBlock +
     `CLIs instaladas nesta máquina: ${installed || 'claude'}\n\n` +
     profileWorkspace(workspacePath);
   const raw = await (async () => {
@@ -168,8 +201,13 @@ export async function designSquadForWorkspace(
   }
 
   const workspaceName = path.basename(workspacePath);
+  // Intent mode ganha id próprio (por nome gerado) — dois squads agênticos no
+  // mesmo workspace não podem colidir no id `custom-<workspace>`.
+  const idBase = intent
+    ? `agentic-${parsed.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now() % 100_000}`
+    : `custom-${workspaceName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   const candidate = {
-    id: `custom-${workspaceName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.slice(0, 64),
+    id: idBase.slice(0, 64),
     name: parsed.name.slice(0, 80),
     createdAt: String(Date.now()),
     builtin: false,

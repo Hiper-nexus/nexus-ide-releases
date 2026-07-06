@@ -64,7 +64,8 @@ export function CostBadge({ paneId }: { paneId: string }) {
 /** Workspace summary: total $, burn rate ($/min) and token throughput. */
 export function CostSummary() {
   const snapshot = useCostStore((s) => s.snapshot);
-  if (snapshot.panes.length === 0) return null;
+  const media = useUsageStore((s) => s.snapshot.media);
+  if (snapshot.panes.length === 0 && media.generations === 0) return null;
 
   return (
     <div className="cost-summary" title="Custo estimado do workspace">
@@ -77,6 +78,14 @@ export function CostSummary() {
       <span className="cost-summary__item">
         {snapshot.tokPerSec.toFixed(1)} tok/s
       </span>
+      {media.generations > 0 && (
+        <span
+          className="cost-summary__item"
+          title={`${media.generations} gerações de mídia (imagem/vídeo/áudio)`}
+        >
+          🎬 {formatUsd(media.costUsd)}
+        </span>
+      )}
     </div>
   );
 }

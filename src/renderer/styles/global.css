@@ -2712,6 +2712,16 @@ body {
   outline: none;
 }
 
+/* Modo Agêntico — textarea de objetivo (mesma pele do input, multi-linha). */
+.wizard__intent {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  line-height: 1.5;
+}
+
 .wizard__browse {
   background: var(--bg);
   border: none;

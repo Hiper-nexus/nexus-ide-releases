@@ -31,6 +31,8 @@ interface Session {
   idleTimer: ReturnType<typeof setTimeout> | null;
   idleTimeoutMs: number;
   state: PaneSessionState;
+  /** Spawn cwd — workspace attribution (media output, telemetry). */
+  cwd: string;
 }
 
 const sessions = new Map<string, Session>();
@@ -374,6 +376,7 @@ export function spawnSession(wc: WebContents, req: SpawnRequest): SpawnedSession
     idleTimer: null,
     idleTimeoutMs: 0,
     state: 'spawning',
+    cwd,
   };
   sessions.set(sessionId, session);
   return { sessionId };
@@ -509,6 +512,7 @@ export function spawnAgentSession(
     idleTimer: null,
     idleTimeoutMs: idleMs,
     state: 'spawning',
+    cwd,
   };
   sessions.set(sessionId, session);
   emitStateChange(wc, sessionId, 'spawning');
@@ -632,6 +636,11 @@ export function orchKillSession(sessionId: string): boolean {
 /** Current lifecycle state of a session, or null if it is gone. */
 export function getSessionState(sessionId: string): PaneSessionState | null {
   return sessions.get(sessionId)?.state ?? null;
+}
+
+/** Spawn cwd of a live session — the caller's workspace dir. */
+export function getSessionCwd(sessionId: string): string | null {
+  return sessions.get(sessionId)?.cwd ?? null;
 }
 
 export function getLiveSessionCount(): number {

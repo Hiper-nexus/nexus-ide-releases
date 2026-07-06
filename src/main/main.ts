@@ -89,6 +89,7 @@ import {
   unregisterPipeListener,
 } from './orch/pane-pipe-ipc';
 import { registerRemoteIpc } from './remote/remote-ipc';
+import { registerMediaIpc } from './media/media-ipc';
 import { stopRemoteBridge } from './remote/remote-bridge';
 import { initSmokeTest } from './smoke-test';
 
@@ -123,6 +124,7 @@ function bootstrap(): void {
   registerFilesIpc();
   registerAccountIpc();
   registerCostIpc();
+  registerMediaIpc();
   // Telemetria REAL de tokens (transcript watchers → SQLite). Convive com o
   // cost-tracker heurístico: a UI prefere o real quando ele existe.
   initUsageTelemetry();
