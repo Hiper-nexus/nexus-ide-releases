@@ -124,11 +124,17 @@ const config: ForgeConfig = {
     },
     ...(process.env.APPLE_TEAM_ID
       ? {
-          osxNotarize: {
-            appleId: process.env.APPLE_ID as string,
-            appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD as string,
-            teamId: process.env.APPLE_TEAM_ID as string,
-          },
+          // Prefer a stored notarytool keychain profile (APPLE_KEYCHAIN_PROFILE)
+          // for local builds — no app-specific password in plaintext/env. CI,
+          // which has no profile but exports the Apple credentials as secrets,
+          // falls back to the appleId/password/teamId trio unchanged.
+          osxNotarize: process.env.APPLE_KEYCHAIN_PROFILE
+            ? { keychainProfile: process.env.APPLE_KEYCHAIN_PROFILE }
+            : {
+                appleId: process.env.APPLE_ID as string,
+                appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD as string,
+                teamId: process.env.APPLE_TEAM_ID as string,
+              },
         }
       : {}),
   },

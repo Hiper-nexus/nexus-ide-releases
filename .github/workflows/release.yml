@@ -11,6 +11,9 @@ on:
   push:
     tags:
       - 'v*'
+  # Permite re-disparar manualmente pela aba Actions (ex.: após destravar o
+  # billing) sem precisar re-taggear. Rode a partir da tag desejada.
+  workflow_dispatch:
 
 permissions:
   contents: write # necessário para criar o Release
