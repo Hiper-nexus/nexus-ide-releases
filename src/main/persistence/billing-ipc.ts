@@ -6,8 +6,8 @@ import { ipcMain, shell } from 'electron';
 import {
   BILLING_CHANNELS,
   DEFAULT_LICENSE,
+  type CheckoutRequest,
   type LicenseInfo,
-  type PlanId,
 } from '../../shared/billing-types';
 
 /**
@@ -16,6 +16,15 @@ import {
  */
 
 const LICENSE_FILE = path.join(os.homedir(), '.nexus', 'license.json');
+
+interface BillingIpcDeps {
+  apiFetch: (
+    path: string,
+    init?: { method?: string; body?: unknown },
+  ) => Promise<{ status: number; json: unknown }>;
+  openExternal: (url: string) => unknown;
+  startCheckoutPolling: () => void;
+}
 
 function readLicense(): LicenseInfo {
   try {
@@ -34,6 +43,43 @@ function readLicense(): LicenseInfo {
 
 export function currentPlan(): string {
   return readLicense().plan;
+}
+
+function normalizeCheckoutRequest(raw: unknown): CheckoutRequest | null {
+  const req = (typeof raw === 'object' && raw !== null ? raw : { plan: raw }) as {
+    plan?: unknown;
+    seats?: unknown;
+    teamName?: unknown;
+  };
+  if (req.plan === 'pro') return { plan: 'pro' };
+  if (req.plan !== 'team') return null;
+  return {
+    plan: 'team',
+    seats: typeof req.seats === 'number' && Number.isFinite(req.seats)
+      ? req.seats
+      : undefined,
+    teamName: typeof req.teamName === 'string' ? req.teamName : undefined,
+  };
+}
+
+function defaultBillingIpcDeps(): BillingIpcDeps {
+  // Lazy require: mantém applyLicenseToken testável sem carregar o cliente HTTP.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { apiFetch } = require('../api-client') as typeof import('../api-client');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { startCheckoutPolling } = require('../license-sync') as typeof import('../license-sync');
+  return {
+    apiFetch,
+    openExternal: (url) => shell.openExternal(url),
+    startCheckoutPolling,
+  };
+}
+
+function resolveBillingIpcDeps(overrides?: Partial<BillingIpcDeps>): BillingIpcDeps {
+  if (overrides?.apiFetch && overrides.openExternal && overrides.startCheckoutPolling) {
+    return overrides as BillingIpcDeps;
+  }
+  return { ...defaultBillingIpcDeps(), ...overrides };
 }
 
 function writeLicense(info: LicenseInfo, file: string = LICENSE_FILE): void {
@@ -137,21 +183,16 @@ export function applyLicenseToken(
   }
 }
 
-export function registerBillingIpc(): void {
+export function registerBillingIpc(overrides?: Partial<BillingIpcDeps>): void {
   ipcMain.handle(BILLING_CHANNELS.get, (): LicenseInfo => readLicense());
 
   ipcMain.handle(BILLING_CHANNELS.checkout, async (_e, raw: unknown) => {
-    const req = (typeof raw === 'object' && raw !== null ? raw : { plan: raw }) as {
-      plan?: unknown;
-      seats?: number;
-      teamName?: string;
-    };
-    const plan: PlanId = req.plan === 'team' ? 'team' : 'pro';
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { apiFetch } = require('../api-client') as typeof import('../api-client');
-    const result = await apiFetch('/v1/billing/checkout', {
+    const req = normalizeCheckoutRequest(raw);
+    if (!req) return { ok: false, error: 'plano inválido' };
+    const deps = resolveBillingIpcDeps(overrides);
+    const result = await deps.apiFetch('/v1/billing/checkout', {
       method: 'POST',
-      body: { plan, seats: req.seats, teamName: req.teamName },
+      body: req,
     });
     const body = result.json as { ok?: boolean; data?: { url?: string }; error?: string } | null;
     if (result.status !== 200 || !body?.data?.url) {
@@ -162,17 +203,14 @@ export function registerBillingIpc(): void {
           : body?.error ?? 'backend indisponível — tente de novo',
       };
     }
-    void shell.openExternal(body.data.url);
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { startCheckoutPolling } = require('../license-sync') as typeof import('../license-sync');
-    startCheckoutPolling();
+    void deps.openExternal(body.data.url);
+    deps.startCheckoutPolling();
     return { ok: true };
   });
 
   ipcMain.handle(BILLING_CHANNELS.portal, async () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { apiFetch } = require('../api-client') as typeof import('../api-client');
-    const result = await apiFetch('/v1/billing/portal', { method: 'POST' });
+    const deps = resolveBillingIpcDeps(overrides);
+    const result = await deps.apiFetch('/v1/billing/portal', { method: 'POST' });
     const body = result.json as { ok?: boolean; data?: { url?: string }; error?: string } | null;
     if (result.status !== 200 || !body?.data?.url) {
       return {
@@ -182,7 +220,7 @@ export function registerBillingIpc(): void {
           : body?.error ?? 'backend indisponível',
       };
     }
-    void shell.openExternal(body.data.url);
+    void deps.openExternal(body.data.url);
     return { ok: true };
   });
 }

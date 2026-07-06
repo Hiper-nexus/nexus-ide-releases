@@ -5142,8 +5142,10 @@ body {
 }
 
 .account__team-error {
+  display: block;
   color: var(--danger);
   font-size: 12px;
+  margin-top: 8px;
 }
 
 .account__plans {
@@ -5214,8 +5216,23 @@ body {
   border-radius: var(--radius-round);
 }
 
+.account__plan-badge--muted {
+  color: var(--text-dim);
+  border-color: var(--border-strong);
+}
+
 .account__plan-cta {
   align-self: flex-start;
+}
+
+.account__team-checkout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px;
+  gap: 8px;
+}
+
+.account__seats-input {
+  min-width: 0;
 }
 
 .account__note {

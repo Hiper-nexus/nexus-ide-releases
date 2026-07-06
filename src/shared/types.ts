@@ -397,7 +397,13 @@ export type Unsubscribe = () => void;
  * The typed surface exposed on `window.nexus` by the preload script.
  * The renderer NEVER sees raw ipcRenderer — only this contract.
  */
-import type { InviteInfo, LicenseInfo, PlanId, TeamInfo } from './billing-types';
+import type {
+  CheckoutRequest,
+  InviteInfo,
+  LicenseInfo,
+  PlanId,
+  TeamInfo,
+} from './billing-types';
 
 export interface NexusApi {
   /** App-shell lifecycle signals to the main process. */
@@ -415,7 +421,7 @@ export interface NexusApi {
   };
   billing: {
     get(): Promise<LicenseInfo>;
-    openCheckout(plan: PlanId): Promise<{ ok: boolean }>;
+    openCheckout(request: PlanId | CheckoutRequest): Promise<{ ok: boolean; error?: string }>;
     openPortal(): Promise<{ ok: boolean }>;
   };
   team: {

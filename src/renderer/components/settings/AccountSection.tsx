@@ -24,6 +24,9 @@ export function AccountSection() {
   const [joinCode, setJoinCode] = useState('');
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [teamError, setTeamError] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [teamCheckoutName, setTeamCheckoutName] = useState('');
+  const [teamCheckoutSeats, setTeamCheckoutSeats] = useState(2);
 
   useEffect(() => {
     void window.nexus.billing.get().then(setLicense);
@@ -96,6 +99,24 @@ export function AccountSection() {
       return;
     }
     await reloadTeam();
+  };
+
+  const startCheckout = async (plan: PlanId) => {
+    setCheckoutError(null);
+    if (plan === 'free') {
+      setCheckoutError('use o portal para alterar uma assinatura ativa');
+      return;
+    }
+    const result = plan === 'team'
+      ? await window.nexus.billing.openCheckout({
+        plan,
+        teamName: teamCheckoutName.trim(),
+        seats: teamCheckoutSeats,
+      })
+      : await window.nexus.billing.openCheckout(plan);
+    if (!result.ok) {
+      setCheckoutError(result.error ?? 'não foi possível abrir o checkout');
+    }
   };
 
   return (
@@ -239,19 +260,48 @@ export function AccountSection() {
               </ul>
               {isCurrent ? (
                 <span className="account__plan-badge">plano atual</span>
+              ) : plan.id === 'free' ? (
+                <span className="account__plan-badge account__plan-badge--muted">
+                  incluso
+                </span>
               ) : (
-                <button
-                  className="agent-picker__btn agent-picker__btn--primary account__plan-cta"
-                  onClick={() => void window.nexus.billing.openCheckout(plan.id)}
-                  title="Abre o checkout no navegador"
-                >
-                  {plan.priceMonthly === null ? 'Falar com a gente' : `Assinar ${plan.name}`}
-                </button>
+                <>
+                  {plan.id === 'team' && (
+                    <div className="account__team-checkout">
+                      <input
+                        className="settings-input"
+                        placeholder="Nome do time"
+                        value={teamCheckoutName}
+                        onChange={(event) => setTeamCheckoutName(event.target.value)}
+                      />
+                      <input
+                        className="settings-input account__seats-input"
+                        min={2}
+                        max={100}
+                        type="number"
+                        value={teamCheckoutSeats}
+                        onChange={(event) => {
+                          const seats = Number(event.target.value);
+                          setTeamCheckoutSeats(Number.isFinite(seats) ? seats : 2);
+                        }}
+                      />
+                    </div>
+                  )}
+                  <button
+                    className="agent-picker__btn agent-picker__btn--primary account__plan-cta"
+                    onClick={() => void startCheckout(plan.id)}
+                    title="Abre o checkout no navegador"
+                  >
+                    {`Assinar ${plan.name}`}
+                  </button>
+                </>
               )}
             </div>
           );
         })}
       </div>
+
+      {checkoutError && <span className="account__team-error">{checkoutError}</span>}
 
       <p className="settings-detail__hint account__note">
         Pagamentos via Stripe chegam com o NexusIDE Cloud — os botões acima já

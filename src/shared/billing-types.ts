@@ -6,7 +6,13 @@
  */
 
 // Fonte única do contrato app↔backend (o servidor importa os MESMOS tipos).
-export type { PlanId, LicenseInfo, TeamInfo, InviteInfo } from '../../shared/contract';
+export type {
+  CheckoutRequest,
+  PlanId,
+  LicenseInfo,
+  TeamInfo,
+  InviteInfo,
+} from '../../shared/contract';
 import type { LicenseInfo, PlanId } from '../../shared/contract';
 
 export interface PlanDef {
