@@ -89,6 +89,7 @@ import {
   unregisterPipeListener,
 } from './orch/pane-pipe-ipc';
 import { registerRemoteIpc } from './remote/remote-ipc';
+import { stopRemoteBridge } from './remote/remote-bridge';
 
 // Windows installer housekeeping (no-op elsewhere).
 if (process.platform === 'win32') {
@@ -183,6 +184,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   killAllSessions();
   shutdownPtyHost();
+  stopRemoteBridge();
   closeOrchestration();
   closeAdapterRegistry();
   closeVoiceIpc();

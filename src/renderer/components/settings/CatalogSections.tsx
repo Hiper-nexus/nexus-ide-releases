@@ -544,6 +544,10 @@ export function RemoteSection() {
     });
     setResult(next);
     if (next.ok && next.attachCommand) {
+      const proceed = window.confirm(
+        `Abrir um shell pane e executar automaticamente?\n\n${next.attachCommand}`,
+      );
+      if (!proceed) return;
       const paneId = useLayoutStore.getState().addShellPane();
       const sessionId = await waitForSession(paneId);
       if (sessionId) window.nexus.pty.write(sessionId, `${next.attachCommand}\n`);

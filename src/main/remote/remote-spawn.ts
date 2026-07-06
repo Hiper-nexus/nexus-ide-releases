@@ -16,6 +16,10 @@ const SESSION_RE = /^[a-zA-Z0-9_.-]{1,80}$/;
 
 function validateTarget(target: string): string {
   const clean = target.trim();
+  // A value beginning with '-' would be parsed by ssh as an OPTION (e.g.
+  // `-Jattacker.host` injects a jump proxy), not a host. The charset also
+  // permits a leading dash, so reject it explicitly before it reaches argv.
+  if (clean.startsWith('-')) throw new Error('invalid ssh target');
   if (!TARGET_RE.test(clean)) throw new Error('invalid ssh target');
   return clean;
 }
@@ -36,7 +40,8 @@ function sessionName(input?: string): string {
 async function ssh(target: string, script: string): Promise<string> {
   const result = await execFileAsync(
     'ssh',
-    ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', target, 'sh', '-lc', script],
+    // `--` ends option parsing so the target can never be read as a flag.
+    ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '--', target, 'sh', '-lc', script],
     { timeout: 20_000, maxBuffer: 512_000 },
   );
   return result.stdout;

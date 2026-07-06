@@ -6,6 +6,7 @@ import type {
   CatalogOverlayPatch,
   RecipeSuggestion,
 } from '../../shared/types';
+import { writeJsonAtomic } from '../util/atomic-write';
 import { detectWorkspaceStacks } from './stack-detector';
 
 const FILE = path.join(os.homedir(), '.nexus', 'catalog-overlay.json');
@@ -25,11 +26,7 @@ function readFile(): OverlayFile {
 }
 
 function writeFile(data: OverlayFile): void {
-  fs.mkdirSync(path.dirname(FILE), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(FILE, JSON.stringify(data, null, 2), {
-    encoding: 'utf8',
-    mode: 0o600,
-  });
+  writeJsonAtomic(FILE, data);
 }
 
 function keyOf(workspacePath?: string): string {

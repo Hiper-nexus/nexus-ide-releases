@@ -10,6 +10,7 @@ import type {
   RemoteBridgeInfo,
   RemoteBridgeStartRequest,
 } from '../../shared/remote-types';
+import { writeJsonAtomic } from '../util/atomic-write';
 import { listMissions } from '../orch/mission-store';
 import {
   findPane,
@@ -26,6 +27,7 @@ interface TlsRecord {
   key: string;
   cert: string;
   fingerprint: string;
+  hosts: string[];
 }
 
 interface TokenRecord {
@@ -42,45 +44,48 @@ interface TokenFile {
 const ROOT = path.join(os.homedir(), '.nexus', 'remote-bridge');
 const TLS_FILE = path.join(ROOT, 'tls.json');
 const TOKENS_FILE = path.join(ROOT, 'tokens.json');
-const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const PAIRING_TTL_MS = 5 * 60 * 1000;
 const MAX_MESSAGE_BYTES = 64 * 1024;
+const MAX_CLIENTS = 16;
+const UNAUTH_TIMEOUT_MS = 15_000;
+// Bound the number of guesses against a single pairing code: once exceeded the
+// code is rotated, so an attacker can never grind the full keyspace.
+const MAX_PAIRING_FAILURES = 8;
+// Unambiguous alphabet (no 0/O/1/I/L) over 8 chars ≈ 32^8 ≈ 1.1e12 keyspace.
+const PAIRING_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+const PAIRING_LEN = 8;
 
 let server: https.Server | null = null;
 let wss: WebSocketServer | null = null;
 let port: number | null = null;
 let tlsRecord: TlsRecord | null = null;
+let pairingFailures = 0;
 let pairing = makePairing();
+let tokenCache: TokenRecord[] | null = null;
 const clients = new Set<WebSocket>();
-const authed = new WeakSet<WebSocket>();
+let authed = new WeakSet<WebSocket>();
 const rate = new Map<string, { count: number; resetAt: number }>();
 
 function ensureRoot(): void {
   fs.mkdirSync(ROOT, { recursive: true, mode: 0o700 });
 }
 
-function writePrivate(file: string, value: unknown): void {
-  ensureRoot();
-  fs.writeFileSync(file, JSON.stringify(value, null, 2), {
-    encoding: 'utf8',
-    mode: 0o600,
-  });
-  try {
-    fs.chmodSync(file, 0o600);
-  } catch {
-    // Best effort on filesystems that do not preserve POSIX mode.
-  }
-}
-
 function sha256Hex(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
+function randomCode(): string {
+  let out = '';
+  for (let i = 0; i < PAIRING_LEN; i += 1) {
+    out += PAIRING_ALPHABET[crypto.randomInt(0, PAIRING_ALPHABET.length)];
+  }
+  return out;
+}
+
 function makePairing(): { code: string; expiresAt: number } {
-  return {
-    code: String(crypto.randomInt(0, 1_000_000)).padStart(6, '0'),
-    expiresAt: Date.now() + PAIRING_TTL_MS,
-  };
+  pairingFailures = 0;
+  return { code: randomCode(), expiresAt: Date.now() + PAIRING_TTL_MS };
 }
 
 function pairingCode(): { code: string; expiresAt: number } {
@@ -88,17 +93,29 @@ function pairingCode(): { code: string; expiresAt: number } {
   return pairing;
 }
 
-function readTokens(): TokenRecord[] {
+function loadTokens(): TokenRecord[] {
+  if (tokenCache) return tokenCache;
   try {
     const raw = JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf8')) as TokenFile;
-    return (raw.tokens ?? []).filter((token) => token.expiresAt > Date.now());
+    tokenCache = raw.tokens ?? [];
   } catch {
-    return [];
+    tokenCache = [];
   }
+  return tokenCache;
+}
+
+/** Live, non-expired tokens; prunes expired records through to disk once. */
+function readTokens(): TokenRecord[] {
+  const all = loadTokens();
+  const live = all.filter((token) => token.expiresAt > Date.now());
+  if (live.length !== all.length) writeTokens(live);
+  return live;
 }
 
 function writeTokens(tokens: TokenRecord[]): void {
-  writePrivate(TOKENS_FILE, { tokens });
+  ensureRoot();
+  writeJsonAtomic(TOKENS_FILE, { tokens });
+  tokenCache = tokens;
 }
 
 function issueToken(): { token: string; expiresAt: number } {
@@ -116,39 +133,52 @@ function issueToken(): { token: string; expiresAt: number } {
 }
 
 function tokenValid(token: string): boolean {
+  if (!token) return false;
   const hash = sha256Hex(token);
-  let changed = false;
-  const tokens = readTokens();
-  const valid = tokens.some((record) => {
+  const right = Buffer.from(hash, 'hex');
+  return readTokens().some((record) => {
     const left = Buffer.from(record.hash, 'hex');
-    const right = Buffer.from(hash, 'hex');
     return left.length === right.length && crypto.timingSafeEqual(left, right);
   });
-  if (tokens.length !== readRawTokenCount()) changed = true;
-  if (changed) writeTokens(tokens);
-  return valid;
 }
 
-function readRawTokenCount(): number {
-  try {
-    const raw = JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf8')) as TokenFile;
-    return raw.tokens?.length ?? 0;
-  } catch {
-    return 0;
+function localIps(): string[] {
+  const ips = new Set<string>(['127.0.0.1', '::1']);
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const iface of entries ?? []) {
+      if (!iface.internal) ips.add(iface.address);
+    }
   }
+  return [...ips];
 }
 
 async function ensureTls(): Promise<TlsRecord> {
-  if (tlsRecord) return tlsRecord;
+  const wanted = localIps();
+  if (tlsRecord && wanted.every((ip) => tlsRecord!.hosts.includes(ip))) {
+    return tlsRecord;
+  }
   try {
     const raw = JSON.parse(fs.readFileSync(TLS_FILE, 'utf8')) as TlsRecord;
-    if (raw.key && raw.cert && raw.fingerprint) {
+    if (
+      raw.key &&
+      raw.cert &&
+      raw.fingerprint &&
+      Array.isArray(raw.hosts) &&
+      wanted.every((ip) => raw.hosts.includes(ip))
+    ) {
       tlsRecord = raw;
       return raw;
     }
   } catch {
     // Generate below.
   }
+  const altNames = [
+    { type: 2 as const, value: 'localhost' },
+    // selfsigned/node-forge IP SANs are IPv4; advertised URLs are IPv4 too.
+    ...wanted
+      .filter((ip) => !ip.includes(':'))
+      .map((ip) => ({ type: 7 as const, ip })),
+  ];
   const pems = await generate(
     [{ name: 'commonName', value: 'Nexus Remote Bridge' }],
     {
@@ -158,25 +188,28 @@ async function ensureTls(): Promise<TlsRecord> {
         { name: 'basicConstraints', cA: false },
         { name: 'keyUsage', digitalSignature: true, keyEncipherment: true },
         { name: 'extKeyUsage', serverAuth: true },
-        {
-          name: 'subjectAltName',
-          altNames: [
-            { type: 2, value: 'localhost' },
-            { type: 7, ip: '127.0.0.1' },
-            { type: 7, ip: '::1' },
-          ],
-        },
+        { name: 'subjectAltName', altNames },
       ],
     },
   );
-  const record = {
+  const record: TlsRecord = {
     key: pems.private,
     cert: pems.cert,
-    fingerprint: pems.fingerprint,
+    fingerprint: certFingerprint256(pems.cert),
+    hosts: wanted,
   };
-  writePrivate(TLS_FILE, record);
+  ensureRoot();
+  writeJsonAtomic(TLS_FILE, record);
   tlsRecord = record;
   return record;
+}
+
+function certFingerprint256(certPem: string): string {
+  try {
+    return new crypto.X509Certificate(certPem).fingerprint256;
+  } catch {
+    return sha256Hex(certPem);
+  }
 }
 
 function localUrls(currentPort: number): string[] {
@@ -197,6 +230,12 @@ function clientIp(req: { socket: { remoteAddress?: string } }): string {
 
 function rateOk(ip: string): boolean {
   const now = Date.now();
+  // Opportunistically drop stale buckets so the map cannot grow unbounded.
+  if (rate.size > 4096) {
+    for (const [key, bucket] of rate) {
+      if (bucket.resetAt < now) rate.delete(key);
+    }
+  }
   const bucket = rate.get(ip);
   if (!bucket || bucket.resetAt < now) {
     rate.set(ip, { count: 1, resetAt: now + 60_000 });
@@ -264,7 +303,9 @@ async function handleAuthedMessage(msg: ReturnType<typeof command>) {
       return { ok: orchResizeSession(sessionIdOf(msg.paneId), cols, rows) };
     }
     case 'pane.close': {
-      if (typeof msg.paneId !== 'string') throw new Error('invalid paneId');
+      if (typeof msg.paneId !== 'string' || msg.paneId.length > 128) {
+        throw new Error('invalid paneId');
+      }
       const pane = findPane(msg.paneId);
       if (!pane) throw new Error('pane not found');
       return { ok: requestPaneClose(pane.paneId) };
@@ -279,35 +320,67 @@ async function handleAuthedMessage(msg: ReturnType<typeof command>) {
 }
 
 function onConnection(ws: WebSocket, req: IncomingMessage) {
+  if (clients.size >= MAX_CLIENTS) {
+    ws.close(1013, 'too many connections');
+    return;
+  }
   clients.add(ws);
   const ip = clientIp(req);
-  ws.on('close', () => clients.delete(ws));
+  // Reap sockets that connect but never authenticate — they otherwise pin a
+  // slot and file descriptors indefinitely.
+  const unauthTimer = setTimeout(() => {
+    if (!authed.has(ws)) ws.close(1008, 'auth timeout');
+  }, UNAUTH_TIMEOUT_MS);
+  ws.on('close', () => {
+    clearTimeout(unauthTimer);
+    clients.delete(ws);
+  });
+  // A protocol error (e.g. an oversized frame rejected by maxPayload) emits
+  // 'error' on the socket; without this listener Node would rethrow it as an
+  // uncaught exception and take down the whole main process.
+  ws.on('error', () => {
+    try {
+      ws.close(1009, 'protocol error');
+    } catch {
+      // Socket already gone.
+    }
+  });
   ws.on('message', async (raw) => {
-    const id = (() => {
-      try {
-        const parsed = parseMessage(raw);
-        return typeof (parsed as { id?: unknown }).id === 'string'
-          ? (parsed as { id: string }).id
-          : undefined;
-      } catch {
-        return undefined;
-      }
-    })();
+    let parsed: unknown;
+    try {
+      parsed = parseMessage(raw);
+    } catch (err) {
+      send(ws, { ok: false, error: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+    const id =
+      typeof (parsed as { id?: unknown }).id === 'string'
+        ? (parsed as { id: string }).id
+        : undefined;
     try {
       if (!rateOk(ip)) throw new Error('rate limited');
-      const msg = command(parseMessage(raw));
+      const msg = command(parsed);
       if (msg.type === 'ping') {
         send(ws, { id: msg.id, ok: true, result: { pong: true } });
         return;
       }
       if (msg.type === 'pair') {
-        const code = typeof msg.code === 'string' ? msg.code.trim() : '';
+        const code = typeof msg.code === 'string' ? msg.code.trim().toUpperCase() : '';
         const current = pairingCode();
-        if (code !== current.code || Date.now() > current.expiresAt) {
+        const supplied = Buffer.from(code);
+        const expected = Buffer.from(current.code);
+        const match =
+          supplied.length === expected.length &&
+          crypto.timingSafeEqual(supplied, expected) &&
+          Date.now() <= current.expiresAt;
+        if (!match) {
+          pairingFailures += 1;
+          if (pairingFailures >= MAX_PAIRING_FAILURES) pairing = makePairing();
           throw new Error('invalid pairing code');
         }
         const issued = issueToken();
         authed.add(ws);
+        clearTimeout(unauthTimer);
         pairing = makePairing();
         send(ws, { id: msg.id, ok: true, result: issued });
         return;
@@ -316,6 +389,7 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
         const token = typeof msg.token === 'string' ? msg.token : '';
         if (!tokenValid(token)) throw new Error('invalid token');
         authed.add(ws);
+        clearTimeout(unauthTimer);
         send(ws, { id: msg.id, ok: true, result: { ok: true } });
         return;
       }
@@ -337,12 +411,14 @@ export async function startRemoteBridge(
 ): Promise<RemoteBridgeInfo> {
   if (server && port) return getRemoteBridgeInfo();
   const tls = await ensureTls();
+  const host = req.host ?? '0.0.0.0';
   await new Promise<void>((resolve, reject) => {
     server = https.createServer({ key: tls.key, cert: tls.cert });
-    wss = new WebSocketServer({ server });
+    wss = new WebSocketServer({ server, maxPayload: MAX_MESSAGE_BYTES });
     wss.on('connection', onConnection);
+    wss.on('error', (err) => console.warn('[remote-bridge] wss error:', err));
     server.once('error', reject);
-    server.listen(req.port ?? 0, '0.0.0.0', () => {
+    server.listen(req.port ?? 0, host, () => {
       const addr = server?.address();
       if (addr && typeof addr === 'object') port = addr.port;
       resolve();
@@ -354,11 +430,14 @@ export async function startRemoteBridge(
 export function stopRemoteBridge(): RemoteBridgeInfo {
   for (const client of clients) client.close(1001, 'bridge stopped');
   clients.clear();
+  authed = new WeakSet<WebSocket>();
+  rate.clear();
   wss?.close();
   server?.close();
   wss = null;
   server = null;
   port = null;
+  pairing = makePairing();
   return getRemoteBridgeInfo();
 }
 

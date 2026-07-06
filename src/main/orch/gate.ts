@@ -37,6 +37,21 @@ const ALWAYS_ALLOWED = new Set([
   'toolsearch',
 ]);
 
+/**
+ * High-impact tools that reach OUTSIDE the sandbox — SSH to arbitrary hosts,
+ * mutating the shared ~/.claude/agents specs, or opening the network bridge.
+ * A default (null) allowlist means "unrestricted" for ordinary tools, but a
+ * prompt-injected agent must NOT inherit these implicitly. They are granted
+ * only when a squad/mission names them EXPLICITLY in the agent's allowlist.
+ */
+const REQUIRES_EXPLICIT_ALLOW = new Set([
+  'remote_spawn',
+  'remote_cli_detect',
+  'remote_tmux_list',
+  'remote_bridge_status',
+  'agent_spec_write',
+]);
+
 const NAMESPACE_PREFIXES = ['nexus_'];
 
 /** Normalize a tool name to its namespace-free canonical form. */
@@ -55,6 +70,14 @@ export function isToolAllowed(
 ): boolean {
   const canonical = canonicalToolName(toolName);
   if (ALWAYS_ALLOWED.has(canonical)) return true;
+  if (REQUIRES_EXPLICIT_ALLOW.has(canonical)) {
+    // Never implicitly available — requires an explicit grant, even when the
+    // rest of the toolset is unrestricted.
+    return (
+      allowedTools !== null &&
+      allowedTools.some((allowed) => canonicalToolName(allowed) === canonical)
+    );
+  }
   if (allowedTools === null) return true;
   return allowedTools.some((allowed) => canonicalToolName(allowed) === canonical);
 }

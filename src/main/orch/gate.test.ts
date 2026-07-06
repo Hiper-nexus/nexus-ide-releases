@@ -46,6 +46,23 @@ describe('isToolAllowed', () => {
     expect(isToolAllowed([], 'handoff_list')).toBe(true);
     expect(isToolAllowed([], 'ToolSearch')).toBe(true);
   });
+
+  it('never grants high-impact tools implicitly (null allowlist)', () => {
+    // These reach outside the sandbox — a prompt-injected agent with the
+    // default (unrestricted) allowlist must NOT inherit them.
+    expect(isToolAllowed(null, 'nexus_remote_spawn')).toBe(false);
+    expect(isToolAllowed(null, 'nexus_agent_spec_write')).toBe(false);
+    expect(isToolAllowed(null, 'nexus_remote_cli_detect')).toBe(false);
+    expect(isToolAllowed(null, 'nexus_remote_bridge_status')).toBe(false);
+  });
+
+  it('grants high-impact tools only when named explicitly', () => {
+    expect(isToolAllowed(['nexus_remote_spawn'], 'nexus_remote_spawn')).toBe(true);
+    expect(isToolAllowed(['remote_spawn'], 'nexus_remote_spawn')).toBe(true);
+    expect(isToolAllowed(['agent_spec_write'], 'nexus_agent_spec_write')).toBe(true);
+    // A different explicit grant does not leak the dangerous one.
+    expect(isToolAllowed(['nexus_pane_read'], 'nexus_remote_spawn')).toBe(false);
+  });
 });
 
 describe('isSkillAllowed', () => {

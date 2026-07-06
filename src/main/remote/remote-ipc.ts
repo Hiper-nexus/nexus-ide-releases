@@ -15,7 +15,10 @@ import {
   listRemoteTmuxSessions,
 } from './remote-spawn';
 
-const startSchema = z.object({ port: z.number().int().min(1).max(65535).optional() });
+const startSchema = z.object({
+  port: z.number().int().min(1).max(65535).optional(),
+  host: z.enum(['0.0.0.0', '127.0.0.1', '::1', '::']).optional(),
+});
 const targetSchema = z.object({
   target: z.string().min(3).max(256),
 });
