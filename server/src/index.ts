@@ -6,6 +6,10 @@ import { errorHandler } from './middleware/errors';
 /** Monta o app Express. Passe deps p/ montar as rotas /v1/auth. */
 export function createApp(deps?: AuthDeps): Express {
   const app = express();
+  // Um proxy/LB na frente (deploy padrão): sem isso o rate-limit veria o IP
+  // do proxy para TODOS os usuários (bucket único = DoS global). Ajuste se a
+  // topologia tiver mais saltos.
+  app.set('trust proxy', 1);
   app.use(express.json({ limit: '256kb' }));
   app.get('/health', (_req, res) => res.json({ ok: true }));
   if (deps) app.use('/v1', buildAuthRouter(deps));

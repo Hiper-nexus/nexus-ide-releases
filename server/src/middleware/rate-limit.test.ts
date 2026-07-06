@@ -36,4 +36,16 @@ describe('rateLimit', () => {
     t = 1001;
     expect(call(rl, 'A').nexted).toBe(true);
   });
+
+  it('varre buckets expirados — o Map não cresce para sempre', () => {
+    let t = 0;
+    const rl = rateLimit({ windowMs: 1000, max: 5, now: () => t, sweepEvery: 4 });
+    call(rl, 'A');
+    call(rl, 'B');
+    call(rl, 'C');
+    expect(rl.bucketCount()).toBe(3);
+    t = 5000; // todos expiraram
+    call(rl, 'D'); // 4ª chamada dispara a varredura
+    expect(rl.bucketCount()).toBe(1); // só o D vivo
+  });
 });
