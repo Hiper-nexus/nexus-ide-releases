@@ -13,63 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.8.2',
+  version: '0.9.0',
   date: '2026-07-06',
-  codename: 'JARVIS operacional',
+  codename: 'Auto-update & missões confiáveis',
   summary:
-    'A JARVIS foi refeita por dentro para nunca mais morrer em silêncio: deadline em toda chamada de rede, microfone do wake que se reconstrói sozinho, retomada de turno travado e barge-in que cala qualquer voz. O HUD dela agora é compacto, arrastável, ancora nos cantos, minimiza numa pill e tem modo só-áudio. E ela fecha panes e abre o Ops Board por voz.',
+    'O NexusIDE agora se atualiza sozinho e avisa quando há versão nova — badge na barra + painel com notas e um clique para instalar. O histórico de missões foi consertado de ponta a ponta (a missão antiga nunca mais some ao abrir outra, e retomar volta para a conversa certa) e o spam de handoff fantasma no orquestrador acabou.',
   highlights: [
     {
-      title: 'JARVIS que não morre',
+      title: 'Auto-update com UI (fim do "às cegas")',
       detail:
-        'Toda borda do pipeline de voz (STT, cérebro, TTS, whisper/piper locais) ganhou deadline duro com fallback falado. Um socket pendurado, um provider mudo ou um subprocesso travado não seguram mais a assistente — ela erra em voz alta e volta a ouvir.',
+        'O app checa releases novos no boot e a cada 6h. Havendo versão nova, um badge ⇪ aparece na barra; o painel mostra atual → nova com as notas e o ciclo Baixar e instalar → Reiniciar agora. Download validado e aplicado pelo Squirrel (assinatura conferida).',
     },
     {
-      title: 'Microfone do wake imortal',
+      title: 'Missões que não somem',
       detail:
-        'Trocar de AirPods ou acordar o Mac matava o stream do "Hey Jarvis" em silêncio. Agora há watchdog de frames, reconstrução automática com backoff e aviso visível se esgotar — nada de surdez muda.',
+        'Abrir uma missão nova não apaga a anterior: ela fica no histórico como "travada", com Retomar visível no rail e no Ops Board. A missão nova aparece na hora — o registro nasce no lançamento, sem depender do orquestrador lembrar de criá-lo.',
     },
     {
-      title: 'HUD arrastável, mini e só-áudio',
+      title: 'Retomar volta para a conversa CERTA',
       detail:
-        'O painel da JARVIS encolheu (300px), é arrastável pelo cabeçalho com âncora no canto mais próximo, redimensiona pela alça lateral, minimiza numa pill e pode sumir de vez no modo só-áudio — a voz continua 100%. Posição e modo ficam salvos.',
-    },
-    {
-      title: 'Novos comandos de voz',
-      detail:
-        '"Fecha esse terminal" (close_pane) e "abre o quadro" (open_board) viraram ações reais. E quando um comando de shell precisa de confirmação, ela avisa em voz que o diálogo está na tela.',
-    },
-    {
-      title: 'Uma instância por vez no wake',
-      detail:
-        'Rodar o app instalado e o dev juntos fazia as duas JARVIS responderem ao mesmo chamado. Um lock por processo garante uma dona única do "Hey Jarvis".',
-    },
-    {
-      title: 'Ícones pixel refinados',
-      detail:
-        'Legibilidade dos ícones do toolbar/deck/board revisada (grade 10px), botão visível do Ops Board e estados do quadro polidos.',
+        'Reabrir uma missão restaura cada pane apontando para a própria conversa daquela missão (resume direcionado), em vez de continuar a conversa mais recente do projeto — que era da outra missão.',
     },
   ],
   fixes: [
     {
-      title: 'Respostas curtas não são mais engolidas',
+      title: 'Spam de handoff fantasma',
       detail:
-        'O filtro anti-alucinação do Whisper descartava "valeu", "oi" e "tchau" mesmo em conversa ativa — agora ele é consciente de contexto e só corta lixo de verdade.',
+        'O orquestrador recebia "[nexus handoff] … <resumo objetivo do que fez>" em loop, até depois de o terminal do worker fechar: o eco/repaint do próprio contrato de kickoff era lido como entrega real. Placeholders são ignorados e repaints deduplicados.',
     },
     {
-      title: 'Barge-in cala o fallback de voz',
+      title: 'Clique morto na missão antiga',
       detail:
-        'Quando a fala saía pelo `say` do sistema, chamar a JARVIS não interrompia o áudio — agora o chamado mata a fala na hora, sem vozes sobrepostas.',
+        'Panes mortos mantinham a missão deslocada marcada como "aberta" para sempre — o clique não fazia nada e o Retomar ficava escondido. Os vínculos agora morrem junto com os panes.',
     },
     {
-      title: 'Acks não censuram você',
+      title: 'Retomar a missão aberta não a mata mais',
       detail:
-        'Os "Sim?" e "Deixa comigo." dela entravam na janela anti-eco e podiam descartar sua resposta seguinte por parecer eco. Saíram da janela.',
-    },
-    {
-      title: 'App não congela em transcrição local',
-      detail:
-        'whisper.cpp e piper rodavam de forma síncrona no processo principal, travando todo o app durante a síntese/transcrição. Viraram assíncronos com timeout.',
+        'A missão viva aparecia como "não aberta" e o Retomar dela matava e recriava a própria missão. O pane do orquestrador agora é vinculado corretamente e há guarda contra reabrir o que já está aberto.',
     },
   ],
 };
