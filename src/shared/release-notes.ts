@@ -44,8 +44,18 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'A tela mostra login local, conta em uso, credencial ausente, cooldown e botão para sincronizar a conta ativa antes de abrir novos terminais.',
     },
+    {
+      title: 'Auth local preservado nos workers',
+      detail:
+        'Codex, AGY, Kimi e Grok agora mantêm o HOME real do Mac nos panes orquestrados, então usam as contas já autenticadas em vez de pedir login de novo.',
+    },
   ],
   fixes: [
+    {
+      title: 'AGY não cai mais no help com code 2',
+      detail:
+        'O modo hands-free do AGY passou de --yolo para --dangerously-skip-permissions, que é a flag aceita pela CLI instalada.',
+    },
     {
       title: 'Sem sobreposição no review de squad',
       detail:
@@ -58,4 +68,3 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
 };
-

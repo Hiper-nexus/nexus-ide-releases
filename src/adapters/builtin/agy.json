@@ -75,7 +75,7 @@
       "arg": "",
       "modes": {},
       "yolo": [
-        "--yolo"
+        "--dangerously-skip-permissions"
       ],
       "default": ""
     }

@@ -135,6 +135,15 @@ describe('builtin adapters', () => {
     ) as { quirks?: { altScreen?: boolean } } | undefined;
     expect(aider?.quirks?.altScreen).toBe(false);
   });
+
+  it('agy yolo flag matches the installed Antigravity CLI', () => {
+    const agy = BUILTIN_ADAPTERS.find(
+      (a) => (a as { id?: string }).id === 'agy',
+    ) as { control?: { permission?: { yolo?: string[] } } } | undefined;
+    expect(agy?.control?.permission?.yolo).toEqual([
+      '--dangerously-skip-permissions',
+    ]);
+  });
 });
 
 // ── resolvePlaceholders ──────────────────────────────────────────────────────

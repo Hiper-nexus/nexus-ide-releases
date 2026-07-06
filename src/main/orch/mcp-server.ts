@@ -42,6 +42,7 @@ import {
   supportsMcpInjection,
   writeGeminiMcpConfig,
 } from './cli-mcp-inject';
+import { shouldUseEphemeralHome } from './spawn-home-policy';
 
 /**
  * Embedded MCP server (docs/ARCHITECTURE.md §E.2): a localhost HTTP endpoint
@@ -268,12 +269,10 @@ function installSpawnHook(): void {
     const mcpConfig = buildMcpConfig(ctx.token);
 
     try {
-      if (gated || adapter.env.ephemeralHome) {
+      if (shouldUseEphemeralHome(adapter, gated)) {
         const home = prepareEphemeralHome(ctx.token, mcpConfig);
         env.HOME = home.dir;
-        if (adapter.quirks.mcpAutoload) {
-          extraArgs.push('--mcp-config', home.mcpConfigPath);
-        }
+        extraArgs.push('--mcp-config', home.mcpConfigPath);
       } else if (adapter.quirks.mcpAutoload) {
         extraArgs.push(
           '--mcp-config',
