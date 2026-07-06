@@ -58,6 +58,14 @@ export function availablePermissionModes(adapter: CliPtyAdapter): string[] {
   return modes;
 }
 
+/** Product default: run providers hands-free unless the user opts back out. */
+export function defaultPermissionMode(adapter: CliPtyAdapter): string {
+  const modes = availablePermissionModes(adapter);
+  if (modes.includes('yolo')) return 'yolo';
+  if (modes.includes('bypass')) return 'bypass';
+  return '';
+}
+
 export function availableEfforts(adapter: CliPtyAdapter): string[] {
   return adapter.control?.effort?.levels ?? [];
 }

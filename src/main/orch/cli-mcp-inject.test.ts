@@ -7,9 +7,9 @@ import {
 } from './cli-mcp-inject';
 
 describe('supportsMcpInjection', () => {
-  it('reconhece codex/gemini/antigravity, ignora claude e shell', () => {
+  it('reconhece codex/agy, ignora claude, gemini legado e shell', () => {
     expect(supportsMcpInjection('codex')).toBe('codex');
-    expect(supportsMcpInjection('gemini')).toBe('gemini');
+    expect(supportsMcpInjection('gemini')).toBe(null);
     expect(supportsMcpInjection('agy')).toBe('gemini');
     expect(supportsMcpInjection('claude')).toBe(null);
     expect(supportsMcpInjection('shell')).toBe(null);

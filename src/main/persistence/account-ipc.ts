@@ -90,6 +90,13 @@ export function registerAccountIpc(): void {
   ipcMain.handle(ACCOUNT_CHANNELS.activate, (_e, raw) => {
     const parsed = accountIdSchema.safeParse(raw);
     if (!parsed.success) return { ok: false };
-    return { ok: activateAccount(parsed.data.id) };
+    const ok = activateAccount(parsed.data.id);
+    return ok
+      ? { ok: true }
+      : {
+          ok: false,
+          error:
+            'Não consegui sincronizar a credencial dessa conta. Salve a sessão logada novamente.',
+        };
   });
 }

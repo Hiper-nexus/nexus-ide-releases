@@ -59,5 +59,15 @@
     "altScreen": true,
     "requiresNoAutoUpdate": false,
     "mcpAutoload": false
+  },
+  "control": {
+    "permission": {
+      "arg": "",
+      "modes": {},
+      "yolo": [
+        "--auto"
+      ],
+      "default": ""
+    }
   }
 }

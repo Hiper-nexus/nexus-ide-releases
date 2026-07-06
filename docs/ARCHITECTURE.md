@@ -151,9 +151,9 @@ Três tipos, todos declarativos, em `~/.nexus/plugins/`, zod-validados, hot-relo
 
 Campos: `kind:'cli-pty'`, `id`, `label`, `version`, `icon`, `bin`, `detect`, `install{method,command}`, `auth{method:oauth|api_key|device_code|subscription|none, envVarFallback, credentialStore, loginHint}`, `spawn{interactive[], headless[], headlessJson[], ptyRequired, resumeArgs[], extraArgs[]}` (placeholder `{{PROMPT}}`/`{{SESSION_ID}}`), `env{static{}, passthrough[], ephemeralHome:bool}`, `models{flag, list[], default}`, `promptInjection{method:stdin|arg|flag, flag, trailingNewline, bracketedPaste}`, `stateParsing{idle{type:regex,pattern}, busy{...}, shellIntegration:bool, exitCodes{}}`, `quirks{altScreen, requiresNoAutoUpdate, approvalFlag, mcpAutoload}`.
 
-**Adapters iniciais (do recon):** claude, codex, agy (Antigravity — substitui gemini descontinuada), kimi, grok, aider (único ptyRequired:false em headless), opencode → `cli-pty`. fugu, glm → `api-provider`.
+**Adapters iniciais (do recon):** claude, codex, agy (Antigravity), kimi, grok, aider (único ptyRequired:false em headless), opencode → `cli-pty`. fugu, glm → `api-provider`.
 
-**Quirks pinados:** grok `requiresNoAutoUpdate:true`+`approvalFlag:'--always-approve'`; aider `ptyRequired:false`,`altScreen:false`; claude/agy/kimi `altScreen:true`; agy sem `--max-turns` (usar `--print-timeout`). Os tipos claude/codex/kimi/antigravity são cobertos como adapters `cli-pty` concretos; o JSON generaliza para qualquer outra CLI sem tocar código.
+**Quirks pinados:** grok `requiresNoAutoUpdate:true`+`approvalFlag:'--always-approve'`; aider `ptyRequired:false`,`altScreen:false`; claude/agy/kimi `altScreen:true`; agy sem `--max-turns` (usar `--print-timeout`). Os tipos claude/codex/kimi/agy são cobertos como adapters `cli-pty` concretos; o JSON generaliza para qualquer outra CLI sem tocar código.
 
 ### D.2 Adapter `api-provider`
 
@@ -232,7 +232,7 @@ Ao spawnar worker, injeta hook PreToolUse + `$HOME` efêmero (isola config/skill
 | Capacidade | Seção | Detalhe |
 |---|---|---|
 | Grid de panes (CLI/shell por pane) | §C.2, §B.4 | split-tree; layout em SQLite/Zustand |
-| Spawn de agente (providerId/model/cwd) | §B.4 | adapters cli-pty: claude\|codex\|kimi\|antigravity + qualquer CLI via JSON |
+| Spawn de agente (providerId/model/cwd) | §B.4 | adapters cli-pty: claude\|codex\|agy\|kimi + qualquer CLI via JSON |
 | Providers HTTP + `pane_list_providers` | §D.2, §E.2 | api-provider (glm/fugu) |
 | Squads (id/name/createdAt/builtin/orchestratorInstructions/agents[]) | §E.1 | category inclui orchestrator; effort low\|high\|xhigh; allowedSkills/allowedTools por agente; export/import JSON |
 | Skill-gate (`$HOME` efêmero + hooks .mjs) | §E.4 | PreToolUse exit 2; null=irrestrito; sempre: ToolSearch/handoff_submit/handoff_list |

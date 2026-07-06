@@ -281,7 +281,7 @@ function installSpawnHook(): void {
         );
       }
       // CLIs não-Claude: injeta o servidor MCP DE VERDADE (não só env), para
-      // que Codex/Gemini/Antigravity chamem as tools nexus_* e submetam
+      // que Codex/AGY chamem as tools nexus_* e submetam
       // handoff. Sem isto a orquestração era efetivamente Claude-cêntrica.
       if (!adapter.quirks.mcpAutoload) {
         const flavor = supportsMcpInjection(adapter.id);

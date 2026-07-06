@@ -755,7 +755,7 @@ export function ShortcutsSection() {
 export function RemoteSection() {
   const [info, setInfo] = useState<RemoteBridgeInfo | null>(null);
   const [target, setTarget] = useState('');
-  const [cli, setCli] = useState<'claude' | 'codex' | 'gemini' | 'kimi' | 'antigravity'>('claude');
+  const [cli, setCli] = useState<'claude' | 'codex' | 'agy' | 'kimi'>('claude');
   const [sessionName, setSessionName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [result, setResult] = useState<RemoteSpawnResult | null>(null);
@@ -873,9 +873,8 @@ export function RemoteSection() {
           >
             <option value="claude">claude</option>
             <option value="codex">codex</option>
-            <option value="gemini">gemini</option>
+            <option value="agy">agy</option>
             <option value="kimi">kimi</option>
-            <option value="antigravity">antigravity</option>
           </select>
           <input
             className="settings-input"

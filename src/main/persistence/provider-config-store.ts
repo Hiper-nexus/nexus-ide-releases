@@ -29,6 +29,7 @@ import {
   availableEfforts,
   availablePermissionModes,
   buildControlArgs,
+  defaultPermissionMode,
   supportsVerbose,
 } from '../adapters/control-args';
 import {
@@ -71,6 +72,25 @@ const CONFIG_FILE = path.join(os.homedir(), '.nexus', 'providers.json');
 let configs = new Map<string, ProviderConfig>();
 const listeners = new Set<WebContents>();
 
+function defaultPermissionModeFor(adapterId: string): string {
+  const adapter = getAdapter(adapterId);
+  return adapter?.kind === 'cli-pty' ? defaultPermissionMode(adapter) : '';
+}
+
+function defaultConfigFor(adapterId: string): ProviderConfig {
+  return {
+    adapterId,
+    enabled: true,
+    binPath: '',
+    defaultModel: '',
+    extraArgs: [],
+    upstream: 'anthropic',
+    permissionMode: defaultPermissionModeFor(adapterId),
+    effort: '',
+    verbose: false,
+  };
+}
+
 function load(): void {
   configs = new Map();
   try {
@@ -79,16 +99,17 @@ function load(): void {
       Partial<ProviderConfig>
     >;
     for (const [adapterId, cfg] of Object.entries(raw)) {
+      const defaults = defaultConfigFor(adapterId);
       configs.set(adapterId, {
-        adapterId,
-        enabled: cfg.enabled ?? true,
-        binPath: cfg.binPath ?? '',
-        defaultModel: cfg.defaultModel ?? '',
-        extraArgs: Array.isArray(cfg.extraArgs) ? cfg.extraArgs : [],
-        upstream: cfg.upstream ?? 'anthropic',
-        permissionMode: cfg.permissionMode ?? '',
-        effort: cfg.effort ?? '',
-        verbose: cfg.verbose ?? false,
+        ...defaults,
+        enabled: cfg.enabled ?? defaults.enabled,
+        binPath: cfg.binPath ?? defaults.binPath,
+        defaultModel: cfg.defaultModel ?? defaults.defaultModel,
+        extraArgs: Array.isArray(cfg.extraArgs) ? cfg.extraArgs : defaults.extraArgs,
+        upstream: cfg.upstream ?? defaults.upstream,
+        permissionMode: cfg.permissionMode ?? defaults.permissionMode,
+        effort: cfg.effort ?? defaults.effort,
+        verbose: cfg.verbose ?? defaults.verbose,
       });
     }
   } catch {
@@ -108,19 +129,7 @@ function persist(): void {
 }
 
 function configFor(adapterId: string): ProviderConfig {
-  return (
-    configs.get(adapterId) ?? {
-      adapterId,
-      enabled: true,
-      binPath: '',
-      defaultModel: '',
-      extraArgs: [],
-      upstream: 'anthropic',
-      permissionMode: '',
-      effort: '',
-      verbose: false,
-    }
-  );
+  return configs.get(adapterId) ?? defaultConfigFor(adapterId);
 }
 
 /** Control-flag args (permission mode, effort, verbose) chosen for an adapter. */

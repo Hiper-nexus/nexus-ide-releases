@@ -48,6 +48,7 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
   const rename = useAccountStore((s) => s.rename);
   const remove = useAccountStore((s) => s.remove);
   const activate = useAccountStore((s) => s.activate);
+  const hydrate = useAccountStore((s) => s.hydrate);
 
   const [addMode, setAddMode] = useState<null | 'subscription' | 'api-key'>(null);
   const [label, setLabel] = useState('');
@@ -55,6 +56,13 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
   const [key, setKey] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [auth, setAuth] = useState<{ state: string; detail: string } | null>(null);
+
+  async function refreshAuth() {
+    const list = await window.nexus.providers.authStatus();
+    const mine = list.find((s) => s.adapterId === adapterId);
+    setAuth(mine ? { state: mine.state, detail: mine.detail } : null);
+  }
+
   useEffect(() => {
     let alive = true;
     void window.nexus.providers.authStatus().then((list) => {
@@ -88,10 +96,12 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
       upstream,
       key: key.trim(),
     });
+    await hydrate();
+    await refreshAuth();
     setBusy(false);
     if (res.ok) {
       closeForm();
-      setNotice('Conta adicionada — ela entra na fila de failover.');
+      setNotice('Conta adicionada, ativada e pronta para o próximo terminal.');
     } else {
       setNotice(res.error ?? 'Falhou.');
     }
@@ -101,37 +111,68 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
     const name = label.trim() || 'Conta Claude';
     setBusy(true);
     const res = await addActiveClaude(name);
+    await hydrate();
+    await refreshAuth();
     setBusy(false);
     if (res.ok) {
       closeForm();
-      setNotice(`Sessão Claude salva${res.email ? ` (${res.email})` : ''}.`);
+      setNotice(
+        `Sessão Claude salva, ativada e sincronizada${res.email ? ` (${res.email})` : ''}.`,
+      );
     } else {
       setNotice(res.error ?? 'Falhou.');
     }
   }
 
+  async function useAccount(id: string) {
+    setBusy(true);
+    const res = await activate(id);
+    await hydrate();
+    await refreshAuth();
+    setBusy(false);
+    setNotice(
+      res.ok
+        ? 'Conta ativada e sincronizada para o próximo terminal.'
+        : res.error ?? 'Não consegui ativar essa conta.',
+    );
+  }
+
+  async function removeAccount(id: string) {
+    setBusy(true);
+    await remove(id);
+    await hydrate();
+    await refreshAuth();
+    setBusy(false);
+    setNotice('Conta removida.');
+  }
+
+  const authClass =
+    auth?.state === 'ok'
+      ? 'acct__status acct__status--ok'
+      : auth?.state === 'missing'
+        ? 'acct__status acct__status--missing'
+        : 'acct__status';
+
   return (
     <div className="acct">
       <div className="acct__head">
-        <span className="acct__title">Contas &amp; failover</span>
+        <div>
+          <span className="acct__title">Contas &amp; failover</span>
+          <p className="acct__hint">
+            A conta ativa é restaurada antes de abrir a CLI; se ela bater limite,
+            o app troca para a próxima salva.
+          </p>
+        </div>
         {auth && (
           <span
-            className="acct__badge"
+            className={authClass}
             title={auth.detail}
-            style={{
-              color:
-                auth.state === 'ok'
-                  ? '#4caf50'
-                  : auth.state === 'missing'
-                    ? '#ef5350'
-                    : 'var(--text-dim)',
-            }}
           >
             {auth.state === 'ok'
-              ? '● logada'
+              ? 'logada'
               : auth.state === 'missing'
-                ? '● sem login'
-                : '○ sem sonda'}
+                ? 'sem login'
+                : 'sem sonda'}
           </span>
         )}
       </div>
@@ -144,6 +185,14 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
             <span className="acct__inuse-name">{active.label}</span>
             <span className="acct__badge">{accountKindLabel(active)}</span>
             {active.email && <span className="acct__email">{active.email}</span>}
+            <button
+              className="acct__use"
+              onClick={() => void useAccount(active.id)}
+              disabled={busy}
+              title="Reaplicar esta conta no ambiente da CLI"
+            >
+              sincronizar
+            </button>
           </>
         ) : (
           <span className="acct__inuse-name acct__inuse-name--implicit">
@@ -152,10 +201,6 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
           </span>
         )}
       </div>
-      <p className="acct__hint">
-        Ao esgotar créditos/limite, o app troca sozinho para a próxima conta da
-        lista e retoma a conversa com --resume.
-      </p>
 
       {accounts.length > 0 && (
         <ul className="acct__list">
@@ -185,7 +230,8 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
               {!a.active && (
                 <button
                   className="acct__use"
-                  onClick={() => void activate(a.id)}
+                  onClick={() => void useAccount(a.id)}
+                  disabled={busy}
                   title="Tornar esta a conta em uso"
                 >
                   usar
@@ -203,8 +249,9 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
               </button>
               <button
                 className="acct__mini acct__mini--danger"
-                onClick={() => void remove(a.id)}
+                onClick={() => void removeAccount(a.id)}
                 title="Remover"
+                disabled={busy}
               >
                 ✕
               </button>

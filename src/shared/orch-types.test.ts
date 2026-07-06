@@ -37,10 +37,12 @@ describe('squadSchema (squads.json compat)', () => {
       agents: [
         { id: 'w1', agentName: 'x', category: 'executor', providerId: 'codex-cli' },
         { id: 'w2', agentName: 'y', category: 'reviewer', providerId: 'antigravity-cli' },
+        { id: 'w3', agentName: 'z', category: 'scout', providerId: 'gemini-cli' },
       ],
     });
     expect(squad.agents[0].cli).toBe('codex');
     expect(squad.agents[1].cli).toBe('agy');
+    expect(squad.agents[2].cli).toBe('agy');
   });
 
   it('preserves nativeInstructions and an explicit cli', () => {

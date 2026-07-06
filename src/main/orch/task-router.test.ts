@@ -7,7 +7,7 @@ import {
 } from './task-router';
 
 function adapters(...installed: string[]): AdapterAvailability[] {
-  const all = ['claude', 'codex', 'gemini', 'grok', 'kimi', 'agy', 'glm'];
+  const all = ['claude', 'codex', 'agy', 'grok', 'kimi', 'glm'];
   return all.map((id) => ({ id, installed: installed.includes(id) }));
 }
 

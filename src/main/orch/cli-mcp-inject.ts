@@ -3,11 +3,11 @@ import path from 'node:path';
 
 /**
  * Injeção REAL do servidor MCP embutido do Nexus nos CLIs não-Claude, para que
- * um worker Codex/Gemini/Antigravity chame as tools `nexus_*` e submeta handoff
+ * um worker Codex/AGY chame as tools `nexus_*` e submeta handoff
  * — não só receba env vars de consciência (gap da auditoria 2026-07-06 §4).
  *
  * - Codex: overrides `-c mcp_servers.nexus.*` no argv (streamable HTTP).
- * - Gemini/Antigravity: `<cwd>/.gemini/settings.json` com `mcpServers.nexus`
+ * - AGY/Antigravity: `<cwd>/.gemini/settings.json` com `mcpServers.nexus`
  *   (merge atômico e idempotente; JSON inválido é preservado como backup).
  *
  * Claude e família (mcpAutoload) continuam pelo `--mcp-config` existente.
@@ -20,7 +20,6 @@ export function supportsMcpInjection(adapterId: string): McpInjectionKind | null
   switch (adapterId) {
     case 'codex':
       return 'codex';
-    case 'gemini':
     case 'agy': // Antigravity usa o mesmo formato de settings do Gemini
       return 'gemini';
     default:
@@ -109,6 +108,6 @@ export function writeGeminiMcpConfig(
     fs.writeFileSync(tmp, JSON.stringify(merged, null, 2));
     fs.renameSync(tmp, file);
   } catch (err) {
-    console.warn('[orch] falha ao injetar MCP no Gemini/Antigravity:', err);
+    console.warn('[orch] falha ao injetar MCP no AGY/Antigravity:', err);
   }
 }

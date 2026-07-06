@@ -25,7 +25,7 @@ const targetSchema = z.object({
 const spawnSchema = z.object({
   target: z.string().min(3).max(256),
   cwd: z.string().min(1).max(4096).optional(),
-  cli: z.enum(['claude', 'codex', 'gemini', 'kimi', 'antigravity']),
+  cli: z.enum(['claude', 'codex', 'agy', 'kimi']),
   sessionName: z.string().min(1).max(80).optional(),
   prompt: z.string().max(8192).optional(),
 });

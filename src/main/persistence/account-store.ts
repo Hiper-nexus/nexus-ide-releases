@@ -24,6 +24,7 @@ const KEY_PREFIX = 'acctkey:'; // api-key accounts
 const CRED_PREFIX = 'acctcred:'; // subscription credential blobs
 
 const accounts = new Map<string, Account>();
+const activeByAdapter = new Map<string, string>();
 let db: Db | null = null;
 let counter = 0;
 const listeners = new Set<() => void>();
@@ -62,6 +63,8 @@ interface Row {
 export function initAccountStore(database: Db | null): void {
   db = database;
   accounts.clear();
+  activeByAdapter.clear();
+  activeHydrated = false;
   if (!db) return;
   try {
     for (const row of db.prepare('SELECT * FROM accounts').all() as Row[]) {
@@ -83,8 +86,6 @@ export function initAccountStore(database: Db | null): void {
     console.warn('[accounts] failed to hydrate:', err);
   }
 }
-
-const activeByAdapter = new Map<string, string>();
 
 function persist(account: Account, active: boolean): void {
   if (!db) return;
@@ -203,10 +204,9 @@ export function addAccount(input: AddAccountInput): Account {
   if (input.mode === 'api-key' && input.key) {
     setSecret(KEY_PREFIX + account.id, input.key);
   }
-  // First account for this adapter becomes active.
-  if (!activeByAdapter.has(account.adapterId)) {
-    activeByAdapter.set(account.adapterId, account.id);
-  }
+  // A newly saved account is the user's immediate intent; make it the active
+  // spawn source and persist every other account as inactive for this adapter.
+  activeByAdapter.set(account.adapterId, account.id);
   persistAll();
   emit();
   return account;
@@ -231,7 +231,7 @@ export function addActiveClaudeAccount(label: string): Account | null {
   };
   accounts.set(account.id, account);
   setSecret(CRED_PREFIX + account.id, blob);
-  if (!activeByAdapter.has('claude')) activeByAdapter.set('claude', account.id);
+  activeByAdapter.set('claude', account.id);
   persistAll();
   emit();
   return account;
@@ -265,9 +265,11 @@ export function removeAccount(id: string): void {
 export function activateAccount(id: string): boolean {
   const account = accounts.get(id);
   if (!account) return false;
-  activeByAdapter.set(account.adapterId, id);
   // Subscription accounts must swap the Claude keychain credential now.
-  if (account.mode === 'subscription') ensureSubscriptionActive(account);
+  if (account.mode === 'subscription' && !ensureSubscriptionActive(account)) {
+    return false;
+  }
+  activeByAdapter.set(account.adapterId, id);
   persistAll();
   emit();
   return true;

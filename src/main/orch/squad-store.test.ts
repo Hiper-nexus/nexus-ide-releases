@@ -88,7 +88,7 @@ const CLONE_CUSTOM_RAW = {
   orchestratorInstructions: '# Clone Custom',
   agents: [
     { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude' },
-    { id: 'scout-web', agentName: 'Scout Web', category: 'scout', cli: 'gemini' },
+    { id: 'scout-web', agentName: 'Scout Web', category: 'scout', cli: 'agy' },
     { id: 'architect', agentName: 'Architect', category: 'architect', cli: 'claude' },
     { id: 'dev-core', agentName: 'Dev Core', category: 'executor', cli: 'codex' },
     { id: 'dev-desktop', agentName: 'Dev Desktop', category: 'executor', cli: 'codex' },

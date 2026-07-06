@@ -29,7 +29,7 @@ export function resolveAuthStrategy(input: {
   subscriptionAuthed: boolean;
 }): AuthDecision {
   // A live CLI-managed login session ALWAYS wins, regardless of the adapter's
-  // declared auth.method. Every CLI here (claude/codex/grok/agy/kimi/gemini…)
+  // declared auth.method. Every CLI here (claude/codex/grok/agy/kimi…)
   // logs in on its own — codex via ChatGPT, grok via ~/.grok/auth.json, etc. —
   // so if we detect that session we must honor it and never inject a key over
   // it (that would divert billing from the plan to the API). Gating on

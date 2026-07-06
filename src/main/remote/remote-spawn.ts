@@ -10,7 +10,7 @@ import type {
 
 const execFileAsync = promisify(execFile);
 
-const ALLOWED_CLIS = ['claude', 'codex', 'gemini', 'kimi', 'antigravity'] as const;
+const ALLOWED_CLIS = ['claude', 'codex', 'agy', 'kimi'] as const;
 const TARGET_RE = /^[a-zA-Z0-9._-]+(?:@[a-zA-Z0-9._-]+)?(?::[0-9]{2,5})?$/;
 const SESSION_RE = /^[a-zA-Z0-9_.-]{1,80}$/;
 

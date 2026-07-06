@@ -599,7 +599,7 @@ export interface NexusApi {
     addActiveClaude(label: string): Promise<{ ok: boolean; id?: string; email?: string; error?: string }>;
     rename(id: string, label: string): Promise<{ ok: boolean }>;
     remove(id: string): Promise<{ ok: boolean }>;
-    activate(id: string): Promise<{ ok: boolean }>;
+    activate(id: string): Promise<{ ok: boolean; error?: string }>;
     onChanged(cb: (list: AccountInfo[]) => void): Unsubscribe;
     onFailover(cb: (event: FailoverEvent) => void): Unsubscribe;
   };

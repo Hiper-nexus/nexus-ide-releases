@@ -15,8 +15,8 @@ Baixe o `.dmg` mais recente em **[Releases](https://github.com/cleofasvolarehost
 abra e arraste para Aplicativos. O app é **assinado com Developer ID e
 notarizado pela Apple** — abre com um duplo-clique, sem avisos de segurança.
 
-As CLIs de IA que você já tem instaladas no Mac (`claude`, `codex`, `gemini`,
-`kimi`, `grok`, `agy`…) são **detectadas automaticamente** — o app lê o PATH do
+As CLIs de IA que você já tem instaladas no Mac (`claude`, `codex`, `agy`,
+`kimi`, `grok`…) são **detectadas automaticamente** — o app lê o PATH do
 seu shell de login, então funciona já na primeira execução.
 
 ## O que funciona
@@ -26,7 +26,7 @@ seu shell de login, então funciona já na primeira execução.
 - **Canvas infinito** arrastável (@xyflow) compartilhando as mesmas sessões.
 - **Onboarding**: escolher/abrir workspace → nova missão em modo **Livre**
   (N panes, provider por pane) ou **Squad** (preset orquestrado).
-- **Multi-CLI declarativo**: claude, codex, gemini, kimi, grok, antigravity,
+- **Multi-CLI declarativo**: claude, codex, agy, kimi, grok,
   aider, opencode — adicionar uma nova é só soltar um JSON.
 - **Multi-conta + failover automático**: ao esgotar créditos/limite de uma conta,
   o app troca sozinho para a próxima e retoma a conversa com `--resume`. Suporta

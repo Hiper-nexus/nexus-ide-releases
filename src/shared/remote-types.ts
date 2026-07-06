@@ -31,7 +31,7 @@ export interface RemoteTmuxSession {
 export interface RemoteSpawnRequest {
   target: string;
   cwd?: string;
-  cli: 'claude' | 'codex' | 'gemini' | 'kimi' | 'antigravity';
+  cli: 'claude' | 'codex' | 'agy' | 'kimi';
   sessionName?: string;
   prompt?: string;
 }

@@ -60,11 +60,15 @@ const OAUTH_PROBES: Record<
     }
     return { state: 'missing', detail: 'sem sessão — rode `codex login`' };
   },
-  gemini: async () => {
-    if (fileExists(path.join(HOME, '.gemini', 'oauth_creds.json'))) {
-      return { state: 'ok', detail: 'sessão OAuth local (oauth_creds.json)' };
+  agy: async () => {
+    if (
+      fileExists(path.join(HOME, '.gemini', 'antigravity')) ||
+      fileExists(path.join(HOME, '.gemini', 'antigravity-cli')) ||
+      fileExists(path.join(HOME, '.antigravity'))
+    ) {
+      return { state: 'ok', detail: 'sessão AGY local' };
     }
-    return { state: 'missing', detail: 'sem sessão — abra a CLI para logar' };
+    return { state: 'missing', detail: 'sem sessão — rode `agy login`' };
   },
 };
 

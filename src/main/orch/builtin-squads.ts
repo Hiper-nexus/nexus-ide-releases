@@ -67,7 +67,7 @@ const RAW_SQUADS: Squad[] = [
       // Workers em CLIs DIFERENTES (defaults editáveis no review): diversidade
       // de modelos = custo menor e sem sobrecarregar um provedor só.
       { id: 'frontend', agentName: 'Frontend', category: 'executor', cli: 'codex', effort: 'medium' },
-      { id: 'backend', agentName: 'Backend', category: 'executor', cli: 'gemini', effort: 'medium' },
+      { id: 'backend', agentName: 'Backend', category: 'executor', cli: 'agy', effort: 'medium' },
       { id: 'ux', agentName: 'UX Designer', category: 'reviewer', cli: 'claude', effort: 'medium' },
       { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'grok', effort: 'medium' },
       { id: 'security', agentName: 'Security', category: 'reviewer', cli: 'claude', effort: 'high' },
@@ -88,7 +88,7 @@ const RAW_SQUADS: Squad[] = [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
       { id: 'correctness', agentName: 'Correctness', category: 'reviewer', cli: 'kimi', effort: 'high' },
       { id: 'security', agentName: 'Security', category: 'reviewer', cli: 'claude', effort: 'high' },
-      { id: 'performance', agentName: 'Performance', category: 'reviewer', cli: 'gemini', effort: 'high' },
+      { id: 'performance', agentName: 'Performance', category: 'reviewer', cli: 'agy', effort: 'high' },
     ],
   },
   {
@@ -105,7 +105,7 @@ const RAW_SQUADS: Squad[] = [
       'antes de qualquer código.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
-      { id: 'scout-a', agentName: 'Scout A', category: 'scout', cli: 'gemini', effort: 'medium' },
+      { id: 'scout-a', agentName: 'Scout A', category: 'scout', cli: 'agy', effort: 'medium' },
       { id: 'scout-b', agentName: 'Scout B', category: 'scout', cli: 'grok', effort: 'medium' },
       { id: 'architect', agentName: 'Architect', category: 'architect', cli: 'claude', effort: 'high' },
       { id: 'contrarian', agentName: 'Contrarian', category: 'reviewer', cli: 'kimi', effort: 'high' },

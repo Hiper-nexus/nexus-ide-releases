@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   availablePermissionModes,
   buildControlArgs,
+  defaultPermissionMode,
   supportsVerbose,
 } from './control-args';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
@@ -81,8 +82,25 @@ describe('buildControlArgs', () => {
     expect(supportsVerbose(CLAUDE_LIKE)).toBe(true);
   });
 
+  it('defaults providers to yolo first, then bypass when yolo is unavailable', () => {
+    expect(defaultPermissionMode(CLAUDE_LIKE)).toBe('yolo');
+    expect(
+      defaultPermissionMode(
+        adapter({
+          permission: {
+            arg: '--permission-mode',
+            modes: { bypass: 'bypassPermissions' },
+            yolo: [],
+            default: '',
+          },
+        }),
+      ),
+    ).toBe('bypass');
+  });
+
   it('offers no modes for an adapter without a permission block', () => {
     expect(availablePermissionModes(adapter({}))).toEqual([]);
+    expect(defaultPermissionMode(adapter({}))).toBe('');
     expect(buildControlArgs(adapter({}), { permissionMode: 'yolo' })).toEqual([]);
   });
 });

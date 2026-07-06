@@ -120,8 +120,8 @@ function kickoffPrompt(squad: Squad): string {
   );
   parts.push(
     '## Realidade de cada CLI (MCP e limites)\n' +
-      'Só claude/glm/longcat têm as tools nexus_* (MCP). codex, gemini, ' +
-      'grok, kimi e agy NÃO têm — nunca peça a eles para chamar nexus_*; ' +
+      'Só claude/glm/longcat têm as tools nexus_* (MCP). codex, agy, ' +
+      'grok e kimi NÃO têm — nunca peça a eles para chamar nexus_*; ' +
       'dê a tarefa em texto puro e aguarde o bloco de handoff impresso no ' +
       'terminal (o contrato certo é anexado automaticamente ao prompt). ' +
       'RATE LIMIT: se um worker reportar limite de uso/rate limit, NÃO ' +
@@ -221,7 +221,7 @@ export function launchSquadMission(
 
   // The orchestrator ALWAYS runs on Claude — it is the only CLI that reliably
   // calls the nexus_pane_* MCP tools to spawn and coordinate workers. A codex /
-  // grok / gemini orchestrator boots but never delegates (the "squad opens but
+  // grok / agy orchestrator boots but never delegates (the "squad opens but
   // nothing starts" bug). Workers keep their own CLI. If a legacy squad declared
   // a different orchestrator CLI we override it here as a safety net; the wizard
   // already locks the picker to Claude.

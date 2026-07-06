@@ -21,7 +21,8 @@ export type AgentCategory = z.infer<typeof agentCategorySchema>;
 const PROVIDER_ID_TO_CLI: Record<string, string> = {
   'claude-cli': 'claude',
   'codex-cli': 'codex',
-  'gemini-cli': 'gemini',
+  // Google's Gemini CLI slot is now served by AGY in Nexus defaults.
+  'gemini-cli': 'agy',
   'kimi-cli': 'kimi',
   'antigravity-cli': 'agy',
 };

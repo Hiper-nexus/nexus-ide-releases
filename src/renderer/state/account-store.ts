@@ -11,7 +11,7 @@ interface AccountStore {
   addActiveClaude(label: string): Promise<{ ok: boolean; email?: string; error?: string }>;
   rename(id: string, label: string): Promise<void>;
   remove(id: string): Promise<void>;
-  activate(id: string): Promise<void>;
+  activate(id: string): Promise<{ ok: boolean; error?: string }>;
 }
 
 export const useAccountStore = create<AccountStore>((set) => ({
@@ -32,9 +32,7 @@ export const useAccountStore = create<AccountStore>((set) => ({
   remove: async (id) => {
     await window.nexus.accounts.remove(id);
   },
-  activate: async (id) => {
-    await window.nexus.accounts.activate(id);
-  },
+  activate: (id) => window.nexus.accounts.activate(id),
 }));
 
 export function useAccountController(): void {

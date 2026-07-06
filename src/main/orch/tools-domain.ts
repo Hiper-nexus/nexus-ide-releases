@@ -510,7 +510,7 @@ const remoteSpawnTool: McpToolDef = {
       cwd: { type: 'string' },
       cli: {
         type: 'string',
-        enum: ['claude', 'codex', 'gemini', 'kimi', 'antigravity'],
+        enum: ['claude', 'codex', 'agy', 'kimi'],
       },
       sessionName: { type: 'string' },
       prompt: { type: 'string' },
@@ -521,7 +521,7 @@ const remoteSpawnTool: McpToolDef = {
     createRemoteTmuxSession({
       target: requireStr(args, 'target'),
       cwd: str(args, 'cwd'),
-      cli: requireStr(args, 'cli') as 'claude' | 'codex' | 'gemini' | 'kimi' | 'antigravity',
+      cli: requireStr(args, 'cli') as 'claude' | 'codex' | 'agy' | 'kimi',
       sessionName: str(args, 'sessionName'),
       prompt: str(args, 'prompt'),
     }),
@@ -637,7 +637,7 @@ const routeTaskTool: McpToolDef = {
     '(trivial|easy|medium|hard|critical) and returns {tier, adapterId, ' +
     'model, effort, reason, alternatives}: pass adapterId/model/effort ' +
     'straight into nexus_pane_spawn. Work is spread across ALL installed LLMs: ' +
-    'trivial/easy → fast cheap models (grok/kimi/gemini-flash), medium → ' +
+    'trivial/easy → fast cheap models (grok/kimi/agy-flash), medium → ' +
     'GLM 5.2/kimi (cheap + strong), hard/critical → opus/fable/gpt-5.5. ' +
     'Call it for EVERY delegation.',
   inputSchema: {

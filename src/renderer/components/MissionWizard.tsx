@@ -4,9 +4,11 @@ import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { useOrchStore } from '../state/orch-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
+import { useProviderStore } from '../state/provider-store';
 import { switchWorkspaceLayout } from '../state/layout-store';
 import { useToastStore } from '../state/toast-store';
 import { launchLibrePanes, launchSquadMission } from '../orch/mission-launcher';
+import { balanceSquadRosterCli } from '../orch/squad-roster';
 
 /**
  * "Novo workspace" / "Nova Missão" wizard — the full flow:
@@ -18,9 +20,6 @@ import { launchLibrePanes, launchSquadMission } from '../orch/mission-launcher';
  * usuário descreve o objetivo, o Squad Architect monta o time sob medida e o
  * wizard cai direto na revisão do roster para disparar.
  */
-
-/** The orchestrator always runs on Claude (only CLI with reliable MCP tool use). */
-const ORCHESTRATOR_CLI = 'claude';
 
 type Mode = 'libre' | 'squad' | 'agentic';
 type Step =
@@ -73,6 +72,7 @@ export function MissionWizard() {
   const presetSquadId = useMissionWizardStore((s) => s.presetSquadId);
   const close = useMissionWizardStore((s) => s.close);
   const squads = useOrchStore((s) => s.squads);
+  const providers = useProviderStore((s) => s.providers);
   const recents = useWorkspaceStore((s) => s.recents);
   const openWorkspace = useWorkspaceStore((s) => s.open);
 
@@ -134,6 +134,14 @@ export function MissionWizard() {
   const originals = squads.filter((s) => s.builtin);
   const userSquads = squads.filter((s) => !s.builtin);
   const selectedSquad = squads.find((s) => s.id === squadId) ?? null;
+  const rosterAdapters = useMemo(
+    () =>
+      adapters.map((adapter) => {
+        const provider = providers.find((item) => item.adapterId === adapter.id);
+        return { ...adapter, enabled: provider?.enabled ?? true };
+      }),
+    [adapters, providers],
+  );
 
   // Derived: which worker (if any) has allowedTools == null (the guard condition).
   // Used to disable "Iniciar Squad" reactively without running the guard imperative.
@@ -148,22 +156,13 @@ export function MissionWizard() {
   // Load the selected squad's roster into an editable copy. The orchestrator is
   // FORCED onto Claude: only Claude Code reliably drives the embedded nexus MCP
   // server (spawning + coordinating worker panes via nexus_pane_* tools). Codex,
-  // Grok, Gemini et al. boot fine as WORKERS, but as the orchestrator they don't
-  // call the MCP tools, so the squad "opens but nothing starts". Workers stay
-  // fully editable (any CLI/model/effort).
+  // Grok, Gemini et al. boot fine as WORKERS, so they are auto-distributed across
+  // the roster and stay fully editable (any CLI/model/effort).
   useEffect(() => {
     const sq = squads.find((s) => s.id === squadId);
-    setRoster(
-      sq
-        ? sq.agents.map((a) =>
-            a.category === 'orchestrator' && a.cli !== ORCHESTRATOR_CLI
-              ? { ...a, cli: ORCHESTRATOR_CLI, model: undefined }
-              : { ...a },
-          )
-        : [],
-    );
+    setRoster(sq ? balanceSquadRosterCli(sq.agents, rosterAdapters) : []);
     setRosterSaved(false);
-  }, [squadId, squads]);
+  }, [squadId, squads, rosterAdapters]);
 
   // Preflight: when the REVISAR step opens, immediately highlight the first
   // agent that will block launch so the user sees the issue before clicking.
@@ -677,19 +676,17 @@ export function MissionWizard() {
                   onClick={() => void saveRoster()}
                   title="Salvar as mudanças de CLI/modelo/effort no squad"
                 >
-                  {rosterSaved ? '✓ salvo' : '💾 salvar edições'}
+                  {rosterSaved ? 'Salvo' : 'Salvar edições'}
                 </button>
               </div>
               <p className="wizard__hint-sm">
-                Edite CLI, modelo, effort e allowlists. Use * para irrestrito
-                só no orquestrador; workers precisam de tools explícitas ou
-                vazio. Gaps explícitos seguem o formato gap:nome: motivo.
+                Orquestrador fixo em Claude para MCP. Workers entram
+                balanceados entre CLIs/providers disponíveis e continuam
+                editáveis.
               </p>
               <p className="wizard__hint-sm">
-                🧭 O <strong>orquestrador roda no Claude</strong> — é o único CLI
-                que dirige o servidor MCP do Nexus de forma confiável (spawna e
-                coordena os panes). Os <strong>workers</strong> podem ser qualquer
-                CLI.
+                Use * só no orquestrador; workers precisam de tools explícitas
+                ou vazio. Gaps explícitos: gap:nome: motivo.
               </p>
               <ul className="wizard__roster wizard__roster--edit">
                 {roster.map((a) => {
@@ -702,68 +699,74 @@ export function MissionWizard() {
                       data-agent-id={a.id}
                       className={`wizard__roster-row${a.id === highlightedAgentId ? ' wizard__roster-row--invalid' : ''}`}
                     >
-                      <span className="wizard__roster-role">{a.category}</span>
-                      <span className="wizard__roster-name" title={a.agentName}>
-                        {a.agentName}
-                      </span>
-                      {isOrchestrator ? (
-                        <span
-                          className="wizard__mini-select wizard__mini-select--locked"
-                          title="O orquestrador é sempre Claude (suporte a MCP tools)."
-                        >
-                          ◆ Claude 🔒
-                        </span>
-                      ) : (
+                      <div className="wizard__agent-main">
+                        <div className="wizard__agent-identity">
+                          <span className="wizard__roster-role">{a.category}</span>
+                          <span className="wizard__roster-name" title={a.agentName}>
+                            {a.agentName}
+                          </span>
+                        </div>
+                        <div className="wizard__agent-controls">
+                          {isOrchestrator ? (
+                            <span
+                              className="wizard__mini-select wizard__mini-select--locked"
+                              title="O orquestrador é sempre Claude (suporte a MCP tools)."
+                            >
+                              ◆ Claude
+                            </span>
+                          ) : (
+                            <select
+                              className="wizard__mini-select"
+                              value={a.cli}
+                              onChange={(e) =>
+                                updateAgent(a.id, {
+                                  cli: e.target.value,
+                                  model: undefined,
+                                })
+                              }
+                            >
+                              {adapters.map((x) => (
+                                <option key={x.id} value={x.id}>
+                                  {x.icon} {x.label}
+                                  {x.installed ? '' : ' ⚠'}
+                                </option>
+                              ))}
+                              {!adapters.some((x) => x.id === a.cli) && (
+                                <option value={a.cli}>{a.cli}</option>
+                              )}
+                            </select>
+                          )}
                         <select
                           className="wizard__mini-select"
-                          value={a.cli}
-                          onChange={(e) =>
-                            updateAgent(a.id, {
-                              cli: e.target.value,
-                              model: undefined,
-                            })
-                          }
+                          value={a.model ?? cliAdapter?.models.default ?? ''}
+                          onChange={(e) => updateAgent(a.id, { model: e.target.value })}
                         >
-                          {adapters.map((x) => (
-                            <option key={x.id} value={x.id}>
-                              {x.icon} {x.label}
-                              {x.installed ? '' : ' ⚠'}
+                          {models.length === 0 && (
+                            <option value={a.model ?? ''}>{a.model ?? '—'}</option>
+                          )}
+                          {models.map((m) => (
+                            <option key={m} value={m}>
+                              {m}
                             </option>
                           ))}
-                          {!adapters.some((x) => x.id === a.cli) && (
-                            <option value={a.cli}>{a.cli}</option>
-                          )}
                         </select>
-                      )}
-                      <select
-                        className="wizard__mini-select"
-                        value={a.model ?? cliAdapter?.models.default ?? ''}
-                        onChange={(e) => updateAgent(a.id, { model: e.target.value })}
-                      >
-                        {models.length === 0 && (
-                          <option value={a.model ?? ''}>{a.model ?? '—'}</option>
-                        )}
-                        {models.map((m) => (
-                          <option key={m} value={m}>
-                            {m}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        className="wizard__mini-select wizard__mini-select--effort"
-                        value={a.effort ?? 'medium'}
-                        onChange={(e) =>
-                          updateAgent(a.id, {
-                            effort: e.target.value as SquadAgent['effort'],
-                          })
-                        }
-                      >
-                        <option value="low">low</option>
-                        <option value="medium">medium</option>
-                        <option value="high">high</option>
-                        <option value="xhigh">xhigh</option>
-                        <option value="max">max</option>
-                      </select>
+                          <select
+                            className="wizard__mini-select wizard__mini-select--effort"
+                            value={a.effort ?? 'medium'}
+                            onChange={(e) =>
+                              updateAgent(a.id, {
+                                effort: e.target.value as SquadAgent['effort'],
+                              })
+                            }
+                          >
+                            <option value="low">low</option>
+                            <option value="medium">medium</option>
+                            <option value="high">high</option>
+                            <option value="xhigh">xhigh</option>
+                            <option value="max">max</option>
+                          </select>
+                        </div>
+                      </div>
                       <div className="wizard__agent-spec">
                         <label className="wizard__agent-spec-label">
                           tools
@@ -807,7 +810,7 @@ export function MissionWizard() {
                         </label>
                         {!isOrchestrator && a.allowedTools == null && (
                           <p className="wizard__row-error">
-                            ⚠ Tools bloqueadas — liste explicitamente ou deixe vazio para bloquear todas
+                            Tools bloqueadas. Liste explicitamente ou deixe vazio para bloquear todas.
                           </p>
                         )}
                       </div>

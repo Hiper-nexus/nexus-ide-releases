@@ -30,6 +30,9 @@ The central config hub, per adapter:
 - **enable/disable** the CLI (a disabled provider cannot spawn);
 - **binary path** override (absolute path bypasses the PATH check);
 - **default model** and **extra args**;
+- **permission mode** defaults to hands-free operation: `YOLO` when the
+  adapter supports it, otherwise `Bypass`; users can switch back to
+  **CLI default** per provider;
 - **upstream routing** (see below);
 - **API key** stored in the **macOS Keychain** via Electron `safeStorage` —
   never plaintext, never on any IPC snapshot (the UI only sees a masked
@@ -63,7 +66,7 @@ parties) plus the provider's extra env (e.g. GLM's `API_TIMEOUT_MS`,
 `provider_setup_env`. The token comes from the Keychain; env flows into the
 xterm PTY via the provider spawn overrides.
 
-**Staged for the next slice** (full ai-launcher parity, 2-3 day estimate):
-multi-account snapshot/switch of the native Claude Keychain credential and the
-5h rate-limit-window auto-switch. The routing table + env builder (~70% of the
-reusable logic) and per-provider keys are shipped here.
+Multi-account support is live: saved Claude subscription sessions are snapshotted
+from the native Keychain, restored before spawn/activation, and API-key accounts
+can route through the configured upstream. Limit/quota events cool down the
+current account and fail over to the next available saved account.
