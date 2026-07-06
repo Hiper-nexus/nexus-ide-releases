@@ -147,7 +147,11 @@ const liveTranscriptListeners = new Set<(event: JarvisLiveTranscriptEvent) => vo
 const liveToolCallListeners = new Set<(event: JarvisLiveToolEvent) => void>();
 const liveToolResultListeners = new Set<(event: JarvisLiveToolResultEvent) => void>();
 const liveInterruptedListeners = new Set<(event: JarvisLiveInterruptEvent) => void>();
+const liveAudioOutListeners = new Set<(b64: string) => void>();
 
+ipcRenderer.on(VOICE_CHANNELS.liveAudioOut, (_event, b64: string) =>
+  liveAudioOutListeners.forEach((cb) => cb(b64)),
+);
 ipcRenderer.on(VOICE_CHANNELS.pttStart, () => pttStartListeners.forEach((cb) => cb()));
 ipcRenderer.on(VOICE_CHANNELS.pttStop, () => pttStopListeners.forEach((cb) => cb()));
 ipcRenderer.on(VOICE_CHANNELS.infoChanged, (_event, info: VoiceRuntimeInfo) =>
@@ -326,6 +330,11 @@ const api: NexusApi = {
       ipcRenderer.send(VOICE_CHANNELS.liveToolResultIn, event),
     liveInterrupt: (reason) =>
       ipcRenderer.invoke(VOICE_CHANNELS.liveInterrupt, { reason }),
+    liveMicIn: (b64: string) => ipcRenderer.send(VOICE_CHANNELS.liveMicIn, b64),
+    liveContextIn: (text: string) =>
+      ipcRenderer.send(VOICE_CHANNELS.liveContextIn, text),
+    onLiveAudioOut: (cb: (b64: string) => void) =>
+      addListener(liveAudioOutListeners, cb),
     onPttToggle: (cb: () => void) => addListener(pttToggleListeners, cb),
     onWakeDetected: (cb: () => void) => addListener(wakeDetectedListeners, cb),
     onPttStart: (cb) => addListener(pttStartListeners, cb),

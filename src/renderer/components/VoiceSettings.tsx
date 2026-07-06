@@ -91,6 +91,10 @@ export function VoiceSettings() {
   const [triggerKey, setTriggerKey] = useState('Space');
   const [wakeWordOn, setWakeWordOn] = useState(false);
   const [jarvisLiveOn, setJarvisLiveOn] = useState(false);
+  const [liveRealtime, setLiveRealtime] = useState(false);
+  const [assistantName, setAssistantName] = useState('Jarvis');
+  const [userName, setUserName] = useState('');
+  const [customInstructions, setCustomInstructions] = useState('');
   const [triggerAccel, setTriggerAccel] = useState('CommandOrControl+Shift+Space');
   const [captureHint, setCaptureHint] = useState<string | null>(null);
   const [capturingKey, setCapturingKey] = useState(false);
@@ -144,6 +148,10 @@ export function VoiceSettings() {
     setTriggerAccel(info.shortcut);
     setWakeWordOn(info.wakeWordEnabled);
     setJarvisLiveOn(info.jarvisLive.enabled);
+    setLiveRealtime(info.jarvisLive.transport === 'gemini-live');
+    setAssistantName(info.persona.assistantName);
+    setUserName(info.persona.userName ?? '');
+    setCustomInstructions(info.persona.customInstructions ?? '');
     setCaptureHint(null);
     setKeyInputs(
       Object.fromEntries(info.keys.map((key) => [key.envVar, ''])),
@@ -199,6 +207,10 @@ export function VoiceSettings() {
         pushToTalkKeyCode: normalizedKey,
         wakeWordEnabled: wakeWordOn,
         jarvisLiveEnabled: jarvisLiveOn,
+        jarvisLiveTransport: liveRealtime ? 'gemini-live' : 'classic',
+        personaAssistantName: assistantName.trim() || 'Jarvis',
+        personaUserName: userName.trim(),
+        personaCustomInstructions: customInstructions.trim(),
       });
       setInfo(next);
       close();
@@ -417,6 +429,24 @@ export function VoiceSettings() {
               />
             </label>
 
+            {jarvisLiveOn && (
+              <label className="agent-picker__label voice-settings__wake-row">
+                <span>
+                  Áudio realtime (Gemini Live)
+                  <span className="voice-settings__key-meta">
+                    {' '}
+                    full-duplex de verdade — requer GEMINI_API_KEY. Sem key ou
+                    desligado, cai no Classic (STT→cérebro→TTS, funciona offline)
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={liveRealtime}
+                  onChange={(e) => setLiveRealtime(e.target.checked)}
+                />
+              </label>
+            )}
+
             <p className="agent-picker__hint">
               {jarvisLiveOn
                 ? 'No Live, a JARVIS reabre a escuta depois de cada resposta e entra em dormant quando você fica em silêncio.'
@@ -426,6 +456,40 @@ export function VoiceSettings() {
               O Jarvis brain decide conversa e ações; STT/TTS continuam com
               fallback separado.
             </p>
+
+            <div className="voice-settings__persona">
+              <label className="agent-picker__label">
+                <span>Seu nome</span>
+                <input
+                  className="settings-input"
+                  value={userName}
+                  placeholder="como a JARVIS te chama"
+                  maxLength={48}
+                  onChange={(e) => setUserName(e.target.value)}
+                />
+              </label>
+              <label className="agent-picker__label">
+                <span>Nome do assistente</span>
+                <input
+                  className="settings-input"
+                  value={assistantName}
+                  placeholder="Jarvis"
+                  maxLength={48}
+                  onChange={(e) => setAssistantName(e.target.value)}
+                />
+              </label>
+              <label className="agent-picker__label">
+                <span>Instruções personalizadas</span>
+                <textarea
+                  className="settings-input"
+                  value={customInstructions}
+                  rows={2}
+                  placeholder='ex.: "sempre responda curto e direto"'
+                  maxLength={2000}
+                  onChange={(e) => setCustomInstructions(e.target.value)}
+                />
+              </label>
+            </div>
 
             {error && <p className="agent-picker__error">{error}</p>}
 

@@ -102,6 +102,21 @@ const inputSchema = z.object({
 export const jarvisLiveConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
+    /**
+     * Transporte da sessão live: 'classic' = FSM sobre o pipeline batch
+     * STT→brain→TTS (sempre disponível); 'gemini-live' = áudio full-duplex
+     * real via WSS BidiGenerateContent (requer GEMINI_API_KEY). Quando o
+     * transporte realtime falha, o Classic segue como fallback.
+     */
+    transport: z.enum(['classic', 'gemini-live']).default('classic'),
+    /** Modelo realtime (áudio nativo) usado pelo transporte gemini-live. */
+    liveModel: z
+      .string()
+      .min(1)
+      .max(128)
+      .default('gemini-2.5-flash-native-audio-preview-12-2025'),
+    /** Voz pré-construída do Gemini Live. */
+    voiceName: z.string().min(1).max(64).default('Charon'),
     /** Keep the live session warm after a turn so follow-ups reuse context. */
     graceReuseMs: z.number().int().positive().max(10 * 60_000).default(90_000),
     /** Move from warm to dormant after no speech; wake/PTT reuses the session. */
@@ -111,10 +126,24 @@ export const jarvisLiveConfigSchema = z
   })
   .default({
     enabled: false,
+    transport: 'classic',
+    liveModel: 'gemini-2.5-flash-native-audio-preview-12-2025',
+    voiceName: 'Charon',
     graceReuseMs: 90_000,
     dormantAfterMs: 5 * 60_000,
     maxWindowTurns: 12,
   });
+
+/** Persona da voz: como o assistente se identifica e trata o usuário. */
+export const voicePersonaSchema = z
+  .object({
+    assistantName: z.string().min(1).max(48).default('Jarvis'),
+    userName: z.string().max(48).optional(),
+    customInstructions: z.string().max(2_000).optional(),
+  })
+  .default({ assistantName: 'Jarvis' });
+
+export type VoicePersona = z.infer<typeof voicePersonaSchema>;
 
 export type JarvisLiveConfig = z.infer<typeof jarvisLiveConfigSchema>;
 
@@ -187,6 +216,7 @@ export const voiceConfigSchema = z.object({
   wakeWord: z
     .object({ enabled: z.boolean().default(false) })
     .default({ enabled: false }),
+  persona: voicePersonaSchema,
   jarvisLive: jarvisLiveConfigSchema,
   jarvisBrain: jarvisBrainProviderSchema.default({
     provider: 'gemini',
@@ -232,8 +262,12 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
   routing: 'jarvis',
   speakMode: 'summary',
   wakeWord: { enabled: false },
+  persona: { assistantName: 'Jarvis' },
   jarvisLive: {
     enabled: false,
+    transport: 'classic',
+    liveModel: 'gemini-2.5-flash-native-audio-preview-12-2025',
+    voiceName: 'Charon',
     graceReuseMs: 90_000,
     dormantAfterMs: 5 * 60_000,
     maxWindowTurns: 12,

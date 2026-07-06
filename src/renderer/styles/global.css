@@ -3916,6 +3916,24 @@ body {
   height: 16px;
 }
 
+/* Persona da voz — nome do assistente / usuário / instruções. */
+.voice-settings__persona {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-strong);
+}
+.voice-settings__persona .settings-input {
+  width: 100%;
+}
+.voice-settings__persona textarea.settings-input {
+  resize: vertical;
+  min-height: 44px;
+  font-family: var(--font-mono);
+}
+
 /* ---- Canvas (xyflow) dark theme: controles legíveis ---- */
 .react-flow__controls-button {
   background: var(--bg-elevated) !important;

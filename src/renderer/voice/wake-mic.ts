@@ -41,6 +41,17 @@ export class WakeMic {
   private uttLastSpeechAt = 0;
   private uttStartedAt = 0;
 
+  // Tap de frames da fala (Jarvis Live realtime): recebe cada frame do mic
+  // enquanto o comando está sendo capturado, junto com o sample rate real.
+  private uttFrameTap: ((frame: Float32Array, sampleRate: number) => void) | null = null;
+
+  /** Registra (ou limpa) o tap de frames de fala para o transporte realtime. */
+  setUtteranceFrameTap(
+    tap: ((frame: Float32Array, sampleRate: number) => void) | null,
+  ): void {
+    this.uttFrameTap = tap;
+  }
+
   isRunning(): boolean {
     return this.running;
   }
@@ -78,6 +89,8 @@ export class WakeMic {
 
   private trackUtterance(frame: Float32Array): void {
     this.uttChunks.push(Float32Array.from(frame));
+    // Jarvis Live realtime: espelha o frame para o transporte enquanto fala.
+    this.uttFrameTap?.(frame, this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE);
     let sum = 0;
     for (let i = 0; i < frame.length; i += 1) sum += frame[i] * frame[i];
     const rms = Math.sqrt(sum / Math.max(1, frame.length));

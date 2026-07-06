@@ -31,6 +31,7 @@ import { transcribe } from './stt-service';
 import { speak } from './tts-service';
 import { echoSuppressor } from './echo-suppress';
 import { JarvisLiveSession } from './jarvis-live';
+import { LiveTransportController } from './live-transport-controller';
 import {
   registerVoiceHotkey,
   disposeVoiceHotkey,
@@ -59,6 +60,7 @@ function broadcast(channel: string, payload?: unknown): void {
 }
 
 const liveSession = new JarvisLiveSession(broadcast);
+const liveTransport = new LiveTransportController(broadcast, liveSession);
 
 function wireHotkey(): void {
   const config = getVoiceConfig();
@@ -237,11 +239,31 @@ export function registerVoiceIpc(): void {
 
   ipcMain.handle(VOICE_CHANNELS.liveStart, (_event, raw) => {
     const parsed = jarvisLiveStartRequestSchema.safeParse(raw ?? {});
-    return liveSession.start(parsed.success ? parsed.data : {});
+    const state = liveSession.start(parsed.success ? parsed.data : {});
+    // Se a config pede o transporte realtime (Gemini Live), conecta o socket;
+    // senão isto é no-op e o Classic segue (fallback keyless).
+    if (liveSession.getState().sessionId) liveTransport.onStart();
+    return state;
   });
 
-  ipcMain.handle(VOICE_CHANNELS.liveStop, () => liveSession.stop());
-  ipcMain.handle(VOICE_CHANNELS.liveEndTurn, () => liveSession.endTurn());
+  ipcMain.handle(VOICE_CHANNELS.liveStop, () => {
+    liveTransport.onStop();
+    return liveSession.stop();
+  });
+  ipcMain.handle(VOICE_CHANNELS.liveEndTurn, () => {
+    liveTransport.endTurn();
+    return liveSession.endTurn();
+  });
+
+  // Mic PCM 16 kHz base64 do renderer → transporte realtime (no-op no Classic).
+  ipcMain.on(VOICE_CHANNELS.liveMicIn, (_event, raw: unknown) => {
+    if (typeof raw === 'string' && raw.length > 0 && raw.length <= 256 * 1024) {
+      liveTransport.micIn(raw);
+    }
+  });
+  ipcMain.on(VOICE_CHANNELS.liveContextIn, (_event, raw: unknown) => {
+    if (typeof raw === 'string' && raw.trim()) liveTransport.contextIn(raw);
+  });
 
   ipcMain.handle(VOICE_CHANNELS.liveStatus, (_event, raw) => {
     const parsed = jarvisLiveStatusPatchSchema.safeParse(raw);

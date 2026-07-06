@@ -49,8 +49,14 @@ export const setConfigRequestSchema = z.object({
   wakeWordEnabled: z.boolean().optional(),
   /** Toggle Jarvis Live: continuous session mode over the Classic fallback. */
   jarvisLiveEnabled: z.boolean().optional(),
+  /** Transporte da sessão live: FSM batch (classic) ou áudio realtime. */
+  jarvisLiveTransport: z.enum(['classic', 'gemini-live']).optional(),
   /** Preferred chat-model provider for the Jarvis brain. */
   jarvisBrainProvider: z.enum(['gemini', 'openai', 'groq']).optional(),
+  /** Persona da voz: nome do assistente / do usuário / instruções custom. */
+  personaAssistantName: z.string().min(1).max(48).optional(),
+  personaUserName: z.string().max(48).optional(),
+  personaCustomInstructions: z.string().max(2_000).optional(),
 });
 
 export type SetConfigRequest = z.infer<typeof setConfigRequestSchema>;
@@ -117,9 +123,16 @@ export interface VoiceRuntimeInfo {
   wakeWordEnabled: boolean;
   jarvisLive: {
     enabled: boolean;
+    /** 'classic' = FSM sobre pipeline batch; 'gemini-live' = áudio realtime. */
+    transport: 'classic' | 'gemini-live';
     graceReuseMs: number;
     dormantAfterMs: number;
     maxWindowTurns: number;
+  };
+  persona: {
+    assistantName: string;
+    userName?: string;
+    customInstructions?: string;
   };
   jarvisBrain: ResolvedChain;
   hasWakeKey: boolean;

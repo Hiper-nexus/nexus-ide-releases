@@ -5,6 +5,7 @@ import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { VoiceCapture } from './voice-capture';
 import { WakeMic } from './wake-mic';
+import { LiveAudioPlayer, micFrameToBase64 } from './live-audio';
 import { stripPromptEcho } from './response-echo';
 import { getPaneSessionId, writeToPane } from '../terminal/terminal-host';
 import { listPanes } from '../lib/split-tree';
@@ -55,6 +56,11 @@ const JARVIS_MEMORY_MS = 240_000; // 4 min: conversa continua sem recomeçar do 
 // Memória curta da conversa com a JARVIS (renderer-local, por janela).
 let jarvisHistory: JarvisTurn[] = [];
 const wakeMic = new WakeMic();
+// Player do áudio realtime (Gemini Live): só instanciado sob demanda.
+let livePlayer: LiveAudioPlayer | null = null;
+function ensureLivePlayer(): LiveAudioPlayer {
+  return (livePlayer ??= new LiveAudioPlayer());
+}
 let jarvisLastTurnAt = 0;
 
 const WAKE_ACKS = ['Pois não?', 'Sim?', 'Às ordens.', 'Diga.'];
@@ -70,6 +76,12 @@ let ackWarmed = false;
 function isJarvisLiveEnabled(): boolean {
   const info = useVoiceStore.getState().info;
   return Boolean(info?.jarvisLive.enabled && info.routing === 'jarvis');
+}
+
+/** Transporte realtime (áudio full-duplex Gemini Live) ligado? */
+function isRealtimeLive(): boolean {
+  const info = useVoiceStore.getState().info;
+  return isJarvisLiveEnabled() && info?.jarvisLive.transport === 'gemini-live';
 }
 
 function liveStatus(
@@ -195,6 +207,18 @@ export function useVoiceController(): void {
     });
     const unsubLiveInterrupted = window.nexus.voice.onLiveInterrupted((event) => {
       useVoiceStore.getState().setLiveInterrupted(event);
+      // barge-in do servidor realtime: corta o áudio que está tocando.
+      livePlayer?.stop();
+    });
+    // Áudio realtime (Gemini Live TTS 24 kHz) → toca em fila contínua.
+    const unsubLiveAudio = window.nexus.voice.onLiveAudioOut((b64) => {
+      ensureLivePlayer().play(b64);
+    });
+    // Espelha o mic para o transporte realtime enquanto o comando é falado.
+    wakeMic.setUtteranceFrameTap((frame, sampleRate) => {
+      if (isRealtimeLive()) {
+        window.nexus.voice.liveMicIn(micFrameToBase64(frame, sampleRate));
+      }
     });
 
     const onStart = () => {
@@ -267,6 +291,10 @@ export function useVoiceController(): void {
       unsubLiveToolCall();
       unsubLiveToolResult();
       unsubLiveInterrupted();
+      unsubLiveAudio();
+      wakeMic.setUtteranceFrameTap(null);
+      livePlayer?.dispose();
+      livePlayer = null;
       wakeMic.stop();
     };
   }, []);
@@ -310,6 +338,15 @@ async function finishAndProcess(
   const store = useVoiceStore.getState();
   busy.current = true;
   try {
+    // Modo realtime: os frames já subiram ao vivo pelo tap do mic; aqui só
+    // fechamos o turno de fala. O transporte devolve STT+resposta+áudio; o
+    // pipeline batch (transcribe→brain→speak) NÃO roda.
+    if (isRealtimeLive()) {
+      if (wakeMic.isUtteranceActive()) wakeMic.finishUtterance();
+      liveEndTurn();
+      store.setStatus('idle');
+      return;
+    }
     const result = wakeMic.isUtteranceActive()
       ? wakeMic.finishUtterance()
       : await capture.stop();

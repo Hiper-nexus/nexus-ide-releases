@@ -212,6 +212,19 @@ export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
     jarvisLive: {
       ...current.jarvisLive,
       enabled: patch.jarvisLiveEnabled ?? current.jarvisLive.enabled,
+      transport: patch.jarvisLiveTransport ?? current.jarvisLive.transport,
+    },
+    persona: {
+      assistantName:
+        patch.personaAssistantName ?? current.persona.assistantName,
+      userName:
+        patch.personaUserName !== undefined
+          ? patch.personaUserName || undefined
+          : current.persona.userName,
+      customInstructions:
+        patch.personaCustomInstructions !== undefined
+          ? patch.personaCustomInstructions || undefined
+          : current.persona.customInstructions,
     },
     jarvisBrain,
     input: {
@@ -329,9 +342,15 @@ export function buildRuntimeInfo(): VoiceRuntimeInfo {
     wakeWordEnabled: current.wakeWord.enabled,
     jarvisLive: {
       enabled: current.jarvisLive.enabled,
+      transport: current.jarvisLive.transport,
       graceReuseMs: current.jarvisLive.graceReuseMs,
       dormantAfterMs: current.jarvisLive.dormantAfterMs,
       maxWindowTurns: current.jarvisLive.maxWindowTurns,
+    },
+    persona: {
+      assistantName: current.persona.assistantName,
+      userName: current.persona.userName,
+      customInstructions: current.persona.customInstructions,
     },
     jarvisBrain: resolveJarvisBrainChain(current.jarvisBrain),
     // openWakeWord roda local e sem key — o campo fica por compat de UI.

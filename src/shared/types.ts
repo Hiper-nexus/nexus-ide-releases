@@ -465,6 +465,12 @@ export interface NexusApi {
     liveTranscript(event: Omit<JarvisLiveTranscriptEvent, 'sessionId' | 'at'>): void;
     liveToolResult(event: Omit<JarvisLiveToolResultEvent, 'sessionId' | 'at'>): void;
     liveInterrupt(reason: string): Promise<JarvisLiveInterruptEvent>;
+    /** Mic PCM 16 kHz base64 → transporte realtime (no-op no Classic). */
+    liveMicIn(b64: string): void;
+    /** Contexto de tela (texto) → sessão live realtime. */
+    liveContextIn(text: string): void;
+    /** TTS PCM 24 kHz base64 do transporte realtime para tocar no renderer. */
+    onLiveAudioOut(cb: (b64: string) => void): Unsubscribe;
     onPttStart(cb: () => void): Unsubscribe;
     onPttToggle(cb: () => void): Unsubscribe;
     onPttStop(cb: () => void): Unsubscribe;

@@ -38,6 +38,12 @@ export const VOICE_CHANNELS = {
   liveToolResultIn: 'voice:live.tool.result.in',
   /** invoke: renderer → main. Mark barge-in/interruption for the live session. */
   liveInterrupt: 'voice:live.interrupt',
+  /** send: renderer → main. Mic PCM 16 kHz base64 → transporte realtime. */
+  liveMicIn: 'voice:live.mic.in',
+  /** send: renderer → main. Contexto de tela (texto) para a sessão live. */
+  liveContextIn: 'voice:live.context.in',
+  /** event: main → renderer. TTS PCM 24 kHz base64 do transporte realtime. */
+  liveAudioOut: 'voice:live.audio.out',
 
   /** event: main → renderer. Global push-to-talk key pressed. */
   pttStart: 'voice:ptt.start',
