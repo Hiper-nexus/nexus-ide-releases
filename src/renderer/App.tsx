@@ -136,6 +136,14 @@ export function App() {
         useSettingsStore.getState().toggleDrawer();
         return;
       }
+      // ⌘⇧O — Perfil de Operador. Funciona sempre, inclusive no modo sóbrio
+      // (que esconde o HUD): sem isto, ativar o modo sóbrio trancaria a única
+      // porta de volta ao perfil e à própria opção de desligá-lo.
+      if (e.key.toLowerCase() === 'o' && e.shiftKey) {
+        e.preventDefault();
+        useGamificationStore.getState().toggleProfile();
+        return;
+      }
       // ⌘B — Ops Board (pipeline de missões). Só faz sentido num workspace.
       if (e.key.toLowerCase() === 'b' && !e.shiftKey && !e.altKey) {
         if (!useWorkspaceStore.getState().current) return;

@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS mission_panes (
   title      TEXT NOT NULL,
   agent_name TEXT,
   role       TEXT NOT NULL DEFAULT 'worker',
+  pane_id    TEXT,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS handoffs (

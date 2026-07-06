@@ -60,6 +60,9 @@ export function OperatorProfile() {
     : 1;
   const stars = '★'.repeat(Math.min(snapshot.prestige, 5));
   const efficient = snapshot.counters.efficient_mission ?? 0;
+  const emptyProfile =
+    snapshot.powerLevel === 0 &&
+    Object.values(snapshot.counters).every((value) => value === 0);
 
   const handleExport = async () => {
     const res = await window.nexus.gamification.exportProfile();
@@ -179,6 +182,14 @@ export function OperatorProfile() {
           </div>
         )}
 
+        {emptyProfile && (
+          <div className="operator-profile__empty" role="status">
+            Ainda não há entregas pontuadas. O XP entra quando uma missão ou
+            task é concluída, um handoff é entregue com sucesso, ou uma mídia é
+            gerada dentro do fluxo.
+          </div>
+        )}
+
         <div className="operator-profile__grid">
           <section className="operator-profile__section" aria-label="Breakdown de XP">
             <h3>Entregas</h3>
@@ -285,6 +296,9 @@ export function OperatorProfile() {
             />
             Modo sóbrio (oculta HUD e celebrações; o XP continua)
           </label>
+          <span className="operator-profile__hint">
+            Reabra este perfil a qualquer momento com ⌘⇧O (Ctrl+Shift+O).
+          </span>
           {ioMessage && (
             <span className="operator-profile__io" role="status">
               {ioMessage}

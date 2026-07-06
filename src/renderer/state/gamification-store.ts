@@ -44,6 +44,7 @@ interface GamificationStore {
   setSober(sober: boolean): void;
   openProfile(): void;
   closeProfile(): void;
+  toggleProfile(): void;
 }
 
 export const useGamificationStore = create<GamificationStore>((set) => ({
@@ -71,6 +72,7 @@ export const useGamificationStore = create<GamificationStore>((set) => ({
   setSober: (sober) => set({ sober }),
   openProfile: () => set({ profileOpen: true }),
   closeProfile: () => set({ profileOpen: false }),
+  toggleProfile: () => set((s) => ({ profileOpen: !s.profileOpen })),
 }));
 
 /** Montar uma vez no App (junto do useUsageSync) — hydrate + subscribe. */

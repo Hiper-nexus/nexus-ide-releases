@@ -4521,6 +4521,16 @@ body {
   font-size: 12px;
   color: var(--text-dim);
 }
+.operator-profile__empty {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(94, 106, 210, 0.08);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
 .operator-profile__grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -4652,6 +4662,12 @@ body {
   font-family: var(--font-mono);
   font-size: 11px;
   word-break: break-all;
+}
+.operator-profile__hint {
+  flex-basis: 100%;
+  color: var(--text-dim);
+  font-size: 11px;
+  opacity: 0.8;
 }
 @media (prefers-reduced-motion: reduce) {
   .operator-profile {
