@@ -1,6 +1,8 @@
+import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { app } from 'electron';
+import { activeWorkspaceOrNull } from '../persistence/workspace-store';
 import type { McpRuntimeInfo } from '../../shared/orch-types';
 import {
   setAgentSpawnHook,
@@ -35,6 +37,11 @@ import {
   prepareEphemeralHome,
   writeMcpConfigFile,
 } from './hooks-gen';
+import {
+  codexMcpArgs,
+  supportsMcpInjection,
+  writeGeminiMcpConfig,
+} from './cli-mcp-inject';
 
 /**
  * Embedded MCP server (docs/ARCHITECTURE.md §E.2): a localhost HTTP endpoint
@@ -205,6 +212,19 @@ async function handleGateRequest(
   }
 }
 
+/**
+ * cwd válido para escrever `.gemini/settings.json`: só um diretório real do
+ * workspace (nunca o home por engano). null → pula a injeção de arquivo.
+ */
+function resolveInjectCwd(cwd: string | undefined): string | null {
+  if (!cwd) return activeWorkspaceOrNull();
+  try {
+    return fs.statSync(cwd).isDirectory() ? cwd : activeWorkspaceOrNull();
+  } catch {
+    return activeWorkspaceOrNull();
+  }
+}
+
 function buildMcpConfig(token: string): object {
   return {
     mcpServers: {
@@ -259,6 +279,18 @@ function installSpawnHook(): void {
           '--mcp-config',
           writeMcpConfigFile(ctx.token, mcpConfig),
         );
+      }
+      // CLIs não-Claude: injeta o servidor MCP DE VERDADE (não só env), para
+      // que Codex/Gemini/Antigravity chamem as tools nexus_* e submetam
+      // handoff. Sem isto a orquestração era efetivamente Claude-cêntrica.
+      if (!adapter.quirks.mcpAutoload) {
+        const flavor = supportsMcpInjection(adapter.id);
+        if (flavor === 'codex') {
+          extraArgs.push(...codexMcpArgs(mcpUrl(), ctx.token));
+        } else if (flavor === 'gemini') {
+          const injectCwd = resolveInjectCwd(req.cwd);
+          if (injectCwd) writeGeminiMcpConfig(injectCwd, mcpUrl(), ctx.token);
+        }
       }
     } catch (err) {
       console.warn('[orch] failed to prepare agent home/config:', err);
