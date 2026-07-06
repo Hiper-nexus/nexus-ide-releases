@@ -1,22 +1,24 @@
 {
   "name": "nexus-ide",
   "productName": "NexusIDE",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Terminal IDE multi-agente: grid de panes de terminal com PTYs reais, base para adapters de CLIs de IA e orquestração de squads.",
   "main": ".vite/build/main.js",
   "author": "NexusIDE",
   "license": "MIT",
   "private": true,
   "scripts": {
+    "prepackage": "node scripts/check-build-node.mjs",
     "start": "electron-forge start",
     "package": "electron-forge package",
+    "premake": "node scripts/check-build-node.mjs",
     "make": "electron-forge make",
     "rebuild": "electron-rebuild -f -w @lydell/node-pty -w better-sqlite3",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20 <23"
   },
   "dependencies": {
     "@lydell/node-pty": "^1.2.0-beta.12",

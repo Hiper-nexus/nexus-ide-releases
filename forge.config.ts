@@ -1,3 +1,6 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import path from 'node:path';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
@@ -9,7 +12,39 @@ import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 
 const config: ForgeConfig = {
+  hooks: {
+    postPackage: async (_forgeConfig, packageResult) => {
+      if (
+        process.platform !== 'darwin' ||
+        packageResult.platform !== 'darwin' ||
+        process.env.APPLE_TEAM_ID
+      ) {
+        return;
+      }
+      const appPaths = packageResult.outputPaths.flatMap((outputPath) => {
+        if (outputPath.endsWith('.app')) return [outputPath];
+        if (!existsSync(outputPath) || !statSync(outputPath).isDirectory()) {
+          return [];
+        }
+        return readdirSync(outputPath)
+          .filter((entry) => entry.endsWith('.app'))
+          .map((entry) => path.join(outputPath, entry));
+      });
+
+      for (const outputPath of appPaths) {
+        execFileSync('codesign', [
+          '--force',
+          '--deep',
+          '--sign',
+          '-',
+          outputPath,
+        ], { stdio: 'inherit' });
+      }
+    },
+  },
   packagerConfig: {
+    appBundleId: 'com.nexuside.app',
+    appCategoryType: 'public.app-category.developer-tools',
     // App icon (Matrix-hacker mark): packager appends .icns on macOS. Read at
     // build time from the project root — not shipped inside the asar.
     icon: 'assets/icon',
@@ -38,23 +73,57 @@ const config: ForgeConfig = {
     // lives in build/entitlements.mac.plist and is applied when code signing is
     // configured (osxSign). Present here so an unsigned dev build still prompts.
     extendInfo: {
+      CFBundleName: 'NexusIDE',
+      CFBundleDisplayName: 'NexusIDE',
       NSMicrophoneUsageDescription:
         'NexusIDE uses the microphone for push-to-talk voice commands (Jarvis mode).',
+      CFBundleURLTypes: [
+        {
+          CFBundleURLName: 'com.nexuside.app',
+          CFBundleURLSchemes: ['nexus'],
+        },
+      ],
+      CFBundleDocumentTypes: [
+        {
+          CFBundleTypeName: 'Markdown Document',
+          CFBundleTypeRole: 'Editor',
+          LSHandlerRank: 'Alternate',
+          LSItemContentTypes: ['net.daringfireball.markdown', 'public.markdown'],
+          CFBundleTypeExtensions: ['md', 'markdown'],
+        },
+        {
+          CFBundleTypeName: 'Text Document',
+          CFBundleTypeRole: 'Editor',
+          LSHandlerRank: 'Alternate',
+          LSItemContentTypes: ['public.plain-text', 'public.text'],
+          CFBundleTypeExtensions: ['txt', 'log'],
+        },
+        {
+          CFBundleTypeName: 'Code or Config Document',
+          CFBundleTypeRole: 'Editor',
+          LSHandlerRank: 'Alternate',
+          LSItemContentTypes: ['public.json', 'public.yaml', 'public.source-code'],
+          CFBundleTypeExtensions: ['json', 'yaml', 'yml', 'ts', 'tsx', 'js', 'jsx'],
+        },
+      ],
     },
-    // Code signing + notarization activate ONLY when the build machine exports
-    // the credentials (APPLE_TEAM_ID present). A dev `npm start`/`make` on a
-    // machine without a Developer ID still produces an unsigned local build.
+    // Code signing always runs so extendInfo changes are bound into the app
+    // signature. Without Apple credentials this is ad-hoc (`identity: '-'`):
+    // good for local validation, still not distributable through Gatekeeper.
+    // Notarization activates ONLY when the build machine exports the Apple
+    // credentials (APPLE_TEAM_ID present).
     // Release builds must export: APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD,
     // APPLE_TEAM_ID (see build/notarize.md).
+    osxSign: {
+      ...(process.env.APPLE_TEAM_ID ? {} : { identity: '-' }),
+      // Hardened runtime is on by default in @electron/osx-sign; apply our
+      // entitlements to every Mach-O it signs (app + nested natives).
+      optionsForFile: () => ({
+        entitlements: 'build/entitlements.mac.plist',
+      }),
+    },
     ...(process.env.APPLE_TEAM_ID
       ? {
-          osxSign: {
-            // Hardened runtime is on by default in @electron/osx-sign; apply
-            // our entitlements to every Mach-O it signs (app + nested natives).
-            optionsForFile: () => ({
-              entitlements: 'build/entitlements.mac.plist',
-            }),
-          },
           osxNotarize: {
             appleId: process.env.APPLE_ID as string,
             appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD as string,

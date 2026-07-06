@@ -5,15 +5,19 @@ import {
   getSessionState,
   killSession,
   setPtyHost,
+  spawnAgentSession,
   spawnSession,
   writeSession,
 } from './pty-manager';
-import type { PtyHost, PtyProcHandle } from './pty-host-core';
+import type { PtyHost, PtyProcHandle, PtySpawnSpec } from './pty-host-core';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
 
 // A minimal, valid cli-pty adapter shaped just enough for agentEnv(). Only the
 // `env` block matters here; the rest satisfies the type.
-function makeAdapter(env: CliPtyAdapter['env']): CliPtyAdapter {
+function makeAdapter(
+  env: CliPtyAdapter['env'],
+  spawnPatch: Partial<CliPtyAdapter['spawn']> = {},
+): CliPtyAdapter {
   return {
     kind: 'cli-pty',
     id: 'test-cli',
@@ -30,6 +34,7 @@ function makeAdapter(env: CliPtyAdapter['env']): CliPtyAdapter {
       ptyRequired: true,
       resumeArgs: [],
       extraArgs: [],
+      ...spawnPatch,
     },
     env,
     models: { flag: '--model', list: ['default'], default: 'default' },
@@ -116,8 +121,13 @@ function fakeWc(): WebContents {
 }
 
 // Records the per-session proxy so a test can see which control calls fired.
-function fakeHost(): { host: PtyHost; procFor: (id: string) => PtyProcHandle } {
+function fakeHost(): {
+  host: PtyHost;
+  procFor: (id: string) => PtyProcHandle;
+  specFor: (id: string) => PtySpawnSpec;
+} {
   const procs = new Map<string, PtyProcHandle>();
+  const specs = new Map<string, PtySpawnSpec>();
   return {
     host: {
       spawn(spec) {
@@ -126,11 +136,13 @@ function fakeHost(): { host: PtyHost; procFor: (id: string) => PtyProcHandle } {
           resize: vi.fn(),
           kill: vi.fn(),
         };
+        specs.set(spec.sessionId, spec);
         procs.set(spec.sessionId, proc);
         return proc;
       },
     },
     procFor: (id) => procs.get(id)!,
+    specFor: (id) => specs.get(id)!,
   };
 }
 
@@ -161,5 +173,28 @@ describe('PTY session ownership (renderer capability boundary)', () => {
     killSession(owner, sessionId);
     expect(proc.kill).toHaveBeenCalledTimes(1);
     expect(getSessionState(sessionId)).toBeNull();
+  });
+});
+
+describe('cli-agent spawn argv hardening', () => {
+  it('appends adapter-declared extra args after user overrides', () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+
+    const adapter = makeAdapter(
+      { static: {}, passthrough: [], ephemeralHome: false },
+      { extraArgs: ['--disallowedTools', 'Task'] },
+    );
+
+    const { sessionId } = spawnAgentSession(
+      fakeWc(),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      adapter,
+      { extraArgs: ['--user-flag'] },
+    );
+
+    const spec = h.specFor(sessionId);
+    expect(spec.args).toContain('--user-flag');
+    expect(spec.args.slice(-2)).toEqual(['--disallowedTools', 'Task']);
   });
 });

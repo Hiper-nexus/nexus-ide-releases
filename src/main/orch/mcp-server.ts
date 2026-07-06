@@ -242,14 +242,9 @@ function installSpawnHook(): void {
       NEXUS_GATE_TOKEN: ctx.token,
     };
     const extraArgs: string[] = [];
-    // Delegação VISÍVEL (benchmark §4.5): panes orquestrados do claude não
-    // podem abrir subagentes invisíveis (tool Task) — todo trabalho entre
-    // agentes passa por panes reais + handoff, onde há autorização, telemetria
-    // e watchdog. Panes abertos diretamente pelo usuário (sem meta) ficam
-    // livres: o Task deles age em nome do próprio usuário.
-    if (meta && adapter.id === 'claude') {
-      extraArgs.push('--disallowedTools', 'Task');
-    }
+    // Delegação VISÍVEL (benchmark §4.5): Claude recebe o hard-deny de Task
+    // pelo adapter base, então o bloqueio vale para panes diretos e
+    // orquestrados sem duplicar flags aqui.
     const mcpConfig = buildMcpConfig(ctx.token);
 
     try {

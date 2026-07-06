@@ -466,6 +466,11 @@ export function spawnAgentSession(
     Object.assign(env, decoration.env);
     args.push(...decoration.extraArgs);
   }
+  // Adapter-enforced argv goes last so user/provider settings cannot soften
+  // security invariants such as Claude's hidden-subagent Task deny.
+  if (adapter.spawn.extraArgs.length > 0) {
+    args.push(...adapter.spawn.extraArgs);
+  }
 
   const idleMs =
     adapter.stateParsing.idle.type === 'timeout'
