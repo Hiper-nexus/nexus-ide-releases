@@ -13,43 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.9.0',
+  version: '0.10.0',
   date: '2026-07-06',
-  codename: 'Auto-update & missões confiáveis',
+  codename: 'Billing, times e operação refinada',
   summary:
-    'O NexusIDE agora se atualiza sozinho e avisa quando há versão nova — badge na barra + painel com notas e um clique para instalar. O histórico de missões foi consertado de ponta a ponta (a missão antiga nunca mais some ao abrir outra, e retomar volta para a conversa certa) e o spam de handoff fantasma no orquestrador acabou.',
+    'O NexusIDE agora tem Billing/Team completo de ponta a ponta: checkout e portal via Stripe, webhooks idempotentes, licença assinada no app, times com convites e assentos, além de correções nos pipes, no canvas e no perfil de operador.',
   highlights: [
     {
-      title: 'Auto-update com UI (fim do "às cegas")',
+      title: 'Billing Stripe real',
       detail:
-        'O app checa releases novos no boot e a cada 6h. Havendo versão nova, um badge ⇪ aparece na barra; o painel mostra atual → nova com as notas e o ciclo Baixar e instalar → Reiniciar agora. Download validado e aplicado pelo Squirrel (assinatura conferida).',
+        'Checkout Pro/Team, portal de assinatura, webhook idempotente e espelho local de assinatura agora fecham o ciclo SaaS. O app sincroniza uma licença assinada e nunca fala direto com Stripe.',
     },
     {
-      title: 'Missões que não somem',
+      title: 'Times com convites e assentos',
       detail:
-        'Abrir uma missão nova não apaga a anterior: ela fica no histórico como "travada", com Retomar visível no rail e no Ops Board. A missão nova aparece na hora — o registro nasce no lançamento, sem depender do orquestrador lembrar de criá-lo.',
+        'A tela Minha Conta mostra owner/member, assentos, membros, convite, entrada por código, saída e remoção. O join usa lock transacional para evitar corrida no último assento.',
     },
     {
-      title: 'Retomar volta para a conversa CERTA',
+      title: 'Operação mais previsível',
       detail:
-        'Reabrir uma missão restaura cada pane apontando para a própria conversa daquela missão (resume direcionado), em vez de continuar a conversa mais recente do projeto — que era da outra missão.',
+        'Pipes entregam imediatamente ao criar conexão onIdle, o canvas não arrasta quando você está selecionando texto e o perfil de operador ganhou atalho e estado vazio.',
     },
   ],
   fixes: [
     {
-      title: 'Spam de handoff fantasma',
+      title: 'Checkout Team sem travar usuário',
       detail:
-        'O orquestrador recebia "[nexus handoff] … <resumo objetivo do que fez>" em loop, até depois de o terminal do worker fechar: o eco/repaint do próprio contrato de kickoff era lido como entrega real. Placeholders são ignorados e repaints deduplicados.',
+        'Se o pagamento falhar, o checkout Team reutiliza o time pendente do owner e um reaper remove órfãos antigos, evitando 409 sem rota de recuperação.',
     },
     {
-      title: 'Clique morto na missão antiga',
+      title: 'Grace e webhooks idempotentes',
       detail:
-        'Panes mortos mantinham a missão deslocada marcada como "aberta" para sempre — o clique não fazia nada e o Retomar ficava escondido. Os vínculos agora morrem junto com os panes.',
+        'A graça de past_due é ancorada na primeira observação e retries do Stripe não estendem acesso indefinidamente. Eventos já processados não rodam de novo.',
     },
     {
-      title: 'Retomar a missão aberta não a mata mais',
+      title: 'Checkout inválido bloqueado no app',
       detail:
-        'A missão viva aparecia como "não aberta" e o Retomar dela matava e recriava a própria missão. O pane do orquestrador agora é vinculado corretamente e há guarda contra reabrir o que já está aberto.',
+        'O CTA Team envia nome do time e assentos ao backend, e o plano Free não é mais mapeado por engano para checkout Pro.',
     },
   ],
 };

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.10.0 — Billing, times e operação refinada
+
+Data: 2026-07-06
+
+Billing/Team completo de ponta a ponta, checkout real via Stripe, licenças assinadas no app, times com convite/assentos e melhorias de operação no canvas, pipes e perfil de operador.
+
+### Melhorias
+
+- Backend SaaS completo para Billing/Team: checkout Pro/Team, portal Stripe, webhook idempotente, espelho de assinatura, grace `past_due` ancorada, entitlement pessoal vs time e licença JWT com TTL 30d/7d.
+- Fluxo de time no app: bloco de Conta mostra owner/member, assentos usados, membros, geração de convite, entrada por código, saída e remoção de membro.
+- Checkout Team no app agora envia nome do time e número de assentos ao backend; plano Free não vira checkout Pro por fallback indevido.
+- Páginas web mínimas para `/billing/success`, `/billing/cancel` e `/join/<code>`, com código de convite sanitizado.
+- Pipes entregam mensagens imediatamente ao criar uma conexão `onIdle`, com logs e badge de entregas na edge.
+- Canvas evita drag acidental ao selecionar texto dentro de terminal/browser panes.
+- Perfil de operador ganhou atalho e estado vazio mais claro.
+
+### Correções
+
+- Webhook Stripe reprocessa eventos não concluídos sem duplicar eventos já processados.
+- Checkout Team reutiliza time pendente do owner e o reaper remove órfãos antigos, evitando travar o usuário quando o pagamento falha.
+- Join de time usa advisory lock e guarda de assentos para corrida no último assento.
+- LGPD: owner com assinatura de time viva não consegue apagar a conta antes de cancelar o time.
+- UI de Conta não renderiza CTA de checkout inválido para Free e mostra erro retornado pelo backend.
+
 ## 0.9.0 — Auto-update & missões confiáveis
 
 Data: 2026-07-06
