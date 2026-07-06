@@ -92,7 +92,20 @@ export const GAMIFICATION_COPY = {
   levelUp: (tier: GamificationTier) => `Subiu para ${tier}.`,
   prestigeUp: (stars: number) => `Transcendência ${stars} alcançada.`,
   achievementUnlocked: (title: string) => `Conquista desbloqueada: ${title}.`,
-  /** id → copy da conquista (renderer nunca importa código do main).
-   *  Populado na Parte 2 Task 4. */
-  achievements: {} as Record<string, { title: string; description: string }>,
+  /** id → copy da conquista (renderer nunca importa código do main). */
+  achievements: {
+    'primeira-missao': { title: 'Primeiro Deploy', description: 'Concluiu a primeira missão.' },
+    'primeira-missao-verde': { title: 'Luz Verde', description: 'Primeira missão concluída com verificação passando.' },
+    'primeira-agentica': { title: 'Arquiteto de Times', description: 'Primeira missão criada no modo Agêntico.' },
+    'primeira-imagem': { title: 'Pintor Pixel', description: 'Primeira imagem gerada por um agente.' },
+    'primeiro-video': { title: 'Diretor', description: 'Primeiro vídeo gerado por um agente.' },
+    'primeiro-audio': { title: 'Locutor', description: 'Primeira locução gerada por um agente.' },
+    centuriao: { title: 'Centurião', description: '100 handoffs entregues com sucesso.' },
+    economico: { title: 'Eficiência de Elite', description: '10 missões fechadas na banda de custo eficiente.' },
+    'sequencia-5': { title: 'Ritmo', description: 'Streak de 5 dias úteis entregando.' },
+    'sequencia-20': { title: 'Imparável', description: 'Streak de 20 dias úteis entregando.' },
+    evolucao: { title: 'Metamorfose', description: 'O mascote evoluiu para um ramo de especialização.' },
+    maratona: { title: 'Maratonista', description: '50 missões verdes concluídas.' },
+    transcendente: { title: 'Transcendente', description: 'Primeiro prestígio: a jornada recomeça com estrela.' },
+  } as Record<string, { title: string; description: string }>,
 } as const;
