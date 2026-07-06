@@ -76,16 +76,16 @@ function insertRawSquad(
 }
 
 /**
- * The "Clone Overclock" roster AS IT SITS ON DISK (~/.nexus/squads.json):
+ * The "Clone Custom" roster AS IT SITS ON DISK (~/.nexus/squads.json):
  * every worker was saved before the fix, so NONE carries `allowedTools`.
  * Orchestrator + 7 workers (scout-web, architect, dev-core, dev-desktop,
  * dev-frontend, reviewer, security).
  */
-const CLONE_OVERCLOCK_RAW = {
-  id: 'clone-overclock',
-  name: 'Clone Overclock',
+const CLONE_CUSTOM_RAW = {
+  id: 'clone-custom',
+  name: 'Clone Custom',
   builtin: false,
-  orchestratorInstructions: '# Clone Overclock',
+  orchestratorInstructions: '# Clone Custom',
   agents: [
     { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude' },
     { id: 'scout-web', agentName: 'Scout Web', category: 'scout', cli: 'gemini' },
@@ -110,15 +110,15 @@ afterEach(() => {
 });
 
 describe('squad-store load path self-heals existing squads', () => {
-  it('unblocks the on-disk "Clone Overclock" roster at boot (real path)', () => {
+  it('unblocks the on-disk "Clone Custom" roster at boot (real path)', () => {
     const db = makeDb();
     openDb = db;
-    insertRawSquad(db, CLONE_OVERCLOCK_RAW);
+    insertRawSquad(db, CLONE_CUSTOM_RAW);
 
     // Genuine boot path: hydrate from SQLite exactly as the app does.
     initSquadStore(db);
 
-    const loaded = getSquad('clone-overclock');
+    const loaded = getSquad('clone-custom');
     expect(loaded).not.toBeNull();
     const squad = loaded as Squad;
 
@@ -142,14 +142,14 @@ describe('squad-store load path self-heals existing squads', () => {
   it('re-persists the healed roster so the DB row is fixed durably', () => {
     const db = makeDb();
     openDb = db;
-    insertRawSquad(db, CLONE_OVERCLOCK_RAW);
+    insertRawSquad(db, CLONE_CUSTOM_RAW);
 
     initSquadStore(db);
 
     // Read the raw row back: the healed allowlists must be written through.
     const row = db
       .prepare('SELECT roster_json FROM squads WHERE id = ?')
-      .get('clone-overclock') as { roster_json: string };
+      .get('clone-custom') as { roster_json: string };
     const persisted = JSON.parse(row.roster_json) as SquadAgent[];
     const persistedWorkers = persisted.filter(
       (a) => a.category !== 'orchestrator',

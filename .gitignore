@@ -53,5 +53,6 @@ Icon
 .vite/
 out/
 
-# Estado local do Overclock (pode conter tokens de auth)
+# Estado local de ferramentas de terceiros (pode conter tokens de auth) —
+# nunca versionar dados de outros apps que apareçam no working dir.
 .overclock-app/

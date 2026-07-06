@@ -8,8 +8,8 @@ import type {
 /**
  * Persistência de custo de GERAÇÃO DE MÍDIA (imagem/vídeo/áudio) no SQLite
  * compartilhado — mesma filosofia do token_usage: auditável, sobrevive ao
- * restart, alimenta o painel de custo. O Overclock não soma mídia ao painel;
- * nós somamos (parte do "superar" da auditoria 2026-07-06).
+ * restart, alimenta o painel de custo (mídia entra no total de gasto do
+ * workspace, não só os tokens).
  */
 
 export interface MediaUsageRecord {

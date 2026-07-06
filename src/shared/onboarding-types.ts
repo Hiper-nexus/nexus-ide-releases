@@ -2,8 +2,8 @@ import { z } from 'zod';
 
 /**
  * Onboarding de primeira execução — estado persistido + "vitórias" (checklist
- * que ensina a interface). Espelha o padrão do Overclock (getState/setState),
- * mas sem telemetria: tudo local em ~/.nexus/onboarding.json.
+ * que ensina a interface). Sem telemetria: tudo local em
+ * ~/.nexus/onboarding.json.
  */
 
 export const ONBOARDING_CHANNELS = {

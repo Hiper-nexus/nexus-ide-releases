@@ -1,10 +1,10 @@
 import type { JarvisContext, JarvisReply } from '../../shared/voice-ipc';
 
 /**
- * Fast-path do Jarvis (benchmark §3): consultas de ESTADO respondem direto do
- * contexto do app, sem tocar no LLM — latência percebida cai de ~1s para ~0.
- * (No Overclock, `consultar/ler/navegar` respondem sem passar pelo modelo; é a
- * maior alavanca individual da sensação de "assistente vivo".)
+ * Fast-path do Jarvis: consultas de ESTADO respondem direto do contexto do
+ * app, sem tocar no LLM — latência percebida cai de ~1s para ~0. Responder
+ * "consultar/ler/navegar" sem passar pelo modelo é a maior alavanca individual
+ * da sensação de "assistente vivo".
  *
  * Regra de ouro: SÓ perguntas de leitura inequívocas. Qualquer verbo de ação
  * ("abre", "roda", "cria"…) ou ambiguidade → null → o cérebro LLM decide.

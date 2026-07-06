@@ -4,10 +4,9 @@ import { toSpeakable } from './speakable';
 import type { Handoff } from '../../shared/orch-types';
 
 /**
- * Narração proativa (benchmark §3): quando um worker entrega, trava ou falha,
- * a JARVIS AVISA em voz alta em vez de esperar ser perguntada — o usuário fica
- * de olho no código, não na timeline. Espelha o poll de narração do Overclock,
- * mas dirigido a evento (onHandoffsChange), sem polling.
+ * Narração proativa: quando um worker entrega, trava ou falha, a JARVIS AVISA
+ * em voz alta em vez de esperar ser perguntada — o usuário fica de olho no
+ * código, não na timeline. Dirigido a evento (onHandoffsChange), sem polling.
  *
  * Anti-tagarelice: só narra em modo jarvis; nunca narra histórico (seed no
  * boot); junta rajadas num único aviso (debounce 1,5s); dedupe por handoff; e
