@@ -85,6 +85,7 @@ import {
   unregisterCostListener,
 } from './orch/cost-ipc';
 import { registerBillingIpc } from './persistence/billing-ipc';
+import { syncLicenseOnBoot } from './license-sync';
 import { registerOnboardingIpc } from './persistence/onboarding-store';
 import {
   registerNotesIpc,
@@ -147,6 +148,7 @@ function bootstrap(): void {
   initUsageTelemetry();
   registerNotesIpc();
   registerBillingIpc();
+  syncLicenseOnBoot();
   registerOnboardingIpc();
   registerPipeIpc(); // also calls initPanePipes()
   registerRemoteIpc();
