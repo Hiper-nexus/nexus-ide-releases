@@ -832,6 +832,15 @@ export function RemoteSection() {
             <p className="settings-list__detail">
               {info.urls.join(' · ') || 'sem URL ativa'}
             </p>
+            {info.urls.length > 0 && (
+              <p className="settings-list__detail">
+                📱 abra no celular:{' '}
+                {info.urls
+                  .filter((u) => !u.includes('127.0.0.1'))
+                  .map((u) => u.replace('wss://', 'https://'))
+                  .join(' · ') || 'só localhost — conecte na mesma rede'}
+              </p>
+            )}
             <p className="settings-list__detail">
               cert: {info.certFingerprint ?? '—'} · clients: {info.clientCount}
             </p>

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { IncomingMessage } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +11,7 @@ import type {
   RemoteBridgeStartRequest,
 } from '../../shared/remote-types';
 import { writeJsonAtomic } from '../util/atomic-write';
+import { REMOTE_CLIENT_HTML } from './remote-client-page';
 import { listMissions } from '../orch/mission-store';
 import {
   findPane,
@@ -406,6 +407,30 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
   });
 }
 
+/**
+ * Serve o thin client mobile na raiz (GET /). Auth continua no WebSocket
+ * (pareamento por código → token); a página é só o cliente. Qualquer outra
+ * rota é 404 — nenhum estado é exposto por HTTP.
+ */
+function serveClientPage(req: IncomingMessage, res: ServerResponse): void {
+  if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      // Sem inline eval; scripts/estilos inline próprios da página; conexão só
+      // ao mesmo host (o WSS da bridge).
+      'Content-Security-Policy':
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+        "connect-src wss: 'self'; base-uri 'none'; form-action 'none'",
+    });
+    res.end(REMOTE_CLIENT_HTML);
+    return;
+  }
+  res.writeHead(404, { 'Content-Type': 'text/plain' });
+  res.end('not found');
+}
+
 export async function startRemoteBridge(
   req: RemoteBridgeStartRequest = {},
 ): Promise<RemoteBridgeInfo> {
@@ -413,7 +438,7 @@ export async function startRemoteBridge(
   const tls = await ensureTls();
   const host = req.host ?? '0.0.0.0';
   await new Promise<void>((resolve, reject) => {
-    server = https.createServer({ key: tls.key, cert: tls.cert });
+    server = https.createServer({ key: tls.key, cert: tls.cert }, serveClientPage);
     wss = new WebSocketServer({ server, maxPayload: MAX_MESSAGE_BYTES });
     wss.on('connection', onConnection);
     wss.on('error', (err) => console.warn('[remote-bridge] wss error:', err));
