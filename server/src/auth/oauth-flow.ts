@@ -50,17 +50,22 @@ export async function exchangeCode(
   http: HttpDeps,
 ): Promise<OAuthProfile> {
   const def = PROVIDERS[provider];
+  // OAuth 2.0 (RFC 6749 §4.1.3): o token endpoint recebe form-urlencoded.
+  // Google REJEITA JSON aqui; GitHub tolera os dois — usamos o padrão.
   const tokenRes = await http.fetchFn(def.tokenUrl, {
     method: 'POST',
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: JSON.stringify({
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
       client_id: p.clientId,
       client_secret: p.clientSecret,
       code: p.code,
       redirect_uri: p.redirectUri,
       grant_type: 'authorization_code',
       code_verifier: p.verifier,
-    }),
+    }).toString(),
   });
   if (!tokenRes.ok) {
     throw new Error(`${provider} token exchange HTTP ${tokenRes.status}`);

@@ -84,6 +84,16 @@ describe('exchangeCode', () => {
     expect(profile.providerUserId).toBe('7');
     expect(profile.email).toBe('u@x.com');
     expect(fetchFn).toHaveBeenCalledTimes(3);
+    // O token endpoint do Google REJEITA JSON — o padrão OAuth 2.0 é
+    // form-urlencoded, e o corpo precisa ser parseável como querystring.
+    const [, tokenInit] = fetchFn.mock.calls[0] as [string, RequestInit];
+    expect((tokenInit.headers as Record<string, string>)['content-type']).toBe(
+      'application/x-www-form-urlencoded',
+    );
+    const body = new URLSearchParams(String(tokenInit.body));
+    expect(body.get('grant_type')).toBe('authorization_code');
+    expect(body.get('code_verifier')).toBe('v');
+    expect(body.get('client_id')).toBe('id');
   });
 
   it('erro HTTP na troca de token vira exceção', async () => {
