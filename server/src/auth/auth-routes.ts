@@ -23,6 +23,8 @@ export interface AuthDeps {
 
 const STATE_TTL = 10 * 60 * 1000;
 const CODE_TTL = 60 * 1000;
+/** Nonce do desktop: mesmo conjunto seguro do deep link, com teto. */
+const APP_STATE_RE = /^[A-Za-z0-9._~-]{1,128}$/;
 
 function isProvider(p: string): p is Provider {
   return p === 'github' || p === 'google';
@@ -43,10 +45,16 @@ export function buildAuthRouter(deps: AuthDeps): Router {
   r.get('/auth/:provider', authLimit, ah(async (req, res) => {
     const p = String(req.params.provider);
     if (!isProvider(p)) return res.status(404).json({ ok: false, error: 'provider' });
+    // O login SÓ nasce no desktop: sem o nonce local (app_state) não há como
+    // o app validar o retorno, então o fluxo nem começa (anti login-CSRF).
+    const appState = String(req.query.app_state ?? '');
+    if (!APP_STATE_RE.test(appState)) {
+      return res.status(400).json({ ok: false, error: 'app_state obrigatório' });
+    }
     const state = newToken();
     const { verifier, challenge } = makePkce();
     await db.insert(oauthStates).values({
-      state, provider: p, codeVerifier: verifier,
+      state, provider: p, codeVerifier: verifier, appState,
       expiresAt: new Date(now() + STATE_TTL),
     });
     res.redirect(authorizeUrl(p, {
@@ -77,7 +85,9 @@ export function buildAuthRouter(deps: AuthDeps): Router {
       codeHash: hashToken(rawCode), accountId,
       expiresAt: new Date(now() + CODE_TTL),
     });
-    res.redirect(`${env.APP_DEEP_LINK_BASE}/${rawCode}`);
+    // Devolve o nonce do desktop: o app rejeita o deep link se não casar
+    // com o login pendente que ele mesmo iniciou.
+    res.redirect(`${env.APP_DEEP_LINK_BASE}/${rawCode}?state=${st.appState}`);
   }));
 
   r.post('/auth/exchange', authLimit, ah(async (req, res) => {

@@ -71,6 +71,9 @@ export const oauthStates = pgTable('oauth_states', {
   state: text('state').primaryKey(),
   provider: providerEnum('provider').notNull(),
   codeVerifier: text('code_verifier').notNull(),
+  /** Nonce gerado pelo DESKTOP ao iniciar o login; volta no deep link como
+   * ?state= e o app só aceita se casar com o fluxo pendente (anti-CSRF). */
+  appState: text('app_state').notNull(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   expiresAt: timestamp('expires_at').notNull(),
 });
@@ -116,7 +119,8 @@ CREATE TABLE refresh_tokens (
   created_at timestamp NOT NULL DEFAULT now());
 CREATE TABLE oauth_states (
   state text PRIMARY KEY, provider provider NOT NULL,
-  code_verifier text NOT NULL, created_at timestamp NOT NULL DEFAULT now(),
+  code_verifier text NOT NULL, app_state text NOT NULL,
+  created_at timestamp NOT NULL DEFAULT now(),
   expires_at timestamp NOT NULL);
 CREATE TABLE auth_codes (
   code_hash text PRIMARY KEY,

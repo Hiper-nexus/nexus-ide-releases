@@ -15,6 +15,13 @@
       "when": 1783359399677,
       "tag": "0001_identities_provider_subject_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783359817252,
+      "tag": "0002_oauth_states_app_state",
+      "breakpoints": true
     }
   ]
 }

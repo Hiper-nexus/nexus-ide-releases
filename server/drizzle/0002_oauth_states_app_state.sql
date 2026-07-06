@@ -1,0 +1,1 @@
+ALTER TABLE "oauth_states" ADD COLUMN "app_state" text NOT NULL;

@@ -35,17 +35,26 @@ async function setup() {
   return { app, db, fetchFn };
 }
 
+/** Extrai o code do redirect nexus://auth/<code>?state=... */
+function deepLinkCode(location: string): string {
+  return new URL(location).pathname.replace(/^\/+/, '');
+}
+
 describe('auth-routes', () => {
   it('loop completo: authorize → callback → exchange → me', async () => {
     const { app } = await setup();
-    const auth = await request(app).get('/v1/auth/github');
+    const auth = await request(app).get('/v1/auth/github?app_state=nonce-local-1');
     expect(auth.status).toBe(302);
     const loc = new URL(auth.headers.location);
     const state = loc.searchParams.get('state')!;
     expect(state).toBeTruthy();
     const cb = await request(app).get(`/v1/auth/github/callback?code=abc&state=${state}`);
     expect(cb.status).toBe(302);
-    const code = cb.headers.location.replace('nexus://auth/', '');
+    // O deep link devolve o app_state — é o binding que o desktop valida
+    // contra o login pendente (anti login-CSRF/fixation).
+    const back = new URL(cb.headers.location);
+    expect(back.searchParams.get('state')).toBe('nonce-local-1');
+    const code = deepLinkCode(cb.headers.location);
     expect(code).toBeTruthy();
     const ex = await request(app).post('/v1/auth/exchange').send({ code });
     expect(ex.status).toBe(200);
@@ -60,12 +69,18 @@ describe('auth-routes', () => {
     expect(ex2.status).toBe(400);
   });
 
+  it('authorize sem app_state → 400 (binding local é obrigatório)', async () => {
+    const { app } = await setup();
+    expect((await request(app).get('/v1/auth/github')).status).toBe(400);
+    expect((await request(app).get('/v1/auth/github?app_state=tem espaço')).status).toBe(400);
+  });
+
   it('exchange concorrente do mesmo code: exatamente um vence', async () => {
     const { app } = await setup();
-    const auth = await request(app).get('/v1/auth/github');
+    const auth = await request(app).get('/v1/auth/github?app_state=n1');
     const state = new URL(auth.headers.location).searchParams.get('state')!;
     const cb = await request(app).get(`/v1/auth/github/callback?code=abc&state=${state}`);
-    const code = cb.headers.location.replace('nexus://auth/', '');
+    const code = deepLinkCode(cb.headers.location);
     // Duplo resgate simultâneo do deep-link code (TOCTOU): o consumo
     // atômico garante 1×200 + 1×400, nunca dois pares de sessão.
     const [a, b] = await Promise.all([
@@ -86,7 +101,7 @@ describe('auth-routes', () => {
     // Provider fora do ar durante o callback: sem asyncHandler, a promise
     // rejeitada em Express 4 nunca responde e a request fica pendurada.
     fetchFn.mockReset().mockRejectedValue(new Error('provider caiu'));
-    const auth = await request(app).get('/v1/auth/github');
+    const auth = await request(app).get('/v1/auth/github?app_state=n2');
     const state = new URL(auth.headers.location).searchParams.get('state')!;
     const r = await request(app)
       .get(`/v1/auth/github/callback?code=abc&state=${state}`)
@@ -97,10 +112,10 @@ describe('auth-routes', () => {
 
   it('DELETE /me apaga a conta (LGPD)', async () => {
     const { app, db } = await setup();
-    const auth = await request(app).get('/v1/auth/github');
+    const auth = await request(app).get('/v1/auth/github?app_state=n3');
     const state = new URL(auth.headers.location).searchParams.get('state')!;
     const cb = await request(app).get(`/v1/auth/github/callback?code=abc&state=${state}`);
-    const code = cb.headers.location.replace('nexus://auth/', '');
+    const code = deepLinkCode(cb.headers.location);
     const ex = await request(app).post('/v1/auth/exchange').send({ code });
     const del = await request(app).delete('/v1/me').set('authorization', `Bearer ${ex.body.data.session}`);
     expect(del.status).toBe(200);
