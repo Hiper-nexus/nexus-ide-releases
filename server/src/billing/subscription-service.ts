@@ -12,8 +12,6 @@ import type { StripeSubscription } from './stripe-like';
 export const GRACE_MS = 7 * 24 * 3600 * 1000;
 export type PriceMap = { pricePro: string; priceTeam: string };
 
-const PAID_STATUSES = new Set(['active', 'trialing', 'past_due']);
-
 export async function applySubscriptionState(
   db: Db,
   sub: StripeSubscription,
@@ -24,7 +22,22 @@ export async function applySubscriptionState(
   const plan = priceId === prices.priceTeam || sub.metadata.plan === 'team' ? 'team' : 'pro';
   const teamId = sub.metadata.teamId || null;
   const accountId = sub.metadata.accountId || null;
-  const graceUntil = sub.status === 'past_due' ? new Date(now() + GRACE_MS) : null;
+
+  // Ancora a graça na primeira observação de past_due: se a linha já estava
+  // past_due com graceUntil setado, REUSA esse valor (retries do Stripe não
+  // empurram a graça pra sempre). Só computa now()+GRACE_MS quando o status
+  // anterior não era past_due. Sair de past_due zera a graça.
+  const [existing] = await db
+    .select()
+    .from(subscriptions)
+    .where(eq(subscriptions.stripeSubscriptionId, sub.id))
+    .limit(1);
+  let graceUntil: Date | null = null;
+  if (sub.status === 'past_due') {
+    graceUntil = existing?.status === 'past_due' && existing.graceUntil
+      ? existing.graceUntil
+      : new Date(now() + GRACE_MS);
+  }
   const values = {
     ownerType: (teamId ? 'team' : 'account') as 'team' | 'account',
     accountId: teamId ? null : accountId,
@@ -44,10 +57,12 @@ export async function applySubscriptionState(
     .onConflictDoUpdate({ target: subscriptions.stripeSubscriptionId, set: values });
 
   // Cache do plano PESSOAL (time não mexe em accounts.plan — o entitlement
-  // de membro é calculado na licença).
+  // de membro é calculado na licença). past_due só mantém o plano enquanto a
+  // graça (ancorada acima) não venceu; graça vencida rebaixa para 'free'.
   if (!teamId && accountId) {
-    const inGrace = sub.status === 'past_due' && graceUntil !== null;
-    const effective = PAID_STATUSES.has(sub.status) || inGrace ? plan : 'free';
+    const inGrace = sub.status === 'past_due' && graceUntil !== null && graceUntil.getTime() > now();
+    const isPaidNow = sub.status === 'active' || sub.status === 'trialing';
+    const effective = isPaidNow || inGrace ? plan : 'free';
     await db.update(accounts).set({ plan: effective as 'free' | 'pro' | 'team' })
       .where(eq(accounts.id, accountId));
   }

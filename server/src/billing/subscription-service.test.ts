@@ -66,6 +66,40 @@ describe('applySubscriptionState', () => {
     expect(a.plan).toBe('free');
   });
 
+  it('grace é ancorada: reaplicar past_due depois NÃO estende graceUntil', async () => {
+    const db = await makeTestDb();
+    const acc = await anAccount(db);
+    const t0 = Date.now();
+    await applySubscriptionState(db, sub(acc), PRICES, () => t0);
+    await applySubscriptionState(db, sub(acc, { status: 'past_due' }), PRICES, () => t0);
+    const [first] = await db.select().from(schema.subscriptions);
+    const firstGrace = first.graceUntil!.getTime();
+
+    const t1 = t0 + 3 * 24 * 3600 * 1000; // +3 dias, mesmo estado reaplicado
+    await applySubscriptionState(db, sub(acc, { status: 'past_due' }), PRICES, () => t1);
+    const [second] = await db.select().from(schema.subscriptions);
+
+    expect(second.graceUntil!.getTime()).toBe(firstGrace);
+  });
+
+  it('past_due com grace vencida rebaixa o cache pra free', async () => {
+    const db = await makeTestDb();
+    const acc = await anAccount(db);
+    const t0 = Date.now();
+    await applySubscriptionState(db, sub(acc), PRICES, () => t0);
+    await applySubscriptionState(db, sub(acc, { status: 'past_due' }), PRICES, () => t0);
+    const [afterFirst] = await db.select().from(schema.subscriptions);
+    const firstGrace = afterFirst.graceUntil!.getTime();
+
+    const t1 = t0 + 8 * 24 * 3600 * 1000; // +8 dias, além dos 7d de graça
+    await applySubscriptionState(db, sub(acc, { status: 'past_due' }), PRICES, () => t1);
+
+    const [row] = await db.select().from(schema.subscriptions);
+    expect(row.graceUntil!.getTime()).toBe(firstGrace); // não re-estende
+    const [a] = await db.select().from(schema.accounts).where(eq(schema.accounts.id, acc));
+    expect(a.plan).toBe('free');
+  });
+
   it('team: seats do quantity; sem accountId no cache', async () => {
     const db = await makeTestDb();
     const acc = await anAccount(db);
