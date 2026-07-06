@@ -69,7 +69,9 @@ const handoffSubmitTool: McpToolDef = {
   description:
     'Submit your work handoff to the orchestrator: ' +
     '{status: success|partial|blocked|failed, summary, artifacts?}. Always ' +
-    'allowed regardless of allowlists. Required before a worker finishes.',
+    'allowed regardless of allowlists. Required before a worker finishes. ' +
+    'Attach {kind:"verification", command, exitCode:0} in artifacts to count ' +
+    'as a VERIFIED (green) delivery.',
   inputSchema: {
     type: 'object',
     properties: {

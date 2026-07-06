@@ -126,6 +126,9 @@ export function recordMediaUsage(
     const { notifyMediaGenerated } =
       require('./usage-service') as typeof import('./usage-service');
     notifyMediaGenerated();
+    const { recordMediaGeneratedForGamification } =
+      require('../gamification/gamification-service') as typeof import('../gamification/gamification-service');
+    recordMediaGeneratedForGamification(result.kind, ctx.missionId ?? null);
   } catch (err) {
     // Telemetria nunca derruba a geração — o arquivo já foi entregue.
     console.warn('[media-usage] falha ao registrar:', err);

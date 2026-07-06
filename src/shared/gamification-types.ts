@@ -92,6 +92,7 @@ export const GAMIFICATION_COPY = {
   levelUp: (tier: GamificationTier) => `Subiu para ${tier}.`,
   prestigeUp: (stars: number) => `Transcendência ${stars} alcançada.`,
   achievementUnlocked: (title: string) => `Conquista desbloqueada: ${title}.`,
+  branchEvolved: (branchName: string) => `Evolução: ${branchName}.`,
   /** id → copy da conquista (renderer nunca importa código do main). */
   achievements: {
     'primeira-missao': { title: 'Primeiro Deploy', description: 'Concluiu a primeira missão.' },
