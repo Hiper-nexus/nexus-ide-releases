@@ -1,0 +1,78 @@
+import { describe, expect, it, vi } from 'vitest';
+import express from 'express';
+import request from 'supertest';
+import { PGlite } from '@electric-sql/pglite';
+import { drizzle } from 'drizzle-orm/pglite';
+import { generateKeyPair, exportPKCS8, exportSPKI } from 'jose';
+import * as schema from '../db/schema';
+import { CREATE_TABLES_SQL } from '../db/schema';
+import type { Db } from '../db/client';
+import type { Env } from '../env';
+import { buildAuthRouter } from './auth-routes';
+
+async function setup() {
+  const client = new PGlite();
+  await client.exec(CREATE_TABLES_SQL);
+  const db = drizzle(client, { schema }) as unknown as Db;
+  const { publicKey, privateKey } = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
+  const env = {
+    LICENSE_PRIVATE_KEY: await exportPKCS8(privateKey),
+    LICENSE_PUBLIC_KEY: await exportSPKI(publicKey),
+    GITHUB_OAUTH_ID: 'gid', GITHUB_OAUTH_SECRET: 'gsec',
+    GOOGLE_OAUTH_ID: 'ggid', GOOGLE_OAUTH_SECRET: 'ggsec',
+    PUBLIC_BASE_URL: 'https://api.test', APP_DEEP_LINK_BASE: 'nexus://auth',
+    DATABASE_URL: 'x', PORT: 8080,
+  } as Env;
+  const fetchFn = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 't' }), { headers: { 'content-type': 'application/json' } }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: 1, login: 'u', name: 'U', avatar_url: 'a' })))
+    .mockResolvedValueOnce(new Response(JSON.stringify([{ email: 'u@x.com', primary: true, verified: true }])));
+  const app = express();
+  app.use(express.json());
+  app.use('/v1', buildAuthRouter({ db, env, fetchFn: fetchFn as unknown as typeof fetch }));
+  return { app, db, fetchFn };
+}
+
+describe('auth-routes', () => {
+  it('loop completo: authorize → callback → exchange → me', async () => {
+    const { app } = await setup();
+    const auth = await request(app).get('/v1/auth/github');
+    expect(auth.status).toBe(302);
+    const loc = new URL(auth.headers.location);
+    const state = loc.searchParams.get('state')!;
+    expect(state).toBeTruthy();
+    const cb = await request(app).get(`/v1/auth/github/callback?code=abc&state=${state}`);
+    expect(cb.status).toBe(302);
+    const code = cb.headers.location.replace('nexus://auth/', '');
+    expect(code).toBeTruthy();
+    const ex = await request(app).post('/v1/auth/exchange').send({ code });
+    expect(ex.status).toBe(200);
+    expect(ex.body.data.session).toBeTruthy();
+    expect(ex.body.data.refresh).toBeTruthy();
+    expect(ex.body.data.licenca).toBeTruthy();
+    const me = await request(app).get('/v1/me').set('authorization', `Bearer ${ex.body.data.session}`);
+    expect(me.status).toBe(200);
+    expect(me.body.data.plan).toBe('free');
+    expect(me.body.data.email).toBe('u@x.com');
+    const ex2 = await request(app).post('/v1/auth/exchange').send({ code });
+    expect(ex2.status).toBe(400);
+  });
+
+  it('callback com state inválido → 400', async () => {
+    const { app } = await setup();
+    const r = await request(app).get('/v1/auth/github/callback?code=x&state=naoexiste');
+    expect(r.status).toBe(400);
+  });
+
+  it('DELETE /me apaga a conta (LGPD)', async () => {
+    const { app, db } = await setup();
+    const auth = await request(app).get('/v1/auth/github');
+    const state = new URL(auth.headers.location).searchParams.get('state')!;
+    const cb = await request(app).get(`/v1/auth/github/callback?code=abc&state=${state}`);
+    const code = cb.headers.location.replace('nexus://auth/', '');
+    const ex = await request(app).post('/v1/auth/exchange').send({ code });
+    const del = await request(app).delete('/v1/me').set('authorization', `Bearer ${ex.body.data.session}`);
+    expect(del.status).toBe(200);
+    expect(await db.select().from(schema.accounts)).toHaveLength(0);
+  });
+});
