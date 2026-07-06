@@ -54,6 +54,7 @@ function buildNode(
     width: layout.size.width,
     height: layout.size.height,
     zIndex: pane.id === focusedPaneId ? 1000 : layout.z,
+    dragHandle: '.toolbar, .canvas-pane__snapshot',
     data: { pane },
     // Prevent xyflow from auto-measuring (we control dimensions explicitly).
     measured: { width: layout.size.width, height: layout.size.height },
@@ -202,15 +203,19 @@ export function CanvasView() {
   // "Edges que conversam": one edge per pipe; drawing one pipes source→target.
   const edges: Edge[] = useMemo(
     () =>
-      pipes.map((p) => ({
-        id: p.id,
-        source: p.sourcePaneId,
-        target: p.targetPaneId,
-        animated: p.mode === 'stream',
-        label: p.mode === 'stream' ? 'stream' : 'ao ficar idle',
-        style: { stroke: 'var(--accent)', strokeWidth: 2 },
-        labelStyle: { fill: 'var(--text-dim)', fontSize: 10 },
-      })),
+      pipes.map((p) => {
+        const count = p.deliveryCount ?? 0;
+        const badge = count > 0 ? ` (${count})` : '';
+        return {
+          id: p.id,
+          source: p.sourcePaneId,
+          target: p.targetPaneId,
+          animated: p.mode === 'stream' || count > 0,
+          label: (p.mode === 'stream' ? 'stream' : 'ao ficar idle') + badge,
+          style: { stroke: 'var(--accent)', strokeWidth: 2 },
+          labelStyle: { fill: 'var(--text-dim)', fontSize: 10 },
+        };
+      }),
     [pipes],
   );
 
