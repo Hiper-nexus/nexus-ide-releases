@@ -4,8 +4,14 @@ import {
   tapSessionData,
   tapSessionExit,
   tapSessionState,
+  getSessionState,
 } from '../pty/pty-manager';
-import { getPanesVersion, findPane, readSessionOutput, stripAnsi } from './pane-registry';
+import {
+  getPanesVersion,
+  findPane,
+  readSessionOutput,
+  stripAnsi,
+} from './pane-registry';
 import { ChangeHub, makeId } from './store-util';
 import {
   InjectionGuard,
@@ -56,6 +62,7 @@ const flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const idleDirty = new Set<string>();
 const lastIdleDeliveryAt = new Map<string, number>();
 const lastIdleDeliveryText = new Map<string, string>();
+const deliveryCounts = new Map<string, number>();
 const guard = new InjectionGuard();
 const hub = new ChangeHub();
 let tapsInstalled = false;
@@ -69,6 +76,7 @@ function clearPipeState(pipeId: string): void {
   idleDirty.delete(pipeId);
   lastIdleDeliveryAt.delete(pipeId);
   lastIdleDeliveryText.delete(pipeId);
+  deliveryCounts.delete(pipeId);
 }
 
 /**
@@ -78,8 +86,20 @@ function clearPipeState(pipeId: string): void {
  */
 function resolveTargetSession(pipe: Pipe, sourceSessionId: string): string | null {
   const target = findPane(pipe.targetPaneId);
-  if (!target || !target.sessionId) return null;
-  if (target.sessionId === sourceSessionId) return null;
+  if (!target) {
+    console.warn(`[pipe ${pipe.id}] target pane ${pipe.targetPaneId} not found`);
+    return null;
+  }
+  if (!target.sessionId) {
+    console.warn(
+      `[pipe ${pipe.id}] target pane ${pipe.targetPaneId} has no live session`,
+    );
+    return null;
+  }
+  if (target.sessionId === sourceSessionId) {
+    console.warn(`[pipe ${pipe.id}] source and target share session ${sourceSessionId}`);
+    return null;
+  }
   return target.sessionId;
 }
 
@@ -108,12 +128,18 @@ function flushQueue(pipeId: string): void {
   }
 
   const batch = queue.splice(0, MAX_LINES_PER_FLUSH);
+  let delivered = 0;
   for (const line of batch) {
     guard.markInjected(targetSessionId, line);
     if (!orchWriteSession(targetSessionId, `${line}\r`)) {
       outQueues.delete(pipeId);
       return;
     }
+    delivered += 1;
+  }
+  if (delivered > 0) {
+    deliveryCounts.set(pipeId, (deliveryCounts.get(pipeId) ?? 0) + delivered);
+    hub.emit();
   }
   if (queue.length > 0) scheduleFlush(pipeId);
   else outQueues.delete(pipeId);
@@ -169,7 +195,12 @@ function handleStreamChunk(pipe: Pipe, sourceSessionId: string, data: string): v
 function deliverIdle(pipe: Pipe, sourceSessionId: string): void {
   const now = Date.now();
   const lastAt = lastIdleDeliveryAt.get(pipe.id) ?? 0;
-  if (now - lastAt < IDLE_THROTTLE_MS) return;
+  if (now - lastAt < IDLE_THROTTLE_MS) {
+    console.log(
+      `[pipe ${pipe.id}] idle delivery throttled (${now - lastAt}ms since last)`,
+    );
+    return;
+  }
 
   const targetSessionId = resolveTargetSession(pipe, sourceSessionId);
   if (!targetSessionId) return;
@@ -182,16 +213,61 @@ function deliverIdle(pipe: Pipe, sourceSessionId: string): void {
       .filter((line) => !line.includes(PIPE_MARKER))
       .join('\n'),
   ).slice(0, MAX_IDLE_DELIVERY_CHARS);
-  if (text.length === 0 || text === lastIdleDeliveryText.get(pipe.id)) return;
+  if (text.length === 0) {
+    console.log(`[pipe ${pipe.id}] idle delivery skipped: sanitized tail is empty`);
+    return;
+  }
+  if (text === lastIdleDeliveryText.get(pipe.id)) {
+    console.log(`[pipe ${pipe.id}] idle delivery skipped: same text as last`);
+    return;
+  }
 
   const message = `${PIPE_MARKER} from=${sanitizeForInjection(pipe.sourcePaneId).slice(0, 128)} ${text}`;
+  console.log(
+    `[pipe ${pipe.id}] delivering ${message.length} chars to target ${pipe.targetPaneId} (session ${targetSessionId})`,
+  );
   guard.markInjected(targetSessionId, message);
-  if (!orchWriteSession(targetSessionId, message)) return;
+  if (!orchWriteSession(targetSessionId, message)) {
+    console.warn(`[pipe ${pipe.id}] orchWriteSession failed for ${targetSessionId}`);
+    return;
+  }
+  deliveryCounts.set(pipe.id, (deliveryCounts.get(pipe.id) ?? 0) + 1);
+  hub.emit();
   // Enter arrives as a separate write so TUIs treat it as a submit keypress.
-  setTimeout(() => orchWriteSession(targetSessionId, '\r'), SUBMIT_ENTER_DELAY_MS);
+  setTimeout(() => {
+    const ok = orchWriteSession(targetSessionId, '\r');
+    if (!ok) console.warn(`[pipe ${pipe.id}] submit Enter failed for ${targetSessionId}`);
+  }, SUBMIT_ENTER_DELAY_MS);
 
   lastIdleDeliveryAt.set(pipe.id, now);
   lastIdleDeliveryText.set(pipe.id, text);
+}
+
+/**
+ * Try to deliver an onIdle pipe now. Used both when the source transitions to
+ * idle and when a new pipe is created while its source is already idle.
+ */
+function tryDeliverIdle(pipe: Pipe, reason: string): void {
+  if (pipe.mode !== 'onIdle') return;
+  const source = findPane(pipe.sourcePaneId);
+  if (!source || !source.sessionId) {
+    console.log(
+      `[pipe ${pipe.id}] cannot deliver (${reason}): source ${pipe.sourcePaneId} has no session`,
+    );
+    return;
+  }
+  const liveState = getSessionState(source.sessionId);
+  if (liveState !== 'idle') {
+    console.log(
+      `[pipe ${pipe.id}] cannot deliver (${reason}): source session ${source.sessionId} is ${liveState}`,
+    );
+    return;
+  }
+  console.log(
+    `[pipe ${pipe.id}] attempting idle delivery (${reason}) from ${pipe.sourcePaneId} → ${pipe.targetPaneId}`,
+  );
+  idleDirty.delete(pipe.id);
+  deliverIdle(pipe, source.sessionId);
 }
 
 let pipesVersion = 0;
@@ -244,8 +320,7 @@ export function initPanePipes(): void {
       if (pipe.mode !== 'onIdle' || !idleDirty.has(pipe.id)) continue;
       const source = findPane(pipe.sourcePaneId);
       if (!source || source.sessionId !== sessionId) continue;
-      idleDirty.delete(pipe.id);
-      deliverIdle(pipe, sessionId);
+      tryDeliverIdle(pipe, 'source became idle');
     }
   });
 
@@ -258,7 +333,10 @@ export function initPanePipes(): void {
 }
 
 export function listPipes(): Pipe[] {
-  return [...pipes.values()];
+  return [...pipes.values()].map((pipe) => ({
+    ...pipe,
+    deliveryCount: deliveryCounts.get(pipe.id) ?? 0,
+  }));
 }
 
 /**
@@ -278,14 +356,25 @@ export function addPipe(
       existing.targetPaneId === targetPaneId &&
       existing.mode === mode
     ) {
+      console.log(`[pipe ${existing.id}] reusing existing ${mode} pipe ${sourcePaneId} → ${targetPaneId}`);
       return existing;
     }
   }
-  if (pipes.size >= MAX_PIPES) return null;
+  if (pipes.size >= MAX_PIPES) {
+    console.warn(`[pipes] addPipe rejected: max ${MAX_PIPES} pipes reached`);
+    return null;
+  }
   const pipe: Pipe = { id: makeId('pipe'), sourcePaneId, targetPaneId, mode };
   pipes.set(pipe.id, pipe);
   pipesVersion += 1;
   hub.emit();
+  console.log(`[pipe ${pipe.id}] created ${mode} pipe ${sourcePaneId} → ${targetPaneId}`);
+  // If the source is already idle, deliver immediately instead of waiting for
+  // the next output cycle (which may never come if the agent is done).
+  if (mode === 'onIdle') {
+    idleDirty.add(pipe.id);
+    tryDeliverIdle(pipe, 'pipe created while source idle');
+  }
   return pipe;
 }
 

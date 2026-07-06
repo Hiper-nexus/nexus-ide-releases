@@ -6,6 +6,7 @@ import { buildBillingRouter } from './billing/billing-routes';
 import { buildWebhookRouter } from './billing/webhook-routes';
 import { buildLicenseRouter } from './billing/license-routes';
 import { buildTeamRouter } from './team/team-routes';
+import { buildWebPages } from './web/pages';
 import { errorHandler } from './middleware/errors';
 
 /** Deps de auth + Stripe opcional (billing só monta quando presente). */
@@ -32,6 +33,7 @@ export function createApp(deps?: AppDeps): Express {
     app.use('/v1', buildBillingRouter({ db: deps.db, env: deps.env, stripe: deps.stripe }));
     app.use('/v1', buildWebhookRouter({ db: deps.db, env: deps.env, stripe: deps.stripe }));
   }
+  app.use(buildWebPages());
   app.use(errorHandler); // rejeição async → 500 JSON (nunca request pendurada)
   return app;
 }

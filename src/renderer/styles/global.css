@@ -5050,6 +5050,104 @@ body {
   font-size: 12px;
 }
 
+.account__team {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  margin-bottom: 18px;
+}
+
+.account__team-head,
+.account__team-summary,
+.account__team-actions,
+.account__join,
+.account__member {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.account__team-head,
+.account__team-summary,
+.account__member {
+  justify-content: space-between;
+}
+
+.account__team-title,
+.account__team-name,
+.account__member-name {
+  font-size: 13px;
+  font-weight: 650;
+  min-width: 0;
+}
+
+.account__team-name,
+.account__member-name,
+.account__invite-url {
+  overflow-wrap: anywhere;
+}
+
+.account__team-role,
+.account__member-role {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.account__members {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.account__member {
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.account__member-name {
+  flex: 1 1 auto;
+}
+
+.account__member-action {
+  flex: 0 0 auto;
+}
+
+.account__join {
+  align-items: stretch;
+}
+
+.account__join .settings-input {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.account__invite-url {
+  display: block;
+  padding: 7px 9px;
+  color: var(--accent);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+}
+
+.account__team-error {
+  display: block;
+  color: var(--danger);
+  font-size: 12px;
+  margin-top: 8px;
+}
+
 .account__plans {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -5118,8 +5216,23 @@ body {
   border-radius: var(--radius-round);
 }
 
+.account__plan-badge--muted {
+  color: var(--text-dim);
+  border-color: var(--border-strong);
+}
+
 .account__plan-cta {
   align-self: flex-start;
+}
+
+.account__team-checkout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px;
+  gap: 8px;
+}
+
+.account__seats-input {
+  min-width: 0;
 }
 
 .account__note {

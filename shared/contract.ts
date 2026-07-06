@@ -30,3 +30,34 @@ export interface XpSyncEvent {
   evidence: string | null;
   createdAt: number;
 }
+
+/** Membro do time como o backend devolve em GET /v1/team. */
+export interface TeamMemberInfo {
+  accountId: string;
+  role: 'owner' | 'member';
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+}
+
+export interface InviteInfo {
+  codePrefix: string;
+  usedCount: number;
+  maxUses: number;
+  expiresAt: string;
+}
+
+export interface TeamInfo {
+  team: { id: string; name: string; role: 'owner' | 'member' } | null;
+  members?: TeamMemberInfo[];
+  seats?: { used: number; total: number };
+  overLimit?: boolean;
+  status?: string;
+  invites?: InviteInfo[];
+}
+
+export interface CheckoutRequest {
+  plan: 'pro' | 'team';
+  seats?: number;
+  teamName?: string;
+}

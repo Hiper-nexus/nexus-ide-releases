@@ -6,30 +6,25 @@ import { ipcMain, shell } from 'electron';
 import {
   BILLING_CHANNELS,
   DEFAULT_LICENSE,
+  type CheckoutRequest,
   type LicenseInfo,
-  type PlanId,
 } from '../../shared/billing-types';
 
 /**
- * Billing scaffold — the desktop side of the future Stripe integration.
- *
- * Design (SaaS-ready, no secrets in the app):
- *  1. "Assinar" abre o navegador em BILLING_BASE/checkout?plan=X — o BACKEND
- *     cria a Stripe Checkout Session (nunca o app; a secret key jamais toca o
- *     desktop) e redireciona.
- *  2. O webhook do Stripe (checkout.session.completed / customer.subscription.*)
- *     emite uma licença assinada; o site devolve o usuário via deep link
- *     nexus://license/<token>, que o app valida e grava em ~/.nexus/license.json.
- *  3. "Gerenciar assinatura" abre o Stripe Customer Portal via BILLING_BASE.
- *
- * TODO(stripe): backend com /checkout, /portal e webhook; validação de
- * assinatura do token de licença; handler do deep link nexus://license.
+ * Billing desktop: o app nunca fala com Stripe direto. Checkout/portal passam
+ * pelo backend autenticado; licença assinada é verificada e gravada localmente.
  */
 
 const LICENSE_FILE = path.join(os.homedir(), '.nexus', 'license.json');
 
-/** Site de billing (backend Stripe). Trocar quando o SaaS for ao ar. */
-const BILLING_BASE = 'https://nexuside.app/billing';
+interface BillingIpcDeps {
+  apiFetch: (
+    path: string,
+    init?: { method?: string; body?: unknown },
+  ) => Promise<{ status: number; json: unknown }>;
+  openExternal: (url: string) => unknown;
+  startCheckoutPolling: () => void;
+}
 
 function readLicense(): LicenseInfo {
   try {
@@ -44,6 +39,47 @@ function readLicense(): LicenseInfo {
   } catch {
     return DEFAULT_LICENSE;
   }
+}
+
+export function currentPlan(): string {
+  return readLicense().plan;
+}
+
+function normalizeCheckoutRequest(raw: unknown): CheckoutRequest | null {
+  const req = (typeof raw === 'object' && raw !== null ? raw : { plan: raw }) as {
+    plan?: unknown;
+    seats?: unknown;
+    teamName?: unknown;
+  };
+  if (req.plan === 'pro') return { plan: 'pro' };
+  if (req.plan !== 'team') return null;
+  return {
+    plan: 'team',
+    seats: typeof req.seats === 'number' && Number.isFinite(req.seats)
+      ? req.seats
+      : undefined,
+    teamName: typeof req.teamName === 'string' ? req.teamName : undefined,
+  };
+}
+
+function defaultBillingIpcDeps(): BillingIpcDeps {
+  // Lazy require: mantém applyLicenseToken testável sem carregar o cliente HTTP.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { apiFetch } = require('../api-client') as typeof import('../api-client');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { startCheckoutPolling } = require('../license-sync') as typeof import('../license-sync');
+  return {
+    apiFetch,
+    openExternal: (url) => shell.openExternal(url),
+    startCheckoutPolling,
+  };
+}
+
+function resolveBillingIpcDeps(overrides?: Partial<BillingIpcDeps>): BillingIpcDeps {
+  if (overrides?.apiFetch && overrides.openExternal && overrides.startCheckoutPolling) {
+    return overrides as BillingIpcDeps;
+  }
+  return { ...defaultBillingIpcDeps(), ...overrides };
 }
 
 function writeLicense(info: LicenseInfo, file: string = LICENSE_FILE): void {
@@ -147,18 +183,44 @@ export function applyLicenseToken(
   }
 }
 
-export function registerBillingIpc(): void {
+export function registerBillingIpc(overrides?: Partial<BillingIpcDeps>): void {
   ipcMain.handle(BILLING_CHANNELS.get, (): LicenseInfo => readLicense());
 
-  ipcMain.handle(BILLING_CHANNELS.checkout, (_e, raw: unknown) => {
-    const plan: PlanId = raw === 'team' ? 'team' : 'pro';
-    // O backend cria a Checkout Session e redireciona ao Stripe.
-    void shell.openExternal(`${BILLING_BASE}/checkout?plan=${plan}`);
+  ipcMain.handle(BILLING_CHANNELS.checkout, async (_e, raw: unknown) => {
+    const req = normalizeCheckoutRequest(raw);
+    if (!req) return { ok: false, error: 'plano inválido' };
+    const deps = resolveBillingIpcDeps(overrides);
+    const result = await deps.apiFetch('/v1/billing/checkout', {
+      method: 'POST',
+      body: req,
+    });
+    const body = result.json as { ok?: boolean; data?: { url?: string }; error?: string } | null;
+    if (result.status !== 200 || !body?.data?.url) {
+      return {
+        ok: false,
+        error: result.status === 401
+          ? 'entre na sua conta primeiro'
+          : body?.error ?? 'backend indisponível — tente de novo',
+      };
+    }
+    void deps.openExternal(body.data.url);
+    deps.startCheckoutPolling();
     return { ok: true };
   });
 
-  ipcMain.handle(BILLING_CHANNELS.portal, () => {
-    void shell.openExternal(`${BILLING_BASE}/portal`);
+  ipcMain.handle(BILLING_CHANNELS.portal, async () => {
+    const deps = resolveBillingIpcDeps(overrides);
+    const result = await deps.apiFetch('/v1/billing/portal', { method: 'POST' });
+    const body = result.json as { ok?: boolean; data?: { url?: string }; error?: string } | null;
+    if (result.status !== 200 || !body?.data?.url) {
+      return {
+        ok: false,
+        error: result.status === 401
+          ? 'entre na sua conta primeiro'
+          : body?.error ?? 'backend indisponível',
+      };
+    }
+    void deps.openExternal(body.data.url);
     return { ok: true };
   });
 }

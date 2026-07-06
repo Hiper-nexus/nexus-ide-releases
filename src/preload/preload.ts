@@ -6,6 +6,7 @@ import {
   LAYOUT_CHANNELS,
   ADAPTER_CHANNELS,
   WINDOW_CHANNELS,
+  TEAM_CHANNELS,
 } from '../shared/channels';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { UPDATE_CHANNELS } from '../shared/update-ipc';
@@ -29,7 +30,7 @@ import type { MediaProviderId } from '../shared/media-types';
 import { GAMIFICATION_CHANNELS } from '../shared/gamification-types';
 import type { GamificationSnapshot } from '../shared/gamification-types';
 import { BILLING_CHANNELS } from '../shared/billing-types';
-import type { PlanId } from '../shared/billing-types';
+import type { CheckoutRequest, PlanId } from '../shared/billing-types';
 import type { CostSnapshot } from '../shared/cost-types';
 import { NOTE_CHANNELS } from '../shared/note-types';
 import type { Note, NotesChangedEvent } from '../shared/note-types';
@@ -578,8 +579,17 @@ const api: NexusApi = {
   },
   billing: {
     get: () => ipcRenderer.invoke(BILLING_CHANNELS.get),
-    openCheckout: (plan: PlanId) => ipcRenderer.invoke(BILLING_CHANNELS.checkout, plan),
+    openCheckout: (request: PlanId | CheckoutRequest) =>
+      ipcRenderer.invoke(BILLING_CHANNELS.checkout, request),
     openPortal: () => ipcRenderer.invoke(BILLING_CHANNELS.portal),
+  },
+  team: {
+    get: () => ipcRenderer.invoke(TEAM_CHANNELS.get),
+    join: (code: string) => ipcRenderer.invoke(TEAM_CHANNELS.join, code),
+    invite: () => ipcRenderer.invoke(TEAM_CHANNELS.invite),
+    removeMember: (accountId: string) =>
+      ipcRenderer.invoke(TEAM_CHANNELS.remove, accountId),
+    leave: () => ipcRenderer.invoke(TEAM_CHANNELS.leave),
   },
   platform: process.platform,
 };

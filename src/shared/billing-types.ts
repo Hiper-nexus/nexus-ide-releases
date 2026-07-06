@@ -1,13 +1,19 @@
 /**
  * Billing / license domain — the SaaS scaffold. Dependency-free (preload +
  * main + renderer all import it). The desktop app never talks to Stripe
- * directly: checkout/portal open the browser on the billing site, and the
- * license state lands here via the backend (see billing-ipc.ts TODOs).
+ * directly: checkout/portal are brokered by the backend, and signed license
+ * state lands here through the same authenticated API.
  */
 
 // Fonte única do contrato app↔backend (o servidor importa os MESMOS tipos).
-export type { PlanId, LicenseInfo } from '../../shared/contract';
-import type { PlanId } from '../../shared/contract';
+export type {
+  CheckoutRequest,
+  PlanId,
+  LicenseInfo,
+  TeamInfo,
+  InviteInfo,
+} from '../../shared/contract';
+import type { LicenseInfo, PlanId } from '../../shared/contract';
 
 export interface PlanDef {
   id: PlanId;
@@ -57,8 +63,6 @@ export const PLANS: PlanDef[] = [
     ],
   },
 ];
-
-import type { LicenseInfo } from '../../shared/contract';
 
 export const DEFAULT_LICENSE: LicenseInfo = {
   plan: 'free',

@@ -21,6 +21,8 @@ export interface Pipe {
    *          as a single injected message.
    */
   mode: PipeMode;
+  /** Number of messages successfully forwarded through this pipe (UI badge). */
+  deliveryCount?: number;
 }
 
 export const pipeSchema = z.object({
@@ -28,6 +30,7 @@ export const pipeSchema = z.object({
   sourcePaneId: z.string().min(1).max(128),
   targetPaneId: z.string().min(1).max(128),
   mode: pipeModeSchema,
+  deliveryCount: z.number().int().min(0).optional(),
 });
 
 export const addPipeSchema = z.object({
