@@ -36,7 +36,7 @@
   - Tipos: `GamificationTier`, `OperatorBranch = 'base'|'guardiao'|'forja'|'scout'`, `XpEventKind`, `XpEventInput`, `StoredXpEvent`, `GamificationSnapshot`, `GAMIFICATION_CHANNELS`, `GAMIFICATION_COPY` (o campo `achievements` nasce `{}` e é populado na Parte 2 Task 4).
   - Regras: `RULE_VERSION`, `BASE_POINTS`, `effortScale(effort?)`, `diminishingFactor(n)`, `efficiencyBonus(kind, effort, costUsd)`, `TIER_THRESHOLDS`, `tierForPower(p)`, `nextTierAt(p)`, `PRESTIGE_THRESHOLD`.
 
-- [ ] **Step 1: Escrever os tipos compartilhados**
+- [x] **Step 1: Escrever os tipos compartilhados**
 
 ```ts
 // src/shared/gamification-types.ts
@@ -140,7 +140,7 @@ export const GAMIFICATION_COPY = {
 } as const;
 ```
 
-- [ ] **Step 2: Escrever o teste que falha**
+- [x] **Step 2: Escrever o teste que falha**
 
 ```ts
 // src/main/gamification/xp-rules.test.ts
@@ -209,12 +209,12 @@ describe('xp-rules', () => {
 });
 ```
 
-- [ ] **Step 3: Rodar e ver falhar**
+- [x] **Step 3: Rodar e ver falhar**
 
 Run: `npx vitest run src/main/gamification/xp-rules.test.ts`
 Expected: FAIL (`Cannot find module './xp-rules'`)
 
-- [ ] **Step 4: Implementar as regras**
+- [x] **Step 4: Implementar as regras**
 
 ```ts
 // src/main/gamification/xp-rules.ts
@@ -321,12 +321,12 @@ export function nextTierAt(power: number): number | null {
 }
 ```
 
-- [ ] **Step 5: Rodar e ver passar**
+- [x] **Step 5: Rodar e ver passar**
 
 Run: `npx vitest run src/main/gamification/xp-rules.test.ts`
 Expected: PASS (6 testes)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/shared/gamification-types.ts src/main/gamification/xp-rules.ts src/main/gamification/xp-rules.test.ts
@@ -349,7 +349,7 @@ git commit -m "feat(gamification): tipos compartilhados + regras de XP v1 (pesos
   - `branchFor(counters: Record<string, number>): OperatorBranch`
   - `BRANCH_MIN_DELIVERIES = 20`, `BRANCH_DOMINANCE = 0.45`
 
-- [ ] **Step 1: Teste que falha**
+- [x] **Step 1: Teste que falha**
 
 ```ts
 // src/main/gamification/xp-engine.test.ts
@@ -428,12 +428,12 @@ describe('foldAggregate', () => {
 });
 ```
 
-- [ ] **Step 2: Rodar e ver falhar**
+- [x] **Step 2: Rodar e ver falhar**
 
 Run: `npx vitest run src/main/gamification/xp-engine.test.ts`
 Expected: FAIL (`Cannot find module './xp-engine'`)
 
-- [ ] **Step 3: Implementar o engine**
+- [x] **Step 3: Implementar o engine**
 
 ```ts
 // src/main/gamification/xp-engine.ts
@@ -530,12 +530,12 @@ export function foldAggregate(
 }
 ```
 
-- [ ] **Step 4: Rodar e ver passar**
+- [x] **Step 4: Rodar e ver passar**
 
 Run: `npx vitest run src/main/gamification/xp-engine.test.ts`
 Expected: PASS (6 testes)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/gamification/xp-engine.ts src/main/gamification/xp-engine.test.ts
