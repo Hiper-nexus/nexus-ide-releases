@@ -1,13 +1,15 @@
 {
   "name": "nexus-ide",
   "productName": "NexusIDE",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Terminal IDE multi-agente: grid de panes de terminal com PTYs reais, base para adapters de CLIs de IA e orquestração de squads.",
   "main": ".vite/build/main.js",
   "author": "NexusIDE",
   "license": "MIT",
   "private": true,
-  "workspaces": ["server"],
+  "workspaces": [
+    "server"
+  ],
   "scripts": {
     "prepackage": "node scripts/check-build-node.mjs",
     "start": "electron-forge start",
