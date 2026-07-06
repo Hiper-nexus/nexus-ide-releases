@@ -4,6 +4,7 @@ import { buildAuthRouter } from './auth/auth-routes';
 import type { StripeLike } from './billing/stripe-like';
 import { buildBillingRouter } from './billing/billing-routes';
 import { buildWebhookRouter } from './billing/webhook-routes';
+import { buildLicenseRouter } from './billing/license-routes';
 import { errorHandler } from './middleware/errors';
 
 /** Deps de auth + Stripe opcional (billing só monta quando presente). */
@@ -21,7 +22,10 @@ export function createApp(deps?: AppDeps): Express {
   }
   app.use(express.json({ limit: '256kb' }));
   app.get('/health', (_req, res) => res.json({ ok: true }));
-  if (deps) app.use('/v1', buildAuthRouter(deps));
+  if (deps) {
+    app.use('/v1', buildAuthRouter(deps));
+    app.use('/v1', buildLicenseRouter({ db: deps.db, env: deps.env, now: deps.now }));
+  }
   if (deps?.stripe) {
     app.use('/v1', buildBillingRouter({ db: deps.db, env: deps.env, stripe: deps.stripe }));
     app.use('/v1', buildWebhookRouter({ db: deps.db, env: deps.env, stripe: deps.stripe }));
