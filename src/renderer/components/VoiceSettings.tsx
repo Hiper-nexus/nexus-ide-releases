@@ -248,64 +248,118 @@ export function VoiceSettings() {
     setKeyInputs((prev) => ({ ...prev, [envVar]: value }));
   };
 
+  const activeStt = info?.stt.active?.provider ?? info?.stt.chain[0]?.provider ?? 'offline';
+  const activeTts = info?.tts.active?.provider ?? info?.tts.chain[0]?.provider ?? 'system';
+  const activeBrain =
+    info?.jarvisBrain.active?.provider ?? info?.jarvisBrain.chain[0]?.provider ?? 'fallback';
+  const liveMode = jarvisLiveOn
+    ? liveRealtime
+      ? 'live realtime'
+      : 'live classic'
+    : 'push-to-talk';
+  const wakeMode = wakeWordOn ? 'wake word on' : 'wake word off';
+
   return (
     <div className="agent-picker" role="dialog" aria-label="Voice settings">
       <div className="agent-picker__overlay" onClick={close} />
-      <div className="agent-picker__panel agent-picker__panel--voice">
-        <h3 className="agent-picker__title">Voice · Jarvis Mode</h3>
+      <div className="agent-picker__panel agent-picker__panel--voice voice-settings">
+        <header className="voice-settings__hero">
+          <span className="voice-settings__mark" aria-hidden>
+            J
+          </span>
+          <div className="voice-settings__hero-copy">
+            <span className="voice-settings__eyebrow">VOICE CONTROL</span>
+            <h3 className="voice-settings__title">Jarvis</h3>
+            <p className="voice-settings__subtitle">
+              Pipeline de voz, wake word, live mode e persona em um painel único.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="voice-settings__close"
+            onClick={close}
+            aria-label="Fechar configurações de voz"
+          >
+            x
+          </button>
+        </header>
 
         {!info ? (
           <p className="agent-picker__empty">Loading voice pipeline…</p>
         ) : (
           <>
-            <label className="agent-picker__label">
-              Speech-to-Text (translate PT→EN)
-              <select
-                className="agent-picker__select"
-                value={sttProvider}
-                onChange={(e) => setSttProvider(e.target.value)}
-              >
-                {info.stt.chain.map((p) => (
-                  <option key={p.provider} value={p.provider}>
-                    {providerOption(p)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="voice-settings__status-grid" aria-label="Estado do Jarvis">
+              <span className="voice-settings__status-card">
+                <span>STT</span>
+                <strong>{activeStt}</strong>
+              </span>
+              <span className="voice-settings__status-card">
+                <span>TTS</span>
+                <strong>{activeTts}</strong>
+              </span>
+              <span className="voice-settings__status-card">
+                <span>BRAIN</span>
+                <strong>{activeBrain}</strong>
+              </span>
+              <span className="voice-settings__status-card voice-settings__status-card--accent">
+                <span>MODE</span>
+                <strong>{liveMode}</strong>
+              </span>
+            </div>
 
-            <label className="agent-picker__label">
-              Text-to-Speech
-              <select
-                className="agent-picker__select"
-                value={ttsProvider}
-                onChange={(e) => setTtsProvider(e.target.value)}
-              >
-                {info.tts.chain.map((p) => (
-                  <option key={p.provider} value={p.provider}>
-                    {providerOption(p)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <section className="voice-settings__section" aria-label="Pipeline de voz">
+              <h4 className="voice-settings__section-title">Pipeline</h4>
+              <div className="voice-settings__form-grid">
+                <label className="agent-picker__label">
+                  STT · traduz PT→EN
+                  <select
+                    className="agent-picker__select"
+                    value={sttProvider}
+                    onChange={(e) => setSttProvider(e.target.value)}
+                  >
+                    {info.stt.chain.map((p) => (
+                      <option key={p.provider} value={p.provider}>
+                        {providerOption(p)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-            <label className="agent-picker__label">
-              Jarvis brain
-              <select
-                className="agent-picker__select"
-                value={jarvisBrainProvider}
-                onChange={(e) => setJarvisBrainProvider(e.target.value)}
-              >
-                {info.jarvisBrain.chain.map((p) => (
-                  <option key={p.provider} value={p.provider}>
-                    {providerOption(p)}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <label className="agent-picker__label">
+                  TTS · voz de saída
+                  <select
+                    className="agent-picker__select"
+                    value={ttsProvider}
+                    onChange={(e) => setTtsProvider(e.target.value)}
+                  >
+                    {info.tts.chain.map((p) => (
+                      <option key={p.provider} value={p.provider}>
+                        {providerOption(p)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="agent-picker__label">
+                  Cérebro Jarvis
+                  <select
+                    className="agent-picker__select"
+                    value={jarvisBrainProvider}
+                    onChange={(e) => setJarvisBrainProvider(e.target.value)}
+                  >
+                    {info.jarvisBrain.chain.map((p) => (
+                      <option key={p.provider} value={p.provider}>
+                        {providerOption(p)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </section>
 
             {info.keys.length > 0 && (
               <section className="voice-settings__section" aria-label="Voice API keys">
-                <h4 className="voice-settings__section-title">API keys</h4>
+                <h4 className="voice-settings__section-title">Credenciais</h4>
                 {info.keys.map((key) => (
                   <div className="voice-settings__key-row" key={key.envVar}>
                     <label className="agent-picker__label voice-settings__key-label">
@@ -335,161 +389,162 @@ export function VoiceSettings() {
               </section>
             )}
 
-            <label className="agent-picker__label">
-              Speak mode
-              <select
-                className="agent-picker__select"
-                value={speakMode}
-                onChange={(e) => setSpeakMode(e.target.value)}
-              >
-                <option value="summary">summary (1–3 sentences)</option>
-                <option value="full">full</option>
-                <option value="off">off (dictation only)</option>
-              </select>
-            </label>
-
-            <label className="agent-picker__label">
-              Routing
-              <select
-                className="agent-picker__select"
-                value={routing}
-                onChange={(e) => setRouting(e.target.value)}
-              >
-                <option value="jarvis">JARVIS (assistente conversacional)</option>
-                <option value="focused-pane">focused pane</option>
-                <option value="orchestrator">orchestrator</option>
-                <option value="ask">ask</option>
-              </select>
-            </label>
-
-            <div className="voice-settings__shortcut-row">
-              <label className="agent-picker__label">
-                Atalho do Jarvis
-                <button
-                  type="button"
-                  className={`agent-picker__select voice-settings__keycap ${capturingKey ? 'voice-settings__keycap--capturing' : ''}`}
-                  onClick={() => {
-                    setCaptureHint(null);
-                    setCapturingKey((v) => !v);
-                  }}
-                  title="Clique e pressione o COMBO desejado (ex.: ⌘⇧Space, ⌥J) ou uma tecla F sozinha (ex.: F6). Esc cancela."
-                >
-                  {capturingKey
-                    ? 'Pressione o atalho… (Esc cancela)'
-                    : triggerAccel}
-                </button>
-              </label>
-              <span className="voice-settings__shortcut-preview">
-                {info.hotkeyArmed === false ? (
-                  <span
-                    className="voice-settings__shortcut-warn"
-                    title="O atalho global não registrou no sistema — provável conflito com outro app. Escolha outro combo."
+            <section className="voice-settings__section" aria-label="Operação Jarvis">
+              <h4 className="voice-settings__section-title">Operação</h4>
+              <div className="voice-settings__form-grid voice-settings__form-grid--compact">
+                <label className="agent-picker__label">
+                  Modo de fala
+                  <select
+                    className="agent-picker__select"
+                    value={speakMode}
+                    onChange={(e) => setSpeakMode(e.target.value)}
                   >
-                    ⚠ não registrado
+                    <option value="summary">resumo (1-3 frases)</option>
+                    <option value="full">completo</option>
+                    <option value="off">desligado (só ditado)</option>
+                  </select>
+                </label>
+
+                <label className="agent-picker__label">
+                  Roteamento
+                  <select
+                    className="agent-picker__select"
+                    value={routing}
+                    onChange={(e) => setRouting(e.target.value)}
+                  >
+                    <option value="jarvis">JARVIS (assistente conversacional)</option>
+                    <option value="focused-pane">pane focado</option>
+                    <option value="orchestrator">orquestrador</option>
+                    <option value="ask">perguntar</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="voice-settings__shortcut-row">
+                <label className="agent-picker__label">
+                  Atalho do Jarvis
+                  <button
+                    type="button"
+                    className={`agent-picker__select voice-settings__keycap ${capturingKey ? 'voice-settings__keycap--capturing' : ''}`}
+                    onClick={() => {
+                      setCaptureHint(null);
+                      setCapturingKey((v) => !v);
+                    }}
+                    title="Clique e pressione o COMBO desejado (ex.: Cmd+Shift+Space, Alt+J) ou uma tecla F sozinha (ex.: F6). Esc cancela."
+                  >
+                    {capturingKey
+                      ? 'Pressione o atalho... (Esc cancela)'
+                      : triggerAccel}
+                  </button>
+                </label>
+                <span className="voice-settings__shortcut-preview">
+                  {info.hotkeyArmed === false ? (
+                    <span
+                      className="voice-settings__shortcut-warn"
+                      title="O atalho global não registrou no sistema: provável conflito com outro app. Escolha outro combo."
+                    >
+                      nao registrado
+                    </span>
+                  ) : (
+                    'ativo'
+                  )}
+                </span>
+              </div>
+              {captureHint && (
+                <p className="agent-picker__hint voice-settings__capture-hint">
+                  {captureHint}
+                </p>
+              )}
+
+              <div className="voice-settings__toggle-stack">
+                <label className="voice-settings__toggle">
+                  <span>
+                    <strong>Wake word</strong>
+                    <span>Diga "Hey Jarvis"; detecção local/offline via openWakeWord.</span>
                   </span>
-                ) : (
-                  'ativo ✓'
+                  <input
+                    type="checkbox"
+                    checked={wakeWordOn}
+                    onChange={(e) => setWakeWordOn(e.target.checked)}
+                  />
+                </label>
+
+                <label className="voice-settings__toggle">
+                  <span>
+                    <strong>Jarvis Live</strong>
+                    <span>Sessão contínua com grace reuse, contexto curto e barge-in.</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={jarvisLiveOn}
+                    onChange={(e) => setJarvisLiveOn(e.target.checked)}
+                  />
+                </label>
+
+                {jarvisLiveOn && (
+                  <label className="voice-settings__toggle">
+                    <span>
+                      <strong>Áudio realtime</strong>
+                      <span>
+                        Gemini Live full-duplex; requer GEMINI_API_KEY. Sem key,
+                        cai no Classic.
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={liveRealtime}
+                      onChange={(e) => setLiveRealtime(e.target.checked)}
+                    />
+                  </label>
                 )}
-              </span>
-            </div>
-            {captureHint && (
-              <p className="agent-picker__hint voice-settings__capture-hint">
-                {captureHint}
+              </div>
+
+              <p className="agent-picker__hint voice-settings__mode-hint">
+                {jarvisLiveOn
+                  ? 'No Live, a JARVIS reabre a escuta depois de cada resposta e entra em dormant quando você fica em silêncio.'
+                  : info.hotkeyMode === 'hold'
+                  ? `Segure ${info.shortcut} para falar e solte para enviar.`
+                  : `Pressione ${info.shortcut} para começar a falar e pressione de novo para enviar.`}{' '}
+                Estado atual: {wakeMode}.
               </p>
-            )}
+            </section>
 
-            <label className="agent-picker__label voice-settings__wake-row">
-              <span>
-                Acionar por voz: diga <strong>"Hey Jarvis"</strong>
-                <span className="voice-settings__key-meta">
-                  {' '}
-                  detecção 100% local e offline (openWakeWord) · sem conta,
-                  sem key — é só ligar
-                </span>
-              </span>
-              <input
-                type="checkbox"
-                checked={wakeWordOn}
-                onChange={(e) => setWakeWordOn(e.target.checked)}
-              />
-            </label>
-
-            <label className="agent-picker__label voice-settings__wake-row">
-              <span>
-                Jarvis Live
-                <span className="voice-settings__key-meta">
-                  {' '}
-                  sessão contínua com grace reuse, contexto curto e barge-in
-                </span>
-              </span>
-              <input
-                type="checkbox"
-                checked={jarvisLiveOn}
-                onChange={(e) => setJarvisLiveOn(e.target.checked)}
-              />
-            </label>
-
-            {jarvisLiveOn && (
-              <label className="agent-picker__label voice-settings__wake-row">
-                <span>
-                  Áudio realtime (Gemini Live)
-                  <span className="voice-settings__key-meta">
-                    {' '}
-                    full-duplex de verdade — requer GEMINI_API_KEY. Sem key ou
-                    desligado, cai no Classic (STT→cérebro→TTS, funciona offline)
-                  </span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={liveRealtime}
-                  onChange={(e) => setLiveRealtime(e.target.checked)}
-                />
-              </label>
-            )}
-
-            <p className="agent-picker__hint">
-              {jarvisLiveOn
-                ? 'No Live, a JARVIS reabre a escuta depois de cada resposta e entra em dormant quando você fica em silêncio.'
-                : info.hotkeyMode === 'hold'
-                ? `Segure ${info.shortcut} para falar e solte para enviar.`
-                : `Pressione ${info.shortcut} para começar a falar e pressione DE NOVO para enviar.`}{' '}
-              O Jarvis brain decide conversa e ações; STT/TTS continuam com
-              fallback separado.
-            </p>
-
-            <div className="voice-settings__persona">
-              <label className="agent-picker__label">
-                <span>Seu nome</span>
-                <input
-                  className="settings-input"
-                  value={userName}
-                  placeholder="como a JARVIS te chama"
-                  maxLength={48}
-                  onChange={(e) => setUserName(e.target.value)}
-                />
-              </label>
-              <label className="agent-picker__label">
-                <span>Nome do assistente</span>
-                <input
-                  className="settings-input"
-                  value={assistantName}
-                  placeholder="Jarvis"
-                  maxLength={48}
-                  onChange={(e) => setAssistantName(e.target.value)}
-                />
-              </label>
-              <label className="agent-picker__label">
-                <span>Instruções personalizadas</span>
-                <textarea
-                  className="settings-input"
-                  value={customInstructions}
-                  rows={2}
-                  placeholder='ex.: "sempre responda curto e direto"'
-                  maxLength={2000}
-                  onChange={(e) => setCustomInstructions(e.target.value)}
-                />
-              </label>
-            </div>
+            <section className="voice-settings__section" aria-label="Persona Jarvis">
+              <h4 className="voice-settings__section-title">Persona</h4>
+              <div className="voice-settings__persona">
+                <label className="agent-picker__label">
+                  <span>Seu nome</span>
+                  <input
+                    className="settings-input"
+                    value={userName}
+                    placeholder="como a JARVIS te chama"
+                    maxLength={48}
+                    onChange={(e) => setUserName(e.target.value)}
+                  />
+                </label>
+                <label className="agent-picker__label">
+                  <span>Nome do assistente</span>
+                  <input
+                    className="settings-input"
+                    value={assistantName}
+                    placeholder="Jarvis"
+                    maxLength={48}
+                    onChange={(e) => setAssistantName(e.target.value)}
+                  />
+                </label>
+                <label className="agent-picker__label voice-settings__persona-prompt">
+                  <span>Instruções personalizadas</span>
+                  <textarea
+                    className="settings-input"
+                    value={customInstructions}
+                    rows={2}
+                    placeholder='ex.: "sempre responda curto e direto"'
+                    maxLength={2000}
+                    onChange={(e) => setCustomInstructions(e.target.value)}
+                  />
+                </label>
+              </div>
+            </section>
 
             {error && <p className="agent-picker__error">{error}</p>}
 

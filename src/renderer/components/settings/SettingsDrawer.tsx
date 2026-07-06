@@ -63,32 +63,32 @@ interface NavItem {
 }
 
 const ACCOUNT_ITEMS: NavItem[] = [
-  { id: 'account', icon: '👤', title: 'MINHA CONTA', subtitle: 'plano · assinatura' },
+  { id: 'account', icon: 'ID', title: 'MINHA CONTA', subtitle: 'plano · assinatura' },
   { id: 'system', icon: 'i', title: 'SISTEMA', subtitle: 'versão · changelog' },
 ];
 
 const MODULE_ITEMS: NavItem[] = [
   { id: 'terminal', icon: '>_', title: 'TERMINAL', subtitle: 'tema · fonte · shell' },
-  { id: 'voice', icon: '🎙', title: 'VOICE', subtitle: 'voz · captura' },
-  { id: 'media', icon: '🎬', title: 'MÍDIA', subtitle: 'imagem · vídeo · voz' },
-  { id: 'providers', icon: '🔑', title: 'PROVIDERS', subtitle: 'tokens · modelos' },
-  { id: 'squads', icon: '👥', title: 'SQUADS', subtitle: 'orquestração' },
-  { id: 'marketplace', icon: '✦', title: 'MARKETPLACE', subtitle: 'Catálogo · 1 clique' },
-  { id: 'remote', icon: '⌁', title: 'REMOTE', subtitle: 'bridge · ssh' },
+  { id: 'voice', icon: 'VOX', title: 'VOICE', subtitle: 'voz · captura' },
+  { id: 'media', icon: 'IMG', title: 'MÍDIA', subtitle: 'imagem · vídeo · voz' },
+  { id: 'providers', icon: 'KEY', title: 'PROVIDERS', subtitle: 'tokens · modelos' },
+  { id: 'squads', icon: 'SQD', title: 'SQUADS', subtitle: 'orquestração' },
+  { id: 'marketplace', icon: 'MKT', title: 'MARKETPLACE', subtitle: 'Catálogo · 1 clique' },
+  { id: 'remote', icon: 'SSH', title: 'REMOTE', subtitle: 'bridge · ssh' },
 ];
 
 const CATALOG_ITEMS: NavItem[] = [
-  { id: 'agents', icon: '👥', title: 'AGENTS', subtitle: 'AI subagents' },
-  { id: 'skills', icon: '✦', title: 'SKILLS', subtitle: 'skills cache' },
-  { id: 'media-catalog', icon: '🎬', title: 'MÍDIA', subtitle: 'modelos de geração' },
-  { id: 'llms', icon: '🧠', title: 'LLMS · CLIS', subtitle: 'arsenal de execução' },
-  { id: 'mcps', icon: '☁', title: 'MCPS', subtitle: 'servers cache' },
-  { id: 'tools', icon: '🔧', title: 'TOOLS', subtitle: 'native tools' },
-  { id: 'recipes', icon: '✓', title: 'RECIPES', subtitle: 'lint · stacks' },
-  { id: 'plugins', icon: '⬡', title: 'PLUGINS', subtitle: 'plugin bundles' },
-  { id: 'hooks', icon: '⚡', title: 'HOOKS', subtitle: 'lifecycle scripts' },
-  { id: 'rules', icon: '🛡', title: 'RULES', subtitle: 'permissions' },
-  { id: 'shortcuts', icon: '⌘', title: 'ATALHOS', subtitle: 'teclado' },
+  { id: 'agents', icon: 'AGT', title: 'AGENTS', subtitle: 'AI subagents' },
+  { id: 'skills', icon: 'SKL', title: 'SKILLS', subtitle: 'skills cache' },
+  { id: 'media-catalog', icon: 'GEN', title: 'MÍDIA', subtitle: 'modelos de geração' },
+  { id: 'llms', icon: 'LLM', title: 'LLMS · CLIS', subtitle: 'arsenal de execução' },
+  { id: 'mcps', icon: 'MCP', title: 'MCPS', subtitle: 'servers cache' },
+  { id: 'tools', icon: 'TLS', title: 'TOOLS', subtitle: 'native tools' },
+  { id: 'recipes', icon: 'RCP', title: 'RECIPES', subtitle: 'lint · stacks' },
+  { id: 'plugins', icon: 'PLG', title: 'PLUGINS', subtitle: 'plugin bundles' },
+  { id: 'hooks', icon: 'HK', title: 'HOOKS', subtitle: 'lifecycle scripts' },
+  { id: 'rules', icon: 'SEC', title: 'RULES', subtitle: 'permissions' },
+  { id: 'shortcuts', icon: 'CMD', title: 'ATALHOS', subtitle: 'teclado' },
 ];
 
 function NavRow({
@@ -153,6 +153,16 @@ export function SettingsDrawer() {
       <div className="settings__overlay" onClick={close} />
       <div className="settings__drawer">
         <nav className="settings-nav" aria-label="Módulos">
+          <div className="settings-nav__brand" aria-label="Nexus Config">
+            <span className="settings-nav__brand-mark" aria-hidden>
+              NX
+            </span>
+            <span className="settings-nav__brand-copy">
+              <span className="settings-nav__brand-title">NEXUS CONFIG</span>
+              <span className="settings-nav__brand-subtitle">mission control</span>
+            </span>
+            <span className="settings-nav__brand-signal" aria-hidden />
+          </div>
           <p className="settings-nav__section">CONTA</p>
           {ACCOUNT_ITEMS.map((item) => (
             <NavRow

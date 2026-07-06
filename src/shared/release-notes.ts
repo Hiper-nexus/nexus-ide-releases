@@ -13,12 +13,27 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.7.0',
+  version: '0.7.1',
   date: '2026-07-06',
-  codename: 'Squad CLI sync',
+  codename: 'Cockpit UI polish',
   summary:
-    'Release focada em deixar squads, providers e contas previsíveis: AGY assume o lugar do Gemini CLI nos defaults, workers são distribuídos entre CLIs instaladas e contas salvas passam a sincronizar de verdade antes do spawn.',
+    'Release focada em deixar squads, providers, contas e configurações mais previsíveis: AGY assume o lugar do Gemini CLI nos defaults, workers são distribuídos entre CLIs instaladas, contas salvas sincronizam antes do spawn e o cockpit de configurações ganhou identidade Nexus.',
   highlights: [
+    {
+      title: 'Configurações com identidade Nexus',
+      detail:
+        'O menu lateral foi redesenhado com glyphs técnicos, hierarquia mais clara, estado ativo mais legível e acabamento visual de cockpit operacional em vez de lista genérica com emojis.',
+    },
+    {
+      title: 'Jarvis em painel operacional',
+      detail:
+        'A configuração de voz agora organiza status, pipeline, credenciais, operação, wake word, live mode e persona em seções legíveis sem criar controles que não salvam.',
+    },
+    {
+      title: 'Perfil de operador refinado',
+      detail:
+        'O modal do operador recebeu acabamento pixel/mission-control, barra de progresso mais clara e superfícies compatíveis com o sprite e com o tema escuro do app.',
+    },
     {
       title: 'AGY no lugar do Gemini CLI',
       detail:
@@ -61,6 +76,16 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [
+    {
+      title: 'Scrollbars integradas ao tema',
+      detail:
+        'Drawers, Jarvis e perfil de operador deixam de mostrar a barra branca crua do sistema e usam rolagem fina, escura e consistente com a UI.',
+    },
+    {
+      title: 'Menos risco de texto sobreposto',
+      detail:
+        'O drawer de configurações ficou mais largo e os itens de navegação ganharam truncamento, espaçamento e estados que mantêm rótulos e badges separados.',
+    },
     {
       title: 'AGY não cai mais no help com code 2',
       detail:
