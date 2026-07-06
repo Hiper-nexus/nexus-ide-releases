@@ -37,6 +37,7 @@ import { useFilesStore } from './state/files-store';
 import { useAccountController } from './state/account-store';
 import { useCostController } from './state/cost-store';
 import { useUsageSync } from './state/usage-store';
+import { useGamificationSync } from './state/gamification-store';
 import { useOnboardingStore, useOnboardingSync } from './state/onboarding-store';
 import { Onboarding } from './components/Onboarding';
 import { useFailoverController } from './orch/failover-controller';
@@ -74,6 +75,7 @@ export function App() {
   useAccountController();
   useCostController();
   useUsageSync();
+  useGamificationSync();
   useOnboardingSync();
   useFailoverController();
 

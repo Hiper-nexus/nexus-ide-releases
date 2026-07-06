@@ -1,0 +1,87 @@
+import { useEffect } from 'react';
+import { create } from 'zustand';
+import type { GamificationSnapshot } from '../../shared/gamification-types';
+
+/**
+ * Espelho no renderer do snapshot de gamificação (gamification-service no
+ * main). Mesmo padrão do usage-store: pull na montagem + push via broadcast.
+ * Também carrega o modo sóbrio (orch settings) — o HUD some, o XP continua.
+ */
+
+interface GamificationApi {
+  snapshot(): Promise<GamificationSnapshot>;
+  onChanged(cb: (snapshot: GamificationSnapshot) => void): () => void;
+}
+
+function gamificationApi(): GamificationApi | undefined {
+  return (window.nexus as unknown as { gamification?: GamificationApi })
+    .gamification;
+}
+
+export const EMPTY_GAMIFICATION_SNAPSHOT: GamificationSnapshot = {
+  powerLevel: 0,
+  tier: 'RECRUTA',
+  tierFloor: 'RECRUTA',
+  nextTierAt: 100_000,
+  prestige: 0,
+  prestigeReady: false,
+  branch: 'base',
+  streakDays: 0,
+  shieldsLeft: 2,
+  achievements: [],
+  skins: [],
+  selectedSkin: null,
+  counters: {},
+  ruleVersion: 1,
+};
+
+interface GamificationStore {
+  snapshot: GamificationSnapshot;
+  sober: boolean;
+  profileOpen: boolean;
+  hydrate(): Promise<void>;
+  receive(snapshot: GamificationSnapshot): void;
+  setSober(sober: boolean): void;
+  openProfile(): void;
+  closeProfile(): void;
+}
+
+export const useGamificationStore = create<GamificationStore>((set) => ({
+  snapshot: EMPTY_GAMIFICATION_SNAPSHOT,
+  sober: false,
+  profileOpen: false,
+
+  hydrate: async () => {
+    const api = gamificationApi();
+    if (!api) return;
+    try {
+      set({ snapshot: await api.snapshot() });
+    } catch (err) {
+      console.warn('[gamification] hydrate failed:', err);
+    }
+    try {
+      const orch = await window.nexus.settings.orchGet();
+      set({ sober: (orch as { soberMode?: boolean }).soberMode === true });
+    } catch {
+      // settings indisponíveis — segue não-sóbrio
+    }
+  },
+
+  receive: (snapshot) => set({ snapshot }),
+  setSober: (sober) => set({ sober }),
+  openProfile: () => set({ profileOpen: true }),
+  closeProfile: () => set({ profileOpen: false }),
+}));
+
+/** Montar uma vez no App (junto do useUsageSync) — hydrate + subscribe. */
+export function useGamificationSync(): void {
+  const hydrate = useGamificationStore((s) => s.hydrate);
+  useEffect(() => {
+    void hydrate();
+    const api = gamificationApi();
+    if (!api) return;
+    return api.onChanged((snapshot) =>
+      useGamificationStore.getState().receive(snapshot),
+    );
+  }, [hydrate]);
+}

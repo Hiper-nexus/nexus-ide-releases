@@ -3558,6 +3558,89 @@ body {
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
+
+/* ---- HUD do Operador (gamificação) ---- */
+.operator-hud {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 10px 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-bar);
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color 160ms var(--ease-out-quart),
+    color 160ms var(--ease-out-quart);
+}
+.operator-hud:hover,
+.operator-hud:focus-visible {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.operator-hud:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.operator-hud__power {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text);
+}
+.operator-hud__detail {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.operator-hud:hover .operator-hud__detail,
+.operator-hud:focus-visible .operator-hud__detail {
+  display: inline-flex;
+  animation: operator-hud-fade 180ms var(--ease-out-quart);
+}
+.operator-hud__stars {
+  color: #ffd166;
+  letter-spacing: 0.1em;
+}
+.operator-hud__bar {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 1px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent-soft);
+  overflow: hidden;
+}
+.operator-hud__bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 240ms var(--ease-out-quint);
+}
+@keyframes operator-hud-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .operator-hud__bar-fill {
+    transition: none;
+  }
+  .operator-hud:hover .operator-hud__detail,
+  .operator-hud:focus-visible .operator-hud__detail {
+    animation: none;
+  }
+}
 .cost-summary__item--total {
   color: var(--text);
   font-weight: 600;
