@@ -58,6 +58,21 @@ describe('auth-routes', () => {
     expect(ex2.status).toBe(400);
   });
 
+  it('exchange concorrente do mesmo code: exatamente um vence', async () => {
+    const { app } = await setup();
+    const auth = await request(app).get('/v1/auth/github');
+    const state = new URL(auth.headers.location).searchParams.get('state')!;
+    const cb = await request(app).get(`/v1/auth/github/callback?code=abc&state=${state}`);
+    const code = cb.headers.location.replace('nexus://auth/', '');
+    // Duplo resgate simultâneo do deep-link code (TOCTOU): o consumo
+    // atômico garante 1×200 + 1×400, nunca dois pares de sessão.
+    const [a, b] = await Promise.all([
+      request(app).post('/v1/auth/exchange').send({ code }),
+      request(app).post('/v1/auth/exchange').send({ code }),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 400]);
+  });
+
   it('callback com state inválido → 400', async () => {
     const { app } = await setup();
     const r = await request(app).get('/v1/auth/github/callback?code=x&state=naoexiste');

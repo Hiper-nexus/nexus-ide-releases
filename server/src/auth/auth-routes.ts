@@ -5,6 +5,7 @@ import type { Env } from '../env';
 import { accounts, authCodes, identities, oauthStates } from '../db/schema';
 import { authorizeUrl, exchangeCode, makePkce } from './oauth-flow';
 import { type Provider } from './oauth-providers';
+import { consumeAuthCode } from './auth-code-service';
 import { findOrCreateAccount } from './account-service';
 import { issueTokens, rotateRefresh, revokeAll } from './session-service';
 import { hashToken, newToken } from './tokens';
@@ -80,15 +81,12 @@ export function buildAuthRouter(deps: AuthDeps): Router {
 
   r.post('/auth/exchange', authLimit, async (req, res) => {
     const code = String((req.body as { code?: string }).code ?? '');
-    const [row] = await db.select().from(authCodes)
-      .where(eq(authCodes.codeHash, hashToken(code))).limit(1);
-    if (!row || row.usedAt || row.expiresAt.getTime() < now()) {
+    const consumed = await consumeAuthCode(db, code, now); // atômico, single-use
+    if (!consumed) {
       return res.status(400).json({ ok: false, error: 'code inválido' });
     }
-    await db.update(authCodes).set({ usedAt: new Date(now()) })
-      .where(eq(authCodes.codeHash, row.codeHash));
-    const [acc] = await db.select().from(accounts).where(eq(accounts.id, row.accountId)).limit(1);
-    const { session, refresh } = await issueTokens(db, row.accountId, now);
+    const [acc] = await db.select().from(accounts).where(eq(accounts.id, consumed.accountId)).limit(1);
+    const { session, refresh } = await issueTokens(db, consumed.accountId, now);
     const licenca = await signLicense(freeLicenseInput(acc.email), env.LICENSE_PRIVATE_KEY);
     res.json({ ok: true, data: { session, refresh, licenca } });
   });
@@ -110,16 +108,14 @@ export function buildAuthRouter(deps: AuthDeps): Router {
     // callback que criou uma conta isolada; move as identities para a conta
     // logada e apaga a isolada.
     const code = String((req.body as { code?: string }).code ?? '');
-    const [row] = await db.select().from(authCodes)
-      .where(eq(authCodes.codeHash, hashToken(code))).limit(1);
-    if (!row || row.usedAt || row.expiresAt.getTime() < now()) {
+    const consumed = await consumeAuthCode(db, code, now); // atômico, single-use
+    if (!consumed) {
       return res.status(400).json({ ok: false, error: 'code inválido' });
     }
-    await db.update(authCodes).set({ usedAt: new Date(now()) }).where(eq(authCodes.codeHash, row.codeHash));
-    if (row.accountId !== req.accountId) {
+    if (consumed.accountId !== req.accountId) {
       await db.update(identities).set({ accountId: req.accountId! })
-        .where(eq(identities.accountId, row.accountId));
-      await db.delete(accounts).where(eq(accounts.id, row.accountId));
+        .where(eq(identities.accountId, consumed.accountId));
+      await db.delete(accounts).where(eq(accounts.id, consumed.accountId));
     }
     res.json({ ok: true });
   });
