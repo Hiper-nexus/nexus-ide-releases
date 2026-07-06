@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.8.2 — JARVIS operacional
+
+Data: 2026-07-06
+
+Refatoração sênior de confiabilidade da JARVIS + HUD flexível, guiada por análise de causa raiz e teardown competitivo (Overclock, BridgeVoice/BridgeSpace).
+
+### Melhorias
+
+- Deadline duro em toda borda do pipeline de voz (STT cloud 12s, TTS 15s, cérebro 15s, whisper local 30s, piper 20s) com erro falado — fim do busy travado que deixava a JARVIS surda para sempre.
+- Microfone do wake resiliente: `track.onended` + watchdog de frames (8s) + reconstrução com backoff (1s/3s/8s) + resume de AudioContext suspenso; esgotou → aviso visível.
+- Retomada de turno preso: um novo "Hey Jarvis" após 20s de turno travado derruba o turno e atende.
+- Wake-lock por PID (`~/.nexus/jarvis-wake.lock`): instâncias dev + empacotada não disputam mais o "Hey Jarvis".
+- HUD da JARVIS compacto (300px) e flexível: arrastável pelo cabeçalho com snap de canto, redimensionável, modo mini (pill) e modo só-áudio (zero visual, voz segue); prefs persistidas + seletor nas configurações de voz.
+- Novas ações de voz: `close_pane` ("fecha esse terminal") e `open_board` ("abre o quadro"); `run_command` avisa em voz que a confirmação está na tela.
+- Ícones pixel refinados no toolbar/deck/board (grade 10px), botão visível do Ops Board e estados do quadro (fundação `--accent-strong`).
+- Servidor: fundação do billing + team (schema subscriptions/teams/invites/stripe_events + migration).
+
+### Correções
+
+- Filtro anti-alucinação do Whisper consciente de contexto: "valeu/oi/tchau" em conversa ativa são resposta legítima, não lixo descartado.
+- Barge-in agora mata a fala do fallback `say` no processo principal — sem vozes sobrepostas.
+- Acks/fillers ("Sim?", "Deixa comigo.") fora da janela anti-eco — não censuram mais a resposta curta seguinte do usuário.
+- whisper.cpp/piper deixaram de rodar síncronos no main (congelavam todo o app durante transcrição/síntese local).
+- Captura de voz com deadline por timer: mic morto no meio da fala fecha o turno em vez de pendurar a escuta.
+
 ## 0.8.1 — Ops Board & identidade pixel
 
 Data: 2026-07-06

@@ -13,68 +13,63 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.8.1',
+  version: '0.8.2',
   date: '2026-07-06',
-  codename: 'Ops Board & identidade pixel',
+  codename: 'JARVIS operacional',
   summary:
-    'Glow-up visual completo em cima da nova fundação de contas: um Ops Board para o pipeline de missões, um icon set pixel próprio (incluindo o novo ícone do app), escalas de token que deixam o espaçamento consistente e o orb do Jarvis reagindo à amplitude real do microfone. Por baixo, o backend de auth (OAuth Google/GitHub) e a gamificação de operador entraram no ciclo.',
+    'A JARVIS foi refeita por dentro para nunca mais morrer em silêncio: deadline em toda chamada de rede, microfone do wake que se reconstrói sozinho, retomada de turno travado e barge-in que cala qualquer voz. O HUD dela agora é compacto, arrastável, ancora nos cantos, minimiza numa pill e tem modo só-áudio. E ela fecha panes e abre o Ops Board por voz.',
   highlights: [
     {
-      title: 'Ops Board — pipeline de missões',
+      title: 'JARVIS que não morre',
       detail:
-        'Um board espacial (a fazer → executando → review → pronto → cancelado) com trilho colorido por status. Arrastar um card é planejamento; "retomar" restaura os panes da missão com as CLIs continuando de onde pararam. Abre com ⌘B.',
+        'Toda borda do pipeline de voz (STT, cérebro, TTS, whisper/piper locais) ganhou deadline duro com fallback falado. Um socket pendurado, um provider mudo ou um subprocesso travado não seguram mais a assistente — ela erra em voz alta e volta a ouvir.',
     },
     {
-      title: 'Icon set pixel + novo ícone do app',
+      title: 'Microfone do wake imortal',
       detail:
-        'Emojis e glyphs Unicode viraram um conjunto único de ícones pixel na pegada do NexusMark. O app ganhou um ícone novo — diamante-nó com core aceso sobre o console navy, no lugar do gradiente genérico.',
+        'Trocar de AirPods ou acordar o Mac matava o stream do "Hey Jarvis" em silêncio. Agora há watchdog de frames, reconstrução automática com backoff e aviso visível se esgotar — nada de surdez muda.',
     },
     {
-      title: 'Escalas de token',
+      title: 'HUD arrastável, mini e só-áudio',
       detail:
-        'Espaçamento, tipografia, raios e sombras agora saem de escalas únicas em vez de valores soltos, deixando o acabamento consistente em toda a UI.',
+        'O painel da JARVIS encolheu (300px), é arrastável pelo cabeçalho com âncora no canto mais próximo, redimensiona pela alça lateral, minimiza numa pill e pode sumir de vez no modo só-áudio — a voz continua 100%. Posição e modo ficam salvos.',
     },
     {
-      title: 'Orb do Jarvis com amplitude real',
+      title: 'Novos comandos de voz',
       detail:
-        'O orb de voz reage ao nível real do microfone (não só à fase), virando um visualizador de amplitude de verdade — e respeita reduced-motion.',
+        '"Fecha esse terminal" (close_pane) e "abre o quadro" (open_board) viraram ações reais. E quando um comando de shell precisa de confirmação, ela avisa em voz que o diálogo está na tela.',
     },
     {
-      title: 'Settings agrupado + busca',
+      title: 'Uma instância por vez no wake',
       detail:
-        'A navegação de configurações foi reagrupada por intenção (Conta · Operação · Arsenal · Catálogo) com campo de busca, resolvendo a lista de 20 itens num nível só.',
+        'Rodar o app instalado e o dev juntos fazia as duas JARVIS responderem ao mesmo chamado. Um lock por processo garante uma dona única do "Hey Jarvis".',
     },
     {
-      title: 'Contas por OAuth (fundação)',
+      title: 'Ícones pixel refinados',
       detail:
-        'Backend de auth com login Google/GitHub (PKCE), exchange por código, tokens no Keychain e licença assinada — a base dos planos Free/Pro.',
-    },
-    {
-      title: 'Gamificação de operador',
-      detail:
-        'XP por valor entregue (nunca por consumo), tiers, streak, conquistas e o mascote pixel no HUD — com modo sóbrio para quem prefere esconder tudo.',
+        'Legibilidade dos ícones do toolbar/deck/board revisada (grade 10px), botão visível do Ops Board e estados do quadro polidos.',
     },
   ],
   fixes: [
     {
-      title: 'Versão correta no About',
+      title: 'Respostas curtas não são mais engolidas',
       detail:
-        'O About mostrava 0.7.1 fixo mesmo em versões novas; agora acompanha a versão real do pacote.',
+        'O filtro anti-alucinação do Whisper descartava "valeu", "oi" e "tchau" mesmo em conversa ativa — agora ele é consciente de contexto e só corta lixo de verdade.',
     },
     {
-      title: 'Bugs de paleta',
+      title: 'Barge-in cala o fallback de voz',
       detail:
-        'O textDim voltava para um cinza que falha contraste WCAG; cores Material cruas no toolbar e o vermelho de "erro" nos presets "Originals" foram trocados por tokens da paleta.',
+        'Quando a fala saía pelo `say` do sistema, chamar a JARVIS não interrompia o áudio — agora o chamado mata a fala na hora, sem vozes sobrepostas.',
     },
     {
-      title: 'Botão de fechar único',
+      title: 'Acks não censuram você',
       detail:
-        'As quatro variantes de "fechar" (incluindo um "x" minúsculo) viraram um X nítido só, em todo o app.',
+        'Os "Sim?" e "Deixa comigo." dela entravam na janela anti-eco e podiam descartar sua resposta seguinte por parecer eco. Saíram da janela.',
     },
     {
-      title: 'PT-BR consistente',
+      title: 'App não congela em transcrição local',
       detail:
-        'O seletor de agente, as fases do HUD de voz e a frase de teste de voz estavam em inglês no meio da UI em português.',
+        'whisper.cpp e piper rodavam de forma síncrona no processo principal, travando todo o app durante a síntese/transcrição. Viraram assíncronos com timeout.',
     },
   ],
 };
