@@ -52,3 +52,6 @@ Icon
 # Electron Forge / Vite build
 .vite/
 out/
+
+# Estado local do Overclock (pode conter tokens de auth)
+.overclock-app/

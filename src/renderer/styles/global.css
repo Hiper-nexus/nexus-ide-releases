@@ -2722,6 +2722,21 @@ body {
   line-height: 1.5;
 }
 
+/* Harness enrich — barra de ação + filtros de tier no arsenal. */
+.settings-enrich {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 12px;
+}
+.settings-enrich__row,
+.settings-enrich__filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .wizard__browse {
   background: var(--bg);
   border: none;

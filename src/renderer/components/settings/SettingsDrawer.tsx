@@ -14,7 +14,9 @@ import { MediaSection } from './MediaSection';
 import {
   AgentsSection,
   HooksSection,
+  LlmsSection,
   McpsSection,
+  MediaCatalogSection,
   PluginsSection,
   RecipesSection,
   RemoteSection,
@@ -41,6 +43,8 @@ export type SettingsSection =
   | 'remote'
   | 'agents'
   | 'skills'
+  | 'media-catalog'
+  | 'llms'
   | 'mcps'
   | 'tools'
   | 'plugins'
@@ -73,6 +77,8 @@ const MODULE_ITEMS: NavItem[] = [
 const CATALOG_ITEMS: NavItem[] = [
   { id: 'agents', icon: '👥', title: 'AGENTS', subtitle: 'AI subagents' },
   { id: 'skills', icon: '✦', title: 'SKILLS', subtitle: 'skills cache' },
+  { id: 'media-catalog', icon: '🎬', title: 'MÍDIA', subtitle: 'modelos de geração' },
+  { id: 'llms', icon: '🧠', title: 'LLMS · CLIS', subtitle: 'arsenal de execução' },
   { id: 'mcps', icon: '☁', title: 'MCPS', subtitle: 'servers cache' },
   { id: 'tools', icon: '🔧', title: 'TOOLS', subtitle: 'native tools' },
   { id: 'recipes', icon: '✓', title: 'RECIPES', subtitle: 'lint · stacks' },
@@ -189,6 +195,8 @@ export function SettingsDrawer() {
           {section === 'remote' && <RemoteSection />}
           {section === 'agents' && <AgentsSection />}
           {section === 'skills' && <SkillsSection />}
+          {section === 'media-catalog' && <MediaCatalogSection />}
+          {section === 'llms' && <LlmsSection adapters={adapters} />}
           {section === 'mcps' && <McpsSection />}
           {section === 'tools' && <ToolsSection />}
           {section === 'recipes' && <RecipesSection />}

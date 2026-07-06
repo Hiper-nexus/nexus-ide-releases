@@ -201,6 +201,43 @@ function parseReply(raw: string): JarvisReply {
   }
 }
 
+/**
+ * Uma chamada de chat pela CADEIA de providers do cérebro (Gemini → OpenAI →
+ * Groq, conforme configurado): tenta cada provider com key até um responder.
+ * Consumidores fora da voz (squad-architect, harness-enrich) usam isto em vez
+ * de reimplementar o loop de fallback.
+ */
+export async function chatViaBrainChain(
+  messages: Array<{ role: string; content: string }>,
+  maxTokens: number,
+  deps: BrainDeps = defaultBrainDeps,
+): Promise<string> {
+  const attempts: string[] = [];
+  for (const provider of flattenJarvisBrainProviders(getVoiceConfig().jarvisBrain)) {
+    const key = providerKey(provider, deps);
+    if (key === undefined) continue;
+    try {
+      return await chatOnce(
+        provider.endpoint,
+        key,
+        provider.model,
+        messages,
+        deps,
+        provider.jsonMode ?? true,
+        maxTokens,
+      );
+    } catch (err) {
+      attempts.push(
+        `${provider.provider}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  throw new Error(
+    attempts[0] ??
+      'nenhuma key de modelo (GEMINI_API_KEY, OPENAI_API_KEY ou GROQ_API_KEY)',
+  );
+}
+
 export async function chatOnce(
   endpoint: string,
   key: string,

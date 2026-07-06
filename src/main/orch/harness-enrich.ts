@@ -1,0 +1,212 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+/**
+ * Harness Enrich — a passada de LLM que transforma o arsenal instalado
+ * (agents + skills) em um catálogo ANOTADO: tier (scout|builder|reviewer),
+ * blurb curto e quando-usar, persistido em ~/.nexus/harness-enriched.json.
+ * O Squad Architect consome esse bloco na hora de desenhar squads — o time
+ * sai citando itens REAIS do arsenal em vez de inventar papéis genéricos.
+ *
+ * Lógica pura (chat injetado) — a borda com a cadeia de brain providers vive
+ * em runHarnessEnrichWithBrain().
+ */
+
+export type HarnessTier = import('../../shared/types').HarnessTier;
+export type EnrichedItem = import('../../shared/types').EnrichedCatalogItem;
+export type EnrichedCatalog = import('../../shared/types').EnrichedCatalogInfo;
+
+export interface EnrichableItem {
+  name: string;
+  kind: 'agent' | 'skill';
+}
+
+export const ENRICH_CHUNK_SIZE = 40;
+const BLURB_MAX = 160;
+const WHEN_MAX = 120;
+const TIERS: HarnessTier[] = ['scout', 'builder', 'reviewer'];
+
+const ENRICH_SYSTEM = `Você classifica componentes de um arsenal de agentes de
+IA (agents e skills instalados) na topologia de 3 papéis:
+- "scout": pesquisa, descoberta, leitura, análise, mapeamento.
+- "builder": execução, construção de código/UI/mídia/copy.
+- "reviewer": QA, teste, auditoria, segurança, crítica de entrega.
+
+Responda APENAS com JSON:
+{"items":[{"name":"<nome exato>","kind":"agent|skill","tier":"scout|builder|reviewer",
+"blurb":"<~120 chars: o que faz>","whenToUse":"<~100 chars: quando escalar>"}]}
+
+Regras: use o NOME EXATO recebido; um item por entrada; blurb objetivo e
+específico (nunca "agente útil"); em dúvida de tier, escolha builder.`;
+
+export function chunkItems<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+export function buildEnrichMessages(
+  chunk: EnrichableItem[],
+): Array<{ role: string; content: string }> {
+  const list = chunk.map((i) => `- ${i.name} (${i.kind})`).join('\n');
+  return [
+    { role: 'system', content: ENRICH_SYSTEM },
+    { role: 'user', content: `ARSENAL A CLASSIFICAR:\n${list}` },
+  ];
+}
+
+/**
+ * Valida a resposta de um chunk: só aceita nomes que estavam no chunk (o
+ * modelo não pode inventar itens), tier fora da taxonomia cai para builder,
+ * textos são clampados. Resposta ilegível degrada para [] — nunca lança.
+ */
+export function parseEnrichResponse(
+  raw: string,
+  chunk: EnrichableItem[],
+): EnrichedItem[] {
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return [];
+  let parsed: { items?: Array<Record<string, unknown>> };
+  try {
+    parsed = JSON.parse(match[0]);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed.items)) return [];
+  const expected = new Map(chunk.map((i) => [`${i.kind}:${i.name}`, i]));
+  const out: EnrichedItem[] = [];
+  for (const entry of parsed.items) {
+    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+    const kind = entry.kind === 'skill' ? 'skill' : 'agent';
+    if (!name || !expected.has(`${kind}:${name}`)) continue;
+    const tier = TIERS.includes(entry.tier as HarnessTier)
+      ? (entry.tier as HarnessTier)
+      : 'builder';
+    const blurb =
+      typeof entry.blurb === 'string' ? entry.blurb.trim().slice(0, BLURB_MAX) : '';
+    const whenToUse =
+      typeof entry.whenToUse === 'string' && entry.whenToUse.trim()
+        ? entry.whenToUse.trim().slice(0, WHEN_MAX)
+        : undefined;
+    out.push({ name, kind, tier, blurb, ...(whenToUse ? { whenToUse } : {}) });
+  }
+  return out;
+}
+
+/** Merge acumulativo por (kind, name) — o fresco vence, o resto permanece. */
+export function mergeEnriched(
+  prev: EnrichedCatalog | null,
+  fresh: EnrichedItem[],
+  now: number,
+): EnrichedCatalog {
+  const byKey = new Map<string, EnrichedItem>();
+  for (const item of prev?.items ?? []) byKey.set(`${item.kind}:${item.name}`, item);
+  for (const item of fresh) byKey.set(`${item.kind}:${item.name}`, item);
+  return { version: 1, updatedAt: now, items: [...byKey.values()] };
+}
+
+export interface RunEnrichOptions {
+  chunkSize?: number;
+  prev?: EnrichedCatalog | null;
+  now?: () => number;
+}
+
+/**
+ * Roda a passada de enriquecimento: chunks sequenciais, chunk que falha
+ * degrada para [] (nunca derruba a passada inteira), merge acumulativo.
+ */
+export async function runHarnessEnrich(
+  items: EnrichableItem[],
+  chat: (messages: Array<{ role: string; content: string }>) => Promise<string>,
+  opts: RunEnrichOptions = {},
+): Promise<EnrichedCatalog> {
+  const { chunkSize = ENRICH_CHUNK_SIZE, prev = null, now = Date.now } = opts;
+  const fresh: EnrichedItem[] = [];
+  for (const chunk of chunkItems(items, chunkSize)) {
+    try {
+      const raw = await chat(buildEnrichMessages(chunk));
+      fresh.push(...parseEnrichResponse(raw, chunk));
+    } catch (err) {
+      console.warn(
+        '[harness] chunk de enriquecimento falhou (seguindo):',
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+  return mergeEnriched(prev, fresh, now());
+}
+
+/**
+ * Bloco de prompt para o Squad Architect: arsenal agrupado por tier, capado
+ * em `cap` chars. Vazio quando não há catálogo enriquecido.
+ */
+export function enrichedBlockForArchitect(
+  cat: EnrichedCatalog | null,
+  cap: number,
+): string {
+  if (!cat || cat.items.length === 0) return '';
+  const lines: string[] = [
+    'ARSENAL ENRIQUECIDO (agents/skills instalados — cite-os nas instruções',
+    'quando couberem ao objetivo, pelo NOME exato):',
+  ];
+  for (const tier of TIERS) {
+    const of = cat.items.filter((i) => i.tier === tier);
+    if (of.length === 0) continue;
+    lines.push(`## ${tier.toUpperCase()}`);
+    for (const item of of) {
+      lines.push(`- ${item.name} (${item.kind}): ${item.blurb}`);
+    }
+  }
+  return lines.join('\n').slice(0, cap);
+}
+
+// ── Persistência + borda (brain chain) ───────────────────────────────────────
+
+export function enrichedFilePath(): string {
+  return path.join(os.homedir(), '.nexus', 'harness-enriched.json');
+}
+
+export function loadEnrichedCatalog(): EnrichedCatalog | null {
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(enrichedFilePath(), 'utf8'),
+    ) as EnrichedCatalog;
+    return parsed && parsed.version === 1 && Array.isArray(parsed.items)
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveEnrichedCatalog(cat: EnrichedCatalog): void {
+  const file = enrichedFilePath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(cat, null, 2));
+  fs.renameSync(tmp, file);
+}
+
+/**
+ * Borda: enriquece o arsenal INSTALADO usando a cadeia de brain providers
+ * (Gemini → OpenAI → Groq). Lazy requires mantêm o módulo testável.
+ */
+export async function runHarnessEnrichWithBrain(): Promise<EnrichedCatalog> {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { listInstalledCatalogItems } = require('./catalog') as typeof import('./catalog');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { chatViaBrainChain } = require('../voice/jarvis-brain') as typeof import('../voice/jarvis-brain');
+  const items: EnrichableItem[] = listInstalledCatalogItems()
+    .filter((i) => i.kind === 'agent' || i.kind === 'skill')
+    .map((i) => ({ name: i.name, kind: i.kind as 'agent' | 'skill' }));
+  const result = await runHarnessEnrich(
+    items,
+    (messages) => chatViaBrainChain(messages, 3_000),
+    { prev: loadEnrichedCatalog() },
+  );
+  saveEnrichedCatalog(result);
+  return result;
+}

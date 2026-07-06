@@ -387,6 +387,8 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.agentSpecWrite, req),
     listInstalledCatalog: () =>
       ipcRenderer.invoke(ORCH_CHANNELS.catalogInstalled),
+    harnessEnriched: () => ipcRenderer.invoke(ORCH_CHANNELS.harnessEnriched),
+    harnessEnrich: () => ipcRenderer.invoke(ORCH_CHANNELS.harnessEnrich),
     listNativeTools: () => ipcRenderer.invoke(ORCH_CHANNELS.toolsList),
     listPluginFiles: () => ipcRenderer.invoke(ORCH_CHANNELS.pluginsList),
     listHookHomes: () => ipcRenderer.invoke(ORCH_CHANNELS.hooksList),

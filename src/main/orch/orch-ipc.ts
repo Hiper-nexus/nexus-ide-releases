@@ -16,6 +16,10 @@ import {
   designSquadFromIntent,
 } from './squad-architect';
 import {
+  loadEnrichedCatalog,
+  runHarnessEnrichWithBrain,
+} from './harness-enrich';
+import {
   initMissionStore,
   listMissions,
   onMissionsChange,
@@ -338,6 +342,18 @@ export function registerOrchIpc(): void {
   ipcMain.handle(ORCH_CHANNELS.catalogInstalled, () =>
     listInstalledCatalogItems(),
   );
+  ipcMain.handle(ORCH_CHANNELS.harnessEnriched, () => loadEnrichedCatalog());
+  ipcMain.handle(ORCH_CHANNELS.harnessEnrich, async () => {
+    try {
+      const catalog = await runHarnessEnrichWithBrain();
+      return { ok: true, catalog };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  });
   ipcMain.handle(ORCH_CHANNELS.toolsList, () => getToolCatalog());
   ipcMain.handle(ORCH_CHANNELS.pluginsList, () => listPluginFiles());
   ipcMain.handle(ORCH_CHANNELS.hooksList, () => listHookHomes());

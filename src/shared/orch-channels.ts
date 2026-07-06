@@ -31,6 +31,8 @@ export const ORCH_CHANNELS = {
   recipePropose: 'orch:recipe.propose',
   agentSpecWrite: 'orch:agentSpec.write',
   catalogInstalled: 'orch:catalog.installed',
+  harnessEnrich: 'orch:harness.enrich',
+  harnessEnriched: 'orch:harness.enriched',
   toolsList: 'orch:tools.list',
   pluginsList: 'orch:plugins.list',
   hooksList: 'orch:hooks.list',

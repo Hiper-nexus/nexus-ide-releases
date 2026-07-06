@@ -92,6 +92,23 @@ export interface InstalledItemInfo {
   modifiedAt: number;
 }
 
+/** Arsenal enriquecido (harness-enrich): tier + blurb por item instalado. */
+export type HarnessTier = 'scout' | 'builder' | 'reviewer';
+
+export interface EnrichedCatalogItem {
+  name: string;
+  kind: 'agent' | 'skill';
+  tier: HarnessTier;
+  blurb: string;
+  whenToUse?: string;
+}
+
+export interface EnrichedCatalogInfo {
+  version: 1;
+  updatedAt: number;
+  items: EnrichedCatalogItem[];
+}
+
 /** One browsable aitmpl catalog component. */
 export interface CatalogEntryInfo {
   kind: 'agent' | 'skill';
@@ -507,6 +524,12 @@ export interface NexusApi {
     proposeRecipes(workspacePath?: string): Promise<RecipeSuggestion[]>;
     writeAgentSpec(req: AgentSpecWriteRequest): Promise<{ ok: boolean; path?: string; error?: string }>;
     listInstalledCatalog(): Promise<InstalledItemInfo[]>;
+    harnessEnriched(): Promise<EnrichedCatalogInfo | null>;
+    harnessEnrich(): Promise<{
+      ok: boolean;
+      catalog?: EnrichedCatalogInfo;
+      error?: string;
+    }>;
     listNativeTools(): Promise<NativeToolInfo[]>;
     listPluginFiles(): Promise<InstalledItemInfo[]>;
     listHookHomes(): Promise<InstalledItemInfo[]>;

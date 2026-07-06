@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { chatOnce, defaultBrainDeps } from '../voice/jarvis-brain';
-import { getVoiceConfig } from '../voice/voice-config-store';
+import { chatViaBrainChain } from '../voice/jarvis-brain';
 import { listAdapterInfos } from '../adapters/adapter-registry';
 import { saveSquad } from './squad-store';
-import { flattenJarvisBrainProviders } from '../../shared/voice-config';
+import {
+  enrichedBlockForArchitect,
+  loadEnrichedCatalog,
+} from './harness-enrich';
 import type { Squad } from '../../shared/orch-types';
 
 /**
@@ -140,46 +142,21 @@ async function designSquad(opts: {
       `objetivo como a missão, e o primeiro passo do orquestrador é decompô-lo ` +
       `e delegar — sem re-perguntar o que fazer.\n\n`
     : '';
+  // Arsenal enriquecido (harness-enrich): o arquiteto cita agents/skills
+  // REAIS instalados em vez de inventar papéis genéricos.
+  const enriched = enrichedBlockForArchitect(loadEnrichedCatalog(), 4_000);
   const profile =
     intentBlock +
     `CLIs instaladas nesta máquina: ${installed || 'claude'}\n\n` +
+    (enriched ? `${enriched}\n\n` : '') +
     profileWorkspace(workspacePath);
-  const raw = await (async () => {
-    const messages = [
+  const raw = await chatViaBrainChain(
+    [
       { role: 'system', content: ARCHITECT_PROMPT },
       { role: 'user', content: `PERFIL DO PROJETO:\n\n${profile}` },
-    ];
-    const attempts: string[] = [];
-    for (const provider of flattenJarvisBrainProviders(getVoiceConfig().jarvisBrain)) {
-      const envVar = provider.auth.envVar;
-      const key =
-        provider.auth.type === 'none'
-          ? ''
-          : envVar
-          ? defaultBrainDeps.getKey(envVar)
-          : undefined;
-      if (key === undefined) continue;
-      try {
-        return await chatOnce(
-          provider.endpoint,
-          key,
-          provider.model,
-          messages,
-          defaultBrainDeps,
-          provider.jsonMode ?? true,
-          2_000,
-        );
-      } catch (err) {
-        attempts.push(
-          `${provider.provider}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-    throw new Error(
-      attempts[0] ??
-        'nenhuma key de modelo (GEMINI_API_KEY, OPENAI_API_KEY ou GROQ_API_KEY)',
-    );
-  })().catch((err) => {
+    ],
+    2_000,
+  ).catch((err) => {
     throw new Error(err instanceof Error ? err.message : String(err));
   });
 

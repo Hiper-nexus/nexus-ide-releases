@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react';
 import type {
   AdapterInfo,
   AgentSpecWriteRequest,
+  EnrichedCatalogInfo,
+  HarnessTier,
   InstalledItemInfo,
   NativeToolInfo,
   RecipeOverlayResult,
   RemoteBridgeInfo,
   RemoteSpawnResult,
 } from '../../../shared/types';
+import type { MediaProviderInfo } from '../../../shared/media-types';
 import { useOrchStore } from '../../state/orch-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { useLayoutStore } from '../../state/layout-store';
@@ -37,30 +40,158 @@ function useInstalledCatalog(kind: string): InstalledItemInfo[] {
   return items;
 }
 
+const TIER_FILTERS: Array<HarnessTier | 'todos'> = [
+  'todos',
+  'scout',
+  'builder',
+  'reviewer',
+];
+
+/**
+ * Arsenal enriquecido (harness-enrich): anotações tier/blurb por item + a
+ * ação "Enriquecer" que roda a passada de LLM sobre o arsenal instalado.
+ */
+function useEnrichedCatalog(): {
+  enriched: EnrichedCatalogInfo | null;
+  enriching: boolean;
+  error: string | null;
+  runEnrich(): void;
+} {
+  const [enriched, setEnriched] = useState<EnrichedCatalogInfo | null>(null);
+  const [enriching, setEnriching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void window.nexus.orch.harnessEnriched().then((cat) => {
+      if (!cancelled) setEnriched(cat);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  function runEnrich() {
+    if (enriching) return;
+    setEnriching(true);
+    setError(null);
+    void window.nexus.orch.harnessEnrich().then((res) => {
+      setEnriching(false);
+      if (res.ok && res.catalog) setEnriched(res.catalog);
+      else setError(res.error ?? 'enriquecimento falhou');
+    });
+  }
+  return { enriched, enriching, error, runEnrich };
+}
+
+function EnrichBar({
+  enriched,
+  enriching,
+  error,
+  runEnrich,
+  tier,
+  onTier,
+}: {
+  enriched: EnrichedCatalogInfo | null;
+  enriching: boolean;
+  error: string | null;
+  runEnrich(): void;
+  tier: HarnessTier | 'todos';
+  onTier(t: HarnessTier | 'todos'): void;
+}) {
+  return (
+    <div className="settings-enrich">
+      <div className="settings-enrich__row">
+        <button
+          className="settings-btn"
+          onClick={runEnrich}
+          disabled={enriching}
+          title="O LLM organiza o arsenal e anota papel + quando/como usar"
+        >
+          {enriching ? '✨ Enriquecendo…' : '✨ Enriquecer'}
+        </button>
+        {enriched && (
+          <span className="settings-detail__hint">
+            {enriched.items.length} itens anotados ·{' '}
+            {timeLabel(enriched.updatedAt)}
+          </span>
+        )}
+      </div>
+      {enriched && enriched.items.length > 0 && (
+        <div className="settings-enrich__filters">
+          <span className="settings-detail__hint">TIER</span>
+          {TIER_FILTERS.map((t) => (
+            <button
+              key={t}
+              className={`settings-chip ${tier === t ? 'settings-chip--ok' : ''}`}
+              onClick={() => onTier(t)}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
+      {error && <p className="settings-detail__hint">✗ {error}</p>}
+    </div>
+  );
+}
+
+function enrichmentOf(
+  enriched: EnrichedCatalogInfo | null,
+  kind: 'agent' | 'skill',
+  name: string,
+) {
+  return enriched?.items.find((i) => i.kind === kind && i.name === name);
+}
+
 function InstalledList({
   items,
   empty,
+  enriched,
+  kind,
 }: {
   items: InstalledItemInfo[];
   empty: string;
+  enriched?: EnrichedCatalogInfo | null;
+  kind?: 'agent' | 'skill';
 }) {
   if (items.length === 0) {
     return <p className="settings-detail__hint">{empty}</p>;
   }
   return (
     <ul className="settings-list">
-      {items.map((item) => (
-        <li key={item.file} className="settings-list__item">
-          <div className="settings-list__head">
-            <span className="settings-list__title">{item.name}</span>
-            <span className="settings-chip">{item.kind}</span>
-          </div>
-          <p className="settings-list__detail">
-            {item.file} · {timeLabel(item.modifiedAt)}
-          </p>
-        </li>
-      ))}
+      {items.map((item) => {
+        const note = kind ? enrichmentOf(enriched ?? null, kind, item.name) : undefined;
+        return (
+          <li key={item.file} className="settings-list__item">
+            <div className="settings-list__head">
+              <span className="settings-list__title">{item.name}</span>
+              {note && <span className="settings-chip settings-chip--ok">{note.tier}</span>}
+              <span className="settings-chip">{item.kind}</span>
+            </div>
+            {note && (
+              <p className="settings-list__detail">
+                {note.blurb}
+                {note.whenToUse ? ` — quando: ${note.whenToUse}` : ''}
+              </p>
+            )}
+            <p className="settings-list__detail">
+              {item.file} · {timeLabel(item.modifiedAt)}
+            </p>
+          </li>
+        );
+      })}
     </ul>
+  );
+}
+
+function tierFiltered(
+  items: InstalledItemInfo[],
+  enriched: EnrichedCatalogInfo | null,
+  kind: 'agent' | 'skill',
+  tier: HarnessTier | 'todos',
+): InstalledItemInfo[] {
+  if (tier === 'todos') return items;
+  return items.filter(
+    (item) => enrichmentOf(enriched, kind, item.name)?.tier === tier,
   );
 }
 
@@ -69,6 +200,9 @@ export function AgentsSection() {
   const squadAgents = useOrchStore((s) =>
     s.squads.reduce((count, squad) => count + squad.agents.length, 0),
   );
+  const enrich = useEnrichedCatalog();
+  const [tier, setTier] = useState<HarnessTier | 'todos'>('todos');
+  const visible = tierFiltered(items, enrich.enriched, 'agent', tier);
   return (
     <section>
       <h3 className="settings-detail__title">Agents</h3>
@@ -76,9 +210,16 @@ export function AgentsSection() {
         AI subagents instalados do catálogo ({items.length}) + {squadAgents}{' '}
         agente(s) definidos em squads.
       </p>
+      <EnrichBar {...enrich} tier={tier} onTier={setTier} />
       <InstalledList
-        items={items}
-        empty="Nenhum agent instalado — use o Marketplace para instalar."
+        items={visible}
+        empty={
+          tier === 'todos'
+            ? 'Nenhum agent instalado — use o Marketplace para instalar.'
+            : `Nenhum agent no tier ${tier} — rode ✨ Enriquecer para classificar.`
+        }
+        enriched={enrich.enriched}
+        kind="agent"
       />
     </section>
   );
@@ -86,16 +227,108 @@ export function AgentsSection() {
 
 export function SkillsSection() {
   const items = useInstalledCatalog('skill');
+  const enrich = useEnrichedCatalog();
+  const [tier, setTier] = useState<HarnessTier | 'todos'>('todos');
+  const visible = tierFiltered(items, enrich.enriched, 'skill', tier);
   return (
     <section>
       <h3 className="settings-detail__title">Skills</h3>
       <p className="settings-detail__hint">
         Cache local de skills instaladas do catálogo ({items.length}).
       </p>
+      <EnrichBar {...enrich} tier={tier} onTier={setTier} />
       <InstalledList
-        items={items}
-        empty="Nenhuma skill instalada — use o Marketplace para instalar."
+        items={visible}
+        empty={
+          tier === 'todos'
+            ? 'Nenhuma skill instalada — use o Marketplace para instalar.'
+            : `Nenhuma skill no tier ${tier} — rode ✨ Enriquecer para classificar.`
+        }
+        enriched={enrich.enriched}
+        kind="skill"
       />
+    </section>
+  );
+}
+
+/** Faixa MÍDIA do arsenal: modelos de geração habilitados (key presente). */
+export function MediaCatalogSection() {
+  const [providers, setProviders] = useState<MediaProviderInfo[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void window.nexus.media.listProviders().then((list) => {
+      if (!cancelled) setProviders(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const enabled = providers.filter((p) => p.hasKey);
+  return (
+    <section>
+      <h3 className="settings-detail__title">Mídia</h3>
+      <p className="settings-detail__hint">
+        Modelos de geração que os agentes podem disparar via MCP (
+        {enabled.length} habilitado{enabled.length === 1 ? '' : 's'} de{' '}
+        {providers.length}). Keys em Settings → MÍDIA.
+      </p>
+      {providers.length === 0 ? (
+        <p className="settings-detail__hint">nenhum provider de mídia</p>
+      ) : (
+        <ul className="settings-list">
+          {providers.map((p) => (
+            <li key={p.id} className="settings-list__item">
+              <div className="settings-list__head">
+                <span className="settings-list__title">{p.label}</span>
+                <span
+                  className={`settings-chip ${p.hasKey ? 'settings-chip--ok' : 'settings-chip--warn'}`}
+                >
+                  {p.hasKey ? 'habilitado' : 'sem key'}
+                </span>
+                <span className="settings-chip">{p.kind}</span>
+              </div>
+              <p className="settings-list__detail">{p.models.join(' · ')}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/** Faixa LLMS · CLIS do arsenal: adapters instalados e seus modelos. */
+export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
+  const installed = adapters.filter((a) => a.installed && a.id !== 'shell');
+  const absent = adapters.filter((a) => !a.installed && a.id !== 'shell');
+  return (
+    <section>
+      <h3 className="settings-detail__title">LLMs · CLIs</h3>
+      <p className="settings-detail__hint">
+        CLIs de IA instaladas nesta máquina ({installed.length}) — o arsenal de
+        execução que o roteador de tarefas distribui por custo.
+      </p>
+      {installed.length === 0 ? (
+        <p className="settings-detail__hint">nenhum LLM/CLI habilitado</p>
+      ) : (
+        <ul className="settings-list">
+          {installed.map((a) => (
+            <li key={a.id} className="settings-list__item">
+              <div className="settings-list__head">
+                <span className="settings-list__title">{a.label}</span>
+                <span className="settings-chip settings-chip--ok">instalado</span>
+              </div>
+              <p className="settings-list__detail">
+                {a.models.list.slice(0, 6).join(' · ') || 'modelos padrão do CLI'}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+      {absent.length > 0 && (
+        <p className="settings-detail__hint">
+          não instalados: {absent.map((a) => a.label).join(', ')}
+        </p>
+      )}
     </section>
   );
 }
