@@ -29,7 +29,10 @@ import { createTask, listTasks, updateTask } from './task-store';
 import { installCatalogItem } from './catalog';
 import { startPreview, stopPreview, listPreviews } from './preview-server';
 import { requestBrowserPane } from './pane-registry';
-import { loadBrowser } from '../browser/browser-manager';
+import {
+  captureBrowserScreenshot,
+  loadBrowser,
+} from '../browser/browser-manager';
 import { collectPerfSnapshot } from '../perf/perf-ipc';
 import { onHandoffSubmitted } from './idle-delivery';
 import { paneSpawnTool } from './tools-panes';
@@ -612,6 +615,25 @@ const browserNavigateTool: McpToolDef = {
   },
 };
 
+const browserScreenshotTool: McpToolDef = {
+  name: 'nexus_browser_screenshot',
+  description:
+    'Capture an embedded browser pane as a PNG and return its local path plus ' +
+    'dimensions. The paneId must refer to a live browser pane.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paneId: { type: 'string' },
+    },
+    required: ['paneId'],
+  },
+  handler: async (args, ctx) => {
+    const paneId = requireStr(args, 'paneId');
+    authorizePaneRef(ctx, paneId, 'read');
+    return captureBrowserScreenshot(paneId);
+  },
+};
+
 const perfSnapshotTool: McpToolDef = {
   name: 'nexus_perf_snapshot',
   description:
@@ -642,6 +664,7 @@ export function buildDomainTools(): McpToolDef[] {
     previewStopTool,
     browserOpenTool,
     browserNavigateTool,
+    browserScreenshotTool,
     perfSnapshotTool,
   ];
 }

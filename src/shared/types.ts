@@ -114,6 +114,16 @@ export interface BrowserPaneState {
   error?: string;
 }
 
+export interface BrowserScreenshotResult {
+  paneId: string;
+  path: string;
+  width: number;
+  height: number;
+  url: string;
+  title: string;
+  capturedAt: number;
+}
+
 export interface PerfSnapshot {
   capturedAt: number;
   process: {

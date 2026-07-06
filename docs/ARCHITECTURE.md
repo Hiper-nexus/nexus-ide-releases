@@ -200,9 +200,9 @@ Formato de squad JSON do NexusIDE:
 
 Notas de design: `category` inclui **orchestrator** (não só os 4 worker roles); `orchestratorInstructions` é markdown; `effort` pinado por agente; allowlists por agente alimentam o skill-gate (§E.4). Squads têm **export/import em JSON** nativo do schema.
 
-### E.2 Servidor MCP embutido — 24 tools (namespace `nexus_*`)
+### E.2 Servidor MCP embutido — namespace `nexus_*`
 
-Main hospeda MCP server (@modelcontextprotocol/sdk); cada CLI-agente conecta via stdio/socket local injetado no spawn. As 24 tools, no namespace `nexus_*`:
+Main hospeda MCP server (@modelcontextprotocol/sdk); cada CLI-agente conecta via stdio/socket local injetado no spawn. Tools principais:
 
 | Grupo | Tools |
 |---|---|
@@ -212,6 +212,8 @@ Main hospeda MCP server (@modelcontextprotocol/sdk); cada CLI-agente conecta via
 | Missões (5) | `nexus_mission_create`, `nexus_mission_get`, `nexus_mission_list`, `nexus_mission_set_status`, `nexus_mission_spawn_pane` |
 | Squad/Catálogo/Task (3) | `nexus_squad_save`, `nexus_catalog_install`, `nexus_task` |
 | Todos (1) | `nexus_todo_manager` |
+| Roteamento (1) | `nexus_route_task` |
+| Preview/Browser/Perf (6) | `nexus_preview_start`, `nexus_preview_stop`, `nexus_browser_open`, `nexus_browser_navigate`, `nexus_browser_screenshot`, `nexus_perf_snapshot` |
 
 Aliases curtos `pane_*`/`handoff_*` mantidos no registry (namespace duplo) para prompts/agentes que usam nomes não-prefixados. **Sempre permitidos independente de allowlist:** `ToolSearch`, `nexus_handoff_submit`, `nexus_handoff_list`.
 
@@ -240,7 +242,7 @@ Ao spawnar worker, injeta hook PreToolUse + `$HOME` efêmero (isola config/skill
 | Entrega auto quando ocioso + marker `### NEXUS_HANDOFF v1` | §E.3 | — |
 | Catálogo (aitmpl 70+ agentes, davila7/claude-code-templates) | §E.6 | API `GET /api/catalog/search?q=&kind=agent\|skill\|command&limit=`; plugin `.claude-plugin/plugin.json` |
 | Voz/ditado (audio-config) | §F | groq/whisper-large-v3/pt→english/hold/Space/coding/190wpm/4700ms — estendido p/ Jarvis (TTS) |
-| 24 MCP tools | §E.2 | namespace `nexus_*` |
+| MCP tools | §E.2 | namespace `nexus_*`; panes, missões, squads, preview/browser e perf |
 | Auth backend (Supabase + Google OAuth) | opcional | NexusIDE v1 é local-first — auth de nuvem é OPCIONAL, não requisito |
 | Config dirs (`~/.nexus/`: squads.json, audio-config.json, plugins/, cache/) | §D.4 | tudo unificado sob `~/.nexus/` |
 | Auto-update (Squirrel) | §G.4 | Forge maker ZIP + Squirrel.Mac |
@@ -334,7 +336,7 @@ Electron Forge: maker-dmg (final) + ZIP (auto-update Squirrel.Mac). Signing `@el
 
 **2c — Canvas:** @xyflow/react; pane=custom node; pan/zoom/minimap; SessionSurfacePool (reparent grid↔canvas sem re-spawn); frozen em zoom-out; edges de orquestração. *Verificável:* alternar grid↔canvas mantém MESMO PTY vivo; fluido com ≥6 terminais.
 
-**2d — Orquestração+MCP:** MCP server 24 tools (nexus_*); domínio squads(schema)/missões/handoffs (SQLite+IPC, não marker files); todo_manager; skill-gate duplo; entrega auto ocioso; parser do marker `### NEXUS_HANDOFF v1` (fallback); catálogo aitmpl. *Verificável:* Squad orquestrador+2 workers delega via pane_spawn/write; worker handoff_submit; entregue ao ficar ocioso; skill fora da allowlist BLOQUEADA; export/import de squad funciona.
+**2d — Orquestração+MCP:** MCP server no namespace `nexus_*`; domínio squads(schema)/missões/handoffs (SQLite+IPC, não marker files); todo_manager; skill-gate duplo; entrega auto ocioso; parser do marker `### NEXUS_HANDOFF v1` (fallback); catálogo aitmpl. *Verificável:* Squad orquestrador+2 workers delega via pane_spawn/write; worker handoff_submit; entregue ao ficar ocioso; skill fora da allowlist BLOQUEADA; export/import de squad funciona.
 
 **2e — Voz Jarvis:** PTT (globalShortcut+uiohook keyup); getUserMedia+AudioWorklet; Silero VAD; STT multi (Groq+whisper.cpp); roteamento; TTS streaming (OpenAI→Piper→say); sumário falável; voice plugin estendendo audio-config. *Verificável:* segurar PTT, falar PT, ver EN injetado, agente responde, **NexusIDE fala resumo**; sem key → whisper.cpp+Piper/say.
 

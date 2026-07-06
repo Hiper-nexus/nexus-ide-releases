@@ -35,8 +35,9 @@ seu shell de login, então funciona já na primeira execução.
   CLI do Claude.
 - **Auth subscription-first**: assinatura autenticada sempre vence; a API key é
   fallback; keys guardadas no **macOS Keychain** (nunca em plaintext).
-- **Orquestração**: servidor MCP embutido com 24 tools, squads (schema JSON
-  portável), missões, handoffs (SQLite + IPC) e skill-gate duplo.
+- **Orquestração**: servidor MCP embutido no namespace `nexus_*`, squads
+  (schema JSON portável), missões, handoffs (SQLite + IPC), skill-gate duplo e
+  tools de preview/browser com screenshot.
 - **Marketplace real** (catálogo aitmpl: 423 agents + 872 skills, install para
   `~/.claude`), **file explorer** com editor, e **voz Jarvis** (push-to-talk,
   STT + tradução PT→EN, resposta falada).

@@ -1,7 +1,14 @@
 import { BrowserWindow, WebContentsView, ipcMain } from 'electron';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { BROWSER_CHANNELS } from '../../shared/channels';
-import type { BrowserPaneBounds, BrowserPaneState } from '../../shared/types';
+import type {
+  BrowserPaneBounds,
+  BrowserPaneState,
+  BrowserScreenshotResult,
+} from '../../shared/types';
 import { z } from 'zod';
 
 interface BrowserEntry {
@@ -14,6 +21,7 @@ interface BrowserEntry {
 }
 
 const browsers = new Map<string, BrowserEntry>();
+const SCREENSHOT_DIR = path.join(os.homedir(), '.nexus', 'browser-shots');
 
 const paneIdSchema = z.string().min(1).max(128);
 const createSchema = z.object({
@@ -61,6 +69,10 @@ function stateOf(paneId: string, entry: BrowserEntry): BrowserPaneState {
     loading: entry.loading || wc.isLoading(),
     error: entry.error,
   };
+}
+
+function safeFilePart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80) || 'browser';
 }
 
 function canSend(wc: WebContents): boolean {
@@ -200,6 +212,40 @@ export async function loadBrowser(
   rawUrl: string,
 ): Promise<BrowserPaneState> {
   return loadBrowserForEntry(paneId, withEntry(paneId), rawUrl);
+}
+
+export async function captureBrowserScreenshot(
+  paneId: string,
+): Promise<BrowserScreenshotResult> {
+  const entry = withEntry(paneId);
+  const wc = entry.view.webContents;
+  if (wc.isDestroyed() || wc.isCrashed()) {
+    throw new Error(`browser pane is not capturable: ${paneId}`);
+  }
+
+  const capturedAt = Date.now();
+  const image = await wc.capturePage();
+  const size = image.getSize();
+  if (size.width <= 0 || size.height <= 0) {
+    throw new Error('browser screenshot is empty; the pane may not be visible yet');
+  }
+
+  await fs.promises.mkdir(SCREENSHOT_DIR, { recursive: true, mode: 0o700 });
+  const filePath = path.join(
+    SCREENSHOT_DIR,
+    `${capturedAt}-${safeFilePart(paneId)}.png`,
+  );
+  await fs.promises.writeFile(filePath, image.toPNG(), { mode: 0o600 });
+
+  return {
+    paneId,
+    path: filePath,
+    width: size.width,
+    height: size.height,
+    url: wc.getURL() || entry.url,
+    title: wc.getTitle() || entry.title,
+    capturedAt,
+  };
 }
 
 function withEntry(paneId: string): BrowserEntry {

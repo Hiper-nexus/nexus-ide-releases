@@ -50,13 +50,33 @@ describe('recipe-lint', () => {
               agentName: 'Worker',
               category: 'executor',
               cli: 'claude',
-              allowedTools: ['gap:nexus_browser_screenshot: aguardando API nativa'],
+              allowedTools: ['gap:nexus_remote_bridge: aguardando bridge remoto'],
               allowedSkills: ['gap:visual-qa: instalar quando catálogo publicar'],
             },
           ],
         }),
       ],
       catalog: { toolNames: [], skillNames: [] },
+    });
+    expect(issues).toEqual([]);
+  });
+
+  it('aceita browser screenshot como tool nativa', () => {
+    const issues = lintSquadRecipes({
+      squads: [
+        squad({
+          agents: [
+            {
+              id: 'a1',
+              agentName: 'Worker',
+              category: 'executor',
+              cli: 'claude',
+              allowedTools: ['nexus_browser_screenshot'],
+            },
+          ],
+        }),
+      ],
+      catalog: { toolNames: ['nexus_browser_screenshot'], skillNames: [] },
     });
     expect(issues).toEqual([]);
   });
