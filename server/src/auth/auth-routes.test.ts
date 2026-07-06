@@ -110,6 +110,33 @@ describe('auth-routes', () => {
     expect(r.body).toEqual({ ok: false, error: 'erro interno' });
   });
 
+  it('link NÃO apaga conta de origem com billing ativo', async () => {
+    const { app, db } = await setup();
+    // Loga o usuário A (github)
+    const auth = await request(app).get('/v1/auth/github?app_state=n4');
+    const state = new URL(auth.headers.location).searchParams.get('state')!;
+    const cb = await request(app).get(`/v1/auth/github/callback?code=abc&state=${state}`);
+    const code = deepLinkCode(cb.headers.location);
+    const ex = await request(app).post('/v1/auth/exchange').send({ code });
+    const session = ex.body.data.session as string;
+    // Conta de origem com plano pago + um code válido apontando pra ela
+    const [paid] = await db.insert(schema.accounts)
+      .values({ email: 'pago@x.com', plan: 'pro', stripeCustomerId: 'cus_1' })
+      .returning({ id: schema.accounts.id });
+    const { hashToken } = await import('./tokens');
+    await db.insert(schema.authCodes).values({
+      codeHash: hashToken('code-pago'), accountId: paid.id,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    // Merge destrutivo bloqueado: apagaria billing pago silenciosamente.
+    const link = await request(app).post('/v1/auth/link')
+      .set('authorization', `Bearer ${session}`).send({ code: 'code-pago' });
+    expect(link.status).toBe(409);
+    const still = await db.select().from(schema.accounts)
+      .where((await import('drizzle-orm')).eq(schema.accounts.id, paid.id));
+    expect(still).toHaveLength(1);
+  });
+
   it('DELETE /me apaga a conta (LGPD)', async () => {
     const { app, db } = await setup();
     const auth = await request(app).get('/v1/auth/github?app_state=n3');

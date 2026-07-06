@@ -124,9 +124,22 @@ export function buildAuthRouter(deps: AuthDeps): Router {
       return res.status(400).json({ ok: false, error: 'code inválido' });
     }
     if (consumed.accountId !== req.accountId) {
-      await db.update(identities).set({ accountId: req.accountId! })
-        .where(eq(identities.accountId, consumed.accountId));
-      await db.delete(accounts).where(eq(accounts.id, consumed.accountId));
+      // Merge destrutivo bloqueado se a origem tem billing: apagar uma conta
+      // com plano pago/Stripe descartaria a assinatura silenciosamente.
+      const [src] = await db.select().from(accounts)
+        .where(eq(accounts.id, consumed.accountId)).limit(1);
+      if (src && (src.plan !== 'free' || src.stripeCustomerId)) {
+        return res.status(409).json({
+          ok: false,
+          error: 'conta de origem tem billing ativo — contate o suporte',
+        });
+      }
+      // Transação: mover identities e apagar a origem é tudo-ou-nada.
+      await db.transaction(async (tx) => {
+        await tx.update(identities).set({ accountId: req.accountId! })
+          .where(eq(identities.accountId, consumed.accountId));
+        await tx.delete(accounts).where(eq(accounts.id, consumed.accountId));
+      });
     }
     res.json({ ok: true });
   }));
