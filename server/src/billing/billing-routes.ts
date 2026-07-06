@@ -31,6 +31,27 @@ async function customerFor(db: Db, stripe: StripeLike, accountId: string): Promi
   return created.id;
 }
 
+function isUniqueViolation(err: unknown): boolean {
+  const layers = [err, (err as { cause?: unknown })?.cause];
+  return layers.some((layer) => {
+    const code = (layer as { code?: string })?.code;
+    const msg = layer instanceof Error ? layer.message : String(layer ?? '');
+    return code === '23505' || /duplicate key|unique constraint/i.test(msg);
+  });
+}
+
+async function hasLiveTeamSubscription(db: Db, teamId: string): Promise<boolean> {
+  const [live] = await db.select({ id: subscriptions.id })
+    .from(subscriptions)
+    .where(and(
+      eq(subscriptions.ownerType, 'team'),
+      eq(subscriptions.teamId, teamId),
+      inArray(subscriptions.status, LIVE),
+    ))
+    .limit(1);
+  return Boolean(live);
+}
+
 export function buildBillingRouter(deps: BillingDeps): Router {
   const { db, env, stripe } = deps;
   const r = Router();
@@ -48,20 +69,40 @@ export function buildBillingRouter(deps: BillingDeps): Router {
       seats = Math.min(Math.max(Math.trunc(body.seats ?? 2), 2), MAX_SEATS);
       const name = String(body.teamName ?? '').trim().slice(0, 80);
       if (!name) return res.status(400).json({ ok: false, error: 'teamName obrigatório' });
-      // 1 time por conta: quem já está num time não cria outro.
-      const [member] = await db.select().from(teamMembers)
-        .where(eq(teamMembers.accountId, accountId)).limit(1);
+      const [member] = await db.select({
+        teamId: teamMembers.teamId,
+        role: teamMembers.role,
+        ownerAccountId: teams.ownerAccountId,
+      })
+        .from(teamMembers)
+        .innerJoin(teams, eq(teams.id, teamMembers.teamId))
+        .where(eq(teamMembers.accountId, accountId))
+        .limit(1);
       if (member) {
-        return res.status(409).json({ ok: false, error: 'você já está num time' });
+        if (member.role !== 'owner' || member.ownerAccountId !== accountId) {
+          return res.status(409).json({ ok: false, error: 'você já está num time' });
+        }
+        if (await hasLiveTeamSubscription(db, member.teamId)) {
+          return res.status(409).json({ ok: false, error: 'assinatura ativa — use o portal' });
+        }
+        await db.update(teams).set({ name }).where(eq(teams.id, member.teamId));
+        teamId = member.teamId;
+      } else {
+        try {
+          const created = await db.transaction(async (tx) => {
+            const [t] = await tx.insert(teams).values({ name, ownerAccountId: accountId })
+              .returning({ id: teams.id });
+            await tx.insert(teamMembers).values({ teamId: t.id, accountId, role: 'owner' });
+            return t;
+          });
+          teamId = created.id;
+        } catch (err) {
+          if (isUniqueViolation(err)) {
+            return res.status(409).json({ ok: false, error: 'você já está num time' });
+          }
+          throw err;
+        }
       }
-      // Time nasce AGORA (pendente até o webhook confirmar o pagamento).
-      const created = await db.transaction(async (tx) => {
-        const [t] = await tx.insert(teams).values({ name, ownerAccountId: accountId })
-          .returning({ id: teams.id });
-        await tx.insert(teamMembers).values({ teamId: t.id, accountId, role: 'owner' });
-        return t;
-      });
-      teamId = created.id;
     } else {
       // Pro: assinatura pessoal viva → mudanças são no portal, não em novo checkout.
       const live = await db.select().from(subscriptions).where(and(

@@ -3,6 +3,7 @@ import type { AuthDeps } from './auth/auth-routes';
 import { buildAuthRouter } from './auth/auth-routes';
 import type { StripeLike } from './billing/stripe-like';
 import { buildBillingRouter } from './billing/billing-routes';
+import { buildWebhookRouter } from './billing/webhook-routes';
 import { errorHandler } from './middleware/errors';
 
 /** Deps de auth + Stripe opcional (billing só monta quando presente). */
@@ -15,11 +16,15 @@ export function createApp(deps?: AppDeps): Express {
   // do proxy para TODOS os usuários (bucket único = DoS global). Ajuste se a
   // topologia tiver mais saltos.
   app.set('trust proxy', 1);
+  if (deps?.stripe) {
+    app.use('/v1/billing/webhook', express.raw({ type: '*/*', limit: '256kb' }));
+  }
   app.use(express.json({ limit: '256kb' }));
   app.get('/health', (_req, res) => res.json({ ok: true }));
   if (deps) app.use('/v1', buildAuthRouter(deps));
   if (deps?.stripe) {
     app.use('/v1', buildBillingRouter({ db: deps.db, env: deps.env, stripe: deps.stripe }));
+    app.use('/v1', buildWebhookRouter({ db: deps.db, env: deps.env, stripe: deps.stripe }));
   }
   app.use(errorHandler); // rejeição async → 500 JSON (nunca request pendurada)
   return app;
@@ -36,7 +41,7 @@ if (process.argv[1] && process.argv[1].endsWith('index.js')) {
   const Stripe = (await import('stripe')).default;
   const stripe = new Stripe(env.STRIPE_SECRET_KEY) as unknown as StripeLike;
   const app = createApp({ db, env, fetchFn: fetch, stripe });
-  // Reaper de linhas efêmeras expiradas (states/codes/sessões/refresh).
+  // Reaper de linhas expiradas e times pendentes antigos.
   const REAP_EVERY_MS = 15 * 60 * 1000;
   const reap = () =>
     cleanupExpired(db).catch((err) => console.error('[server] reaper:', err));

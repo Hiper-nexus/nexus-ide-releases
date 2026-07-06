@@ -28,14 +28,54 @@ describe('billing-routes', () => {
     expect(params.line_items[0].quantity).toBe(5);
   });
 
-  it('guardas 409: team já em time; pro com assinatura pessoal ativa', async () => {
+  it('checkout team reutiliza time pendente do proprio owner', async () => {
+    const { app, db, fake, bearer } = await setup();
+
+    const first = await request(app).post('/v1/billing/checkout')
+      .set('authorization', bearer)
+      .send({ plan: 'team', seats: 5, teamName: 'Squad' });
+    const second = await request(app).post('/v1/billing/checkout')
+      .set('authorization', bearer)
+      .send({ plan: 'team', seats: 7, teamName: 'Squad Renomeado' });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(await db.select().from(schema.teams)).toHaveLength(1);
+    expect(fake.calls.checkoutCreate).toHaveLength(2);
+    const params = fake.calls.checkoutCreate[1] as {
+      line_items: Array<{ quantity: number }>;
+      subscription_data: { metadata: { teamId: string } };
+    };
+    const [team] = await db.select().from(schema.teams);
+    expect(team.name).toBe('Squad Renomeado');
+    expect(params.line_items[0].quantity).toBe(7);
+    expect(params.subscription_data.metadata.teamId).toBe(team.id);
+  });
+
+  it('guardas 409: member ja em time; owner com assinatura team viva; pro com assinatura pessoal ativa', async () => {
     const { app, db, bearer, accountId } = await setup();
+    const [owner] = await db.insert(schema.accounts).values({ email: 'owner@x.com' })
+      .returning({ id: schema.accounts.id });
     const [t] = await db.insert(schema.teams).values({ name: 'S', ownerAccountId: accountId })
       .returning({ id: schema.teams.id });
     await db.insert(schema.teamMembers).values({ teamId: t.id, accountId, role: 'owner' });
-    const rTeam = await request(app).post('/v1/billing/checkout')
+    await db.insert(schema.subscriptions).values({
+      ownerType: 'team', teamId: t.id, stripeSubscriptionId: 'sub_t',
+      stripeCustomerId: 'cus_t', plan: 'team', status: 'active', seats: 3,
+      currentPeriodEnd: new Date(Date.now() + 86_400_000),
+    });
+    const rOwnerTeam = await request(app).post('/v1/billing/checkout')
       .set('authorization', bearer).send({ plan: 'team', seats: 3, teamName: 'X' });
-    expect(rTeam.status).toBe(409);
+    expect(rOwnerTeam.status).toBe(409);
+    await db.delete(schema.subscriptions);
+    await db.delete(schema.teamMembers);
+    await db.delete(schema.teams);
+    const [memberTeam] = await db.insert(schema.teams).values({ name: 'Other', ownerAccountId: owner.id })
+      .returning({ id: schema.teams.id });
+    await db.insert(schema.teamMembers).values({ teamId: memberTeam.id, accountId, role: 'member' });
+    const rMemberTeam = await request(app).post('/v1/billing/checkout')
+      .set('authorization', bearer).send({ plan: 'team', seats: 3, teamName: 'X' });
+    expect(rMemberTeam.status).toBe(409);
     await db.insert(schema.subscriptions).values({
       ownerType: 'account', accountId, stripeSubscriptionId: 'sub_p',
       stripeCustomerId: 'cus_p', plan: 'pro', status: 'active', seats: 1,

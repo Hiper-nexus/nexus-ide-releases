@@ -4,7 +4,7 @@ import { drizzle } from 'drizzle-orm/pglite';
 import * as schema from './schema';
 import { CREATE_TABLES_SQL } from './schema';
 import type { Db } from './client';
-import { cleanupExpired } from './maintenance';
+import { PENDING_TEAM_TTL_MS, cleanupExpired } from './maintenance';
 
 async function makeTestDb(): Promise<Db> {
   const client = new PGlite();
@@ -44,5 +44,37 @@ describe('cleanupExpired', () => {
     expect(await db.select().from(schema.authCodes)).toHaveLength(1);
     expect(await db.select().from(schema.sessions)).toHaveLength(1);
     expect(await db.select().from(schema.refreshTokens)).toHaveLength(1);
+  });
+
+  it('remove times pendentes antigos sem assinatura e preserva times com subscription', async () => {
+    const db = await makeTestDb();
+    const now = Date.now();
+    const old = new Date(now - PENDING_TEAM_TTL_MS - 1_000);
+    const [owner] = await db.insert(schema.accounts).values({ email: 'owner@x.com' })
+      .returning({ id: schema.accounts.id });
+    const [oldPending] = await db.insert(schema.teams)
+      .values({ name: 'old', ownerAccountId: owner.id, createdAt: old })
+      .returning({ id: schema.teams.id });
+    await db.insert(schema.teamMembers)
+      .values({ teamId: oldPending.id, accountId: owner.id, role: 'owner' });
+    const [kept] = await db.insert(schema.teams)
+      .values({ name: 'paid', ownerAccountId: owner.id, createdAt: old })
+      .returning({ id: schema.teams.id });
+    await db.insert(schema.subscriptions).values({
+      ownerType: 'team',
+      teamId: kept.id,
+      stripeSubscriptionId: 'sub_kept',
+      stripeCustomerId: 'cus_kept',
+      plan: 'team',
+      status: 'canceled',
+      seats: 3,
+      currentPeriodEnd: old,
+    });
+
+    await cleanupExpired(db, () => now);
+
+    const teams = await db.select().from(schema.teams);
+    expect(teams.map((team) => team.id)).toEqual([kept.id]);
+    expect(await db.select().from(schema.teamMembers)).toHaveLength(0);
   });
 });
