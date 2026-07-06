@@ -37,7 +37,7 @@
 **Interfaces:**
 - Produces: `shared/contract.ts` exporta `PlanId = 'free'|'pro'|'team'`, `LicenseInfo`, `LicensePayload`, `XpSyncEvent`. `server/src/index.ts` exporta `createApp(): import('express').Express` (com `GET /health`).
 
-- [ ] **Step 1: `shared/contract.ts` — fonte única do contrato**
+- [x] **Step 1: `shared/contract.ts` — fonte única do contrato**
 
 ```ts
 // shared/contract.ts
@@ -75,7 +75,7 @@ export interface XpSyncEvent {
 }
 ```
 
-- [ ] **Step 2: `server/package.json`**
+- [x] **Step 2: `server/package.json`**
 
 ```json
 {
@@ -115,7 +115,7 @@ export interface XpSyncEvent {
 }
 ```
 
-- [ ] **Step 3: `server/tsconfig.json` + `server/vitest.config.ts`**
+- [x] **Step 3: `server/tsconfig.json` + `server/vitest.config.ts`**
 
 ```json
 // server/tsconfig.json
@@ -142,7 +142,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({ test: { environment: 'node' } });
 ```
 
-- [ ] **Step 4: teste que falha (health)**
+- [x] **Step 4: teste que falha (health)**
 
 ```ts
 // server/src/health.test.ts
@@ -159,12 +159,12 @@ describe('health', () => {
 });
 ```
 
-- [ ] **Step 5: instalar deps + rodar e ver falhar**
+- [x] **Step 5: instalar deps + rodar e ver falhar**
 
 Run: `cd server && npm install && npx vitest run src/health.test.ts`
 Expected: FAIL (`Cannot find module './index'`)
 
-- [ ] **Step 6: `server/src/index.ts` mínimo**
+- [x] **Step 6: `server/src/index.ts` mínimo**
 
 ```ts
 // server/src/index.ts
@@ -186,12 +186,12 @@ if (process.argv[1] && process.argv[1].endsWith('index.js')) {
 }
 ```
 
-- [ ] **Step 7: rodar e ver passar**
+- [x] **Step 7: rodar e ver passar**
 
 Run: `cd server && npx vitest run src/health.test.ts`
 Expected: PASS
 
-- [ ] **Step 8: adicionar `server` e `shared` aos workspaces da raiz**
+- [x] **Step 8: adicionar `server` e `shared` aos workspaces da raiz**
 
 No `package.json` da RAIZ, adicionar (se não existir o campo, criar):
 
@@ -202,7 +202,7 @@ No `package.json` da RAIZ, adicionar (se não existir o campo, criar):
 (O `shared/` é referenciado pelo `tsconfig` do server via `rootDirs`; não precisa
 ser workspace npm próprio.)
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add shared/contract.ts server/package.json server/tsconfig.json server/vitest.config.ts server/src/index.ts server/src/health.test.ts package.json
