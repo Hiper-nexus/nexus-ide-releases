@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { and, eq } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import type { Env } from '../env';
-import { accounts, authCodes, identities, oauthStates } from '../db/schema';
+import { accounts, authCodes, identities, oauthStates, subscriptions, teams } from '../db/schema';
 import { authorizeUrl, exchangeCode, makePkce } from './oauth-flow';
 import { type Provider } from './oauth-providers';
 import { consumeAuthCode } from './auth-code-service';
@@ -23,6 +23,7 @@ export interface AuthDeps {
 
 const STATE_TTL = 10 * 60 * 1000;
 const CODE_TTL = 60 * 1000;
+const LIVE_TEAM_SUBSCRIPTIONS = ['active', 'trialing', 'past_due'];
 /** Nonce do desktop: mesmo conjunto seguro do deep link, com teto. */
 const APP_STATE_RE = /^[A-Za-z0-9._~-]{1,128}$/;
 
@@ -150,6 +151,20 @@ export function buildAuthRouter(deps: AuthDeps): Router {
   }));
 
   r.delete('/me', requireAuth(db), ah(async (req, res) => {
+    const ownedTeams = await db.select({ id: teams.id })
+      .from(teams)
+      .where(eq(teams.ownerAccountId, req.accountId!));
+    for (const team of ownedTeams) {
+      const teamSubs = await db.select({ status: subscriptions.status })
+        .from(subscriptions)
+        .where(and(
+          eq(subscriptions.ownerType, 'team'),
+          eq(subscriptions.teamId, team.id),
+        ));
+      if (teamSubs.some((sub) => LIVE_TEAM_SUBSCRIPTIONS.includes(sub.status))) {
+        return res.status(409).json({ ok: false, error: 'cancele a assinatura do time primeiro' });
+      }
+    }
     await db.delete(accounts).where(eq(accounts.id, req.accountId!)); // cascade
     res.json({ ok: true });
   }));

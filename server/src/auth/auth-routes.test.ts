@@ -148,4 +148,46 @@ describe('auth-routes', () => {
     expect(del.status).toBe(200);
     expect(await db.select().from(schema.accounts)).toHaveLength(0);
   });
+
+  it('DELETE /me de owner com assinatura de time ativa retorna 409; cancelada apaga', async () => {
+    const { app, db } = await setup();
+    const auth = await request(app).get('/v1/auth/github?app_state=n5');
+    const state = new URL(auth.headers.location).searchParams.get('state')!;
+    const cb = await request(app).get(`/v1/auth/github/callback?code=abc&state=${state}`);
+    const code = deepLinkCode(cb.headers.location);
+    const ex = await request(app).post('/v1/auth/exchange').send({ code });
+    const bearer = `Bearer ${ex.body.data.session}`;
+    const accountId = (await db.select().from(schema.accounts))[0].id;
+    const [team] = await db.insert(schema.teams)
+      .values({ name: 'S', ownerAccountId: accountId })
+      .returning({ id: schema.teams.id });
+    await db.insert(schema.teamMembers)
+      .values({ teamId: team.id, accountId, role: 'owner' });
+    await db.insert(schema.subscriptions).values({
+      ownerType: 'team',
+      teamId: team.id,
+      stripeSubscriptionId: 's0',
+      stripeCustomerId: 'c0',
+      plan: 'team',
+      status: 'canceled',
+      seats: 99,
+      currentPeriodEnd: new Date(Date.now() - 86_400_000),
+    });
+    await db.insert(schema.subscriptions).values({
+      ownerType: 'team',
+      teamId: team.id,
+      stripeSubscriptionId: 's1',
+      stripeCustomerId: 'c1',
+      plan: 'team',
+      status: 'active',
+      seats: 3,
+      currentPeriodEnd: new Date(Date.now() + 86_400_000),
+    });
+
+    expect((await request(app).delete('/v1/me').set('authorization', bearer)).status).toBe(409);
+    const { eq } = await import('drizzle-orm');
+    await db.update(schema.subscriptions).set({ status: 'canceled' })
+      .where(eq(schema.subscriptions.teamId, team.id));
+    expect((await request(app).delete('/v1/me').set('authorization', bearer)).status).toBe(200);
+  });
 });

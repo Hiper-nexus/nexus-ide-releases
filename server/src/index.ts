@@ -5,6 +5,7 @@ import type { StripeLike } from './billing/stripe-like';
 import { buildBillingRouter } from './billing/billing-routes';
 import { buildWebhookRouter } from './billing/webhook-routes';
 import { buildLicenseRouter } from './billing/license-routes';
+import { buildTeamRouter } from './team/team-routes';
 import { errorHandler } from './middleware/errors';
 
 /** Deps de auth + Stripe opcional (billing só monta quando presente). */
@@ -25,6 +26,7 @@ export function createApp(deps?: AppDeps): Express {
   if (deps) {
     app.use('/v1', buildAuthRouter(deps));
     app.use('/v1', buildLicenseRouter({ db: deps.db, env: deps.env, now: deps.now }));
+    app.use('/v1', buildTeamRouter({ db: deps.db, env: deps.env, now: deps.now }));
   }
   if (deps?.stripe) {
     app.use('/v1', buildBillingRouter({ db: deps.db, env: deps.env, stripe: deps.stripe }));
