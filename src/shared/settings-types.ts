@@ -69,6 +69,9 @@ export const orchSettingsSchema = z.object({
   seniorMode: z.boolean().default(true),
   /** Carta de Design anti-genérico (Impeccable) para tarefas com UI. */
   designPro: z.boolean().default(true),
+  /** Modo sóbrio: oculta HUD/celebrações/narração da gamificação (o XP
+   *  continua acumulando em silêncio). */
+  soberMode: z.boolean().default(false),
 });
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});

@@ -24,6 +24,8 @@ import { USAGE_CHANNELS } from '../shared/usage-types';
 import type { UsageSnapshot } from '../shared/usage-types';
 import { MEDIA_CHANNELS } from '../shared/media-types';
 import type { MediaProviderId } from '../shared/media-types';
+import { GAMIFICATION_CHANNELS } from '../shared/gamification-types';
+import type { GamificationSnapshot } from '../shared/gamification-types';
 import { BILLING_CHANNELS } from '../shared/billing-types';
 import type { PlanId } from '../shared/billing-types';
 import type { CostSnapshot } from '../shared/cost-types';
@@ -253,6 +255,14 @@ ipcRenderer.on(COST_CHANNELS.changed, (_e, snapshot: CostSnapshot) =>
 const usageChangedListeners = new Set<(snapshot: UsageSnapshot) => void>();
 ipcRenderer.on(USAGE_CHANNELS.changed, (_e, snapshot: UsageSnapshot) =>
   usageChangedListeners.forEach((cb) => cb(snapshot)),
+);
+const gamificationChangedListeners = new Set<
+  (snapshot: GamificationSnapshot) => void
+>();
+ipcRenderer.on(
+  GAMIFICATION_CHANNELS.changed,
+  (_e, snapshot: GamificationSnapshot) =>
+    gamificationChangedListeners.forEach((cb) => cb(snapshot)),
 );
 
 const notesChangedListeners = new Set<(event: NotesChangedEvent) => void>();
@@ -498,6 +508,18 @@ const api: NexusApi = {
     snapshot: () => ipcRenderer.invoke(USAGE_CHANNELS.snapshot),
     onChanged: (cb: (snapshot: UsageSnapshot) => void) =>
       addListener(usageChangedListeners, cb),
+  },
+  gamification: {
+    snapshot: () => ipcRenderer.invoke(GAMIFICATION_CHANNELS.snapshot),
+    selectSkin: (skin: string | null) =>
+      ipcRenderer.invoke(GAMIFICATION_CHANNELS.selectSkin, { skin }),
+    exportProfile: () =>
+      ipcRenderer.invoke(GAMIFICATION_CHANNELS.exportProfile),
+    importProfile: () =>
+      ipcRenderer.invoke(GAMIFICATION_CHANNELS.importProfile),
+    prestige: () => ipcRenderer.invoke(GAMIFICATION_CHANNELS.prestige),
+    onChanged: (cb: (snapshot: GamificationSnapshot) => void) =>
+      addListener(gamificationChangedListeners, cb),
   },
   perf: {
     snapshot: () => ipcRenderer.invoke(PERF_CHANNELS.snapshot),

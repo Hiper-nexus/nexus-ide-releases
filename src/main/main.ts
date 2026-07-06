@@ -90,6 +90,11 @@ import {
 } from './orch/pane-pipe-ipc';
 import { registerRemoteIpc } from './remote/remote-ipc';
 import { registerMediaIpc } from './media/media-ipc';
+import { registerGamificationIpc } from './gamification/gamification-ipc';
+import {
+  initGamificationService,
+  shutdownGamificationService,
+} from './gamification/gamification-service';
 import { startCronLoop, stopCronLoop } from './orch/cron-runtime';
 import { wireDeepLinks, consumeLaunchDeepLink } from './deep-link';
 import { initAutoUpdater } from './updater';
@@ -128,6 +133,7 @@ function bootstrap(): void {
   registerAccountIpc();
   registerCostIpc();
   registerMediaIpc();
+  registerGamificationIpc();
   // Telemetria REAL de tokens (transcript watchers → SQLite). Convive com o
   // cost-tracker heurístico: a UI prefere o real quando ele existe.
   initUsageTelemetry();
@@ -138,9 +144,13 @@ function bootstrap(): void {
   registerRemoteIpc();
   // Orchestration boots async (MCP server binds a localhost port); the window
   // opens immediately and orchestration attaches when ready.
-  void initOrchestration().catch((err) =>
-    console.warn('[nexus] orchestration failed to start:', err),
-  );
+  // Gamificação SÓ depois: o retro replay precisa dos stores orch hidratados
+  // (senão a estreia gravaria replayDone com zero eventos).
+  void initOrchestration()
+    .then(() => initGamificationService())
+    .catch((err) =>
+      console.warn('[nexus] orchestration failed to start:', err),
+    );
   // Cron: squads/agentes agendados (tick 60s, skip-if-stale).
   startCronLoop();
   createMainWindow();
@@ -209,6 +219,7 @@ app.on('before-quit', () => {
   closeAdapterRegistry();
   closeVoiceIpc();
   shutdownUsageTelemetry();
+  shutdownGamificationService();
   stopCronLoop();
   closeDb();
 });

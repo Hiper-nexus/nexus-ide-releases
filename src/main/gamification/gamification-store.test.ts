@@ -3,10 +3,12 @@ import type { Db } from '../persistence/db';
 import type { XpEventInput } from '../../shared/gamification-types';
 import {
   countTodaySameBucket,
+  dumpMeta,
   getMeta,
   initGamificationStore,
   insertXpEvent,
   listXpEvents,
+  replaceProfile,
   setMeta,
 } from './gamification-store';
 
@@ -68,6 +70,29 @@ describe.skipIf(!sqlite)('gamification-store (SQLite real)', () => {
     expect(countTodaySameBucket(db, 'handoff_green', 'medium', 0)).toBe(2);
     expect(countTodaySameBucket(db, 'handoff_green', 'high', 0)).toBe(1);
     db.close();
+  });
+
+  it('perfil: dump + replace fazem round-trip; falha faz rollback', () => {
+    const db = makeDb();
+    insertXpEvent(db, ev(), 8_000);
+    setMeta(db, 'prestige', '1');
+    const events = listXpEvents(db);
+    const meta = dumpMeta(db);
+    expect(meta).toEqual({ prestige: '1' });
+
+    const db2 = makeDb();
+    replaceProfile(db2, events, meta);
+    expect(listXpEvents(db2)).toEqual(events);
+    expect(dumpMeta(db2)).toEqual(meta);
+
+    // evento inválido (points objeto) → lança e NADA muda (transação)
+    const broken = [{ ...events[0], id: 2, entityKey: 'x', points: {} }];
+    expect(() =>
+      replaceProfile(db2, broken as unknown as typeof events, meta),
+    ).toThrow();
+    expect(listXpEvents(db2)).toEqual(events);
+    db.close();
+    db2.close();
   });
 
   it('meta: get/set roundtrip com overwrite', () => {

@@ -51,6 +51,7 @@ import type {
 import type { AccountInfo, AddAccountRequest, FailoverEvent } from './account-types';
 import type { CostSnapshot } from './cost-types';
 import type { UsageSnapshot } from './usage-types';
+import type { GamificationSnapshot } from './gamification-types';
 import type {
   MediaProviderId,
   MediaProviderInfo,
@@ -612,6 +613,15 @@ export interface NexusApi {
   usage: {
     snapshot(): Promise<UsageSnapshot>;
     onChanged(cb: (snapshot: UsageSnapshot) => void): Unsubscribe;
+  };
+  /** Gamificação power-scaling: XP por entrega, nunca por consumo. */
+  gamification: {
+    snapshot(): Promise<GamificationSnapshot>;
+    selectSkin(skin: string | null): Promise<GamificationSnapshot>;
+    exportProfile(): Promise<{ ok: boolean; path?: string; error?: string }>;
+    importProfile(): Promise<{ ok: boolean; error?: string }>;
+    prestige(): Promise<GamificationSnapshot>;
+    onChanged(cb: (snapshot: GamificationSnapshot) => void): Unsubscribe;
   };
   perf: {
     snapshot(): Promise<PerfSnapshot>;

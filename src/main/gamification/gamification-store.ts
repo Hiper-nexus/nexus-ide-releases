@@ -120,6 +120,63 @@ export function countTodaySameBucket(
   return row?.n ?? 0;
 }
 
+/** Dump ordenado do meta (export de perfil — checksum determinístico). */
+export function dumpMeta(db: Db): Record<string, string> {
+  const rows = db
+    .prepare('SELECT key, value FROM gamification_meta ORDER BY key')
+    .all() as Array<{ key: string; value: string }>;
+  return Object.fromEntries(rows.map((r) => [r.key, r.value]));
+}
+
+/** Substitui eventos+meta em transação (import de perfil). Lança em falha
+ *  (rollback aplicado) — o chamador decide a mensagem. */
+export function replaceProfile(
+  db: Db,
+  events: StoredXpEvent[],
+  meta: Record<string, string>,
+): void {
+  db.exec('BEGIN');
+  try {
+    db.exec('DELETE FROM xp_events; DELETE FROM gamification_meta;');
+    const insertEvent = db.prepare(
+      `INSERT INTO xp_events
+         (id, entity_key, kind, mission_id, agent_category, effort, cost_usd,
+          evidence, retro, points, rule_version, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const ev of events) {
+      insertEvent.run(
+        ev.id,
+        ev.entityKey,
+        ev.kind,
+        ev.missionId ?? null,
+        ev.agentCategory ?? null,
+        ev.effort ?? null,
+        ev.costUsd ?? null,
+        ev.evidence ?? null,
+        ev.retro ? 1 : 0,
+        ev.points,
+        ev.ruleVersion,
+        ev.createdAt,
+      );
+    }
+    const insertMeta = db.prepare(
+      'INSERT INTO gamification_meta (key, value) VALUES (?, ?)',
+    );
+    for (const [key, value] of Object.entries(meta)) {
+      insertMeta.run(key, String(value));
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // rollback melhor-esforço — o erro original é o que importa
+    }
+    throw err;
+  }
+}
+
 export function getMeta(db: Db, key: string): string | null {
   const row = db
     .prepare('SELECT value FROM gamification_meta WHERE key = ?')

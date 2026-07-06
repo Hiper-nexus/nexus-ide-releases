@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Db } from '../persistence/db';
 import type {
   GamificationSnapshot,
@@ -16,12 +16,15 @@ import { advanceStreak, SHIELDS_PER_MONTH, type StreakState } from './streak';
 import { evaluateAchievements } from './achievements';
 import {
   countTodaySameBucket,
+  dumpMeta,
   getMeta,
   initGamificationStore,
   insertXpEvent,
   listXpEvents,
+  replaceProfile,
   setMeta,
 } from './gamification-store';
+import type { StoredXpEvent } from '../../shared/gamification-types';
 import { listHandoffs, onHandoffsChange } from '../orch/handoff-store';
 import { listMissions, onMissionsChange } from '../orch/mission-store';
 import { listTasks, onTasksChange } from '../orch/task-store';
@@ -408,7 +411,12 @@ function scheduleChangedBroadcast(): void {
   if (changedTimer) return;
   changedTimer = setTimeout(() => {
     changedTimer = null;
-    depsOf().broadcast(GAMIFICATION_CHANNELS.changed, buildSnapshot());
+    if (!deps) return; // shutdown entre o agendamento e o disparo
+    try {
+      deps.broadcast(GAMIFICATION_CHANNELS.changed, buildSnapshot());
+    } catch (err) {
+      console.warn('[gamification] broadcast falhou:', err);
+    }
   }, 1000);
   changedTimer.unref?.();
 }
@@ -567,6 +575,69 @@ export function initGamificationService(over?: Partial<ServiceDeps>): void {
     onMissionsChange(scanLive),
     onTasksChange(scanLive),
   ];
+  // Janela pode ter montado antes do init (orchestration é async): empurra o
+  // snapshot real mesmo sem evento novo.
+  scheduleChangedBroadcast();
+}
+
+// ── Export/import de perfil (multi-máquina hoje; semente do sync do SaaS) ───
+
+export interface ProfileExport {
+  version: 1;
+  ruleVersion: number;
+  events: StoredXpEvent[];
+  meta: Record<string, string>;
+  /** sha256 de JSON.stringify({events, meta}) — integridade; assinatura
+   *  criptográfica real fica para o backend. */
+  checksum: string;
+}
+
+function profileChecksum(events: unknown, meta: unknown): string {
+  return createHash('sha256')
+    .update(JSON.stringify({ events, meta }))
+    .digest('hex');
+}
+
+export function exportProfileData(): ProfileExport | null {
+  const db = deps?.db;
+  if (!db) return null;
+  const events = listXpEvents(db);
+  const meta = dumpMeta(db);
+  return {
+    version: 1,
+    ruleVersion: RULE_VERSION,
+    events,
+    meta,
+    checksum: profileChecksum(events, meta),
+  };
+}
+
+export function importProfileData(raw: unknown): { ok: boolean; error?: string } {
+  const db = deps?.db;
+  if (!db) return { ok: false, error: 'Banco de dados indisponível.' };
+  if (!raw || typeof raw !== 'object') {
+    return { ok: false, error: 'Arquivo de perfil inválido.' };
+  }
+  const profile = raw as Partial<ProfileExport>;
+  if (
+    profile.version !== 1 ||
+    !Array.isArray(profile.events) ||
+    !profile.meta ||
+    typeof profile.meta !== 'object' ||
+    typeof profile.checksum !== 'string'
+  ) {
+    return { ok: false, error: 'Arquivo de perfil inválido.' };
+  }
+  if (profileChecksum(profile.events, profile.meta) !== profile.checksum) {
+    return { ok: false, error: 'Checksum não confere — arquivo alterado ou corrompido.' };
+  }
+  try {
+    replaceProfile(db, profile.events, profile.meta as Record<string, string>);
+  } catch {
+    return { ok: false, error: 'Falha ao gravar o perfil importado.' };
+  }
+  scheduleChangedBroadcast();
+  return { ok: true };
 }
 
 export function shutdownGamificationService(): void {
