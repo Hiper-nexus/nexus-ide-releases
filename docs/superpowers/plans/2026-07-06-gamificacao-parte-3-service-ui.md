@@ -37,7 +37,7 @@
 **Interfaces:**
 - Produces (Task 7): `usageTotalsByMission(db: Db, missionId: string): UsageTotals` (mesmo shape das totals existentes).
 
-- [ ] **Step 1: Adicionar o teste** — no `describe.skipIf(!sqlite)` existente:
+- [x] **Step 1: Adicionar o teste** — no `describe.skipIf(!sqlite)` existente:
 
 ```ts
   it('agrega uso por missão', () => {
@@ -59,8 +59,8 @@
 `missionId?: string | null` — se `makeEvent` não propagar, passar direto no
 objeto literal como acima.)
 
-- [ ] **Step 2: Rodar e ver falhar** — `npx vitest run src/main/usage/usage-store.test.ts` → FAIL (não exportada)
-- [ ] **Step 3: Implementar** — ao lado de `usageTotalsByWorkspace`, com o MESMO corpo trocando o WHERE:
+- [x] **Step 2: Rodar e ver falhar** — `npx vitest run src/main/usage/usage-store.test.ts` → FAIL (não exportada)
+- [x] **Step 3: Implementar** — ao lado de `usageTotalsByWorkspace`, com o MESMO corpo trocando o WHERE:
 
 ```ts
 export function usageTotalsByMission(db: Db, missionId: string): UsageTotals {
@@ -74,8 +74,8 @@ export function usageTotalsByMission(db: Db, missionId: string): UsageTotals {
 (Se não existir helper `totalsFromRow`, replicar o mapeamento literal da
 função vizinha — manter idêntico.)
 
-- [ ] **Step 4: Rodar e ver passar** — suite do arquivo inteira PASS.
-- [ ] **Step 5: Commit** — `git add src/main/usage/ && git commit -m "feat(usage): totais de tokens por missão (base do bônus de eficiência)"`
+- [x] **Step 4: Rodar e ver passar** — suite do arquivo inteira PASS.
+- [x] **Step 5: Commit** — `git add src/main/usage/ && git commit -m "feat(usage): totais de tokens por missão (base do bônus de eficiência)"`
 
 ---
 
@@ -150,10 +150,10 @@ com handoff verde + custo na banda → `mission_green` com bônus e counter
 de conquista); level-up narra e sóbrio suprime; retro marca `replayDone`, não
 narra e conta com peso simples; snapshot completo (streak/conquistas/skins).
 
-- [ ] **Step 1: Escrever o teste com os 8 casos** (padrão `describe.skipIf(!sqlite)`).
-- [ ] **Step 2: Rodar e ver falhar** — `npx vitest run src/main/gamification/gamification-service.test.ts`
-- [ ] **Step 3: Implementar o service** conforme os 9 comportamentos (lazy require de `persistence/db` e `settings-store`; broadcast coalescido de 1s copiado de `usage-service.scheduleBroadcast`).
-- [ ] **Step 4: Tap de mídia** — em `media-usage-store.recordMediaUsage`, após o `insertMediaUsage` + notify existente:
+- [x] **Step 1: Escrever o teste com os 8 casos** (padrão `describe.skipIf(!sqlite)`).
+- [x] **Step 2: Rodar e ver falhar** — `npx vitest run src/main/gamification/gamification-service.test.ts`
+- [x] **Step 3: Implementar o service** conforme os 9 comportamentos (lazy require de `persistence/db` e `settings-store`; broadcast coalescido de 1s copiado de `usage-service.scheduleBroadcast`).
+- [x] **Step 4: Tap de mídia** — em `media-usage-store.recordMediaUsage`, após o `insertMediaUsage` + notify existente:
 
 ```ts
     const { recordMediaGeneratedForGamification } =
@@ -161,9 +161,9 @@ narra e conta com peso simples; snapshot completo (streak/conquistas/skins).
     recordMediaGeneratedForGamification(result.kind, ctx.missionId ?? null);
 ```
 
-- [ ] **Step 5: Hint de evidência** — em `tools-domain.ts`, description de `nexus_handoff_submit`, acrescentar: `'Attach {kind:"verification", command, exitCode:0} in artifacts to count as a VERIFIED (green) delivery.'`
-- [ ] **Step 6: Rodar tudo** — `npx vitest run src/main/gamification && npm run typecheck` → PASS/limpo.
-- [ ] **Step 7: Commit** — `git add -A src/main/gamification src/main/usage/media-usage-store.ts src/main/orch/tools-domain.ts && git commit -m "feat(gamification): service read-model (handoff/missão/task/mídia → XP, retro, narração, prestígio)"`
+- [x] **Step 5: Hint de evidência** — em `tools-domain.ts`, description de `nexus_handoff_submit`, acrescentar: `'Attach {kind:"verification", command, exitCode:0} in artifacts to count as a VERIFIED (green) delivery.'`
+- [x] **Step 6: Rodar tudo** — `npx vitest run src/main/gamification && npm run typecheck` → PASS/limpo.
+- [x] **Step 7: Commit** — `git add -A src/main/gamification src/main/usage/media-usage-store.ts src/main/orch/tools-domain.ts && git commit -m "feat(gamification): service read-model (handoff/missão/task/mídia → XP, retro, narração, prestígio)"`
 
 ---
 
@@ -241,10 +241,10 @@ Steps: (1) implementar tela + CSS; (2) montar no App (dois pontos de return com 
 
 **Files:** nenhum novo (correções pontuais se algo falhar).
 
-- [ ] **Step 1:** `npm run typecheck` → exit 0.
-- [ ] **Step 2:** `npm test` → suite completa verde (~35–45 testes novos sobre a base atual).
-- [ ] **Step 3:** Smoke real: `npm start`, abrir workspace com histórico → HUD já mostra power > 0 (retro replay funcionou); abrir Perfil (clique no HUD); conquista "Primeiro Deploy" visível; ligar Modo sóbrio → HUD some; desligar → volta com o mesmo power.
-- [ ] **Step 4:** Commit final:
+- [x] **Step 1:** `npm run typecheck` → exit 0.
+- [x] **Step 2:** `npm test` → suite completa verde (~35–45 testes novos sobre a base atual).
+- [x] **Step 3:** Smoke real: `npm start`, abrir workspace com histórico → HUD já mostra power > 0 (retro replay funcionou); abrir Perfil (clique no HUD); conquista "Primeiro Deploy" visível; ligar Modo sóbrio → HUD some; desligar → volta com o mesmo power.
+- [x] **Step 4:** Commit final:
 
 ```bash
 git add -A
