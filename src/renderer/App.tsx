@@ -37,7 +37,8 @@ import { useFilesStore } from './state/files-store';
 import { useAccountController } from './state/account-store';
 import { useCostController } from './state/cost-store';
 import { useUsageSync } from './state/usage-store';
-import { useGamificationSync } from './state/gamification-store';
+import { useGamificationSync, useGamificationStore } from './state/gamification-store';
+import { OperatorProfile } from './components/OperatorProfile';
 import { useOnboardingStore, useOnboardingSync } from './state/onboarding-store';
 import { Onboarding } from './components/Onboarding';
 import { useFailoverController } from './orch/failover-controller';
@@ -60,12 +61,14 @@ export function App() {
   const onboardingVisible = useOnboardingStore(
     (s) => s.loaded && !s.state.completed && !s.state.skipped,
   );
+  const operatorProfileOpen = useGamificationStore((s) => s.profileOpen);
   const suppressBrowserPanes =
     settingsDrawerOpen ||
     missionWizardOpen ||
     closeWorkspaceOpen ||
     voiceSettingsOpen ||
-    onboardingVisible;
+    onboardingVisible ||
+    operatorProfileOpen;
 
   useVoiceController();
   useOrchBridge();
@@ -174,6 +177,7 @@ export function App() {
         <LaunchScreen />
         <SettingsDrawer />
         <MissionWizard />
+        <OperatorProfile />
         <Toasts />
       </div>
     );
@@ -198,6 +202,7 @@ export function App() {
       <VoiceSettings />
       <SettingsDrawer />
       <MissionWizard />
+      <OperatorProfile />
       <CloseWorkspaceDialog />
       <Onboarding />
       <Toasts />
