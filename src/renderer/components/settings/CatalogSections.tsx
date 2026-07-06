@@ -436,9 +436,9 @@ export function HooksSection() {
     <section>
       <h3 className="settings-detail__title">Hooks</h3>
       <p className="settings-detail__hint">
-        Lifecycle scripts do skill-gate: cada worker gated recebe um $HOME
-        efêmero com hooks PreToolUse / PostToolUse / Stop que consultam o gate
-        local. {homes.length} home(s) ativo(s).
+        Lifecycle scripts do skill-gate: workers Claude-like recebem $HOME
+        efêmero com hooks PreToolUse / PostToolUse / Stop; demais CLIs mantêm
+        o HOME real e usam o gate server-side. {homes.length} home(s) ativo(s).
       </p>
       <InstalledList
         items={homes}

@@ -49,6 +49,11 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Codex, AGY, Kimi e Grok agora mantêm o HOME real do Mac nos panes orquestrados, então usam as contas já autenticadas em vez de pedir login de novo.',
     },
+    {
+      title: 'Skills reais por CLI',
+      detail:
+        'O Nexus espelha skills instaladas para Claude, Codex, AGY, Kimi e Grok no spawn e cria a skill ponytail a partir da regra interna, respeitando allowedSkills quando houver allowlist explícita.',
+    },
   ],
   fixes: [
     {

@@ -300,6 +300,18 @@ function scanDir(
   }
 }
 
+function uniqueInstalledItems(items: InstalledItem[]): InstalledItem[] {
+  const seen = new Set<string>();
+  const out: InstalledItem[] = [];
+  for (const item of items) {
+    const key = `${item.kind}:${item.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
 /**
  * Installed catalog components. Components install into the CLI's real
  * namespace (~/.claude) — that's what we scan; the legacy
@@ -319,11 +331,21 @@ export function listInstalledCatalogItems(): InstalledItem[] {
       return [];
     }
   })();
-  return [
+  return uniqueInstalledItems([
     ...scanDir(path.join(home, '.claude', 'agents'), 'agent', { ext: '.md' }),
     ...scanDir(path.join(home, '.claude', 'skills'), 'skill', { dirs: true }),
+    ...scanDir(path.join(home, '.agents', 'skills'), 'skill', { dirs: true }),
+    ...scanDir(path.join(home, '.codex', 'skills'), 'skill', { dirs: true }),
+    ...scanDir(path.join(home, '.gemini', 'config', 'skills'), 'skill', {
+      dirs: true,
+    }),
+    ...scanDir(path.join(home, '.gemini', 'antigravity', 'skills'), 'skill', {
+      dirs: true,
+    }),
+    ...scanDir(path.join(home, '.kimi-code', 'skills'), 'skill', { dirs: true }),
+    ...scanDir(path.join(home, '.grok', 'skills'), 'skill', { dirs: true }),
     ...legacy,
-  ];
+  ]);
 }
 
 /** User plugin files (declarative adapters + voice configs). */

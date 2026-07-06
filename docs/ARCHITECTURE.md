@@ -90,7 +90,7 @@ Agentes CLI rodam DENTRO das sessões PTY; falam MCP com o servidor embutido.
 
 @lydell/node-pty é addon nativo C++; segfault/FD-leak (cf. bug Gemini CLI #15945) **não pode derrubar main nem UI**. PTY Host é `utilityProcess` (mais leve que BrowserWindow, sem Chromium): mantém `sessionId → IPty`, streama bytes por MessagePort dedicado por sessão (baixa latência), recebe controle (spawn/write/resize/kill) do main, reinicia isolado com re-spawn de sessões recuperáveis.
 
-Implementação (2026-07): `pty-host-entry.ts` roda no utilityProcess e é um **executor burro** — só spawna/escreve/mata; nunca decide política. Todo o trabalho sensível (allowlist de env, montagem de argv, `$HOME` efêmero do skill-gate, ownership) fica no main (`pty-manager.ts`). A ponte pura vive em `pty-host-core.ts` (sem electron, unit-testada); o supervisor `pty-host-client.ts` é o **único** módulo PTY que importa electron e é injetado via `setPtyHost`, mantendo `pty-manager` fora do grafo electron (testável). O stream de bytes hoje volta ao main (não vai direto ao xterm) porque as taps de orquestração — cost tracker, parser de handoff legado, pipes — precisam observá-lo; a MessagePort direta ao xterm da §B.3 é otimização futura condicionada a preservar essas taps.
+Implementação (2026-07): `pty-host-entry.ts` roda no utilityProcess e é um **executor burro** — só spawna/escreve/mata; nunca decide política. Todo o trabalho sensível (allowlist de env, montagem de argv, `$HOME` efêmero quando o adapter precisa, espelho de skills, ownership) fica no main (`pty-manager.ts`). A ponte pura vive em `pty-host-core.ts` (sem electron, unit-testada); o supervisor `pty-host-client.ts` é o **único** módulo PTY que importa electron e é injetado via `setPtyHost`, mantendo `pty-manager` fora do grafo electron (testável). O stream de bytes hoje volta ao main (não vai direto ao xterm) porque as taps de orquestração — cost tracker, parser de handoff legado, pipes — precisam observá-lo; a MessagePort direta ao xterm da §B.3 é otimização futura condicionada a preservar essas taps.
 
 **Threat model do PTY (capability).** O renderer é confiável-mas-não-privilegiado: ele NÃO segura um handle de terminal real, só um `sessionId` opaco. Toda ação PTY é mediada pelo main, que amarra cada sessão ao `WebContents` que a criou (`ownedSession`); um renderer não escreve nem mata sessão que não seja sua (regressão em `pty-manager.test.ts`). O host isolado remove a classe "write em PTY morto derruba o main" (o addon nativo não roda mais no main). **Risco residual aceito e documentado:** uma XSS/comprometimento no renderer confiável ainda consegue dirigir os PANES DAQUELE renderer (é o trabalho legítimo de um terminal) — daí a CSP estrita (§ segurança), o isolamento de processo aqui, e a autorização por objeto das tools de orquestração (impede escape lateral ENTRE agentes/missões) serem camadas complementares, não redundantes.
 
@@ -106,7 +106,7 @@ Contrato (design, `src/shared/ipc/contracts.ts`): canais `session:spawn/write/re
 
 ### B.4 Sessões PTY
 
-- `Session` nasce de `SpawnSessionInput` (adapterId+model+cwd+env); main resolve adapter, monta spawnArgs+env, injeta `$HOME` efêmero se skill-gated, pede spawn ao PTY Host.
+- `Session` nasce de `SpawnSessionInput` (adapterId+model+cwd+env); main resolve adapter, monta spawnArgs+env, injeta `$HOME` efêmero só em adapters Claude-like e preserva HOME real nas demais CLIs, pede spawn ao PTY Host.
 - **Session ≠ Pane**: referenciada por `sessionId`; panes de grid e canvas apontam para o mesmo id. Fechar pane não mata session salvo último referenciador (`killOnLastPane` default true, exceto missões).
 - Idle/busy via `stateParsing` do adapter → alimenta `pane_wait_idle`.
 - Buffer serializado (@xterm/addon-serialize) → SQLite ao fechar; re-hidratado ao reabrir.
@@ -225,7 +225,7 @@ O NexusIDE controla handoffs por **3 hooks `.mjs` gerados por sessão+pane**: Po
 
 ### E.4 Skill-gate (enforcement duplo)
 
-Ao spawnar worker, injeta hook PreToolUse + `$HOME` efêmero (isola config/skills). Hook consulta `allowedSkills`/`allowedTools` do agente e bloqueia fora da allowlist (exit 2). **Defesa em profundidade:** o MCP server TAMBÉM recusa server-side chamadas fora da allowlist do worker chamador — não confiar só no hook client-side. (Este próprio worker está sob esse gate: Write/Bash bloqueados.)
+Ao spawnar worker Claude-like, injeta hook PreToolUse + `$HOME` efêmero. Workers Codex/AGY/Kimi/Grok mantêm o HOME real para preservar auth local; nesses casos o MCP server continua fazendo o bloqueio server-side. Em todos os casos, o Nexus espelha skills instaladas para o namespace da CLI (`~/.codex/skills`, `~/.gemini/.../skills`, `~/.kimi-code/skills`, `~/.grok/skills`) e respeita `allowedSkills` quando a allowlist é explícita. **Defesa em profundidade:** o MCP server TAMBÉM recusa server-side chamadas fora da allowlist do worker chamador — não confiar só no hook client-side.
 
 ### E.5 Matriz de capacidades
 
@@ -316,7 +316,7 @@ Temas (JSON, CSS custom properties `--color/*text/*space/*duration` — sem pale
 | Renderer | contextIsolation/sandbox true, nodeIntegration false, sem remote |
 | IPC | zod no receptor; contextBridge mínimo; sem ipcRenderer cru |
 | CSP | estrita (default-src 'self', sem unsafe-eval, sem remote scripts) |
-| Spawn | node-pty só no PTY Host; argv array (sem shell-string concat); $HOME efêmero p/ skill-gated |
+| Spawn | node-pty só no PTY Host; argv array (sem shell-string concat); HOME real preservado nas CLIs com auth local; HOME efêmero só para Claude-like gated |
 | **Secrets** | **macOS Keychain (safeStorage/keytar) ou libsodium (secretbox) como fallback gracioso — sem cripto caseira, nunca plaintext.** Nunca em SQLite/logs; resolução on-demand no spawn |
 | Skill-gate | client (hook) + server (MCP) — defesa em profundidade |
 | Plugins untrusted | JSON fail-fast; adapters não executam código arbitrário (só declaram argv/env) |

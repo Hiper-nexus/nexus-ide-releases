@@ -107,7 +107,7 @@ function fireTaps<T extends (...args: never[]) => void>(
 
 /**
  * Decoration applied to a cli-agent spawn by the orchestration layer: extra
- * env (MCP endpoint + auth token, ephemeral HOME), extra argv entries
+ * env (MCP endpoint + auth token, HOME override when needed), extra argv entries
  * (e.g. --mcp-config), and a callback binding the minted token to the
  * concrete sessionId once the PTY exists.
  */
@@ -462,7 +462,7 @@ export function spawnAgentSession(
     if (!isDangerousEnvKey(key)) env[key] = value;
   }
 
-  // Orchestration decoration: MCP endpoint env, skill-gate ephemeral HOME and
+  // Orchestration decoration: MCP endpoint env, optional HOME override and
   // extra argv (e.g. --mcp-config). The hook is trusted main-process code.
   const decoration = agentSpawnHook ? agentSpawnHook(adapter, req) : null;
   if (decoration) {

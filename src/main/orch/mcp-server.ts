@@ -42,6 +42,7 @@ import {
   supportsMcpInjection,
   writeGeminiMcpConfig,
 } from './cli-mcp-inject';
+import { ensureSkillsForCli } from './skill-mirror';
 import { shouldUseEphemeralHome } from './spawn-home-policy';
 
 /**
@@ -238,7 +239,7 @@ function buildMcpConfig(token: string): object {
   };
 }
 
-/** Wire the per-agent spawn decoration (tokens, gate env, ephemeral HOME). */
+/** Wire per-agent spawn decoration: gate tokens, MCP config and skill mirrors. */
 function installSpawnHook(): void {
   setAgentSpawnHook((adapter, req) => {
     const meta = req.orchRequestId
@@ -263,6 +264,7 @@ function installSpawnHook(): void {
       NEXUS_GATE_TOKEN: ctx.token,
     };
     const extraArgs: string[] = [];
+    let ephemeralHomeDir: string | null = null;
     // Delegação VISÍVEL (benchmark §4.5): Claude recebe o hard-deny de Task
     // pelo adapter base, então o bloqueio vale para panes diretos e
     // orquestrados sem duplicar flags aqui.
@@ -272,6 +274,7 @@ function installSpawnHook(): void {
       if (shouldUseEphemeralHome(adapter, gated)) {
         const home = prepareEphemeralHome(ctx.token, mcpConfig);
         env.HOME = home.dir;
+        ephemeralHomeDir = home.dir;
         extraArgs.push('--mcp-config', home.mcpConfigPath);
       } else if (adapter.quirks.mcpAutoload) {
         extraArgs.push(
@@ -291,6 +294,10 @@ function installSpawnHook(): void {
           if (injectCwd) writeGeminiMcpConfig(injectCwd, mcpUrl(), ctx.token);
         }
       }
+      ensureSkillsForCli(adapter.id, {
+        allowedSkills: meta?.allowedSkills ?? null,
+        ephemeralHomeDir,
+      });
     } catch (err) {
       console.warn('[orch] failed to prepare agent home/config:', err);
     }
