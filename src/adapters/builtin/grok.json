@@ -28,7 +28,9 @@
     ],
     "ptyRequired": true,
     "resumeArgs": [],
-    "extraArgs": []
+    "extraArgs": [
+      "--trust-folder"
+    ]
   },
   "env": {
     "static": {},

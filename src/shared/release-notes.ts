@@ -54,12 +54,22 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'O Nexus espelha skills instaladas para Claude, Codex, AGY, Kimi e Grok no spawn e cria a skill ponytail a partir da regra interna, respeitando allowedSkills quando houver allowlist explícita.',
     },
+    {
+      title: 'Trust de workspace no harness',
+      detail:
+        'AGY é confirmado automaticamente quando mostra o diálogo conhecido de confiança do workspace, e Grok abre com --trust-folder para não parar antes de iniciar o agente.',
+    },
   ],
   fixes: [
     {
       title: 'AGY não cai mais no help com code 2',
       detail:
         'O modo hands-free do AGY passou de --yolo para --dangerously-skip-permissions, que é a flag aceita pela CLI instalada.',
+    },
+    {
+      title: 'Menos prompts bloqueando squads',
+      detail:
+        'O harness reconhece prompts de confiança suportados por CLI e responde apenas a assinaturas específicas, uma vez por sessão.',
     },
     {
       title: 'Sem sobreposição no review de squad',

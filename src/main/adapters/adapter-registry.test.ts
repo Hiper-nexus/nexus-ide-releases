@@ -144,6 +144,13 @@ describe('builtin adapters', () => {
       '--dangerously-skip-permissions',
     ]);
   });
+
+  it('grok trusts the workspace folder before the TUI prompt can block', () => {
+    const grok = BUILTIN_ADAPTERS.find(
+      (a) => (a as { id?: string }).id === 'grok',
+    ) as { spawn?: { extraArgs?: string[] } } | undefined;
+    expect(grok?.spawn?.extraArgs).toContain('--trust-folder');
+  });
 });
 
 // ── resolvePlaceholders ──────────────────────────────────────────────────────

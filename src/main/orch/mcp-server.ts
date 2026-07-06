@@ -5,6 +5,7 @@ import { app } from 'electron';
 import { activeWorkspaceOrNull } from '../persistence/workspace-store';
 import type { McpRuntimeInfo } from '../../shared/orch-types';
 import {
+  orchWriteSession,
   setAgentSpawnHook,
   tapSessionData,
   tapSessionExit,
@@ -32,6 +33,9 @@ import { getPendingSpawnMeta, stripAnsi } from './pane-registry';
 import { LegacyHandoffParser } from './legacy-handoff';
 import { submitHandoff } from './handoff-store';
 import { onHandoffSubmitted } from './idle-delivery';
+import {
+  CliPromptAutoResponder,
+} from './cli-prompt-autoresponder';
 import {
   cleanupSessionArtifacts,
   prepareEphemeralHome,
@@ -61,6 +65,7 @@ let server: http.Server | null = null;
 let port = 0;
 let registry: McpRegistry | null = null;
 const sessionTokens = new Map<string, string>(); // sessionId → token
+const cliPromptAutoResponder = new CliPromptAutoResponder();
 
 function mcpUrl(): string {
   return `http://127.0.0.1:${port}/mcp`;
@@ -308,6 +313,7 @@ function installSpawnHook(): void {
       onSpawned: (sessionId) => {
         bindTokenToSession(ctx.token, sessionId);
         sessionTokens.set(sessionId, ctx.token);
+        cliPromptAutoResponder.bind(sessionId, adapter.id);
       },
       onSpawnFailed: () => {
         // No session will ever exist for this token — drop it from the auth
@@ -341,15 +347,27 @@ function installLegacyParser(): void {
   const rawTails = new Map<string, string>();
   const MARKER_HINT = 'NEXUS_HANDOFF';
   tapSessionData((sessionId, data) => {
+    let plain: string | null = null;
+    if (cliPromptAutoResponder.isPending(sessionId)) {
+      plain = stripAnsi(data);
+    }
+    const response =
+      plain !== null ? cliPromptAutoResponder.observe(sessionId, plain) : null;
+    if (response !== null) {
+      setTimeout(() => {
+        orchWriteSession(sessionId, response);
+      }, 50);
+    }
     const tail = rawTails.get(sessionId) ?? '';
     const probe = tail + data;
     rawTails.set(sessionId, probe.slice(-32));
     if (!parser.isCollecting(sessionId) && !probe.includes(MARKER_HINT)) {
       return;
     }
-    parser.feed(sessionId, stripAnsi(data));
+    parser.feed(sessionId, plain ?? stripAnsi(data));
   });
   tapSessionExit((sessionId) => {
+    cliPromptAutoResponder.unbind(sessionId);
     parser.dropSession(sessionId);
     rawTails.delete(sessionId);
     const token = sessionTokens.get(sessionId);
@@ -409,6 +427,7 @@ export function startMcpServer(): Promise<void> {
 
 export function stopMcpServer(): void {
   setAgentSpawnHook(null);
+  cliPromptAutoResponder.clear();
   server?.close();
   server = null;
   port = 0;
