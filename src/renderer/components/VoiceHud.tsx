@@ -20,10 +20,20 @@ export function VoiceHud() {
   const note = useVoiceStore((s) => s.note);
   const error = useVoiceStore((s) => s.error);
   const info = useVoiceStore((s) => s.info);
+  const liveState = useVoiceStore((s) => s.liveState);
+  const liveTool = useVoiceStore((s) => s.liveTool);
 
-  if (status === 'idle') return null;
+  const liveVisible =
+    liveState?.enabled === true &&
+    liveState.status !== 'off' &&
+    liveState.status !== 'dormant';
 
-  const label = PHASE_LABEL[status];
+  if (status === 'idle' && !liveVisible) return null;
+
+  const label =
+    status === 'idle'
+      ? `Live ${liveState?.status ?? 'ready'}`
+      : PHASE_LABEL[status];
   const isError = status === 'error';
 
   // In toggle mode the send edge is a SECOND keypress — say so, or users
@@ -51,13 +61,21 @@ export function VoiceHud() {
           <span className="voice-orb__scan voice-orb__scan--b" />
         </div>
         <div className="voice-hud__body">
-          <span className="voice-hud__eyebrow">JARVIS</span>
+          <span className="voice-hud__eyebrow">
+            {info?.jarvisLive.enabled ? 'JARVIS LIVE' : 'JARVIS'}
+          </span>
           <span className="voice-hud__label">{label}</span>
           {isError && error ? (
             <span className="voice-hud__detail voice-hud__detail--error">{error}</span>
           ) : (
             <>
               {transcript && <span className="voice-hud__detail">"{transcript}"</span>}
+              {info?.jarvisLive.enabled && liveState && (
+                <span className="voice-hud__detail voice-hud__detail--note">
+                  sessão {liveState.turns} turno{liveState.turns === 1 ? '' : 's'}
+                  {liveTool ? ` · ${liveTool.summary}` : ''}
+                </span>
+              )}
               {listeningHint && (
                 <span className="voice-hud__detail voice-hud__detail--note">
                   {listeningHint}

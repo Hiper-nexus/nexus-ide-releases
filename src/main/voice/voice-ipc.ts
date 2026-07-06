@@ -6,6 +6,11 @@ import {
   setConfigRequestSchema,
   setVoiceKeyRequestSchema,
   jarvisRequestSchema,
+  jarvisLiveInterruptRequestSchema,
+  jarvisLiveStartRequestSchema,
+  jarvisLiveStatusPatchSchema,
+  jarvisLiveToolResultInputSchema,
+  jarvisLiveTranscriptInputSchema,
   type VoiceRuntimeInfo,
   type TranscribeResult,
   type SpeakResult,
@@ -25,6 +30,7 @@ import { WakeEngine } from './wake-engine';
 import { transcribe } from './stt-service';
 import { speak } from './tts-service';
 import { echoSuppressor } from './echo-suppress';
+import { JarvisLiveSession } from './jarvis-live';
 import {
   registerVoiceHotkey,
   disposeVoiceHotkey,
@@ -52,6 +58,8 @@ function broadcast(channel: string, payload?: unknown): void {
   }
 }
 
+const liveSession = new JarvisLiveSession(broadcast);
+
 function wireHotkey(): void {
   const config = getVoiceConfig();
   const mainKeyCode = config.input.pushToTalkKey?.code ?? 'Space';
@@ -74,6 +82,7 @@ export function registerVoiceIpc(): void {
   // Narração proativa: handoff novo (entrega/travamento/falha) vira aviso de
   // voz — o renderer fala quando não houver turno ativo.
   initJarvisNarrator(broadcast);
+  liveSession.setEnabled(getVoiceConfig().jarvisLive.enabled);
 
   ipcMain.handle(VOICE_CHANNELS.getInfo, (): VoiceRuntimeInfo => fullInfo());
 
@@ -83,6 +92,7 @@ export function registerVoiceIpc(): void {
     const before = getVoiceConfig().input.shortcut;
     const beforeKey = getVoiceConfig().input.pushToTalkKey?.code;
     applyConfigPatch(parsed.data);
+    liveSession.setEnabled(getVoiceConfig().jarvisLive.enabled);
     // Re-register the accelerator only if it actually changed.
     const nextInput = getVoiceConfig().input;
     if (
@@ -174,6 +184,7 @@ export function registerVoiceIpc(): void {
         parsed.data.context,
         parsed.data.history,
       );
+      liveSession.onJarvisReply(parsed.data.transcript, reply);
       console.log(
         `[voice] jarvis: "${parsed.data.transcript}" → ${reply.action.type}` +
           ` | say="${reply.say.slice(0, 80)}"`,
@@ -223,6 +234,39 @@ export function registerVoiceIpc(): void {
       return result.response === 1;
     },
   );
+
+  ipcMain.handle(VOICE_CHANNELS.liveStart, (_event, raw) => {
+    const parsed = jarvisLiveStartRequestSchema.safeParse(raw ?? {});
+    return liveSession.start(parsed.success ? parsed.data : {});
+  });
+
+  ipcMain.handle(VOICE_CHANNELS.liveStop, () => liveSession.stop());
+  ipcMain.handle(VOICE_CHANNELS.liveEndTurn, () => liveSession.endTurn());
+
+  ipcMain.handle(VOICE_CHANNELS.liveStatus, (_event, raw) => {
+    const parsed = jarvisLiveStatusPatchSchema.safeParse(raw);
+    if (!parsed.success) return liveSession.getState();
+    return liveSession.patchStatus(parsed.data);
+  });
+
+  ipcMain.on(VOICE_CHANNELS.liveTranscriptIn, (_event, raw) => {
+    const parsed = jarvisLiveTranscriptInputSchema.safeParse(raw);
+    if (!parsed.success) return;
+    liveSession.transcript(parsed.data);
+  });
+
+  ipcMain.on(VOICE_CHANNELS.liveToolResultIn, (_event, raw) => {
+    const parsed = jarvisLiveToolResultInputSchema.safeParse(raw);
+    if (!parsed.success) return;
+    liveSession.toolResult(parsed.data);
+  });
+
+  ipcMain.handle(VOICE_CHANNELS.liveInterrupt, (_event, raw) => {
+    const parsed = jarvisLiveInterruptRequestSchema.safeParse(raw ?? {});
+    return liveSession.interrupt(
+      parsed.success ? parsed.data.reason : 'interrupted',
+    );
+  });
 }
 
 export function closeVoiceIpc(): void {

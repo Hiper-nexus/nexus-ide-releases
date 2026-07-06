@@ -88,6 +88,7 @@ export function VoiceSettings() {
   const [routing, setRouting] = useState('focused-pane');
   const [triggerKey, setTriggerKey] = useState('Space');
   const [wakeWordOn, setWakeWordOn] = useState(false);
+  const [jarvisLiveOn, setJarvisLiveOn] = useState(false);
   const [triggerAccel, setTriggerAccel] = useState('CommandOrControl+Shift+Space');
   const [captureHint, setCaptureHint] = useState<string | null>(null);
   const [capturingKey, setCapturingKey] = useState(false);
@@ -137,6 +138,7 @@ export function VoiceSettings() {
     setTriggerKey(info.pushToTalkKeyCode);
     setTriggerAccel(info.shortcut);
     setWakeWordOn(info.wakeWordEnabled);
+    setJarvisLiveOn(info.jarvisLive.enabled);
     setCaptureHint(null);
     setKeyInputs(
       Object.fromEntries(info.keys.map((key) => [key.envVar, ''])),
@@ -172,11 +174,16 @@ export function VoiceSettings() {
         ...(sttProvider !== sttInitial ? { sttProvider } : {}),
         ...(ttsProvider !== ttsInitial ? { ttsProvider } : {}),
         speakMode: speakMode as 'summary' | 'full' | 'off',
-        routing: routing as 'jarvis' | 'focused-pane' | 'orchestrator' | 'ask',
+        routing: (jarvisLiveOn ? 'jarvis' : routing) as
+          | 'jarvis'
+          | 'focused-pane'
+          | 'orchestrator'
+          | 'ask',
         // The captured combo IS the accelerator (F6 alone, ⌥Space, ⌘⇧J…).
         shortcut: triggerAccel || accelFromCode(normalizedKey),
         pushToTalkKeyCode: normalizedKey,
         wakeWordEnabled: wakeWordOn,
+        jarvisLiveEnabled: jarvisLiveOn,
       });
       setInfo(next);
       close();
@@ -365,8 +372,25 @@ export function VoiceSettings() {
               />
             </label>
 
+            <label className="agent-picker__label voice-settings__wake-row">
+              <span>
+                Jarvis Live
+                <span className="voice-settings__key-meta">
+                  {' '}
+                  sessão contínua com grace reuse, contexto curto e barge-in
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={jarvisLiveOn}
+                onChange={(e) => setJarvisLiveOn(e.target.checked)}
+              />
+            </label>
+
             <p className="agent-picker__hint">
-              {info.hotkeyMode === 'hold'
+              {jarvisLiveOn
+                ? 'No Live, a JARVIS reabre a escuta depois de cada resposta e entra em dormant quando você fica em silêncio.'
+                : info.hotkeyMode === 'hold'
                 ? `Segure ${info.shortcut} para falar e solte para enviar.`
                 : `Pressione ${info.shortcut} para começar a falar e pressione DE NOVO para enviar.`}{' '}
               O Jarvis manda a transcrição para o pane focado e fala a resposta

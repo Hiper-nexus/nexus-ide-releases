@@ -15,6 +15,13 @@ import type {
   SetVoiceKeyRequest,
   JarvisRequest,
   JarvisReply,
+  JarvisLiveInterruptEvent,
+  JarvisLiveStartRequest,
+  JarvisLiveState,
+  JarvisLiveStatusPatch,
+  JarvisLiveToolEvent,
+  JarvisLiveToolResultEvent,
+  JarvisLiveTranscriptEvent,
 } from './voice-ipc';
 import type {
   Handoff,
@@ -376,12 +383,24 @@ export interface NexusApi {
     jarvis(req: JarvisRequest): Promise<JarvisReply>;
     /** Native confirmation before a voice-issued shell command runs (SEC#6). */
     confirmCommand(command: string): Promise<boolean>;
+    liveStart(req?: JarvisLiveStartRequest): Promise<JarvisLiveState>;
+    liveStop(): Promise<JarvisLiveState>;
+    liveEndTurn(): Promise<JarvisLiveState>;
+    liveStatus(patch: JarvisLiveStatusPatch): Promise<JarvisLiveState>;
+    liveTranscript(event: Omit<JarvisLiveTranscriptEvent, 'sessionId' | 'at'>): void;
+    liveToolResult(event: Omit<JarvisLiveToolResultEvent, 'sessionId' | 'at'>): void;
+    liveInterrupt(reason: string): Promise<JarvisLiveInterruptEvent>;
     onPttStart(cb: () => void): Unsubscribe;
     onPttToggle(cb: () => void): Unsubscribe;
     onPttStop(cb: () => void): Unsubscribe;
     onInfoChanged(cb: (info: VoiceRuntimeInfo) => void): Unsubscribe;
     /** Narração proativa (handoff/travamento) — falar se não houver turno ativo. */
     onNarrate(cb: (event: { text: string }) => void): Unsubscribe;
+    onLiveState(cb: (state: JarvisLiveState) => void): Unsubscribe;
+    onLiveTranscript(cb: (event: JarvisLiveTranscriptEvent) => void): Unsubscribe;
+    onLiveToolCall(cb: (event: JarvisLiveToolEvent) => void): Unsubscribe;
+    onLiveToolResult(cb: (event: JarvisLiveToolResultEvent) => void): Unsubscribe;
+    onLiveInterrupted(cb: (event: JarvisLiveInterruptEvent) => void): Unsubscribe;
   };
   orch: {
     /** Mirror the current pane set into the main-process registry. */

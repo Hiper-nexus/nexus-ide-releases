@@ -13,12 +13,25 @@ function providerShort(provider: string | undefined): string {
 export function VoiceButton() {
   const info = useVoiceStore((s) => s.info);
   const status = useVoiceStore((s) => s.status);
+  const liveState = useVoiceStore((s) => s.liveState);
   const openSettings = useVoiceStore((s) => s.openSettings);
 
   const stt = providerShort(info?.stt.active?.provider);
   const tts = providerShort(info?.tts.active?.provider);
   const armed = info?.enabled ?? false;
-  const active = status !== 'idle' && status !== 'error';
+  const liveOn = info?.jarvisLive.enabled === true;
+  const liveActive =
+    liveOn &&
+    liveState?.status !== undefined &&
+    liveState.status !== 'off' &&
+    liveState.status !== 'dormant';
+  const active = (status !== 'idle' && status !== 'error') || liveActive;
+  const label =
+    liveOn && liveState?.status && liveState.status !== 'off'
+      ? `live:${liveState.status}`
+      : active
+        ? status
+        : `${stt} → ${tts}`;
 
   return (
     <button
@@ -26,13 +39,13 @@ export function VoiceButton() {
       onClick={openSettings}
       title={
         info
-          ? `Push-to-talk: ${info.shortcut} (${info.hotkeyMode}) · STT ${stt} · TTS ${tts}`
+          ? `Push-to-talk: ${info.shortcut} (${info.hotkeyMode}) · STT ${stt} · TTS ${tts}${liveOn ? ' · Jarvis Live' : ''}`
           : 'Voice pipeline'
       }
     >
       <span className={`voice-dot ${armed ? 'voice-dot--on' : ''} ${active ? 'voice-dot--pulse' : ''}`} />
       <span className="workspace-bar__voice-label">
-        {active ? status : `${stt} → ${tts}`}
+        {label}
       </span>
     </button>
   );

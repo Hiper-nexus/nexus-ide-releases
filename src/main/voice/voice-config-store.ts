@@ -198,6 +198,10 @@ export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
     wakeWord: {
       enabled: patch.wakeWordEnabled ?? current.wakeWord.enabled,
     },
+    jarvisLive: {
+      ...current.jarvisLive,
+      enabled: patch.jarvisLiveEnabled ?? current.jarvisLive.enabled,
+    },
     input: {
       ...current.input,
       shortcut,
@@ -270,6 +274,12 @@ export function buildRuntimeInfo(): VoiceRuntimeInfo {
     pushToTalkKeyCode,
     hotkeyMode,
     wakeWordEnabled: current.wakeWord.enabled,
+    jarvisLive: {
+      enabled: current.jarvisLive.enabled,
+      graceReuseMs: current.jarvisLive.graceReuseMs,
+      dormantAfterMs: current.jarvisLive.dormantAfterMs,
+      maxWindowTurns: current.jarvisLive.maxWindowTurns,
+    },
     // openWakeWord roda local e sem key — o campo fica por compat de UI.
     hasWakeKey: true,
     keys: collectVoiceEnvVars(current.stt, current.tts),

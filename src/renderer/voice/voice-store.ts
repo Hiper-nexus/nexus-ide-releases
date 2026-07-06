@@ -1,5 +1,12 @@
 import { create } from 'zustand';
-import type { VoiceRuntimeInfo } from '../../shared/voice-ipc';
+import type {
+  JarvisLiveInterruptEvent,
+  JarvisLiveState,
+  JarvisLiveToolEvent,
+  JarvisLiveToolResultEvent,
+  JarvisLiveTranscriptEvent,
+  VoiceRuntimeInfo,
+} from '../../shared/voice-ipc';
 
 /**
  * Renderer-side voice UI state: the current pipeline phase (for the HUD), the
@@ -24,6 +31,10 @@ interface VoiceStore {
   note: string | null;
   error: string | null;
   settingsOpen: boolean;
+  liveState: JarvisLiveState | null;
+  liveTranscript: JarvisLiveTranscriptEvent[];
+  liveTool: JarvisLiveToolEvent | JarvisLiveToolResultEvent | null;
+  liveInterrupted: JarvisLiveInterruptEvent | null;
 
   setStatus: (status: VoiceUiStatus) => void;
   setInfo: (info: VoiceRuntimeInfo) => void;
@@ -31,6 +42,10 @@ interface VoiceStore {
   setSpoken: (text: string) => void;
   setNote: (note: string | null) => void;
   setError: (error: string | null) => void;
+  setLiveState: (state: JarvisLiveState) => void;
+  addLiveTranscript: (event: JarvisLiveTranscriptEvent) => void;
+  setLiveTool: (event: JarvisLiveToolEvent | JarvisLiveToolResultEvent) => void;
+  setLiveInterrupted: (event: JarvisLiveInterruptEvent) => void;
   openSettings: () => void;
   closeSettings: () => void;
 }
@@ -43,6 +58,10 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   note: null,
   error: null,
   settingsOpen: false,
+  liveState: null,
+  liveTranscript: [],
+  liveTool: null,
+  liveInterrupted: null,
 
   setStatus: (status) => set({ status, ...(status !== 'error' ? { error: null } : {}) }),
   setInfo: (info) => set({ info }),
@@ -50,6 +69,13 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   setSpoken: (lastSpoken) => set({ lastSpoken }),
   setNote: (note) => set({ note }),
   setError: (error) => set({ error, status: error ? 'error' : 'idle' }),
+  setLiveState: (liveState) => set({ liveState }),
+  addLiveTranscript: (event) =>
+    set((state) => ({
+      liveTranscript: [...state.liveTranscript, event].slice(-12),
+    })),
+  setLiveTool: (liveTool) => set({ liveTool }),
+  setLiveInterrupted: (liveInterrupted) => set({ liveInterrupted }),
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
 }));

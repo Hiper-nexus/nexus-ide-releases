@@ -12,6 +12,47 @@ Push-to-talk speech → transcribe+translate to English → inject into the focu
 pane → speak a condensed summary back. Multi-provider, declarative, with a
 keyless local fallback so it keeps working when cloud APIs are throttled.
 
+## Jarvis Live
+
+Jarvis Live is an optional continuous session mode layered on top of Jarvis
+Classic. It does not replace the resilient STT/TTS fallback chain. Instead it
+keeps a live session identity, reuses the short conversation context, broadcasts
+`voice:live.*` state/transcript/tool/interruption events, and reopens listening
+after each answer until the user goes silent.
+
+Behavior:
+
+- `voice:live.start` starts or reuses the session (`manual`, `wake`, `ptt`, or
+  `reply` reason).
+- `voice:live.state` reports `listening`, `thinking`, `speaking`,
+  `interrupted`, `dormant`, or `error`.
+- `voice:live.transcript` emits final user/assistant lines for the live window.
+- `voice:live.tool.call` / `voice:live.tool.result` expose app actions such as
+  `send_to_pane`, `open_squad`, and `run_command`.
+- `voice:live.endTurn` closes the current exchange while keeping the session
+  dormant for reuse.
+- Barge-in calls `voice:live.interrupt`, cuts pending playback, and immediately
+  allows a new turn.
+- If the user does not answer after a Live reply, the silence gate ends the
+  capture and the session moves to `dormant`; the next wake/PTT reuses it.
+
+Config lives in `voice.jarvisLive`:
+
+```json
+{
+  "jarvisLive": {
+    "enabled": true,
+    "graceReuseMs": 90000,
+    "dormantAfterMs": 300000,
+    "maxWindowTurns": 12
+  }
+}
+```
+
+The settings UI exposes this as **Jarvis Live**. For hands-free operation, enable
+both **Hey Jarvis** and **Jarvis Live**; for a tighter workstation flow, leave
+wake word off and use the PTT shortcut to enter the same live session.
+
 ## Pipeline
 
 ```
@@ -78,4 +119,5 @@ To make OpenAI or local the primary STT, either:
   to `openai` / `local-whisper`. One line, no recompile.
 
 `voice.speakMode`: `summary` (default, 1–3 sentences) · `full` · `off` (dictation
-only). `voice.routing`: `focused-pane` (default) · `orchestrator` · `ask`.
+only). `voice.routing`: `jarvis` (default) · `focused-pane` · `orchestrator` ·
+`ask`.

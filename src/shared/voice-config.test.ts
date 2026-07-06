@@ -25,6 +25,8 @@ describe('voiceConfigSchema', () => {
     expect(parsed.routing).toBe('jarvis');
     expect(parsed.speakMode).toBe('summary');
     expect(parsed.input.shortcut).toBe('CommandOrControl+Shift+Space');
+    expect(parsed.jarvisLive.enabled).toBe(false);
+    expect(parsed.jarvisLive.graceReuseMs).toBe(90_000);
   });
 
   it('validates a nested fallback chain', () => {

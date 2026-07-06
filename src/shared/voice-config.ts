@@ -98,6 +98,25 @@ const inputSchema = z.object({
   pushToTalkKey: z.object({ code: z.string().max(32) }).optional(),
 });
 
+export const jarvisLiveConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    /** Keep the live session warm after a turn so follow-ups reuse context. */
+    graceReuseMs: z.number().int().positive().max(10 * 60_000).default(90_000),
+    /** Move from warm to dormant after no speech; wake/PTT reuses the session. */
+    dormantAfterMs: z.number().int().positive().max(30 * 60_000).default(5 * 60_000),
+    /** Soft cap for short-term live transcript context held in memory. */
+    maxWindowTurns: z.number().int().positive().max(40).default(12),
+  })
+  .default({
+    enabled: false,
+    graceReuseMs: 90_000,
+    dormantAfterMs: 5 * 60_000,
+    maxWindowTurns: 12,
+  });
+
+export type JarvisLiveConfig = z.infer<typeof jarvisLiveConfigSchema>;
+
 export const voiceConfigSchema = z.object({
   enabled: z.boolean().default(true),
   input: inputSchema.default({
@@ -110,6 +129,7 @@ export const voiceConfigSchema = z.object({
   wakeWord: z
     .object({ enabled: z.boolean().default(false) })
     .default({ enabled: false }),
+  jarvisLive: jarvisLiveConfigSchema,
   stt: voicePluginSchema,
   tts: voicePluginSchema,
 });
@@ -133,6 +153,12 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
   routing: 'jarvis',
   speakMode: 'summary',
   wakeWord: { enabled: false },
+  jarvisLive: {
+    enabled: false,
+    graceReuseMs: 90_000,
+    dormantAfterMs: 5 * 60_000,
+    maxWindowTurns: 12,
+  },
   stt: {
     type: 'stt',
     provider: 'groq',

@@ -24,6 +24,21 @@ export const VOICE_CHANNELS = {
    * voz (SEC#6 — anti prompt-injection voz→shell). Retorna boolean. */
   confirmCommand: 'voice:confirmCommand',
 
+  /** invoke: renderer → main. Start/reuse the Jarvis Live session. */
+  liveStart: 'voice:live.start',
+  /** invoke: renderer → main. Stop the Jarvis Live session. */
+  liveStop: 'voice:live.stop',
+  /** invoke: renderer → main. End the current turn and keep the session dormant. */
+  liveEndTurn: 'voice:live.endTurn',
+  /** invoke: renderer → main. Update the live phase (listening/thinking/...). */
+  liveStatus: 'voice:live.status',
+  /** send: renderer → main. Report a transcript line into the live session. */
+  liveTranscriptIn: 'voice:live.transcript.in',
+  /** send: renderer → main. Report the result of a live tool/action. */
+  liveToolResultIn: 'voice:live.tool.result.in',
+  /** invoke: renderer → main. Mark barge-in/interruption for the live session. */
+  liveInterrupt: 'voice:live.interrupt',
+
   /** event: main → renderer. Global push-to-talk key pressed. */
   pttStart: 'voice:ptt.start',
   /** event: main → renderer. Toggle-mode press — renderer decide start/stop. */
@@ -35,4 +50,14 @@ export const VOICE_CHANNELS = {
   /** event: main → renderer. Narração proativa da JARVIS (handoff chegou,
    * worker travou) — o renderer fala o texto se não houver turno de voz ativo. */
   narrate: 'voice:narrate',
+  /** event: main → renderer. Jarvis Live state changed. */
+  liveState: 'voice:live.state',
+  /** event: main → renderer. Final/partial Jarvis Live transcript. */
+  liveTranscript: 'voice:live.transcript',
+  /** event: main → renderer. Jarvis Live is about to execute a tool/action. */
+  liveToolCall: 'voice:live.tool.call',
+  /** event: main → renderer. Jarvis Live tool/action finished. */
+  liveToolResult: 'voice:live.tool.result',
+  /** event: main → renderer. Jarvis Live speech was interrupted. */
+  liveInterrupted: 'voice:live.interrupted',
 } as const;

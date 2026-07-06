@@ -43,6 +43,8 @@ export const setConfigRequestSchema = z.object({
   ttsProvider: z.string().min(1).max(64).optional(),
   /** Toggle the "Jarvis" wake word (Porcupine local detection). */
   wakeWordEnabled: z.boolean().optional(),
+  /** Toggle Jarvis Live: continuous session mode over the Classic fallback. */
+  jarvisLiveEnabled: z.boolean().optional(),
 });
 
 export type SetConfigRequest = z.infer<typeof setConfigRequestSchema>;
@@ -106,6 +108,12 @@ export interface VoiceRuntimeInfo {
   hotkeyArmed?: boolean;
   /** Wake word ("Jarvis") toggle + whether its Picovoice key is present. */
   wakeWordEnabled: boolean;
+  jarvisLive: {
+    enabled: boolean;
+    graceReuseMs: number;
+    dormantAfterMs: number;
+    maxWindowTurns: number;
+  };
   hasWakeKey: boolean;
   keys: VoiceApiKeyStatus[];
   stt: ResolvedChain;
@@ -200,3 +208,105 @@ export type SpeakResult =
   | { ok: true; provider: string; mode: 'audio'; format: string; audioBase64: string }
   | { ok: true; provider: string; mode: 'silent' }
   | { ok: false; error: string };
+
+// ── JARVIS LIVE (continuous session mode) ───────────────────────────────────
+
+export type JarvisLiveStatus =
+  | 'off'
+  | 'dormant'
+  | 'listening'
+  | 'thinking'
+  | 'speaking'
+  | 'interrupted'
+  | 'error';
+
+export interface JarvisLiveState {
+  enabled: boolean;
+  sessionId: string | null;
+  status: JarvisLiveStatus;
+  startedAt: number | null;
+  lastActiveAt: number | null;
+  turns: number;
+  pendingMic: boolean;
+  error?: string;
+}
+
+export interface JarvisLiveStartRequest {
+  reason?: 'manual' | 'wake' | 'ptt' | 'reply';
+}
+
+export interface JarvisLiveStatusPatch {
+  status: Exclude<JarvisLiveStatus, 'off'>;
+  pendingMic?: boolean;
+  error?: string;
+}
+
+export interface JarvisLiveTranscriptEvent {
+  sessionId: string;
+  role: 'user' | 'assistant';
+  text: string;
+  final: boolean;
+  at: number;
+}
+
+export interface JarvisLiveToolEvent {
+  sessionId: string;
+  tool: JarvisAction['type'];
+  summary: string;
+  at: number;
+}
+
+export interface JarvisLiveToolResultEvent extends JarvisLiveToolEvent {
+  ok: boolean;
+}
+
+export interface JarvisLiveInterruptEvent {
+  sessionId: string | null;
+  reason: string;
+  at: number;
+}
+
+export const jarvisLiveStartRequestSchema = z
+  .object({
+    reason: z.enum(['manual', 'wake', 'ptt', 'reply']).optional(),
+  })
+  .default({});
+
+export const jarvisLiveStatusPatchSchema = z.object({
+  status: z.enum([
+    'dormant',
+    'listening',
+    'thinking',
+    'speaking',
+    'interrupted',
+    'error',
+  ]),
+  pendingMic: z.boolean().optional(),
+  error: z.string().max(500).optional(),
+});
+
+export const jarvisLiveTranscriptInputSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  text: z.string().max(20_000),
+  final: z.boolean().default(true),
+});
+
+export const jarvisLiveToolResultInputSchema = z.object({
+  tool: z.enum([
+    'none',
+    'open_squad',
+    'open_workspace',
+    'design_squad',
+    'new_mission',
+    'send_to_pane',
+    'run_command',
+  ]),
+  summary: z.string().max(1000),
+  ok: z.boolean(),
+});
+
+export const jarvisLiveInterruptRequestSchema = z
+  .object({
+    reason: z.string().min(1).max(200).default('interrupted'),
+  })
+  .default({ reason: 'interrupted' });

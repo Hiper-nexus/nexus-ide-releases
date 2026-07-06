@@ -42,7 +42,14 @@ import type {
   PaneSessionState,
   AdapterInfo,
 } from '../shared/types';
-import type { VoiceRuntimeInfo } from '../shared/voice-ipc';
+import type {
+  JarvisLiveInterruptEvent,
+  JarvisLiveState,
+  JarvisLiveToolEvent,
+  JarvisLiveToolResultEvent,
+  JarvisLiveTranscriptEvent,
+  VoiceRuntimeInfo,
+} from '../shared/voice-ipc';
 import type {
   Handoff,
   BrowserPaneOpenRequest,
@@ -132,11 +139,37 @@ ipcRenderer.on(VOICE_CHANNELS.narrate, (_e, event: { text: string }) =>
 );
 
 const voiceInfoListeners = new Set<(info: VoiceRuntimeInfo) => void>();
+const liveStateListeners = new Set<(state: JarvisLiveState) => void>();
+const liveTranscriptListeners = new Set<(event: JarvisLiveTranscriptEvent) => void>();
+const liveToolCallListeners = new Set<(event: JarvisLiveToolEvent) => void>();
+const liveToolResultListeners = new Set<(event: JarvisLiveToolResultEvent) => void>();
+const liveInterruptedListeners = new Set<(event: JarvisLiveInterruptEvent) => void>();
 
 ipcRenderer.on(VOICE_CHANNELS.pttStart, () => pttStartListeners.forEach((cb) => cb()));
 ipcRenderer.on(VOICE_CHANNELS.pttStop, () => pttStopListeners.forEach((cb) => cb()));
 ipcRenderer.on(VOICE_CHANNELS.infoChanged, (_event, info: VoiceRuntimeInfo) =>
   voiceInfoListeners.forEach((cb) => cb(info)),
+);
+ipcRenderer.on(VOICE_CHANNELS.liveState, (_event, state: JarvisLiveState) =>
+  liveStateListeners.forEach((cb) => cb(state)),
+);
+ipcRenderer.on(
+  VOICE_CHANNELS.liveTranscript,
+  (_event, event: JarvisLiveTranscriptEvent) =>
+    liveTranscriptListeners.forEach((cb) => cb(event)),
+);
+ipcRenderer.on(VOICE_CHANNELS.liveToolCall, (_event, event: JarvisLiveToolEvent) =>
+  liveToolCallListeners.forEach((cb) => cb(event)),
+);
+ipcRenderer.on(
+  VOICE_CHANNELS.liveToolResult,
+  (_event, event: JarvisLiveToolResultEvent) =>
+    liveToolResultListeners.forEach((cb) => cb(event)),
+);
+ipcRenderer.on(
+  VOICE_CHANNELS.liveInterrupted,
+  (_event, event: JarvisLiveInterruptEvent) =>
+    liveInterruptedListeners.forEach((cb) => cb(event)),
 );
 
 function addListener<T>(set: Set<T>, cb: T): () => void {
@@ -280,6 +313,16 @@ const api: NexusApi = {
     jarvis: (req) => ipcRenderer.invoke(VOICE_CHANNELS.jarvis, req),
     confirmCommand: (command: string) =>
       ipcRenderer.invoke(VOICE_CHANNELS.confirmCommand, command),
+    liveStart: (req) => ipcRenderer.invoke(VOICE_CHANNELS.liveStart, req ?? {}),
+    liveStop: () => ipcRenderer.invoke(VOICE_CHANNELS.liveStop),
+    liveEndTurn: () => ipcRenderer.invoke(VOICE_CHANNELS.liveEndTurn),
+    liveStatus: (patch) => ipcRenderer.invoke(VOICE_CHANNELS.liveStatus, patch),
+    liveTranscript: (event) =>
+      ipcRenderer.send(VOICE_CHANNELS.liveTranscriptIn, event),
+    liveToolResult: (event) =>
+      ipcRenderer.send(VOICE_CHANNELS.liveToolResultIn, event),
+    liveInterrupt: (reason) =>
+      ipcRenderer.invoke(VOICE_CHANNELS.liveInterrupt, { reason }),
     onPttToggle: (cb: () => void) => addListener(pttToggleListeners, cb),
     onWakeDetected: (cb: () => void) => addListener(wakeDetectedListeners, cb),
     onPttStart: (cb) => addListener(pttStartListeners, cb),
@@ -287,6 +330,11 @@ const api: NexusApi = {
     onInfoChanged: (cb) => addListener(voiceInfoListeners, cb),
     onNarrate: (cb: (event: { text: string }) => void) =>
       addListener(narrateListeners, cb),
+    onLiveState: (cb) => addListener(liveStateListeners, cb),
+    onLiveTranscript: (cb) => addListener(liveTranscriptListeners, cb),
+    onLiveToolCall: (cb) => addListener(liveToolCallListeners, cb),
+    onLiveToolResult: (cb) => addListener(liveToolResultListeners, cb),
+    onLiveInterrupted: (cb) => addListener(liveInterruptedListeners, cb),
   },
   orch: {
     syncPanes: (entries) => ipcRenderer.send(ORCH_CHANNELS.panesSync, entries),
