@@ -11,7 +11,16 @@ export type PixelIconName =
   | 'config'
   | 'mic'
   | 'plus'
-  | 'sparkle';
+  | 'sparkle'
+  | 'close'
+  | 'sun'
+  | 'moon'
+  | 'chevron'
+  | 'status-idle'
+  | 'status-busy'
+  | 'status-exited'
+  | 'status-hibernated'
+  | 'status-spawning';
 
 /**
  * Icon set pixel — desenhado no MESMO grid 11×11 do NexusMark, em rects crisp
@@ -123,6 +132,85 @@ const ICONS: Record<PixelIconName, Rect[]> = {
     [7, 7, 1, 1],
     [7, 3, 1, 1],
     [3, 7, 1, 1],
+  ],
+  // close / cross (x)
+  close: [
+    [3, 3, 1, 1],
+    [4, 4, 1, 1],
+    [5, 5, 1, 1],
+    [6, 6, 1, 1],
+    [7, 7, 1, 1],
+    [7, 3, 1, 1],
+    [6, 4, 1, 1],
+    [4, 6, 1, 1],
+    [3, 7, 1, 1],
+  ],
+  // sun (wake)
+  sun: [
+    [4, 4, 3, 3],
+    [5, 1, 1, 2],
+    [5, 8, 1, 2],
+    [1, 5, 2, 1],
+    [8, 5, 2, 1],
+  ],
+  // moon (sleep)
+  moon: [
+    [4, 2, 4, 1],
+    [3, 3, 2, 1],
+    [2, 4, 2, 1],
+    [2, 5, 2, 1],
+    [2, 6, 2, 1],
+    [3, 7, 2, 1],
+    [4, 8, 4, 1],
+  ],
+  // chevron right
+  chevron: [
+    [4, 3],
+    [5, 4],
+    [6, 5],
+    [5, 6],
+    [4, 7],
+  ],
+  // status idle (filled circle)
+  'status-idle': [
+    [4, 3, 3, 1],
+    [3, 4, 5, 1],
+    [3, 5, 5, 1],
+    [3, 6, 5, 1],
+    [4, 7, 3, 1],
+  ],
+  // status busy (dashed/dotted-like ring)
+  'status-busy': [
+    [5, 3, 1, 1],
+    [3, 5, 1, 1],
+    [7, 5, 1, 1],
+    [5, 7, 1, 1],
+    [4, 4, 1, 1], [6, 4, 1, 1],
+    [4, 6, 1, 1], [6, 6, 1, 1],
+  ],
+  // status exited (small cross)
+  'status-exited': [
+    [3, 3, 1, 1], [7, 3, 1, 1],
+    [4, 4, 1, 1], [6, 4, 1, 1],
+    [5, 5, 1, 1],
+    [4, 6, 1, 1], [6, 6, 1, 1],
+    [3, 7, 1, 1], [7, 7, 1, 1],
+  ],
+  // status hibernated (circle with horizontal bar)
+  'status-hibernated': [
+    [4, 3, 3, 1],
+    [3, 4, 1, 1], [7, 4, 1, 1],
+    [3, 5, 5, 1],
+    [3, 6, 1, 1], [7, 6, 1, 1],
+    [4, 7, 3, 1],
+  ],
+  // status spawning (hollow circle)
+  'status-spawning': [
+    [4, 3, 3, 1],
+    [3, 4, 1, 1], [7, 4, 1, 1],
+    [3, 5, 1, 1], [7, 5, 1, 1],
+    [3, 6, 1, 1], [7, 6, 1, 1],
+    [4, 7, 3, 1],
   ],
 };
 

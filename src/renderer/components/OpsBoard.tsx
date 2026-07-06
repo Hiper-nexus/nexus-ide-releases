@@ -116,14 +116,7 @@ export function OpsBoard() {
           title="Fechar o board (Esc)"
           aria-label="Fechar Ops Board"
         >
-          <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-            <path
-              d="M2.5 2.5 L9.5 9.5 M9.5 2.5 L2.5 9.5"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-            />
-          </svg>
+          <PixelIcon name="close" size={10} />
         </button>
       </header>
 
@@ -241,7 +234,13 @@ export function OpsBoard() {
                                 onClick={() => retomar(m)}
                                 title="Restaura os panes desta missão (as CLIs voltam com --continue)"
                               >
-                                {busy === m.id ? 'retomando…' : '▸ retomar'}
+                                {busy === m.id ? (
+                                  'retomando…'
+                                ) : (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                    <PixelIcon name="mission" size={8} /> retomar
+                                  </span>
+                                )}
                               </button>
                             )}
                             <button

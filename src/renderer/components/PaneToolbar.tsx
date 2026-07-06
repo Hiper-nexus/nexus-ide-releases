@@ -9,6 +9,7 @@ import {
   wakeHost,
 } from '../terminal/terminal-host';
 import { CostBadge } from './CostBadge';
+import { PixelIcon, type PixelIconName } from './PixelIcon';
 
 interface Props {
   pane: PaneModel;
@@ -23,22 +24,23 @@ function StateIndicator({ paneId }: { paneId: string }) {
 
   const view =
     state === 'idle'
-      ? { dot: '●', mod: 'idle', label: 'pronto' }
+      ? { icon: 'status-idle' as PixelIconName, mod: 'idle', label: 'pronto' }
       : state === 'busy'
-        ? { dot: '◌', mod: 'busy', label: 'trabalhando' }
+        ? { icon: 'status-busy' as PixelIconName, mod: 'busy', label: 'trabalhando' }
         : state === 'exited'
-          ? { dot: '✕', mod: 'exited', label: 'encerrado — use ↻ para reabrir' }
+          ? { icon: 'status-exited' as PixelIconName, mod: 'exited', label: 'encerrado — use ↻ para reabrir' }
           : state === 'hibernated'
-            ? { dot: '◍', mod: 'hibernated', label: 'dormindo — use ☀ para acordar' }
-            : { dot: '○', mod: 'spawning', label: 'iniciando' };
+            ? { icon: 'status-hibernated' as PixelIconName, mod: 'hibernated', label: 'dormindo — use ☀ para acordar' }
+            : { icon: 'status-spawning' as PixelIconName, mod: 'spawning', label: 'iniciando' };
 
   return (
     <span
       className={`toolbar__state toolbar__state--${view.mod}`}
       title={`agente: ${view.label}`}
       aria-label={`estado do agente: ${view.label}`}
+      style={{ display: 'inline-flex', alignItems: 'center' }}
     >
-      {view.dot}
+      <PixelIcon name={view.icon} size={8} />
     </span>
   );
 }
@@ -160,7 +162,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
             }
           }}
         >
-          {paneState === 'hibernated' ? '☀' : '☾'}
+          <PixelIcon name={paneState === 'hibernated' ? 'sun' : 'moon'} size={10} />
         </button>
       )}
       {pane.kind === 'cli-agent' && (
@@ -220,7 +222,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
           close(pane.id);
         }}
       >
-        ✕
+        <PixelIcon name="close" size={8} />
       </button>
     </div>
   );

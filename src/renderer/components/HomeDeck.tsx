@@ -178,7 +178,9 @@ export function HomeDeck() {
                   >
                     <span className="home-deck__squad-name">{s.name}</span>
                     <span className="home-deck__squad-meta">{workerCount(s)}</span>
-                    <span className="home-deck__squad-go" aria-hidden="true">›</span>
+                    <span className="home-deck__squad-go" aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'center' }}>
+                      <PixelIcon name="chevron" size={7} />
+                    </span>
                   </button>
                 </li>
               ))}
@@ -190,8 +192,8 @@ export function HomeDeck() {
           <span className="home-deck__keys">
             <kbd>⌘D</kbd> dividir · <kbd>⇧⌘D</kbd> dividir ↓ · <kbd>⌘W</kbd> fechar pane
           </span>
-          <button className="home-deck__dismiss" onClick={hide}>
-            usar só o terminal ›
+          <button className="home-deck__dismiss" onClick={hide} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            usar só o terminal <PixelIcon name="chevron" size={7} />
           </button>
         </footer>
       </div>

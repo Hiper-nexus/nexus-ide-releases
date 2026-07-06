@@ -3,6 +3,7 @@ import type { Mission } from '../../shared/orch-types';
 import { useOrchStore } from '../state/orch-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { reopenMission } from '../orch/mission-reopen';
+import { PixelIcon } from './PixelIcon';
 
 /**
  * Trilha de missões (lateral esquerda). Toda missão criada fica listada e
@@ -52,8 +53,9 @@ export function MissionRail() {
           className="mission-rail__new"
           title="Iniciar uma nova missão (a atual fica salva aqui)"
           onClick={openMissionWizard}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}
         >
-          ＋ Nova
+          <PixelIcon name="plus" size={8} /> Nova
         </button>
       </header>
 
@@ -91,9 +93,7 @@ export function MissionRail() {
                 aria-label={`Remover missão ${m.title}`}
                 onClick={() => removeMission(m, active)}
               >
-                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-                  <path d="M2.5 2.5 L9.5 9.5 M9.5 2.5 L2.5 9.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                </svg>
+                <PixelIcon name="close" size={10} />
               </button>
             </li>
           );
