@@ -220,7 +220,7 @@ git commit -m "feat(server): scaffold do backend Express + contract compartilhad
 **Interfaces:**
 - Produces: `parseEnv(raw: Record<string, string | undefined>): Env` (lança em falta) e `type Env = { DATABASE_URL, LICENSE_PRIVATE_KEY, LICENSE_PUBLIC_KEY, GITHUB_OAUTH_ID, GITHUB_OAUTH_SECRET, GOOGLE_OAUTH_ID, GOOGLE_OAUTH_SECRET, PUBLIC_BASE_URL, APP_DEEP_LINK_BASE, PORT }`.
 
-- [ ] **Step 1: teste que falha**
+- [x] **Step 1: teste que falha**
 
 ```ts
 // server/src/env.test.ts
@@ -257,8 +257,8 @@ describe('parseEnv', () => {
 });
 ```
 
-- [ ] **Step 2: rodar e ver falhar** — `cd server && npx vitest run src/env.test.ts` → FAIL
-- [ ] **Step 3: implementar**
+- [x] **Step 2: rodar e ver falhar** — `cd server && npx vitest run src/env.test.ts` → FAIL
+- [x] **Step 3: implementar**
 
 ```ts
 // server/src/env.ts
@@ -295,8 +295,8 @@ export function parseEnv(raw: Record<string, string | undefined>): Env {
 }
 ```
 
-- [ ] **Step 4: rodar e ver passar** — PASS (3 testes)
-- [ ] **Step 5: Commit** — `git add server/src/env.ts server/src/env.test.ts && git commit -m "feat(server): validação de env no boot (zod, fail-fast)"`
+- [x] **Step 4: rodar e ver passar** — PASS (3 testes)
+- [x] **Step 5: Commit** — `git add server/src/env.ts server/src/env.test.ts && git commit -m "feat(server): validação de env no boot (zod, fail-fast)"`
 
 ---
 
