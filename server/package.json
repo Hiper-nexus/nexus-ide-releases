@@ -12,15 +12,17 @@
     "db:migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
-    "express": "^4.21.0",
     "drizzle-orm": "^0.36.0",
-    "pg": "^8.13.0",
+    "express": "^4.21.0",
     "jose": "^5.9.0",
-    "zod": "^3.23.0",
+    "pg": "^8.13.0",
     "pino": "^9.5.0",
-    "pino-http": "^10.3.0"
+    "pino-http": "^10.3.0",
+    "stripe": "^22.3.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.2.0",
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.0",
     "@types/pg": "^8.11.0",
@@ -29,7 +31,6 @@
     "supertest": "^7.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0",
-    "@electric-sql/pglite": "^0.2.0"
+    "vitest": "^3.0.0"
   }
 }

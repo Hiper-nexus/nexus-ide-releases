@@ -14,6 +14,11 @@ const schema = z.object({
   GOOGLE_OAUTH_SECRET: z.string().min(1),
   PUBLIC_BASE_URL: z.string().url(),
   APP_DEEP_LINK_BASE: z.string().min(1),
+  STRIPE_SECRET_KEY: z.string().min(1),
+  STRIPE_WEBHOOK_SECRET: z.string().min(1),
+  STRIPE_PRICE_PRO: z.string().min(1),
+  STRIPE_PRICE_TEAM: z.string().min(1),
+  PUBLIC_SITE_URL: z.string().url(),
   PORT: z.coerce.number().int().positive().default(8080),
 });
 

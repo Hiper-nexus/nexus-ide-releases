@@ -11,6 +11,11 @@ const FULL = {
   GOOGLE_OAUTH_SECRET: 'ggsec',
   PUBLIC_BASE_URL: 'https://api.nexuside.app',
   APP_DEEP_LINK_BASE: 'nexus://auth',
+  STRIPE_SECRET_KEY: 'sk_test_x',
+  STRIPE_WEBHOOK_SECRET: 'whsec_x',
+  STRIPE_PRICE_PRO: 'price_pro',
+  STRIPE_PRICE_TEAM: 'price_team',
+  PUBLIC_SITE_URL: 'https://nexuside.app',
 };
 
 describe('parseEnv', () => {
@@ -27,5 +32,16 @@ describe('parseEnv', () => {
 
   it('rejeita PUBLIC_BASE_URL que não é URL', () => {
     expect(() => parseEnv({ ...FULL, PUBLIC_BASE_URL: 'nao-url' })).toThrow();
+  });
+
+  it('exige as vars do Stripe', () => {
+    expect(() => parseEnv({ ...FULL, STRIPE_SECRET_KEY: undefined } as never)).toThrow(/STRIPE_SECRET_KEY/);
+    const ok = parseEnv({
+      ...FULL,
+      STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: 'whsec_x',
+      STRIPE_PRICE_PRO: 'price_pro', STRIPE_PRICE_TEAM: 'price_team',
+      PUBLIC_SITE_URL: 'https://nexuside.app',
+    });
+    expect(ok.STRIPE_PRICE_PRO).toBe('price_pro');
   });
 });
