@@ -1,5 +1,5 @@
 import { importPKCS8, importSPKI, SignJWT, jwtVerify } from 'jose';
-import type { LicensePayload, PlanId } from '../contract';
+import type { LicensePayload, PlanId } from '../../../shared/contract';
 
 /**
  * Assina/verifica a licença JWT com Ed25519 (EdDSA). A chave privada só existe

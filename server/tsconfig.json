@@ -7,7 +7,6 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "rootDir": "..",
     "outDir": "dist",
     "rootDirs": ["src", "../shared"],
     "types": ["node"]
