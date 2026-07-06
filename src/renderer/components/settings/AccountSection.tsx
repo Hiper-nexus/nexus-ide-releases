@@ -11,6 +11,9 @@ import {
  * SaaS ir ao ar, os CTAs deixam isso explícito em vez de fingir.
  */
 
+/** Backend do SaaS — o login OAuth abre <AUTH_BASE>/v1/auth/<provider>. */
+const AUTH_BASE = 'https://api.nexuside.app';
+
 function planPrice(price: number | null): string {
   if (price === null) return 'fale conosco';
   if (price === 0) return 'grátis';
@@ -54,6 +57,32 @@ export function AccountSection() {
           </button>
         )}
       </div>
+
+      {!license?.email && (
+        <div className="account__login">
+          <span className="settings-detail__hint">
+            Entre para sincronizar plano, times e ranking:
+          </span>
+          <div className="account__login-buttons">
+            <button
+              className="agent-picker__btn"
+              onClick={() =>
+                void window.nexus.app.openExternal(`${AUTH_BASE}/v1/auth/github`)
+              }
+            >
+              Entrar com GitHub
+            </button>
+            <button
+              className="agent-picker__btn"
+              onClick={() =>
+                void window.nexus.app.openExternal(`${AUTH_BASE}/v1/auth/google`)
+              }
+            >
+              Entrar com Google
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="account__plans">
         {PLANS.map((plan) => {

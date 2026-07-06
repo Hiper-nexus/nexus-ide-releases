@@ -104,6 +104,16 @@ function defaultHandler(link: DeepLink, trusted: boolean): void {
     } catch {
       console.warn('[deep-link] caminho inexistente:', link.path);
     }
+  } else if (link.kind === 'auth') {
+    // Login: troca o code de uso único por tokens (Keychain) + licença.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { exchangeAuthCode } = require('./auth-client') as typeof import('./auth-client');
+    void exchangeAuthCode(link.code).then((r) => {
+      if (!r.ok) console.warn('[auth] exchange falhou:', r.error);
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { BILLING_CHANNELS } = require('../shared/billing-types') as typeof import('../shared/billing-types');
+      win?.webContents.send(BILLING_CHANNELS.changed);
+    });
   }
 }
 
