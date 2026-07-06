@@ -41,6 +41,7 @@ function resolveLink(plugin: VoicePlugin, probes: ProviderProbes): ResolvedProvi
       provider: plugin.provider,
       kind,
       available,
+      model: plugin.model,
       reason: available ? 'ready (system voice)' : 'macOS only',
     };
   }
@@ -52,6 +53,7 @@ function resolveLink(plugin: VoicePlugin, probes: ProviderProbes): ResolvedProvi
       provider: plugin.provider,
       kind,
       available,
+      model: plugin.model,
       reason: available ? `ready (${bin})` : `binary not found: ${bin}`,
     };
   }
@@ -59,7 +61,13 @@ function resolveLink(plugin: VoicePlugin, probes: ProviderProbes): ResolvedProvi
   // cloud
   const authType = plugin.auth?.type ?? 'api_key';
   if (authType === 'none') {
-    return { provider: plugin.provider, kind, available: true, reason: 'ready (no auth)' };
+    return {
+      provider: plugin.provider,
+      kind,
+      available: true,
+      model: plugin.model,
+      reason: 'ready (no auth)',
+    };
   }
   const envVar = plugin.auth?.envVar;
   if (!envVar) {
@@ -67,6 +75,7 @@ function resolveLink(plugin: VoicePlugin, probes: ProviderProbes): ResolvedProvi
       provider: plugin.provider,
       kind,
       available: false,
+      model: plugin.model,
       reason: 'no auth.envVar configured',
     };
   }
@@ -75,6 +84,7 @@ function resolveLink(plugin: VoicePlugin, probes: ProviderProbes): ResolvedProvi
     provider: plugin.provider,
     kind,
     available,
+    model: plugin.model,
     reason: available ? `ready (${envVar})` : `${envVar} not set`,
   };
 }

@@ -3,7 +3,9 @@ import {
   voiceConfigSchema,
   voicePluginSchema,
   DEFAULT_VOICE_CONFIG,
+  flattenJarvisBrainProviders,
   migrateLegacyVoiceConfig,
+  promoteJarvisBrainProvider,
   accelFromCode,
   keyCodeFromAccelerator,
   normalizeKeyCode,
@@ -27,6 +29,8 @@ describe('voiceConfigSchema', () => {
     expect(parsed.input.shortcut).toBe('CommandOrControl+Shift+Space');
     expect(parsed.jarvisLive.enabled).toBe(false);
     expect(parsed.jarvisLive.graceReuseMs).toBe(90_000);
+    expect(parsed.jarvisBrain.provider).toBe('gemini');
+    expect(parsed.jarvisBrain.fallback?.provider).toBe('openai');
   });
 
   it('validates a nested fallback chain', () => {
@@ -49,6 +53,33 @@ describe('voiceConfigSchema', () => {
       endpoint: 'not-a-url',
     });
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe('jarvis brain providers', () => {
+  it('ships Gemini → OpenAI → Groq as the configurable brain chain', () => {
+    expect(
+      flattenJarvisBrainProviders(DEFAULT_VOICE_CONFIG.jarvisBrain).map(
+        (provider) => provider.provider,
+      ),
+    ).toEqual(['gemini', 'openai', 'groq']);
+  });
+
+  it('promotes the selected brain provider without mutating the original chain', () => {
+    const promoted = promoteJarvisBrainProvider(
+      DEFAULT_VOICE_CONFIG.jarvisBrain,
+      'openai',
+    );
+    expect(flattenJarvisBrainProviders(promoted).map((p) => p.provider)).toEqual([
+      'openai',
+      'gemini',
+      'groq',
+    ]);
+    expect(
+      flattenJarvisBrainProviders(DEFAULT_VOICE_CONFIG.jarvisBrain).map(
+        (p) => p.provider,
+      ),
+    ).toEqual(['gemini', 'openai', 'groq']);
   });
 });
 

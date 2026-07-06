@@ -89,6 +89,7 @@ export const voicePluginSchema: z.ZodType<VoicePlugin> = z.lazy(() =>
 
 export type VoiceRouting = 'jarvis' | 'focused-pane' | 'orchestrator' | 'ask';
 export type VoiceSpeakMode = 'summary' | 'full' | 'off';
+export type JarvisBrainProviderId = 'gemini' | 'openai' | 'groq';
 
 const inputSchema = z.object({
   mode: z.enum(['push-to-talk']).default('push-to-talk'),
@@ -117,6 +118,63 @@ export const jarvisLiveConfigSchema = z
 
 export type JarvisLiveConfig = z.infer<typeof jarvisLiveConfigSchema>;
 
+export interface JarvisBrainProvider {
+  provider: JarvisBrainProviderId;
+  endpoint: string;
+  auth: z.infer<typeof authSchema>;
+  model: string;
+  /** Some OpenAI-compatible providers reject JSON mode; the prompt still asks for strict JSON. */
+  jsonMode?: boolean;
+  fallback?: JarvisBrainProvider;
+}
+
+export const jarvisBrainProviderSchema: z.ZodType<JarvisBrainProvider> = z.lazy(() =>
+  z.object({
+    provider: z.enum(['gemini', 'openai', 'groq']),
+    endpoint: z.string().url().max(2048),
+    auth: authSchema,
+    model: z.string().min(1).max(128),
+    jsonMode: z.boolean().optional(),
+    fallback: jarvisBrainProviderSchema.optional(),
+  }),
+);
+
+export function flattenJarvisBrainProviders(
+  head: JarvisBrainProvider,
+): JarvisBrainProvider[] {
+  const out: JarvisBrainProvider[] = [];
+  let node: JarvisBrainProvider | undefined = head;
+  let guard = 0;
+  while (node && guard < 16) {
+    out.push(node);
+    node = node.fallback;
+    guard += 1;
+  }
+  return out;
+}
+
+export function relinkJarvisBrainProviders(
+  providers: JarvisBrainProvider[],
+): JarvisBrainProvider {
+  return providers.reduceRight<JarvisBrainProvider | undefined>((fallback, provider) => {
+    const { fallback: _drop, ...rest } = provider;
+    return { ...rest, ...(fallback ? { fallback } : {}) };
+  }, undefined) as JarvisBrainProvider;
+}
+
+export function promoteJarvisBrainProvider(
+  head: JarvisBrainProvider,
+  providerId: JarvisBrainProviderId,
+): JarvisBrainProvider {
+  const providers = flattenJarvisBrainProviders(head);
+  const idx = providers.findIndex((p) => p.provider === providerId);
+  if (idx <= 0) return head;
+  return relinkJarvisBrainProviders([
+    providers[idx],
+    ...providers.filter((_, i) => i !== idx),
+  ]);
+}
+
 export const voiceConfigSchema = z.object({
   enabled: z.boolean().default(true),
   input: inputSchema.default({
@@ -130,6 +188,27 @@ export const voiceConfigSchema = z.object({
     .object({ enabled: z.boolean().default(false) })
     .default({ enabled: false }),
   jarvisLive: jarvisLiveConfigSchema,
+  jarvisBrain: jarvisBrainProviderSchema.default({
+    provider: 'gemini',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    auth: { type: 'api_key', envVar: 'GEMINI_API_KEY' },
+    model: 'gemini-3.5-flash',
+    jsonMode: false,
+    fallback: {
+      provider: 'openai',
+      endpoint: 'https://api.openai.com/v1/chat/completions',
+      auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
+      model: 'gpt-4o-mini',
+      jsonMode: true,
+      fallback: {
+        provider: 'groq',
+        endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+        auth: { type: 'api_key', envVar: 'GROQ_API_KEY' },
+        model: 'llama-3.3-70b-versatile',
+        jsonMode: true,
+      },
+    },
+  }),
   stt: voicePluginSchema,
   tts: voicePluginSchema,
 });
@@ -158,6 +237,27 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
     graceReuseMs: 90_000,
     dormantAfterMs: 5 * 60_000,
     maxWindowTurns: 12,
+  },
+  jarvisBrain: {
+    provider: 'gemini',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    auth: { type: 'api_key', envVar: 'GEMINI_API_KEY' },
+    model: 'gemini-3.5-flash',
+    jsonMode: false,
+    fallback: {
+      provider: 'openai',
+      endpoint: 'https://api.openai.com/v1/chat/completions',
+      auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
+      model: 'gpt-4o-mini',
+      jsonMode: true,
+      fallback: {
+        provider: 'groq',
+        endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+        auth: { type: 'api_key', envVar: 'GROQ_API_KEY' },
+        model: 'llama-3.3-70b-versatile',
+        jsonMode: true,
+      },
+    },
   },
   stt: {
     type: 'stt',

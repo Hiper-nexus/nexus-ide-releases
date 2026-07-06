@@ -1,17 +1,20 @@
 import { resolveVoiceApiKey } from './voice-secrets';
 import { jarvisMemory } from './jarvis-memory';
 import { jarvisFastPath } from './jarvis-fastpath';
+import { getVoiceConfig } from './voice-config-store';
+import { flattenJarvisBrainProviders } from '../../shared/voice-config';
 import type {
   JarvisContext,
   JarvisReply,
   JarvisTurn,
 } from '../../shared/voice-ipc';
+import type { JarvisBrainProvider } from '../../shared/voice-config';
 
 /**
  * O cérebro da JARVIS — transforma a fala transcrita numa resposta CURTA em
- * PT-BR + uma ação opcional no app. Roda num chat model barato/rápido:
- * OpenAI (gpt-4o-mini) quando a key existe, senão Groq (llama). A resposta é
- * JSON estrito {say, action} para o renderer executar e falar.
+ * PT-BR + uma ação opcional no app. Roda numa cadeia configurável de chat
+ * models rápidos (Gemini/OpenAI/Groq) e devolve JSON estrito {say, action}
+ * para o renderer executar e falar.
  */
 
 const SYSTEM_PROMPT = `Você é JARVIS, a assistente pessoal de voz do dono deste
@@ -120,6 +123,15 @@ export const defaultBrainDeps: BrainDeps = {
   fetchImpl: (...args) => fetch(...args),
   getKey: (envVar) => resolveVoiceApiKey(envVar),
 };
+
+function providerKey(
+  provider: JarvisBrainProvider,
+  deps: BrainDeps,
+): string | undefined {
+  if (provider.auth.type === 'none') return '';
+  const envVar = provider.auth.envVar;
+  return envVar ? deps.getKey(envVar) : undefined;
+}
 
 function contextBlock(ctx: JarvisContext): string {
   const squads = ctx.squads.length > 0 ? ctx.squads.join(', ') : 'nenhum';
@@ -251,48 +263,35 @@ export async function jarvisThink(
     { role: 'user', content: transcript },
   ];
 
-  const openaiKey = deps.getKey('OPENAI_API_KEY');
-  const groqKey = deps.getKey('GROQ_API_KEY');
+  const providers = flattenJarvisBrainProviders(getVoiceConfig().jarvisBrain);
   const attempts: string[] = [];
 
-  if (groqKey) {
+  for (const provider of providers) {
+    const key = providerKey(provider, deps);
+    if (key === undefined) continue;
     try {
       const raw = await chatOnce(
-        'https://api.groq.com/openai/v1/chat/completions',
-        groqKey,
-        'llama-3.3-70b-versatile',
+        provider.endpoint,
+        key,
+        provider.model,
         messages,
         deps,
-        true,
+        provider.jsonMode ?? true,
       );
       applyMemoryOps(raw);
       return parseReply(raw);
     } catch (err) {
-      attempts.push(`groq: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  if (openaiKey) {
-    try {
-      const raw = await chatOnce(
-        'https://api.openai.com/v1/chat/completions',
-        openaiKey,
-        'gpt-4o-mini',
-        messages,
-        deps,
-        true,
+      attempts.push(
+        `${provider.provider}: ${err instanceof Error ? err.message : String(err)}`,
       );
-      applyMemoryOps(raw);
-      return parseReply(raw);
-    } catch (err) {
-      attempts.push(`openai: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   if (attempts.length === 0) {
     return {
       say:
-        'Preciso de uma chave de modelo para conversar — cole a OPENAI_API_KEY ' +
-        'ou use a GROQ_API_KEY nas configurações de voz.',
+        'Preciso de uma chave de modelo para conversar — cole a GEMINI_API_KEY, ' +
+        'OPENAI_API_KEY ou GROQ_API_KEY nas configurações de voz.',
       action: { type: 'none' },
     };
   }

@@ -17,7 +17,8 @@ import type {
 
 function providerOption(p: ResolvedProvider): string {
   const tag = p.available ? '' : ' (unavailable)';
-  return `${p.provider}${tag} — ${p.reason}`;
+  const model = p.model ? ` · ${p.model}` : '';
+  return `${p.provider}${model}${tag} — ${p.reason}`;
 }
 
 function keyStatusText(key: VoiceApiKeyStatus): string {
@@ -84,6 +85,7 @@ export function VoiceSettings() {
 
   const [sttProvider, setSttProvider] = useState('');
   const [ttsProvider, setTtsProvider] = useState('');
+  const [jarvisBrainProvider, setJarvisBrainProvider] = useState('');
   const [speakMode, setSpeakMode] = useState('summary');
   const [routing, setRouting] = useState('focused-pane');
   const [triggerKey, setTriggerKey] = useState('Space');
@@ -133,6 +135,9 @@ export function VoiceSettings() {
     if (!info) return;
     setSttProvider(info.stt.active?.provider ?? info.stt.chain[0]?.provider ?? '');
     setTtsProvider(info.tts.active?.provider ?? info.tts.chain[0]?.provider ?? '');
+    setJarvisBrainProvider(
+      info.jarvisBrain.active?.provider ?? info.jarvisBrain.chain[0]?.provider ?? '',
+    );
     setSpeakMode(info.speakMode);
     setRouting(info.routing);
     setTriggerKey(info.pushToTalkKeyCode);
@@ -170,9 +175,19 @@ export function VoiceSettings() {
       // re-fixava o fallback (say) no topo da chain para sempre.
       const sttInitial = info.stt.active?.provider ?? info.stt.chain[0]?.provider ?? '';
       const ttsInitial = info.tts.active?.provider ?? info.tts.chain[0]?.provider ?? '';
+      const brainInitial =
+        info.jarvisBrain.active?.provider ?? info.jarvisBrain.chain[0]?.provider ?? '';
       const next = await window.nexus.voice.setConfig({
         ...(sttProvider !== sttInitial ? { sttProvider } : {}),
         ...(ttsProvider !== ttsInitial ? { ttsProvider } : {}),
+        ...(jarvisBrainProvider !== brainInitial
+          ? {
+              jarvisBrainProvider: jarvisBrainProvider as
+                | 'gemini'
+                | 'openai'
+                | 'groq',
+            }
+          : {}),
         speakMode: speakMode as 'summary' | 'full' | 'off',
         routing: (jarvisLiveOn ? 'jarvis' : routing) as
           | 'jarvis'
@@ -254,6 +269,21 @@ export function VoiceSettings() {
                 onChange={(e) => setTtsProvider(e.target.value)}
               >
                 {info.tts.chain.map((p) => (
+                  <option key={p.provider} value={p.provider}>
+                    {providerOption(p)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="agent-picker__label">
+              Jarvis brain
+              <select
+                className="agent-picker__select"
+                value={jarvisBrainProvider}
+                onChange={(e) => setJarvisBrainProvider(e.target.value)}
+              >
+                {info.jarvisBrain.chain.map((p) => (
                   <option key={p.provider} value={p.provider}>
                     {providerOption(p)}
                   </option>
@@ -393,8 +423,8 @@ export function VoiceSettings() {
                 : info.hotkeyMode === 'hold'
                 ? `Segure ${info.shortcut} para falar e solte para enviar.`
                 : `Pressione ${info.shortcut} para começar a falar e pressione DE NOVO para enviar.`}{' '}
-              O Jarvis manda a transcrição para o pane focado e fala a resposta
-              do agente.
+              O Jarvis brain decide conversa e ações; STT/TTS continuam com
+              fallback separado.
             </p>
 
             {error && <p className="agent-picker__error">{error}</p>}

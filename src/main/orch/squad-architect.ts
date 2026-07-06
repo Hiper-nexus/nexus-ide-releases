@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { chatOnce, defaultBrainDeps } from '../voice/jarvis-brain';
+import { getVoiceConfig } from '../voice/voice-config-store';
 import { listAdapterInfos } from '../adapters/adapter-registry';
 import { saveSquad } from './squad-store';
+import { flattenJarvisBrainProviders } from '../../shared/voice-config';
 import type { Squad } from '../../shared/orch-types';
 
 /**
@@ -110,40 +112,40 @@ export async function designSquadForWorkspace(
     `CLIs instaladas nesta máquina: ${installed || 'claude'}\n\n` +
     profileWorkspace(workspacePath);
   const raw = await (async () => {
-    const groq = defaultBrainDeps.getKey('GROQ_API_KEY');
-    const openai = defaultBrainDeps.getKey('OPENAI_API_KEY');
     const messages = [
       { role: 'system', content: ARCHITECT_PROMPT },
       { role: 'user', content: `PERFIL DO PROJETO:\n\n${profile}` },
     ];
-    // Qualidade primeiro aqui (não é tempo-real): OpenAI → Groq.
-    if (openai) {
+    const attempts: string[] = [];
+    for (const provider of flattenJarvisBrainProviders(getVoiceConfig().jarvisBrain)) {
+      const envVar = provider.auth.envVar;
+      const key =
+        provider.auth.type === 'none'
+          ? ''
+          : envVar
+          ? defaultBrainDeps.getKey(envVar)
+          : undefined;
+      if (key === undefined) continue;
       try {
         return await chatOnce(
-          'https://api.openai.com/v1/chat/completions',
-          openai,
-          'gpt-4o-mini',
+          provider.endpoint,
+          key,
+          provider.model,
           messages,
           defaultBrainDeps,
-          true,
+          provider.jsonMode ?? true,
           2_000,
         );
-      } catch {
-        // cai para o Groq
+      } catch (err) {
+        attempts.push(
+          `${provider.provider}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
-    if (groq) {
-      return chatOnce(
-        'https://api.groq.com/openai/v1/chat/completions',
-        groq,
-        'llama-3.3-70b-versatile',
-        messages,
-        defaultBrainDeps,
-        true,
-        2_000,
-      );
-    }
-    throw new Error('nenhuma key de modelo (OPENAI_API_KEY ou GROQ_API_KEY)');
+    throw new Error(
+      attempts[0] ??
+        'nenhuma key de modelo (GEMINI_API_KEY, OPENAI_API_KEY ou GROQ_API_KEY)',
+    );
   })().catch((err) => {
     throw new Error(err instanceof Error ? err.message : String(err));
   });

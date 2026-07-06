@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import type { VoiceRouting, VoiceSpeakMode } from './voice-config';
+import type {
+  JarvisBrainProviderId,
+  VoiceRouting,
+  VoiceSpeakMode,
+} from './voice-config';
 
 /**
  * Zod schemas + transport types for the voice IPC surface. The main process
@@ -45,6 +49,8 @@ export const setConfigRequestSchema = z.object({
   wakeWordEnabled: z.boolean().optional(),
   /** Toggle Jarvis Live: continuous session mode over the Classic fallback. */
   jarvisLiveEnabled: z.boolean().optional(),
+  /** Preferred chat-model provider for the Jarvis brain. */
+  jarvisBrainProvider: z.enum(['gemini', 'openai', 'groq']).optional(),
 });
 
 export type SetConfigRequest = z.infer<typeof setConfigRequestSchema>;
@@ -70,6 +76,7 @@ export interface ResolvedProvider {
   provider: string;
   kind: ProviderKind;
   available: boolean;
+  model?: string;
   /** Why it is (un)available, e.g. "GROQ_API_KEY not set" or "ready". */
   reason: string;
 }
@@ -114,6 +121,7 @@ export interface VoiceRuntimeInfo {
     dormantAfterMs: number;
     maxWindowTurns: number;
   };
+  jarvisBrain: ResolvedChain;
   hasWakeKey: boolean;
   keys: VoiceApiKeyStatus[];
   stt: ResolvedChain;
@@ -178,6 +186,8 @@ export interface JarvisReply {
   expectReply?: boolean;
   action: JarvisAction;
 }
+
+export type JarvisBrainProviderChoice = JarvisBrainProviderId;
 
 export const jarvisRequestSchema = z.object({
   transcript: z.string().min(1).max(4000),

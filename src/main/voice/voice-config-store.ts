@@ -4,22 +4,26 @@ import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import {
   DEFAULT_VOICE_CONFIG,
+  flattenJarvisBrainProviders,
   keyCodeFromAccelerator,
   normalizeKeyCode,
+  promoteJarvisBrainProvider,
   voiceConfigSchema,
   legacyVoiceConfigSchema,
   migrateLegacyVoiceConfig,
+  type JarvisBrainProvider,
   type VoiceConfig,
   type VoicePlugin,
 } from '../../shared/voice-config';
 import type {
   HotkeyMode,
+  ResolvedChain,
+  ResolvedProvider,
   VoiceApiKeyStatus,
   SetConfigRequest,
   VoiceRuntimeInfo,
 } from '../../shared/voice-ipc';
 import {
-  flattenChain,
   resolveChain,
   promoteProvider,
   type ProviderProbes,
@@ -183,8 +187,15 @@ export function setHotkeyMode(mode: HotkeyMode): void {
 export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
   let stt = current.stt;
   let tts = current.tts;
+  let jarvisBrain = current.jarvisBrain;
   if (patch.sttProvider) stt = promoteProvider(stt, patch.sttProvider);
   if (patch.ttsProvider) tts = promoteProvider(tts, patch.ttsProvider);
+  if (patch.jarvisBrainProvider) {
+    jarvisBrain = promoteJarvisBrainProvider(
+      jarvisBrain,
+      patch.jarvisBrainProvider,
+    );
+  }
   const shortcut = patch.shortcut ?? current.input.shortcut;
   const pushToTalkKeyCode = normalizeKeyCode(
     patch.pushToTalkKeyCode ?? keyCodeFromAccelerator(shortcut),
@@ -202,6 +213,7 @@ export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
       ...current.jarvisLive,
       enabled: patch.jarvisLiveEnabled ?? current.jarvisLive.enabled,
     },
+    jarvisBrain,
     input: {
       ...current.input,
       shortcut,
@@ -216,10 +228,30 @@ export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
   return next;
 }
 
-function collectVoiceEnvVars(...heads: VoicePlugin[]): VoiceApiKeyStatus[] {
+type SecretBearingProvider = {
+  provider: string;
+  auth?: { type?: 'api_key' | 'bearer' | 'none'; envVar?: string };
+  fallback?: SecretBearingProvider;
+};
+
+function flattenSecretProviders(head: SecretBearingProvider): SecretBearingProvider[] {
+  const out: SecretBearingProvider[] = [];
+  let node: SecretBearingProvider | undefined = head;
+  let guard = 0;
+  while (node && guard < 32) {
+    out.push(node);
+    node = node.fallback;
+    guard += 1;
+  }
+  return out;
+}
+
+function collectVoiceEnvVars(
+  ...heads: Array<VoicePlugin | JarvisBrainProvider>
+): VoiceApiKeyStatus[] {
   const byEnv = new Map<string, Set<string>>();
   for (const head of heads) {
-    for (const plugin of flattenChain(head)) {
+    for (const plugin of flattenSecretProviders(head)) {
       const authType = plugin.auth?.type ?? 'api_key';
       const envVar = plugin.auth?.envVar;
       if (authType === 'none' || !envVar) continue;
@@ -239,7 +271,11 @@ function collectVoiceEnvVars(...heads: VoicePlugin[]): VoiceApiKeyStatus[] {
 }
 
 export function knownVoiceEnvVars(): Set<string> {
-  return new Set(collectVoiceEnvVars(current.stt, current.tts).map((key) => key.envVar));
+  return new Set(
+    collectVoiceEnvVars(current.stt, current.tts, current.jarvisBrain).map(
+      (key) => key.envVar,
+    ),
+  );
 }
 
 export function storeVoiceApiKey(
@@ -261,6 +297,23 @@ function persist(config: VoiceConfig): void {
   }
 }
 
+function resolveJarvisBrainChain(head: JarvisBrainProvider): ResolvedChain {
+  const links: ResolvedProvider[] = flattenJarvisBrainProviders(head).map((provider) => {
+    const envVar = provider.auth.envVar;
+    const available =
+      provider.auth.type === 'none' || (envVar ? hasEnv(envVar) : false);
+    return {
+      provider: provider.provider,
+      kind: 'cloud',
+      available,
+      model: provider.model,
+      reason: available ? `ready (${envVar ?? 'no auth'})` : `${envVar ?? 'key'} not set`,
+    };
+  });
+  const active = links.find((link) => link.available) ?? null;
+  return { active, chain: links };
+}
+
 /** Build the secret-free snapshot for the renderer. */
 export function buildRuntimeInfo(): VoiceRuntimeInfo {
   const probes = currentProbes();
@@ -280,9 +333,10 @@ export function buildRuntimeInfo(): VoiceRuntimeInfo {
       dormantAfterMs: current.jarvisLive.dormantAfterMs,
       maxWindowTurns: current.jarvisLive.maxWindowTurns,
     },
+    jarvisBrain: resolveJarvisBrainChain(current.jarvisBrain),
     // openWakeWord roda local e sem key — o campo fica por compat de UI.
     hasWakeKey: true,
-    keys: collectVoiceEnvVars(current.stt, current.tts),
+    keys: collectVoiceEnvVars(current.stt, current.tts, current.jarvisBrain),
     stt: resolveChain(current.stt, probes),
     tts: resolveChain(current.tts, probes),
   };

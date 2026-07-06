@@ -53,12 +53,28 @@ The settings UI exposes this as **Jarvis Live**. For hands-free operation, enabl
 both **Hey Jarvis** and **Jarvis Live**; for a tighter workstation flow, leave
 wake word off and use the PTT shortcut to enter the same live session.
 
+## Jarvis Brain Providers
+
+The Jarvis brain is separate from STT/TTS. It is the chat model that receives
+the app context and returns the strict JSON reply `{say, expectReply, action}`.
+The default chain is:
+
+1. Gemini (`GEMINI_API_KEY`, `gemini-3.5-flash`)
+2. OpenAI (`OPENAI_API_KEY`, `gpt-4o-mini`)
+3. Groq (`GROQ_API_KEY`, `llama-3.3-70b-versatile`)
+
+The settings UI exposes this as **Jarvis brain**. Selecting a provider promotes
+it to the head of `voice.jarvisBrain` while keeping the rest as fallback. The
+same chain is reused by the squad architect so "design squad" does not depend
+on a hidden hardcoded provider.
+
 ## Pipeline
 
 ```
 Hold Cmd+Shift+Space
   → getUserMedia 16 kHz mono + AudioWorklet PCM (renderer)
   → STT chain (main): Groq translate → OpenAI → whisper.cpp local   (PT → EN)
+  → Jarvis brain (main): Gemini → OpenAI → Groq                  (JSON action)
   → inject text into the focused pane's PTY (same path as typing)
   → capture the agent's reply, condense to 1–3 sentences (speakMode: summary)
   → TTS chain (main): OpenAI tts-1 → Piper → macOS `say`
@@ -78,8 +94,9 @@ Secrets never reach the renderer or shell panes — they are read from
 
 | Provider | Env var | Notes |
 |----------|---------|-------|
-| Groq (STT default) | `GROQ_API_KEY` | `whisper-large-v3-turbo`, `task=translate` |
-| OpenAI (STT fallback + TTS default) | `OPENAI_API_KEY` | `whisper-1` / `tts-1` |
+| Gemini (Jarvis brain default) | `GEMINI_API_KEY` | OpenAI-compatible chat completions, `gemini-3.5-flash` |
+| OpenAI (Jarvis brain fallback + STT/TTS) | `OPENAI_API_KEY` | brain `gpt-4o-mini`, STT `whisper-1`, TTS `tts-1` |
+| Groq (Jarvis brain fallback + STT default) | `GROQ_API_KEY` | brain `llama-3.3-70b-versatile`, STT `whisper-large-v3-turbo` |
 | whisper.cpp (STT last resort) | — (keyless) | `brew install whisper-cpp` + a model |
 | Piper (TTS fallback) | — (keyless) | optional local binary |
 | macOS `say` (TTS last resort) | — (keyless) | always available; voice `Luciana` |
@@ -112,11 +129,12 @@ Config lives at `~/.nexus/plugins/voice/nexus-voice.json` (a superset of a
 legacy `audio-config.json`, which is auto-migrated on first run).
 To make OpenAI or local the primary STT, either:
 
-- **UI:** the voice button in the WorkspaceBar → *Voice · Jarvis Mode* → pick the
-  STT/TTS provider, speak mode, routing, and PTT key. "Test voice" speaks a line
-  through the active TTS chain (works with zero keys via `say`).
+- **UI:** the voice button in the WorkspaceBar → *Voice · Jarvis Mode* → pick
+  STT, TTS, **Jarvis brain**, speak mode, routing, and PTT key. "Test voice"
+  speaks a line through the active TTS chain (works with zero keys via `say`).
 - **Config:** reorder the `stt`/`tts` fallback chain, or set the head `provider`
-  to `openai` / `local-whisper`. One line, no recompile.
+  to `openai` / `local-whisper`. Reorder `jarvisBrain` or set its head provider
+  to `gemini`, `openai`, or `groq`. One line, no recompile.
 
 `voice.speakMode`: `summary` (default, 1–3 sentences) · `full` · `off` (dictation
 only). `voice.routing`: `jarvis` (default) · `focused-pane` · `orchestrator` ·

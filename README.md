@@ -40,7 +40,8 @@ seu shell de login, então funciona já na primeira execução.
   tools de preview/browser com screenshot.
 - **Marketplace real** (catálogo aitmpl: 423 agents + 872 skills, install para
   `~/.claude`), **file explorer** com editor, e **voz Jarvis** (Classic e Live,
-  wake/PTT, STT, resposta falada e ações no app).
+  wake/PTT, cérebro Gemini/OpenAI/Groq pela UX, STT, resposta falada e ações no
+  app).
 
 ## Desenvolvimento
 
