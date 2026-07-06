@@ -542,7 +542,7 @@ git commit -m "feat(server): schema Drizzle (account/identity/session/refresh/oa
   - `verifyLicense(jwt: string, publicKeyPem: string): Promise<LicensePayload | null>` (null se inválida — reusa o mesmo alg do app).
   - `freeLicenseInput(email: string | null)` → input Free pronto.
 
-- [ ] **Step 1: teste que falha (gera par real no teste, assina e verifica)**
+- [x] **Step 1: teste que falha (gera par real no teste, assina e verifica)**
 
 ```ts
 // server/src/auth/license-signer.test.ts
@@ -595,8 +595,8 @@ describe('license-signer', () => {
 });
 ```
 
-- [ ] **Step 2: rodar e ver falhar** — FAIL
-- [ ] **Step 3: implementar**
+- [x] **Step 2: rodar e ver falhar** — FAIL
+- [x] **Step 3: implementar**
 
 ```ts
 // server/src/auth/license-signer.ts
@@ -666,9 +666,9 @@ export async function verifyLicense(
 }
 ```
 
-- [ ] **Step 4: rodar e ver passar** — PASS
-- [ ] **Step 5: typecheck** — `cd server && npx tsc --noEmit` → limpo
-- [ ] **Step 6: Commit**
+- [x] **Step 4: rodar e ver passar** — PASS
+- [x] **Step 5: typecheck** — `cd server && npx tsc --noEmit` → limpo
+- [x] **Step 6: Commit**
 
 ```bash
 git add server/src/auth/license-signer.ts server/src/auth/license-signer.test.ts
