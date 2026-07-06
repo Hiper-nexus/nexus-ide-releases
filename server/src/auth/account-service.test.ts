@@ -79,4 +79,18 @@ describe('findOrCreateAccount (matriz de merge)', () => {
     );
     expect(second.accountId).not.toBe(first.accountId);
   });
+
+  it('primeiro login concorrente do MESMO subject não duplica conta', async () => {
+    const db = await makeTestDb();
+    // Dois callbacks simultâneos do mesmo usuário OAuth: a UNIQUE(provider,
+    // provider_user_id) derruba o perdedor, que precisa re-resolver e
+    // devolver a MESMA conta — nunca 500, nunca duplicata.
+    const [a, b] = await Promise.all([
+      findOrCreateAccount(db, prof()),
+      findOrCreateAccount(db, prof()),
+    ]);
+    expect(a.accountId).toBe(b.accountId);
+    expect(await db.select().from(schema.accounts)).toHaveLength(1);
+    expect(await db.select().from(schema.identities)).toHaveLength(1);
+  });
 });

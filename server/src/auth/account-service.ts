@@ -23,9 +23,18 @@ async function insertIdentity(
   });
 }
 
+function isUniqueViolation(err: unknown): boolean {
+  const code = (err as { code?: string })?.code;
+  const msg = err instanceof Error ? err.message : String(err);
+  return code === '23505' || /duplicate key|unique constraint/i.test(msg);
+}
+
+const MAX_RACE_RETRIES = 3;
+
 export async function findOrCreateAccount(
   db: Db,
   p: OAuthProfile,
+  attempt = 0,
 ): Promise<{ accountId: string; merged: boolean }> {
   // 1. identity já existe → usa a conta dela
   const existing = await db
@@ -62,7 +71,16 @@ export async function findOrCreateAccount(
         )
         .limit(1);
       if (verified[0]) {
-        await insertIdentity(db, acc.id, p);
+        try {
+          await insertIdentity(db, acc.id, p);
+        } catch (err) {
+          // Corrida: outro request inseriu esta identity primeiro →
+          // re-resolve do topo (o passo 1 encontra e reusa).
+          if (isUniqueViolation(err) && attempt < MAX_RACE_RETRIES) {
+            return findOrCreateAccount(db, p, attempt + 1);
+          }
+          throw err;
+        }
         return { accountId: acc.id, merged: true };
       }
     }
@@ -72,12 +90,27 @@ export async function findOrCreateAccount(
   // não-verificada, usa um email desambiguado para não violar a constraint.
   const emailForAccount =
     p.email && p.emailVerified ? p.email : `${p.provider}:${p.providerUserId}`;
-  const [created] = await db
-    .insert(accounts)
-    .values({ email: emailForAccount, name: p.name, avatarUrl: p.avatar })
-    .returning({ id: accounts.id });
-  await insertIdentity(db, created.id, p);
-  return { accountId: created.id, merged: false };
+  try {
+    // Transação: conta + identity nascem juntas. Sem isso, uma violação na
+    // identity deixaria uma conta órfã que envenena merges futuros por email.
+    const created = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(accounts)
+        .values({ email: emailForAccount, name: p.name, avatarUrl: p.avatar })
+        .returning({ id: accounts.id });
+      await insertIdentity(tx as unknown as Db, row.id, p);
+      return row;
+    });
+    return { accountId: created.id, merged: false };
+  } catch (err) {
+    // Corrida de primeiro login duplo: o perdedor bate na UNIQUE (do email
+    // da conta ou do subject da identity) e re-resolve do topo, achando a
+    // conta do vencedor. Nunca 500, nunca duplicata.
+    if (isUniqueViolation(err) && attempt < MAX_RACE_RETRIES) {
+      return findOrCreateAccount(db, p, attempt + 1);
+    }
+    throw err;
+  }
 }
 
 export async function linkIdentity(

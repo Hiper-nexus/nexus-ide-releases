@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { sql } from 'drizzle-orm';
+import { getTableConfig } from 'drizzle-orm/pg-core';
 import * as schema from './schema';
 import { CREATE_TABLES_SQL } from './schema';
 
@@ -22,5 +23,17 @@ describe('schema', () => {
     await expect(
       db.execute(sql`INSERT INTO accounts (email, plan) VALUES ('c@d.com','invalido')`),
     ).rejects.toBeTruthy();
+  });
+
+  it('schema REAL tem UNIQUE(provider, provider_user_id) em identities', () => {
+    // A DDL de teste sempre teve a constraint; este teste garante que a
+    // schema Drizzle (fonte das migrations de produção) também tem — sem
+    // ela, dois primeiros logins concorrentes duplicariam a identidade.
+    const cfg = getTableConfig(schema.identities);
+    const unique = cfg.uniqueConstraints.find((u) => {
+      const cols = u.columns.map((c) => c.name).sort();
+      return cols.join(',') === 'provider,provider_user_id';
+    });
+    expect(unique).toBeTruthy();
   });
 });

@@ -4,6 +4,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -23,17 +24,23 @@ export const accounts = pgTable('accounts', {
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
-export const identities = pgTable('identities', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  accountId: uuid('account_id')
-    .notNull()
-    .references(() => accounts.id, { onDelete: 'cascade' }),
-  provider: providerEnum('provider').notNull(),
-  providerUserId: text('provider_user_id').notNull(),
-  email: text('email'),
-  emailVerified: boolean('email_verified').notNull().default(false),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-});
+export const identities = pgTable(
+  'identities',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    provider: providerEnum('provider').notNull(),
+    providerUserId: text('provider_user_id').notNull(),
+    email: text('email'),
+    emailVerified: boolean('email_verified').notNull().default(false),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  // Invariante central de identidade: um subject OAuth = uma identity.
+  // Sem isso, dois primeiros logins concorrentes duplicariam contas.
+  (t) => [unique('identities_provider_subject_unique').on(t.provider, t.providerUserId)],
+);
 
 export const sessions = pgTable('sessions', {
   id: uuid('id').defaultRandom().primaryKey(),
