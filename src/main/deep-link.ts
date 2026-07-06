@@ -15,7 +15,8 @@ const SAFE_TOKEN = /^[A-Za-z0-9._~-]+$/;
 
 export type DeepLink =
   | { kind: 'license'; token: string }
-  | { kind: 'open'; path: string };
+  | { kind: 'open'; path: string }
+  | { kind: 'auth'; code: string };
 
 export function parseDeepLink(raw: string): DeepLink | null {
   let url: URL;
@@ -42,6 +43,14 @@ export function parseDeepLink(raw: string): DeepLink | null {
     // Só caminho absoluto — nunca relativo (evita surpresa/traversal).
     if (!p || !path.isAbsolute(p) || p.includes('\0')) return null;
     return { kind: 'open', path: p };
+  }
+
+  if (host === 'auth') {
+    // Code de uso único do login (nexus://auth/<code>) — trocado por tokens
+    // no backend. Mesmo rigor dos demais: conjunto seguro + teto.
+    const code = decodeURIComponent(url.pathname.replace(/^\/+/, ''));
+    if (!code || code.length > TOKEN_MAX || !SAFE_TOKEN.test(code)) return null;
+    return { kind: 'auth', code };
   }
 
   return null;

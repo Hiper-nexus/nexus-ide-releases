@@ -5,7 +5,9 @@
  * license state lands here via the backend (see billing-ipc.ts TODOs).
  */
 
-export type PlanId = 'free' | 'pro' | 'team';
+// Fonte única do contrato app↔backend (o servidor importa os MESMOS tipos).
+export type { PlanId, LicenseInfo } from '../../shared/contract';
+import type { PlanId } from '../../shared/contract';
 
 export interface PlanDef {
   id: PlanId;
@@ -56,14 +58,7 @@ export const PLANS: PlanDef[] = [
   },
 ];
 
-export interface LicenseInfo {
-  plan: PlanId;
-  /** Conta associada (null = conta local, sem login). */
-  email: string | null;
-  status: 'none' | 'active' | 'past_due';
-  /** ISO date da próxima renovação, quando assinante. */
-  renewsAt: string | null;
-}
+import type { LicenseInfo } from '../../shared/contract';
 
 export const DEFAULT_LICENSE: LicenseInfo = {
   plan: 'free',

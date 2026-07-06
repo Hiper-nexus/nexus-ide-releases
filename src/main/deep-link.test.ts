@@ -35,6 +35,16 @@ describe('parseDeepLink', () => {
   it('limita o tamanho do token', () => {
     expect(parseDeepLink('nexus://license/' + 'a'.repeat(5000))).toBeNull();
   });
+
+  it('reconhece nexus://auth/<code> com code seguro', () => {
+    expect(parseDeepLink('nexus://auth/abcXYZ_-.09')).toEqual({
+      kind: 'auth',
+      code: 'abcXYZ_-.09',
+    });
+    expect(parseDeepLink('nexus://auth/')).toBeNull();
+    expect(parseDeepLink('nexus://auth/tem espaço')).toBeNull();
+    expect(parseDeepLink('nexus://auth/' + 'a'.repeat(5000))).toBeNull();
+  });
 });
 
 describe('deepLinkFromArgv', () => {
