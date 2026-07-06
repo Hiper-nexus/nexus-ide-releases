@@ -12,6 +12,7 @@ import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
 import { NexusMark } from './NexusMark';
 import { PixelIcon } from './PixelIcon';
+import { UpdateModal, useUpdateState } from './UpdateModal';
 import type { AdapterInfo } from '../../shared/types';
 import { setBrowserPaneSuppression } from '../browser/browser-host';
 
@@ -46,6 +47,8 @@ export function WorkspaceBar() {
 
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const updateState = useUpdateState();
+  const [updateOpen, setUpdateOpen] = useState(false);
   const [selectedAdapter, setSelectedAdapter] = useState<AdapterInfo | null>(null);
   const [selectedModel, setSelectedModel] = useState('');
 
@@ -206,15 +209,45 @@ export function WorkspaceBar() {
         </button>
         <span className="workspace-bar__sep" aria-hidden="true" />
         <VoiceButton />
+        {updateState &&
+          ['available', 'downloading', 'ready', 'error'].includes(updateState.phase) && (
+            <button
+              className={`workspace-bar__btn workspace-bar__btn--update workspace-bar__btn--update-${updateState.phase}`}
+              onClick={() => setUpdateOpen(true)}
+              title={
+                updateState.phase === 'ready'
+                  ? 'Atualização pronta — reiniciar para aplicar'
+                  : updateState.phase === 'error'
+                    ? `Atualização: ${updateState.error ?? 'erro'}`
+                    : `NexusIDE v${updateState.available?.version ?? ''} disponível`
+              }
+            >
+              ⇪{' '}
+              {updateState.phase === 'ready'
+                ? 'reiniciar'
+                : updateState.phase === 'downloading'
+                  ? 'baixando…'
+                  : updateState.phase === 'error'
+                    ? 'update: erro'
+                    : `v${updateState.available?.version ?? 'nova'}`}
+            </button>
+          )}
         <button
           className="workspace-bar__btn"
-          onClick={toggleSettings}
+          onClick={() => {
+            setUpdateOpen(false);
+            toggleSettings();
+          }}
           title="Conta, plano, módulos e catálogo (⌘,)"
         >
           <PixelIcon name="config" />
           Config
         </button>
       </div>
+
+      {updateOpen && updateState && (
+        <UpdateModal state={updateState} onClose={() => setUpdateOpen(false)} />
+      )}
 
       {pickerOpen && (
         <div className="agent-picker" role="dialog" aria-label="Abrir agente">

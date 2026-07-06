@@ -8,6 +8,8 @@ import {
   WINDOW_CHANNELS,
 } from '../shared/channels';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
+import { UPDATE_CHANNELS } from '../shared/update-ipc';
+import type { UpdateState } from '../shared/update-ipc';
 import { ORCH_CHANNELS } from '../shared/orch-channels';
 import { REMOTE_CHANNELS } from '../shared/remote-channels';
 import { SETTINGS_CHANNELS } from '../shared/settings-types';
@@ -156,9 +158,13 @@ const liveToolCallListeners = new Set<(event: JarvisLiveToolEvent) => void>();
 const liveToolResultListeners = new Set<(event: JarvisLiveToolResultEvent) => void>();
 const liveInterruptedListeners = new Set<(event: JarvisLiveInterruptEvent) => void>();
 const liveAudioOutListeners = new Set<(b64: string) => void>();
+const updateStateListeners = new Set<(state: UpdateState) => void>();
 
 ipcRenderer.on(VOICE_CHANNELS.liveAudioOut, (_event, b64: string) =>
   liveAudioOutListeners.forEach((cb) => cb(b64)),
+);
+ipcRenderer.on(UPDATE_CHANNELS.state, (_event, state: UpdateState) =>
+  updateStateListeners.forEach((cb) => cb(state)),
 );
 ipcRenderer.on(VOICE_CHANNELS.pttStart, () => pttStartListeners.forEach((cb) => cb()));
 ipcRenderer.on(VOICE_CHANNELS.pttStop, () => pttStopListeners.forEach((cb) => cb()));
@@ -330,6 +336,14 @@ const api: NexusApi = {
     get: () => ipcRenderer.invoke(ONBOARDING_CHANNELS.get),
     set: (patch: OnboardingPatch) =>
       ipcRenderer.invoke(ONBOARDING_CHANNELS.set, patch),
+  },
+  update: {
+    getState: () => ipcRenderer.invoke(UPDATE_CHANNELS.getState),
+    check: () => ipcRenderer.invoke(UPDATE_CHANNELS.check),
+    install: () => ipcRenderer.invoke(UPDATE_CHANNELS.install),
+    restart: () => ipcRenderer.invoke(UPDATE_CHANNELS.restart),
+    onState: (cb: (state: UpdateState) => void) =>
+      addListener(updateStateListeners, cb),
   },
   voice: {
     getInfo: () => ipcRenderer.invoke(VOICE_CHANNELS.getInfo),

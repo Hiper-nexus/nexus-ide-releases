@@ -5,6 +5,7 @@
 
 import type { AdapterInfo } from './adapter-types';
 import type { OnboardingState, OnboardingPatch } from './onboarding-types';
+import type { UpdateState } from './update-ipc';
 import type {
   VoiceRuntimeInfo,
   TranscribeRequest,
@@ -455,6 +456,17 @@ export interface NexusApi {
   onboarding: {
     get(): Promise<OnboardingState>;
     set(patch: OnboardingPatch): Promise<OnboardingState>;
+  };
+  update: {
+    /** Snapshot do estado do auto-update (fase, versão atual, disponível). */
+    getState(): Promise<UpdateState>;
+    /** Checa agora por versão nova; retorna o estado resultante. */
+    check(): Promise<UpdateState>;
+    /** Baixa + prepara a atualização disponível (Squirrel). */
+    install(): Promise<UpdateState>;
+    /** Update pronto → reinicia aplicando. */
+    restart(): Promise<void>;
+    onState(cb: (state: UpdateState) => void): Unsubscribe;
   };
   voice: {
     getInfo(): Promise<VoiceRuntimeInfo>;
