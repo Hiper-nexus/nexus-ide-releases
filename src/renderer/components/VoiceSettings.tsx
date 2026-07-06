@@ -8,7 +8,9 @@ import { credentialLinkForEnv } from '../../shared/credential-links';
 import { openExternalFromAnchor } from '../lib/open-external';
 import { CloseButton } from './CloseButton';
 import type {
+  JarvisRequest,
   ResolvedProvider,
+  SpeakResult,
   VoiceApiKeyStatus,
 } from '../../shared/voice-ipc';
 
@@ -35,6 +37,37 @@ function keyPlaceholder(key: VoiceApiKeyStatus): string {
   if (key.hasStoredKey) return `Stored ${key.keyMasked ?? 'key'}; paste to replace`;
   if (key.hasEnv) return 'Already set in environment; paste to override';
   return `Paste ${key.envVar}`;
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function playAudioBase64(base64: string): Promise<void> {
+  const bytes = base64ToBytes(base64);
+  const ctx = new AudioContext();
+  try {
+    const arrayBuffer = bytes.buffer.slice(0) as ArrayBuffer;
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    const source = ctx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(ctx.destination);
+    await new Promise<void>((resolve) => {
+      source.onended = () => resolve();
+      source.start();
+    });
+  } finally {
+    void ctx.close();
+  }
+}
+
+async function playSpeakResult(result: SpeakResult): Promise<void> {
+  if (result.ok && result.mode === 'audio') {
+    await playAudioBase64(result.audioBase64);
+  }
 }
 
 /**
@@ -105,6 +138,8 @@ export function VoiceSettings() {
   const [capturingKey, setCapturingKey] = useState(false);
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
   const [testing, setTesting] = useState(false);
+  const [testingJarvis, setTestingJarvis] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -162,6 +197,7 @@ export function VoiceSettings() {
       Object.fromEntries(info.keys.map((key) => [key.envVar, ''])),
     );
     setError(null);
+    setTestResult(null);
   }, [open, info]);
 
   if (!open) return null;
@@ -226,15 +262,87 @@ export function VoiceSettings() {
     }
   };
 
+  // Jarvis Live e Áudio realtime persistem NA HORA (otimista), sem depender do
+  // botão "Salvar". Sem isto, marcar o toggle e fechar pelo X/Esc/backdrop
+  // perdia a marcação — ao reabrir, o useEffect ressincronizava do config
+  // salvo e o botão "desmarcava" sozinho. (bug: "coloco live live e não fica").
+  const persistLive = async (patch: {
+    jarvisLiveEnabled?: boolean;
+  }) => {
+    try {
+      const next = await window.nexus.voice.setConfig(patch);
+      setInfo(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const toggleJarvisLive = (on: boolean) => {
+    setJarvisLiveOn(on);
+    void persistLive({ jarvisLiveEnabled: on });
+  };
+
   const testVoice = async () => {
     setTesting(true);
+    setError(null);
+    setTestResult(null);
     try {
-      await window.nexus.voice.speak({
+      const spoken = await window.nexus.voice.speak({
         text: 'Voz do NexusIDE online. Modo Jarvis pronto.',
         speakMode: 'full',
       });
+      if (!spoken.ok) {
+        setError(spoken.error);
+        return;
+      }
+      await playSpeakResult(spoken);
+      setTestResult(`TTS ok via ${spoken.provider}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setTesting(false);
+    }
+  };
+
+  const testJarvis = async () => {
+    setTestingJarvis(true);
+    setError(null);
+    setTestResult(null);
+    try {
+      const req: JarvisRequest = {
+        transcript:
+          'diagnóstico rápido da jarvis: responda em uma frase curta que está online',
+        context: {
+          workspace: null,
+          screen: 'Painel de configurações de voz aberto.',
+          recents: [],
+          squads: [],
+          panes: [],
+          focusedPane: null,
+          orchestrator: null,
+          missions: [],
+        },
+        history: [],
+      };
+      const reply = await window.nexus.voice.jarvis(req);
+      if (reply.say.trim()) {
+        const spoken = await window.nexus.voice.speak({
+          text: reply.say,
+          speakMode: 'full',
+        });
+        if (!spoken.ok) {
+          setError(`JARVIS pensou, mas TTS falhou: ${spoken.error}`);
+          return;
+        }
+        await playSpeakResult(spoken);
+        setTestResult(`JARVIS ok: "${reply.say}"`);
+        return;
+      }
+      setTestResult('JARVIS respondeu sem fala audível.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTestingJarvis(false);
     }
   };
 
@@ -262,7 +370,12 @@ export function VoiceSettings() {
       ? 'live realtime'
       : 'live classic'
     : 'push-to-talk';
-  const wakeMode = wakeWordOn ? 'wake word on' : 'wake word off';
+  const wakeMode =
+    wakeWordOn && info?.wakeLockHolderPid
+      ? `wake word preso pelo PID ${info.wakeLockHolderPid}`
+      : wakeWordOn
+        ? 'wake word on'
+        : 'wake word off';
 
   return (
     <div className="agent-picker" role="dialog" aria-label="Voice settings">
@@ -496,7 +609,7 @@ export function VoiceSettings() {
                   <input
                     type="checkbox"
                     checked={jarvisLiveOn}
-                    onChange={(e) => setJarvisLiveOn(e.target.checked)}
+                    onChange={(e) => toggleJarvisLive(e.target.checked)}
                   />
                 </label>
 
@@ -505,14 +618,16 @@ export function VoiceSettings() {
                     <span>
                       <strong>Áudio realtime</strong>
                       <span>
-                        Gemini Live full-duplex; requer GEMINI_API_KEY. Sem key,
-                        cai no Classic.
+                        Temporariamente bloqueado: o Live atual usa o loop
+                        Classic, que executa ações no Nexus. O realtime ainda
+                        não dirige ferramentas com segurança.
                       </span>
                     </span>
                     <input
                       type="checkbox"
-                      checked={liveRealtime}
-                      onChange={(e) => setLiveRealtime(e.target.checked)}
+                      checked={false}
+                      disabled
+                      aria-label="Áudio realtime temporariamente indisponível"
                     />
                   </label>
                 )}
@@ -602,10 +717,18 @@ export function VoiceSettings() {
             </section>
 
             {error && <p className="agent-picker__error">{error}</p>}
+            {testResult && <p className="voice-settings__mode-hint">{testResult}</p>}
 
             <div className="agent-picker__actions">
               <button className="agent-picker__btn" onClick={testVoice} disabled={testing}>
-                {testing ? 'Speaking…' : 'Test voice'}
+                {testing ? 'Falando…' : 'Testar voz'}
+              </button>
+              <button
+                className="agent-picker__btn"
+                onClick={testJarvis}
+                disabled={testingJarvis}
+              >
+                {testingJarvis ? 'Diagnosticando…' : 'Testar JARVIS'}
               </button>
               <button className="agent-picker__btn" onClick={close} disabled={saving}>
                 Cancel

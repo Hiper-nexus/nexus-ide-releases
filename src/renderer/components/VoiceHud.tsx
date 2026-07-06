@@ -71,6 +71,8 @@ export function VoiceHud() {
   );
 
   const liveStatus = liveState?.status ?? 'dormant';
+  const wakeBlockedPid = info?.wakeLockHolderPid ?? null;
+  const wakeBlocked = info?.wakeWordEnabled === true && wakeBlockedPid !== null;
   const liveVisible =
     info?.jarvisLive.enabled === true &&
     liveState?.enabled !== false &&
@@ -87,10 +89,14 @@ export function VoiceHud() {
   }, []);
 
   if (hud.mode === 'hidden') return null; // só-áudio: zero visual
-  if (status === 'idle' && !liveVisible) return null;
+  if (status === 'idle' && !liveVisible && !wakeBlocked) return null;
 
   const liveLabel = LIVE_LABEL[liveStatus] ?? liveStatus;
-  const label = status === 'idle' ? `Jarvis ${liveLabel}` : PHASE_LABEL[status];
+  const label = wakeBlocked
+    ? 'Wake word preso'
+    : status === 'idle'
+      ? `Jarvis ${liveLabel}`
+      : PHASE_LABEL[status];
   const isError = status === 'error';
   const isMini = hud.mode === 'mini';
 
@@ -223,7 +229,13 @@ export function VoiceHud() {
       >
         {orb}
         <span className="voice-hud__mini-label">
-          {isError ? 'erro' : status === 'idle' ? liveLabel : PHASE_LABEL[status]}
+          {wakeBlocked
+            ? 'wake preso'
+            : isError
+              ? 'erro'
+              : status === 'idle'
+                ? liveLabel
+                : PHASE_LABEL[status]}
         </span>
         <button
           className="voice-hud__ctl"
@@ -289,6 +301,12 @@ export function VoiceHud() {
             <span className="voice-hud__detail voice-hud__detail--error">{error}</span>
           ) : (
             <>
+              {wakeBlocked && (
+                <span className="voice-hud__detail voice-hud__detail--error">
+                  Outra instância do NexusIDE está ouvindo "Hey Jarvis" (PID {wakeBlockedPid}).
+                  Feche a outra instância ou reinicie o app.
+                </span>
+              )}
               {transcript && <span className="voice-hud__detail">"{transcript}"</span>}
               {info?.jarvisLive.enabled && liveState && (
                 <span className="voice-hud__detail voice-hud__detail--note">

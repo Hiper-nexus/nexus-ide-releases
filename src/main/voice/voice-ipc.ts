@@ -80,7 +80,11 @@ function wireHotkey(): void {
 
 /** Runtime snapshot + whether the OS actually accepted the accelerator. */
 function fullInfo(): VoiceRuntimeInfo {
-  return { ...buildRuntimeInfo(), hotkeyArmed: isVoiceHotkeyArmed() };
+  return {
+    ...buildRuntimeInfo(),
+    hotkeyArmed: isVoiceHotkeyArmed(),
+    wakeLockHolderPid: wakeLockHolder(),
+  };
 }
 
 export function registerVoiceIpc(): void {
@@ -161,10 +165,14 @@ export function registerVoiceIpc(): void {
         console.warn(
           `[wake] outra instância do NexusIDE (pid ${wakeLockHolder()}) detém o wake — ignorando frames aqui`,
         );
+        broadcast(VOICE_CHANNELS.infoChanged, fullInfo());
       }
       return;
     }
-    wakeLockWarned = false;
+    if (wakeLockWarned) {
+      wakeLockWarned = false;
+      broadcast(VOICE_CHANNELS.infoChanged, fullInfo());
+    }
     // Electron entrega o ArrayBuffer do renderer como Buffer/TypedArray —
     // normalize os três formatos (respeitando byteOffset/length!).
     let frame: Float32Array | null = null;

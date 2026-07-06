@@ -127,6 +127,11 @@ export interface VoiceRuntimeInfo {
   hotkeyArmed?: boolean;
   /** Wake word ("Jarvis") toggle + whether its Picovoice key is present. */
   wakeWordEnabled: boolean;
+  /**
+   * PID de outra instância viva segurando o wake-lock. Quando presente, esta
+   * janela NÃO processa "Hey Jarvis" para evitar duas instâncias respondendo.
+   */
+  wakeLockHolderPid?: number | null;
   jarvisLive: {
     enabled: boolean;
     /** 'classic' = FSM sobre pipeline batch; 'gemini-live' = áudio realtime. */

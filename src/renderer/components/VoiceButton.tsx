@@ -20,6 +20,8 @@ export function VoiceButton() {
   const tts = providerShort(info?.tts.active?.provider);
   const armed = info?.enabled ?? false;
   const liveOn = info?.jarvisLive.enabled === true;
+  const wakeBlockedPid = info?.wakeLockHolderPid ?? null;
+  const wakeBlocked = info?.wakeWordEnabled === true && wakeBlockedPid !== null;
   const liveActive =
     liveOn &&
     liveState?.status !== undefined &&
@@ -27,7 +29,9 @@ export function VoiceButton() {
     liveState.status !== 'dormant';
   const active = (status !== 'idle' && status !== 'error') || liveActive;
   const label =
-    liveOn && liveState?.status && liveState.status !== 'off'
+    wakeBlocked
+      ? 'wake preso'
+      : liveOn && liveState?.status && liveState.status !== 'off'
       ? `live:${liveState.status}`
       : active
         ? status
@@ -39,7 +43,7 @@ export function VoiceButton() {
       onClick={openSettings}
       title={
         info
-          ? `Push-to-talk: ${info.shortcut} (${info.hotkeyMode}) · STT ${stt} · TTS ${tts}${liveOn ? ' · Jarvis Live' : ''}`
+          ? `Push-to-talk: ${info.shortcut} (${info.hotkeyMode}) · STT ${stt} · TTS ${tts}${liveOn ? ' · Jarvis Live' : ''}${wakeBlocked ? ` · wake preso pelo PID ${wakeBlockedPid}` : ''}`
           : 'Voice pipeline'
       }
     >
