@@ -43,4 +43,18 @@ describe('license-signer', () => {
     const jwt = await signLicense(freeLicenseInput('z@z.com'), priv, past);
     expect(await verifyLicense(jwt, pub)).toBeNull();
   });
+
+  it('aceita TTL customizado (licença de time = 7d)', async () => {
+    const { priv, pub } = await keypair();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const now = () => nowSeconds;
+    const jwt = await signLicense(
+      { plan: 'team', email: 'a@b.com', status: 'active' },
+      priv,
+      now,
+      7 * 24 * 3600,
+    );
+    const payload = await verifyLicense(jwt, pub);
+    expect(payload!.exp).toBe(nowSeconds + 7 * 24 * 3600);
+  });
 });

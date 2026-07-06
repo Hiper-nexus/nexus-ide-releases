@@ -26,6 +26,7 @@ export async function signLicense(
   input: SignInput,
   privateKeyPem: string,
   now: () => number = () => Math.floor(Date.now() / 1000),
+  ttlSeconds: number = TTL_SECONDS,
 ): Promise<string> {
   const key = await importPKCS8(privateKeyPem, ALG);
   const iat = now();
@@ -39,7 +40,7 @@ export async function signLicense(
   return new SignJWT({ ...payload })
     .setProtectedHeader({ alg: ALG })
     .setIssuedAt(iat)
-    .setExpirationTime(iat + TTL_SECONDS)
+    .setExpirationTime(iat + ttlSeconds)
     .sign(key);
 }
 
