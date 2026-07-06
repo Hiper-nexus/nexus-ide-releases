@@ -36,12 +36,12 @@ describe('parseEnv', () => {
 
   it('exige as vars do Stripe', () => {
     expect(() => parseEnv({ ...FULL, STRIPE_SECRET_KEY: undefined } as never)).toThrow(/STRIPE_SECRET_KEY/);
-    const ok = parseEnv({
-      ...FULL,
-      STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: 'whsec_x',
-      STRIPE_PRICE_PRO: 'price_pro', STRIPE_PRICE_TEAM: 'price_team',
-      PUBLIC_SITE_URL: 'https://nexuside.app',
-    });
-    expect(ok.STRIPE_PRICE_PRO).toBe('price_pro');
+    expect(() => parseEnv({ ...FULL, STRIPE_WEBHOOK_SECRET: undefined } as never)).toThrow(/STRIPE_WEBHOOK_SECRET/);
+    expect(() => parseEnv({ ...FULL, STRIPE_PRICE_PRO: undefined } as never)).toThrow(/STRIPE_PRICE_PRO/);
+    expect(() => parseEnv({ ...FULL, STRIPE_PRICE_TEAM: undefined } as never)).toThrow(/STRIPE_PRICE_TEAM/);
+  });
+
+  it('rejeita PUBLIC_SITE_URL que não é URL', () => {
+    expect(() => parseEnv({ ...FULL, PUBLIC_SITE_URL: 'nao-e-url' })).toThrow();
   });
 });
