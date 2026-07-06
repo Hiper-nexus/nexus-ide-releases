@@ -3,6 +3,14 @@ import { resolveUserPath } from './path-resolver';
 import { createMainWindow } from './window';
 import { registerAuthProbeIpc } from './adapters/auth-probe';
 
+// Sandbox de userData para smoke/testes (dev-only): redireciona SQLite,
+// layout, sessões e o single-instance lock para um diretório isolado — o
+// smoke roda com o app empacotado aberto em paralelo, sem tocar dados reais.
+const userDataOverride = process.env.NEXUS_USER_DATA_DIR;
+if (!app.isPackaged && userDataOverride) {
+  app.setPath('userData', userDataOverride);
+}
+
 // Remote debugging (Chrome DevTools Protocol) is a full local-RCE surface: any
 // process that connects to the port can run JS in the renderer, and the preload
 // exposes PTY/file APIs. It used to be ON for every dev run on a fixed 9223;
