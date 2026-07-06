@@ -23,7 +23,7 @@
 - Consumes: nada (puro).
 - Produces (Parte 3 Task 7): `SHIELDS_PER_MONTH = 2`; `StreakState = { streakDays: number; lastDeliveryDay: string | null; shieldsUsedMonth: string | null; shieldsUsed: number }`; `advanceStreak(state: StreakState, deliveryDate: Date): StreakState`; `businessDaysBetween(fromDay: string, toDay: string): number` (dias `YYYY-MM-DD` locais).
 
-- [ ] **Step 1: Teste que falha**
+- [x] **Step 1: Teste que falha**
 
 ```ts
 // src/main/gamification/streak.test.ts
@@ -99,12 +99,12 @@ describe('advanceStreak', () => {
 });
 ```
 
-- [ ] **Step 2: Rodar e ver falhar**
+- [x] **Step 2: Rodar e ver falhar**
 
 Run: `npx vitest run src/main/gamification/streak.test.ts`
 Expected: FAIL (`Cannot find module './streak'`)
 
-- [ ] **Step 3: Implementar**
+- [x] **Step 3: Implementar**
 
 ```ts
 // src/main/gamification/streak.ts
@@ -192,12 +192,12 @@ export function advanceStreak(
 }
 ```
 
-- [ ] **Step 4: Rodar e ver passar**
+- [x] **Step 4: Rodar e ver passar**
 
 Run: `npx vitest run src/main/gamification/streak.test.ts`
 Expected: PASS (6 testes)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/gamification/streak.ts src/main/gamification/streak.test.ts
@@ -221,7 +221,7 @@ git commit -m "feat(gamification): streak de dias úteis com 2 escudos/mês"
   - `ACHIEVEMENTS: AchievementDef[]` (13 itens)
   - `evaluateAchievements(ctx, unlocked: Set<string>): AchievementDef[]` (só novas)
 
-- [ ] **Step 1: Teste que falha**
+- [x] **Step 1: Teste que falha**
 
 ```ts
 // src/main/gamification/achievements.test.ts
@@ -285,12 +285,12 @@ describe('achievements', () => {
 });
 ```
 
-- [ ] **Step 2: Rodar e ver falhar**
+- [x] **Step 2: Rodar e ver falhar**
 
 Run: `npx vitest run src/main/gamification/achievements.test.ts`
 Expected: FAIL (`Cannot find module './achievements'`)
 
-- [ ] **Step 3: Implementar catálogo + popular copy no shared**
+- [x] **Step 3: Implementar catálogo + popular copy no shared**
 
 Em `src/shared/gamification-types.ts`, substituir o `achievements: {}` da
 Task 1 por:
@@ -365,12 +365,12 @@ export function evaluateAchievements(
 }
 ```
 
-- [ ] **Step 4: Rodar e ver passar**
+- [x] **Step 4: Rodar e ver passar**
 
 Run: `npx vitest run src/main/gamification/achievements.test.ts`
 Expected: PASS (5 testes)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/gamification/achievements.ts src/main/gamification/achievements.test.ts src/shared/gamification-types.ts
@@ -394,7 +394,7 @@ git commit -m "feat(gamification): 13 conquistas com skins; copy centralizado no
   - `countTodaySameBucket(db: Db, kind: XpEventKind, effort: string | null | undefined, dayStart: number): number`
   - `getMeta(db: Db, key: string): string | null` / `setMeta(db: Db, key: string, value: string): void`
 
-- [ ] **Step 1: Teste que falha**
+- [x] **Step 1: Teste que falha**
 
 ```ts
 // src/main/gamification/gamification-store.test.ts
@@ -482,12 +482,12 @@ describe.skipIf(!sqlite)('gamification-store (SQLite real)', () => {
 });
 ```
 
-- [ ] **Step 2: Rodar e ver falhar**
+- [x] **Step 2: Rodar e ver falhar**
 
 Run: `npx vitest run src/main/gamification/gamification-store.test.ts`
 Expected: FAIL (`Cannot find module './gamification-store'`)
 
-- [ ] **Step 3: Implementar**
+- [x] **Step 3: Implementar**
 
 ```ts
 // src/main/gamification/gamification-store.ts
@@ -628,12 +628,12 @@ export function setMeta(db: Db, key: string, value: string): void {
 }
 ```
 
-- [ ] **Step 4: Rodar e ver passar + typecheck**
+- [x] **Step 4: Rodar e ver passar + typecheck**
 
 Run: `npx vitest run src/main/gamification && npm run typecheck`
 Expected: PASS (todas as suites da pasta) + typecheck limpo
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/gamification/gamification-store.ts src/main/gamification/gamification-store.test.ts
