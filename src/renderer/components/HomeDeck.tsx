@@ -6,7 +6,11 @@ import { useOrchStore } from '../state/orch-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
+import { useVoiceStore } from '../voice/voice-store';
 import { listPanes } from '../lib/split-tree';
+import { isMissingModelKeyError } from '../lib/credential-errors';
+import { NexusMark } from './NexusMark';
+import { PixelIcon } from './PixelIcon';
 
 /**
  * Home deck — the ops-deck empty state rendered over the pane area when a
@@ -30,6 +34,7 @@ export function HomeDeck() {
   const workspace = useWorkspaceStore((s) => s.current);
   const openWizard = useMissionWizardStore((s) => s.openForMission);
   const openForSquad = useMissionWizardStore((s) => s.openForSquad);
+  const openVoiceSettings = useVoiceStore((s) => s.openSettings);
   const addShellPane = useLayoutStore((s) => s.addShellPane);
   const paneCount = useLayoutStore((s) => listPanes(s.root).length);
 
@@ -76,7 +81,7 @@ export function HomeDeck() {
     <div className="home-deck" role="region" aria-label="Início do workspace">
       <div className="home-deck__panel">
         <header className="home-deck__head">
-          <span className="home-deck__logo">◈</span>
+          <NexusMark size={26} className="home-deck__logo" />
           <div className="home-deck__title-wrap">
             <h1 className="home-deck__title">Pronto para operar</h1>
             <p className="home-deck__ws" title={workspace?.path}>
@@ -115,7 +120,8 @@ export function HomeDeck() {
 
         <div className="home-deck__actions">
           <button className="home-deck__cta" onClick={openWizard} autoFocus>
-            ▸ Iniciar missão
+            <PixelIcon name="mission" />
+            Iniciar missão
           </button>
           <button
             className="home-deck__btn"
@@ -133,12 +139,19 @@ export function HomeDeck() {
                     setDesignNote(null);
                     openForSquad(res.squad.id);
                   } else {
-                    setDesignNote(res.error ?? 'Não consegui gerar o squad.');
+                    const error = res.error ?? 'Não consegui gerar o squad.';
+                    if (isMissingModelKeyError(error)) {
+                      setDesignNote('Configure uma key de modelo para gerar o squad.');
+                      openVoiceSettings();
+                    } else {
+                      setDesignNote(error);
+                    }
                   }
                 });
             }}
           >
-            {designing ? '✨ Analisando…' : '✨ Squad sob medida'}
+            <PixelIcon name="sparkle" />
+            {designing ? 'Analisando…' : 'Squad sob medida'}
           </button>
           <button
             className="home-deck__btn"
@@ -147,7 +160,8 @@ export function HomeDeck() {
               addShellPane();
             }}
           >
-            ＋ Terminal
+            <PixelIcon name="terminal" />
+            Terminal
           </button>
         </div>
         {designNote && <p className="home-deck__ws">{designNote}</p>}

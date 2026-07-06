@@ -24,6 +24,8 @@ interface OrchState {
   mcpInfo: McpRuntimeInfo | null;
   panelOpen: boolean;
   panelTab: OrchPanelTab;
+  /** Ops Board — pipeline espacial de missões (overlay de workspace). */
+  boardOpen: boolean;
   /** paneId → missionId for panes spawned by the orchestration layer. */
   paneMissions: Record<string, string>;
 
@@ -31,6 +33,8 @@ interface OrchState {
   togglePanel(): void;
   openPanel(tab: OrchPanelTab): void;
   setPanelTab(tab: OrchPanelTab): void;
+  toggleBoard(): void;
+  closeBoard(): void;
   bindPaneMission(paneId: string, missionId: string | undefined): void;
 
   setMissions(missions: Mission[]): void;
@@ -47,6 +51,7 @@ export const useOrchStore = create<OrchState>((set) => ({
   mcpInfo: null,
   panelOpen: false,
   panelTab: 'missions',
+  boardOpen: false,
   paneMissions: {},
 
   hydrate: async () => {
@@ -68,6 +73,8 @@ export const useOrchStore = create<OrchState>((set) => ({
   togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
   openPanel: (tab) => set({ panelOpen: true, panelTab: tab }),
   setPanelTab: (tab) => set({ panelTab: tab }),
+  toggleBoard: () => set((s) => ({ boardOpen: !s.boardOpen })),
+  closeBoard: () => set({ boardOpen: false }),
 
   bindPaneMission: (paneId, missionId) =>
     set((s) => {

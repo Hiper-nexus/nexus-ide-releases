@@ -25,6 +25,8 @@ export type VoiceUiStatus =
 interface VoiceStore {
   status: VoiceUiStatus;
   info: VoiceRuntimeInfo | null;
+  /** Nível de mic ao vivo [0,1] — visualizador de amplitude do orb. */
+  level: number;
   lastTranscript: string;
   lastSpoken: string;
   /** Transient fallback note, e.g. "groq throttled (429) → openai". */
@@ -38,6 +40,7 @@ interface VoiceStore {
 
   setStatus: (status: VoiceUiStatus) => void;
   setInfo: (info: VoiceRuntimeInfo) => void;
+  setLevel: (level: number) => void;
   setTranscript: (text: string) => void;
   setSpoken: (text: string) => void;
   setNote: (note: string | null) => void;
@@ -53,6 +56,7 @@ interface VoiceStore {
 export const useVoiceStore = create<VoiceStore>((set) => ({
   status: 'idle',
   info: null,
+  level: 0,
   lastTranscript: '',
   lastSpoken: '',
   note: null,
@@ -65,6 +69,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
 
   setStatus: (status) => set({ status, ...(status !== 'error' ? { error: null } : {}) }),
   setInfo: (info) => set({ info }),
+  setLevel: (level) => set({ level }),
   setTranscript: (lastTranscript) => set({ lastTranscript }),
   setSpoken: (lastSpoken) => set({ lastSpoken }),
   setNote: (note) => set({ note }),

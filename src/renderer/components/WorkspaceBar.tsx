@@ -10,14 +10,10 @@ import { CostSummary } from './CostBadge';
 import { OperatorHud } from './OperatorHud';
 import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
+import { NexusMark } from './NexusMark';
+import { PixelIcon } from './PixelIcon';
 import type { AdapterInfo } from '../../shared/types';
 import { setBrowserPaneSuppression } from '../browser/browser-host';
-
-/** Botão de view mostra a AÇÃO (para onde vai), não o estado atual —
- *  usuários procuram a palavra "Canvas" para ENTRAR no canvas. */
-function viewLabel(kind: 'grid' | 'canvas'): string {
-  return kind === 'canvas' ? '⊞ Grid' : '⬡ Canvas';
-}
 
 /** Slim top chrome: brand, pane count, split shortcuts, view toggle, and the agent launcher. */
 export function WorkspaceBar() {
@@ -31,6 +27,8 @@ export function WorkspaceBar() {
 
   const orchPanelOpen = useOrchStore((s) => s.panelOpen);
   const toggleOrchPanel = useOrchStore((s) => s.togglePanel);
+  const opsBoardOpen = useOrchStore((s) => s.boardOpen);
+  const toggleOpsBoard = useOrchStore((s) => s.toggleBoard);
   const toggleSettings = useSettingsStore((s) => s.toggleDrawer);
   const workspace = useWorkspaceStore((s) => s.current);
   const openWizard = useMissionWizardStore((s) => s.openForMission);
@@ -98,7 +96,7 @@ export function WorkspaceBar() {
   return (
     <header className="workspace-bar">
       <div className="workspace-bar__brand">
-        <span className="workspace-bar__logo">◈</span>
+        <NexusMark size={15} className="workspace-bar__logo" />
         {workspace ? (
           <>
             <span className="workspace-bar__name" title={workspace.path}>
@@ -136,28 +134,32 @@ export function WorkspaceBar() {
           onClick={openWizard}
           title="Nova missão (livre ou squad)"
         >
-          ▸ Missão
+          <PixelIcon name="mission" />
+          Missão
         </button>
         <button
           className="workspace-bar__btn workspace-bar__btn--agent"
           onClick={openPicker}
           title="Abrir um agente de IA em um pane novo"
         >
-          ＋ Agent
+          <PixelIcon name="agent" />
+          Agent
         </button>
         <button
           className="workspace-bar__btn"
           onClick={addShellPane}
           title={`Abrir um terminal shell novo (${paneCount} pane${paneCount === 1 ? '' : 's'} aberto${paneCount === 1 ? '' : 's'} · ⌘D divide o pane focado)`}
         >
-          ＋ Terminal
+          <PixelIcon name="terminal" />
+          Terminal
         </button>
         <button
           className="workspace-bar__btn"
           onClick={() => addBrowserPane()}
           title="Abrir um browser embutido em um pane novo"
         >
-          ＋ Browser
+          <PixelIcon name="browser" />
+          Browser
         </button>
         <span className="workspace-bar__sep" aria-hidden="true" />
         <button
@@ -165,21 +167,32 @@ export function WorkspaceBar() {
           onClick={toggleView}
           title={viewKind === 'grid' ? 'Mudar para canvas (arrastar livre)' : 'Mudar para grid (panes divididos)'}
         >
-          {viewLabel(viewKind)}
+          <PixelIcon name={viewKind === 'canvas' ? 'grid' : 'canvas'} />
+          {viewKind === 'canvas' ? 'Grid' : 'Canvas'}
         </button>
         <button
           className={`workspace-bar__btn ${filesOpen ? 'workspace-bar__btn--view-active' : ''}`}
           onClick={toggleFiles}
           title="Arquivos do workspace (ver/editar)"
         >
-          🗂 Files
+          <PixelIcon name="files" />
+          Files
+        </button>
+        <button
+          className={`workspace-bar__btn ${opsBoardOpen ? 'workspace-bar__btn--view-active' : ''}`}
+          onClick={toggleOpsBoard}
+          title="Ops Board — pipeline de missões (⌘B)"
+        >
+          <PixelIcon name="board" />
+          Board
         </button>
         <button
           className={`workspace-bar__btn ${orchPanelOpen ? 'workspace-bar__btn--view-active' : ''}`}
           onClick={toggleOrchPanel}
           title="Missões, handoffs, todos e squads"
         >
-          ⛭ Orch
+          <PixelIcon name="orch" />
+          Orch
         </button>
         <span className="workspace-bar__sep" aria-hidden="true" />
         <VoiceButton />
@@ -188,29 +201,30 @@ export function WorkspaceBar() {
           onClick={toggleSettings}
           title="Conta, plano, módulos e catálogo (⌘,)"
         >
-          ⚙ Config
+          <PixelIcon name="config" />
+          Config
         </button>
       </div>
 
       {pickerOpen && (
-        <div className="agent-picker" role="dialog" aria-label="Launch agent">
+        <div className="agent-picker" role="dialog" aria-label="Abrir agente">
           <div className="agent-picker__overlay" onClick={closePicker} />
           <div className="agent-picker__panel">
-            <h3 className="agent-picker__title">Launch Agent</h3>
+            <h3 className="agent-picker__title">Abrir agente</h3>
 
             {installedAdapters.length === 0 ? (
               <p className="agent-picker__empty">
-                No CLI adapters found. Install one to get started.
+                Nenhuma CLI encontrada. Instale uma para começar.
                 {adapters.length > 0 && (
                   <span>
-                    {' '}Try: <code>{adapters[0].installCommand}</code>
+                    {' '}Tente: <code>{adapters[0].installCommand}</code>
                   </span>
                 )}
               </p>
             ) : (
               <>
                 <label className="agent-picker__label">
-                  Adapter
+                  Adaptador
                   <select
                     className="agent-picker__select"
                     value={selectedAdapter?.id ?? ''}
@@ -226,7 +240,7 @@ export function WorkspaceBar() {
 
                 {selectedAdapter && selectedAdapter.models.list.length > 0 && (
                   <label className="agent-picker__label">
-                    Model
+                    Modelo
                     <select
                       className="agent-picker__select"
                       value={selectedModel}
@@ -247,14 +261,14 @@ export function WorkspaceBar() {
 
                 <div className="agent-picker__actions">
                   <button className="agent-picker__btn" onClick={closePicker}>
-                    Cancel
+                    Cancelar
                   </button>
                   <button
                     className="agent-picker__btn agent-picker__btn--primary"
                     onClick={confirmSpawn}
                     disabled={!selectedAdapter}
                   >
-                    Launch
+                    Abrir
                   </button>
                 </div>
               </>

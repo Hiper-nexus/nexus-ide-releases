@@ -9,6 +9,7 @@ import { CREATE_TABLES_SQL } from '../db/schema';
 import type { Db } from '../db/client';
 import type { Env } from '../env';
 import { buildAuthRouter } from './auth-routes';
+import { errorHandler } from '../middleware/errors';
 
 async function setup() {
   const client = new PGlite();
@@ -30,6 +31,7 @@ async function setup() {
   const app = express();
   app.use(express.json());
   app.use('/v1', buildAuthRouter({ db, env, fetchFn: fetchFn as unknown as typeof fetch }));
+  app.use(errorHandler); // espelha createApp: rejeição async → 500 JSON
   return { app, db, fetchFn };
 }
 
@@ -77,6 +79,20 @@ describe('auth-routes', () => {
     const { app } = await setup();
     const r = await request(app).get('/v1/auth/github/callback?code=x&state=naoexiste');
     expect(r.status).toBe(400);
+  });
+
+  it('rejeição async vira 500 JSON (não pendura a request)', async () => {
+    const { app, fetchFn } = await setup();
+    // Provider fora do ar durante o callback: sem asyncHandler, a promise
+    // rejeitada em Express 4 nunca responde e a request fica pendurada.
+    fetchFn.mockReset().mockRejectedValue(new Error('provider caiu'));
+    const auth = await request(app).get('/v1/auth/github');
+    const state = new URL(auth.headers.location).searchParams.get('state')!;
+    const r = await request(app)
+      .get(`/v1/auth/github/callback?code=abc&state=${state}`)
+      .timeout({ deadline: 5000 });
+    expect(r.status).toBe(500);
+    expect(r.body).toEqual({ ok: false, error: 'erro interno' });
   });
 
   it('DELETE /me apaga a conta (LGPD)', async () => {

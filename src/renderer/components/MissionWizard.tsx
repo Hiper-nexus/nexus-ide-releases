@@ -7,8 +7,11 @@ import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useProviderStore } from '../state/provider-store';
 import { switchWorkspaceLayout } from '../state/layout-store';
 import { useToastStore } from '../state/toast-store';
+import { useVoiceStore } from '../voice/voice-store';
+import { isMissingModelKeyError } from '../lib/credential-errors';
 import { launchLibrePanes, launchSquadMission } from '../orch/mission-launcher';
 import { balanceSquadRosterCli } from '../orch/squad-roster';
+import { CloseButton } from './CloseButton';
 
 /**
  * "Novo workspace" / "Nova Missão" wizard — the full flow:
@@ -290,7 +293,13 @@ export function MissionWizard() {
       }
       const res = await window.nexus.orch.designSquad(workspacePath, intent.trim());
       if (!res.ok || !res.squad) {
-        setError(res.error ?? 'Não consegui montar o time.');
+        const message = res.error ?? 'Não consegui montar o time.';
+        if (isMissingModelKeyError(message)) {
+          setError('Configure uma key de modelo para montar o time sob medida.');
+          useVoiceStore.getState().openSettings();
+        } else {
+          setError(message);
+        }
         return;
       }
       // O squad já foi salvo no main — garantir que a lista local o contém
@@ -376,9 +385,7 @@ export function MissionWizard() {
           <span className="wizard__title">
             {hasNewWsStep ? 'Novo workspace' : 'Nova Missão'}
           </span>
-          <button className="wizard__close" onClick={close} aria-label="Fechar">
-            ✕
-          </button>
+          <CloseButton className="wizard__close" onClick={close} label="Fechar" />
         </header>
         <StepsBar steps={steps} current={step} />
 

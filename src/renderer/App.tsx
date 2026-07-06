@@ -20,8 +20,10 @@ import {
   useCloseWorkspaceStore,
 } from './components/CloseWorkspaceDialog';
 import { FilesPanel } from './components/FilesPanel';
+import { OpsBoard } from './components/OpsBoard';
 import { useVoiceController } from './voice/voice-controller';
 import { useOrchBridge } from './orch/orch-bridge';
+import { useOrchStore } from './state/orch-store';
 import { useSettingsController, useSettingsStore } from './state/settings-store';
 import { useWorkspaceController, useWorkspaceStore } from './state/workspace-store';
 import { useProviderController } from './state/provider-store';
@@ -58,6 +60,7 @@ export function App() {
   const missionWizardOpen = useMissionWizardStore((s) => s.open);
   const closeWorkspaceOpen = useCloseWorkspaceStore((s) => s.open);
   const voiceSettingsOpen = useVoiceStore((s) => s.settingsOpen);
+  const opsBoardOpen = useOrchStore((s) => s.boardOpen);
   const onboardingVisible = useOnboardingStore(
     (s) => s.loaded && !s.state.completed && !s.state.skipped,
   );
@@ -67,6 +70,7 @@ export function App() {
     missionWizardOpen ||
     closeWorkspaceOpen ||
     voiceSettingsOpen ||
+    opsBoardOpen ||
     onboardingVisible ||
     operatorProfileOpen;
 
@@ -130,6 +134,13 @@ export function App() {
       if (e.key === ',') {
         e.preventDefault();
         useSettingsStore.getState().toggleDrawer();
+        return;
+      }
+      // ⌘B — Ops Board (pipeline de missões). Só faz sentido num workspace.
+      if (e.key.toLowerCase() === 'b' && !e.shiftKey && !e.altKey) {
+        if (!useWorkspaceStore.getState().current) return;
+        e.preventDefault();
+        useOrchStore.getState().toggleBoard();
         return;
       }
       const { focusedPaneId, split, close, viewKind: vk } = useLayoutStore.getState();
@@ -198,6 +209,7 @@ export function App() {
         <HomeDeck />
         <OrchestrationPanel />
       </main>
+      <OpsBoard />
       <VoiceHud />
       <VoiceSettings />
       <SettingsDrawer />

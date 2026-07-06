@@ -28,7 +28,9 @@ const PALETTES: Record<TerminalThemeId, UiPalette> = {
     border: '#1c2333',
     borderStrong: '#273049',
     text: '#c9d1e0',
-    textDim: '#6b7690',
+    // ~5.3:1 sobre --bg (clears WCAG AA). NÃO baixar pra #6b7690 (~4.25:1,
+    // falha AA) — este valor tem que casar com o de global.css:root.
+    textDim: '#7c869e',
     accent: '#6ea8fe',
     accentSoft: 'rgba(110, 168, 254, 0.14)',
     danger: '#f7768e',

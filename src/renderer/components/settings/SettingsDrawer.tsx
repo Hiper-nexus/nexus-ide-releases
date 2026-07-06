@@ -1,7 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { AdapterInfo } from '../../../shared/types';
 import { useOrchStore } from '../../state/orch-store';
 import { useSettingsStore } from '../../state/settings-store';
+import {
+  SETTINGS_GROUPS,
+  filterSettingsGroups,
+  type NavItem,
+  type SettingsSection,
+} from './settings-nav';
 import {
   VoiceSection,
   MarketplaceSection,
@@ -28,68 +34,11 @@ import {
 } from './CatalogSections';
 
 /**
- * Settings drawer — modules sidebar: MÓDULOS
- * (Terminal, Voice, Providers, Squads, Marketplace) and CATALOG
- * (Agents, Skills, MCPs, Tools, Plugins, Hooks, Rules, Atalhos).
+ * Settings drawer — nav agrupada por intenção (CONTA · OPERAÇÃO · ARSENAL ·
+ * CATÁLOGO) com busca no topo. Grupos e filtro em settings-nav.ts (testados).
  */
 
-export type SettingsSection =
-  | 'account'
-  | 'system'
-  | 'terminal'
-  | 'voice'
-  | 'media'
-  | 'providers'
-  | 'squads'
-  | 'marketplace'
-  | 'remote'
-  | 'agents'
-  | 'skills'
-  | 'media-catalog'
-  | 'llms'
-  | 'mcps'
-  | 'tools'
-  | 'plugins'
-  | 'recipes'
-  | 'hooks'
-  | 'rules'
-  | 'shortcuts';
-
-interface NavItem {
-  id: SettingsSection;
-  icon: string;
-  title: string;
-  subtitle: string;
-}
-
-const ACCOUNT_ITEMS: NavItem[] = [
-  { id: 'account', icon: 'ID', title: 'MINHA CONTA', subtitle: 'plano · assinatura' },
-  { id: 'system', icon: 'i', title: 'SISTEMA', subtitle: 'versão · changelog' },
-];
-
-const MODULE_ITEMS: NavItem[] = [
-  { id: 'terminal', icon: '>_', title: 'TERMINAL', subtitle: 'tema · fonte · shell' },
-  { id: 'voice', icon: 'VOX', title: 'VOICE', subtitle: 'voz · captura' },
-  { id: 'media', icon: 'IMG', title: 'MÍDIA', subtitle: 'imagem · vídeo · voz' },
-  { id: 'providers', icon: 'KEY', title: 'PROVIDERS', subtitle: 'tokens · modelos' },
-  { id: 'squads', icon: 'SQD', title: 'SQUADS', subtitle: 'orquestração' },
-  { id: 'marketplace', icon: 'MKT', title: 'MARKETPLACE', subtitle: 'Catálogo · 1 clique' },
-  { id: 'remote', icon: 'SSH', title: 'REMOTE', subtitle: 'bridge · ssh' },
-];
-
-const CATALOG_ITEMS: NavItem[] = [
-  { id: 'agents', icon: 'AGT', title: 'AGENTS', subtitle: 'AI subagents' },
-  { id: 'skills', icon: 'SKL', title: 'SKILLS', subtitle: 'skills cache' },
-  { id: 'media-catalog', icon: 'GEN', title: 'MÍDIA', subtitle: 'modelos de geração' },
-  { id: 'llms', icon: 'LLM', title: 'LLMS · CLIS', subtitle: 'arsenal de execução' },
-  { id: 'mcps', icon: 'MCP', title: 'MCPS', subtitle: 'servers cache' },
-  { id: 'tools', icon: 'TLS', title: 'TOOLS', subtitle: 'native tools' },
-  { id: 'recipes', icon: 'RCP', title: 'RECIPES', subtitle: 'lint · stacks' },
-  { id: 'plugins', icon: 'PLG', title: 'PLUGINS', subtitle: 'plugin bundles' },
-  { id: 'hooks', icon: 'HK', title: 'HOOKS', subtitle: 'lifecycle scripts' },
-  { id: 'rules', icon: 'SEC', title: 'RULES', subtitle: 'permissions' },
-  { id: 'shortcuts', icon: 'CMD', title: 'ATALHOS', subtitle: 'teclado' },
-];
+export type { SettingsSection };
 
 function NavRow({
   item,
@@ -127,6 +76,8 @@ export function SettingsDrawer() {
   const squadsCount = useOrchStore((s) => s.squads.length);
   const [section, setSection] = useState<SettingsSection>('terminal');
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
+  const [query, setQuery] = useState('');
+  const groups = useMemo(() => filterSettingsGroups(SETTINGS_GROUPS, query), [query]);
 
   useEffect(() => {
     if (!open) return;
@@ -163,35 +114,37 @@ export function SettingsDrawer() {
             </span>
             <span className="settings-nav__brand-signal" aria-hidden />
           </div>
-          <p className="settings-nav__section">CONTA</p>
-          {ACCOUNT_ITEMS.map((item) => (
-            <NavRow
-              key={item.id}
-              item={item}
-              active={section === item.id}
-              onSelect={setSection}
+          <div className="settings-nav__search">
+            <span className="settings-nav__search-icon" aria-hidden>
+              ⌕
+            </span>
+            <input
+              className="settings-nav__search-input"
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="buscar settings…"
+              aria-label="Buscar nas configurações"
             />
-          ))}
-          <p className="settings-nav__section">MÓDULOS</p>
-          {MODULE_ITEMS.map((item) => (
-            <NavRow
-              key={item.id}
-              item={item}
-              active={section === item.id}
-              badge={badges[item.id]}
-              onSelect={setSection}
-            />
-          ))}
-          <p className="settings-nav__section">CATALOG</p>
-          {CATALOG_ITEMS.map((item) => (
-            <NavRow
-              key={item.id}
-              item={item}
-              active={section === item.id}
-              badge={badges[item.id]}
-              onSelect={setSection}
-            />
-          ))}
+          </div>
+          {groups.length === 0 ? (
+            <p className="settings-nav__no-match">Nada encontrado para “{query}”.</p>
+          ) : (
+            groups.map((group) => (
+              <div key={group.label}>
+                <p className="settings-nav__section">{group.label}</p>
+                {group.items.map((item) => (
+                  <NavRow
+                    key={item.id}
+                    item={item}
+                    active={section === item.id}
+                    badge={badges[item.id]}
+                    onSelect={setSection}
+                  />
+                ))}
+              </div>
+            ))
+          )}
           <button className="settings-nav__close" onClick={close}>
             ✕ FECHAR
           </button>

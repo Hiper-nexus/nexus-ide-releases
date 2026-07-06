@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
+import { NexusMark } from './NexusMark';
+import { PixelIcon } from './PixelIcon';
 
 /**
  * Launch / onboarding screen — the first surface when no workspace is open:
@@ -42,7 +44,7 @@ export function LaunchScreen() {
     <div className="launch">
       <header className="launch__topbar">
         <div className="workspace-bar__brand">
-          <span className="workspace-bar__logo">◈</span>
+          <NexusMark size={15} className="workspace-bar__logo" />
           <span className="workspace-bar__name">NexusIDE</span>
         </div>
         <button
@@ -50,12 +52,13 @@ export function LaunchScreen() {
           onClick={openSettings}
           title="Providers, keys, catálogo e temas"
         >
-          ⚙ Configurações
+          <PixelIcon name="config" />
+          Configurações
         </button>
       </header>
       <div className="launch__panel">
         <header className="launch__head">
-          <span className="launch__logo">◈</span>
+          <NexusMark size={30} className="launch__logo" />
           <div>
             <h1 className="launch__title">NexusIDE</h1>
             <p className="launch__tagline">

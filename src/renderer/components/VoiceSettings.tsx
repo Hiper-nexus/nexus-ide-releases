@@ -4,6 +4,9 @@ import {
   accelFromCode,
   normalizeKeyCode,
 } from '../../shared/voice-config';
+import { credentialLinkForEnv } from '../../shared/credential-links';
+import { openExternalFromAnchor } from '../lib/open-external';
+import { CloseButton } from './CloseButton';
 import type {
   ResolvedProvider,
   VoiceApiKeyStatus,
@@ -225,7 +228,7 @@ export function VoiceSettings() {
     setTesting(true);
     try {
       await window.nexus.voice.speak({
-        text: 'NexusIDE voice online. Jarvis mode ready.',
+        text: 'Voz do NexusIDE online. Modo Jarvis pronto.',
         speakMode: 'full',
       });
     } finally {
@@ -274,18 +277,15 @@ export function VoiceSettings() {
               Pipeline de voz, wake word, live mode e persona em um painel único.
             </p>
           </div>
-          <button
-            type="button"
+          <CloseButton
             className="voice-settings__close"
             onClick={close}
-            aria-label="Fechar configurações de voz"
-          >
-            x
-          </button>
+            label="Fechar configurações de voz"
+          />
         </header>
 
         {!info ? (
-          <p className="agent-picker__empty">Loading voice pipeline…</p>
+          <p className="agent-picker__empty">Carregando pipeline de voz…</p>
         ) : (
           <>
             <div className="voice-settings__status-grid" aria-label="Estado do Jarvis">
@@ -360,32 +360,49 @@ export function VoiceSettings() {
             {info.keys.length > 0 && (
               <section className="voice-settings__section" aria-label="Voice API keys">
                 <h4 className="voice-settings__section-title">Credenciais</h4>
-                {info.keys.map((key) => (
-                  <div className="voice-settings__key-row" key={key.envVar}>
-                    <label className="agent-picker__label voice-settings__key-label">
-                      {key.envVar}
-                      <input
-                        className="agent-picker__select"
-                        type="password"
-                        value={keyInputs[key.envVar] ?? ''}
-                        placeholder={keyPlaceholder(key)}
-                        onChange={(e) => patchKeyInput(key.envVar, e.target.value)}
-                        autoComplete="off"
-                        spellCheck={false}
-                      />
-                      <span className="voice-settings__key-meta">
-                        {key.providers.join(' / ')} · {keyStatusText(key)}
-                      </span>
-                    </label>
-                    <button
-                      className="agent-picker__btn voice-settings__clear"
-                      onClick={() => void clearKey(key.envVar)}
-                      disabled={!key.hasStoredKey}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                ))}
+                {info.keys.map((key) => {
+                  const credentialLink = credentialLinkForEnv(key.envVar);
+                  return (
+                    <div className="voice-settings__key-row" key={key.envVar}>
+                      <label className="agent-picker__label voice-settings__key-label">
+                        {key.envVar}
+                        <input
+                          className="agent-picker__select"
+                          type="password"
+                          value={keyInputs[key.envVar] ?? ''}
+                          placeholder={keyPlaceholder(key)}
+                          onChange={(e) => patchKeyInput(key.envVar, e.target.value)}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />
+                        <span className="voice-settings__key-meta">
+                          {key.providers.join(' / ')} · {keyStatusText(key)}
+                          {credentialLink && (
+                            <>
+                              {' · '}
+                              <a
+                                className="settings-link"
+                                href={credentialLink.url}
+                                onClick={(e) =>
+                                  openExternalFromAnchor(e, credentialLink.url)
+                                }
+                              >
+                                obter key em {credentialLink.label}
+                              </a>
+                            </>
+                          )}
+                        </span>
+                      </label>
+                      <button
+                        className="agent-picker__btn voice-settings__clear"
+                        onClick={() => void clearKey(key.envVar)}
+                        disabled={!key.hasStoredKey}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  );
+                })}
               </section>
             )}
 

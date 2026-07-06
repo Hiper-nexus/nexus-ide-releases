@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { AdapterInfo } from '../../shared/types';
 import { VICTORY_KEYS, type VictoryKey } from '../../shared/onboarding-types';
 import { useOnboardingStore } from '../state/onboarding-store';
+import { NexusMark } from './NexusMark';
 
 /**
  * Onboarding de primeira execução — a tela que PREPARA o sistema, no lugar de
@@ -89,7 +90,7 @@ export function Onboarding() {
     <div className="onb" role="dialog" aria-modal="true" aria-label="Boas-vindas ao NexusIDE">
       <div className="onb__panel">
         <header className="onb__head">
-          <span className="onb__logo" aria-hidden="true">◈</span>
+          <NexusMark size={28} className="onb__logo" />
           <div>
             <h1 className="onb__title">Bem-vindo ao NexusIDE</h1>
             <p className="onb__sub">

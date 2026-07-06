@@ -10,6 +10,7 @@ import { findOrCreateAccount } from './account-service';
 import { issueTokens, rotateRefresh, revokeAll } from './session-service';
 import { hashToken, newToken } from './tokens';
 import { freeLicenseInput, signLicense } from './license-signer';
+import { asyncHandler as ah } from '../middleware/errors';
 import { rateLimit } from '../middleware/rate-limit';
 import { requireAuth } from '../middleware/require-auth';
 
@@ -39,7 +40,7 @@ export function buildAuthRouter(deps: AuthDeps): Router {
   const authLimit = rateLimit({ windowMs: 60_000, max: 20 });
   const redirectUri = (p: Provider) => `${env.PUBLIC_BASE_URL}/v1/auth/${p}/callback`;
 
-  r.get('/auth/:provider', authLimit, async (req, res) => {
+  r.get('/auth/:provider', authLimit, ah(async (req, res) => {
     const p = String(req.params.provider);
     if (!isProvider(p)) return res.status(404).json({ ok: false, error: 'provider' });
     const state = newToken();
@@ -52,9 +53,9 @@ export function buildAuthRouter(deps: AuthDeps): Router {
       clientId: providerCreds(env, p).id,
       redirectUri: redirectUri(p), state, challenge,
     }));
-  });
+  }));
 
-  r.get('/auth/:provider/callback', authLimit, async (req, res) => {
+  r.get('/auth/:provider/callback', authLimit, ah(async (req, res) => {
     const p = String(req.params.provider);
     if (!isProvider(p)) return res.status(404).json({ ok: false, error: 'provider' });
     const code = String(req.query.code ?? '');
@@ -77,9 +78,9 @@ export function buildAuthRouter(deps: AuthDeps): Router {
       expiresAt: new Date(now() + CODE_TTL),
     });
     res.redirect(`${env.APP_DEEP_LINK_BASE}/${rawCode}`);
-  });
+  }));
 
-  r.post('/auth/exchange', authLimit, async (req, res) => {
+  r.post('/auth/exchange', authLimit, ah(async (req, res) => {
     const code = String((req.body as { code?: string }).code ?? '');
     const consumed = await consumeAuthCode(db, code, now); // atômico, single-use
     if (!consumed) {
@@ -89,21 +90,21 @@ export function buildAuthRouter(deps: AuthDeps): Router {
     const { session, refresh } = await issueTokens(db, consumed.accountId, now);
     const licenca = await signLicense(freeLicenseInput(acc.email), env.LICENSE_PRIVATE_KEY);
     res.json({ ok: true, data: { session, refresh, licenca } });
-  });
+  }));
 
-  r.post('/auth/refresh', authLimit, async (req, res) => {
+  r.post('/auth/refresh', authLimit, ah(async (req, res) => {
     const raw = String((req.body as { refresh?: string }).refresh ?? '');
     const out = await rotateRefresh(db, raw, now);
     if ('reuseDetected' in out) return res.status(401).json({ ok: false, error: 'refresh inválido' });
     res.json({ ok: true, data: out });
-  });
+  }));
 
-  r.post('/auth/logout', requireAuth(db), async (req, res) => {
+  r.post('/auth/logout', requireAuth(db), ah(async (req, res) => {
     await revokeAll(db, req.accountId!);
     res.json({ ok: true });
-  });
+  }));
 
-  r.post('/auth/link', requireAuth(db), async (req, res) => {
+  r.post('/auth/link', requireAuth(db), ah(async (req, res) => {
     // Vincula um provider já autorizado. Recebe {code} de um segundo fluxo
     // callback que criou uma conta isolada; move as identities para a conta
     // logada e apaga a isolada.
@@ -118,17 +119,17 @@ export function buildAuthRouter(deps: AuthDeps): Router {
       await db.delete(accounts).where(eq(accounts.id, consumed.accountId));
     }
     res.json({ ok: true });
-  });
+  }));
 
-  r.get('/me', requireAuth(db), async (req, res) => {
+  r.get('/me', requireAuth(db), ah(async (req, res) => {
     const [acc] = await db.select().from(accounts).where(eq(accounts.id, req.accountId!)).limit(1);
     res.json({ ok: true, data: { email: acc.email, name: acc.name, plan: acc.plan } });
-  });
+  }));
 
-  r.delete('/me', requireAuth(db), async (req, res) => {
+  r.delete('/me', requireAuth(db), ah(async (req, res) => {
     await db.delete(accounts).where(eq(accounts.id, req.accountId!)); // cascade
     res.json({ ok: true });
-  });
+  }));
 
   return r;
 }

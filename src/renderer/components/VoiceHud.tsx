@@ -1,18 +1,33 @@
+import { useEffect, useRef } from 'react';
 import { useVoiceStore, type VoiceUiStatus } from '../voice/voice-store';
 
 /**
- * Floating HUD that surfaces the live voice pipeline phase (listening →
- * transcribing → routing → speaking) plus the last transcript and any error.
- * Hidden while idle so it never occludes the workspace.
+ * HUD flutuante que mostra a fase do pipeline de voz ao vivo (ouvindo →
+ * transcrevendo → enviando → falando), o último transcript e qualquer erro.
+ * No Jarvis Live fica visível enquanto pronto, para a assistente não sumir
+ * entre turnos. O orb reage à amplitude REAL do mic (voice-store.level).
  */
 
 const PHASE_LABEL: Record<Exclude<VoiceUiStatus, 'idle'>, string> = {
-  listening: 'Listening',
-  transcribing: 'Transcribing',
-  routing: 'Sending to pane',
-  speaking: 'Speaking',
-  error: 'Voice error',
+  listening: 'Ouvindo',
+  transcribing: 'Transcrevendo',
+  routing: 'Enviando ao pane',
+  speaking: 'Falando',
+  error: 'Erro de voz',
 };
+
+/** Estados do Jarvis Live → rótulo em PT. */
+const LIVE_LABEL: Record<string, string> = {
+  dormant: 'pronto',
+  thinking: 'pensando',
+  speaking: 'falando',
+  listening: 'ouvindo',
+  interrupted: 'interrompido',
+};
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
 
 export function VoiceHud() {
   const status = useVoiceStore((s) => s.status);
@@ -23,17 +38,26 @@ export function VoiceHud() {
   const liveState = useVoiceStore((s) => s.liveState);
   const liveTool = useVoiceStore((s) => s.liveTool);
 
+  const liveStatus = liveState?.status ?? 'dormant';
   const liveVisible =
-    liveState?.enabled === true &&
-    liveState.status !== 'off' &&
-    liveState.status !== 'dormant';
+    info?.jarvisLive.enabled === true &&
+    liveState?.enabled !== false &&
+    liveStatus !== 'off' &&
+    (liveStatus !== 'dormant' || status === 'idle');
+
+  // Amplitude do mic → CSS var no orb, imperativo (sem re-render por frame).
+  const orbRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (prefersReducedMotion()) return;
+    return useVoiceStore.subscribe((s) => {
+      orbRef.current?.style.setProperty('--voice-amp', s.level.toFixed(3));
+    });
+  }, []);
 
   if (status === 'idle' && !liveVisible) return null;
 
-  const label =
-    status === 'idle'
-      ? `Live ${liveState?.status ?? 'ready'}`
-      : PHASE_LABEL[status];
+  const liveLabel = LIVE_LABEL[liveStatus] ?? liveStatus;
+  const label = status === 'idle' ? `Jarvis ${liveLabel}` : PHASE_LABEL[status];
   const isError = status === 'error';
 
   // In toggle mode the send edge is a SECOND keypress — say so, or users
@@ -52,7 +76,7 @@ export function VoiceHud() {
       aria-live="polite"
     >
       <div className="voice-hud__shell">
-        <div className="voice-orb" aria-hidden="true">
+        <div className="voice-orb" aria-hidden="true" ref={orbRef}>
           <span className="voice-orb__ring voice-orb__ring--outer" />
           <span className="voice-orb__ring voice-orb__ring--middle" />
           <span className="voice-orb__ring voice-orb__ring--inner" />

@@ -1,6 +1,7 @@
 import express, { type Express } from 'express';
 import type { AuthDeps } from './auth/auth-routes';
 import { buildAuthRouter } from './auth/auth-routes';
+import { errorHandler } from './middleware/errors';
 
 /** Monta o app Express. Passe deps p/ montar as rotas /v1/auth. */
 export function createApp(deps?: AuthDeps): Express {
@@ -8,6 +9,7 @@ export function createApp(deps?: AuthDeps): Express {
   app.use(express.json({ limit: '256kb' }));
   app.get('/health', (_req, res) => res.json({ ok: true }));
   if (deps) app.use('/v1', buildAuthRouter(deps));
+  app.use(errorHandler); // rejeição async → 500 JSON (nunca request pendurada)
   return app;
 }
 

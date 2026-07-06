@@ -1,4 +1,5 @@
 import pcmWorkletUrl from './pcm-processor.js?url';
+import { rmsToLevel } from './voice-level';
 
 /**
  * Microphone capture for push-to-talk. Opens a 16 kHz mono getUserMedia stream,
@@ -53,6 +54,12 @@ export class VoiceCapture {
   private lastSpeechAt = 0;
   private startedAt = 0;
 
+  /**
+   * Live mic level [0,1] per frame — alimenta o visualizador do orb. Opcional:
+   * quem não liga só não recebe. Zerado no stop para o orb assentar.
+   */
+  onLevel: ((level: number) => void) | null = null;
+
   isCapturing(): boolean {
     return this.capturing;
   }
@@ -80,6 +87,7 @@ export class VoiceCapture {
     const onFrame = (frame: Float32Array) => {
       if (!this.capturing) return;
       this.chunks.push(frame);
+      if (this.onLevel) this.onLevel(rmsToLevel(frameRms(frame)));
       if (this.autoStop && !this.autoStopFired) this.trackSilence(frame);
     };
 
@@ -109,6 +117,7 @@ export class VoiceCapture {
       return { wavBase64: '', sampleRate: TARGET_SAMPLE_RATE, durationSec: 0 };
     }
     this.capturing = false;
+    this.onLevel?.(0); // o orb assenta assim que a fala termina
     this.teardown();
 
     const pcm = mergeChunks(this.chunks);
@@ -126,9 +135,7 @@ export class VoiceCapture {
   private trackSilence(frame: Float32Array): void {
     const opts = this.autoStop;
     if (!opts) return;
-    let sum = 0;
-    for (let i = 0; i < frame.length; i += 1) sum += frame[i] * frame[i];
-    const rms = Math.sqrt(sum / Math.max(1, frame.length));
+    const rms = frameRms(frame);
     const now = Date.now();
     if (rms >= SPEECH_RMS) {
       this.heardSpeech = true;
@@ -164,6 +171,13 @@ export class VoiceCapture {
 }
 
 // ── PCM helpers (pure) ───────────────────────────────────────────────────────
+
+/** RMS de um frame Float32 (energia média por amostra). */
+export function frameRms(frame: Float32Array): number {
+  let sum = 0;
+  for (let i = 0; i < frame.length; i += 1) sum += frame[i] * frame[i];
+  return Math.sqrt(sum / Math.max(1, frame.length));
+}
 
 export function mergeChunks(chunks: Float32Array[]): Float32Array {
   const total = chunks.reduce((n, c) => n + c.length, 0);
