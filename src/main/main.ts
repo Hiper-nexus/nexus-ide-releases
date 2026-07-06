@@ -91,6 +91,8 @@ import {
 import { registerRemoteIpc } from './remote/remote-ipc';
 import { registerMediaIpc } from './media/media-ipc';
 import { startCronLoop, stopCronLoop } from './orch/cron-runtime';
+import { wireDeepLinks, consumeLaunchDeepLink } from './deep-link';
+import { initAutoUpdater } from './updater';
 import { stopRemoteBridge } from './remote/remote-bridge';
 import { initSmokeTest } from './smoke-test';
 
@@ -142,11 +144,21 @@ function bootstrap(): void {
   // Cron: squads/agentes agendados (tick 60s, skip-if-stale).
   startCronLoop();
   createMainWindow();
+  // Deep link nexus:// vindo no lançamento a frio (após a janela existir) +
+  // auto-updater (opt-in por ambiente; no-op sem servidor configurado).
+  consumeLaunchDeepLink();
+  initAutoUpdater();
 }
 
 initSmokeTest();
 
-app.whenReady().then(bootstrap);
+// Single-instance + protocolo nexus:// precisam ser registrados ANTES do
+// whenReady. Se outra instância já detém o lock, saímos (ela recebe o link).
+if (!wireDeepLinks()) {
+  app.quit();
+} else {
+  app.whenReady().then(bootstrap);
+}
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {

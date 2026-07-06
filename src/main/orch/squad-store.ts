@@ -70,7 +70,25 @@ export function initSquadStore(database: Db | null): void {
           agents: parseJsonColumn<SquadAgent[]>(row.roster_json, []),
         };
         const parsed = squadSchema.safeParse(candidate);
-        if (parsed.success) squads.set(parsed.data.id, parsed.data);
+        if (!parsed.success) continue;
+        // Self-heal on load (SEC#5): squads persisted BEFORE the allowlist
+        // normalization landed carry workers with `allowedTools` undefined,
+        // which the wizard's fire-gate (validateWorkerToolScopes) rejects — so
+        // those existing squads never launched. saveSquad/importSquadsJson only
+        // normalized NEW writes; the hydration path loaded old rows verbatim.
+        // Apply the same canonical rule here so EXISTING squads start too, and
+        // re-persist when it actually changed the roster to heal the DB row
+        // durably (idempotent for already-normalized rosters).
+        const healed: Squad = {
+          ...parsed.data,
+          agents: withAllowlists(parsed.data.agents),
+        };
+        squads.set(healed.id, healed);
+        if (
+          JSON.stringify(healed.agents) !== JSON.stringify(parsed.data.agents)
+        ) {
+          persist(healed);
+        }
       }
     } catch (err) {
       console.warn('[orch] failed to hydrate squads:', err);

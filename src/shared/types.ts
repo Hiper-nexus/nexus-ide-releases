@@ -402,6 +402,10 @@ export interface NexusApi {
   app: {
     /** Tell main that React committed its first frame (mount watchdog). */
     signalMounted(): void;
+    /** Deep link / document open (nexus://open ou abrir-com). */
+    onDeepOpenPath(
+      cb: (payload: { path: string; isDir: boolean }) => void,
+    ): Unsubscribe;
   };
   billing: {
     get(): Promise<LicenseInfo>;

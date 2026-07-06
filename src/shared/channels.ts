@@ -46,4 +46,7 @@ export const WINDOW_CHANNELS = {
    * distinguish "page loaded" from "app actually rendered" — in dev AND in
    * the packaged app, where a boot crash used to leave a black window. */
   mounted: 'renderer:mounted',
+  /** event: main → renderer. Deep link/document open (nexus://open ou
+   * abrir-com): { path, isDir }. O renderer abre o workspace (ou o do pai). */
+  deepOpenPath: 'app:deepOpenPath',
 } as const;

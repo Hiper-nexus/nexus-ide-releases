@@ -151,6 +151,15 @@ export function App() {
     return () => setBrowserPaneSuppression('modal-overlay', false);
   }, []);
 
+  // Deep link nexus://open?path=… / abrir-com no Finder: abre o workspace
+  // (diretório) ou o workspace-pai do arquivo. Validado no main (path absoluto).
+  useEffect(() => {
+    return window.nexus.app.onDeepOpenPath(({ path, isDir }) => {
+      const wsPath = isDir ? path : path.replace(/\/[^/]*$/, '');
+      if (wsPath) void useWorkspaceStore.getState().open(wsPath);
+    });
+  }, []);
+
   if (!workspaceHydrated) {
     return <div className="boot">Starting NexusIDE…</div>;
   }

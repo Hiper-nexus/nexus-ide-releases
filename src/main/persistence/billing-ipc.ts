@@ -45,6 +45,43 @@ function readLicense(): LicenseInfo {
   }
 }
 
+function writeLicense(info: LicenseInfo): void {
+  fs.mkdirSync(path.dirname(LICENSE_FILE), { recursive: true });
+  const tmp = `${LICENSE_FILE}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(info, null, 2), { mode: 0o600 });
+  fs.renameSync(tmp, LICENSE_FILE);
+}
+
+/**
+ * Aplica um token de licença vindo do deep link nexus://license/<token>. O
+ * token é um JWT `header.payload.signature` (base64url); sem a chave pública
+ * do backend aqui, decodificamos o payload e gravamos o estado — a validação
+ * de ASSINATURA fica pro backend/próxima fase (TODO stripe). Nunca lança.
+ */
+export function applyLicenseToken(
+  token: string,
+): { ok: boolean; error?: string } {
+  const parts = token.split('.');
+  if (parts.length < 2) return { ok: false, error: 'token malformado' };
+  try {
+    const payload = JSON.parse(
+      Buffer.from(parts[1], 'base64url').toString('utf8'),
+    ) as Partial<LicenseInfo>;
+    writeLicense({
+      plan: payload.plan === 'pro' || payload.plan === 'team' ? payload.plan : 'free',
+      email: typeof payload.email === 'string' ? payload.email : null,
+      status:
+        payload.status === 'active' || payload.status === 'past_due'
+          ? payload.status
+          : 'active',
+      renewsAt: typeof payload.renewsAt === 'string' ? payload.renewsAt : null,
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export function registerBillingIpc(): void {
   ipcMain.handle(BILLING_CHANNELS.get, (): LicenseInfo => readLicense());
 

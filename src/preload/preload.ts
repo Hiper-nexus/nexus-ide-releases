@@ -79,6 +79,12 @@ const dataSubs = new Map<string, Set<DataCb>>();
 const exitSubs = new Map<string, Set<ExitCb>>();
 const stateSubs = new Map<string, Set<StateCb>>();
 const browserStateListeners = new Set<(state: BrowserPaneState) => void>();
+const deepOpenListeners = new Set<(payload: { path: string; isDir: boolean }) => void>();
+ipcRenderer.on(
+  WINDOW_CHANNELS.deepOpenPath,
+  (_event, payload: { path: string; isDir: boolean }) =>
+    deepOpenListeners.forEach((cb) => cb(payload)),
+);
 
 ipcRenderer.on(PTY_CHANNELS.data, (_event, payload: PtyDataEvent) => {
   dataSubs.get(payload.sessionId)?.forEach((cb) => cb(payload.data));
@@ -261,6 +267,8 @@ ipcRenderer.on(PIPE_CHANNELS.changed, (_e, pipes: Pipe[]) =>
 const api: NexusApi = {
   app: {
     signalMounted: () => ipcRenderer.send(WINDOW_CHANNELS.mounted),
+    onDeepOpenPath: (cb: (payload: { path: string; isDir: boolean }) => void) =>
+      addListener(deepOpenListeners, cb),
   },
   pty: {
     spawn: (req: SpawnRequest): Promise<SpawnResult> =>
