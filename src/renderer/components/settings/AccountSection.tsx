@@ -3,6 +3,7 @@ import {
   PLANS,
   type LicenseInfo,
   type PlanId,
+  type TeamInfo,
 } from '../../../shared/billing-types';
 
 /**
@@ -19,12 +20,83 @@ function planPrice(price: number | null): string {
 
 export function AccountSection() {
   const [license, setLicense] = useState<LicenseInfo | null>(null);
+  const [team, setTeam] = useState<TeamInfo | null>(null);
+  const [joinCode, setJoinCode] = useState('');
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [teamError, setTeamError] = useState<string | null>(null);
 
   useEffect(() => {
     void window.nexus.billing.get().then(setLicense);
   }, []);
 
+  const isLoggedIn = Boolean(license?.email);
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setTeam(null);
+      return;
+    }
+    let cancelled = false;
+    void window.nexus.team.get().then((result) => {
+      if (cancelled) return;
+      if (result.ok) setTeam(result.data ?? null);
+      else setTeamError(result.error ?? 'não foi possível carregar o time');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn]);
+
   const currentPlan: PlanId = license?.plan ?? 'free';
+  const isOwner = team?.team?.role === 'owner';
+
+  const reloadTeam = async () => {
+    const result = await window.nexus.team.get();
+    if (result.ok) {
+      setTeam(result.data ?? null);
+      setTeamError(null);
+    } else {
+      setTeamError(result.error ?? 'não foi possível atualizar o time');
+    }
+  };
+
+  const joinTeam = async () => {
+    const result = await window.nexus.team.join(joinCode);
+    if (!result.ok) {
+      setTeamError(result.error ?? 'não foi possível entrar no time');
+      return;
+    }
+    setJoinCode('');
+    await reloadTeam();
+  };
+
+  const createInvite = async () => {
+    const result = await window.nexus.team.invite();
+    if (!result.ok) {
+      setTeamError(result.error ?? 'não foi possível gerar convite');
+      return;
+    }
+    setInviteUrl(result.data?.url ?? null);
+    setTeamError(null);
+  };
+
+  const leaveTeam = async () => {
+    const result = await window.nexus.team.leave();
+    if (!result.ok) {
+      setTeamError(result.error ?? 'não foi possível sair do time');
+      return;
+    }
+    setTeam(null);
+    setInviteUrl(null);
+  };
+
+  const removeMember = async (accountId: string) => {
+    const result = await window.nexus.team.removeMember(accountId);
+    if (!result.ok) {
+      setTeamError(result.error ?? 'não foi possível remover membro');
+      return;
+    }
+    await reloadTeam();
+  };
 
   return (
     <section>
@@ -74,6 +146,76 @@ export function AccountSection() {
               Entrar com Google
             </button>
           </div>
+        </div>
+      )}
+
+      {license?.email && (
+        <div className="account__team">
+          <div className="account__team-head">
+            <span className="account__team-title">Time</span>
+            {team?.team && (
+              <span className="account__team-role">
+                {team.team.role === 'owner' ? 'owner' : 'member'}
+              </span>
+            )}
+          </div>
+          {team?.team ? (
+            <>
+              <div className="account__team-summary">
+                <span className="account__team-name">{team.team.name}</span>
+                <span className="settings-detail__hint">
+                  {team.seats?.used ?? team.members?.length ?? 0}/{team.seats?.total ?? 0} assentos
+                  {team.overLimit ? ' · acima do limite' : ''}
+                </span>
+              </div>
+              {team.members && team.members.length > 0 && (
+                <div className="account__members">
+                  {team.members.map((member) => (
+                    <div className="account__member" key={member.accountId}>
+                      <span className="account__member-name">
+                        {member.name ?? member.email ?? member.accountId}
+                      </span>
+                      <span className="account__member-role">{member.role}</span>
+                      {isOwner && member.role !== 'owner' && (
+                        <button
+                          className="agent-picker__btn account__member-action"
+                          onClick={() => void removeMember(member.accountId)}
+                        >
+                          Remover
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="account__team-actions">
+                {isOwner && (
+                  <button className="agent-picker__btn" onClick={() => void createInvite()}>
+                    Gerar convite
+                  </button>
+                )}
+                {team.team.role === 'member' && (
+                  <button className="agent-picker__btn" onClick={() => void leaveTeam()}>
+                    Sair do time
+                  </button>
+                )}
+              </div>
+              {inviteUrl && <code className="account__invite-url">{inviteUrl}</code>}
+            </>
+          ) : (
+            <div className="account__join">
+              <input
+                className="settings-input"
+                placeholder="AB12-CD34"
+                value={joinCode}
+                onChange={(event) => setJoinCode(event.target.value)}
+              />
+              <button className="agent-picker__btn" onClick={() => void joinTeam()}>
+                Entrar num time
+              </button>
+            </div>
+          )}
+          {teamError && <span className="account__team-error">{teamError}</span>}
         </div>
       )}
 

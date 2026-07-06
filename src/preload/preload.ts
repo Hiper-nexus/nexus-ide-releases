@@ -6,6 +6,7 @@ import {
   LAYOUT_CHANNELS,
   ADAPTER_CHANNELS,
   WINDOW_CHANNELS,
+  TEAM_CHANNELS,
 } from '../shared/channels';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { UPDATE_CHANNELS } from '../shared/update-ipc';
@@ -580,6 +581,14 @@ const api: NexusApi = {
     get: () => ipcRenderer.invoke(BILLING_CHANNELS.get),
     openCheckout: (plan: PlanId) => ipcRenderer.invoke(BILLING_CHANNELS.checkout, plan),
     openPortal: () => ipcRenderer.invoke(BILLING_CHANNELS.portal),
+  },
+  team: {
+    get: () => ipcRenderer.invoke(TEAM_CHANNELS.get),
+    join: (code: string) => ipcRenderer.invoke(TEAM_CHANNELS.join, code),
+    invite: () => ipcRenderer.invoke(TEAM_CHANNELS.invite),
+    removeMember: (accountId: string) =>
+      ipcRenderer.invoke(TEAM_CHANNELS.remove, accountId),
+    leave: () => ipcRenderer.invoke(TEAM_CHANNELS.leave),
   },
   platform: process.platform,
 };

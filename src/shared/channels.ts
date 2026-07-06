@@ -56,3 +56,11 @@ export const WINDOW_CHANNELS = {
    * a URL de auth. */
   authLogin: 'auth:login',
 } as const;
+
+export const TEAM_CHANNELS = {
+  get: 'team:get',
+  join: 'team:join',
+  invite: 'team:invite',
+  remove: 'team:removeMember',
+  leave: 'team:leave',
+} as const;
