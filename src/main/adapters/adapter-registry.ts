@@ -69,12 +69,61 @@ export function mergeAdapters(
   return merged;
 }
 
+/**
+ * Resolve the login-shell PATH once per process lifetime.
+ *
+ * GUI apps launched from Finder/Dock/Spotlight inherit only a minimal PATH
+ * (~100 bytes) that omits everything set in the user's shell profile
+ * (~/.zprofile, ~/.bash_profile, .bashrc, nvm, volta, Homebrew…).  Spawning
+ * the user's login shell with `-l` sources those profiles and gives us the
+ * real PATH so `which` can find CLIs installed there.
+ *
+ * Cost: one synchronous shell spawn at first call (~50–300 ms), then zero —
+ * the result is memoised for the process lifetime.
+ */
+let _loginShellPath: string | null = null;
+function resolveLoginShellPath(): string {
+  if (_loginShellPath !== null) return _loginShellPath;
+  if (process.platform === 'win32') {
+    _loginShellPath = process.env.PATH ?? '';
+    return _loginShellPath;
+  }
+  const shell = process.env.SHELL ?? '/bin/bash';
+  try {
+    const out = execFileSync(shell, ['-l', '-c', 'printf "%s" "$PATH"'], {
+      stdio: 'pipe',
+      encoding: 'utf-8',
+      timeout: 5_000,
+    });
+    _loginShellPath = out.trim() || (process.env.PATH ?? '');
+  } catch {
+    _loginShellPath = process.env.PATH ?? '';
+  }
+  return _loginShellPath;
+}
+
 /** Check whether the CLI binary for an adapter is available on PATH. */
 function isBinInstalled(bin: string): boolean {
   // `which` doesn't exist on Windows; `where` is the equivalent lookup.
   const lookup = process.platform === 'win32' ? 'where' : 'which';
   try {
     execFileSync(lookup, [bin], { stdio: 'pipe', encoding: 'utf-8' });
+    return true;
+  } catch {
+    // Fast path failed.  Packaged GUI apps on macOS/Linux inherit a minimal
+    // PATH that skips login-shell entries.  Re-try with the full login-shell
+    // PATH so the installed check succeeds for CLIs in ~/.local/bin,
+    // /opt/homebrew/bin, nvm shims, volta, etc.
+  }
+  if (process.platform === 'win32') return false;
+  const lsPath = resolveLoginShellPath();
+  if (!lsPath || lsPath === (process.env.PATH ?? '')) return false;
+  try {
+    execFileSync(lookup, [bin], {
+      stdio: 'pipe',
+      encoding: 'utf-8',
+      env: { ...process.env, PATH: lsPath },
+    });
     return true;
   } catch {
     return false;

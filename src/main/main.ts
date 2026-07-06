@@ -90,6 +90,7 @@ import {
 } from './orch/pane-pipe-ipc';
 import { registerRemoteIpc } from './remote/remote-ipc';
 import { registerMediaIpc } from './media/media-ipc';
+import { startCronLoop, stopCronLoop } from './orch/cron-runtime';
 import { stopRemoteBridge } from './remote/remote-bridge';
 import { initSmokeTest } from './smoke-test';
 
@@ -138,6 +139,8 @@ function bootstrap(): void {
   void initOrchestration().catch((err) =>
     console.warn('[nexus] orchestration failed to start:', err),
   );
+  // Cron: squads/agentes agendados (tick 60s, skip-if-stale).
+  startCronLoop();
   createMainWindow();
 }
 
@@ -194,5 +197,6 @@ app.on('before-quit', () => {
   closeAdapterRegistry();
   closeVoiceIpc();
   shutdownUsageTelemetry();
+  stopCronLoop();
   closeDb();
 });

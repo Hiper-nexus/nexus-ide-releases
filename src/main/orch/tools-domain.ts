@@ -36,6 +36,7 @@ import {
   loadBrowser,
 } from '../browser/browser-manager';
 import { collectPerfSnapshot } from '../perf/perf-ipc';
+import { addCronJob, deleteCronJob, listCronJobs } from './cron-runtime';
 import { onHandoffSubmitted } from './idle-delivery';
 import { paneSpawnTool } from './tools-panes';
 import {
@@ -797,6 +798,54 @@ const browserScreenshotTool: McpToolDef = {
   },
 };
 
+const cronTool: McpToolDef = {
+  name: 'nexus_cron',
+  description:
+    'Agendar squads/agentes: action "create" {name, schedule (cron 5 campos ' +
+    '"min hora dom mês dow"), brief, workspacePath?, agentName? XOR squadId?}, ' +
+    '"list", "delete" {id}. O job dispara o brief no horário; atraso > 5min ' +
+    '(laptop fechado) é pulado, sem catch-up em rajada.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      action: { type: 'string', enum: ['create', 'list', 'delete'] },
+      name: { type: 'string' },
+      schedule: { type: 'string' },
+      brief: { type: 'string' },
+      workspacePath: { type: 'string' },
+      agentName: { type: 'string' },
+      squadId: { type: 'string' },
+      id: { type: 'string' },
+    },
+    required: ['action'],
+  },
+  handler: async (args) => {
+    switch (args.action) {
+      case 'create': {
+        const agentName = str(args, 'agentName');
+        const squadId = str(args, 'squadId');
+        if (!agentName && !squadId) {
+          throw new Error('informe agentName OU squadId');
+        }
+        return addCronJob({
+          name: requireStr(args, 'name'),
+          schedule: requireStr(args, 'schedule'),
+          brief: requireStr(args, 'brief'),
+          workspacePath: str(args, 'workspacePath'),
+          agentName,
+          squadId,
+        });
+      }
+      case 'list':
+        return listCronJobs();
+      case 'delete':
+        return { deleted: deleteCronJob(requireStr(args, 'id')) };
+      default:
+        throw new Error(`unknown action: ${String(args.action)}`);
+    }
+  },
+};
+
 const perfSnapshotTool: McpToolDef = {
   name: 'nexus_perf_snapshot',
   description:
@@ -835,6 +884,7 @@ export function buildDomainTools(): McpToolDef[] {
     browserOpenTool,
     browserNavigateTool,
     browserScreenshotTool,
+    cronTool,
     perfSnapshotTool,
   ];
 }

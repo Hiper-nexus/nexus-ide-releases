@@ -93,6 +93,7 @@ export function MissionWizard() {
   // Editable copy of the selected squad's roster (cli/model/effort per agent).
   const [roster, setRoster] = useState<SquadAgent[]>([]);
   const [rosterSaved, setRosterSaved] = useState(false);
+  const [highlightedAgentId, setHighlightedAgentId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -134,6 +135,16 @@ export function MissionWizard() {
   const userSquads = squads.filter((s) => !s.builtin);
   const selectedSquad = squads.find((s) => s.id === squadId) ?? null;
 
+  // Derived: which worker (if any) has allowedTools == null (the guard condition).
+  // Used to disable "Iniciar Squad" reactively without running the guard imperative.
+  const rosterInvalidAgent = useMemo(
+    () =>
+      roster.find(
+        (a) => a.category !== 'orchestrator' && a.allowedTools == null,
+      ) ?? null,
+    [roster],
+  );
+
   // Load the selected squad's roster into an editable copy. The orchestrator is
   // FORCED onto Claude: only Claude Code reliably drives the embedded nexus MCP
   // server (spawning + coordinating worker panes via nexus_pane_* tools). Codex,
@@ -154,13 +165,44 @@ export function MissionWizard() {
     setRosterSaved(false);
   }, [squadId, squads]);
 
+  // Preflight: when the REVISAR step opens, immediately highlight the first
+  // agent that will block launch so the user sees the issue before clicking.
+  useEffect(() => {
+    if (step !== 'squad-review') {
+      setHighlightedAgentId(null);
+      return;
+    }
+    const invalid = roster.find(
+      (a) => a.category !== 'orchestrator' && a.allowedTools == null,
+    );
+    if (invalid) {
+      setHighlightedAgentId(invalid.id);
+      setError(
+        `Worker "${invalid.agentName}" está com tools bloqueadas (campo nulo). ` +
+          'Liste tools explícitas (ex.: Bash, Read, Edit) ou deixe vazio para bloquear todas.',
+      );
+      // Scroll the offending row into view.
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-agent-id="${invalid.id}"]`)
+          ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
   function updateAgent(id: string, patch: Partial<SquadAgent>) {
     setRoster((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
     setRosterSaved(false);
+    // Clear the preflight highlight once the user fixes this agent's tool list.
+    if (id === highlightedAgentId && 'allowedTools' in patch && patch.allowedTools != null) {
+      setHighlightedAgentId(null);
+      setError(null);
+    }
   }
 
-  function specValue(list: string[] | null | undefined): string {
-    if (list == null) return '*';
+  function specValue(list: string[] | null | undefined, isOrchestrator = false): string {
+    if (list == null) return isOrchestrator ? '*' : 'vazio/bloqueado';
     return list.join(', ');
   }
 
@@ -180,9 +222,12 @@ export function MissionWizard() {
     );
     if (!unsafe) return true;
     const message =
-      `Worker ${unsafe.agentName} não pode usar tools irrestritas. ` +
-      'Preencha tools explícitas ou deixe vazio para bloquear todas.';
+      `Worker "${unsafe.agentName}" está sem allowlist de tools. ` +
+      'No campo "tools" desse worker, liste as ferramentas permitidas (ex.: Bash, Read, Edit) ' +
+      'ou deixe vazio para bloquear todas. ' +
+      'O wildcard * só é permitido no orquestrador.';
     setError(message);
+    setHighlightedAgentId(unsafe.id);
     useToastStore.getState().push('error', 'Allowlist insegura', message);
     return false;
   }
@@ -652,7 +697,11 @@ export function MissionWizard() {
                   const cliAdapter = adapters.find((x) => x.id === a.cli);
                   const models = cliAdapter?.models.list ?? [];
                   return (
-                    <li key={a.id} className="wizard__roster-row">
+                    <li
+                      key={a.id}
+                      data-agent-id={a.id}
+                      className={`wizard__roster-row${a.id === highlightedAgentId ? ' wizard__roster-row--invalid' : ''}`}
+                    >
                       <span className="wizard__roster-role">{a.category}</span>
                       <span className="wizard__roster-name" title={a.agentName}>
                         {a.agentName}
@@ -719,8 +768,13 @@ export function MissionWizard() {
                         <label className="wizard__agent-spec-label">
                           tools
                           <input
-                            className="wizard__agent-spec-input"
-                            value={specValue(a.allowedTools)}
+                            className={`wizard__agent-spec-input${!isOrchestrator && a.allowedTools == null ? ' wizard__agent-spec-input--error' : ''}`}
+                            value={specValue(a.allowedTools, isOrchestrator)}
+                            placeholder={
+                              isOrchestrator
+                                ? '* (irrestrito) ou Bash, Read, Edit…'
+                                : 'Bash, Read, Edit… (vazio = bloquear todas)'
+                            }
                             spellCheck={false}
                             onChange={(e) => {
                               if (!isOrchestrator && e.target.value.trim() === '*') {
@@ -741,7 +795,8 @@ export function MissionWizard() {
                           skills
                           <input
                             className="wizard__agent-spec-input"
-                            value={specValue(a.allowedSkills)}
+                            value={specValue(a.allowedSkills, true)}
+                            placeholder="react-patterns, graphify… (vazio = bloquear)"
                             spellCheck={false}
                             onChange={(e) =>
                               updateAgent(a.id, {
@@ -750,6 +805,11 @@ export function MissionWizard() {
                             }
                           />
                         </label>
+                        {!isOrchestrator && a.allowedTools == null && (
+                          <p className="wizard__row-error">
+                            ⚠ Tools bloqueadas — liste explicitamente ou deixe vazio para bloquear todas
+                          </p>
+                        )}
                       </div>
                     </li>
                   );
@@ -772,7 +832,12 @@ export function MissionWizard() {
                   <button
                     className="wizard__btn wizard__btn--primary"
                     onClick={() => void handleLaunchSquad()}
-                    disabled={spawning}
+                    disabled={spawning || !!rosterInvalidAgent}
+                    title={
+                      rosterInvalidAgent
+                        ? `Worker "${rosterInvalidAgent.agentName}" está sem allowlist de tools. Corrija o campo "tools" antes de iniciar.`
+                        : undefined
+                    }
                   >
                     {spawning ? 'Iniciando…' : 'Iniciar Squad'}
                   </button>

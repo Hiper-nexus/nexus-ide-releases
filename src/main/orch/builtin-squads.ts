@@ -25,8 +25,19 @@ const SPEAK_HUMAN =
  * sem spawnar panes, sem controlar a missão. `allowedSkills` fica aberto de
  * propósito: skills rodam no contexto do próprio worker (não é vetor de escape
  * lateral) e workers legítimos precisam delas (ex.: impeccable no UX Designer).
+ *
+ * NOTA — normalizador canônico: esta é a ÚNICA regra de allowlist do produto.
+ * Os built-ins a aplicam no load; os squads custom/arquiteto/importados a
+ * aplicam na camada de persistência (squad-store.saveSquad / importSquadsJson)
+ * para que TODO worker persistido tenha `allowedTools` não-nulo e passe o
+ * fire-gate do wizard (validateWorkerToolScopes). O `[]` do worker escopa
+ * APENAS o toolset MCP do Nexus (nexus_pane_*, remote_*, etc.) — as tools
+ * NATIVAS da CLI do worker (Read/Write/Edit/Bash/Grep/Glob) não passam por este
+ * gate, então `[]` NÃO incapacita o worker: ele continua codando normalmente e
+ * só perde acesso cruzado a panes/missão, entregando via nexus_handoff_submit
+ * (sempre permitido). Ver gate.ts isToolAllowed + mcp-protocol.ts.
  */
-function withAllowlists(agents: SquadAgent[]): SquadAgent[] {
+export function withAllowlists(agents: SquadAgent[]): SquadAgent[] {
   return agents.map((agent) => ({
     ...agent,
     allowedTools:

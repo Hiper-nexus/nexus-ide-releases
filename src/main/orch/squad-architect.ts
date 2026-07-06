@@ -201,6 +201,10 @@ async function designSquad(opts: {
     ],
   };
   try {
+    // saveSquad aplica withAllowlists (normalizador canônico): os workers
+    // gerados aqui não carregam `allowedTools`, e é lá que ganham o `[]` que os
+    // faz passar o fire-gate do wizard. Não normalizamos aqui para não duplicar
+    // a regra — a persistência é o único ponto de normalização.
     const squad = saveSquad(candidate);
     console.log(`[orch] squad sob medida criado: ${squad.name} (${squad.agents.length} agentes)`);
     return { ok: true, squad };

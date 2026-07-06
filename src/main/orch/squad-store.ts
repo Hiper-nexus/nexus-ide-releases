@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { Db } from '../persistence/db';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { squadSchema, squadsFileSchema } from '../../shared/orch-types';
-import { BUILTIN_SQUADS } from './builtin-squads';
+import { BUILTIN_SQUADS, withAllowlists } from './builtin-squads';
 import { ChangeHub, parseJsonColumn } from './store-util';
 
 /**
@@ -140,7 +140,12 @@ export function getSquad(id: string): Squad | null {
 
 /** Validate and save a squad (create or replace). Returns the saved squad. */
 export function saveSquad(raw: unknown): Squad {
-  const squad = squadSchema.parse(raw);
+  const parsed = squadSchema.parse(raw);
+  // Normalize workers' allowlists with the same canonical rule the built-ins
+  // use (withAllowlists): every persisted worker gets a non-null `allowedTools`
+  // so it passes the wizard's fire-gate (validateWorkerToolScopes). Custom and
+  // architect-generated squads (designSquad → saveSquad) both funnel here.
+  const squad: Squad = { ...parsed, agents: withAllowlists(parsed.agents) };
   squads.set(squad.id, squad);
   persist(squad);
   hub.emit();
@@ -190,7 +195,12 @@ export function exportSquadsJson(): string {
 /** Import a squads file. Returns how many were saved. */
 export function importSquadsJson(json: string): number {
   const parsed = squadsFileSchema.parse(JSON.parse(json));
-  for (const squad of parsed.squads) {
+  for (const imported of parsed.squads) {
+    // Same canonical allowlist normalization as saveSquad: imported/migrated
+    // rosters that omit `allowedTools` would otherwise die at the wizard's
+    // fire-gate. Built-ins carry `builtin: true` and are already normalized at
+    // module load, so re-applying is idempotent.
+    const squad: Squad = { ...imported, agents: withAllowlists(imported.agents) };
     squads.set(squad.id, squad);
     persist(squad);
   }

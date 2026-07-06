@@ -232,12 +232,17 @@ export function launchSquadMission(
     claudeAdapter?.models.default ??
     '';
   if (!claudeAdapter?.installed) {
-    return {
-      ok: false,
-      error:
-        'O orquestrador roda no Claude, mas a CLI `claude` não foi detectada. ' +
-        'Instale/entre no Claude Code (ou ajuste o binário em Configurações › Providers) e tente de novo.',
-    };
+    const lines = [
+      'CLI `claude` não encontrada — o orquestrador de squad requer o Claude Code CLI.',
+      'Para resolver, tente uma das opções:',
+      '  1. Instale o Claude Code: npm install -g @anthropic-ai/claude-code',
+      '  2. Abra o Nexus pelo terminal (não pelo Finder/Dock) para herdar o PATH de shell completo',
+      '  3. Adicione o diretório do binário `claude` em Configurações › Providers',
+    ];
+    if (!claudeAdapter) {
+      lines.push('(adapter "claude" não carregado — verifique ~/.nexus/plugins/adapters)');
+    }
+    return { ok: false, error: lines.join('\n') };
   }
 
   // Start the mission in a clean grid with just the orchestrator pane (a
