@@ -316,7 +316,7 @@ export function parseEnv(raw: Record<string, string | undefined>): Env {
   - `client.ts`: `type Db = import('drizzle-orm/node-postgres').NodePgDatabase<typeof schema>`; `makeDb(pool): Db`.
   - `migrate.ts`: runner (aplica migrations geradas).
 
-- [ ] **Step 1: teste que falha (schema aplica limpo no pglite)**
+- [x] **Step 1: teste que falha (schema aplica limpo no pglite)**
 
 ```ts
 // server/src/db/schema.test.ts
@@ -348,8 +348,8 @@ describe('schema', () => {
 });
 ```
 
-- [ ] **Step 2: rodar e ver falhar** — FAIL (`Cannot find module './schema'`)
-- [ ] **Step 3: implementar `schema.ts`**
+- [x] **Step 2: rodar e ver falhar** — FAIL (`Cannot find module './schema'`)
+- [x] **Step 3: implementar `schema.ts`**
 
 ```ts
 // server/src/db/schema.ts
@@ -474,7 +474,7 @@ CREATE TABLE auth_codes (
 `;
 ```
 
-- [ ] **Step 4: `client.ts` + `migrate.ts` + `drizzle.config.ts`**
+- [x] **Step 4: `client.ts` + `migrate.ts` + `drizzle.config.ts`**
 
 ```ts
 // server/src/db/client.ts
@@ -514,13 +514,13 @@ export default defineConfig({
 });
 ```
 
-- [ ] **Step 5: rodar e ver passar** — `cd server && npx vitest run src/db/schema.test.ts` → PASS
-- [ ] **Step 6: gerar a migration inicial**
+- [x] **Step 5: rodar e ver passar** — `cd server && npx vitest run src/db/schema.test.ts` → PASS
+- [x] **Step 6: gerar a migration inicial**
 
 Run: `cd server && DATABASE_URL=postgres://x npx drizzle-kit generate`
 Expected: cria `server/drizzle/0000_*.sql`. Commitar junto.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add server/src/db server/drizzle.config.ts server/drizzle
