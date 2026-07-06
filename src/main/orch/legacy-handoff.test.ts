@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   extractJsonObject,
+  isPlaceholderSummary,
+  LEGACY_DEDUPE_TTL_MS,
   LEGACY_MARKER,
+  LegacyHandoffDedupe,
   LegacyHandoffParser,
   type LegacyHandoffPayload,
 } from './legacy-handoff';
@@ -96,5 +99,66 @@ describe('LegacyHandoffParser', () => {
     parser.feed('s1', 'x'.repeat(20_000));
     parser.feed('s1', '"}');
     expect(received).toHaveLength(0);
+  });
+});
+
+describe('isPlaceholderSummary', () => {
+  it('rejeita o template do contrato ecoado pelo kickoff', () => {
+    expect(isPlaceholderSummary('<resumo objetivo do que fez>')).toBe(true);
+  });
+
+  it('rejeita resumos curtos demais', () => {
+    expect(isPlaceholderSummary('ok')).toBe(true);
+    expect(isPlaceholderSummary('   feito   ')).toBe(true);
+  });
+
+  it('aceita uma entrega real', () => {
+    expect(
+      isPlaceholderSummary('Implementei o formulário de login com validação.'),
+    ).toBe(false);
+  });
+});
+
+describe('LegacyHandoffDedupe', () => {
+  const payload: LegacyHandoffPayload = {
+    status: 'success',
+    summary: 'Implementei o formulário de login com validação.',
+    artifacts: [],
+  };
+
+  it('deixa a primeira entrega passar e barra o repaint idêntico', () => {
+    let now = 1_000;
+    const dedupe = new LegacyHandoffDedupe(() => now);
+    expect(dedupe.isDuplicate('s1', payload)).toBe(false);
+    now += 5_000; // repaint segundos depois
+    expect(dedupe.isDuplicate('s1', payload)).toBe(true);
+  });
+
+  it('conteúdo diferente ou sessão diferente não é duplicata', () => {
+    const dedupe = new LegacyHandoffDedupe(() => 1_000);
+    expect(dedupe.isDuplicate('s1', payload)).toBe(false);
+    expect(dedupe.isDuplicate('s2', payload)).toBe(false);
+    expect(
+      dedupe.isDuplicate('s1', { ...payload, summary: 'Outra entrega real feita.' }),
+    ).toBe(false);
+  });
+
+  it('expira após o TTL (reentrega tardia legítima passa)', () => {
+    let now = 1_000;
+    const dedupe = new LegacyHandoffDedupe(() => now);
+    expect(dedupe.isDuplicate('s1', payload)).toBe(false);
+    now += LEGACY_DEDUPE_TTL_MS + 1;
+    expect(dedupe.isDuplicate('s1', payload)).toBe(false);
+  });
+
+  it('dropSession limpa só a sessão encerrada', () => {
+    let now = 1_000;
+    const dedupe = new LegacyHandoffDedupe(() => now);
+    dedupe.isDuplicate('s1', payload);
+    dedupe.isDuplicate('s2', payload);
+    dedupe.dropSession('s1');
+    now += 5_000;
+    expect(dedupe.isDuplicate('s1', payload)).toBe(false); // limpo
+    expect(dedupe.isDuplicate('s2', payload)).toBe(true); // preservado
   });
 });

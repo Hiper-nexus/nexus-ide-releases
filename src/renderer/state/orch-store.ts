@@ -36,6 +36,8 @@ interface OrchState {
   toggleBoard(): void;
   closeBoard(): void;
   bindPaneMission(paneId: string, missionId: string | undefined): void;
+  /** Remove bindings de panes que não existem mais no layout. */
+  pruneMissionBindings(livePaneIds: Set<string>): void;
 
   setMissions(missions: Mission[]): void;
   setHandoffs(handoffs: Handoff[]): void;
@@ -80,6 +82,18 @@ export const useOrchStore = create<OrchState>((set) => ({
     set((s) => {
       if (!missionId) return s;
       return { paneMissions: { ...s.paneMissions, [paneId]: missionId } };
+    }),
+
+  // Sem o prune, os bindings de panes mortos marcavam a missão deslocada como
+  // "aberta" PARA SEMPRE: o clique no rail virava no-op e o board escondia o
+  // "retomar" — a missão antiga sumia sem volta (o bug do histórico).
+  pruneMissionBindings: (livePaneIds) =>
+    set((s) => {
+      const entries = Object.entries(s.paneMissions).filter(([paneId]) =>
+        livePaneIds.has(paneId),
+      );
+      if (entries.length === Object.keys(s.paneMissions).length) return s;
+      return { paneMissions: Object.fromEntries(entries) };
     }),
 
   setMissions: (missions) => {

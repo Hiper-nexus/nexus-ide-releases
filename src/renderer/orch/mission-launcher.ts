@@ -83,7 +83,7 @@ function rosterBlock(agents: SquadAgent[]): string {
     .join('\n');
 }
 
-function kickoffPrompt(squad: Squad): string {
+function kickoffPrompt(squad: Squad, missionId?: string): string {
   const parts: string[] = [];
   if (squad.orchestratorInstructions.trim()) {
     parts.push(squad.orchestratorInstructions.trim());
@@ -91,10 +91,15 @@ function kickoffPrompt(squad: Squad): string {
   parts.push(
     `## Seu squad (${squad.name})\n${rosterBlock(squad.agents) || '(sem workers definidos)'}`,
   );
+  const missionLine = missionId
+    ? `a missão JÁ ESTÁ registrada (missionId=${missionId}) — NÃO chame ` +
+      'nexus_mission_create; use nexus_mission_set_status para movê-la ' +
+      '(running ao começar, review/done ao fechar)'
+    : 'nexus_mission_create para abrir a missão';
   parts.push(
     'Você é o orquestrador desta missão dentro do NexusIDE. Use as tools MCP ' +
-      'do servidor "nexus" para orquestrar: nexus_mission_create para abrir a ' +
-      'missão, nexus_pane_spawn {agentName} para spawnar cada worker (as ' +
+      `do servidor "nexus" para orquestrar: ${missionLine}, ` +
+      'nexus_pane_spawn {agentName} para spawnar cada worker (as ' +
       'allowlists do squad são aplicadas automaticamente), nexus_pane_write / ' +
       'nexus_pane_wait_idle / nexus_pane_read para coordenar, e ' +
       'nexus_handoff_list para coletar os resultados. Cada worker deve ' +
@@ -108,10 +113,13 @@ function kickoffPrompt(squad: Squad): string {
       'esperando o anterior. Não recite o plano nem peça confirmações: ' +
       'recebida a missão, EXECUTE. Respostas suas no chat: curtas.',
   );
+  const step1 = missionId
+    ? 'nexus_mission_set_status {missionId acima, status: "running"}'
+    : 'nexus_mission_create';
   parts.push(
     '## REGRA INEGOCIÁVEL: você DELEGA, não executa\n' +
       'Você NÃO escreve código nem edita arquivos você mesmo. Recebida a ' +
-      'missão, IMEDIATAMENTE: (1) nexus_mission_create; (2) quebre em tarefas; ' +
+      `missão, IMEDIATAMENTE: (1) ${step1}; (2) quebre em tarefas; ` +
       '(3) para CADA tarefa, nexus_route_task e nexus_pane_spawn do worker ' +
       'correspondente do seu time; (4) coordene e cobre handoffs. Se uma tool ' +
       'falhar, mostre o erro EXATO no chat e tente uma vez de novo — nunca ' +
@@ -257,6 +265,12 @@ export function launchSquadMission(
     role: 'orchestrator' as const,
     agentName: orchestrator.agentName,
   };
+  // Missões que estavam abertas neste grid serão deslocadas: marca como
+  // "travada" ANTES de matar os panes — elas continuam visíveis no rail/board
+  // com "retomar", em vez de sumirem penduradas em "rodando".
+  const displaced = new Set(
+    Object.values(useOrchStore.getState().paneMissions),
+  );
   // Preserva a missão anterior (fica na trilha) e garante 1 orquestrador só.
   killLiveAgents();
   useHomeStore.getState().hide();
@@ -265,15 +279,44 @@ export function launchSquadMission(
   // Kickoff injection runs async — the wizard closes immediately, the
   // instructions land as soon as the CLI is booted and idle.
   void (async () => {
+    for (const missionId of displaced) {
+      await window.nexus.orch
+        .updateMission(missionId, { status: 'blocked' })
+        .catch(() => {}); // missão já removida — nada a marcar
+    }
+    // O registro da missão nasce AQUI, no lançamento — não fica à mercê de o
+    // LLM chamar nexus_mission_create (sem isto a missão nova não aparecia
+    // em rail/board nenhum enquanto a antiga já tinha sido deslocada).
+    const mission = await window.nexus.orch
+      .createMission({
+        title: squad.name,
+        squadId: squad.id,
+        orchestratorPane: {
+          paneId: orchPane.id,
+          adapterId: cli,
+          model,
+          cwd,
+          title: orchPane.title,
+          agentName: orchestrator.agentName,
+        },
+      })
+      .catch(() => null);
+    if (mission) {
+      useOrchStore.getState().bindPaneMission(orchPane.id, mission.id);
+    }
     const sessionId = await waitForSession(orchPane.id);
     if (!sessionId) return;
+    if (mission) {
+      void window.nexus.orch
+        .rebindMissionOrchestrator(mission.id, sessionId)
+        .catch(() => {});
+    }
     await waitFirstIdle(sessionId);
-    const prompt = kickoffPrompt(squad);
+    const prompt = kickoffPrompt(squad, mission?.id);
     // Bracketed paste keeps multi-line playbooks from submitting line-by-line.
     window.nexus.pty.write(sessionId, `\x1b[200~${prompt}\x1b[201~`);
     setTimeout(() => window.nexus.pty.write(sessionId, '\r'), PASTE_SETTLE_MS);
   })();
 
-  useOrchStore.getState().bindPaneMission(orchPane.id, undefined);
   return { ok: true, paneId: orchPane.id };
 }

@@ -228,6 +228,7 @@ const missionCreateTool: McpToolDef = {
         model: orchPane.model,
         title: orchPane.title,
         role: 'orchestrator',
+        paneId: orchPane.paneId,
       });
     }
     return mission;

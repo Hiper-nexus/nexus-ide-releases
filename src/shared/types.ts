@@ -523,6 +523,19 @@ export interface NexusApi {
       sessionId: string,
     ): Promise<{ ok: boolean }>;
     /** Patch a mission's editable fields (title/description/status/milestones). */
+    /** Cria o registro da missão no lançamento (não depende do LLM). */
+    createMission(input: {
+      title: string;
+      squadId?: string;
+      orchestratorPane?: {
+        paneId: string;
+        adapterId: string;
+        model?: string;
+        cwd?: string;
+        title?: string;
+        agentName?: string;
+      };
+    }): Promise<Mission>;
     updateMission(missionId: string, patch: MissionPatch): Promise<Mission>;
     removeMission(missionId: string): Promise<{ removed: boolean }>;
     listHandoffs(): Promise<Handoff[]>;

@@ -30,7 +30,11 @@ import {
 } from './mcp-protocol';
 import { buildToolset } from './tools';
 import { getPendingSpawnMeta, stripAnsi } from './pane-registry';
-import { LegacyHandoffParser } from './legacy-handoff';
+import {
+  isPlaceholderSummary,
+  LegacyHandoffDedupe,
+  LegacyHandoffParser,
+} from './legacy-handoff';
 import { submitHandoff } from './handoff-store';
 import { onHandoffSubmitted } from './idle-delivery';
 import {
@@ -328,7 +332,19 @@ function installSpawnHook(): void {
 
 /** Legacy `### NEXUS_HANDOFF v1` stream fallback (ARCHITECTURE §E.3). */
 function installLegacyParser(): void {
+  const dedupe = new LegacyHandoffDedupe();
   const parser = new LegacyHandoffParser((sessionId, payload) => {
+    // O eco/repaint do kickoff contém o bloco-EXEMPLO do contrato — sem esta
+    // régua (a mesma da tool MCP), o template "<resumo objetivo do que fez>"
+    // virava handoff real em loop no orquestrador.
+    if (isPlaceholderSummary(payload.summary)) {
+      console.log(
+        `[handoff] bloco legacy com summary placeholder ignorado (${sessionId})`,
+      );
+      return;
+    }
+    // Repaint do TUI re-emite o MESMO bloco — uma entrega só por conteúdo.
+    if (dedupe.isDuplicate(sessionId, payload)) return;
     const ctx = getContextBySession(sessionId);
     const handoff = submitHandoff({
       status: payload.status,
@@ -369,6 +385,7 @@ function installLegacyParser(): void {
   tapSessionExit((sessionId) => {
     cliPromptAutoResponder.unbind(sessionId);
     parser.dropSession(sessionId);
+    dedupe.dropSession(sessionId);
     rawTails.delete(sessionId);
     const token = sessionTokens.get(sessionId);
     if (token) {

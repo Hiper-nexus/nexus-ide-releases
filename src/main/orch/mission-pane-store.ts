@@ -20,6 +20,7 @@ interface MissionPaneRow {
   title: string | null;
   agent_name: string | null;
   role: string;
+  pane_id: string | null;
   created_at: number;
 }
 
@@ -46,6 +47,7 @@ export function initMissionPaneStore(database: Db | null): void {
         title: row.title ?? row.adapter_id,
         agentName: row.agent_name ?? undefined,
         role: row.role === 'orchestrator' ? 'orchestrator' : 'worker',
+        paneId: row.pane_id ?? undefined,
         createdAt: row.created_at,
       });
       specsByMission.set(row.mission_id, list);
@@ -61,8 +63,8 @@ function persist(spec: MissionPaneSpec): void {
     db.prepare(
       `INSERT OR REPLACE INTO mission_panes
          (id, mission_id, adapter_id, model, effort, cwd, title, agent_name,
-          role, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          role, pane_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       spec.id,
       spec.missionId,
@@ -73,6 +75,7 @@ function persist(spec: MissionPaneSpec): void {
       spec.title,
       spec.agentName ?? null,
       spec.role,
+      spec.paneId ?? null,
       spec.createdAt,
     );
   } catch (err) {
@@ -89,6 +92,8 @@ export interface RecordMissionPaneInput {
   title?: string;
   agentName?: string;
   role?: 'orchestrator' | 'worker';
+  /** paneId original no layout — chave do resume direcionado no reopen. */
+  paneId?: string;
 }
 
 /**
@@ -108,7 +113,14 @@ export function recordMissionPane(input: RecordMissionPaneInput): void {
       spec.title === title &&
       spec.role === role,
   );
-  if (existing) return;
+  if (existing) {
+    // Registro antigo sem paneId (pré-migração) ganha a chave do resume.
+    if (!existing.paneId && input.paneId) {
+      existing.paneId = input.paneId;
+      persist(existing);
+    }
+    return;
+  }
   const spec: MissionPaneSpec = {
     id: makeId('mpane'),
     missionId: input.missionId,
@@ -119,6 +131,7 @@ export function recordMissionPane(input: RecordMissionPaneInput): void {
     title,
     agentName: input.agentName,
     role,
+    paneId: input.paneId,
     createdAt: Date.now(),
   };
   specsByMission.set(input.missionId, [...list, spec]);

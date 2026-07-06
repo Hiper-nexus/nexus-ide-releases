@@ -231,6 +231,14 @@ export function OrchestrationPanel() {
   }
 
   function onReopenMission(mission: Mission) {
+    // Missão já aberta no grid: reabrir mataria e respawnaria ela mesma.
+    const openIds = new Set(
+      Object.values(useOrchStore.getState().paneMissions),
+    );
+    if (openIds.has(mission.id)) {
+      setNotice('Esta missão já está aberta no grid.');
+      return;
+    }
     void (async () => {
       const result = await reopenMission(mission);
       setNotice(

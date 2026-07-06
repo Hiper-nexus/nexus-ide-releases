@@ -56,12 +56,18 @@ export async function reopenMission(
       spec.adapterId,
       spec.model,
     );
+    // Reusa o paneId ORIGINAL da missão: a captura de session-id do resume é
+    // chaveada por (cwd, paneId) — com id novo o resume direcionado nunca
+    // acertava e o --continue genérico retomava a conversa da OUTRA missão.
+    // O grid acabou de ser substituído, então não há colisão de ids.
+    const paneId = spec.paneId ?? base.id;
     // Mark BEFORE the panes mount so the first spawn picks up the resume flag.
-    markResumeOnSpawn(base.id);
+    markResumeOnSpawn(paneId);
     // Restore the pane's reasoning effort (task-router decision) so the
     // reopened pane re-spawns at the same effort it originally ran with.
     return {
       ...base,
+      id: paneId,
       title: spec.title,
       effort: spec.effort,
       role: spec.role,

@@ -20,6 +20,7 @@ import {
   runHarnessEnrichWithBrain,
 } from './harness-enrich';
 import {
+  createMission,
   initMissionStore,
   listMissions,
   onMissionsChange,
@@ -27,7 +28,11 @@ import {
   updateMission,
   removeMission,
 } from './mission-store';
-import { initMissionPaneStore, listMissionPanes } from './mission-pane-store';
+import {
+  initMissionPaneStore,
+  listMissionPanes,
+  recordMissionPane,
+} from './mission-pane-store';
 import { initHandoffStore, listHandoffs, onHandoffsChange } from './handoff-store';
 import { initTodoStore, listTodoLists, onTodosChange, setItemStatus } from './todo-store';
 import { initTaskStore } from './task-store';
@@ -143,6 +148,47 @@ export function registerOrchIpc(): void {
       return [];
     }
     return listMissionPanes(raw);
+  });
+
+  // A missão nasce NO LANÇAMENTO (renderer), não à mercê de o LLM chamar
+  // nexus_mission_create — sem isto, a missão nova não aparecia em lugar
+  // nenhum enquanto a antiga já tinha sido deslocada.
+  const missionCreateSchema = z.object({
+    title: z.string().min(1).max(512),
+    squadId: z.string().min(1).max(128).optional(),
+    /** Pane do orquestrador — entra na composição para o reopen restaurá-lo. */
+    orchestratorPane: z
+      .object({
+        paneId: z.string().min(1).max(128),
+        adapterId: z.string().min(1).max(128),
+        model: z.string().max(128).optional(),
+        cwd: z.string().max(4096).optional(),
+        title: z.string().max(512).optional(),
+        agentName: z.string().max(256).optional(),
+      })
+      .optional(),
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionCreate, (_event, raw) => {
+    const parsed = missionCreateSchema.safeParse(raw);
+    if (!parsed.success) throw new Error('invalid mission create payload');
+    const mission = createMission({
+      title: parsed.data.title,
+      squadId: parsed.data.squadId,
+    });
+    const pane = parsed.data.orchestratorPane;
+    if (pane) {
+      recordMissionPane({
+        missionId: mission.id,
+        adapterId: pane.adapterId,
+        model: pane.model,
+        cwd: pane.cwd,
+        title: pane.title,
+        agentName: pane.agentName,
+        role: 'orchestrator',
+        paneId: pane.paneId,
+      });
+    }
+    return mission;
   });
 
   const missionRebindSchema = z.object({

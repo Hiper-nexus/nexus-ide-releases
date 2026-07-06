@@ -136,6 +136,11 @@ export function getDb(): Db | null {
     } catch {
       // Column already present.
     }
+    try {
+      db.exec('ALTER TABLE mission_panes ADD COLUMN pane_id TEXT');
+    } catch {
+      // Column already present.
+    }
   } catch (err) {
     console.warn('[nexus] SQLite unavailable, falling back to JSON only:', err);
     db = null;

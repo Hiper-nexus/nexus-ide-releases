@@ -113,9 +113,22 @@ export function useOrchBridge(): void {
         window.nexus.orch.syncPanes(snapshotPanes());
       }),
 
-      window.nexus.orch.onMissionsChanged((missions) =>
-        useOrchStore.getState().setMissions(missions),
-      ),
+      window.nexus.orch.onMissionsChanged((missions) => {
+        useOrchStore.getState().setMissions(missions);
+        // Vincula o pane do ORQUESTRADOR à missão dele (via sessionId): sem
+        // isto a missão nova nunca constava como aberta — o rail oferecia
+        // "retomar" na missão viva e o clique matava/respawnava ela mesma.
+        const panes = listPanes(useLayoutStore.getState().root);
+        for (const mission of missions) {
+          if (!mission.orchestratorSessionId) continue;
+          const pane = panes.find(
+            (p) => getPaneSessionId(p.id) === mission.orchestratorSessionId,
+          );
+          if (pane) {
+            useOrchStore.getState().bindPaneMission(pane.id, mission.id);
+          }
+        }
+      }),
       window.nexus.orch.onHandoffsChanged((handoffs) =>
         useOrchStore.getState().setHandoffs(handoffs),
       ),
@@ -131,6 +144,12 @@ export function useOrchBridge(): void {
     // change AND when a pane's sessionId materializes after its async spawn —
     // the exact event the old 1s setInterval was polling for.
     const unsubLayout = useLayoutStore.subscribe(() => {
+      // Bindings pane→missão de panes que saíram do layout morrem junto —
+      // senão a missão deslocada fica "aberta" para sempre (não-clicável).
+      const live = new Set(
+        listPanes(useLayoutStore.getState().root).map((p) => p.id),
+      );
+      useOrchStore.getState().pruneMissionBindings(live);
       window.nexus.orch.syncPanes(snapshotPanes());
     });
     const unsubSession = onPaneSessionChange(() => {

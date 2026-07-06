@@ -11,6 +11,7 @@ export const ORCH_CHANNELS = {
   browserOpenResult: 'orch:browser.openResult',
   missionsList: 'orch:missions.list',
   missionPanesList: 'orch:missions.panes',
+  missionCreate: 'orch:missions.create',
   missionRebind: 'orch:missions.rebind',
   missionUpdate: 'orch:missions.update',
   missionRemove: 'orch:missions.remove',

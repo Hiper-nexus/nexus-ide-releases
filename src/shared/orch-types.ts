@@ -173,6 +173,13 @@ export interface MissionPaneSpec {
   title: string;
   agentName?: string;
   role: 'orchestrator' | 'worker';
+  /**
+   * paneId ORIGINAL do pane no layout — a captura de session-id de resume é
+   * chaveada por (cwd, paneId); sem reutilizá-lo, o reopen criava ids novos e
+   * o resume direcionado nunca acertava (caía no --continue genérico, que
+   * retoma a conversa MAIS RECENTE do cwd — a da outra missão).
+   */
+  paneId?: string;
   createdAt: number;
 }
 

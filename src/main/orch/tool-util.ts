@@ -166,6 +166,9 @@ export async function spawnPaneAndMaybePrompt(
       title: options.title,
       agentName: options.agentName,
       role: options.role ?? 'worker',
+      // Chave do resume direcionado: o reopen reusa este paneId para o CLI
+      // voltar à MESMA conversa (não à mais recente do cwd).
+      paneId: result.paneId,
     });
   }
   if (options.prompt) {

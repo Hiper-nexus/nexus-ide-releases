@@ -398,6 +398,18 @@ const api: NexusApi = {
     listMissions: () => ipcRenderer.invoke(ORCH_CHANNELS.missionsList),
     listMissionPanes: (missionId: string) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPanesList, missionId),
+    createMission: (input: {
+      title: string;
+      squadId?: string;
+      orchestratorPane?: {
+        paneId: string;
+        adapterId: string;
+        model?: string;
+        cwd?: string;
+        title?: string;
+        agentName?: string;
+      };
+    }) => ipcRenderer.invoke(ORCH_CHANNELS.missionCreate, input),
     rebindMissionOrchestrator: (missionId: string, sessionId: string) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionRebind, { missionId, sessionId }),
     updateMission: (missionId: string, patch: MissionPatch) =>
