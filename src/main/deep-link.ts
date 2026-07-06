@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, dialog } from 'electron';
 
 /**
  * Deep link `nexus://` + document open. O parser é PURO e valida com rigor
@@ -55,16 +55,22 @@ export function deepLinkFromArgv(argv: string[]): DeepLink | null {
 
 // ── Borda (electron) ─────────────────────────────────────────────────────────
 
-type DeepLinkHandler = (link: DeepLink) => void;
+/** `trusted` = veio de um gesto do usuário (abrir-com do Finder), não da web. */
+type DeepLinkHandler = (link: DeepLink, trusted: boolean) => void;
 let handler: DeepLinkHandler = defaultHandler;
 
-/** Roteamento padrão: licença → billing; open → foca a janela e abre no app. */
-function defaultHandler(link: DeepLink): void {
+function focusMainWindow(): BrowserWindow | undefined {
   const win = BrowserWindow.getAllWindows()[0];
   if (win) {
     if (win.isMinimized()) win.restore();
     win.focus();
   }
+  return win;
+}
+
+/** Roteamento padrão: licença → billing; open → foca a janela e abre no app. */
+function defaultHandler(link: DeepLink, trusted: boolean): void {
+  const win = focusMainWindow();
   if (link.kind === 'license') {
     // Lazy require: billing-ipc importa electron; mantém deep-link testável.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -75,6 +81,14 @@ function defaultHandler(link: DeepLink): void {
     const { BILLING_CHANNELS } = require('../shared/billing-types') as typeof import('../shared/billing-types');
     win?.webContents.send(BILLING_CHANNELS.changed);
   } else if (link.kind === 'open') {
+    // SEGURANÇA: um deep link nexus://open pode ser disparado por QUALQUER site.
+    // Abrir um diretório arbitrário como workspace expõe arquivos pelo file
+    // explorer. Sem gesto confiável (abrir-com), exigimos confirmação nativa
+    // (que o navegador não consegue forjar) mostrando o caminho exato.
+    if (!trusted && !confirmOpenPath(link.path, win)) {
+      console.warn('[deep-link] abertura recusada pelo usuário:', link.path);
+      return;
+    }
     try {
       const isDir = fs.statSync(link.path).isDirectory();
       win?.webContents.send('app:deepOpenPath', { path: link.path, isDir });
@@ -82,6 +96,24 @@ function defaultHandler(link: DeepLink): void {
       console.warn('[deep-link] caminho inexistente:', link.path);
     }
   }
+}
+
+/** Diálogo nativo (não-forjável) confirmando abertura de um caminho externo. */
+function confirmOpenPath(target: string, win?: BrowserWindow): boolean {
+  const opts = {
+    type: 'warning' as const,
+    buttons: ['Cancelar', 'Abrir'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Abrir pasta externa?',
+    message: 'Um link pediu para o NexusIDE abrir este caminho:',
+    detail: `${target}\n\nAbra apenas se você reconhece e confia na origem.`,
+    noLink: true,
+  };
+  const res = win
+    ? dialog.showMessageBoxSync(win, opts)
+    : dialog.showMessageBoxSync(opts);
+  return res === 1;
 }
 
 /**
@@ -107,23 +139,20 @@ export function wireDeepLinks(customHandler?: DeepLinkHandler): boolean {
   if (!gotLock) return false;
   app.on('second-instance', (_e, argv) => {
     const link = deepLinkFromArgv(argv);
-    if (link) handler(link);
-    const win = BrowserWindow.getAllWindows()[0];
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
-    }
+    if (link) handler(link, false); // veio de URL → não confiável
+    focusMainWindow();
   });
 
   // macOS: deep link e abertura de documento chegam por evento (app já vivo).
   app.on('open-url', (event, url) => {
     event.preventDefault();
     const link = parseDeepLink(url);
-    if (link) handler(link);
+    if (link) handler(link, false); // protocolo → pode vir da web
   });
   app.on('open-file', (event, filePath) => {
     event.preventDefault();
-    if (path.isAbsolute(filePath)) handler({ kind: 'open', path: filePath });
+    // "Abrir com" no Finder é gesto do usuário → confiável.
+    if (path.isAbsolute(filePath)) handler({ kind: 'open', path: filePath }, true);
   });
 
   return true;
@@ -132,5 +161,5 @@ export function wireDeepLinks(customHandler?: DeepLinkHandler): boolean {
 /** Deep link que veio no argv do LANÇAMENTO a frio (processa após o boot). */
 export function consumeLaunchDeepLink(): void {
   const link = deepLinkFromArgv(process.argv);
-  if (link) handler(link);
+  if (link) handler(link, false); // argv de lançamento pode vir de URL
 }
