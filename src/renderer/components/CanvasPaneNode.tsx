@@ -100,7 +100,7 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
       ) : (
         <>
           <PaneToolbar pane={pane} isFocused={isFocused} isCanvas />
-          <div ref={slotRef} className="canvas-pane__terminal" />
+          <div ref={slotRef} className="canvas-pane__terminal nodrag" />
         </>
       )}
     </div>

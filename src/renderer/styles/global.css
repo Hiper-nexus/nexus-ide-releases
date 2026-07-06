@@ -1223,6 +1223,21 @@ body {
 .canvas-container {
   width: 100%;
   height: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Allow text selection inside the terminal and interactive controls */
+.canvas-container .term-host,
+.canvas-container .term-host *,
+.canvas-container input,
+.canvas-container textarea,
+.canvas-container [contenteditable="true"],
+.canvas-container .browser-pane__surface,
+.canvas-container webview,
+.canvas-container iframe {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* xyflow wrapper fills the container */

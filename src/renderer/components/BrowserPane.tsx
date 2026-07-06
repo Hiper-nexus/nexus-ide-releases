@@ -70,7 +70,7 @@ export function BrowserPane({ pane, isCanvas }: Props) {
     <div className={`pane ${isFocused ? 'pane--focused' : ''}`}>
       <PaneToolbar pane={pane} isFocused={isFocused} isCanvas={isCanvas} />
       <form
-        className="browser-bar"
+        className="browser-bar nodrag"
         onSubmit={(e) => {
           e.preventDefault();
           void load(draftUrl);
@@ -114,8 +114,8 @@ export function BrowserPane({ pane, isCanvas }: Props) {
           aria-label="URL do browser"
         />
       </form>
-      {state.error && <div className="browser-pane__error">{state.error}</div>}
-      <div ref={slotRef} className="browser-pane__surface" />
+      {state.error && <div className="browser-pane__error nodrag">{state.error}</div>}
+      <div ref={slotRef} className="browser-pane__surface nodrag" />
     </div>
   );
 }
