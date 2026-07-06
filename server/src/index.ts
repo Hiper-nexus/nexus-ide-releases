@@ -21,8 +21,15 @@ export function createApp(deps?: AuthDeps): Express {
 if (process.argv[1] && process.argv[1].endsWith('index.js')) {
   const { parseEnv } = await import('./env');
   const { makeDb } = await import('./db/client');
+  const { cleanupExpired } = await import('./db/maintenance');
   const env = parseEnv(process.env);
   const { db } = makeDb(env.DATABASE_URL);
   const app = createApp({ db, env, fetchFn: fetch });
+  // Reaper de linhas efêmeras expiradas (states/codes/sessões/refresh).
+  const REAP_EVERY_MS = 15 * 60 * 1000;
+  const reap = () =>
+    cleanupExpired(db).catch((err) => console.error('[server] reaper:', err));
+  void reap();
+  setInterval(reap, REAP_EVERY_MS).unref();
   app.listen(env.PORT, () => console.log(`[server] :${env.PORT}`));
 }
