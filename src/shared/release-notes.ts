@@ -13,98 +13,68 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.7.1',
+  version: '0.8.1',
   date: '2026-07-06',
-  codename: 'Cockpit UI polish',
+  codename: 'Ops Board & identidade pixel',
   summary:
-    'Release focada em deixar squads, providers, contas e configurações mais previsíveis: AGY assume o lugar do Gemini CLI nos defaults, workers são distribuídos entre CLIs instaladas, contas salvas sincronizam antes do spawn e o cockpit de configurações ganhou identidade Nexus.',
+    'Glow-up visual completo em cima da nova fundação de contas: um Ops Board para o pipeline de missões, um icon set pixel próprio (incluindo o novo ícone do app), escalas de token que deixam o espaçamento consistente e o orb do Jarvis reagindo à amplitude real do microfone. Por baixo, o backend de auth (OAuth Google/GitHub) e a gamificação de operador entraram no ciclo.',
   highlights: [
     {
-      title: 'Configurações com identidade Nexus',
+      title: 'Ops Board — pipeline de missões',
       detail:
-        'O menu lateral foi redesenhado com glyphs técnicos, hierarquia mais clara, estado ativo mais legível e acabamento visual de cockpit operacional em vez de lista genérica com emojis.',
+        'Um board espacial (a fazer → executando → review → pronto → cancelado) com trilho colorido por status. Arrastar um card é planejamento; "retomar" restaura os panes da missão com as CLIs continuando de onde pararam. Abre com ⌘B.',
     },
     {
-      title: 'Jarvis em painel operacional',
+      title: 'Icon set pixel + novo ícone do app',
       detail:
-        'A configuração de voz agora organiza status, pipeline, credenciais, operação, wake word, live mode e persona em seções legíveis sem criar controles que não salvam.',
+        'Emojis e glyphs Unicode viraram um conjunto único de ícones pixel na pegada do NexusMark. O app ganhou um ícone novo — diamante-nó com core aceso sobre o console navy, no lugar do gradiente genérico.',
     },
     {
-      title: 'Perfil de operador refinado',
+      title: 'Escalas de token',
       detail:
-        'O modal do operador recebeu acabamento pixel/mission-control, barra de progresso mais clara e superfícies compatíveis com o sprite e com o tema escuro do app.',
+        'Espaçamento, tipografia, raios e sombras agora saem de escalas únicas em vez de valores soltos, deixando o acabamento consistente em toda a UI.',
     },
     {
-      title: 'AGY no lugar do Gemini CLI',
+      title: 'Orb do Jarvis com amplitude real',
       detail:
-        'O adapter Gemini foi removido dos built-ins. Squads, roteamento e remote spawn agora usam AGY como padrão compatível.',
+        'O orb de voz reage ao nível real do microfone (não só à fase), virando um visualizador de amplitude de verdade — e respeita reduced-motion.',
     },
     {
-      title: 'Squads mais equilibrados',
+      title: 'Settings agrupado + busca',
       detail:
-        'O orquestrador permanece no Claude e os workers são distribuídos entre as CLIs instaladas para evitar tudo concentrado em um só provider.',
+        'A navegação de configurações foi reagrupada por intenção (Conta · Operação · Arsenal · Catálogo) com campo de busca, resolvendo a lista de 20 itens num nível só.',
     },
     {
-      title: 'Providers hands-free por padrão',
+      title: 'Contas por OAuth (fundação)',
       detail:
-        'Permissões passam a iniciar em YOLO quando a CLI suporta, ou Bypass quando esse for o modo disponível. O cliente ainda pode voltar para o default da CLI.',
+        'Backend de auth com login Google/GitHub (PKCE), exchange por código, tokens no Keychain e licença assinada — a base dos planos Free/Pro.',
     },
     {
-      title: 'Contas sincronizadas',
+      title: 'Gamificação de operador',
       detail:
-        'Conta nova vira ativa imediatamente. Ao usar uma conta Claude por assinatura, a credencial salva é restaurada no Keychain antes de marcar como em uso.',
-    },
-    {
-      title: 'UI de contas mais clara',
-      detail:
-        'A tela mostra login local, conta em uso, credencial ausente, cooldown e botão para sincronizar a conta ativa antes de abrir novos terminais.',
-    },
-    {
-      title: 'Auth local preservado nos workers',
-      detail:
-        'Codex, AGY, Kimi e Grok agora mantêm o HOME real do Mac nos panes orquestrados, então usam as contas já autenticadas em vez de pedir login de novo.',
-    },
-    {
-      title: 'Skills reais por CLI',
-      detail:
-        'O Nexus espelha skills instaladas para Claude, Codex, AGY, Kimi e Grok no spawn e cria a skill ponytail a partir da regra interna, respeitando allowedSkills quando houver allowlist explícita.',
-    },
-    {
-      title: 'Trust de workspace no harness',
-      detail:
-        'AGY é confirmado automaticamente quando mostra o diálogo conhecido de confiança do workspace, e Grok abre com --trust-folder para não parar antes de iniciar o agente.',
+        'XP por valor entregue (nunca por consumo), tiers, streak, conquistas e o mascote pixel no HUD — com modo sóbrio para quem prefere esconder tudo.',
     },
   ],
   fixes: [
     {
-      title: 'Scrollbars integradas ao tema',
+      title: 'Versão correta no About',
       detail:
-        'Drawers, Jarvis e perfil de operador deixam de mostrar a barra branca crua do sistema e usam rolagem fina, escura e consistente com a UI.',
+        'O About mostrava 0.7.1 fixo mesmo em versões novas; agora acompanha a versão real do pacote.',
     },
     {
-      title: 'Menos risco de texto sobreposto',
+      title: 'Bugs de paleta',
       detail:
-        'O drawer de configurações ficou mais largo e os itens de navegação ganharam truncamento, espaçamento e estados que mantêm rótulos e badges separados.',
+        'O textDim voltava para um cinza que falha contraste WCAG; cores Material cruas no toolbar e o vermelho de "erro" nos presets "Originals" foram trocados por tokens da paleta.',
     },
     {
-      title: 'AGY não cai mais no help com code 2',
+      title: 'Botão de fechar único',
       detail:
-        'O modo hands-free do AGY passou de --yolo para --dangerously-skip-permissions, que é a flag aceita pela CLI instalada.',
+        'As quatro variantes de "fechar" (incluindo um "x" minúsculo) viraram um X nítido só, em todo o app.',
     },
     {
-      title: 'Menos prompts bloqueando squads',
+      title: 'PT-BR consistente',
       detail:
-        'O harness reconhece prompts de confiança suportados por CLI e responde apenas a assinaturas específicas, uma vez por sessão.',
-    },
-    {
-      title: 'Sem sobreposição no review de squad',
-      detail:
-        'O layout do passo Revisar foi reorganizado com identidade e controles separados, evitando texto por cima dos selects.',
-    },
-    {
-      title: 'Compatibilidade de squads antigos',
-      detail:
-        'providerId gemini-cli em arquivos antigos passa a ser normalizado para agy quando o cli não está explícito.',
+        'O seletor de agente, as fases do HUD de voz e a frase de teste de voz estavam em inglês no meio da UI em português.',
     },
   ],
 };
