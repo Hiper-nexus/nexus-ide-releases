@@ -90,6 +90,7 @@ import {
 } from './orch/pane-pipe-ipc';
 import { registerRemoteIpc } from './remote/remote-ipc';
 import { stopRemoteBridge } from './remote/remote-bridge';
+import { initSmokeTest } from './smoke-test';
 
 // Windows installer housekeeping (no-op elsewhere).
 if (process.platform === 'win32') {
@@ -137,6 +138,8 @@ function bootstrap(): void {
   );
   createMainWindow();
 }
+
+initSmokeTest();
 
 app.whenReady().then(bootstrap);
 

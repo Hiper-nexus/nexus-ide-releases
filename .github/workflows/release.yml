@@ -63,6 +63,34 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run make
 
+      # Roda o .app EMPACOTADO antes de publicar: se o main crashar no boot
+      # (ex.: interop de bundle que só quebra em produção), o release não sai.
+      # O timeout externo cobre o caso de crash em import-time, onde o Electron
+      # mostra o dialog de exceção e trava sem encerrar o processo.
+      - name: Smoke test do app empacotado
+        run: |
+          set -euo pipefail
+          APP="$(find out -maxdepth 2 -name 'NexusIDE.app' -not -path '*/make/*' | head -1)"
+          BIN="$APP/Contents/MacOS/NexusIDE"
+          test -x "$BIN" || { echo '::error::app empacotado não encontrado em out/'; exit 1; }
+          "$BIN" --smoke-test &
+          PID=$!
+          CODE=""
+          for _ in $(seq 1 45); do
+            if ! kill -0 "$PID" 2>/dev/null; then
+              wait "$PID" && CODE=0 || CODE=$?
+              break
+            fi
+            sleep 2
+          done
+          if [ -z "$CODE" ]; then
+            kill -9 "$PID" 2>/dev/null || true
+            echo '::error::smoke test: timeout — main process travou no boot (provável exceção em import-time)'
+            exit 1
+          fi
+          echo "smoke test exit code: $CODE"
+          exit "$CODE"
+
       - name: Publicar Release com o .dmg + .zip
         env:
           GH_TOKEN: ${{ github.token }}
