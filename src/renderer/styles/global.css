@@ -1983,6 +1983,62 @@ body {
   margin: 10px 0;
 }
 
+.release-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.release-version {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: var(--accent-soft);
+}
+
+.release-summary {
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.release-summary > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.release-summary p {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.release-section-title {
+  margin: 16px 0 8px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.release-note {
+  background:
+    linear-gradient(90deg, rgba(107, 141, 255, 0.08), transparent 56%),
+    var(--bg);
+}
+
 /* ---- Launch / onboarding screen ---- */
 .launch {
   height: 100%;

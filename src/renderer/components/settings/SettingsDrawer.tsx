@@ -6,6 +6,7 @@ import {
   VoiceSection,
   MarketplaceSection,
   SquadsSection,
+  SystemSection,
   TerminalSection,
 } from './ModuleSections';
 import { ProvidersPanel } from './ProvidersPanel';
@@ -34,6 +35,7 @@ import {
 
 export type SettingsSection =
   | 'account'
+  | 'system'
   | 'terminal'
   | 'voice'
   | 'media'
@@ -62,6 +64,7 @@ interface NavItem {
 
 const ACCOUNT_ITEMS: NavItem[] = [
   { id: 'account', icon: '👤', title: 'MINHA CONTA', subtitle: 'plano · assinatura' },
+  { id: 'system', icon: 'i', title: 'SISTEMA', subtitle: 'versão · changelog' },
 ];
 
 const MODULE_ITEMS: NavItem[] = [
@@ -186,6 +189,7 @@ export function SettingsDrawer() {
 
         <div className="settings-detail">
           {section === 'account' && <AccountSection />}
+          {section === 'system' && <SystemSection />}
           {section === 'terminal' && <TerminalSection />}
           {section === 'voice' && <VoiceSection onNavigate={close} />}
           {section === 'media' && <MediaSection />}

@@ -7,6 +7,7 @@ import { TERMINAL_THEMES } from '../../styles/terminal-theme';
 import { useSettingsStore } from '../../state/settings-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useVoiceStore } from '../../voice/voice-store';
+import { CURRENT_RELEASE } from '../../../shared/release-notes';
 
 /** MÓDULOS sections: Terminal, Voice, Providers, Squads, Marketplace. */
 
@@ -100,6 +101,56 @@ export function VoiceSection({ onNavigate }: { onNavigate: () => void }) {
       >
         Abrir configurações de voz
       </button>
+    </section>
+  );
+}
+
+export function SystemSection() {
+  const release = CURRENT_RELEASE;
+  return (
+    <section>
+      <div className="release-head">
+        <div>
+          <h3 className="settings-detail__title">Sistema</h3>
+          <p className="settings-detail__hint">
+            Versão atual, changelog e estado do pacote local instalado.
+          </p>
+        </div>
+        <span className="release-version">v{release.version}</span>
+      </div>
+
+      <div className="release-summary">
+        <div>
+          <span className="settings-chip settings-chip--ok">instalada</span>
+          <span className="settings-chip">{release.date}</span>
+          <span className="settings-chip">{release.codename}</span>
+        </div>
+        <p>{release.summary}</p>
+      </div>
+
+      <h4 className="release-section-title">Changelog · melhorias</h4>
+      <ul className="settings-list">
+        {release.highlights.map((item) => (
+          <li key={item.title} className="settings-list__item release-note">
+            <div className="settings-list__head">
+              <span className="settings-list__title">{item.title}</span>
+            </div>
+            <p className="settings-list__detail">{item.detail}</p>
+          </li>
+        ))}
+      </ul>
+
+      <h4 className="release-section-title">Changelog · correções</h4>
+      <ul className="settings-list">
+        {release.fixes.map((item) => (
+          <li key={item.title} className="settings-list__item release-note">
+            <div className="settings-list__head">
+              <span className="settings-list__title">{item.title}</span>
+            </div>
+            <p className="settings-list__detail">{item.detail}</p>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

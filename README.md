@@ -61,7 +61,9 @@ Processo separado, segurança em primeiro lugar: `contextIsolation`,
 validado com zod em todo boundary do main, e PTYs isolados. Ver
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md),
 [`docs/orchestration.md`](docs/orchestration.md) e
-[`docs/workspace-and-settings.md`](docs/workspace-and-settings.md).
+[`docs/workspace-and-settings.md`](docs/workspace-and-settings.md). Mudanças
+visíveis da versão atual ficam em [`CHANGELOG.md`](CHANGELOG.md) e em
+Configurações → Sistema dentro do app.
 
 ## Stack
 
