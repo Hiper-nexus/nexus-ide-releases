@@ -80,6 +80,33 @@ describe('findOrCreateAccount (matriz de merge)', () => {
     expect(second.accountId).not.toBe(first.accountId);
   });
 
+  it('email verificado colidindo com conta NÃO-mesclável não quebra o login', async () => {
+    const db = await makeTestDb();
+    // Estado adversarial: conta segurando o email a@b.com SEM nenhuma
+    // identity verificada (não-mesclável pela matriz anti-takeover).
+    const [acc] = await db
+      .insert(schema.accounts)
+      .values({ email: 'a@b.com' })
+      .returning({ id: schema.accounts.id });
+    await db.insert(schema.identities).values({
+      accountId: acc.id,
+      provider: 'google',
+      providerUserId: 'g-zumbi',
+      email: 'a@b.com',
+      emailVerified: false,
+    });
+    // Login verificado com o mesmo email: não pode 500 (violação de UNIQUE)
+    // nem tomar a conta — cria conta isolada com email sintético.
+    const r = await findOrCreateAccount(db, prof());
+    expect(r.merged).toBe(false);
+    expect(r.accountId).not.toBe(acc.id);
+    const [created] = await db
+      .select()
+      .from(schema.accounts)
+      .where(eq(schema.accounts.id, r.accountId));
+    expect(created.email).toBe('github:gh-1');
+  });
+
   it('primeiro login concorrente do MESMO subject não duplica conta', async () => {
     const db = await makeTestDb();
     // Dois callbacks simultâneos do mesmo usuário OAuth: a UNIQUE(provider,

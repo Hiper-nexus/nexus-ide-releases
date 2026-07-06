@@ -50,6 +50,7 @@ export async function findOrCreateAccount(
   if (existing[0]) return { accountId: existing[0].accountId, merged: false };
 
   // 2. merge por email — SÓ com email verificado dos dois lados
+  let verifiedEmailTaken = false;
   if (p.email && p.emailVerified) {
     const byEmail = await db
       .select()
@@ -58,6 +59,9 @@ export async function findOrCreateAccount(
       .limit(1);
     const acc = byEmail[0];
     if (acc) {
+      // Conta segurando o email mas NÃO-mesclável: o passo 3 precisa usar
+      // email sintético, senão a UNIQUE(email) derruba o login (500/DoS).
+      verifiedEmailTaken = true;
       // a conta existente precisa ter chegado por um email verificado:
       // exigimos que ELA tenha ao menos uma identity com email verificado.
       const verified = await db
@@ -87,9 +91,12 @@ export async function findOrCreateAccount(
   }
 
   // 3. cria conta nova + identity. Email único: se colidir com conta
-  // não-verificada, usa um email desambiguado para não violar a constraint.
+  // não-mesclável (ou não for verificado), usa um email desambiguado
+  // estável para não violar a constraint.
   const emailForAccount =
-    p.email && p.emailVerified ? p.email : `${p.provider}:${p.providerUserId}`;
+    p.email && p.emailVerified && !verifiedEmailTaken
+      ? p.email
+      : `${p.provider}:${p.providerUserId}`;
   try {
     // Transação: conta + identity nascem juntas. Sem isso, uma violação na
     // identity deixaria uma conta órfã que envenena merges futuros por email.
