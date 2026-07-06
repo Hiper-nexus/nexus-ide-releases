@@ -1831,6 +1831,33 @@ body {
   flex: 1;
 }
 
+.settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.settings-textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px 9px;
+  font-family: var(--font-mono);
+  box-sizing: border-box;
+}
+
+.settings-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .settings-theme-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));

@@ -9,6 +9,7 @@ import {
 } from '../shared/channels';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { ORCH_CHANNELS } from '../shared/orch-channels';
+import { REMOTE_CHANNELS } from '../shared/remote-channels';
 import { SETTINGS_CHANNELS } from '../shared/settings-types';
 import type { TerminalSettings } from '../shared/settings-types';
 import { WORKSPACE_CHANNELS } from '../shared/workspace-types';
@@ -373,6 +374,12 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.catalogInstall, req),
     getRecipeOverlay: (workspacePath?: string) =>
       ipcRenderer.invoke(ORCH_CHANNELS.recipeOverlay, { workspacePath }),
+    saveCatalogOverlay: (patch) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.catalogOverlaySave, patch),
+    proposeRecipes: (workspacePath?: string) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.recipePropose, { workspacePath }),
+    writeAgentSpec: (req) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.agentSpecWrite, req),
     listInstalledCatalog: () =>
       ipcRenderer.invoke(ORCH_CHANNELS.catalogInstalled),
     listNativeTools: () => ipcRenderer.invoke(ORCH_CHANNELS.toolsList),
@@ -382,6 +389,21 @@ const api: NexusApi = {
     onHandoffsChanged: (cb) => addListener(handoffsChangedListeners, cb),
     onTodosChanged: (cb) => addListener(todosChangedListeners, cb),
     onSquadsChanged: (cb) => addListener(squadsChangedListeners, cb),
+  },
+  remote: {
+    bridgeStatus: () => ipcRenderer.invoke(REMOTE_CHANNELS.bridgeStatus),
+    bridgeStart: (req) => ipcRenderer.invoke(REMOTE_CHANNELS.bridgeStart, req ?? {}),
+    bridgeStop: () => ipcRenderer.invoke(REMOTE_CHANNELS.bridgeStop),
+    bridgeRotatePairing: () =>
+      ipcRenderer.invoke(REMOTE_CHANNELS.bridgeRotatePairing),
+    bridgeRevokeTokens: () =>
+      ipcRenderer.invoke(REMOTE_CHANNELS.bridgeRevokeTokens),
+    detectClis: (target) =>
+      ipcRenderer.invoke(REMOTE_CHANNELS.remoteSpawnDetect, { target }),
+    listTmux: (target) =>
+      ipcRenderer.invoke(REMOTE_CHANNELS.remoteSpawnList, { target }),
+    createTmux: (req) =>
+      ipcRenderer.invoke(REMOTE_CHANNELS.remoteSpawnCreate, req),
   },
   settings: {
     get: () => ipcRenderer.invoke(SETTINGS_CHANNELS.get),

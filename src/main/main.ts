@@ -88,6 +88,7 @@ import {
   registerPipeListener,
   unregisterPipeListener,
 } from './orch/pane-pipe-ipc';
+import { registerRemoteIpc } from './remote/remote-ipc';
 
 // Windows installer housekeeping (no-op elsewhere).
 if (process.platform === 'win32') {
@@ -127,6 +128,7 @@ function bootstrap(): void {
   registerBillingIpc();
   registerOnboardingIpc();
   registerPipeIpc(); // also calls initPanePipes()
+  registerRemoteIpc();
   // Orchestration boots async (MCP server binds a localhost port); the window
   // opens immediately and orchestration attaches when ready.
   void initOrchestration().catch((err) =>

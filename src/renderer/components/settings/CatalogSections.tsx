@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react';
 import type {
   AdapterInfo,
+  AgentSpecWriteRequest,
   InstalledItemInfo,
   NativeToolInfo,
   RecipeOverlayResult,
+  RemoteBridgeInfo,
+  RemoteSpawnResult,
 } from '../../../shared/types';
 import { useOrchStore } from '../../state/orch-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
+import { useLayoutStore } from '../../state/layout-store';
+import { waitForSession } from '../../terminal/terminal-host';
 
 /**
  * CATALOG sections: locally installed components (agents/skills), the
@@ -261,6 +266,17 @@ export function RecipesSection() {
   const workspace = useWorkspaceStore((s) => s.current);
   const squads = useOrchStore((s) => s.squads);
   const [overlay, setOverlay] = useState<RecipeOverlayResult | null>(null);
+  const [manualStacks, setManualStacks] = useState('');
+  const [agentSpec, setAgentSpec] = useState<AgentSpecWriteRequest>({
+    name: '',
+    tools: [],
+    skills: [],
+    model: '',
+    effort: '',
+    category: '',
+    systemPrompt: '',
+  });
+  const [agentSpecResult, setAgentSpecResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
 
@@ -270,7 +286,10 @@ export function RecipesSection() {
     void window.nexus.orch
       .getRecipeOverlay(workspace?.path)
       .then((result) => {
-        if (!cancelled) setOverlay(result);
+        if (!cancelled) {
+          setOverlay(result);
+          setManualStacks(result.overlay?.stacks.join(', ') ?? '');
+        }
       })
       .catch(() => {
         if (!cancelled) setOverlay(null);
@@ -284,9 +303,30 @@ export function RecipesSection() {
   }, [workspace?.path, squads, refreshTick]);
 
   const issues = overlay?.issues ?? [];
+  const suggestions = overlay?.suggestions ?? [];
   const categories = Object.entries(overlay?.categories ?? {}).sort(([a], [b]) =>
     a.localeCompare(b),
   );
+
+  async function saveStacks() {
+    await window.nexus.orch.saveCatalogOverlay({
+      workspacePath: workspace?.path,
+      stacks: manualStacks
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    });
+    setRefreshTick((tick) => tick + 1);
+  }
+
+  async function saveAgentSpec() {
+    const result = await window.nexus.orch.writeAgentSpec({
+      ...agentSpec,
+      tools: (agentSpec.tools ?? []).filter(Boolean),
+      skills: (agentSpec.skills ?? []).filter(Boolean),
+    });
+    setAgentSpecResult(result.ok ? result.path ?? 'salvo' : result.error ?? 'erro');
+  }
 
   return (
     <section>
@@ -312,6 +352,101 @@ export function RecipesSection() {
         <span className={`settings-chip ${overlay?.ok ? 'settings-chip--ok' : 'settings-chip--warn'}`}>
           {overlay?.ok ? 'lint ok' : `${issues.length} issue(s)`}
         </span>
+      </div>
+
+      <div className="settings-list__item">
+        <div className="settings-list__head">
+          <span className="settings-list__title">Overlay de stacks</span>
+          <button className="settings-btn" onClick={() => void saveStacks()}>
+            Salvar
+          </button>
+        </div>
+        <input
+          className="settings-input"
+          value={manualStacks}
+          placeholder="react, electron, rust"
+          onChange={(e) => setManualStacks(e.target.value)}
+        />
+      </div>
+
+      {suggestions.length > 0 && (
+        <ul className="settings-list">
+          {suggestions.map((recipe) => (
+            <li key={recipe.id} className="settings-list__item">
+              <div className="settings-list__head">
+                <span className="settings-list__title">{recipe.title}</span>
+                <span className="settings-chip">{recipe.agents.join(' · ')}</span>
+              </div>
+              <p className="settings-list__detail">
+                tools: {recipe.tools.join(', ')}
+              </p>
+              {recipe.gaps.length > 0 && (
+                <p className="settings-list__detail">gaps: {recipe.gaps.join(', ')}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="settings-list__item">
+        <div className="settings-list__head">
+          <span className="settings-list__title">Agent spec writer</span>
+          <button
+            className="settings-btn"
+            onClick={() => void saveAgentSpec()}
+            disabled={!agentSpec.name.trim()}
+          >
+            Salvar agent
+          </button>
+        </div>
+        <div className="settings-form-grid">
+          <input
+            className="settings-input"
+            value={agentSpec.name}
+            placeholder="nome-do-agent"
+            onChange={(e) => setAgentSpec((prev) => ({ ...prev, name: e.target.value }))}
+          />
+          <input
+            className="settings-input"
+            value={agentSpec.model}
+            placeholder="modelo"
+            onChange={(e) => setAgentSpec((prev) => ({ ...prev, model: e.target.value }))}
+          />
+          <input
+            className="settings-input"
+            value={agentSpec.effort}
+            placeholder="effort"
+            onChange={(e) => setAgentSpec((prev) => ({ ...prev, effort: e.target.value }))}
+          />
+          <input
+            className="settings-input"
+            value={agentSpec.category}
+            placeholder="categoria"
+            onChange={(e) => setAgentSpec((prev) => ({ ...prev, category: e.target.value }))}
+          />
+        </div>
+        <input
+          className="settings-input"
+          value={(agentSpec.tools ?? []).join(', ')}
+          placeholder="tools separadas por vírgula"
+          onChange={(e) =>
+            setAgentSpec((prev) => ({
+              ...prev,
+              tools: e.target.value.split(',').map((item) => item.trim()),
+            }))
+          }
+        />
+        <textarea
+          className="settings-textarea"
+          value={agentSpec.systemPrompt}
+          placeholder="system prompt"
+          onChange={(e) =>
+            setAgentSpec((prev) => ({ ...prev, systemPrompt: e.target.value }))
+          }
+        />
+        {agentSpecResult && (
+          <p className="settings-list__detail">{agentSpecResult}</p>
+        )}
       </div>
 
       {categories.length > 0 && (
@@ -380,6 +515,141 @@ export function ShortcutsSection() {
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+export function RemoteSection() {
+  const [info, setInfo] = useState<RemoteBridgeInfo | null>(null);
+  const [target, setTarget] = useState('');
+  const [cli, setCli] = useState<'claude' | 'codex' | 'gemini' | 'kimi' | 'antigravity'>('claude');
+  const [sessionName, setSessionName] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [result, setResult] = useState<RemoteSpawnResult | null>(null);
+
+  async function refresh() {
+    setInfo(await window.nexus.remote.bridgeStatus());
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function createRemote() {
+    const next = await window.nexus.remote.createTmux({
+      target,
+      cli,
+      sessionName: sessionName || undefined,
+      prompt: prompt || undefined,
+    });
+    setResult(next);
+    if (next.ok && next.attachCommand) {
+      const paneId = useLayoutStore.getState().addShellPane();
+      const sessionId = await waitForSession(paneId);
+      if (sessionId) window.nexus.pty.write(sessionId, `${next.attachCommand}\n`);
+    }
+  }
+
+  return (
+    <section>
+      <h3 className="settings-detail__title">Remote</h3>
+      <div className="settings-pill-row">
+        <span className={`settings-chip ${info?.running ? 'settings-chip--ok' : 'settings-chip--warn'}`}>
+          {info?.running ? 'wss online' : 'offline'}
+        </span>
+        <button
+          className="settings-btn"
+          onClick={async () => {
+            setInfo(await window.nexus.remote.bridgeStart());
+          }}
+        >
+          Iniciar
+        </button>
+        <button
+          className="settings-btn"
+          onClick={async () => {
+            setInfo(await window.nexus.remote.bridgeRotatePairing());
+          }}
+        >
+          Novo código
+        </button>
+        <button
+          className="settings-btn"
+          onClick={async () => {
+            setInfo(await window.nexus.remote.bridgeRevokeTokens());
+          }}
+        >
+          Revogar tokens
+        </button>
+      </div>
+
+      {info && (
+        <ul className="settings-list">
+          <li className="settings-list__item">
+            <div className="settings-list__head">
+              <span className="settings-list__title settings-list__title--mono">
+                {info.pairingCode ?? '------'}
+              </span>
+              <span className="settings-chip">{info.tokenCount} token(s)</span>
+            </div>
+            <p className="settings-list__detail">
+              {info.urls.join(' · ') || 'sem URL ativa'}
+            </p>
+            <p className="settings-list__detail">
+              cert: {info.certFingerprint ?? '—'} · clients: {info.clientCount}
+            </p>
+          </li>
+        </ul>
+      )}
+
+      <div className="settings-list__item">
+        <div className="settings-list__head">
+          <span className="settings-list__title">SSH/tmux</span>
+          <button
+            className="settings-btn"
+            onClick={() => void createRemote()}
+            disabled={!target.trim()}
+          >
+            Criar/adotar
+          </button>
+        </div>
+        <div className="settings-form-grid">
+          <input
+            className="settings-input"
+            value={target}
+            placeholder="user@host"
+            onChange={(e) => setTarget(e.target.value)}
+          />
+          <select
+            className="settings-input"
+            value={cli}
+            onChange={(e) => setCli(e.target.value as typeof cli)}
+          >
+            <option value="claude">claude</option>
+            <option value="codex">codex</option>
+            <option value="gemini">gemini</option>
+            <option value="kimi">kimi</option>
+            <option value="antigravity">antigravity</option>
+          </select>
+          <input
+            className="settings-input"
+            value={sessionName}
+            placeholder="tmux session"
+            onChange={(e) => setSessionName(e.target.value)}
+          />
+        </div>
+        <textarea
+          className="settings-textarea"
+          value={prompt}
+          placeholder="prompt inicial"
+          onChange={(e) => setPrompt(e.target.value)}
+        />
+        {result && (
+          <p className="settings-list__detail">
+            {result.ok ? result.attachCommand : result.error}
+          </p>
+        )}
+      </div>
     </section>
   );
 }

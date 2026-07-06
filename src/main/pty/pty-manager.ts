@@ -605,6 +605,22 @@ export function orchWriteSession(sessionId: string, data: string): boolean {
   return true;
 }
 
+/** Trusted main-process resize (remote bridge / orchestration utilities). */
+export function orchResizeSession(
+  sessionId: string,
+  cols: number,
+  rows: number,
+): boolean {
+  const session = sessions.get(sessionId);
+  if (!session) return false;
+  try {
+    session.proc.resize(cols, rows);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Trusted main-process kill (MCP pane_close on a session-only target). */
 export function orchKillSession(sessionId: string): boolean {
   const session = sessions.get(sessionId);

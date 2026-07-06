@@ -39,7 +39,7 @@ interface LayoutState {
   /** Replace the whole grid with an explicit set of panes (Modo Livre). */
   setPanes(panes: PaneModel[]): void;
   /** Add a fresh shell terminal pane (＋ Terminal) alongside the others. */
-  addShellPane(): void;
+  addShellPane(): string;
   /** Add an embedded browser pane. */
   addBrowserPane(url?: string): string;
   /**
@@ -241,6 +241,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     bumpTreeVersion();
     set({ root, focusedPaneId: newPane.id });
     persist({ ...get(), root, focusedPaneId: newPane.id });
+    return newPane.id;
   },
 
   setPanes: (panes) => {

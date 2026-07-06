@@ -16,6 +16,7 @@ import {
   McpsSection,
   PluginsSection,
   RecipesSection,
+  RemoteSection,
   RulesSection,
   ShortcutsSection,
   SkillsSection,
@@ -35,6 +36,7 @@ export type SettingsSection =
   | 'providers'
   | 'squads'
   | 'marketplace'
+  | 'remote'
   | 'agents'
   | 'skills'
   | 'mcps'
@@ -62,6 +64,7 @@ const MODULE_ITEMS: NavItem[] = [
   { id: 'providers', icon: '🔑', title: 'PROVIDERS', subtitle: 'tokens · modelos' },
   { id: 'squads', icon: '👥', title: 'SQUADS', subtitle: 'orquestração' },
   { id: 'marketplace', icon: '✦', title: 'MARKETPLACE', subtitle: 'Catálogo · 1 clique' },
+  { id: 'remote', icon: '⌁', title: 'REMOTE', subtitle: 'bridge · ssh' },
 ];
 
 const CATALOG_ITEMS: NavItem[] = [
@@ -179,6 +182,7 @@ export function SettingsDrawer() {
           {section === 'providers' && <ProvidersPanel />}
           {section === 'squads' && <SquadsSection onNavigate={close} />}
           {section === 'marketplace' && <MarketplaceSection />}
+          {section === 'remote' && <RemoteSection />}
           {section === 'agents' && <AgentsSection />}
           {section === 'skills' && <SkillsSection />}
           {section === 'mcps' && <McpsSection />}

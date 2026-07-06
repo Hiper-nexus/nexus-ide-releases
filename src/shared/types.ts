@@ -60,8 +60,23 @@ import type {
   SetKeyRequest,
   TestConnectionResult,
 } from './provider-settings-types';
+import type {
+  RemoteBridgeInfo,
+  RemoteBridgeStartRequest,
+  RemoteCliDetection,
+  RemoteSpawnRequest,
+  RemoteSpawnResult,
+} from './remote-types';
 
 export type { AdapterInfo };
+export type {
+  RemoteBridgeInfo,
+  RemoteBridgeStartRequest,
+  RemoteCliDetection,
+  RemoteSpawnRequest,
+  RemoteSpawnResult,
+  RemoteTmuxSession,
+} from './remote-types';
 
 /** One locally installed catalog component / plugin file / hook home. */
 export interface InstalledItemInfo {
@@ -178,8 +193,46 @@ export interface RecipeOverlayResult {
   ok: boolean;
   checkedAt: number;
   stacks: string[];
+  overlay?: CatalogOverlayState;
+  suggestions?: RecipeSuggestion[];
   categories: Record<string, number>;
   issues: RecipeLintIssue[];
+}
+
+export interface CatalogOverlayState {
+  workspacePath?: string;
+  stacks: string[];
+  disabled: string[];
+  tombstones: string[];
+  categories: Record<string, string>;
+  updatedAt: number;
+}
+
+export interface CatalogOverlayPatch {
+  workspacePath?: string;
+  stacks?: string[];
+  disabled?: string[];
+  tombstones?: string[];
+  categories?: Record<string, string>;
+}
+
+export interface RecipeSuggestion {
+  id: string;
+  title: string;
+  stacks: string[];
+  agents: string[];
+  tools: string[];
+  gaps: string[];
+}
+
+export interface AgentSpecWriteRequest {
+  name: string;
+  tools?: string[];
+  skills?: string[];
+  model?: string;
+  effort?: string;
+  category?: string;
+  systemPrompt?: string;
 }
 
 /**
@@ -442,6 +495,9 @@ export interface NexusApi {
       slug: string;
     }): Promise<CatalogInstallResult>;
     getRecipeOverlay(workspacePath?: string): Promise<RecipeOverlayResult>;
+    saveCatalogOverlay(patch: CatalogOverlayPatch): Promise<CatalogOverlayState>;
+    proposeRecipes(workspacePath?: string): Promise<RecipeSuggestion[]>;
+    writeAgentSpec(req: AgentSpecWriteRequest): Promise<{ ok: boolean; path?: string; error?: string }>;
     listInstalledCatalog(): Promise<InstalledItemInfo[]>;
     listNativeTools(): Promise<NativeToolInfo[]>;
     listPluginFiles(): Promise<InstalledItemInfo[]>;
@@ -450,6 +506,16 @@ export interface NexusApi {
     onHandoffsChanged(cb: (handoffs: Handoff[]) => void): Unsubscribe;
     onTodosChanged(cb: (lists: TodoList[]) => void): Unsubscribe;
     onSquadsChanged(cb: (squads: Squad[]) => void): Unsubscribe;
+  };
+  remote: {
+    bridgeStatus(): Promise<RemoteBridgeInfo>;
+    bridgeStart(req?: RemoteBridgeStartRequest): Promise<RemoteBridgeInfo>;
+    bridgeStop(): Promise<RemoteBridgeInfo>;
+    bridgeRotatePairing(): Promise<RemoteBridgeInfo>;
+    bridgeRevokeTokens(): Promise<RemoteBridgeInfo>;
+    detectClis(target: string): Promise<RemoteCliDetection>;
+    listTmux(target: string): Promise<RemoteSpawnResult>;
+    createTmux(req: RemoteSpawnRequest): Promise<RemoteSpawnResult>;
   };
   settings: {
     get(): Promise<TerminalSettings>;

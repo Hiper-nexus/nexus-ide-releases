@@ -27,6 +27,8 @@ import {
 } from './todo-store';
 import { createTask, listTasks, updateTask } from './task-store';
 import { installCatalogItem } from './catalog';
+import { saveCatalogOverlay, proposeRecipes } from './catalog-overlay';
+import { writeAgentSpec } from './agent-spec-writer';
 import { startPreview, stopPreview, listPreviews } from './preview-server';
 import { requestBrowserPane } from './pane-registry';
 import {
@@ -36,6 +38,17 @@ import {
 import { collectPerfSnapshot } from '../perf/perf-ipc';
 import { onHandoffSubmitted } from './idle-delivery';
 import { paneSpawnTool } from './tools-panes';
+import {
+  getRemoteBridgeInfo,
+  rotateRemotePairing,
+  startRemoteBridge,
+  stopRemoteBridge,
+} from '../remote/remote-bridge';
+import {
+  createRemoteTmuxSession,
+  detectRemoteClis,
+  listRemoteTmuxSessions,
+} from '../remote/remote-spawn';
 import {
   authorizePaneRef,
   num,
@@ -363,6 +376,156 @@ const catalogInstallTool: McpToolDef = {
   },
 };
 
+const catalogOverlayTool: McpToolDef = {
+  name: 'nexus_catalog_overlay',
+  description:
+    'Persist workspace catalog overlay fields: stacks, disabled refs, tombstones ' +
+    'and category overrides. Use this when recipe lint needs local context.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      workspacePath: { type: 'string' },
+      stacks: { type: 'array', items: { type: 'string' } },
+      disabled: { type: 'array', items: { type: 'string' } },
+      tombstones: { type: 'array', items: { type: 'string' } },
+      categories: { type: 'object' },
+    },
+  },
+  handler: async (args) =>
+    saveCatalogOverlay({
+      workspacePath: str(args, 'workspacePath'),
+      stacks: Array.isArray(args.stacks) ? strArray(args, 'stacks') : undefined,
+      disabled: Array.isArray(args.disabled) ? strArray(args, 'disabled') : undefined,
+      tombstones: Array.isArray(args.tombstones) ? strArray(args, 'tombstones') : undefined,
+      categories:
+        args.categories && typeof args.categories === 'object'
+          ? (args.categories as Record<string, string>)
+          : undefined,
+    }),
+};
+
+const recipeProposeTool: McpToolDef = {
+  name: 'nexus_recipe_propose',
+  description:
+    'Synthesize candidate squad recipes for this workspace from detected stacks ' +
+    'and catalog overlay. Returns recipes with explicit gaps.',
+  inputSchema: {
+    type: 'object',
+    properties: { workspacePath: { type: 'string' } },
+  },
+  handler: async (args) => proposeRecipes(str(args, 'workspacePath')),
+};
+
+const agentSpecWriteTool: McpToolDef = {
+  name: 'nexus_agent_spec_write',
+  description:
+    'Create or update a Claude agent spec frontmatter file in ~/.claude/agents. ' +
+    'Edits tools, skills, model, effort, category and systemPrompt.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      tools: { type: 'array', items: { type: 'string' } },
+      skills: { type: 'array', items: { type: 'string' } },
+      model: { type: 'string' },
+      effort: { type: 'string' },
+      category: { type: 'string' },
+      systemPrompt: { type: 'string' },
+    },
+    required: ['name'],
+  },
+  handler: async (args) =>
+    writeAgentSpec({
+      name: requireStr(args, 'name'),
+      tools: Array.isArray(args.tools) ? strArray(args, 'tools') : undefined,
+      skills: Array.isArray(args.skills) ? strArray(args, 'skills') : undefined,
+      model: str(args, 'model'),
+      effort: str(args, 'effort'),
+      category: str(args, 'category'),
+      systemPrompt: str(args, 'systemPrompt'),
+    }),
+};
+
+const remoteBridgeTool: McpToolDef = {
+  name: 'nexus_remote_bridge_status',
+  description:
+    'Manage the Nexus Remote Bridge WSS server. action=status|start|stop|rotate_pairing.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        enum: ['status', 'start', 'stop', 'rotate_pairing'],
+      },
+      port: { type: 'number' },
+    },
+  },
+  handler: async (args) => {
+    switch (str(args, 'action') ?? 'status') {
+      case 'start':
+        return startRemoteBridge({ port: num(args, 'port') });
+      case 'stop':
+        return stopRemoteBridge();
+      case 'rotate_pairing':
+        return rotateRemotePairing();
+      case 'status':
+      default:
+        return getRemoteBridgeInfo();
+    }
+  },
+};
+
+const remoteCliDetectTool: McpToolDef = {
+  name: 'nexus_remote_cli_detect',
+  description: 'SSH into target and detect supported remote CLIs.',
+  inputSchema: {
+    type: 'object',
+    properties: { target: { type: 'string' } },
+    required: ['target'],
+  },
+  handler: async (args) => detectRemoteClis(requireStr(args, 'target')),
+};
+
+const remoteTmuxListTool: McpToolDef = {
+  name: 'nexus_remote_tmux_list',
+  description: 'List tmux sessions on a remote SSH target for adoption/recovery.',
+  inputSchema: {
+    type: 'object',
+    properties: { target: { type: 'string' } },
+    required: ['target'],
+  },
+  handler: async (args) => listRemoteTmuxSessions(requireStr(args, 'target')),
+};
+
+const remoteSpawnTool: McpToolDef = {
+  name: 'nexus_remote_spawn',
+  description:
+    'Create/adopt a remote tmux session running a supported AI CLI over SSH. ' +
+    'Returns the local attach command for a Nexus shell pane.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      target: { type: 'string' },
+      cwd: { type: 'string' },
+      cli: {
+        type: 'string',
+        enum: ['claude', 'codex', 'gemini', 'kimi', 'antigravity'],
+      },
+      sessionName: { type: 'string' },
+      prompt: { type: 'string' },
+    },
+    required: ['target', 'cli'],
+  },
+  handler: async (args) =>
+    createRemoteTmuxSession({
+      target: requireStr(args, 'target'),
+      cwd: str(args, 'cwd'),
+      cli: requireStr(args, 'cli') as 'claude' | 'codex' | 'gemini' | 'kimi' | 'antigravity',
+      sessionName: str(args, 'sessionName'),
+      prompt: str(args, 'prompt'),
+    }),
+};
+
 const taskTool: McpToolDef = {
   name: 'nexus_task',
   description:
@@ -658,8 +821,15 @@ export function buildDomainTools(): McpToolDef[] {
     missionSpawnPaneTool,
     squadSaveTool,
     catalogInstallTool,
+    catalogOverlayTool,
+    recipeProposeTool,
+    agentSpecWriteTool,
     taskTool,
     todoManagerTool,
+    remoteBridgeTool,
+    remoteCliDetectTool,
+    remoteTmuxListTool,
+    remoteSpawnTool,
     previewStartTool,
     previewStopTool,
     browserOpenTool,

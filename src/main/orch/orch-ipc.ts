@@ -35,7 +35,10 @@ import {
 import { initIdleDelivery } from './idle-delivery';
 import { initStallWatchdog, shutdownStallWatchdog } from './stall-watchdog';
 import { stopAllPreviews } from './preview-server';
+import { startRemoteBridge, stopRemoteBridge } from '../remote/remote-bridge';
 import { buildRecipeOverlay } from './recipe-overlay';
+import { proposeRecipes, saveCatalogOverlay } from './catalog-overlay';
+import { writeAgentSpec } from './agent-spec-writer';
 import {
   getMcpRuntimeInfo,
   getToolCatalog,
@@ -87,6 +90,9 @@ export async function initOrchestration(): Promise<void> {
   initIdleDelivery();
   initStallWatchdog();
   await startMcpServer();
+  void startRemoteBridge().catch((err) =>
+    console.warn('[remote] bridge failed to start:', err),
+  );
 
   onMissionsChange(() =>
     broadcast(ORCH_CHANNELS.missionsChanged, listMissions()),
@@ -104,6 +110,7 @@ export async function initOrchestration(): Promise<void> {
 export function closeOrchestration(): void {
   shutdownStallWatchdog();
   stopAllPreviews();
+  stopRemoteBridge();
   stopMcpServer();
 }
 
@@ -270,6 +277,39 @@ export function registerOrchIpc(): void {
   ipcMain.handle(ORCH_CHANNELS.recipeOverlay, (_event, raw) => {
     const parsed = recipeOverlaySchema.safeParse(raw ?? {});
     return buildRecipeOverlay(parsed.success ? parsed.data.workspacePath : undefined);
+  });
+
+  const catalogOverlaySaveSchema = z.object({
+    workspacePath: z.string().min(1).max(4096).optional(),
+    stacks: z.array(z.string().min(1).max(64)).max(32).optional(),
+    disabled: z.array(z.string().min(1).max(128)).max(512).optional(),
+    tombstones: z.array(z.string().min(1).max(128)).max(512).optional(),
+    categories: z.record(z.string().min(1).max(128), z.string().min(1).max(128)).optional(),
+  });
+  ipcMain.handle(ORCH_CHANNELS.catalogOverlaySave, (_event, raw) => {
+    const parsed = catalogOverlaySaveSchema.safeParse(raw ?? {});
+    if (!parsed.success) throw new Error('invalid catalog overlay');
+    return saveCatalogOverlay(parsed.data);
+  });
+
+  ipcMain.handle(ORCH_CHANNELS.recipePropose, (_event, raw) => {
+    const parsed = recipeOverlaySchema.safeParse(raw ?? {});
+    return proposeRecipes(parsed.success ? parsed.data.workspacePath : undefined);
+  });
+
+  const agentSpecWriteSchema = z.object({
+    name: z.string().min(1).max(96),
+    tools: z.array(z.string().min(1).max(128)).max(128).optional(),
+    skills: z.array(z.string().min(1).max(128)).max(128).optional(),
+    model: z.string().max(128).optional(),
+    effort: z.string().max(32).optional(),
+    category: z.string().max(64).optional(),
+    systemPrompt: z.string().max(65_536).optional(),
+  });
+  ipcMain.handle(ORCH_CHANNELS.agentSpecWrite, (_event, raw) => {
+    const parsed = agentSpecWriteSchema.safeParse(raw ?? {});
+    if (!parsed.success) return { ok: false, error: 'invalid agent spec' };
+    return writeAgentSpec(parsed.data);
   });
 
   ipcMain.handle(ORCH_CHANNELS.catalogInstalled, () =>
