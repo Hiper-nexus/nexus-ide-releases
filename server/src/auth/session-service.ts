@@ -60,22 +60,34 @@ export async function rotateRefresh(
   now: () => number = Date.now,
 ): Promise<{ session: string; refresh: string } | { reuseDetected: true }> {
   const hash = hashToken(refreshRaw);
-  const [row] = await db
-    .select()
-    .from(refreshTokens)
-    .where(eq(refreshTokens.tokenHash, hash))
-    .limit(1);
-
-  // inexistente OU já usado OU revogado OU expirado → comprometido
-  if (!row || row.usedAt || row.revokedAt || row.expiresAt.getTime() < now()) {
+  const at = new Date(now());
+  // Consumo ATÔMICO (anti-TOCTOU): marca usado SÓ se ainda virgem/válido, em
+  // um único UPDATE condicional. Duas rotações concorrentes: uma vence, a
+  // outra não consome linha e cai no caminho de reuso abaixo.
+  const [consumed] = await db
+    .update(refreshTokens)
+    .set({ usedAt: at })
+    .where(
+      and(
+        eq(refreshTokens.tokenHash, hash),
+        isNull(refreshTokens.usedAt),
+        isNull(refreshTokens.revokedAt),
+        gt(refreshTokens.expiresAt, at),
+      ),
+    )
+    .returning();
+  if (!consumed) {
+    // inexistente OU já usado OU revogado OU expirado → comprometido.
+    // Fail closed: se o token existe, revoga a cadeia inteira da conta.
+    const [row] = await db
+      .select()
+      .from(refreshTokens)
+      .where(eq(refreshTokens.tokenHash, hash))
+      .limit(1);
     if (row) await revokeAll(db, row.accountId);
     return { reuseDetected: true };
   }
-  await db
-    .update(refreshTokens)
-    .set({ usedAt: new Date(now()) })
-    .where(eq(refreshTokens.id, row.id));
-  return issue(db, row.accountId, now(), row.id);
+  return issue(db, consumed.accountId, now(), consumed.id);
 }
 
 export async function sessionAccount(

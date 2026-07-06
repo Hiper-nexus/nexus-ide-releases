@@ -60,4 +60,21 @@ describe('session-service', () => {
     const r = await rotateRefresh(db, 'nunca-existiu');
     expect('reuseDetected' in r).toBe(true);
   });
+
+  it('rotação concorrente: só UMA das duas vence (consumo atômico)', async () => {
+    const db = await makeTestDb();
+    const acc = await anAccount(db);
+    const first = await issueTokens(db, acc);
+    // Duas rotações simultâneas do MESMO refresh — o TOCTOU clássico. O
+    // consumo atômico garante exatamente 1 sucesso; a perdedora cai no
+    // caminho de reuso (que revoga a cadeia — fail closed).
+    const [a, b] = await Promise.all([
+      rotateRefresh(db, first.refresh),
+      rotateRefresh(db, first.refresh),
+    ]);
+    const wins = [a, b].filter((r) => 'refresh' in r).length;
+    const reuses = [a, b].filter((r) => 'reuseDetected' in r).length;
+    expect(wins).toBe(1);
+    expect(reuses).toBe(1);
+  });
 });
