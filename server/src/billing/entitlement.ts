@@ -39,6 +39,8 @@ export async function entitlementFor(
   const consider = (sub: typeof subscriptions.$inferSelect, fromTeam: boolean) => {
     const st = liveStatus(sub.status, sub.graceUntil, t);
     if (!st) return;
+    // Tie-break por RANK: empate (=) mantém quem veio primeiro. Como pessoal é
+    // considerado antes de times, empate favorece a assinatura pessoal (TTL 30d, intencional).
     if (!best || RANK[sub.plan] > RANK[best.plan]) {
       best = {
         plan: sub.plan, status: st,

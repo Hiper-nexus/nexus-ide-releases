@@ -85,4 +85,25 @@ describe('entitlementFor', () => {
     const after = await entitlementFor(db, member);
     expect(after.input.plan).toBe('free');
   });
+
+  it('empate pessoal vs time: vence o pessoal (TTL 30d)', async () => {
+    const db = await makeTestDb();
+    const owner = await acc(db, 'tie-own@x.com');
+    const member = await acc(db, 'tie-mem@x.com');
+
+    // Subscription pessoal com plan 'team' (mesmo rank que time)
+    await db.insert(schema.subscriptions).values({
+      ownerType: 'account', accountId: member, stripeSubscriptionId: 'sub_pers',
+      stripeCustomerId: 'cus_pers', plan: 'team', status: 'active', seats: 1,
+      currentPeriodEnd: new Date(Date.now() + 86_400_000),
+    });
+
+    // Time também com plan 'team'
+    await teamWith(db, owner, member, 'active');
+
+    const r = await entitlementFor(db, member);
+    expect(r.input.plan).toBe('team');
+    // Pessoal vence empate → TTL_PERSONAL, não TTL_TEAM_MEMBER
+    expect(r.ttlSeconds).toBe(TTL_PERSONAL);
+  });
 });
