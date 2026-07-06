@@ -179,14 +179,13 @@ const ICONS: Record<PixelIconName, Rect[]> = {
     [3, 6, 5, 1],
     [4, 7, 3, 1],
   ],
-  // status busy (dashed/dotted-like ring)
+  // status busy (dense/segmented thick ring)
   'status-busy': [
-    [5, 3, 1, 1],
-    [3, 5, 1, 1],
-    [7, 5, 1, 1],
-    [5, 7, 1, 1],
-    [4, 4, 1, 1], [6, 4, 1, 1],
-    [4, 6, 1, 1], [6, 6, 1, 1],
+    [3, 3, 5, 1],
+    [3, 4, 2, 1], [6, 4, 2, 1],
+    [3, 5, 2, 1], [6, 5, 2, 1],
+    [3, 6, 2, 1], [6, 6, 2, 1],
+    [3, 7, 5, 1],
   ],
   // status exited (small cross)
   'status-exited': [

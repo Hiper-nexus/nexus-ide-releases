@@ -108,7 +108,7 @@ export function WorkspaceBar() {
               title="Abrir/criar outro workspace"
               style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}
             >
-              <PixelIcon name="plus" size={7} /> novo
+              <PixelIcon name="plus" size={10} /> novo
             </button>
             <button
               className="workspace-bar__ws-btn workspace-bar__ws-btn--close"
@@ -116,7 +116,7 @@ export function WorkspaceBar() {
               title="Fechar este workspace"
               style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}
             >
-              <PixelIcon name="close" size={7} /> fechar
+              <PixelIcon name="close" size={10} /> fechar
             </button>
             <button
               className={`workspace-bar__ws-btn ${opsBoardOpen ? 'workspace-bar__ws-btn--active' : ''}`}
@@ -124,7 +124,7 @@ export function WorkspaceBar() {
               title="Ops Board — pipeline de missões (⌘B)"
               style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}
             >
-              <PixelIcon name="board" size={8} /> board
+              <PixelIcon name="board" size={10} /> board
             </button>
           </>
         ) : (
@@ -136,7 +136,7 @@ export function WorkspaceBar() {
         <CostSummary />
         {activeTodo && (
           <span className="workspace-bar__todo" title="Current orchestration task" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-            <PixelIcon name="mission" size={8} /> {activeTodo}
+            <PixelIcon name="mission" size={10} /> {activeTodo}
           </span>
         )}
         <button

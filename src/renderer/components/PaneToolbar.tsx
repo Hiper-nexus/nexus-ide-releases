@@ -40,7 +40,7 @@ function StateIndicator({ paneId }: { paneId: string }) {
       aria-label={`estado do agente: ${view.label}`}
       style={{ display: 'inline-flex', alignItems: 'center' }}
     >
-      <PixelIcon name={view.icon} size={8} />
+      <PixelIcon name={view.icon} size={10} />
     </span>
   );
 }

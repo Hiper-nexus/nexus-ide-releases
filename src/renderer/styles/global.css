@@ -10,6 +10,7 @@
   --text-dim: #7c869e;
   --accent: #6ea8fe;
   --accent-soft: rgba(110, 168, 254, 0.14);
+  --accent-strong: rgba(110, 168, 254, 0.28);
   --danger: #f7768e;
   --scrollbar-track: rgba(4, 6, 10, 0.44);
   --scrollbar-thumb: rgba(124, 134, 158, 0.36);
@@ -5823,7 +5824,9 @@ body {
 .home-deck__dismiss:focus-visible,
 .home-deck__close:focus-visible,
 .mission-rail__new:focus-visible,
-.mission-rail__item:focus-visible {
+.mission-rail__item:focus-visible,
+.mission-rail__remove:focus-visible,
+.ops-board__close:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -5859,7 +5862,9 @@ body {
   color: var(--accent) !important;
 }
 
-.home-deck__close:active {
+.home-deck__close:active,
+.mission-rail__remove:active,
+.ops-board__close:active {
   background: var(--accent-soft) !important;
   border-color: var(--accent) !important;
 }
