@@ -32,6 +32,20 @@ const MIGRATION_CANDIDATES = [
   path.join(os.homedir(), '.nexus', 'squads.json'),
 ];
 
+const SIBLING_DB_CANDIDATES = [
+  path.join(os.homedir(), 'Library', 'Application Support', 'Electron', 'nexus.db'),
+  path.join(os.homedir(), 'Library', 'Application Support', 'NexusIDE', 'nexus.db'),
+];
+
+interface LegacySquadRow {
+  id: string;
+  name: string;
+  created_at: string;
+  builtin: number;
+  orchestrator_instructions: string;
+  roster_json: string;
+}
+
 /**
  * First-run migration: with an empty store, import the user's existing
  * squads.json (originals + custom squads) so the squad picker is populated on
@@ -50,6 +64,61 @@ function migrateFromDiskIfEmpty(): void {
     } catch {
       // Missing or invalid — try the next candidate.
     }
+  }
+}
+
+function recoverMissingUserSquadsFromSiblingDbs(): void {
+  if (process.env.VITEST) return;
+  let recovered = 0;
+  for (const candidate of SIBLING_DB_CANDIDATES) {
+    try {
+      if (!fs.existsSync(candidate)) continue;
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const Database = require('better-sqlite3') as new (
+        file: string,
+        opts?: { readonly?: boolean; fileMustExist?: boolean },
+      ) => Db;
+      const source = new Database(candidate, {
+        readonly: true,
+        fileMustExist: true,
+      });
+      try {
+        const rows = source
+          .prepare(
+            `SELECT id, name, created_at, builtin,
+                    orchestrator_instructions, roster_json
+               FROM squads
+              WHERE builtin = 0`,
+          )
+          .all() as LegacySquadRow[];
+        for (const row of rows) {
+          if (squads.has(row.id)) continue;
+          const parsed = squadSchema.safeParse({
+            id: row.id,
+            name: row.name,
+            createdAt: row.created_at,
+            builtin: false,
+            orchestratorInstructions: row.orchestrator_instructions,
+            agents: parseJsonColumn<SquadAgent[]>(row.roster_json, []),
+          });
+          if (!parsed.success) continue;
+          const squad: Squad = {
+            ...parsed.data,
+            agents: withAllowlists(parsed.data.agents),
+          };
+          squads.set(squad.id, squad);
+          persist(squad);
+          recovered += 1;
+        }
+      } finally {
+        source.close();
+      }
+    } catch {
+      // Best-effort profile recovery; normal DB hydration remains authoritative.
+    }
+  }
+  if (recovered > 0) {
+    console.log(`[orch] recovered ${recovered} custom squad(s) from sibling profile DBs`);
   }
 }
 
@@ -94,6 +163,7 @@ export function initSquadStore(database: Db | null): void {
       console.warn('[orch] failed to hydrate squads:', err);
     }
   }
+  recoverMissingUserSquadsFromSiblingDbs();
   migrateFromDiskIfEmpty();
   seedBuiltinsIfEmpty();
 }

@@ -15,6 +15,7 @@ describe('JarvisLiveSession', () => {
     const started = live.start({ reason: 'manual' });
     expect(started.enabled).toBe(true);
     expect(started.status).toBe('listening');
+    expect(started.realtimeReady).toBe(false);
     expect(started.sessionId).toBeTruthy();
 
     now += 10;
@@ -37,6 +38,7 @@ describe('JarvisLiveSession', () => {
     const live = new JarvisLiveSession(() => {}, () => now);
     live.setEnabled(true);
     const started = live.start({ reason: 'wake' });
+    live.patchStatus({ status: 'listening', realtimeReady: true });
 
     now += 42;
     const ended = live.endTurn();
@@ -44,8 +46,32 @@ describe('JarvisLiveSession', () => {
       enabled: true,
       sessionId: started.sessionId,
       status: 'dormant',
+      realtimeReady: true,
       pendingMic: false,
       lastActiveAt: 2_042,
+    });
+  });
+
+  it('tracks realtime transport readiness separately from live status', () => {
+    const live = new JarvisLiveSession(() => {}, () => 100);
+    live.setEnabled(true);
+    live.start({ reason: 'manual' });
+
+    const ready = live.patchStatus({ status: 'listening', realtimeReady: true });
+    expect(ready.realtimeReady).toBe(true);
+
+    const thinking = live.patchStatus({ status: 'thinking' });
+    expect(thinking.realtimeReady).toBe(true);
+
+    const failed = live.patchStatus({
+      status: 'error',
+      realtimeReady: false,
+      error: 'transporte realtime falhou — usando Classic',
+    });
+    expect(failed).toMatchObject({
+      status: 'error',
+      realtimeReady: false,
+      error: 'transporte realtime falhou — usando Classic',
     });
   });
 

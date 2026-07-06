@@ -7,7 +7,7 @@ import {
 } from './task-router';
 
 function adapters(...installed: string[]): AdapterAvailability[] {
-  const all = ['claude', 'codex', 'agy', 'grok', 'kimi', 'glm'];
+  const all = ['claude', 'codex', 'agy', 'grok', 'kimi', 'glm', 'longcat'];
   return all.map((id) => ({ id, installed: installed.includes(id) }));
 }
 
@@ -120,6 +120,35 @@ describe('routeTask', () => {
     );
     expect(decision!.adapterId).toBe('glm');
     expect(decision!.model).toBe('glm-5.2');
+  });
+
+  it('uses the configured Kimi model id that exists in kimi-code config.toml', () => {
+    const decision = routeTask(
+      'corrigir typo no README do projeto agora',
+      adapters('kimi'),
+      DEFAULT_ROUTING_TABLE,
+      'easy',
+    );
+    expect(decision!.adapterId).toBe('kimi');
+    expect(decision!.model).toBe('kimi-code/kimi-for-coding');
+  });
+
+  it('does not route to LongCat when the caller marks it unavailable', () => {
+    const decision = routeTask(
+      'tarefa de complexidade média',
+      adapters('longcat', 'codex'),
+      DEFAULT_ROUTING_TABLE,
+      'medium',
+    );
+    expect(decision!.adapterId).toBe('longcat');
+
+    const withoutLongCat = routeTask(
+      'tarefa de complexidade média',
+      adapters('codex'),
+      DEFAULT_ROUTING_TABLE,
+      'medium',
+    );
+    expect(withoutLongCat!.adapterId).toBe('codex');
   });
 
   it('reserva o claude OAuth para o orquestrador (reserveClaude)', () => {

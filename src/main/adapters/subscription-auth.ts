@@ -119,7 +119,12 @@ function detect(adapterId: string): boolean {
         exists('.antigravity')
       );
     case 'kimi':
-      return exists('.kimi') || exists('.config', 'kimi');
+      return (
+        exists('.kimi-code', 'oauth', 'kimi-code') ||
+        exists('.kimi-code', 'credentials', 'kimi-code.json') ||
+        exists('.kimi', 'credentials', 'kimi-code.json') ||
+        exists('.config', 'kimi', 'credentials.json')
+      );
     default:
       // Unknown detector: assume the subscription session exists — the
       // directive is subscription-first, and an explicit upstream route is

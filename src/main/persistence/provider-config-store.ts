@@ -188,9 +188,63 @@ function authDecision(adapterId: string) {
     adapter?.kind === 'cli-pty' ? adapter.auth.method : 'api_key';
   return resolveAuthStrategy({
     authMethod,
-    hasStoredKey: hasKey(adapterId),
+    hasStoredKey: hasRuntimeKey(adapterId),
     subscriptionAuthed: hasSubscriptionAuth(adapterId),
   });
+}
+
+function hasRuntimeKey(adapterId: string): boolean {
+  if (hasKey(adapterId)) return true;
+  return keyEnvVarsOf(adapterId).some((name) => {
+    const value = process.env[name];
+    return typeof value === 'string' && value.trim().length > 0;
+  });
+}
+
+export interface ProviderReadiness {
+  ready: boolean;
+  reason: string;
+}
+
+export function providerReadiness(adapterId: string): ProviderReadiness {
+  const adapter = getAdapter(adapterId);
+  if (!adapter) return { ready: false, reason: `unknown provider: ${adapterId}` };
+
+  const cfg = configFor(adapterId);
+  if (!cfg.enabled) {
+    return {
+      ready: false,
+      reason: `${adapter.label} está desativado em Configurações › Providers.`,
+    };
+  }
+
+  if (adapter.kind === 'cli-pty') {
+    const effectiveBin = cfg.binPath || adapter.bin;
+    if (!isBinResolvable(effectiveBin)) {
+      return {
+        ready: false,
+        reason: `${adapter.label} não encontrado. Instale: ${adapter.install.command}`,
+      };
+    }
+  }
+
+  const decision = authDecision(adapterId);
+  if (decision.strategy === 'login-needed') {
+    return {
+      ready: false,
+      reason:
+        `${adapter.label} sem login/key configurado. ` +
+        (adapter.kind === 'cli-pty'
+          ? (adapter.auth.loginHint ?? 'Faça login na CLI ou configure a key.')
+          : 'Configure a key do provider.'),
+    };
+  }
+
+  return { ready: true, reason: 'ready' };
+}
+
+export function isProviderReady(adapterId: string): boolean {
+  return providerReadiness(adapterId).ready;
 }
 
 export function providerSpawnOverrides(
@@ -298,7 +352,7 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
     customModels: getCustomModels(adapterId),
     extraArgs: cfg.extraArgs,
     keyEnvVar: primaryKeyEnvVar(adapter),
-    hasKey: hasKey(adapterId),
+    hasKey: hasRuntimeKey(adapterId),
     keyMasked: maskedKey(adapterId),
     authMethod: adapter.kind === 'cli-pty' ? adapter.auth.method : 'api_key',
     loginHint:

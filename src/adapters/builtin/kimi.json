@@ -43,7 +43,7 @@
   "models": {
     "flag": "--model",
     "list": [
-      "kimi-for-coding",
+      "kimi-code/kimi-for-coding",
       "kimi-k2.7",
       "kimi-k2.6",
       "kimi-k2-turbo",
@@ -51,7 +51,7 @@
       "moonshot-v1-128k",
       "moonshot-v1-32k"
     ],
-    "default": "kimi-for-coding"
+    "default": "kimi-code/kimi-for-coding"
   },
   "promptInjection": {
     "method": "arg",

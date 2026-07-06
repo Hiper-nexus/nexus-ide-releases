@@ -68,7 +68,7 @@ export function toSpeakable(raw: string, mode: VoiceSpeakMode): string {
   if (cleaned.length < MIN_MEANINGFUL_CHARS) {
     // The output was essentially all code / decoration.
     const hadCode = HAS_CODE_RE.test(raw);
-    return hadCode ? 'Done. The response is mostly code — check the pane.' : '';
+    return hadCode ? 'Pronto. A resposta é quase toda código — veja o pane.' : '';
   }
 
   const sentences = splitSentences(cleaned).slice(0, MAX_SUMMARY_SENTENCES);

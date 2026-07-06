@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { BrowserWindow, ipcMain, session } from 'electron';
+import { BrowserWindow, ipcMain, session, shell } from 'electron';
 import type { IpcMainEvent, WebContents } from 'electron';
 import { WINDOW_CHANNELS } from '../shared/channels';
 import { killSessionsFor } from './pty/pty-manager';
@@ -78,8 +78,41 @@ function buildCsp(devServerUrl: string | undefined): string {
   ].join('; ');
 }
 
+let externalLinkIpcRegistered = false;
+
+function registerExternalLinkIpc(): void {
+  if (externalLinkIpcRegistered) return;
+  externalLinkIpcRegistered = true;
+  ipcMain.handle(WINDOW_CHANNELS.openExternal, (_event, raw: unknown) => {
+    if (typeof raw !== 'string' || raw.length > 2_048) {
+      return { ok: false, error: 'URL inválida' };
+    }
+    try {
+      const url = new URL(raw);
+      if (url.protocol !== 'https:') {
+        return { ok: false, error: 'protocolo não permitido' };
+      }
+      void shell.openExternal(url.toString());
+      return { ok: true };
+    } catch {
+      return { ok: false, error: 'URL inválida' };
+    }
+  });
+  ipcMain.handle(WINDOW_CHANNELS.authLogin, (_event, provider: unknown) => {
+    if (provider !== 'github' && provider !== 'google') {
+      return { ok: false, error: 'provider inválido' };
+    }
+    // O main gera o nonce do binding e abre o browser — o renderer nunca
+    // monta a URL de auth (ver auth-client.beginLogin).
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { beginLogin } = require('./auth-client') as typeof import('./auth-client');
+    return beginLogin(provider);
+  });
+}
+
 export function createMainWindow(): BrowserWindow {
   const devServerUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL;
+  registerExternalLinkIpc();
 
   // Apply the CSP via response headers on this window's session so it also
   // covers the dev server (a static <meta> tag can't allow the HMR socket).

@@ -239,10 +239,13 @@ export function registerVoiceIpc(): void {
 
   ipcMain.handle(VOICE_CHANNELS.liveStart, (_event, raw) => {
     const parsed = jarvisLiveStartRequestSchema.safeParse(raw ?? {});
-    const state = liveSession.start(parsed.success ? parsed.data : {});
+    let state = liveSession.start(parsed.success ? parsed.data : {});
     // Se a config pede o transporte realtime (Gemini Live), conecta o socket;
     // senão isto é no-op e o Classic segue (fallback keyless).
-    if (liveSession.getState().sessionId) liveTransport.onStart();
+    if (liveSession.getState().sessionId) {
+      liveTransport.onStart();
+      state = liveSession.getState();
+    }
     return state;
   });
 

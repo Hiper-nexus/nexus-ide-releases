@@ -16,7 +16,7 @@ const SAFE_TOKEN = /^[A-Za-z0-9._~-]+$/;
 export type DeepLink =
   | { kind: 'license'; token: string }
   | { kind: 'open'; path: string }
-  | { kind: 'auth'; code: string };
+  | { kind: 'auth'; code: string; state: string | null };
 
 export function parseDeepLink(raw: string): DeepLink | null {
   let url: URL;
@@ -46,11 +46,17 @@ export function parseDeepLink(raw: string): DeepLink | null {
   }
 
   if (host === 'auth') {
-    // Code de uso único do login (nexus://auth/<code>) — trocado por tokens
-    // no backend. Mesmo rigor dos demais: conjunto seguro + teto.
+    // Code de uso único do login (nexus://auth/<code>?state=<nonce>) —
+    // trocado por tokens no backend. O state é o nonce que o PRÓPRIO app
+    // gerou ao iniciar o login; a validação contra o pendente acontece no
+    // auth-client. Mesmo rigor dos demais: conjunto seguro + teto.
     const code = decodeURIComponent(url.pathname.replace(/^\/+/, ''));
     if (!code || code.length > TOKEN_MAX || !SAFE_TOKEN.test(code)) return null;
-    return { kind: 'auth', code };
+    const state = url.searchParams.get('state');
+    if (state !== null && (state.length > TOKEN_MAX || !SAFE_TOKEN.test(state))) {
+      return null; // state presente mas fora do conjunto seguro → link inteiro cai
+    }
+    return { kind: 'auth', code, state };
   }
 
   return null;
@@ -105,10 +111,11 @@ function defaultHandler(link: DeepLink, trusted: boolean): void {
       console.warn('[deep-link] caminho inexistente:', link.path);
     }
   } else if (link.kind === 'auth') {
-    // Login: troca o code de uso único por tokens (Keychain) + licença.
+    // Login: valida o state contra o login pendente e troca o code de uso
+    // único por tokens (Keychain) + licença.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { exchangeAuthCode } = require('./auth-client') as typeof import('./auth-client');
-    void exchangeAuthCode(link.code).then((r) => {
+    void exchangeAuthCode(link.code, link.state).then((r) => {
       if (!r.ok) console.warn('[auth] exchange falhou:', r.error);
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { BILLING_CHANNELS } = require('../shared/billing-types') as typeof import('../shared/billing-types');

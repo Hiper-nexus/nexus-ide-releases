@@ -403,6 +403,10 @@ export interface NexusApi {
   app: {
     /** Tell main that React committed its first frame (mount watchdog). */
     signalMounted(): void;
+    /** Open an external http(s) URL in the OS browser. */
+    openExternal(url: string): Promise<{ ok: boolean; error?: string }>;
+    /** Inicia o login OAuth (nonce local + browser) no processo main. */
+    authLogin(provider: 'github' | 'google'): Promise<{ ok: boolean; error?: string }>;
     /** Deep link / document open (nexus://open ou abrir-com). */
     onDeepOpenPath(
       cb: (payload: { path: string; isDir: boolean }) => void,

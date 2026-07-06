@@ -396,6 +396,13 @@ export interface AgentSpawnOverrides {
   suppressEnv?: string[];
 }
 
+function normalizeAgentModel(adapter: CliPtyAdapter, model: string): string {
+  if (adapter.id === 'kimi' && model === 'kimi-for-coding') {
+    return 'kimi-code/kimi-for-coding';
+  }
+  return model;
+}
+
 /** Spawn a cli-agent PTY from a validated adapter. */
 export function spawnAgentSession(
   wc: WebContents,
@@ -404,8 +411,10 @@ export function spawnAgentSession(
   overrides: AgentSpawnOverrides = {},
 ): SpawnedSession {
   const cwd = resolveCwd(req.cwd);
-  const model =
-    req.model ?? overrides.defaultModel ?? adapter.models.default;
+  const model = normalizeAgentModel(
+    adapter,
+    req.model ?? overrides.defaultModel ?? adapter.models.default,
+  );
   const argv = resolvePlaceholders(adapter.spawn.interactive, {
     MODEL: model,
     CWD: cwd,

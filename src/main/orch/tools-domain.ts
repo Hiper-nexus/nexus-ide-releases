@@ -2,8 +2,7 @@ import { markHandoffSubmitted } from './gate';
 import type { McpToolDef } from './mcp-protocol';
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
 import { recordMissionPane } from './mission-pane-store';
-import { listAdapterInfos } from '../adapters/adapter-registry';
-import { hasKey } from '../persistence/secrets-store';
+import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
 import {
   handoffStatusSchema,
@@ -672,13 +671,13 @@ const routeTaskTool: McpToolDef = {
     // Failover de rate limit: o orquestrador re-roteia excluindo a CLI que
     // acabou de estourar cota/quebrar, em vez de insistir nela.
     const excluded = new Set(strArray(args, 'exclude'));
-    const adapters = listAdapterInfos().map((a) => ({
-      id: a.id,
-      // GLM rides the Claude binary but authenticates with a z.ai token — it is
-      // only routable once that key is stored, otherwise the spawn would fail.
+    const adapters = listProviderSettings().map((a) => ({
+      id: a.adapterId,
       installed:
-        !excluded.has(a.id) &&
-        (a.id === 'glm' ? a.installed && hasKey('glm') : a.installed),
+        !excluded.has(a.adapterId) &&
+        a.enabled &&
+        a.installed &&
+        a.authStrategy !== 'login-needed',
     }));
     // reserveClaude=true: workers nunca no binário claude OAuth — evita
     // corromper o keychain compartilhado com o orquestrador.

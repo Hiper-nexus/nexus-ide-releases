@@ -3,6 +3,8 @@ import type {
   MediaProviderInfo,
   MediaUsageTotals,
 } from '../../../shared/media-types';
+import { credentialLinkForKeySlot } from '../../../shared/credential-links';
+import { openExternalFromAnchor } from '../../lib/open-external';
 
 /**
  * Settings → Mídia: providers de geração (imagem/vídeo/voz) que viram MCP
@@ -33,6 +35,10 @@ function MediaKeyField({
   const [draft, setDraft] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const credentialLink = credentialLinkForKeySlot({
+    envVar: provider.envVar,
+    providerId: provider.id,
+  });
 
   async function save() {
     setBusy(true);
@@ -53,6 +59,25 @@ function MediaKeyField({
 
   return (
     <div className="prov__key">
+      <div className="prov__key-row">
+        <span className="prov__key-label">
+          API key <code className="prov__env"> → {provider.envVar}</code>
+          {credentialLink && (
+            <>
+              {' · '}
+              <a
+                className="settings-link"
+                href={credentialLink.url}
+                onClick={(e) =>
+                  openExternalFromAnchor(e, credentialLink.url)
+                }
+              >
+                obter em {credentialLink.label}
+              </a>
+            </>
+          )}
+        </span>
+      </div>
       <div className="prov__key-input">
         <input
           className="settings-input"

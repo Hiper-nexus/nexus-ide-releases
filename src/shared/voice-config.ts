@@ -332,7 +332,7 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
     provider: 'openai',
     endpoint: 'https://api.openai.com/v1/audio/speech',
     auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
-    model: 'tts-1',
+    model: 'gpt-4o-mini-tts',
     voice: 'nova',
     speed: 1.0,
     streaming: true,

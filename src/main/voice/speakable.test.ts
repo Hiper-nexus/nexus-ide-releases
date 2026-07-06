@@ -47,7 +47,7 @@ describe('toSpeakable', () => {
 
   it('summary of a code-only response returns a generic spoken line', () => {
     const out = toSpeakable('```js\nconst x = 1;\nconst y = 2;\n```', 'summary');
-    expect(out).toBe('Done. The response is mostly code — check the pane.');
+    expect(out).toBe('Pronto. A resposta é quase toda código — veja o pane.');
   });
 
   it('returns empty when there is nothing meaningful and no code', () => {

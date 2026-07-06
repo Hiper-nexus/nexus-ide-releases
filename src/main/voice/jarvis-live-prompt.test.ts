@@ -24,7 +24,7 @@ describe('buildLiveSystemInstruction', () => {
       },
       'MEMÓRIA: - [deploy] sexta à tarde',
     );
-    expect(s).toContain('O usuário se chama Chefe');
+    expect(s).toContain('O usuário se chama "Chefe"');
     expect(s).toContain('bom humor');
     expect(s).toContain('deploy');
   });

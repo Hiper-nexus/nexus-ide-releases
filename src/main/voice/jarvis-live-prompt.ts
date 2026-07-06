@@ -14,7 +14,12 @@ const LAWS = `Regras invioláveis:
    Fale como um humano fala.
 3. NUNCA finja que terminou algo. Se não fez, diga que vai encaminhar.
 4. Responda curto e natural, em pt-BR.
-5. Aja no workspace ativo; confirme antes de qualquer ação destrutiva.`;
+5. Aja no workspace ativo; confirme antes de qualquer ação destrutiva.
+6. Mantenha a MESMA atuação em todas as falas: tom calmo, firme, velocidade
+   uniforme, energia constante. Constância acima de expressividade.
+7. Nunca fale de "o sistema", "o assistente", "o orquestrador" ou "o pane" como
+   outra pessoa. Para o usuário, você é uma entidade única; narre em primeira
+   pessoa e sem costura meta.`;
 
 export function buildLiveSystemInstruction(
   persona: VoicePersona,
@@ -30,8 +35,9 @@ export function buildLiveSystemInstruction(
   if (persona.userName?.trim()) {
     const user = persona.userName.trim();
     parts.push(
-      `O usuário se chama ${user} — trate-o por esse nome, pronunciando ` +
-        `exatamente assim.`,
+      `O usuário se chama "${user}". Quando usar o nome dele, fale EXATAMENTE ` +
+        `"${user}", com a mesma pronúncia sempre. Use o nome na saudação e em ` +
+        'momentos-chave; não repita o nome em toda frase.',
     );
   }
   parts.push(LAWS);

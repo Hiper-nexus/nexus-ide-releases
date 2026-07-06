@@ -21,7 +21,8 @@ import {
 
 const TARGET_SAMPLE_RATE = 16_000;
 const CHUNK = 1280;
-const SPEECH_RMS = 0.015;
+const SPEECH_RMS = 0.022;
+const MIN_SPEECH_MS = 320;
 
 export class WakeMic {
   private ctx: AudioContext | null = null;
@@ -31,6 +32,7 @@ export class WakeMic {
   private source: MediaStreamAudioSourceNode | null = null;
   private pending: number[] = [];
   private running = false;
+  private wakeSuppressedUntil = 0;
 
   // Utterance capture (comando pós-wake/F6) sobre o MESMO stream quente.
   private uttChunks: Float32Array[] = [];
@@ -38,6 +40,7 @@ export class WakeMic {
   private uttAutoStop: AutoStopOptions | null = null;
   private uttFired = false;
   private uttHeardSpeech = false;
+  private uttSpeechMs = 0;
   private uttLastSpeechAt = 0;
   private uttStartedAt = 0;
 
@@ -60,6 +63,11 @@ export class WakeMic {
     return this.uttActive;
   }
 
+  /** Pausa curta do detector de wake enquanto a própria Jarvis está falando. */
+  suppressWakeDetection(ms: number): void {
+    this.wakeSuppressedUntil = Math.max(this.wakeSuppressedUntil, Date.now() + ms);
+  }
+
   /** Abre a escuta de comando INSTANTANEAMENTE (stream já está quente). */
   beginUtterance(autoStop?: AutoStopOptions): void {
     if (!this.running || this.uttActive) return;
@@ -68,6 +76,7 @@ export class WakeMic {
     this.uttAutoStop = autoStop ?? null;
     this.uttFired = false;
     this.uttHeardSpeech = false;
+    this.uttSpeechMs = 0;
     this.uttStartedAt = Date.now();
     this.uttLastSpeechAt = this.uttStartedAt;
   }
@@ -96,7 +105,8 @@ export class WakeMic {
     const rms = Math.sqrt(sum / Math.max(1, frame.length));
     const now = Date.now();
     if (rms >= SPEECH_RMS) {
-      this.uttHeardSpeech = true;
+      this.uttSpeechMs += (frame.length / (this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE)) * 1000;
+      this.uttHeardSpeech = this.uttSpeechMs >= MIN_SPEECH_MS;
       this.uttLastSpeechAt = now;
     }
     const opts = this.uttAutoStop;
@@ -131,6 +141,7 @@ export class WakeMic {
         this.trackUtterance(frame);
         return;
       }
+      if (Date.now() < this.wakeSuppressedUntil) return;
       for (let i = 0; i < frame.length; i += 1) this.pending.push(frame[i]);
       while (this.pending.length >= CHUNK) {
         const chunk = Float32Array.from(this.pending.splice(0, CHUNK));
@@ -160,6 +171,7 @@ export class WakeMic {
     if (!this.running) return;
     this.running = false;
     this.pending = [];
+    this.wakeSuppressedUntil = 0;
     try {
       this.worklet?.disconnect();
       this.scriptNode?.disconnect();

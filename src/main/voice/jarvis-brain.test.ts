@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { jarvisThink, type BrainDeps } from './jarvis-brain';
+import {
+  buildJarvisPersonaInstruction,
+  jarvisThink,
+  type BrainDeps,
+} from './jarvis-brain';
 import type { JarvisContext } from '../../shared/voice-ipc';
 
 const CTX: JarvisContext = {
@@ -27,6 +31,19 @@ function deps(
 }
 
 describe('jarvisThink brain providers', () => {
+  it('builds a hard persona instruction with the configured user name', () => {
+    const prompt = buildJarvisPersonaInstruction({
+      assistantName: 'Jarvis',
+      userName: 'patrão',
+      customInstructions: 'seja cordial e breve',
+    });
+
+    expect(prompt).toContain('IDENTIDADE DA VOZ');
+    expect(prompt).toContain('o usuário se chama "patrão"');
+    expect(prompt).toContain('fale EXATAMENTE "patrão"');
+    expect(prompt).toContain('seja cordial e breve');
+  });
+
   it('uses Gemini first when GEMINI_API_KEY is available', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse(
@@ -48,6 +65,8 @@ describe('jarvisThink brain providers', () => {
     expect(String(url)).toContain('generativelanguage.googleapis.com');
     expect(JSON.parse(String(init.body)).model).toBe('gemini-3.5-flash');
     expect(JSON.parse(String(init.body)).response_format).toBeUndefined();
+    const messages = JSON.parse(String(init.body)).messages as Array<{ content: string }>;
+    expect(messages.some((m) => m.content.includes('IDENTIDADE DA VOZ'))).toBe(true);
   });
 
   it('falls back to OpenAI when Gemini fails', async () => {
@@ -94,5 +113,24 @@ describe('jarvisThink brain providers', () => {
 
     expect(reply.say).toContain('GEMINI_API_KEY');
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('keeps an intentional empty say silent instead of turning it into filler', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(
+        200,
+        '{"say":"","expectReply":false,"action":{"type":"none"}}',
+      ),
+    ) as unknown as typeof fetch;
+
+    const reply = await jarvisThink(
+      'obrigado por assistir',
+      CTX,
+      [],
+      deps((envVar) => (envVar === 'GEMINI_API_KEY' ? 'gemini-key' : undefined), fetchImpl),
+    );
+
+    expect(reply.say).toBe('');
+    expect(reply.expectReply).toBe(false);
   });
 });

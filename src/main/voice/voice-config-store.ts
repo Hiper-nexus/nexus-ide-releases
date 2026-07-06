@@ -55,6 +55,14 @@ const LEGACY_VOICE_CANDIDATES = [
 let current: VoiceConfig = DEFAULT_VOICE_CONFIG;
 let hotkeyMode: HotkeyMode = 'toggle';
 
+function stableJarvisLiveTransport(
+  transport: VoiceConfig['jarvisLive']['transport'],
+): VoiceConfig['jarvisLive']['transport'] {
+  // Gemini Live currently speaks but does not drive Nexus actions/tools. Keep
+  // the action-capable Classic loop as the production Jarvis path.
+  return transport === 'gemini-live' ? 'classic' : transport;
+}
+
 /** Env var present and non-empty. */
 function hasEnv(name: string): boolean {
   return hasVoiceCredential(name);
@@ -127,21 +135,19 @@ export function loadVoiceConfig(): VoiceConfig {
   const userConfig = readUserConfig();
   if (userConfig) {
     let migrated = false;
-    // Upgrade one-time: quem ficou nos defaults antigos de TTS (tts-1/onyx)
-    // ganha a voz natural nova (gpt-4o-mini-tts/nova) sem perder customização.
+    // Upgrade one-time: quem ficou no TTS low-latency (tts-1) ganha a voz
+    // natural nova (gpt-4o-mini-tts/nova) sem perder customização de provider.
     if (
       userConfig.tts.provider === 'openai' &&
-      ((userConfig.tts.model === 'tts-1' && userConfig.tts.voice === 'onyx') ||
-        // gpt-4o-mini-tts media 1.3s/frase — tts-1 é o modelo low-latency.
-        userConfig.tts.model === 'gpt-4o-mini-tts')
+      userConfig.tts.model === 'tts-1'
     ) {
       userConfig.tts = {
         ...userConfig.tts,
-        model: 'tts-1',
+        model: 'gpt-4o-mini-tts',
         voice: 'nova',
       };
       migrated = true;
-      console.log('[voice] TTS migrado para tts-1 (latência)');
+      console.log('[voice] TTS migrado para gpt-4o-mini-tts (qualidade)');
     }
     // Saves antigos promoviam o fallback macos-say para o TOPO da chain — a
     // voz ficava robótica para sempre, mesmo com key OpenAI. Restaure a chain
@@ -156,6 +162,14 @@ export function loadVoiceConfig(): VoiceConfig {
       userConfig.routing = 'jarvis';
       migrated = true;
       console.log('[voice] routing migrado para o modo JARVIS (assistente)');
+    }
+    if (userConfig.jarvisLive.transport === 'gemini-live') {
+      userConfig.jarvisLive = {
+        ...userConfig.jarvisLive,
+        transport: stableJarvisLiveTransport(userConfig.jarvisLive.transport),
+      };
+      migrated = true;
+      console.log('[voice] Jarvis Live realtime protegido → Classic action loop');
     }
     if (migrated) persist(userConfig);
     current = userConfig;
@@ -212,7 +226,9 @@ export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
     jarvisLive: {
       ...current.jarvisLive,
       enabled: patch.jarvisLiveEnabled ?? current.jarvisLive.enabled,
-      transport: patch.jarvisLiveTransport ?? current.jarvisLive.transport,
+      transport: stableJarvisLiveTransport(
+        patch.jarvisLiveTransport ?? current.jarvisLive.transport,
+      ),
     },
     persona: {
       assistantName:

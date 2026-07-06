@@ -18,6 +18,7 @@ function initialState(enabled = false): JarvisLiveState {
     enabled,
     sessionId: null,
     status: enabled ? 'dormant' : 'off',
+    realtimeReady: false,
     startedAt: null,
     lastActiveAt: null,
     turns: 0,
@@ -37,6 +38,8 @@ function actionSummary(action: JarvisAction): string {
       return 'desenhar squad';
     case 'new_mission':
       return 'nova missão';
+    case 'open_terminal':
+      return 'abrir terminal';
     case 'send_to_pane':
       return 'enviar tarefa ao pane';
     case 'run_command':
@@ -86,6 +89,7 @@ export class JarvisLiveSession {
       ...this.state,
       sessionId: this.state.sessionId ?? randomUUID(),
       status: 'listening',
+      realtimeReady: false,
       startedAt: this.state.startedAt ?? now,
       lastActiveAt: now,
       pendingMic: false,
@@ -122,6 +126,7 @@ export class JarvisLiveSession {
       status: patch.status,
       lastActiveAt: this.now(),
       pendingMic: patch.pendingMic ?? this.state.pendingMic,
+      realtimeReady: patch.realtimeReady ?? this.state.realtimeReady,
       error: patch.error,
     };
     this.broadcastState();

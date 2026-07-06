@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { ProviderSettingsInfo } from '../../../shared/provider-settings-types';
+import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { useProviderStore } from '../../state/provider-store';
+import { openExternalFromAnchor } from '../../lib/open-external';
 import { AccountsManager } from './AccountsManager';
 
 /**
@@ -17,6 +19,11 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
   const [draft, setDraft] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const credentialLink = credentialLinkForKeySlot({
+    envVar: provider.keyEnvVar,
+    providerId: provider.adapterId,
+    upstreamId: provider.routable ? provider.upstream : null,
+  });
 
   async function save() {
     setBusy(true);
@@ -48,6 +55,20 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
           API key
           {provider.keyEnvVar && (
             <code className="prov__env"> → {provider.keyEnvVar}</code>
+          )}
+          {credentialLink && (
+            <>
+              {' · '}
+              <a
+                className="settings-link"
+                href={credentialLink.url}
+                onClick={(e) =>
+                  openExternalFromAnchor(e, credentialLink.url)
+                }
+              >
+                obter em {credentialLink.label}
+              </a>
+            </>
           )}
         </span>
         <span

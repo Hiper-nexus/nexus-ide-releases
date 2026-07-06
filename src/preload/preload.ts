@@ -277,6 +277,10 @@ ipcRenderer.on(PIPE_CHANNELS.changed, (_e, pipes: Pipe[]) =>
 const api: NexusApi = {
   app: {
     signalMounted: () => ipcRenderer.send(WINDOW_CHANNELS.mounted),
+    openExternal: (url: string) =>
+      ipcRenderer.invoke(WINDOW_CHANNELS.openExternal, url),
+    authLogin: (provider: 'github' | 'google') =>
+      ipcRenderer.invoke(WINDOW_CHANNELS.authLogin, provider),
     onDeepOpenPath: (cb: (payload: { path: string; isDir: boolean }) => void) =>
       addListener(deepOpenListeners, cb),
   },

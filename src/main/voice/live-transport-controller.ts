@@ -39,9 +39,19 @@ export class LiveTransportController {
 
   /** Chamado no start() do live: conecta o socket se o realtime estiver ligado. */
   onStart(): void {
-    if (!this.isRealtimeConfigured()) return;
+    if (!this.isRealtimeConfigured()) {
+      this.patchRealtimeReady(false);
+      return;
+    }
     const key = resolveVoiceApiKey('GEMINI_API_KEY');
-    if (!key) return;
+    if (!key) {
+      this.patchRealtimeReady(false);
+      return;
+    }
+    if (this.transport?.isReady) {
+      this.fsm.patchStatus({ status: 'listening', realtimeReady: true });
+      return;
+    }
     const live = getVoiceConfig().jarvisLive;
     const persona = getVoiceConfig().persona;
     const systemInstruction = buildLiveSystemInstruction(
@@ -55,10 +65,16 @@ export class LiveTransportController {
           this.fsm.transcript({ role, text, final }),
         onInterrupted: () => this.fsm.interrupt('barge-in'),
         onStateChange: (state) => {
-          if (state === 'ready') this.fsm.patchStatus({ status: 'listening' });
-          else if (state === 'error') {
+          if (state === 'connecting') {
+            this.fsm.patchStatus({ status: 'listening', realtimeReady: false });
+          } else if (state === 'ready') {
+            this.fsm.patchStatus({ status: 'listening', realtimeReady: true });
+          } else if (state === 'closed') {
+            this.patchRealtimeReady(false);
+          } else if (state === 'error') {
             this.fsm.patchStatus({
               status: 'error',
+              realtimeReady: false,
               error: 'transporte realtime falhou — usando Classic',
             });
           }
@@ -96,6 +112,17 @@ export class LiveTransportController {
   onStop(): void {
     this.transport?.disconnect();
     this.transport = null;
+    this.patchRealtimeReady(false);
+  }
+
+  private patchRealtimeReady(realtimeReady: boolean): void {
+    const state = this.fsm.getState();
+    if (!state.enabled || !state.sessionId) return;
+    this.fsm.patchStatus({
+      status: state.status === 'off' ? 'dormant' : state.status,
+      realtimeReady,
+      error: realtimeReady ? undefined : state.error,
+    });
   }
 }
 

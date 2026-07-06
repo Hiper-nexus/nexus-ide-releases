@@ -17,6 +17,8 @@ export interface MediaProviderInfo {
   id: MediaProviderId;
   kind: MediaKind;
   label: string;
+  /** Env var shape the provider expects, shown only as a non-secret hint. */
+  envVar: string;
   defaultModel: string;
   /** Whitelisted models — requests outside this list are rejected. */
   models: string[];

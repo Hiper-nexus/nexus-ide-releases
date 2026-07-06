@@ -168,6 +168,8 @@ export type TranscribeResult =
 
 export interface JarvisContext {
   workspace: string | null;
+  /** Resumo determinístico do que o usuário está vendo agora. */
+  screen?: string | null;
   /** Workspaces recentes (nomes) — para open_workspace. */
   recents: string[];
   squads: string[];
@@ -190,6 +192,7 @@ export type JarvisAction =
   | { type: 'open_workspace'; workspaceName: string }
   | { type: 'design_squad' }
   | { type: 'new_mission' }
+  | { type: 'open_terminal' }
   | { type: 'send_to_pane'; text: string }
   | { type: 'run_command'; command: string };
 
@@ -206,6 +209,7 @@ export const jarvisRequestSchema = z.object({
   transcript: z.string().min(1).max(4000),
   context: z.object({
     workspace: z.string().nullable(),
+    screen: z.string().max(500).nullable().optional(),
     recents: z.array(z.string().max(128)).max(20).default([]),
     squads: z.array(z.string().max(128)).max(50),
     panes: z.array(z.string().max(128)).max(50),
@@ -247,6 +251,8 @@ export interface JarvisLiveState {
   enabled: boolean;
   sessionId: string | null;
   status: JarvisLiveStatus;
+  /** True only after the realtime transport socket is connected and setup-complete. */
+  realtimeReady: boolean;
   startedAt: number | null;
   lastActiveAt: number | null;
   turns: number;
@@ -261,6 +267,7 @@ export interface JarvisLiveStartRequest {
 export interface JarvisLiveStatusPatch {
   status: Exclude<JarvisLiveStatus, 'off'>;
   pendingMic?: boolean;
+  realtimeReady?: boolean;
   error?: string;
 }
 
@@ -305,6 +312,7 @@ export const jarvisLiveStatusPatchSchema = z.object({
     'error',
   ]),
   pendingMic: z.boolean().optional(),
+  realtimeReady: z.boolean().optional(),
   error: z.string().max(500).optional(),
 });
 
@@ -321,6 +329,7 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'open_workspace',
     'design_squad',
     'new_mission',
+    'open_terminal',
     'send_to_pane',
     'run_command',
   ]),

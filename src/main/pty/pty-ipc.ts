@@ -19,6 +19,7 @@ import { createRealPtyHost } from './pty-host-client';
 import { getAdapter, isAdapterInstalled } from '../adapters/adapter-registry';
 import {
   isProviderEnabled,
+  providerReadiness,
   providerSpawnOverrides,
 } from '../persistence/provider-config-store';
 
@@ -56,6 +57,10 @@ export function registerPtyIpc(): void {
           ok: false,
           error: `${adapter.label} is disabled in Settings → Providers.`,
         };
+      }
+      const readiness = providerReadiness(adapter.id);
+      if (!readiness.ready) {
+        return { ok: false, error: readiness.reason };
       }
       const overrides = providerSpawnOverrides(adapter.id, {
         effort: req.effort,

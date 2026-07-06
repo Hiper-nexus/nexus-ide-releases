@@ -1,5 +1,9 @@
 import { spawn, execFileSync } from 'node:child_process';
-import type { VoiceConfig, VoicePlugin } from '../../shared/voice-config';
+import type {
+  VoiceConfig,
+  VoicePersona,
+  VoicePlugin,
+} from '../../shared/voice-config';
 import type { SpeakRequest, SpeakResult } from '../../shared/voice-ipc';
 import { toSpeakable } from './speakable';
 import { echoSuppressor } from './echo-suppress';
@@ -62,10 +66,30 @@ function runPiperLocal(plugin: VoicePlugin, text: string): Buffer {
   return execFileSync(bin, args, { input: text, maxBuffer: 64 * 1024 * 1024 });
 }
 
+function ttsInstructions(persona: VoicePersona): string {
+  const assistant = persona.assistantName?.trim() || 'Jarvis';
+  const user = persona.userName?.trim();
+  return [
+    `Você é a voz de ${assistant} no NexusIDE.`,
+    'Fale sempre em português brasileiro, com pronúncia brasileira.',
+    'Use tom calmo, firme, próximo e útil; mantenha ritmo e energia constantes.',
+    'Não dramatize, não acelere no meio da frase e não mude de atuação entre respostas.',
+    user
+      ? `Quando o texto contiver o nome do usuário, pronuncie exatamente "${user}".`
+      : '',
+    persona.customInstructions?.trim()
+      ? `Preferência do usuário: ${persona.customInstructions.trim()}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
 async function speakCloud(
   plugin: VoicePlugin,
   text: string,
   deps: TtsDeps,
+  persona: VoicePersona,
 ): Promise<SpeakResult> {
   const envVar = plugin.auth?.envVar;
   const key = envVar ? deps.getEnv(envVar)?.trim() : undefined;
@@ -85,11 +109,7 @@ async function speakCloud(
       voice: plugin.voice ?? 'nova',
       // Persona JARVIS — só o gpt-4o-mini-tts aceita instructions.
       ...((plugin.model ?? 'gpt-4o-mini-tts').startsWith('gpt-4o-mini-tts')
-        ? {
-            instructions:
-              'Fale em português brasileiro, tom confiante, caloroso e ágil — ' +
-              'assistente pessoal estilo JARVIS.',
-          }
+        ? { instructions: ttsInstructions(persona) }
         : {}),
       input: text,
       response_format: format,
@@ -150,9 +170,10 @@ function speakVia(
   plugin: VoicePlugin,
   text: string,
   deps: TtsDeps,
+  persona: VoicePersona,
 ): Promise<SpeakResult> {
   return classifyKind(plugin) === 'cloud'
-    ? speakCloud(plugin, text, deps)
+    ? speakCloud(plugin, text, deps, persona)
     : speakLocalOrSystem(plugin, text, deps);
 }
 
@@ -178,7 +199,7 @@ export async function speak(
   const failures: string[] = [];
 
   for (const plugin of chain) {
-    const result = await speakVia(plugin, text, deps);
+    const result = await speakVia(plugin, text, deps, config.persona);
     if (result.ok) {
       // Janela de eco: registra o que foi falado para o fluxo de STT poder
       // descartar transcrições que são o alto-falante vazando no microfone.

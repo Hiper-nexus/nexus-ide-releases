@@ -34,11 +34,11 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   trivial: [
     { adapterId: 'grok', model: 'grok-code-fast-1', effort: 'low' },
     { adapterId: 'agy', model: 'gemini-3.5-flash-low', effort: 'low' },
-    { adapterId: 'kimi', model: 'kimi-for-coding', effort: 'low' },
+    { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'low' },
     { adapterId: 'claude', model: 'claude-haiku-4-5', effort: 'low' },
   ],
   easy: [
-    { adapterId: 'kimi', model: 'kimi-for-coding', effort: 'low' },
+    { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'low' },
     { adapterId: 'grok', model: 'grok-4-fast', effort: 'low' },
     { adapterId: 'agy', model: 'gemini-3.5-flash-low', effort: 'low' },
     { adapterId: 'codex', model: 'gpt-5.4-mini', effort: 'low' },
@@ -47,7 +47,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   medium: [
     { adapterId: 'glm', model: 'glm-5.2', effort: 'medium' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'medium' },
-    { adapterId: 'kimi', model: 'kimi-for-coding', effort: 'medium' },
+    { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'medium' },
     { adapterId: 'grok', model: 'grok-4.1', effort: 'medium' },
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'medium' },
     { adapterId: 'codex', model: 'gpt-5.4', effort: 'medium' },
@@ -59,7 +59,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.5', effort: 'high' },
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'high' },
-    { adapterId: 'kimi', model: 'kimi-for-coding', effort: 'high' },
+    { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'high' },
     { adapterId: 'grok', model: 'grok-4.1', effort: 'high' },
   ],
   critical: [

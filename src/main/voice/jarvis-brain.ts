@@ -8,7 +8,7 @@ import type {
   JarvisReply,
   JarvisTurn,
 } from '../../shared/voice-ipc';
-import type { JarvisBrainProvider } from '../../shared/voice-config';
+import type { JarvisBrainProvider, VoicePersona } from '../../shared/voice-config';
 
 /**
  * O cérebro da JARVIS — transforma a fala transcrita numa resposta CURTA em
@@ -56,9 +56,10 @@ Tipos de action:
 - {"type":"design_squad"} — quando pedirem um squad SOB MEDIDA para o projeto
   atual ("cria um squad pra esse projeto", "monta um time pra esse app").
 - {"type":"new_mission"} — nova missão sem citar squad.
+- {"type":"open_terminal"} — abrir um terminal/shell vazio no workspace atual.
 - {"type":"run_command","command":"<comando exato>"} — quando pedirem para
-  EXECUTAR/RODAR um comando, programa ou CLI no terminal (o pane focado é um
-  shell de verdade). Use o comando literal, sem explicação.
+  EXECUTAR/RODAR um comando, programa ou CLI no terminal. Use o comando literal,
+  sem explicação. Se não houver terminal focado, o app abre um terminal e roda.
 - {"type":"send_to_pane","text":"<prompt de engenharia em INGLÊS>"} — quando a
   fala for uma TAREFA/MISSÃO para um agente de IA (codar, corrigir, construir).
   NÃO traduza literalmente: COMPONHA um prompt profissional em inglês com:
@@ -84,6 +85,7 @@ correspondente — sem action, nada acontece no app.
 VOCÊ PODE executar coisas — nunca diga que não pode. Exemplos:
 - "executa o comando ai" → {"say":"Rodando o ai no terminal.","action":{"type":"run_command","command":"ai"}}
 - "roda npm test" → {"say":"Rodando os testes.","action":{"type":"run_command","command":"npm test"}}
+- "abre um terminal" → {"say":"Abrindo um terminal.","action":{"type":"open_terminal"}}
 - "abre o squad de review" → {"say":"Subindo o Code Review.","action":{"type":"open_squad","squadName":"Code Review"}}
 - "abre o projeto saasbarbearia" → {"say":"Abrindo o saasbarbearia.","action":{"type":"open_workspace","workspaceName":"saasbarbearia"}}
 - "pede pro agente corrigir o bug do login" → send_to_pane com o prompt em inglês.
@@ -101,7 +103,10 @@ CONSCIÊNCIA DE ESTADO (o mais importante):
 - Sem orquestrador ativo: aí sim open_squad inicia um.
 
 Se o usuário só te chamou ("Jarvis?", "você está aí?"), responda presente e
-pergunte o que ele quer, citando 1-2 opções reais do contexto.
+pergunte o que vamos fazer COM BASE NA TELA ATUAL, citando 1-2 ações reais que
+cabem nela. Ex.: se a tela for "Pronto para operar", pergunte se iniciamos
+missão ou escolhemos um squad; se for um pane, pergunte se vamos agir naquele
+pane; se forem configurações, pergunte o que ajustamos.
 Termine com pergunta apenas quando fizer sentido continuar a conversa.
 
 MEMÓRIA PERSISTENTE: você tem memória de longo prazo entre sessões. Os fatos já
@@ -113,6 +118,43 @@ sempre na sexta", "me chama de chefe"), inclua no JSON um campo extra:
 Para apagar um fato a pedido dele: "forget":"<slug>". NÃO salve conversa
 passageira, tarefas do momento ou segredos (chaves, senhas) — só fatos que
 continuam verdade amanhã.`;
+
+export function buildJarvisPersonaInstruction(persona: VoicePersona): string {
+  const assistant = persona.assistantName?.trim() || 'Jarvis';
+  const parts = [
+    `IDENTIDADE DA VOZ: seu nome é "${assistant}".`,
+    'Você é uma entidade única para o usuário: nunca fale como se "o sistema", ' +
+      '"o assistente", "o orquestrador" ou "o pane" fossem outra pessoa. ' +
+      'Quando narrar trabalho, fale em primeira pessoa e sem costura meta.',
+    'ENTREGA DE VOZ: frases curtas, naturais, em português brasileiro. ' +
+      'Mantenha o mesmo tom calmo, firme e útil do começo ao fim da conversa.',
+  ];
+
+  if (assistant.toLowerCase() !== 'jarvis') {
+    parts.push(
+      `Apresente-se e refira-se a si mesma como "${assistant}", nunca como Jarvis.`,
+    );
+  }
+
+  const user = persona.userName?.trim();
+  if (user) {
+    parts.push(
+      `NOME DO USUÁRIO: o usuário se chama "${user}". ` +
+        `Quando usar o nome dele, fale EXATAMENTE "${user}", sem inventar apelido, ` +
+        'diminutivo ou variação. Use o nome na saudação e em momentos-chave; ' +
+        'não repita o nome em toda frase.',
+    );
+  }
+
+  if (persona.customInstructions?.trim()) {
+    parts.push(
+      `PERSONALIZAÇÃO DO USUÁRIO — siga salvo conflito com as regras acima:\n` +
+        persona.customInstructions.trim(),
+    );
+  }
+
+  return parts.join('\n\n');
+}
 
 export interface BrainDeps {
   fetchImpl: typeof fetch;
@@ -139,6 +181,7 @@ function contextBlock(ctx: JarvisContext): string {
   return (
     `Contexto do app agora:\n` +
     `- workspace: ${ctx.workspace ?? 'nenhum aberto'}\n` +
+    `- tela atual: ${ctx.screen ?? 'não informada'}\n` +
     `- workspaces recentes: ${ctx.recents.join(', ') || 'nenhum'}\n` +
     `- squads disponíveis: ${squads}\n` +
     `- panes abertos: ${panes}\n` +
@@ -177,9 +220,9 @@ function parseReply(raw: string): JarvisReply {
   if (!match) return { say: raw.trim().slice(0, 300), action: { type: 'none' } };
   try {
     const obj = JSON.parse(match[0]) as Partial<JarvisReply>;
-    const say = typeof obj.say === 'string' && obj.say.trim() ? obj.say.trim() : 'Certo.';
+    const say = typeof obj.say === 'string' ? obj.say.trim() : 'Certo.';
     const expectReply =
-      typeof obj.expectReply === 'boolean' ? obj.expectReply : /\?\s*$/.test(say);
+      typeof obj.expectReply === 'boolean' ? obj.expectReply : (say ? /\?\s*$/.test(say) : false);
     const type = obj.action?.type;
     if (type === 'open_squad' && typeof obj.action?.squadName === 'string') {
       return { say, expectReply, action: { type, squadName: obj.action.squadName } };
@@ -189,6 +232,7 @@ function parseReply(raw: string): JarvisReply {
     }
     if (type === 'design_squad') return { say, expectReply, action: { type } };
     if (type === 'new_mission') return { say, expectReply, action: { type } };
+    if (type === 'open_terminal') return { say, expectReply, action: { type } };
     if (type === 'send_to_pane' && typeof obj.action?.text === 'string') {
       return { say, expectReply, action: { type, text: obj.action.text } };
     }
@@ -290,8 +334,10 @@ export async function jarvisThink(
   if (fast) return fast;
 
   const facts = jarvisMemory.factsBlock();
+  const voiceConfig = getVoiceConfig();
   const messages: Array<{ role: string; content: string }> = [
     { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: buildJarvisPersonaInstruction(voiceConfig.persona) },
     { role: 'system', content: contextBlock(ctx) },
     ...(facts
       ? [{ role: 'system', content: `Fatos lembrados (memória persistente):\n${facts}` }]
@@ -300,7 +346,7 @@ export async function jarvisThink(
     { role: 'user', content: transcript },
   ];
 
-  const providers = flattenJarvisBrainProviders(getVoiceConfig().jarvisBrain);
+  const providers = flattenJarvisBrainProviders(voiceConfig.jarvisBrain);
   const attempts: string[] = [];
 
   for (const provider of providers) {

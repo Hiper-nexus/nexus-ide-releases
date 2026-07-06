@@ -178,4 +178,42 @@ describe('speak', () => {
       expect(result.audioBase64.length).toBeGreaterThan(0);
     }
   });
+
+  it('sends persona instructions to the high-quality OpenAI voice model', async () => {
+    const config: VoiceConfig = {
+      ...DEFAULT_VOICE_CONFIG,
+      persona: {
+        assistantName: 'Jarvis',
+        userName: 'patrão',
+        customInstructions: 'seja cordial e breve',
+      },
+      tts: {
+        type: 'tts',
+        provider: 'openai',
+        endpoint: 'https://api.openai.com/v1/audio/speech',
+        auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
+        model: 'gpt-4o-mini-tts',
+        voice: 'nova',
+        format: 'mp3',
+      },
+    };
+    const fetchImpl = vi.fn(
+      async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 }),
+    ) as unknown as typeof fetch;
+
+    const result = await speak(
+      { text: 'Pois não, patrão?', speakMode: 'full' },
+      config,
+      { ...PROBES, hasEnv: () => true },
+      deps({ fetchImpl, getEnv: () => 'key' }),
+    );
+
+    expect(result.ok).toBe(true);
+    const [, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(String(init.body));
+    expect(body.model).toBe('gpt-4o-mini-tts');
+    expect(body.instructions).toContain('pronúncia brasileira');
+    expect(body.instructions).toContain('patrão');
+    expect(body.instructions).toContain('seja cordial e breve');
+  });
 });

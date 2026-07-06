@@ -158,6 +158,7 @@ export function listMediaProviders(
     id: def.id,
     kind: def.kind,
     label: def.label,
+    envVar: def.envVar,
     defaultModel: def.defaultModel,
     models: def.models,
     hasKey: hasKeyFn(def),

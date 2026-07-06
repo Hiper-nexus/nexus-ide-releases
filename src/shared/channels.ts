@@ -49,4 +49,10 @@ export const WINDOW_CHANNELS = {
   /** event: main → renderer. Deep link/document open (nexus://open ou
    * abrir-com): { path, isDir }. O renderer abre o workspace (ou o do pai). */
   deepOpenPath: 'app:deepOpenPath',
+  /** invoke: renderer → main. Open a trusted https URL in the OS browser. */
+  openExternal: 'app:openExternal',
+  /** invoke: renderer → main. Inicia o login OAuth: o main gera o nonce
+   * local (binding do deep link) e abre o browser — o renderer nunca monta
+   * a URL de auth. */
+  authLogin: 'auth:login',
 } as const;

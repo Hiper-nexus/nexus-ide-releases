@@ -40,10 +40,22 @@ describe('parseDeepLink', () => {
     expect(parseDeepLink('nexus://auth/abcXYZ_-.09')).toEqual({
       kind: 'auth',
       code: 'abcXYZ_-.09',
+      state: null,
     });
     expect(parseDeepLink('nexus://auth/')).toBeNull();
     expect(parseDeepLink('nexus://auth/tem espaço')).toBeNull();
     expect(parseDeepLink('nexus://auth/' + 'a'.repeat(5000))).toBeNull();
+  });
+
+  it('auth carrega o ?state= do binding local (e rejeita state perigoso)', () => {
+    expect(parseDeepLink('nexus://auth/code1?state=nonce-1')).toEqual({
+      kind: 'auth',
+      code: 'code1',
+      state: 'nonce-1',
+    });
+    // state fora do conjunto seguro invalida o link inteiro
+    expect(parseDeepLink('nexus://auth/code1?state=tem espaço')).toBeNull();
+    expect(parseDeepLink('nexus://auth/code1?state=' + 'a'.repeat(5000))).toBeNull();
   });
 });
 
