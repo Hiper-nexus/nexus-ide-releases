@@ -23,10 +23,18 @@ async function insertIdentity(
   });
 }
 
+/**
+ * drizzle-orm >= 0.38 envolve o erro do driver num DrizzleQueryError,
+ * guardando o erro real do Postgres em `.cause` (code/message só existem
+ * lá). Checamos os dois níveis para não perder a detecção de corrida.
+ */
 function isUniqueViolation(err: unknown): boolean {
-  const code = (err as { code?: string })?.code;
-  const msg = err instanceof Error ? err.message : String(err);
-  return code === '23505' || /duplicate key|unique constraint/i.test(msg);
+  const layers = [err, (err as { cause?: unknown })?.cause];
+  return layers.some((layer) => {
+    const code = (layer as { code?: string })?.code;
+    const msg = layer instanceof Error ? layer.message : String(layer ?? '');
+    return code === '23505' || /duplicate key|unique constraint/i.test(msg);
+  });
 }
 
 const MAX_RACE_RETRIES = 3;
