@@ -57,6 +57,10 @@ Tipos de action:
   atual ("cria um squad pra esse projeto", "monta um time pra esse app").
 - {"type":"new_mission"} — nova missão sem citar squad.
 - {"type":"open_terminal"} — abrir um terminal/shell vazio no workspace atual.
+- {"type":"close_pane"} — FECHAR o pane/terminal focado ("fecha esse terminal",
+  "fecha esse pane", "pode fechar isso").
+- {"type":"open_board"} — abrir o quadro de missões / Ops Board ("abre o
+  quadro", "mostra o board", "abre as missões").
 - {"type":"run_command","command":"<comando exato>"} — quando pedirem para
   EXECUTAR/RODAR um comando, programa ou CLI no terminal. Use o comando literal,
   sem explicação. Se não houver terminal focado, o app abre um terminal e roda.
@@ -233,6 +237,8 @@ function parseReply(raw: string): JarvisReply {
     if (type === 'design_squad') return { say, expectReply, action: { type } };
     if (type === 'new_mission') return { say, expectReply, action: { type } };
     if (type === 'open_terminal') return { say, expectReply, action: { type } };
+    if (type === 'close_pane') return { say, expectReply, action: { type } };
+    if (type === 'open_board') return { say, expectReply, action: { type } };
     if (type === 'send_to_pane' && typeof obj.action?.text === 'string') {
       return { say, expectReply, action: { type, text: obj.action.text } };
     }
@@ -282,6 +288,12 @@ export async function chatViaBrainChain(
   );
 }
 
+/**
+ * Deadline duro do cérebro: sem ele, um socket pendurado do provider segura o
+ * turno inteiro (busy preso no renderer = "JARVIS não responde mais").
+ */
+export const BRAIN_TIMEOUT_MS = 15_000;
+
 export async function chatOnce(
   endpoint: string,
   key: string,
@@ -300,14 +312,23 @@ export async function chatOnce(
     max_tokens: maxTokens,
   };
   if (jsonMode) body.response_format = { type: 'json_object' };
-  const res = await deps.fetchImpl(endpoint, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${key}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await deps.fetchImpl(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(BRAIN_TIMEOUT_MS),
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      throw new Error(`timeout (${BRAIN_TIMEOUT_MS / 1000}s sem resposta)`);
+    }
+    throw err;
+  }
   if (!res.ok) {
     const detail = (await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
     throw new Error(`${res.status}: ${detail}`);

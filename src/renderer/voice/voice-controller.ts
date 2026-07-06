@@ -7,6 +7,7 @@ import { VoiceCapture } from './voice-capture';
 import { WakeMic } from './wake-mic';
 import { LiveAudioPlayer, micFrameToBase64 } from './live-audio';
 import { stripPromptEcho } from './response-echo';
+import { isDiscardableTranscript } from './transcript-filter';
 import { getPaneSessionId, waitForSession, writeToPane } from '../terminal/terminal-host';
 import { listPanes } from '../lib/split-tree';
 import { useWorkspaceStore } from '../state/workspace-store';
@@ -36,30 +37,43 @@ import type {
 
 const RESPONSE_QUIET_MS = 1_500; // speak once the pane has been quiet this long
 const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
-const MIN_SPEECH_SEC = 0.25;
+const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
 const REALTIME_ACTION_BRIDGE_ENABLED = false;
 const WAKE_ACK_SUPPRESS_MS = 1_500;
 const WAKE_ACK_TAIL_GUARD_MS = 180;
-
-/**
- * Frases que o Whisper cospe em áudio SEM fala (créditos de YouTube no corpus
- * de treino). Sozinhas, são quase sempre alucinação de silêncio — não turno.
- */
-const WHISPER_GHOSTS = new Set([
-  'you', 'thank you', 'thanks', 'thank you.', 'thanks for watching',
-  'thanks for watching!', 'you.', 'bye', 'bye.', '.', 'obrigado',
-  'obrigado.', 'obrigado por assistir', 'valeu', 'tchau', 'até a próxima',
-  'e aí', 'e ai', 'ei', 'oi', 'legendas pela comunidade amara.org', 'amara.org',
-]);
-
-function isWhisperHallucination(text: string): boolean {
-  const clean = text.trim().toLowerCase().replace(/\s+/g, ' ');
-  if (clean.length === 0) return true;
-  return WHISPER_GHOSTS.has(clean);
-} // ignore accidental taps shorter than this
 const WAKE_SILENCE_MS = 700; // wake-word capture: quiet time that ends the utterance
 const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
+const PTT_HOLD_MAX_MS = 60_000; // hold-to-talk sem keyup (tap morto) fecha aqui
 const JARVIS_MEMORY_MS = 240_000; // 4 min: conversa continua sem recomeçar do zero
+
+// Deadlines das invocações renderer→main (cinto E suspensório sobre os
+// timeouts do main): se QUALQUER etapa pendurar além disto, o turno morre com
+// erro falável em vez de deixar busy travado — "JARVIS não responde nunca
+// mais" era exatamente um await sem deadline segurando o busy para sempre.
+export const TRANSCRIBE_DEADLINE_MS = 60_000;
+export const BRAIN_DEADLINE_MS = 35_000;
+const SPEAK_DEADLINE_MS = 40_000;
+// Turno preso além disto + novo "Hey Jarvis" = derruba o turno e atende.
+const STUCK_TURN_TAKEOVER_MS = 20_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} demorou demais (${Math.round(ms / 1000)}s)`)),
+      ms,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
 
 // Memória curta da conversa com a JARVIS (renderer-local, por janela).
 let jarvisHistory: JarvisTurn[] = [];
@@ -74,6 +88,9 @@ function ensureLivePlayer(): LiveAudioPlayer {
 let realtimeTurnActive = false;
 let jarvisLastTurnAt = 0;
 let wakeOpenInProgress = false;
+// Início do turno em processamento (0 = nenhum) — o wake usa para detectar
+// turno PRESO (fetch pendurado etc.) e retomar o controle.
+let turnStartedAt = 0;
 
 const BASE_WAKE_ACKS = ['Pois não?', 'Sim?', 'Às ordens.', 'Diga.'];
 // Micro-fillers ditos NA HORA em que você termina de falar (enquanto STT +
@@ -220,8 +237,10 @@ function warmAckCache(): void {
   for (const text of [...wakeAckTexts(), ...THINK_FILLERS]) {
     if (warmedAckTexts.has(text)) continue;
     warmedAckTexts.add(text);
+    // echoRecord:false — acks/fillers na janela anti-eco censuravam respostas
+    // curtas legítimas do usuário ("sim", "deixa") logo em seguida.
     void window.nexus.voice
-      .speak({ text, speakMode: 'full' })
+      .speak({ text, speakMode: 'full', echoRecord: false })
       .then((r) => {
         if (r.ok && r.mode === 'audio') {
           ackCache.set(text, { audioBase64: r.audioBase64, format: r.format });
@@ -241,7 +260,11 @@ async function playWakePrompt(text: string): Promise<void> {
   if (!text.trim()) return;
   const cached = ackCache.get(text);
   if (!cached) {
-    const result = await window.nexus.voice.speak({ text, speakMode: 'full' });
+    const result = await withTimeout(
+      window.nexus.voice.speak({ text, speakMode: 'full', echoRecord: false }),
+      SPEAK_DEADLINE_MS,
+      'TTS do ack',
+    );
     if (result.ok && result.mode === 'audio') {
       ackCache.set(text, { audioBase64: result.audioBase64, format: result.format });
       await playAudioBase64(result.audioBase64, result.format);
@@ -298,10 +321,21 @@ export function useVoiceController(): void {
         // BARGE-IN: corta qualquer fala/fila dela na hora do chamado.
         stopAllPlayback();
         if (busy.current) {
-          // Estava FALANDO? Interrompe e volta a ouvir. Pensando (stt/cérebro,
-          // <1s)? Deixa terminar — chame de novo em seguida.
-          if (useVoiceStore.getState().status !== 'speaking') return;
-          busy.current = false;
+          const stuckFor = turnStartedAt ? Date.now() - turnStartedAt : 0;
+          if (useVoiceStore.getState().status === 'speaking') {
+            busy.current = false;
+          } else if (stuckFor > STUCK_TURN_TAKEOVER_MS) {
+            // Turno PRESO (rede pendurada, pipeline zumbi): quem chama de novo
+            // depois de 20s merece ser atendido — derruba o turno e segue. Sem
+            // isto, um único await travado deixava a JARVIS surda para sempre.
+            console.warn(`[voice] turno preso há ${Math.round(stuckFor / 1000)}s — retomando pelo wake`);
+            busy.current = false;
+            turnStartedAt = 0;
+            useVoiceStore.getState().setStatus('idle');
+          } else {
+            // Pensando de verdade (<20s): deixa terminar — chame em seguida.
+            return;
+          }
         }
 
         const screen = currentScreenSnapshot();
@@ -317,6 +351,18 @@ export function useVoiceController(): void {
     };
     const onWake = () => {
       void handleWake();
+    };
+    // Morte do stream do mic (AirPods trocados, sleep/wake): o WakeMic
+    // reconstrói sozinho; se esgotar, a UI avisa em vez de ficar surda muda.
+    wakeMic.onDied = (reason) => {
+      useVoiceStore
+        .getState()
+        .setError(`Mic do wake morreu (${reason}) — religue o wake word nas configurações.`);
+    };
+    wakeMic.onRecovered = () => {
+      const s = useVoiceStore.getState();
+      if (s.status === 'error') s.setStatus('idle');
+      s.setNote('mic do wake reconectado');
     };
     const syncWakeWord = (info: VoiceRuntimeInfo) => {
       if (info.enabled && info.wakeWordEnabled) {
@@ -369,7 +415,16 @@ export function useVoiceController(): void {
 
     const onStart = () => {
       if (busy.current) return;
-      void beginListening(capture.current!, undefined, 'ptt');
+      // Hold-to-talk com guarda: se o keyup nunca chegar (event tap do uiohook
+      // morto — o macOS desliga taps em silêncio), o deadline fecha o turno.
+      const holdGuard: AutoStopOptions = {
+        silenceMs: PTT_HOLD_MAX_MS, // nunca fecha por silêncio no hold
+        maxMs: PTT_HOLD_MAX_MS,
+        onAutoStop: () => {
+          if (isListening(capture.current)) void finishAndProcess(capture.current!, busy);
+        },
+      };
+      void beginListening(capture.current!, holdGuard, 'ptt');
     };
     const onStop = () => {
       if (!isListening(capture.current)) return;
@@ -485,6 +540,7 @@ async function finishAndProcess(
 ): Promise<void> {
   const store = useVoiceStore.getState();
   busy.current = true;
+  turnStartedAt = Date.now();
   try {
     // Modo realtime: os frames já subiram ao vivo pelo tap do mic; aqui só
     // fechamos o turno de fala. O transporte devolve STT+resposta+áudio; o
@@ -526,13 +582,17 @@ async function finishAndProcess(
     if (routing === 'jarvis' && isJarvisLiveEnabled()) {
       liveStatus('thinking');
     }
-    const stt = await window.nexus.voice.transcribe({
-      audioBase64: result.wavBase64,
-      mime: 'audio/wav',
-      sampleRate: result.sampleRate,
-      // Modo JARVIS conversa em PT — transcreve cru, sem traduzir para EN.
-      ...(routing === 'jarvis' ? { translate: false, language: 'pt' } : {}),
-    });
+    const stt = await withTimeout(
+      window.nexus.voice.transcribe({
+        audioBase64: result.wavBase64,
+        mime: 'audio/wav',
+        sampleRate: result.sampleRate,
+        // Modo JARVIS conversa em PT — transcreve cru, sem traduzir para EN.
+        ...(routing === 'jarvis' ? { translate: false, language: 'pt' } : {}),
+      }),
+      TRANSCRIBE_DEADLINE_MS,
+      'transcrição',
+    );
     if (!stt.ok) {
       store.setError(stt.error);
       liveStatus('error', stt.error);
@@ -550,7 +610,9 @@ async function finishAndProcess(
     // Whisper ALUCINA frases fixas em silêncio/ruído ("you", "thank you",
     // "obrigado por assistir"…). Elas passam o gate de RMS quando há um
     // sussurro — descarta antes de virar turno (a JARVIS falando sozinha).
-    if (isWhisperHallucination(stt.text)) {
+    const inConversation =
+      jarvisHistory.length > 0 && Date.now() - jarvisLastTurnAt <= JARVIS_MEMORY_MS;
+    if (isDiscardableTranscript(stt.text, { inConversation })) {
       console.log(`[voice] transcrição-lixo do Whisper descartada: "${stt.text}"`);
       store.setStatus('idle');
       liveEndTurn();
@@ -578,7 +640,11 @@ async function finishAndProcess(
     const reply = await captureResponse(paneId, stt.text);
     if (reply.trim()) {
       store.setStatus('speaking');
-      const spoken = await window.nexus.voice.speak({ text: reply });
+      const spoken = await withTimeout(
+        window.nexus.voice.speak({ text: reply }),
+        SPEAK_DEADLINE_MS,
+        'TTS',
+      );
       if (spoken.ok) {
         if (spoken.mode === 'audio') await playAudioBase64(spoken.audioBase64, spoken.format);
         store.setSpoken(reply);
@@ -593,6 +659,7 @@ async function finishAndProcess(
     liveStatus('error', errMsg(err));
   } finally {
     busy.current = false;
+    turnStartedAt = 0;
   }
 }
 
@@ -643,11 +710,15 @@ async function runJarvisTurn(
 
   store.setStatus('routing');
   const tBrain = Date.now();
-  const reply = await window.nexus.voice.jarvis({
-    transcript,
-    context,
-    history: jarvisHistory,
-  });
+  const reply = await withTimeout(
+    window.nexus.voice.jarvis({
+      transcript,
+      context,
+      history: jarvisHistory,
+    }),
+    BRAIN_DEADLINE_MS,
+    'cérebro',
+  );
   console.log(`[voice] cérebro: ${Date.now() - tBrain}ms`);
   jarvisHistory.push({ role: 'user', content: transcript });
   jarvisHistory.push({ role: 'assistant', content: reply.say });
@@ -762,6 +833,24 @@ async function runJarvisTurn(
       ok,
       summary: ok ? 'terminal aberto' : 'terminal sem sessão',
     };
+  } else if (reply.action.type === 'close_pane') {
+    const layout = useLayoutStore.getState();
+    const target = layout.focusedPaneId;
+    if (target) {
+      const title =
+        listPanes(layout.root).find((p) => p.id === target)?.title ?? 'pane';
+      layout.close(target);
+      console.log(`[voice] ação close_pane → "${title}" fechado`);
+      toolResult = { tool: reply.action.type, ok: true, summary: `${title} fechado` };
+    } else {
+      sayText = 'Nenhum pane focado para eu fechar.';
+      toolResult = { tool: reply.action.type, ok: false, summary: 'sem pane focado' };
+    }
+  } else if (reply.action.type === 'open_board') {
+    const orch = useOrchStore.getState();
+    if (!orch.boardOpen) orch.toggleBoard();
+    console.log('[voice] ação open_board → quadro de missões aberto');
+    toolResult = { tool: reply.action.type, ok: true, summary: 'quadro aberto' };
   } else if (reply.action.type === 'send_to_pane') {
     // Missão dita por voz vai pro ORQUESTRADOR quando ele existe; senão, pro
     // pane focado.
@@ -796,6 +885,16 @@ async function runJarvisTurn(
       // A shell command decided by the (LLM) brain NEVER auto-runs: a poisoned
       // transcript could inject one. Require an explicit, un-spoofable native
       // confirmation showing the exact command before it executes.
+      // Avisa em voz que a confirmação está NA TELA — sem isto o diálogo passa
+      // despercebido e parece que "ela não comanda nada".
+      void window.nexus.voice
+        .speak({ text: 'Confirma na tela para eu executar.', speakMode: 'full', echoRecord: false })
+        .then((r) => {
+          if (r.ok && r.mode === 'audio') {
+            void playAudioBase64(r.audioBase64, r.format).catch(() => {});
+          }
+        })
+        .catch(() => {});
       const approved = await window.nexus.voice.confirmCommand(command);
       if (approved) {
         const ok = writeToPane(targetPaneId, `${command}\n`);
@@ -830,7 +929,11 @@ async function runJarvisTurn(
   // frase enquanto o resto ainda está sendo gerado — corta o time-to-first-audio.
   const split = splitFirstSentence(sayText);
   const tTts = Date.now();
-  const first = await window.nexus.voice.speak({ text: split.first, speakMode: 'full' });
+  const first = await withTimeout(
+    window.nexus.voice.speak({ text: split.first, speakMode: 'full' }),
+    SPEAK_DEADLINE_MS,
+    'TTS',
+  );
   console.log(`[voice] tts 1ª frase: ${Date.now() - tTts}ms`);
   if (!first.ok) {
     store.setError(first.error);
@@ -842,9 +945,11 @@ async function runJarvisTurn(
       : null;
   await playSpeakResult(first);
   if (split.rest) {
-    const rest = restPromise
-      ? await restPromise
-      : await window.nexus.voice.speak({ text: split.rest, speakMode: 'full' });
+    const rest = await withTimeout(
+      restPromise ?? window.nexus.voice.speak({ text: split.rest, speakMode: 'full' }),
+      SPEAK_DEADLINE_MS,
+      'TTS',
+    );
     if (!rest.ok) {
       store.setError(rest.error);
       return;
@@ -974,6 +1079,9 @@ function stopAllPlayback(): void {
   if (isJarvisLiveEnabled() && useVoiceStore.getState().status === 'speaking') {
     void window.nexus.voice.liveInterrupt('barge-in');
   }
+  // O fallback `say` toca no MAIN — sem este kill, o barge-in calava só o
+  // áudio do renderer e a voz do sistema continuava falando por cima.
+  void window.nexus.voice.stopSpeak().catch(() => {});
   playbackGen += 1;
   for (const src of liveSources) {
     try {

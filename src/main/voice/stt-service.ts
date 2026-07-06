@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import type { VoiceConfig, VoicePlugin } from '../../shared/voice-config';
 import type {
   TranscribeRequest,
@@ -26,7 +26,7 @@ import { resolveVoiceApiKey } from './voice-secrets';
 export interface SttDeps {
   fetchImpl: typeof fetch;
   /** Runs the local whisper binary over a wav file, returns transcript text. */
-  runLocal: (bin: string, args: string[]) => void;
+  runLocal: (bin: string, args: string[]) => void | Promise<void>;
   readText: (file: string) => string;
   writeFile: (file: string, data: Buffer) => void;
   removeFile: (file: string) => void;
@@ -35,11 +35,27 @@ export interface SttDeps {
   getEnv: (name: string) => string | undefined;
 }
 
+/**
+ * Deadlines duros da borda STT. Sem eles um socket pendurado (wifi caiu,
+ * laptop acordou do sleep) segura o await do turno por minutos e a JARVIS
+ * "morre" com busy travado — o sintoma nº 1 de "não responde".
+ */
+export const STT_CLOUD_TIMEOUT_MS = 12_000;
+export const STT_LOCAL_TIMEOUT_MS = 30_000;
+
 const defaultDeps: SttDeps = {
   fetchImpl: (...args) => fetch(...args),
-  runLocal: (bin, args) => {
-    execFileSync(bin, args, { stdio: 'pipe' });
-  },
+  // Assíncrono + timeout: o whisper.cpp local levava SEGUNDOS rodando em
+  // execFileSync, congelando o event loop do main (todo IPC parado).
+  runLocal: (bin, args) =>
+    new Promise<void>((resolve, reject) => {
+      execFile(
+        bin,
+        args,
+        { timeout: STT_LOCAL_TIMEOUT_MS, killSignal: 'SIGKILL' },
+        (err) => (err ? reject(err) : resolve()),
+      );
+    }),
   readText: (file) => fs.readFileSync(file, 'utf-8'),
   writeFile: (file, data) => fs.writeFileSync(file, data),
   removeFile: (file) => {
@@ -130,8 +146,17 @@ async function attemptCloud(
       method: 'POST',
       headers: key ? { Authorization: `Bearer ${key}` } : {},
       body: form,
+      // Deadline duro: requisição pendurada nunca pode segurar o turno.
+      signal: AbortSignal.timeout(STT_CLOUD_TIMEOUT_MS),
     });
   } catch (err) {
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      return {
+        ok: false,
+        needsKey: false,
+        reason: `timeout (${STT_CLOUD_TIMEOUT_MS / 1000}s sem resposta)`,
+      };
+    }
     // Network failure (offline, DNS, TLS) — treat as unavailable, fall through.
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, needsKey: false, reason: `network error (${message})` };
@@ -186,7 +211,11 @@ const WHISPER_INSTALL_HINT =
   'install whisper.cpp (brew install whisper-cpp) and a model ' +
   '(~/.nexus/models/whisper/ggml-base.bin)';
 
-function attemptLocal(plugin: VoicePlugin, req: TranscribeRequest, deps: SttDeps): Attempt {
+async function attemptLocal(
+  plugin: VoicePlugin,
+  req: TranscribeRequest,
+  deps: SttDeps,
+): Promise<Attempt> {
   const bin = deps.findBin(whisperBinCandidates(plugin));
   if (!bin) {
     return { ok: false, needsKey: false, reason: `whisper.cpp not found — ${WHISPER_INSTALL_HINT}` };
@@ -202,7 +231,7 @@ function attemptLocal(plugin: VoicePlugin, req: TranscribeRequest, deps: SttDeps
     deps.writeFile(wav, base64ToBuffer(req.audioBase64));
     const args = ['-f', wav, '-m', model, '-otxt', '-nt'];
     if (plugin.translate ?? false) args.push('-tr');
-    deps.runLocal(bin, args);
+    await deps.runLocal(bin, args);
     const text = deps.readText(txt).trim();
     if (!text) return { ok: false, needsKey: false, reason: 'local whisper returned empty text' };
     return { ok: true, text };

@@ -115,6 +115,27 @@ describe('jarvisThink brain providers', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('parseia as ações close_pane e open_board do JSON do cérebro', async () => {
+    const replies = [
+      '{"say":"Fechando.","expectReply":false,"action":{"type":"close_pane"}}',
+      '{"say":"Abrindo o quadro.","expectReply":false,"action":{"type":"open_board"}}',
+    ];
+    let call = 0;
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(200, replies[call++]),
+    ) as unknown as typeof fetch;
+    const d = deps(
+      (envVar) => (envVar === 'GEMINI_API_KEY' ? 'gemini-key' : undefined),
+      fetchImpl,
+    );
+
+    const closeReply = await jarvisThink('fecha esse terminal', CTX, [], d);
+    expect(closeReply.action).toEqual({ type: 'close_pane' });
+
+    const boardReply = await jarvisThink('mostra o quadro de missões', CTX, [], d);
+    expect(boardReply.action).toEqual({ type: 'open_board' });
+  });
+
   it('keeps an intentional empty say silent instead of turning it into filler', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse(

@@ -462,6 +462,8 @@ export interface NexusApi {
     setKey(req: SetVoiceKeyRequest): Promise<{ ok: boolean; error?: string }>;
     transcribe(req: TranscribeRequest): Promise<TranscribeResult>;
     speak(req: SpeakRequest): Promise<SpeakResult>;
+    /** Barge-in: mata a fala do fallback `say` que toca no main. */
+    stopSpeak(): Promise<void>;
     sendWakeAudio(chunk: ArrayBuffer): void;
     onWakeDetected(cb: () => void): Unsubscribe;
     jarvis(req: JarvisRequest): Promise<JarvisReply>;

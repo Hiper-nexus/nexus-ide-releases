@@ -50,6 +50,7 @@ export class VoiceCapture {
   private capturing = false;
   private autoStop: AutoStopOptions | null = null;
   private autoStopFired = false;
+  private autoStopDeadline: ReturnType<typeof setTimeout> | null = null;
   private heardSpeech = false;
   private lastSpeechAt = 0;
   private startedAt = 0;
@@ -110,6 +111,17 @@ export class VoiceCapture {
     }
 
     this.capturing = true;
+    // Deadline DURO por timer: o auto-stop normal depende de frames chegando
+    // (trackSilence roda no onFrame). Se o mic morrer no meio, nenhum frame
+    // chega e a captura ficaria aberta para sempre — o timer fecha mesmo assim.
+    if (autoStop) {
+      this.autoStopDeadline = setTimeout(() => {
+        if (this.capturing && !this.autoStopFired) {
+          this.autoStopFired = true;
+          autoStop.onAutoStop();
+        }
+      }, autoStop.maxMs + 1_000);
+    }
   }
 
   async stop(): Promise<CaptureResult> {
@@ -117,6 +129,10 @@ export class VoiceCapture {
       return { wavBase64: '', sampleRate: TARGET_SAMPLE_RATE, durationSec: 0 };
     }
     this.capturing = false;
+    if (this.autoStopDeadline) {
+      clearTimeout(this.autoStopDeadline);
+      this.autoStopDeadline = null;
+    }
     this.onLevel?.(0); // o orb assenta assim que a fala termina
     this.teardown();
 

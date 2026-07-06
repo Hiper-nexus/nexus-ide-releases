@@ -40,6 +40,10 @@ function actionSummary(action: JarvisAction): string {
       return 'nova missão';
     case 'open_terminal':
       return 'abrir terminal';
+    case 'close_pane':
+      return 'fechar pane';
+    case 'open_board':
+      return 'abrir quadro de missões';
     case 'send_to_pane':
       return 'enviar tarefa ao pane';
     case 'run_command':

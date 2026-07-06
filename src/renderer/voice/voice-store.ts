@@ -1,4 +1,13 @@
 import { create } from 'zustand';
+import {
+  DEFAULT_HUD_PREFS,
+  clampHudWidth,
+  loadHudPrefs,
+  saveHudPrefs,
+  type HudCorner,
+  type HudMode,
+  type HudPrefs,
+} from './hud-prefs';
 import type {
   JarvisLiveInterruptEvent,
   JarvisLiveState,
@@ -37,6 +46,8 @@ interface VoiceStore {
   liveTranscript: JarvisLiveTranscriptEvent[];
   liveTool: JarvisLiveToolEvent | JarvisLiveToolResultEvent | null;
   liveInterrupted: JarvisLiveInterruptEvent | null;
+  /** HUD da JARVIS: modo (expandida/mini/só-áudio), âncora e largura. */
+  hud: HudPrefs;
 
   setStatus: (status: VoiceUiStatus) => void;
   setInfo: (info: VoiceRuntimeInfo) => void;
@@ -49,8 +60,20 @@ interface VoiceStore {
   addLiveTranscript: (event: JarvisLiveTranscriptEvent) => void;
   setLiveTool: (event: JarvisLiveToolEvent | JarvisLiveToolResultEvent) => void;
   setLiveInterrupted: (event: JarvisLiveInterruptEvent) => void;
+  setHudMode: (mode: HudMode) => void;
+  setHudAnchor: (anchor: { corner: HudCorner; dx: number; dy: number }) => void;
+  setHudWidth: (width: number) => void;
   openSettings: () => void;
   closeSettings: () => void;
+}
+
+// localStorage não existe no ambiente de teste node — degrade para defaults.
+const hudStorage: Pick<Storage, 'getItem' | 'setItem'> | null =
+  typeof localStorage === 'undefined' ? null : localStorage;
+
+function persistHud(prefs: HudPrefs): HudPrefs {
+  if (hudStorage) saveHudPrefs(hudStorage, prefs);
+  return prefs;
 }
 
 export const useVoiceStore = create<VoiceStore>((set) => ({
@@ -66,6 +89,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   liveTranscript: [],
   liveTool: null,
   liveInterrupted: null,
+  hud: hudStorage ? loadHudPrefs(hudStorage) : { ...DEFAULT_HUD_PREFS },
 
   setStatus: (status) => set({ status, ...(status !== 'error' ? { error: null } : {}) }),
   setInfo: (info) => set({ info }),
@@ -81,6 +105,14 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
     })),
   setLiveTool: (liveTool) => set({ liveTool }),
   setLiveInterrupted: (liveInterrupted) => set({ liveInterrupted }),
+  setHudMode: (mode) =>
+    set((state) => ({ hud: persistHud({ ...state.hud, mode }) })),
+  setHudAnchor: (anchor) =>
+    set((state) => ({ hud: persistHud({ ...state.hud, ...anchor }) })),
+  setHudWidth: (width) =>
+    set((state) => ({
+      hud: persistHud({ ...state.hud, width: clampHudWidth(width) }),
+    })),
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
 }));

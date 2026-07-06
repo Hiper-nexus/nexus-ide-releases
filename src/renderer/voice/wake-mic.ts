@@ -17,12 +17,28 @@ import {
  * FLUIDEZ: o mesmo stream quente também grava os COMANDOS (beginUtterance /
  * finishUtterance) — abrir a escuta é instantâneo, sem novo getUserMedia a
  * cada turno (a maior fonte do "aperto F6 e nada acontece").
+ *
+ * RESILIÊNCIA (a cura do "morreu sozinha"): o macOS mata streams em silêncio
+ * — troca de AirPods, sleep/wake, mudança de dispositivo padrão. O stream
+ * morre, isRunning() continua true e o wake fica surdo para sempre. Três
+ * defesas (padrão validado no teardown do BridgeVoice, `mic_recovery.*`):
+ *   1. track.onended → reconstrução imediata do stream;
+ *   2. watchdog de frames (sem PCM por >8s = stream zumbi → reconstrução);
+ *   3. AudioContext suspenso → resume().
+ * Reconstrução com backoff (1s/3s/8s); esgotou → onDied(reason) avisa a UI.
  */
 
 const TARGET_SAMPLE_RATE = 16_000;
 const CHUNK = 1280;
 const SPEECH_RMS = 0.022;
 const MIN_SPEECH_MS = 320;
+
+const WATCHDOG_INTERVAL_MS = 4_000;
+const FRAME_STALL_MS = 8_000;
+const RESTART_BACKOFF_MS = [1_000, 3_000, 8_000];
+/** Folga sobre o maxMs da captura: se os frames morrerem no meio da fala, o
+ * deadline fecha o turno mesmo sem PCM chegando (senão busy trava). */
+const UTTERANCE_DEADLINE_SLACK_MS = 1_000;
 
 export class WakeMic {
   private ctx: AudioContext | null = null;
@@ -34,6 +50,18 @@ export class WakeMic {
   private running = false;
   private wakeSuppressedUntil = 0;
 
+  // Watchdog do stream (morte silenciosa do mic).
+  private lastFrameAt = 0;
+  private watchdog: ReturnType<typeof setInterval> | null = null;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
+  private restartAttempt = 0;
+  private restarting = false;
+
+  /** Stream morreu e a reconstrução esgotou as tentativas. */
+  onDied: ((reason: string) => void) | null = null;
+  /** Stream reconstruído com sucesso após uma morte. */
+  onRecovered: (() => void) | null = null;
+
   // Utterance capture (comando pós-wake/F6) sobre o MESMO stream quente.
   private uttChunks: Float32Array[] = [];
   private uttActive = false;
@@ -43,6 +71,7 @@ export class WakeMic {
   private uttSpeechMs = 0;
   private uttLastSpeechAt = 0;
   private uttStartedAt = 0;
+  private uttDeadline: ReturnType<typeof setTimeout> | null = null;
 
   // Tap de frames da fala (Jarvis Live realtime): recebe cada frame do mic
   // enquanto o comando está sendo capturado, junto com o sample rate real.
@@ -79,11 +108,26 @@ export class WakeMic {
     this.uttSpeechMs = 0;
     this.uttStartedAt = Date.now();
     this.uttLastSpeechAt = this.uttStartedAt;
+    // Deadline DURO por timer: o auto-stop normal roda dentro do onFrame — se
+    // o mic morrer no meio da fala, nenhum frame chega e o turno ficaria
+    // aberto para sempre. O timer fecha mesmo com o stream mudo.
+    if (autoStop) {
+      this.uttDeadline = setTimeout(() => {
+        if (this.uttActive && !this.uttFired) {
+          this.uttFired = true;
+          autoStop.onAutoStop();
+        }
+      }, autoStop.maxMs + UTTERANCE_DEADLINE_SLACK_MS);
+    }
   }
 
   /** Encerra a escuta e devolve o WAV do que foi falado. */
   finishUtterance(): CaptureResult {
     this.uttActive = false;
+    if (this.uttDeadline) {
+      clearTimeout(this.uttDeadline);
+      this.uttDeadline = null;
+    }
     const pcm = mergeChunks(this.uttChunks);
     this.uttChunks = [];
     const rate = this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE;
@@ -122,6 +166,15 @@ export class WakeMic {
 
   async start(): Promise<void> {
     if (this.running) return;
+    await this.openGraph();
+    this.running = true;
+    this.restartAttempt = 0;
+    this.startWatchdog();
+    console.log('[wake] mic do wake word ligado (openWakeWord, sem key)');
+  }
+
+  /** Abre stream + grafo de áudio (comum ao start e à reconstrução). */
+  private async openGraph(): Promise<void> {
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -130,11 +183,24 @@ export class WakeMic {
         noiseSuppression: true,
       },
     });
+    // Morte explícita do track (dispositivo removido, permissão revogada):
+    // não espere o watchdog — reconstrói na hora.
+    for (const track of this.stream.getTracks()) {
+      track.addEventListener('ended', () => this.handleStreamDeath('track ended'));
+    }
     this.ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+    this.ctx.onstatechange = () => {
+      // Sleep/wake do macOS pode deixar o contexto suspenso — retome.
+      if (this.ctx?.state === 'suspended' && this.running) {
+        void this.ctx.resume().catch(() => {});
+      }
+    };
     this.source = this.ctx.createMediaStreamSource(this.stream);
+    this.lastFrameAt = Date.now();
 
     const onFrame = (frame: Float32Array) => {
       if (!this.running) return;
+      this.lastFrameAt = Date.now();
       // Comando em gravação: acumula localmente (e NÃO alimenta o detector —
       // senão a própria fala do comando poderia re-disparar o wake).
       if (this.uttActive) {
@@ -163,15 +229,60 @@ export class WakeMic {
       node.connect(this.ctx.destination);
       this.scriptNode = node;
     }
-    this.running = true;
-    console.log('[wake] mic do wake word ligado (openWakeWord, sem key)');
   }
 
-  stop(): void {
-    if (!this.running) return;
-    this.running = false;
-    this.pending = [];
-    this.wakeSuppressedUntil = 0;
+  private startWatchdog(): void {
+    this.stopWatchdog();
+    this.watchdog = setInterval(() => {
+      if (!this.running || this.restarting) return;
+      if (Date.now() - this.lastFrameAt > FRAME_STALL_MS) {
+        this.handleStreamDeath(`sem frames do mic há ${FRAME_STALL_MS / 1000}s`);
+      }
+    }, WATCHDOG_INTERVAL_MS);
+  }
+
+  private stopWatchdog(): void {
+    if (this.watchdog) clearInterval(this.watchdog);
+    this.watchdog = null;
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = null;
+  }
+
+  /** Stream morreu em silêncio: reconstrói com backoff; esgotou → onDied. */
+  private handleStreamDeath(reason: string): void {
+    if (!this.running || this.restarting) return;
+    this.restarting = true;
+    console.warn(`[wake] stream do mic morreu (${reason}) — reconstruindo`);
+    this.teardownGraph();
+    this.scheduleRestart(reason);
+  }
+
+  private scheduleRestart(reason: string): void {
+    const attempt = this.restartAttempt;
+    if (attempt >= RESTART_BACKOFF_MS.length) {
+      this.restarting = false;
+      this.running = false;
+      this.stopWatchdog();
+      console.warn('[wake] reconstrução do mic esgotou as tentativas');
+      this.onDied?.(reason);
+      return;
+    }
+    this.restartAttempt += 1;
+    this.restartTimer = setTimeout(() => {
+      void this.openGraph()
+        .then(() => {
+          this.restarting = false;
+          this.restartAttempt = 0;
+          this.lastFrameAt = Date.now();
+          console.log('[wake] mic reconstruído com sucesso');
+          this.onRecovered?.();
+        })
+        .catch(() => this.scheduleRestart(reason));
+    }, RESTART_BACKOFF_MS[attempt]);
+  }
+
+  /** Derruba só o grafo de áudio (mantém o estado running/watchdog). */
+  private teardownGraph(): void {
     try {
       this.worklet?.disconnect();
       this.scriptNode?.disconnect();
@@ -186,6 +297,22 @@ export class WakeMic {
     this.source = null;
     this.stream = null;
     this.ctx = null;
+  }
+
+  stop(): void {
+    if (!this.running && !this.restarting) return;
+    this.running = false;
+    this.restarting = false;
+    this.restartAttempt = 0;
+    this.stopWatchdog();
+    this.pending = [];
+    this.wakeSuppressedUntil = 0;
+    if (this.uttDeadline) {
+      clearTimeout(this.uttDeadline);
+      this.uttDeadline = null;
+    }
+    this.uttActive = false;
+    this.teardownGraph();
     console.log('[wake] mic do wake word desligado');
   }
 }

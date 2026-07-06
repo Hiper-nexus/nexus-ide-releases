@@ -28,8 +28,13 @@ import {
 import { jarvisThink } from './jarvis-brain';
 import { WakeEngine } from './wake-engine';
 import { transcribe } from './stt-service';
-import { speak } from './tts-service';
+import { speak, stopSystemSpeech } from './tts-service';
 import { echoSuppressor } from './echo-suppress';
+import {
+  acquireWakeLock,
+  releaseWakeLock,
+  wakeLockHolder,
+} from './wake-lock';
 import { JarvisLiveSession } from './jarvis-live';
 import { LiveTransportController } from './live-transport-controller';
 import {
@@ -145,8 +150,21 @@ export function registerVoiceIpc(): void {
   // stream dos frames PCM; a detecção volta como broadcast.
   let wakeEngine: WakeEngine | null = null;
   let wakeFramesSeen = false;
+  let wakeLockWarned = false;
   ipcMain.on(VOICE_CHANNELS.wakeAudio, (_event, raw: unknown) => {
     if (!getVoiceConfig().wakeWord.enabled) return;
+    // Mutex entre instâncias (dev + empacotado abertos juntos): só a dona do
+    // lock processa wake — senão as DUAS respondem ao mesmo "Hey Jarvis".
+    if (!acquireWakeLock()) {
+      if (!wakeLockWarned) {
+        wakeLockWarned = true;
+        console.warn(
+          `[wake] outra instância do NexusIDE (pid ${wakeLockHolder()}) detém o wake — ignorando frames aqui`,
+        );
+      }
+      return;
+    }
+    wakeLockWarned = false;
     // Electron entrega o ArrayBuffer do renderer como Buffer/TypedArray —
     // normalize os três formatos (respeitando byteOffset/length!).
     let frame: Float32Array | null = null;
@@ -207,6 +225,12 @@ export function registerVoiceIpc(): void {
       const message = err instanceof Error ? err.message : String(err);
       return { ok: false, error: message };
     }
+  });
+
+  // Barge-in do fallback `say` (mode 'played' toca no main — o renderer não
+  // tem como calar sem isto).
+  ipcMain.handle(VOICE_CHANNELS.speakStop, () => {
+    stopSystemSpeech();
   });
 
   // SEC#6: a shell command produced by the (LLM) Jarvis brain must never run
@@ -297,4 +321,6 @@ export function registerVoiceIpc(): void {
 export function closeVoiceIpc(): void {
   disposeVoiceHotkey();
   shutdownJarvisNarrator();
+  stopSystemSpeech();
+  releaseWakeLock();
 }

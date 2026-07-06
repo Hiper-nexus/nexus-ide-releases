@@ -14,6 +14,8 @@ export const VOICE_CHANNELS = {
   transcribe: 'voice:transcribe',
   /** invoke: renderer → main. Text → spoken (main plays `say`, or returns audio). */
   speak: 'voice:speak',
+  /** invoke: renderer → main. Barge-in: mata a fala do fallback `say` no main. */
+  speakStop: 'voice:speak.stop',
   /** send: renderer → main. Frames PCM 16 kHz para o detector de wake word. */
   wakeAudio: 'voice:wakeAudio',
   /** event: main → renderer. "Hey Jarvis" detectado pelo openWakeWord. */

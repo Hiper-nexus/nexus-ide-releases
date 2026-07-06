@@ -85,6 +85,8 @@ export function VoiceSettings() {
   const info = useVoiceStore((s) => s.info);
   const close = useVoiceStore((s) => s.closeSettings);
   const setInfo = useVoiceStore((s) => s.setInfo);
+  const hudMode = useVoiceStore((s) => s.hud.mode);
+  const setHudMode = useVoiceStore((s) => s.setHudMode);
 
   const [sttProvider, setSttProvider] = useState('');
   const [ttsProvider, setTtsProvider] = useState('');
@@ -514,6 +516,42 @@ export function VoiceSettings() {
                     />
                   </label>
                 )}
+
+                <div className="voice-settings__toggle voice-settings__hud-row">
+                  <span>
+                    <strong>Exibição da JARVIS</strong>
+                    <span>
+                      O HUD é arrastável e ancora nos cantos; em "só áudio" a voz
+                      funciona sem visual nenhum.
+                    </span>
+                  </span>
+                  <span
+                    className="voice-settings__hud-modes"
+                    role="radiogroup"
+                    aria-label="Modo de exibição do HUD"
+                  >
+                    {(
+                      [
+                        ['expanded', 'EXPANDIDA'],
+                        ['mini', 'MINI'],
+                        ['hidden', 'SÓ ÁUDIO'],
+                      ] as const
+                    ).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        role="radio"
+                        aria-checked={hudMode === mode}
+                        className={`voice-settings__hud-mode ${
+                          hudMode === mode ? 'voice-settings__hud-mode--on' : ''
+                        }`}
+                        onClick={() => setHudMode(mode)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </span>
+                </div>
               </div>
 
               <p className="agent-picker__hint voice-settings__mode-hint">

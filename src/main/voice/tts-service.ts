@@ -1,4 +1,4 @@
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import type {
   VoiceConfig,
   VoicePersona,
@@ -28,12 +28,19 @@ import { resolveVoiceApiKey } from './voice-secrets';
 
 const SAY_BIN = '/usr/bin/say';
 
+/**
+ * Deadlines duros da borda TTS: um POST pendurado ou um piper travado nunca
+ * podem segurar o turno de voz (busy preso = "JARVIS morreu").
+ */
+export const TTS_CLOUD_TIMEOUT_MS = 15_000;
+export const TTS_LOCAL_TIMEOUT_MS = 20_000;
+
 export interface TtsDeps {
   fetchImpl: typeof fetch;
   /** Speak text via macOS `say`; resolves when playback finishes. */
   speakViaSay: (text: string, voice?: string) => Promise<void>;
   /** Run Piper over text, return wav bytes. */
-  runPiper: (plugin: VoicePlugin, text: string) => Buffer;
+  runPiper: (plugin: VoicePlugin, text: string) => Buffer | Promise<Buffer>;
   getEnv: (name: string) => string | undefined;
 }
 
@@ -44,26 +51,78 @@ const defaultDeps: TtsDeps = {
   getEnv: resolveVoiceApiKey,
 };
 
+// O `say` toca DIRETO no main (mode 'played') — sem uma referência viva ao
+// processo, o barge-in do renderer não tem como calar a voz do fallback.
+let activeSay: ChildProcess | null = null;
+
+/** Mata a fala em andamento do fallback `say` (barge-in / nova fala). */
+export function stopSystemSpeech(): void {
+  if (activeSay) {
+    try {
+      activeSay.kill('SIGKILL');
+    } catch {
+      // já morreu
+    }
+    activeSay = null;
+  }
+}
+
 /**
  * Speak via macOS `say`. Text is passed as a single argv arg (no shell), so
  * user/agent content can never be interpreted as a command. Resolves on exit.
  */
 export function speakViaSay(text: string, voice?: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    stopSystemSpeech(); // uma voz por vez — nunca duas falas sobrepostas
     const args = voice ? ['-v', voice, text] : [text];
     const proc = spawn(SAY_BIN, args, { stdio: 'ignore' });
-    proc.on('error', reject);
-    proc.on('close', (code) =>
-      code === 0 ? resolve() : reject(new Error(`say exited ${code}`)),
-    );
+    activeSay = proc;
+    const clear = () => {
+      if (activeSay === proc) activeSay = null;
+    };
+    proc.on('error', (err) => {
+      clear();
+      reject(err);
+    });
+    proc.on('close', (code, signal) => {
+      clear();
+      // Morto pelo barge-in (SIGKILL) conta como fala concluída, não erro.
+      if (code === 0 || signal) resolve();
+      else reject(new Error(`say exited ${code}`));
+    });
   });
 }
 
-function runPiperLocal(plugin: VoicePlugin, text: string): Buffer {
-  const bin = plugin.localBin ?? 'piper';
-  const args: string[] = ['--output_file', '-'];
-  if (plugin.modelPath) args.push('--model', plugin.modelPath);
-  return execFileSync(bin, args, { input: text, maxBuffer: 64 * 1024 * 1024 });
+function runPiperLocal(plugin: VoicePlugin, text: string): Promise<Buffer> {
+  // Assíncrono + deadline: o execFileSync antigo congelava o event loop do
+  // main durante a síntese inteira (todo o IPC do app parado).
+  return new Promise<Buffer>((resolve, reject) => {
+    const bin = plugin.localBin ?? 'piper';
+    const args: string[] = ['--output_file', '-'];
+    if (plugin.modelPath) args.push('--model', plugin.modelPath);
+    const proc = spawn(bin, args, { stdio: ['pipe', 'pipe', 'ignore'] });
+    const chunks: Buffer[] = [];
+    const timer = setTimeout(() => {
+      try {
+        proc.kill('SIGKILL');
+      } catch {
+        // já morreu
+      }
+      reject(new Error(`piper timeout (${TTS_LOCAL_TIMEOUT_MS / 1000}s)`));
+    }, TTS_LOCAL_TIMEOUT_MS);
+    proc.stdout?.on('data', (c: Buffer) => chunks.push(c));
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve(Buffer.concat(chunks));
+      else reject(new Error(`piper exited ${code}`));
+    });
+    proc.stdin?.write(text);
+    proc.stdin?.end();
+  });
 }
 
 function ttsInstructions(persona: VoicePersona): string {
@@ -104,6 +163,8 @@ async function speakCloud(
       'Content-Type': 'application/json',
       ...(key ? { Authorization: `Bearer ${key}` } : {}),
     },
+    // Deadline duro: um POST pendurado nunca pode segurar o turno de fala.
+    signal: AbortSignal.timeout(TTS_CLOUD_TIMEOUT_MS),
     body: JSON.stringify({
       model: plugin.model ?? 'tts-1',
       voice: plugin.voice ?? 'nova',
@@ -151,7 +212,7 @@ async function speakLocalOrSystem(
   }
   // Piper (local): produce wav bytes for the renderer to play.
   try {
-    const wav = deps.runPiper(plugin, text);
+    const wav = await deps.runPiper(plugin, text);
     return {
       ok: true,
       provider: plugin.provider,
@@ -203,7 +264,10 @@ export async function speak(
     if (result.ok) {
       // Janela de eco: registra o que foi falado para o fluxo de STT poder
       // descartar transcrições que são o alto-falante vazando no microfone.
-      echoSuppressor.record(text);
+      // Acks/fillers curtos ("Sim?", "Deixa comigo.") pedem echoRecord:false —
+      // registrá-los poluía a janela e censurava respostas legítimas do
+      // usuário ("sim", "deixa") logo depois.
+      if ((req as any).echoRecord !== false) echoSuppressor.record(text);
       return result;
     }
     failures.push(`${plugin.provider}: ${result.error}`);

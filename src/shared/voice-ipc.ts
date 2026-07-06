@@ -30,6 +30,12 @@ export const speakRequestSchema = z.object({
   text: z.string().min(1).max(20_000),
   /** Override the configured speakMode for this utterance (optional). */
   speakMode: z.enum(['summary', 'full', 'off']).optional(),
+  /**
+   * false = não registrar na janela anti-eco. Para acks/fillers curtos
+   * ("Sim?", "Deixa comigo.") — registrá-los censurava respostas legítimas
+   * parecidas do usuário logo em seguida.
+   */
+  echoRecord: z.boolean().optional(),
 });
 
 export type SpeakRequest = z.infer<typeof speakRequestSchema>;
@@ -193,6 +199,8 @@ export type JarvisAction =
   | { type: 'design_squad' }
   | { type: 'new_mission' }
   | { type: 'open_terminal' }
+  | { type: 'close_pane' }
+  | { type: 'open_board' }
   | { type: 'send_to_pane'; text: string }
   | { type: 'run_command'; command: string };
 
@@ -330,6 +338,8 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'design_squad',
     'new_mission',
     'open_terminal',
+    'close_pane',
+    'open_board',
     'send_to_pane',
     'run_command',
   ]),
