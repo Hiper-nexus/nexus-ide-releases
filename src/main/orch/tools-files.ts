@@ -2,24 +2,16 @@ import type { McpToolDef } from './mcp-protocol';
 import { requireStr, str } from './tool-util';
 import fs from 'node:fs';
 import path from 'node:path';
-import { activeWorkspaceOrNull } from '../persistence/workspace-store';
+import {
+  activeWorkspaceRoot,
+  resolveWorkspacePath,
+} from './workspace-path';
 
 /**
  * File-system MCP tools for Jarvis agent.
  * Operates within the workspace boundary — no absolute paths outside cwd
  * unless explicitly allowed by guardrails.
  */
-
-function resolveWorkspacePath(relativePath: string): string {
-  const cwd = activeWorkspaceOrNull();
-  if (!cwd) throw new Error('no workspace open');
-  // Normalize and prevent directory traversal
-  const resolved = path.resolve(cwd, relativePath);
-  if (!resolved.startsWith(cwd)) {
-    throw new Error(`path escapes workspace: ${relativePath}`);
-  }
-  return resolved;
-}
 
 const fileOpen: McpToolDef = {
   name: 'nexus_file_open',
@@ -58,6 +50,29 @@ const fileOpen: McpToolDef = {
       size: stat.size,
       content,
     };
+  },
+};
+
+const fileClose: McpToolDef = {
+  name: 'nexus_file_close',
+  description:
+    'Close a file in the editor by its workspace-relative path. ' +
+    'This is a safe no-op for headless MCP callers and exists so agents can ' +
+    'complete open/read/edit workflows consistently.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: {
+        type: 'string',
+        description: 'File path relative to the workspace root',
+      },
+    },
+    required: ['path'],
+  },
+  handler: async (args) => {
+    const relativePath = requireStr(args, 'path');
+    resolveWorkspacePath(relativePath);
+    return { path: relativePath, closed: true };
   },
 };
 
@@ -180,8 +195,7 @@ const fileSearch: McpToolDef = {
   },
   handler: async (args) => {
     const pattern = requireStr(args, 'pattern');
-    const cwd = activeWorkspaceOrNull();
-    if (!cwd) throw new Error('no workspace open');
+    const cwd = activeWorkspaceRoot();
     const maxResults = typeof args.maxResults === 'number' ? args.maxResults : 100;
 
     // Simple glob implementation using fs.readdirSync recursively
@@ -217,7 +231,7 @@ const fileSearch: McpToolDef = {
  */
 function matchGlob(filePath: string, pattern: string): boolean {
   const regex = globToRegex(pattern);
-  return regex.test(filePath);
+  return regex.test(filePath) || (!pattern.includes('/') && regex.test(path.basename(filePath)));
 }
 
 function globToRegex(pattern: string): RegExp {
@@ -245,5 +259,5 @@ function globToRegex(pattern: string): RegExp {
 }
 
 export function buildFileTools(): McpToolDef[] {
-  return [fileOpen, fileRead, fileWrite, fileSearch];
+  return [fileOpen, fileClose, fileRead, fileWrite, fileSearch];
 }

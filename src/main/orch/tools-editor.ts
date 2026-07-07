@@ -1,8 +1,7 @@
 import type { McpToolDef } from './mcp-protocol';
-import { requireStr, str } from './tool-util';
+import { num, requireStr } from './tool-util';
 import fs from 'node:fs';
-import path from 'node:path';
-import { activeWorkspaceOrNull } from '../persistence/workspace-store';
+import { resolveWorkspacePath } from './workspace-path';
 
 /**
  * Editor manipulation MCP tools for Jarvis agent.
@@ -10,14 +9,11 @@ import { activeWorkspaceOrNull } from '../persistence/workspace-store';
  * source code through the editor.
  */
 
-function resolveWorkspacePath(relativePath: string): string {
-  const cwd = activeWorkspaceOrNull();
-  if (!cwd) throw new Error('no workspace open');
-  const resolved = path.resolve(cwd, relativePath);
-  if (!resolved.startsWith(cwd)) {
-    throw new Error(`path escapes workspace: ${relativePath}`);
-  }
-  return resolved;
+function countLines(content: string): number {
+  if (content.length === 0) return 0;
+  return content.endsWith('\n')
+    ? content.slice(0, -1).split('\n').length
+    : content.split('\n').length;
 }
 
 const editorFocus: McpToolDef = {
@@ -58,7 +54,7 @@ const editorFocus: McpToolDef = {
       line: line ?? null,
       column: column ?? null,
       content,
-      lines: content.split('\n').length,
+      lines: countLines(content),
     };
   },
 };
@@ -95,8 +91,7 @@ const editorInsert: McpToolDef = {
   handler: async (args) => {
     const relativePath = requireStr(args, 'path');
     const text = requireStr(args, 'text');
-    const line = requireStr(args, 'line'); // Will be parsed as number from string
-    const lineNum = parseInt(line, 10);
+    const lineNum = num(args, 'line') ?? parseInt(requireStr(args, 'line'), 10);
     if (isNaN(lineNum) || lineNum < 1) {
       throw new Error('line must be a positive integer');
     }
@@ -234,7 +229,7 @@ const editorGotoLine: McpToolDef = {
       path: relativePath,
       line: lineNum,
       column,
-      totalLines: lines.length,
+      totalLines: countLines(raw),
       lineContent: targetLine,
     };
   },

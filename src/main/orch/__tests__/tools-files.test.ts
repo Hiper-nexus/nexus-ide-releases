@@ -1,14 +1,20 @@
-import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { buildFileTools } from '../tools-files';
+
+const workspace = vi.hoisted(() => ({ current: '' }));
+vi.mock('../../persistence/workspace-store', () => ({
+  activeWorkspaceOrNull: () => workspace.current,
+}));
 
 const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-files');
 const wsDir = path.join(testDir, 'workspace');
 
 describe('tools-files', () => {
   beforeAll(() => {
+    workspace.current = wsDir;
     fs.mkdirSync(wsDir, { recursive: true });
     fs.writeFileSync(path.join(wsDir, 'readme.md'), '# Hello\nWorld\n', 'utf-8');
     fs.mkdirSync(path.join(wsDir, 'src'), { recursive: true });
@@ -22,10 +28,18 @@ describe('tools-files', () => {
   it('nexus_file_open reads a file', async () => {
     const tools = buildFileTools();
     const open = tools.find((t) => t.name === 'nexus_file_open')!;
-    // Override workspace path for testing
     const result = await open.handler({ path: 'readme.md' }, fakeCtx());
     expect(result).toHaveProperty('content', '# Hello\nWorld\n');
     expect(result).toHaveProperty('path', 'readme.md');
+  });
+
+  it('nexus_file_close is a safe no-op', async () => {
+    const tools = buildFileTools();
+    const close = tools.find((t) => t.name === 'nexus_file_close')!;
+    await expect(close.handler({ path: 'readme.md' }, fakeCtx())).resolves.toMatchObject({
+      closed: true,
+      path: 'readme.md',
+    });
   });
 
   it('nexus_file_open throws for missing file', async () => {
@@ -57,9 +71,17 @@ describe('tools-files', () => {
   it('nexus_file_search finds files by pattern', async () => {
     const tools = buildFileTools();
     const search = tools.find((t) => t.name === 'nexus_file_search')!;
-    const result = await search.handler({ pattern: '*.ts' }, fakeCtx());
+    const result = await search.handler({ pattern: '*.ts' }, fakeCtx()) as { files: string[] };
     expect(result).toHaveProperty('files');
     expect(result.files).toContain('src/index.ts');
+  });
+
+  it('denies paths outside the active workspace', async () => {
+    const tools = buildFileTools();
+    const read = tools.find((t) => t.name === 'nexus_file_read')!;
+    await expect(read.handler({ path: '../outside.txt' }, fakeCtx())).rejects.toThrow(
+      /escapes workspace/,
+    );
   });
 });
 
@@ -74,8 +96,3 @@ function fakeCtx() {
     handoffSubmitted: false,
   };
 }
-
-// Override activeWorkspaceOrNull for tests
-import { activeWorkspaceOrNull } from '../../persistence/workspace-store';
-const origActiveWorkspace = activeWorkspaceOrNull;
-(activeWorkspaceOrNull as unknown as () => string | null) = () => wsDir;

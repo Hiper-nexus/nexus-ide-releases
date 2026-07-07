@@ -1,14 +1,20 @@
-import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { buildEditorTools } from '../tools-editor';
+
+const workspace = vi.hoisted(() => ({ current: '' }));
+vi.mock('../../persistence/workspace-store', () => ({
+  activeWorkspaceOrNull: () => workspace.current,
+}));
 
 const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-editor');
 const wsDir = path.join(testDir, 'workspace');
 
 describe('tools-editor', () => {
   beforeAll(() => {
+    workspace.current = wsDir;
     fs.mkdirSync(wsDir, { recursive: true });
     fs.writeFileSync(
       path.join(wsDir, 'app.ts'),
@@ -33,7 +39,7 @@ describe('tools-editor', () => {
   it('nexus_editor_focus with line', async () => {
     const tools = buildEditorTools();
     const focus = tools.find((t) => t.name === 'nexus_editor_focus')!;
-    const result = await focus.handler({ path: 'app.ts', line: 2 }, fakeCtx());
+    const result = await focus.handler({ path: 'app.ts', line: 2 }, fakeCtx()) as { line: number };
     expect(result.line).toBe(2);
   });
 
@@ -87,7 +93,3 @@ function fakeCtx() {
     handoffSubmitted: false,
   };
 }
-
-// Override activeWorkspaceOrNull for tests
-import { activeWorkspaceOrNull } from '../../persistence/workspace-store';
-(activeWorkspaceOrNull as unknown as () => string | null) = () => wsDir;

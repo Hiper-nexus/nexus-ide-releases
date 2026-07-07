@@ -1,7 +1,7 @@
 import type { McpToolDef } from './mcp-protocol';
 import { requireStr, str } from './tool-util';
 import { exec, type ChildProcess } from 'node:child_process';
-import { activeWorkspaceOrNull } from '../persistence/workspace-store';
+import { resolveWorkspaceCwd } from './workspace-path';
 
 /**
  * Terminal execution MCP tools for Jarvis agent.
@@ -42,7 +42,7 @@ const terminalRun: McpToolDef = {
   },
   handler: async (args) => {
     const command = requireStr(args, 'command');
-    const cwd = str(args, 'cwd') ?? activeWorkspaceOrNull() ?? process.cwd();
+    const cwd = resolveWorkspaceCwd(str(args, 'cwd'));
     const timeoutMs = Math.min(
       typeof args.timeoutMs === 'number' ? args.timeoutMs : 30000,
       300_000,

@@ -15,7 +15,7 @@ import { buildEditorTools } from './tools-editor';
  *
  * Groups: panes (10), routing, handoffs, agents, missions, squad/catalog/task,
  * todos, preview/browser, perf, media generation (image/video/audio),
- * files (4), terminal (2), git (10), editor (4).
+ * files (5), terminal (2), git (10), editor (4).
  */
 export function buildToolset(): McpToolDef[] {
   return [

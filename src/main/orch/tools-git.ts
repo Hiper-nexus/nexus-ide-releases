@@ -1,7 +1,7 @@
 import type { McpToolDef } from './mcp-protocol';
 import { requireStr, str } from './tool-util';
-import { exec } from 'node:child_process';
-import { activeWorkspaceOrNull } from '../persistence/workspace-store';
+import { execFile } from 'node:child_process';
+import { resolveWorkspaceCwd } from './workspace-path';
 
 /**
  * Git operations MCP tools for Jarvis agent.
@@ -10,8 +10,9 @@ import { activeWorkspaceOrNull } from '../persistence/workspace-store';
 
 function gitExec(args: string[], cwd: string): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    exec(
-      `git ${args.join(' ')}`,
+    execFile(
+      'git',
+      args,
       { cwd, timeout: 30000, maxBuffer: 5 * 1024 * 1024 },
       (err, stdout, stderr) => {
         if (err) {
@@ -25,7 +26,7 @@ function gitExec(args: string[], cwd: string): Promise<{ stdout: string; stderr:
 }
 
 function resolveCwd(cwdOverride?: string): string {
-  return cwdOverride ?? activeWorkspaceOrNull() ?? process.cwd();
+  return resolveWorkspaceCwd(cwdOverride);
 }
 
 const gitStatus: McpToolDef = {
@@ -100,7 +101,7 @@ const gitCommit: McpToolDef = {
   handler: async (args) => {
     const cwd = resolveCwd(str(args, 'cwd'));
     const message = requireStr(args, 'message');
-    const { stdout } = await gitExec(['commit', '-m', JSON.stringify(message)], cwd);
+    const { stdout } = await gitExec(['commit', '-m', message], cwd);
     return { cwd, output: stdout };
   },
 };
