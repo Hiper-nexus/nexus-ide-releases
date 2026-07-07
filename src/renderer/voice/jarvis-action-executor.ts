@@ -9,6 +9,7 @@ import { useGamificationStore } from '../state/gamification-store';
 import { useVoiceStore } from './voice-store';
 import { useSettingsStore } from '../state/settings-store';
 import { waitForSession, writeToPane } from '../terminal/terminal-host';
+import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { launchSquadMission } from '../orch/mission-launcher';
 import { isMissingModelKeyError } from '../lib/credential-errors';
 import { playAudioBase64 } from './voice-playback';
@@ -41,6 +42,34 @@ function paneContext() {
 function mcpSummary(result: { ok: boolean; tool: string; error?: string }): string {
   if (result.ok) return `${result.tool} ok`;
   return result.error ?? `${result.tool} falhou`;
+}
+
+function focusedOrFirstBrowserPane(): { id: string; title: string } | null {
+  const { root, focusedPaneId } = useLayoutStore.getState();
+  const panes = listPanes(root);
+  const focused = focusedPaneId
+    ? panes.find((pane) => pane.id === focusedPaneId)
+    : undefined;
+  const browser = focused?.kind === 'browser'
+    ? focused
+    : panes.find((pane) => pane.kind === 'browser');
+  return browser ? { id: browser.id, title: browser.title } : null;
+}
+
+async function navigateBrowserPane(
+  nav: 'back' | 'forward' | 'reload',
+): Promise<{ ok: boolean; summary: string }> {
+  const pane = focusedOrFirstBrowserPane();
+  if (!pane) return { ok: false, summary: 'nenhum browser aberto' };
+  try {
+    await window.nexus.browser[nav](pane.id);
+    return { ok: true, summary: `browser ${nav} em ${pane.title}` };
+  } catch (err) {
+    return {
+      ok: false,
+      summary: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 async function executeViaMcp(
@@ -230,6 +259,51 @@ export async function executeJarvisAction(
     useHomeStore.getState().hide();
     sayText = 'Grade aberta.';
     toolResult = { tool: action.type, ok: true, summary: 'modo grade aberto' };
+  } else if (action.type === 'open_browser') {
+    useGamificationStore.getState().closeProfile();
+    const paneId = useLayoutStore.getState().addBrowserPane(action.url);
+    useHomeStore.getState().hide();
+    try {
+      await waitForBrowserPaneCreated(paneId, 3_000);
+      sayText = action.url ? 'Site aberto.' : 'Browser aberto.';
+      toolResult = {
+        tool: action.type,
+        ok: true,
+        summary: action.url ? `browser aberto em ${action.url}` : 'browser aberto',
+      };
+    } catch (err) {
+      sayText = 'Criei o pane do browser, mas ele ainda não respondeu.';
+      toolResult = {
+        tool: action.type,
+        ok: false,
+        summary: err instanceof Error ? err.message : String(err),
+      };
+    }
+  } else if (action.type === 'browser_back') {
+    const result = await navigateBrowserPane('back');
+    sayText = result.ok ? 'Voltei no browser.' : 'Nenhum browser aberto para voltar.';
+    toolResult = { tool: action.type, ok: result.ok, summary: result.summary };
+  } else if (action.type === 'browser_forward') {
+    const result = await navigateBrowserPane('forward');
+    sayText = result.ok ? 'Avancei no browser.' : 'Nenhum browser aberto para avançar.';
+    toolResult = { tool: action.type, ok: result.ok, summary: result.summary };
+  } else if (action.type === 'browser_reload') {
+    const result = await navigateBrowserPane('reload');
+    sayText = result.ok ? 'Página recarregada.' : 'Nenhum browser aberto para recarregar.';
+    toolResult = { tool: action.type, ok: result.ok, summary: result.summary };
+  } else if (action.type === 'focus_next_pane') {
+    const layout = useLayoutStore.getState();
+    const panes = listPanes(layout.root);
+    if (panes.length <= 1) {
+      sayText = 'Só tem um pane aberto.';
+      toolResult = { tool: action.type, ok: false, summary: 'apenas um pane aberto' };
+    } else {
+      const index = panes.findIndex((pane) => pane.id === layout.focusedPaneId);
+      const next = panes[(index + 1 + panes.length) % panes.length];
+      layout.focus(next.id);
+      sayText = 'Próximo pane focado.';
+      toolResult = { tool: action.type, ok: true, summary: `${next.title} focado` };
+    }
   } else if (action.type === 'send_to_pane') {
     const { root, focusedPaneId } = useLayoutStore.getState();
     const target = findOrchestratorPane(root) ?? focusedPaneId;

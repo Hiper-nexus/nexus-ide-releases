@@ -11,6 +11,9 @@ describe('mcp-bridge action mapping', () => {
     expect(mapActionToTool({ type: 'open_voice_settings' })).toBeNull();
     expect(mapActionToTool({ type: 'open_canvas' })).toBeNull();
     expect(mapActionToTool({ type: 'open_grid' })).toBeNull();
+    expect(mapActionToTool({ type: 'open_browser' })).toBeNull();
+    expect(mapActionToTool({ type: 'browser_reload' })).toBeNull();
+    expect(mapActionToTool({ type: 'focus_next_pane' })).toBeNull();
   });
 
   it('maps pane actions only when a pane target is available', () => {

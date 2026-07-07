@@ -224,6 +224,11 @@ export type JarvisAction =
   | { type: 'open_voice_settings' }
   | { type: 'open_canvas' }
   | { type: 'open_grid' }
+  | { type: 'open_browser'; url?: string }
+  | { type: 'browser_back' }
+  | { type: 'browser_forward' }
+  | { type: 'browser_reload' }
+  | { type: 'focus_next_pane' }
   | { type: 'send_to_pane'; text: string }
   | { type: 'run_command'; command: string }
   | { type: 'mcp_tool'; tool: string; args: Record<string, unknown> };
@@ -396,6 +401,11 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'open_voice_settings',
     'open_canvas',
     'open_grid',
+    'open_browser',
+    'browser_back',
+    'browser_forward',
+    'browser_reload',
+    'focus_next_pane',
     'send_to_pane',
     'run_command',
     'mcp_tool',

@@ -141,6 +141,9 @@ describe('jarvisThink brain providers', () => {
     const replies = [
       '{"say":"Abrindo o canvas.","expectReply":false,"action":{"type":"open_canvas"}}',
       '{"say":"Abrindo voz.","expectReply":false,"action":{"type":"open_voice_settings"}}',
+      '{"say":"Abrindo site.","expectReply":false,"action":{"type":"open_browser","url":"https://example.com"}}',
+      '{"say":"Recarregando.","expectReply":false,"action":{"type":"browser_reload"}}',
+      '{"say":"Próximo pane.","expectReply":false,"action":{"type":"focus_next_pane"}}',
     ];
     let call = 0;
     const fetchImpl = vi.fn(async () =>
@@ -153,9 +156,18 @@ describe('jarvisThink brain providers', () => {
 
     const canvasReply = await jarvisThink('preciso reorganizar a tela livre', CTX, [], d);
     const voiceReply = await jarvisThink('preciso ajustar a voz da assistente', CTX, [], d);
+    const browserReply = await jarvisThink('abre example.com', CTX, [], d);
+    const reloadReply = await jarvisThink('recarrega a página', CTX, [], d);
+    const focusReply = await jarvisThink('próximo pane', CTX, [], d);
 
     expect(canvasReply.action).toEqual({ type: 'open_canvas' });
     expect(voiceReply.action).toEqual({ type: 'open_voice_settings' });
+    expect(browserReply.action).toEqual({
+      type: 'open_browser',
+      url: 'https://example.com',
+    });
+    expect(reloadReply.action).toEqual({ type: 'browser_reload' });
+    expect(focusReply.action).toEqual({ type: 'focus_next_pane' });
   });
 
   it('keeps an intentional empty say silent instead of turning it into filler', async () => {

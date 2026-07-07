@@ -3,6 +3,7 @@ import { getVoiceConfig } from './voice-config-store';
 import { resolveVoiceApiKey } from './voice-secrets';
 import { jarvisMemory } from './jarvis-memory';
 import type { JarvisLiveSession } from './jarvis-live';
+import type { JarvisLiveToolResultEvent } from '../../shared/voice-ipc';
 import {
   createRealtimeProviderCandidates,
   loadJarvisSystemPrompt,
@@ -43,6 +44,8 @@ export class LiveTransportController {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private reconnectGeneration = 0;
+  private latestContext = '';
+  private recentToolResults: string[] = [];
 
   constructor(
     private emit: Emit,
@@ -116,7 +119,18 @@ export class LiveTransportController {
   }
 
   contextIn(text: string): void {
-    this.provider?.sendContext(text);
+    this.latestContext = text.trim().slice(0, 1_200);
+    this.sendProviderContext();
+  }
+
+  toolResult(event: JarvisLiveToolResultEvent): void {
+    const status = event.ok ? 'ok' : 'failed';
+    const summary = event.summary.trim() || status;
+    this.recentToolResults = [
+      ...this.recentToolResults,
+      `- ${event.tool}: ${status} (${summary})`,
+    ].slice(-5);
+    this.sendProviderContext();
   }
 
   endTurn(): void {
@@ -221,6 +235,17 @@ export class LiveTransportController {
       });
       this.scheduleReconnect();
     });
+  }
+
+  private sendProviderContext(): void {
+    if (!this.provider?.isReady) return;
+    const parts: string[] = [];
+    if (this.latestContext) parts.push(`Current Nexus screen:\n${this.latestContext}`);
+    if (this.recentToolResults.length > 0) {
+      parts.push(`Recent Nexus action results:\n${this.recentToolResults.join('\n')}`);
+    }
+    const text = parts.join('\n\n').trim();
+    if (text) this.provider.sendContext(text);
   }
 
   private buildSystemInstruction(): string {

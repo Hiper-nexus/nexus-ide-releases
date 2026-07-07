@@ -62,6 +62,10 @@ Action types:
 - {"type":"open_voice_settings"} - open the Jarvis/voice settings panel.
 - {"type":"open_canvas"} - switch the workspace to canvas view.
 - {"type":"open_grid"} - switch the workspace to grid view.
+- {"type":"open_browser","url":"<optional url>"} - open an embedded browser pane.
+- {"type":"browser_back"} / {"type":"browser_forward"} / {"type":"browser_reload"}
+  - navigate the focused embedded browser pane.
+- {"type":"focus_next_pane"} - move focus to the next open pane.
 - {"type":"run_command","command":"<exact command>"} - run a program, command,
   or CLI in the terminal. Use the literal command with no explanation. If no
   terminal is focused, the app opens one and runs it after native confirmation.
@@ -99,6 +103,10 @@ You can execute things through actions. Never claim you cannot. Examples:
 - "iniciar um novo workspace" -> {"say":"Abrindo o assistente de workspace.","action":{"type":"new_workspace"}}
 - "abre configuracoes de voz" -> {"say":"Abrindo as configuracoes de voz.","action":{"type":"open_voice_settings"}}
 - "abre o modo canvas" -> {"say":"Abrindo o canvas.","action":{"type":"open_canvas"}}
+- "abre um browser" -> {"say":"Abrindo o browser.","action":{"type":"open_browser"}}
+- "abre o site https://example.com" -> {"say":"Abrindo o site.","action":{"type":"open_browser","url":"https://example.com"}}
+- "recarrega a pagina" -> {"say":"Recarregando a pagina.","action":{"type":"browser_reload"}}
+- "proximo pane" -> {"say":"Focando o proximo pane.","action":{"type":"focus_next_pane"}}
 - "abre o squad de review" -> {"say":"Subindo o Code Review.","action":{"type":"open_squad","squadName":"Code Review"}}
 - "abre o projeto saasbarbearia" -> {"say":"Abrindo o saasbarbearia.","action":{"type":"open_workspace","workspaceName":"saasbarbearia"}}
 - "pede pro agente corrigir o bug do login" -> use send_to_pane with an English prompt.
@@ -259,6 +267,14 @@ function parseReply(raw: string): JarvisReply {
     if (type === 'open_voice_settings') return { say, expectReply, action: { type } };
     if (type === 'open_canvas') return { say, expectReply, action: { type } };
     if (type === 'open_grid') return { say, expectReply, action: { type } };
+    if (type === 'open_browser') {
+      const url = typeof obj.action?.url === 'string' ? obj.action.url : undefined;
+      return { say, expectReply, action: url ? { type, url } : { type } };
+    }
+    if (type === 'browser_back') return { say, expectReply, action: { type } };
+    if (type === 'browser_forward') return { say, expectReply, action: { type } };
+    if (type === 'browser_reload') return { say, expectReply, action: { type } };
+    if (type === 'focus_next_pane') return { say, expectReply, action: { type } };
     if (type === 'send_to_pane' && typeof obj.action?.text === 'string') {
       return { say, expectReply, action: { type, text: obj.action.text } };
     }

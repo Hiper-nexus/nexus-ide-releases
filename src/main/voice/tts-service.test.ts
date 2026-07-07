@@ -88,7 +88,7 @@ describe('speak', () => {
     expect(speakViaSay).toHaveBeenCalledOnce();
   });
 
-  it('retries the configured primary voice after a temporary fallback', async () => {
+  it('pins the fallback voice after a primary failure to avoid voice hopping', async () => {
     const tts: VoicePlugin = {
       type: 'tts',
       provider: 'openai',
@@ -117,10 +117,13 @@ describe('speak', () => {
       deps({ fetchImpl, getEnv: () => 'key', speakViaSay }),
     );
 
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(speakViaSay).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(speakViaSay).toHaveBeenCalledTimes(2);
     expect(second.ok).toBe(true);
-    if (second.ok) expect(second.provider).toBe('openai');
+    if (second.ok) {
+      expect(second.provider).toBe('macos-say');
+      expect(second.fallbackNote).toContain('TTS fallback fixado');
+    }
   });
 
   it('walks openai(429) → piper(broken) → say to keep the guarantee', async () => {

@@ -34,9 +34,9 @@ let stickyTtsProvider: string | null = null;
 
 function reorderTtsChain(chain: VoicePlugin[]): VoicePlugin[] {
   if (!stickyTtsProvider) return chain;
-  if (chain[0]?.provider !== stickyTtsProvider) return chain;
   const hit = chain.find((p) => p.provider === stickyTtsProvider);
   if (!hit) return chain;
+  if (chain[0]?.provider === stickyTtsProvider) return chain;
   return [hit, ...chain.filter((p) => p.provider !== stickyTtsProvider)];
 }
 
@@ -273,19 +273,26 @@ export async function speak(
   const text = toSpeakable(req.text, mode);
   if (!text) return { ok: true, provider: '-', mode: 'silent' };
 
+  const configuredHeadProvider = flattenChain(config.tts)[0]?.provider;
   const chain = reorderTtsChain(flattenChain(config.tts));
   const failures: string[] = [];
 
   for (const plugin of chain) {
     const result = await speakVia(plugin, text, deps, config.persona);
     if (result.ok) {
+      const pinnedFallback =
+        failures.length === 0 &&
+        plugin.provider === stickyTtsProvider &&
+        plugin.provider !== configuredHeadProvider;
       const fallbackNote =
         failures.length > 0
           ? `TTS fallback: ${failures.join(' · ')} → ${plugin.provider}`
+          : pinnedFallback
+            ? `TTS fallback fixado: ${plugin.provider}; reinicie a voz ou ajuste o provider para tentar a voz principal.`
           : undefined;
-      stickyTtsProvider = plugin.provider === chain[0]?.provider ? plugin.provider : null;
+      stickyTtsProvider = plugin.provider;
       logVoice('info', 'tts.provider', `${plugin.provider} (${plugin.voice ?? plugin.model ?? 'default'})`, {
-        fallback: failures.length > 0,
+        fallback: failures.length > 0 || pinnedFallback,
       });
       if (fallbackNote) {
         logVoice('warn', 'tts.fallback', fallbackNote);

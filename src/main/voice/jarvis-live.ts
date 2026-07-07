@@ -58,6 +58,16 @@ function actionSummary(action: JarvisAction): string {
       return 'abrir canvas';
     case 'open_grid':
       return 'abrir grade';
+    case 'open_browser':
+      return action.url ? `abrir browser em ${action.url}` : 'abrir browser';
+    case 'browser_back':
+      return 'voltar no browser';
+    case 'browser_forward':
+      return 'avançar no browser';
+    case 'browser_reload':
+      return 'recarregar browser';
+    case 'focus_next_pane':
+      return 'focar próximo pane';
     case 'send_to_pane':
       return 'enviar tarefa ao pane';
     case 'run_command':

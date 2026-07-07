@@ -27,6 +27,16 @@ function stripTail(text: string): string {
     .trim();
 }
 
+function looksLikeUrl(text: string): boolean {
+  return /^(?:https?:\/\/)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[/:?#][^\s]*)?$/i.test(text.trim());
+}
+
+function normalizeUrl(text: string): string {
+  const value = text.trim();
+  if (/^https?:\/\//i.test(value)) return value;
+  return `https://${value}`;
+}
+
 function say(ctx: JarvisContext, text: string): string {
   const user = ctx.userName?.trim();
   if (!user) return text;
@@ -94,6 +104,71 @@ export function jarvisActionFastPath(
     /\b(modo grade|modo grid|grid mode)\b$/.test(t)
   ) {
     return { say: say(ctx, 'Voltando para a grade.'), expectReply: false, action: { type: 'open_grid' } };
+  }
+
+  const openBrowserWithUrl = t.match(
+    /\b(?:abre|abra|abrir|open)\b(?:\s+o)?\s+(?:site|url|pagina|page|browser|navegador)\s+(.+)$/,
+  );
+  if (openBrowserWithUrl) {
+    const url = stripTail(openBrowserWithUrl[1]);
+    if (looksLikeUrl(url)) {
+      return {
+        say: say(ctx, 'Abrindo o site.'),
+        expectReply: false,
+        action: { type: 'open_browser', url: normalizeUrl(url) },
+      };
+    }
+  }
+
+  if (
+    /\b(?:abre|abra|abrir|open)\b(?:\s+o)?\s+(?:browser|navegador)\s*$/.test(t) ||
+    /\b(?:browser|navegador)\s+(?:novo|new)\b/.test(t)
+  ) {
+    return {
+      say: say(ctx, 'Abrindo o browser.'),
+      expectReply: false,
+      action: { type: 'open_browser' },
+    };
+  }
+
+  if (/\b(?:volta|voltar|back)\b.*\b(?:pagina|site|browser|navegador)\b/.test(t)) {
+    return {
+      say: say(ctx, 'Voltando no browser.'),
+      expectReply: false,
+      action: { type: 'browser_back' },
+    };
+  }
+
+  if (/\b(?:avanca|avancar|forward)\b.*\b(?:pagina|site|browser|navegador)\b/.test(t)) {
+    return {
+      say: say(ctx, 'Avançando no browser.'),
+      expectReply: false,
+      action: { type: 'browser_forward' },
+    };
+  }
+
+  if (
+    /\b(?:recarrega|recarregue|reload|atualiza|atualize)\b.*\b(?:pagina|site|browser|navegador)\b/.test(
+      t,
+    ) ||
+    /\b(?:reload page|refresh page)\b/.test(t)
+  ) {
+    return {
+      say: say(ctx, 'Recarregando a página.'),
+      expectReply: false,
+      action: { type: 'browser_reload' },
+    };
+  }
+
+  if (
+    /\b(?:proximo|proxima|next)\b.*\b(?:pane|painel|aba|terminal)\b/.test(t) ||
+    /\b(?:muda|troca|vai)\b.*\b(?:pane|painel|aba)\b/.test(t)
+  ) {
+    return {
+      say: say(ctx, 'Focando o próximo pane.'),
+      expectReply: false,
+      action: { type: 'focus_next_pane' },
+    };
   }
 
   if (/\b(nova|novo|cria|crie|criar|abre|abra|abrir)\b.*\bmiss(ao|oes)\b/.test(t)) {

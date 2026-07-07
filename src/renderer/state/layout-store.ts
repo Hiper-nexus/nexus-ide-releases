@@ -220,10 +220,19 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       ? splitPane(currentRoot, target.paneId, target.direction, newPane)
       : splitPane(initialTree(), firstPaneId(initialTree()) ?? '', 'row', newPane);
 
+    const existingPanes = listPanes(currentRoot);
     const paneCount = listPanes(root).length;
+    const baseCanvasLayouts =
+      viewKind === 'canvas'
+        ? ensureCanvasLayouts(existingPanes, canvasNodeLayouts)
+        : canvasNodeLayouts;
+    const pivot = target.paneId ?? firstPaneId(currentRoot);
     const updatedLayouts =
       viewKind === 'canvas'
-        ? { ...canvasNodeLayouts, [newPane.id]: defaultCanvasLayout(paneCount - 1) }
+        ? {
+            ...baseCanvasLayouts,
+            [newPane.id]: nextCanvasLayout(baseCanvasLayouts, pivot, paneCount - 1),
+          }
         : canvasNodeLayouts;
 
     bumpTreeVersion();
@@ -239,12 +248,17 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const root = pivot
       ? splitPane(currentRoot, pivot, 'row', newPane)
       : buildGridTree([newPane]);
+    const existingPanes = listPanes(currentRoot);
     const paneCount = listPanes(root).length;
+    const baseCanvasLayouts =
+      viewKind === 'canvas'
+        ? ensureCanvasLayouts(existingPanes, canvasNodeLayouts)
+        : canvasNodeLayouts;
     const updatedLayouts =
       viewKind === 'canvas'
         ? {
-            ...canvasNodeLayouts,
-            [newPane.id]: nextCanvasLayout(canvasNodeLayouts, pivot, paneCount - 1),
+            ...baseCanvasLayouts,
+            [newPane.id]: nextCanvasLayout(baseCanvasLayouts, pivot, paneCount - 1),
           }
         : canvasNodeLayouts;
     bumpTreeVersion();
@@ -286,12 +300,17 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       ? splitPane(currentRoot, pivotId, 'row', newPane)
       : splitPane(initialTree(), firstPaneId(initialTree()) ?? '', 'row', newPane);
 
+    const existingPanes = listPanes(currentRoot);
     const paneCount = listPanes(root).length;
+    const baseCanvasLayouts =
+      viewKind === 'canvas'
+        ? ensureCanvasLayouts(existingPanes, canvasNodeLayouts)
+        : canvasNodeLayouts;
     const updatedLayouts =
       viewKind === 'canvas'
         ? {
-            ...canvasNodeLayouts,
-            [newPane.id]: nextCanvasLayout(canvasNodeLayouts, pivotId, paneCount - 1),
+            ...baseCanvasLayouts,
+            [newPane.id]: nextCanvasLayout(baseCanvasLayouts, pivotId, paneCount - 1),
           }
         : canvasNodeLayouts;
 
@@ -326,12 +345,17 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const root = pivot
       ? splitPane(currentRoot, pivot, 'row', newPane)
       : buildGridTree([newPane]);
+    const existingPanes = listPanes(currentRoot);
     const paneCount = listPanes(root).length;
+    const baseCanvasLayouts =
+      viewKind === 'canvas'
+        ? ensureCanvasLayouts(existingPanes, canvasNodeLayouts)
+        : canvasNodeLayouts;
     const updatedLayouts =
       viewKind === 'canvas'
         ? {
-            ...canvasNodeLayouts,
-            [newPane.id]: nextCanvasLayout(canvasNodeLayouts, pivot, paneCount - 1),
+            ...baseCanvasLayouts,
+            [newPane.id]: nextCanvasLayout(baseCanvasLayouts, pivot, paneCount - 1),
           }
         : canvasNodeLayouts;
     bumpTreeVersion();

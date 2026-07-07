@@ -378,7 +378,10 @@ export function registerVoiceIpc(): void {
     const parsed = jarvisLiveToolResultInputSchema.safeParse(raw);
     if (!parsed.success) return;
     const event = liveSession.toolResult(parsed.data);
-    if (event) jarvisLatencyTracker.markAction(event.sessionId);
+    if (event) {
+      jarvisLatencyTracker.markAction(event.sessionId);
+      liveTransport.toolResult(event);
+    }
   });
 
   ipcMain.handle(VOICE_CHANNELS.liveInterrupt, (_event, raw) => {

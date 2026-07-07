@@ -72,6 +72,22 @@ describe('jarvisActionFastPath', () => {
     });
   });
 
+  it('browser e navegação disparam ações nativas', () => {
+    expect(jarvisActionFastPath('abrir navegador', CTX)?.action).toEqual({
+      type: 'open_browser',
+    });
+    expect(jarvisActionFastPath('abre site example.com', CTX)?.action).toEqual({
+      type: 'open_browser',
+      url: 'https://example.com',
+    });
+    expect(jarvisActionFastPath('recarrega a página', CTX)?.action).toEqual({
+      type: 'browser_reload',
+    });
+    expect(jarvisActionFastPath('próximo pane', CTX)?.action).toEqual({
+      type: 'focus_next_pane',
+    });
+  });
+
   it('iniciar um novo squad dispara design_squad', () => {
     const reply = jarvisActionFastPath('iniciar um novo squad', CTX);
     expect(reply?.action).toEqual({ type: 'design_squad' });

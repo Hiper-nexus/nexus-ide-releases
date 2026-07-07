@@ -34,6 +34,11 @@ export function mapActionToTool(
     case 'open_voice_settings':
     case 'open_canvas':
     case 'open_grid':
+    case 'open_browser':
+    case 'browser_back':
+    case 'browser_forward':
+    case 'browser_reload':
+    case 'focus_next_pane':
       return null;
     case 'close_pane': {
       const paneId = paneCtx?.focusedPaneId;

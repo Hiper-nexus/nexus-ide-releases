@@ -210,6 +210,62 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
+  it('sends action results back into realtime provider context', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'openai', provider }];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'openai-realtime',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['openai'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    await controller.onStart();
+    controller.contextIn('Workspace nexus em canvas.');
+    controller.toolResult({
+      sessionId: 'session-1',
+      at: 1001,
+      tool: 'open_terminal',
+      ok: true,
+      summary: 'terminal aberto',
+    });
+
+    expect(provider.sendContext).toHaveBeenLastCalledWith(
+      expect.stringContaining('Recent Nexus action results'),
+    );
+    expect(provider.sendContext).toHaveBeenLastCalledWith(
+      expect.stringContaining('open_terminal: ok (terminal aberto)'),
+    );
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
   it('marks realtime not ready and reconnects after a post-setup disconnect', async () => {
     vi.useFakeTimers();
     vi.resetModules();
