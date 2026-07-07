@@ -17,7 +17,7 @@ export const CURRENT_RELEASE: AppRelease = {
   date: '2026-07-07',
   codename: 'Jarvis mais operacional',
   summary:
-    'Hotfix de paridade operacional: a Jarvis ganhou mais controle nativo do app, limpeza de sessão MCP por turno e fala em uma única voz por resposta.',
+    'Hotfix de paridade operacional: a Jarvis ganhou mais controle nativo do app, limpeza de sessão MCP por turno, fala em uma única voz por resposta e seleção explícita do transporte realtime.',
   highlights: [
     {
       title: 'Mais ações nativas sem LLM',
@@ -28,6 +28,11 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Sessões de ação mais limpas',
       detail:
         'Cada turno limpa o cache de permissões MCP depois de executar, evitando estado reaproveitado entre comandos por voz.',
+    },
+    {
+      title: 'Realtime configurável',
+      detail:
+        'O painel de voz permite escolher OpenAI Realtime ou Gemini Live, persiste a escolha na hora e mostra o diagnóstico da chave correta.',
     },
   ],
   fixes: [

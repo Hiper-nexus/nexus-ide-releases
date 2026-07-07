@@ -4,6 +4,7 @@ import {
   accelFromCode,
   normalizeKeyCode,
 } from '../../shared/voice-config';
+import type { JarvisLiveTransport } from '../../shared/voice-config';
 import { credentialLinkForEnv } from '../../shared/credential-links';
 import { openExternalFromAnchor } from '../lib/open-external';
 import { CloseButton } from './CloseButton';
@@ -13,6 +14,8 @@ import type {
   SpeakResult,
   VoiceApiKeyStatus,
 } from '../../shared/voice-ipc';
+
+type RealtimeTransport = Exclude<JarvisLiveTransport, 'classic'>;
 
 /**
  * Minimal voice settings: pick STT/TTS provider, speak mode, routing, and the
@@ -132,6 +135,8 @@ export function VoiceSettings() {
   const [wakeWordOn, setWakeWordOn] = useState(false);
   const [jarvisLiveOn, setJarvisLiveOn] = useState(false);
   const [liveRealtime, setLiveRealtime] = useState(false);
+  const [realtimeTransport, setRealtimeTransport] =
+    useState<RealtimeTransport>('openai-realtime');
   const [assistantName, setAssistantName] = useState('Jarvis');
   const [userName, setUserName] = useState('');
   const [customInstructions, setCustomInstructions] = useState('');
@@ -191,6 +196,9 @@ export function VoiceSettings() {
     setWakeWordOn(info.wakeWordEnabled);
     setJarvisLiveOn(info.jarvisLive.enabled);
     setLiveRealtime(info.jarvisLive.transport !== 'classic');
+    setRealtimeTransport(
+      info.jarvisLive.transport === 'gemini-live' ? 'gemini-live' : 'openai-realtime',
+    );
     setAssistantName(info.persona.assistantName);
     setUserName(info.persona.userName ?? '');
     setCustomInstructions(info.persona.customInstructions ?? '');
@@ -250,7 +258,7 @@ export function VoiceSettings() {
         pushToTalkKeyCode: normalizedKey,
         wakeWordEnabled: wakeWordOn,
         jarvisLiveEnabled: jarvisLiveOn,
-        jarvisLiveTransport: liveRealtime ? 'openai-realtime' : 'classic',
+        jarvisLiveTransport: liveRealtime ? realtimeTransport : 'classic',
         personaAssistantName: assistantName.trim() || 'Jarvis',
         personaUserName: userName.trim(),
         personaCustomInstructions: customInstructions.trim(),
@@ -270,7 +278,7 @@ export function VoiceSettings() {
   // salvo e o botão "desmarcava" sozinho. (bug: "coloco live live e não fica").
   const persistLive = async (patch: {
     jarvisLiveEnabled?: boolean;
-    jarvisLiveTransport?: 'classic' | 'openai-realtime';
+    jarvisLiveTransport?: JarvisLiveTransport;
   }) => {
     try {
       const next = await window.nexus.voice.setConfig(patch);
@@ -284,7 +292,7 @@ export function VoiceSettings() {
     setJarvisLiveOn(on);
     void persistLive({
       jarvisLiveEnabled: on,
-      ...(on && liveRealtime ? { jarvisLiveTransport: 'openai-realtime' } : {}),
+      ...(on && liveRealtime ? { jarvisLiveTransport: realtimeTransport } : {}),
     });
   };
 
@@ -293,7 +301,17 @@ export function VoiceSettings() {
     if (on) setJarvisLiveOn(true);
     void persistLive({
       jarvisLiveEnabled: on ? true : jarvisLiveOn,
-      jarvisLiveTransport: on ? 'openai-realtime' : 'classic',
+      jarvisLiveTransport: on ? realtimeTransport : 'classic',
+    });
+  };
+
+  const chooseRealtimeTransport = (transport: RealtimeTransport) => {
+    setRealtimeTransport(transport);
+    setLiveRealtime(true);
+    setJarvisLiveOn(true);
+    void persistLive({
+      jarvisLiveEnabled: true,
+      jarvisLiveTransport: transport,
     });
   };
 
@@ -346,7 +364,9 @@ export function VoiceSettings() {
         setTestResult(
           state.realtimeReady
             ? 'Realtime ativo: smoke enviado.'
-            : 'Realtime indisponível; verifique OPENAI_API_KEY.',
+            : realtimeTransport === 'gemini-live'
+              ? 'Realtime indisponível; verifique GEMINI_API_KEY.'
+              : 'Realtime indisponível; verifique OPENAI_API_KEY.',
         );
         return;
       }
@@ -396,7 +416,7 @@ export function VoiceSettings() {
     ? 'Realtime ativo'
     : jarvisLiveOn
       ? liveRealtime
-        ? 'realtime conectando'
+        ? `${realtimeTransport === 'gemini-live' ? 'Gemini Live' : 'OpenAI Realtime'} conectando`
         : 'live classic'
       : 'push-to-talk';
   const wakeMode =
@@ -664,7 +684,9 @@ export function VoiceSettings() {
                     <span>
                       <strong>Áudio realtime</strong>
                       <span>
-                        OpenAI Realtime
+                        {realtimeTransport === 'gemini-live'
+                          ? 'Gemini Live'
+                          : 'OpenAI Realtime'}
                         {realtimeActive ? ' · ativo' : ' · standby'}
                       </span>
                     </span>
@@ -674,6 +696,22 @@ export function VoiceSettings() {
                       onChange={(e) => toggleRealtime(e.target.checked)}
                       aria-label="Áudio realtime"
                     />
+                  </label>
+                )}
+
+                {jarvisLiveOn && liveRealtime && (
+                  <label className="agent-picker__label">
+                    Transporte realtime
+                    <select
+                      className="agent-picker__select"
+                      value={realtimeTransport}
+                      onChange={(e) =>
+                        chooseRealtimeTransport(e.target.value as RealtimeTransport)
+                      }
+                    >
+                      <option value="openai-realtime">OpenAI Realtime</option>
+                      <option value="gemini-live">Gemini Live</option>
+                    </select>
                   </label>
                 )}
 

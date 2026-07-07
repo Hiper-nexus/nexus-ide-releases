@@ -5,7 +5,8 @@
 Data: 2026-07-07
 
 Hotfix de paridade operacional: a Jarvis ganhou mais controle nativo do app,
-limpeza de sessão MCP por turno e fala em uma única voz por resposta.
+limpeza de sessão MCP por turno, fala em uma única voz por resposta e seleção
+explícita do transporte realtime.
 
 ### Correcoes
 
@@ -19,6 +20,8 @@ limpeza de sessão MCP por turno e fala em uma única voz por resposta.
   confirmações reaproveitadas entre comandos.
 - A fala da Jarvis voltou a usar uma chamada TTS por resposta, evitando troca de
   timbre entre primeira frase e resto quando um provedor degrada no meio.
+- O painel de voz agora permite escolher OpenAI Realtime ou Gemini Live,
+  persiste a escolha imediatamente e mostra a credencial correta no diagnóstico.
 
 ## 0.10.7 — Jarvis operacional
 
