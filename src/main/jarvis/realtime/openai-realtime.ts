@@ -68,6 +68,9 @@ export function buildOpenAISessionUpdate(opts: {
             type: 'audio/pcm',
             rate: opts.inputRate ?? DEFAULT_TARGET_RATE,
           },
+          transcription: {
+            model: 'gpt-realtime-whisper',
+          },
           turn_detection: {
             type: 'server_vad',
             threshold: 0.5,

@@ -105,8 +105,8 @@ export const jarvisLiveConfigSchema = z
     enabled: z.boolean().default(false),
     /**
      * Transporte da sessao live: 'classic' = FSM sobre pipeline batch;
-     * 'openai-realtime' = OpenAI Realtime via WSS; 'gemini-live' fica como
-     * fallback futuro. Quando realtime falha, o Classic segue valendo.
+     * 'openai-realtime' = OpenAI Realtime via WSS; 'gemini-live' = fallback
+     * realtime. Quando realtime falha, o Classic segue valendo.
      */
     transport: z.enum(['classic', 'openai-realtime', 'gemini-live']).default('classic'),
     /** Modelo realtime OpenAI padrao. */

@@ -4,6 +4,7 @@ import path from 'node:path';
 
 export type JarvisRealtimeMetric =
   | 'audio_in_to_transcript_delta_ms'
+  | 'transcript_final_to_action_ms'
   | 'transcript_final_to_audio_out_ms'
   | 'roundtrip_ms';
 
@@ -23,7 +24,9 @@ interface TurnTiming {
   audioInAt: number;
   firstTranscriptLogged: boolean;
   transcriptFinalAt: number | null;
+  firstActionAt: number | null;
   firstAudioOutAt: number | null;
+  transcriptToActionLogged: boolean;
   transcriptToAudioLogged: boolean;
 }
 
@@ -71,15 +74,29 @@ export class JarvisLatencyTracker {
       audioInAt: this.nowMs(),
       firstTranscriptLogged: false,
       transcriptFinalAt: null,
+      firstActionAt: null,
       firstAudioOutAt: null,
+      transcriptToActionLogged: false,
       transcriptToAudioLogged: false,
     });
   }
 
   markTranscript(sessionId: string, final: boolean): void {
-    const turn = this.turns.get(sessionId);
-    if (!turn) return;
     const now = this.nowMs();
+    const turn = this.turns.get(sessionId);
+    if (!turn) {
+      if (!final) return;
+      this.turns.set(sessionId, {
+        audioInAt: now,
+        firstTranscriptLogged: true,
+        transcriptFinalAt: now,
+        firstActionAt: null,
+        firstAudioOutAt: null,
+        transcriptToActionLogged: false,
+        transcriptToAudioLogged: false,
+      });
+      return;
+    }
     if (!turn.firstTranscriptLogged) {
       this.logger.log(
         'audio_in_to_transcript_delta_ms',
@@ -90,7 +107,17 @@ export class JarvisLatencyTracker {
     }
     if (final) {
       turn.transcriptFinalAt = now;
+      this.maybeLogTranscriptToAction(sessionId, turn);
       this.maybeLogTranscriptToAudio(sessionId, turn);
+    }
+  }
+
+  markAction(sessionId: string): void {
+    const turn = this.turns.get(sessionId);
+    if (!turn) return;
+    if (turn.firstActionAt === null) {
+      turn.firstActionAt = this.nowMs();
+      this.maybeLogTranscriptToAction(sessionId, turn);
     }
   }
 
@@ -117,6 +144,17 @@ export class JarvisLatencyTracker {
     this.logger.log(
       'transcript_final_to_audio_out_ms',
       turn.firstAudioOutAt - turn.transcriptFinalAt,
+      sessionId,
+    );
+  }
+
+  private maybeLogTranscriptToAction(sessionId: string, turn: TurnTiming): void {
+    if (turn.transcriptFinalAt === null || turn.firstActionAt === null) return;
+    if (turn.transcriptToActionLogged) return;
+    turn.transcriptToActionLogged = true;
+    this.logger.log(
+      'transcript_final_to_action_ms',
+      turn.firstActionAt - turn.transcriptFinalAt,
       sessionId,
     );
   }

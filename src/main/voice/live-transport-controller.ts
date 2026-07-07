@@ -4,16 +4,16 @@ import { resolveVoiceApiKey } from './voice-secrets';
 import { jarvisMemory } from './jarvis-memory';
 import type { JarvisLiveSession } from './jarvis-live';
 import {
-  createRealtimeProvider,
+  createRealtimeProviderCandidates,
   loadJarvisSystemPrompt,
-  resolveRealtimeProviderId,
+  resolveRealtimeProviderIds,
+  type RealtimeProviderCandidate,
 } from '../jarvis/realtime/factory';
 import {
   base64ToInt16Array,
   int16ArrayToBase64,
   type TurnManagedRealtimeProvider,
 } from '../jarvis/realtime/provider';
-import { transcriptStore } from '../jarvis/transcript-store';
 import { jarvisLatencyTracker } from '../jarvis/realtime/metrics';
 
 type Emit = (channel: string, payload?: unknown) => void;
@@ -35,54 +35,43 @@ export class LiveTransportController {
 
   /** True quando a config pede o transporte realtime E há key. */
   isRealtimeConfigured(): boolean {
-    const providerId = resolveRealtimeProviderId(getVoiceConfig());
-    if (providerId === 'openai') return resolveVoiceApiKey('OPENAI_API_KEY') !== undefined;
-    if (providerId === 'gemini') return resolveVoiceApiKey('GEMINI_API_KEY') !== undefined;
-    return false;
+    return resolveRealtimeProviderIds(getVoiceConfig()).some((providerId) => {
+      const envVar = providerId === 'openai' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY';
+      return resolveVoiceApiKey(envVar) !== undefined;
+    });
   }
 
   /** Chamado no start() do live: conecta o socket se o realtime estiver ligado. */
-  onStart(): void {
+  onStart(): Promise<void> {
     if (!this.isRealtimeConfigured()) {
       this.patchRealtimeReady(false);
-      return;
+      return Promise.resolve();
     }
     if (this.provider?.isReady) {
       this.fsm.patchStatus({ status: 'listening', realtimeReady: true });
-      return;
+      return Promise.resolve();
     }
-    this.provider?.close();
-    this.provider = createRealtimeProvider({
+    if (this.connecting) return this.connecting;
+    const candidates = createRealtimeProviderCandidates({
       config: getVoiceConfig(),
       instructions: this.buildSystemInstruction(),
     });
-    if (!this.provider) {
+    if (candidates.length === 0) {
       this.patchRealtimeReady(false);
-      return;
+      return Promise.resolve();
     }
-    this.bindProvider(this.provider);
     this.fsm.patchStatus({ status: 'listening', realtimeReady: false });
-    this.connecting = this.provider
-      .connect()
-      .then(() => {
-        this.fsm.patchStatus({ status: 'listening', realtimeReady: true });
-      })
-      .catch((err) => {
-        console.warn('[live]', err instanceof Error ? err.message : String(err));
-        this.provider?.close();
-        this.provider = null;
-        this.fsm.patchStatus({
-          status: 'error',
-          realtimeReady: false,
-          error: 'transporte realtime falhou — usando Classic',
-        });
+    const connecting = this.connectFirstAvailable(candidates)
+      .finally(() => {
+        if (this.connecting === connecting) this.connecting = null;
       });
+    this.connecting = connecting;
+    return connecting;
   }
 
   async smokeTest(text: string): Promise<ReturnType<JarvisLiveSession['getState']>> {
     if (!this.fsm.getState().sessionId) this.fsm.start({ reason: 'manual' });
-    this.onStart();
-    if (this.connecting) await this.connecting;
+    await this.onStart();
     if (this.provider?.isReady) {
       this.provider.sendText(text);
       this.fsm.patchStatus({ status: 'thinking', realtimeReady: true });
@@ -125,38 +114,64 @@ export class LiveTransportController {
     this.patchRealtimeReady(false);
   }
 
+  private async connectFirstAvailable(
+    candidates: RealtimeProviderCandidate[],
+  ): Promise<void> {
+    this.provider?.close();
+    this.provider = null;
+    for (const candidate of candidates) {
+      const provider = candidate.provider;
+      this.provider = provider;
+      this.bindProvider(provider);
+      try {
+        await provider.connect();
+        if (this.provider === provider) {
+          this.fsm.patchStatus({ status: 'listening', realtimeReady: true });
+        }
+        return;
+      } catch (err) {
+        console.warn(
+          `[live] ${candidate.id}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        provider.close();
+        if (this.provider === provider) this.provider = null;
+      }
+    }
+    this.fsm.patchStatus({
+      status: 'error',
+      realtimeReady: false,
+      error: 'transporte realtime falhou — usando Classic',
+    });
+  }
+
   private bindProvider(provider: TurnManagedRealtimeProvider): void {
     provider.onAudioOut((pcm16) => {
+      if (this.provider !== provider) return;
       const sessionId = this.fsm.getState().sessionId;
       if (sessionId) jarvisLatencyTracker.markAudioOut(sessionId);
       this.fsm.patchStatus({ status: 'speaking', realtimeReady: true });
       this.emit(VOICE_CHANNELS.liveAudioOut, int16ArrayToBase64(pcm16));
     });
     provider.onRoleTranscript((line) => {
+      if (this.provider !== provider) return;
       if (!line.text.trim()) return;
       const event = this.fsm.transcript(line);
       if (!event) return;
-      jarvisLatencyTracker.markTranscript(event.sessionId, line.final);
-      const record = transcriptStore.append(event.sessionId, {
-        role: line.role,
-        text: line.text,
-        final: line.final,
-        audio_url: null,
-      });
-      this.emit(VOICE_CHANNELS.jarvisTranscriptAppend, {
-        sessionId: event.sessionId,
-        ...record,
-      });
     });
     provider.onInterrupted(() => {
+      if (this.provider !== provider) return;
       this.fsm.interrupt('barge-in');
     });
     provider.onResponseDone(() => {
+      if (this.provider !== provider) return;
       const sessionId = this.fsm.getState().sessionId;
       if (sessionId) jarvisLatencyTracker.markResponseDone(sessionId);
       this.fsm.patchStatus({ status: 'dormant', realtimeReady: true });
     });
     provider.onError((err) => {
+      if (this.provider !== provider) return;
       console.warn('[live]', err.message);
       this.fsm.patchStatus({
         status: 'error',

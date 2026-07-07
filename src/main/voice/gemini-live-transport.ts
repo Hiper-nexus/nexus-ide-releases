@@ -27,6 +27,7 @@ export interface LiveTransportEvents {
   onAudioOut(b64: string): void;
   onTranscript(role: 'user' | 'assistant', text: string, final: boolean): void;
   onInterrupted(): void;
+  onTurnComplete?(): void;
   onStateChange(state: LiveTransportState): void;
   onError(message: string): void;
 }
@@ -266,6 +267,7 @@ export class GeminiLiveTransport {
       this.events.onTranscript('assistant', msg.outputTranscription, false);
     }
     if (msg.interrupted) this.events.onInterrupted();
+    if (msg.turnComplete) this.events.onTurnComplete?.();
     if (msg.resumptionHandle) this.resumptionHandle = msg.resumptionHandle;
     if (msg.goAway && this.lastOptions) {
       // O servidor vai derrubar — reconectar preservando o handle de resume.
@@ -314,6 +316,26 @@ export class GeminiLiveTransport {
             { role: 'user', parts: [{ text: `[update] ${text.slice(0, 400)}` }] },
           ],
           turnComplete: false,
+        },
+      }),
+    );
+  }
+
+  /** Entrada textual direta para smoke tests e fallback sem áudio. */
+  sendText(text: string): void {
+    this.sendTextTurn(text);
+  }
+
+  /** Text prompt into the live conversation, used by smoke tests and fallback. */
+  sendTextTurn(text: string): void {
+    if (!this.isReady || !this.ws) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    this.ws.send(
+      JSON.stringify({
+        clientContent: {
+          turns: [{ role: 'user', parts: [{ text: trimmed.slice(0, 4000) }] }],
+          turnComplete: true,
         },
       }),
     );

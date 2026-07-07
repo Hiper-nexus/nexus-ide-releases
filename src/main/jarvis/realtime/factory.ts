@@ -15,6 +15,11 @@ export interface RealtimeProviderFactoryOptions {
   promptPath?: string;
 }
 
+export interface RealtimeProviderCandidate {
+  id: RealtimeProviderId;
+  provider: TurnManagedRealtimeProvider;
+}
+
 const SYSTEM_PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'system.en.md');
 const FALLBACK_SYSTEM_PROMPT = `You are Jarvis, the voice assistant embedded in Nexus IDE.
 You have full authority over actions inside the Nexus IDE (files, terminal, git, editor, panes).
@@ -32,11 +37,18 @@ export function resolveRealtimeProviderId(
   config: VoiceConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): RealtimeProviderId | null {
+  return resolveRealtimeProviderIds(config, env)[0] ?? null;
+}
+
+export function resolveRealtimeProviderIds(
+  config: VoiceConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): RealtimeProviderId[] {
   const forced = env.NEXUS_REALTIME_PROVIDER?.trim().toLowerCase();
-  if (forced === 'openai' || forced === 'gemini') return forced;
-  if (config.jarvisLive.transport === 'openai-realtime') return 'openai';
-  if (config.jarvisLive.transport === 'gemini-live') return 'gemini';
-  return null;
+  if (forced === 'openai' || forced === 'gemini') return [forced];
+  if (config.jarvisLive.transport === 'openai-realtime') return ['openai', 'gemini'];
+  if (config.jarvisLive.transport === 'gemini-live') return ['gemini'];
+  return [];
 }
 
 export function loadJarvisSystemPrompt(promptPath = SYSTEM_PROMPT_PATH): string {
@@ -50,17 +62,44 @@ export function loadJarvisSystemPrompt(promptPath = SYSTEM_PROMPT_PATH): string 
 export function createRealtimeProvider(
   options: RealtimeProviderFactoryOptions,
 ): TurnManagedRealtimeProvider | null {
-  const providerId = resolveRealtimeProviderId(options.config);
-  if (!providerId) return null;
-  if (providerId === 'gemini') return new GeminiLiveProvider();
+  return createRealtimeProviderCandidates(options)[0]?.provider ?? null;
+}
 
-  const apiKey = resolveVoiceApiKey('OPENAI_API_KEY');
-  if (!apiKey) return null;
+export function createRealtimeProviderCandidates(
+  options: RealtimeProviderFactoryOptions,
+): RealtimeProviderCandidate[] {
   const live = options.config.jarvisLive;
-  return new OpenAIRealtimeProvider({
-    apiKey,
-    model: live.openaiModel,
-    voice: live.openaiVoice,
-    instructions: options.instructions ?? loadJarvisSystemPrompt(options.promptPath),
-  });
+  const instructions = options.instructions ?? loadJarvisSystemPrompt(options.promptPath);
+  const candidates: RealtimeProviderCandidate[] = [];
+  for (const providerId of resolveRealtimeProviderIds(options.config)) {
+    if (providerId === 'openai') {
+      const apiKey = resolveVoiceApiKey('OPENAI_API_KEY');
+      if (apiKey) {
+        candidates.push({
+          id: providerId,
+          provider: new OpenAIRealtimeProvider({
+            apiKey,
+            model: live.openaiModel,
+            voice: live.openaiVoice,
+            instructions,
+          }),
+        });
+      }
+      continue;
+    }
+
+    const apiKey = resolveVoiceApiKey('GEMINI_API_KEY');
+    if (apiKey) {
+      candidates.push({
+        id: providerId,
+        provider: new GeminiLiveProvider({
+          apiKey,
+          model: live.liveModel,
+          voiceName: live.voiceName,
+          instructions,
+        }),
+      });
+    }
+  }
+  return candidates;
 }

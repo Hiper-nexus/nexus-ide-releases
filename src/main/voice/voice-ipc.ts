@@ -41,6 +41,8 @@ import {
 } from './wake-lock';
 import { JarvisLiveSession } from './jarvis-live';
 import { LiveTransportController } from './live-transport-controller';
+import { jarvisLatencyTracker } from '../jarvis/realtime/metrics';
+import { transcriptStore } from '../jarvis/transcript-store';
 import {
   registerVoiceHotkey,
   disposeVoiceHotkey,
@@ -68,7 +70,19 @@ function broadcast(channel: string, payload?: unknown): void {
   }
 }
 
-const liveSession = new JarvisLiveSession(broadcast);
+const liveSession = new JarvisLiveSession(broadcast, Date.now, (sessionId, line) => {
+  jarvisLatencyTracker.markTranscript(sessionId, line.final);
+  const record = transcriptStore.append(sessionId, {
+    role: line.role,
+    text: line.text,
+    final: line.final,
+    audio_url: null,
+  });
+  broadcast(VOICE_CHANNELS.jarvisTranscriptAppend, {
+    sessionId,
+    ...record,
+  });
+});
 const liveTransport = new LiveTransportController(broadcast, liveSession);
 
 function wireHotkey(): void {
@@ -302,13 +316,13 @@ export function registerVoiceIpc(): void {
     },
   );
 
-  ipcMain.handle(VOICE_CHANNELS.liveStart, (_event, raw) => {
+  ipcMain.handle(VOICE_CHANNELS.liveStart, async (_event, raw) => {
     const parsed = jarvisLiveStartRequestSchema.safeParse(raw ?? {});
     let state = liveSession.start(parsed.success ? parsed.data : {});
-    // Se a config pede o transporte realtime (Gemini Live), conecta o socket;
+    // Se a config pede transporte realtime, conecta o socket antes do mic;
     // senão isto é no-op e o Classic segue (fallback keyless).
     if (liveSession.getState().sessionId) {
-      liveTransport.onStart();
+      await liveTransport.onStart();
       state = liveSession.getState();
     }
     return state;
@@ -353,7 +367,8 @@ export function registerVoiceIpc(): void {
   ipcMain.on(VOICE_CHANNELS.liveToolResultIn, (_event, raw) => {
     const parsed = jarvisLiveToolResultInputSchema.safeParse(raw);
     if (!parsed.success) return;
-    liveSession.toolResult(parsed.data);
+    const event = liveSession.toolResult(parsed.data);
+    if (event) jarvisLatencyTracker.markAction(event.sessionId);
   });
 
   ipcMain.handle(VOICE_CHANNELS.liveInterrupt, (_event, raw) => {

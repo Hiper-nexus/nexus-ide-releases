@@ -39,7 +39,7 @@ import type {
 const RESPONSE_QUIET_MS = 1_500; // speak once the pane has been quiet this long
 const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
 const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
-const JARVIS_REALTIME_ENABLED = true;
+const REALTIME_ACTION_BRIDGE_ENABLED = true;
 const WAKE_ACK_SUPPRESS_MS = 1_500;
 const WAKE_ACK_TAIL_GUARD_MS = 180;
 const WAKE_SILENCE_MS = 700; // wake-word capture: quiet time that ends the utterance
@@ -83,13 +83,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 // Memória curta da conversa com a JARVIS (renderer-local, por janela).
 let jarvisHistory: JarvisTurn[] = [];
 const wakeMic = new WakeMic();
-// Player do áudio realtime (Gemini Live): só instanciado sob demanda.
+// Player do áudio realtime (OpenAI Realtime / Gemini Live): só instanciado sob demanda.
 let livePlayer: LiveAudioPlayer | null = null;
 function ensureLivePlayer(): LiveAudioPlayer {
   return (livePlayer ??= new LiveAudioPlayer());
 }
-// Decision is per utterance. Fase 3 enables speech-to-speech realtime; Nexus
-// tool execution still stays out of scope until Fase 4.
+// Decision is per utterance. Fase 3 enables speech-to-speech realtime; tool
+// execution still goes through the existing live action events until Fase 4.
 let realtimeTurnActive = false;
 let jarvisLastTurnAt = 0;
 let wakeOpenInProgress = false;
@@ -112,7 +112,7 @@ function isJarvisLiveEnabled(): boolean {
   return Boolean(info?.jarvisLive.enabled && info.routing === 'jarvis');
 }
 
-/** Transporte realtime (áudio full-duplex Gemini Live) ligado? */
+/** Transporte realtime (áudio full-duplex OpenAI/Gemini) ligado? */
 function isRealtimeLive(): boolean {
   const info = useVoiceStore.getState().info;
   const liveState = useVoiceStore.getState().liveState;
@@ -558,7 +558,7 @@ async function beginListening(
     if (isJarvisLiveEnabled()) {
       const state = await window.nexus.voice.liveStart({ reason });
       store.setLiveState(state);
-      realtimeTurnActive = JARVIS_REALTIME_ENABLED && isRealtimeLive();
+      realtimeTurnActive = REALTIME_ACTION_BRIDGE_ENABLED && isRealtimeLive();
     }
     if (wakeMic.isRunning()) {
       // Stream do wake já está quente → escuta INSTANTÂNEA, sem getUserMedia.
