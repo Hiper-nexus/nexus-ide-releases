@@ -1,0 +1,88 @@
+/**
+ * OCR module — Fase 5 Jarvis Vision.
+ * Uses tesseract.js for offline, local OCR.
+ * Includes a simple cache: same image hash within 30s returns cached result.
+ */
+import type { OcrResult } from '../../shared/vision-ipc';
+import { createHash } from 'node:crypto';
+
+interface CacheEntry {
+  text: string;
+  confidence: number;
+  cachedAt: number;
+}
+
+const cache = new Map<string, CacheEntry>();
+const CACHE_TTL_MS = 30_000;
+const CACHE_MAX_SIZE = 20;
+
+function hashBuffer(buffer: Buffer): string {
+  return createHash('sha256').update(buffer).digest('hex').slice(0, 32);
+}
+
+function pruneCache(): void {
+  if (cache.size <= CACHE_MAX_SIZE) return;
+  const now = Date.now();
+  // Remove expired entries first
+  for (const [key, entry] of cache) {
+    if (now - entry.cachedAt > CACHE_TTL_MS) {
+      cache.delete(key);
+    }
+  }
+  // If still too many, remove oldest
+  if (cache.size > CACHE_MAX_SIZE) {
+    const sorted = [...cache.entries()].sort((a, b) => a[1].cachedAt - b[1].cachedAt);
+    for (let i = 0; i < sorted.length - CACHE_MAX_SIZE; i++) {
+      cache.delete(sorted[i][0]);
+    }
+  }
+}
+
+/**
+ * Run OCR on a PNG image buffer using tesseract.js.
+ * @param buffer PNG image buffer
+ * @param lang Language code(s) for OCR, e.g. 'eng+por'
+ * @returns Recognized text and confidence score
+ */
+export async function ocrImage(
+  buffer: Buffer,
+  lang: string = 'eng+por',
+): Promise<OcrResult> {
+  // Check cache
+  const hash = hashBuffer(buffer);
+  const cached = cache.get(hash);
+  if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
+    return { text: cached.text, confidence: cached.confidence };
+  }
+
+  // Dynamic import tesseract (it's heavy, only load on first use)
+  const { createWorker } = await import('tesseract.js');
+
+  try {
+    const worker = await createWorker(lang, 1, {
+      logger: () => {
+        // Silent — no progress logging
+      },
+    });
+
+    const {
+      data: { text, confidence },
+    } = await worker.recognize(buffer);
+
+    await worker.terminate();
+
+    const result: OcrResult = {
+      text: text.trim(),
+      confidence: Math.round(confidence),
+    };
+
+    // Cache result
+    cache.set(hash, { ...result, cachedAt: Date.now() });
+    pruneCache();
+
+    return result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`OCR failed: ${message}`);
+  }
+}
