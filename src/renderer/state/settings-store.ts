@@ -23,6 +23,14 @@ function applyUiEverywhere(ui: UiSettings): void {
   applyPixelMode(ui.pixelMode);
 }
 
+function settingsApi() {
+  return window.nexus.settings as typeof window.nexus.settings & {
+    uiGet?: () => Promise<UiSettings>;
+    uiSet?: (patch: UiSettingsPatch) => Promise<UiSettings>;
+    onUiChanged?: (cb: (ui: UiSettings) => void) => () => void;
+  };
+}
+
 /**
  * Renderer mirror of terminal + UI settings plus the settings-drawer open
  * state. Every change round-trips through the main process (validate +
@@ -52,9 +60,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   hydrate: async () => {
     try {
+      const api = settingsApi();
       const [settings, ui] = await Promise.all([
-        window.nexus.settings.get(),
-        window.nexus.settings.uiGet(),
+        api.get(),
+        api.uiGet ? api.uiGet() : Promise.resolve(DEFAULT_UI_SETTINGS),
       ]);
       applyEverywhere(settings);
       applyUiEverywhere(ui);
@@ -72,7 +81,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   },
 
   updateUi: async (patch) => {
-    const ui = await window.nexus.settings.uiSet(patch);
+    const api = settingsApi();
+    const ui = api.uiSet
+      ? await api.uiSet(patch)
+      : { ...useSettingsStore.getState().ui, ...patch };
     applyUiEverywhere(ui);
     set({ ui });
   },
@@ -96,12 +108,13 @@ export function useSettingsController(): void {
   const hydrate = useSettingsStore((s) => s.hydrate);
   useEffect(() => {
     void hydrate();
-    const unsubTerminal = window.nexus.settings.onChanged((settings) =>
+    const api = settingsApi();
+    const unsubTerminal = api.onChanged((settings) =>
       useSettingsStore.getState().receive(settings),
     );
-    const unsubUi = window.nexus.settings.onUiChanged((ui) =>
-      useSettingsStore.getState().receiveUi(ui),
-    );
+    const unsubUi = api.onUiChanged
+      ? api.onUiChanged((ui) => useSettingsStore.getState().receiveUi(ui))
+      : () => {};
     return () => {
       unsubTerminal();
       unsubUi();
