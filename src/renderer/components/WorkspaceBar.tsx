@@ -10,6 +10,7 @@ import { CostSummary } from './CostBadge';
 import { OperatorHud } from './OperatorHud';
 import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
+import { VisionIndicator } from './VisionIndicator';
 import { NexusMark } from './NexusMark';
 import { PixelIcon } from './PixelIcon';
 import { UpdateModal, UpdateStatusButton, useUpdateState } from './UpdateModal';
@@ -209,6 +210,7 @@ export function WorkspaceBar() {
         </button>
         <span className="workspace-bar__sep" aria-hidden="true" />
         <VoiceButton />
+        <VisionIndicator />
         {updateState && (
           <UpdateStatusButton
             state={updateState}

@@ -76,6 +76,17 @@ export const orchSettingsSchema = z.object({
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});
 
+/**
+ * Privacy settings for Jarvis Vision. Defaults are fail-closed: raw screenshots
+ * stay local unless explicit UI consent enables access.
+ */
+export const visionSettingsSchema = z.object({
+  allowCloudImage: z.boolean().default(false),
+});
+export type VisionSettings = z.infer<typeof visionSettingsSchema>;
+export const DEFAULT_VISION_SETTINGS: VisionSettings =
+  visionSettingsSchema.parse({});
+
 export const SETTINGS_CHANNELS = {
   get: 'settings:get',
   set: 'settings:set',

@@ -295,6 +295,37 @@
   white-space: nowrap;
 }
 
+.vision-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  animation: vision-indicator-pulse 1800ms var(--ease-out-quart) infinite;
+}
+
+.vision-indicator__label {
+  line-height: 1;
+}
+
+@keyframes vision-indicator-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.62;
+  }
+}
+
 .voice-dot {
   width: 8px;
   height: 8px;

@@ -10,6 +10,7 @@ export type PixelIconName =
   | 'orch'
   | 'config'
   | 'mic'
+  | 'vision'
   | 'plus'
   | 'sparkle'
   | 'close'
@@ -125,6 +126,18 @@ const ICONS: Record<PixelIconName, Rect[]> = {
     [7, 5, 1, 1],
     [5, 6, 1, 2],
     [3, 9, 5, 1],
+  ],
+  // eye / vision sensor
+  vision: [
+    [2, 5, 1, 1],
+    [3, 4, 1, 1],
+    [4, 3, 3, 1],
+    [7, 4, 1, 1],
+    [8, 5, 1, 1],
+    [7, 6, 1, 1],
+    [4, 7, 3, 1],
+    [3, 6, 1, 1],
+    [5, 5, 1, 1],
   ],
   // + cruz
   plus: [

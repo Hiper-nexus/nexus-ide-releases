@@ -63,6 +63,7 @@ import type {
 } from './media-types';
 import type { NotesApi } from './note-types';
 import type { PipeApi } from './pipe-types';
+import type { VisionApi } from './vision-ipc';
 import type {
   AdapterAuthStatus,
   ProviderConfigPatch,
@@ -707,5 +708,7 @@ export interface NexusApi {
   };
   notes: NotesApi;
   pipes: PipeApi;
+  /** Fase 5 — Jarvis Vision: screen capture + AX tree + OCR */
+  vision: VisionApi;
   platform: NodeJS.Platform;
 }
