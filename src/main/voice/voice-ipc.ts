@@ -78,6 +78,7 @@ const liveSession = new JarvisLiveSession(broadcast, Date.now, (sessionId, line)
     final: line.final,
     audio_url: null,
   });
+  if (!record) return;
   broadcast(VOICE_CHANNELS.jarvisTranscriptAppend, {
     sessionId,
     ...record,
