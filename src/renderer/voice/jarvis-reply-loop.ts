@@ -10,7 +10,7 @@ export const MAX_AUTO_REPLY_LOOPS = 5;
 export const MAX_CONFUSION_REPLY_REOPENS = 1;
 
 let autoReplyLoopCount = 0;
-export type JarvisCaptureReason = 'manual' | 'wake' | 'ptt' | 'reply';
+export type JarvisCaptureReason = 'manual' | 'wake' | 'click' | 'ptt' | 'reply';
 
 export function resetAutoReplyLoop(): void {
   autoReplyLoopCount = 0;

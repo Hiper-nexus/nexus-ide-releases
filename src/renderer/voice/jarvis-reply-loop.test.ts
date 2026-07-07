@@ -107,6 +107,21 @@ describe('jarvis-reply-loop', () => {
     ).toBe(false);
   });
 
+  it('reseta contador quando a captura vem do clique na Jarvis', () => {
+    resetAutoReplyLoop();
+    noteAutoReplyOpened();
+    resetAutoReplyLoopForCapture('click');
+    expect(
+      shouldReopenJarvisListening({
+        expectReply: true,
+        sayText: 'Não entendi o pedido, patrão.',
+        realtimeTurnActive: false,
+        isRealtimeLive: false,
+        captureReason: 'click',
+      }),
+    ).toBe(true);
+  });
+
   it('trava após muitas reaberturas seguidas', () => {
     resetAutoReplyLoop();
     for (let i = 0; i < 5; i += 1) noteAutoReplyOpened();

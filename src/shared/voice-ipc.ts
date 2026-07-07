@@ -314,7 +314,7 @@ export interface JarvisLiveState {
 }
 
 export interface JarvisLiveStartRequest {
-  reason?: 'manual' | 'wake' | 'ptt' | 'reply';
+  reason?: 'manual' | 'wake' | 'click' | 'ptt' | 'reply';
 }
 
 export interface JarvisLiveSmokeTestRequest {
@@ -369,7 +369,7 @@ export interface JarvisLiveInterruptEvent {
 
 export const jarvisLiveStartRequestSchema = z
   .object({
-    reason: z.enum(['manual', 'wake', 'ptt', 'reply']).optional(),
+    reason: z.enum(['manual', 'wake', 'click', 'ptt', 'reply']).optional(),
   })
   .default({});
 

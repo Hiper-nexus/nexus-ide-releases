@@ -19,6 +19,7 @@ import {
   noteAutoReplyOpened,
   resetAutoReplyLoopForCapture,
   REPLY_LISTEN_DELAY_MS,
+  type JarvisCaptureReason,
   shouldReopenJarvisListening,
 } from './jarvis-reply-loop';
 import {
@@ -47,6 +48,7 @@ import { useSettingsStore } from '../state/settings-store';
 import { useGamificationStore } from '../state/gamification-store';
 import { executeJarvisAction } from './jarvis-action-executor';
 import { mcpClearSession } from '../services/mcp-bridge';
+import { splitForPipelinedSpeech } from './speech-segments';
 import type { AutoStopOptions } from './voice-capture';
 import type {
   JarvisAction,
@@ -77,6 +79,7 @@ const WAKE_ACK_SUPPRESS_MS = 8_000;
 const WAKE_PREROLL_MS = 2_500;
 const WAKE_SILENCE_MS = 1_200; // wake-word capture: quiet time that ends the utterance
 const WAKE_MIN_LISTEN_MS = 3_200; // keep the mic open after ack/pre-roll before silence can close it
+const CLICK_WAKE_MIN_LISTEN_MS = 4_500; // mouse wake has no pre-roll; give the user room to start talking
 const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
 const PTT_HOLD_MAX_MS = 60_000; // hold-to-talk sem keyup (tap morto) fecha aqui
 const JARVIS_MEMORY_MS = 240_000; // 4 min: conversa continua sem recomeçar do zero
@@ -136,7 +139,7 @@ let queuedRealtimeTranscript: string | null = null;
 let finishRealtimeCapture: (() => void) | null = null;
 let jarvisLastTurnAt = 0;
 let wakeOpenInProgress = false;
-let activeCaptureReason: 'manual' | 'wake' | 'ptt' | 'reply' = 'manual';
+let activeCaptureReason: JarvisCaptureReason = 'manual';
 let realtimeNativeToolInFlight = 0;
 let lastRealtimeNativeToolAt = 0;
 type WakeSource = 'voice' | 'click';
@@ -211,14 +214,18 @@ function waitForRealtimeTranscript(timeoutMs = REALTIME_TRANSCRIPT_WAIT_MS): Pro
   });
 }
 
+function isAckGatedCapture(reason: JarvisCaptureReason = activeCaptureReason): boolean {
+  return reason === 'wake' || reason === 'click';
+}
+
 function commandFromRealtimeTranscript(text: string): string | null {
   const raw = text.trim();
   if (!raw) return null;
-  if (activeCaptureReason === 'wake' && isWakeAckOnlyTranscript(raw, personaUserName())) {
+  if (isAckGatedCapture() && isWakeAckOnlyTranscript(raw, personaUserName())) {
     return null;
   }
   const transcript =
-    activeCaptureReason === 'wake' ? stripWakeAckEcho(raw, personaUserName()) : raw;
+    isAckGatedCapture() ? stripWakeAckEcho(raw, personaUserName()) : raw;
   return transcript.trim() || null;
 }
 
@@ -256,8 +263,8 @@ function onRealtimeTranscriptForActionBridge(event: JarvisLiveTranscriptEvent): 
   if (!realtimeTurnActive || event.role !== 'user' || !event.final) return;
   const text = commandFromRealtimeTranscript(event.text);
   if (!text) {
-    if (activeCaptureReason === 'wake') {
-      console.log(`[voice] realtime wake só ack/eco: "${event.text.trim()}"`);
+    if (isAckGatedCapture()) {
+      console.log(`[voice] realtime wake/click só ack/eco: "${event.text.trim()}"`);
     }
     return;
   }
@@ -487,17 +494,11 @@ async function speakRealtimeToolResult(text: string): Promise<void> {
   stopAllPlayback();
   store.setStatus('speaking');
   liveStatus('speaking');
-  const spoken = await withTimeout(
-    window.nexus.voice.speak({ text: trimmed, speakMode: 'full' }),
-    SPEAK_DEADLINE_MS,
-    'TTS',
-  );
+  const spoken = await speakAndPlayPipelined(trimmed);
   if (!spoken.ok) {
     store.setError(spoken.error);
     return;
   }
-  surfaceTtsFallback(spoken);
-  await playSpeakResult(spoken);
   store.setSpoken(trimmed);
   void window.nexus.voice.recordEcho(trimmed);
   wakeMic.suppressWakeDetection(
@@ -601,15 +602,45 @@ async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promise<void
   }
 }
 
+async function speakSegment(text: string, label: string): Promise<SpeakResult> {
+  return withTimeout(
+    window.nexus.voice.speak({ text, speakMode: 'full' }),
+    SPEAK_DEADLINE_MS,
+    label,
+  );
+}
+
+async function speakAndPlayPipelined(
+  text: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { first, rest } = splitForPipelinedSpeech(text);
+  if (!first) return { ok: true };
+  const firstSpoken = await speakSegment(first, 'TTS');
+  if (!firstSpoken.ok) return { ok: false, error: firstSpoken.error };
+  surfaceTtsFallback(firstSpoken);
+
+  const restPromise =
+    rest && firstSpoken.mode === 'audio' ? speakSegment(rest, 'TTS continuação') : null;
+  await playSpeakResult(firstSpoken);
+
+  if (!rest) return { ok: true };
+  const restSpoken = restPromise ? await restPromise : await speakSegment(rest, 'TTS continuação');
+  if (!restSpoken.ok) return { ok: false, error: restSpoken.error };
+  surfaceTtsFallback(restSpoken);
+  await playSpeakResult(restSpoken);
+  return { ok: true };
+}
+
 
 /** Auto-stop padrão das capturas iniciadas por voz (sem tecla de soltar). */
 function wakeAutoStop(
   capture: VoiceCapture,
   busy: React.MutableRefObject<boolean>,
+  reason: 'wake' | 'click' = 'wake',
 ): AutoStopOptions {
   return {
     silenceMs: WAKE_SILENCE_MS,
-    minListenMs: WAKE_MIN_LISTEN_MS,
+    minListenMs: reason === 'click' ? CLICK_WAKE_MIN_LISTEN_MS : WAKE_MIN_LISTEN_MS,
     maxMs: WAKE_MAX_MS,
     onAutoStop: () => {
       if (isListening(capture)) void finishAndProcess(capture, busy);
@@ -666,8 +697,8 @@ export function useVoiceController(): void {
         wakeMic.suppressWakeDetection(WAKE_ACK_SUPPRESS_MS);
         await beginListening(
           capture.current!,
-          wakeAutoStop(capture.current!, busy),
-          'wake',
+          wakeAutoStop(capture.current!, busy, source === 'voice' ? 'wake' : 'click'),
+          source === 'voice' ? 'wake' : 'click',
           wakePreRoll,
           busy,
         );
@@ -912,7 +943,7 @@ export function useVoiceController(): void {
 async function beginListening(
   capture: VoiceCapture,
   autoStop?: import('./voice-capture').AutoStopOptions,
-  reason: 'manual' | 'wake' | 'ptt' | 'reply' = 'manual',
+  reason: JarvisCaptureReason = 'manual',
   preRollSeed?: Float32Array[],
   busy?: React.MutableRefObject<boolean>,
 ): Promise<void> {
@@ -927,7 +958,7 @@ async function beginListening(
           if (isListening(capture)) void finishAndProcess(capture, busy);
         }
       : null;
-    if (reason === 'wake') {
+    if (isAckGatedCapture(reason)) {
       suppressRealtimeAudioOut = true;
       void window.nexus.voice.liveInterrupt('wake-listen').catch(() => {});
     } else {
@@ -1014,17 +1045,17 @@ async function finishAndProcess(
       if (liveTranscript) {
         const rawTranscript = liveTranscript.trim();
         if (
-          activeCaptureReason === 'wake' &&
+          isAckGatedCapture() &&
           isWakeAckOnlyTranscript(rawTranscript, personaUserName())
         ) {
-          console.log(`[voice] realtime wake só ack/eco: "${liveTranscript}"`);
+          console.log(`[voice] realtime wake/click só ack/eco: "${liveTranscript}"`);
           store.setStatus('idle');
           void window.nexus.voice.liveInterrupt('ack-only-transcript').catch(() => {});
           liveEndTurn();
           return;
         }
         const transcript =
-          activeCaptureReason === 'wake'
+          isAckGatedCapture()
             ? stripWakeAckEcho(rawTranscript, personaUserName())
             : rawTranscript;
         if (!transcript) {
@@ -1117,21 +1148,21 @@ async function finishAndProcess(
     }
     const tStt = Date.now() - tTurn;
     if (
-      activeCaptureReason === 'wake' &&
+      isAckGatedCapture() &&
       isWakeAckOnlyTranscript(stt.text, personaUserName())
     ) {
-      console.log(`[voice] turno wake só ack/eco descartado: "${stt.text}"`);
+      console.log(`[voice] turno wake/click só ack/eco descartado: "${stt.text}"`);
       store.setStatus('idle');
       liveEndTurn();
       return;
     }
     const transcript =
-      activeCaptureReason === 'wake'
+      isAckGatedCapture()
         ? stripWakeAckEcho(stt.text, personaUserName())
         : stt.text.trim();
     if (!transcript) {
       const reason =
-        activeCaptureReason === 'wake' ? 'eco do wake/ack' : 'transcrição vazia';
+        isAckGatedCapture() ? 'eco do wake/click/ack' : 'transcrição vazia';
       console.log(`[voice] ${reason} descartado: "${stt.text}"`);
       store.setStatus('idle');
       liveEndTurn();
@@ -1141,7 +1172,7 @@ async function finishAndProcess(
     // "obrigado por assistir"…). Elas passam o gate de RMS quando há um
     // sussurro — descarta antes de virar turno (a JARVIS falando sozinha).
     const inConversation =
-      activeCaptureReason === 'wake'
+      isAckGatedCapture()
         ? false
         : jarvisHistory.length > 0 && Date.now() - jarvisLastTurnAt <= JARVIS_MEMORY_MS;
     if (isDiscardableTranscript(transcript, { inConversation })) {
@@ -1282,18 +1313,12 @@ async function runJarvisTurn(
   store.setStatus('speaking');
   liveStatus('speaking');
   const tTts = Date.now();
-  const spoken = await withTimeout(
-    window.nexus.voice.speak({ text: sayText, speakMode: 'full' }),
-    SPEAK_DEADLINE_MS,
-    'TTS',
-  );
+  const spoken = await speakAndPlayPipelined(sayText);
   console.log(`[voice] tts: ${Date.now() - tTts}ms`);
   if (!spoken.ok) {
     store.setError(spoken.error);
     return;
   }
-  surfaceTtsFallback(spoken);
-  await playSpeakResult(spoken);
   store.setSpoken(sayText);
   store.setStatus('idle');
   void window.nexus.voice.recordEcho(sayText);

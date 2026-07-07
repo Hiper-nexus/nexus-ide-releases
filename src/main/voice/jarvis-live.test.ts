@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { VOICE_CHANNELS } from '../../shared/voice-channels';
+import { jarvisLiveStartRequestSchema } from '../../shared/voice-ipc';
 import { JarvisLiveSession } from './jarvis-live';
 
 describe('JarvisLiveSession', () => {
@@ -37,6 +38,12 @@ describe('JarvisLiveSession', () => {
 
     live.toolResult({ tool: 'run_command', ok: false, summary: 'usuário recusou' });
     expect(events.filter((e) => e.channel === VOICE_CHANNELS.liveToolResult)).toHaveLength(1);
+  });
+
+  it('accepts mouse click as a live wake reason', () => {
+    expect(jarvisLiveStartRequestSchema.parse({ reason: 'click' })).toEqual({
+      reason: 'click',
+    });
   });
 
   it('ends a turn without destroying the live session', () => {
