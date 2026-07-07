@@ -7,7 +7,7 @@
  * the embedded MCP server, but reached via IPC instead of HTTP.
  */
 
-import { ipcMain } from 'electron';
+import { dialog, ipcMain } from 'electron';
 import { MCP_CHANNELS } from '../../shared/channels';
 import type {
   McpConfirmRequest,
@@ -20,11 +20,20 @@ import type { McpRegistry } from '../orch/mcp-protocol';
 import { buildToolset } from '../orch/tools';
 import { requiresConfirmation, confirmationReason } from '../jarvis/guardrails';
 import {
-  hasPermission,
   grantPermission,
   clearSession,
 } from '../jarvis/permissions';
-import { auditSuccess, auditError, auditDenied } from '../jarvis/audit-log';
+import { redactArgs } from '../jarvis/audit-log';
+import {
+  consumeConfirmationToken,
+  createConfirmationToken,
+} from './confirmation-tokens';
+import {
+  currentPermissionWorkspaceId,
+  dispatchToolCall,
+  permissionScopeForTool,
+} from '../orch/mcp-dispatch';
+import { validateToolArgs } from '../orch/mcp-args-validation';
 
 let registry: McpRegistry | null = null;
 const RENDERER_SESSION_ID = 'jarvis-renderer';
@@ -38,12 +47,6 @@ function getRegistry(): McpRegistry {
     };
   }
   return registry;
-}
-
-function normalizeArgs(args: unknown): Record<string, unknown> {
-  return args && typeof args === 'object' && !Array.isArray(args)
-    ? (args as Record<string, unknown>)
-    : {};
 }
 
 function rendererToolContext() {
@@ -60,85 +63,45 @@ function rendererToolContext() {
 
 export async function invokeMcpTool(raw: McpInvokeRequest): Promise<McpInvokeResult> {
   const toolName = raw?.tool;
-  const args = normalizeArgs(raw?.args);
 
   if (!toolName || typeof toolName !== 'string') {
     return { ok: false, tool: '', error: 'invalid tool name' };
   }
 
-  const startMs = Date.now();
-  const sessionId = RENDERER_SESSION_ID;
-
-  const tool = resolveTool(getRegistry(), toolName);
-  if (!tool) {
-    const durationMs = Date.now() - startMs;
-    auditError(
-      sessionId,
-      toolName,
-      args,
-      durationMs,
-      `unknown tool: ${toolName}`,
-      false,
-    );
-    return {
-      ok: false,
-      tool: toolName,
-      error: `unknown tool: ${toolName}`,
-    };
-  }
-
-  const needsConfirmation = requiresConfirmation(tool.name, args);
-  const isUserAuthorized = needsConfirmation && hasPermission(sessionId, tool.name, args);
-  if (needsConfirmation && !isUserAuthorized) {
-    const durationMs = Date.now() - startMs;
-    const reason = confirmationReason(tool.name, args);
-    auditDenied(sessionId, tool.name, args, durationMs, reason);
-    return {
-      ok: false,
-      tool: tool.name,
-      denied: true,
-      requiredConfirmation: true,
-      confirmationReason: reason,
-    };
-  }
-
-  try {
-    const result = await tool.handler(args, rendererToolContext());
-    const durationMs = Date.now() - startMs;
-    auditSuccess(
-      sessionId,
-      tool.name,
-      args,
-      durationMs,
-      isUserAuthorized,
-    );
-    return {
-      ok: true,
-      tool: tool.name,
-      result,
-    };
-  } catch (err) {
-    const durationMs = Date.now() - startMs;
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    auditError(
-      sessionId,
-      tool.name,
-      args,
-      durationMs,
-      errorMsg,
-      isUserAuthorized,
-    );
-    return {
-      ok: false,
-      tool: tool.name,
-      error: errorMsg,
-    };
-  }
+  return dispatchToolCall(
+    'ipc-renderer',
+    getRegistry(),
+    toolName,
+    raw?.args ?? {},
+    rendererToolContext(),
+  );
 }
 
-export function confirmMcpTool(raw: McpConfirmRequest): McpConfirmResult {
+async function requestNativeConfirmation(
+  toolName: string,
+  args: Record<string, unknown>,
+  reason: string,
+  workspaceId: string,
+): Promise<boolean> {
+  const redacted = JSON.stringify(redactArgs(args), null, 2);
+  const result = await dialog.showMessageBox({
+    type: 'warning',
+    buttons: ['Deny', 'Allow'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    message: `Allow MCP tool "${toolName}"?`,
+    detail:
+      `Source: renderer IPC\n` +
+      `Workspace: ${workspaceId}\n` +
+      `Reason: ${reason}\n\n` +
+      `Arguments:\n${redacted}`,
+  });
+  return result.response === 1;
+}
+
+export async function confirmMcpTool(raw: McpConfirmRequest): Promise<McpConfirmResult> {
   const toolName = raw?.tool;
-  const args = normalizeArgs(raw?.args);
   if (!toolName || typeof toolName !== 'string') {
     return { ok: false, error: 'invalid tool name' };
   }
@@ -146,7 +109,56 @@ export function confirmMcpTool(raw: McpConfirmRequest): McpConfirmResult {
   if (!tool) {
     return { ok: false, error: `unknown tool: ${toolName}` };
   }
-  grantPermission(RENDERER_SESSION_ID, tool.name, args);
+
+  let args: Record<string, unknown>;
+  try {
+    args = validateToolArgs(tool.name, raw?.args ?? {});
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `invalid arguments: ${detail}` };
+  }
+
+  let workspaceId: string;
+  try {
+    workspaceId = currentPermissionWorkspaceId();
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `workspace_unavailable: ${detail}` };
+  }
+
+  const scope = permissionScopeForTool(
+    RENDERER_SESSION_ID,
+    workspaceId,
+    tool.name,
+    args,
+  );
+
+  if (raw.granted === true) {
+    if (typeof raw.token !== 'string' || !consumeConfirmationToken(raw.token, scope)) {
+      return { ok: false, error: 'invalid_confirmation_token' };
+    }
+    grantPermission(scope);
+    return { ok: true };
+  }
+
+  if (!requiresConfirmation(tool.name, args) && tool.requiresConfirm !== true) {
+    return { ok: true };
+  }
+
+  const reason = confirmationReason(tool.name, args);
+  const approved = await requestNativeConfirmation(
+    tool.name,
+    args,
+    reason,
+    workspaceId,
+  );
+  if (!approved) return { ok: false, error: 'user_denied' };
+
+  const token = createConfirmationToken(scope);
+  if (!consumeConfirmationToken(token, scope)) {
+    return { ok: false, error: 'invalid_confirmation_token' };
+  }
+  grantPermission(scope);
   return { ok: true };
 }
 

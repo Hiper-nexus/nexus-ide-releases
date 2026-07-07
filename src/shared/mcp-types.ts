@@ -16,6 +16,8 @@ export interface McpInvokeResult {
 export interface McpConfirmRequest {
   tool: string;
   args?: Record<string, unknown>;
+  granted?: boolean;
+  token?: string;
 }
 
 export interface McpConfirmResult {
