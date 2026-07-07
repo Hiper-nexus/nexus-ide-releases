@@ -34,6 +34,60 @@ const BOOT_CHECK_DELAY_MS = 20_000;
 const GH_CHECK_TIMEOUT_MS = 15_000;
 const GH_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 
+type UpdateLogLevel = 'info' | 'warn';
+
+function formatLogDetail(detail: unknown): string {
+  if (detail === undefined) return '';
+  if (detail instanceof Error) return detail.message;
+  if (typeof detail === 'string') return detail;
+  try {
+    return JSON.stringify(detail);
+  } catch {
+    return String(detail);
+  }
+}
+
+function writeUpdateLog(
+  level: UpdateLogLevel,
+  message: string,
+  detail?: unknown,
+): void {
+  const renderedDetail = formatLogDetail(detail);
+  const consoleArgs = renderedDetail
+    ? [`[updater] ${message}`, detail]
+    : [`[updater] ${message}`];
+  if (level === 'warn') {
+    console.warn(...consoleArgs);
+  } else {
+    console.info(...consoleArgs);
+  }
+
+  try {
+    const dir = app.getPath('logs');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(
+      path.join(dir, 'update.log'),
+      `${new Date().toISOString()} ${level.toUpperCase()} ${message}${
+        renderedDetail ? ` ${renderedDetail}` : ''
+      }\n`,
+      'utf8',
+    );
+  } catch (err) {
+    console.warn('[updater] falha ao gravar log:', err);
+  }
+}
+
+function summarizeState(state: UpdateState): Record<string, unknown> {
+  return {
+    phase: state.phase,
+    source: state.source,
+    currentVersion: state.currentVersion,
+    availableVersion: state.available?.version,
+    canInstall: state.canInstall,
+    error: state.error,
+  };
+}
+
 function broadcast(channel: string, payload?: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     const wc = win.webContents;
@@ -103,6 +157,12 @@ class UpdateManager {
       this.mode = 'gh';
       this.patch({ source: 'gh' });
     }
+    writeUpdateLog('info', 'init', {
+      mode: this.mode,
+      packaged: app.isPackaged,
+      currentVersion: this.state.currentVersion,
+      canInstall: this.state.canInstall,
+    });
 
     ipcMain.handle(UPDATE_CHANNELS.getState, () => this.getState());
     ipcMain.handle(UPDATE_CHANNELS.check, async () => {
@@ -133,18 +193,36 @@ class UpdateManager {
   }
 
   private patch(patch: Partial<UpdateState>): void {
+    const previous = this.state;
     this.state = { ...this.state, ...patch };
+    if (
+      previous.phase !== this.state.phase ||
+      previous.source !== this.state.source ||
+      previous.available?.version !== this.state.available?.version ||
+      previous.error !== this.state.error
+    ) {
+      writeUpdateLog(
+        this.state.phase === 'error' ? 'warn' : 'info',
+        'state',
+        summarizeState(this.state),
+      );
+    }
     broadcast(UPDATE_CHANNELS.state, this.getState());
   }
 
   private async check(): Promise<void> {
     if (this.state.phase === 'downloading' || this.state.phase === 'ready') return;
+    writeUpdateLog('info', 'check:start', {
+      mode: this.mode,
+      currentVersion: this.state.currentVersion,
+    });
     if (this.mode === 'feed') {
       // Squirrel direto: os eventos do autoUpdater dirigem o estado.
       this.patch({ phase: 'checking', error: undefined });
       try {
         autoUpdater.checkForUpdates();
       } catch (err) {
+        writeUpdateLog('warn', 'check:feed-failed', err);
         this.patch({ phase: 'error', error: String(err).slice(0, 200) });
       }
       return;
@@ -165,6 +243,12 @@ class UpdateManager {
       const release = parseGhRelease(raw, this.state.currentVersion);
       this.release = release;
       if (release) {
+        writeUpdateLog('info', 'check:available', {
+          currentVersion: this.state.currentVersion,
+          availableVersion: release.version,
+          tag: release.tag,
+          zipAsset: release.zipAsset,
+        });
         this.patch({
           phase: 'available',
           available: {
@@ -176,6 +260,9 @@ class UpdateManager {
           checkedAt: Date.now(),
         });
       } else {
+        writeUpdateLog('info', 'check:uptodate', {
+          currentVersion: this.state.currentVersion,
+        });
         this.patch({
           phase: 'uptodate',
           available: undefined,
@@ -185,6 +272,7 @@ class UpdateManager {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const missing = /ENOENT/.test(message);
+      writeUpdateLog('warn', 'check:gh-failed', { message, missing });
       this.patch({
         phase: missing ? 'unsupported' : 'error',
         error: missing
@@ -197,6 +285,7 @@ class UpdateManager {
   private async install(): Promise<void> {
     if (this.state.phase !== 'available' || !this.release) return;
     if (!this.state.canInstall) {
+      writeUpdateLog('warn', 'install:blocked-dev-build');
       this.patch({
         phase: 'available',
         error: 'Build de desenvolvimento — instale pelo app empacotado.',
@@ -205,6 +294,10 @@ class UpdateManager {
     }
     if (this.mode === 'feed') return; // no modo feed o Squirrel baixa sozinho
     const release = this.release;
+    writeUpdateLog('info', 'install:start', {
+      tag: release.tag,
+      zipAsset: release.zipAsset,
+    });
     this.patch({ phase: 'downloading', error: undefined });
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-update-'));
     try {
@@ -226,11 +319,13 @@ class UpdateManager {
       const zipPath = path.join(dir, release.zipAsset);
       if (!fs.existsSync(zipPath)) throw new Error('zip do release não veio');
       const feedUrl = await this.serveLocalFeed(release, zipPath);
+      writeUpdateLog('info', 'install:local-feed-ready', { feedUrl });
       this.wireSquirrel();
       autoUpdater.setFeedURL({ url: feedUrl });
       autoUpdater.checkForUpdates(); // Squirrel valida assinatura + faz o swap
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      writeUpdateLog('warn', 'install:failed', { message });
       this.patch({ phase: 'error', error: `download falhou: ${message}` });
     }
   }
@@ -265,6 +360,7 @@ class UpdateManager {
       server.listen(0, '127.0.0.1', () => {
         this.server = server;
         const { port } = server.address() as { port: number };
+        writeUpdateLog('info', 'local-feed:listening', { port });
         resolve(`http://127.0.0.1:${port}/feed.json`);
       });
     });
@@ -274,19 +370,22 @@ class UpdateManager {
     if (this.squirrelWired) return;
     this.squirrelWired = true;
     autoUpdater.on('error', (err) => {
-      console.warn('[updater] erro:', err);
+      writeUpdateLog('warn', 'squirrel:error', err);
       this.patch({ phase: 'error', error: String(err.message ?? err).slice(0, 200) });
     });
     autoUpdater.on('update-available', () => {
+      writeUpdateLog('info', 'squirrel:update-available', { mode: this.mode });
       // No modo gh isto é o Squirrel puxando do feed local (download começou).
       if (this.mode === 'feed') this.patch({ phase: 'downloading' });
     });
     autoUpdater.on('update-not-available', () => {
+      writeUpdateLog('info', 'squirrel:update-not-available', { mode: this.mode });
       if (this.mode === 'feed') {
         this.patch({ phase: 'uptodate', checkedAt: Date.now() });
       }
     });
     autoUpdater.on('update-downloaded', (_e, _notes, name) => {
+      writeUpdateLog('info', 'squirrel:update-downloaded', { name });
       this.patch({
         phase: 'ready',
         available: this.state.available ?? {

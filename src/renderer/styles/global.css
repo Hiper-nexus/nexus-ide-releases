@@ -1030,11 +1030,68 @@ body {
   background: rgba(110, 168, 254, 0.12);
 }
 
-/* ---- Auto-update: badge na WorkspaceBar + modal ---- */
+/* ---- Auto-update: badge global + modal ---- */
+.update-notifier {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 1200;
+  pointer-events: none;
+}
+
+.update-status-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.update-status-btn__glyph {
+  line-height: 1;
+}
+
+.update-status-btn__label {
+  min-width: 0;
+}
+
+.update-status-btn--bar {
+  min-width: 72px;
+}
+
+.update-status-btn--floating {
+  appearance: none;
+  pointer-events: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-1);
+  color: var(--text);
+  font-size: 12px;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.update-status-btn--floating:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .workspace-bar__btn--update {
   color: var(--accent);
   border-color: var(--accent-strong, rgba(110, 168, 254, 0.28));
-  font-variant-numeric: tabular-nums;
+}
+
+.workspace-bar__btn--update-idle,
+.workspace-bar__btn--update-uptodate {
+  color: var(--text-dim);
+  border-color: var(--border-strong);
+}
+
+.workspace-bar__btn--update-checking,
+.workspace-bar__btn--update-unsupported {
+  color: var(--accent);
 }
 
 .workspace-bar__btn--update-ready {
@@ -1048,6 +1105,19 @@ body {
 }
 
 .workspace-bar__btn--update-downloading {
+  animation: voice-orb-breathe 1.4s ease-in-out infinite;
+}
+
+.update-status-btn--ready {
+  color: var(--ok, #9ece6a);
+}
+
+.update-status-btn--error {
+  color: var(--danger);
+}
+
+.update-status-btn--checking,
+.update-status-btn--downloading {
   animation: voice-orb-breathe 1.4s ease-in-out infinite;
 }
 

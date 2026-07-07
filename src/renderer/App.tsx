@@ -46,6 +46,7 @@ import { Onboarding } from './components/Onboarding';
 import { useFailoverController } from './orch/failover-controller';
 import { Toasts } from './components/Toasts';
 import { useVoiceStore } from './voice/voice-store';
+import { UpdateNotifier } from './components/UpdateModal';
 
 /**
  * App root: hydrates the saved layout on boot and wires global keyboard
@@ -198,6 +199,7 @@ export function App() {
         <MissionWizard />
         <OperatorProfile />
         <Toasts />
+        <UpdateNotifier alwaysVisible />
       </div>
     );
   }

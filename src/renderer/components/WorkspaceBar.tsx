@@ -12,7 +12,7 @@ import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
 import { NexusMark } from './NexusMark';
 import { PixelIcon } from './PixelIcon';
-import { UpdateModal, useUpdateState } from './UpdateModal';
+import { UpdateModal, UpdateStatusButton, useUpdateState } from './UpdateModal';
 import type { AdapterInfo } from '../../shared/types';
 import { setBrowserPaneSuppression } from '../browser/browser-host';
 
@@ -209,29 +209,13 @@ export function WorkspaceBar() {
         </button>
         <span className="workspace-bar__sep" aria-hidden="true" />
         <VoiceButton />
-        {updateState &&
-          ['available', 'downloading', 'ready', 'error'].includes(updateState.phase) && (
-            <button
-              className={`workspace-bar__btn workspace-bar__btn--update workspace-bar__btn--update-${updateState.phase}`}
-              onClick={() => setUpdateOpen(true)}
-              title={
-                updateState.phase === 'ready'
-                  ? 'Atualização pronta — reiniciar para aplicar'
-                  : updateState.phase === 'error'
-                    ? `Atualização: ${updateState.error ?? 'erro'}`
-                    : `NexusIDE v${updateState.available?.version ?? ''} disponível`
-              }
-            >
-              ⇪{' '}
-              {updateState.phase === 'ready'
-                ? 'reiniciar'
-                : updateState.phase === 'downloading'
-                  ? 'baixando…'
-                  : updateState.phase === 'error'
-                    ? 'update: erro'
-                    : `v${updateState.available?.version ?? 'nova'}`}
-            </button>
-          )}
+        {updateState && (
+          <UpdateStatusButton
+            state={updateState}
+            alwaysVisible
+            onClick={() => setUpdateOpen(true)}
+          />
+        )}
         <button
           className="workspace-bar__btn"
           onClick={() => {
