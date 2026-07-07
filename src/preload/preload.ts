@@ -571,6 +571,8 @@ const api: NexusApi = {
     importProfile: () =>
       ipcRenderer.invoke(GAMIFICATION_CHANNELS.importProfile),
     prestige: () => ipcRenderer.invoke(GAMIFICATION_CHANNELS.prestige),
+    recordJarvisAction: (input: { actionType: string; ok: boolean }) =>
+      ipcRenderer.invoke(GAMIFICATION_CHANNELS.recordJarvisAction, input),
     onChanged: (cb: (snapshot: GamificationSnapshot) => void) =>
       addListener(gamificationChangedListeners, cb),
   },

@@ -517,6 +517,27 @@ export function recordMediaGeneratedForGamification(
   finalize(db, scan, false, before);
 }
 
+/** Ação operacional da Jarvis concluída (terminal, MCP, squad, etc.). */
+export function recordJarvisActionForGamification(
+  actionType: string,
+  ok: boolean,
+): void {
+  if (!ok || !actionType || actionType === 'none') return;
+  const db = deps?.db;
+  if (!db) return;
+  const before = buildSnapshot();
+  const input: XpEventInput = {
+    kind: 'jarvis_action',
+    entityKey: `jarvis_action:${actionType}:${randomUUID()}`,
+    createdAt: depsOf().now(),
+  };
+  const scan: ScanResult = { insertedAny: false, deliveries: [] };
+  if (insertEvent(db, input, false)) {
+    scan.insertedAny = true;
+  }
+  finalize(db, scan, false, before);
+}
+
 /** Transcender: só em LENDA com o limiar cruzado. Reseta a jornada (baseline)
  *  e ganha estrela permanente; piso volta ao início da nova jornada. */
 export function doPrestige(): GamificationSnapshot {

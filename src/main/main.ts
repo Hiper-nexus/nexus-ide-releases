@@ -176,9 +176,10 @@ function bootstrap(): void {
   // (senão a estreia gravaria replayDone com zero eventos).
   void initOrchestration()
     .then(() => initGamificationService())
-    .catch((err) =>
-      console.warn('[nexus] orchestration failed to start:', err),
-    );
+    .catch((err) => {
+      console.warn('[nexus] orchestration failed to start:', err);
+      initGamificationService();
+    });
   // Cron: squads/agentes agendados (tick 60s, skip-if-stale).
   startCronLoop();
   createMainWindow();

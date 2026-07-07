@@ -22,6 +22,7 @@ import {
   hasGreenEvidence,
   initGamificationService,
   recordMediaGeneratedForGamification,
+  recordJarvisActionForGamification,
   shutdownGamificationService,
 } from './gamification-service';
 
@@ -339,6 +340,22 @@ describe.skipIf(!sqlite)('gamification-service (SQLite real)', () => {
     vi.advanceTimersByTime(1_100);
     const channels = broadcast.mock.calls.map(([c]) => c);
     expect(channels).toContain(GAMIFICATION_CHANNELS.changed);
+    vi.useRealTimers();
+    db.close();
+  });
+
+  it('ação da Jarvis concluída gera jarvis_action e conquista Às Ordens', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-07T12:00:00Z'));
+    const db = makeDb();
+    bootService(db);
+    const before = buildSnapshot().powerLevel;
+    recordJarvisActionForGamification('open_terminal', true);
+    recordJarvisActionForGamification('open_terminal', true);
+    const snap = buildSnapshot();
+    expect(snap.powerLevel).toBe(before + 3_000);
+    expect(snap.counters.jarvis_action).toBe(2);
+    expect(snap.achievements).toContain('primeiro-comando');
     vi.useRealTimers();
     db.close();
   });

@@ -20,6 +20,7 @@ const XP_BREAKDOWN_COPY: Array<[string, string]> = [
   ['handoff_success', 'handoffs entregues'],
   ['task_done', 'tasks concluídas'],
   ['media_generated', 'mídias geradas'],
+  ['jarvis_action', 'ações da Jarvis no IDE'],
 ];
 
 const DEFAULT_SKIN_LABEL = 'padrão';

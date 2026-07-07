@@ -31,9 +31,19 @@ describe('jarvis-reply-loop', () => {
     ).toBe(true);
   });
 
-  it('não reabre em respostas de confusão', () => {
+  it('reabre uma vez em respostas de confusão', () => {
     resetAutoReplyLoop();
     expect(isConfusionReply('Não entendi o pedido, patrão.')).toBe(true);
+    expect(
+      shouldReopenJarvisListening({
+        expectReply: true,
+        sayText: 'Não entendi o pedido, patrão.',
+        realtimeTurnActive: false,
+        isRealtimeLive: false,
+      }),
+    ).toBe(true);
+
+    noteAutoReplyOpened();
     expect(
       shouldReopenJarvisListening({
         expectReply: true,

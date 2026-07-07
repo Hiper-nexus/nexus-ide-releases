@@ -20,6 +20,7 @@ export const BASE_POINTS: Record<XpEventKind, number> = {
   handoff_success: 3_000,
   task_done: 5_000,
   media_generated: 1_000,
+  jarvis_action: 1_500,
 };
 
 /**

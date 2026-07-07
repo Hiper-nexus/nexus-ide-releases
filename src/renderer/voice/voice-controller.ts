@@ -240,6 +240,20 @@ function liveEndTurn(): void {
     .catch(() => {});
 }
 
+function logVoiceEvent(
+  level: 'info' | 'warn' | 'error',
+  event: string,
+  msg?: string,
+  data?: Record<string, unknown>,
+): void {
+  window.nexus.voice.logVoice({
+    level,
+    event,
+    ...(msg ? { msg: msg.slice(0, 500) } : {}),
+    ...(data ? { data } : {}),
+  });
+}
+
 function personaUserName(): string {
   return useVoiceStore.getState().info?.persona.userName?.trim() ?? '';
 }
@@ -704,9 +718,12 @@ async function finishAndProcess(
         store.setTranscript(transcript);
         store.setNote(null);
         resetAutoReplyLoop();
-        console.log(
-          `[voice] realtime transcript (${Date.now() - tRealtime}ms): "${transcript}"`,
-        );
+        const realtimeMs = Date.now() - tRealtime;
+        console.log(`[voice] realtime transcript (${realtimeMs}ms): "${transcript}"`);
+        logVoiceEvent('info', 'jarvis.realtimeTranscript', transcript, {
+          latencyMs: realtimeMs,
+          reason: activeCaptureReason,
+        });
         if (shouldUseClassicActionBridge(transcript)) {
           // Action/app-control turns belong to the audited Classic/MCP executor.
           // Stop any provider speech that may have started and reply once via
@@ -714,12 +731,19 @@ async function finishAndProcess(
           suppressRealtimeAudioOut = true;
           livePlayer?.stop();
           stopAllPlayback();
+          logVoiceEvent('info', 'jarvis.actionBridge', 'classic executor', {
+            reason: 'app_action',
+            transcript: transcript.slice(0, 180),
+          });
           void window.nexus.voice.liveInterrupt('classic-action-bridge').catch(() => {});
           realtimeTurnActive = false;
           await runJarvisTurn(transcript, capture, busy);
           return;
         }
         console.log('[voice] realtime owns conversational response');
+        logVoiceEvent('info', 'jarvis.realtimeOwns', 'conversation', {
+          transcript: transcript.slice(0, 180),
+        });
         realtimeTurnActive = false;
         return;
       }
@@ -794,6 +818,10 @@ async function finishAndProcess(
     }
     store.setTranscript(transcript);
     console.log(`[voice] transcrito (${tStt}ms): "${transcript}"`);
+    logVoiceEvent('info', 'jarvis.classicTranscript', transcript, {
+      latencyMs: tStt,
+      reason: activeCaptureReason,
+    });
     resetAutoReplyLoop();
     // Surface throttle/quota fallbacks instead of failing silently.
     store.setNote(stt.fallbackNote ?? null);
@@ -898,7 +926,13 @@ async function runJarvisTurn(
     BRAIN_DEADLINE_MS,
     'cérebro',
   );
-  console.log(`[voice] cérebro: ${Date.now() - tBrain}ms`);
+  const brainMs = Date.now() - tBrain;
+  console.log(`[voice] cérebro: ${brainMs}ms`);
+  logVoiceEvent('info', 'jarvis.brainReply', reply.say, {
+    latencyMs: brainMs,
+    action: reply.action.type,
+    expectReply: reply.expectReply === true,
+  });
   jarvisHistory.push({ role: 'user', content: transcript });
   jarvisHistory.push({ role: 'assistant', content: reply.say });
   const maxTurns = isJarvisLiveEnabled()
@@ -912,6 +946,18 @@ async function runJarvisTurn(
   let sayText = exec.sayText;
   if (exec.expectReply !== undefined) reply.expectReply = exec.expectReply;
   const toolResult = exec.toolResult;
+  if (toolResult) {
+    logVoiceEvent(toolResult.ok ? 'info' : 'warn', 'jarvis.actionResult', toolResult.summary, {
+      tool: toolResult.tool,
+      ok: toolResult.ok,
+    });
+  }
+
+  if (reply.action.type !== 'none' && toolResult?.ok) {
+    void window.nexus.gamification
+      .recordJarvisAction({ actionType: reply.action.type, ok: true })
+      .catch(() => {});
+  }
 
   if (toolResult && isJarvisLiveEnabled()) {
     window.nexus.voice.liveToolResult(toolResult);

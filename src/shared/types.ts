@@ -688,6 +688,10 @@ export interface NexusApi {
     exportProfile(): Promise<{ ok: boolean; path?: string; error?: string }>;
     importProfile(): Promise<{ ok: boolean; error?: string }>;
     prestige(): Promise<GamificationSnapshot>;
+    recordJarvisAction(input: {
+      actionType: string;
+      ok: boolean;
+    }): Promise<GamificationSnapshot>;
     onChanged(cb: (snapshot: GamificationSnapshot) => void): Unsubscribe;
   };
   perf: {

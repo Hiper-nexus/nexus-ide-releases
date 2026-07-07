@@ -14,11 +14,17 @@ function norm(text: string): string {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[.!?,;:]+$/g, '')
     .replace(/\s+/g, ' ')
+    .replace(/\bwork\s*space\b/g, 'workspace')
+    .replace(/\b(workpasce|workspac|workpace|workbase|workspay)\b/g, 'workspace')
     .trim();
 }
 
 function stripTail(text: string): string {
-  return text.replace(/\s+por favor$/i, '').replace(/\s+agora$/i, '').trim();
+  return text
+    .replace(/\s+por favor$/i, '')
+    .replace(/\s+please$/i, '')
+    .replace(/\s+(agora|now)$/i, '')
+    .trim();
 }
 
 function say(ctx: JarvisContext, text: string): string {
@@ -82,8 +88,26 @@ export function jarvisActionFastPath(
     }
   }
 
+  if (
+    /\b(?:inicia|inicie|iniciar|cria|crie|criar|abre|abra|abrir|comeca|comece|comecar)\b(?:\s+o)?\s+(?:um\s+)?(?:novo\s+|nova\s+)?(?:workspace|projeto|ambiente)\s*$/.test(
+      t,
+    ) ||
+    /\b(?:novo|nova)\s+(?:workspace|projeto|ambiente)\b/.test(t) ||
+    /\b(?:start|create|make|launch|initialize|init|begin)\b(?:\s+(?:a|an|one))?\s+(?:new\s+)?(?:workspace|project)\s*$/.test(
+      t,
+    ) ||
+    /\bopen\b(?:\s+(?:a|an|one))?\s+new\s+(?:workspace|project)\s*$/.test(t) ||
+    /\bnew\s+(?:workspace|project)\b/.test(t)
+  ) {
+    return {
+      say: say(ctx, 'Abrindo o assistente de novo workspace.'),
+      expectReply: false,
+      action: { type: 'new_workspace' },
+    };
+  }
+
   const openWs = t.match(
-    /\b(?:abre|abra|abrir|inicia|inicie|iniciar)\b(?:\s+o)?\s+(?:projeto|workspace|workpasce|workspac)\s+(.+)$/,
+    /\b(?:abre|abra|abrir|inicia|inicie|iniciar|open)\b(?:\s+o)?\s+(?:projeto|project|workspace)\s+(.+)$/,
   );
   if (openWs) {
     const workspaceName = stripTail(openWs[1]);
@@ -94,18 +118,6 @@ export function jarvisActionFastPath(
         action: { type: 'open_workspace', workspaceName },
       };
     }
-  }
-
-  if (
-    /\b(?:inicia|inicie|iniciar|cria|crie|criar|abre|abra|abrir)\b(?:\s+o)?\s+(?:um\s+)?(?:novo\s+)?(?:workspace|workpasce|workspac)\s*$/.test(
-      t,
-    ) || /\bnovo\s+(?:workspace|workpasce|workspac)\b/.test(t)
-  ) {
-    return {
-      say: say(ctx, 'Abrindo o assistente de novo workspace.'),
-      expectReply: false,
-      action: { type: 'new_workspace' },
-    };
   }
 
   const openCmd = t.match(/\babrir?\s+um\s+comando\s+(.+)$/);

@@ -10,6 +10,7 @@ import {
   doPrestige,
   exportProfileData,
   importProfileData,
+  recordJarvisActionForGamification,
   selectSkin,
 } from './gamification-service';
 
@@ -21,6 +22,11 @@ import {
 const selectSkinSchema = z.object({
   /** null = skin padrão. */
   skin: z.string().min(1).max(64).nullable(),
+});
+
+const recordJarvisActionSchema = z.object({
+  actionType: z.string().min(1).max(64),
+  ok: z.boolean(),
 });
 
 const MAX_PROFILE_FILE_BYTES = 50 * 1024 * 1024;
@@ -48,6 +54,16 @@ export function registerGamificationIpc(): void {
   ipcMain.handle(
     GAMIFICATION_CHANNELS.prestige,
     (): GamificationSnapshot => doPrestige(),
+  );
+
+  ipcMain.handle(
+    GAMIFICATION_CHANNELS.recordJarvisAction,
+    (_e, raw): GamificationSnapshot => {
+      const parsed = recordJarvisActionSchema.safeParse(raw);
+      if (!parsed.success) return buildSnapshot();
+      recordJarvisActionForGamification(parsed.data.actionType, parsed.data.ok);
+      return buildSnapshot();
+    },
   );
 
   ipcMain.handle(GAMIFICATION_CHANNELS.exportProfile, async () => {

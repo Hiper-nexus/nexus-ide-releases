@@ -7,6 +7,7 @@
 
 export const REPLY_LISTEN_DELAY_MS = 700;
 export const MAX_AUTO_REPLY_LOOPS = 5;
+export const MAX_CONFUSION_REPLY_REOPENS = 1;
 
 let autoReplyLoopCount = 0;
 
@@ -28,7 +29,7 @@ function norm(text: string): string {
     .trim();
 }
 
-/** Respostas de confusão/eco — não devem reabrir escuta (quebra o loop). */
+/** Respostas de confusão/eco: reabre só uma vez para o usuário corrigir. */
 export function isConfusionReply(text: string): boolean {
   const n = norm(text);
   if (!n) return true;
@@ -49,7 +50,13 @@ export function shouldReopenJarvisListening(opts: {
     return false;
   }
   if (opts.realtimeTurnActive && opts.isRealtimeLive) return true;
-  if (isConfusionReply(opts.sayText)) return false;
+  if (isConfusionReply(opts.sayText)) {
+    if (autoReplyLoopCount >= MAX_CONFUSION_REPLY_REOPENS) {
+      console.log('[voice] trava anti-loop: confusão repetida, não reabrindo');
+      return false;
+    }
+    return true;
+  }
   return opts.expectReply === true;
 }
 

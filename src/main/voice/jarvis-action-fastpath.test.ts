@@ -36,6 +36,27 @@ describe('jarvisActionFastPath', () => {
     expect(reply?.action).toEqual({ type: 'new_workspace' });
   });
 
+  it('transcrição realtime em inglês dispara new_workspace', () => {
+    for (const text of [
+      'start a new workspace',
+      'create new work space',
+      'open a new workspace',
+      'new project',
+    ]) {
+      const reply = jarvisActionFastPath(text, CTX);
+      expect(reply?.action).toEqual({ type: 'new_workspace' });
+    }
+  });
+
+  it('novo projeto ou ambiente dispara new_workspace', () => {
+    expect(jarvisActionFastPath('criar um novo projeto', CTX)?.action).toEqual({
+      type: 'new_workspace',
+    });
+    expect(jarvisActionFastPath('abre novo ambiente', CTX)?.action).toEqual({
+      type: 'new_workspace',
+    });
+  });
+
   it('iniciar um novo squad dispara design_squad', () => {
     const reply = jarvisActionFastPath('iniciar um novo squad', CTX);
     expect(reply?.action).toEqual({ type: 'design_squad' });

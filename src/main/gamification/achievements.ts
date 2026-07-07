@@ -22,6 +22,7 @@ const c = (ctx: AchievementCtx, key: string) => ctx.counters[key] ?? 0;
 
 export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'primeira-missao', test: (x) => c(x, 'mission_done') + c(x, 'mission_green') >= 1 },
+  { id: 'primeiro-comando', test: (x) => c(x, 'jarvis_action') >= 1 },
   { id: 'primeira-missao-verde', test: (x) => c(x, 'mission_green') >= 1 },
   { id: 'primeira-agentica', test: (x) => c(x, 'agentic_mission') >= 1 },
   { id: 'primeira-imagem', test: (x) => c(x, 'media_image') >= 1 },

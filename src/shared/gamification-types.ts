@@ -19,7 +19,8 @@ export type XpEventKind =
   | 'handoff_green'
   | 'handoff_success'
   | 'task_done'
-  | 'media_generated';
+  | 'media_generated'
+  | 'jarvis_action';
 
 /** Entrada pura do engine (a borda resolve effort/custo/evidência antes). */
 export interface XpEventInput {
@@ -71,6 +72,7 @@ export const GAMIFICATION_CHANNELS = {
   exportProfile: 'gamification:export',
   importProfile: 'gamification:import',
   prestige: 'gamification:prestige',
+  recordJarvisAction: 'gamification:recordJarvisAction',
 } as const;
 
 /** Copy em tokens (i18n desde o dia 1 — PT-BR primeiro). */
@@ -96,6 +98,10 @@ export const GAMIFICATION_COPY = {
   /** id → copy da conquista (renderer nunca importa código do main). */
   achievements: {
     'primeira-missao': { title: 'Primeiro Deploy', description: 'Concluiu a primeira missão.' },
+    'primeiro-comando': {
+      title: 'Às Ordens',
+      description: 'Primeira ação executada pela Jarvis no IDE.',
+    },
     'primeira-missao-verde': { title: 'Luz Verde', description: 'Primeira missão concluída com verificação passando.' },
     'primeira-agentica': { title: 'Arquiteto de Times', description: 'Primeira missão criada no modo Agêntico.' },
     'primeira-imagem': { title: 'Pintor Pixel', description: 'Primeira imagem gerada por um agente.' },
