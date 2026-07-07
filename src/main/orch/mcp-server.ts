@@ -28,6 +28,7 @@ import {
   isJsonRpcRequest,
   type McpRegistry,
 } from './mcp-protocol';
+import { MAX_MCP_PAYLOAD_BYTES } from './mcp-args-validation';
 import { buildToolset } from './tools';
 import { getPendingSpawnMeta, stripAnsi } from './pane-registry';
 import {
@@ -63,7 +64,7 @@ import { shouldUseEphemeralHome } from './spawn-home-policy';
  * authentication is per-agent, the port never leaves 127.0.0.1.
  */
 
-const MAX_BODY_BYTES = 2_097_152;
+const MAX_BODY_BYTES = MAX_MCP_PAYLOAD_BYTES;
 
 let server: http.Server | null = null;
 let port = 0;

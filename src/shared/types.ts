@@ -77,6 +77,10 @@ import type {
   RemoteSpawnRequest,
   RemoteSpawnResult,
 } from './remote-types';
+import type {
+  McpConfirmResult,
+  McpInvokeResult,
+} from './mcp-types';
 
 export type { AdapterInfo };
 export type {
@@ -681,6 +685,17 @@ export interface NexusApi {
   };
   perf: {
     snapshot(): Promise<PerfSnapshot>;
+  };
+  mcp: {
+    invoke(
+      tool: string,
+      args?: Record<string, unknown>,
+    ): Promise<McpInvokeResult>;
+    confirm(
+      tool: string,
+      args?: Record<string, unknown>,
+    ): Promise<McpConfirmResult>;
+    clearSession(): Promise<{ ok: boolean }>;
   };
   media: {
     listProviders(): Promise<MediaProviderInfo[]>;

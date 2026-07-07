@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { mintToken, resetGateForTests } from './gate';
+import {
+  clearAuditLog,
+  readAuditLog,
+  setAuditLogPathForTests,
+} from '../jarvis/audit-log';
 import {
   handleMcpMessage,
   MCP_PROTOCOL_VERSION,
@@ -17,7 +25,7 @@ function makeRegistry(): McpRegistry {
     handler: async (args) => ({ echoed: args }),
   };
   const boom: McpToolDef = {
-    name: 'nexus_pane_close',
+    name: 'nexus_pane_read_many',
     description: 'always throws',
     inputSchema: { type: 'object', properties: {} },
     handler: async () => {
@@ -46,6 +54,23 @@ describe('resolveTool', () => {
 });
 
 describe('handleMcpMessage', () => {
+  const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-mcp-protocol');
+  const testAuditLog = path.join(testDir, 'jarvis-actions.log');
+
+  beforeAll(() => {
+    fs.mkdirSync(testDir, { recursive: true });
+    setAuditLogPathForTests(testAuditLog);
+  });
+
+  beforeEach(() => {
+    clearAuditLog();
+  });
+
+  afterAll(() => {
+    setAuditLogPathForTests(null);
+    fs.rmSync(testDir, { recursive: true, force: true });
+  });
+
   it('answers initialize with the negotiated protocol version', async () => {
     const res = await handleMcpMessage(
       makeRegistry(),
@@ -102,6 +127,49 @@ describe('handleMcpMessage', () => {
     };
     expect(result.isError).toBeUndefined();
     expect(JSON.parse(result.content[0].text)).toEqual({ echoed: { x: 1 } });
+    expect(readAuditLog()[0]).toMatchObject({
+      source: 'http-mcp',
+      tool: 'nexus_pane_read',
+      result: 'ok',
+    });
+  });
+
+  it('fails HTTP MCP confirmation-required tools closed and audits denial', async () => {
+    const destructive: McpToolDef = {
+      name: 'nexus_terminal_run',
+      description: 'terminal',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => {
+        throw new Error('handler should not execute');
+      },
+    };
+    const registry: McpRegistry = {
+      tools: [destructive],
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
+
+    const res = await handleMcpMessage(
+      registry,
+      userCtx(),
+      req('tools/call', {
+        name: 'nexus_terminal_run',
+        arguments: { command: 'echo no-ui' },
+      }),
+    );
+
+    const result = res?.result as {
+      isError?: boolean;
+      content: Array<{ text: string }>;
+    };
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('confirmation_ui_unavailable');
+    expect(readAuditLog()[0]).toMatchObject({
+      source: 'http-mcp',
+      tool: 'nexus_terminal_run',
+      result: 'denied',
+      error: expect.stringContaining('confirmation_ui_unavailable'),
+    });
   });
 
   it('refuses tools outside the allowlist (server-side skill-gate)', async () => {
@@ -114,7 +182,7 @@ describe('handleMcpMessage', () => {
     const res = await handleMcpMessage(
       makeRegistry(),
       ctx,
-      req('tools/call', { name: 'nexus_pane_close', arguments: {} }),
+      req('tools/call', { name: 'nexus_pane_read_many', arguments: {} }),
     );
     const result = res?.result as { isError?: boolean; content: Array<{ text: string }> };
     expect(result.isError).toBe(true);
@@ -125,7 +193,7 @@ describe('handleMcpMessage', () => {
     const res = await handleMcpMessage(
       makeRegistry(),
       userCtx(),
-      req('tools/call', { name: 'nexus_pane_close', arguments: {} }),
+      req('tools/call', { name: 'nexus_pane_read_many', arguments: {} }),
     );
     const result = res?.result as { isError?: boolean; content: Array<{ text: string }> };
     expect(result.isError).toBe(true);
