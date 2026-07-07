@@ -229,4 +229,36 @@ describe('GeminiLiveTransport', () => {
     const last = JSON.parse(ws.sent.at(-1)!);
     expect(last.realtimeInput.audioStreamEnd).toBe(true);
   });
+
+  it('ignores an obsolete reconnect timer after a manual reconnect', async () => {
+    vi.useFakeTimers();
+    const ws1 = fakeWs();
+    const ws2 = fakeWs();
+    const ws3 = fakeWs();
+    const sockets = [ws1, ws2, ws3];
+    const ev = events();
+    let call = 0;
+    const t = new GeminiLiveTransport(ev, {
+      wsFactory: () => sockets[call++],
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws1.fire('open');
+    ws1.fire('message', JSON.stringify({ setupComplete: {} }));
+    ws1.fire('close');
+
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws2.fire('open');
+    ws2.fire('message', JSON.stringify({ setupComplete: {} }));
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(call).toBe(2);
+    expect(ws2.close).not.toHaveBeenCalled();
+    expect(t.isReady).toBe(true);
+    vi.useRealTimers();
+  });
 });
