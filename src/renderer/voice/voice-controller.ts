@@ -50,6 +50,10 @@ import { executeJarvisAction } from './jarvis-action-executor';
 import { mcpClearSession } from '../services/mcp-bridge';
 import { splitForPipelinedSpeech } from './speech-segments';
 import { realtimeToolEventToJarvisAction } from './realtime-action';
+import {
+  shouldLetRealtimeProviderAnswer,
+  shouldUseClassicActionBridge,
+} from './realtime-bridge-policy';
 import type { AutoStopOptions } from './voice-capture';
 import type {
   JarvisAction,
@@ -74,7 +78,7 @@ const RESPONSE_QUIET_MS = 1_500; // speak once the pane has been quiet this long
 const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
 const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
 const REALTIME_ACTION_BRIDGE_ENABLED = true;
-const REALTIME_PROVIDER_AUDIO_ENABLED = false;
+const REALTIME_PROVIDER_AUDIO_ENABLED = true;
 const REALTIME_TRANSCRIPT_WAIT_MS = 1_800;
 const WAKE_ACK_SUPPRESS_MS = 8_000;
 const WAKE_PREROLL_MS = 2_500;
@@ -232,32 +236,6 @@ function commandFromRealtimeTranscript(text: string): string | null {
 
 function hasRealtimeNativeToolSince(since: number): boolean {
   return realtimeNativeToolInFlight > 0 || lastRealtimeNativeToolAt >= since;
-}
-
-function normalizeVoiceCommand(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\p{L}\p{N}\s._/-]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function shouldUseClassicActionBridge(transcript: string): boolean {
-  const t = normalizeVoiceCommand(transcript);
-  if (!t) return false;
-  return (
-    /\b(abre|abra|abrir|fecha|feche|fechar|cria|crie|criar|novo|nova|inicia|inicie|iniciar|sobe|suba|liga|ligue|monta|monte|montar|roda|rode|rodar|executa|execute|executar|manda|mande|mandar|envia|envie|enviar|corrige|corrija|conserta|conserte|implementa|implemente|edita|edite|salva|salve|instala|instale|mata|mate|para|pare|retoma|retome)\b/.test(
-      t,
-    ) ||
-    /\b(terminal|shell|console|pane|painel|pagina|url|site|browser|canvas|workspace|projeto|squad|missao|missoes|orquestrador|board|quadro|git|arquivo|pasta|comando|npm|teste|testes|build|status)\b/.test(
-      t,
-    ) ||
-    /\b(que horas sao|hora certa|onde estamos|onde eu estou|qual tela|qual pagina|qual pane)\b/.test(
-      t,
-    )
-  );
 }
 
 function onRealtimeTranscriptForActionBridge(event: JarvisLiveTranscriptEvent): void {
@@ -1058,6 +1036,20 @@ async function finishAndProcess(
           latencyMs: realtimeMs,
           reason: activeCaptureReason,
         });
+
+        if (
+          REALTIME_PROVIDER_AUDIO_ENABLED &&
+          shouldLetRealtimeProviderAnswer(transcript) &&
+          isRealtimeLive()
+        ) {
+          logVoiceEvent('info', 'jarvis.liveProviderAnswer', 'provider realtime', {
+            reason: activeCaptureReason,
+            transcript: transcript.slice(0, 180),
+          });
+          realtimeTurnActive = false;
+          return;
+        }
+
         suppressRealtimeAudioOut = true;
         livePlayer?.stop();
         stopAllPlayback();
