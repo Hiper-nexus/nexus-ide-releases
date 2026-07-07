@@ -38,9 +38,9 @@ describe('jarvisThink brain providers', () => {
       customInstructions: 'seja cordial e breve',
     });
 
-    expect(prompt).toContain('IDENTIDADE DA VOZ');
-    expect(prompt).toContain('o usuário se chama "patrão"');
-    expect(prompt).toContain('fale EXATAMENTE "patrão"');
+    expect(prompt).toContain('VOICE IDENTITY');
+    expect(prompt).toContain('the user is named "patrão"');
+    expect(prompt).toContain('say exactly "patrão"');
     expect(prompt).toContain('seja cordial e breve');
   });
 
@@ -66,7 +66,7 @@ describe('jarvisThink brain providers', () => {
     expect(JSON.parse(String(init.body)).model).toBe('gemini-3.5-flash');
     expect(JSON.parse(String(init.body)).response_format).toBeUndefined();
     const messages = JSON.parse(String(init.body)).messages as Array<{ content: string }>;
-    expect(messages.some((m) => m.content.includes('IDENTIDADE DA VOZ'))).toBe(true);
+    expect(messages.some((m) => m.content.includes('VOICE IDENTITY'))).toBe(true);
   });
 
   it('falls back to OpenAI when Gemini fails', async () => {

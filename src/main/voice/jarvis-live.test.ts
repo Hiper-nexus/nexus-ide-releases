@@ -6,9 +6,11 @@ describe('JarvisLiveSession', () => {
   it('starts, broadcasts state, transcripts and tool events', () => {
     let now = 1_000;
     const events: Array<{ channel: string; payload: unknown }> = [];
+    const persisted: Array<{ sessionId: string; role: string; text: string }> = [];
     const live = new JarvisLiveSession(
       (channel, payload) => events.push({ channel, payload }),
       () => now,
+      (sessionId, line) => persisted.push({ sessionId, role: line.role, text: line.text }),
     );
 
     live.setEnabled(true);
@@ -27,6 +29,10 @@ describe('JarvisLiveSession', () => {
     expect(events.some((e) => e.channel === VOICE_CHANNELS.liveState)).toBe(true);
     expect(events.filter((e) => e.channel === VOICE_CHANNELS.liveTranscript)).toHaveLength(2);
     expect(events.filter((e) => e.channel === VOICE_CHANNELS.liveToolCall)).toHaveLength(1);
+    expect(persisted.map((line) => [line.role, line.text])).toEqual([
+      ['user', 'que horas são?'],
+      ['assistant', 'São dez horas.'],
+    ]);
     expect(live.getState().turns).toBe(1);
 
     live.toolResult({ tool: 'run_command', ok: false, summary: 'usuário recusou' });

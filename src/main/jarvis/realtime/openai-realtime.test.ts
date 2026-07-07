@@ -45,6 +45,7 @@ describe('buildOpenAISessionUpdate', () => {
         audio: {
           input: {
             format: { type: 'audio/pcm', rate: 24_000 },
+            transcription: { model: 'gpt-realtime-whisper' },
             turn_detection: { type: 'server_vad', threshold: 0.5 },
           },
           output: {

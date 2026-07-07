@@ -44,6 +44,8 @@ describe('JarvisLatencyTracker', () => {
     tracker.markTranscript('s1', false);
     wall = 180;
     tracker.markTranscript('s1', true);
+    wall = 220;
+    tracker.markAction('s1');
     wall = 260;
     tracker.markAudioOut('s1');
     wall = 420;
@@ -56,8 +58,35 @@ describe('JarvisLatencyTracker', () => {
       .map((line) => JSON.parse(line));
     expect(metrics.map((line) => [line.metric, line.value])).toEqual([
       ['audio_in_to_transcript_delta_ms', 120],
+      ['transcript_final_to_action_ms', 40],
       ['transcript_final_to_audio_out_ms', 80],
       ['roundtrip_ms', 420],
+    ]);
+  });
+
+  it('can measure text-to-action when the transcript source was already text', () => {
+    const filePath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-metrics-')),
+      'jarvis-metrics.log',
+    );
+    let wall = 100;
+    const logger = new JarvisMetricsLogger({
+      filePath,
+      now: () => new Date('2026-07-07T12:00:00.000Z'),
+    });
+    const tracker = new JarvisLatencyTracker(logger, () => wall);
+
+    tracker.markTranscript('s2', true);
+    wall = 175;
+    tracker.markAction('s2');
+
+    const metrics = fs
+      .readFileSync(filePath, 'utf-8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(metrics.map((line) => [line.metric, line.value])).toEqual([
+      ['transcript_final_to_action_ms', 75],
     ]);
   });
 });
