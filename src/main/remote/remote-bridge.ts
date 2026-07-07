@@ -60,6 +60,7 @@ const PAIRING_LEN = 8;
 let server: https.Server | null = null;
 let wss: WebSocketServer | null = null;
 let port: number | null = null;
+let boundHost: string | null = null;
 let tlsRecord: TlsRecord | null = null;
 let pairingFailures = 0;
 let pairing = makePairing();
@@ -215,10 +216,14 @@ function certFingerprint256(certPem: string): string {
 
 function localUrls(currentPort: number): string[] {
   const urls = new Set<string>([`wss://127.0.0.1:${currentPort}`]);
-  for (const entries of Object.values(os.networkInterfaces())) {
-    for (const iface of entries ?? []) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        urls.add(`wss://${iface.address}:${currentPort}`);
+  // Só anuncia IPs da LAN quando o bind é wildcard — bound a localhost, essas
+  // URLs não funcionariam.
+  if (boundHost === '0.0.0.0' || boundHost === '::') {
+    for (const entries of Object.values(os.networkInterfaces())) {
+      for (const iface of entries ?? []) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          urls.add(`wss://${iface.address}:${currentPort}`);
+        }
       }
     }
   }
@@ -436,7 +441,9 @@ export async function startRemoteBridge(
 ): Promise<RemoteBridgeInfo> {
   if (server && port) return getRemoteBridgeInfo();
   const tls = await ensureTls();
-  const host = req.host ?? '0.0.0.0';
+  // Default seguro: só localhost. Expor na LAN (0.0.0.0/::) exige pedido
+  // explícito do usuário — a bridge controla PTYs reais.
+  const host = req.host ?? '127.0.0.1';
   await new Promise<void>((resolve, reject) => {
     server = https.createServer({ key: tls.key, cert: tls.cert }, serveClientPage);
     wss = new WebSocketServer({ server, maxPayload: MAX_MESSAGE_BYTES });
@@ -446,6 +453,7 @@ export async function startRemoteBridge(
     server.listen(req.port ?? 0, host, () => {
       const addr = server?.address();
       if (addr && typeof addr === 'object') port = addr.port;
+      boundHost = host;
       resolve();
     });
   });
@@ -462,6 +470,7 @@ export function stopRemoteBridge(): RemoteBridgeInfo {
   wss = null;
   server = null;
   port = null;
+  boundHost = null;
   pairing = makePairing();
   return getRemoteBridgeInfo();
 }

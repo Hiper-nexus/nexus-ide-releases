@@ -70,6 +70,9 @@ function broadcast(channel: string, payload?: unknown): void {
 const liveSession = new JarvisLiveSession(broadcast);
 const liveTransport = new LiveTransportController(broadcast, liveSession);
 
+// Módulo-level para o closeVoiceIpc() poder liberar as sessões ONNX no quit.
+let wakeEngine: WakeEngine | null = null;
+
 function wireHotkey(): void {
   const config = getVoiceConfig();
   const mainKeyCode = config.input.pushToTalkKey?.code ?? 'Space';
@@ -155,7 +158,6 @@ export function registerVoiceIpc(): void {
 
   // Wake word "Hey Jarvis" (openWakeWord/onnx, sem conta): o renderer faz
   // stream dos frames PCM; a detecção volta como broadcast.
-  let wakeEngine: WakeEngine | null = null;
   let wakeFramesSeen = false;
   let wakeLockWarned = false;
   ipcMain.on(VOICE_CHANNELS.wakeAudio, (_event, raw: unknown) => {
@@ -208,7 +210,8 @@ export function registerVoiceIpc(): void {
           logVoice('error', 'wake.engineInitFail', m);
           wakeEngine = null;
         });
-      return; // primeiro lote só inicializa; frames seguintes alimentam
+      // Sem return: o primeiro lote também alimenta — o engine enfileira os
+      // frames recebidos durante a init e processa quando ela completar.
     }
     wakeEngine.feed(frame);
   });
@@ -362,5 +365,9 @@ export function closeVoiceIpc(): void {
   disposeVoiceHotkey();
   shutdownJarvisNarrator();
   stopSystemSpeech();
+  // Sessões ONNX do wake são memória nativa — sem release explícito vazam
+  // em quit/restart.
+  void wakeEngine?.dispose();
+  wakeEngine = null;
   releaseWakeLock();
 }

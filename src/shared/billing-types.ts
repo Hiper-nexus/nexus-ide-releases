@@ -64,6 +64,14 @@ export const PLANS: PlanDef[] = [
   },
 ];
 
+/**
+ * Estado devolvido ao renderer em billing:get: os campos da licença mais se a
+ * assinatura do token gravado foi REVERIFICADA na leitura. `verified: false`
+ * (sem token gravado, sem NEXUS_LICENSE_PUBKEY ou assinatura inválida) não
+ * bloqueia nada — só informa que o conteúdo do arquivo não tem prova criptográfica.
+ */
+export type LicenseState = LicenseInfo & { verified: boolean };
+
 export const DEFAULT_LICENSE: LicenseInfo = {
   plan: 'free',
   email: null,

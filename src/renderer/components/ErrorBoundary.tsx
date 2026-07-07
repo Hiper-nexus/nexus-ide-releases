@@ -13,7 +13,8 @@ import { Component, type ErrorInfo, type ReactNode } from 'react';
  *    watchdog recovers.
  *
  * Styles are inline so the error screen renders even if the stylesheet is the
- * thing that failed to load.
+ * thing that failed to load — every var() carries a hardcoded fallback for
+ * exactly that case (tokens quando o CSS carregou, cores fixas quando não).
  */
 
 interface Props {
@@ -56,9 +57,9 @@ export class ErrorBoundary extends Component<Props, State> {
           alignItems: 'center',
           justifyContent: 'center',
           padding: 24,
-          background: '#0b0e14',
-          color: '#e6e9ef',
-          fontFamily: 'system-ui, -apple-system, sans-serif',
+          background: 'var(--bg, #0b0e14)',
+          color: 'var(--text, #e6e9ef)',
+          fontFamily: 'var(--font-ui, system-ui, -apple-system, sans-serif)',
         }}
       >
         <div style={{ maxWidth: 520, textAlign: 'center' }}>
@@ -70,7 +71,7 @@ export class ErrorBoundary extends Component<Props, State> {
               margin: '0 0 20px',
               fontSize: 13,
               lineHeight: 1.5,
-              color: '#9aa4b2',
+              color: 'var(--text-dim, #9aa4b2)',
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
             }}
@@ -83,10 +84,10 @@ export class ErrorBoundary extends Component<Props, State> {
             style={{
               padding: '8px 20px',
               fontSize: 13,
-              color: '#e6e9ef',
-              background: '#2a3346',
-              border: '1px solid #3a4560',
-              borderRadius: 8,
+              color: 'var(--text, #e6e9ef)',
+              background: 'var(--accent-soft, #2a3346)',
+              border: '1px solid var(--border-strong, #3a4560)',
+              borderRadius: 0,
               cursor: 'pointer',
             }}
           >

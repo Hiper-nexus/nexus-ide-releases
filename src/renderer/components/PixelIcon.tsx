@@ -16,6 +16,13 @@ export type PixelIconName =
   | 'sun'
   | 'moon'
   | 'chevron'
+  | 'chevron-down'
+  | 'bolt'
+  | 'key'
+  | 'id-badge'
+  | 'warn'
+  | 'user'
+  | 'users'
   | 'status-idle'
   | 'status-busy'
   | 'status-exited'
@@ -170,6 +177,71 @@ const ICONS: Record<PixelIconName, Rect[]> = {
     [6, 5],
     [5, 6],
     [4, 7],
+  ],
+  // chevron down (mesmo desenho, rotacionado)
+  'chevron-down': [
+    [3, 4],
+    [7, 4],
+    [4, 5],
+    [6, 5],
+    [5, 6],
+  ],
+  // raio (modo agêntico / disparar)
+  bolt: [
+    [6, 1],
+    [5, 2],
+    [4, 3],
+    [3, 4, 5, 1],
+    [6, 5],
+    [5, 6],
+    [4, 7],
+    [3, 8],
+  ],
+  // chave: anel à esquerda + haste com dentes
+  key: [
+    [2, 3, 2, 1],
+    [1, 4, 1, 2],
+    [4, 4, 1, 2],
+    [2, 6, 2, 1],
+    [5, 5, 4, 1],
+    [7, 6, 1, 1],
+    [9, 5, 1, 2],
+  ],
+  // crachá: cartão + foto + linhas
+  'id-badge': [
+    [1, 2, 9, 1],
+    [1, 2, 1, 7],
+    [9, 2, 1, 7],
+    [1, 8, 9, 1],
+    [3, 4, 2, 2],
+    [6, 4, 2, 1],
+    [6, 6, 2, 1],
+  ],
+  // triângulo de alerta com exclamação
+  warn: [
+    [5, 1, 1, 1],
+    [4, 2, 1, 1], [6, 2, 1, 1],
+    [4, 3, 1, 1], [6, 3, 1, 1],
+    [3, 4, 1, 1], [7, 4, 1, 1],
+    [3, 5, 1, 1], [7, 5, 1, 1],
+    [2, 6, 1, 1], [8, 6, 1, 1],
+    [2, 7, 1, 1], [8, 7, 1, 1],
+    [2, 8, 7, 1],
+    [5, 3, 1, 3],
+    [5, 7, 1, 1],
+  ],
+  // operador solo: cabeça + tronco
+  user: [
+    [4, 2, 3, 3],
+    [3, 6, 5, 1],
+    [2, 7, 7, 2],
+  ],
+  // squad: dois operadores lado a lado
+  users: [
+    [2, 2, 2, 2],
+    [7, 2, 2, 2],
+    [1, 5, 4, 3],
+    [6, 5, 4, 3],
   ],
   // status idle (filled circle)
   'status-idle': [

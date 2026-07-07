@@ -48,11 +48,18 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
 
   // Attach (or re-attach after snapshot) the terminal into this slot.
   useEffect(() => {
-    if (pane.kind === 'browser') return;
+    if (pane.kind === 'browser') return undefined;
     const slot = slotRef.current;
-    if (slot && !isSnapshot) {
-      attachHost(pane, slot);
-    }
+    if (!slot || isSnapshot) return undefined;
+    attachHost(pane, slot);
+    // On snapshot-enter (or unmount) detach the xterm element from the slot
+    // BEFORE React drops the slot div — otherwise the dead slot keeps the
+    // terminal (and its WebGL canvas) parented off-tree, pressuring the GPU
+    // with many panes. Purely visual: the PTY session and buffer stay alive
+    // in terminal-host; re-attach on snapshot-exit re-parents the same node.
+    return () => {
+      for (const child of Array.from(slot.children)) child.remove();
+    };
     // pane.id is the stable identity; isSnapshot controls live vs. frozen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pane.id, isSnapshot]);

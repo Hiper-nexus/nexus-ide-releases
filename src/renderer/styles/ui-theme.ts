@@ -95,3 +95,20 @@ export function applyUiTheme(themeId: TerminalThemeId): void {
   }
   root.dataset.theme = themeId;
 }
+
+/**
+ * Liga/desliga o MODO PIXEL da identidade visual: seta `data-theme-pixel` no
+ * <html>, que ativa o bloco de overrides em base.css — todos os `--radius-*`
+ * viram 0, `--font-ui` passa a ser a fonte bitmap (`--font-pixel`/VT323) e o
+ * antialias do body é desligado. Reversível e ortogonal ao tema de cores
+ * (applyUiTheme). Ainda NÃO está ligado à UI de settings — exportada para o
+ * toggle futuro; chame `applyPixelMode(true)` para experimentar.
+ */
+export function applyPixelMode(on: boolean): void {
+  const root = document.documentElement;
+  if (on) {
+    root.dataset.themePixel = 'on';
+  } else {
+    delete root.dataset.themePixel;
+  }
+}

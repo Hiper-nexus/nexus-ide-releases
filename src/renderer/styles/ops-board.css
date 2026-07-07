@@ -1,0 +1,567 @@
+/* Ops Board (pipeline pixel) + foco de teclado global.
+   Módulo extraído do antigo global.css monolítico — a ordem de import
+   em global.css preserva a cascata original. */
+
+/* ============================== OPS BOARD =============================== */
+/* Pipeline espacial de missões: colunas com trilho semântico (a cor do topo
+   conta o estado antes do texto), cards arrastáveis, war-room em pixel. */
+
+.ops-board {
+  position: fixed;
+  inset: var(--bar-height) 0 0 0;
+  z-index: 34; /* acima do orch panel (31), abaixo de drawer/wizard (40+) */
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(var(--pixel-grid) 1px, transparent 1px) 0 0 / 22px 22px,
+    linear-gradient(90deg, var(--pixel-grid) 1px, transparent 1px) 0 0 / 22px 22px,
+    linear-gradient(180deg, var(--bg-bar), var(--bg));
+  animation: ops-board-in 180ms var(--ease-out-expo);
+}
+@keyframes ops-board-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ops-board {
+    animation: none;
+  }
+}
+
+.ops-board__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.ops-board__mark {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--text-sm);
+}
+.ops-board__head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.ops-board__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+/* Labels do board em fonte bitmap (superfície já retrô). VT323 é condensada:
+   piso de 12px (--text-sm) no lugar dos 10px da mono. */
+.ops-board__sub {
+  font-family: var(--font-pixel);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+.ops-board__spacer {
+  flex: 1;
+}
+.ops-board__new {
+  font-family: var(--font-pixel);
+  font-size: var(--text-md);
+  font-weight: 400;
+  color: var(--bg);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: filter 150ms var(--ease-out-quart);
+}
+.ops-board__new:hover {
+  filter: brightness(1.12);
+}
+.ops-board__new:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ops-board__close {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color 150ms var(--ease-out-quart), border-color 150ms var(--ease-out-quart);
+}
+.ops-board__close:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.ops-board__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ops-board__cols {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(200px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  overflow: auto;
+  min-height: 0;
+}
+.ops-board__col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+  transition: background 150ms var(--ease-out-quart);
+}
+.ops-board__col--drop {
+  background: var(--accent-soft);
+}
+.ops-board__col-rail {
+  height: 2px;
+  flex: 0 0 auto;
+}
+.ops-board__col--pending .ops-board__col-rail {
+  background: var(--border-strong);
+}
+.ops-board__col--running .ops-board__col-rail {
+  background: var(--accent);
+  box-shadow: 0 0 10px rgba(110, 168, 254, 0.4);
+}
+.ops-board__col--blocked .ops-board__col-rail {
+  background: var(--warn);
+}
+.ops-board__col--done .ops-board__col-rail {
+  background: var(--live);
+  box-shadow: 0 0 10px rgba(53, 224, 141, 0.4);
+}
+.ops-board__col--failed .ops-board__col-rail {
+  background: var(--danger);
+}
+
+.ops-board__col-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+}
+.ops-board__col-glyph {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-xs);
+  transform: rotate(45deg);
+  background: var(--text-dim);
+}
+.ops-board__col--running .ops-board__col-glyph {
+  background: var(--accent);
+}
+.ops-board__col--blocked .ops-board__col-glyph {
+  background: var(--warn);
+}
+.ops-board__col--done .ops-board__col-glyph {
+  background: var(--live);
+}
+.ops-board__col--failed .ops-board__col-glyph {
+  background: var(--danger);
+}
+.ops-board__col-label {
+  font-family: var(--font-pixel);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.ops-board__count {
+  margin-left: auto;
+  min-width: 18px;
+  text-align: center;
+  font-family: var(--font-pixel);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 1px 6px;
+}
+
+.ops-board__cards {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  overflow-y: auto;
+  min-height: 0;
+}
+.ops-board__card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  cursor: grab;
+  transition:
+    border-color 150ms var(--ease-out-quart),
+    transform 150ms var(--ease-out-quart);
+}
+.ops-board__card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+.ops-board__card:active {
+  cursor: grabbing;
+}
+.ops-board__card--dragging {
+  opacity: 0.45;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ops-board__card:hover {
+    transform: none;
+  }
+}
+
+.ops-board__card-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.ops-board__badge {
+  font-family: var(--font-pixel);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-xs);
+  padding: 2px 6px;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ops-board__badge--livre {
+  color: var(--text-dim);
+  background: var(--bg-bar);
+  border: 1px solid var(--border);
+}
+.ops-board__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--live);
+}
+.ops-board__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--live);
+  box-shadow: 0 0 5px var(--live);
+}
+.ops-board__card-title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.ops-board__card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
+}
+.ops-board__card-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.ops-board__card-btn {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: color 150ms var(--ease-out-quart), border-color 150ms var(--ease-out-quart);
+}
+.ops-board__card-btn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.ops-board__card-btn--danger:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.ops-board__card-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ops-board__card-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ops-board__empty-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-2);
+  opacity: 0.5;
+  font-family: var(--font-pixel);
+  font-size: var(--text-sm);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.ops-board__empty-col canvas {
+  image-rendering: pixelated;
+}
+
+.ops-board__empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+}
+.ops-board__empty-title {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 700;
+}
+.ops-board__empty-sub {
+  margin: 0;
+  max-width: 44ch;
+  font-size: var(--text-md);
+  color: var(--text-dim);
+}
+
+.ops-board__note {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--danger);
+}
+
+/* Settings nav — busca + grupo vazio. Mantém o texto-badge mono (identidade). */
+.settings-nav__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) var(--space-3) var(--space-3);
+  padding: 6px var(--space-2);
+  background: var(--bg-bar);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color 150ms var(--ease-out-quart);
+}
+.settings-nav__search:focus-within {
+  border-color: var(--accent);
+}
+.settings-nav__search-icon {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--faint, var(--text-dim));
+}
+.settings-nav__search-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+.settings-nav__search-input::placeholder {
+  color: var(--text-dim);
+}
+.settings-nav__search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.settings-nav__no-match {
+  margin: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+/* Orb como visualizador de amplitude REAL: o brilho pulsa com o nível do mic
+   (--voice-amp, 0..1, setado imperativamente pelo VoiceHud). Sobrepõe o breathe
+   sem brigar com o transform. Reduced-motion: JS mantém --voice-amp em 0. */
+.voice-orb {
+  --voice-amp: 0;
+}
+.voice-hud--listening .voice-orb {
+  box-shadow:
+    0 0 calc(34px + var(--voice-amp) * 46px)
+      rgba(110, 168, 254, calc(0.45 + var(--voice-amp) * 0.4)),
+    inset 0 0 28px rgba(110, 168, 254, 0.34);
+  transition: box-shadow 90ms linear;
+}
+.voice-hud--listening .voice-orb__core {
+  box-shadow: 0 0 calc(22px + var(--voice-amp) * 34px)
+    rgba(110, 168, 254, calc(0.72 + var(--voice-amp) * 0.28));
+  transition: box-shadow 90ms linear;
+}
+
+/* CloseButton compartilhado — um X nítido, uma afordância só em todo o app. */
+.icon-close {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    color 150ms var(--ease-out-quart),
+    border-color 150ms var(--ease-out-quart);
+}
+.icon-close:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.icon-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Icon set pixel: ícone + label alinhados no botão, ícone não encolhe. */
+.workspace-bar__btn,
+.home-deck__cta,
+.home-deck__btn,
+.ops-board__new,
+.launch__primary,
+.wizard__btn,
+.settings-btn,
+.wizard__squad-name {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.wizard__squad-name {
+  justify-content: flex-start;
+}
+.pixel-icon {
+  flex: 0 0 auto;
+  display: block;
+}
+
+/* ---- Keyboard Focus and Active States ---- */
+/* Um anel de foco só na app inteira: 2px --accent, offset 1px. Cobre também
+   wizard, settings-nav, toasts, voice-hud e launch (antes sem foco visível). */
+.toolbar__btn:focus-visible,
+.workspace-bar__btn:focus-visible,
+.workspace-bar__ws-btn:focus-visible,
+.home-deck__btn:focus-visible,
+.home-deck__squad:focus-visible,
+.home-deck__dismiss:focus-visible,
+.home-deck__close:focus-visible,
+.mission-rail__new:focus-visible,
+.mission-rail__item:focus-visible,
+.mission-rail__remove:focus-visible,
+.ops-board__close:focus-visible,
+.wizard__btn:focus-visible,
+.wizard__mode:focus-visible,
+.wizard__chip:focus-visible,
+.wizard__chip-recent:focus-visible,
+.wizard__browse:focus-visible,
+.wizard__close:focus-visible,
+.settings-nav__item:focus-visible,
+.settings-nav__close:focus-visible,
+.toast__close:focus-visible,
+.voice-hud__ctl:focus-visible,
+.voice-hud__action:focus-visible,
+.launch__primary:focus-visible,
+.launch__secondary:focus-visible,
+.launch__link:focus-visible,
+.launch__item-open:focus-visible,
+.launch__item-remove:focus-visible,
+.confirm__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.toolbar__btn:active {
+  background: var(--accent-strong) !important;
+  color: var(--text) !important;
+}
+
+.workspace-bar__btn:active {
+  background: var(--accent-strong) !important;
+  border-color: var(--accent) !important;
+}
+
+.workspace-bar__ws-btn:active,
+.workspace-bar__ws-btn--active {
+  background: var(--accent-strong) !important;
+  color: var(--text) !important;
+  border-color: var(--accent) !important;
+}
+
+.home-deck__btn:active {
+  background: var(--accent-strong) !important;
+  border-color: var(--accent) !important;
+}
+
+.home-deck__squad:active {
+  background: var(--accent-strong) !important;
+  border-color: var(--accent) !important;
+}
+
+.home-deck__dismiss:active {
+  color: var(--accent) !important;
+}
+
+.home-deck__close:active,
+.mission-rail__remove:active,
+.ops-board__close:active {
+  background: var(--accent-soft) !important;
+  border-color: var(--accent) !important;
+}
+
+.mission-rail__new:active {
+  background: var(--accent-strong) !important;
+}
+
+.mission-rail__item:active {
+  background: var(--accent-soft) !important;
+  border-color: var(--accent) !important;
+}

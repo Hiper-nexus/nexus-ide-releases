@@ -3,6 +3,7 @@ import path from 'node:path';
 import { app } from 'electron';
 import type { WorkspaceLayout } from '../../shared/types';
 import { workspaceLayoutSchema } from '../../shared/ipc';
+import { writeJsonAtomic } from '../util/atomic-write';
 import { getDb } from './db';
 
 /**
@@ -44,7 +45,8 @@ export function saveLayout(
   const json = JSON.stringify(all);
 
   try {
-    fs.writeFileSync(layoutFile(), json, 'utf8');
+    // Atômico (tmp + rename): crash no meio do write não corrompe o layout.
+    writeJsonAtomic(layoutFile(), all);
   } catch (err) {
     console.error('[nexus] failed to persist layout JSON:', err);
     return { ok: false };

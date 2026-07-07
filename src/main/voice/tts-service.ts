@@ -267,7 +267,7 @@ export async function speak(
       // Acks/fillers curtos ("Sim?", "Deixa comigo.") pedem echoRecord:false —
       // registrá-los poluía a janela e censurava respostas legítimas do
       // usuário ("sim", "deixa") logo depois.
-      if ((req as any).echoRecord !== false) echoSuppressor.record(text);
+      if (req.echoRecord !== false) echoSuppressor.record(text);
       return result;
     }
     failures.push(`${plugin.provider}: ${result.error}`);

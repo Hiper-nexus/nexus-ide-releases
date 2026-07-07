@@ -115,12 +115,16 @@ function defaultHandler(link: DeepLink, trusted: boolean): void {
     // único por tokens (Keychain) + licença.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { exchangeAuthCode } = require('./auth-client') as typeof import('./auth-client');
-    void exchangeAuthCode(link.code, link.state).then((r) => {
-      if (!r.ok) console.warn('[auth] exchange falhou:', r.error);
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { BILLING_CHANNELS } = require('../shared/billing-types') as typeof import('../shared/billing-types');
-      win?.webContents.send(BILLING_CHANNELS.changed);
-    });
+    void exchangeAuthCode(link.code, link.state)
+      .then((r) => {
+        if (!r.ok) console.warn('[auth] exchange falhou:', r.error);
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { BILLING_CHANNELS } = require('../shared/billing-types') as typeof import('../shared/billing-types');
+        win?.webContents.send(BILLING_CHANNELS.changed);
+      })
+      .catch((err) => {
+        console.warn('[auth] exchange rejeitou:', err);
+      });
   }
 }
 

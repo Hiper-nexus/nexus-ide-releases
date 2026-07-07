@@ -8,6 +8,7 @@ import {
   DEFAULT_LICENSE,
   type CheckoutRequest,
   type LicenseInfo,
+  type LicenseState,
 } from '../../shared/billing-types';
 
 /**
@@ -26,18 +27,56 @@ interface BillingIpcDeps {
   startCheckoutPolling: () => void;
 }
 
-function readLicense(): LicenseInfo {
+function readLicense(): LicenseState {
   try {
-    const raw = JSON.parse(fs.readFileSync(LICENSE_FILE, 'utf8')) as Partial<LicenseInfo>;
+    const raw = JSON.parse(fs.readFileSync(LICENSE_FILE, 'utf8')) as Partial<LicenseInfo> & {
+      token?: unknown;
+    };
     return {
       plan: raw.plan === 'pro' || raw.plan === 'team' ? raw.plan : 'free',
       email: typeof raw.email === 'string' ? raw.email : null,
       status:
         raw.status === 'active' || raw.status === 'past_due' ? raw.status : 'none',
       renewsAt: typeof raw.renewsAt === 'string' ? raw.renewsAt : null,
+      // O arquivo é gravável pelo usuário — reverifica a assinatura do token
+      // gravado a cada leitura; sem token/chave, o estado é "não provado".
+      verified: verifyStoredToken(raw.token),
     };
   } catch {
-    return DEFAULT_LICENSE;
+    return { ...DEFAULT_LICENSE, verified: false };
+  }
+}
+
+/**
+ * Reverifica o JWT gravado junto da licença (assinatura + expiração) contra a
+ * chave pública pinada. Licenças antigas (sem token gravado) ou builds sem
+ * NEXUS_LICENSE_PUBKEY resultam em false — nunca lança.
+ */
+function verifyStoredToken(token: unknown): boolean {
+  if (typeof token !== 'string') return false;
+  const publicKeyPem = licensePublicKey();
+  if (!publicKeyPem) return false;
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  let alg = '';
+  try {
+    const header = JSON.parse(
+      Buffer.from(parts[0], 'base64url').toString('utf8'),
+    ) as { alg?: string };
+    alg = typeof header.alg === 'string' ? header.alg : '';
+  } catch {
+    return false;
+  }
+  if (!verifyJwtSignature(parts[0], parts[1], parts[2], publicKeyPem, alg)) {
+    return false;
+  }
+  try {
+    const payload = JSON.parse(
+      Buffer.from(parts[1], 'base64url').toString('utf8'),
+    ) as { exp?: number };
+    return !(typeof payload.exp === 'number' && payload.exp * 1000 < Date.now());
+  } catch {
+    return false;
   }
 }
 
@@ -82,7 +121,10 @@ function resolveBillingIpcDeps(overrides?: Partial<BillingIpcDeps>): BillingIpcD
   return { ...defaultBillingIpcDeps(), ...overrides };
 }
 
-function writeLicense(info: LicenseInfo, file: string = LICENSE_FILE): void {
+function writeLicense(
+  info: LicenseInfo & { token?: string },
+  file: string = LICENSE_FILE,
+): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(info, null, 2), { mode: 0o600 });
@@ -174,6 +216,9 @@ export function applyLicenseToken(
             ? payload.status
             : 'active',
         renewsAt: typeof payload.renewsAt === 'string' ? payload.renewsAt : null,
+        // Guarda o JWT junto: permite reverificar a assinatura em cada leitura
+        // (ver verifyStoredToken) em vez de confiar no JSON cru do disco.
+        token,
       },
       opts.licensePath,
     );
@@ -184,7 +229,7 @@ export function applyLicenseToken(
 }
 
 export function registerBillingIpc(overrides?: Partial<BillingIpcDeps>): void {
-  ipcMain.handle(BILLING_CHANNELS.get, (): LicenseInfo => readLicense());
+  ipcMain.handle(BILLING_CHANNELS.get, (): LicenseState => readLicense());
 
   ipcMain.handle(BILLING_CHANNELS.checkout, async (_e, raw: unknown) => {
     const req = normalizeCheckoutRequest(raw);
