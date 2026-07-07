@@ -22,6 +22,23 @@ export interface RealtimeProviderCandidate {
 
 const SYSTEM_PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'system.en.md');
 const OPENAI_REALTIME_FALLBACK_VOICE = 'alloy';
+const OPENAI_REALTIME_VOICES = new Set([
+  'alloy',
+  'ash',
+  'ballad',
+  'coral',
+  'echo',
+  'sage',
+  'shimmer',
+  'verse',
+  'marin',
+  'cedar',
+]);
+
+function resolveOpenAiRealtimeVoice(configured: string): string {
+  const voice = configured.trim().toLowerCase();
+  return OPENAI_REALTIME_VOICES.has(voice) ? voice : OPENAI_REALTIME_FALLBACK_VOICE;
+}
 const FALLBACK_SYSTEM_PROMPT = `You are Jarvis, the voice assistant embedded in Nexus IDE.
 You have full authority over actions inside the Nexus IDE (files, terminal, git, editor, panes).
 For actions outside Nexus, refuse and explain you're scoped to the IDE only in this version.
@@ -77,10 +94,11 @@ export function createRealtimeProviderCandidates(
     if (providerId === 'openai') {
       const apiKey = resolveVoiceApiKey('OPENAI_API_KEY');
       if (apiKey) {
+        const configuredVoice = resolveOpenAiRealtimeVoice(live.openaiVoice);
         const voices =
-          live.openaiVoice === OPENAI_REALTIME_FALLBACK_VOICE
-            ? [live.openaiVoice]
-            : [live.openaiVoice, OPENAI_REALTIME_FALLBACK_VOICE];
+          configuredVoice === OPENAI_REALTIME_FALLBACK_VOICE
+            ? [configuredVoice]
+            : [configuredVoice, OPENAI_REALTIME_FALLBACK_VOICE];
         for (const voice of voices) {
           candidates.push({
             id: providerId,

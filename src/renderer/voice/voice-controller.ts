@@ -8,7 +8,11 @@ import { WakeMic } from './wake-mic';
 import { classifyMicHealth, type MicHealth } from './wake-health';
 import { LiveAudioPlayer, micFrameToBase64 } from './live-audio';
 import { stripPromptEcho } from './response-echo';
-import { isDiscardableTranscript, stripWakeAckEcho } from './transcript-filter';
+import {
+  isDiscardableTranscript,
+  isWakeAckOnlyTranscript,
+  stripWakeAckEcho,
+} from './transcript-filter';
 import { onJarvisWakeRequest } from './manual-wake';
 import {
   delay,
@@ -63,8 +67,7 @@ const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
 const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
 const REALTIME_ACTION_BRIDGE_ENABLED = true;
 const REALTIME_TRANSCRIPT_WAIT_MS = 1_800;
-const WAKE_ACK_SUPPRESS_MS = 1_500;
-const WAKE_PREROLL_MS = 2_500;
+const WAKE_ACK_SUPPRESS_MS = 8_000;
 const WAKE_SILENCE_MS = 700; // wake-word capture: quiet time that ends the utterance
 const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
 const PTT_HOLD_MAX_MS = 60_000; // hold-to-talk sem keyup (tap morto) fecha aqui
@@ -392,24 +395,47 @@ export function useVoiceController(): void {
             // segue — o wake mic quente é o caminho principal
           }
         }
-        busy.current = false;
+        busy.current = true;
         useVoiceStore.getState().setStatus('idle');
         useVoiceStore.getState().setError(null);
 
+        // Wake usa só Classic — realtime duplex + ack no WAV geravam 2 vozes e delírio.
+        suppressRealtimeAudioOut = true;
+        realtimeTurnActive = false;
+        livePlayer?.stop();
+        void window.nexus.voice.liveInterrupt('wake-ack').catch(() => {});
+
         const ack = wakeGreetingText(personaUserName());
         wakeMic.suppressWakeDetection(WAKE_ACK_SUPPRESS_MS);
-        // Escuta ANTES do ack terminar — senão a fala durante "Pois não?" se perde.
+        // Ack PRIMEIRO: se gravar durante o TTS, o STT transcreve "Pois não" como comando.
+        await playWakePrompt(ack).catch(() => playCachedWakeAck(personaUserName()));
+        wakeMic.suppressWakeDetection(WAKE_ACK_SUPPRESS_MS);
         await beginListening(
           capture.current!,
           wakeAutoStop(capture.current!, busy),
           'wake',
         );
-        void playWakePrompt(ack).catch(() => playCachedWakeAck(personaUserName()));
+      } catch (err) {
+        busy.current = false;
+        useVoiceStore.getState().setError(`Wake falhou: ${errMsg(err)}`);
       } finally {
         wakeOpenInProgress = false;
       }
     };
     const onWake = () => {
+      if (wakeOpenInProgress || busy.current) {
+        console.log('[voice] wake ignorado (turno em andamento)');
+        return;
+      }
+      const voiceStatus = useVoiceStore.getState().status;
+      if (
+        voiceStatus === 'speaking' ||
+        voiceStatus === 'transcribing' ||
+        voiceStatus === 'routing'
+      ) {
+        console.log('[voice] wake ignorado (pipeline ocupado)');
+        return;
+      }
       void handleWake();
     };
     // Morte do stream do mic (AirPods trocados, sleep/wake): o WakeMic
@@ -522,7 +548,7 @@ export function useVoiceController(): void {
     });
     // Espelha o mic para o transporte realtime enquanto o comando é falado.
     wakeMic.setUtteranceFrameTap((frame, sampleRate) => {
-      if (shouldStreamToRealtime()) {
+      if (shouldStreamToRealtime() && activeCaptureReason !== 'wake') {
         window.nexus.voice.liveMicIn(micFrameToBase64(frame, sampleRate));
       }
     });
@@ -628,9 +654,14 @@ async function beginListening(
   try {
     store.setNote(null);
     realtimeTurnActive = false;
-    suppressRealtimeAudioOut = false;
     activeCaptureReason = reason;
-    if (isJarvisLiveEnabled()) {
+    if (reason === 'wake') {
+      suppressRealtimeAudioOut = true;
+      void window.nexus.voice.liveInterrupt('wake-listen').catch(() => {});
+    } else {
+      suppressRealtimeAudioOut = false;
+    }
+    if (isJarvisLiveEnabled() && reason !== 'wake') {
       const info = useVoiceStore.getState().info;
       realtimeTurnActive =
         REALTIME_ACTION_BRIDGE_ENABLED && canAttemptRealtime(info);
@@ -647,7 +678,7 @@ async function beginListening(
     // Padrao pendingMic: mic ANTES da sessao live ficar pronta — liveStart
     // nao pode bloquear a captura ou a fala inicial some do WAV.
     if (wakeMic.isRunning()) {
-      wakeMic.beginUtterance(autoStop, reason === 'wake' ? WAKE_PREROLL_MS : 0);
+      wakeMic.beginUtterance(autoStop, 0);
     } else {
       await capture.start(autoStop);
     }
@@ -689,7 +720,7 @@ async function finishAndProcess(
 
     const routing = store.info?.routing ?? 'focused-pane';
 
-    if (routing === 'jarvis' && shouldStreamToRealtime()) {
+    if (routing === 'jarvis' && shouldStreamToRealtime() && activeCaptureReason !== 'wake') {
       const tRealtime = Date.now();
       store.setStatus('transcribing');
       liveStatus('thinking');
@@ -697,10 +728,7 @@ async function finishAndProcess(
       liveEndTurn();
       const liveTranscript = await waitForRealtimeTranscript();
       if (liveTranscript) {
-        const transcript =
-          activeCaptureReason === 'wake'
-            ? stripWakeAckEcho(liveTranscript, personaUserName())
-            : liveTranscript.trim();
+        const transcript = liveTranscript.trim();
         if (!transcript) {
           console.log(`[voice] realtime transcript descartado como eco wake: "${liveTranscript}"`);
           store.setStatus('idle');
@@ -740,6 +768,13 @@ async function finishAndProcess(
           await runJarvisTurn(transcript, capture, busy);
           return;
         }
+        if (isWakeAckOnlyTranscript(transcript, personaUserName())) {
+          console.log(`[voice] realtime transcript só ack/eco: "${transcript}"`);
+          store.setStatus('idle');
+          void window.nexus.voice.liveInterrupt('ack-only-transcript').catch(() => {});
+          liveEndTurn();
+          return;
+        }
         console.log('[voice] realtime owns conversational response');
         logVoiceEvent('info', 'jarvis.realtimeOwns', 'conversation', {
           transcript: transcript.slice(0, 180),
@@ -757,7 +792,7 @@ async function finishAndProcess(
 
     // Feedback INSTANTÂNEO: um micro-filler do cache cobre o tempo de
     // STT+cérebro (fire-and-forget; echoCancellation filtra do próximo turno).
-    if (routing === 'jarvis') {
+    if (routing === 'jarvis' && activeCaptureReason !== 'wake') {
       const filler = THINK_FILLERS[Math.floor(Math.random() * THINK_FILLERS.length)];
       const cached = getThinkFillerCache().get(filler);
       if (cached) void playAudioBase64(cached.audioBase64, cached.format).catch(() => {});
@@ -793,6 +828,15 @@ async function finishAndProcess(
       return;
     }
     const tStt = Date.now() - tTurn;
+    if (
+      activeCaptureReason === 'wake' &&
+      isWakeAckOnlyTranscript(stt.text, personaUserName())
+    ) {
+      console.log(`[voice] turno wake só ack/eco descartado: "${stt.text}"`);
+      store.setStatus('idle');
+      liveEndTurn();
+      return;
+    }
     const transcript =
       activeCaptureReason === 'wake'
         ? stripWakeAckEcho(stt.text, personaUserName())
@@ -809,7 +853,9 @@ async function finishAndProcess(
     // "obrigado por assistir"…). Elas passam o gate de RMS quando há um
     // sussurro — descarta antes de virar turno (a JARVIS falando sozinha).
     const inConversation =
-      jarvisHistory.length > 0 && Date.now() - jarvisLastTurnAt <= JARVIS_MEMORY_MS;
+      activeCaptureReason === 'wake'
+        ? false
+        : jarvisHistory.length > 0 && Date.now() - jarvisLastTurnAt <= JARVIS_MEMORY_MS;
     if (isDiscardableTranscript(transcript, { inConversation })) {
       console.log(`[voice] transcrição-lixo do Whisper descartada: "${transcript}"`);
       store.setStatus('idle');
@@ -970,6 +1016,11 @@ async function runJarvisTurn(
     return;
   }
 
+  // Classic TTS é a única voz — corta qualquer áudio realtime pendente.
+  suppressRealtimeAudioOut = true;
+  livePlayer?.stop();
+  void window.nexus.voice.liveInterrupt('classic-tts').catch(() => {});
+
   store.setStatus('speaking');
   liveStatus('speaking');
   // Pipelining por sentença (LiveKit playbook): sintetiza e toca a PRIMEIRA
@@ -1013,11 +1064,15 @@ async function runJarvisTurn(
   // Classic: só reabre escuta quando o cérebro pediu resposta de verdade.
   // jarvisLive.enabled no painel NÃO é full-duplex — reabrir sempre gerava loop
   // (TTS ecoando no mic → "não entendi" → TTS → …).
+  wakeMic.suppressWakeDetection(
+    Math.min(12_000, Math.max(3_500, sayText.length * 70 + 2_000)),
+  );
   const wantsReply = shouldReopenJarvisListening({
     expectReply: reply.expectReply === true,
     sayText,
     realtimeTurnActive,
     isRealtimeLive: isRealtimeLive(),
+    captureReason: activeCaptureReason,
   });
   if (wantsReply) {
     busy.current = false;

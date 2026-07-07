@@ -128,7 +128,7 @@ describe('createRealtimeProvider', () => {
     vi.doUnmock('../../voice/voice-secrets');
   });
 
-  it('adds a safe OpenAI voice retry before the secondary realtime provider', async () => {
+  it('maps unsupported OpenAI TTS voices (nova) to alloy for realtime', async () => {
     vi.resetModules();
     vi.doMock('../../voice/voice-secrets', () => ({
       resolveVoiceApiKey: (envVar: string) =>
@@ -150,7 +150,7 @@ describe('createRealtimeProvider', () => {
       createRealtimeProviderCandidates({ config, instructions: 'You are Jarvis.' }).map(
         (candidate) => candidate.id,
       ),
-    ).toEqual(['openai', 'openai', 'gemini']);
+    ).toEqual(['openai', 'gemini']);
     vi.doUnmock('../../voice/voice-secrets');
   });
 });

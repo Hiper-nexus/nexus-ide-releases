@@ -19,6 +19,19 @@ describe('jarvis-reply-loop', () => {
     ).toBe(false);
   });
 
+  it('não reabre após turno wake (evita loop de eco/TTS)', () => {
+    resetAutoReplyLoop();
+    expect(
+      shouldReopenJarvisListening({
+        expectReply: true,
+        sayText: 'O que você precisa?',
+        realtimeTurnActive: false,
+        isRealtimeLive: false,
+        captureReason: 'wake',
+      }),
+    ).toBe(false);
+  });
+
   it('reabre quando o cérebro pediu resposta', () => {
     resetAutoReplyLoop();
     expect(

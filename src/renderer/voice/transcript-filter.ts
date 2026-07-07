@@ -94,19 +94,34 @@ function wakeEchoPatterns(userName: string): string[][] {
   const patterns = [
     ['hey', 'jarvis'],
     ['ei', 'jarvis'],
+    ['e', 'jarvis'],
+    ['e', 'javes'],
+    ['ei', 'javes'],
     ['ok', 'jarvis'],
     ['jarvis'],
-    ['pois', 'nao'],
-    ['sim'],
-    ['diga'],
+    ['javes'],
+    ['jave'],
     ['estou', 'ouvindo'],
   ];
-  if (!user) return patterns;
+  if (!user) {
+    return [
+      ...patterns,
+      ['pois', 'nao'],
+      ['pues', 'no'],
+      ['sim'],
+      ['diga'],
+    ];
+  }
   return [
     ['pois', 'nao', user],
+    ['pues', 'no', user],
     ['sim', user],
     ['diga', user],
     ...patterns,
+    ['pois', 'nao'],
+    ['pues', 'no'],
+    ['sim'],
+    ['diga'],
   ];
 }
 
@@ -120,7 +135,21 @@ export function stripWakeAckEcho(text: string, userName: string): string {
   const tokens = tokenized(text);
   if (tokens.length === 0) return '';
   const rest = stripLeadingPatterns(tokens, wakeEchoPatterns(userName));
-  return rest.map((token) => token.raw).join(' ').trim();
+  let out = rest.map((token) => token.raw).join(' ').trim();
+  const user = normalizeToken(userName);
+  if (user) {
+    const n = normalizeToken(out);
+    // Vocativo do ack (PT patrão / ES patrón) vazado pelo alto-falante.
+    if (n === user || n === 'patron' || n === 'patrao') return '';
+  }
+  return out;
+}
+
+/** Só eco do ack / wake — nada que deva virar turno ou resposta realtime. */
+export function isWakeAckOnlyTranscript(text: string, userName: string): boolean {
+  const stripped = stripWakeAckEcho(text, userName);
+  if (!stripped.trim()) return true;
+  return isDiscardableTranscript(stripped, { inConversation: false });
 }
 
 /**

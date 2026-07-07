@@ -44,7 +44,12 @@ export function shouldReopenJarvisListening(opts: {
   sayText: string;
   realtimeTurnActive: boolean;
   isRealtimeLive: boolean;
+  captureReason?: 'manual' | 'wake' | 'ptt' | 'reply';
 }): boolean {
+  if (opts.captureReason === 'wake') {
+    console.log('[voice] não reabre após turno wake — diga Hey Jarvis de novo');
+    return false;
+  }
   if (autoReplyLoopCount >= MAX_AUTO_REPLY_LOOPS) {
     console.log('[voice] trava anti-loop: limite de reaberturas automáticas');
     return false;

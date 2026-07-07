@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isDiscardableTranscript, stripWakeAckEcho } from './transcript-filter';
+import {
+  isDiscardableTranscript,
+  isWakeAckOnlyTranscript,
+  stripWakeAckEcho,
+} from './transcript-filter';
 
 describe('isDiscardableTranscript', () => {
   it('descarta alucinações clássicas em captura fria', () => {
@@ -57,11 +61,21 @@ describe('stripWakeAckEcho', () => {
   it('descarta ack puro vazado pelo alto-falante', () => {
     expect(stripWakeAckEcho('Pois não, patrão?', 'patrão')).toBe('');
     expect(stripWakeAckEcho('Estou ouvindo.', 'patrão')).toBe('');
+    expect(stripWakeAckEcho('E Javes Pois não, Patrão', 'Patrão')).toBe('');
+    expect(stripWakeAckEcho('Pues no patrón.', 'Patrão')).toBe('');
   });
 
   it('não mexe em fala real sem prefixo de wake', () => {
     expect(stripWakeAckEcho('abre o terminal agora', 'patrão')).toBe(
       'abre o terminal agora',
     );
+  });
+});
+
+describe('isWakeAckOnlyTranscript', () => {
+  it('marca eco de ack sem comando', () => {
+    expect(isWakeAckOnlyTranscript('Pois não, patrão?', 'patrão')).toBe(true);
+    expect(isWakeAckOnlyTranscript('Pues no patrón.', 'Patrão')).toBe(true);
+    expect(isWakeAckOnlyTranscript('abrir terminal', 'patrão')).toBe(false);
   });
 });
