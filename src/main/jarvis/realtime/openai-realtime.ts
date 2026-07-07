@@ -76,6 +76,9 @@ export function buildOpenAISessionUpdate(opts: {
         output: {
           format: {
             type: 'audio/pcm',
+            // A API exige rate explícito no output; 24 kHz casa com o
+            // OUTPUT_SAMPLE_RATE do LiveAudioPlayer do renderer.
+            rate: DEFAULT_TARGET_RATE,
           },
           voice: opts.voice,
         },
