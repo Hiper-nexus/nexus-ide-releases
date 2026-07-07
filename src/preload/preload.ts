@@ -515,7 +515,10 @@ const api: NexusApi = {
     pathForFile: (file: File): string => {
       try {
         return webUtils.getPathForFile(file);
-      } catch {
+      } catch (err) {
+        // Sem o path real o drop cai no fallback (salvar blob) — deixa rastro
+        // no console em vez de falhar 100% silencioso.
+        console.warn('[preload] pathForFile falhou para', file.name, err);
         return '';
       }
     },

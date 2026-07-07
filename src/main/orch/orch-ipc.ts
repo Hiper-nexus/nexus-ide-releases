@@ -47,7 +47,7 @@ import {
 import { initIdleDelivery } from './idle-delivery';
 import { initStallWatchdog, shutdownStallWatchdog } from './stall-watchdog';
 import { stopAllPreviews } from './preview-server';
-import { startRemoteBridge, stopRemoteBridge } from '../remote/remote-bridge';
+import { stopRemoteBridge } from '../remote/remote-bridge';
 import { buildRecipeOverlay } from './recipe-overlay';
 import { proposeRecipes, saveCatalogOverlay } from './catalog-overlay';
 import { writeAgentSpec } from './agent-spec-writer';
@@ -75,7 +75,10 @@ const listeners = new Set<WebContents>();
 
 function broadcast(channel: string, payload: unknown): void {
   for (const wc of listeners) {
-    if (!wc.isDestroyed()) wc.send(channel, payload);
+    // isDestroyed() sozinho não basta: renderer recém-crashado ainda reporta
+    // false e o send() loga "Render frame was disposed" (mesmo padrão do
+    // canSend em pty-manager).
+    if (!wc.isDestroyed() && !wc.isCrashed()) wc.send(channel, payload);
   }
 }
 
@@ -102,9 +105,8 @@ export async function initOrchestration(): Promise<void> {
   initIdleDelivery();
   initStallWatchdog();
   await startMcpServer();
-  void startRemoteBridge().catch((err) =>
-    console.warn('[remote] bridge failed to start:', err),
-  );
+  // SEGURANÇA: a remote bridge NÃO sobe no boot — só sob demanda, via IPC
+  // explícito do usuário (remote:bridge.start) ou pela tool MCP dedicada.
 
   onMissionsChange(() =>
     broadcast(ORCH_CHANNELS.missionsChanged, listMissions()),

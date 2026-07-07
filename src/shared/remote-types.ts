@@ -11,7 +11,7 @@ export interface RemoteBridgeInfo {
 
 export interface RemoteBridgeStartRequest {
   port?: number;
-  /** Bind address. Defaults to 0.0.0.0; set 127.0.0.1 to restrict to localhost. */
+  /** Bind address. Defaults to 127.0.0.1; set 0.0.0.0 to expose on the LAN. */
   host?: string;
 }
 

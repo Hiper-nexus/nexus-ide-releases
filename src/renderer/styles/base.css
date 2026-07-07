@@ -1,0 +1,599 @@
+/* Fundação: tokens, reset, workspace bar, grid, panes, toolbar.
+   Módulo extraído do antigo global.css monolítico — a ordem de import
+   em global.css preserva a cascata original. */
+
+/* Fonte bitmap da identidade pixel — VT323 (Google Fonts, licença OFL),
+   servida localmente para funcionar offline no Electron. */
+@font-face {
+  font-family: 'VT323';
+  src: url('./fonts/VT323-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --bg: #0b0e14;
+  --bg-elevated: #10141d;
+  --bg-bar: #0d1119;
+  --border: #1c2333;
+  --border-strong: #273049;
+  --text: #c9d1e0;
+  /* Secondary text. Lifted from #6b7690 (~4.25:1 on --bg, fails WCAG AA) to
+     ~5.3:1 so small meta/detail/empty-state copy clears AA everywhere. */
+  --text-dim: #7c869e;
+  --accent: #6ea8fe;
+  --accent-soft: rgba(110, 168, 254, 0.14);
+  --accent-strong: rgba(110, 168, 254, 0.28);
+  /* Hover do CTA sólido — antes era #8db9ff hardcoded em cada componente. */
+  --accent-hover: #8db9ff;
+  --danger: #f7768e;
+  --scrollbar-track: rgba(4, 6, 10, 0.44);
+  --scrollbar-thumb: rgba(124, 134, 158, 0.36);
+  --scrollbar-thumb-hover: rgba(110, 168, 254, 0.62);
+  --pixel-grid: rgba(110, 168, 254, 0.045);
+  --radius: 8px;
+  --bar-height: 44px;
+  --toolbar-height: 28px;
+  --font-ui: ui-sans-serif, -apple-system, "SF Pro Text", Segoe UI, system-ui,
+    sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  /* Fonte bitmap (VT323) — superfícies retrô usam direto; o modo pixel
+     ([data-theme-pixel="on"]) promove para --font-ui. VT323 é condensada:
+     nunca usar abaixo de 12px. */
+  --font-pixel: 'VT323', 'Courier New', monospace;
+  /* Curvas de easing do sistema de motion — desaceleração natural, nunca
+     bounce/elastic. Estado muda em 150–250ms; feedback em ~120ms. */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Escalas — fonte única de espaçamento, tipo, raio e sombra. Valores fora
+     da escala são exceção deliberada, não default. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 14px;
+  --text-xl: 16px;
+  --text-2xl: 18px;
+  --text-3xl: 22px;
+  --text-hero: 34px;
+
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 18px;
+  --radius-round: 999px;
+
+  --shadow-1: 0 4px 14px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 24px 64px rgba(0, 0, 0, 0.5);
+
+  /* Estados operacionais compartilhados entre temas — sinal, não decoração. */
+  --ok: #7ee2a8;
+  --live: #35e08d;
+  --warn: #e5c07b;
+  --gold: #ffd166;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Buttons don't inherit text color by default (the UA uses a dark canvastext),
+   which can render dark-on-dark. Inherit unless a component sets its own. */
+button {
+  color: inherit;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* Modo pixel opt-in (ui-theme.applyPixelMode seta data-theme-pixel no <html>):
+   cantos retos em toda a escala de raio, fonte bitmap como UI e sem antialias.
+   Fora deste bloco os tokens default continuam intactos. */
+[data-theme-pixel='on'] {
+  --radius: 0px;
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-round: 0px;
+  --font-ui: var(--font-pixel);
+}
+
+[data-theme-pixel='on'] body {
+  -webkit-font-smoothing: unset;
+}
+
+/* Scrollbar pixel GLOBAL — um idioma só de scroll na app inteira: trilho
+   chapado, thumb quadrado (sem radius) em --border, acende em --accent no
+   hover. Substitui os blocos por-painel que existiam antes. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  min-height: 42px;
+  border: 2px solid transparent;
+  background-color: var(--border-strong);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--accent);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.boot {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--text-dim);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ---- Top workspace bar ---- */
+.workspace-bar {
+  height: var(--bar-height);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px 0 84px; /* leave room for macOS traffic lights */
+  background: var(--bg-bar);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+  user-select: none;
+  overflow: hidden;
+}
+
+.workspace-bar__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.workspace-bar__logo {
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.workspace-bar__name {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-bar__tag {
+  color: var(--text-dim);
+  /* Superfície retrô: fonte bitmap direto. VT323 é condensada — 13px aqui
+     equivale visualmente aos 11px da sans e mantém legibilidade AA. */
+  font-family: var(--font-pixel);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.workspace-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-bar__actions::-webkit-scrollbar {
+  display: none;
+}
+
+.workspace-bar__actions > * {
+  flex: 0 0 auto;
+}
+
+.workspace-bar__count {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-bar__btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.workspace-bar__btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* ---- Grid + panels ---- */
+/* Linha flex: trilha de missões (coluna fixa à esquerda) + grid/canvas.
+   Sem o display:flex a trilha empilhava ACIMA do grid e empurrava o
+   height:100% do grid para fora da janela — as últimas linhas do terminal
+   ficavam abaixo da borda e o xterm "não rolava até embaixo". */
+.app__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.grid,
+.panel-group {
+  height: 100%;
+  width: 100%;
+}
+
+/* Filhos no fluxo do body ocupam o restante da linha; min-width: 0 permite
+   encolher abaixo do conteúdo do terminal. */
+.app__body > .grid,
+.app__body > .canvas-container {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+/* Panel inner div (library applies our class to the nested element). */
+.panel {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.resize-handle {
+  position: relative;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.resize-handle--horizontal {
+  width: 8px;
+  cursor: col-resize;
+}
+
+.resize-handle--vertical {
+  height: 8px;
+  cursor: row-resize;
+}
+
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  background: var(--border);
+  border-radius: var(--radius-xs);
+  transition: background 120ms ease;
+}
+
+.resize-handle--horizontal::after {
+  width: 2px;
+  height: 32px;
+}
+
+.resize-handle--vertical::after {
+  height: 2px;
+  width: 32px;
+}
+
+.resize-handle:hover::after {
+  background: var(--accent);
+}
+
+/* ---- Pane ---- */
+.pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition:
+    border-color 150ms var(--ease-out-quart),
+    box-shadow 150ms var(--ease-out-quart);
+}
+
+.pane--focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft), 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+
+.toolbar {
+  height: var(--toolbar-height);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  background: var(--bg-bar);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  user-select: none;
+}
+
+.toolbar__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  flex: 0 0 auto;
+}
+
+.toolbar__dot--on {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+/* Estado do agente no toolbar: o glifo COMUNICA (busy respira, spawning pisca
+   devagar, idle assenta com um pop único). Sinal operacional, não decoração. */
+.toolbar__state {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1;
+}
+.toolbar__state--idle {
+  color: var(--ok);
+  animation: state-settle 250ms var(--ease-out-quart);
+}
+.toolbar__state--busy {
+  color: var(--warn);
+  animation: state-breathe 1.4s ease-in-out infinite;
+}
+.toolbar__state--spawning {
+  color: var(--text-dim);
+  animation: state-breathe 0.9s ease-in-out infinite;
+}
+.toolbar__state--exited {
+  color: var(--danger);
+}
+.toolbar__state--hibernated {
+  color: var(--accent);
+}
+@keyframes state-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@keyframes state-settle {
+  from { transform: scale(1.4); }
+  to { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toolbar__state--busy,
+  .toolbar__state--spawning,
+  .toolbar__state--idle {
+    animation: none;
+  }
+}
+
+.toolbar__title {
+  font-family: var(--font-mono);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
+}
+
+.toolbar__badge {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+}
+
+.toolbar__spacer {
+  flex: 1 1 auto;
+}
+
+.toolbar__btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.toolbar__btn:hover {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.toolbar__btn--close:hover {
+  color: var(--danger);
+  background: rgba(247, 118, 142, 0.14);
+}
+
+.pane__terminal {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  padding: 4px 6px 2px;
+}
+
+.browser-bar {
+  height: 34px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-bar) 72%, var(--bg) 28%);
+}
+
+.browser-bar__btn {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.browser-bar__btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.browser-bar__btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.browser-bar__url {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 0 8px;
+  outline: none;
+}
+
+.browser-bar__url:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+
+.browser-pane__surface {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  background: #ffffff;
+}
+
+.browser-pane__error {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(247, 118, 142, 0.25);
+  color: #ff9aa8;
+  background: rgba(247, 118, 142, 0.10);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* The persistent xterm host node re-parented into each pane slot. */
+.term-host {
+  position: absolute;
+  inset: 4px 6px 2px;
+}
+
+.term-host .xterm,
+.term-host .xterm-viewport {
+  height: 100% !important;
+}
+
+/* xterm herda a scrollbar pixel global (thumb quadrado --border-strong,
+   accent no hover) — o override local ficou redundante e foi removido. */
+
+/* ---- Toolbar agent extensions ---- */
+.toolbar__badge--agent {
+  color: var(--accent);
+  border-color: var(--accent);
+  opacity: 0.8;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* (.toolbar__state consolidado no bloco principal acima — a redefinição
+   duplicada que existia aqui só repetia font-size/flex e foi removida.) */
+
+/* ---- Workspace bar agent button ---- */
+.workspace-bar__btn--agent {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.workspace-bar__btn--agent:hover {
+  background: rgba(110, 168, 254, 0.25);
+}

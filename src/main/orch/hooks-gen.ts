@@ -22,7 +22,9 @@ process.stdin.on('data', (c) => (raw += c));
 process.stdin.on('end', async () => {
   if (!url || !token) process.exit(0);
   let input = {};
-  try { input = JSON.parse(raw); } catch {}
+  try { input = JSON.parse(raw); } catch {
+    console.error('[nexus-hook] stdin não é JSON válido — seguindo sem tool_name/tool_input');
+  }
   try {
     const res = await fetch(url + '/' + event, {
       method: 'POST',

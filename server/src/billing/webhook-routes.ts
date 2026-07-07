@@ -53,19 +53,33 @@ export function buildWebhookRouter(deps: BillingDeps): Router {
       if (existing?.processedAt) return res.json({ ok: true });
     }
 
-    const subId = subscriptionIdFrom(event);
-    if (subId) {
-      const current = await stripe.subscriptions.retrieve(subId);
-      await applySubscriptionState(
-        db,
-        current,
-        { pricePro: env.STRIPE_PRICE_PRO, priceTeam: env.STRIPE_PRICE_TEAM },
-        now,
+    // Processamento + processedAt na MESMA transação: se applySubscriptionState
+    // falhar, o evento fica sem processedAt e o Stripe retenta (o insert acima
+    // já garantiu a idempotência). A chamada à API do Stripe fica FORA da
+    // transação — nunca segurar conexão de banco esperando rede.
+    try {
+      const subId = subscriptionIdFrom(event);
+      const current = subId ? await stripe.subscriptions.retrieve(subId) : null;
+      await db.transaction(async (tx) => {
+        if (current) {
+          await applySubscriptionState(
+            tx as unknown as typeof db,
+            current,
+            { pricePro: env.STRIPE_PRICE_PRO, priceTeam: env.STRIPE_PRICE_TEAM },
+            now,
+          );
+        }
+        await tx.update(stripeEvents)
+          .set({ processedAt: new Date(now?.() ?? Date.now()) })
+          .where(eq(stripeEvents.eventId, event.id));
+      });
+    } catch (err) {
+      console.error(
+        `[billing] webhook ${event.id} (${event.type}) falhou ao processar — Stripe vai retentar:`,
+        err,
       );
+      throw err; // errorHandler → 500 → retry do Stripe
     }
-    await db.update(stripeEvents)
-      .set({ processedAt: new Date(now?.() ?? Date.now()) })
-      .where(eq(stripeEvents.eventId, event.id));
     res.json({ ok: true });
   }));
 

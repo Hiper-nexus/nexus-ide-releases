@@ -1,6 +1,7 @@
 import type { FileNode } from '../../shared/files-types';
 import { useFilesStore } from '../state/files-store';
 import { useWorkspaceStore } from '../state/workspace-store';
+import { PixelIcon } from './PixelIcon';
 
 /**
  * FILES tab — a workspace file explorer with a lazy tree and an inline text
@@ -26,7 +27,11 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
         onClick={() => (isDir ? void toggleDir(node.relPath) : void selectFile(node.relPath))}
       >
         <span className="files-node__glyph">
-          {isDir ? (expanded ? '▾' : '▸') : '·'}
+          {isDir ? (
+            <PixelIcon name={expanded ? 'chevron-down' : 'chevron'} size={10} />
+          ) : (
+            '·'
+          )}
         </span>
         <span className="files-node__name">{node.name}</span>
       </button>

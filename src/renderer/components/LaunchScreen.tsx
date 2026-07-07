@@ -73,7 +73,8 @@ export function LaunchScreen() {
             onClick={openWizard}
             disabled={busy}
           >
-            ＋ Novo workspace
+            <PixelIcon name="plus" size={14} />
+            Novo workspace
           </button>
           <div className="launch__manual">
             <input

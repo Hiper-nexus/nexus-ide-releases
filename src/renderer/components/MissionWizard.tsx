@@ -12,6 +12,8 @@ import { isMissingModelKeyError } from '../lib/credential-errors';
 import { launchLibrePanes, launchSquadMission } from '../orch/mission-launcher';
 import { balanceSquadRosterCli } from '../orch/squad-roster';
 import { CloseButton } from './CloseButton';
+import { MissionWizardReview } from './MissionWizardReview';
+import { PixelIcon } from './PixelIcon';
 
 /**
  * "Novo workspace" / "Nova Missão" wizard — the full flow:
@@ -201,21 +203,6 @@ export function MissionWizard() {
       setHighlightedAgentId(null);
       setError(null);
     }
-  }
-
-  function specValue(list: string[] | null | undefined, isOrchestrator = false): string {
-    if (list == null) return isOrchestrator ? '*' : 'vazio/bloqueado';
-    return list.join(', ');
-  }
-
-  function parseSpecList(value: string, allowUnrestricted: boolean): string[] | null {
-    const clean = value.trim();
-    if (clean === '*') return allowUnrestricted ? null : [];
-    if (!clean) return [];
-    return clean
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
   }
 
   function validateWorkerToolScopes(agents: SquadAgent[]): boolean {
@@ -448,7 +435,9 @@ export function MissionWizard() {
                   className={`wizard__mode ${mode === 'libre' ? 'wizard__mode--active' : ''}`}
                   onClick={() => chooseMode('libre')}
                 >
-                  <span className="wizard__mode-icon">&gt;_</span>
+                  <span className="wizard__mode-icon">
+                    <PixelIcon name="terminal" size={22} />
+                  </span>
                   <span className="wizard__mode-title">Modo Livre</span>
                   <span className="wizard__mode-desc">
                     Escolha providers e quantidade de panes
@@ -459,7 +448,9 @@ export function MissionWizard() {
                   onClick={() => chooseMode('squad')}
                   disabled={squads.length === 0}
                 >
-                  <span className="wizard__mode-icon">👥</span>
+                  <span className="wizard__mode-icon">
+                    <PixelIcon name="users" size={22} />
+                  </span>
                   <span className="wizard__mode-title">Modo Squad</span>
                   <span className="wizard__mode-desc">
                     Use um preset de squad salvo
@@ -470,7 +461,9 @@ export function MissionWizard() {
                   className={`wizard__mode ${mode === 'agentic' ? 'wizard__mode--active' : ''}`}
                   onClick={() => chooseMode('agentic')}
                 >
-                  <span className="wizard__mode-icon">⚡</span>
+                  <span className="wizard__mode-icon">
+                    <PixelIcon name="bolt" size={22} />
+                  </span>
                   <span className="wizard__mode-title">Modo Agêntico</span>
                   <span className="wizard__mode-desc">
                     Descreva o que quer — a IA monta o time e dispara
@@ -525,7 +518,14 @@ export function MissionWizard() {
                     onClick={() => void handleDesignFromIntent()}
                     disabled={designing || !intent.trim()}
                   >
-                    {designing ? '✨ Montando o time…' : 'Montar time ⚡'}
+                    {designing ? (
+                      'Montando o time…'
+                    ) : (
+                      <>
+                        <PixelIcon name="bolt" />
+                        Montar time
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -647,7 +647,9 @@ export function MissionWizard() {
                         className={`wizard__squad ${squadId === s.id ? 'wizard__squad--active' : ''}`}
                         onClick={() => setSquadId(s.id)}
                       >
-                        <span className="wizard__squad-name">👥 {s.name}</span>
+                        <span className="wizard__squad-name">
+                          <PixelIcon name="users" /> {s.name}
+                        </span>
                         <span className="wizard__squad-count">{workerCount(s)}</span>
                       </button>
                     ))}
@@ -675,185 +677,24 @@ export function MissionWizard() {
           )}
 
           {step === 'squad-review' && selectedSquad && (
-            <div className="wizard__section">
-              <div className="wizard__review-head">
-                <p className="wizard__label">{selectedSquad.name}</p>
-                <button
-                  className="wizard__btn"
-                  onClick={() => void saveRoster()}
-                  title="Salvar as mudanças de CLI/modelo/effort no squad"
-                >
-                  {rosterSaved ? 'Salvo' : 'Salvar edições'}
-                </button>
-              </div>
-              <p className="wizard__hint-sm">
-                Orquestrador fixo em Claude para MCP. Workers entram
-                balanceados entre CLIs/providers disponíveis e continuam
-                editáveis.
-              </p>
-              <p className="wizard__hint-sm">
-                Use * só no orquestrador; workers precisam de tools explícitas
-                ou vazio. Gaps explícitos: gap:nome: motivo.
-              </p>
-              <ul className="wizard__roster wizard__roster--edit">
-                {roster.map((a) => {
-                  const isOrchestrator = a.category === 'orchestrator';
-                  const cliAdapter = adapters.find((x) => x.id === a.cli);
-                  const models = cliAdapter?.models.list ?? [];
-                  return (
-                    <li
-                      key={a.id}
-                      data-agent-id={a.id}
-                      className={`wizard__roster-row${a.id === highlightedAgentId ? ' wizard__roster-row--invalid' : ''}`}
-                    >
-                      <div className="wizard__agent-main">
-                        <div className="wizard__agent-identity">
-                          <span className="wizard__roster-role">{a.category}</span>
-                          <span className="wizard__roster-name" title={a.agentName}>
-                            {a.agentName}
-                          </span>
-                        </div>
-                        <div className="wizard__agent-controls">
-                          {isOrchestrator ? (
-                            <span
-                              className="wizard__mini-select wizard__mini-select--locked"
-                              title="O orquestrador é sempre Claude (suporte a MCP tools)."
-                            >
-                              ◆ Claude
-                            </span>
-                          ) : (
-                            <select
-                              className="wizard__mini-select"
-                              value={a.cli}
-                              onChange={(e) =>
-                                updateAgent(a.id, {
-                                  cli: e.target.value,
-                                  model: undefined,
-                                })
-                              }
-                            >
-                              {adapters.map((x) => (
-                                <option key={x.id} value={x.id}>
-                                  {x.icon} {x.label}
-                                  {x.installed ? '' : ' ⚠'}
-                                </option>
-                              ))}
-                              {!adapters.some((x) => x.id === a.cli) && (
-                                <option value={a.cli}>{a.cli}</option>
-                              )}
-                            </select>
-                          )}
-                        <select
-                          className="wizard__mini-select"
-                          value={a.model ?? cliAdapter?.models.default ?? ''}
-                          onChange={(e) => updateAgent(a.id, { model: e.target.value })}
-                        >
-                          {models.length === 0 && (
-                            <option value={a.model ?? ''}>{a.model ?? '—'}</option>
-                          )}
-                          {models.map((m) => (
-                            <option key={m} value={m}>
-                              {m}
-                            </option>
-                          ))}
-                        </select>
-                          <select
-                            className="wizard__mini-select wizard__mini-select--effort"
-                            value={a.effort ?? 'medium'}
-                            onChange={(e) =>
-                              updateAgent(a.id, {
-                                effort: e.target.value as SquadAgent['effort'],
-                              })
-                            }
-                          >
-                            <option value="low">low</option>
-                            <option value="medium">medium</option>
-                            <option value="high">high</option>
-                            <option value="xhigh">xhigh</option>
-                            <option value="max">max</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div className="wizard__agent-spec">
-                        <label className="wizard__agent-spec-label">
-                          tools
-                          <input
-                            className={`wizard__agent-spec-input${!isOrchestrator && a.allowedTools == null ? ' wizard__agent-spec-input--error' : ''}`}
-                            value={specValue(a.allowedTools, isOrchestrator)}
-                            placeholder={
-                              isOrchestrator
-                                ? '* (irrestrito) ou Bash, Read, Edit…'
-                                : 'Bash, Read, Edit… (vazio = bloquear todas)'
-                            }
-                            spellCheck={false}
-                            onChange={(e) => {
-                              if (!isOrchestrator && e.target.value.trim() === '*') {
-                                setError(
-                                  'Workers não podem usar * em tools; deixe vazio ou liste tools explícitas.',
-                                );
-                              }
-                              updateAgent(a.id, {
-                                allowedTools: parseSpecList(
-                                  e.target.value,
-                                  isOrchestrator,
-                                ),
-                              });
-                            }}
-                          />
-                        </label>
-                        <label className="wizard__agent-spec-label">
-                          skills
-                          <input
-                            className="wizard__agent-spec-input"
-                            value={specValue(a.allowedSkills, true)}
-                            placeholder="react-patterns, graphify… (vazio = bloquear)"
-                            spellCheck={false}
-                            onChange={(e) =>
-                              updateAgent(a.id, {
-                                allowedSkills: parseSpecList(e.target.value, true),
-                              })
-                            }
-                          />
-                        </label>
-                        {!isOrchestrator && a.allowedTools == null && (
-                          <p className="wizard__row-error">
-                            Tools bloqueadas. Liste explicitamente ou deixe vazio para bloquear todas.
-                          </p>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-              {error && <p className="wizard__error">{error}</p>}
-              <div className="wizard__actions">
-                <button
-                  className="wizard__btn"
-                  onClick={() =>
-                    setStep(mode === 'agentic' ? 'agentic-intent' : 'squad-select')
-                  }
-                >
-                  ‹ Voltar
-                </button>
-                <div className="wizard__actions-right">
-                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
-                    Cancelar
-                  </button>
-                  <button
-                    className="wizard__btn wizard__btn--primary"
-                    onClick={() => void handleLaunchSquad()}
-                    disabled={spawning || !!rosterInvalidAgent}
-                    title={
-                      rosterInvalidAgent
-                        ? `Worker "${rosterInvalidAgent.agentName}" está sem allowlist de tools. Corrija o campo "tools" antes de iniciar.`
-                        : undefined
-                    }
-                  >
-                    {spawning ? 'Iniciando…' : 'Iniciar Squad'}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <MissionWizardReview
+              squad={selectedSquad}
+              roster={roster}
+              adapters={adapters}
+              highlightedAgentId={highlightedAgentId}
+              error={error}
+              spawning={spawning}
+              rosterSaved={rosterSaved}
+              rosterInvalidAgent={rosterInvalidAgent}
+              onSaveRoster={() => void saveRoster()}
+              onUpdateAgent={updateAgent}
+              onError={setError}
+              onBack={() =>
+                setStep(mode === 'agentic' ? 'agentic-intent' : 'squad-select')
+              }
+              onCancel={close}
+              onLaunch={() => void handleLaunchSquad()}
+            />
           )}
         </div>
       </div>

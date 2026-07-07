@@ -110,12 +110,17 @@ function registerExternalLinkIpc(): void {
   });
 }
 
-export function createMainWindow(): BrowserWindow {
-  const devServerUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL;
-  registerExternalLinkIpc();
+let cspRegistered = false;
 
-  // Apply the CSP via response headers on this window's session so it also
-  // covers the dev server (a static <meta> tag can't allow the HMR socket).
+/**
+ * Apply the CSP via response headers on the default session so it also covers
+ * the dev server (a static <meta> tag can't allow the HMR socket). Guarded:
+ * `createMainWindow` roda de novo no `activate` do macOS e registrar outro
+ * handler substituiria/duplicaria o anterior.
+ */
+function registerCsp(devServerUrl: string | undefined): void {
+  if (cspRegistered) return;
+  cspRegistered = true;
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
@@ -124,6 +129,12 @@ export function createMainWindow(): BrowserWindow {
       },
     });
   });
+}
+
+export function createMainWindow(): BrowserWindow {
+  const devServerUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL;
+  registerExternalLinkIpc();
+  registerCsp(devServerUrl);
 
   const win = new BrowserWindow({
     width: 1280,
@@ -214,26 +225,38 @@ export function createMainWindow(): BrowserWindow {
   // janela abria preta e exigia fechar/reabrir). Auto-retry até carregar; o
   // backoff curto cobre o boot do Vite sem atrasar o caso saudável.
   let loadRetries = 0;
+  const MAX_LOAD_RETRIES = 20;
   const load = () => {
     // Rejeições são esperadas durante o boot do Vite (ERR_ABORTED em reload
     // concorrente) — o watchdog cuida do retry; nunca deixar virar unhandled.
     if (devServerUrl) {
-      win.loadURL(devServerUrl).catch(() => {});
+      win.loadURL(devServerUrl).catch((err) => {
+        console.warn('[window] load failed:', err);
+      });
     } else {
       win
         .loadFile(
           path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
         )
-        .catch(() => {});
+        .catch((err) => {
+          console.warn('[window] load failed:', err);
+        });
     }
   };
   wc.on('did-fail-load', (_e, code, desc) => {
     if (win.isDestroyed()) return;
     loadRetries += 1;
+    if (loadRetries > MAX_LOAD_RETRIES) {
+      console.error(
+        `[window] load falhou ${MAX_LOAD_RETRIES}x (${code} ${desc}) — desistindo do retry automático`,
+      );
+      return;
+    }
     console.warn(`[window] load falhou (${code} ${desc}) — retry ${loadRetries}`);
+    // Backoff simples: 400ms crescendo com o número de tentativas, teto 5s.
     setTimeout(() => {
       if (!win.isDestroyed()) load();
-    }, 400);
+    }, Math.min(400 * loadRetries, 5_000));
   });
   // Watchdog em DUAS fases. Fase 1 (load): cobre falha sem did-fail-load
   // (conexão pendurada, Vite frio, localhost→IPv4 com servidor só em ::1).

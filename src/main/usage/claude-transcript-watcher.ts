@@ -74,10 +74,10 @@ export class ClaudeTranscriptWatcher {
         // Sem dir de projeto ainda (primeira sessão) — o poll descobre depois.
       }
     }
-    this.pollTimer = setInterval(() => this.scanAll(), this.opts.pollMs ?? DEFAULT_POLL_MS);
+    this.pollTimer = setInterval(() => void this.scanAll(), this.opts.pollMs ?? DEFAULT_POLL_MS);
     // unref: o watcher nunca deve segurar o processo vivo no quit.
     this.pollTimer.unref?.();
-    this.scanAll();
+    void this.scanAll();
   }
 
   stop(): void {
@@ -94,12 +94,12 @@ export class ClaudeTranscriptWatcher {
     this.pollTimer = null;
   }
 
-  private scanAll(): void {
+  private async scanAll(): Promise<void> {
     if (this.stopped) return;
     for (const dir of this.projectDirs()) {
       let names: string[];
       try {
-        names = fs.readdirSync(dir);
+        names = await fs.promises.readdir(dir);
       } catch {
         continue;
       }

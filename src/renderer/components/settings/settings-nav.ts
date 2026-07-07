@@ -20,9 +20,14 @@ export type SettingsSection =
   | 'rules'
   | 'shortcuts';
 
+import type { PixelIconName } from '../PixelIcon';
+
 export interface NavItem {
   id: SettingsSection;
+  /** Badge mono de fallback (identidade), usado quando não há pixelIcon. */
   icon: string;
+  /** Ícone do idioma pixel (11×11) — quando presente, vence o badge de texto. */
+  pixelIcon?: PixelIconName;
   title: string;
   subtitle: string;
 }
@@ -34,23 +39,25 @@ export interface NavGroup {
 
 /**
  * Nav do Settings agrupada por INTENÇÃO — conta / operação diária / arsenal de
- * execução / catálogo instalado — em vez de 20 linhas num nível só. Os badges
- * mono (ID/VOX/KEY…) são identidade, ficam. Duplicata "MÍDIA" e sobreposição
- * PROVIDERS↔CLIS resolvidas por rótulo, sem apagar tela.
+ * execução / catálogo instalado — em vez de 20 linhas num nível só. Onde o
+ * idioma pixel já tem ícone (ID/>_ /VOX/KEY…) usamos PixelIcon; os demais
+ * badges mono (SQD/MKT/LLM…) seguem como texto até ganharem ícone próprio.
+ * Duplicata "MÍDIA" e sobreposição PROVIDERS↔CLIS resolvidas por rótulo,
+ * sem apagar tela.
  */
 export const SETTINGS_GROUPS: NavGroup[] = [
   {
     label: 'CONTA',
     items: [
-      { id: 'account', icon: 'ID', title: 'MINHA CONTA', subtitle: 'plano · assinatura' },
+      { id: 'account', icon: 'ID', pixelIcon: 'id-badge', title: 'MINHA CONTA', subtitle: 'plano · assinatura' },
       { id: 'system', icon: 'i', title: 'SISTEMA', subtitle: 'versão · changelog' },
     ],
   },
   {
     label: 'OPERAÇÃO',
     items: [
-      { id: 'terminal', icon: '>_', title: 'TERMINAL', subtitle: 'tema · fonte · shell' },
-      { id: 'voice', icon: 'VOX', title: 'VOICE', subtitle: 'voz · captura · Jarvis' },
+      { id: 'terminal', icon: '>_', pixelIcon: 'terminal', title: 'TERMINAL', subtitle: 'tema · fonte · shell' },
+      { id: 'voice', icon: 'VOX', pixelIcon: 'mic', title: 'VOICE', subtitle: 'voz · captura · Jarvis' },
       { id: 'media', icon: 'IMG', title: 'MÍDIA', subtitle: 'chaves de geração' },
       { id: 'shortcuts', icon: 'CMD', title: 'ATALHOS', subtitle: 'teclado' },
     ],
@@ -58,8 +65,8 @@ export const SETTINGS_GROUPS: NavGroup[] = [
   {
     label: 'ARSENAL',
     items: [
-      { id: 'providers', icon: 'KEY', title: 'PROVIDERS', subtitle: 'chaves · modelos · rota' },
-      { id: 'squads', icon: 'SQD', title: 'SQUADS', subtitle: 'orquestração' },
+      { id: 'providers', icon: 'KEY', pixelIcon: 'key', title: 'PROVIDERS', subtitle: 'chaves · modelos · rota' },
+      { id: 'squads', icon: 'SQD', pixelIcon: 'users', title: 'SQUADS', subtitle: 'orquestração' },
       { id: 'remote', icon: 'SSH', title: 'REMOTE', subtitle: 'bridge · ssh' },
       { id: 'marketplace', icon: 'MKT', title: 'MARKETPLACE', subtitle: 'catálogo · 1 clique' },
     ],

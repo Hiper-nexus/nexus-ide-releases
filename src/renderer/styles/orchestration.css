@@ -1,0 +1,403 @@
+/* Orchestration panel: missões, handoffs, todos, badges.
+   Módulo extraído do antigo global.css monolítico — a ordem de import
+   em global.css preserva a cascata original. */
+
+/* ---- Orchestration panel (missions / handoffs / todos / squads) ---- */
+.app__body {
+  position: relative;
+}
+
+.workspace-bar__todo {
+  color: var(--accent);
+  font-size: 11px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orch-panel {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  bottom: 8px;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  z-index: 30;
+  animation: orch-panel-in 160ms var(--ease-out-expo);
+}
+
+@keyframes orch-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orch-panel {
+    animation: none;
+  }
+}
+
+.orch-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.orch-panel__title {
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  flex: 1;
+}
+
+.orch-panel__mcp {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.orch-panel__tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.orch-panel__tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 5px 4px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.orch-panel__tab:hover {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.orch-panel__tab--active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.orch-panel__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.orch-panel__empty {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 8px 4px;
+}
+
+.orch-panel__toolbar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.orch-panel__btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.orch-panel__btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.orch-panel__btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.orch-panel__btn--danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: transparent;
+}
+
+.orch-panel__notice {
+  color: var(--text-dim);
+  font-size: 10px;
+  margin: 0 0 8px;
+  word-break: break-all;
+}
+
+.orch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.orch-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  background: var(--bg);
+  /* Item novo na timeline (handoff chegou, missão criada) entra assentando —
+     o olho é puxado para a novidade sem coreografia. */
+  animation: orch-item-in 200ms var(--ease-out-quart);
+}
+@keyframes orch-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .orch-item { animation: none; }
+}
+
+.orch-item__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.orch-item__title {
+  font-size: 12px;
+  font-weight: 600;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orch-item__detail {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.orch-item__meta {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Fechar/remover a missão da lista — discreto, acende no hover do item. */
+.orch-item__remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  opacity: 0;
+  cursor: pointer;
+  transition:
+    opacity 120ms var(--ease-out-quart),
+    background-color 120ms var(--ease-out-quart),
+    color 120ms var(--ease-out-quart);
+}
+.orch-item:hover .orch-item__remove,
+.orch-item__remove:focus-visible {
+  opacity: 1;
+}
+.orch-item__remove:hover {
+  background: var(--accent-soft);
+  color: var(--danger);
+}
+@media (prefers-reduced-motion: reduce) {
+  .orch-item__remove { transition: none; }
+}
+
+.orch-badge {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border-radius: var(--radius-round);
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+}
+
+.orch-badge--running,
+.orch-badge--in_progress {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.orch-badge--done,
+.orch-badge--success {
+  color: var(--ok);
+  border-color: rgba(126, 226, 168, 0.55);
+}
+
+.orch-badge--blocked,
+.orch-badge--partial {
+  color: var(--warn);
+  border-color: rgba(229, 192, 123, 0.55);
+}
+
+.orch-badge--failed {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* Handoff sintético do watchdog: worker em silêncio prolongado. Âmbar pulsante
+   — pede diagnóstico, não é falha consumada. */
+.orch-badge--stalled {
+  color: #e5a556;
+  border-color: rgba(229, 165, 86, 0.55);
+  animation: orch-stalled-pulse 2.4s ease-in-out infinite;
+}
+@keyframes orch-stalled-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .orch-badge--stalled { animation: none; }
+}
+
+.orch-todo-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.orch-todo {
+  display: flex;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.orch-todo--in_progress {
+  color: var(--accent);
+}
+
+.orch-todo--done {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.orch-todo__dot {
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-round);
+  border: 1.5px solid var(--text-dim);
+  box-sizing: border-box;
+}
+
+.orch-todo__dot--in_progress {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.orch-todo__dot--done {
+  border-color: var(--ok);
+  background: var(--ok);
+}
+
+.orch-todo__label {
+  flex: 1;
+}
+
+/* Small status pill (pending/delivered on a handoff, delivery count on a
+   mission). Distinct from --badge: neutral by default, colored by modifier. */
+.orch-tag {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: var(--radius-round);
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.orch-tag--pending {
+  color: var(--warn);
+  border-color: rgba(229, 192, 123, 0.5);
+}
+
+.orch-tag--done {
+  color: var(--ok);
+  border-color: rgba(126, 226, 168, 0.5);
+}
+
+/* Handoff artifacts: a compact, monospaced bulleted list of file paths / names. */
+.orch-artifacts {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.orch-artifacts__item {
+  position: relative;
+  padding-left: 12px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.orch-artifacts__item::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 6px;
+  width: 4px;
+  height: 4px;
+  border-radius: var(--radius-round);
+  background: var(--text-dim);
+}
+
+.orch-panel__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  line-height: 0;
+}

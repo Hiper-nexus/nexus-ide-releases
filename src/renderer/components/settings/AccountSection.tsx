@@ -5,6 +5,7 @@ import {
   type PlanId,
   type TeamInfo,
 } from '../../../shared/billing-types';
+import { PixelIcon } from '../PixelIcon';
 
 /**
  * Minha Conta — plano atual + upgrade. O checkout/portal abrem o navegador no
@@ -124,7 +125,7 @@ export function AccountSection() {
       <h3 className="settings-detail__title">Minha Conta</h3>
       <div className="account__identity">
         <span className="account__avatar" aria-hidden="true">
-          👤
+          <PixelIcon name="user" size={22} />
         </span>
         <div className="account__who">
           <span className="account__email">

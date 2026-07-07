@@ -401,7 +401,7 @@ export type Unsubscribe = () => void;
 import type {
   CheckoutRequest,
   InviteInfo,
-  LicenseInfo,
+  LicenseState,
   PlanId,
   TeamInfo,
 } from './billing-types';
@@ -421,7 +421,7 @@ export interface NexusApi {
     ): Unsubscribe;
   };
   billing: {
-    get(): Promise<LicenseInfo>;
+    get(): Promise<LicenseState>;
     openCheckout(request: PlanId | CheckoutRequest): Promise<{ ok: boolean; error?: string }>;
     openPortal(): Promise<{ ok: boolean }>;
   };

@@ -36,17 +36,26 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
   },
 
   complete: () => {
-    void window.nexus.onboarding.set({ completed: true }).then((state) => set({ state }));
+    void window.nexus.onboarding
+      .set({ completed: true })
+      .then((state) => set({ state }))
+      .catch((err) => console.warn('[onboarding] falha ao persistir complete:', err));
   },
 
   skip: () => {
-    void window.nexus.onboarding.set({ skipped: true }).then((state) => set({ state }));
+    void window.nexus.onboarding
+      .set({ skipped: true })
+      .then((state) => set({ state }))
+      .catch((err) => console.warn('[onboarding] falha ao persistir skip:', err));
   },
 
   markVictory: (key) => {
     // Só chama o main se ainda não registrada (a vitória é o primeiro momento).
     if (get().state.victories[key] !== undefined) return;
-    void window.nexus.onboarding.set({ victory: key }).then((state) => set({ state }));
+    void window.nexus.onboarding
+      .set({ victory: key })
+      .then((state) => set({ state }))
+      .catch((err) => console.warn(`[onboarding] falha ao persistir vitória "${key}":`, err));
   },
 }));
 

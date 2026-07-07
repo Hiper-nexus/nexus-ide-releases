@@ -8,6 +8,7 @@ import { buildLicenseRouter } from './billing/license-routes';
 import { buildTeamRouter } from './team/team-routes';
 import { buildWebPages } from './web/pages';
 import { errorHandler } from './middleware/errors';
+import { rateLimit } from './middleware/rate-limit';
 
 /** Deps de auth + Stripe opcional (billing só monta quando presente). */
 export type AppDeps = AuthDeps & { stripe?: StripeLike };
@@ -19,6 +20,14 @@ export function createApp(deps?: AppDeps): Express {
   // do proxy para TODOS os usuários (bucket único = DoS global). Ajuste se a
   // topologia tiver mais saltos.
   app.set('trust proxy', 1);
+  // Teto global generoso por IP (rotas sensíveis têm limiters próprios, mais
+  // apertados). O webhook do Stripe fica FORA: retries legítimos chegam em
+  // rajada e a rota já se protege por assinatura + idempotência.
+  const globalLimiter = rateLimit({ windowMs: 60_000, max: 300 });
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/v1/billing/webhook')) return next();
+    globalLimiter(req, res, next);
+  });
   if (deps?.stripe) {
     app.use('/v1/billing/webhook', express.raw({ type: '*/*', limit: '256kb' }));
   }

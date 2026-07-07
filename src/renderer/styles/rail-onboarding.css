@@ -1,0 +1,360 @@
+/* Trilha de missões + onboarding de primeira execução.
+   Módulo extraído do antigo global.css monolítico — a ordem de import
+   em global.css preserva a cascata original. */
+
+/* ── Trilha de missões (coluna vertical, altura total à esquerda) ────── */
+.mission-rail {
+  width: 208px;
+  flex: 0 0 208px;
+  align-self: stretch;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.02));
+  overflow: hidden;
+}
+.mission-rail__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.mission-rail__title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  flex: 1;
+}
+.mission-rail__new {
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.mission-rail__new:hover { border-color: var(--accent); }
+.mission-rail__list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* O X de remover fica SOBRE o item (que é ele próprio um botão — não pode
+   aninhar). A linha é relativa; o X acende no hover ou com foco no teclado. */
+.mission-rail__row {
+  position: relative;
+}
+.mission-rail__item {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 30px 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+.mission-rail__item:hover:not(:disabled) { background: rgba(255, 255, 255, 0.04); }
+.mission-rail__remove {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  opacity: 0;
+  cursor: pointer;
+  transition:
+    opacity 120ms var(--ease-out-quart),
+    background-color 120ms var(--ease-out-quart),
+    color 120ms var(--ease-out-quart);
+}
+.mission-rail__row:hover .mission-rail__remove,
+.mission-rail__remove:focus-visible {
+  opacity: 1;
+}
+.mission-rail__remove:hover {
+  background: var(--accent-soft);
+  color: var(--danger);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mission-rail__remove { transition: none; }
+}
+.mission-rail__item--active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.mission-rail__item:disabled { opacity: 0.6; cursor: default; }
+.mission-rail__dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex: 0 0 8px; }
+/* Estados nos tokens compartilhados (--ok/--warn/--danger) — mesmo
+   significado, mesma cor no rail, no Ops Board e no orch panel. */
+.mission-rail__dot--running { background: var(--warn); }
+.mission-rail__dot--done { background: var(--ok); }
+.mission-rail__dot--failed { background: var(--danger); }
+.mission-rail__dot--blocked { background: var(--warn); }
+.mission-rail__dot--pending { background: var(--text-dim); }
+.mission-rail__item-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mission-rail__item-title { font-size: 13px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; }
+.mission-rail__item-meta { font-size: 11px; color: var(--text-dim); }
+.mission-rail__note { font-size: 11px; color: var(--danger); padding: 6px 12px; }
+
+/* ── Onboarding de primeira execução ─────────────────────────────────────── */
+.onb {
+  position: fixed;
+  inset: 0;
+  z-index: 70; /* acima de wizard/drawers — é a primeira tela */
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(3px);
+}
+.onb__panel {
+  width: min(600px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  padding: 26px 26px 20px;
+  box-shadow: var(--shadow-3);
+  animation: onb-rise 200ms var(--ease-out-quint);
+}
+@keyframes onb-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .onb__panel { animation: none; }
+}
+.onb__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+.onb__logo {
+  color: var(--accent);
+  font-size: 28px;
+  line-height: 1;
+  flex: none;
+}
+.onb__title {
+  font-size: 19px;
+  font-weight: 650;
+  margin: 0 0 4px;
+}
+.onb__sub {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin: 0;
+  max-width: 46ch;
+}
+.onb__skip-x {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color 120ms var(--ease-out-quart), color 120ms var(--ease-out-quart);
+}
+.onb__skip-x:hover { border-color: var(--border-strong); color: var(--text); }
+
+.onb__section { margin-bottom: 20px; }
+.onb__section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin: 0 0 10px;
+}
+.onb__pill {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  padding: 1px 8px;
+  border-radius: var(--radius-round);
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+}
+.onb__pill--ok { color: var(--ok); border-color: rgba(126, 226, 168, 0.5); }
+.onb__pill--warn { color: var(--warn); border-color: rgba(229, 192, 123, 0.5); }
+
+.onb__cli-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.onb__cli {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.onb__cli--ok { border-color: rgba(126, 226, 168, 0.4); }
+.onb__cli-glyph { color: var(--accent); }
+
+.onb__missing { margin-top: 12px; }
+.onb__missing > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--accent);
+  user-select: none;
+}
+.onb__install-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.onb__install {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.onb__install-label { min-width: 70px; }
+.onb__install-cmd {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 7px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.onb__copy {
+  flex: none;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.onb__copy:hover { color: var(--text); border-color: var(--accent); }
+.onb__hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin: 10px 0 0;
+}
+.onb__hint code {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.onb__victories {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.onb__victory {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.onb__victory--done { color: var(--text); }
+.onb__check {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  font-size: 11px;
+  color: var(--ok);
+}
+.onb__victory--done .onb__check {
+  border-color: var(--ok);
+  background: rgba(126, 226, 168, 0.12);
+}
+
+.onb__foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.onb__skip {
+  font-size: 13px;
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.onb__skip:hover { color: var(--text); }
+.onb__cta {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 18px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-soft);
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out-quart);
+}
+.onb__cta:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+.onb__cta:disabled { opacity: 0.5; cursor: not-allowed; }

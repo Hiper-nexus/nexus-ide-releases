@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 let db: Db | null = null;
 let initialized = false;
+let degraded = false;
 
 /** Lazily open the DB and create the schema. Returns null if unavailable. */
 export function getDb(): Db | null {
@@ -142,10 +143,20 @@ export function getDb(): Db | null {
       // Column already present.
     }
   } catch (err) {
-    console.warn('[nexus] SQLite unavailable, falling back to JSON only:', err);
+    degraded = true;
+    console.error(
+      '[nexus] SQLite indisponível — MODO DEGRADADO: missões, squads e ' +
+        'histórico NÃO serão persistidos nesta sessão (apenas estado em memória/JSON):',
+      err,
+    );
     db = null;
   }
   return db;
+}
+
+/** True quando o better-sqlite3 falhou no load e a persistência está degradada. */
+export function isDbDegraded(): boolean {
+  return degraded;
 }
 
 export function closeDb(): void {

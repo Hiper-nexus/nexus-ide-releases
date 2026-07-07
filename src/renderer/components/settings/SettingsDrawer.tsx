@@ -16,6 +16,7 @@ import {
   TerminalSection,
 } from './ModuleSections';
 import { ProvidersPanel } from './ProvidersPanel';
+import { PixelIcon } from '../PixelIcon';
 import { AccountSection } from './AccountSection';
 import { MediaSection } from './MediaSection';
 import {
@@ -57,7 +58,7 @@ function NavRow({
       onClick={() => onSelect(item.id)}
     >
       <span className="settings-nav__icon" aria-hidden>
-        {item.icon}
+        {item.pixelIcon ? <PixelIcon name={item.pixelIcon} size={14} /> : item.icon}
       </span>
       <span className="settings-nav__text">
         <span className="settings-nav__title">{item.title}</span>
