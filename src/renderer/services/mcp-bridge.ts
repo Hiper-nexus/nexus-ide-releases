@@ -12,16 +12,7 @@
  */
 
 import type { JarvisAction } from '../../shared/voice-ipc';
-
-export interface McpInvokeResult {
-  ok: boolean;
-  tool: string;
-  result?: unknown;
-  error?: string;
-  denied?: boolean;
-  requiredConfirmation?: boolean;
-  confirmationReason?: string;
-}
+import type { McpInvokeResult } from '../../shared/mcp-types';
 
 /**
  * Map a JarvisAction to the corresponding MCP tool name and args.
@@ -66,7 +57,7 @@ export function mapActionToTool(
  */
 export async function mcpInvoke(
   tool: string,
-  args: Record<string, unknown>,
+  args: Record<string, unknown> = {},
 ): Promise<McpInvokeResult> {
   try {
     const result = await window.nexus.mcp.invoke(tool, args);
@@ -77,6 +68,28 @@ export async function mcpInvoke(
       tool,
       error: err instanceof Error ? err.message : String(err),
     };
+  }
+}
+
+export async function mcpConfirm(
+  tool: string,
+  args: Record<string, unknown> = {},
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    return await window.nexus.mcp.confirm(tool, args);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function mcpClearSession(): Promise<{ ok: boolean }> {
+  try {
+    return await window.nexus.mcp.clearSession();
+  } catch {
+    return { ok: false };
   }
 }
 

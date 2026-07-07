@@ -10,41 +10,56 @@ import os from 'node:os';
  *   ~/Library/Logs/NexusIDE/jarvis-actions.log
  *
  * Format (one JSON object per line):
- *   {ts, session, tool, args, result, duration_ms, user_confirmed, error?}
+ *   {timestamp, session, tool, args, result, duration_ms, user_authorized, error?}
  */
 
 const LOG_DIR = path.join(os.homedir(), 'Library', 'Logs', 'NexusIDE');
 const LOG_FILE = path.join(LOG_DIR, 'jarvis-actions.log');
-
-let logStream: fs.WriteStream | null = null;
-
-function ensureStream(): fs.WriteStream {
-  if (!logStream || logStream.destroyed) {
-    if (!fs.existsSync(LOG_DIR)) {
-      fs.mkdirSync(LOG_DIR, { recursive: true });
-    }
-    logStream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
-  }
-  return logStream;
-}
+const REDACTED = '[REDACTED]';
+const REDACTED_TEXT = '[REDACTED_TEXT]';
+const SECRET_KEY_RE = /(authorization|cookie|password|secret|token|api[_-]?key|access[_-]?key)/i;
+const CONTENT_KEY_RE = /^(content|oldText|newText)$/i;
 
 export interface AuditEntry {
   /** ISO 8601 timestamp */
-  ts: string;
+  timestamp: string;
   /** Session identifier */
   session: string;
   /** MCP tool name (e.g. "nexus_file_write") */
   tool: string;
-  /** Tool arguments (serialized as JSON string) */
-  args: string;
+  /** Redacted tool arguments */
+  args: Record<string, unknown>;
   /** Result status */
   result: 'ok' | 'error' | 'denied';
   /** Duration in milliseconds */
-  durationMs: number;
+  duration_ms: number;
   /** Whether the user explicitly confirmed this action */
-  userConfirmed: boolean;
+  user_authorized: boolean;
   /** Error message, if result is 'error' */
   error?: string;
+}
+
+function redactValue(value: unknown, key = ''): unknown {
+  if (SECRET_KEY_RE.test(key)) return REDACTED;
+  if (CONTENT_KEY_RE.test(key)) return REDACTED_TEXT;
+  if (Array.isArray(value)) return value.map((item) => redactValue(item));
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([childKey, childValue]) => [
+        childKey,
+        redactValue(childValue, childKey),
+      ]);
+    return Object.fromEntries(entries);
+  }
+  if (typeof value === 'string' && value.length > 2000) {
+    return `${value.slice(0, 2000)}...[TRUNCATED]`;
+  }
+  return value;
+}
+
+export function redactArgs(args: Record<string, unknown>): Record<string, unknown> {
+  return redactValue(args) as Record<string, unknown>;
 }
 
 /**
@@ -73,16 +88,16 @@ export function auditSuccess(
   tool: string,
   args: Record<string, unknown>,
   durationMs: number,
-  userConfirmed: boolean,
+  userAuthorized: boolean,
 ): void {
   writeAuditEntry({
-    ts: new Date().toISOString(),
+    timestamp: new Date().toISOString(),
     session,
     tool,
-    args: JSON.stringify(args),
+    args: redactArgs(args),
     result: 'ok',
-    durationMs,
-    userConfirmed,
+    duration_ms: durationMs,
+    user_authorized: userAuthorized,
   });
 }
 
@@ -95,16 +110,16 @@ export function auditError(
   args: Record<string, unknown>,
   durationMs: number,
   error: string,
-  userConfirmed: boolean,
+  userAuthorized: boolean,
 ): void {
   writeAuditEntry({
-    ts: new Date().toISOString(),
+    timestamp: new Date().toISOString(),
     session,
     tool,
-    args: JSON.stringify(args),
+    args: redactArgs(args),
     result: 'error',
-    durationMs,
-    userConfirmed,
+    duration_ms: durationMs,
+    user_authorized: userAuthorized,
     error,
   });
 }
@@ -120,15 +135,55 @@ export function auditDenied(
   reason: string,
 ): void {
   writeAuditEntry({
-    ts: new Date().toISOString(),
+    timestamp: new Date().toISOString(),
     session,
     tool,
-    args: JSON.stringify(args),
+    args: redactArgs(args),
     result: 'denied',
-    durationMs,
-    userConfirmed: false,
+    duration_ms: durationMs,
+    user_authorized: false,
     error: reason,
   });
+}
+
+function parseLegacyArgs(args: unknown): Record<string, unknown> {
+  if (typeof args !== 'string') {
+    return args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
+  }
+  try {
+    const parsed = JSON.parse(args);
+    return parsed && typeof parsed === 'object'
+      ? redactArgs(parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseAuditEntry(line: string): AuditEntry | null {
+  try {
+    const raw = JSON.parse(line) as Partial<AuditEntry> & {
+      ts?: string;
+      durationMs?: number;
+      userConfirmed?: boolean;
+    };
+    if (typeof raw.timestamp === 'string') return raw as AuditEntry;
+    if (typeof raw.ts === 'string') {
+      return {
+        timestamp: raw.ts,
+        session: String(raw.session ?? ''),
+        tool: String(raw.tool ?? ''),
+        args: parseLegacyArgs(raw.args),
+        result: raw.result ?? 'error',
+        duration_ms: raw.durationMs ?? 0,
+        user_authorized: raw.userConfirmed ?? false,
+        error: raw.error,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -142,13 +197,7 @@ export function readAuditLog(limit = 100): AuditEntry[] {
     const lines = raw.trim().split('\n');
     const entries = lines
       .slice(-limit)
-      .map((line) => {
-        try {
-          return JSON.parse(line) as AuditEntry;
-        } catch {
-          return null;
-        }
-      })
+      .map(parseAuditEntry)
       .filter((e): e is AuditEntry => e !== null);
     return entries;
   } catch {
@@ -161,10 +210,6 @@ export function readAuditLog(limit = 100): AuditEntry[] {
  */
 export function clearAuditLog(): void {
   try {
-    if (logStream) {
-      logStream.close();
-      logStream = null;
-    }
     if (fs.existsSync(LOG_FILE)) {
       fs.unlinkSync(LOG_FILE);
     }
@@ -184,12 +229,5 @@ export function getAuditLogPath(): string {
  * Close the log stream (for graceful shutdown).
  */
 export function closeAuditLog(): void {
-  try {
-    if (logStream) {
-      logStream.end();
-      logStream = null;
-    }
-  } catch {
-    // Silent
-  }
+  // Synchronous appends keep no open handle.
 }

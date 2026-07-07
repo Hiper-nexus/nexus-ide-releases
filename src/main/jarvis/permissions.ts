@@ -21,8 +21,21 @@ const cache = new Map<string, PermissionEntry>();
  * Generate a deterministic hash of the tool arguments.
  * The hash is used to identify identical tool invocations.
  */
+function normalizeForHash(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeForHash(item));
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, normalizeForHash(item)] as const);
+    return Object.fromEntries(entries);
+  }
+  return value;
+}
+
 function hashArgs(args: Record<string, unknown>): string {
-  const normalized = JSON.stringify(args, Object.keys(args).sort());
+  const normalized = JSON.stringify(normalizeForHash(args));
   return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
 }
 

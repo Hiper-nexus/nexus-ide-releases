@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DESTRUCTIVE_PATTERNS,
   isDestructive,
   requiresConfirmation,
   confirmationReason,
@@ -101,6 +100,7 @@ describe('requiresConfirmation', () => {
   it('never confirms read-only tools', () => {
     expect(requiresConfirmation('nexus_file_read', { path: 'foo.ts' })).toBe(false);
     expect(requiresConfirmation('nexus_file_open', { path: 'foo.ts' })).toBe(false);
+    expect(requiresConfirmation('nexus_file_close', { path: 'foo.ts' })).toBe(false);
     expect(requiresConfirmation('nexus_git_status', {})).toBe(false);
     expect(requiresConfirmation('nexus_git_diff', {})).toBe(false);
     expect(requiresConfirmation('nexus_git_log', {})).toBe(false);

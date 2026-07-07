@@ -1,7 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import fs from 'node:fs';
 import {
-  writeAuditEntry,
   auditSuccess,
   auditError,
   auditDenied,
@@ -31,12 +29,12 @@ describe('audit-log', () => {
     expect(entries[0].session).toBe('sess1');
     expect(entries[0].tool).toBe('nexus_file_read');
     expect(entries[0].result).toBe('ok');
-    expect(entries[0].durationMs).toBe(42);
-    expect(entries[0].userConfirmed).toBe(false);
+    expect(entries[0].duration_ms).toBe(42);
+    expect(entries[0].user_authorized).toBe(false);
 
     expect(entries[1].result).toBe('error');
     expect(entries[1].error).toBe('disk full');
-    expect(entries[1].userConfirmed).toBe(true);
+    expect(entries[1].user_authorized).toBe(true);
 
     expect(entries[2].result).toBe('denied');
     expect(entries[2].error).toBe('destructive');
@@ -47,13 +45,13 @@ describe('audit-log', () => {
     const entries = readAuditLog();
     expect(entries.length).toBe(1);
     const entry = entries[0];
-    expect(entry.ts).toBeTruthy();
+    expect(entry.timestamp).toBeTruthy();
     expect(entry.session).toBe('sess1');
     expect(entry.tool).toBe('nexus_file_read');
     expect(entry.args).toBeTruthy();
     expect(entry.result).toBe('ok');
-    expect(typeof entry.durationMs).toBe('number');
-    expect(typeof entry.userConfirmed).toBe('boolean');
+    expect(typeof entry.duration_ms).toBe('number');
+    expect(typeof entry.user_authorized).toBe('boolean');
   });
 
   it('clears log file', () => {
@@ -94,7 +92,22 @@ describe('audit-log', () => {
     const args = { path: 'test.ts', nested: { key: 'value' } };
     auditSuccess('sess1', 'nexus_file_read', args, 10, false);
     const entries = readAuditLog();
-    const parsed = JSON.parse(entries[0].args);
-    expect(parsed).toEqual(args);
+    expect(entries[0].args).toEqual(args);
+  });
+
+  it('redacts sensitive args before persisting', () => {
+    auditSuccess(
+      'sess1',
+      'nexus_file_write',
+      { path: 'test.ts', content: 'secret source', token: 'abc' },
+      10,
+      true,
+    );
+    const entries = readAuditLog();
+    expect(entries[0].args).toMatchObject({
+      path: 'test.ts',
+      content: '[REDACTED_TEXT]',
+      token: '[REDACTED]',
+    });
   });
 });

@@ -3,6 +3,7 @@ import {
   PTY_CHANNELS,
   BROWSER_CHANNELS,
   PERF_CHANNELS,
+  MCP_CHANNELS,
   LAYOUT_CHANNELS,
   ADAPTER_CHANNELS,
   WINDOW_CHANNELS,
@@ -558,6 +559,13 @@ const api: NexusApi = {
   },
   perf: {
     snapshot: () => ipcRenderer.invoke(PERF_CHANNELS.snapshot),
+  },
+  mcp: {
+    invoke: (tool: string, args: Record<string, unknown> = {}) =>
+      ipcRenderer.invoke(MCP_CHANNELS.invoke, { tool, args }),
+    confirm: (tool: string, args: Record<string, unknown> = {}) =>
+      ipcRenderer.invoke(MCP_CHANNELS.confirm, { tool, args }),
+    clearSession: () => ipcRenderer.invoke(MCP_CHANNELS.clearSession),
   },
   media: {
     listProviders: () => ipcRenderer.invoke(MEDIA_CHANNELS.listProviders),

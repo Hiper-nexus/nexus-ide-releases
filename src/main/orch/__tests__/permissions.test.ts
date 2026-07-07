@@ -87,4 +87,26 @@ describe('permissions', () => {
     grantPermission('sess1', 'nexus_file_write', args1);
     expect(hasPermission('sess1', 'nexus_file_write', args2)).toBe(true);
   });
+
+  it('does not authorize different nested args', () => {
+    grantPermission('sess1', 'nexus_terminal_run', {
+      command: 'echo hi',
+      env: { SAFE: '1' },
+    });
+    expect(hasPermission('sess1', 'nexus_terminal_run', {
+      command: 'echo hi',
+      env: { SAFE: '2' },
+    })).toBe(false);
+  });
+
+  it('matches nested args regardless of key order', () => {
+    grantPermission('sess1', 'nexus_terminal_run', {
+      command: 'echo hi',
+      env: { B: '2', A: '1' },
+    });
+    expect(hasPermission('sess1', 'nexus_terminal_run', {
+      env: { A: '1', B: '2' },
+      command: 'echo hi',
+    })).toBe(true);
+  });
 });

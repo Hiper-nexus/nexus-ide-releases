@@ -8,6 +8,13 @@
  */
 
 import { ipcMain } from 'electron';
+import { MCP_CHANNELS } from '../../shared/channels';
+import type {
+  McpConfirmRequest,
+  McpConfirmResult,
+  McpInvokeRequest,
+  McpInvokeResult,
+} from '../../shared/mcp-types';
 import { resolveTool } from '../orch/mcp-protocol';
 import type { McpRegistry } from '../orch/mcp-protocol';
 import { buildToolset } from '../orch/tools';
@@ -20,6 +27,7 @@ import {
 import { auditSuccess, auditError, auditDenied } from '../jarvis/audit-log';
 
 let registry: McpRegistry | null = null;
+const RENDERER_SESSION_ID = 'jarvis-renderer';
 
 function getRegistry(): McpRegistry {
   if (!registry) {
@@ -32,19 +40,119 @@ function getRegistry(): McpRegistry {
   return registry;
 }
 
-export interface McpInvokeRequest {
-  tool: string;
-  args: Record<string, unknown>;
+function normalizeArgs(args: unknown): Record<string, unknown> {
+  return args && typeof args === 'object' && !Array.isArray(args)
+    ? (args as Record<string, unknown>)
+    : {};
 }
 
-export interface McpInvokeResult {
-  ok: boolean;
-  tool: string;
-  result?: unknown;
-  error?: string;
-  denied?: boolean;
-  requiredConfirmation?: boolean;
-  confirmationReason?: string;
+function rendererToolContext() {
+  return {
+    token: 'renderer-ipc',
+    label: 'Jarvis Renderer',
+    role: 'user' as const,
+    allowedTools: null,
+    allowedSkills: null,
+    stopAttempts: 0,
+    handoffSubmitted: false,
+  };
+}
+
+export async function invokeMcpTool(raw: McpInvokeRequest): Promise<McpInvokeResult> {
+  const toolName = raw?.tool;
+  const args = normalizeArgs(raw?.args);
+
+  if (!toolName || typeof toolName !== 'string') {
+    return { ok: false, tool: '', error: 'invalid tool name' };
+  }
+
+  const startMs = Date.now();
+  const sessionId = RENDERER_SESSION_ID;
+
+  const tool = resolveTool(getRegistry(), toolName);
+  if (!tool) {
+    const durationMs = Date.now() - startMs;
+    auditError(
+      sessionId,
+      toolName,
+      args,
+      durationMs,
+      `unknown tool: ${toolName}`,
+      false,
+    );
+    return {
+      ok: false,
+      tool: toolName,
+      error: `unknown tool: ${toolName}`,
+    };
+  }
+
+  const needsConfirmation = requiresConfirmation(tool.name, args);
+  const isUserAuthorized = needsConfirmation && hasPermission(sessionId, tool.name, args);
+  if (needsConfirmation && !isUserAuthorized) {
+    const durationMs = Date.now() - startMs;
+    const reason = confirmationReason(tool.name, args);
+    auditDenied(sessionId, tool.name, args, durationMs, reason);
+    return {
+      ok: false,
+      tool: tool.name,
+      denied: true,
+      requiredConfirmation: true,
+      confirmationReason: reason,
+    };
+  }
+
+  try {
+    const result = await tool.handler(args, rendererToolContext());
+    const durationMs = Date.now() - startMs;
+    auditSuccess(
+      sessionId,
+      tool.name,
+      args,
+      durationMs,
+      isUserAuthorized,
+    );
+    return {
+      ok: true,
+      tool: tool.name,
+      result,
+    };
+  } catch (err) {
+    const durationMs = Date.now() - startMs;
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    auditError(
+      sessionId,
+      tool.name,
+      args,
+      durationMs,
+      errorMsg,
+      isUserAuthorized,
+    );
+    return {
+      ok: false,
+      tool: tool.name,
+      error: errorMsg,
+    };
+  }
+}
+
+export function confirmMcpTool(raw: McpConfirmRequest): McpConfirmResult {
+  const toolName = raw?.tool;
+  const args = normalizeArgs(raw?.args);
+  if (!toolName || typeof toolName !== 'string') {
+    return { ok: false, error: 'invalid tool name' };
+  }
+  const tool = resolveTool(getRegistry(), toolName);
+  if (!tool) {
+    return { ok: false, error: `unknown tool: ${toolName}` };
+  }
+  grantPermission(RENDERER_SESSION_ID, tool.name, args);
+  return { ok: true };
+}
+
+export function clearMcpRendererSession(): { ok: boolean } {
+  clearSession(RENDERER_SESSION_ID);
+  return { ok: true };
 }
 
 /**
@@ -53,92 +161,9 @@ export interface McpInvokeResult {
  */
 export function registerMcpInvokeIpc(): void {
   ipcMain.handle(
-    'mcp:invoke',
-    async (_event, raw: McpInvokeRequest): Promise<McpInvokeResult> => {
-      const { tool: toolName, args } = raw;
-
-      if (!toolName || typeof toolName !== 'string') {
-        return { ok: false, tool: '', error: 'invalid tool name' };
-      }
-
-      const startMs = Date.now();
-      const sessionId = 'jarvis-renderer'; // Single session for renderer-initiated calls
-
-      // Resolve the tool
-      const tool = resolveTool(getRegistry(), toolName);
-      if (!tool) {
-        const durationMs = Date.now() - startMs;
-        auditError(
-          sessionId,
-          toolName,
-          args,
-          durationMs,
-          `unknown tool: ${toolName}`,
-          false,
-        );
-        return {
-          ok: false,
-          tool: toolName,
-          error: `unknown tool: ${toolName}`,
-        };
-      }
-
-      // Check guardrails for confirmation requirement
-      const needsConfirmation = requiresConfirmation(tool.name, args);
-      if (needsConfirmation && !hasPermission(sessionId, tool.name, args)) {
-        const reason = confirmationReason(tool.name, args);
-        return {
-          ok: false,
-          tool: tool.name,
-          requiredConfirmation: true,
-          confirmationReason: reason,
-        };
-      }
-
-      // Execute the tool
-      try {
-        // Create a minimal context for the tool handler
-        const ctx = {
-          token: 'renderer-ipc',
-          label: 'Jarvis Renderer',
-          role: 'user' as const,
-          allowedTools: null,
-          allowedSkills: null,
-          stopAttempts: 0,
-          handoffSubmitted: false,
-        };
-        const result = await tool.handler(args, ctx);
-        const durationMs = Date.now() - startMs;
-        auditSuccess(
-          sessionId,
-          tool.name,
-          args,
-          durationMs,
-          needsConfirmation,
-        );
-        return {
-          ok: true,
-          tool: tool.name,
-          result,
-        };
-      } catch (err) {
-        const durationMs = Date.now() - startMs;
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        auditError(
-          sessionId,
-          tool.name,
-          args,
-          durationMs,
-          errorMsg,
-          needsConfirmation,
-        );
-        return {
-          ok: false,
-          tool: tool.name,
-          error: errorMsg,
-        };
-      }
-    },
+    MCP_CHANNELS.invoke,
+    async (_event, raw: McpInvokeRequest): Promise<McpInvokeResult> =>
+      invokeMcpTool(raw),
   );
 }
 
@@ -147,12 +172,9 @@ export function registerMcpInvokeIpc(): void {
  */
 export function registerMcpConfirmIpc(): void {
   ipcMain.handle(
-    'mcp:confirm',
-    async (_event, raw: { tool: string; args: Record<string, unknown> }): Promise<{ ok: boolean }> => {
-      const sessionId = 'jarvis-renderer';
-      grantPermission(sessionId, raw.tool, raw.args);
-      return { ok: true };
-    },
+    MCP_CHANNELS.confirm,
+    async (_event, raw: McpConfirmRequest): Promise<McpConfirmResult> =>
+      confirmMcpTool(raw),
   );
 }
 
@@ -160,10 +182,7 @@ export function registerMcpConfirmIpc(): void {
  * Clear the renderer session permissions (called when Jarvis session ends).
  */
 export function registerMcpClearSessionIpc(): void {
-  ipcMain.handle('mcp:clearSession', async () => {
-    clearSession('jarvis-renderer');
-    return { ok: true };
-  });
+  ipcMain.handle(MCP_CHANNELS.clearSession, async () => clearMcpRendererSession());
 }
 
 /**

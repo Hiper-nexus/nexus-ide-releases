@@ -55,6 +55,7 @@ const ALWAYS_CONFIRM_TOOLS = new Set([
 const NEVER_CONFIRM_TOOLS = new Set([
   'nexus_file_read',
   'nexus_file_open',
+  'nexus_file_close',
   'nexus_file_search',
   'nexus_git_status',
   'nexus_git_diff',

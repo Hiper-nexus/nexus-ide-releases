@@ -30,6 +30,12 @@ export const PERF_CHANNELS = {
   snapshot: 'perf:snapshot',
 } as const;
 
+export const MCP_CHANNELS = {
+  invoke: 'mcp:invoke',
+  confirm: 'mcp:confirm',
+  clearSession: 'mcp:clearSession',
+} as const;
+
 export const LAYOUT_CHANNELS = {
   save: 'layout:save',
   load: 'layout:load',
