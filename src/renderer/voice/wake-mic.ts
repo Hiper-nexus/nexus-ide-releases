@@ -41,7 +41,7 @@ const MIN_SPEECH_MS = 320;
  * normal marcava só 0.21-0.27 de wake score e o ambiente 0.05-0.10;
  * 8x ≈ +18dB coloca a fala na zona de detecção mantendo o ambiente longe
  * do threshold 0.6. Clamp ±1 no onFrame evita estouro do int16. */
-const WAKE_MAKEUP_GAIN = 8;
+const WAKE_MAKEUP_GAIN = 12;
 
 const WATCHDOG_INTERVAL_MS = 4_000;
 const FRAME_STALL_MS = 8_000;
