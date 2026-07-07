@@ -5,6 +5,7 @@ import { useWorkspaceStore } from '../state/workspace-store';
 import { useOrchStore } from '../state/orch-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useHomeStore } from '../state/home-store';
+import { useGamificationStore } from '../state/gamification-store';
 import { useVoiceStore } from './voice-store';
 import { waitForSession, writeToPane } from '../terminal/terminal-host';
 import { launchSquadMission } from '../orch/mission-launcher';
@@ -185,6 +186,7 @@ export async function executeJarvisAction(
     useMissionWizardStore.getState().openForNewWorkspace();
     toolResult = { tool: action.type, ok: true, summary: 'wizard de workspace aberto' };
   } else if (action.type === 'open_terminal') {
+    useGamificationStore.getState().closeProfile();
     const paneId = useLayoutStore.getState().addShellPane();
     useHomeStore.getState().hide();
     const sessionId = await waitForSession(paneId, 5_000);

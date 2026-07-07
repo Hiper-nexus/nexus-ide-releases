@@ -17,7 +17,7 @@ import { onJarvisWakeRequest } from './manual-wake';
 import {
   delay,
   noteAutoReplyOpened,
-  resetAutoReplyLoop,
+  resetAutoReplyLoopForCapture,
   REPLY_LISTEN_DELAY_MS,
   shouldReopenJarvisListening,
 } from './jarvis-reply-loop';
@@ -44,6 +44,7 @@ import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useHomeStore } from '../state/home-store';
 import { useFilesStore } from '../state/files-store';
 import { useSettingsStore } from '../state/settings-store';
+import { useGamificationStore } from '../state/gamification-store';
 import { executeJarvisAction } from './jarvis-action-executor';
 import type { AutoStopOptions } from './voice-capture';
 import type {
@@ -66,8 +67,10 @@ const RESPONSE_QUIET_MS = 1_500; // speak once the pane has been quiet this long
 const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
 const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
 const REALTIME_ACTION_BRIDGE_ENABLED = true;
+const REALTIME_PROVIDER_AUDIO_ENABLED = false;
 const REALTIME_TRANSCRIPT_WAIT_MS = 1_800;
 const WAKE_ACK_SUPPRESS_MS = 8_000;
+const WAKE_PREROLL_MS = 2_500;
 const WAKE_SILENCE_MS = 700; // wake-word capture: quiet time that ends the utterance
 const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
 const PTT_HOLD_MAX_MS = 60_000; // hold-to-talk sem keyup (tap morto) fecha aqui
@@ -519,7 +522,12 @@ export function useVoiceController(): void {
     });
     const unsubLiveTranscript = window.nexus.voice.onLiveTranscript((event) => {
       useVoiceStore.getState().addLiveTranscript(event);
-      if (event.role === 'assistant' && event.final && event.text.trim()) {
+      if (
+        event.role === 'assistant' &&
+        event.final &&
+        event.text.trim() &&
+        !suppressRealtimeAudioOut
+      ) {
         useVoiceStore.getState().setSpoken(event.text.trim());
         void window.nexus.voice.recordEcho(event.text).catch(() => {});
       }
@@ -659,7 +667,7 @@ async function beginListening(
       suppressRealtimeAudioOut = true;
       void window.nexus.voice.liveInterrupt('wake-listen').catch(() => {});
     } else {
-      suppressRealtimeAudioOut = false;
+      suppressRealtimeAudioOut = !REALTIME_PROVIDER_AUDIO_ENABLED;
     }
     if (isJarvisLiveEnabled() && reason !== 'wake') {
       const info = useVoiceStore.getState().info;
@@ -678,7 +686,7 @@ async function beginListening(
     // Padrao pendingMic: mic ANTES da sessao live ficar pronta — liveStart
     // nao pode bloquear a captura ou a fala inicial some do WAV.
     if (wakeMic.isRunning()) {
-      wakeMic.beginUtterance(autoStop, 0);
+      wakeMic.beginUtterance(autoStop, reason === 'wake' ? WAKE_PREROLL_MS : 0);
     } else {
       await capture.start(autoStop);
     }
@@ -724,7 +732,7 @@ async function finishAndProcess(
       const tRealtime = Date.now();
       store.setStatus('transcribing');
       liveStatus('thinking');
-      suppressRealtimeAudioOut = false;
+      suppressRealtimeAudioOut = !REALTIME_PROVIDER_AUDIO_ENABLED;
       liveEndTurn();
       const liveTranscript = await waitForRealtimeTranscript();
       if (liveTranscript) {
@@ -743,31 +751,6 @@ async function finishAndProcess(
           void window.nexus.voice.liveInterrupt('discarded-transcript').catch(() => {});
           return;
         }
-        store.setTranscript(transcript);
-        store.setNote(null);
-        resetAutoReplyLoop();
-        const realtimeMs = Date.now() - tRealtime;
-        console.log(`[voice] realtime transcript (${realtimeMs}ms): "${transcript}"`);
-        logVoiceEvent('info', 'jarvis.realtimeTranscript', transcript, {
-          latencyMs: realtimeMs,
-          reason: activeCaptureReason,
-        });
-        if (shouldUseClassicActionBridge(transcript)) {
-          // Action/app-control turns belong to the audited Classic/MCP executor.
-          // Stop any provider speech that may have started and reply once via
-          // the normal Jarvis voice path.
-          suppressRealtimeAudioOut = true;
-          livePlayer?.stop();
-          stopAllPlayback();
-          logVoiceEvent('info', 'jarvis.actionBridge', 'classic executor', {
-            reason: 'app_action',
-            transcript: transcript.slice(0, 180),
-          });
-          void window.nexus.voice.liveInterrupt('classic-action-bridge').catch(() => {});
-          realtimeTurnActive = false;
-          await runJarvisTurn(transcript, capture, busy);
-          return;
-        }
         if (isWakeAckOnlyTranscript(transcript, personaUserName())) {
           console.log(`[voice] realtime transcript só ack/eco: "${transcript}"`);
           store.setStatus('idle');
@@ -775,11 +758,33 @@ async function finishAndProcess(
           liveEndTurn();
           return;
         }
-        console.log('[voice] realtime owns conversational response');
-        logVoiceEvent('info', 'jarvis.realtimeOwns', 'conversation', {
-          transcript: transcript.slice(0, 180),
+        store.setTranscript(transcript);
+        store.setNote(null);
+        resetAutoReplyLoopForCapture(activeCaptureReason);
+        const realtimeMs = Date.now() - tRealtime;
+        console.log(`[voice] realtime transcript (${realtimeMs}ms): "${transcript}"`);
+        logVoiceEvent('info', 'jarvis.realtimeTranscript', transcript, {
+          latencyMs: realtimeMs,
+          reason: activeCaptureReason,
         });
+        suppressRealtimeAudioOut = true;
+        livePlayer?.stop();
+        stopAllPlayback();
+        liveStatus('thinking');
+        void window.nexus.voice.liveInterrupt('classic-live-bridge').catch(() => {});
+        if (shouldUseClassicActionBridge(transcript)) {
+          logVoiceEvent('info', 'jarvis.actionBridge', 'classic executor', {
+            reason: 'app_action',
+            transcript: transcript.slice(0, 180),
+          });
+        } else {
+          logVoiceEvent('info', 'jarvis.liveBridge', 'classic executor', {
+            reason: 'conversation',
+            transcript: transcript.slice(0, 180),
+          });
+        }
         realtimeTurnActive = false;
+        await runJarvisTurn(transcript, capture, busy);
         return;
       }
       console.log(
@@ -868,7 +873,7 @@ async function finishAndProcess(
       latencyMs: tStt,
       reason: activeCaptureReason,
     });
-    resetAutoReplyLoop();
+    resetAutoReplyLoopForCapture(activeCaptureReason);
     // Surface throttle/quota fallbacks instead of failing silently.
     store.setNote(stt.fallbackNote ?? null);
 
@@ -1000,8 +1005,10 @@ async function runJarvisTurn(
   }
 
   if (reply.action.type !== 'none' && toolResult?.ok) {
+    useVoiceStore.getState().setNote(null);
     void window.nexus.gamification
       .recordJarvisAction({ actionType: reply.action.type, ok: true })
+      .then((snap) => useGamificationStore.getState().receive(snap))
       .catch(() => {});
   }
 

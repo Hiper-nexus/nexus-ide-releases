@@ -3,6 +3,7 @@ import {
   isConfusionReply,
   noteAutoReplyOpened,
   resetAutoReplyLoop,
+  resetAutoReplyLoopForCapture,
   shouldReopenJarvisListening,
 } from './jarvis-reply-loop';
 
@@ -19,7 +20,7 @@ describe('jarvis-reply-loop', () => {
     ).toBe(false);
   });
 
-  it('não reabre após turno wake (evita loop de eco/TTS)', () => {
+  it('reabre após wake quando a resposta pede continuidade', () => {
     resetAutoReplyLoop();
     expect(
       shouldReopenJarvisListening({
@@ -29,7 +30,7 @@ describe('jarvis-reply-loop', () => {
         isRealtimeLive: false,
         captureReason: 'wake',
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('reabre quando o cérebro pediu resposta', () => {
@@ -63,6 +64,45 @@ describe('jarvis-reply-loop', () => {
         sayText: 'Não entendi o pedido, patrão.',
         realtimeTurnActive: false,
         isRealtimeLive: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('reabre confusão vinda de wake só uma vez', () => {
+    resetAutoReplyLoop();
+    expect(
+      shouldReopenJarvisListening({
+        expectReply: true,
+        sayText: 'Não entendi o pedido, patrão.',
+        realtimeTurnActive: false,
+        isRealtimeLive: false,
+        captureReason: 'wake',
+      }),
+    ).toBe(true);
+
+    noteAutoReplyOpened();
+    expect(
+      shouldReopenJarvisListening({
+        expectReply: true,
+        sayText: 'Não entendi o pedido, patrão.',
+        realtimeTurnActive: false,
+        isRealtimeLive: false,
+        captureReason: 'reply',
+      }),
+    ).toBe(false);
+  });
+
+  it('não reseta contador em captura automática de reply', () => {
+    resetAutoReplyLoop();
+    noteAutoReplyOpened();
+    resetAutoReplyLoopForCapture('reply');
+    expect(
+      shouldReopenJarvisListening({
+        expectReply: true,
+        sayText: 'Não entendi o pedido, patrão.',
+        realtimeTurnActive: false,
+        isRealtimeLive: false,
+        captureReason: 'reply',
       }),
     ).toBe(false);
   });

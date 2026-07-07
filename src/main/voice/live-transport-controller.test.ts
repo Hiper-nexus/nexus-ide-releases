@@ -269,4 +269,29 @@ describe('LiveTransportController', () => {
     vi.doUnmock('./jarvis-memory');
     vi.doUnmock('../jarvis/realtime/factory');
   });
+
+  it('não chama response.cancel quando a sessão está dormant', async () => {
+    const provider = fakeProvider(async () => {});
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    session.patchStatus({ status: 'dormant', realtimeReady: true });
+    const interrupt = vi.fn();
+    const controller = new LiveTransportController(() => {}, session);
+    (controller as unknown as { provider: typeof provider }).provider = {
+      ...provider,
+      interrupt,
+    };
+    controller.interrupt('wake-ack');
+    expect(interrupt).not.toHaveBeenCalled();
+  });
+});
+
+describe('isIgnorableRealtimeError', () => {
+  it('ignora cancel sem response ativa', async () => {
+    const { isIgnorableRealtimeError } = await import('./live-transport-controller');
+    expect(isIgnorableRealtimeError('Cancellation failed: no active response')).toBe(true);
+    expect(isIgnorableRealtimeError('OpenAI realtime socket closed')).toBe(false);
+  });
 });

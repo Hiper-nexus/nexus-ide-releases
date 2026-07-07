@@ -17,13 +17,19 @@ export const CURRENT_RELEASE: AppRelease = {
   date: '2026-07-07',
   codename: 'Jarvis operacional',
   summary:
-    'Hotfix operacional baseado na análise interna de voz: o Nexus preserva a fala colada ao wake word, limpa eco da saudação e mantém o tratamento "patrão" nos comandos rápidos.',
-  highlights: [],
+    'Hotfix operacional de voz: o Nexus usa live transcript sem deixar o provedor falar por fora, preserva comandos colados ao wake word e mantém uma voz única no executor da Jarvis.',
+  highlights: [
+    {
+      title: 'Live passa pelo executor da Jarvis',
+      detail:
+        'O realtime agora acelera o transcript, mas respostas e ações voltam pelo cérebro/action executor auditável; a Jarvis deixa de conversar por fora quando precisa operar o app.',
+    },
+  ],
   fixes: [
     {
       title: 'Comando colado ao wake não se perde',
       detail:
-        'O wake mic agora mantém um pre-roll curto de áudio e semeia a captura do comando quando o "Hey Jarvis" dispara, evitando cortar pedidos como "Hey Jarvis, abrir terminal".',
+        'O wake mic mantém pre-roll curto e marca fala real nos frames semeados, evitando cortar pedidos como "Hey Jarvis, abrir terminal".',
     },
     {
       title: 'Eco da saudação é filtrado',
@@ -34,6 +40,11 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Persona nos fast-paths críticos',
       detail:
         'Comandos diretos como abrir terminal e consultas como "que horas são" recebem o nome configurado do usuário no contexto, mantendo respostas breves e cordiais com "patrão".',
+    },
+    {
+      title: 'Voz consistente no modo live',
+      detail:
+        'Áudio do provedor realtime fica mudo enquanto o executor clássico responde com o TTS configurado, evitando alternância silenciosa de timbre no mesmo turno.',
     },
   ],
 };

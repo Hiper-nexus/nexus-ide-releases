@@ -162,7 +162,8 @@ export class WakeMic {
   beginUtterance(autoStop?: AutoStopOptions, preRollMs = 0): void {
     if (!this.running) return;
     if (this.uttActive) this.cancelUtterance();
-    this.uttChunks = this.seedPreRoll(preRollMs);
+    const seeded = this.seedPreRoll(preRollMs);
+    this.uttChunks = seeded;
     this.uttActive = true;
     this.uttAutoStop = autoStop ?? null;
     this.uttFired = false;
@@ -170,6 +171,7 @@ export class WakeMic {
     this.uttSpeechMs = 0;
     this.uttStartedAt = Date.now();
     this.uttLastSpeechAt = this.uttStartedAt;
+    this.markSeededSpeech(seeded);
     // Deadline DURO por timer: o auto-stop normal roda dentro do onFrame — se
     // o mic morrer no meio da fala, nenhum frame chega e o turno ficaria
     // aberto para sempre. O timer fecha mesmo com o stream mudo.
@@ -248,6 +250,26 @@ export class WakeMic {
     return this.preRoll
       .filter((entry) => entry.at >= cutoff)
       .map((entry) => Float32Array.from(entry.frame));
+  }
+
+  private markSeededSpeech(chunks: Float32Array[]): void {
+    for (const frame of chunks) {
+      let sum = 0;
+      let peak = 0;
+      for (let i = 0; i < frame.length; i += 1) {
+        const sample = frame[i];
+        sum += sample * sample;
+        peak = Math.max(peak, Math.abs(sample));
+      }
+      const rms = Math.sqrt(sum / Math.max(1, frame.length));
+      if (rms >= SPEECH_RMS && peak >= SPEECH_PEAK) {
+        this.uttSpeechMs += (frame.length / (this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE)) * 1000;
+      }
+    }
+    if (this.uttSpeechMs >= MIN_SPEECH_MS) {
+      this.uttHeardSpeech = true;
+      this.uttLastSpeechAt = Date.now();
+    }
   }
 
   async start(): Promise<void> {

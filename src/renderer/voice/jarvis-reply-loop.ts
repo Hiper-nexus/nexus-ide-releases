@@ -10,9 +10,14 @@ export const MAX_AUTO_REPLY_LOOPS = 5;
 export const MAX_CONFUSION_REPLY_REOPENS = 1;
 
 let autoReplyLoopCount = 0;
+export type JarvisCaptureReason = 'manual' | 'wake' | 'ptt' | 'reply';
 
 export function resetAutoReplyLoop(): void {
   autoReplyLoopCount = 0;
+}
+
+export function resetAutoReplyLoopForCapture(reason: JarvisCaptureReason): void {
+  if (reason !== 'reply') resetAutoReplyLoop();
 }
 
 export function noteAutoReplyOpened(): void {
@@ -44,12 +49,8 @@ export function shouldReopenJarvisListening(opts: {
   sayText: string;
   realtimeTurnActive: boolean;
   isRealtimeLive: boolean;
-  captureReason?: 'manual' | 'wake' | 'ptt' | 'reply';
+  captureReason?: JarvisCaptureReason;
 }): boolean {
-  if (opts.captureReason === 'wake') {
-    console.log('[voice] não reabre após turno wake — diga Hey Jarvis de novo');
-    return false;
-  }
   if (autoReplyLoopCount >= MAX_AUTO_REPLY_LOOPS) {
     console.log('[voice] trava anti-loop: limite de reaberturas automáticas');
     return false;

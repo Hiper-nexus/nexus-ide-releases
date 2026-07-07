@@ -20,6 +20,17 @@ type Emit = (channel: string, payload?: unknown) => void;
 const RUNTIME_RECONNECT_BASE_MS = 750;
 const RUNTIME_RECONNECT_MAX_ATTEMPTS = 3;
 
+/** OpenAI devolve isto quando cancelamos sem response ativa — ruído, não falha real. */
+export function isIgnorableRealtimeError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes('cancellation failed') ||
+    m.includes('no active response') ||
+    m.includes('response_cancel_not_active') ||
+    m.includes('nothing to cancel')
+  );
+}
+
 /**
  * Borda entre o IPC e o provider realtime: conecta o socket escolhido, roteia
  * mic→servidor e áudio/transcrição/barge-in→renderer + FSM. Quando o
@@ -113,7 +124,10 @@ export class LiveTransportController {
   }
 
   interrupt(reason: string): ReturnType<JarvisLiveSession['interrupt']> {
-    this.provider?.interrupt();
+    const status = this.fsm.getState().status;
+    if (status === 'speaking' || status === 'thinking') {
+      this.provider?.interrupt();
+    }
     return this.fsm.interrupt(reason);
   }
 
@@ -184,6 +198,10 @@ export class LiveTransportController {
     });
     provider.onError((err) => {
       if (this.provider !== provider) return;
+      if (isIgnorableRealtimeError(err.message)) {
+        console.log('[live] realtime cancel ignorado:', err.message);
+        return;
+      }
       console.warn('[live]', err.message);
       this.fsm.patchStatus({
         status: 'error',

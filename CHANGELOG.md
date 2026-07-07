@@ -4,17 +4,25 @@
 
 Data: 2026-07-07
 
-Hotfix operacional baseado na analise interna de voz: a Jarvis agora
-preserva a fala colada ao wake word, limpa eco da saudacao e mantem tratamento
-"patrao" tambem nos caminhos rapidos.
+Hotfix operacional de voz: a Jarvis agora usa realtime como transcript rapido,
+mas fala e executa pelo executor auditavel do Nexus; preserva fala colada ao
+wake word, limpa eco da saudacao e mantem tratamento "patrao" tambem nos
+caminhos rapidos.
 
 ### Correcoes
 
+- Live sem voz dupla: o provedor realtime deixa de falar por fora do executor da
+  Jarvis. O transcript rapido volta para o brain/action executor unico, evitando
+  troca de timbre e respostas que prometem acao sem operar o app.
 - Wake mic com pre-roll curto: comandos como "Hey Jarvis, abrir terminal" nao
-  perdem o inicio da ordem enquanto o wake word e a saudacao acontecem.
+  perdem o inicio da ordem enquanto o wake word e a saudacao acontecem; frames
+  semeados agora contam como fala real.
 - Filtro de wake/ack: prefixos como "Hey Jarvis" e "Pois nao, patrao?" sao
   removidos antes de chegar ao fast-path/brain; ack puro vazado pelo alto-falante
   e descartado.
+- Anti-loop ajustado: quando a Jarvis nao entende depois do wake, ela pode
+  reabrir uma vez para correcao; capturas automaticas de resposta nao resetam o
+  contador, entao eco/confusao repetida nao entra em loop.
 - Fast-paths de acao e estado recebem o `userName` da persona, evitando respostas
   secas nos comandos criticos "abrir terminal" e "que horas sao".
 - Nova analise em `docs/analysis/2026-07-07-jarvis-operational-gap.md`
