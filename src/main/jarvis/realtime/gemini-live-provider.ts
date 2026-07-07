@@ -27,6 +27,8 @@ export class GeminiLiveProvider implements TurnManagedRealtimeProvider {
   private errorCallbacks: Array<(err: Error) => void> = [];
   private interruptedCallbacks: Array<() => void> = [];
   private responseDoneCallbacks: Array<() => void> = [];
+  private disconnectedCallbacks: Array<(err: Error) => void> = [];
+  private closing = false;
 
   private readonly deps: LiveTransportDeps;
 
@@ -69,6 +71,9 @@ export class GeminiLiveProvider implements TurnManagedRealtimeProvider {
             if (state === 'error') settle(new Error('Gemini Live setup failed'));
             if (state === 'closed' && !settled) {
               settle(new Error('Gemini Live socket closed before setup'));
+            }
+            if (state === 'closed' && settled && !this.closing) {
+              this.emitDisconnected(new Error('Gemini Live socket closed'));
             }
           },
           onError: (message) => {
@@ -118,10 +123,16 @@ export class GeminiLiveProvider implements TurnManagedRealtimeProvider {
     this.responseDoneCallbacks.push(cb);
   }
 
+  onDisconnected(cb: (err: Error) => void): void {
+    this.disconnectedCallbacks.push(cb);
+  }
+
   interrupt(): void {}
 
   close(): void {
+    this.closing = true;
     this.transport?.disconnect();
+    this.closing = false;
     this.transport = null;
   }
 
@@ -148,6 +159,10 @@ export class GeminiLiveProvider implements TurnManagedRealtimeProvider {
 
   private emitError(err: Error): void {
     for (const cb of this.errorCallbacks) cb(err);
+  }
+
+  private emitDisconnected(err: Error): void {
+    for (const cb of this.disconnectedCallbacks) cb(err);
   }
 }
 

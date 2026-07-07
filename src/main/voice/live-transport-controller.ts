@@ -17,6 +17,8 @@ import {
 import { jarvisLatencyTracker } from '../jarvis/realtime/metrics';
 
 type Emit = (channel: string, payload?: unknown) => void;
+const RUNTIME_RECONNECT_BASE_MS = 750;
+const RUNTIME_RECONNECT_MAX_ATTEMPTS = 3;
 
 /**
  * Borda entre o IPC e o provider realtime: conecta o socket escolhido, roteia
@@ -27,6 +29,9 @@ type Emit = (channel: string, payload?: unknown) => void;
 export class LiveTransportController {
   private provider: TurnManagedRealtimeProvider | null = null;
   private connecting: Promise<void> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempt = 0;
+  private reconnectGeneration = 0;
 
   constructor(
     private emit: Emit,
@@ -43,6 +48,7 @@ export class LiveTransportController {
 
   /** Chamado no start() do live: conecta o socket se o realtime estiver ligado. */
   onStart(): Promise<void> {
+    this.clearReconnectTimer();
     if (!this.isRealtimeConfigured()) {
       this.patchRealtimeReady(false);
       return Promise.resolve();
@@ -108,6 +114,7 @@ export class LiveTransportController {
   }
 
   onStop(): void {
+    this.clearReconnectTimer();
     this.provider?.close();
     this.provider = null;
     this.connecting = null;
@@ -126,6 +133,7 @@ export class LiveTransportController {
       try {
         await provider.connect();
         if (this.provider === provider) {
+          this.reconnectAttempt = 0;
           this.fsm.patchStatus({ status: 'listening', realtimeReady: true });
         }
         return;
@@ -179,6 +187,18 @@ export class LiveTransportController {
         error: err.message,
       });
     });
+    provider.onDisconnected((err) => {
+      if (this.provider !== provider) return;
+      console.warn('[live]', err.message);
+      provider.close();
+      if (this.provider === provider) this.provider = null;
+      this.fsm.patchStatus({
+        status: 'listening',
+        realtimeReady: false,
+        error: err.message,
+      });
+      this.scheduleReconnect();
+    });
   }
 
   private buildSystemInstruction(): string {
@@ -207,5 +227,36 @@ export class LiveTransportController {
       realtimeReady,
       error: realtimeReady ? undefined : state.error,
     });
+  }
+
+  private scheduleReconnect(): void {
+    const state = this.fsm.getState();
+    if (!state.enabled || !state.sessionId) return;
+    if (this.reconnectAttempt >= RUNTIME_RECONNECT_MAX_ATTEMPTS) return;
+    this.reconnectAttempt += 1;
+    this.clearReconnectTimer();
+    const generation = this.reconnectGeneration;
+    const delay = RUNTIME_RECONNECT_BASE_MS * 2 ** (this.reconnectAttempt - 1);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (generation !== this.reconnectGeneration) return;
+      const latest = this.fsm.getState();
+      if (!latest.enabled || !latest.sessionId) return;
+      void this.onStart()
+        .then(() => {
+          if (!this.provider?.isReady) this.scheduleReconnect();
+        })
+        .catch((err) => {
+          console.warn('[live] reconnect failed', err);
+          this.scheduleReconnect();
+        });
+    }, delay);
+  }
+
+  private clearReconnectTimer(): void {
+    this.reconnectGeneration += 1;
+    if (!this.reconnectTimer) return;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
   }
 }

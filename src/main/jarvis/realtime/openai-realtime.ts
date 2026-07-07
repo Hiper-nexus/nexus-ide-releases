@@ -71,10 +71,7 @@ export function buildOpenAISessionUpdate(opts: {
           transcription: {
             model: 'gpt-realtime-whisper',
           },
-          turn_detection: {
-            type: 'server_vad',
-            threshold: 0.5,
-          },
+          turn_detection: null,
         },
         output: {
           format: {
@@ -190,6 +187,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   private errorCallbacks: Array<(err: Error) => void> = [];
   private interruptedCallbacks: Array<() => void> = [];
   private responseDoneCallbacks: Array<() => void> = [];
+  private disconnectedCallbacks: Array<(err: Error) => void> = [];
   private latestContext = '';
 
   private readonly apiKey: string;
@@ -257,8 +255,15 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
         if (parsed.error) settle(parsed.error);
       });
       ws.on('close', () => {
+        const wasReady = this.ready;
         this.ready = false;
-        settle(new Error('OpenAI realtime socket closed before setup'));
+        this.pendingAudio = [];
+        this.pendingAudioBytes = 0;
+        if (!settled) {
+          settle(new Error('OpenAI realtime socket closed before setup'));
+          return;
+        }
+        if (wasReady) this.emitDisconnected(new Error('OpenAI realtime socket closed'));
       });
       ws.on('error', (payload) => {
         const err =
@@ -271,14 +276,14 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
 
   sendAudioChunk(pcm16: Int16Array): void {
     if (pcm16.length === 0) return;
-    const prepared = resamplePcm16(pcm16, this.sourceRate, this.targetRate);
     if (!this.isReady) {
-      const nextBytes = prepared.byteLength;
+      const nextBytes = pcm16.byteLength;
       if (this.pendingAudioBytes + nextBytes > PENDING_AUDIO_MAX_BYTES) return;
-      this.pendingAudio.push(prepared);
+      this.pendingAudio.push(pcm16.slice());
       this.pendingAudioBytes += nextBytes;
       return;
     }
+    const prepared = resamplePcm16(pcm16, this.sourceRate, this.targetRate);
     this.sendEvent({
       type: 'input_audio_buffer.append',
       audio: int16ArrayToBase64(prepared),
@@ -307,6 +312,10 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
 
   onResponseDone(cb: () => void): void {
     this.responseDoneCallbacks.push(cb);
+  }
+
+  onDisconnected(cb: (err: Error) => void): void {
+    this.disconnectedCallbacks.push(cb);
   }
 
   interrupt(): void {
@@ -413,6 +422,10 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
 
   private emitError(err: Error): void {
     for (const cb of this.errorCallbacks) cb(err);
+  }
+
+  private emitDisconnected(err: Error): void {
+    for (const cb of this.disconnectedCallbacks) cb(err);
   }
 }
 

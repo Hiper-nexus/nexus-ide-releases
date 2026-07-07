@@ -27,6 +27,7 @@ export interface TurnManagedRealtimeProvider extends RoleAwareRealtimeProvider {
   sendText(text: string): void;
   onInterrupted(cb: () => void): void;
   onResponseDone(cb: () => void): void;
+  onDisconnected(cb: (err: Error) => void): void;
 }
 
 export type RealtimeProviderId = 'openai' | 'gemini';
