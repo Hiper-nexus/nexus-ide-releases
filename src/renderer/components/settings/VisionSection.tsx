@@ -1,0 +1,147 @@
+import { useEffect, useState } from 'react';
+import type { ScreenPermissionStatus } from '../../../shared/vision-ipc';
+import { useVisionConsentStore } from '../../state/vision-consent-store';
+import {
+  formatDate,
+  MetricTile,
+  permissionLabel,
+  permissionTone,
+  StatusPill,
+} from './ops-format';
+
+function VisionConsentPanel({
+  active,
+  pending,
+  onToggle,
+}: {
+  active: boolean;
+  pending: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="ops-consent-panel">
+      <div>
+        <p className="ops-consent-panel__title">
+          Permitir envio de imagem da tela para nuvem
+        </p>
+        <p className="ops-consent-panel__copy">
+          Quando ativo, o main libera a última captura bruta da janela Nexus
+          somente com token de consentimento. Ao desativar, o token é invalidado
+          e a captura bruta em memória é descartada.
+        </p>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={active}
+        className={`ops-switch ${active ? 'ops-switch--on' : ''}`}
+        disabled={pending}
+        onClick={onToggle}
+      >
+        <span className="ops-switch__track">
+          <span className="ops-switch__thumb" />
+        </span>
+        <span className="ops-switch__label">
+          {pending ? 'salvando' : active ? 'permitido' : 'bloqueado'}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+export function VisionSection() {
+  const allowCloudImage = useVisionConsentStore((s) => s.allowCloudImage);
+  const consentToken = useVisionConsentStore((s) => s.consentToken);
+  const pending = useVisionConsentStore((s) => s.pending);
+  const error = useVisionConsentStore((s) => s.error);
+  const lastCapture = useVisionConsentStore((s) => s.lastCapture);
+  const enableCloudImage = useVisionConsentStore((s) => s.enableCloudImage);
+  const disableCloudImage = useVisionConsentStore((s) => s.disableCloudImage);
+  const [permission, setPermission] =
+    useState<ScreenPermissionStatus | 'error'>('not-determined');
+  const [captureStatus, setCaptureStatus] = useState<string | null>(null);
+
+  const refreshPermission = async () => {
+    try {
+      setPermission(await window.nexus.vision.checkPermission());
+    } catch {
+      setPermission('error');
+    }
+  };
+
+  const toggleConsent = async () => {
+    if (allowCloudImage) await disableCloudImage();
+    else await enableCloudImage();
+  };
+
+  const captureMetadata = async () => {
+    setCaptureStatus('capturando');
+    try {
+      const result = await window.nexus.vision.capture();
+      useVisionConsentStore.getState().markCaptured(result);
+      setCaptureStatus(`${result.width}x${result.height} capturado`);
+      void refreshPermission();
+    } catch (err) {
+      setCaptureStatus(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  useEffect(() => {
+    void refreshPermission();
+  }, []);
+
+  return (
+    <section>
+      <div className="settings-detail__split-head">
+        <div>
+          <h3 className="settings-detail__title">Vision</h3>
+          <p className="settings-detail__hint">
+            Jarvis só envia imagem da janela Nexus para provedores multimodais
+            quando você permite nesta sessão. Capturas locais e OCR continuam
+            limitados à janela do Nexus.
+          </p>
+        </div>
+        <StatusPill tone={allowCloudImage ? 'ok' : 'warn'}>
+          {allowCloudImage ? 'consent ativo' : 'local only'}
+        </StatusPill>
+      </div>
+
+      <VisionConsentPanel
+        active={allowCloudImage}
+        pending={pending}
+        onToggle={() => void toggleConsent()}
+      />
+      {error && <p className="settings-error">{error}</p>}
+
+      <div className="ops-metric-grid">
+        <MetricTile
+          label="Screen Recording"
+          value={permissionLabel(permission)}
+          tone={permissionTone(permission)}
+          detail="Permissão macOS para capturar a janela Nexus."
+        />
+        <MetricTile
+          label="Token de consent"
+          value={consentToken ? 'emitido' : 'inativo'}
+          tone={consentToken ? 'ok' : 'warn'}
+          detail={consentToken ? 'Válido só até desativar ou reiniciar.' : 'Imagem bruta não sai do main.'}
+        />
+        <MetricTile
+          label="Última captura"
+          value={lastCapture ? `${lastCapture.width}x${lastCapture.height}` : 'nenhuma'}
+          detail={lastCapture ? formatDate(lastCapture.capturedAt) : 'Use captura sob demanda para testar.'}
+        />
+      </div>
+
+      <div className="settings-row">
+        <button className="settings-btn" type="button" onClick={() => void captureMetadata()}>
+          Testar captura local
+        </button>
+        <button className="settings-btn" type="button" onClick={() => void refreshPermission()}>
+          Rechecar permissão
+        </button>
+      </div>
+      {captureStatus && <p className="settings-field__note">{captureStatus}</p>}
+    </section>
+  );
+}

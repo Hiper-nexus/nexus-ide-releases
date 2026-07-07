@@ -5,6 +5,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { PixelIcon } from './PixelIcon';
+import { useVisionConsentStore } from '../state/vision-consent-store';
 
 interface VisionIndicatorProps {
   className?: string;
@@ -13,10 +14,13 @@ interface VisionIndicatorProps {
 export function VisionIndicator({ className }: VisionIndicatorProps) {
   const [visible, setVisible] = useState(false);
   const timerRef = useRef<number | null>(null);
+  const consentActive = useVisionConsentStore((s) => s.allowCloudImage);
+  const markCaptured = useVisionConsentStore((s) => s.markCaptured);
 
   useEffect(() => {
-    const handler = () => {
+    const handler = (result: Parameters<typeof markCaptured>[0]) => {
       if (timerRef.current) window.clearTimeout(timerRef.current);
+      markCaptured(result);
       setVisible(true);
       timerRef.current = window.setTimeout(() => {
         setVisible(false);
@@ -24,9 +28,7 @@ export function VisionIndicator({ className }: VisionIndicatorProps) {
       }, 10_000);
     };
 
-    const unsub = window.nexus?.vision?.onCaptured(() => {
-      handler();
-    });
+    const unsub = window.nexus?.vision?.onCaptured(handler);
 
     return () => {
       if (timerRef.current) {
@@ -37,15 +39,26 @@ export function VisionIndicator({ className }: VisionIndicatorProps) {
     };
   }, []);
 
-  if (!visible) return null;
+  if (!visible && !consentActive) return null;
+
+  const label = consentActive ? 'Vision consent' : 'Vision';
+  const title = consentActive
+    ? 'Envio de imagem da tela para nuvem permitido nesta sessão'
+    : 'Jarvis Vision capturou a tela do Nexus IDE';
 
   return (
     <span
-      className={['vision-indicator', className].filter(Boolean).join(' ')}
-      title="Jarvis Vision está capturando a tela do Nexus IDE"
+      className={[
+        'vision-indicator',
+        consentActive ? 'vision-indicator--consent' : 'vision-indicator--capture',
+        className,
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      title={title}
     >
       <PixelIcon name="vision" size={11} />
-      <span className="vision-indicator__label">Vision</span>
+      <span className="vision-indicator__label">{label}</span>
     </span>
   );
 }

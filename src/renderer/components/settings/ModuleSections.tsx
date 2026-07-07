@@ -8,6 +8,7 @@ import { useSettingsStore } from '../../state/settings-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useVoiceStore } from '../../voice/voice-store';
 import { CURRENT_RELEASE } from '../../../shared/release-notes';
+import { UpdateReadinessPanel } from './ObservabilitySections';
 
 /** MÓDULOS sections: Terminal, Voice, Providers, Squads, Marketplace. */
 
@@ -151,6 +152,8 @@ export function SystemSection() {
           </li>
         ))}
       </ul>
+
+      <UpdateReadinessPanel />
     </section>
   );
 }

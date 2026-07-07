@@ -3,6 +3,9 @@ export type SettingsSection =
   | 'system'
   | 'terminal'
   | 'voice'
+  | 'vision'
+  | 'diagnostics'
+  | 'audit'
   | 'media'
   | 'providers'
   | 'squads'
@@ -58,6 +61,9 @@ export const SETTINGS_GROUPS: NavGroup[] = [
     items: [
       { id: 'terminal', icon: '>_', pixelIcon: 'terminal', title: 'TERMINAL', subtitle: 'tema · fonte · shell' },
       { id: 'voice', icon: 'VOX', pixelIcon: 'mic', title: 'VOICE', subtitle: 'voz · captura · Jarvis' },
+      { id: 'vision', icon: 'VIS', pixelIcon: 'vision', title: 'VISION', subtitle: 'consent · tela' },
+      { id: 'diagnostics', icon: 'DIA', title: 'DIAGNÓSTICO', subtitle: 'mic · permissões · live' },
+      { id: 'audit', icon: 'AUD', title: 'AUDITORIA', subtitle: 'ações · confirmations' },
       { id: 'media', icon: 'IMG', title: 'MÍDIA', subtitle: 'chaves de geração' },
       { id: 'shortcuts', icon: 'CMD', title: 'ATALHOS', subtitle: 'teclado' },
     ],

@@ -312,6 +312,12 @@
   animation: vision-indicator-pulse 1800ms var(--ease-out-quart) infinite;
 }
 
+.vision-indicator--consent {
+  border-color: rgba(126, 226, 168, 0.7);
+  background: rgba(126, 226, 168, 0.12);
+  color: var(--ok);
+}
+
 .vision-indicator__label {
   line-height: 1;
 }

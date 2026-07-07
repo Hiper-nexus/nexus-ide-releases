@@ -82,6 +82,10 @@ import type {
   McpConfirmResult,
   McpInvokeResult,
 } from './mcp-types';
+import type {
+  AuditLogSnapshot,
+  ReleaseReadinessSnapshot,
+} from './ops-ipc';
 
 export type { AdapterInfo };
 export type {
@@ -697,6 +701,10 @@ export interface NexusApi {
       args?: Record<string, unknown>,
     ): Promise<McpConfirmResult>;
     clearSession(): Promise<{ ok: boolean }>;
+  };
+  ops: {
+    auditLog(limit?: number): Promise<AuditLogSnapshot>;
+    releaseReadiness(): Promise<ReleaseReadinessSnapshot>;
   };
   media: {
     listProviders(): Promise<MediaProviderInfo[]>;
