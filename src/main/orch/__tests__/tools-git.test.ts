@@ -77,6 +77,36 @@ describe('tools-git', () => {
     ).rejects.toThrow();
     expect(fs.existsSync(marker)).toBe(false);
   });
+
+  it.each([
+    { remote: '--force' },
+    { remote: '--delete' },
+    { remote: '--mirror' },
+    { remote: '-f' },
+    { remote: '-d' },
+    { remote: '--force-with-lease' },
+    { branch: '--force' },
+    { branch: '--delete' },
+    { branch: '--mirror' },
+    { branch: '-f' },
+    { branch: '-d' },
+    { branch: '--force-with-lease' },
+    { branch: ':main' },
+    { branch: '+refs/heads/main' },
+    { branch: 'main:main' },
+  ])('rejects dangerous git push args %o', async (args) => {
+    const tools = buildGitTools();
+    const push = tools.find((t) => t.name === 'nexus_git_push')!;
+    await expect(push.handler(args, fakeCtx())).rejects.toThrow(
+      /blocked push flag|cannot start|refspec|delete refspec|force refspec/,
+    );
+  });
+
+  it('marks nexus_git_push as requiring confirmation', () => {
+    const tools = buildGitTools();
+    const push = tools.find((t) => t.name === 'nexus_git_push')!;
+    expect(push.requiresConfirm).toBe(true);
+  });
 });
 
 function fakeCtx() {

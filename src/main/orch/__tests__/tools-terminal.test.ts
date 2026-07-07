@@ -53,6 +53,34 @@ describe('tools-terminal', () => {
     expect(result.stderr).toContain('error');
   });
 
+  it('drops environment variables outside the allowlist', async () => {
+    const tools = buildTerminalTools();
+    const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
+    const result = await run.handler(
+      {
+        command: 'node -e "console.log(process.env.NODE_OPTIONS || \\"missing\\")"',
+        timeoutMs: 5000,
+        env: { NODE_OPTIONS: '--require ./malicious.js' },
+      },
+      fakeCtx(),
+    ) as { stdout: string };
+    expect(result.stdout.trim()).toBe('missing');
+  });
+
+  it('caps stdout at 1 MB with a truncation marker', async () => {
+    const tools = buildTerminalTools();
+    const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
+    const result = await run.handler(
+      {
+        command: 'node -e "process.stdout.write(\\"x\\".repeat(1024 * 1024 + 10))"',
+        timeoutMs: 5000,
+      },
+      fakeCtx(),
+    ) as { stdout: string };
+    expect(result.stdout).toContain('[TRUNCATED: output exceeded 1048576 bytes]');
+    expect(Buffer.byteLength(result.stdout)).toBeLessThan(1024 * 1024 + 200);
+  });
+
   it('denies cwd outside the active workspace', async () => {
     const tools = buildTerminalTools();
     const run = tools.find((t) => t.name === 'nexus_terminal_run')!;

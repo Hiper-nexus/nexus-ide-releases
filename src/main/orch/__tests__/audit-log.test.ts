@@ -1,4 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   auditSuccess,
   auditError,
@@ -7,15 +10,23 @@ import {
   clearAuditLog,
   getAuditLogPath,
   closeAuditLog,
+  setAuditLogPathForTests,
 } from '../../jarvis/audit-log';
 
 describe('audit-log', () => {
+  const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-audit-log');
+  const testAuditLog = path.join(testDir, 'jarvis-actions.log');
+
   beforeEach(() => {
+    fs.mkdirSync(testDir, { recursive: true });
+    setAuditLogPathForTests(testAuditLog);
     clearAuditLog();
   });
 
   afterEach(() => {
     closeAuditLog();
+    setAuditLogPathForTests(null);
+    fs.rmSync(testDir, { recursive: true, force: true });
   });
 
   it('writes and reads audit entries (JSONL)', () => {
@@ -27,6 +38,7 @@ describe('audit-log', () => {
     expect(entries.length).toBe(3);
 
     expect(entries[0].session).toBe('sess1');
+    expect(entries[0].source).toBe('ipc-renderer');
     expect(entries[0].tool).toBe('nexus_file_read');
     expect(entries[0].result).toBe('ok');
     expect(entries[0].duration_ms).toBe(42);
@@ -76,8 +88,7 @@ describe('audit-log', () => {
   });
 
   it('getAuditLogPath returns the correct path', () => {
-    const path = getAuditLogPath();
-    expect(path).toContain('jarvis-actions.log');
+    expect(getAuditLogPath()).toBe(testAuditLog);
   });
 
   it('handles concurrent writes without errors', () => {
@@ -108,6 +119,41 @@ describe('audit-log', () => {
       path: 'test.ts',
       content: '[REDACTED_TEXT]',
       token: '[REDACTED]',
+    });
+  });
+
+  it('redacts high-risk headers, env-shaped content, and editor text', () => {
+    auditSuccess(
+      'sess1',
+      'nexus_terminal_run',
+      {
+        authorization: 'Bearer abc',
+        cookie: 'sid=secret',
+        'set-cookie': 'sid=secret',
+        'x-api-key': 'secret',
+        credential: 'secret',
+        bearer: 'secret',
+        command: 'TOKEN=abc npm test',
+        text: 'inserted secret text',
+        nested: { envFile: 'API_KEY=abc\nSAFE=1' },
+      },
+      10,
+      true,
+      'http-mcp',
+    );
+
+    const [entry] = readAuditLog();
+    expect(entry.source).toBe('http-mcp');
+    expect(entry.args).toMatchObject({
+      authorization: '[REDACTED]',
+      cookie: '[REDACTED]',
+      'set-cookie': '[REDACTED]',
+      'x-api-key': '[REDACTED]',
+      credential: '[REDACTED]',
+      bearer: '[REDACTED]',
+      command: '[REDACTED]',
+      text: '[REDACTED_TEXT]',
+      nested: { envFile: '[REDACTED]' },
     });
   });
 });

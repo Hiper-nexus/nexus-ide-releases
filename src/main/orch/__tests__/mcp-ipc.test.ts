@@ -12,12 +12,17 @@ import {
   clearAuditLog,
   closeAuditLog,
   readAuditLog,
+  setAuditLogPathForTests,
 } from '../../jarvis/audit-log';
+import { clearConfirmationTokensForTests } from '../../jarvis/confirmation-tokens';
 
 const workspace = vi.hoisted(() => ({ current: '' }));
 
 vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn() },
+  dialog: {
+    showMessageBox: vi.fn(async () => ({ response: 1 })),
+  },
 }));
 
 vi.mock('../../persistence/workspace-store', () => ({
@@ -25,21 +30,25 @@ vi.mock('../../persistence/workspace-store', () => ({
 }));
 
 const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-mcp-ipc');
+const testAuditLog = path.join(testDir, 'jarvis-actions.log');
 
 describe('mcp-ipc security flow', () => {
   beforeAll(() => {
     workspace.current = testDir;
     fs.mkdirSync(testDir, { recursive: true });
+    setAuditLogPathForTests(testAuditLog);
   });
 
   beforeEach(() => {
     clearAll();
+    clearConfirmationTokensForTests();
     clearMcpRendererSession();
     clearAuditLog();
   });
 
   afterAll(() => {
     closeAuditLog();
+    setAuditLogPathForTests(null);
     fs.rmSync(testDir, { recursive: true, force: true });
   });
 
@@ -77,7 +86,9 @@ describe('mcp-ipc security flow', () => {
 
   it('persists an audit entry with tool call result', async () => {
     const args = { command: 'echo audit-ok', cwd: testDir };
-    expect(confirmMcpTool({ tool: 'terminal_run', args })).toEqual({ ok: true });
+    await expect(confirmMcpTool({ tool: 'terminal_run', args })).resolves.toEqual({
+      ok: true,
+    });
 
     const result = await invokeMcpTool({ tool: 'nexus_terminal_run', args });
     expect(result.ok).toBe(true);
@@ -86,6 +97,7 @@ describe('mcp-ipc security flow', () => {
     const entries = readAuditLog();
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
+      source: 'ipc-renderer',
       tool: 'nexus_terminal_run',
       result: 'ok',
       user_authorized: true,
@@ -98,7 +110,10 @@ describe('mcp-ipc security flow', () => {
   it('denies an action outside the user-authorized args scope', async () => {
     const allowedArgs = { command: 'echo allowed', cwd: testDir };
     const otherArgs = { command: 'echo denied', cwd: testDir };
-    expect(confirmMcpTool({ tool: 'nexus_terminal_run', args: allowedArgs })).toEqual({
+    await expect(confirmMcpTool({
+      tool: 'nexus_terminal_run',
+      args: allowedArgs,
+    })).resolves.toEqual({
       ok: true,
     });
 
