@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.10.7 — Jarvis operacional
+
+Data: 2026-07-07
+
+Hotfix operacional inspirado na analise local do Overclock: a Jarvis agora
+preserva a fala colada ao wake word, limpa eco da saudacao e mantem tratamento
+"patrao" tambem nos caminhos rapidos.
+
+### Correcoes
+
+- Wake mic com pre-roll curto: comandos como "Hey Jarvis, abrir terminal" nao
+  perdem o inicio da ordem enquanto o wake word e a saudacao acontecem.
+- Filtro de wake/ack: prefixos como "Hey Jarvis" e "Pois nao, patrao?" sao
+  removidos antes de chegar ao fast-path/brain; ack puro vazado pelo alto-falante
+  e descartado.
+- Fast-paths de acao e estado recebem o `userName` da persona, evitando respostas
+  secas nos comandos criticos "abrir terminal" e "que horas sao".
+- Nova analise em `docs/analysis/2026-07-07-jarvis-overclock-operational-gap.md`
+  documenta a arquitetura observada no Overclock e os gaps restantes do Nexus.
+
 ## 0.10.6 — Jarvis te ouve
 
 Data: 2026-07-07

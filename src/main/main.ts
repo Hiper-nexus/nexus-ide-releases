@@ -2,7 +2,7 @@ import { app, BrowserWindow } from 'electron';
 import { resolveUserPath } from './path-resolver';
 import { createMainWindow } from './window';
 import { registerAuthProbeIpc } from './adapters/auth-probe';
-import { shouldUseUserDataOverride } from './smoke-core';
+import { isSmokeTest, shouldUseUserDataOverride } from './smoke-core';
 
 // Sandbox de userData para dev/smoke: redireciona SQLite, layout, sessões e o
 // single-instance lock para um diretório isolado. Em app empacotado só vale
@@ -161,7 +161,12 @@ function bootstrap(): void {
   registerNotesIpc();
   registerBillingIpc();
   registerTeamIpc();
-  syncLicenseOnBoot();
+  // Packaged smoke must prove the app can boot without touching the user's
+  // real Keychain. License sync is useful in normal launches, but it can block
+  // inside SecItemCopyMatching before the smoke window has a chance to load.
+  if (!isSmokeTest(process.argv)) {
+    syncLicenseOnBoot();
+  }
   registerOnboardingIpc();
   registerPipeIpc(); // also calls initPanePipes()
   registerRemoteIpc();

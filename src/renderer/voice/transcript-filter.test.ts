@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isDiscardableTranscript } from './transcript-filter';
+import { isDiscardableTranscript, stripWakeAckEcho } from './transcript-filter';
 
 describe('isDiscardableTranscript', () => {
   it('descarta alucinações clássicas em captura fria', () => {
@@ -37,6 +37,24 @@ describe('isDiscardableTranscript', () => {
   it('normaliza caixa e espaços antes de comparar', () => {
     expect(isDiscardableTranscript('  THANK   YOU  ', { inConversation: false })).toBe(
       true,
+    );
+  });
+});
+
+describe('stripWakeAckEcho', () => {
+  it('remove invocação e ack do pre-roll antes do comando', () => {
+    expect(stripWakeAckEcho('Hey Jarvis, pois não, patrão, abrir terminal', 'patrão'))
+      .toBe('abrir terminal');
+  });
+
+  it('descarta ack puro vazado pelo alto-falante', () => {
+    expect(stripWakeAckEcho('Pois não, patrão?', 'patrão')).toBe('');
+    expect(stripWakeAckEcho('Estou ouvindo.', 'patrão')).toBe('');
+  });
+
+  it('não mexe em fala real sem prefixo de wake', () => {
+    expect(stripWakeAckEcho('abre o terminal agora', 'patrão')).toBe(
+      'abre o terminal agora',
     );
   });
 });

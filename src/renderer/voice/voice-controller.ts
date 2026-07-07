@@ -8,7 +8,7 @@ import { WakeMic } from './wake-mic';
 import { classifyMicHealth, type MicHealth } from './wake-health';
 import { LiveAudioPlayer, micFrameToBase64 } from './live-audio';
 import { stripPromptEcho } from './response-echo';
-import { isDiscardableTranscript } from './transcript-filter';
+import { isDiscardableTranscript, stripWakeAckEcho } from './transcript-filter';
 import {
   bindWakeSuppressor,
   playAudioBase64,
@@ -55,6 +55,7 @@ const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
 const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
 const REALTIME_ACTION_BRIDGE_ENABLED = false;
 const WAKE_ACK_SUPPRESS_MS = 1_500;
+const WAKE_PREROLL_MS = 2_500;
 const WAKE_SILENCE_MS = 700; // wake-word capture: quiet time that ends the utterance
 const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
 const PTT_HOLD_MAX_MS = 60_000; // hold-to-talk sem keyup (tap morto) fecha aqui
@@ -107,6 +108,7 @@ function ensureLivePlayer(): LiveAudioPlayer {
 let realtimeTurnActive = false;
 let jarvisLastTurnAt = 0;
 let wakeOpenInProgress = false;
+let activeCaptureReason: 'manual' | 'wake' | 'ptt' | 'reply' = 'manual';
 // Início do turno em processamento (0 = nenhum) — o wake usa para detectar
 // turno PRESO (fetch pendurado etc.) e retomar o controle.
 let turnStartedAt = 0;
@@ -506,6 +508,7 @@ async function beginListening(
   try {
     store.setNote(null);
     realtimeTurnActive = false;
+    activeCaptureReason = reason;
     if (isJarvisLiveEnabled()) {
       const state = await window.nexus.voice.liveStart({ reason });
       store.setLiveState(state);
@@ -513,7 +516,7 @@ async function beginListening(
     }
     if (wakeMic.isRunning()) {
       // Stream do wake já está quente → escuta INSTANTÂNEA, sem getUserMedia.
-      wakeMic.beginUtterance(autoStop);
+      wakeMic.beginUtterance(autoStop, reason === 'wake' ? WAKE_PREROLL_MS : 0);
     } else {
       await capture.start(autoStop);
     }
@@ -602,29 +605,41 @@ async function finishAndProcess(
       return;
     }
     const tStt = Date.now() - tTurn;
+    const transcript =
+      activeCaptureReason === 'wake'
+        ? stripWakeAckEcho(stt.text, personaUserName())
+        : stt.text.trim();
+    if (!transcript) {
+      const reason =
+        activeCaptureReason === 'wake' ? 'eco do wake/ack' : 'transcrição vazia';
+      console.log(`[voice] ${reason} descartado: "${stt.text}"`);
+      store.setStatus('idle');
+      liveEndTurn();
+      return;
+    }
     // Whisper ALUCINA frases fixas em silêncio/ruído ("you", "thank you",
     // "obrigado por assistir"…). Elas passam o gate de RMS quando há um
     // sussurro — descarta antes de virar turno (a JARVIS falando sozinha).
     const inConversation =
       jarvisHistory.length > 0 && Date.now() - jarvisLastTurnAt <= JARVIS_MEMORY_MS;
-    if (isDiscardableTranscript(stt.text, { inConversation })) {
-      console.log(`[voice] transcrição-lixo do Whisper descartada: "${stt.text}"`);
+    if (isDiscardableTranscript(transcript, { inConversation })) {
+      console.log(`[voice] transcrição-lixo do Whisper descartada: "${transcript}"`);
       store.setStatus('idle');
       liveEndTurn();
       return;
     }
-    store.setTranscript(stt.text);
-    console.log(`[voice] transcrito (${tStt}ms): "${stt.text}"`);
+    store.setTranscript(transcript);
+    console.log(`[voice] transcrito (${tStt}ms): "${transcript}"`);
     // Surface throttle/quota fallbacks instead of failing silently.
     store.setNote(stt.fallbackNote ?? null);
 
     if (routing === 'jarvis') {
-      await runJarvisTurn(stt.text, capture, busy);
+      await runJarvisTurn(transcript, capture, busy);
       return;
     }
 
     store.setStatus('routing');
-    const paneId = routePrompt(stt.text);
+    const paneId = routePrompt(transcript);
     if (!paneId) {
       store.setError('No focused pane to route the prompt into.');
       return;
@@ -632,7 +647,7 @@ async function finishAndProcess(
 
     // Jarvis: capture the agent's reply, then speak a condensed summary. The
     // transcribed prompt is passed so its PTY echo is stripped before speaking.
-    const reply = await captureResponse(paneId, stt.text);
+    const reply = await captureResponse(paneId, transcript);
     if (reply.trim()) {
       store.setStatus('speaking');
       const spoken = await withTimeout(
@@ -680,6 +695,7 @@ async function runJarvisTurn(
   const screen = currentScreenSnapshot();
   const context = {
     workspace: useWorkspaceStore.getState().current?.name ?? null,
+    userName: personaUserName() || null,
     screen: screen.context,
     recents: useWorkspaceStore.getState().recents.map((r) => r.name).slice(0, 10),
     squads: useOrchStore.getState().squads.map((s) => s.name),

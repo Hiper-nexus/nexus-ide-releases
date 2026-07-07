@@ -31,6 +31,12 @@ function listOrNone(items: string[], max = 5): string {
   return rest > 0 ? `${shown} e mais ${rest}` : shown;
 }
 
+function address(ctx: JarvisContext, text: string): string {
+  const user = ctx.userName?.trim();
+  if (!user) return text;
+  return text.replace(/\.$/, `, ${user}.`);
+}
+
 /** Tenta responder a consulta direto do contexto. null = deixa para o LLM. */
 export function jarvisFastPath(
   transcript: string,
@@ -48,7 +54,7 @@ export function jarvisFastPath(
       hour: '2-digit',
       minute: '2-digit',
     });
-    return { say: `São ${time}.`, expectReply: false, action: { type: 'none' } };
+    return { say: address(ctx, `São ${time}.`), expectReply: false, action: { type: 'none' } };
   }
 
   // Panes/terminais abertos
@@ -57,8 +63,8 @@ export function jarvisFastPath(
     return {
       say:
         ctx.panes.length === 0
-          ? 'Nenhum pane aberto agora.'
-          : `${ctx.panes.length} pane${ctx.panes.length > 1 ? 's' : ''}: ${list}.`,
+          ? address(ctx, 'Nenhum pane aberto agora.')
+          : address(ctx, `${ctx.panes.length} pane${ctx.panes.length > 1 ? 's' : ''}: ${list}.`),
       expectReply: false,
       action: { type: 'none' },
     };
@@ -70,8 +76,8 @@ export function jarvisFastPath(
     return {
       say:
         ctx.squads.length === 0
-          ? 'Nenhum squad salvo ainda. Quer que eu desenhe um para este projeto?'
-          : `Squads disponíveis: ${list}.`,
+          ? `${address(ctx, 'Nenhum squad salvo ainda.')} Quer que eu desenhe um para este projeto?`
+          : address(ctx, `Squads disponíveis: ${list}.`),
       expectReply: ctx.squads.length === 0,
       action: { type: 'none' },
     };
@@ -83,8 +89,8 @@ export function jarvisFastPath(
     return {
       say:
         ctx.missions.length === 0
-          ? 'Nenhuma missão ativa agora.'
-          : `Missões ativas: ${list}.`,
+          ? address(ctx, 'Nenhuma missão ativa agora.')
+          : address(ctx, `Missões ativas: ${list}.`),
       expectReply: false,
       action: { type: 'none' },
     };
@@ -94,8 +100,8 @@ export function jarvisFastPath(
   if (/\b(qual|que)\b.*\b(projeto|workspace)\b.*\b(aberto|atual|agora|esse)\b/.test(t)) {
     return {
       say: ctx.workspace
-        ? `Estamos no ${ctx.workspace}.`
-        : 'Nenhum workspace aberto agora.',
+        ? address(ctx, `Estamos no ${ctx.workspace}.`)
+        : address(ctx, 'Nenhum workspace aberto agora.'),
       expectReply: false,
       action: { type: 'none' },
     };
@@ -105,8 +111,8 @@ export function jarvisFastPath(
   if (/\borquestrador\b.*\b(ativo|rodando|ligado|tem|existe)\b|\b(tem|existe|ha)\b.*\borquestrador\b/.test(t)) {
     return {
       say: ctx.orchestrator
-        ? `Sim — ${ctx.orchestrator} está de pé esperando missão.`
-        : 'Nenhum orquestrador ativo agora.',
+        ? address(ctx, `Sim — ${ctx.orchestrator} está de pé esperando missão.`)
+        : address(ctx, 'Nenhum orquestrador ativo agora.'),
       expectReply: false,
       action: { type: 'none' },
     };

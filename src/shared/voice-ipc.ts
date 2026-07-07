@@ -188,6 +188,8 @@ export type TranscribeResult =
 
 export interface JarvisContext {
   workspace: string | null;
+  /** Nome/tratamento configurado para o usuário, ex.: "patrão". */
+  userName?: string | null;
   /** Resumo determinístico do que o usuário está vendo agora. */
   screen?: string | null;
   /** Workspaces recentes (nomes) — para open_workspace. */
@@ -231,6 +233,7 @@ export const jarvisRequestSchema = z.object({
   transcript: z.string().min(1).max(4000),
   context: z.object({
     workspace: z.string().nullable(),
+    userName: z.string().max(48).nullable().optional(),
     screen: z.string().max(500).nullable().optional(),
     recents: z.array(z.string().max(128)).max(20).default([]),
     squads: z.array(z.string().max(128)).max(50),

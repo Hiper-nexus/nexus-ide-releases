@@ -13,22 +13,27 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.10.6',
+  version: '0.10.7',
   date: '2026-07-07',
-  codename: 'Jarvis te ouve',
+  codename: 'Jarvis operacional',
   summary:
-    'A causa raiz da "Jarvis surda" foi corrigida: o controle automático de ganho do Chromium achataba o sinal do microfone USB perto de zero — o sistema ouvia, o app recebia silêncio. Agora o stream do wake word capta o áudio cru e a Jarvis finalmente acorda ao seu chamado.',
+    'Hotfix operacional inspirado na Jarvis do Overclock: o Nexus preserva a fala colada ao wake word, limpa eco da saudação e mantém o tratamento "patrão" nos comandos rápidos.',
   highlights: [],
   fixes: [
     {
-      title: 'Jarvis finalmente ouve o microfone',
+      title: 'Comando colado ao wake não se perde',
       detail:
-        'O autoGainControl (ligado por padrão no Chromium) esmagava o sinal de microfones USB sensíveis, e os frames chegavam mudos mesmo com permissão concedida. As três opções de processamento de áudio foram desligadas no stream do wake word (que quer PCM limpo), e o eco é controlado pela pausa que já existe enquanto a Jarvis fala.',
+        'O wake mic agora mantém um pre-roll curto de áudio e semeia a captura do comando quando o "Hey Jarvis" dispara, evitando cortar pedidos como "Hey Jarvis, abrir terminal".',
     },
     {
-      title: 'Diagnóstico de microfone no log',
+      title: 'Eco da saudação é filtrado',
       detail:
-        'O wake agora registra qual dispositivo de áudio o app realmente capturou e o nível (RMS) do primeiro frame — prova definitiva de que o sinal chegou, em vez de ficar só "não funciona".',
+        'Prefixos de wake e respostas como "Pois não, patrão?" são removidos antes do fast-path/brain; ack puro vazado pelo alto-falante é descartado em silêncio.',
+    },
+    {
+      title: 'Persona nos fast-paths críticos',
+      detail:
+        'Comandos diretos como abrir terminal e consultas como "que horas são" recebem o nome configurado do usuário no contexto, mantendo respostas breves e cordiais com "patrão".',
     },
   ],
 };

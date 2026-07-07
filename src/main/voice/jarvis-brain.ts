@@ -175,6 +175,7 @@ function contextBlock(ctx: JarvisContext): string {
   return (
     `Current app context:\n` +
     `- workspace: ${ctx.workspace ?? 'none open'}\n` +
+    `- user name: ${ctx.userName ?? 'not configured'}\n` +
     `- current screen: ${ctx.screen ?? 'not provided'}\n` +
     `- recent workspaces: ${ctx.recents.join(', ') || 'none'}\n` +
     `- available squads: ${squads}\n` +

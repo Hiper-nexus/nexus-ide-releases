@@ -4,6 +4,7 @@ import type { JarvisContext } from '../../shared/voice-ipc';
 
 const CTX: JarvisContext = {
   workspace: 'nexus-ide',
+  userName: 'patrão',
   recents: ['nexus-ide', 'saasbarbearia'],
   squads: ['Code Review', 'QA Swarm'],
   panes: ['pane-1 [shell]', 'pane-2 [agente]'],
@@ -28,6 +29,7 @@ describe('jarvisFastPath', () => {
     expect(jarvisFastPath('qual projeto está aberto agora?', CTX)?.say).toContain(
       'nexus-ide',
     );
+    expect(jarvisFastPath('que horas são?', CTX)?.say).toContain('patrão');
     expect(jarvisFastPath('tem orquestrador ativo?', CTX)?.say).toContain('pane-3');
   });
 

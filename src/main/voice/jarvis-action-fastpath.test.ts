@@ -4,6 +4,7 @@ import type { JarvisContext } from '../../shared/voice-ipc';
 
 const CTX: JarvisContext = {
   workspace: 'nexus-ide',
+  userName: 'patrão',
   recents: ['nexus-ide'],
   squads: ['Code Review'],
   panes: ['pane-1 [shell]'],
@@ -17,6 +18,7 @@ describe('jarvisActionFastPath', () => {
     const reply = jarvisActionFastPath('Abrir terminal.', CTX);
     expect(reply?.action).toEqual({ type: 'open_terminal' });
     expect(reply?.say).toContain('terminal');
+    expect(reply?.say).toContain('patrão');
   });
 
   it('abrir um comando ai dispara run_command', () => {

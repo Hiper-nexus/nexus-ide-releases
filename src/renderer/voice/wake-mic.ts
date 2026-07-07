@@ -36,6 +36,7 @@ const TARGET_SAMPLE_RATE = 16_000;
 const CHUNK = 1280;
 const SPEECH_RMS = 0.022;
 const MIN_SPEECH_MS = 320;
+const MAX_PREROLL_MS = 3_000;
 /** Ganho inicial do AGC próprio (ver agc.ts) — o valor 12x foi o melhor
  * fixo medido ao vivo em 2026-07-07; o AGC parte dele e adapta. */
 const WAKE_INITIAL_GAIN = 18;
@@ -70,6 +71,8 @@ export class WakeMic {
   private silentSince = 0;
   /** Log único do RMS do primeiro frame após abrir o grafo (prova sinal). */
   private firstFrameLogged = false;
+  /** Rolling buffer dos frames recentes para não perder comando emendado ao wake. */
+  private preRoll: Array<{ at: number; frame: Float32Array }> = [];
 
   /** Stream morreu e a reconstrução esgotou as tentativas. */
   onDied: ((reason: string) => void) | null = null;
@@ -139,9 +142,9 @@ export class WakeMic {
   }
 
   /** Abre a escuta de comando INSTANTANEAMENTE (stream já está quente). */
-  beginUtterance(autoStop?: AutoStopOptions): void {
+  beginUtterance(autoStop?: AutoStopOptions, preRollMs = 0): void {
     if (!this.running || this.uttActive) return;
-    this.uttChunks = [];
+    this.uttChunks = this.seedPreRoll(preRollMs);
     this.uttActive = true;
     this.uttAutoStop = autoStop ?? null;
     this.uttFired = false;
@@ -203,6 +206,23 @@ export class WakeMic {
       this.uttFired = true;
       opts.onAutoStop();
     }
+  }
+
+  private rememberPreRoll(frame: Float32Array): void {
+    const now = Date.now();
+    this.preRoll.push({ at: now, frame: Float32Array.from(frame) });
+    const cutoff = now - MAX_PREROLL_MS;
+    while (this.preRoll.length > 0 && this.preRoll[0].at < cutoff) {
+      this.preRoll.shift();
+    }
+  }
+
+  private seedPreRoll(ms: number): Float32Array[] {
+    if (ms <= 0) return [];
+    const cutoff = Date.now() - Math.min(ms, MAX_PREROLL_MS);
+    return this.preRoll
+      .filter((entry) => entry.at >= cutoff)
+      .map((entry) => Float32Array.from(entry.frame));
   }
 
   async start(): Promise<void> {
@@ -277,6 +297,7 @@ export class WakeMic {
       this.silentSince = frameIsSilent(frameRms(frame))
         ? this.silentSince || Date.now()
         : 0;
+      this.rememberPreRoll(frame);
       // Comando em gravação: acumula localmente (e NÃO alimenta o detector —
       // senão a própria fala do comando poderia re-disparar o wake).
       if (this.uttActive) {
@@ -391,6 +412,7 @@ export class WakeMic {
     this.restartAttempt = 0;
     this.stopWatchdog();
     this.pending = [];
+    this.preRoll = [];
     this.wakeSuppressedUntil = 0;
     if (this.uttDeadline) {
       clearTimeout(this.uttDeadline);

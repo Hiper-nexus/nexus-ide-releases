@@ -29,6 +29,84 @@ function normalize(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+function normalizeToken(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '')
+    .trim();
+}
+
+function tokenized(text: string): Array<{ raw: string; norm: string }> {
+  return text
+    .trim()
+    .split(/\s+/)
+    .map((raw) => ({ raw, norm: normalizeToken(raw) }))
+    .filter((token) => token.norm.length > 0);
+}
+
+function startsWithPattern(
+  tokens: Array<{ raw: string; norm: string }>,
+  pattern: string[],
+): boolean {
+  if (tokens.length < pattern.length) return false;
+  return pattern.every((part, index) => tokens[index]?.norm === part);
+}
+
+function stripLeadingPatterns(
+  tokens: Array<{ raw: string; norm: string }>,
+  patterns: string[][],
+): Array<{ raw: string; norm: string }> {
+  let rest = tokens;
+  let changed = true;
+  while (changed && rest.length > 0) {
+    changed = false;
+    for (const pattern of patterns) {
+      if (startsWithPattern(rest, pattern)) {
+        rest = rest.slice(pattern.length);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return rest;
+}
+
+function wakeEchoPatterns(userName: string): string[][] {
+  const user = normalizeToken(userName);
+  const patterns = [
+    ['hey', 'jarvis'],
+    ['ei', 'jarvis'],
+    ['ok', 'jarvis'],
+    ['jarvis'],
+    ['pois', 'nao'],
+    ['sim'],
+    ['diga'],
+    ['estou', 'ouvindo'],
+  ];
+  if (!user) return patterns;
+  return [
+    ['pois', 'nao', user],
+    ['sim', user],
+    ['diga', user],
+    ...patterns,
+  ];
+}
+
+/**
+ * Wake pre-roll intentionally captures the user's "Hey Jarvis" and may also
+ * catch the cached acknowledgement leaking from speakers. Strip those leading
+ * assistant/wake fragments so "Hey Jarvis, pois não patrão, abre terminal"
+ * becomes just "abre terminal" before the fast-path/brain sees it.
+ */
+export function stripWakeAckEcho(text: string, userName: string): string {
+  const tokens = tokenized(text);
+  if (tokens.length === 0) return '';
+  const rest = stripLeadingPatterns(tokens, wakeEchoPatterns(userName));
+  return rest.map((token) => token.raw).join(' ').trim();
+}
+
 /**
  * true = descartar em silêncio (não virar turno). `inConversation` = há uma
  * conversa ativa com a JARVIS (janela de memória curta ainda quente).
