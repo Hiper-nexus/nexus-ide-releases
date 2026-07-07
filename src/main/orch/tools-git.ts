@@ -29,6 +29,62 @@ function resolveCwd(cwdOverride?: string): string {
   return resolveWorkspaceCwd(cwdOverride);
 }
 
+const DANGEROUS_PUSH_FLAGS = [
+  '--force',
+  '--delete',
+  '--mirror',
+  '-f',
+  '-d',
+  '--force-with-lease',
+];
+
+function assertNoControlChars(value: string, label: string): void {
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} contains control characters`);
+  }
+}
+
+function assertNoLeadingDash(value: string, label: string): void {
+  if (value.startsWith('-')) {
+    throw new Error(`${label} cannot start with '-'`);
+  }
+}
+
+function assertSafeGitName(value: string, label: string): void {
+  assertNoControlChars(value, label);
+  assertNoLeadingDash(value, label);
+}
+
+function assertSafeGitPathspec(value: string): void {
+  assertNoControlChars(value, 'pathspec');
+  assertNoLeadingDash(value, 'pathspec');
+}
+
+function assertSafePushArg(value: string, label: string): void {
+  assertSafeGitName(value, label);
+  const lowered = value.toLowerCase();
+  if (
+    DANGEROUS_PUSH_FLAGS.some(
+      (flag) => lowered === flag || lowered.startsWith(`${flag}=`),
+    )
+  ) {
+    throw new Error(`${label} uses blocked push flag: ${value}`);
+  }
+}
+
+function assertSafePushBranch(value: string): void {
+  assertSafePushArg(value, 'branch');
+  if (value.startsWith(':')) {
+    throw new Error('branch uses delete refspec syntax');
+  }
+  if (value.startsWith('+')) {
+    throw new Error('branch uses force refspec syntax');
+  }
+  if (value.includes(':')) {
+    throw new Error('branch refspec syntax is not allowed');
+  }
+}
+
 const gitStatus: McpToolDef = {
   name: 'nexus_git_status',
   description:
@@ -74,7 +130,8 @@ const gitAdd: McpToolDef = {
     const paths = Array.isArray(args.paths) && args.paths.length > 0
       ? args.paths.filter((p): p is string => typeof p === 'string')
       : ['.'];
-    const { stdout } = await gitExec(['add', ...paths], cwd);
+    paths.forEach(assertSafeGitPathspec);
+    const { stdout } = await gitExec(['add', '--', ...paths], cwd);
     return { cwd, staged: paths, output: stdout || 'ok' };
   },
 };
@@ -108,6 +165,7 @@ const gitCommit: McpToolDef = {
 
 const gitPush: McpToolDef = {
   name: 'nexus_git_push',
+  requiresConfirm: true,
   description:
     'Update remote refs along with associated objects. ' +
     'Equivalent to `git push`. Force push (--force) is BLOCKED by guardrails.',
@@ -132,6 +190,8 @@ const gitPush: McpToolDef = {
     const cwd = resolveCwd(str(args, 'cwd'));
     const remote = str(args, 'remote') ?? 'origin';
     const branch = str(args, 'branch');
+    assertSafePushArg(remote, 'remote');
+    if (branch) assertSafePushBranch(branch);
     const cmdArgs = ['push', remote];
     if (branch) cmdArgs.push(branch);
     const { stdout } = await gitExec(cmdArgs, cwd);
@@ -169,6 +229,8 @@ const gitPull: McpToolDef = {
     const cwd = resolveCwd(str(args, 'cwd'));
     const remote = str(args, 'remote') ?? 'origin';
     const branch = str(args, 'branch');
+    assertSafeGitName(remote, 'remote');
+    if (branch) assertSafeGitName(branch, 'branch');
     const cmdArgs = ['pull'];
     if (args.rebase === true) cmdArgs.push('--rebase');
     cmdArgs.push(remote);
@@ -225,10 +287,10 @@ const gitLog: McpToolDef = {
   },
   handler: async (args) => {
     const cwd = resolveCwd(str(args, 'cwd'));
-    const count = Math.min(
-      typeof args.count === 'number' ? args.count : 10,
-      100,
-    );
+    const rawCount = typeof args.count === 'number' ? args.count : 10;
+    const count = Number.isInteger(rawCount) && rawCount > 0
+      ? Math.min(rawCount, 100)
+      : 10;
     const { stdout } = await gitExec(
       ['log', '--oneline', '-n', String(count)],
       cwd,
@@ -281,6 +343,7 @@ const gitBranchCreate: McpToolDef = {
   handler: async (args) => {
     const cwd = resolveCwd(str(args, 'cwd'));
     const name = requireStr(args, 'name');
+    assertSafeGitName(name, 'branch');
     const { stdout } = await gitExec(['branch', name], cwd);
     return { cwd, branch: name, output: stdout || 'created' };
   },
@@ -308,6 +371,7 @@ const gitBranchSwitch: McpToolDef = {
   handler: async (args) => {
     const cwd = resolveCwd(str(args, 'cwd'));
     const name = requireStr(args, 'name');
+    assertSafeGitName(name, 'branch');
     const { stdout } = await gitExec(['checkout', name], cwd);
     return { cwd, branch: name, output: stdout };
   },

@@ -154,13 +154,19 @@ export function confirmationReason(
   }
   if (toolName === 'nexus_terminal_run' || toolName === 'terminal_run') {
     const cmd = typeof args.command === 'string' ? args.command : 'unknown';
+    const envKeys =
+      args.env && typeof args.env === 'object' && !Array.isArray(args.env)
+        ? Object.keys(args.env as Record<string, unknown>).sort()
+        : [];
+    const envNote = envKeys.length > 0 ? ` with env: ${envKeys.join(', ')}` : '';
     if (isDestructive(cmd)) {
-      return `destructive command: ${cmd}`;
+      return `destructive command: ${cmd}${envNote}`;
     }
-    return `run command: ${cmd}`;
+    return `run command: ${cmd}${envNote}`;
   }
   if (toolName === 'nexus_git_push' || toolName === 'git_push') {
-    return 'push to remote';
+    return `push to remote ${String(args.remote ?? 'origin')} ` +
+      `branch ${String(args.branch ?? 'current')}`;
   }
   if (toolName === 'nexus_git_commit' || toolName === 'git_commit') {
     return `commit: ${String(args.message ?? 'no message')}`;
