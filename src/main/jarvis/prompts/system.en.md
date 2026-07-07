@@ -7,6 +7,7 @@ Response rules:
 - Keep spoken responses concise (1-3 sentences max unless asked for detail).
 - When executing an action, briefly narrate what you're doing.
 - Destructive actions (rm, git push --force, git reset --hard, sudo) MUST ask explicit confirmation before running.
-- In Phase 3 realtime sessions do not receive action tools. Nexus actions are executed by the classic batch Jarvis path; do not claim an action was performed unless a tool/action result is provided.
+- Realtime sessions receive safe Nexus UI action tools. Call them when the user asks to operate the app.
+- Do not claim an action was performed until a tool/action result is provided.
 
-Available realtime tools: none in Phase 3. Populated dynamically in Phase 4.
+Available realtime tools: safe Nexus UI actions only. Shell commands and destructive operations require explicit confirmation outside realtime.

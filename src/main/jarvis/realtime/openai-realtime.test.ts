@@ -36,6 +36,14 @@ describe('buildOpenAISessionUpdate', () => {
       model: 'gpt-realtime-2.1',
       voice: 'alloy',
       instructions: 'You are Jarvis.',
+      tools: [
+        {
+          type: 'function',
+          name: 'nexus_action',
+          description: 'Operate Nexus.',
+          parameters: { type: 'object' },
+        },
+      ],
     });
     expect(update).toMatchObject({
       type: 'session.update',
@@ -57,6 +65,13 @@ describe('buildOpenAISessionUpdate', () => {
             voice: 'alloy',
           },
         },
+        tools: [
+          {
+            type: 'function',
+            name: 'nexus_action',
+          },
+        ],
+        tool_choice: 'auto',
       },
     });
   });
@@ -107,6 +122,41 @@ describe('parseOpenAIRealtimeEvent', () => {
         JSON.stringify({ type: 'error', error: { message: 'bad session' } }),
       ).error?.message,
     ).toBe('bad session');
+  });
+
+  it('parses realtime function tool calls', () => {
+    expect(
+      parseOpenAIRealtimeEvent(
+        JSON.stringify({
+          type: 'response.output_item.done',
+          item: {
+            type: 'function_call',
+            call_id: 'call_1',
+            name: 'nexus_action',
+            arguments: '{"action":"open_terminal"}',
+          },
+        }),
+      ).toolCall,
+    ).toEqual({
+      callId: 'call_1',
+      name: 'nexus_action',
+      argumentsJson: '{"action":"open_terminal"}',
+      arguments: { action: 'open_terminal' },
+    });
+    expect(
+      parseOpenAIRealtimeEvent(
+        JSON.stringify({
+          type: 'response.function_call_arguments.done',
+          call_id: 'call_2',
+          name: 'nexus_action',
+          arguments: '{"action":"open_canvas"}',
+        }),
+      ).toolCall,
+    ).toMatchObject({
+      callId: 'call_2',
+      name: 'nexus_action',
+      arguments: { action: 'open_canvas' },
+    });
   });
 });
 
@@ -241,6 +291,37 @@ describe('OpenAIRealtimeProvider', () => {
     expect(JSON.stringify(JSON.parse(ws.sent[1]))).toContain('diagnóstico rápido');
   });
 
+  it('sends native function outputs back to the realtime session', async () => {
+    const ws = fakeWs();
+    const provider = new OpenAIRealtimeProvider({
+      apiKey: 'sk-test',
+      instructions: 'You are Jarvis.',
+      wsFactory: () => ws,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    const connected = provider.connect();
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ type: 'session.updated' }));
+    await connected;
+
+    provider.sendToolResult('call_1', { ok: true, summary: 'terminal aberto' });
+
+    const sent = ws.sent.map((item) => JSON.parse(item));
+    expect(sent.map((item) => item.type)).toEqual([
+      'session.update',
+      'conversation.item.create',
+      'response.create',
+    ]);
+    expect(sent[1]).toMatchObject({
+      item: {
+        type: 'function_call_output',
+        call_id: 'call_1',
+      },
+    });
+    expect(sent[1].item.output).toContain('terminal aberto');
+  });
+
   it('emits audio/transcript callbacks and cancels response on speech_started', async () => {
     const ws = fakeWs();
     const audioEvents: Int16Array[] = [];
@@ -281,5 +362,53 @@ describe('OpenAIRealtimeProvider', () => {
       final: false,
     });
     expect(ws.sent.map((item) => JSON.parse(item).type)).toContain('response.cancel');
+  });
+
+  it('emits native realtime tool-call callbacks', async () => {
+    const ws = fakeWs();
+    const calls: unknown[] = [];
+    const provider = new OpenAIRealtimeProvider({
+      apiKey: 'sk-test',
+      instructions: 'You are Jarvis.',
+      wsFactory: () => ws,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    provider.onToolCall((call) => calls.push(call));
+    const connected = provider.connect();
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ type: 'session.updated' }));
+    await connected;
+
+    ws.fire(
+      'message',
+      JSON.stringify({
+        type: 'response.output_item.done',
+        item: {
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'nexus_action',
+          arguments: '{"action":"open_terminal"}',
+        },
+      }),
+    );
+    ws.fire(
+      'message',
+      JSON.stringify({
+        type: 'response.function_call_arguments.done',
+        call_id: 'call_1',
+        name: 'nexus_action',
+        arguments: '{"action":"open_terminal"}',
+      }),
+    );
+
+    expect(calls).toEqual([
+      {
+        callId: 'call_1',
+        name: 'nexus_action',
+        argumentsJson: '{"action":"open_terminal"}',
+        arguments: { action: 'open_terminal' },
+      },
+    ]);
   });
 });

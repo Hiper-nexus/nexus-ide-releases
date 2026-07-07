@@ -2,6 +2,8 @@ import {
   base64ToInt16Array,
   int16ArrayToBase64,
   resamplePcm16,
+  type RealtimeToolCallEvent,
+  type RealtimeToolDefinition,
   type RealtimeTranscriptEvent,
   type TurnManagedRealtimeProvider,
 } from './provider';
@@ -24,6 +26,7 @@ export interface OpenAIRealtimeProviderOptions {
   voice?: string;
   inputSourceRate?: number;
   inputTargetRate?: number;
+  tools?: RealtimeToolDefinition[];
   wsFactory?: (url: string, init: RealtimeWsInit) => RealtimeWsLike;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: (timer: ReturnType<typeof setTimeout>) => void;
@@ -38,6 +41,7 @@ export interface ParsedOpenAIRealtimeEvent {
   responseDone?: boolean;
   sessionReady?: boolean;
   responseCancelled?: boolean;
+  toolCall?: RealtimeToolCallEvent;
   error?: Error;
 }
 
@@ -54,7 +58,9 @@ export function buildOpenAISessionUpdate(opts: {
   voice: string;
   instructions: string;
   inputRate?: number;
+  tools?: RealtimeToolDefinition[];
 }): Record<string, unknown> {
+  const tools = opts.tools ?? [];
   return {
     type: 'session.update',
     session: {
@@ -85,6 +91,12 @@ export function buildOpenAISessionUpdate(opts: {
           voice: opts.voice,
         },
       },
+      ...(tools.length > 0
+        ? {
+            tools,
+            tool_choice: 'auto',
+          }
+        : {}),
     },
   };
 }
@@ -127,6 +139,9 @@ export function parseOpenAIRealtimeEvent(raw: string): ParsedOpenAIRealtimeEvent
   if (type === 'response.cancelled') {
     return { type, responseCancelled: true };
   }
+
+  const toolCall = parseToolCallEvent(type, event);
+  if (toolCall) return { type, toolCall };
 
   if (type === 'response.output_audio.delta' || type === 'response.audio.delta') {
     const delta = typeof event.delta === 'string' ? event.delta : '';
@@ -181,13 +196,75 @@ export function parseOpenAIRealtimeEvent(raw: string): ParsedOpenAIRealtimeEvent
   return { type };
 }
 
+function parseToolCallEvent(
+  type: string,
+  event: Record<string, unknown>,
+): RealtimeToolCallEvent | null {
+  if (type === 'response.function_call_arguments.done') {
+    const callId =
+      typeof event.call_id === 'string'
+        ? event.call_id
+        : typeof event.callId === 'string'
+          ? event.callId
+          : '';
+    const name = typeof event.name === 'string' ? event.name : '';
+    if (!callId || !name) return null;
+    const argumentsJson =
+      typeof event.arguments === 'string'
+        ? event.arguments
+        : JSON.stringify(event.arguments ?? {});
+    return {
+      callId,
+      name,
+      argumentsJson,
+      arguments: parseToolArguments(argumentsJson),
+    };
+  }
+
+  if (type !== 'response.output_item.done') return null;
+  const item = event.item as Record<string, unknown> | undefined;
+  if (!item || item.type !== 'function_call') return null;
+  const callId =
+    typeof item.call_id === 'string'
+      ? item.call_id
+      : typeof item.callId === 'string'
+        ? item.callId
+        : '';
+  const name = typeof item.name === 'string' ? item.name : '';
+  if (!callId || !name) return null;
+  const argumentsJson =
+    typeof item.arguments === 'string'
+      ? item.arguments
+      : JSON.stringify(item.arguments ?? {});
+  return {
+    callId,
+    name,
+    argumentsJson,
+    arguments: parseToolArguments(argumentsJson),
+  };
+}
+
+function parseToolArguments(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Invalid tool JSON is reported to the renderer as an empty arg object.
+  }
+  return {};
+}
+
 export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   private ws: RealtimeWsLike | null = null;
   private ready = false;
   private pendingAudio: Int16Array[] = [];
   private pendingAudioBytes = 0;
+  private emittedToolCallIds = new Set<string>();
   private transcriptCallbacks: Array<(delta: string, final: boolean) => void> = [];
   private roleTranscriptCallbacks: Array<(event: RealtimeTranscriptEvent) => void> = [];
+  private toolCallCallbacks: Array<(event: RealtimeToolCallEvent) => void> = [];
   private audioCallbacks: Array<(pcm16: Int16Array) => void> = [];
   private errorCallbacks: Array<(err: Error) => void> = [];
   private interruptedCallbacks: Array<() => void> = [];
@@ -201,6 +278,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   private readonly voice: string;
   private readonly sourceRate: number;
   private readonly targetRate: number;
+  private readonly tools: RealtimeToolDefinition[];
   private readonly wsFactory: (url: string, init: RealtimeWsInit) => RealtimeWsLike;
   private readonly setTimeoutFn: typeof setTimeout;
   private readonly clearTimeoutFn: (timer: ReturnType<typeof setTimeout>) => void;
@@ -212,6 +290,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     this.voice = options.voice ?? DEFAULT_VOICE;
     this.sourceRate = options.inputSourceRate ?? DEFAULT_SOURCE_RATE;
     this.targetRate = options.inputTargetRate ?? DEFAULT_TARGET_RATE;
+    this.tools = options.tools ?? [];
     this.wsFactory = options.wsFactory ?? defaultWsFactory;
     this.setTimeoutFn = options.setTimeoutFn ?? setTimeout;
     this.clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
@@ -224,6 +303,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   connect(): Promise<void> {
     this.close();
     this.ready = false;
+    this.emittedToolCallIds = new Set();
     const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(this.model)}`;
     const ws = this.wsFactory(url, {
       headers: {
@@ -303,6 +383,10 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     this.roleTranscriptCallbacks.push(cb);
   }
 
+  onToolCall(cb: (event: RealtimeToolCallEvent) => void): void {
+    this.toolCallCallbacks.push(cb);
+  }
+
   onAudioOut(cb: (pcm16: Int16Array) => void): void {
     this.audioCallbacks.push(cb);
   }
@@ -360,10 +444,30 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     });
   }
 
+  sendToolResult(callId: string, output: unknown): void {
+    const trimmedCallId = callId.trim();
+    if (!trimmedCallId || !this.isReady) return;
+    const outputText =
+      typeof output === 'string' ? output : JSON.stringify(output ?? {});
+    this.sendEvent({
+      type: 'conversation.item.create',
+      item: {
+        type: 'function_call_output',
+        call_id: trimmedCallId,
+        output: outputText.slice(0, 20_000),
+      },
+    });
+    this.sendEvent({
+      type: 'response.create',
+      response: { output_modalities: ['audio'] },
+    });
+  }
+
   close(): void {
     this.ready = false;
     this.pendingAudio = [];
     this.pendingAudioBytes = 0;
+    this.emittedToolCallIds.clear();
     if (!this.ws) return;
     try {
       this.ws.close();
@@ -383,6 +487,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
         voice: this.voice,
         instructions: contextBlock,
         inputRate: this.targetRate,
+        tools: this.tools,
       }),
     );
   }
@@ -411,6 +516,12 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     }
     if (event.responseDone) {
       for (const cb of this.responseDoneCallbacks) cb();
+    }
+    if (event.toolCall) {
+      if (!this.emittedToolCallIds.has(event.toolCall.callId)) {
+        this.emittedToolCallIds.add(event.toolCall.callId);
+        for (const cb of this.toolCallCallbacks) cb(event.toolCall);
+      }
     }
     if (event.audio) {
       for (const cb of this.audioCallbacks) cb(event.audio);

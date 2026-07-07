@@ -13,9 +13,16 @@ import {
 import {
   base64ToInt16Array,
   int16ArrayToBase64,
+  type RealtimeToolCallEvent,
   type TurnManagedRealtimeProvider,
 } from '../jarvis/realtime/provider';
 import { jarvisLatencyTracker } from '../jarvis/realtime/metrics';
+import {
+  NEXUS_REALTIME_ACTION_TOOL,
+  realtimeArgsToJarvisAction,
+  summarizeNexusRealtimeAction,
+  type NexusRealtimeActionArgs,
+} from '../jarvis/realtime/nexus-realtime-tools';
 
 type Emit = (channel: string, payload?: unknown) => void;
 const RUNTIME_RECONNECT_BASE_MS = 750;
@@ -126,6 +133,14 @@ export class LiveTransportController {
   toolResult(event: JarvisLiveToolResultEvent): void {
     const status = event.ok ? 'ok' : 'failed';
     const summary = event.summary.trim() || status;
+    if (event.callId && this.provider?.isReady) {
+      this.provider.sendToolResult(event.callId, {
+        ok: event.ok,
+        tool: event.tool,
+        summary,
+        output: event.output ?? null,
+      });
+    }
     this.recentToolResults = [
       ...this.recentToolResults,
       `- ${event.tool}: ${status} (${summary})`,
@@ -235,6 +250,44 @@ export class LiveTransportController {
       });
       this.scheduleReconnect();
     });
+    provider.onToolCall((call) => {
+      if (this.provider !== provider) return;
+      this.handleRealtimeToolCall(call);
+    });
+  }
+
+  private handleRealtimeToolCall(call: RealtimeToolCallEvent): void {
+    if (call.name !== NEXUS_REALTIME_ACTION_TOOL) {
+      const event = this.fsm.realtimeToolCall({
+        source: 'realtime',
+        callId: call.callId,
+        name: call.name,
+        tool: 'none',
+        summary: `tool realtime não suportada: ${call.name}`,
+        args: call.arguments,
+      });
+      if (event) {
+        this.toolResult({
+          ...event,
+          ok: false,
+          summary: `tool realtime não suportada: ${call.name}`,
+          output: { error: 'unsupported_tool' },
+        });
+      }
+      return;
+    }
+
+    const args = call.arguments as NexusRealtimeActionArgs;
+    const action = realtimeArgsToJarvisAction(args);
+    const event = this.fsm.realtimeToolCall({
+      source: 'realtime',
+      callId: call.callId,
+      name: call.name,
+      tool: action?.type ?? 'none',
+      summary: summarizeNexusRealtimeAction(args),
+      args: call.arguments,
+    });
+    if (!event || action) return;
   }
 
   private sendProviderContext(): void {

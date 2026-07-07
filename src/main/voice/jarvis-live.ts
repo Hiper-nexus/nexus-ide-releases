@@ -6,6 +6,7 @@ import type {
   JarvisLiveStartRequest,
   JarvisLiveState,
   JarvisLiveStatusPatch,
+  JarvisLiveToolEvent,
   JarvisLiveToolResultEvent,
   JarvisLiveTranscriptEvent,
   JarvisReply,
@@ -204,9 +205,34 @@ export class JarvisLiveSession {
         sessionId: this.state.sessionId,
         tool: reply.action.type,
         summary: actionSummary(reply.action),
+        source: 'classic',
         at: this.now(),
       });
     }
+  }
+
+  realtimeToolCall(
+    raw: Omit<JarvisLiveToolEvent, 'sessionId' | 'at'>,
+  ): JarvisLiveToolEvent | null {
+    if (!this.state.enabled) return null;
+    if (!this.state.sessionId) this.start({ reason: 'manual' });
+    const sessionId = this.state.sessionId;
+    if (!sessionId) return null;
+    const event: JarvisLiveToolEvent = {
+      ...raw,
+      source: raw.source ?? 'realtime',
+      sessionId,
+      at: this.now(),
+    };
+    this.state = {
+      ...this.state,
+      status: 'thinking',
+      lastActiveAt: event.at,
+      pendingMic: false,
+    };
+    this.emit(VOICE_CHANNELS.liveToolCall, event);
+    this.broadcastState();
+    return event;
   }
 
   toolResult(

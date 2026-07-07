@@ -16,6 +16,20 @@ export interface RealtimeTranscriptEvent {
   final: boolean;
 }
 
+export interface RealtimeToolDefinition {
+  type: 'function';
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface RealtimeToolCallEvent {
+  callId: string;
+  name: string;
+  argumentsJson: string;
+  arguments: Record<string, unknown>;
+}
+
 export interface RoleAwareRealtimeProvider extends RealtimeProvider {
   onRoleTranscript(cb: (event: RealtimeTranscriptEvent) => void): void;
 }
@@ -25,6 +39,8 @@ export interface TurnManagedRealtimeProvider extends RoleAwareRealtimeProvider {
   endUserTurn(): void;
   sendContext(text: string): void;
   sendText(text: string): void;
+  sendToolResult(callId: string, output: unknown): void;
+  onToolCall(cb: (event: RealtimeToolCallEvent) => void): void;
   onInterrupted(cb: () => void): void;
   onResponseDone(cb: () => void): void;
   onDisconnected(cb: (err: Error) => void): void;

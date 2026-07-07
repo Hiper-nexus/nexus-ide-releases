@@ -49,6 +49,9 @@ import { executeJarvisAction } from './jarvis-action-executor';
 import { mcpClearSession } from '../services/mcp-bridge';
 import type { AutoStopOptions } from './voice-capture';
 import type {
+  JarvisAction,
+  JarvisContext,
+  JarvisLiveToolEvent,
   JarvisLiveTranscriptEvent,
   JarvisTurn,
   SpeakResult,
@@ -134,6 +137,8 @@ let finishRealtimeCapture: (() => void) | null = null;
 let jarvisLastTurnAt = 0;
 let wakeOpenInProgress = false;
 let activeCaptureReason: 'manual' | 'wake' | 'ptt' | 'reply' = 'manual';
+let realtimeNativeToolInFlight = 0;
+let lastRealtimeNativeToolAt = 0;
 type WakeSource = 'voice' | 'click';
 // Início do turno em processamento (0 = nenhum) — o wake usa para detectar
 // turno PRESO (fetch pendurado etc.) e retomar o controle.
@@ -215,6 +220,10 @@ function commandFromRealtimeTranscript(text: string): string | null {
   const transcript =
     activeCaptureReason === 'wake' ? stripWakeAckEcho(raw, personaUserName()) : raw;
   return transcript.trim() || null;
+}
+
+function hasRealtimeNativeToolSince(since: number): boolean {
+  return realtimeNativeToolInFlight > 0 || lastRealtimeNativeToolAt >= since;
 }
 
 function normalizeVoiceCommand(text: string): string {
@@ -403,6 +412,193 @@ function currentScreenSnapshot(): ScreenSnapshot {
       ? `Estou no pane ${focused.title}. O que vamos fazer nele?`
       : `Estou no workspace ${wsName}. Quer abrir missão, terminal ou squad?`,
   };
+}
+
+function buildJarvisContext(): JarvisContext {
+  const { root, focusedPaneId } = useLayoutStore.getState();
+  const panes = listPanes(root);
+  const orchPaneId = findOrchestratorPane(root);
+  const orchPane = panes.find((p) => p.id === orchPaneId) ?? null;
+  const focusedPane = panes.find((p) => p.id === focusedPaneId) ?? null;
+  const screen = currentScreenSnapshot();
+  return {
+    workspace: useWorkspaceStore.getState().current?.name ?? null,
+    userName: personaUserName() || null,
+    screen: screen.context,
+    recents: useWorkspaceStore.getState().recents.map((r) => r.name).slice(0, 10),
+    squads: useOrchStore.getState().squads.map((s) => s.name),
+    panes: panes
+      .map((p) => {
+        const tag =
+          p.id === orchPaneId
+            ? '[orquestrador] '
+            : p.kind === 'shell'
+              ? '[shell] '
+              : p.kind === 'browser'
+                ? '[browser] '
+                : '[agente] ';
+        return `${tag}${p.title}`;
+      })
+      .slice(0, 20),
+    focusedPane: focusedPane?.title ?? null,
+    focusedPaneKind: focusedPane?.kind ?? null,
+    focusedPaneUrl: focusedPane?.browserUrl ?? null,
+    orchestrator: orchPane?.title ?? null,
+    missions: useOrchStore
+      .getState()
+      .missions.filter((m) => m.status !== 'done')
+      .map((m) => `${m.title} (${m.status})`)
+      .slice(0, 10),
+  };
+}
+
+function actionFromRealtimeToolEvent(event: JarvisLiveToolEvent): JarvisAction | null {
+  if (event.source !== 'realtime' || event.name !== 'nexus_action' || !event.callId) {
+    return null;
+  }
+  const action = typeof event.args?.action === 'string' ? event.args.action : '';
+  switch (action) {
+    case 'new_mission':
+    case 'new_workspace':
+    case 'open_terminal':
+    case 'open_board':
+    case 'open_settings':
+    case 'open_voice_settings':
+    case 'open_canvas':
+    case 'open_grid':
+    case 'browser_back':
+    case 'browser_forward':
+    case 'browser_reload':
+    case 'focus_next_pane':
+      return { type: action };
+    case 'open_browser': {
+      const url = typeof event.args?.url === 'string' ? event.args.url.trim() : '';
+      return url ? { type: 'open_browser', url } : { type: 'open_browser' };
+    }
+    default:
+      return null;
+  }
+}
+
+async function speakRealtimeToolResult(text: string): Promise<void> {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const store = useVoiceStore.getState();
+  stopAllPlayback();
+  store.setStatus('speaking');
+  liveStatus('speaking');
+  const spoken = await withTimeout(
+    window.nexus.voice.speak({ text: trimmed, speakMode: 'full' }),
+    SPEAK_DEADLINE_MS,
+    'TTS',
+  );
+  if (!spoken.ok) {
+    store.setError(spoken.error);
+    return;
+  }
+  surfaceTtsFallback(spoken);
+  await playSpeakResult(spoken);
+  store.setSpoken(trimmed);
+  void window.nexus.voice.recordEcho(trimmed);
+  wakeMic.suppressWakeDetection(
+    Math.min(12_000, Math.max(3_500, trimmed.length * 70 + 2_000)),
+  );
+}
+
+async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promise<void> {
+  if (!event.callId || !event.name || event.source !== 'realtime') return;
+  if (event.name !== 'nexus_action') return;
+  const action = actionFromRealtimeToolEvent(event);
+  lastRealtimeNativeToolAt = Date.now();
+  realtimeNativeToolInFlight += 1;
+  const store = useVoiceStore.getState();
+  try {
+    if (!action) {
+      window.nexus.voice.liveToolResult({
+        source: 'realtime',
+        callId: event.callId,
+        name: event.name,
+        tool: 'none',
+        ok: false,
+        summary: 'ação realtime inválida',
+        args: event.args,
+        output: { error: 'invalid_action' },
+      });
+      return;
+    }
+
+    store.setStatus('routing');
+    liveStatus('thinking');
+    const context = buildJarvisContext();
+    const reply = { say: '', action };
+    const exec = await executeJarvisActionForTurn(reply, context);
+    const toolResult = exec.toolResult ?? {
+      tool: action.type,
+      ok: true,
+      summary: exec.sayText.trim() || 'executado',
+    };
+    logVoiceEvent(
+      toolResult.ok ? 'info' : 'warn',
+      'jarvis.realtimeActionResult',
+      toolResult.summary,
+      {
+        tool: toolResult.tool,
+        ok: toolResult.ok,
+        callId: event.callId,
+      },
+    );
+    window.nexus.voice.liveToolResult({
+      source: 'realtime',
+      callId: event.callId,
+      name: event.name,
+      tool: toolResult.tool,
+      ok: toolResult.ok,
+      summary: toolResult.summary,
+      args: event.args,
+      output: {
+        ok: toolResult.ok,
+        summary: toolResult.summary,
+        tool: toolResult.tool,
+      },
+    });
+
+    if (toolResult.ok) {
+      void window.nexus.gamification
+        .recordJarvisAction({ actionType: toolResult.tool, ok: true })
+        .then((snap) => useGamificationStore.getState().receive(snap))
+        .catch(() => {});
+    }
+
+    if (!REALTIME_PROVIDER_AUDIO_ENABLED) {
+      const sayText =
+        exec.sayText.trim() ||
+        (toolResult.ok ? 'Feito, patrão.' : `Não consegui: ${toolResult.summary}.`);
+      await speakRealtimeToolResult(sayText);
+    }
+  } catch (err) {
+    const message = errMsg(err);
+    logVoiceEvent('error', 'jarvis.realtimeActionError', message, {
+      callId: event.callId,
+      tool: event.tool,
+    });
+    window.nexus.voice.liveToolResult({
+      source: 'realtime',
+      callId: event.callId,
+      name: event.name,
+      tool: action?.type ?? 'none',
+      ok: false,
+      summary: message,
+      args: event.args,
+      output: { error: message },
+    });
+    store.setError(message);
+  } finally {
+    realtimeNativeToolInFlight = Math.max(0, realtimeNativeToolInFlight - 1);
+    const currentStatus = useVoiceStore.getState().status;
+    if (currentStatus === 'speaking' || currentStatus === 'routing') {
+      useVoiceStore.getState().setStatus('idle');
+    }
+  }
 }
 
 
@@ -595,6 +791,9 @@ export function useVoiceController(): void {
     });
     const unsubLiveToolCall = window.nexus.voice.onLiveToolCall((event) => {
       useVoiceStore.getState().setLiveTool(event);
+      if (event.source === 'realtime') {
+        void executeRealtimeToolCall(event);
+      }
     });
     const unsubLiveToolResult = window.nexus.voice.onLiveToolResult((event) => {
       useVoiceStore.getState().setLiveTool(event);
@@ -806,6 +1005,12 @@ async function finishAndProcess(
       suppressRealtimeAudioOut = !REALTIME_PROVIDER_AUDIO_ENABLED;
       liveEndTurn();
       const liveTranscript = await waitForRealtimeTranscript();
+      if (hasRealtimeNativeToolSince(tRealtime)) {
+        realtimeTurnActive = false;
+        store.setStatus('idle');
+        console.log('[voice] realtime tool-call resolveu o turno; Classic pulado');
+        return;
+      }
       if (liveTranscript) {
         const rawTranscript = liveTranscript.trim();
         if (
@@ -1010,39 +1215,7 @@ async function runJarvisTurn(
   if (now - jarvisLastTurnAt > JARVIS_MEMORY_MS) jarvisHistory = [];
   jarvisLastTurnAt = now;
 
-  const { root, focusedPaneId } = useLayoutStore.getState();
-  const panes = listPanes(root);
-  const orchPaneId = findOrchestratorPane(root);
-  const orchPane = panes.find((p) => p.id === orchPaneId) ?? null;
-  const focusedPane = panes.find((p) => p.id === focusedPaneId) ?? null;
-  const screen = currentScreenSnapshot();
-  const context = {
-    workspace: useWorkspaceStore.getState().current?.name ?? null,
-    userName: personaUserName() || null,
-    screen: screen.context,
-    recents: useWorkspaceStore.getState().recents.map((r) => r.name).slice(0, 10),
-    squads: useOrchStore.getState().squads.map((s) => s.name),
-    panes: panes
-      .map((p) => {
-        const tag =
-          p.id === orchPaneId
-            ? '[orquestrador] '
-            : p.kind === 'shell'
-              ? '[shell] '
-              : '[agente] ';
-        return `${tag}${p.title}`;
-      })
-      .slice(0, 20),
-    focusedPane: focusedPane?.title ?? null,
-    focusedPaneKind: focusedPane?.kind ?? null,
-    focusedPaneUrl: focusedPane?.browserUrl ?? null,
-    orchestrator: orchPane?.title ?? null,
-    missions: useOrchStore
-      .getState()
-      .missions.filter((m) => m.status !== 'done')
-      .map((m) => `${m.title} (${m.status})`)
-      .slice(0, 10),
-  };
+  const context = buildJarvisContext();
 
   store.setStatus('routing');
   const tBrain = Date.now();

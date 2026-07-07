@@ -5,6 +5,7 @@ import {
 import {
   base64ToInt16Array,
   int16ArrayToBase64,
+  type RealtimeToolCallEvent,
   type RealtimeTranscriptEvent,
   type TurnManagedRealtimeProvider,
 } from './provider';
@@ -147,6 +148,10 @@ export class GeminiLiveProvider implements TurnManagedRealtimeProvider {
   sendText(text: string): void {
     this.transport?.sendTextTurn(text);
   }
+
+  sendToolResult(_callId: string, _output: unknown): void {}
+
+  onToolCall(_cb: (event: RealtimeToolCallEvent) => void): void {}
 
   private emitAudioOut(pcm16: Int16Array): void {
     for (const cb of this.audioCallbacks) cb(pcm16);

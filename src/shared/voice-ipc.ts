@@ -66,6 +66,10 @@ export const setConfigRequestSchema = z.object({
   jarvisLiveEnabled: z.boolean().optional(),
   /** Transporte da sessão live: FSM batch (classic) ou áudio realtime. */
   jarvisLiveTransport: z.enum(['classic', 'openai-realtime', 'gemini-live']).optional(),
+  /** OpenAI Realtime model override, e.g. gpt-realtime-2.1 or gpt-realtime-2.1-mini. */
+  jarvisLiveOpenaiModel: z.string().min(1).max(128).optional(),
+  /** OpenAI Realtime voice override. */
+  jarvisLiveOpenaiVoice: z.string().min(1).max(64).optional(),
   /** Preferred chat-model provider for the Jarvis brain. */
   jarvisBrainProvider: z.enum(['gemini', 'openai', 'groq']).optional(),
   /** Persona da voz: nome do assistente / do usuário / instruções custom. */
@@ -145,6 +149,8 @@ export interface VoiceRuntimeInfo {
     enabled: boolean;
     /** 'classic' = FSM batch; 'openai-realtime'/'gemini-live' = audio realtime. */
     transport: 'classic' | 'openai-realtime' | 'gemini-live';
+    openaiModel: string;
+    openaiVoice: string;
     graceReuseMs: number;
     dormantAfterMs: number;
     maxWindowTurns: number;
@@ -343,11 +349,16 @@ export interface JarvisLiveToolEvent {
   sessionId: string;
   tool: JarvisAction['type'];
   summary: string;
+  source?: 'classic' | 'realtime';
+  callId?: string;
+  name?: string;
+  args?: Record<string, unknown>;
   at: number;
 }
 
 export interface JarvisLiveToolResultEvent extends JarvisLiveToolEvent {
   ok: boolean;
+  output?: unknown;
 }
 
 export interface JarvisLiveInterruptEvent {
@@ -387,6 +398,10 @@ export const jarvisLiveTranscriptInputSchema = z.object({
 });
 
 export const jarvisLiveToolResultInputSchema = z.object({
+  callId: z.string().min(1).max(256).optional(),
+  name: z.string().min(1).max(128).optional(),
+  source: z.enum(['classic', 'realtime']).optional(),
+  args: z.record(z.string(), z.unknown()).optional(),
   tool: z.enum([
     'none',
     'open_squad',
@@ -412,6 +427,7 @@ export const jarvisLiveToolResultInputSchema = z.object({
   ]),
   summary: z.string().max(1000),
   ok: z.boolean(),
+  output: z.unknown().optional(),
 });
 
 export const jarvisLiveInterruptRequestSchema = z

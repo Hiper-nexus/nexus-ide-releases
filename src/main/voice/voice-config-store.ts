@@ -219,6 +219,8 @@ export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
       transport: stableJarvisLiveTransport(
         patch.jarvisLiveTransport ?? current.jarvisLive.transport,
       ),
+      openaiModel: patch.jarvisLiveOpenaiModel ?? current.jarvisLive.openaiModel,
+      openaiVoice: patch.jarvisLiveOpenaiVoice ?? current.jarvisLive.openaiVoice,
     },
     persona: {
       assistantName:
@@ -349,6 +351,8 @@ export function buildRuntimeInfo(): VoiceRuntimeInfo {
     jarvisLive: {
       enabled: current.jarvisLive.enabled,
       transport: current.jarvisLive.transport,
+      openaiModel: current.jarvisLive.openaiModel,
+      openaiVoice: current.jarvisLive.openaiVoice,
       graceReuseMs: current.jarvisLive.graceReuseMs,
       dormantAfterMs: current.jarvisLive.dormantAfterMs,
       maxWindowTurns: current.jarvisLive.maxWindowTurns,

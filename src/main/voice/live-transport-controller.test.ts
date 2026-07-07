@@ -21,10 +21,12 @@ function deferred(): {
 function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider & {
   closeCalls: number;
   fireDisconnected(err: Error): void;
+  fireToolCall(): void;
 } {
   let ready = false;
   let closeCalls = 0;
   const disconnectedCallbacks: Array<(err: Error) => void> = [];
+  const toolCallCallbacks: Parameters<TurnManagedRealtimeProvider['onToolCall']>[0][] = [];
   return {
     get closeCalls() {
       return closeCalls;
@@ -49,6 +51,10 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
     endUserTurn: vi.fn(),
     sendContext: vi.fn(),
     sendText: vi.fn(),
+    sendToolResult: vi.fn(),
+    onToolCall: vi.fn((cb) => {
+      toolCallCallbacks.push(cb);
+    }),
     onInterrupted: vi.fn(),
     onResponseDone: vi.fn(),
     onDisconnected: vi.fn((cb) => {
@@ -57,6 +63,16 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
     fireDisconnected(err) {
       ready = false;
       for (const cb of disconnectedCallbacks) cb(err);
+    },
+    fireToolCall() {
+      for (const cb of toolCallCallbacks) {
+        cb({
+          callId: 'call_1',
+          name: 'nexus_action',
+          argumentsJson: '{"action":"open_terminal"}',
+          arguments: { action: 'open_terminal' },
+        });
+      }
     },
   };
 }
@@ -258,6 +274,86 @@ describe('LiveTransportController', () => {
     );
     expect(provider.sendContext).toHaveBeenLastCalledWith(
       expect.stringContaining('open_terminal: ok (terminal aberto)'),
+    );
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('bridges native realtime tool calls to the renderer and returns function output', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'openai', provider }];
+    const events: Array<{ channel: string; payload: unknown }> = [];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'openai-realtime',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['openai'],
+    }));
+
+    const { VOICE_CHANNELS } = await import('../../shared/voice-channels');
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(
+      (channel, payload) => events.push({ channel, payload }),
+      () => 1000,
+    );
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(
+      (channel, payload) => events.push({ channel, payload }),
+      session,
+    );
+
+    await controller.onStart();
+    provider.fireToolCall();
+
+    const toolCall = events.find((event) => event.channel === VOICE_CHANNELS.liveToolCall);
+    expect(toolCall?.payload).toMatchObject({
+      source: 'realtime',
+      callId: 'call_1',
+      name: 'nexus_action',
+      tool: 'open_terminal',
+      args: { action: 'open_terminal' },
+    });
+
+    controller.toolResult({
+      sessionId: session.getState().sessionId ?? 'session',
+      at: 1001,
+      source: 'realtime',
+      callId: 'call_1',
+      name: 'nexus_action',
+      tool: 'open_terminal',
+      ok: true,
+      summary: 'terminal aberto',
+      output: { ok: true },
+    });
+
+    expect(provider.sendToolResult).toHaveBeenCalledWith(
+      'call_1',
+      expect.objectContaining({
+        ok: true,
+        tool: 'open_terminal',
+        summary: 'terminal aberto',
+      }),
     );
 
     vi.doUnmock('./voice-config-store');
