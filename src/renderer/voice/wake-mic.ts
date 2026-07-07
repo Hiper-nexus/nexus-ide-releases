@@ -10,6 +10,7 @@ import {
 } from './voice-capture';
 import { RESTART_BACKOFF_MS, nextRearmDelay } from './wake-rearm';
 import { frameIsSilent, type MicPermissionState } from './wake-health';
+import { SoftAgc } from './agc';
 
 /**
  * Mic sempre-ligado do wake word: stream 16 kHz mono de baixo custo que
@@ -35,13 +36,9 @@ const TARGET_SAMPLE_RATE = 16_000;
 const CHUNK = 1280;
 const SPEECH_RMS = 0.022;
 const MIN_SPEECH_MS = 320;
-/** Ganho de compensação pós-APM-off: sem o AGC do Chromium, o PCM cru de
- * mics USB sensíveis (fifine) chega fraco — wake score baixo e Whisper
- * alucinando em fala normal. Medido ao vivo (2026-07-07): com 3x a voz
- * normal marcava só 0.21-0.27 de wake score e o ambiente 0.05-0.10;
- * 8x ≈ +18dB coloca a fala na zona de detecção mantendo o ambiente longe
- * do threshold 0.6. Clamp ±1 no onFrame evita estouro do int16. */
-const WAKE_MAKEUP_GAIN = 12;
+/** Ganho inicial do AGC próprio (ver agc.ts) — o valor 12x foi o melhor
+ * fixo medido ao vivo em 2026-07-07; o AGC parte dele e adapta. */
+const WAKE_INITIAL_GAIN = 12;
 
 const WATCHDOG_INTERVAL_MS = 4_000;
 const FRAME_STALL_MS = 8_000;
@@ -58,6 +55,8 @@ export class WakeMic {
   private pending: number[] = [];
   private running = false;
   private wakeSuppressedUntil = 0;
+  /** AGC próprio do pipeline (o APM do Chromium fica desligado). */
+  private readonly agc = new SoftAgc(WAKE_INITIAL_GAIN);
 
   // Watchdog do stream (morte silenciosa do mic).
   private lastFrameAt = 0;
@@ -263,14 +262,10 @@ export class WakeMic {
     const onFrame = (frame: Float32Array) => {
       if (!this.running) return;
       this.lastFrameAt = Date.now();
-      // Makeup gain: com o APM off (AGC desligado), o sinal cru de mics USB
-      // sensíveis (fifine) fica baixo demais — o usuário precisava quase
-      // gritar. Amplifica com clamp em ±1 para não estourar o int16 do
-      // openWakeWord/Whisper.
-      for (let i = 0; i < frame.length; i += 1) {
-        const amplified = frame[i] * WAKE_MAKEUP_GAIN;
-        frame[i] = amplified > 1 ? 1 : amplified < -1 ? -1 : amplified;
-      }
+      // AGC próprio (ver agc.ts): o APM do Chromium foi desligado (897ce56)
+      // e ganho FIXO não acompanha distância — perto satura, longe some.
+      // O SoftAgc mira a FALA em RMS ~0.1 e ignora ruído de fundo.
+      this.agc.process(frame);
       // Prova única (por grafo) de que frames têm sinal: RMS do 1º frame.
       if (!this.firstFrameLogged) {
         this.firstFrameLogged = true;
