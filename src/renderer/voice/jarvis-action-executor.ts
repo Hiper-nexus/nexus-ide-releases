@@ -7,6 +7,7 @@ import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useHomeStore } from '../state/home-store';
 import { useGamificationStore } from '../state/gamification-store';
 import { useVoiceStore } from './voice-store';
+import { useSettingsStore } from '../state/settings-store';
 import { waitForSession, writeToPane } from '../terminal/terminal-host';
 import { launchSquadMission } from '../orch/mission-launcher';
 import { isMissingModelKeyError } from '../lib/credential-errors';
@@ -208,6 +209,27 @@ export async function executeJarvisAction(
     const orch = useOrchStore.getState();
     if (!orch.boardOpen) orch.toggleBoard();
     toolResult = { tool: action.type, ok: true, summary: 'quadro aberto' };
+  } else if (action.type === 'open_settings') {
+    const settings = useSettingsStore.getState();
+    if (!settings.drawerOpen) settings.toggleDrawer();
+    sayText = 'Configurações abertas.';
+    toolResult = { tool: action.type, ok: true, summary: 'configurações abertas' };
+  } else if (action.type === 'open_voice_settings') {
+    useVoiceStore.getState().openSettings();
+    sayText = 'Configurações de voz abertas.';
+    toolResult = { tool: action.type, ok: true, summary: 'configurações de voz abertas' };
+  } else if (action.type === 'open_canvas') {
+    const layout = useLayoutStore.getState();
+    if (layout.viewKind !== 'canvas') layout.toggleView();
+    useHomeStore.getState().hide();
+    sayText = 'Canvas aberto.';
+    toolResult = { tool: action.type, ok: true, summary: 'modo canvas aberto' };
+  } else if (action.type === 'open_grid') {
+    const layout = useLayoutStore.getState();
+    if (layout.viewKind !== 'grid') layout.toggleView();
+    useHomeStore.getState().hide();
+    sayText = 'Grade aberta.';
+    toolResult = { tool: action.type, ok: true, summary: 'modo grade aberto' };
   } else if (action.type === 'send_to_pane') {
     const { root, focusedPaneId } = useLayoutStore.getState();
     const target = findOrchestratorPane(root) ?? focusedPaneId;

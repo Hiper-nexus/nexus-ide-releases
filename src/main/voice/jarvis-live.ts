@@ -50,6 +50,14 @@ function actionSummary(action: JarvisAction): string {
       return 'fechar pane';
     case 'open_board':
       return 'abrir quadro de missões';
+    case 'open_settings':
+      return 'abrir configurações';
+    case 'open_voice_settings':
+      return 'abrir configurações de voz';
+    case 'open_canvas':
+      return 'abrir canvas';
+    case 'open_grid':
+      return 'abrir grade';
     case 'send_to_pane':
       return 'enviar tarefa ao pane';
     case 'run_command':

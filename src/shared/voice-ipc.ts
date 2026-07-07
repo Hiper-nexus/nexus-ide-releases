@@ -220,6 +220,10 @@ export type JarvisAction =
   | { type: 'open_terminal' }
   | { type: 'close_pane' }
   | { type: 'open_board' }
+  | { type: 'open_settings' }
+  | { type: 'open_voice_settings' }
+  | { type: 'open_canvas' }
+  | { type: 'open_grid' }
   | { type: 'send_to_pane'; text: string }
   | { type: 'run_command'; command: string }
   | { type: 'mcp_tool'; tool: string; args: Record<string, unknown> };
@@ -388,6 +392,10 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'open_terminal',
     'close_pane',
     'open_board',
+    'open_settings',
+    'open_voice_settings',
+    'open_canvas',
+    'open_grid',
     'send_to_pane',
     'run_command',
     'mcp_tool',

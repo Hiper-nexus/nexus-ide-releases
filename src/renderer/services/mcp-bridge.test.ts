@@ -6,6 +6,13 @@ describe('mcp-bridge action mapping', () => {
     expect(mapActionToTool({ type: 'open_terminal' })).toBeNull();
   });
 
+  it('keeps local UI actions on the renderer UI path', () => {
+    expect(mapActionToTool({ type: 'open_settings' })).toBeNull();
+    expect(mapActionToTool({ type: 'open_voice_settings' })).toBeNull();
+    expect(mapActionToTool({ type: 'open_canvas' })).toBeNull();
+    expect(mapActionToTool({ type: 'open_grid' })).toBeNull();
+  });
+
   it('maps pane actions only when a pane target is available', () => {
     expect(mapActionToTool({ type: 'close_pane' })).toBeNull();
     expect(

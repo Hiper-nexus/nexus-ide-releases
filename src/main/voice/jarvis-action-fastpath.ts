@@ -54,6 +54,48 @@ export function jarvisActionFastPath(
     return { say: say(ctx, 'Abrindo o quadro de missões.'), expectReply: false, action: { type: 'open_board' } };
   }
 
+  if (
+    /\b(abre|abra|abrir|mostra|mostre|vai|ir)\b.*\b(configuracoes de voz|ajustes de voz|jarvis settings|voice settings)\b/.test(
+      t,
+    ) ||
+    /\b(configuracoes de voz|ajustes de voz|voice settings)\b$/.test(t)
+  ) {
+    return {
+      say: say(ctx, 'Abrindo as configurações de voz.'),
+      expectReply: false,
+      action: { type: 'open_voice_settings' },
+    };
+  }
+
+  if (
+    /\b(abre|abra|abrir|mostra|mostre|vai|ir)\b.*\b(configuracoes|ajustes|settings|preferencias)\b/.test(t) ||
+    /\b(configuracoes|ajustes|settings|preferencias)\b$/.test(t)
+  ) {
+    return {
+      say: say(ctx, 'Abrindo as configurações.'),
+      expectReply: false,
+      action: { type: 'open_settings' },
+    };
+  }
+
+  if (
+    /\b(abre|abra|abrir|mostra|mostre|ativa|ative|entrar|entra|vai|ir)\b.*\b(canvas|modo canvas|tela livre)\b/.test(
+      t,
+    ) ||
+    /\b(modo canvas|canvas mode)\b$/.test(t)
+  ) {
+    return { say: say(ctx, 'Abrindo o canvas.'), expectReply: false, action: { type: 'open_canvas' } };
+  }
+
+  if (
+    /\b(abre|abra|abrir|mostra|mostre|ativa|ative|volta|volte|vai|ir)\b.*\b(grid|grade|modo grade|modo grid)\b/.test(
+      t,
+    ) ||
+    /\b(modo grade|modo grid|grid mode)\b$/.test(t)
+  ) {
+    return { say: say(ctx, 'Voltando para a grade.'), expectReply: false, action: { type: 'open_grid' } };
+  }
+
   if (/\b(nova|novo|cria|crie|criar|abre|abra|abrir)\b.*\bmiss(ao|oes)\b/.test(t)) {
     return { say: say(ctx, 'Abrindo o assistente de missão.'), expectReply: false, action: { type: 'new_mission' } };
   }

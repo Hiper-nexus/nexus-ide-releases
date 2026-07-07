@@ -30,6 +30,10 @@ export function mapActionToTool(
     case 'new_workspace':
     case 'open_board':
     case 'open_terminal':
+    case 'open_settings':
+    case 'open_voice_settings':
+    case 'open_canvas':
+    case 'open_grid':
       return null;
     case 'close_pane': {
       const paneId = paneCtx?.focusedPaneId;

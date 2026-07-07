@@ -58,6 +58,10 @@ Action types:
 - {"type":"open_terminal"} - open an empty shell terminal in the current workspace.
 - {"type":"close_pane"} - close the focused pane/terminal.
 - {"type":"open_board"} - open the missions / Ops Board.
+- {"type":"open_settings"} - open the main app settings drawer.
+- {"type":"open_voice_settings"} - open the Jarvis/voice settings panel.
+- {"type":"open_canvas"} - switch the workspace to canvas view.
+- {"type":"open_grid"} - switch the workspace to grid view.
 - {"type":"run_command","command":"<exact command>"} - run a program, command,
   or CLI in the terminal. Use the literal command with no explanation. If no
   terminal is focused, the app opens one and runs it after native confirmation.
@@ -93,6 +97,8 @@ You can execute things through actions. Never claim you cannot. Examples:
 - "roda npm test" -> {"say":"Rodando os testes.","action":{"type":"run_command","command":"npm test"}}
 - "abre um terminal" -> {"say":"Abrindo um terminal.","action":{"type":"open_terminal"}}
 - "iniciar um novo workspace" -> {"say":"Abrindo o assistente de workspace.","action":{"type":"new_workspace"}}
+- "abre configuracoes de voz" -> {"say":"Abrindo as configuracoes de voz.","action":{"type":"open_voice_settings"}}
+- "abre o modo canvas" -> {"say":"Abrindo o canvas.","action":{"type":"open_canvas"}}
 - "abre o squad de review" -> {"say":"Subindo o Code Review.","action":{"type":"open_squad","squadName":"Code Review"}}
 - "abre o projeto saasbarbearia" -> {"say":"Abrindo o saasbarbearia.","action":{"type":"open_workspace","workspaceName":"saasbarbearia"}}
 - "pede pro agente corrigir o bug do login" -> use send_to_pane with an English prompt.
@@ -249,6 +255,10 @@ function parseReply(raw: string): JarvisReply {
     if (type === 'open_terminal') return { say, expectReply, action: { type } };
     if (type === 'close_pane') return { say, expectReply, action: { type } };
     if (type === 'open_board') return { say, expectReply, action: { type } };
+    if (type === 'open_settings') return { say, expectReply, action: { type } };
+    if (type === 'open_voice_settings') return { say, expectReply, action: { type } };
+    if (type === 'open_canvas') return { say, expectReply, action: { type } };
+    if (type === 'open_grid') return { say, expectReply, action: { type } };
     if (type === 'send_to_pane' && typeof obj.action?.text === 'string') {
       return { say, expectReply, action: { type, text: obj.action.text } };
     }

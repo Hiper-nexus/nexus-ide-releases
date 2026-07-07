@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.10.8 — Jarvis mais operacional
+
+Data: 2026-07-07
+
+Hotfix de paridade operacional: a Jarvis ganhou mais controle nativo do app,
+limpeza de sessão MCP por turno e fala em uma única voz por resposta.
+
+### Correcoes
+
+- Novos fast-paths sem LLM para abrir configurações, configurações de voz,
+  entrar no modo canvas e voltar para a grade.
+- O cérebro agora reconhece essas ações nativas no JSON, então a Jarvis não cai
+  em `action:none` quando a LLM decide operar a UI.
+- O executor renderer abre os painéis reais e alterna canvas/grade diretamente,
+  mantendo os resultados no transcript live/tool result.
+- Cada turno da Jarvis limpa a sessão MCP ao fim da ação, evitando permissões e
+  confirmações reaproveitadas entre comandos.
+- A fala da Jarvis voltou a usar uma chamada TTS por resposta, evitando troca de
+  timbre entre primeira frase e resto quando um provedor degrada no meio.
+
 ## 0.10.7 — Jarvis operacional
 
 Data: 2026-07-07

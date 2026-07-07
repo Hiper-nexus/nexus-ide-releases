@@ -46,6 +46,7 @@ import { useFilesStore } from '../state/files-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useGamificationStore } from '../state/gamification-store';
 import { executeJarvisAction } from './jarvis-action-executor';
+import { mcpClearSession } from '../services/mcp-bridge';
 import type { AutoStopOptions } from './voice-capture';
 import type {
   JarvisLiveTranscriptEvent,
@@ -288,6 +289,27 @@ function logVoiceEvent(
     ...(msg ? { msg: msg.slice(0, 500) } : {}),
     ...(data ? { data } : {}),
   });
+}
+
+async function clearJarvisMcpSession(): Promise<void> {
+  try {
+    const result = await mcpClearSession();
+    if (!result.ok) {
+      console.warn('[voice] não consegui limpar sessão MCP da Jarvis');
+    }
+  } catch (err) {
+    console.warn('[voice] falha limpando sessão MCP da Jarvis:', errMsg(err));
+  }
+}
+
+async function executeJarvisActionForTurn(
+  ...args: Parameters<typeof executeJarvisAction>
+): ReturnType<typeof executeJarvisAction> {
+  try {
+    return await executeJarvisAction(...args);
+  } finally {
+    await clearJarvisMcpSession();
+  }
 }
 
 function personaUserName(): string {
@@ -1049,7 +1071,7 @@ async function runJarvisTurn(
     jarvisHistory = jarvisHistory.slice(-(maxTurns * 2));
   }
 
-  const exec = await executeJarvisAction(reply, context);
+  const exec = await executeJarvisActionForTurn(reply, context);
   let sayText = exec.sayText;
   if (exec.expectReply !== undefined) reply.expectReply = exec.expectReply;
   const toolResult = exec.toolResult;
@@ -1086,40 +1108,19 @@ async function runJarvisTurn(
 
   store.setStatus('speaking');
   liveStatus('speaking');
-  // Pipelining por sentença (LiveKit playbook): sintetiza e toca a PRIMEIRA
-  // frase enquanto o resto ainda está sendo gerado — corta o time-to-first-audio.
-  // Uma só chamada TTS em respostas curtas — duas frases = duas vozes/timbres.
-  const split = sayText.length > 120 ? splitFirstSentence(sayText) : { first: sayText, rest: '' };
   const tTts = Date.now();
-  const first = await withTimeout(
-    window.nexus.voice.speak({ text: split.first, speakMode: 'full' }),
+  const spoken = await withTimeout(
+    window.nexus.voice.speak({ text: sayText, speakMode: 'full' }),
     SPEAK_DEADLINE_MS,
     'TTS',
   );
-  console.log(`[voice] tts 1ª frase: ${Date.now() - tTts}ms`);
-  if (!first.ok) {
-    store.setError(first.error);
+  console.log(`[voice] tts: ${Date.now() - tTts}ms`);
+  if (!spoken.ok) {
+    store.setError(spoken.error);
     return;
   }
-  surfaceTtsFallback(first);
-  const restPromise =
-    split.rest && first.mode === 'audio'
-      ? window.nexus.voice.speak({ text: split.rest, speakMode: 'full' })
-      : null;
-  await playSpeakResult(first);
-  if (split.rest) {
-    const rest = await withTimeout(
-      restPromise ?? window.nexus.voice.speak({ text: split.rest, speakMode: 'full' }),
-      SPEAK_DEADLINE_MS,
-      'TTS',
-    );
-    if (!rest.ok) {
-      store.setError(rest.error);
-      return;
-    }
-    surfaceTtsFallback(rest);
-    await playSpeakResult(rest);
-  }
+  surfaceTtsFallback(spoken);
+  await playSpeakResult(spoken);
   store.setSpoken(sayText);
   store.setStatus('idle');
   void window.nexus.voice.recordEcho(sayText);
@@ -1146,15 +1147,6 @@ async function runJarvisTurn(
   } else {
     liveEndTurn();
   }
-}
-
-/** Primeira sentença (mín. 12 chars) + resto — para o TTS pipelined. */
-function splitFirstSentence(text: string): { first: string; rest: string } {
-  const t = text.trim();
-  const m = /[.!?…](\s|$)/.exec(t.slice(12));
-  if (!m || m.index + 13 >= t.length) return { first: t, rest: '' };
-  const cut = 12 + m.index + 1;
-  return { first: t.slice(0, cut).trim(), rest: t.slice(cut).trim() };
 }
 
 /**

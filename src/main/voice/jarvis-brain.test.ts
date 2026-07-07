@@ -137,6 +137,27 @@ describe('jarvisThink brain providers', () => {
     expect(boardReply.action).toEqual({ type: 'open_board' });
   });
 
+  it('parseia ações nativas de UI do JSON do cérebro', async () => {
+    const replies = [
+      '{"say":"Abrindo o canvas.","expectReply":false,"action":{"type":"open_canvas"}}',
+      '{"say":"Abrindo voz.","expectReply":false,"action":{"type":"open_voice_settings"}}',
+    ];
+    let call = 0;
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(200, replies[call++]),
+    ) as unknown as typeof fetch;
+    const d = deps(
+      (envVar) => (envVar === 'GEMINI_API_KEY' ? 'gemini-key' : undefined),
+      fetchImpl,
+    );
+
+    const canvasReply = await jarvisThink('preciso reorganizar a tela livre', CTX, [], d);
+    const voiceReply = await jarvisThink('preciso ajustar a voz da assistente', CTX, [], d);
+
+    expect(canvasReply.action).toEqual({ type: 'open_canvas' });
+    expect(voiceReply.action).toEqual({ type: 'open_voice_settings' });
+  });
+
   it('keeps an intentional empty say silent instead of turning it into filler', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse(

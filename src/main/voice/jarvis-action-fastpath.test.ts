@@ -57,6 +57,21 @@ describe('jarvisActionFastPath', () => {
     });
   });
 
+  it('configurações e modos visuais disparam ações nativas', () => {
+    expect(jarvisActionFastPath('abre configurações de voz', CTX)?.action).toEqual({
+      type: 'open_voice_settings',
+    });
+    expect(jarvisActionFastPath('abrir configurações', CTX)?.action).toEqual({
+      type: 'open_settings',
+    });
+    expect(jarvisActionFastPath('modo canvas', CTX)?.action).toEqual({
+      type: 'open_canvas',
+    });
+    expect(jarvisActionFastPath('volta para modo grid', CTX)?.action).toEqual({
+      type: 'open_grid',
+    });
+  });
+
   it('iniciar um novo squad dispara design_squad', () => {
     const reply = jarvisActionFastPath('iniciar um novo squad', CTX);
     expect(reply?.action).toEqual({ type: 'design_squad' });
