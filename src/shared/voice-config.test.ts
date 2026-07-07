@@ -29,7 +29,7 @@ describe('voiceConfigSchema', () => {
     expect(parsed.input.shortcut).toBe('CommandOrControl+Shift+Space');
     expect(parsed.jarvisLive.enabled).toBe(false);
     expect(parsed.jarvisLive.graceReuseMs).toBe(90_000);
-    expect(parsed.jarvisLive.openaiModel).toBe('gpt-realtime-2.1');
+    expect(parsed.jarvisLive.openaiModel).toBe('gpt-realtime-2.1-mini');
     expect(parsed.jarvisLive.openaiVoice).toBe('alloy');
     expect(parsed.jarvisBrain.provider).toBe('gemini');
     expect(parsed.jarvisBrain.fallback?.provider).toBe('openai');

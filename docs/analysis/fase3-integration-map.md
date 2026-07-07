@@ -116,7 +116,8 @@ Fonte oficial consultada:
 
 Achados relevantes em 2026-07-07:
 
-- WebSocket server-to-server: `wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1`
+- WebSocket server-to-server: `wss://api.openai.com/v1/realtime?model=<modelo realtime configurado>`
+- Default operacional atual do Nexus: `gpt-realtime-2.1-mini`; `gpt-realtime-2.1` continua aceito por override de config.
 - auth no main: header `Authorization: Bearer ${OPENAI_API_KEY}`
 - GA session shape usa `session.type = "realtime"`, `output_modalities`, `audio.input`, `audio.output`
 - audio WebSocket exige eventos JSON com audio base64 no input buffer
@@ -142,6 +143,6 @@ Achados relevantes em 2026-07-07:
 
 ## Riscos
 
-- A aceitacao menciona `gpt-4o-realtime-preview` e eventos beta. A documentacao atual recomenda `gpt-realtime-2.1` e eventos GA. Decisao: usar GA por default e aceitar aliases/eventos beta no parser.
+- A aceitacao menciona `gpt-4o-realtime-preview` e eventos beta. A linha atual usa modelos `gpt-realtime-*` e eventos GA. Decisao: usar `gpt-realtime-2.1-mini` por default operacional, aceitar override de modelo e aceitar aliases/eventos beta no parser.
 - Meta `<500ms` depende de rede/modelo/audio device; o codigo pode medir, mas nao garantir no CI.
 - E2E manual com voz depende de permissao de mic e app Electron rodando; automatizar totalmente ficaria fora do escopo sem Browser/Computer Use no app.

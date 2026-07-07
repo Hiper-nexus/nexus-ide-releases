@@ -187,7 +187,7 @@ describe('OpenAIRealtimeProvider', () => {
     await connected;
 
     expect(observedUrl).toBe(
-      'wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1',
+      'wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1-mini',
     );
     expect(observedAuth).toBe('Bearer sk-test');
     expect(ws.sent).toHaveLength(2);
