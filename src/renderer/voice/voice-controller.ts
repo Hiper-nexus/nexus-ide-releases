@@ -49,6 +49,7 @@ import { useGamificationStore } from '../state/gamification-store';
 import { executeJarvisAction } from './jarvis-action-executor';
 import { mcpClearSession } from '../services/mcp-bridge';
 import { splitForPipelinedSpeech } from './speech-segments';
+import { realtimeToolEventToJarvisAction } from './realtime-action';
 import type { AutoStopOptions } from './voice-capture';
 import type {
   JarvisAction,
@@ -460,31 +461,7 @@ function buildJarvisContext(): JarvisContext {
 }
 
 function actionFromRealtimeToolEvent(event: JarvisLiveToolEvent): JarvisAction | null {
-  if (event.source !== 'realtime' || event.name !== 'nexus_action' || !event.callId) {
-    return null;
-  }
-  const action = typeof event.args?.action === 'string' ? event.args.action : '';
-  switch (action) {
-    case 'new_mission':
-    case 'new_workspace':
-    case 'open_terminal':
-    case 'open_board':
-    case 'open_settings':
-    case 'open_voice_settings':
-    case 'open_canvas':
-    case 'open_grid':
-    case 'browser_back':
-    case 'browser_forward':
-    case 'browser_reload':
-    case 'focus_next_pane':
-      return { type: action };
-    case 'open_browser': {
-      const url = typeof event.args?.url === 'string' ? event.args.url.trim() : '';
-      return url ? { type: 'open_browser', url } : { type: 'open_browser' };
-    }
-    default:
-      return null;
-  }
+  return realtimeToolEventToJarvisAction(event);
 }
 
 async function speakRealtimeToolResult(text: string): Promise<void> {
