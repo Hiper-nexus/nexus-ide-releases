@@ -7,6 +7,7 @@ import {
   setVoiceKeyRequestSchema,
   jarvisRequestSchema,
   jarvisLiveInterruptRequestSchema,
+  jarvisLiveSmokeTestRequestSchema,
   jarvisLiveStartRequestSchema,
   jarvisLiveStatusPatchSchema,
   jarvisLiveToolResultInputSchema,
@@ -321,6 +322,11 @@ export function registerVoiceIpc(): void {
     liveTransport.endTurn();
     return liveSession.endTurn();
   });
+  ipcMain.handle(VOICE_CHANNELS.liveSmokeTest, async (_event, raw) => {
+    const parsed = jarvisLiveSmokeTestRequestSchema.safeParse(raw);
+    if (!parsed.success) return liveSession.getState();
+    return liveTransport.smokeTest(parsed.data.text);
+  });
 
   // Mic PCM 16 kHz base64 do renderer → transporte realtime (no-op no Classic).
   ipcMain.on(VOICE_CHANNELS.liveMicIn, (_event, raw: unknown) => {
@@ -352,7 +358,7 @@ export function registerVoiceIpc(): void {
 
   ipcMain.handle(VOICE_CHANNELS.liveInterrupt, (_event, raw) => {
     const parsed = jarvisLiveInterruptRequestSchema.safeParse(raw ?? {});
-    return liveSession.interrupt(
+    return liveTransport.interrupt(
       parsed.success ? parsed.data.reason : 'interrupted',
     );
   });

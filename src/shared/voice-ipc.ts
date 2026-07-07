@@ -65,7 +65,7 @@ export const setConfigRequestSchema = z.object({
   /** Toggle Jarvis Live: continuous session mode over the Classic fallback. */
   jarvisLiveEnabled: z.boolean().optional(),
   /** Transporte da sessão live: FSM batch (classic) ou áudio realtime. */
-  jarvisLiveTransport: z.enum(['classic', 'gemini-live']).optional(),
+  jarvisLiveTransport: z.enum(['classic', 'openai-realtime', 'gemini-live']).optional(),
   /** Preferred chat-model provider for the Jarvis brain. */
   jarvisBrainProvider: z.enum(['gemini', 'openai', 'groq']).optional(),
   /** Persona da voz: nome do assistente / do usuário / instruções custom. */
@@ -143,8 +143,8 @@ export interface VoiceRuntimeInfo {
   wakeLockHolderPid?: number | null;
   jarvisLive: {
     enabled: boolean;
-    /** 'classic' = FSM sobre pipeline batch; 'gemini-live' = áudio realtime. */
-    transport: 'classic' | 'gemini-live';
+    /** 'classic' = FSM batch; 'openai-realtime'/'gemini-live' = audio realtime. */
+    transport: 'classic' | 'openai-realtime' | 'gemini-live';
     graceReuseMs: number;
     dormantAfterMs: number;
     maxWindowTurns: number;
@@ -286,6 +286,10 @@ export interface JarvisLiveStartRequest {
   reason?: 'manual' | 'wake' | 'ptt' | 'reply';
 }
 
+export interface JarvisLiveSmokeTestRequest {
+  text: string;
+}
+
 export interface JarvisLiveStatusPatch {
   status: Exclude<JarvisLiveStatus, 'off'>;
   pendingMic?: boolean;
@@ -299,6 +303,15 @@ export interface JarvisLiveTranscriptEvent {
   text: string;
   final: boolean;
   at: number;
+}
+
+export interface JarvisTranscriptAppendEvent {
+  sessionId: string;
+  ts: string;
+  role: 'user' | 'assistant';
+  text: string;
+  audio_url: string | null;
+  final: boolean;
 }
 
 export interface JarvisLiveToolEvent {
@@ -323,6 +336,10 @@ export const jarvisLiveStartRequestSchema = z
     reason: z.enum(['manual', 'wake', 'ptt', 'reply']).optional(),
   })
   .default({});
+
+export const jarvisLiveSmokeTestRequestSchema = z.object({
+  text: z.string().min(1).max(1000),
+});
 
 export const jarvisLiveStatusPatchSchema = z.object({
   status: z.enum([

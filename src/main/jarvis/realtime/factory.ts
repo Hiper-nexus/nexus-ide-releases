@@ -1,0 +1,66 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { resolveVoiceApiKey } from '../../voice/voice-secrets';
+import type { VoiceConfig } from '../../../shared/voice-config';
+import { GeminiLiveProvider } from './gemini-live-provider';
+import { OpenAIRealtimeProvider } from './openai-realtime';
+import type {
+  RealtimeProviderId,
+  TurnManagedRealtimeProvider,
+} from './provider';
+
+export interface RealtimeProviderFactoryOptions {
+  config: VoiceConfig;
+  instructions?: string;
+  promptPath?: string;
+}
+
+const SYSTEM_PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'system.en.md');
+const FALLBACK_SYSTEM_PROMPT = `You are Jarvis, the voice assistant embedded in Nexus IDE.
+You have full authority over actions inside the Nexus IDE (files, terminal, git, editor, panes).
+For actions outside Nexus, refuse and explain you're scoped to the IDE only in this version.
+
+Response rules:
+- Answer in the user's language (they will speak Portuguese most of the time).
+- Keep spoken responses concise (1-3 sentences max unless asked for detail).
+- When executing an action, briefly narrate what you're doing.
+- Destructive actions (rm, git push --force, git reset --hard, sudo) MUST ask explicit confirmation before running.
+
+Available tools: (populated dynamically in Phase 4)`;
+
+export function resolveRealtimeProviderId(
+  config: VoiceConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): RealtimeProviderId | null {
+  const forced = env.NEXUS_REALTIME_PROVIDER?.trim().toLowerCase();
+  if (forced === 'openai' || forced === 'gemini') return forced;
+  if (config.jarvisLive.transport === 'openai-realtime') return 'openai';
+  if (config.jarvisLive.transport === 'gemini-live') return 'gemini';
+  return null;
+}
+
+export function loadJarvisSystemPrompt(promptPath = SYSTEM_PROMPT_PATH): string {
+  try {
+    return fs.readFileSync(promptPath, 'utf-8').trim();
+  } catch {
+    return FALLBACK_SYSTEM_PROMPT;
+  }
+}
+
+export function createRealtimeProvider(
+  options: RealtimeProviderFactoryOptions,
+): TurnManagedRealtimeProvider | null {
+  const providerId = resolveRealtimeProviderId(options.config);
+  if (!providerId) return null;
+  if (providerId === 'gemini') return new GeminiLiveProvider();
+
+  const apiKey = resolveVoiceApiKey('OPENAI_API_KEY');
+  if (!apiKey) return null;
+  const live = options.config.jarvisLive;
+  return new OpenAIRealtimeProvider({
+    apiKey,
+    model: live.openaiModel,
+    voice: live.openaiVoice,
+    instructions: options.instructions ?? loadJarvisSystemPrompt(options.promptPath),
+  });
+}

@@ -90,6 +90,7 @@ export const voicePluginSchema: z.ZodType<VoicePlugin> = z.lazy(() =>
 export type VoiceRouting = 'jarvis' | 'focused-pane' | 'orchestrator' | 'ask';
 export type VoiceSpeakMode = 'summary' | 'full' | 'off';
 export type JarvisBrainProviderId = 'gemini' | 'openai' | 'groq';
+export type JarvisLiveTransport = 'classic' | 'openai-realtime' | 'gemini-live';
 
 const inputSchema = z.object({
   mode: z.enum(['push-to-talk']).default('push-to-talk'),
@@ -103,19 +104,22 @@ export const jarvisLiveConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
     /**
-     * Transporte da sessão live: 'classic' = FSM sobre o pipeline batch
-     * STT→brain→TTS (sempre disponível); 'gemini-live' = áudio full-duplex
-     * real via WSS BidiGenerateContent (requer GEMINI_API_KEY). Quando o
-     * transporte realtime falha, o Classic segue como fallback.
+     * Transporte da sessao live: 'classic' = FSM sobre pipeline batch;
+     * 'openai-realtime' = OpenAI Realtime via WSS; 'gemini-live' fica como
+     * fallback futuro. Quando realtime falha, o Classic segue valendo.
      */
-    transport: z.enum(['classic', 'gemini-live']).default('classic'),
-    /** Modelo realtime (áudio nativo) usado pelo transporte gemini-live. */
+    transport: z.enum(['classic', 'openai-realtime', 'gemini-live']).default('classic'),
+    /** Modelo realtime OpenAI padrao. */
+    openaiModel: z.string().min(1).max(128).default('gpt-realtime-2.1'),
+    /** Voz OpenAI Realtime padrao. */
+    openaiVoice: z.string().min(1).max(64).default('alloy'),
+    /** Modelo realtime (audio nativo) usado pelo transporte gemini-live. */
     liveModel: z
       .string()
       .min(1)
       .max(128)
       .default('gemini-2.5-flash-native-audio-preview-12-2025'),
-    /** Voz pré-construída do Gemini Live. */
+    /** Voz pre-construida do Gemini Live. */
     voiceName: z.string().min(1).max(64).default('Charon'),
     /** Keep the live session warm after a turn so follow-ups reuse context. */
     graceReuseMs: z.number().int().positive().max(10 * 60_000).default(90_000),
@@ -127,6 +131,8 @@ export const jarvisLiveConfigSchema = z
   .default({
     enabled: false,
     transport: 'classic',
+    openaiModel: 'gpt-realtime-2.1',
+    openaiVoice: 'alloy',
     liveModel: 'gemini-2.5-flash-native-audio-preview-12-2025',
     voiceName: 'Charon',
     graceReuseMs: 90_000,
@@ -266,6 +272,8 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
   jarvisLive: {
     enabled: false,
     transport: 'classic',
+    openaiModel: 'gpt-realtime-2.1',
+    openaiVoice: 'alloy',
     liveModel: 'gemini-2.5-flash-native-audio-preview-12-2025',
     voiceName: 'Charon',
     graceReuseMs: 90_000,
