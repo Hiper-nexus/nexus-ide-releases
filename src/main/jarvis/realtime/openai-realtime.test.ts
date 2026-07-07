@@ -42,7 +42,9 @@ describe('buildOpenAISessionUpdate', () => {
       session: {
         type: 'realtime',
         model: 'gpt-realtime-2.1',
-        output_modalities: ['text', 'audio'],
+        // A API GA aceita ['text'] OU ['audio'] — nunca ambos (validado ao
+        // vivo em 2026-07-07); o transcript chega via output_audio_transcript.
+        output_modalities: ['audio'],
         audio: {
           input: {
             format: { type: 'audio/pcm', rate: 24_000 },
@@ -50,7 +52,8 @@ describe('buildOpenAISessionUpdate', () => {
             turn_detection: null,
           },
           output: {
-            format: { type: 'audio/pcm' },
+            // rate é obrigatório no output também (erro da API sem ele).
+            format: { type: 'audio/pcm', rate: 24_000 },
             voice: 'alloy',
           },
         },

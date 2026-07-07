@@ -61,7 +61,9 @@ export function buildOpenAISessionUpdate(opts: {
       type: 'realtime',
       model: opts.model,
       instructions: opts.instructions,
-      output_modalities: ['text', 'audio'],
+      // A API aceita ['text'] OU ['audio'], nunca ambos; com 'audio'
+      // o transcript continua chegando via response.output_audio_transcript.*.
+      output_modalities: ['audio'],
       audio: {
         input: {
           format: {
@@ -330,7 +332,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     this.sendEvent({ type: 'input_audio_buffer.commit' });
     this.sendEvent({
       type: 'response.create',
-      response: { output_modalities: ['text', 'audio'] },
+      response: { output_modalities: ['audio'] },
     });
   }
 
@@ -354,7 +356,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     });
     this.sendEvent({
       type: 'response.create',
-      response: { output_modalities: ['text', 'audio'] },
+      response: { output_modalities: ['audio'] },
     });
   }
 
