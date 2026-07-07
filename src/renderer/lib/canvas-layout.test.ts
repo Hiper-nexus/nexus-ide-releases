@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { defaultCanvasLayout, ensureCanvasLayouts, pruneCanvasLayouts } from './canvas-layout';
+import {
+  defaultCanvasLayout,
+  ensureCanvasLayouts,
+  nextCanvasLayout,
+  pruneCanvasLayouts,
+} from './canvas-layout';
 import type { CanvasNodeLayout } from '../../shared/types';
 
 describe('defaultCanvasLayout', () => {
@@ -56,6 +61,38 @@ describe('ensureCanvasLayouts', () => {
     const panes = [{ id: 'x', kind: 'shell' as const, title: 'X' }];
     ensureCanvasLayouts(panes, existing);
     expect(Object.keys(existing)).toHaveLength(0);
+  });
+});
+
+describe('nextCanvasLayout', () => {
+  it('places a new pane to the right of the focused pane', () => {
+    const focused = defaultCanvasLayout(0);
+    const next = nextCanvasLayout({ a: focused }, 'a', 1);
+
+    expect(next.position.y).toBe(focused.position.y);
+    expect(next.position.x).toBe(focused.position.x + focused.size.width + 24);
+    expect(next.size).toEqual(focused.size);
+    expect(next.z).toBeGreaterThan(focused.z);
+  });
+
+  it('keeps scanning right when the first sibling slot is occupied', () => {
+    const focused = defaultCanvasLayout(0);
+    const firstRight: CanvasNodeLayout = {
+      ...defaultCanvasLayout(1),
+      position: { x: focused.position.x + focused.size.width + 24, y: focused.position.y },
+    };
+
+    const next = nextCanvasLayout({ a: focused, b: firstRight }, 'a', 2);
+
+    expect(next.position.y).toBe(focused.position.y);
+    expect(next.position.x).toBe(firstRight.position.x + focused.size.width + 24);
+  });
+
+  it('falls back to the default cascade when no pivot layout exists', () => {
+    const next = nextCanvasLayout({}, 'missing', 2);
+
+    expect(next.position).toEqual(defaultCanvasLayout(2).position);
+    expect(next.z).toBe(0);
   });
 });
 

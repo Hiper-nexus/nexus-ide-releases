@@ -14,6 +14,7 @@ const COL_STRIDE = DEFAULT_WIDTH + 24;
 const ROW_STRIDE = DEFAULT_HEIGHT + 24;
 const ORIGIN_X = 24;
 const ORIGIN_Y = 24;
+const SIBLING_GAP = 24;
 
 /** Stable default layout for a pane at a given slot index. */
 export function defaultCanvasLayout(index: number): CanvasNodeLayout {
@@ -24,6 +25,58 @@ export function defaultCanvasLayout(index: number): CanvasNodeLayout {
     size: { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT },
     z: index,
   };
+}
+
+function maxZ(layouts: Record<string, CanvasNodeLayout>): number {
+  return Math.max(-1, ...Object.values(layouts).map((layout) => layout.z ?? 0));
+}
+
+function overlaps(
+  candidate: CanvasNodeLayout,
+  existing: CanvasNodeLayout,
+): boolean {
+  const a = {
+    left: candidate.position.x,
+    right: candidate.position.x + candidate.size.width,
+    top: candidate.position.y,
+    bottom: candidate.position.y + candidate.size.height,
+  };
+  const b = {
+    left: existing.position.x,
+    right: existing.position.x + existing.size.width,
+    top: existing.position.y,
+    bottom: existing.position.y + existing.size.height,
+  };
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+/**
+ * New panes opened while the user is already in canvas mode should feel like a
+ * deliberate split: place them beside the focused pane, not in a far cascade.
+ */
+export function nextCanvasLayout(
+  layouts: Record<string, CanvasNodeLayout>,
+  pivotPaneId: string | null,
+  fallbackIndex: number,
+): CanvasNodeLayout {
+  const z = maxZ(layouts) + 1;
+  const pivot = pivotPaneId ? layouts[pivotPaneId] : null;
+  if (!pivot) return { ...defaultCanvasLayout(fallbackIndex), z };
+
+  const candidate: CanvasNodeLayout = {
+    position: {
+      x: pivot.position.x + pivot.size.width + SIBLING_GAP,
+      y: pivot.position.y,
+    },
+    size: { ...pivot.size },
+    z,
+  };
+  const stride = pivot.size.width + SIBLING_GAP;
+  const occupied = Object.entries(layouts).filter(([id]) => id !== pivotPaneId);
+  while (occupied.some(([, layout]) => overlaps(candidate, layout))) {
+    candidate.position.x += stride;
+  }
+  return candidate;
 }
 
 /**

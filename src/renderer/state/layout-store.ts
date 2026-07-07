@@ -20,6 +20,7 @@ import {
 import {
   defaultCanvasLayout,
   ensureCanvasLayouts,
+  nextCanvasLayout,
 } from '../lib/canvas-layout';
 import { getActiveWorkspacePath } from './active-workspace';
 import { useHomeStore } from './home-store';
@@ -232,15 +233,23 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   },
 
   addShellPane: () => {
-    const { root: currentRoot, focusedPaneId } = get();
+    const { root: currentRoot, focusedPaneId, viewKind, canvasNodeLayouts } = get();
     const newPane = createPane('shell', getActiveWorkspacePath() ?? undefined);
     const pivot = focusedPaneId ?? firstPaneId(currentRoot);
     const root = pivot
       ? splitPane(currentRoot, pivot, 'row', newPane)
       : buildGridTree([newPane]);
+    const paneCount = listPanes(root).length;
+    const updatedLayouts =
+      viewKind === 'canvas'
+        ? {
+            ...canvasNodeLayouts,
+            [newPane.id]: nextCanvasLayout(canvasNodeLayouts, pivot, paneCount - 1),
+          }
+        : canvasNodeLayouts;
     bumpTreeVersion();
-    set({ root, focusedPaneId: newPane.id });
-    persist({ ...get(), root, focusedPaneId: newPane.id });
+    set({ root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
+    persist({ ...get(), root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });
     return newPane.id;
   },
 
@@ -280,7 +289,10 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const paneCount = listPanes(root).length;
     const updatedLayouts =
       viewKind === 'canvas'
-        ? { ...canvasNodeLayouts, [newPane.id]: defaultCanvasLayout(paneCount - 1) }
+        ? {
+            ...canvasNodeLayouts,
+            [newPane.id]: nextCanvasLayout(canvasNodeLayouts, pivotId, paneCount - 1),
+          }
         : canvasNodeLayouts;
 
     const focusedPaneId = newPane.id;
@@ -317,7 +329,10 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const paneCount = listPanes(root).length;
     const updatedLayouts =
       viewKind === 'canvas'
-        ? { ...canvasNodeLayouts, [newPane.id]: defaultCanvasLayout(paneCount - 1) }
+        ? {
+            ...canvasNodeLayouts,
+            [newPane.id]: nextCanvasLayout(canvasNodeLayouts, pivot, paneCount - 1),
+          }
         : canvasNodeLayouts;
     bumpTreeVersion();
     set({ root, focusedPaneId: newPane.id, canvasNodeLayouts: updatedLayouts });

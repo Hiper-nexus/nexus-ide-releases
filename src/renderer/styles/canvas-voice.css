@@ -57,12 +57,29 @@
 .canvas-container .react-flow__minimap {
   border-radius: var(--radius);
   overflow: hidden;
+  width: 148px;
+  height: 104px;
+  opacity: 0.58;
+  filter: saturate(0.85);
+  transition: opacity 120ms ease, filter 120ms ease, transform 120ms ease;
+}
+
+.canvas-container .react-flow__minimap:hover {
+  opacity: 0.95;
+  filter: saturate(1);
+  transform: translateY(-1px);
 }
 
 /* xyflow controls */
 .canvas-container .react-flow__controls {
   border-radius: var(--radius);
   overflow: hidden;
+  opacity: 0.78;
+  transition: opacity 120ms ease;
+}
+
+.canvas-container .react-flow__controls:hover {
+  opacity: 1;
 }
 
 .canvas-container .react-flow__controls-button {

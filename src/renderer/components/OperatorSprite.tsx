@@ -7,9 +7,9 @@ import { OPERATOR_GRID, paletteFor } from './operator-sprite-data';
 
 /**
  * Mascote pixel programático: desenha OPERATOR_GRID num canvas em escala
- * INTEIRA (pixel art nítida). 2 frames de idle (bob de 1px + faísca de aura),
- * desligados com prefers-reduced-motion. `mood` ajusta a leitura: celebrando
- * pulsa o acento, dormindo apaga o visor.
+ * INTEIRA (pixel art nítida). 4 frames de idle com respiração e faísca de
+ * aura, desligados com prefers-reduced-motion. `mood` ajusta a leitura:
+ * celebrando pulsa o acento, dormindo apaga o visor.
  */
 
 export type OperatorMood = 'idle' | 'celebrating' | 'evolving' | 'sleeping';
@@ -23,10 +23,23 @@ interface OperatorSpriteProps {
 }
 
 const GRID_SIZE = 16;
-const FRAME_MS = 600;
+const FRAME_MS = 220;
 
-function prefersReducedMotion(): boolean {
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(() =>
+    typeof window === 'undefined'
+      ? false
+      : window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = () => setReduced(query.matches);
+    onChange();
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+  return reduced;
 }
 
 export function OperatorSprite({
@@ -38,14 +51,15 @@ export function OperatorSprite({
 }: OperatorSpriteProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [frame, setFrame] = useState(0);
-  const animated = mood !== 'sleeping' && !prefersReducedMotion();
+  const reducedMotion = usePrefersReducedMotion();
+  const animated = mood !== 'sleeping' && !reducedMotion;
 
   useEffect(() => {
     if (!animated) {
       setFrame(0);
       return;
     }
-    const id = setInterval(() => setFrame((f) => (f + 1) % 2), FRAME_MS);
+    const id = setInterval(() => setFrame((f) => (f + 1) % 4), FRAME_MS);
     return () => clearInterval(id);
   }, [animated]);
 
@@ -61,20 +75,27 @@ export function OperatorSprite({
 
     const palette = [...paletteFor(tier, branch, skin)];
     if (mood === 'sleeping') palette[3] = palette[2]; // visor apagado
-    if ((mood === 'celebrating' || mood === 'evolving') && frame === 1) {
+    if ((mood === 'celebrating' || mood === 'evolving') && frame % 2 === 1) {
       palette[4] = palette[5] === 'rgba(0,0,0,0)' ? palette[3] : palette[5];
     }
 
     ctx.clearRect(0, 0, px, px);
     ctx.globalAlpha = mood === 'sleeping' ? 0.55 : 1;
-    const bob = frame === 1 ? scale : 0; // 1px de respiração no frame B
+    const bodyBob = frame === 1 || frame === 2 ? -scale : 0;
+    const accentNudge = frame === 2 ? scale : 0;
+    const auraOn = mood !== 'idle' || frame !== 2;
     for (let y = 0; y < GRID_SIZE; y += 1) {
       for (let x = 0; x < GRID_SIZE; x += 1) {
         const idx = OPERATOR_GRID[y][x];
         if (idx === 0) continue;
-        if (idx === 5 && frame === 1 && mood === 'idle') continue; // faísca
+        if (idx === 5 && !auraOn) continue;
         ctx.fillStyle = palette[idx];
-        ctx.fillRect(x * scale, y * scale + (idx === 5 ? 0 : bob), scale, scale);
+        ctx.fillRect(
+          x * scale + (idx === 4 ? accentNudge : 0),
+          y * scale + (idx === 5 ? 0 : bodyBob),
+          scale,
+          scale,
+        );
       }
     }
   }, [size, tier, branch, skin, mood, frame]);
