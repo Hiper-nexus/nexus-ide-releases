@@ -26,6 +26,25 @@ Overclock, por comparacao, tem uma arquitetura mais proxima do objetivo: app nat
 
 Ha ainda um ponto operacional importante: o repo local esta em `0.10.2`, mas `/Applications/NexusIDE.app` reporta `0.10.1`. Os crash reports locais incluem uma falha do NexusIDE `0.10.1` em 2026-07-06. Antes de implementar novas features, P0 deve alinhar app instalado vs fonte, reproduzir os crashes e validar que as correcoes recentes de wake/live diagnostics realmente chegaram ao binario usado.
 
+## 1.1 Metodologia e niveis de confianca
+
+Este relatorio mistura tres niveis de certeza. Eles nao tem o mesmo peso e devem ser lidos de forma diferente:
+
+| Fonte | Como foi analisada | Confianca |
+|---|---|---|
+| Nexus | codigo-fonte local completo (leitura direta dos arquivos) | Alta |
+| Overclock | app instalado, sidecar JS (`dist/*.js`), `package.json`, `otool -L`, strings e logs locais | Media/Alta |
+| BridgeSpace/BridgeVoice | app instalado, strings do binario, recursos locais e docs oficiais | Media |
+| Docs externas (overclock.sh, bridgemind.ai) | contexto de produto, nao prova de runtime | Baixa/Media |
+
+Regras de leitura:
+
+- Afirmacoes sobre o Nexus vem do codigo e podem ser tratadas como fato verificavel.
+- Afirmacoes sobre Overclock/Bridge sao inferencias a partir de artefato instalado (bundle/strings/sidecar), nao do codigo-fonte deles. Sao plausiveis, mas nao certezas.
+- Recomendacoes (secoes 8 e 9) sao opiniao tecnica, nao fato observado.
+
+Limites desta fase (repetidos no apendice): nao houve teste interativo de voz, benchmark real de latencia com cronometro, nem captura de tela. A latencia da secao 3.8 e estimada a partir do desenho e dos timeouts, nao medida.
+
 ## 2. Arquitetura atual do Nexus
 
 ### 2.1 Visao em 4 processos
@@ -79,6 +98,18 @@ Agent CLI pane
 ```
 
 Isso e uma boa base para o futuro Jarvis Agente. O problema e que Jarvis ainda nao usa esse mesmo catalogo robusto de ferramentas; ela usa um schema pequeno e um `switch` no renderer.
+
+Ponto que merece enfase (e a tese central do P2): o gap NAO e falta de ferramenta. O `mcp-server.ts` do Nexus ja expoe um catalogo rico, verificado em `src/main/orch/tools-domain.ts`, incluindo entre outros:
+
+- `nexus_agent_invoke`, `nexus_agent_list`, `nexus_agent_get`;
+- `nexus_task`, `nexus_route_task`, `nexus_todo_manager`;
+- `nexus_mission_create/get/list/set_status/spawn_pane`;
+- `nexus_browser_open/navigate/screenshot`;
+- `nexus_preview_start/stop`;
+- `nexus_remote_bridge_status/cli_detect/tmux_list/spawn`;
+- `nexus_squad_save`, `nexus_catalog_install/overlay`, `nexus_recipe_propose`, `nexus_agent_spec_write`.
+
+Ou seja: as ferramentas existem, tem autorizacao por pane e ja sao usadas por agentes CLI. O que falta e a Jarvis CONSUMIR esse mesmo catalogo em vez de manter um `switch` paralelo de 9 acoes no renderer.
 
 ### 2.3 Voz/Jarvis - fluxo atual
 
@@ -173,6 +204,8 @@ Isso e bom para seguranca inicial, mas ainda nao e um framework de tool-use. Fal
 - reaproveitamento das ferramentas MCP ja existentes;
 - execucao multi-step com estado.
 
+Reforcando: o item "reaproveitamento das ferramentas MCP ja existentes" e o mais importante. O Nexus ja tem o catalogo `nexus_*` (secao 2.2). O problema nao e ausencia de tools; e a Jarvis ainda nao ser cliente desse catalogo. A afirmacao correta do gap e: "a Jarvis ainda nao consome o sistema de ferramentas que o Nexus ja tem", nao "o Nexus nao tem ferramentas".
+
 ### 3.5 Realtime
 
 Evidencia principal:
@@ -235,6 +268,33 @@ Nao medi audio com cronometro nesta fase; a estimativa vem do desenho e dos time
 - TTS cloud: ate 15 s em `src/main/voice/tts-service.ts`.
 
 Na rota Classic, a primeira resposta real normalmente so pode vir depois de fim da fala + upload/transcricao + brain + inicio do TTS. Latencia percebida provavel: 2,5 s a 6 s em rede boa; pior caso de codigo: dezenas de segundos. Isso nao atende a meta P1 de `<500 ms` sem audio-to-audio streaming.
+
+Ressalva de metodologia: os numeros acima sao estimativa de desenho, nao medicao. Antes de tratar "Jarvis esta lenta" como fato, instrumentar o pipeline com marcos e um trace por turno:
+
+```text
+mic_start
+speech_start
+speech_end
+partial_transcript
+final_transcript
+brain_start
+tool_call
+tool_done
+first_audio
+tts_done
+turn_done
+```
+
+Metricas derivadas a medir por cenario (rede boa / rede ruim / local):
+
+| Metrica | Como calcular | Alvo |
+|---|---|---|
+| tempo ate transcript final | speech_end -> final_transcript | depende do provider |
+| tempo ate primeiro feedback | speech_end -> first_audio ou ack visivel | `<500 ms` (ack, ver P1) |
+| duracao da acao | tool_call -> tool_done | por tipo de acao |
+| turno completo | speech_start -> turn_done | por cenario |
+
+Sem esses marcos, qualquer meta de latencia (inclusive a `<500 ms`) e inauditavel.
 
 ## 4. Analise Overclock
 
@@ -383,7 +443,7 @@ Interpretacao: BridgeVoice nao parece ser um "Jarvis agent" de IDE. Ele e um dit
 
 | Severidade | Item | Evidencia | Impacto | Proximo passo |
 |---|---|---|---|---|
-| Critico | App instalado esta atras do repo | `package.json` = `0.10.2`; `/Applications/NexusIDE.app` = `0.10.1` | usuario testa uma versao diferente da fonte analisada | gerar/instalar build assinado de `0.10.2` depois de aprovacao; nao nesta task |
+| Alto/Critico | App instalado esta atras do repo | `package.json` = `0.10.2`; `/Applications/NexusIDE.app` = `0.10.1` | usuario testa uma versao diferente da fonte analisada; isolado e Alto, mas Critico/P0 AQUI porque contamina a triagem do crash e invalida teste manual | gerar/instalar build assinado de `0.10.2` depois de aprovacao; nao nesta task |
 | Critico | Crash report recente no app instalado | `~/Library/Logs/DiagnosticReports/NexusIDE-2026-07-06-181134.ips`, versao `0.10.1`, `EXC_BREAKPOINT/SIGTRAP` | quebra de confiabilidade basica | simbolizar/triangular crash; reproduzir no app instalado |
 | Alto | Jarvis nao executa acoes em realtime | `REALTIME_ACTION_BRIDGE_ENABLED = false`; comentario diz Live nao action-capable | sintoma principal do usuario | P1/P2: conectar Live a action/tool framework |
 | Alto | Jarvis nao le tela visualmente | so `currentScreenSnapshot()` textual; sem screen capture/AX/OCR/vision | comandos dependentes do que esta na tela falham | P3: capturar tela + AX tree + vision/OCR |
@@ -399,21 +459,23 @@ Observacao: `npm run typecheck` passou no repo atual `0.10.2`. A prioridade nao 
 
 ## 7. Gap analysis
 
-| Feature | Nexus atual | Overclock | BridgeSpace/Voice | Gap |
-|---|---|---|---|---|
-| IDE multi-agent | Sim, Electron + MCP + panes | Sim, cockpit multi-agent | Sim, command center/agents | Nexus tem base competitiva |
-| PTY isolado | Sim, utilityProcess | Sim, sidecar/node-pty | Sim, portable-pty | Paridade boa |
-| MCP local | Sim | Sim | Sim | Paridade, mas Jarvis nao reutiliza bem |
-| Voice PTT | Sim | Sim, ClockVoice | Sim, BridgeVoice | Nexus existe, precisa robustez/UX |
-| Wake word | Sim, default off | Evidencia de wake/live warm reuse | BridgeVoice e mais hotkey/PTT | Nexus precisa validar rearm/permissoes |
-| STT realtime | Nao na rota Classic; Live opcional | Sim via Gemini Live/ClockVoice | Principalmente local/cloud batch robusto | Nexus P1 |
-| Audio full-duplex | Opcional `gemini-live` | Sim, `GeminiLiveSession` | Nao evidenciado como agente full-duplex | Nexus P1 |
-| Acoes por voz | Pequeno switch no renderer | Funcoes Live + delegacao Agent SDK + MCP | Injecao de texto/BridgeSpace integration | Nexus P2 |
-| Leitura de tela | Texto deterministico curto | Screen context estruturado e atualizado | Accessibility para injecao/foco | Nexus P3 |
-| Visao/OCR | Nao encontrado | Nao comprovado como vision, mas screen context melhor | Nao foco principal | Nexus P3 |
-| Confirmacao de comandos | Sim para `run_command` | Ferramentas sensiveis mapeadas; UI atual parece sem confirmBeforeTools | BridgeVoice injeta texto | Nexus deve manter confirmacao por risco |
-| Diagnosticos de voz | Em evolucao | Logs sidecar/MCP | Forte em PTT/permissoes/watchdog | Nexus deve copiar BridgeVoice |
-| App instalado vs fonte | Divergente: 0.10.1 vs 0.10.2 | Instalado 1.0.4 | Instalados recentes | Nexus P0 |
+A coluna Confianca segue a secao 1.1: Alta = observado no codigo/artefato de forma direta; Media = inferido de bundle/strings/sidecar; Baixa = so de docs/produto.
+
+| Feature | Nexus atual | Overclock | BridgeSpace/Voice | Gap | Confianca |
+|---|---|---|---|---|---|
+| IDE multi-agent | Sim, Electron + MCP + panes | Sim, cockpit multi-agent | Sim, command center/agents | Nexus tem base competitiva | Alta (Nexus) / Media (outros) |
+| PTY isolado | Sim, utilityProcess | Sim, sidecar/node-pty | Sim, portable-pty | Paridade boa | Alta (Nexus) / Media (outros) |
+| MCP local | Sim | Sim | Sim | Paridade, mas Jarvis nao reutiliza bem | Alta (Nexus) / Media (outros) |
+| Voice PTT | Sim | Sim, ClockVoice | Sim, BridgeVoice | Nexus existe, precisa robustez/UX | Alta (Nexus) / Media (outros) |
+| Wake word | Sim, default off | Evidencia de wake/live warm reuse | BridgeVoice e mais hotkey/PTT | Nexus precisa validar rearm/permissoes | Alta (Nexus) / Media (outros) |
+| STT realtime | Nao na rota Classic; Live opcional | Sim via Gemini Live/ClockVoice | Principalmente local/cloud batch robusto | Nexus P1 | Alta (Nexus) / Media (outros) |
+| Audio full-duplex | Opcional `gemini-live` | Sim, `GeminiLiveSession` | Nao evidenciado como agente full-duplex | Nexus P1 | Alta (Nexus) / Media (Overclock) |
+| Acoes por voz | Pequeno switch no renderer | Funcoes Live + delegacao Agent SDK + MCP | Injecao de texto/BridgeSpace integration | Nexus P2 | Alta (Nexus) / Media (outros) |
+| Leitura de tela | Texto deterministico curto | Screen context estruturado e atualizado | Accessibility para injecao/foco | Nexus P2.5 (semantico) e P3 (vision) | Alta (Nexus) / Media (outros) |
+| Visao/OCR | Nao encontrado | Nao comprovado como vision, mas screen context melhor | Nao foco principal | Nexus P3 | Alta (Nexus) / Media (outros) |
+| Confirmacao de comandos | Sim para `run_command` | Ferramentas sensiveis mapeadas; UI atual parece sem confirmBeforeTools | BridgeVoice injeta texto | Nexus deve manter confirmacao por risco | Alta (Nexus) / Media (outros) |
+| Diagnosticos de voz | Em evolucao | Logs sidecar/MCP | Forte em PTT/permissoes/watchdog | Nexus deve copiar BridgeVoice | Alta (Nexus) / Media (outros) |
+| App instalado vs fonte | Divergente: 0.10.1 vs 0.10.2 | Instalado 1.0.4 | Instalados recentes | Nexus P0 | Alta |
 
 ## 8. Plano priorizado P0 -> P4
 
@@ -466,10 +528,11 @@ Objetivo: transformar a conversa de voz em baixa latencia real, com streaming e 
 
 Subtarefas:
 
-1. Escolher transporte realtime principal.
+1. Escolher transporte realtime principal via spike comparativo (nao decidir no papel).
    - Opcao A: OpenAI Realtime API para audio-to-audio, tool calls e barge-in.
    - Opcao B: Gemini Live, aproveitando codigo existente.
-   - Recomendacao: se a prioridade e tool-use com actions, avaliar OpenAI Realtime como rota principal e manter Gemini Live como fallback/experimento, porque a ponte atual Gemini Live ainda nao esta action-capable no Nexus.
+   - Nota: o Overclock demonstra Gemini Live funcionando com function declarations (`delegar/consultar/ler/navegar/comandar/perguntar`) e delegacao para o brain. Isso indica que o `REALTIME_ACTION_BRIDGE_ENABLED = false` do Nexus pode ser so a ponte de actions ainda nao implementada, nao uma limitacao do Gemini Live. Por isso NAO escolher provider antes de medir.
+   - Fazer um spike curto das duas opcoes e decidir com base em: latencia (marcos da secao 3.8), qualidade do barge-in, estabilidade/reconexao, custo por turno, facilidade de tool-use, streaming de transcript e modelo de confirmacao de acoes. So depois eleger rota principal + fallback.
 
 2. Substituir turn Classic por streaming quando Live esta ativo.
    - Remover dependencia de `REALTIME_ACTION_BRIDGE_ENABLED = false`.
@@ -506,7 +569,8 @@ Riscos:
 
 Aceite:
 
-- primeira resposta audivel ou acknowledgement em `<500 ms` apos fim da fala em rede normal;
+- meta `<500 ms` = PRIMEIRO feedback (ack audivel ou visual) apos endpointing, NAO conclusao da acao. Completar tool-use/comando de terminal/navegacao/execucao de agente em `<500 ms` nao e realista; acoes longas recebem ack imediato e follow-up ao terminar;
+- primeiro feedback (ack) em `<500 ms` apos fim da fala em rede normal; acoes simples iniciadas em ate ~1 s;
 - partial transcript visivel em tempo real;
 - usuario interrompe a Jarvis durante TTS e novo turn inicia;
 - fallback Classic automatico quando provider realtime falha.
@@ -571,9 +635,43 @@ Aceite:
 - acoes high-risk exigem confirmacao visivel;
 - erro de action vira mensagem clara e nao quebra a sessao de voz.
 
+### P2.5 - Semantic screen context (contexto estruturado antes de pixels)
+
+Objetivo: dar a Jarvis um contexto de tela CONFIAVEL sem depender de screenshot/OCR/vision. Para um IDE proprio, a Jarvis nao precisa "ver pixels" primeiro; ela precisa saber estruturalmente o que esta na tela. Isso e mais barato, mais rapido e mais seguro que OCR, e por isso vem antes do P3.
+
+Motivacao: hoje o `currentScreenSnapshot()` gera texto e o IPC corta `context.screen` em 500 caracteres (`src/shared/voice-ipc.ts:234`). E suficiente para uma nocao grossa, mas perde detalhe de pane/editor/terminal.
+
+Subtarefas:
+
+1. Substituir o snapshot textual curto por um contexto estruturado do renderer:
+   - workspace atual;
+   - pane focado e seu tipo (shell/editor/browser/board);
+   - arquivo aberto no editor;
+   - modal/drawer/wizard ativo;
+   - terminal ativo e selecao;
+   - lista de panes visiveis com ids (padrao Overclock: `PANES VISIVEIS`, ver `JarvisService.updateScreen`);
+   - acoes possiveis no estado atual;
+   - confirmacoes pendentes.
+
+2. Elevar/estruturar o campo `screen` no IPC: alem do texto de 500 chars, passar um objeto estruturado (ou aumentar o limite de forma controlada) para o brain/live.
+
+3. Alimentar tanto a rota Classic quanto o transporte realtime com o mesmo contexto estruturado (`getJarvisContext()` da secao P3 pode nascer aqui, primeiro so com o nivel semantico).
+
+Arquivos/modulos afetados:
+
+- `src/renderer/voice/voice-controller.ts` (`currentScreenSnapshot`)
+- `src/shared/voice-ipc.ts` (schema de `context.screen`)
+- stores do renderer (layout/panes/files/editor)
+
+Aceite:
+
+- Jarvis responde "o que esta aberto/focado?" a partir de estado real do renderer, sem screenshot;
+- Jarvis resolve um pane por id/numero dito pelo usuario (ex. "331");
+- contexto estruturado aparece no diagnostico de voz.
+
 ### P3 - Jarvis Vision (le tela)
 
-Objetivo: dar a Jarvis contexto real do que esta visivel no Nexus.
+Objetivo: dar a Jarvis contexto VISUAL (pixels) do Nexus quando o contexto semantico (P2.5) nao basta. P3 pressupoe P2.5 pronto: screenshot/OCR/vision sao o nivel caro, sob demanda, nao o padrao.
 
 Subtarefas:
 
@@ -671,6 +769,38 @@ Aceite:
 - tabela de paridade revisada com usuario;
 - pelo menos 3 fluxos end-to-end: "abrir workspace", "rodar comando confirmado", "ler tela e agir";
 - diagnosticos comparaveis ao BridgeVoice para permissoes/mic/hotkey.
+
+### 8.1 Backlog ticketavel (ordem de execucao)
+
+O P0->P4 acima e direcao estrategica. Para virar trabalho de engenharia, quebrar em tickets pequenos, cada um com feature flag, teste minimo e criterio de aceite. Ordem sugerida:
+
+```text
+P0.1 alinhar app instalado com o repo (build assinado 0.10.2, apos aprovacao)
+P0.2 simbolizar e reproduzir o crash EXC_BREAKPOINT/SIGTRAP do 0.10.1
+P0.3 painel minimo de diagnostico de voz (mic/wake/live/STT/TTS/action/permissao)
+P1.1 spike Gemini Live vs OpenAI Realtime (medir latencia/barge-in/custo/tool-use)
+P1.2 instrumentar marcos de latencia (secao 3.8) e trace por turno
+P1.3 ligar transporte realtime escolhido + remover dependencia de REALTIME_ACTION_BRIDGE_ENABLED
+P1.4 VAD/end-of-turn + TTS interruptivel (barge-in) + AEC
+P2.1 voice action registry (nome, schema Zod, risco, executor, criterio de sucesso)
+P2.2 integrar Jarvis ao catalogo MCP existente (nexus_*) em vez do switch do renderer
+P2.3 tool-use no provider realtime + confirmacao por risco (low/medium/high)
+P2.5 semantic screen context (estado estruturado do renderer, sem pixels)
+P3.1 screenshot/OCR/vision sob demanda, com indicador de captura e permissao explicita
+P4.x paridade seletiva (Overclock: warm/dormant live, ack rapido; BridgeVoice: mic recovery/diagnostics)
+```
+
+Modelo de ticket (usar para cada item acima):
+
+```md
+Titulo: <ex. P2.1 Voice Action Registry>
+Entregaveis: <arquivos exatos criados/alterados>
+Feature flag: <nome do flag; default off>
+Testes minimos: <casos AAA, incluindo edge cases>
+Telemetria: <eventos/marcos emitidos>
+Aceite: <condicoes verificaveis>
+Rollback: <como desligar sem quebrar a sessao>
+```
 
 ## 9. Recomendacoes tecnicas
 
@@ -788,3 +918,303 @@ Riscos tecnicos:
 - Nao capturei screenshots da GUI.
 - A analise de Overclock/Bridge foi por bundle, strings, sidecar JS, logs locais e docs oficiais.
 - O proximo passo recomendado e uma sessao hands-on controlada com permissao explicita para operar microfone, screen recording e comandos de voz.
+
+## Apendice B - Rastreabilidade Jarvis sob edicao paralela
+
+Aviso operacional: em 2026-07-07, apos o aviso de que outra LLM estava alterando Jarvis em paralelo, esta analise passou a operar em modo leitura. A unica escrita permitida a partir desse ponto foi este documento. Os comandos abaixo foram read-only (`git rev-parse`, `git status`, `git diff --stat`, `git log`, `git blame`, `stat`, `nl`, `sed`). Nao rodei build, testes, install, checkout, stash, pull ou reset depois desse aviso.
+
+Hash do snapshot usado para os trechos abaixo:
+
+```text
+220089412d6c6413e012b870aa7ff6024dfe57ae
+```
+
+### B.1 Estado do repo no momento da analise
+
+`git rev-parse HEAD`:
+
+```text
+220089412d6c6413e012b870aa7ff6024dfe57ae
+```
+
+`git status --short`:
+
+```text
+ M docs/analysis/nexus-vs-overclock-bridge.md
+ M package.json
+ M src/main/main.ts
+ M src/main/smoke-core.test.ts
+ M src/main/smoke-core.ts
+```
+
+`git diff --stat`:
+
+```text
+ docs/analysis/nexus-vs-overclock-bridge.md | 170 +++++++++++++++++++++++++----
+ package.json                               |  10 +-
+ src/main/main.ts                           |  12 +-
+ src/main/smoke-core.test.ts                |  30 ++++-
+ src/main/smoke-core.ts                     |   9 ++
+ 5 files changed, 203 insertions(+), 28 deletions(-)
+```
+
+Observacao: os arquivos de codigo listados acima ja estavam modificados no working tree quando este apendice de leitura foi criado. Eles nao fazem parte da analise Jarvis abaixo, exceto como baseline do repo.
+
+### B.2 Arquivos Jarvis monitorados por mtime
+
+Comparei mtime antes e depois da leitura dos trechos Jarvis. Nenhum dos arquivos abaixo mudou durante esta coleta; portanto, nao marquei nenhum como "arquivo em modificacao ativa por outra LLM" nesta rodada.
+
+| Arquivo | mtime observado |
+|---|---:|
+| `src/renderer/voice/voice-controller.ts` | `2026-07-07T10:17:12-0300` |
+| `src/shared/voice-config.ts` | `2026-07-06T14:40:34-0300` |
+| `src/shared/voice-ipc.ts` | `2026-07-07T10:18:15-0300` |
+| `src/main/voice/stt-service.ts` | `2026-07-06T15:59:08-0300` |
+| `src/main/voice/tts-service.ts` | `2026-07-06T16:01:35-0300` |
+| `src/main/voice/jarvis-brain.ts` | `2026-07-06T16:01:45-0300` |
+| `src/main/voice/live-transport-controller.ts` | `2026-07-06T14:40:34-0300` |
+| `src/main/voice/gemini-live-transport.ts` | `2026-07-06T09:05:14-0300` |
+| `src/main/voice/wake-engine.ts` | `2026-07-06T07:35:17-0300` |
+| `src/renderer/voice/wake-mic.ts` | `2026-07-07T10:16:32-0300` |
+| `src/renderer/voice/wake-rearm.ts` | `2026-07-07T10:10:31-0300` |
+| `src/main/voice/voice-ipc.ts` | `2026-07-07T10:14:09-0300` |
+| `src/main/voice/voice-log.ts` | `2026-07-07T10:09:02-0300` |
+| `src/shared/voice-channels.ts` | `2026-07-07T10:12:46-0300` |
+
+### B.3 Ultimo commit por arquivo Jarvis lido
+
+| Arquivo | Ultimo commit tocando o arquivo |
+|---|---|
+| `src/renderer/voice/voice-controller.ts` | `db94187ebbb44b812d77ebb5a5d3aa9e3804e180` - `fix(voice): wake mic nunca mais morre sozinho + observabilidade` |
+| `src/shared/voice-config.ts` | `3b603fa26c2b3e380aa88b83387c8379c2a6808b` - `fix: harden Jarvis voice and provider readiness` |
+| `src/shared/voice-ipc.ts` | `db94187ebbb44b812d77ebb5a5d3aa9e3804e180` - `fix(voice): wake mic nunca mais morre sozinho + observabilidade` |
+| `src/main/voice/stt-service.ts` | `1c9f42c9b4958c88a42eb128b0f4005b0bf4a102` - `fix(voice): JARVIS operacional — confiabilidade, comandos e HUD arrastável` |
+| `src/main/voice/tts-service.ts` | `1c9f42c9b4958c88a42eb128b0f4005b0bf4a102` - `fix(voice): JARVIS operacional — confiabilidade, comandos e HUD arrastável` |
+| `src/main/voice/jarvis-brain.ts` | `1c9f42c9b4958c88a42eb128b0f4005b0bf4a102` - `fix(voice): JARVIS operacional — confiabilidade, comandos e HUD arrastável` |
+| `src/main/voice/live-transport-controller.ts` | `3b603fa26c2b3e380aa88b83387c8379c2a6808b` - `fix: harden Jarvis voice and provider readiness` |
+| `src/main/voice/gemini-live-transport.ts` | `3feeab6bb57ebac5d70d14a4878e59f909e0943c` - `feat: Jarvis Live transporte realtime (Gemini Live) + persona (P1-4)` |
+| `src/main/voice/wake-engine.ts` | `3924bc43af91aae184875ee85e354f9d81831e60` - `fix(voice): JARVIS no longer talks to herself (false wake + silence STT)` |
+| `src/renderer/voice/wake-mic.ts` | `db94187ebbb44b812d77ebb5a5d3aa9e3804e180` - `fix(voice): wake mic nunca mais morre sozinho + observabilidade` |
+| `src/renderer/voice/wake-rearm.ts` | `db94187ebbb44b812d77ebb5a5d3aa9e3804e180` - `fix(voice): wake mic nunca mais morre sozinho + observabilidade` |
+| `src/main/voice/voice-ipc.ts` | `db94187ebbb44b812d77ebb5a5d3aa9e3804e180` - `fix(voice): wake mic nunca mais morre sozinho + observabilidade` |
+| `src/main/voice/voice-log.ts` | `db94187ebbb44b812d77ebb5a5d3aa9e3804e180` - `fix(voice): wake mic nunca mais morre sozinho + observabilidade` |
+| `src/shared/voice-channels.ts` | `db94187ebbb44b812d77ebb5a5d3aa9e3804e180` - `fix(voice): wake mic nunca mais morre sozinho + observabilidade` |
+
+### B.4 Blame das linhas-chave citadas
+
+| Evidencia | Blame |
+|---|---|
+| `src/renderer/voice/voice-controller.ts:41` `REALTIME_ACTION_BRIDGE_ENABLED = false` | `a623a574` 2026-07-06 `fix(server): asyncHandler + errorHandler — rejeição async vira 500 JSON` |
+| `src/renderer/voice/voice-controller.ts:86` comentario "Gemini Live is not action-capable yet" | `a623a574` 2026-07-06 |
+| `src/renderer/voice/voice-controller.ts:153` `currentScreenSnapshot()` | `a623a574` 2026-07-06 |
+| `src/renderer/voice/voice-controller.ts:517` `realtimeTurnActive = REALTIME_ACTION_BRIDGE_ENABLED && isRealtimeLive()` | `a623a574` 2026-07-06 |
+| `src/renderer/voice/voice-controller.ts:587` chamada batch `window.nexus.voice.transcribe` | `1c9f42c9` 2026-07-06 `fix(voice): JARVIS operacional — confiabilidade, comandos e HUD arrastável` |
+| `src/renderer/voice/voice-controller.ts:686` contexto usa `currentScreenSnapshot()` | `a623a574` 2026-07-06 |
+| `src/renderer/voice/voice-controller.ts:870` branch `run_command` | `f5d738f3` 2026-07-04 `feat: living JARVIS voice assistant, home deck, providers, SaaS scaffold` |
+| `src/shared/voice-config.ts:102` schema `jarvisLiveConfigSchema` | `ea2c165f` 2026-07-05 `feat: add jarvis live mode` |
+| `src/shared/voice-config.ts:266` default `jarvisLive` | `ea2c165f` 2026-07-05 |
+| `src/shared/voice-config.ts:296` default STT | `8a3b0449` 2026-07-03 `feat(2e): Jarvis voice mode — push-to-talk STT translate + spoken TTS response, multi-provider with local fallback` |
+| `src/shared/voice-config.ts:330` default TTS | `8a3b0449` 2026-07-03 |
+| `src/shared/voice-ipc.ts:209` union `JarvisAction` | `f5d738f3` 2026-07-04 |
+| `src/shared/voice-ipc.ts:230` `jarvisRequestSchema` | `f5d738f3` 2026-07-04 |
+| `src/main/voice/stt-service.ts:111` `attemptCloud()` | `8a3b0449` 2026-07-03 |
+| `src/main/voice/tts-service.ts:54` barge-in do `say` | `1c9f42c9` 2026-07-06 |
+| `src/main/voice/jarvis-brain.ts:50` catalogo de actions no prompt | `f5d738f3` 2026-07-04 |
+| `src/main/voice/jarvis-brain.ts:182` `contextBlock()` | `f5d738f3` 2026-07-04 |
+| `src/main/voice/jarvis-brain.ts:295` `BRAIN_TIMEOUT_MS = 15_000` | `1c9f42c9` 2026-07-06 |
+| `src/main/voice/live-transport-controller.ts:31` realtime configurado por `gemini-live` + key | `3feeab6b` 2026-07-06 `feat: Jarvis Live transporte realtime (Gemini Live) + persona (P1-4)` |
+| `src/main/voice/gemini-live-transport.ts:1` transporte Gemini Live full-duplex | `3feeab6b` 2026-07-06 |
+| `src/main/voice/wake-engine.ts:40` chunk wake 1280 amostras | `f5d738f3` 2026-07-04 |
+| `src/renderer/voice/wake-mic.ts:12` comentario do wake mic sempre ligado | `f5d738f3` 2026-07-04 |
+| `src/renderer/voice/wake-mic.ts:264` rearme infinito do mic | `db94187e` 2026-07-07 `fix(voice): wake mic nunca mais morre sozinho + observabilidade` |
+| `src/renderer/voice/wake-rearm.ts:11` backoff `[1s, 3s, 8s]` + lento | `db94187e` 2026-07-07 |
+| `src/main/voice/voice-ipc.ts:224` handler `VOICE_CHANNELS.jarvis` | `f5d738f3` 2026-07-04 |
+| `src/main/voice/voice-ipc.ts:264` confirmacao nativa para `run_command` | `ee494d62` 2026-07-05 `fix: apply architectural audit backlog (2026-07-05) + UX polish` |
+
+### B.5 Snapshots compactos dos trechos citados
+
+Todos os snapshots abaixo foram lidos no commit `220089412d6c6413e012b870aa7ff6024dfe57ae`.
+
+```ts
+// src/renderer/voice/voice-controller.ts:41,86-88,517
+const REALTIME_ACTION_BRIDGE_ENABLED = false;
+// Decision is per utterance. Gemini Live is not action-capable yet, so the
+// production Jarvis path stays Classic: STT → Jarvis brain → app actions → TTS.
+realtimeTurnActive = REALTIME_ACTION_BRIDGE_ENABLED && isRealtimeLive();
+```
+
+```ts
+// src/renderer/voice/voice-controller.ts:153,225-233,686-690
+function currentScreenSnapshot(): ScreenSnapshot { ... }
+return {
+  context:
+    `Workspace ${wsName} em modo ${viewKind}. ` +
+    `${panes.length} pane... ` +
+    `Pane focado: ${focused?.title ?? 'nenhum'}.`,
+};
+const screen = currentScreenSnapshot();
+const context = {
+  workspace: useWorkspaceStore.getState().current?.name ?? null,
+  screen: screen.context,
+};
+```
+
+```ts
+// src/renderer/voice/voice-controller.ts:538-596
+if (realtimeTurnActive && isRealtimeLive()) {
+  if (wakeMic.isUtteranceActive()) wakeMic.finishUtterance();
+  liveEndTurn();
+  store.setStatus('idle');
+  return;
+}
+const stt = await withTimeout(
+  window.nexus.voice.transcribe({
+    audioBase64: result.wavBase64,
+    mime: 'audio/wav',
+    sampleRate: result.sampleRate,
+    ...(routing === 'jarvis' ? { translate: false, language: 'pt' } : {}),
+  }),
+  TRANSCRIBE_DEADLINE_MS,
+  'transcrição',
+);
+```
+
+```ts
+// src/shared/voice-config.ts:102-117,266-274
+export const jarvisLiveConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  transport: z.enum(['classic', 'gemini-live']).default('classic'),
+  liveModel: z.string().default('gemini-2.5-flash-native-audio-preview-12-2025'),
+});
+jarvisLive: {
+  enabled: false,
+  transport: 'classic',
+  liveModel: 'gemini-2.5-flash-native-audio-preview-12-2025',
+  voiceName: 'Charon',
+}
+```
+
+```ts
+// src/shared/voice-config.ts:296-339
+stt: {
+  provider: 'groq',
+  endpoint: 'https://api.groq.com/openai/v1/audio/transcriptions',
+  model: 'whisper-large-v3-turbo',
+  streaming: false,
+  fallback: { provider: 'openai', model: 'whisper-1', fallback: { provider: 'local-whisper' } },
+},
+tts: {
+  provider: 'openai',
+  endpoint: 'https://api.openai.com/v1/audio/speech',
+  model: 'gpt-4o-mini-tts',
+  streaming: true,
+  fallback: { provider: 'piper', fallback: { provider: 'macos-say' } },
+}
+```
+
+```ts
+// src/shared/voice-ipc.ts:209-219,230-235
+export type JarvisAction =
+  | { type: 'none' }
+  | { type: 'open_squad'; squadName: string }
+  | { type: 'open_workspace'; workspaceName: string }
+  | { type: 'design_squad' }
+  | { type: 'new_mission' }
+  | { type: 'open_terminal' }
+  | { type: 'close_pane' }
+  | { type: 'open_board' }
+  | { type: 'send_to_pane'; text: string }
+  | { type: 'run_command'; command: string };
+screen: z.string().max(500).nullable().optional(),
+```
+
+```ts
+// src/main/voice/stt-service.ts:111-151
+async function attemptCloud(plugin, req, deps): Promise<Attempt> {
+  const endpoint = resolveEndpoint(plugin, translate);
+  const audio = base64ToBuffer(req.audioBase64);
+  const form = new FormData();
+  form.append('file', new Blob([new Uint8Array(audio)], { type: req.mime }), `audio.${ext}`);
+  res = await deps.fetchImpl(endpoint, { method: 'POST', body: form, signal: AbortSignal.timeout(STT_CLOUD_TIMEOUT_MS) });
+}
+```
+
+```ts
+// src/main/voice/tts-service.ts:54-68
+let activeSay: ChildProcess | null = null;
+export function stopSystemSpeech(): void {
+  if (activeSay) {
+    activeSay.kill('SIGKILL');
+    activeSay = null;
+  }
+}
+```
+
+```ts
+// src/main/voice/jarvis-brain.ts:50-68,182-194,295
+Tipos de action:
+- {"type":"none"}
+- {"type":"open_squad","squadName":"<nome aproximado>"}
+- {"type":"run_command","command":"<comando exato>"}
+- {"type":"send_to_pane","text":"<prompt de engenharia em INGLÊS>"}
+function contextBlock(ctx: JarvisContext): string {
+  return `- tela atual: ${ctx.screen ?? 'não informada'}\n` + ...
+}
+export const BRAIN_TIMEOUT_MS = 15_000;
+```
+
+```ts
+// src/main/voice/live-transport-controller.ts:31-37,100-110
+isRealtimeConfigured(): boolean {
+  const live = getVoiceConfig().jarvisLive;
+  return live.transport === 'gemini-live' && resolveVoiceApiKey('GEMINI_API_KEY') !== undefined;
+}
+micIn(b64: string): void { this.transport?.sendMicChunk(b64); }
+contextIn(text: string): void { this.transport?.sendContext(text); }
+endTurn(): void { this.transport?.endUserTurn(); }
+```
+
+```ts
+// src/main/voice/gemini-live-transport.ts:1-13,55-61,83-99
+// Gemini Live — transporte de áudio full-duplex real (WSS BidiGenerateContent...)
+const LIVE_WS_BASE = 'wss://generativelanguage.googleapis.com/ws/...BidiGenerateContent';
+const SETUP_TIMEOUT_MS = 10_000;
+const PENDING_MIC_MAX_BYTES = 160 * 1024;
+generationConfig: { responseModalities: ['AUDIO'], speechConfig: { ... } },
+inputAudioTranscription: {},
+outputAudioTranscription: {},
+contextWindowCompression: { slidingWindow: {} },
+```
+
+```ts
+// src/renderer/voice/wake-mic.ts:12-29,264-301
+// Mic sempre-ligado do wake word...
+// RESILIÊNCIA: track.onended, watchdog de frames, AudioContext suspenso.
+private handleStreamDeath(reason: string): void { ... this.scheduleRestart(reason); }
+private scheduleRestart(reason: string): void {
+  if (attempt >= RESTART_BACKOFF_MS.length && !this.dead) this.onDied?.(reason);
+  setTimeout(() => this.openGraph().then(...).catch(() => this.scheduleRestart(reason)), nextRearmDelay(attempt));
+}
+```
+
+```ts
+// src/renderer/voice/wake-rearm.ts:11-20
+export const RESTART_BACKOFF_MS = [1_000, 3_000, 8_000] as const;
+export const REARM_SLOW_MS = 30_000;
+export function nextRearmDelay(attempt: number): number {
+  return attempt < RESTART_BACKOFF_MS.length ? RESTART_BACKOFF_MS[attempt] : REARM_SLOW_MS;
+}
+```
+
+```ts
+// src/main/voice/voice-ipc.ts:224-240,264-270
+ipcMain.handle(VOICE_CHANNELS.jarvis, async (_event, raw): Promise<JarvisReply> => {
+  const parsed = jarvisRequestSchema.safeParse(raw);
+  const reply = await jarvisThink(parsed.data.transcript, parsed.data.context, parsed.data.history);
+  liveSession.onJarvisReply(parsed.data.transcript, reply);
+  return reply;
+});
+// SEC#6: a shell command produced by the (LLM) Jarvis brain must never run
+// without an explicit, un-spoofable human OK.
+ipcMain.handle(VOICE_CHANNELS.confirmCommand, async (_event, raw): Promise<boolean> => { ... });
+```
