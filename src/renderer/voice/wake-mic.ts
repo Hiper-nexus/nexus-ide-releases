@@ -35,6 +35,13 @@ const TARGET_SAMPLE_RATE = 16_000;
 const CHUNK = 1280;
 const SPEECH_RMS = 0.022;
 const MIN_SPEECH_MS = 320;
+/** Ganho de compensação pós-APM-off: sem o AGC do Chromium, o PCM cru de
+ * mics USB sensíveis (fifine) chega fraco — wake score baixo e Whisper
+ * alucinando em fala normal. Medido ao vivo (2026-07-07): com 3x a voz
+ * normal marcava só 0.21-0.27 de wake score e o ambiente 0.05-0.10;
+ * 8x ≈ +18dB coloca a fala na zona de detecção mantendo o ambiente longe
+ * do threshold 0.6. Clamp ±1 no onFrame evita estouro do int16. */
+const WAKE_MAKEUP_GAIN = 8;
 
 const WATCHDOG_INTERVAL_MS = 4_000;
 const FRAME_STALL_MS = 8_000;
@@ -256,6 +263,14 @@ export class WakeMic {
     const onFrame = (frame: Float32Array) => {
       if (!this.running) return;
       this.lastFrameAt = Date.now();
+      // Makeup gain: com o APM off (AGC desligado), o sinal cru de mics USB
+      // sensíveis (fifine) fica baixo demais — o usuário precisava quase
+      // gritar. Amplifica com clamp em ±1 para não estourar o int16 do
+      // openWakeWord/Whisper.
+      for (let i = 0; i < frame.length; i += 1) {
+        const amplified = frame[i] * WAKE_MAKEUP_GAIN;
+        frame[i] = amplified > 1 ? 1 : amplified < -1 ? -1 : amplified;
+      }
       // Prova única (por grafo) de que frames têm sinal: RMS do 1º frame.
       if (!this.firstFrameLogged) {
         this.firstFrameLogged = true;
