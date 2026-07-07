@@ -59,9 +59,12 @@ describe('loadJarvisSystemPrompt', () => {
   });
 
   it('has an English fallback when packaged prompt is missing', () => {
-    expect(loadJarvisSystemPrompt('/missing/system.en.md')).toContain(
-      'voice assistant embedded in Nexus IDE',
-    );
+    const prompt = loadJarvisSystemPrompt('/missing/system.en.md');
+    expect(prompt).toContain('voice assistant embedded in Nexus IDE');
+    expect(prompt).toContain('nexus_action');
+    expect(prompt).toContain('mcp_tool');
+    expect(prompt).toContain('speak directly for normal conversation');
+    expect(prompt).not.toContain('safe Nexus UI actions only');
   });
 });
 

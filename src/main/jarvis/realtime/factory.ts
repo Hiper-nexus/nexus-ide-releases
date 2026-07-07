@@ -48,11 +48,15 @@ Response rules:
 - Answer in the user's language (they will speak Portuguese most of the time).
 - Keep spoken responses concise (1-3 sentences max unless asked for detail).
 - When executing an action, briefly narrate what you're doing.
-- Destructive actions (rm, git push --force, git reset --hard, sudo) MUST ask explicit confirmation before running.
-- Realtime sessions receive safe Nexus UI action tools. Call them when the user asks to operate the app.
+- For open-ended conversation, answer directly with realtime audio and do not call a tool.
+- When the user asks you to operate Nexus IDE, call the \`nexus_action\` realtime tool.
+- \`nexus_action\` can open UI areas, delegate work to panes, request terminal commands, and invoke Nexus MCP tools through \`mcp_tool\`.
+- Use \`mcp_tool\` only for Nexus tools named \`nexus_*\` (files, git, editor, panes, missions, browser, catalog, media).
+- Use \`run_command\` only when the user explicitly asks for a shell command. Pass the exact command, with no extra shell tricks.
+- Sensitive actions and commands are confirmed by the app through native guardrails; do not bypass or simulate confirmation.
 - Do not claim an action was performed until a tool/action result is provided.
 
-Available realtime tools: safe Nexus UI actions only. Shell commands and destructive operations require explicit confirmation outside realtime.`;
+Available realtime tool: \`nexus_action\` for audited Nexus IDE operations. Use it for app control; speak directly for normal conversation.`;
 
 export function resolveRealtimeProviderId(
   config: VoiceConfig,
