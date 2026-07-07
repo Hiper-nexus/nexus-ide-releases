@@ -13,43 +13,22 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.10.0',
-  date: '2026-07-06',
-  codename: 'Billing, times e operação refinada',
+  version: '0.10.6',
+  date: '2026-07-07',
+  codename: 'Jarvis te ouve',
   summary:
-    'O NexusIDE agora tem Billing/Team completo de ponta a ponta: checkout e portal via Stripe, webhooks idempotentes, licença assinada no app, times com convites e assentos, além de correções nos pipes, no canvas e no perfil de operador.',
-  highlights: [
-    {
-      title: 'Billing Stripe real',
-      detail:
-        'Checkout Pro/Team, portal de assinatura, webhook idempotente e espelho local de assinatura agora fecham o ciclo SaaS. O app sincroniza uma licença assinada e nunca fala direto com Stripe.',
-    },
-    {
-      title: 'Times com convites e assentos',
-      detail:
-        'A tela Minha Conta mostra owner/member, assentos, membros, convite, entrada por código, saída e remoção. O join usa lock transacional para evitar corrida no último assento.',
-    },
-    {
-      title: 'Operação mais previsível',
-      detail:
-        'Pipes entregam imediatamente ao criar conexão onIdle, o canvas não arrasta quando você está selecionando texto e o perfil de operador ganhou atalho e estado vazio.',
-    },
-  ],
+    'A causa raiz da "Jarvis surda" foi corrigida: o controle automático de ganho do Chromium achataba o sinal do microfone USB perto de zero — o sistema ouvia, o app recebia silêncio. Agora o stream do wake word capta o áudio cru e a Jarvis finalmente acorda ao seu chamado.',
+  highlights: [],
   fixes: [
     {
-      title: 'Checkout Team sem travar usuário',
+      title: 'Jarvis finalmente ouve o microfone',
       detail:
-        'Se o pagamento falhar, o checkout Team reutiliza o time pendente do owner e um reaper remove órfãos antigos, evitando 409 sem rota de recuperação.',
+        'O autoGainControl (ligado por padrão no Chromium) esmagava o sinal de microfones USB sensíveis, e os frames chegavam mudos mesmo com permissão concedida. As três opções de processamento de áudio foram desligadas no stream do wake word (que quer PCM limpo), e o eco é controlado pela pausa que já existe enquanto a Jarvis fala.',
     },
     {
-      title: 'Grace e webhooks idempotentes',
+      title: 'Diagnóstico de microfone no log',
       detail:
-        'A graça de past_due é ancorada na primeira observação e retries do Stripe não estendem acesso indefinidamente. Eventos já processados não rodam de novo.',
-    },
-    {
-      title: 'Checkout inválido bloqueado no app',
-      detail:
-        'O CTA Team envia nome do time e assentos ao backend, e o plano Free não é mais mapeado por engano para checkout Pro.',
+        'O wake agora registra qual dispositivo de áudio o app realmente capturou e o nível (RMS) do primeiro frame — prova definitiva de que o sinal chegou, em vez de ficar só "não funciona".',
     },
   ],
 };

@@ -1,7 +1,7 @@
 {
   "name": "nexus-ide",
   "productName": "NexusIDE",
-  "version": "0.10.5",
+  "version": "0.10.6",
   "description": "Terminal IDE multi-agente: grid de panes de terminal com PTYs reais, base para adapters de CLIs de IA e orquestração de squads.",
   "main": ".vite/build/main.js",
   "author": "NexusIDE",
@@ -22,7 +22,6 @@
     "rebuild:electron": "electron-rebuild -f -w @lydell/node-pty -w better-sqlite3",
     "rebuild:node": "npm rebuild better-sqlite3",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit",
     "test": "vitest run"
   },
   "engines": {
