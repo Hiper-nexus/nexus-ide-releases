@@ -17,9 +17,8 @@ export const AGC_TARGET_RMS = 0.1;
 export const AGC_MAX_GAIN = 24;
 /** Ganho mínimo: nunca atenua abaixo do sinal cru. */
 export const AGC_MIN_GAIN = 1;
-/** Só adapta quando o frame parece FALA: RMS cru acima deste piso
- * (ambiente medido no fifine ≈ 0.0045; fala fraca ≈ 0.02). */
-export const AGC_SPEECH_FLOOR = 0.01;
+/** Só adapta quando o frame parece FALA: RMS cru acima deste piso. */
+export const AGC_SPEECH_FLOOR = 0.006;
 /** Subida por frame de 80ms (~0.5dB) — chega ao alvo em ~2s de fala. */
 const AGC_UP_RATE = 1.06;
 /** Descida por frame (~1.4dB) — reage rápido a saturação. */
@@ -28,7 +27,7 @@ const AGC_DOWN_RATE = 0.85;
 export class SoftAgc {
   private gain: number;
 
-  constructor(initialGain = 12) {
+  constructor(initialGain = 18) {
     this.gain = clampGain(initialGain);
   }
 

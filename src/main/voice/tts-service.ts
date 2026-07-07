@@ -28,6 +28,21 @@ import { resolveVoiceApiKey } from './voice-secrets';
 
 const SAY_BIN = '/usr/bin/say';
 
+/** Provedor TTS que funcionou por último — evita trocar de voz no meio da conversa. */
+let stickyTtsProvider: string | null = null;
+
+function reorderTtsChain(chain: VoicePlugin[]): VoicePlugin[] {
+  if (!stickyTtsProvider) return chain;
+  const hit = chain.find((p) => p.provider === stickyTtsProvider);
+  if (!hit) return chain;
+  return [hit, ...chain.filter((p) => p.provider !== stickyTtsProvider)];
+}
+
+/** Testes: limpa voz sticky entre casos. */
+export function resetStickyTtsProvider(): void {
+  stickyTtsProvider = null;
+}
+
 /**
  * Deadlines duros da borda TTS: um POST pendurado ou um piper travado nunca
  * podem segurar o turno de voz (busy preso = "JARVIS morreu").
@@ -256,12 +271,14 @@ export async function speak(
   const text = toSpeakable(req.text, mode);
   if (!text) return { ok: true, provider: '-', mode: 'silent' };
 
-  const chain = flattenChain(config.tts);
+  const chain = reorderTtsChain(flattenChain(config.tts));
   const failures: string[] = [];
 
   for (const plugin of chain) {
     const result = await speakVia(plugin, text, deps, config.persona);
     if (result.ok) {
+      stickyTtsProvider = plugin.provider;
+      console.log(`[tts] voz via ${plugin.provider} (${plugin.voice ?? plugin.model ?? 'default'})`);
       // Janela de eco: registra o que foi falado para o fluxo de STT poder
       // descartar transcrições que são o alto-falante vazando no microfone.
       // Acks/fillers curtos ("Sim?", "Deixa comigo.") pedem echoRecord:false —

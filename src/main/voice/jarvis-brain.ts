@@ -1,5 +1,6 @@
 import { resolveVoiceApiKey } from './voice-secrets';
 import { jarvisMemory } from './jarvis-memory';
+import { jarvisActionFastPath } from './jarvis-action-fastpath';
 import { jarvisFastPath } from './jarvis-fastpath';
 import { getVoiceConfig } from './voice-config-store';
 import { flattenJarvisBrainProviders } from '../../shared/voice-config';
@@ -133,8 +134,9 @@ export function buildJarvisPersonaInstruction(persona: VoicePersona): string {
     parts.push(
       `USER NAME: the user is named "${user}". ` +
         `When using their name, say exactly "${user}", without inventing a ` +
-        'nickname, diminutive, or variation. Use the name in greetings and key ' +
-        'moments, but do not repeat it in every sentence.',
+        'nickname, diminutive, or variation. ALWAYS greet them by name in the ' +
+        'first sentence of every new wake or conversation restart. Use the name ' +
+        'in greetings and key moments, but do not repeat it in every sentence.',
     );
   }
 
@@ -338,6 +340,10 @@ export async function jarvisThink(
   history: JarvisTurn[],
   deps: BrainDeps = defaultBrainDeps,
 ): Promise<JarvisReply> {
+  // Fast-path de ação: comando imperativo inequívoco executa sem LLM (~0ms).
+  const actionFast = jarvisActionFastPath(transcript, ctx);
+  if (actionFast) return actionFast;
+
   // Fast-path: consulta de estado responde do contexto em ~0ms, sem LLM.
   const fast = jarvisFastPath(transcript, ctx);
   if (fast) return fast;

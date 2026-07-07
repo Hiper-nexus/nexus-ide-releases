@@ -9,6 +9,21 @@ import { classifyMicHealth, type MicHealth } from './wake-health';
 import { LiveAudioPlayer, micFrameToBase64 } from './live-audio';
 import { stripPromptEcho } from './response-echo';
 import { isDiscardableTranscript } from './transcript-filter';
+import {
+  bindWakeSuppressor,
+  playAudioBase64,
+  playSpeakResult,
+  stopAllPlayback,
+} from './voice-playback';
+import {
+  getThinkFillerCache,
+  invalidateAckCacheIfPersonaChanged,
+  playCachedWakeAck,
+  playWakePrompt,
+  THINK_FILLERS,
+  warmAckCache,
+  wakeGreetingText,
+} from './voice-wake-ack';
 import { getPaneSessionId, waitForSession, writeToPane } from '../terminal/terminal-host';
 import { listPanes } from '../lib/split-tree';
 import { useWorkspaceStore } from '../state/workspace-store';
@@ -23,7 +38,6 @@ import type { AutoStopOptions } from './voice-capture';
 import type {
   JarvisAction,
   JarvisTurn,
-  SpeakResult,
   VoiceRuntimeInfo,
 } from '../../shared/voice-ipc';
 
@@ -41,7 +55,6 @@ const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
 const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
 const REALTIME_ACTION_BRIDGE_ENABLED = false;
 const WAKE_ACK_SUPPRESS_MS = 1_500;
-const WAKE_ACK_TAIL_GUARD_MS = 180;
 const WAKE_SILENCE_MS = 700; // wake-word capture: quiet time that ends the utterance
 const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
 const PTT_HOLD_MAX_MS = 60_000; // hold-to-talk sem keyup (tap morto) fecha aqui
@@ -83,6 +96,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 // Memória curta da conversa com a JARVIS (renderer-local, por janela).
 let jarvisHistory: JarvisTurn[] = [];
 const wakeMic = new WakeMic();
+bindWakeSuppressor((ms) => wakeMic.suppressWakeDetection(ms));
 // Player do áudio realtime (OpenAI Realtime / Gemini Live): só instanciado sob demanda.
 let livePlayer: LiveAudioPlayer | null = null;
 function ensureLivePlayer(): LiveAudioPlayer {
@@ -97,15 +111,6 @@ let wakeOpenInProgress = false;
 // turno PRESO (fetch pendurado etc.) e retomar o controle.
 let turnStartedAt = 0;
 
-const BASE_WAKE_ACKS = ['Pois não?', 'Sim?', 'Às ordens.', 'Diga.'];
-// Micro-fillers ditos NA HORA em que você termina de falar (enquanto STT +
-// cérebro rodam) — latência percebida ~zero, estilo "Right away, sir".
-const THINK_FILLERS = ['Deixa comigo.', 'Um instante.', 'Certo.', 'Já vejo.'];
-
-// Acks pré-sintetizados (LiveKit playbook: cached greetings) — a resposta ao
-// chamado sai INSTANTÂNEA, sem HTTP de TTS por wake.
-const ackCache = new Map<string, { audioBase64: string; format: string }>();
-const warmedAckTexts = new Set<string>();
 
 function isJarvisLiveEnabled(): boolean {
   const info = useVoiceStore.getState().info;
@@ -144,11 +149,6 @@ function personaUserName(): string {
   return useVoiceStore.getState().info?.persona.userName?.trim() ?? '';
 }
 
-function wakeAckTexts(): string[] {
-  const user = personaUserName();
-  if (!user) return BASE_WAKE_ACKS;
-  return [`Pois não, ${user}?`, `Sim, ${user}?`, `Diga, ${user}.`, 'Estou ouvindo.'];
-}
 
 interface ScreenSnapshot {
   context: string;
@@ -238,55 +238,6 @@ function currentScreenSnapshot(): ScreenSnapshot {
   };
 }
 
-function warmAckCache(): void {
-  for (const text of [...wakeAckTexts(), ...THINK_FILLERS]) {
-    if (warmedAckTexts.has(text)) continue;
-    warmedAckTexts.add(text);
-    // echoRecord:false — acks/fillers na janela anti-eco censuravam respostas
-    // curtas legítimas do usuário ("sim", "deixa") logo em seguida.
-    void window.nexus.voice
-      .speak({ text, speakMode: 'full', echoRecord: false })
-      .then((r) => {
-        if (r.ok && r.mode === 'audio') {
-          ackCache.set(text, { audioBase64: r.audioBase64, format: r.format });
-        }
-      })
-      .catch(() => {
-        warmedAckTexts.delete(text);
-      });
-  }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function playWakePrompt(text: string): Promise<void> {
-  if (!text.trim()) return;
-  const cached = ackCache.get(text);
-  if (!cached) {
-    const result = await withTimeout(
-      window.nexus.voice.speak({ text, speakMode: 'full', echoRecord: false }),
-      SPEAK_DEADLINE_MS,
-      'TTS do ack',
-    );
-    if (result.ok && result.mode === 'audio') {
-      ackCache.set(text, { audioBase64: result.audioBase64, format: result.format });
-      await playAudioBase64(result.audioBase64, result.format);
-    }
-    await sleep(WAKE_ACK_TAIL_GUARD_MS);
-    return;
-  }
-  await playAudioBase64(cached.audioBase64, cached.format);
-  await sleep(WAKE_ACK_TAIL_GUARD_MS);
-}
-
-async function playCachedWakeAck(ack: string): Promise<void> {
-  const cached = ackCache.get(ack);
-  if (!cached) return;
-  await playAudioBase64(cached.audioBase64, cached.format);
-  await sleep(WAKE_ACK_TAIL_GUARD_MS);
-}
 
 /** Auto-stop padrão das capturas iniciadas por voz (sem tecla de soltar). */
 function wakeAutoStop(
@@ -343,10 +294,9 @@ export function useVoiceController(): void {
           }
         }
 
-        const screen = currentScreenSnapshot();
-        const ack = screen.wakePrompt || wakeAckTexts()[0];
+        const ack = wakeGreetingText(personaUserName());
         wakeMic.suppressWakeDetection(WAKE_ACK_SUPPRESS_MS);
-        await playWakePrompt(ack).catch(() => playCachedWakeAck(wakeAckTexts()[0]));
+        await playWakePrompt(ack).catch(() => playCachedWakeAck(personaUserName()));
         if (!isListening(capture.current) && !busy.current) {
           await beginListening(capture.current!, wakeAutoStop(capture.current!, busy), 'wake');
         }
@@ -406,7 +356,8 @@ export function useVoiceController(): void {
     void checkMicHealth();
     const syncWakeWord = (info: VoiceRuntimeInfo) => {
       if (info.enabled && info.wakeWordEnabled) {
-        warmAckCache();
+        invalidateAckCacheIfPersonaChanged(info);
+        warmAckCache(info.persona.userName ?? '');
         void wakeMic.start().catch((err) => {
           useVoiceStore
             .getState()
@@ -617,7 +568,7 @@ async function finishAndProcess(
     // STT+cérebro (fire-and-forget; echoCancellation filtra do próximo turno).
     if (routing === 'jarvis') {
       const filler = THINK_FILLERS[Math.floor(Math.random() * THINK_FILLERS.length)];
-      const cached = ackCache.get(filler);
+      const cached = getThinkFillerCache().get(filler);
       if (cached) void playAudioBase64(cached.audioBase64, cached.format).catch(() => {});
     }
 
@@ -1117,66 +1068,6 @@ function captureResponse(paneId: string, promptEcho: string): Promise<string> {
 }
 
 /** Decode + play TTS audio bytes via Web Audio. */
-// ── Controlador central de reprodução (barge-in) ────────────────────────────
-// Toda fala dela passa por aqui. Um novo "Hey Jarvis" corta o áudio atual E
-// invalida reproduções pendentes (geração) — sem isso, respostas antigas
-// enfileiradas vazavam no chamado seguinte ("ela chega agradecendo").
-let playbackGen = 0;
-let liveSources: AudioBufferSourceNode[] = [];
-
-function stopAllPlayback(): void {
-  if (isJarvisLiveEnabled() && useVoiceStore.getState().status === 'speaking') {
-    void window.nexus.voice.liveInterrupt('barge-in');
-  }
-  // O fallback `say` toca no MAIN — sem este kill, o barge-in calava só o
-  // áudio do renderer e a voz do sistema continuava falando por cima.
-  void window.nexus.voice.stopSpeak().catch(() => {});
-  playbackGen += 1;
-  for (const src of liveSources) {
-    try {
-      src.stop();
-    } catch {
-      // já parado
-    }
-  }
-  liveSources = [];
-}
-
-async function playAudioBase64(base64: string, _format: string): Promise<void> {
-  const gen = playbackGen;
-  const bytes = base64ToBytes(base64);
-  const ctx = new AudioContext();
-  try {
-    // Fresh Uint8Array → its buffer is a plain ArrayBuffer (not shared).
-    const arrayBuffer = bytes.buffer.slice(0) as ArrayBuffer;
-    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-    if (gen !== playbackGen) return; // barge-in aconteceu enquanto decodificava
-    const source = ctx.createBufferSource();
-    liveSources.push(source);
-    source.buffer = audioBuffer;
-    source.connect(ctx.destination);
-    await new Promise<void>((resolve) => {
-      source.onended = () => resolve();
-      source.start();
-    });
-    liveSources = liveSources.filter((s) => s !== source);
-  } finally {
-    void ctx.close();
-  }
-}
-
-async function playSpeakResult(result: SpeakResult): Promise<void> {
-  if (result.ok && result.mode === 'audio') {
-    await playAudioBase64(result.audioBase64, result.format);
-  }
-}
-
-function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

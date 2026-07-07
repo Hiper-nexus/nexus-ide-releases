@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_VOICE_CONFIG, type VoiceConfig, type VoicePlugin } from '../../shared/voice-config';
 import type { ProviderProbes } from './provider-select';
-import { speak, type TtsDeps } from './tts-service';
+import { resetStickyTtsProvider, speak, type TtsDeps } from './tts-service';
 
 const PROBES: ProviderProbes = { hasEnv: () => false, hasBin: () => true, platform: 'darwin' };
 
@@ -22,6 +22,10 @@ function sayConfig(): VoiceConfig {
 }
 
 describe('speak', () => {
+  beforeEach(() => {
+    resetStickyTtsProvider();
+  });
+
   it('condenses to a summary and plays via macOS say', async () => {
     const speakViaSay = vi.fn(async (_text: string, _voice?: string) => undefined);
     const result = await speak(

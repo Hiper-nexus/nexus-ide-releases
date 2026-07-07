@@ -38,7 +38,7 @@ const SPEECH_RMS = 0.022;
 const MIN_SPEECH_MS = 320;
 /** Ganho inicial do AGC próprio (ver agc.ts) — o valor 12x foi o melhor
  * fixo medido ao vivo em 2026-07-07; o AGC parte dele e adapta. */
-const WAKE_INITIAL_GAIN = 12;
+const WAKE_INITIAL_GAIN = 18;
 
 const WATCHDOG_INTERVAL_MS = 4_000;
 const FRAME_STALL_MS = 8_000;
