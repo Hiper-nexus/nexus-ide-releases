@@ -159,10 +159,14 @@ export class WakeMic {
   }
 
   /** Abre a escuta de comando INSTANTANEAMENTE (stream já está quente). */
-  beginUtterance(autoStop?: AutoStopOptions, preRollMs = 0): void {
+  beginUtterance(
+    autoStop?: AutoStopOptions,
+    preRollMs = 0,
+    preRollSeed?: Float32Array[],
+  ): void {
     if (!this.running) return;
     if (this.uttActive) this.cancelUtterance();
-    const seeded = this.seedPreRoll(preRollMs);
+    const seeded = preRollSeed?.map((frame) => Float32Array.from(frame)) ?? this.seedPreRoll(preRollMs);
     this.uttChunks = seeded;
     this.uttActive = true;
     this.uttAutoStop = autoStop ?? null;
@@ -226,9 +230,13 @@ export class WakeMic {
     }
     const opts = this.uttAutoStop;
     if (!opts || this.uttFired) return;
+    const total = now - this.uttStartedAt;
+    const minListenMs = opts.minListenMs ?? 0;
     if (
-      (this.uttHeardSpeech && now - this.uttLastSpeechAt >= opts.silenceMs) ||
-      now - this.uttStartedAt >= opts.maxMs
+      (this.uttHeardSpeech &&
+        now - this.uttLastSpeechAt >= opts.silenceMs &&
+        total >= minListenMs) ||
+      total >= opts.maxMs
     ) {
       this.uttFired = true;
       opts.onAutoStop();
@@ -250,6 +258,10 @@ export class WakeMic {
     return this.preRoll
       .filter((entry) => entry.at >= cutoff)
       .map((entry) => Float32Array.from(entry.frame));
+  }
+
+  snapshotPreRoll(ms: number): Float32Array[] {
+    return this.seedPreRoll(ms);
   }
 
   private markSeededSpeech(chunks: Float32Array[]): void {

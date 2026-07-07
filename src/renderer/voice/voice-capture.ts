@@ -32,6 +32,8 @@ export interface CaptureResult {
 export interface AutoStopOptions {
   /** Quiet time after speech that ends the utterance. */
   silenceMs: number;
+  /** Minimum open window before silence is allowed to end the utterance. */
+  minListenMs?: number;
   /** Hard cap on the whole capture. */
   maxMs: number;
   onAutoStop: () => void;
@@ -160,8 +162,9 @@ export class VoiceCapture {
     }
     const quietFor = now - this.lastSpeechAt;
     const total = now - this.startedAt;
+    const minListenMs = opts.minListenMs ?? 0;
     if (
-      (this.heardSpeech && quietFor >= opts.silenceMs) ||
+      (this.heardSpeech && quietFor >= opts.silenceMs && total >= minListenMs) ||
       total >= opts.maxMs
     ) {
       this.autoStopFired = true;

@@ -22,7 +22,12 @@ export const CURRENT_RELEASE: AppRelease = {
     {
       title: 'Live passa pelo executor da Jarvis',
       detail:
-        'O realtime agora acelera o transcript, mas respostas e ações voltam pelo cérebro/action executor auditável; a Jarvis deixa de conversar por fora quando precisa operar o app.',
+        'O realtime agora acelera o transcript e encerra a captura ao receber fala final, mas respostas e ações voltam pelo cérebro/action executor auditável.',
+    },
+    {
+      title: 'Clique e wake seguram a escuta',
+      detail:
+        'A saudação não entra mais no pre-roll do comando, o clique acorda sem herdar áudio antigo e a janela de escuta não fecha no eco de "Pois não, patrão?".',
     },
   ],
   fixes: [
@@ -45,6 +50,11 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Voz consistente no modo live',
       detail:
         'Áudio do provedor realtime fica mudo enquanto o executor clássico responde com o TTS configurado, evitando alternância silenciosa de timbre no mesmo turno.',
+    },
+    {
+      title: 'Configurações sem sobreposição',
+      detail:
+        'O botão Fechar do drawer agora fica fora da lista rolável e não cobre Agents/Skills quando o catálogo está expandido.',
     },
   ],
 };

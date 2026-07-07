@@ -142,77 +142,53 @@ export function SettingsDrawer() {
       <div className="settings__overlay" onClick={close} />
       <div className="settings__drawer">
         <nav className="settings-nav" aria-label="Módulos">
-          <div className="settings-nav__brand" aria-label="Nexus Config">
-            <span className="settings-nav__brand-mark" aria-hidden>
-              NX
-            </span>
-            <span className="settings-nav__brand-copy">
-              <span className="settings-nav__brand-title">Nexus config</span>
-              <span className="settings-nav__brand-subtitle">mission control</span>
-            </span>
-            <span className="settings-nav__brand-signal" aria-hidden />
-          </div>
-          <div className="settings-nav__search">
-            <span className="settings-nav__search-icon" aria-hidden>
-              ⌕
-            </span>
-            <input
-              className="settings-nav__search-input"
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar configurações…"
-              aria-label="Buscar nas configurações"
-            />
-          </div>
-          {searching ? (
-            groups.length === 0 ? (
-              <p className="settings-nav__no-match">Nada encontrado para “{query}”.</p>
+          <div className="settings-nav__body">
+            <div className="settings-nav__brand" aria-label="Nexus Config">
+              <span className="settings-nav__brand-mark" aria-hidden>
+                NX
+              </span>
+              <span className="settings-nav__brand-copy">
+                <span className="settings-nav__brand-title">Nexus config</span>
+                <span className="settings-nav__brand-subtitle">mission control</span>
+              </span>
+              <span className="settings-nav__brand-signal" aria-hidden />
+            </div>
+            <div className="settings-nav__search">
+              <span className="settings-nav__search-icon" aria-hidden>
+                ⌕
+              </span>
+              <input
+                className="settings-nav__search-input"
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Buscar configurações…"
+                aria-label="Buscar nas configurações"
+              />
+            </div>
+            {searching ? (
+              groups.length === 0 ? (
+                <p className="settings-nav__no-match">Nada encontrado para “{query}”.</p>
+              ) : (
+                groups.map((group) => (
+                  <div key={group.label}>
+                    <p className="settings-nav__section">{group.label}</p>
+                    {group.items.map((item) => (
+                      <NavRow
+                        key={item.id}
+                        item={item}
+                        active={section === item.id}
+                        badge={badges[item.id]}
+                        onSelect={setSection}
+                      />
+                    ))}
+                  </div>
+                ))
+              )
             ) : (
-              groups.map((group) => (
-                <div key={group.label}>
-                  <p className="settings-nav__section">{group.label}</p>
-                  {group.items.map((item) => (
-                    <NavRow
-                      key={item.id}
-                      item={item}
-                      active={section === item.id}
-                      badge={badges[item.id]}
-                      onSelect={setSection}
-                    />
-                  ))}
-                </div>
-              ))
-            )
-          ) : (
-            <>
-              {primaryGroups.map((group) => (
-                <div key={group.label}>
-                  <p className="settings-nav__section">{group.label}</p>
-                  {group.items.map((item) => (
-                    <NavRow
-                      key={item.id}
-                      item={item}
-                      active={section === item.id}
-                      badge={badges[item.id]}
-                      onSelect={setSection}
-                    />
-                  ))}
-                </div>
-              ))}
-              <button
-                type="button"
-                className={`settings-nav__advanced ${advancedOpen ? 'settings-nav__advanced--open' : ''}`}
-                onClick={() => setAdvancedOpen((open) => !open)}
-                aria-expanded={advancedOpen}
-              >
-                <span className="settings-nav__advanced-label">Avançado</span>
-                <span className="settings-nav__advanced-hint">catálogo · sistema</span>
-                <PixelIcon name="chevron-down" size={12} />
-              </button>
-              {advancedOpen &&
-                advancedGroups.map((group) => (
-                  <div key={group.label} className="settings-nav__advanced-block">
+              <>
+                {primaryGroups.map((group) => (
+                  <div key={group.label}>
                     <p className="settings-nav__section">{group.label}</p>
                     {group.items.map((item) => (
                       <NavRow
@@ -225,8 +201,34 @@ export function SettingsDrawer() {
                     ))}
                   </div>
                 ))}
-            </>
-          )}
+                <button
+                  type="button"
+                  className={`settings-nav__advanced ${advancedOpen ? 'settings-nav__advanced--open' : ''}`}
+                  onClick={() => setAdvancedOpen((open) => !open)}
+                  aria-expanded={advancedOpen}
+                >
+                  <span className="settings-nav__advanced-label">Avançado</span>
+                  <span className="settings-nav__advanced-hint">catálogo · sistema</span>
+                  <PixelIcon name="chevron-down" size={12} />
+                </button>
+                {advancedOpen &&
+                  advancedGroups.map((group) => (
+                    <div key={group.label} className="settings-nav__advanced-block">
+                      <p className="settings-nav__section">{group.label}</p>
+                      {group.items.map((item) => (
+                        <NavRow
+                          key={item.id}
+                          item={item}
+                          active={section === item.id}
+                          badge={badges[item.id]}
+                          onSelect={setSection}
+                        />
+                      ))}
+                    </div>
+                  ))}
+              </>
+            )}
+          </div>
           <button type="button" className="settings-nav__close" onClick={close}>
             Fechar
           </button>

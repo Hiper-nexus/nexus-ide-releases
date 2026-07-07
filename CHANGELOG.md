@@ -14,6 +14,12 @@ caminhos rapidos.
 - Live sem voz dupla: o provedor realtime deixa de falar por fora do executor da
   Jarvis. O transcript rapido volta para o brain/action executor unico, evitando
   troca de timbre e respostas que prometem acao sem operar o app.
+- Wake/click mais operacional: o pre-roll e congelado antes da saudacao, o clique
+  nao herda audio antigo e a janela de escuta fica aberta tempo suficiente para o
+  comando chegar sem fechar no "Pois nao, patrao?".
+- Transcript live encerra a captura assim que chega final do usuario, entao o
+  modo realtime nao precisa esperar todo o timeout/silencio do WAV classico para
+  acionar o executor.
 - Wake mic com pre-roll curto: comandos como "Hey Jarvis, abrir terminal" nao
   perdem o inicio da ordem enquanto o wake word e a saudacao acontecem; frames
   semeados agora contam como fala real.
@@ -25,6 +31,8 @@ caminhos rapidos.
   contador, entao eco/confusao repetida nao entra em loop.
 - Fast-paths de acao e estado recebem o `userName` da persona, evitando respostas
   secas nos comandos criticos "abrir terminal" e "que horas sao".
+- Drawer de configuracoes corrige o rodape "Fechar" para nao cobrir itens do
+  catalogo expandido.
 - Nova analise em `docs/analysis/2026-07-07-jarvis-operational-gap.md`
   documenta os gaps operacionais restantes do Nexus.
 
