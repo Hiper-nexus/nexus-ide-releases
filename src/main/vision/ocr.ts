@@ -12,6 +12,16 @@ interface CacheEntry {
   cachedAt: number;
 }
 
+interface OcrWorker {
+  recognize(buffer: Buffer): Promise<{
+    data: {
+      text: string;
+      confidence: number;
+    };
+  }>;
+  terminate(): Promise<unknown>;
+}
+
 const cache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 30_000;
 const CACHE_MAX_SIZE = 20;
@@ -38,6 +48,10 @@ function pruneCache(): void {
   }
 }
 
+export function clearOcrCache(): void {
+  cache.clear();
+}
+
 /**
  * Run OCR on a PNG image buffer using tesseract.js.
  * @param buffer PNG image buffer
@@ -57,19 +71,18 @@ export async function ocrImage(
 
   // Dynamic import tesseract (it's heavy, only load on first use)
   const { createWorker } = await import('tesseract.js');
+  let worker: OcrWorker | null = null;
 
   try {
-    const worker = await createWorker(lang, 1, {
+    worker = await createWorker(lang, 1, {
       logger: () => {
         // Silent — no progress logging
       },
-    });
+    }) as OcrWorker;
 
     const {
       data: { text, confidence },
     } = await worker.recognize(buffer);
-
-    await worker.terminate();
 
     const result: OcrResult = {
       text: text.trim(),
@@ -84,5 +97,9 @@ export async function ocrImage(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`OCR failed: ${message}`);
+  } finally {
+    if (worker) {
+      await Promise.resolve(worker.terminate()).catch(() => undefined);
+    }
   }
 }

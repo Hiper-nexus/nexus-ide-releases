@@ -10,7 +10,11 @@ const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'META', 'LINK', 'HEAD'
 
 function isHidden(el: Element): boolean {
   const style = window.getComputedStyle(el);
-  return style.display === 'none' || style.visibility === 'hidden';
+  return (
+    style.display === 'none' ||
+    style.visibility === 'hidden' ||
+    el.getAttribute('aria-hidden') === 'true'
+  );
 }
 
 function extractNode(el: Element, depth: number): AxNode | null {

@@ -600,6 +600,7 @@ const api: NexusApi = {
   // Fase 5 — Jarvis Vision: screen capture + AX tree + OCR
   vision: {
     capture: () => ipcRenderer.invoke(VISION_CHANNELS.capture),
+    context: (options) => ipcRenderer.invoke(VISION_CHANNELS.context, options),
     getAxTree: () => getAxTree(),
     ocr: (imageBase64: string) => ipcRenderer.invoke(VISION_CHANNELS.ocr, imageBase64),
     checkPermission: () => ipcRenderer.invoke(VISION_CHANNELS.permission),
