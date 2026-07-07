@@ -62,6 +62,8 @@ export class WakeMic {
   private dead = false;
   /** Início do silêncio contínuo atual (epoch ms); 0 = ouvindo áudio real. */
   private silentSince = 0;
+  /** Log único do RMS do primeiro frame após abrir o grafo (prova sinal). */
+  private firstFrameLogged = false;
 
   /** Stream morreu e a reconstrução esgotou as tentativas. */
   onDied: ((reason: string) => void) | null = null;
@@ -214,8 +216,16 @@ export class WakeMic {
       audio: {
         channelCount: 1,
         sampleRate: TARGET_SAMPLE_RATE,
-        echoCancellation: true,
-        noiseSuppression: true,
+        // APM (WebRTC audio processing) DESLIGADO no stream de wake word.
+        // openWakeWord/KWS quer PCM limpo; o processamento corrompe as
+        // features do modelo. autoGainControl (default true do Chromium
+        // quando qualquer constraint é pedida) achata o sinal de mics USB
+        // sensíveis (fifine) perto de zero → "SO ouve, app mudo". Wake é
+        // pausado (suppressWakeDetection) enquanto a JARVIS fala, então eco
+        // não importa aqui.
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
       },
     });
     // Morte explícita do track (dispositivo removido, permissão revogada):
@@ -223,6 +233,16 @@ export class WakeMic {
     for (const track of this.stream.getTracks()) {
       track.addEventListener('ended', () => this.handleStreamDeath('track ended'));
     }
+    // Diagnóstico decisivo: qual device o app realmente capturou + settings
+    // reais (sampleRate/channelCount/APM podem diferir do pedido). Prova se
+    // o app pegou o fifine ou outro device silencioso.
+    const audioTrack = this.stream.getAudioTracks()[0];
+    if (audioTrack) {
+      this.log('info', 'mic.device', `device: ${audioTrack.label || '(sem label)'}`, {
+        settings: audioTrack.getSettings(),
+      });
+    }
+    this.firstFrameLogged = false;
     this.ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
     this.ctx.onstatechange = () => {
       // Sleep/wake do macOS pode deixar o contexto suspenso — retome.
@@ -236,6 +256,13 @@ export class WakeMic {
     const onFrame = (frame: Float32Array) => {
       if (!this.running) return;
       this.lastFrameAt = Date.now();
+      // Prova única (por grafo) de que frames têm sinal: RMS do 1º frame.
+      if (!this.firstFrameLogged) {
+        this.firstFrameLogged = true;
+        this.log('info', 'mic.firstFrame', 'primeiro frame recebido', {
+          rms: frameRms(frame),
+        });
+      }
       // Saúde do mic: acumula quanto tempo em silêncio (RMS abaixo do piso).
       this.silentSince = frameIsSilent(frameRms(frame))
         ? this.silentSince || Date.now()
