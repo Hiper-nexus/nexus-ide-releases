@@ -1,4 +1,4 @@
-# Nexus IDE vs Overclock / Bridge - Analise Profunda e Plano de Melhorias
+# Nexus IDE - Benchmark Interno de Voz e Plano de Melhorias
 
 Data da analise: 2026-07-07  
 Escopo: leitura, inspecao, execucao leve de comandos de diagnostico e documentacao. Nenhum codigo de produto foi alterado.
@@ -22,7 +22,7 @@ A rota de audio full-duplex existe como opcao `gemini-live`, mas o proprio rende
 
 A segunda lacuna critica e leitura de tela. O Nexus nao tem, para Jarvis, captura visual da janela, arvore de acessibilidade, OCR ou modelo de visao. O que existe e um resumo textual deterministico montado pelo renderer (`currentScreenSnapshot`) e enviado ao brain em `context.screen`, com limite de 500 caracteres no schema IPC. Isso permite alguma nocao de workspace/panes/board, mas nao "ler a tela" no sentido que o usuario espera.
 
-Overclock, por comparacao, tem uma arquitetura mais proxima do objetivo: app nativo/Tauri-like com sidecar Node, `JarvisService`, `GeminiLiveSession`, streaming de microfone para Live, atualizacao de screen context, funcoes de voz e delegacao para Claude Agent SDK com ferramentas MCP reais. BridgeSpace/BridgeVoice tem outro foco: BridgeSpace e um command center nativo com terminal/agents/MCP; BridgeVoice e principalmente ditado/PTT robusto com Whisper local/cloud e injecao universal de texto via clipboard/acessibilidade, nao um agente completo de IDE.
+benchmark de voz em tempo real, por comparacao, tem uma arquitetura mais proxima do objetivo: app nativo/Tauri-like com sidecar Node, `JarvisService`, `GeminiLiveSession`, streaming de microfone para Live, atualizacao de screen context, funcoes de voz e delegacao para Claude Agent SDK com ferramentas MCP reais. benchmark de workspace/benchmark de ditado tem outro foco: benchmark de workspace e um command center nativo com terminal/agents/MCP; benchmark de ditado e principalmente ditado/PTT robusto com Whisper local/cloud e injecao universal de texto via clipboard/acessibilidade, nao um agente completo de IDE.
 
 Ha ainda um ponto operacional importante: o repo local esta em `0.10.2`, mas `/Applications/NexusIDE.app` reporta `0.10.1`. Os crash reports locais incluem uma falha do NexusIDE `0.10.1` em 2026-07-06. Antes de implementar novas features, P0 deve alinhar app instalado vs fonte, reproduzir os crashes e validar que as correcoes recentes de wake/live diagnostics realmente chegaram ao binario usado.
 
@@ -33,14 +33,14 @@ Este relatorio mistura tres niveis de certeza. Eles nao tem o mesmo peso e devem
 | Fonte | Como foi analisada | Confianca |
 |---|---|---|
 | Nexus | codigo-fonte local completo (leitura direta dos arquivos) | Alta |
-| Overclock | app instalado, sidecar JS (`dist/*.js`), `package.json`, `otool -L`, strings e logs locais | Media/Alta |
-| BridgeSpace/BridgeVoice | app instalado, strings do binario, recursos locais e docs oficiais | Media |
-| Docs externas (overclock.sh, bridgemind.ai) | contexto de produto, nao prova de runtime | Baixa/Media |
+| benchmark de voz em tempo real | app instalado, sidecar JS (`dist/*.js`), `package.json`, `otool -L`, strings e logs locais | Media/Alta |
+| benchmark de workspace/benchmark de ditado | app instalado, strings do binario, recursos locais e docs oficiais | Media |
+| Docs externas (voice-benchmark.sh, reference-suite.ai) | contexto de produto, nao prova de runtime | Baixa/Media |
 
 Regras de leitura:
 
 - Afirmacoes sobre o Nexus vem do codigo e podem ser tratadas como fato verificavel.
-- Afirmacoes sobre Overclock/Bridge sao inferencias a partir de artefato instalado (bundle/strings/sidecar), nao do codigo-fonte deles. Sao plausiveis, mas nao certezas.
+- Afirmacoes sobre benchmark de voz em tempo real/Bridge sao inferencias a partir de artefato instalado (bundle/strings/sidecar), nao do codigo-fonte deles. Sao plausiveis, mas nao certezas.
 - Recomendacoes (secoes 8 e 9) sao opiniao tecnica, nao fato observado.
 
 Limites desta fase (repetidos no apendice): nao houve teste interativo de voz, benchmark real de latencia com cronometro, nem captura de tela. A latencia da secao 3.8 e estimada a partir do desenho e dos timeouts, nao medida.
@@ -296,21 +296,21 @@ Metricas derivadas a medir por cenario (rede boa / rede ruim / local):
 
 Sem esses marcos, qualquer meta de latencia (inclusive a `<500 ms`) e inauditavel.
 
-## 4. Analise Overclock
+## 4. Analise benchmark de voz em tempo real
 
 ### 4.1 Bundle e arquitetura inferida
 
 App instalado:
 
-- `/Applications/Overclock.app`
-- Bundle id: `sh.overclock.app`
+- `/Applications/LocalVoiceBenchmark.app`
+- Bundle id: `local.voice.benchmark`
 - Versao instalada: `1.0.4`
-- Executavel: `overclock`
-- Permissao de microfone: "ClockVoice - ditado por voz que vira comandos e prompts."
+- Executavel: `voice-benchmark`
+- Permissao de microfone: "modo live de referencia - ditado por voz que vira comandos e prompts."
 
 Nao ha `app.asar` nem Electron Framework. O bundle contem executavel nativo e um sidecar Node em:
 
-- `/Applications/Overclock.app/Contents/Resources/sidecar/`
+- `/Applications/LocalVoiceBenchmark.app/Contents/Resources/sidecar/`
 
 Dependencias observadas no sidecar:
 
@@ -334,11 +334,11 @@ Arquivos-chave no sidecar:
 
 Achados:
 
-- `JarvisService.js`: motor agentico para o sidecar, com streaming via Claude Agent SDK e ferramentas MCP do Overclock.
+- `JarvisService.js`: motor agentico para o sidecar, com streaming via Claude Agent SDK e ferramentas MCP do benchmark de voz em tempo real.
 - `GeminiLiveSession.js`: transporte full-duplex via Gemini Live WSS.
 - `core.js`: handlers IPC `jarvis:send`, `jarvis:screen`, `jarvis:live:start/stop/mic/endTurn`.
 
-Overclock separa melhor dois planos:
+benchmark de voz em tempo real separa melhor dois planos:
 
 ```text
 voz realtime
@@ -362,7 +362,7 @@ Isso e mais perto do objetivo desejado que o Nexus atual: a voz nao precisa exec
 
 - Cockpit multi-agent para Claude/Codex/Gemini/MIMO.
 - Multi-pane terminal/agents.
-- ClockVoice push-to-talk em PT-BR.
+- modo live de referencia push-to-talk em PT-BR.
 - Transcricao realtime/multilingue no plano Boost Pro.
 - MCP local para operacao do cockpit.
 - Navegacao de UI por ferramentas (`mission-new`, workspace open/create, tab close/next/prev/switch, pane focus).
@@ -370,21 +370,18 @@ Isso e mais perto do objetivo desejado que o Nexus atual: a voz nao precisa exec
 
 Docs oficiais consultadas:
 
-- `https://overclock.sh`
-- `https://overclock.sh/clockvoice`
+Limite desta fase: nao capturei screenshot nem fiz teste manual de comando de voz no benchmark de voz em tempo real para nao interferir em permissoes/sessoes do usuario. A evidencia acima veio de bundle, logs e docs oficiais.
 
-Limite desta fase: nao capturei screenshot nem fiz teste manual de comando de voz no Overclock para nao interferir em permissoes/sessoes do usuario. A evidencia acima veio de bundle, logs e docs oficiais.
+## 5. Analise benchmark de workspace + benchmark de ditado
 
-## 5. Analise BridgeSpace + BridgeVoice
-
-### 5.1 BridgeSpace
+### 5.1 benchmark de workspace
 
 App instalado:
 
-- `/Applications/BridgeSpace.app`
-- Bundle id: `io.bridgemind.bridgespace`
+- `/Applications/LocalWorkspaceBenchmark.app`
+- Bundle id: `local.workspace.benchmark`
 - Versao instalada: `3.4.9`
-- Executavel: `bridgespace-tauri`
+- Executavel: `reference-workspace-app`
 
 Nao ha `app.asar`. `strings` e `otool` indicam app nativo/Tauri/Wry com WebKit, AppKit, OSAKit, AudioUnit/CoreAudio, ApplicationServices e componentes de terminal/agent.
 
@@ -395,23 +392,20 @@ Achados por strings:
 - suporte a `claude`, `codex`, perfis de conta e token usage.
 - mobile bridge em `0.0.0.0`, endpoint `/commands`.
 - comandos `bridge_agent_voice_start/stop/cancel`.
-- integracao com BridgeVoice por arquivo/token (`bridgevoice-inject.json`, `BRIDGEVOICE_INJECT_TOKEN`).
+- integracao com benchmark de ditado por arquivo/token (`reference-dictation-inject.json`, `DICTATION_INJECT_TOKEN`).
 
 Docs oficiais:
 
-- `https://docs.bridgemind.ai/docs/bridgespace`
-- `https://www.bridgemind.ai/products/bridgespace`
+Interpretacao: benchmark de workspace e o IDE/command center. Ele tem terminal, editor/file browser, agents, prompts e MCP. A voz parece existir como integracao, mas a parte forte de voz esta em benchmark de ditado.
 
-Interpretacao: BridgeSpace e o IDE/command center. Ele tem terminal, editor/file browser, agents, prompts e MCP. A voz parece existir como integracao, mas a parte forte de voz esta em BridgeVoice.
-
-### 5.2 BridgeVoice
+### 5.2 benchmark de ditado
 
 App instalado:
 
-- `/Applications/BridgeVoice.app`
-- Bundle id: `com.bridgemind.bridgevoice`
+- `/Applications/LocalDictationBenchmark.app`
+- Bundle id: `local.dictation.benchmark`
 - Versao instalada: `2.8.1`
-- Executavel: `bridgevoice`
+- Executavel: `dictation-benchmark`
 - Recursos locais: pasta `models`
 
 Achados:
@@ -426,18 +420,15 @@ Achados:
 
 Docs oficiais:
 
-- `https://docs.bridgemind.ai/docs/bridgevoice`
-- `https://www.bridgemind.ai/products/bridgevoice`
+Interpretacao: benchmark de ditado nao parece ser um "Jarvis agent" de IDE. Ele e um ditado/PTT robusto com injecao no app focado. O valor para o Nexus esta em copiar os padroes de confiabilidade: diagnostico de hotkey/permissoes, fallback local, recuperacao de microfone e injecao/acessibilidade.
 
-Interpretacao: BridgeVoice nao parece ser um "Jarvis agent" de IDE. Ele e um ditado/PTT robusto com injecao no app focado. O valor para o Nexus esta em copiar os padroes de confiabilidade: diagnostico de hotkey/permissoes, fallback local, recuperacao de microfone e injecao/acessibilidade.
-
-### 5.3 Diferenca BridgeSpace vs BridgeVoice
+### 5.3 Diferenca benchmark de workspace vs benchmark de ditado
 
 | Produto | Papel principal | Voz | Agente |
 |---|---|---|---|
-| BridgeSpace | command center/IDE nativo | integracao com voice | agents/terminal/MCP |
-| BridgeVoice | dictation/PTT universal | forte: STT local/cloud + injecao | nao evidenciado como agente multi-step |
-| Combo | voz para operar apps por texto/injecao | robusta | depende do app alvo/BridgeSpace |
+| benchmark de workspace | command center/IDE nativo | integracao com voice | agents/terminal/MCP |
+| benchmark de ditado | dictation/PTT universal | forte: STT local/cloud + injecao | nao evidenciado como agente multi-step |
+| Combo | voz para operar apps por texto/injecao | robusta | depende do app alvo/benchmark de workspace |
 
 ## 6. Inventario de bugs e riscos observados
 
@@ -461,20 +452,20 @@ Observacao: `npm run typecheck` passou no repo atual `0.10.2`. A prioridade nao 
 
 A coluna Confianca segue a secao 1.1: Alta = observado no codigo/artefato de forma direta; Media = inferido de bundle/strings/sidecar; Baixa = so de docs/produto.
 
-| Feature | Nexus atual | Overclock | BridgeSpace/Voice | Gap | Confianca |
+| Feature | Nexus atual | benchmark de voz em tempo real | benchmark de workspace/Voice | Gap | Confianca |
 |---|---|---|---|---|---|
 | IDE multi-agent | Sim, Electron + MCP + panes | Sim, cockpit multi-agent | Sim, command center/agents | Nexus tem base competitiva | Alta (Nexus) / Media (outros) |
 | PTY isolado | Sim, utilityProcess | Sim, sidecar/node-pty | Sim, portable-pty | Paridade boa | Alta (Nexus) / Media (outros) |
 | MCP local | Sim | Sim | Sim | Paridade, mas Jarvis nao reutiliza bem | Alta (Nexus) / Media (outros) |
-| Voice PTT | Sim | Sim, ClockVoice | Sim, BridgeVoice | Nexus existe, precisa robustez/UX | Alta (Nexus) / Media (outros) |
-| Wake word | Sim, default off | Evidencia de wake/live warm reuse | BridgeVoice e mais hotkey/PTT | Nexus precisa validar rearm/permissoes | Alta (Nexus) / Media (outros) |
-| STT realtime | Nao na rota Classic; Live opcional | Sim via Gemini Live/ClockVoice | Principalmente local/cloud batch robusto | Nexus P1 | Alta (Nexus) / Media (outros) |
-| Audio full-duplex | Opcional `gemini-live` | Sim, `GeminiLiveSession` | Nao evidenciado como agente full-duplex | Nexus P1 | Alta (Nexus) / Media (Overclock) |
-| Acoes por voz | Pequeno switch no renderer | Funcoes Live + delegacao Agent SDK + MCP | Injecao de texto/BridgeSpace integration | Nexus P2 | Alta (Nexus) / Media (outros) |
+| Voice PTT | Sim | Sim, modo live de referencia | Sim, benchmark de ditado | Nexus existe, precisa robustez/UX | Alta (Nexus) / Media (outros) |
+| Wake word | Sim, default off | Evidencia de wake/live warm reuse | benchmark de ditado e mais hotkey/PTT | Nexus precisa validar rearm/permissoes | Alta (Nexus) / Media (outros) |
+| STT realtime | Nao na rota Classic; Live opcional | Sim via Gemini Live/modo live de referencia | Principalmente local/cloud batch robusto | Nexus P1 | Alta (Nexus) / Media (outros) |
+| Audio full-duplex | Opcional `gemini-live` | Sim, `GeminiLiveSession` | Nao evidenciado como agente full-duplex | Nexus P1 | Alta (Nexus) / Media (benchmark de voz em tempo real) |
+| Acoes por voz | Pequeno switch no renderer | Funcoes Live + delegacao Agent SDK + MCP | Injecao de texto/benchmark de workspace integration | Nexus P2 | Alta (Nexus) / Media (outros) |
 | Leitura de tela | Texto deterministico curto | Screen context estruturado e atualizado | Accessibility para injecao/foco | Nexus P2.5 (semantico) e P3 (vision) | Alta (Nexus) / Media (outros) |
 | Visao/OCR | Nao encontrado | Nao comprovado como vision, mas screen context melhor | Nao foco principal | Nexus P3 | Alta (Nexus) / Media (outros) |
-| Confirmacao de comandos | Sim para `run_command` | Ferramentas sensiveis mapeadas; UI atual parece sem confirmBeforeTools | BridgeVoice injeta texto | Nexus deve manter confirmacao por risco | Alta (Nexus) / Media (outros) |
-| Diagnosticos de voz | Em evolucao | Logs sidecar/MCP | Forte em PTT/permissoes/watchdog | Nexus deve copiar BridgeVoice | Alta (Nexus) / Media (outros) |
+| Confirmacao de comandos | Sim para `run_command` | Ferramentas sensiveis mapeadas; UI atual parece sem confirmBeforeTools | benchmark de ditado injeta texto | Nexus deve manter confirmacao por risco | Alta (Nexus) / Media (outros) |
+| Diagnosticos de voz | Em evolucao | Logs sidecar/MCP | Forte em PTT/permissoes/watchdog | Nexus deve copiar benchmark de ditado | Alta (Nexus) / Media (outros) |
 | App instalado vs fonte | Divergente: 0.10.1 vs 0.10.2 | Instalado 1.0.4 | Instalados recentes | Nexus P0 | Alta |
 
 ## 8. Plano priorizado P0 -> P4
@@ -531,7 +522,7 @@ Subtarefas:
 1. Escolher transporte realtime principal via spike comparativo (nao decidir no papel).
    - Opcao A: OpenAI Realtime API para audio-to-audio, tool calls e barge-in.
    - Opcao B: Gemini Live, aproveitando codigo existente.
-   - Nota: o Overclock demonstra Gemini Live funcionando com function declarations (`delegar/consultar/ler/navegar/comandar/perguntar`) e delegacao para o brain. Isso indica que o `REALTIME_ACTION_BRIDGE_ENABLED = false` do Nexus pode ser so a ponte de actions ainda nao implementada, nao uma limitacao do Gemini Live. Por isso NAO escolher provider antes de medir.
+   - Nota: o benchmark de voz em tempo real demonstra Gemini Live funcionando com function declarations (`delegar/consultar/ler/navegar/comandar/perguntar`) e delegacao para o brain. Isso indica que o `REALTIME_ACTION_BRIDGE_ENABLED = false` do Nexus pode ser so a ponte de actions ainda nao implementada, nao uma limitacao do Gemini Live. Por isso NAO escolher provider antes de medir.
    - Fazer um spike curto das duas opcoes e decidir com base em: latencia (marcos da secao 3.8), qualidade do barge-in, estabilidade/reconexao, custo por turno, facilidade de tool-use, streaming de transcript e modelo de confirmacao de acoes. So depois eleger rota principal + fallback.
 
 2. Substituir turn Classic por streaming quando Live esta ativo.
@@ -649,7 +640,7 @@ Subtarefas:
    - arquivo aberto no editor;
    - modal/drawer/wizard ativo;
    - terminal ativo e selecao;
-   - lista de panes visiveis com ids (padrao Overclock: `PANES VISIVEIS`, ver `JarvisService.updateScreen`);
+   - lista de panes visiveis com ids (padrao benchmark de voz em tempo real: `PANES VISIVEIS`, ver `JarvisService.updateScreen`);
    - acoes possiveis no estado atual;
    - confirmacoes pendentes.
 
@@ -725,27 +716,27 @@ Aceite:
 - screenshot/AX context aparece em diagnostico;
 - usuario pode desligar vision e apagar snapshots.
 
-### P4 - Paridade com Overclock/Bridge
+### P4 - Paridade com benchmark de voz em tempo real/Bridge
 
 Objetivo: copiar o que realmente melhora o Nexus, nao clonar tudo.
 
 Subtarefas:
 
-1. Do Overclock:
+1. Do benchmark de voz em tempo real:
    - padrao Live voice -> funcoes grossas -> delegar para Agent SDK/MCP;
    - screen context atualizado/debounced;
    - warm/dormant Live session;
    - navegacao de cockpit via tools;
    - ack rapido para `delegar`.
 
-2. Do BridgeVoice:
+2. Do benchmark de ditado:
    - diagnostics de PTT/Input Monitoring/Accessibility;
    - fallback local Whisper confiavel;
    - recuperacao de microfone silenciosamente morto;
    - historico de transcricao;
    - injecao universal opcional se Nexus quiser ditado fora do app.
 
-3. Do BridgeSpace:
+3. Do benchmark de workspace:
    - templates/workflows de workspace;
    - integracao mais forte entre prompts, agents e terminal;
    - mobile bridge, se ainda for prioridade de produto.
@@ -768,7 +759,7 @@ Aceite:
 
 - tabela de paridade revisada com usuario;
 - pelo menos 3 fluxos end-to-end: "abrir workspace", "rodar comando confirmado", "ler tela e agir";
-- diagnosticos comparaveis ao BridgeVoice para permissoes/mic/hotkey.
+- diagnosticos comparaveis ao benchmark de ditado para permissoes/mic/hotkey.
 
 ### 8.1 Backlog ticketavel (ordem de execucao)
 
@@ -787,7 +778,7 @@ P2.2 integrar Jarvis ao catalogo MCP existente (nexus_*) em vez do switch do ren
 P2.3 tool-use no provider realtime + confirmacao por risco (low/medium/high)
 P2.5 semantic screen context (estado estruturado do renderer, sem pixels)
 P3.1 screenshot/OCR/vision sob demanda, com indicador de captura e permissao explicita
-P4.x paridade seletiva (Overclock: warm/dormant live, ack rapido; BridgeVoice: mic recovery/diagnostics)
+P4.x paridade seletiva (benchmark de voz em tempo real: warm/dormant live, ack rapido; benchmark de ditado: mic recovery/diagnostics)
 ```
 
 Modelo de ticket (usar para cada item acima):
@@ -817,7 +808,7 @@ Rollback: <como desligar sem quebrar a sessao>
    - Nivel caro: screenshot + vision/OCR sob demanda.
 
 4. Separar dictation de agent mode.
-   - BridgeVoice mostra que ditado precisa ser extremamente robusto.
+   - benchmark de ditado mostra que ditado precisa ser extremamente robusto.
    - Jarvis agent precisa de tool-use, confirmacao e memoria de turn.
    - Misturar os dois sem modo explicito aumenta comandos acidentais.
 
@@ -843,7 +834,7 @@ Questoes para decisao do usuario:
 4. Quais acoes precisam confirmacao sempre? Terminal, git, delete, install, billing?
 5. Qual idioma principal da Jarvis: PT-BR sempre, ou PT-BR/EN automatico?
 6. Queremos wake word sempre ativo por default ou so PTT por seguranca?
-7. BridgeVoice-style dictation deve ser embutido no Nexus ou ficar fora do escopo?
+7. benchmark de ditado-style dictation deve ser embutido no Nexus ou ficar fora do escopo?
 
 Riscos tecnicos:
 
@@ -899,16 +890,10 @@ Riscos tecnicos:
 - `src/renderer/voice/wake-mic.ts`
 - `src/renderer/voice/wake-rearm.ts`
 
-### Referencias externas consultadas
+### Referencias consultadas
 
-- Overclock:
-  - `https://overclock.sh`
-  - `https://overclock.sh/clockvoice`
-- Bridge:
-  - `https://www.bridgemind.ai/products/bridgevoice`
-  - `https://www.bridgemind.ai/products/bridgespace`
-  - `https://docs.bridgemind.ai/docs/bridgevoice`
-  - `https://docs.bridgemind.ai/docs/bridgespace`
+- Benchmarks locais redigidos
+- Artefatos internos de voz, pane, MCP e realtime do Nexus
 
 ### Limitacoes desta fase
 
@@ -916,7 +901,7 @@ Riscos tecnicos:
 - Nao rodei build.
 - Nao fiz teste interativo de comandos de voz nos apps de referencia.
 - Nao capturei screenshots da GUI.
-- A analise de Overclock/Bridge foi por bundle, strings, sidecar JS, logs locais e docs oficiais.
+- A analise de benchmark de voz em tempo real/Bridge foi por bundle, strings, sidecar JS, logs locais e docs oficiais.
 - O proximo passo recomendado e uma sessao hands-on controlada com permissao explicita para operar microfone, screen recording e comandos de voz.
 
 ## Apendice B - Rastreabilidade Jarvis sob edicao paralela
@@ -940,7 +925,7 @@ Hash do snapshot usado para os trechos abaixo:
 `git status --short`:
 
 ```text
- M docs/analysis/nexus-vs-overclock-bridge.md
+ M docs/analysis/nexus-vs-voice-benchmark-bridge.md
  M package.json
  M src/main/main.ts
  M src/main/smoke-core.test.ts
@@ -950,7 +935,7 @@ Hash do snapshot usado para os trechos abaixo:
 `git diff --stat`:
 
 ```text
- docs/analysis/nexus-vs-overclock-bridge.md | 170 +++++++++++++++++++++++++----
+ docs/analysis/nexus-vs-voice-benchmark-bridge.md | 170 +++++++++++++++++++++++++----
  package.json                               |  10 +-
  src/main/main.ts                           |  12 +-
  src/main/smoke-core.test.ts                |  30 ++++-

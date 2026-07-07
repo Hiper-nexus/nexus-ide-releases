@@ -25,7 +25,7 @@ import { SoftAgc } from './agc';
  * RESILIÊNCIA (a cura do "morreu sozinha"): o macOS mata streams em silêncio
  * — troca de AirPods, sleep/wake, mudança de dispositivo padrão. O stream
  * morre, isRunning() continua true e o wake fica surdo para sempre. Três
- * defesas (padrão validado no teardown do BridgeVoice, `mic_recovery.*`):
+ * defesas (padrão validado no benchmark interno de mic, `mic_recovery.*`):
  *   1. track.onended → reconstrução imediata do stream;
  *   2. watchdog de frames (sem PCM por >8s = stream zumbi → reconstrução);
  *   3. AudioContext suspenso → resume().

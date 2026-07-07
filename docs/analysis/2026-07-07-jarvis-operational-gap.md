@@ -1,12 +1,12 @@
-# Jarvis Nexus vs Overclock - gap operacional
+# Jarvis Nexus - gap operacional
 
 Data: 2026-07-07  
-Escopo: inspeção local do Overclock instalado, comparação com Nexus IDE `main`
+Escopo: inspeção local de benchmark de voz em tempo real, comparação com Nexus IDE `main`
 e implementação de hotfix operacional no pipeline Classic da Jarvis.
 
 ## Sumario executivo
 
-O Overclock opera a Jarvis como uma sessão live full-duplex com ferramentas
+O benchmark de voz em tempo real opera a Jarvis como uma sessão live full-duplex com ferramentas
 declaradas no modelo. O Nexus ja tem wake word, STT, brain, TTS e acoes, mas a
 rota confiavel em producao ainda e Classic: grava fala, transcreve em batch,
 chama o brain e executa uma action local.
@@ -22,25 +22,23 @@ de contexto no instante do wake:
 - Com isso a Jarvis parecia acordar, mas ficava inconsistente, lenta ou
   falava sozinha.
 
-O hotfix implementado segue o padrao observado no Overclock: manter um buffer
+O hotfix implementado segue o padrao observado no benchmark de voz em tempo real: manter um buffer
 curto de audio antes do wake, semear o utterance com esse pre-roll, e limpar
 prefixos de wake/ack antes de mandar o texto ao fast-path/brain.
 
-## Overclock observado localmente
+## benchmark de voz em tempo real observado localmente
 
 Artefatos inspecionados:
 
-- `/Applications/Overclock.app`
-- `/Applications/Overclock.app/Contents/Resources/sidecar`
-- `dist/GeminiLiveSession.js`
-- `dist/JarvisService.js`
-- `dist/core.js`
-- `sidecar/package.json`
+- bundle desktop local com sidecar JS
+- sessão live full-duplex
+- serviço de execução agentica
+- catálogo de tools
 - `Info.plist`
 
 Conclusoes de arquitetura:
 
-1. O Overclock nao e Electron tradicional; ele aparenta ser nativo/Tauri-like
+1. O benchmark de voz em tempo real nao e Electron tradicional; ele aparenta ser nativo/Tauri-like
    com sidecar Node.
 2. A Jarvis usa Gemini Live como canal principal de conversa.
 3. O modelo recebe `functionDeclarations`, incluindo funcoes como `delegar`,
@@ -55,7 +53,7 @@ Conclusoes de arquitetura:
 7. O app declara permissoes de microfone e captura de audio no `Info.plist`,
    o que indica desenho mais cuidadoso para referencia de output/eco.
 
-O ponto que mais explica a diferença de sensacao e que Overclock trata a voz
+O ponto que mais explica a diferença de sensacao e que benchmark de voz em tempo real trata a voz
 como sessao continua com tools; o Nexus, no modo Classic atual do usuario, trata
 cada turno como uma captura batch curta.
 
@@ -74,7 +72,7 @@ Estado local relevante:
 
 Principais gaps:
 
-| Area | Overclock | Nexus antes | Risco |
+| Area | benchmark de voz em tempo real | Nexus antes | Risco |
 |---|---|---|---|
 | Fala colada ao wake | buffer pendente/pre-roll | captura comecava pos-wake | perder comando |
 | Ack/eco | filtro por spoken similarity | TTS echo existe, mas wake ack podia entrar | auto-conversa |
@@ -130,7 +128,7 @@ Ainda nao esta fechado:
 
 1. A rota realtime agora pode operar em modo hibrido: transcript live entra
    rapido, a resposta de audio live e suprimida no turno de action, e a action
-   roda pelo executor Classic/MCP. Ainda nao e paridade total com Overclock,
+   roda pelo executor Classic/MCP. Ainda nao e paridade total com benchmark de voz em tempo real,
    porque OpenAI/Gemini Live ainda nao chamam tools nativas diretamente.
 2. O executor de voz ja centraliza actions em `jarvis-action-executor.ts` e usa
    MCP para `mcp_tool`, `run_command`, `send_to_pane` e fechamento de pane. UI
@@ -159,7 +157,7 @@ Usar o build local e observar `~/.nexus/logs/voice.log`:
 
 ## Proximo passo tecnico
 
-Para chegar na Jarvis do Overclock, a proxima fase deve ligar uma ponte segura:
+Para chegar na Jarvis do benchmark de voz em tempo real, a proxima fase deve ligar uma ponte segura:
 
 ```text
 Realtime transcript/tool call
@@ -172,7 +170,7 @@ Realtime transcript/tool call
 Enquanto isso nao for concluido, o modo recomendado para usuario final e o
 Classic com fast-paths agressivos para comandos frequentes.
 
-## Rodada 2 — sessao paralela (anti-surdez + MCP + Overclock pendingMic)
+## Rodada 2 — sessao paralela (anti-surdez + MCP + benchmark de voz em tempo real pendingMic)
 
 Apos o hotfix de pre-roll/ack, outra sessao atacou os sintomas que ainda
 faziam a Jarvis parecer surda ou limitada:
@@ -185,7 +183,7 @@ faziam a Jarvis parecer surda ou limitada:
 | So 10 acoes | Schema fechado no renderer | `mcp_tool` + `jarvis-action-executor.ts` via MCP bridge |
 | Eco da propria voz | Transcript do TTS reentrando | `recordEcho`, filtro `JARVIS_SELF_ECHO`, anti-loop |
 
-Padrao Overclock `pendingMic` portado para Classic:
+Padrao benchmark de voz em tempo real `pendingMic` portado para Classic:
 
 - `beginUtterance()` dispara **antes** de `liveStart` (nao bloqueia mais a captura).
 - Pre-roll 2,5s + `stripWakeAckEcho` da rodada 1 continuam valendo.
@@ -204,7 +202,7 @@ Gap remanescente atualizado:
 1. Realtime ainda sem `functionDeclarations`/native tool calls no provider.
 2. Classic/hibrido ja pode invocar qualquer tool `nexus_*` via `mcp_tool` no
    brain e passa por executor central.
-3. Paridade total Overclock = live full-duplex **com** tools no provider
+3. Paridade total benchmark de voz em tempo real = live full-duplex **com** tools no provider
    OpenAI/Gemini.
 
 ## Rodada 3 — Jarvis app-aware, clicavel e prompt de agente em ingles

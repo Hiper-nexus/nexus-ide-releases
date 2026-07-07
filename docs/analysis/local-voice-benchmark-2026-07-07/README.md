@@ -1,33 +1,33 @@
-# Auditoria competitiva: Nexus vs Overclock, BridgeVoice e BridgeSpace
+# Auditoria interna: benchmarks locais de voz e workspace
 
 Data: 2026-07-07
 Baseline visual consultado: Linear (`~/.design-references/linear.md`)
-Apps inspecionados localmente:
+Benchmarks locais inspecionados:
 
-- `/Applications/Overclock.app` (`sh.overclock.app`, 1.0.4)
-- `/Applications/BridgeVoice.app` (`com.bridgemind.bridgevoice`, 2.8.1)
-- `/Applications/BridgeSpace.app` (`io.bridgemind.bridgespace`, 3.4.9)
+- Benchmark de voz em tempo real
+- Benchmark de ditado
+- Benchmark de workspace
 - Nexus dev/local em `/Users/cleofasrocha/dev/nexus-ide`
 
 ## Evidencias capturadas
 
 Screenshots locais:
 
-- `screenshots/01-overclock-home.png`
-- `screenshots/02-bridgevoice-home.png`
-- `screenshots/03-bridgespace-home.png`
+- `screenshots/01-voice-benchmark-home.png`
+- `screenshots/02-dictation-benchmark-home.png`
+- `screenshots/03-workspace-benchmark-home.png`
 - `screenshots/04-nexus-canvas-current.png`
 
 Inspecao de bundle:
 
-- Overclock expoe bastante arquitetura em `/Applications/Overclock.app/Contents/Resources/sidecar/dist`.
-- BridgeVoice e BridgeSpace estao mais fechados/compilados em Tauri/Rust; a leitura util veio de `Info.plist` e `strings` nos binarios.
+- O benchmark de voz em tempo real expoe bastante arquitetura em sidecar JS.
+- benchmark de ditado e benchmark de workspace estao mais fechados/compilados em Tauri/Rust; a leitura util veio de `Info.plist` e `strings` nos binarios.
 
-## O que os concorrentes fazem melhor hoje
+## O que os benchmarks mostram
 
-### Overclock
+### benchmark de voz em tempo real
 
-Overclock vence em operacao porque separa voz fluida de execucao confiavel:
+benchmark de voz em tempo real vence em operacao porque separa voz fluida de execucao confiavel:
 
 - Usa uma sessao Gemini Live full-duplex para a experiencia de voz, com singleton de sessao, fila serializada de turnos, buffer de mic pre-setup, timeout de setup e supressao de eco textual.
 - Nao tenta fazer tudo pelo modelo realtime. A voz usa tools grosseiras e delega trabalho real para um `JarvisService` com Agent SDK + MCP in-process.
@@ -36,11 +36,11 @@ Overclock vence em operacao porque separa voz fluida de execucao confiavel:
 
 Gap direto no Nexus: agora temos uma ponte realtime hibrida
 transcript -> Classic/MCP, mas ainda nao temos `functionDeclarations`/tool calls
-nativas no provider live como o Overclock.
+nativas no provider live como o benchmark de voz em tempo real.
 
-### BridgeVoice
+### benchmark de ditado
 
-BridgeVoice vence por foco:
+benchmark de ditado vence por foco:
 
 - A primeira tela e simples: ditado, historico, dicionario, atalhos, ajustes.
 - `Info.plist` e `strings` indicam captura persistente de audio, recuperacao de microfone, failover de device, mutar audio do sistema durante gravacao, STT local/cloud e logs de transcricao.
@@ -48,13 +48,13 @@ BridgeVoice vence por foco:
 
 Gap direto no Nexus: nosso pipeline de mic ja melhorou, mas ainda aparece `mic.firstFrame rms:0` e a calibracao do Fifine precisa virar uma rotina diagnostica guiada, nao tentativa manual por log.
 
-### BridgeSpace
+### benchmark de workspace
 
-BridgeSpace vence em clareza de entrada:
+benchmark de workspace vence em clareza de entrada:
 
-- A tela inicial comunica quatro modos de trabalho com alto contraste: BridgeSpace, BridgeSwarm, BridgeBoard, BridgeMemory.
+- A tela inicial comunica quatro modos de trabalho com alto contraste: benchmark de workspace, modos avançados de workspace.
 - A interface e menos "engenharia exposta"; o usuario entende o que fazer antes de ver detalhes.
-- O bundle aponta para gerenciamento de perfis/contas/sessoes Claude/Codex e leitura de transcripts, mas nao expõe uma stack de voz comparavel ao Overclock.
+- O bundle aponta para gerenciamento de perfis/contas/sessoes Claude/Codex e leitura de transcripts, mas nao expõe uma stack de voz comparavel ao benchmark de voz em tempo real.
 
 Gap direto no Nexus: nosso primeiro viewport mistura topbar, canvas, Jarvis HUD, minimap, rails e pane. O poder existe, mas a hierarquia visual ainda nao guia.
 
@@ -128,7 +128,7 @@ Falhou / risco:
 ## Proximos P0 recomendados
 
 1. Evoluir da ponte hibrida para live tool-calling nativo.
-   - Seguir o padrao do Overclock: Live para conversa, executor separado para
+   - Seguir o padrao do benchmark de voz em tempo real: Live para conversa, executor separado para
      tools, confirmacao/gates tecnicos, tool result de volta para a sessao.
 
 2. Transformar diagnostico de mic em rotina de calibracao no app.

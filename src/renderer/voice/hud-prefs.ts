@@ -65,8 +65,8 @@ export interface DragRect {
 
 /**
  * Converte a posição solta do drag em âncora de canto + offsets, clampando
- * para dentro do viewport (nunca ancora fora da tela — mesma proteção do
- * "re-anchored to monitor" do BridgeVoice).
+ * para dentro do viewport (nunca ancora fora da tela — mesma proteção dos
+ * benchmarks internos de HUD flutuante).
  */
 export function anchorFromDrag(
   rect: DragRect,

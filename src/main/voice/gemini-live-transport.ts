@@ -5,8 +5,7 @@
  * serverContent.interrupted. Este transporte é OPCIONAL por cima do Jarvis
  * Classic — quando cai (sem key, socket morto), o Classic segue valendo.
  *
- * Alavancas de custo/latência OBRIGATÓRIAS (auditoria 2026-07-06 — a
- * evidência do concorrente é 12,9M tokens/noite sem elas):
+ * Alavancas de custo/latência OBRIGATÓRIAS (auditoria interna 2026-07-06):
  * - contextWindowCompression slidingWindow (sempre no setup)
  * - pendingMic (primeira frase bufferizada até setupComplete, teto 160 KB)
  * - singleton (connect novo mata o socket anterior — nunca "duas vozes")

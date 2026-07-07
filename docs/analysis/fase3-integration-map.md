@@ -15,7 +15,7 @@ Estado observado:
 
 - `origin/main`: `7927f10 chore(release): bump version to 0.10.5`
 - branch anterior local: `docs/crashes-triage` em `1df0c5f`
-- working tree preexistente: `docs/analysis/nexus-vs-overclock-bridge.md` modificado; nao faz parte desta task e nao sera stageado
+- working tree preexistente: `docs/analysis/nexus-vs-voice-benchmark-bridge.md` modificado; nao faz parte desta task e nao sera stageado
 - zona quente declarada pelo usuario: somente leitura; nenhum plano edita `wake-mic`, `wake-rearm`, `wake-health`, `pcm-processor` ou `voice-log*`
 
 ## UI existente: `Jarvis > Voice Control`

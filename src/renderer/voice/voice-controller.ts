@@ -574,7 +574,7 @@ async function beginListening(
         console.warn('[voice] liveStart falhou (classic segue):', errMsg(err));
       });
     }
-    // Overclock pendingMic: mic ANTES da sessao live ficar pronta — liveStart
+    // Padrao pendingMic: mic ANTES da sessao live ficar pronta — liveStart
     // nao pode bloquear a captura ou a fala inicial some do WAV.
     if (wakeMic.isRunning()) {
       wakeMic.beginUtterance(autoStop, reason === 'wake' ? WAKE_PREROLL_MS : 0);

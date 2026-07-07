@@ -17,7 +17,7 @@ export const CURRENT_RELEASE: AppRelease = {
   date: '2026-07-07',
   codename: 'Jarvis operacional',
   summary:
-    'Hotfix operacional inspirado na Jarvis do Overclock: o Nexus preserva a fala colada ao wake word, limpa eco da saudação e mantém o tratamento "patrão" nos comandos rápidos.',
+    'Hotfix operacional baseado na análise interna de voz: o Nexus preserva a fala colada ao wake word, limpa eco da saudação e mantém o tratamento "patrão" nos comandos rápidos.',
   highlights: [],
   fixes: [
     {

@@ -4,7 +4,7 @@
 
 Data: 2026-07-07
 
-Hotfix operacional inspirado na analise local do Overclock: a Jarvis agora
+Hotfix operacional baseado na analise interna de voz: a Jarvis agora
 preserva a fala colada ao wake word, limpa eco da saudacao e mantem tratamento
 "patrao" tambem nos caminhos rapidos.
 
@@ -17,8 +17,8 @@ preserva a fala colada ao wake word, limpa eco da saudacao e mantem tratamento
   e descartado.
 - Fast-paths de acao e estado recebem o `userName` da persona, evitando respostas
   secas nos comandos criticos "abrir terminal" e "que horas sao".
-- Nova analise em `docs/analysis/2026-07-07-jarvis-overclock-operational-gap.md`
-  documenta a arquitetura observada no Overclock e os gaps restantes do Nexus.
+- Nova analise em `docs/analysis/2026-07-07-jarvis-operational-gap.md`
+  documenta os gaps operacionais restantes do Nexus.
 
 ## 0.10.6 — Jarvis te ouve
 
@@ -78,7 +78,7 @@ Auto-update visível de ponta a ponta + conserto completo do ciclo de vida de mi
 
 Data: 2026-07-06
 
-Refatoração sênior de confiabilidade da JARVIS + HUD flexível, guiada por análise de causa raiz e teardown competitivo (Overclock, BridgeVoice/BridgeSpace).
+Refatoração sênior de confiabilidade da JARVIS + HUD flexível, guiada por análise de causa raiz e benchmark interno (benchmark de voz em tempo real, benchmark de ditado/benchmark de workspace).
 
 ### Melhorias
 

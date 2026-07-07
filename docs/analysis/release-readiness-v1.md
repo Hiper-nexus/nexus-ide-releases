@@ -222,7 +222,7 @@ Recomendacao operacional:
 3. Rodar smoke empacotado em app assinado/notarizado, incluindo permissoes macOS.
 4. So promover para `v1.0.0` apos uma janela curta sem CRITICAL/HIGH regressivo e com evidencia de audit/consentimento.
 
-Se o negocio exigir `v1.0.0` agora, o escopo de marketing deve ser reduzido: "Jarvis in Nexus com voz, MCP e Vision sob consentimento", nao "assistente universal", nao "BridgeVoice replacement", e nao "realtime tool-use" sem prova F3+F4.
+Se o negocio exigir `v1.0.0` agora, o escopo de marketing deve ser reduzido: "Jarvis in Nexus com voz, MCP e Vision sob consentimento", nao "assistente universal", nao "benchmark de ditado replacement", e nao "realtime tool-use" sem prova F3+F4.
 
 ## 7. Top 5 riscos residuais pos-fix
 

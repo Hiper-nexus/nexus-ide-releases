@@ -5,7 +5,7 @@ Escopo: leitura + diagnósticos read-only + 2 auditorias paralelas (visual e bug
 
 Documentos irmãos:
 
-- `docs/analysis/nexus-vs-overclock-bridge.md` — análise profunda Jarvis vs Overclock/Bridge (P0→P4). Este documento complementa com bugs, visual e o delta do dia.
+- `docs/analysis/nexus-vs-voice-benchmark-bridge.md` — análise profunda Jarvis vs benchmark de voz em tempo real/Bridge (P0→P4). Este documento complementa com bugs, visual e o delta do dia.
 - `docs/audit/2026-07-05-*.md` — auditoria de 05/07; vários itens já corrigidos (seção 6).
 
 ---
@@ -131,7 +131,7 @@ Stashes `recover ... from mixed workspace` (0-3): NÃO dropar até confirmar abs
 ### 9.2.1 Recomendações para a fase3 (achados do hands-on 13:15-13:46)
 
 1. **Makeup gain é obrigatório com APM off**: sem AGC o fifine fica fiel porém fraco (wake 0.39-0.47, usuário gritando). `WAKE_MAKEUP_GAIN = 3` validado ao vivo (0.77-0.99 voz normal). Commitar; futuro: ganho adaptativo por RMS médio.
-2. **Captura deve começar NO wake, não após o ack**: hoje toca "Pois não?" e SÓ DEPOIS abre a escuta — comando emendado ("Hey Jarvis abre um terminal") cai fora da gravação; captura fecha em quase-silêncio e o Whisper alucina "E aí" (observado 3× no teste). Fix: pre-roll buffer desde `wake.detected` + captura durante o ack (padrão Siri/Alexa/Overclock).
+2. **Captura deve começar NO wake, não após o ack**: hoje toca "Pois não?" e SÓ DEPOIS abre a escuta — comando emendado ("Hey Jarvis abre um terminal") cai fora da gravação; captura fecha em quase-silêncio e o Whisper alucina "E aí" (observado 3× no teste). Fix: pre-roll buffer desde `wake.detected` + captura durante o ack (padrão Siri/Alexa/benchmark de voz em tempo real).
 3. **STT primário do usuário trocado para Groq whisper-large-v3-turbo** (backup `nexus-voice.json.bak-pre-groq`) — corta 1-3s/turno na rota Classic até o realtime chegar. Medido ao vivo: transcrição caiu para 466-766ms.
 4. **CRÍTICO — eco/self-talk agora é responsabilidade do app**: com o APM off, o `echoCancellation` que filtrava a voz da própria Jarvis do mic SUMIU (o comentário em `voice-controller.ts:614` "echoCancellation filtra do próximo turno" ficou obsoleto). Observado ao vivo (13:54): loop completo de self-talk — a Jarvis capturou o próprio TTS como fala do usuário e conversou consigo mesma por vários turnos (agravado por `expectReply` reabrindo a escuta + makeup gain + fifine ser input E output default). Mitigação imediata aplicada: saída de áudio movida para os alto-falantes do MacBook (separação física). Fix de código necessário: suprimir captura/wake durante TODO o playback de TTS (hoje só o ack tem 1.5s de supressão), janela anti-eco cobrindo a duração real do áudio + margem, e/ou AEC por software. Sem isso, o realtime full-duplex da fase3 vai sofrer o mesmo loop.
 
