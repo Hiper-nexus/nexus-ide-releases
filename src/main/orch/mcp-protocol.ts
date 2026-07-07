@@ -1,5 +1,6 @@
 import type { AgentGateContext } from './gate';
 import { canonicalToolName, isToolAllowed } from './gate';
+import { dispatchToolCall } from './mcp-dispatch';
 
 /**
  * Minimal MCP (Model Context Protocol) server core: JSON-RPC 2.0 message
@@ -39,6 +40,8 @@ export interface McpToolDef {
   description: string;
   /** Plain JSON Schema for the tool input. */
   inputSchema: Record<string, unknown>;
+  /** Forces native/user confirmation even if the generic guardrail changes. */
+  requiresConfirm?: boolean;
   handler: (
     args: Record<string, unknown>,
     ctx: AgentGateContext,
@@ -147,30 +150,16 @@ export async function handleMcpMessage(
       if (typeof name !== 'string' || name.length === 0) {
         return rpcError(id, -32602, 'tools/call requires params.name');
       }
-      const tool = resolveTool(registry, name);
-      if (!tool) {
-        return ok(id, toolError(`unknown tool: ${name}`));
-      }
-      if (!isToolAllowed(ctx.allowedTools, tool.name)) {
-        return ok(
-          id,
-          toolError(
-            `tool "${tool.name}" is outside this agent's allowlist ` +
-              `(agent: ${ctx.label})`,
-          ),
-        );
-      }
       const args =
         (message.params?.arguments as Record<string, unknown>) ?? {};
-      try {
-        const result = await tool.handler(args, ctx);
-        console.log(`[orch] tool ${tool.name} ok (${ctx.label})`);
-        return ok(id, toolText(result));
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        console.warn(`[orch] tool ${tool.name} FALHOU (${ctx.label}): ${detail}`);
-        return ok(id, toolError(`${tool.name} failed: ${detail}`));
+      const result = await dispatchToolCall('http-mcp', registry, name, args, ctx);
+      if (result.ok) {
+        console.log(`[orch] tool ${result.tool} ok (${ctx.label})`);
+        return ok(id, toolText(result.result));
       }
+      const detail = result.error ?? result.confirmationReason ?? 'tool denied';
+      console.warn(`[orch] tool ${result.tool} FALHOU (${ctx.label}): ${detail}`);
+      return ok(id, toolError(`${result.tool} failed: ${detail}`));
     }
 
     default:
