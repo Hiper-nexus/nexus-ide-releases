@@ -1933,6 +1933,25 @@ body {
   white-space: normal;
 }
 
+.voice-hud__action {
+  font: inherit;
+  font-size: 11px;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.voice-hud__action:hover {
+  background: var(--accent);
+  color: var(--bg);
+}
+
 /* ---- Orchestration panel (missions / handoffs / todos / squads) ---- */
 .app__body {
   position: relative;

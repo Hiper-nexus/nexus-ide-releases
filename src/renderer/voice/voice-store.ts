@@ -16,6 +16,7 @@ import type {
   JarvisLiveTranscriptEvent,
   VoiceRuntimeInfo,
 } from '../../shared/voice-ipc';
+import type { MicHealth } from './wake-health';
 
 /**
  * Renderer-side voice UI state: the current pipeline phase (for the HUD), the
@@ -41,6 +42,8 @@ interface VoiceStore {
   /** Transient fallback note, e.g. "groq throttled (429) → openai". */
   note: string | null;
   error: string | null;
+  /** Saúde do mic: 'ok' | 'needsPermission' | 'silent'. */
+  micHealth: MicHealth;
   settingsOpen: boolean;
   liveState: JarvisLiveState | null;
   liveTranscript: JarvisLiveTranscriptEvent[];
@@ -56,6 +59,7 @@ interface VoiceStore {
   setSpoken: (text: string) => void;
   setNote: (note: string | null) => void;
   setError: (error: string | null) => void;
+  setMicHealth: (micHealth: MicHealth) => void;
   setLiveState: (state: JarvisLiveState) => void;
   addLiveTranscript: (event: JarvisLiveTranscriptEvent) => void;
   setLiveTool: (event: JarvisLiveToolEvent | JarvisLiveToolResultEvent) => void;
@@ -84,6 +88,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   lastSpoken: '',
   note: null,
   error: null,
+  micHealth: 'ok',
   settingsOpen: false,
   liveState: null,
   liveTranscript: [],
@@ -98,6 +103,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   setSpoken: (lastSpoken) => set({ lastSpoken }),
   setNote: (note) => set({ note }),
   setError: (error) => set({ error, status: error ? 'error' : 'idle' }),
+  setMicHealth: (micHealth) => set({ micHealth }),
   setLiveState: (liveState) => set({ liveState }),
   addLiveTranscript: (event) =>
     set((state) => ({

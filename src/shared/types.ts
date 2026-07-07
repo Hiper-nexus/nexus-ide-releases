@@ -494,6 +494,10 @@ export interface NexusApi {
     /** Evento do pipeline (mic morreu, wake detectado, falha de STT/brain) →
      *  log persistente em ~/.nexus/logs/voice.log (via main). */
     logVoice(payload: VoiceLogPayload): void;
+    /** Abre Ajustes do macOS → Privacidade → Microfone (deep-link). */
+    openMicSettings(): void;
+    /** Abre Ajustes do macOS → Som (deep-link). */
+    openSoundSettings(): void;
     onWakeDetected(cb: () => void): Unsubscribe;
     jarvis(req: JarvisRequest): Promise<JarvisReply>;
     /** Native confirmation before a voice-issued shell command runs (SEC#6). */

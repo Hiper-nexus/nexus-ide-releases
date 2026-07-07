@@ -54,6 +54,7 @@ export function VoiceHud() {
   const transcript = useVoiceStore((s) => s.lastTranscript);
   const note = useVoiceStore((s) => s.note);
   const error = useVoiceStore((s) => s.error);
+  const micHealth = useVoiceStore((s) => s.micHealth);
   const info = useVoiceStore((s) => s.info);
   const liveState = useVoiceStore((s) => s.liveState);
   const liveTool = useVoiceStore((s) => s.liveTool);
@@ -323,6 +324,42 @@ export function VoiceHud() {
                 <span className="voice-hud__detail voice-hud__detail--note">
                   {'-> '}
                   {note}
+                </span>
+              )}
+              {micHealth === 'needsPermission' && (
+                <span className="voice-hud__detail voice-hud__detail--error">
+                  Microfone sem permissão — a JARVIS não te ouve.
+                  <button
+                    type="button"
+                    className="voice-hud__action"
+                    onClick={() =>
+                      navigator.mediaDevices
+                        .getUserMedia({ audio: true })
+                        .then((s) => s.getTracks().forEach((t) => t.stop()))
+                        .catch(() => {})
+                    }
+                  >
+                    Permitir
+                  </button>
+                  <button
+                    type="button"
+                    className="voice-hud__action"
+                    onClick={() => window.nexus.voice.openMicSettings()}
+                  >
+                    Ajustes
+                  </button>
+                </span>
+              )}
+              {micHealth === 'silent' && (
+                <span className="voice-hud__detail voice-hud__detail--error">
+                  Não estou ouvindo nada — mic mudo ou dispositivo errado.
+                  <button
+                    type="button"
+                    className="voice-hud__action"
+                    onClick={() => window.nexus.voice.openSoundSettings()}
+                  >
+                    Ajustes de som
+                  </button>
                 </span>
               )}
             </>

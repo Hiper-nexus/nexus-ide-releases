@@ -23,6 +23,10 @@ export const VOICE_CHANNELS = {
   /** send: renderer → main. Evento do pipeline de voz para o log persistente
    *  (~/.nexus/logs/voice.log). Observabilidade da morte silenciosa do mic. */
   logEvent: 'voice:log',
+  /** send: renderer → main. Abrir Ajustes do macOS → Microfone (permissão). */
+  openMicSettings: 'voice:openMicSettings',
+  /** send: renderer → main. Abrir Ajustes do macOS → Som (entrada). */
+  openSoundSettings: 'voice:openSoundSettings',
   /** invoke: renderer → main. Fala transcrita → resposta JARVIS {say, action}. */
   jarvis: 'voice:jarvis',
   /** invoke: renderer → main. Confirmação nativa antes de rodar um comando de

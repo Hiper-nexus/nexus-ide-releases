@@ -29,6 +29,7 @@ import {
 import { jarvisThink } from './jarvis-brain';
 import { WakeEngine } from './wake-engine';
 import { logVoice } from './voice-log';
+import { spawn } from 'node:child_process';
 import { transcribe } from './stt-service';
 import { speak, stopSystemSpeech } from './tts-service';
 import { echoSuppressor } from './echo-suppress';
@@ -219,6 +220,17 @@ export function registerVoiceIpc(): void {
     if (parsed.success) {
       logVoice(parsed.data.level, parsed.data.event, parsed.data.msg, parsed.data.data);
     }
+  });
+
+  // Deep-links pra Ajustes do macOS: o renderer pede quando a JARVIS detecta
+  // que tá sem permissão de mic (Privacy → Microfone) ou com input mudo (Som).
+  ipcMain.on(VOICE_CHANNELS.openMicSettings, () => {
+    spawn('open', ['x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone']);
+    logVoice('info', 'mic.openMicSettings', 'abriu Ajustes → Microfone');
+  });
+  ipcMain.on(VOICE_CHANNELS.openSoundSettings, () => {
+    spawn('open', ['x-apple.systempreferences:com.apple.preference.sound']);
+    logVoice('info', 'mic.openSoundSettings', 'abriu Ajustes → Som');
   });
 
   ipcMain.handle(VOICE_CHANNELS.jarvis, async (_event, raw): Promise<JarvisReply> => {

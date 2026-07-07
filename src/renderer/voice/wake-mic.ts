@@ -4,10 +4,12 @@ import {
   downsample,
   encodeWav,
   bytesToBase64,
+  frameRms,
   type AutoStopOptions,
   type CaptureResult,
 } from './voice-capture';
 import { RESTART_BACKOFF_MS, nextRearmDelay } from './wake-rearm';
+import { frameIsSilent, type MicPermissionState } from './wake-health';
 
 /**
  * Mic sempre-ligado do wake word: stream 16 kHz mono de baixo custo que
@@ -58,6 +60,8 @@ export class WakeMic {
   private restarting = false;
   /** True após onDied disparar (rearme lento ativo). Reset em recover/stop. */
   private dead = false;
+  /** Início do silêncio contínuo atual (epoch ms); 0 = ouvindo áudio real. */
+  private silentSince = 0;
 
   /** Stream morreu e a reconstrução esgotou as tentativas. */
   onDied: ((reason: string) => void) | null = null;
@@ -98,6 +102,23 @@ export class WakeMic {
     data?: Record<string, unknown>,
   ): void {
     window.nexus.voice.logVoice({ level, event, msg, data });
+  }
+
+  /** ms em silêncio contínuo; 0 se o mic está ouvindo áudio real. */
+  getSilentMs(): number {
+    return this.silentSince ? Date.now() - this.silentSince : 0;
+  }
+
+  /** Estado da permissão de mic (Permissions API / macOS); 'unknown' se indisponível. */
+  async checkPermission(): Promise<MicPermissionState> {
+    try {
+      const res = await navigator.permissions.query({
+        name: 'microphone' as PermissionName,
+      });
+      return (res.state as MicPermissionState) ?? 'unknown';
+    } catch {
+      return 'unknown';
+    }
   }
 
   isUtteranceActive(): boolean {
@@ -181,6 +202,7 @@ export class WakeMic {
     await this.openGraph();
     this.running = true;
     this.restartAttempt = 0;
+    this.silentSince = 0;
     this.startWatchdog();
     console.log('[wake] mic do wake word ligado (openWakeWord, sem key)');
     this.log('info', 'mic.started', 'wake mic ligado');
@@ -214,6 +236,10 @@ export class WakeMic {
     const onFrame = (frame: Float32Array) => {
       if (!this.running) return;
       this.lastFrameAt = Date.now();
+      // Saúde do mic: acumula quanto tempo em silêncio (RMS abaixo do piso).
+      this.silentSince = frameIsSilent(frameRms(frame))
+        ? this.silentSince || Date.now()
+        : 0;
       // Comando em gravação: acumula localmente (e NÃO alimenta o detector —
       // senão a própria fala do comando poderia re-disparar o wake).
       if (this.uttActive) {
@@ -324,6 +350,7 @@ export class WakeMic {
     this.running = false;
     this.restarting = false;
     this.dead = false;
+    this.silentSince = 0;
     this.restartAttempt = 0;
     this.stopWatchdog();
     this.pending = [];

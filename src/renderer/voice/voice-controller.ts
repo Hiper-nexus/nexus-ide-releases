@@ -5,6 +5,7 @@ import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { VoiceCapture } from './voice-capture';
 import { WakeMic } from './wake-mic';
+import { classifyMicHealth, type MicHealth } from './wake-health';
 import { LiveAudioPlayer, micFrameToBase64 } from './live-audio';
 import { stripPromptEcho } from './response-echo';
 import { isDiscardableTranscript } from './transcript-filter';
@@ -55,6 +56,10 @@ export const BRAIN_DEADLINE_MS = 35_000;
 const SPEAK_DEADLINE_MS = 40_000;
 // Turno preso além disto + novo "Hey Jarvis" = derruba o turno e atende.
 const STUCK_TURN_TAKEOVER_MS = 20_000;
+// granted mas mudo além disso → "silent" (dispositivo morto/mudo, ex.: fifine)
+const MIC_SILENT_THRESHOLD_MS = 12_000;
+// re-avalia permissão + silêncio do mic a cada 5s (banner de saúde reage)
+const MIC_HEALTH_CHECK_MS = 5_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -365,6 +370,40 @@ export function useVoiceController(): void {
     wakeMic.onRecovered = () => {
       useVoiceStore.getState().setNote('mic do wake reconectado');
     };
+
+    // ── Saúde do mic: detecta permissão faltando / captura muda e avisa a UI ──
+    // macOS entrega áudio mudo (zeros) sem erro quando falta permissão; sem isto
+    // a JARVIS fica "surda" em silêncio. classifications → banner acionável.
+    let lastMicHealth: MicHealth | null = null;
+    const checkMicHealth = async (): Promise<void> => {
+      if (!wakeMic.isRunning()) {
+        if (lastMicHealth && lastMicHealth !== 'ok') {
+          useVoiceStore.getState().setMicHealth('ok');
+          lastMicHealth = 'ok';
+        }
+        return;
+      }
+      const perm = await wakeMic.checkPermission();
+      const health = classifyMicHealth(
+        perm,
+        wakeMic.getSilentMs(),
+        MIC_SILENT_THRESHOLD_MS,
+      );
+      if (health !== lastMicHealth) {
+        useVoiceStore.getState().setMicHealth(health);
+        lastMicHealth = health;
+        if (health !== 'ok') {
+          window.nexus.voice.logVoice({
+            level: 'warn',
+            event: 'mic.health',
+            msg: health,
+            data: { permission: perm },
+          });
+        }
+      }
+    };
+    const micHealthTimer = setInterval(checkMicHealth, MIC_HEALTH_CHECK_MS);
+    void checkMicHealth();
     const syncWakeWord = (info: VoiceRuntimeInfo) => {
       if (info.enabled && info.wakeWordEnabled) {
         warmAckCache();
@@ -482,6 +521,7 @@ export function useVoiceController(): void {
     });
 
     return () => {
+      clearInterval(micHealthTimer);
       unsubInfo();
       unsubStart();
       unsubStop();
