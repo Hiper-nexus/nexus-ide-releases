@@ -355,6 +355,7 @@ const api: NexusApi = {
     stopSpeak: () => ipcRenderer.invoke(VOICE_CHANNELS.speakStop),
     sendWakeAudio: (chunk: ArrayBuffer) =>
       ipcRenderer.send(VOICE_CHANNELS.wakeAudio, chunk),
+    logVoice: (payload) => ipcRenderer.send(VOICE_CHANNELS.logEvent, payload),
     jarvis: (req) => ipcRenderer.invoke(VOICE_CHANNELS.jarvis, req),
     confirmCommand: (command: string) =>
       ipcRenderer.invoke(VOICE_CHANNELS.confirmCommand, command),

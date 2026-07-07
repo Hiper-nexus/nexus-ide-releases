@@ -7,6 +7,7 @@ import {
   type AutoStopOptions,
   type CaptureResult,
 } from './voice-capture';
+import { RESTART_BACKOFF_MS, nextRearmDelay } from './wake-rearm';
 
 /**
  * Mic sempre-ligado do wake word: stream 16 kHz mono de baixo custo que
@@ -35,7 +36,6 @@ const MIN_SPEECH_MS = 320;
 
 const WATCHDOG_INTERVAL_MS = 4_000;
 const FRAME_STALL_MS = 8_000;
-const RESTART_BACKOFF_MS = [1_000, 3_000, 8_000];
 /** Folga sobre o maxMs da captura: se os frames morrerem no meio da fala, o
  * deadline fecha o turno mesmo sem PCM chegando (senão busy trava). */
 const UTTERANCE_DEADLINE_SLACK_MS = 1_000;
@@ -56,6 +56,8 @@ export class WakeMic {
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private restartAttempt = 0;
   private restarting = false;
+  /** True após onDied disparar (rearme lento ativo). Reset em recover/stop. */
+  private dead = false;
 
   /** Stream morreu e a reconstrução esgotou as tentativas. */
   onDied: ((reason: string) => void) | null = null;
@@ -86,6 +88,16 @@ export class WakeMic {
 
   isRunning(): boolean {
     return this.running;
+  }
+
+  /** Encaminha evento do ciclo de vida do mic ao log persistente (main). */
+  private log(
+    level: 'info' | 'warn' | 'error',
+    event: string,
+    msg?: string,
+    data?: Record<string, unknown>,
+  ): void {
+    window.nexus.voice.logVoice({ level, event, msg, data });
   }
 
   isUtteranceActive(): boolean {
@@ -171,6 +183,7 @@ export class WakeMic {
     this.restartAttempt = 0;
     this.startWatchdog();
     console.log('[wake] mic do wake word ligado (openWakeWord, sem key)');
+    this.log('info', 'mic.started', 'wake mic ligado');
   }
 
   /** Abre stream + grafo de áudio (comum ao start e à reconstrução). */
@@ -248,37 +261,44 @@ export class WakeMic {
     this.restartTimer = null;
   }
 
-  /** Stream morreu em silêncio: reconstrói com backoff; esgotou → onDied. */
+  /** Stream morreu em silêncio: reconstrói com backoff e NUNCA desiste.
+   *  Esgotado o backoff rápido (1s/3s/8s), dispara onDied (UI avisa) e entra
+   *  num rearme lento infinito a cada 30s até o dispositivo voltar. */
   private handleStreamDeath(reason: string): void {
     if (!this.running || this.restarting) return;
     this.restarting = true;
+    this.restartAttempt = 0;
+    this.dead = false;
     console.warn(`[wake] stream do mic morreu (${reason}) — reconstruindo`);
+    this.log('warn', 'mic.died', `stream morreu: ${reason}`);
     this.teardownGraph();
     this.scheduleRestart(reason);
   }
 
   private scheduleRestart(reason: string): void {
     const attempt = this.restartAttempt;
-    if (attempt >= RESTART_BACKOFF_MS.length) {
-      this.restarting = false;
-      this.running = false;
-      this.stopWatchdog();
-      console.warn('[wake] reconstrução do mic esgotou as tentativas');
+    // Primeira entrada no rearme lento: avisa a UI (onDied) — mas continua
+    // tentando. Antes daqui o mic ficava morto até toggle manual.
+    if (attempt >= RESTART_BACKOFF_MS.length && !this.dead) {
+      this.dead = true;
+      console.warn('[wake] backoff rápido esgotou — rearme lento a cada 30s');
+      this.log('warn', 'mic.slowRearm', 'rearme lento (a cada 30s)', { reason });
       this.onDied?.(reason);
-      return;
     }
     this.restartAttempt += 1;
     this.restartTimer = setTimeout(() => {
       void this.openGraph()
         .then(() => {
           this.restarting = false;
+          this.dead = false;
           this.restartAttempt = 0;
           this.lastFrameAt = Date.now();
           console.log('[wake] mic reconstruído com sucesso');
+          this.log('info', 'mic.recovered', 'stream reconstruído');
           this.onRecovered?.();
         })
         .catch(() => this.scheduleRestart(reason));
-    }, RESTART_BACKOFF_MS[attempt]);
+    }, nextRearmDelay(attempt));
   }
 
   /** Derruba só o grafo de áudio (mantém o estado running/watchdog). */
@@ -303,6 +323,7 @@ export class WakeMic {
     if (!this.running && !this.restarting) return;
     this.running = false;
     this.restarting = false;
+    this.dead = false;
     this.restartAttempt = 0;
     this.stopWatchdog();
     this.pending = [];
@@ -314,5 +335,6 @@ export class WakeMic {
     this.uttActive = false;
     this.teardownGraph();
     console.log('[wake] mic do wake word desligado');
+    this.log('info', 'mic.stopped', 'wake mic desligado');
   }
 }

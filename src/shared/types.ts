@@ -23,6 +23,7 @@ import type {
   JarvisLiveToolEvent,
   JarvisLiveToolResultEvent,
   JarvisLiveTranscriptEvent,
+  VoiceLogPayload,
 } from './voice-ipc';
 import type {
   Handoff,
@@ -490,6 +491,9 @@ export interface NexusApi {
     /** Barge-in: mata a fala do fallback `say` que toca no main. */
     stopSpeak(): Promise<void>;
     sendWakeAudio(chunk: ArrayBuffer): void;
+    /** Evento do pipeline (mic morreu, wake detectado, falha de STT/brain) →
+     *  log persistente em ~/.nexus/logs/voice.log (via main). */
+    logVoice(payload: VoiceLogPayload): void;
     onWakeDetected(cb: () => void): Unsubscribe;
     jarvis(req: JarvisRequest): Promise<JarvisReply>;
     /** Native confirmation before a voice-issued shell command runs (SEC#6). */

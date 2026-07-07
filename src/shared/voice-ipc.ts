@@ -40,6 +40,15 @@ export const speakRequestSchema = z.object({
 
 export type SpeakRequest = z.infer<typeof speakRequestSchema>;
 
+export const voiceLogSchema = z.object({
+  level: z.enum(['info', 'warn', 'error']),
+  event: z.string().min(1).max(64),
+  msg: z.string().max(500).optional(),
+  data: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type VoiceLogPayload = z.infer<typeof voiceLogSchema>;
+
 export const setConfigRequestSchema = z.object({
   enabled: z.boolean().optional(),
   routing: z.enum(['jarvis', 'focused-pane', 'orchestrator', 'ask']).optional(),

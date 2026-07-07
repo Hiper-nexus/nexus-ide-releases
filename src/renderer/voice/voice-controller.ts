@@ -354,15 +354,16 @@ export function useVoiceController(): void {
     };
     // Morte do stream do mic (AirPods trocados, sleep/wake): o WakeMic
     // reconstrói sozinho; se esgotar, a UI avisa em vez de ficar surda muda.
+    // Auto-rearme: onDied NÃO é mais estado terminal — o WakeMic continua
+    // tentando a cada 30s até o dispositivo voltar. Avisamos como nota
+    // transitória, não como erro vermelho exigindo toggle manual.
     wakeMic.onDied = (reason) => {
       useVoiceStore
         .getState()
-        .setError(`Mic do wake morreu (${reason}) — religue o wake word nas configurações.`);
+        .setNote(`Mic do wake rearmarando (${reason}) a cada 30s…`);
     };
     wakeMic.onRecovered = () => {
-      const s = useVoiceStore.getState();
-      if (s.status === 'error') s.setStatus('idle');
-      s.setNote('mic do wake reconectado');
+      useVoiceStore.getState().setNote('mic do wake reconectado');
     };
     const syncWakeWord = (info: VoiceRuntimeInfo) => {
       if (info.enabled && info.wakeWordEnabled) {

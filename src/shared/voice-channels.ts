@@ -20,6 +20,9 @@ export const VOICE_CHANNELS = {
   wakeAudio: 'voice:wakeAudio',
   /** event: main → renderer. "Hey Jarvis" detectado pelo openWakeWord. */
   wakeDetected: 'voice:wake.detected',
+  /** send: renderer → main. Evento do pipeline de voz para o log persistente
+   *  (~/.nexus/logs/voice.log). Observabilidade da morte silenciosa do mic. */
+  logEvent: 'voice:log',
   /** invoke: renderer → main. Fala transcrita → resposta JARVIS {say, action}. */
   jarvis: 'voice:jarvis',
   /** invoke: renderer → main. Confirmação nativa antes de rodar um comando de

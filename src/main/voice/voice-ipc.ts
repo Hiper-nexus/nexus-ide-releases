@@ -11,6 +11,7 @@ import {
   jarvisLiveStatusPatchSchema,
   jarvisLiveToolResultInputSchema,
   jarvisLiveTranscriptInputSchema,
+  voiceLogSchema,
   type VoiceRuntimeInfo,
   type TranscribeResult,
   type SpeakResult,
@@ -27,6 +28,7 @@ import {
 } from './voice-config-store';
 import { jarvisThink } from './jarvis-brain';
 import { WakeEngine } from './wake-engine';
+import { logVoice } from './voice-log';
 import { transcribe } from './stt-service';
 import { speak, stopSystemSpeech } from './tts-service';
 import { echoSuppressor } from './echo-suppress';
@@ -162,8 +164,11 @@ export function registerVoiceIpc(): void {
     if (!acquireWakeLock()) {
       if (!wakeLockWarned) {
         wakeLockWarned = true;
-        console.warn(
-          `[wake] outra instância do NexusIDE (pid ${wakeLockHolder()}) detém o wake — ignorando frames aqui`,
+        logVoice(
+          'warn',
+          'wake.lockContention',
+          'outra instância do NexusIDE detém o wake — frames ignorados aqui',
+          { holderPid: wakeLockHolder() },
         );
         broadcast(VOICE_CHANNELS.infoChanged, fullInfo());
       }
@@ -185,20 +190,35 @@ export function registerVoiceIpc(): void {
     if (!frame || frame.length === 0 || frame.length > 16_384) return;
     if (!wakeFramesSeen) {
       wakeFramesSeen = true;
-      console.log(`[wake] recebendo áudio do renderer (${frame.length} amostras/frame)`);
+      logVoice('info', 'wake.framesStart', 'recebendo áudio do renderer', {
+        frameSamples: frame.length,
+      });
     }
     if (!wakeEngine) {
-      wakeEngine = new WakeEngine(() => broadcast(VOICE_CHANNELS.wakeDetected));
+      wakeEngine = new WakeEngine(() => {
+        logVoice('info', 'wake.detected', '"Hey Jarvis"');
+        broadcast(VOICE_CHANNELS.wakeDetected);
+      });
       void wakeEngine
         .init()
-        .then(() => console.log('[wake] engine openWakeWord pronto ("Hey Jarvis")'))
+        .then(() => logVoice('info', 'wake.engineReady', 'openWakeWord pronto'))
         .catch((err) => {
-          console.warn('[wake] engine init failed:', err);
+          const m = err instanceof Error ? err.message : String(err);
+          logVoice('error', 'wake.engineInitFail', m);
           wakeEngine = null;
         });
       return; // primeiro lote só inicializa; frames seguintes alimentam
     }
     wakeEngine.feed(frame);
+  });
+
+  // Eventos do pipeline vindos do renderer (mic do wake morreu/reconstruiu,
+  // etc.) → log persistente. Observabilidade da morte silenciosa do mic.
+  ipcMain.on(VOICE_CHANNELS.logEvent, (_event, raw: unknown) => {
+    const parsed = voiceLogSchema.safeParse(raw);
+    if (parsed.success) {
+      logVoice(parsed.data.level, parsed.data.event, parsed.data.msg, parsed.data.data);
+    }
   });
 
   ipcMain.handle(VOICE_CHANNELS.jarvis, async (_event, raw): Promise<JarvisReply> => {
