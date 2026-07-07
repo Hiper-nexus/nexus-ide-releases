@@ -35,6 +35,13 @@ const TARGET_SAMPLE_RATE = 16_000;
 const CHUNK = 1280;
 const SPEECH_RMS = 0.022;
 const MIN_SPEECH_MS = 320;
+/** Ganho de compensação pós-APM-off: sem o AGC do Chromium, o PCM cru de
+ * mics USB sensíveis (fifine) chega fraco — wake score baixo e Whisper
+ * alucinando em fala normal. Medido ao vivo (2026-07-07): com 3x a voz
+ * normal marcava só 0.21-0.27 de wake score e o ambiente 0.05-0.10;
+ * 8x ≈ +18dB coloca a fala na zona de detecção mantendo o ambiente longe
+ * do threshold 0.6. Clamp ±1 no onFrame evita estouro do int16. */
+const WAKE_MAKEUP_GAIN = 8;
 
 const WATCHDOG_INTERVAL_MS = 4_000;
 const FRAME_STALL_MS = 8_000;
@@ -62,6 +69,8 @@ export class WakeMic {
   private dead = false;
   /** Início do silêncio contínuo atual (epoch ms); 0 = ouvindo áudio real. */
   private silentSince = 0;
+  /** Log único do RMS do primeiro frame após abrir o grafo (prova sinal). */
+  private firstFrameLogged = false;
 
   /** Stream morreu e a reconstrução esgotou as tentativas. */
   onDied: ((reason: string) => void) | null = null;
@@ -214,8 +223,16 @@ export class WakeMic {
       audio: {
         channelCount: 1,
         sampleRate: TARGET_SAMPLE_RATE,
-        echoCancellation: true,
-        noiseSuppression: true,
+        // APM (WebRTC audio processing) DESLIGADO no stream de wake word.
+        // openWakeWord/KWS quer PCM limpo; o processamento corrompe as
+        // features do modelo. autoGainControl (default true do Chromium
+        // quando qualquer constraint é pedida) achata o sinal de mics USB
+        // sensíveis (fifine) perto de zero → "SO ouve, app mudo". Wake é
+        // pausado (suppressWakeDetection) enquanto a JARVIS fala, então eco
+        // não importa aqui.
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
       },
     });
     // Morte explícita do track (dispositivo removido, permissão revogada):
@@ -223,6 +240,16 @@ export class WakeMic {
     for (const track of this.stream.getTracks()) {
       track.addEventListener('ended', () => this.handleStreamDeath('track ended'));
     }
+    // Diagnóstico decisivo: qual device o app realmente capturou + settings
+    // reais (sampleRate/channelCount/APM podem diferir do pedido). Prova se
+    // o app pegou o fifine ou outro device silencioso.
+    const audioTrack = this.stream.getAudioTracks()[0];
+    if (audioTrack) {
+      this.log('info', 'mic.device', `device: ${audioTrack.label || '(sem label)'}`, {
+        settings: audioTrack.getSettings(),
+      });
+    }
+    this.firstFrameLogged = false;
     this.ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
     this.ctx.onstatechange = () => {
       // Sleep/wake do macOS pode deixar o contexto suspenso — retome.
@@ -236,6 +263,21 @@ export class WakeMic {
     const onFrame = (frame: Float32Array) => {
       if (!this.running) return;
       this.lastFrameAt = Date.now();
+      // Makeup gain: com o APM off (AGC desligado), o sinal cru de mics USB
+      // sensíveis (fifine) fica baixo demais — o usuário precisava quase
+      // gritar. Amplifica com clamp em ±1 para não estourar o int16 do
+      // openWakeWord/Whisper.
+      for (let i = 0; i < frame.length; i += 1) {
+        const amplified = frame[i] * WAKE_MAKEUP_GAIN;
+        frame[i] = amplified > 1 ? 1 : amplified < -1 ? -1 : amplified;
+      }
+      // Prova única (por grafo) de que frames têm sinal: RMS do 1º frame.
+      if (!this.firstFrameLogged) {
+        this.firstFrameLogged = true;
+        this.log('info', 'mic.firstFrame', 'primeiro frame recebido', {
+          rms: frameRms(frame),
+        });
+      }
       // Saúde do mic: acumula quanto tempo em silêncio (RMS abaixo do piso).
       this.silentSince = frameIsSilent(frameRms(frame))
         ? this.silentSince || Date.now()
