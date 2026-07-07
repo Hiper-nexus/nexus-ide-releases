@@ -499,6 +499,8 @@ export interface NexusApi {
     setKey(req: SetVoiceKeyRequest): Promise<{ ok: boolean; error?: string }>;
     transcribe(req: TranscribeRequest): Promise<TranscribeResult>;
     speak(req: SpeakRequest): Promise<SpeakResult>;
+    /** Registra texto falado para supressão de eco no próximo STT. */
+    recordEcho(text: string): Promise<{ ok: true }>;
     /** Barge-in: mata a fala do fallback `say` que toca no main. */
     stopSpeak(): Promise<void>;
     sendWakeAudio(chunk: ArrayBuffer): void;

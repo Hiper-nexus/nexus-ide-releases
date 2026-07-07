@@ -42,6 +42,8 @@ function actionSummary(action: JarvisAction): string {
       return 'desenhar squad';
     case 'new_mission':
       return 'nova missão';
+    case 'new_workspace':
+      return 'novo workspace';
     case 'open_terminal':
       return 'abrir terminal';
     case 'close_pane':
@@ -52,6 +54,8 @@ function actionSummary(action: JarvisAction): string {
       return 'enviar tarefa ao pane';
     case 'run_command':
       return `rodar comando: ${action.command}`;
+    case 'mcp_tool':
+      return action.tool;
   }
 }
 

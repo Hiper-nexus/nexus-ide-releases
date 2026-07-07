@@ -82,7 +82,9 @@ export function jarvisActionFastPath(
     }
   }
 
-  const openWs = t.match(/\b(?:abre|abra|abrir)\b(?:\s+o)?\s+(?:projeto|workspace)\s+(.+)$/);
+  const openWs = t.match(
+    /\b(?:abre|abra|abrir|inicia|inicie|iniciar)\b(?:\s+o)?\s+(?:projeto|workspace|workpasce|workspac)\s+(.+)$/,
+  );
   if (openWs) {
     const workspaceName = stripTail(openWs[1]);
     if (workspaceName.length >= 2) {
@@ -92,6 +94,18 @@ export function jarvisActionFastPath(
         action: { type: 'open_workspace', workspaceName },
       };
     }
+  }
+
+  if (
+    /\b(?:inicia|inicie|iniciar|cria|crie|criar|abre|abra|abrir)\b(?:\s+o)?\s+(?:um\s+)?(?:novo\s+)?(?:workspace|workpasce|workspac)\s*$/.test(
+      t,
+    ) || /\bnovo\s+(?:workspace|workpasce|workspac)\b/.test(t)
+  ) {
+    return {
+      say: say(ctx, 'Abrindo o assistente de novo workspace.'),
+      expectReply: false,
+      action: { type: 'new_workspace' },
+    };
   }
 
   const openCmd = t.match(/\babrir?\s+um\s+comando\s+(.+)$/);

@@ -1,8 +1,10 @@
 import { useVoiceStore } from '../voice/voice-store';
+import { requestJarvisWake } from '../voice/manual-wake';
 
 /**
  * WorkspaceBar voice control: a mic pill showing whether voice is armed, the
- * active STT/TTS providers, and the current phase. Click opens voice settings.
+ * active STT/TTS providers, and the current phase. Click wakes Jarvis; modified
+ * click/right-click opens voice settings.
  */
 
 function providerShort(provider: string | undefined): string {
@@ -37,13 +39,27 @@ export function VoiceButton() {
         ? status
         : `${stt} → ${tts}`;
 
+  function handleClick(e: React.MouseEvent<HTMLButtonElement>): void {
+    if (e.altKey || e.metaKey || e.ctrlKey) {
+      openSettings();
+      return;
+    }
+    requestJarvisWake();
+  }
+
+  function handleContextMenu(e: React.MouseEvent<HTMLButtonElement>): void {
+    e.preventDefault();
+    openSettings();
+  }
+
   return (
     <button
       className={`workspace-bar__btn workspace-bar__btn--voice ${active ? 'workspace-bar__btn--voice-active' : ''}`}
-      onClick={openSettings}
+      onClick={handleClick}
+      onContextMenu={handleContextMenu}
       title={
         info
-          ? `Push-to-talk: ${info.shortcut} (${info.hotkeyMode}) · STT ${stt} · TTS ${tts}${liveOn ? ' · Jarvis Live' : ''}${wakeBlocked ? ` · wake preso pelo PID ${wakeBlockedPid}` : ''}`
+          ? `Clique para acordar a Jarvis · ⌥/⌘ clique para ajustes · Push-to-talk: ${info.shortcut} (${info.hotkeyMode}) · STT ${stt} · TTS ${tts}${liveOn ? ' · Jarvis Live' : ''}${wakeBlocked ? ` · wake preso pelo PID ${wakeBlockedPid}` : ''}`
           : 'Voice pipeline'
       }
     >

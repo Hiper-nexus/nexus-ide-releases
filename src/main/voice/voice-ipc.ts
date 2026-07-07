@@ -286,6 +286,12 @@ export function registerVoiceIpc(): void {
     }
   });
 
+  ipcMain.handle(VOICE_CHANNELS.recordEcho, (_event, raw: unknown) => {
+    const text = typeof (raw as { text?: unknown })?.text === 'string' ? (raw as { text: string }).text : '';
+    if (text.trim()) echoSuppressor.record(text);
+    return { ok: true as const };
+  });
+
   // Barge-in do fallback `say` (mode 'played' toca no main — o renderer não
   // tem como calar sem isto).
   ipcMain.handle(VOICE_CHANNELS.speakStop, () => {

@@ -25,8 +25,23 @@ const HARD_GHOSTS = new Set([
   'thanks for watching', 'thanks for watching!', 'obrigado por assistir',
 ]);
 
+/** Eco da própria JARVIS (TTS vazando no mic) — descarta mesmo em conversa. */
+const JARVIS_SELF_ECHO = new Set([
+  'nao entendi o pedido',
+  'nao entendi',
+  'nao compreendi',
+  'pode repetir',
+  'repita por favor',
+  'desculpa nao entendi',
+]);
+
 function normalize(text: string): string {
-  return text.trim().toLowerCase().replace(/\s+/g, ' ');
+  return text
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ');
 }
 
 function normalizeToken(text: string): string {
@@ -117,5 +132,6 @@ export function isDiscardableTranscript(
 ): boolean {
   const clean = normalize(text);
   if (clean.length === 0) return true;
+  if (JARVIS_SELF_ECHO.has(clean)) return true;
   return opts.inConversation ? HARD_GHOSTS.has(clean) : COLD_GHOSTS.has(clean);
 }

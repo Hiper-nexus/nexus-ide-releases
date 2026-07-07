@@ -9,8 +9,10 @@ const CTX: JarvisContext = {
   squads: ['Code Review', 'QA Swarm'],
   panes: ['pane-1 [shell]', 'pane-2 [agente]'],
   focusedPane: 'pane-2 [agente]',
+  focusedPaneKind: 'cli-agent',
   orchestrator: 'pane-3 [orquestrador]',
   missions: ['Landing page'],
+  screen: 'Workspace nexus-ide em modo canvas. 2 panes abertos. Pane focado: pane-2.',
 };
 
 describe('jarvisFastPath', () => {
@@ -31,6 +33,22 @@ describe('jarvisFastPath', () => {
     );
     expect(jarvisFastPath('que horas são?', CTX)?.say).toContain('patrão');
     expect(jarvisFastPath('tem orquestrador ativo?', CTX)?.say).toContain('pane-3');
+  });
+
+  it('responde pane e pagina atual sem LLM', () => {
+    expect(jarvisFastPath('qual pane esta focado?', CTX)?.say).toContain(
+      'pane-2 [agente]',
+    );
+    const browserCtx: JarvisContext = {
+      ...CTX,
+      focusedPane: 'Preview',
+      focusedPaneKind: 'browser',
+      focusedPaneUrl: 'https://example.com/docs',
+    };
+    expect(jarvisFastPath('qual pagina estamos?', browserCtx)?.say).toContain(
+      'https://example.com/docs',
+    );
+    expect(jarvisFastPath('onde estamos?', CTX)?.say).toContain('modo canvas');
   });
 
   it('NUNCA intercepta pedidos de ação — mesmo citando squad/pane', () => {

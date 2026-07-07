@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useVoiceStore, type VoiceUiStatus } from '../voice/voice-store';
 import { anchorFromDrag, hudPositionStyle } from '../voice/hud-prefs';
+import { requestJarvisWake } from '../voice/manual-wake';
 
 /**
  * HUD flutuante da JARVIS: fase do pipeline ao vivo (ouvindo → transcrevendo →
@@ -74,6 +75,7 @@ export function VoiceHud() {
   const liveStatus = liveState?.status ?? 'dormant';
   const wakeBlockedPid = info?.wakeLockHolderPid ?? null;
   const wakeBlocked = info?.wakeWordEnabled === true && wakeBlockedPid !== null;
+  const canClickWake = status === 'idle' && info?.enabled === true && !wakeBlocked;
   const liveVisible =
     info?.jarvisLive.enabled === true &&
     liveState?.enabled !== false &&
@@ -90,16 +92,18 @@ export function VoiceHud() {
   }, []);
 
   if (hud.mode === 'hidden') return null; // só-áudio: zero visual
-  if (status === 'idle' && !liveVisible && !wakeBlocked) return null;
+  if (status === 'idle' && !liveVisible && !wakeBlocked && !canClickWake) return null;
 
   const liveLabel = LIVE_LABEL[liveStatus] ?? liveStatus;
   const label = wakeBlocked
     ? 'Wake word preso'
-    : status === 'idle'
+    : canClickWake
+      ? 'Jarvis pronta'
+      : status === 'idle'
       ? `Jarvis ${liveLabel}`
       : PHASE_LABEL[status];
   const isError = status === 'error';
-  const isMini = hud.mode === 'mini';
+  const isMini = hud.mode === 'mini' || canClickWake;
 
   // In toggle mode the send edge is a SECOND keypress — say so, or users
   // hold-release and think voice broke.
@@ -165,6 +169,8 @@ export function VoiceHud() {
           { width: window.innerWidth, height: window.innerHeight },
         ),
       );
+    } else if (canClickWake) {
+      requestJarvisWake();
     } else if (isMini) {
       setHudMode('expanded'); // clique (sem drag) na pill = expandir
     }
@@ -222,7 +228,11 @@ export function VoiceHud() {
         style={positionStyle}
         role="status"
         aria-live="polite"
-        title="JARVIS — clique para expandir, arraste para mover"
+        title={
+          canClickWake
+            ? 'JARVIS — clique para acordar, arraste para mover'
+            : 'JARVIS — clique para expandir, arraste para mover'
+        }
         onPointerDown={beginDrag}
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
@@ -234,7 +244,9 @@ export function VoiceHud() {
             ? 'wake preso'
             : isError
               ? 'erro'
-              : status === 'idle'
+              : canClickWake
+                ? 'pronta'
+                : status === 'idle'
                 ? liveLabel
                 : PHASE_LABEL[status]}
         </span>

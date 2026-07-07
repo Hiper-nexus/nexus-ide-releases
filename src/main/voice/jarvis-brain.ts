@@ -2,6 +2,7 @@ import { resolveVoiceApiKey } from './voice-secrets';
 import { jarvisMemory } from './jarvis-memory';
 import { jarvisActionFastPath } from './jarvis-action-fastpath';
 import { jarvisFastPath } from './jarvis-fastpath';
+import { jarvisToolCatalogCompact } from './jarvis-tool-catalog';
 import { getVoiceConfig } from './voice-config-store';
 import { flattenJarvisBrainProviders } from '../../shared/voice-config';
 import type {
@@ -53,12 +54,17 @@ Action types:
   recent project/workspace.
 - {"type":"design_squad"} - create a custom squad for the current project.
 - {"type":"new_mission"} - open a new mission flow without naming a squad.
+- {"type":"new_workspace"} - open the new workspace wizard (folder + setup).
 - {"type":"open_terminal"} - open an empty shell terminal in the current workspace.
 - {"type":"close_pane"} - close the focused pane/terminal.
 - {"type":"open_board"} - open the missions / Ops Board.
 - {"type":"run_command","command":"<exact command>"} - run a program, command,
   or CLI in the terminal. Use the literal command with no explanation. If no
   terminal is focused, the app opens one and runs it after native confirmation.
+- {"type":"mcp_tool","tool":"<nexus_tool_name>","args":{...}} - invoke ANY Nexus
+  MCP tool (files, git, editor, panes, missions, browser, catalog, etc.). Use
+  this for everything the simple actions above do not cover, and prefer it for
+  read/write files, git ops, mission management, browser, editor navigation.
 - {"type":"send_to_pane","text":"<engineering prompt in English>"} - send work
   to an AI agent pane or orchestrator. Do not translate literally: compose a
   professional English prompt with a clear objective, concrete inferred
@@ -72,20 +78,27 @@ Action types:
 
 Language rule: the "say" field must always be 100% Brazilian Portuguese. Do not
 mix in English. English belongs only in action.text for send_to_pane. If the
-user utterance is truncated, meaningless, or looks like noise/echo ("you",
+user speaks Portuguese and asks you to delegate work, translate the intent into
+an English engineering prompt in action.text; never pass raw Portuguese to an AI
+agent pane. If the user utterance is truncated, meaningless, or looks like noise/echo ("you",
 "thank you", "obrigado por assistir"), answer exactly:
 {"say":"","expectReply":false,"action":{"type":"none"}}
 
 Golden rule: never say you did or will do something unless you return the
-matching action. Without an action, nothing happens in the app.
+matching action. Without an action, nothing happens in the app. For file/git/
+editor/browser/mission tasks, use mcp_tool with the correct nexus_* tool.
 
 You can execute things through actions. Never claim you cannot. Examples:
 - "executa o comando ai" -> {"say":"Rodando o ai no terminal.","action":{"type":"run_command","command":"ai"}}
 - "roda npm test" -> {"say":"Rodando os testes.","action":{"type":"run_command","command":"npm test"}}
 - "abre um terminal" -> {"say":"Abrindo um terminal.","action":{"type":"open_terminal"}}
+- "iniciar um novo workspace" -> {"say":"Abrindo o assistente de workspace.","action":{"type":"new_workspace"}}
 - "abre o squad de review" -> {"say":"Subindo o Code Review.","action":{"type":"open_squad","squadName":"Code Review"}}
 - "abre o projeto saasbarbearia" -> {"say":"Abrindo o saasbarbearia.","action":{"type":"open_workspace","workspaceName":"saasbarbearia"}}
 - "pede pro agente corrigir o bug do login" -> use send_to_pane with an English prompt.
+- "le o arquivo package.json" -> {"say":"Lendo o package.json.","action":{"type":"mcp_tool","tool":"nexus_file_read","args":{"path":"package.json"}}}
+- "qual o status do git" -> {"say":"Checando o git.","action":{"type":"mcp_tool","tool":"nexus_git_status","args":{}}}
+- "cria uma missão de refactor" -> {"say":"Criando a missão.","action":{"type":"mcp_tool","tool":"nexus_mission_create","args":{"title":"Refactor"}}}
 
 Pane labels in context: [shell] means a terminal, so use run_command; [agent]
 means an AI CLI pane, so use send_to_pane.
@@ -181,6 +194,8 @@ function contextBlock(ctx: JarvisContext): string {
     `- available squads: ${squads}\n` +
     `- open panes: ${panes}\n` +
     `- focused pane: ${ctx.focusedPane ?? 'none'}\n` +
+    `- focused pane kind: ${ctx.focusedPaneKind ?? 'none'}\n` +
+    `- focused pane url: ${ctx.focusedPaneUrl ?? 'none'}\n` +
     `- active orchestrator: ${ctx.orchestrator ?? 'none'}\n` +
     `- active missions: ${ctx.missions.join('; ') || 'none'}`
   );
@@ -216,8 +231,11 @@ function parseReply(raw: string): JarvisReply {
   try {
     const obj = JSON.parse(match[0]) as Partial<JarvisReply>;
     const say = typeof obj.say === 'string' ? obj.say.trim() : 'Certo.';
-    const expectReply =
+    let expectReply =
       typeof obj.expectReply === 'boolean' ? obj.expectReply : (say ? /\?\s*$/.test(say) : false);
+    if (!say || /\b(n[aã]o entendi|n[aã]o compreendi|repita|pode repetir)\b/i.test(say)) {
+      expectReply = false;
+    }
     const type = obj.action?.type;
     if (type === 'open_squad' && typeof obj.action?.squadName === 'string') {
       return { say, expectReply, action: { type, squadName: obj.action.squadName } };
@@ -227,6 +245,7 @@ function parseReply(raw: string): JarvisReply {
     }
     if (type === 'design_squad') return { say, expectReply, action: { type } };
     if (type === 'new_mission') return { say, expectReply, action: { type } };
+    if (type === 'new_workspace') return { say, expectReply, action: { type } };
     if (type === 'open_terminal') return { say, expectReply, action: { type } };
     if (type === 'close_pane') return { say, expectReply, action: { type } };
     if (type === 'open_board') return { say, expectReply, action: { type } };
@@ -235,6 +254,13 @@ function parseReply(raw: string): JarvisReply {
     }
     if (type === 'run_command' && typeof obj.action?.command === 'string') {
       return { say, expectReply, action: { type, command: obj.action.command } };
+    }
+    if (type === 'mcp_tool' && typeof obj.action?.tool === 'string') {
+      const args =
+        obj.action.args && typeof obj.action.args === 'object' && !Array.isArray(obj.action.args)
+          ? (obj.action.args as Record<string, unknown>)
+          : {};
+      return { say, expectReply, action: { type: 'mcp_tool', tool: obj.action.tool, args } };
     }
     return { say, expectReply, action: { type: 'none' } };
   } catch {
@@ -353,6 +379,7 @@ export async function jarvisThink(
   const voiceConfig = getVoiceConfig();
   const messages: Array<{ role: string; content: string }> = [
     { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: `Nexus MCP tools (use mcp_tool to invoke):\n${jarvisToolCatalogCompact()}` },
     { role: 'system', content: buildJarvisPersonaInstruction(voiceConfig.persona) },
     { role: 'system', content: contextBlock(ctx) },
     ...(facts
@@ -376,6 +403,7 @@ export async function jarvisThink(
         messages,
         deps,
         provider.jsonMode ?? true,
+        600,
       );
       applyMemoryOps(raw);
       return parseReply(raw);

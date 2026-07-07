@@ -31,6 +31,11 @@ describe('jarvisActionFastPath', () => {
     expect(reply?.action).toEqual({ type: 'run_command', command: 'npm test' });
   });
 
+  it('iniciar um novo workspace dispara new_workspace', () => {
+    const reply = jarvisActionFastPath('iniciar um novo workspace', CTX);
+    expect(reply?.action).toEqual({ type: 'new_workspace' });
+  });
+
   it('iniciar um novo squad dispara design_squad', () => {
     const reply = jarvisActionFastPath('iniciar um novo squad', CTX);
     expect(reply?.action).toEqual({ type: 'design_squad' });

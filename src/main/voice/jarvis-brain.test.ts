@@ -67,6 +67,7 @@ describe('jarvisThink brain providers', () => {
     expect(JSON.parse(String(init.body)).response_format).toBeUndefined();
     const messages = JSON.parse(String(init.body)).messages as Array<{ content: string }>;
     expect(messages.some((m) => m.content.includes('VOICE IDENTITY'))).toBe(true);
+    expect(messages.some((m) => m.content.includes('never pass raw Portuguese'))).toBe(true);
   });
 
   it('falls back to OpenAI when Gemini fails', async () => {
@@ -153,5 +154,27 @@ describe('jarvisThink brain providers', () => {
 
     expect(reply.say).toBe('');
     expect(reply.expectReply).toBe(false);
+  });
+
+  it('parses mcp_tool actions from brain JSON', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(
+        200,
+        '{"say":"Lendo o package.json.","expectReply":false,"action":{"type":"mcp_tool","tool":"nexus_file_read","args":{"path":"package.json"}}}',
+      ),
+    ) as unknown as typeof fetch;
+
+    const reply = await jarvisThink(
+      'le o package json',
+      CTX,
+      [],
+      deps((envVar) => (envVar === 'GEMINI_API_KEY' ? 'gemini-key' : undefined), fetchImpl),
+    );
+
+    expect(reply.action).toEqual({
+      type: 'mcp_tool',
+      tool: 'nexus_file_read',
+      args: { path: 'package.json' },
+    });
   });
 });

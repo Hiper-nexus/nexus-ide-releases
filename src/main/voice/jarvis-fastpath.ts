@@ -37,6 +37,23 @@ function address(ctx: JarvisContext, text: string): string {
   return text.replace(/\.$/, `, ${user}.`);
 }
 
+function focusedPaneDescription(ctx: JarvisContext): string {
+  if (!ctx.focusedPane) return 'Nenhum pane focado agora.';
+  const kind =
+    ctx.focusedPaneKind === 'browser'
+      ? 'browser'
+      : ctx.focusedPaneKind === 'shell'
+        ? 'terminal'
+        : ctx.focusedPaneKind === 'cli-agent'
+          ? 'agente'
+          : 'pane';
+  const url =
+    ctx.focusedPaneKind === 'browser' && ctx.focusedPaneUrl
+      ? `, na página ${ctx.focusedPaneUrl}`
+      : '';
+  return `Pane focado: ${ctx.focusedPane} (${kind})${url}.`;
+}
+
 /** Tenta responder a consulta direto do contexto. null = deixa para o LLM. */
 export function jarvisFastPath(
   transcript: string,
@@ -65,6 +82,28 @@ export function jarvisFastPath(
         ctx.panes.length === 0
           ? address(ctx, 'Nenhum pane aberto agora.')
           : address(ctx, `${ctx.panes.length} pane${ctx.panes.length > 1 ? 's' : ''}: ${list}.`),
+      expectReply: false,
+      action: { type: 'none' },
+    };
+  }
+
+  // Pane/página/tela atual
+  if (
+    /\b(qual|que|em que|onde)\b.*\b(pane|painel|terminal|aba)\b.*\b(focado|atual|selecionado|estou|estamos)\b/.test(
+      t,
+    ) ||
+    /\b(qual|que)\b.*\b(pagina|url|site)\b.*\b(atual|aberta|estou|estamos)\b/.test(t)
+  ) {
+    return {
+      say: address(ctx, focusedPaneDescription(ctx)),
+      expectReply: false,
+      action: { type: 'none' },
+    };
+  }
+
+  if (/\b(onde estamos|onde eu estou|em que tela estamos|qual tela estou|qual tela estamos)\b/.test(t)) {
+    return {
+      say: address(ctx, ctx.screen ?? focusedPaneDescription(ctx)),
       expectReply: false,
       action: { type: 'none' },
     };

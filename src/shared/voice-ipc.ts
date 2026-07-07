@@ -197,6 +197,8 @@ export interface JarvisContext {
   squads: string[];
   panes: string[];
   focusedPane: string | null;
+  focusedPaneKind?: 'shell' | 'cli-agent' | 'browser' | null;
+  focusedPaneUrl?: string | null;
   /** Título do pane do ORQUESTRADOR ativo (null = nenhum squad rodando). */
   orchestrator: string | null;
   /** Missões ativas (nomes/status). */
@@ -214,11 +216,13 @@ export type JarvisAction =
   | { type: 'open_workspace'; workspaceName: string }
   | { type: 'design_squad' }
   | { type: 'new_mission' }
+  | { type: 'new_workspace' }
   | { type: 'open_terminal' }
   | { type: 'close_pane' }
   | { type: 'open_board' }
   | { type: 'send_to_pane'; text: string }
-  | { type: 'run_command'; command: string };
+  | { type: 'run_command'; command: string }
+  | { type: 'mcp_tool'; tool: string; args: Record<string, unknown> };
 
 export interface JarvisReply {
   say: string;
@@ -239,6 +243,8 @@ export const jarvisRequestSchema = z.object({
     squads: z.array(z.string().max(128)).max(50),
     panes: z.array(z.string().max(128)).max(50),
     focusedPane: z.string().max(128).nullable(),
+    focusedPaneKind: z.enum(['shell', 'cli-agent', 'browser']).nullable().optional(),
+    focusedPaneUrl: z.string().max(4096).nullable().optional(),
     orchestrator: z.string().max(128).nullable().default(null),
     missions: z.array(z.string().max(160)).max(20).default([]),
   }),
@@ -371,11 +377,13 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'open_workspace',
     'design_squad',
     'new_mission',
+    'new_workspace',
     'open_terminal',
     'close_pane',
     'open_board',
     'send_to_pane',
     'run_command',
+    'mcp_tool',
   ]),
   summary: z.string().max(1000),
   ok: z.boolean(),

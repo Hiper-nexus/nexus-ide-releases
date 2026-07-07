@@ -1,48 +1,49 @@
 /**
  * MCP Bridge — renderer-side client for invoking MCP tools through IPC.
- *
- * Instead of the renderer calling actions directly (the old switch in
- * voice-controller.ts), this bridge routes tool invocations through the
- * main process MCP server so they follow the same path as CLI agents:
- * guardrails → permissions → audit log → tool execution.
- *
- * Usage:
- *   import { mcpInvoke } from '../services/mcp-bridge';
- *   const result = await mcpInvoke('nexus_file_read', { path: 'src/main.ts' });
  */
 
 import type { JarvisAction } from '../../shared/voice-ipc';
 import type { McpInvokeResult } from '../../shared/mcp-types';
 
+export interface McpPaneContext {
+  focusedPaneId?: string | null;
+  orchestratorPaneId?: string | null;
+}
+
 /**
  * Map a JarvisAction to the corresponding MCP tool name and args.
- * Returns null for actions that don't have an MCP equivalent yet.
+ * Returns null for actions that must stay on the UI path (squads, wizards).
  */
 export function mapActionToTool(
   action: JarvisAction,
+  paneCtx?: McpPaneContext,
 ): { tool: string; args: Record<string, unknown> } | null {
   switch (action.type) {
     case 'none':
       return null;
+    case 'mcp_tool':
+      return { tool: action.tool, args: action.args ?? {} };
     case 'open_squad':
-      return null; // Squad launch is UI-only, no MCP equivalent
     case 'open_workspace':
-      return null; // Workspace switching is UI-only
     case 'design_squad':
-      return null; // Squad design is UI-only
     case 'new_mission':
-      return null; // Mission wizard is UI-only
-    case 'open_terminal':
-      return { tool: 'nexus_pane_spawn', args: { adapterId: 'shell', title: 'Terminal' } };
-    case 'close_pane':
-      return null; // Needs paneId from focused pane — deferred
+    case 'new_workspace':
     case 'open_board':
-      return null; // UI toggle
-    case 'send_to_pane':
+    case 'open_terminal':
+      return null;
+    case 'close_pane': {
+      const paneId = paneCtx?.focusedPaneId;
+      if (!paneId) return null;
+      return { tool: 'nexus_pane_close', args: { paneId } };
+    }
+    case 'send_to_pane': {
+      const paneId = paneCtx?.orchestratorPaneId ?? paneCtx?.focusedPaneId;
+      if (!paneId) return null;
       return {
         tool: 'nexus_pane_write',
-        args: { text: action.text, submit: true },
+        args: { paneId, text: action.text, submit: true },
       };
+    }
     case 'run_command':
       return { tool: 'nexus_terminal_run', args: { command: action.command } };
     default:
@@ -50,18 +51,12 @@ export function mapActionToTool(
   }
 }
 
-/**
- * Invoke an MCP tool through the IPC bridge.
- * This goes through the main process, which applies guardrails,
- * permissions, and audit logging.
- */
 export async function mcpInvoke(
   tool: string,
   args: Record<string, unknown> = {},
 ): Promise<McpInvokeResult> {
   try {
-    const result = await window.nexus.mcp.invoke(tool, args);
-    return result;
+    return await window.nexus.mcp.invoke(tool, args);
   } catch (err) {
     return {
       ok: false,
@@ -85,6 +80,23 @@ export async function mcpConfirm(
   }
 }
 
+/** Confirma (se necessário) e executa um tool MCP com guardrails do main. */
+export async function invokeMcpWithConfirm(
+  tool: string,
+  args: Record<string, unknown> = {},
+): Promise<McpInvokeResult> {
+  let result = await mcpInvoke(tool, args);
+  if (result.ok) return result;
+  if (result.denied && result.requiredConfirmation) {
+    const confirm = await mcpConfirm(tool, args);
+    if (!confirm.ok) {
+      return { ok: false, tool, error: confirm.error ?? 'user_denied' };
+    }
+    return mcpInvoke(tool, args);
+  }
+  return result;
+}
+
 export async function mcpClearSession(): Promise<{ ok: boolean }> {
   try {
     return await window.nexus.mcp.clearSession();
@@ -93,14 +105,11 @@ export async function mcpClearSession(): Promise<{ ok: boolean }> {
   }
 }
 
-/**
- * Convenience: invoke a JarvisAction through MCP when possible.
- * Falls back to null for actions without MCP equivalents.
- */
 export async function invokeActionViaMcp(
   action: JarvisAction,
+  paneCtx?: McpPaneContext,
 ): Promise<McpInvokeResult | null> {
-  const mapping = mapActionToTool(action);
+  const mapping = mapActionToTool(action, paneCtx);
   if (!mapping) return null;
-  return mcpInvoke(mapping.tool, mapping.args);
+  return invokeMcpWithConfirm(mapping.tool, mapping.args);
 }

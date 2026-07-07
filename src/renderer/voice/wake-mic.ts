@@ -34,7 +34,7 @@ import { SoftAgc } from './agc';
 
 const TARGET_SAMPLE_RATE = 16_000;
 const CHUNK = 1280;
-const SPEECH_RMS = 0.022;
+const SPEECH_RMS = 0.012;
 const MIN_SPEECH_MS = 320;
 const MAX_PREROLL_MS = 3_000;
 /** Ganho inicial do AGC próprio (ver agc.ts) — o valor 12x foi o melhor
@@ -141,9 +141,23 @@ export class WakeMic {
     this.wakeSuppressedUntil = Math.max(this.wakeSuppressedUntil, Date.now() + ms);
   }
 
+  /** Encerra captura em andamento sem processar (barge-in no novo wake). */
+  cancelUtterance(): void {
+    if (!this.uttActive) return;
+    this.uttActive = false;
+    this.uttFired = true;
+    if (this.uttDeadline) {
+      clearTimeout(this.uttDeadline);
+      this.uttDeadline = null;
+    }
+    this.uttChunks = [];
+    this.uttAutoStop = null;
+  }
+
   /** Abre a escuta de comando INSTANTANEAMENTE (stream já está quente). */
   beginUtterance(autoStop?: AutoStopOptions, preRollMs = 0): void {
-    if (!this.running || this.uttActive) return;
+    if (!this.running) return;
+    if (this.uttActive) this.cancelUtterance();
     this.uttChunks = this.seedPreRoll(preRollMs);
     this.uttActive = true;
     this.uttAutoStop = autoStop ?? null;

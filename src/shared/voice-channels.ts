@@ -39,8 +39,10 @@ export const VOICE_CHANNELS = {
   liveStop: 'voice:live.stop',
   /** invoke: renderer → main. End the current turn and keep the session dormant. */
   liveEndTurn: 'voice:live.endTurn',
-  /** invoke: renderer → main. Text smoke test through active realtime provider. */
+  /** invoke: renderer → main. Send a text smoke prompt through the live transport. */
   liveSmokeTest: 'voice:live.smokeTest',
+  /** invoke: renderer → main. Registra texto falado para supressão de eco no STT. */
+  recordEcho: 'voice:recordEcho',
   /** invoke: renderer → main. Update the live phase (listening/thinking/...). */
   liveStatus: 'voice:live.status',
   /** send: renderer → main. Report a transcript line into the live session. */

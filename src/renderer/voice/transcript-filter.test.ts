@@ -25,6 +25,13 @@ describe('isDiscardableTranscript', () => {
     expect(isDiscardableTranscript('', { inConversation: false })).toBe(true);
   });
 
+  it('descarta eco da própria JARVIS em conversa', () => {
+    expect(isDiscardableTranscript('não entendi o pedido', { inConversation: true })).toBe(
+      true,
+    );
+    expect(isDiscardableTranscript('pode repetir', { inConversation: true })).toBe(true);
+  });
+
   it('nunca descarta fala real', () => {
     expect(
       isDiscardableTranscript('abre o terminal', { inConversation: false }),

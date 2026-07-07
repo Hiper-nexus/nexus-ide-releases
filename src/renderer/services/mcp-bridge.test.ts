@@ -1,0 +1,31 @@
+import { describe, expect, it } from 'vitest';
+import { mapActionToTool } from './mcp-bridge';
+
+describe('mcp-bridge action mapping', () => {
+  it('keeps open_terminal on the renderer UI shell path', () => {
+    expect(mapActionToTool({ type: 'open_terminal' })).toBeNull();
+  });
+
+  it('maps pane actions only when a pane target is available', () => {
+    expect(mapActionToTool({ type: 'close_pane' })).toBeNull();
+    expect(
+      mapActionToTool({ type: 'close_pane' }, { focusedPaneId: 'pane-1' }),
+    ).toEqual({
+      tool: 'nexus_pane_close',
+      args: { paneId: 'pane-1' },
+    });
+  });
+
+  it('maps explicit MCP tool calls without changing the args', () => {
+    expect(
+      mapActionToTool({
+        type: 'mcp_tool',
+        tool: 'nexus_git_status',
+        args: { cwd: '/tmp/project' },
+      }),
+    ).toEqual({
+      tool: 'nexus_git_status',
+      args: { cwd: '/tmp/project' },
+    });
+  });
+});
