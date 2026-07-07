@@ -6,12 +6,15 @@ import type { WebContents } from 'electron';
 import {
   DEFAULT_ORCH_SETTINGS,
   DEFAULT_TERMINAL_SETTINGS,
+  DEFAULT_VISION_SETTINGS,
   SETTINGS_CHANNELS,
   orchSettingsSchema,
   terminalSettingsPatchSchema,
   terminalSettingsSchema,
+  visionSettingsSchema,
   type OrchSettings,
   type TerminalSettings,
+  type VisionSettings,
 } from '../../shared/settings-types';
 
 /**
@@ -24,6 +27,7 @@ const SETTINGS_FILE = path.join(os.homedir(), '.nexus', 'settings.json');
 
 let current: TerminalSettings = DEFAULT_TERMINAL_SETTINGS;
 let orchSettings: OrchSettings = DEFAULT_ORCH_SETTINGS;
+let visionSettings: VisionSettings = DEFAULT_VISION_SETTINGS;
 const listeners = new Set<WebContents>();
 
 function load(): void {
@@ -33,6 +37,8 @@ function load(): void {
     if (parsed.success) current = parsed.data;
     const orchParsed = orchSettingsSchema.safeParse(raw?.orch ?? {});
     if (orchParsed.success) orchSettings = orchParsed.data;
+    const visionParsed = visionSettingsSchema.safeParse(raw?.vision ?? {});
+    if (visionParsed.success) visionSettings = visionParsed.data;
   } catch {
     // Missing/corrupt file — keep defaults.
   }
@@ -43,7 +49,11 @@ function persist(): void {
     fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
     fs.writeFileSync(
       SETTINGS_FILE,
-      JSON.stringify({ terminal: current, orch: orchSettings }, null, 2),
+      JSON.stringify(
+        { terminal: current, orch: orchSettings, vision: visionSettings },
+        null,
+        2,
+      ),
     );
   } catch (err) {
     console.warn('[settings] failed to persist settings:', err);
@@ -62,6 +72,24 @@ export function getTerminalSettings(): TerminalSettings {
 
 export function getOrchSettings(): OrchSettings {
   return orchSettings;
+}
+
+export function getVisionSettings(): VisionSettings {
+  return visionSettings;
+}
+
+export function setVisionSettingsPatch(
+  patch: Partial<VisionSettings>,
+): VisionSettings {
+  const parsed = visionSettingsSchema.safeParse({
+    ...visionSettings,
+    ...patch,
+  });
+  if (parsed.success) {
+    visionSettings = parsed.data;
+    persist();
+  }
+  return visionSettings;
 }
 
 export function registerSettingsListener(wc: WebContents): void {

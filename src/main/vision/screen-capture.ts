@@ -3,7 +3,10 @@
  * Captures the Nexus IDE window using desktopCapturer.
  */
 import { desktopCapturer, BrowserWindow, systemPreferences } from 'electron';
-import type { ScreenCaptureResult, ScreenPermissionStatus } from '../../shared/vision-ipc';
+import type {
+  ScreenCaptureResultInternal,
+  ScreenPermissionStatus,
+} from '../../shared/vision-ipc';
 import { ScreenRecordingPermissionDenied } from '../../shared/vision-ipc';
 
 const PNG_SIGNATURE = Buffer.from([
@@ -15,6 +18,14 @@ function isPng(buffer: Buffer): boolean {
     buffer.length >= PNG_SIGNATURE.length &&
     PNG_SIGNATURE.every((byte, index) => buffer[index] === byte)
   );
+}
+
+function nexusWindowSourceIds(): Set<string> {
+  const ids = BrowserWindow.getAllWindows()
+    .filter((window) => !window.isDestroyed())
+    .map((window) => window.getMediaSourceId())
+    .filter((id) => id.length > 0);
+  return new Set(ids);
 }
 
 /** Resolve screen permission via macOS systemPreferences. */
@@ -38,11 +49,11 @@ export function assertScreenPermission(): void {
 
 /**
  * Capture the Nexus IDE window as a PNG buffer.
- * Filters sources by window name matching "NexusIDE" and falls back
- * to the focused window.
+ * Matches Electron's canonical media source id for an app-owned BrowserWindow.
  */
-export async function captureNexusWindow(): Promise<ScreenCaptureResult> {
+export async function captureNexusWindow(): Promise<ScreenCaptureResultInternal> {
   assertScreenPermission();
+  const expectedSourceIds = nexusWindowSourceIds();
 
   const sources = await desktopCapturer.getSources({
     types: ['window'],
@@ -50,25 +61,19 @@ export async function captureNexusWindow(): Promise<ScreenCaptureResult> {
     fetchWindowIcons: false,
   });
 
-  // Strategy 1: match by window name
-  let source = sources.find((s) => s.name.includes('NexusIDE'));
+  let source = sources.find((candidate) => expectedSourceIds.has(candidate.id));
 
-  // Strategy 2: fallback to focused window
-  if (!source) {
-    const focused = BrowserWindow.getFocusedWindow();
-    if (focused) {
-      const title = focused.getTitle();
-      source = sources.find((s) => s.name === title);
+  if (!source && process.env.NEXUS_VISION_DEBUG_ALLOW_NAME_MATCH === '1') {
+    source = sources.find((candidate) => candidate.name.includes('NexusIDE'));
+    if (source) {
+      console.warn(
+        '[vision] NEXUS_VISION_DEBUG_ALLOW_NAME_MATCH matched source by name; do not enable in release.',
+      );
     }
   }
 
-  // Strategy 3: any window with a non-empty name (last resort)
   if (!source) {
-    source = sources.find((s) => s.name.length > 0);
-  }
-
-  if (!source) {
-    throw new Error('Nenhuma janela encontrada para captura.');
+    throw new Error('nexus_window_not_identified');
   }
 
   const thumbnail = source.thumbnail;
@@ -84,5 +89,6 @@ export async function captureNexusWindow(): Promise<ScreenCaptureResult> {
     width: size.width,
     height: size.height,
     capturedAt: new Date().toISOString(),
+    sourceId: source.id,
   };
 }

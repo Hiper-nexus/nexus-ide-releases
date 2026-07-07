@@ -10,7 +10,7 @@ import {
 } from '../shared/channels';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { VISION_CHANNELS } from '../shared/vision-ipc';
-import type { ScreenCaptureResult } from '../shared/vision-ipc';
+import type { ScreenCaptureMetadata } from '../shared/vision-ipc';
 import { getAxTree } from './ax-tree';
 import { UPDATE_CHANNELS } from '../shared/update-ipc';
 import type { UpdateState } from '../shared/update-ipc';
@@ -600,12 +600,15 @@ const api: NexusApi = {
   // Fase 5 — Jarvis Vision: screen capture + AX tree + OCR
   vision: {
     capture: () => ipcRenderer.invoke(VISION_CHANNELS.capture),
+    getImage: (request) => ipcRenderer.invoke(VISION_CHANNELS.getImage, request),
+    setImageConsent: (allowCloudImage: boolean) =>
+      ipcRenderer.invoke(VISION_CHANNELS.setImageConsent, { allowCloudImage }),
     context: (options) => ipcRenderer.invoke(VISION_CHANNELS.context, options),
     getAxTree: () => getAxTree(),
     ocr: (imageBase64: string) => ipcRenderer.invoke(VISION_CHANNELS.ocr, imageBase64),
     checkPermission: () => ipcRenderer.invoke(VISION_CHANNELS.permission),
-    onCaptured: (cb: (result: ScreenCaptureResult) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, result: ScreenCaptureResult) => cb(result);
+    onCaptured: (cb: (result: ScreenCaptureMetadata) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, result: ScreenCaptureMetadata) => cb(result);
       ipcRenderer.on(VISION_CHANNELS.captured, handler);
       return () => ipcRenderer.removeListener(VISION_CHANNELS.captured, handler);
     },

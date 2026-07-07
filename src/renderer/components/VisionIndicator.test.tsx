@@ -4,22 +4,24 @@
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ScreenCaptureResult } from '../../shared/vision-ipc';
+import type { ScreenCaptureMetadata } from '../../shared/vision-ipc';
 import { VisionIndicator } from './VisionIndicator';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
-const CAPTURE: ScreenCaptureResult = {
-  imageBase64: 'image',
+const CAPTURE: ScreenCaptureMetadata = {
   format: 'png',
   width: 1,
   height: 1,
   capturedAt: '2026-07-07T12:00:00.000Z',
+  sourceId: 'window:1',
+  hasImage: true,
+  hasOcr: false,
 };
 
 function setVisionApi(
-  onCaptured: (cb: (result: ScreenCaptureResult) => void) => () => void,
+  onCaptured: (cb: (result: ScreenCaptureMetadata) => void) => () => void,
 ): void {
   Object.defineProperty(window, 'nexus', {
     configurable: true,
@@ -58,7 +60,7 @@ describe('VisionIndicator', () => {
   });
 
   it('shows after capture and hides after the visibility window', () => {
-    let captured: ((result: ScreenCaptureResult) => void) | null = null;
+    let captured: ((result: ScreenCaptureMetadata) => void) | null = null;
     const unsubscribe = vi.fn();
     setVisionApi((cb) => {
       captured = cb;

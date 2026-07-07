@@ -25,9 +25,52 @@ interface OcrWorker {
 const cache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 30_000;
 const CACHE_MAX_SIZE = 20;
+const OCR_TIMEOUT_MS = 30_000;
+const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
+const PNG_SIGNATURE = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
 
 function hashBuffer(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex').slice(0, 32);
+}
+
+function maxOcrBytes(): number {
+  const parsed = Number.parseInt(process.env.VISION_OCR_MAX_BYTES ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_BYTES;
+}
+
+function isPng(buffer: Buffer): boolean {
+  return (
+    buffer.length >= PNG_SIGNATURE.length &&
+    PNG_SIGNATURE.every((byte, index) => buffer[index] === byte)
+  );
+}
+
+function validateImage(buffer: Buffer): void {
+  const maxBytes = maxOcrBytes();
+  if (buffer.byteLength > maxBytes) {
+    throw new Error(`OCR image exceeds ${maxBytes} bytes.`);
+  }
+  if (!isPng(buffer)) {
+    throw new Error('OCR image must be a valid PNG.');
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`OCR timed out after ${timeoutMs}ms.`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function pruneCache(): void {
@@ -62,6 +105,8 @@ export async function ocrImage(
   buffer: Buffer,
   lang: string = 'eng+por',
 ): Promise<OcrResult> {
+  validateImage(buffer);
+
   // Check cache
   const hash = hashBuffer(buffer);
   const cached = cache.get(hash);
@@ -82,7 +127,7 @@ export async function ocrImage(
 
     const {
       data: { text, confidence },
-    } = await worker.recognize(buffer);
+    } = await withTimeout(worker.recognize(buffer), OCR_TIMEOUT_MS);
 
     const result: OcrResult = {
       text: text.trim(),

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AxNode, ScreenCaptureResult } from '../../shared/vision-ipc';
+import type { AxNode, ScreenCaptureResultInternal } from '../../shared/vision-ipc';
 import { ScreenRecordingPermissionDenied } from '../../shared/vision-ipc';
 import { collectVisionContext } from './vision-orchestrator';
 
@@ -22,12 +22,13 @@ const AX_TREE: AxNode = {
   ],
 };
 
-const CAPTURE: ScreenCaptureResult = {
+const CAPTURE: ScreenCaptureResultInternal = {
   imageBase64: PNG_BASE64,
   format: 'png',
   width: 1,
   height: 1,
   capturedAt: '2026-07-07T12:00:00.000Z',
+  sourceId: 'window:nexus:1',
 };
 
 describe('collectVisionContext', () => {
@@ -54,15 +55,16 @@ describe('collectVisionContext', () => {
       format: 'png',
       width: 1,
       height: 1,
+      sourceId: 'window:nexus:1',
+      hasImage: true,
       cloudAllowed: false,
     });
-    expect(context.screenshot.imageBase64).toBeUndefined();
     expect(context.llmPrompt).toContain('Use this local vision context');
     expect(context.llmPrompt).toContain('Raw image included for cloud vision: no');
     expect(context.llmPrompt).toContain('HELLO VISION');
   });
 
-  it('includes raw screenshot only when cloud image consent is explicit', async () => {
+  it('keeps raw screenshot out of context even when cloud image is allowed', async () => {
     const context = await collectVisionContext(
       { allowCloudImage: true, includeOcr: false },
       {
@@ -74,9 +76,9 @@ describe('collectVisionContext', () => {
     );
 
     expect(context.screenshot.cloudAllowed).toBe(true);
-    expect(context.screenshot.imageBase64).toBe(PNG_BASE64);
+    expect('imageBase64' in context.screenshot).toBe(false);
     expect(context.ocr.status).toBe('unavailable');
-    expect(context.llmPrompt).toContain('Raw image included for cloud vision: yes');
+    expect(context.llmPrompt).toContain('Raw image included for cloud vision: no');
   });
 
   it('degrades gracefully when AX permission is denied', async () => {

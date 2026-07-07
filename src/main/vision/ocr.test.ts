@@ -21,6 +21,7 @@ describe('ocrImage', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     clearOcrCache();
   });
 
@@ -51,9 +52,8 @@ describe('ocrImage', () => {
     };
     vi.mocked(createWorker).mockResolvedValue(mockWorker as any);
 
-    const buffer = Buffer.from('same-image');
-    const result1 = await ocrImage(buffer);
-    const result2 = await ocrImage(buffer);
+    const result1 = await ocrImage(KNOWN_TEXT_PNG);
+    const result2 = await ocrImage(KNOWN_TEXT_PNG);
 
     expect(result1.text).toBe('Cached');
     expect(result2.text).toBe('Cached');
@@ -64,8 +64,9 @@ describe('ocrImage', () => {
   it('throws on OCR failure', async () => {
     vi.mocked(createWorker).mockRejectedValue(new Error('Worker init failed'));
 
-    const buffer = Buffer.from('bad-image');
-    await expect(ocrImage(buffer)).rejects.toThrow('OCR failed: Worker init failed');
+    await expect(ocrImage(KNOWN_TEXT_PNG)).rejects.toThrow(
+      'OCR failed: Worker init failed',
+    );
   });
 
   it('terminates the worker when recognition fails', async () => {
@@ -76,6 +77,53 @@ describe('ocrImage', () => {
     vi.mocked(createWorker).mockResolvedValue(mockWorker as any);
 
     await expect(ocrImage(KNOWN_TEXT_PNG)).rejects.toThrow('OCR failed: bad pixels');
+    expect(mockWorker.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('rejects invalid PNG buffers before creating a worker', async () => {
+    await expect(ocrImage(Buffer.from('not-a-png'))).rejects.toThrow(
+      'valid PNG',
+    );
+    expect(createWorker).not.toHaveBeenCalled();
+  });
+
+  it('rejects buffers larger than the configured byte limit', async () => {
+    const originalLimit = process.env.VISION_OCR_MAX_BYTES;
+    process.env.VISION_OCR_MAX_BYTES = '16';
+    const oversizedPng = Buffer.concat([KNOWN_TEXT_PNG, Buffer.alloc(17)]);
+
+    try {
+      await expect(ocrImage(oversizedPng)).rejects.toThrow('exceeds 16 bytes');
+      expect(createWorker).not.toHaveBeenCalled();
+    } finally {
+      if (originalLimit === undefined) {
+        Reflect.deleteProperty(process.env, 'VISION_OCR_MAX_BYTES');
+      } else {
+        process.env.VISION_OCR_MAX_BYTES = originalLimit;
+      }
+    }
+  });
+
+  it('times out recognition and terminates the worker', async () => {
+    vi.useFakeTimers();
+    const mockWorker = {
+      recognize: vi.fn(() => new Promise(() => undefined)),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.mocked(createWorker).mockResolvedValue(mockWorker as any);
+
+    const result = ocrImage(KNOWN_TEXT_PNG);
+    const assertion = expect(result).rejects.toThrow(
+      'OCR timed out after 30000ms',
+    );
+    for (let i = 0; i < 20 && mockWorker.recognize.mock.calls.length === 0; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await Promise.resolve();
+    }
+    expect(mockWorker.recognize).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await assertion;
     expect(mockWorker.terminate).toHaveBeenCalledOnce();
   });
 });

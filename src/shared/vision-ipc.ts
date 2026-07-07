@@ -6,6 +6,10 @@
 export const VISION_CHANNELS = {
   /** invoke: renderer → main. Captura screenshot da janela Nexus. */
   capture: 'vision:capture',
+  /** invoke: renderer → main. Retorna imagem bruta somente com consentimento. */
+  getImage: 'vision:getImage',
+  /** invoke: renderer → main. Ativa/desativa consentimento para imagem bruta. */
+  setImageConsent: 'vision:setImageConsent',
   /** invoke: renderer → main. Combina screenshot, AX tree e OCR local. */
   context: 'vision:context',
   /** invoke: renderer → main. Extrai accessibility tree do DOM. */
@@ -27,13 +31,27 @@ export interface AxNode {
   children: AxNode[];
 }
 
-/** Resultado da captura de tela. */
-export interface ScreenCaptureResult {
+/** Resultado interno da captura de tela. Nunca deve ser enviado por broadcast. */
+export interface ScreenCaptureResultInternal {
   imageBase64: string;
   format: 'png';
   width: number;
   height: number;
   capturedAt: string;
+  sourceId: string;
+  ocrText?: string;
+  axSummary?: string;
+}
+
+/** Payload público seguro para renderer/preload. */
+export interface ScreenCaptureMetadata {
+  format: 'png';
+  width: number;
+  height: number;
+  capturedAt: string;
+  sourceId: string;
+  hasImage: boolean;
+  hasOcr: boolean;
 }
 
 /** Resultado do OCR. */
@@ -77,15 +95,12 @@ export interface VisionOcrContext {
 
 export interface VisionScreenshotContext {
   status: VisionSourceStatus;
-  format: ScreenCaptureResult['format'] | null;
+  format: ScreenCaptureMetadata['format'] | null;
   width: number | null;
   height: number | null;
   capturedAt: string | null;
-  /**
-   * Present only when allowCloudImage is true. Local OCR uses the image
-   * internally and this field stays omitted without explicit user consent.
-   */
-  imageBase64?: string;
+  sourceId: string | null;
+  hasImage: boolean;
   cloudAllowed: boolean;
   error?: string;
 }
@@ -118,10 +133,39 @@ export class ScreenRecordingPermissionDenied extends Error {
   }
 }
 
+export interface VisionGetImageRequest {
+  consentToken: string;
+}
+
+export type VisionGetImageResult =
+  | {
+      imageBase64: string;
+      format: 'png';
+      width: number;
+      height: number;
+      capturedAt: string;
+      sourceId: string;
+    }
+  | { error: 'consent_required' | 'not_found' };
+
+export interface VisionImageConsentRequest {
+  allowCloudImage: boolean;
+}
+
+export type VisionImageConsentResult =
+  | { allowCloudImage: true; consentToken: string }
+  | { allowCloudImage: false; consentToken: null };
+
 /** API exposta no window.nexus.vision */
 export interface VisionApi {
-  /** Captura screenshot da janela Nexus IDE. */
-  capture(): Promise<ScreenCaptureResult>;
+  /** Captura screenshot da janela Nexus IDE e retorna somente metadata segura. */
+  capture(): Promise<ScreenCaptureMetadata>;
+  /** Retorna a última imagem bruta somente com consentimento explícito válido. */
+  getImage(request: VisionGetImageRequest): Promise<VisionGetImageResult>;
+  /** Ativa/desativa consentimento para acesso à imagem bruta. */
+  setImageConsent(
+    allowCloudImage: boolean,
+  ): Promise<VisionImageConsentResult>;
   /** Combina AX tree, screenshot e OCR local. */
   context(options?: VisionContextOptions): Promise<VisionContext>;
   /** Extrai a accessibility tree do DOM atual. */
@@ -131,5 +175,5 @@ export interface VisionApi {
   /** Checa status da permissão de Screen Recording. */
   checkPermission(): Promise<ScreenPermissionStatus>;
   /** Escuta evento de captura concluída. */
-  onCaptured(cb: (result: ScreenCaptureResult) => void): () => void;
+  onCaptured(cb: (result: ScreenCaptureMetadata) => void): () => void;
 }

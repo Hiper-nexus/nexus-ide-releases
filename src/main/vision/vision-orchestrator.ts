@@ -1,7 +1,7 @@
 import type {
   AxNode,
   OcrResult,
-  ScreenCaptureResult,
+  ScreenCaptureResultInternal,
   VisionContext,
   VisionContextOptions,
   VisionSourceStatus,
@@ -11,7 +11,7 @@ import { captureNexusWindow } from './screen-capture';
 import { ocrImage } from './ocr';
 
 interface VisionOrchestratorDeps {
-  capture: () => Promise<ScreenCaptureResult>;
+  capture: () => Promise<ScreenCaptureResultInternal>;
   readAxTree: () => Promise<AxNode>;
   ocr: (buffer: Buffer) => Promise<OcrResult>;
   now: () => Date;
@@ -85,10 +85,10 @@ async function readAx(
 }
 
 async function captureScreen(
-  capture: () => Promise<ScreenCaptureResult>,
+  capture: () => Promise<ScreenCaptureResultInternal>,
   allowCloudImage: boolean,
 ): Promise<{
-  capture: ScreenCaptureResult | null;
+  capture: ScreenCaptureResultInternal | null;
   context: VisionContext['screenshot'];
 }> {
   try {
@@ -101,8 +101,9 @@ async function captureScreen(
         width: result.width,
         height: result.height,
         capturedAt: result.capturedAt,
+        sourceId: result.sourceId,
+        hasImage: result.imageBase64.length > 0,
         cloudAllowed: allowCloudImage,
-        ...(allowCloudImage ? { imageBase64: result.imageBase64 } : {}),
       },
     };
   } catch (err) {
@@ -114,6 +115,8 @@ async function captureScreen(
         width: null,
         height: null,
         capturedAt: null,
+        sourceId: null,
+        hasImage: false,
         cloudAllowed: allowCloudImage,
         error: errorMessage(err),
       },
@@ -175,7 +178,7 @@ export function buildVisionPrompt(context: Omit<VisionContext, 'llmPrompt'>): st
   const axLines = flattenAxText(context.ax.tree);
   const screenshotLine =
     context.screenshot.status === 'ok'
-      ? `Screenshot: ${context.screenshot.width}x${context.screenshot.height} ${context.screenshot.format}. Raw image included for cloud vision: ${context.screenshot.imageBase64 ? 'yes' : 'no'}.`
+      ? `Screenshot: ${context.screenshot.width}x${context.screenshot.height} ${context.screenshot.format}. Raw image included for cloud vision: no.`
       : `Screenshot unavailable: ${context.screenshot.status}${context.screenshot.error ? ` (${context.screenshot.error})` : ''}.`;
   const ocrLine =
     context.ocr.status === 'ok'
@@ -215,6 +218,8 @@ export async function collectVisionContext(
             width: null,
             height: null,
             capturedAt: null,
+            sourceId: null,
+            hasImage: false,
             cloudAllowed: resolved.allowCloudImage,
             error: 'Screenshot capture was not requested.',
           },

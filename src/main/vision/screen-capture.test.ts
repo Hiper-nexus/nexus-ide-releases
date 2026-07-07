@@ -6,7 +6,7 @@ vi.mock('electron', () => ({
     getSources: vi.fn(),
   },
   BrowserWindow: {
-    getFocusedWindow: vi.fn(),
+    getAllWindows: vi.fn(),
   },
   systemPreferences: {
     getMediaAccessStatus: vi.fn(),
@@ -66,13 +66,19 @@ describe('captureNexusWindow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(systemPreferences.getMediaAccessStatus).mockReturnValue('granted' as any);
+    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([
+      {
+        isDestroyed: () => false,
+        getMediaSourceId: () => 'window:nexus:1',
+      } as any,
+    ]);
   });
 
-  it('captures the NexusIDE window by name', async () => {
+  it('captures the NexusIDE window when the media source id matches exactly', async () => {
     const thumbnail = mockThumbnail(1920, 1080);
     vi.mocked(desktopCapturer.getSources).mockResolvedValue([
-      { id: 'w1', name: 'NexusIDE', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
-      { id: 'w2', name: 'Finder', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
+      { id: 'window:nexus:1', name: 'Renamed Window', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
+      { id: 'window:finder:1', name: 'Finder', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
     ]);
     const result = await captureNexusWindow();
     expect(result.format).toBe('png');
@@ -82,30 +88,19 @@ describe('captureNexusWindow', () => {
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     );
     expect(result.capturedAt).toBeTruthy();
+    expect(result.sourceId).toBe('window:nexus:1');
   });
 
-  it('falls back to focused window when no name match', async () => {
-    const thumbnail = mockThumbnail(800, 600);
-    vi.mocked(desktopCapturer.getSources).mockResolvedValue([
-      { id: 'w1', name: 'Terminal', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
-    ]);
-    vi.mocked(BrowserWindow.getFocusedWindow).mockReturnValue({
-      getTitle: () => 'Terminal',
-    } as any);
-    const result = await captureNexusWindow();
-    expect(result.width).toBe(800);
-    expect(result.height).toBe(600);
-  });
-
-  it('falls back to any window with non-empty name', async () => {
+  it('rejects non-Nexus windows when no media source id matches', async () => {
     const thumbnail = mockThumbnail(640, 480);
     vi.mocked(desktopCapturer.getSources).mockResolvedValue([
-      { id: 'w1', name: '', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
-      { id: 'w2', name: 'SomeApp', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
+      { id: 'window:terminal:1', name: 'Terminal', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
+      { id: 'window:someapp:1', name: 'SomeApp', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
     ]);
-    vi.mocked(BrowserWindow.getFocusedWindow).mockReturnValue(null);
-    const result = await captureNexusWindow();
-    expect(result.width).toBe(640);
+
+    await expect(captureNexusWindow()).rejects.toThrow(
+      'nexus_window_not_identified',
+    );
   });
 
   it('throws when Electron returns an invalid image buffer', async () => {
@@ -114,7 +109,7 @@ describe('captureNexusWindow', () => {
       getSize: () => ({ width: 1, height: 1 }),
     };
     vi.mocked(desktopCapturer.getSources).mockResolvedValue([
-      { id: 'w1', name: 'NexusIDE', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
+      { id: 'window:nexus:1', name: 'NexusIDE', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
     ]);
 
     await expect(captureNexusWindow()).rejects.toThrow('valid PNG');
@@ -122,7 +117,9 @@ describe('captureNexusWindow', () => {
 
   it('throws when no windows available', async () => {
     vi.mocked(desktopCapturer.getSources).mockResolvedValue([]);
-    vi.mocked(BrowserWindow.getFocusedWindow).mockReturnValue(null);
-    await expect(captureNexusWindow()).rejects.toThrow('Nenhuma janela encontrada');
+    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([]);
+    await expect(captureNexusWindow()).rejects.toThrow(
+      'nexus_window_not_identified',
+    );
   });
 });
