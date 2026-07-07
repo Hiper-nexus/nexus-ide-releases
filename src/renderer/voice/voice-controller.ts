@@ -927,7 +927,8 @@ async function runJarvisTurn(
   liveStatus('speaking');
   // Pipelining por sentença (LiveKit playbook): sintetiza e toca a PRIMEIRA
   // frase enquanto o resto ainda está sendo gerado — corta o time-to-first-audio.
-  const split = splitFirstSentence(sayText);
+  // Uma só chamada TTS em respostas curtas — duas frases = duas vozes/timbres.
+  const split = sayText.length > 120 ? splitFirstSentence(sayText) : { first: sayText, rest: '' };
   const tTts = Date.now();
   const first = await withTimeout(
     window.nexus.voice.speak({ text: split.first, speakMode: 'full' }),

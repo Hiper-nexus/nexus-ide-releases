@@ -29,6 +29,16 @@ describe('jarvisActionFastPath', () => {
     expect(reply?.action).toEqual({ type: 'run_command', command: 'npm test' });
   });
 
+  it('iniciar um novo squad dispara design_squad', () => {
+    const reply = jarvisActionFastPath('iniciar um novo squad', CTX);
+    expect(reply?.action).toEqual({ type: 'design_squad' });
+  });
+
+  it('inicia squad full stack dispara open_squad', () => {
+    const reply = jarvisActionFastPath('inicia o squad full stack', CTX);
+    expect(reply?.action).toEqual({ type: 'open_squad', squadName: 'full stack' });
+  });
+
   it('abre squad de code review dispara open_squad', () => {
     const reply = jarvisActionFastPath('abre o squad de code review', CTX);
     expect(reply?.action).toEqual({ type: 'open_squad', squadName: 'code review' });

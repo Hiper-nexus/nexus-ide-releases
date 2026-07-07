@@ -52,7 +52,8 @@ export function jarvisActionFastPath(
 
   if (
     /\b(monta|monte|montar|cria|crie|criar|design)\b.*\bsquad\b/.test(t) ||
-    /\bsquad\b.*\b(custom|personalizado|projeto)\b/.test(t)
+    /\bsquad\b.*\b(custom|personalizado|projeto)\b/.test(t) ||
+    /\b(?:inicia|inicie|iniciar|sobe|suba|liga|ligue)\b(?:\s+o)?\s+(?:um\s+)?(?:novo\s+)?squad\s*$/.test(t)
   ) {
     return {
       say: 'Vou montar um squad para este projeto.',
@@ -62,7 +63,7 @@ export function jarvisActionFastPath(
   }
 
   const openSquad = t.match(
-    /\b(?:abre|abra|abrir|sobe|suba|inicia|inicie|liga|ligue|roda|rode)\b(?:\s+o)?\s+squad(?:\s+(?:de|do|da))?\s+(.+)$/,
+    /\b(?:abre|abra|abrir|sobe|suba|inicia|inicie|iniciar|liga|ligue|roda|rode)\b(?:\s+o)?\s+(?:um\s+)?(?:novo\s+)?squad(?:\s+(?:de|do|da))?\s+(.+)$/,
   );
   if (openSquad) {
     const squadName = stripTail(openSquad[1]);
