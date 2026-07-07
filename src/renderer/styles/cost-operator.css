@@ -131,6 +131,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  flex: 0 0 auto;
   padding: 2px 10px 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -141,6 +142,21 @@
   cursor: pointer;
   transition: border-color 160ms var(--ease-out-quart),
     color 160ms var(--ease-out-quart);
+}
+.operator-hud__level {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-soft);
+  white-space: nowrap;
 }
 .operator-hud:hover,
 .operator-hud:focus-visible {
@@ -205,6 +221,29 @@
   .operator-hud:hover .operator-hud__detail,
   .operator-hud:focus-visible .operator-hud__detail {
     animation: none;
+  }
+}
+
+/* Telas estreitas: HUD compacto sempre visível; tier só no hover em telas largas. */
+@media (max-width: 1280px) {
+  .operator-hud {
+    gap: 5px;
+    padding: 2px 7px 4px;
+  }
+  .operator-hud__detail {
+    display: none !important;
+  }
+}
+
+@media (max-width: 960px) {
+  .operator-hud__power {
+    font-size: 10px;
+  }
+}
+
+@media (min-width: 1281px) {
+  .operator-hud__level {
+    display: none;
   }
 }
 

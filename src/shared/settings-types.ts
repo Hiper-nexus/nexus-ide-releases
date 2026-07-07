@@ -87,10 +87,29 @@ export type VisionSettings = z.infer<typeof visionSettingsSchema>;
 export const DEFAULT_VISION_SETTINGS: VisionSettings =
   visionSettingsSchema.parse({});
 
+/**
+ * Aparência global do app (não do xterm): modo pixel, etc.
+ * Persistido em ~/.nexus/settings.json → `ui`.
+ */
+export const uiSettingsSchema = z.object({
+  /** Cantos retos, VT323 como --font-ui, antialias desligado (data-theme-pixel). */
+  pixelMode: z.boolean().default(false),
+});
+export type UiSettings = z.infer<typeof uiSettingsSchema>;
+export const DEFAULT_UI_SETTINGS: UiSettings = uiSettingsSchema.parse({});
+
+export const uiSettingsPatchSchema = z.object({
+  pixelMode: z.boolean().optional(),
+});
+export type UiSettingsPatch = z.infer<typeof uiSettingsPatchSchema>;
+
 export const SETTINGS_CHANNELS = {
   get: 'settings:get',
   set: 'settings:set',
   changed: 'settings:changed',
   orchGet: 'settings:orch:get',
   orchSet: 'settings:orch:set',
+  uiGet: 'settings:ui:get',
+  uiSet: 'settings:ui:set',
+  uiChanged: 'settings:ui:changed',
 } as const;

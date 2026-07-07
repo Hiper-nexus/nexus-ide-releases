@@ -8,9 +8,11 @@
 }
 
 .workspace-bar__todo {
+  flex: 1 1 auto;
   color: var(--accent);
   font-size: 11px;
-  max-width: 260px;
+  max-width: min(260px, 22vw);
+  min-width: 48px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

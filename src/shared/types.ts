@@ -46,6 +46,8 @@ import type {
   TerminalSettings,
   OrchSettings,
   TerminalSettingsPatch,
+  UiSettings,
+  UiSettingsPatch,
 } from './settings-types';
 import type { WorkspaceState } from './workspace-types';
 import type {
@@ -632,6 +634,9 @@ export interface NexusApi {
     onChanged(cb: (settings: TerminalSettings) => void): Unsubscribe;
     orchGet(): Promise<OrchSettings>;
     orchSet(patch: Partial<OrchSettings>): Promise<OrchSettings>;
+    uiGet(): Promise<UiSettings>;
+    uiSet(patch: UiSettingsPatch): Promise<UiSettings>;
+    onUiChanged(cb: (ui: UiSettings) => void): Unsubscribe;
   };
   workspace: {
     get(): Promise<WorkspaceState>;

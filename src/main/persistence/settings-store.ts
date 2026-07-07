@@ -6,14 +6,18 @@ import type { WebContents } from 'electron';
 import {
   DEFAULT_ORCH_SETTINGS,
   DEFAULT_TERMINAL_SETTINGS,
+  DEFAULT_UI_SETTINGS,
   DEFAULT_VISION_SETTINGS,
   SETTINGS_CHANNELS,
   orchSettingsSchema,
   terminalSettingsPatchSchema,
   terminalSettingsSchema,
+  uiSettingsPatchSchema,
+  uiSettingsSchema,
   visionSettingsSchema,
   type OrchSettings,
   type TerminalSettings,
+  type UiSettings,
   type VisionSettings,
 } from '../../shared/settings-types';
 
@@ -28,7 +32,9 @@ const SETTINGS_FILE = path.join(os.homedir(), '.nexus', 'settings.json');
 let current: TerminalSettings = DEFAULT_TERMINAL_SETTINGS;
 let orchSettings: OrchSettings = DEFAULT_ORCH_SETTINGS;
 let visionSettings: VisionSettings = DEFAULT_VISION_SETTINGS;
+let uiSettings: UiSettings = DEFAULT_UI_SETTINGS;
 const listeners = new Set<WebContents>();
+const uiListeners = new Set<WebContents>();
 
 function load(): void {
   try {
@@ -39,6 +45,8 @@ function load(): void {
     if (orchParsed.success) orchSettings = orchParsed.data;
     const visionParsed = visionSettingsSchema.safeParse(raw?.vision ?? {});
     if (visionParsed.success) visionSettings = visionParsed.data;
+    const uiParsed = uiSettingsSchema.safeParse(raw?.ui ?? {});
+    if (uiParsed.success) uiSettings = uiParsed.data;
   } catch {
     // Missing/corrupt file — keep defaults.
   }
@@ -50,7 +58,7 @@ function persist(): void {
     fs.writeFileSync(
       SETTINGS_FILE,
       JSON.stringify(
-        { terminal: current, orch: orchSettings, vision: visionSettings },
+        { terminal: current, orch: orchSettings, vision: visionSettings, ui: uiSettings },
         null,
         2,
       ),
@@ -66,6 +74,12 @@ function broadcast(): void {
   }
 }
 
+function broadcastUi(): void {
+  for (const wc of uiListeners) {
+    if (!wc.isDestroyed()) wc.send(SETTINGS_CHANNELS.uiChanged, uiSettings);
+  }
+}
+
 export function getTerminalSettings(): TerminalSettings {
   return current;
 }
@@ -76,6 +90,10 @@ export function getOrchSettings(): OrchSettings {
 
 export function getVisionSettings(): VisionSettings {
   return visionSettings;
+}
+
+export function getUiSettings(): UiSettings {
+  return uiSettings;
 }
 
 export function setVisionSettingsPatch(
@@ -94,10 +112,12 @@ export function setVisionSettingsPatch(
 
 export function registerSettingsListener(wc: WebContents): void {
   listeners.add(wc);
+  uiListeners.add(wc);
 }
 
 export function unregisterSettingsListener(wc: WebContents): void {
   listeners.delete(wc);
+  uiListeners.delete(wc);
 }
 
 export function registerSettingsIpc(): void {
@@ -123,5 +143,16 @@ export function registerSettingsIpc(): void {
       persist();
     }
     return orchSettings;
+  });
+
+  ipcMain.handle(SETTINGS_CHANNELS.uiGet, () => uiSettings);
+
+  ipcMain.handle(SETTINGS_CHANNELS.uiSet, (_event, raw) => {
+    const parsed = uiSettingsPatchSchema.safeParse(raw);
+    if (!parsed.success) return uiSettings;
+    uiSettings = { ...uiSettings, ...parsed.data };
+    persist();
+    broadcastUi();
+    return uiSettings;
   });
 }

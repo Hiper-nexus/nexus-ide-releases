@@ -123,7 +123,7 @@ export function WorkspaceBar() {
               <PixelIcon name="close" size={10} /> fechar
             </button>
             <button
-              className={`workspace-bar__ws-btn ${opsBoardOpen ? 'workspace-bar__ws-btn--active' : ''}`}
+              className={`workspace-bar__ws-btn workspace-bar__ws-btn--board ${opsBoardOpen ? 'workspace-bar__ws-btn--active' : ''}`}
               onClick={toggleOpsBoard}
               title="Ops Board — pipeline de missões (⌘B)"
               style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}
@@ -136,99 +136,107 @@ export function WorkspaceBar() {
         )}
       </div>
       <div className="workspace-bar__actions">
-        <OperatorHud />
-        <CostSummary />
-        {activeTodo && (
-          <span className="workspace-bar__todo" title="Current orchestration task" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-            <PixelIcon name="mission" size={10} /> {activeTodo}
-          </span>
-        )}
-        <button
-          className="workspace-bar__btn workspace-bar__btn--primary"
-          onClick={openWizard}
-          title="Nova missão (livre ou squad)"
-        >
-          <PixelIcon name="mission" />
-          Missão
-        </button>
-        <button
-          className="workspace-bar__btn workspace-bar__btn--agent"
-          onClick={openPicker}
-          title="Abrir um agente de IA em um pane novo"
-        >
-          <PixelIcon name="agent" />
-          Agent
-        </button>
-        <button
-          className="workspace-bar__btn"
-          onClick={addShellPane}
-          title={`Abrir um terminal shell novo (${paneCount} pane${paneCount === 1 ? '' : 's'} aberto${paneCount === 1 ? '' : 's'} · ⌘D divide o pane focado)`}
-        >
-          <PixelIcon name="terminal" />
-          Terminal
-        </button>
-        <button
-          className="workspace-bar__btn"
-          onClick={() => addBrowserPane()}
-          title="Abrir um browser embutido em um pane novo"
-        >
-          <PixelIcon name="browser" />
-          Browser
-        </button>
-        <span className="workspace-bar__sep" aria-hidden="true" />
-        <button
-          className={`workspace-bar__btn workspace-bar__btn--view ${viewKind === 'canvas' ? 'workspace-bar__btn--view-active' : ''}`}
-          onClick={toggleView}
-          title={viewKind === 'grid' ? 'Mudar para canvas (arrastar livre)' : 'Mudar para grid (panes divididos)'}
-        >
-          <PixelIcon name={viewKind === 'canvas' ? 'grid' : 'canvas'} />
-          {viewKind === 'canvas' ? 'Grid' : 'Canvas'}
-        </button>
-        <button
-          className={`workspace-bar__btn ${filesOpen ? 'workspace-bar__btn--view-active' : ''}`}
-          onClick={toggleFiles}
-          title="Arquivos do workspace (ver/editar)"
-        >
-          <PixelIcon name="files" />
-          Files
-        </button>
-        <button
-          className={`workspace-bar__btn ${opsBoardOpen ? 'workspace-bar__btn--view-active' : ''}`}
-          onClick={toggleOpsBoard}
-          title="Ops Board — pipeline de missões (⌘B)"
-        >
-          <PixelIcon name="board" />
-          Board
-        </button>
-        <button
-          className={`workspace-bar__btn ${orchPanelOpen ? 'workspace-bar__btn--view-active' : ''}`}
-          onClick={toggleOrchPanel}
-          title="Missões, handoffs, todos e squads"
-        >
-          <PixelIcon name="orch" />
-          Orch
-        </button>
-        <span className="workspace-bar__sep" aria-hidden="true" />
-        <VoiceButton />
-        <VisionIndicator />
-        {updateState && (
-          <UpdateStatusButton
-            state={updateState}
-            alwaysVisible
-            onClick={() => setUpdateOpen(true)}
-          />
-        )}
-        <button
-          className="workspace-bar__btn"
-          onClick={() => {
-            setUpdateOpen(false);
-            toggleSettings();
-          }}
-          title="Conta, plano, módulos e catálogo (⌘,)"
-        >
-          <PixelIcon name="config" />
-          Config
-        </button>
+        <div className="workspace-bar__actions-pinned">
+          <OperatorHud />
+          <CostSummary />
+          {activeTodo && (
+            <span
+              className="workspace-bar__todo"
+              title="Current orchestration task"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+            >
+              <PixelIcon name="mission" size={10} /> {activeTodo}
+            </span>
+          )}
+        </div>
+        <div className="workspace-bar__actions-scroll">
+          <button
+            className="workspace-bar__btn workspace-bar__btn--primary"
+            onClick={openWizard}
+            title="Nova missão (livre ou squad)"
+          >
+            <PixelIcon name="mission" />
+            Missão
+          </button>
+          <button
+            className="workspace-bar__btn workspace-bar__btn--agent"
+            onClick={openPicker}
+            title="Abrir um agente de IA em um pane novo"
+          >
+            <PixelIcon name="agent" />
+            Agent
+          </button>
+          <button
+            className="workspace-bar__btn"
+            onClick={addShellPane}
+            title={`Abrir um terminal shell novo (${paneCount} pane${paneCount === 1 ? '' : 's'} aberto${paneCount === 1 ? '' : 's'} · ⌘D divide o pane focado)`}
+          >
+            <PixelIcon name="terminal" />
+            Terminal
+          </button>
+          <button
+            className="workspace-bar__btn"
+            onClick={() => addBrowserPane()}
+            title="Abrir um browser embutido em um pane novo"
+          >
+            <PixelIcon name="browser" />
+            Browser
+          </button>
+          <span className="workspace-bar__sep" aria-hidden="true" />
+          <button
+            className={`workspace-bar__btn workspace-bar__btn--view ${viewKind === 'canvas' ? 'workspace-bar__btn--view-active' : ''}`}
+            onClick={toggleView}
+            title={viewKind === 'grid' ? 'Mudar para canvas (arrastar livre)' : 'Mudar para grid (panes divididos)'}
+          >
+            <PixelIcon name={viewKind === 'canvas' ? 'grid' : 'canvas'} />
+            {viewKind === 'canvas' ? 'Grid' : 'Canvas'}
+          </button>
+          <button
+            className={`workspace-bar__btn ${filesOpen ? 'workspace-bar__btn--view-active' : ''}`}
+            onClick={toggleFiles}
+            title="Arquivos do workspace (ver/editar)"
+          >
+            <PixelIcon name="files" />
+            Files
+          </button>
+          <button
+            className={`workspace-bar__btn ${opsBoardOpen ? 'workspace-bar__btn--view-active' : ''}`}
+            onClick={toggleOpsBoard}
+            title="Ops Board — pipeline de missões (⌘B)"
+          >
+            <PixelIcon name="board" />
+            Board
+          </button>
+          <button
+            className={`workspace-bar__btn ${orchPanelOpen ? 'workspace-bar__btn--view-active' : ''}`}
+            onClick={toggleOrchPanel}
+            title="Missões, handoffs, todos e squads"
+          >
+            <PixelIcon name="orch" />
+            Orch
+          </button>
+          <span className="workspace-bar__sep" aria-hidden="true" />
+          <VoiceButton />
+          <VisionIndicator />
+          {updateState && (
+            <UpdateStatusButton
+              state={updateState}
+              alwaysVisible
+              onClick={() => setUpdateOpen(true)}
+            />
+          )}
+          <button
+            className="workspace-bar__btn"
+            onClick={() => {
+              setUpdateOpen(false);
+              toggleSettings();
+            }}
+            title="Conta, plano, módulos e catálogo (⌘,)"
+          >
+            <PixelIcon name="config" />
+            Config
+          </button>
+        </div>
       </div>
 
       {updateOpen && updateState && (

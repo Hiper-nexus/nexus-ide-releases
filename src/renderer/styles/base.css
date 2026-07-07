@@ -234,19 +234,40 @@ body {
   gap: 8px;
   flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+
+/* HUD + custo ficam fixos; só os botões rolam em telas estreitas. */
+.workspace-bar__actions-pinned {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: min(620px, 52vw);
+}
+
+.workspace-bar__actions-scroll {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
   justify-content: flex-end;
   flex-wrap: nowrap;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
-  -webkit-app-region: no-drag;
+  -webkit-overflow-scrolling: touch;
 }
 
-.workspace-bar__actions::-webkit-scrollbar {
+.workspace-bar__actions-scroll::-webkit-scrollbar {
   display: none;
 }
 
-.workspace-bar__actions > * {
+.workspace-bar__actions-pinned > *,
+.workspace-bar__actions-scroll > * {
   flex: 0 0 auto;
 }
 
@@ -271,6 +292,19 @@ body {
 .workspace-bar__btn:hover {
   background: var(--accent-soft);
   border-color: var(--accent);
+}
+
+@media (max-width: 960px) {
+  .workspace-bar__btn {
+    padding: 4px 7px;
+    font-size: 10px;
+  }
+  .workspace-bar__ws-btn {
+    display: none;
+  }
+  .workspace-bar__ws-btn--board {
+    display: none;
+  }
 }
 
 /* ---- Grid + panels ---- */

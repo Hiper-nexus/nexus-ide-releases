@@ -19,7 +19,7 @@ import type { UpdateState } from '../shared/update-ipc';
 import { ORCH_CHANNELS } from '../shared/orch-channels';
 import { REMOTE_CHANNELS } from '../shared/remote-channels';
 import { SETTINGS_CHANNELS } from '../shared/settings-types';
-import type { TerminalSettings } from '../shared/settings-types';
+import type { TerminalSettings, UiSettings } from '../shared/settings-types';
 import { WORKSPACE_CHANNELS } from '../shared/workspace-types';
 import type { WorkspaceState } from '../shared/workspace-types';
 import { PROVIDER_CHANNELS } from '../shared/provider-settings-types';
@@ -245,6 +245,11 @@ ipcRenderer.on(ORCH_CHANNELS.squadsChanged, (_e, squads: Squad[]) =>
 const settingsChangedListeners = new Set<(settings: TerminalSettings) => void>();
 ipcRenderer.on(SETTINGS_CHANNELS.changed, (_e, settings: TerminalSettings) =>
   settingsChangedListeners.forEach((cb) => cb(settings)),
+);
+
+const uiSettingsChangedListeners = new Set<(ui: UiSettings) => void>();
+ipcRenderer.on(SETTINGS_CHANNELS.uiChanged, (_e, ui: UiSettings) =>
+  uiSettingsChangedListeners.forEach((cb) => cb(ui)),
 );
 
 const workspaceChangedListeners = new Set<(state: WorkspaceState) => void>();
@@ -495,6 +500,9 @@ const api: NexusApi = {
     onChanged: (cb) => addListener(settingsChangedListeners, cb),
     orchGet: () => ipcRenderer.invoke(SETTINGS_CHANNELS.orchGet),
     orchSet: (patch) => ipcRenderer.invoke(SETTINGS_CHANNELS.orchSet, patch),
+    uiGet: () => ipcRenderer.invoke(SETTINGS_CHANNELS.uiGet),
+    uiSet: (patch) => ipcRenderer.invoke(SETTINGS_CHANNELS.uiSet, patch),
+    onUiChanged: (cb) => addListener(uiSettingsChangedListeners, cb),
   },
   workspace: {
     get: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.get),

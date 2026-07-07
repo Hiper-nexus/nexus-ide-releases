@@ -1,5 +1,6 @@
 export type SettingsSection =
   | 'account'
+  | 'appearance'
   | 'system'
   | 'terminal'
   | 'voice'
@@ -33,6 +34,7 @@ export interface NavItem {
   pixelIcon?: PixelIconName;
   title: string;
   subtitle: string;
+  aliases?: string[];
 }
 
 export interface NavGroup {
@@ -40,59 +42,221 @@ export interface NavGroup {
   items: NavItem[];
 }
 
-/**
- * Nav do Settings agrupada por INTENÇÃO — conta / operação diária / arsenal de
- * execução / catálogo instalado — em vez de 20 linhas num nível só. Onde o
- * idioma pixel já tem ícone (ID/>_ /VOX/KEY…) usamos PixelIcon; os demais
- * badges mono (SQD/MKT/LLM…) seguem como texto até ganharem ícone próprio.
- * Duplicata "MÍDIA" e sobreposição PROVIDERS↔CLIS resolvidas por rótulo,
- * sem apagar tela.
- */
-export const SETTINGS_GROUPS: NavGroup[] = [
+/** Oito entradas do dia a dia — visíveis sem abrir Avançado. */
+export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
   {
     label: 'CONTA',
     items: [
-      { id: 'account', icon: 'ID', pixelIcon: 'id-badge', title: 'MINHA CONTA', subtitle: 'plano · assinatura' },
-      { id: 'system', icon: 'i', title: 'SISTEMA', subtitle: 'versão · changelog' },
+      {
+        id: 'account',
+        icon: 'ID',
+        pixelIcon: 'id-badge',
+        title: 'Minha conta',
+        subtitle: 'plano · assinatura',
+        aliases: ['account', 'billing', 'subscription'],
+      },
+    ],
+  },
+  {
+    label: 'INTERFACE',
+    items: [
+      {
+        id: 'appearance',
+        icon: 'PX',
+        pixelIcon: 'grid',
+        title: 'Aparência',
+        subtitle: 'pixel · tema · paleta',
+        aliases: ['appearance', 'theme', 'visual', 'ui'],
+      },
+      {
+        id: 'terminal',
+        icon: '>_',
+        pixelIcon: 'terminal',
+        title: 'Terminal',
+        subtitle: 'fonte · shell',
+        aliases: ['console', 'xterm'],
+      },
+      {
+        id: 'shortcuts',
+        icon: 'CMD',
+        title: 'Atalhos',
+        subtitle: 'teclado',
+        aliases: ['shortcuts', 'hotkeys', 'keyboard'],
+      },
     ],
   },
   {
     label: 'OPERAÇÃO',
     items: [
-      { id: 'terminal', icon: '>_', pixelIcon: 'terminal', title: 'TERMINAL', subtitle: 'tema · fonte · shell' },
-      { id: 'voice', icon: 'VOX', pixelIcon: 'mic', title: 'VOICE', subtitle: 'voz · captura · Jarvis' },
-      { id: 'vision', icon: 'VIS', pixelIcon: 'vision', title: 'VISION', subtitle: 'consent · tela' },
-      { id: 'diagnostics', icon: 'DIA', title: 'DIAGNÓSTICO', subtitle: 'mic · permissões · live' },
-      { id: 'audit', icon: 'AUD', title: 'AUDITORIA', subtitle: 'ações · confirmations' },
-      { id: 'media', icon: 'IMG', title: 'MÍDIA', subtitle: 'chaves de geração' },
-      { id: 'shortcuts', icon: 'CMD', title: 'ATALHOS', subtitle: 'teclado' },
+      {
+        id: 'voice',
+        icon: 'VOX',
+        pixelIcon: 'mic',
+        title: 'Voz',
+        subtitle: 'Jarvis · captura',
+        aliases: ['voice', 'realtime', 'wake', 'mic', 'microfone'],
+      },
+      {
+        id: 'providers',
+        icon: 'KEY',
+        pixelIcon: 'key',
+        title: 'Providers',
+        subtitle: 'chaves · modelos',
+        aliases: ['keys', 'models'],
+      },
+      {
+        id: 'squads',
+        icon: 'SQD',
+        pixelIcon: 'users',
+        title: 'Squads',
+        subtitle: 'orquestração',
+        aliases: ['teams', 'agents'],
+      },
+      {
+        id: 'diagnostics',
+        icon: 'DIA',
+        title: 'Diagnóstico',
+        subtitle: 'mic · permissões',
+        aliases: ['diagnostics', 'health', 'permissions'],
+      },
     ],
   },
+];
+
+/** Catálogo e ops raras — progressive disclosure na nav. */
+export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
   {
-    label: 'ARSENAL',
+    label: 'SISTEMA',
     items: [
-      { id: 'providers', icon: 'KEY', pixelIcon: 'key', title: 'PROVIDERS', subtitle: 'chaves · modelos · rota' },
-      { id: 'squads', icon: 'SQD', pixelIcon: 'users', title: 'SQUADS', subtitle: 'orquestração' },
-      { id: 'remote', icon: 'SSH', title: 'REMOTE', subtitle: 'bridge · ssh' },
-      { id: 'marketplace', icon: 'MKT', title: 'MARKETPLACE', subtitle: 'catálogo · 1 clique' },
+      { id: 'system', icon: 'i', title: 'Sistema', subtitle: 'versão · changelog' },
+      {
+        id: 'vision',
+        icon: 'VIS',
+        pixelIcon: 'vision',
+        title: 'Vision',
+        subtitle: 'consent · tela',
+        aliases: ['screen', 'capture', 'vision'],
+      },
+      {
+        id: 'audit',
+        icon: 'AUD',
+        title: 'Auditoria',
+        subtitle: 'ações · confirmações',
+        aliases: ['audit', 'confirmations'],
+      },
+      {
+        id: 'media',
+        icon: 'IMG',
+        title: 'Mídia',
+        subtitle: 'chaves de geração',
+        aliases: ['media', 'image', 'video'],
+      },
+      {
+        id: 'remote',
+        icon: 'SSH',
+        title: 'Remote',
+        subtitle: 'bridge · ssh',
+        aliases: ['ssh', 'remote'],
+      },
+      {
+        id: 'marketplace',
+        icon: 'MKT',
+        title: 'Marketplace',
+        subtitle: 'catálogo · 1 clique',
+        aliases: ['marketplace', 'catalog'],
+      },
     ],
   },
   {
     label: 'CATÁLOGO',
     items: [
-      { id: 'agents', icon: 'AGT', title: 'AGENTS', subtitle: 'AI subagents' },
-      { id: 'skills', icon: 'SKL', title: 'SKILLS', subtitle: 'skills cache' },
-      { id: 'llms', icon: 'LLM', title: 'CLIS · MODELOS', subtitle: 'arsenal instalado' },
-      { id: 'mcps', icon: 'MCP', title: 'MCPS', subtitle: 'servers cache' },
-      { id: 'tools', icon: 'TLS', title: 'TOOLS', subtitle: 'native tools' },
-      { id: 'media-catalog', icon: 'GEN', title: 'MODELOS', subtitle: 'geração · whitelist' },
-      { id: 'recipes', icon: 'RCP', title: 'RECIPES', subtitle: 'lint · stacks' },
-      { id: 'plugins', icon: 'PLG', title: 'PLUGINS', subtitle: 'plugin bundles' },
-      { id: 'hooks', icon: 'HK', title: 'HOOKS', subtitle: 'lifecycle scripts' },
-      { id: 'rules', icon: 'SEC', title: 'RULES', subtitle: 'permissions' },
+      {
+        id: 'agents',
+        icon: 'AGT',
+        title: 'Agents',
+        subtitle: 'AI subagents',
+        aliases: ['subagents'],
+      },
+      {
+        id: 'skills',
+        icon: 'SKL',
+        title: 'Skills',
+        subtitle: 'skills cache',
+        aliases: ['skills'],
+      },
+      {
+        id: 'llms',
+        icon: 'LLM',
+        title: 'CLIs · modelos',
+        subtitle: 'arsenal instalado',
+        aliases: ['llms', 'models'],
+      },
+      {
+        id: 'mcps',
+        icon: 'MCP',
+        title: 'MCPs',
+        subtitle: 'servers cache',
+        aliases: ['mcp', 'servers'],
+      },
+      {
+        id: 'tools',
+        icon: 'TLS',
+        title: 'Tools',
+        subtitle: 'native tools',
+        aliases: ['tools'],
+      },
+      {
+        id: 'media-catalog',
+        icon: 'GEN',
+        title: 'Modelos',
+        subtitle: 'geração · whitelist',
+        aliases: ['generation', 'models'],
+      },
+      {
+        id: 'recipes',
+        icon: 'RCP',
+        title: 'Recipes',
+        subtitle: 'lint · stacks',
+        aliases: ['recipes'],
+      },
+      {
+        id: 'plugins',
+        icon: 'PLG',
+        title: 'Plugins',
+        subtitle: 'plugin bundles',
+        aliases: ['plugins'],
+      },
+      {
+        id: 'hooks',
+        icon: 'HK',
+        title: 'Hooks',
+        subtitle: 'lifecycle scripts',
+        aliases: ['hooks'],
+      },
+      {
+        id: 'rules',
+        icon: 'SEC',
+        title: 'Rules',
+        subtitle: 'permissions',
+        aliases: ['rules', 'permissions'],
+      },
     ],
   },
 ];
+
+/** União para busca e testes de cobertura de seções. */
+export const SETTINGS_GROUPS: NavGroup[] = [
+  ...SETTINGS_PRIMARY_GROUPS,
+  ...SETTINGS_ADVANCED_GROUPS,
+];
+
+const ADVANCED_SECTION_IDS = new Set(
+  SETTINGS_ADVANCED_GROUPS.flatMap((g) => g.items.map((i) => i.id)),
+);
+
+export function isAdvancedSettingsSection(id: SettingsSection): boolean {
+  return ADVANCED_SECTION_IDS.has(id);
+}
 
 /** Normaliza para busca: minúsculas e sem diacríticos. */
 function normalize(value: string): string {
@@ -114,7 +278,9 @@ export function filterSettingsGroups(groups: NavGroup[], query: string): NavGrou
       label: group.label,
       items: group.items.filter(
         (item) =>
-          normalize(item.title).includes(q) || normalize(item.subtitle).includes(q),
+          normalize(item.title).includes(q) ||
+          normalize(item.subtitle).includes(q) ||
+          (item.aliases ?? []).some((alias) => normalize(alias).includes(q)),
       ),
     }))
     .filter((group) => group.items.length > 0);

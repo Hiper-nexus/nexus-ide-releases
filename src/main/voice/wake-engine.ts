@@ -44,8 +44,8 @@ const MEL_MAX = 400;
 const EMB_WINDOW = 16;
 const FEAT_MAX = 120;
 // Ambiente marca picos de 0.2-0.4 (um falso disparo real registrado a 0.39);
-// um "hey jarvis" de verdade marca ~0.97. 0.55 corta ruído mas acorda com fala normal.
-const THRESHOLD = 0.55;
+// um "hey jarvis" de verdade marca ~0.97. 0.48 tolera fifine com RMS baixo no macOS.
+const THRESHOLD = 0.48;
 const DEBOUNCE_MS = 2_500;
 // Cap da fila de PCM: ~50 chunks (≈4 s de áudio). Se o mic produz mais rápido
 // que o drain() consome, descartamos os samples mais ANTIGOS em vez de deixar

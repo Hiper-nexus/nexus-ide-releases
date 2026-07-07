@@ -87,9 +87,12 @@ export function OperatorHud() {
         skin={snapshot.selectedSkin}
         mood={mood}
       />
+      <span className="operator-hud__level" aria-hidden="true">
+        Lv {level}
+      </span>
       <span className="operator-hud__power">{fmt(shownPower)}</span>
       <span className="operator-hud__detail">
-        LV {level} · {GAMIFICATION_COPY.tiers[snapshot.tier]}
+        {GAMIFICATION_COPY.tiers[snapshot.tier]}
         {stars && <span className="operator-hud__stars">{stars}</span>}
       </span>
       <span className="operator-hud__bar" aria-hidden="true">

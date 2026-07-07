@@ -1,9 +1,4 @@
 import { useEffect, useState } from 'react';
-import {
-  TERMINAL_THEME_IDS,
-  type TerminalThemeId,
-} from '../../../shared/settings-types';
-import { TERMINAL_THEMES } from '../../styles/terminal-theme';
 import { useSettingsStore } from '../../state/settings-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useVoiceStore } from '../../voice/voice-store';
@@ -20,30 +15,8 @@ export function TerminalSection() {
     <section>
       <h3 className="settings-detail__title">Terminal</h3>
       <p className="settings-detail__hint">
-        Tema, fonte e shell aplicados ao vivo em todos os panes abertos.
+        Fonte e shell dos panes xterm. Paleta e modo pixel ficam em Aparência.
       </p>
-
-      <label className="settings-field">
-        Tema
-        <div className="settings-theme-grid">
-          {TERMINAL_THEME_IDS.map((id: TerminalThemeId) => {
-            const entry = TERMINAL_THEMES[id];
-            return (
-              <button
-                key={id}
-                className={`settings-theme ${terminal.themeId === id ? 'settings-theme--active' : ''}`}
-                style={{
-                  background: String(entry.theme.background),
-                  color: String(entry.theme.foreground),
-                }}
-                onClick={() => void update({ themeId: id })}
-              >
-                {entry.label}
-              </button>
-            );
-          })}
-        </div>
-      </label>
 
       <label className="settings-field">
         Fonte (vazio = padrão do sistema)

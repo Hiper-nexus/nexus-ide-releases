@@ -236,9 +236,15 @@
   background: var(--accent-soft);
 }
 
-.workspace-bar__actions {
+.workspace-bar__actions-scroll {
   flex-wrap: nowrap;
   justify-content: flex-end;
+}
+
+@media (max-width: 1100px) {
+  .workspace-bar__brand .workspace-bar__ws-btn--board {
+    display: none;
+  }
 }
 
 /* ---- Mission wizard ---- */
