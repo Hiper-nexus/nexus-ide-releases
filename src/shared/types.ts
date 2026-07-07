@@ -17,14 +17,12 @@ import type {
   JarvisRequest,
   JarvisReply,
   JarvisLiveInterruptEvent,
-  JarvisLiveSmokeTestRequest,
   JarvisLiveStartRequest,
   JarvisLiveState,
   JarvisLiveStatusPatch,
   JarvisLiveToolEvent,
   JarvisLiveToolResultEvent,
   JarvisLiveTranscriptEvent,
-  JarvisTranscriptAppendEvent,
   VoiceLogPayload,
 } from './voice-ipc';
 import type {
@@ -508,7 +506,6 @@ export interface NexusApi {
     liveStart(req?: JarvisLiveStartRequest): Promise<JarvisLiveState>;
     liveStop(): Promise<JarvisLiveState>;
     liveEndTurn(): Promise<JarvisLiveState>;
-    liveSmokeTest(req: JarvisLiveSmokeTestRequest): Promise<JarvisLiveState>;
     liveStatus(patch: JarvisLiveStatusPatch): Promise<JarvisLiveState>;
     liveTranscript(event: Omit<JarvisLiveTranscriptEvent, 'sessionId' | 'at'>): void;
     liveToolResult(event: Omit<JarvisLiveToolResultEvent, 'sessionId' | 'at'>): void;
@@ -527,7 +524,6 @@ export interface NexusApi {
     onNarrate(cb: (event: { text: string }) => void): Unsubscribe;
     onLiveState(cb: (state: JarvisLiveState) => void): Unsubscribe;
     onLiveTranscript(cb: (event: JarvisLiveTranscriptEvent) => void): Unsubscribe;
-    onTranscriptAppend(cb: (event: JarvisTranscriptAppendEvent) => void): Unsubscribe;
     onLiveToolCall(cb: (event: JarvisLiveToolEvent) => void): Unsubscribe;
     onLiveToolResult(cb: (event: JarvisLiveToolResultEvent) => void): Unsubscribe;
     onLiveInterrupted(cb: (event: JarvisLiveInterruptEvent) => void): Unsubscribe;
@@ -693,21 +689,6 @@ export interface NexusApi {
   };
   notes: NotesApi;
   pipes: PipeApi;
-  /** Fase 4 — Jarvis Agent: invoke MCP tools from the renderer through guardrails. */
-  mcp: {
-    invoke(
-      tool: string,
-      args: Record<string, unknown>,
-    ): Promise<{
-      ok: boolean;
-      tool: string;
-      result?: unknown;
-      error?: string;
-      denied?: boolean;
-      requiredConfirmation?: boolean;
-      confirmationReason?: string;
-    }>;
-  };
   /** Fase 5 — Jarvis Vision: screen capture + AX tree + OCR */
   vision: VisionApi;
   platform: NodeJS.Platform;

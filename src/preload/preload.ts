@@ -59,7 +59,6 @@ import type {
   JarvisLiveToolEvent,
   JarvisLiveToolResultEvent,
   JarvisLiveTranscriptEvent,
-  JarvisTranscriptAppendEvent,
   VoiceRuntimeInfo,
 } from '../shared/voice-ipc';
 import type {
@@ -159,7 +158,6 @@ ipcRenderer.on(VOICE_CHANNELS.narrate, (_e, event: { text: string }) =>
 const voiceInfoListeners = new Set<(info: VoiceRuntimeInfo) => void>();
 const liveStateListeners = new Set<(state: JarvisLiveState) => void>();
 const liveTranscriptListeners = new Set<(event: JarvisLiveTranscriptEvent) => void>();
-const transcriptAppendListeners = new Set<(event: JarvisTranscriptAppendEvent) => void>();
 const liveToolCallListeners = new Set<(event: JarvisLiveToolEvent) => void>();
 const liveToolResultListeners = new Set<(event: JarvisLiveToolResultEvent) => void>();
 const liveInterruptedListeners = new Set<(event: JarvisLiveInterruptEvent) => void>();
@@ -184,11 +182,6 @@ ipcRenderer.on(
   VOICE_CHANNELS.liveTranscript,
   (_event, event: JarvisLiveTranscriptEvent) =>
     liveTranscriptListeners.forEach((cb) => cb(event)),
-);
-ipcRenderer.on(
-  VOICE_CHANNELS.jarvisTranscriptAppend,
-  (_event, event: JarvisTranscriptAppendEvent) =>
-    transcriptAppendListeners.forEach((cb) => cb(event)),
 );
 ipcRenderer.on(VOICE_CHANNELS.liveToolCall, (_event, event: JarvisLiveToolEvent) =>
   liveToolCallListeners.forEach((cb) => cb(event)),
@@ -374,7 +367,6 @@ const api: NexusApi = {
     liveStart: (req) => ipcRenderer.invoke(VOICE_CHANNELS.liveStart, req ?? {}),
     liveStop: () => ipcRenderer.invoke(VOICE_CHANNELS.liveStop),
     liveEndTurn: () => ipcRenderer.invoke(VOICE_CHANNELS.liveEndTurn),
-    liveSmokeTest: (req) => ipcRenderer.invoke(VOICE_CHANNELS.liveSmokeTest, req),
     liveStatus: (patch) => ipcRenderer.invoke(VOICE_CHANNELS.liveStatus, patch),
     liveTranscript: (event) =>
       ipcRenderer.send(VOICE_CHANNELS.liveTranscriptIn, event),
@@ -396,7 +388,6 @@ const api: NexusApi = {
       addListener(narrateListeners, cb),
     onLiveState: (cb) => addListener(liveStateListeners, cb),
     onLiveTranscript: (cb) => addListener(liveTranscriptListeners, cb),
-    onTranscriptAppend: (cb) => addListener(transcriptAppendListeners, cb),
     onLiveToolCall: (cb) => addListener(liveToolCallListeners, cb),
     onLiveToolResult: (cb) => addListener(liveToolResultListeners, cb),
     onLiveInterrupted: (cb) => addListener(liveInterruptedListeners, cb),
@@ -605,11 +596,6 @@ const api: NexusApi = {
     removeMember: (accountId: string) =>
       ipcRenderer.invoke(TEAM_CHANNELS.remove, accountId),
     leave: () => ipcRenderer.invoke(TEAM_CHANNELS.leave),
-  },
-  // Fase 4 — Jarvis Agent: invoke MCP tools from the renderer through guardrails.
-  mcp: {
-    invoke: (tool: string, args: Record<string, unknown>) =>
-      ipcRenderer.invoke('mcp:invoke', { tool, args }),
   },
   // Fase 5 — Jarvis Vision: screen capture + AX tree + OCR
   vision: {
