@@ -35,6 +35,7 @@ function events(): LiveTransportEvents & { calls: Record<string, unknown[]> } {
     audioOut: [],
     transcript: [],
     interrupted: [],
+    turnComplete: [],
     stateChange: [],
     error: [],
   };
@@ -43,6 +44,7 @@ function events(): LiveTransportEvents & { calls: Record<string, unknown[]> } {
     onAudioOut: (b64) => calls.audioOut.push(b64),
     onTranscript: (role, text, final) => calls.transcript.push({ role, text, final }),
     onInterrupted: () => calls.interrupted.push(1),
+    onTurnComplete: () => calls.turnComplete.push(1),
     onStateChange: (state) => calls.stateChange.push(state),
     onError: (msg) => calls.error.push(msg),
   };
@@ -105,6 +107,11 @@ describe('parseServerMessage', () => {
 
     const done = parseServerMessage(JSON.stringify({ setupComplete: {} }));
     expect(done.setupComplete).toBe(true);
+
+    const turnDone = parseServerMessage(
+      JSON.stringify({ serverContent: { turnComplete: true } }),
+    );
+    expect(turnDone.turnComplete).toBe(true);
   });
 
   it('mensagem ilegível não explode', () => {
@@ -166,9 +173,11 @@ describe('GeminiLiveTransport', () => {
       }),
     );
     ws.fire('message', JSON.stringify({ serverContent: { interrupted: true } }));
+    ws.fire('message', JSON.stringify({ serverContent: { turnComplete: true } }));
     expect(ev.calls.audioOut).toEqual(['QUJD']);
     expect(ev.calls.transcript).toContainEqual({ role: 'assistant', text: 'oi', final: false });
     expect(ev.calls.interrupted).toHaveLength(1);
+    expect(ev.calls.turnComplete).toHaveLength(1);
   });
 
   it('envia contexto de tela como clientContent sem fechar o turno', () => {
@@ -181,6 +190,18 @@ describe('GeminiLiveTransport', () => {
     const last = JSON.parse(ws.sent.at(-1)!);
     expect(last.clientContent.turnComplete).toBe(false);
     expect(JSON.stringify(last)).toContain('3 panes');
+  });
+
+  it('envia texto como turno completo para smoke/fallback', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    t.sendTextTurn('teste jarvis');
+    const last = JSON.parse(ws.sent.at(-1)!);
+    expect(last.clientContent.turnComplete).toBe(true);
+    expect(JSON.stringify(last)).toContain('teste jarvis');
   });
 
   it('singleton: connect novo mata o socket anterior', () => {
@@ -207,5 +228,37 @@ describe('GeminiLiveTransport', () => {
     t.endUserTurn();
     const last = JSON.parse(ws.sent.at(-1)!);
     expect(last.realtimeInput.audioStreamEnd).toBe(true);
+  });
+
+  it('ignores an obsolete reconnect timer after a manual reconnect', async () => {
+    vi.useFakeTimers();
+    const ws1 = fakeWs();
+    const ws2 = fakeWs();
+    const ws3 = fakeWs();
+    const sockets = [ws1, ws2, ws3];
+    const ev = events();
+    let call = 0;
+    const t = new GeminiLiveTransport(ev, {
+      wsFactory: () => sockets[call++],
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws1.fire('open');
+    ws1.fire('message', JSON.stringify({ setupComplete: {} }));
+    ws1.fire('close');
+
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws2.fire('open');
+    ws2.fire('message', JSON.stringify({ setupComplete: {} }));
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(call).toBe(2);
+    expect(ws2.close).not.toHaveBeenCalled();
+    expect(t.isReady).toBe(true);
+    vi.useRealTimers();
   });
 });

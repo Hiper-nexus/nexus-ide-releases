@@ -27,6 +27,7 @@ export interface LiveTransportEvents {
   onAudioOut(b64: string): void;
   onTranscript(role: 'user' | 'assistant', text: string, final: boolean): void;
   onInterrupted(): void;
+  onTurnComplete?(): void;
   onStateChange(state: LiveTransportState): void;
   onError(message: string): void;
 }
@@ -157,7 +158,9 @@ export class GeminiLiveTransport {
   private pendingMic: string[] = [];
   private pendingMicBytes = 0;
   private setupTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
+  private connectionGeneration = 0;
   private lastOptions: LiveConnectOptions | null = null;
   private resumptionHandle: string | undefined;
   private closedByUs = false;
@@ -174,6 +177,7 @@ export class GeminiLiveTransport {
   connect(opts: LiveConnectOptions): void {
     // Singleton: nunca duas sessões (= duas vozes) vivas.
     this.teardown(true);
+    const generation = ++this.connectionGeneration;
     this.lastOptions = opts;
     this.closedByUs = false;
     this.setupDone = false;
@@ -192,6 +196,7 @@ export class GeminiLiveTransport {
     this.ws = ws;
 
     this.setupTimer = this.deps.setTimeoutFn(() => {
+      if (generation !== this.connectionGeneration) return;
       if (!this.setupDone) {
         this.events.onError('live: setup timeout (10s)');
         this.teardown(true);
@@ -200,6 +205,7 @@ export class GeminiLiveTransport {
     }, SETUP_TIMEOUT_MS);
 
     ws.on('open', () => {
+      if (generation !== this.connectionGeneration) return;
       ws.send(
         JSON.stringify(
           buildSetupMessage({
@@ -214,6 +220,7 @@ export class GeminiLiveTransport {
     });
 
     ws.on('message', (payload) => {
+      if (generation !== this.connectionGeneration) return;
       const raw =
         typeof payload === 'string'
           ? payload
@@ -224,6 +231,7 @@ export class GeminiLiveTransport {
     });
 
     ws.on('close', () => {
+      if (generation !== this.connectionGeneration) return;
       const wasReady = this.setupDone;
       this.setupDone = false;
       if (this.closedByUs) {
@@ -234,7 +242,10 @@ export class GeminiLiveTransport {
       if (wasReady && this.reconnectAttempts < MAX_RECONNECT_ATTEMPTS && this.lastOptions) {
         this.reconnectAttempts += 1;
         const delay = 500 * 2 ** this.reconnectAttempts;
-        this.deps.setTimeoutFn(() => {
+        this.clearReconnectTimer();
+        this.reconnectTimer = this.deps.setTimeoutFn(() => {
+          this.reconnectTimer = null;
+          if (generation !== this.connectionGeneration) return;
           if (!this.closedByUs && this.lastOptions) this.connect(this.lastOptions);
         }, delay);
       } else {
@@ -266,6 +277,7 @@ export class GeminiLiveTransport {
       this.events.onTranscript('assistant', msg.outputTranscription, false);
     }
     if (msg.interrupted) this.events.onInterrupted();
+    if (msg.turnComplete) this.events.onTurnComplete?.();
     if (msg.resumptionHandle) this.resumptionHandle = msg.resumptionHandle;
     if (msg.goAway && this.lastOptions) {
       // O servidor vai derrubar — reconectar preservando o handle de resume.
@@ -319,15 +331,39 @@ export class GeminiLiveTransport {
     );
   }
 
+  /** Entrada textual direta para smoke tests e fallback sem áudio. */
+  sendText(text: string): void {
+    this.sendTextTurn(text);
+  }
+
+  /** Text prompt into the live conversation, used by smoke tests and fallback. */
+  sendTextTurn(text: string): void {
+    if (!this.isReady || !this.ws) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    this.ws.send(
+      JSON.stringify({
+        clientContent: {
+          turns: [{ role: 'user', parts: [{ text: trimmed.slice(0, 4000) }] }],
+          turnComplete: true,
+        },
+      }),
+    );
+  }
+
   disconnect(): void {
     this.teardown(true);
     this.events.onStateChange('closed');
   }
 
   private teardown(markClosed: boolean): void {
-    if (markClosed) this.closedByUs = true;
+    if (markClosed) {
+      this.closedByUs = true;
+      this.connectionGeneration += 1;
+    }
     if (this.setupTimer) this.deps.clearTimeoutFn(this.setupTimer);
     this.setupTimer = null;
+    this.clearReconnectTimer();
     this.setupDone = false;
     if (this.ws) {
       try {
@@ -339,5 +375,11 @@ export class GeminiLiveTransport {
     }
     this.pendingMic = [];
     this.pendingMicBytes = 0;
+  }
+
+  private clearReconnectTimer(): void {
+    if (!this.reconnectTimer) return;
+    this.deps.clearTimeoutFn(this.reconnectTimer);
+    this.reconnectTimer = null;
   }
 }

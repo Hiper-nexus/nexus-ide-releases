@@ -116,6 +116,8 @@ function comboFromKeyboardEvent(
 export function VoiceSettings() {
   const open = useVoiceStore((s) => s.settingsOpen);
   const info = useVoiceStore((s) => s.info);
+  const liveState = useVoiceStore((s) => s.liveState);
+  const transcriptAppend = useVoiceStore((s) => s.transcriptAppend);
   const close = useVoiceStore((s) => s.closeSettings);
   const setInfo = useVoiceStore((s) => s.setInfo);
   const hudMode = useVoiceStore((s) => s.hud.mode);
@@ -188,7 +190,7 @@ export function VoiceSettings() {
     setTriggerAccel(info.shortcut);
     setWakeWordOn(info.wakeWordEnabled);
     setJarvisLiveOn(info.jarvisLive.enabled);
-    setLiveRealtime(info.jarvisLive.transport === 'gemini-live');
+    setLiveRealtime(info.jarvisLive.transport !== 'classic');
     setAssistantName(info.persona.assistantName);
     setUserName(info.persona.userName ?? '');
     setCustomInstructions(info.persona.customInstructions ?? '');
@@ -248,7 +250,7 @@ export function VoiceSettings() {
         pushToTalkKeyCode: normalizedKey,
         wakeWordEnabled: wakeWordOn,
         jarvisLiveEnabled: jarvisLiveOn,
-        jarvisLiveTransport: liveRealtime ? 'gemini-live' : 'classic',
+        jarvisLiveTransport: liveRealtime ? 'openai-realtime' : 'classic',
         personaAssistantName: assistantName.trim() || 'Jarvis',
         personaUserName: userName.trim(),
         personaCustomInstructions: customInstructions.trim(),
@@ -268,6 +270,7 @@ export function VoiceSettings() {
   // salvo e o botão "desmarcava" sozinho. (bug: "coloco live live e não fica").
   const persistLive = async (patch: {
     jarvisLiveEnabled?: boolean;
+    jarvisLiveTransport?: 'classic' | 'openai-realtime';
   }) => {
     try {
       const next = await window.nexus.voice.setConfig(patch);
@@ -279,7 +282,19 @@ export function VoiceSettings() {
 
   const toggleJarvisLive = (on: boolean) => {
     setJarvisLiveOn(on);
-    void persistLive({ jarvisLiveEnabled: on });
+    void persistLive({
+      jarvisLiveEnabled: on,
+      ...(on && liveRealtime ? { jarvisLiveTransport: 'openai-realtime' } : {}),
+    });
+  };
+
+  const toggleRealtime = (on: boolean) => {
+    setLiveRealtime(on);
+    if (on) setJarvisLiveOn(true);
+    void persistLive({
+      jarvisLiveEnabled: on ? true : jarvisLiveOn,
+      jarvisLiveTransport: on ? 'openai-realtime' : 'classic',
+    });
   };
 
   const testVoice = async () => {
@@ -324,6 +339,17 @@ export function VoiceSettings() {
         },
         history: [],
       };
+      if (jarvisLiveOn && liveRealtime) {
+        const state = await window.nexus.voice.liveSmokeTest({
+          text: req.transcript,
+        });
+        setTestResult(
+          state.realtimeReady
+            ? 'Realtime ativo: smoke enviado.'
+            : 'Realtime indisponível; verifique OPENAI_API_KEY.',
+        );
+        return;
+      }
       const reply = await window.nexus.voice.jarvis(req);
       if (reply.say.trim()) {
         const spoken = await window.nexus.voice.speak({
@@ -365,11 +391,14 @@ export function VoiceSettings() {
   const activeTts = info?.tts.active?.provider ?? info?.tts.chain[0]?.provider ?? 'system';
   const activeBrain =
     info?.jarvisBrain.active?.provider ?? info?.jarvisBrain.chain[0]?.provider ?? 'fallback';
-  const liveMode = jarvisLiveOn
-    ? liveRealtime
-      ? 'live realtime'
-      : 'live classic'
-    : 'push-to-talk';
+  const realtimeActive = Boolean(jarvisLiveOn && liveRealtime && liveState?.realtimeReady);
+  const liveMode = realtimeActive
+    ? 'Realtime ativo'
+    : jarvisLiveOn
+      ? liveRealtime
+        ? 'realtime conectando'
+        : 'live classic'
+      : 'push-to-talk';
   const wakeMode =
     wakeWordOn && info?.wakeLockHolderPid
       ? `wake word preso pelo PID ${info.wakeLockHolderPid}`
@@ -421,6 +450,23 @@ export function VoiceSettings() {
                 <strong>{liveMode}</strong>
               </span>
             </div>
+
+            {transcriptAppend.length > 0 && (
+              <section className="voice-settings__section" aria-label="Transcrição live">
+                <h4 className="voice-settings__section-title">Transcript</h4>
+                <div className="voice-settings__transcript-list">
+                  {transcriptAppend.slice(-6).map((line, index) => (
+                    <p
+                      className="voice-settings__transcript-line"
+                      key={`${line.ts}-${index}`}
+                    >
+                      <span>{line.role === 'user' ? 'Você' : 'Jarvis'}</span>
+                      <strong>{line.text}</strong>
+                    </p>
+                  ))}
+                </div>
+              </section>
+            )}
 
             <section className="voice-settings__section" aria-label="Pipeline de voz">
               <h4 className="voice-settings__section-title">Pipeline</h4>
@@ -618,16 +664,15 @@ export function VoiceSettings() {
                     <span>
                       <strong>Áudio realtime</strong>
                       <span>
-                        Temporariamente bloqueado: o Live atual usa o loop
-                        Classic, que executa ações no Nexus. O realtime ainda
-                        não dirige ferramentas com segurança.
+                        OpenAI Realtime
+                        {realtimeActive ? ' · ativo' : ' · standby'}
                       </span>
                     </span>
                     <input
                       type="checkbox"
-                      checked={false}
-                      disabled
-                      aria-label="Áudio realtime temporariamente indisponível"
+                      checked={liveRealtime}
+                      onChange={(e) => toggleRealtime(e.target.checked)}
+                      aria-label="Áudio realtime"
                     />
                   </label>
                 )}

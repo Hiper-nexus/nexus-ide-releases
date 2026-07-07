@@ -58,9 +58,7 @@ let hotkeyMode: HotkeyMode = 'toggle';
 function stableJarvisLiveTransport(
   transport: VoiceConfig['jarvisLive']['transport'],
 ): VoiceConfig['jarvisLive']['transport'] {
-  // Gemini Live currently speaks but does not drive Nexus actions/tools. Keep
-  // the action-capable Classic loop as the production Jarvis path.
-  return transport === 'gemini-live' ? 'classic' : transport;
+  return transport;
 }
 
 /** Env var present and non-empty. */
@@ -162,14 +160,6 @@ export function loadVoiceConfig(): VoiceConfig {
       userConfig.routing = 'jarvis';
       migrated = true;
       console.log('[voice] routing migrado para o modo JARVIS (assistente)');
-    }
-    if (userConfig.jarvisLive.transport === 'gemini-live') {
-      userConfig.jarvisLive = {
-        ...userConfig.jarvisLive,
-        transport: stableJarvisLiveTransport(userConfig.jarvisLive.transport),
-      };
-      migrated = true;
-      console.log('[voice] Jarvis Live realtime protegido → Classic action loop');
     }
     if (migrated) persist(userConfig);
     current = userConfig;

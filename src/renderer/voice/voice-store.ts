@@ -14,6 +14,7 @@ import type {
   JarvisLiveToolEvent,
   JarvisLiveToolResultEvent,
   JarvisLiveTranscriptEvent,
+  JarvisTranscriptAppendEvent,
   VoiceRuntimeInfo,
 } from '../../shared/voice-ipc';
 import type { MicHealth } from './wake-health';
@@ -47,6 +48,7 @@ interface VoiceStore {
   settingsOpen: boolean;
   liveState: JarvisLiveState | null;
   liveTranscript: JarvisLiveTranscriptEvent[];
+  transcriptAppend: JarvisTranscriptAppendEvent[];
   liveTool: JarvisLiveToolEvent | JarvisLiveToolResultEvent | null;
   liveInterrupted: JarvisLiveInterruptEvent | null;
   /** HUD da JARVIS: modo (expandida/mini/só-áudio), âncora e largura. */
@@ -62,6 +64,7 @@ interface VoiceStore {
   setMicHealth: (micHealth: MicHealth) => void;
   setLiveState: (state: JarvisLiveState) => void;
   addLiveTranscript: (event: JarvisLiveTranscriptEvent) => void;
+  addTranscriptAppend: (event: JarvisTranscriptAppendEvent) => void;
   setLiveTool: (event: JarvisLiveToolEvent | JarvisLiveToolResultEvent) => void;
   setLiveInterrupted: (event: JarvisLiveInterruptEvent) => void;
   setHudMode: (mode: HudMode) => void;
@@ -92,6 +95,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   settingsOpen: false,
   liveState: null,
   liveTranscript: [],
+  transcriptAppend: [],
   liveTool: null,
   liveInterrupted: null,
   hud: hudStorage ? loadHudPrefs(hudStorage) : { ...DEFAULT_HUD_PREFS },
@@ -108,6 +112,10 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   addLiveTranscript: (event) =>
     set((state) => ({
       liveTranscript: [...state.liveTranscript, event].slice(-12),
+    })),
+  addTranscriptAppend: (event) =>
+    set((state) => ({
+      transcriptAppend: [...state.transcriptAppend, event].slice(-20),
     })),
   setLiveTool: (liveTool) => set({ liveTool }),
   setLiveInterrupted: (liveInterrupted) => set({ liveInterrupted }),

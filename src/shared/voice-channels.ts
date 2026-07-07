@@ -39,6 +39,8 @@ export const VOICE_CHANNELS = {
   liveStop: 'voice:live.stop',
   /** invoke: renderer → main. End the current turn and keep the session dormant. */
   liveEndTurn: 'voice:live.endTurn',
+  /** invoke: renderer → main. Text smoke test through active realtime provider. */
+  liveSmokeTest: 'voice:live.smokeTest',
   /** invoke: renderer → main. Update the live phase (listening/thinking/...). */
   liveStatus: 'voice:live.status',
   /** send: renderer → main. Report a transcript line into the live session. */
@@ -69,6 +71,8 @@ export const VOICE_CHANNELS = {
   liveState: 'voice:live.state',
   /** event: main → renderer. Final/partial Jarvis Live transcript. */
   liveTranscript: 'voice:live.transcript',
+  /** event: main → renderer. Persisted Jarvis transcript JSONL line. */
+  jarvisTranscriptAppend: 'jarvis:transcript-append',
   /** event: main → renderer. Jarvis Live is about to execute a tool/action. */
   liveToolCall: 'voice:live.tool.call',
   /** event: main → renderer. Jarvis Live tool/action finished. */

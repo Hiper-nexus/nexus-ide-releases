@@ -83,13 +83,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 // Memória curta da conversa com a JARVIS (renderer-local, por janela).
 let jarvisHistory: JarvisTurn[] = [];
 const wakeMic = new WakeMic();
-// Player do áudio realtime (Gemini Live): só instanciado sob demanda.
+// Player do áudio realtime (OpenAI Realtime / Gemini Live): só instanciado sob demanda.
 let livePlayer: LiveAudioPlayer | null = null;
 function ensureLivePlayer(): LiveAudioPlayer {
   return (livePlayer ??= new LiveAudioPlayer());
 }
-// Decision is per utterance. Gemini Live is not action-capable yet, so the
-// production Jarvis path stays Classic: STT → Jarvis brain → app actions → TTS.
+// Decision is per utterance. Fase 3 keeps Nexus actions on the batch
+// STT -> brain -> action path; realtime action tools are enabled in Fase 4.
 let realtimeTurnActive = false;
 let jarvisLastTurnAt = 0;
 let wakeOpenInProgress = false;
@@ -112,13 +112,13 @@ function isJarvisLiveEnabled(): boolean {
   return Boolean(info?.jarvisLive.enabled && info.routing === 'jarvis');
 }
 
-/** Transporte realtime (áudio full-duplex Gemini Live) ligado? */
+/** Transporte realtime (áudio full-duplex OpenAI/Gemini) ligado? */
 function isRealtimeLive(): boolean {
   const info = useVoiceStore.getState().info;
   const liveState = useVoiceStore.getState().liveState;
   return Boolean(
     isJarvisLiveEnabled() &&
-      info?.jarvisLive.transport === 'gemini-live' &&
+      info?.jarvisLive.transport !== 'classic' &&
       liveState?.realtimeReady === true &&
       liveState.status !== 'error',
   );
@@ -431,6 +431,9 @@ export function useVoiceController(): void {
     const unsubLiveTranscript = window.nexus.voice.onLiveTranscript((event) => {
       useVoiceStore.getState().addLiveTranscript(event);
     });
+    const unsubTranscriptAppend = window.nexus.voice.onTranscriptAppend((event) => {
+      useVoiceStore.getState().addTranscriptAppend(event);
+    });
     const unsubLiveToolCall = window.nexus.voice.onLiveToolCall((event) => {
       useVoiceStore.getState().setLiveTool(event);
     });
@@ -442,7 +445,7 @@ export function useVoiceController(): void {
       // barge-in do servidor realtime: corta o áudio que está tocando.
       livePlayer?.stop();
     });
-    // Áudio realtime (Gemini Live TTS 24 kHz) → toca em fila contínua.
+    // Áudio realtime (provider TTS PCM 24 kHz) → toca em fila contínua.
     const unsubLiveAudio = window.nexus.voice.onLiveAudioOut((b64) => {
       ensureLivePlayer().play(b64);
     });
@@ -530,6 +533,7 @@ export function useVoiceController(): void {
       unsubNarrate();
       unsubLiveState();
       unsubLiveTranscript();
+      unsubTranscriptAppend();
       unsubLiveToolCall();
       unsubLiveToolResult();
       unsubLiveInterrupted();
@@ -583,9 +587,8 @@ async function finishAndProcess(
   busy.current = true;
   turnStartedAt = Date.now();
   try {
-    // Modo realtime: os frames já subiram ao vivo pelo tap do mic; aqui só
-    // fechamos o turno de fala. O transporte devolve STT+resposta+áudio; o
-    // pipeline batch (transcribe→brain→speak) NÃO roda.
+    // Modo realtime experimental: só roda quando a ponte de actions estiver
+    // explicitamente habilitada. Com a Fase 3 default, ações seguem pelo batch.
     if (realtimeTurnActive && isRealtimeLive()) {
       if (wakeMic.isUtteranceActive()) wakeMic.finishUtterance();
       liveEndTurn();
@@ -771,6 +774,11 @@ async function runJarvisTurn(
   }
 
   // Executa a ação decidida pelo cérebro.
+  //
+  // @deprecated Fase 4 — this switch will be replaced by MCP tool invocations
+  // through the mcp-bridge.ts IPC. The new path applies guardrails, permissions,
+  // and audit logging uniformly. Keep this switch working until Fase 3 lands
+  // and the realtime integration is complete.
   let sayText = reply.say;
   let toolResult: { tool: JarvisAction['type']; ok: boolean; summary: string } | null =
     reply.action.type === 'none'

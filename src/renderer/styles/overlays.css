@@ -701,3 +701,41 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Transcript persistente do Jarvis Live (fase3 realtime) */
+.voice-settings__transcript-list {
+  display: grid;
+  gap: 6px;
+}
+
+.voice-settings__transcript-line {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-sm);
+  background: rgba(6, 9, 15, 0.44);
+}
+
+.voice-settings__transcript-line span {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.voice-settings__transcript-line strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 520;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+

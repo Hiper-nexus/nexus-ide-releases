@@ -12,6 +12,10 @@ import type {
 } from '../../shared/voice-ipc';
 
 type Emit = (channel: string, payload?: unknown) => void;
+type TranscriptSink = (
+  sessionId: string,
+  line: Omit<JarvisLiveTranscriptEvent, 'sessionId' | 'at'>,
+) => void;
 
 function initialState(enabled = false): JarvisLiveState {
   return {
@@ -59,7 +63,11 @@ function actionSummary(action: JarvisAction): string {
 export class JarvisLiveSession {
   private state: JarvisLiveState = initialState(false);
 
-  constructor(private emit: Emit, private now: () => number = Date.now) {}
+  constructor(
+    private emit: Emit,
+    private now: () => number = Date.now,
+    private transcriptSink?: TranscriptSink,
+  ) {}
 
   getState(): JarvisLiveState {
     return { ...this.state };
@@ -157,6 +165,7 @@ export class JarvisLiveSession {
           ? this.state.turns + 1
           : this.state.turns,
     };
+    this.transcriptSink?.(sessionId, raw);
     this.emit(VOICE_CHANNELS.liveTranscript, event);
     this.broadcastState();
     return event;
