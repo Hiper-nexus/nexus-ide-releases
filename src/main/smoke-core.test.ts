@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createSmokeSettler, isSmokeTest, SMOKE_FLAG, smokeExitCode } from './smoke-core';
+import {
+  createSmokeSettler,
+  isSmokeTest,
+  shouldUseUserDataOverride,
+  SMOKE_FLAG,
+  smokeExitCode,
+} from './smoke-core';
 
 describe('isSmokeTest', () => {
   it('detects the flag anywhere in argv', () => {
@@ -28,6 +34,28 @@ describe('smokeExitCode', () => {
     expect(smokeExitCode('renderer-failed')).toBe(1);
     expect(smokeExitCode('uncaught-exception')).toBe(1);
     expect(smokeExitCode('timeout')).toBe(1);
+  });
+});
+
+describe('shouldUseUserDataOverride', () => {
+  it('keeps the dev override behavior for unpackaged runs', () => {
+    expect(shouldUseUserDataOverride(false, ['/path/electron'], '/tmp/nexus')).toBe(true);
+  });
+
+  it('allows isolated userData for packaged smoke tests', () => {
+    expect(
+      shouldUseUserDataOverride(true, ['/Applications/NexusIDE.app/Contents/MacOS/NexusIDE', SMOKE_FLAG], '/tmp/nexus'),
+    ).toBe(true);
+  });
+
+  it('ignores the override for normal packaged launches', () => {
+    expect(
+      shouldUseUserDataOverride(true, ['/Applications/NexusIDE.app/Contents/MacOS/NexusIDE'], '/tmp/nexus'),
+    ).toBe(false);
+  });
+
+  it('ignores empty overrides', () => {
+    expect(shouldUseUserDataOverride(false, ['/path/electron'], undefined)).toBe(false);
   });
 });
 

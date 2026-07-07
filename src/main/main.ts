@@ -2,12 +2,16 @@ import { app, BrowserWindow } from 'electron';
 import { resolveUserPath } from './path-resolver';
 import { createMainWindow } from './window';
 import { registerAuthProbeIpc } from './adapters/auth-probe';
+import { shouldUseUserDataOverride } from './smoke-core';
 
-// Sandbox de userData para smoke/testes (dev-only): redireciona SQLite,
-// layout, sessões e o single-instance lock para um diretório isolado — o
-// smoke roda com o app empacotado aberto em paralelo, sem tocar dados reais.
+// Sandbox de userData para dev/smoke: redireciona SQLite, layout, sessões e o
+// single-instance lock para um diretório isolado. Em app empacotado só vale
+// para `--smoke-test`; launches normais nunca obedecem env override.
 const userDataOverride = process.env.NEXUS_USER_DATA_DIR;
-if (!app.isPackaged && userDataOverride) {
+if (
+  userDataOverride &&
+  shouldUseUserDataOverride(app.isPackaged, process.argv, userDataOverride)
+) {
   app.setPath('userData', userDataOverride);
 }
 

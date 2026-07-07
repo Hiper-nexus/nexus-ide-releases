@@ -16,6 +16,15 @@ export function isSmokeTest(argv: readonly string[]): boolean {
   return argv.includes(SMOKE_FLAG);
 }
 
+export function shouldUseUserDataOverride(
+  isPackaged: boolean,
+  argv: readonly string[],
+  override: string | undefined,
+): boolean {
+  if (!override) return false;
+  return !isPackaged || isSmokeTest(argv);
+}
+
 export function smokeExitCode(event: SmokeEvent): 0 | 1 {
   return event === 'renderer-loaded' ? 0 : 1;
 }

@@ -11,12 +11,16 @@
     "server"
   ],
   "scripts": {
-    "prepackage": "node scripts/check-build-node.mjs",
+    "prepackage": "node scripts/check-build-node.mjs && npm run rebuild:electron",
+    "postpackage": "npm run rebuild:node",
     "start": "electron-forge start",
     "package": "electron-forge package",
-    "premake": "node scripts/check-build-node.mjs",
+    "premake": "node scripts/check-build-node.mjs && npm run rebuild:electron",
+    "postmake": "npm run rebuild:node",
     "make": "electron-forge make",
-    "rebuild": "electron-rebuild -f -w @lydell/node-pty -w better-sqlite3",
+    "rebuild": "npm run rebuild:electron",
+    "rebuild:electron": "electron-rebuild -f -w @lydell/node-pty -w better-sqlite3",
+    "rebuild:node": "npm rebuild better-sqlite3",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
