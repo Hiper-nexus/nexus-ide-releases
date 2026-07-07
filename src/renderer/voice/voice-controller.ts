@@ -39,7 +39,7 @@ import type {
 const RESPONSE_QUIET_MS = 1_500; // speak once the pane has been quiet this long
 const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
 const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
-const REALTIME_ACTION_BRIDGE_ENABLED = true;
+const REALTIME_ACTION_BRIDGE_ENABLED = false;
 const WAKE_ACK_SUPPRESS_MS = 1_500;
 const WAKE_ACK_TAIL_GUARD_MS = 180;
 const WAKE_SILENCE_MS = 700; // wake-word capture: quiet time that ends the utterance
@@ -88,8 +88,8 @@ let livePlayer: LiveAudioPlayer | null = null;
 function ensureLivePlayer(): LiveAudioPlayer {
   return (livePlayer ??= new LiveAudioPlayer());
 }
-// Decision is per utterance. Fase 3 enables speech-to-speech realtime; tool
-// execution still goes through the existing live action events until Fase 4.
+// Decision is per utterance. Fase 3 keeps Nexus actions on the batch
+// STT -> brain -> action path; realtime action tools are enabled in Fase 4.
 let realtimeTurnActive = false;
 let jarvisLastTurnAt = 0;
 let wakeOpenInProgress = false;
@@ -587,9 +587,8 @@ async function finishAndProcess(
   busy.current = true;
   turnStartedAt = Date.now();
   try {
-    // Modo realtime: os frames já subiram ao vivo pelo tap do mic; aqui só
-    // fechamos o turno de fala. O transporte devolve STT+resposta+áudio; o
-    // pipeline batch (transcribe→brain→speak) NÃO roda.
+    // Modo realtime experimental: só roda quando a ponte de actions estiver
+    // explicitamente habilitada. Com a Fase 3 default, ações seguem pelo batch.
     if (realtimeTurnActive && isRealtimeLive()) {
       if (wakeMic.isUtteranceActive()) wakeMic.finishUtterance();
       liveEndTurn();
