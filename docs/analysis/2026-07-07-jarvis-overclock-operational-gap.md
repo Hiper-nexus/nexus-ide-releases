@@ -64,7 +64,9 @@ cada turno como uma captura batch curta.
 Estado local relevante:
 
 - `jarvisLive.transport = "classic"` no config do usuario.
-- `REALTIME_ACTION_BRIDGE_ENABLED = false` no renderer.
+- `REALTIME_ACTION_BRIDGE_ENABLED` agora esta ativo no renderer como ponte
+  hibrida: o realtime acelera audio/transcript, mas a execucao de actions volta
+  ao executor Classic/MCP auditavel.
 - STT: Groq Whisper batch.
 - TTS: OpenAI `gpt-4o-mini-tts` voz `nova`.
 - Wake: openWakeWord local, threshold baixo para sensibilidade.
@@ -76,7 +78,7 @@ Principais gaps:
 |---|---|---|---|
 | Fala colada ao wake | buffer pendente/pre-roll | captura comecava pos-wake | perder comando |
 | Ack/eco | filtro por spoken similarity | TTS echo existe, mas wake ack podia entrar | auto-conversa |
-| Tools live | function declarations | bridge realtime desligado | realtime conversa, nao age |
+| Tools live | function declarations | bridge transcript -> Classic/MCP | ainda sem tool-calling nativo |
 | Persona | voz/nome pinados | persona existe, mas fast-path seco | nem sempre chama "patrao" |
 | Latencia | live streaming | STT batch + brain + TTS | turnos de segundos |
 
@@ -126,10 +128,13 @@ npm run typecheck
 
 Ainda nao esta fechado:
 
-1. `REALTIME_ACTION_BRIDGE_ENABLED = false`. A rota realtime ainda nao deve
-   prometer execucao de acoes.
-2. O MCP bridge de voz nao e o executor unico das actions. O Nexus ja tem tools
-   MCP ricas, mas a Jarvis Classic ainda usa action schema pequeno.
+1. A rota realtime agora pode operar em modo hibrido: transcript live entra
+   rapido, a resposta de audio live e suprimida no turno de action, e a action
+   roda pelo executor Classic/MCP. Ainda nao e paridade total com Overclock,
+   porque OpenAI/Gemini Live ainda nao chamam tools nativas diretamente.
+2. O executor de voz ja centraliza actions em `jarvis-action-executor.ts` e usa
+   MCP para `mcp_tool`, `run_command`, `send_to_pane` e fechamento de pane. UI
+   local continua correta para abrir terminal, workspaces, wizards e squads.
 3. Latencia sub-2s depende de evitar LLM nos comandos simples. O fast-path cobre
    `abrir terminal` e `que horas sao`, mas perguntas abertas continuam batch.
 4. Notarizacao depende de credenciais Apple (`APPLE_TEAM_ID`, `APPLE_ID` e
@@ -166,3 +171,77 @@ Realtime transcript/tool call
 
 Enquanto isso nao for concluido, o modo recomendado para usuario final e o
 Classic com fast-paths agressivos para comandos frequentes.
+
+## Rodada 2 — sessao paralela (anti-surdez + MCP + Overclock pendingMic)
+
+Apos o hotfix de pre-roll/ack, outra sessao atacou os sintomas que ainda
+faziam a Jarvis parecer surda ou limitada:
+
+| Sintoma | Causa | Fix |
+|---|---|---|
+| Loop "nao entendi" | `jarvisLive.enabled` reabria mic apos toda fala | `jarvis-reply-loop.ts`: so reabre com `expectReply` |
+| Surda apos wake | Turno preso + `await liveStart` antes do mic | Barge-in no wake + mic antes de `liveStart` |
+| Fala perdida no ack | Escuta so depois do TTS "Pois nao?" | `beginListening` antes do ack (paralelo) |
+| So 10 acoes | Schema fechado no renderer | `mcp_tool` + `jarvis-action-executor.ts` via MCP bridge |
+| Eco da propria voz | Transcript do TTS reentrando | `recordEcho`, filtro `JARVIS_SELF_ECHO`, anti-loop |
+
+Padrao Overclock `pendingMic` portado para Classic:
+
+- `beginUtterance()` dispara **antes** de `liveStart` (nao bloqueia mais a captura).
+- Pre-roll 2,5s + `stripWakeAckEcho` da rodada 1 continuam valendo.
+- `cancelUtterance()` no barge-in: novo "Hey Jarvis" sempre retoma.
+
+Arquivos adicionais desta rodada:
+
+- `src/renderer/voice/jarvis-reply-loop.ts`
+- `src/renderer/voice/jarvis-action-executor.ts`
+- `src/renderer/services/mcp-bridge.ts` (expandido)
+- `src/main/voice/jarvis-tool-catalog.ts`
+- `src/shared/voice-ipc.ts` (`mcp_tool`, `recordEcho`)
+
+Gap remanescente atualizado:
+
+1. Realtime ainda sem `functionDeclarations`/native tool calls no provider.
+2. Classic/hibrido ja pode invocar qualquer tool `nexus_*` via `mcp_tool` no
+   brain e passa por executor central.
+3. Paridade total Overclock = live full-duplex **com** tools no provider
+   OpenAI/Gemini.
+
+## Rodada 3 — Jarvis app-aware, clicavel e prompt de agente em ingles
+
+Esta rodada fecha parte importante da sensacao "ela domina o app":
+
+- Clique na pill/HUD da JARVIS agora acorda a assistente usando o mesmo caminho
+  do wake word: barge-in, ack e captura hands-free. Option/Command-click ou
+  clique direito no botao de voz abre ajustes.
+- A HUD fica visivel como pill pequena quando a voz esta pronta, sem ocupar o
+  canvas inteiro.
+- O contexto enviado ao brain agora inclui tipo do pane focado e URL quando o
+  pane e browser.
+- Fast-paths respondem sem LLM: "qual pane esta focado?", "qual pagina
+  estamos?" e "onde estamos?".
+- O prompt do brain reforca que `send_to_pane.action.text` deve ser um prompt
+  de engenharia em ingles, mesmo quando o usuario dita em portugues.
+- `open_terminal` ficou no caminho UI direto (`addShellPane()` + espera de
+  sessao), porque `nexus_pane_spawn` e ferramenta de agente/worker, nao de
+  shell simples. Isso evita "falou que abriu, mas nao abriu".
+
+Validacao da rodada:
+
+```bash
+npm run typecheck
+npx vitest run src/main/voice/jarvis-fastpath.test.ts \
+  src/main/voice/jarvis-brain.test.ts \
+  src/renderer/services/mcp-bridge.test.ts \
+  src/renderer/lib/canvas-layout.test.ts \
+  src/renderer/components/operator-sprite-data.test.ts \
+  src/main/voice/jarvis-action-fastpath.test.ts \
+  src/main/voice/jarvis-live.test.ts \
+  src/main/voice/live-transport-controller.test.ts \
+  src/renderer/voice/jarvis-reply-loop.test.ts \
+  src/renderer/voice/transcript-filter.test.ts \
+  src/main/jarvis/realtime/openai-realtime.test.ts \
+  src/main/voice/gemini-live-transport.test.ts
+```
+
+Resultado: 12 arquivos, 85 testes, todos passando.
