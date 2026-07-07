@@ -11,6 +11,56 @@ import { resolveWorkspaceCwd } from './workspace-path';
 const activeProcesses = new Map<string, ChildProcess>();
 let processCounter = 0;
 
+const SAFE_ENV_KEYS = new Set(['PATH', 'HOME', 'LANG', 'USER', 'SHELL']);
+const DEFAULT_TIMEOUT_MS = 60_000;
+const MAX_TIMEOUT_MS = 300_000;
+const OUTPUT_CAP_BYTES = 1024 * 1024;
+const OUTPUT_TRUNCATED_MARKER = '\n...[TRUNCATED: output exceeded 1048576 bytes]';
+
+interface OutputBuffer {
+  value: string;
+  bytes: number;
+  truncated: boolean;
+}
+
+function sanitizeEnv(extraEnv: unknown): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of SAFE_ENV_KEYS) {
+    const value = process.env[key];
+    if (typeof value === 'string') env[key] = value;
+  }
+  if (extraEnv && typeof extraEnv === 'object' && !Array.isArray(extraEnv)) {
+    for (const [key, value] of Object.entries(extraEnv as Record<string, unknown>)) {
+      if (SAFE_ENV_KEYS.has(key) && typeof value === 'string') {
+        env[key] = value;
+      }
+    }
+  }
+  return env;
+}
+
+function appendOutput(buffer: OutputBuffer, chunk: Buffer | string): void {
+  if (buffer.truncated) return;
+  const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+  const remaining = OUTPUT_CAP_BYTES - buffer.bytes;
+  if (bytes.length <= remaining) {
+    buffer.value += bytes.toString();
+    buffer.bytes += bytes.length;
+    return;
+  }
+  if (remaining > 0) {
+    buffer.value += bytes.subarray(0, remaining).toString();
+    buffer.bytes = OUTPUT_CAP_BYTES;
+  }
+  buffer.value += OUTPUT_TRUNCATED_MARKER;
+  buffer.truncated = true;
+}
+
+function boundedTimeout(raw: unknown): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return DEFAULT_TIMEOUT_MS;
+  return Math.min(Math.max(1, Math.floor(raw)), MAX_TIMEOUT_MS);
+}
+
 const terminalRun: McpToolDef = {
   name: 'nexus_terminal_run',
   description:
@@ -31,7 +81,7 @@ const terminalRun: McpToolDef = {
       },
       timeoutMs: {
         type: 'number',
-        description: 'Timeout in milliseconds (default: 30000, max: 300000)',
+        description: 'Timeout in milliseconds (default: 60000, max: 300000)',
       },
       env: {
         type: 'object',
@@ -43,11 +93,8 @@ const terminalRun: McpToolDef = {
   handler: async (args) => {
     const command = requireStr(args, 'command');
     const cwd = resolveWorkspaceCwd(str(args, 'cwd'));
-    const timeoutMs = Math.min(
-      typeof args.timeoutMs === 'number' ? args.timeoutMs : 30000,
-      300_000,
-    );
-    const extraEnv = (args.env as Record<string, string> | undefined) ?? {};
+    const timeoutMs = boundedTimeout(args.timeoutMs);
+    const env = sanitizeEnv(args.env);
 
     return new Promise<{
       exitCode: number | null;
@@ -58,15 +105,15 @@ const terminalRun: McpToolDef = {
       const proc = exec(command, {
         cwd,
         timeout: timeoutMs,
-        env: { ...process.env, ...extraEnv },
-        maxBuffer: 10 * 1024 * 1024, // 10 MB
+        env,
+        maxBuffer: OUTPUT_CAP_BYTES,
       });
 
       const id = String(++processCounter);
       activeProcesses.set(id, proc);
 
-      let stdout = '';
-      let stderr = '';
+      const stdout: OutputBuffer = { value: '', bytes: 0, truncated: false };
+      const stderr: OutputBuffer = { value: '', bytes: 0, truncated: false };
       let killed = false;
 
       const timer = setTimeout(() => {
@@ -81,10 +128,10 @@ const terminalRun: McpToolDef = {
       }, timeoutMs);
 
       proc.stdout?.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString();
+        appendOutput(stdout, chunk);
       });
       proc.stderr?.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString();
+        appendOutput(stderr, chunk);
       });
 
       proc.on('close', (code) => {
@@ -92,8 +139,8 @@ const terminalRun: McpToolDef = {
         activeProcesses.delete(id);
         resolve({
           exitCode: code,
-          stdout: stdout.slice(-100_000), // Truncate to 100KB
-          stderr: stderr.slice(-100_000),
+          stdout: stdout.value,
+          stderr: stderr.value,
           killed,
         });
       });

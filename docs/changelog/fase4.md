@@ -16,3 +16,6 @@
 - Added regression coverage for destructive command confirmation, force-push
   confirmation, audit persistence, scoped permissions, workspace path escape,
   cwd escape, and git argument injection.
+- Kept the realtime voice action bridge disabled for v1.0.0. Voice-to-MCP
+  execution remains deferred to F4.x/F6.2 so the existing F3 blocker fix stays
+  in place until a complete confirmation/audit integration lands.
