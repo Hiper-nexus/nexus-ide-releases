@@ -20,6 +20,11 @@ import { PixelIcon } from '../PixelIcon';
 import { AccountSection } from './AccountSection';
 import { MediaSection } from './MediaSection';
 import {
+  AuditSection,
+  DiagnosticsSection,
+  VisionSection,
+} from './ObservabilitySections';
+import {
   AgentsSection,
   HooksSection,
   LlmsSection,
@@ -156,6 +161,9 @@ export function SettingsDrawer() {
           {section === 'system' && <SystemSection />}
           {section === 'terminal' && <TerminalSection />}
           {section === 'voice' && <VoiceSection onNavigate={close} />}
+          {section === 'vision' && <VisionSection />}
+          {section === 'diagnostics' && <DiagnosticsSection />}
+          {section === 'audit' && <AuditSection />}
           {section === 'media' && <MediaSection />}
           {section === 'providers' && <ProvidersPanel />}
           {section === 'squads' && <SquadsSection onNavigate={close} />}

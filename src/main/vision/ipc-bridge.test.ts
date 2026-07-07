@@ -167,4 +167,22 @@ describe('registerVisionIpc', () => {
       sourceId: 'window:nexus:1',
     });
   });
+
+  it('invalidates the consent token immediately when cloud image consent is disabled', async () => {
+    registerTestIpc();
+    const consent = await invoke<{ consentToken: string }>(
+      VISION_CHANNELS.setImageConsent,
+      { allowCloudImage: true },
+    );
+    await invoke(VISION_CHANNELS.capture);
+
+    await expect(
+      invoke(VISION_CHANNELS.setImageConsent, { allowCloudImage: false }),
+    ).resolves.toEqual({ allowCloudImage: false, consentToken: null });
+    await expect(
+      invoke(VISION_CHANNELS.getImage, {
+        consentToken: consent.consentToken,
+      }),
+    ).resolves.toEqual({ error: 'consent_required' });
+  });
 });

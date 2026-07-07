@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ScreenCaptureMetadata } from '../../shared/vision-ipc';
 import { VisionIndicator } from './VisionIndicator';
+import { useVisionConsentStore } from '../state/vision-consent-store';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,6 +42,13 @@ describe('VisionIndicator', () => {
   afterEach(() => {
     vi.useRealTimers();
     Reflect.deleteProperty(window, 'nexus');
+    useVisionConsentStore.setState({
+      allowCloudImage: false,
+      consentToken: null,
+      pending: false,
+      error: null,
+      lastCapture: null,
+    });
     document.body.innerHTML = '';
   });
 
@@ -88,5 +96,25 @@ describe('VisionIndicator', () => {
       root.unmount();
     });
     expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it('stays visible while cloud image consent is active', () => {
+    setVisionApi(() => vi.fn());
+    useVisionConsentStore.setState({
+      allowCloudImage: true,
+      consentToken: 'token',
+    });
+
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    act(() => {
+      root.render(<VisionIndicator />);
+    });
+
+    expect(host.textContent).toContain('Vision consent');
+
+    act(() => {
+      root.unmount();
+    });
   });
 });

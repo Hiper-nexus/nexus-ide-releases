@@ -107,6 +107,7 @@ import { registerRemoteIpc } from './remote/remote-ipc';
 import { registerMediaIpc } from './media/media-ipc';
 import { registerGamificationIpc } from './gamification/gamification-ipc';
 import { registerMcpIpc } from './jarvis/mcp-ipc';
+import { registerOpsIpc } from './ops/ops-ipc';
 import { closeAuditLog } from './jarvis/audit-log';
 import {
   initGamificationService,
@@ -153,6 +154,7 @@ function bootstrap(): void {
   registerMediaIpc();
   registerGamificationIpc();
   registerMcpIpc();
+  registerOpsIpc();
   // Telemetria REAL de tokens (transcript watchers → SQLite). Convive com o
   // cost-tracker heurístico: a UI prefere o real quando ele existe.
   initUsageTelemetry();

@@ -9,6 +9,7 @@ import {
   WINDOW_CHANNELS,
   TEAM_CHANNELS,
 } from '../shared/channels';
+import { OPS_CHANNELS } from '../shared/ops-ipc';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { VISION_CHANNELS } from '../shared/vision-ipc';
 import type { ScreenCaptureMetadata } from '../shared/vision-ipc';
@@ -581,6 +582,10 @@ const api: NexusApi = {
     confirm: (tool: string, args: Record<string, unknown> = {}) =>
       ipcRenderer.invoke(MCP_CHANNELS.confirm, { tool, args }),
     clearSession: () => ipcRenderer.invoke(MCP_CHANNELS.clearSession),
+  },
+  ops: {
+    auditLog: (limit?: number) => ipcRenderer.invoke(OPS_CHANNELS.auditLog, limit),
+    releaseReadiness: () => ipcRenderer.invoke(OPS_CHANNELS.releaseReadiness),
   },
   media: {
     listProviders: () => ipcRenderer.invoke(MEDIA_CHANNELS.listProviders),
