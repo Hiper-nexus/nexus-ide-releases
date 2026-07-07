@@ -77,6 +77,8 @@ const config: ForgeConfig = {
       CFBundleDisplayName: 'NexusIDE',
       NSMicrophoneUsageDescription:
         'NexusIDE uses the microphone for push-to-talk voice commands (Jarvis mode).',
+      NSScreenCaptureUsageDescription:
+        'NexusIDE uses screen capture to give Jarvis visual context of your workspace.',
       CFBundleURLTypes: [
         {
           CFBundleURLName: 'com.nexuside.app',

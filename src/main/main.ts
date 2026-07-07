@@ -45,6 +45,8 @@ import { registerPerfIpc } from './perf/perf-ipc';
 import { registerLayoutIpc } from './persistence/layout-ipc';
 import { registerAdapterIpc } from './adapters/adapter-ipc';
 import { registerVoiceIpc, closeVoiceIpc } from './voice/voice-ipc';
+import { registerMcpIpc } from './jarvis/mcp-ipc';
+import { registerVisionIpc } from './vision/ipc-bridge';
 import {
   initAdapterRegistry,
   registerAdapterListener,
@@ -138,6 +140,8 @@ function bootstrap(): void {
   registerLayoutIpc();
   registerAdapterIpc();
   registerVoiceIpc();
+  registerMcpIpc();
+  registerVisionIpc();
   registerOrchIpc();
   registerSettingsIpc();
   registerAuthProbeIpc();
