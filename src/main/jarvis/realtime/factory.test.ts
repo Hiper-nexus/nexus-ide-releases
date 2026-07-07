@@ -127,4 +127,30 @@ describe('createRealtimeProvider', () => {
     ).toEqual(['openai', 'gemini']);
     vi.doUnmock('../../voice/voice-secrets');
   });
+
+  it('adds a safe OpenAI voice retry before the secondary realtime provider', async () => {
+    vi.resetModules();
+    vi.doMock('../../voice/voice-secrets', () => ({
+      resolveVoiceApiKey: (envVar: string) =>
+        envVar === 'OPENAI_API_KEY' || envVar === 'GEMINI_API_KEY'
+          ? `${envVar}-value`
+          : undefined,
+    }));
+    const { createRealtimeProviderCandidates } = await import('./factory');
+    const config = {
+      ...DEFAULT_VOICE_CONFIG,
+      jarvisLive: {
+        ...DEFAULT_VOICE_CONFIG.jarvisLive,
+        transport: 'openai-realtime' as const,
+        openaiVoice: 'nova',
+      },
+    };
+
+    expect(
+      createRealtimeProviderCandidates({ config, instructions: 'You are Jarvis.' }).map(
+        (candidate) => candidate.id,
+      ),
+    ).toEqual(['openai', 'openai', 'gemini']);
+    vi.doUnmock('../../voice/voice-secrets');
+  });
 });

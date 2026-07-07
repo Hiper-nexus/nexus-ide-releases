@@ -45,6 +45,7 @@ import type { AutoStopOptions } from './voice-capture';
 import type {
   JarvisLiveTranscriptEvent,
   JarvisTurn,
+  SpeakResult,
   VoiceRuntimeInfo,
 } from '../../shared/voice-ipc';
 
@@ -61,7 +62,7 @@ const RESPONSE_QUIET_MS = 1_500; // speak once the pane has been quiet this long
 const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
 const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
 const REALTIME_ACTION_BRIDGE_ENABLED = true;
-const REALTIME_TRANSCRIPT_WAIT_MS = 4_500;
+const REALTIME_TRANSCRIPT_WAIT_MS = 1_800;
 const WAKE_ACK_SUPPRESS_MS = 1_500;
 const WAKE_PREROLL_MS = 2_500;
 const WAKE_SILENCE_MS = 700; // wake-word capture: quiet time that ends the utterance
@@ -144,6 +145,18 @@ function isRealtimeLive(): boolean {
   );
 }
 
+function hasCredential(info: VoiceRuntimeInfo | null | undefined, envVar: string): boolean {
+  return Boolean(
+    info?.keys.some((key) => key.envVar === envVar && (key.hasEnv || key.hasStoredKey)),
+  );
+}
+
+function canAttemptRealtime(info: VoiceRuntimeInfo | null | undefined): boolean {
+  if (!info?.jarvisLive.enabled || info.jarvisLive.transport === 'classic') return false;
+  if (info.jarvisLive.transport === 'gemini-live') return hasCredential(info, 'GEMINI_API_KEY');
+  return hasCredential(info, 'OPENAI_API_KEY') || hasCredential(info, 'GEMINI_API_KEY');
+}
+
 function shouldStreamToRealtime(): boolean {
   const info = useVoiceStore.getState().info;
   const liveState = useVoiceStore.getState().liveState;
@@ -151,6 +164,7 @@ function shouldStreamToRealtime(): boolean {
     realtimeTurnActive &&
       isJarvisLiveEnabled() &&
       info?.jarvisLive.transport !== 'classic' &&
+      canAttemptRealtime(info) &&
       liveState?.status !== 'error',
   );
 }
@@ -174,6 +188,32 @@ function waitForRealtimeTranscript(timeoutMs = REALTIME_TRANSCRIPT_WAIT_MS): Pro
     }, timeoutMs);
     pendingRealtimeTranscript = { resolve, timer };
   });
+}
+
+function normalizeVoiceCommand(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}\s._/-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function shouldUseClassicActionBridge(transcript: string): boolean {
+  const t = normalizeVoiceCommand(transcript);
+  if (!t) return false;
+  return (
+    /\b(abre|abra|abrir|fecha|feche|fechar|cria|crie|criar|novo|nova|inicia|inicie|iniciar|sobe|suba|liga|ligue|monta|monte|montar|roda|rode|rodar|executa|execute|executar|manda|mande|mandar|envia|envie|enviar|corrige|corrija|conserta|conserte|implementa|implemente|edita|edite|salva|salve|instala|instale|mata|mate|para|pare|retoma|retome)\b/.test(
+      t,
+    ) ||
+    /\b(terminal|shell|console|pane|painel|pagina|url|site|browser|canvas|workspace|projeto|squad|missao|missoes|orquestrador|board|quadro|git|arquivo|pasta|comando|npm|teste|testes|build|status)\b/.test(
+      t,
+    ) ||
+    /\b(que horas sao|hora certa|onde estamos|onde eu estou|qual tela|qual pagina|qual pane)\b/.test(
+      t,
+    )
+  );
 }
 
 function onRealtimeTranscriptForActionBridge(event: JarvisLiveTranscriptEvent): void {
@@ -429,9 +469,20 @@ export function useVoiceController(): void {
     });
     const unsubLiveState = window.nexus.voice.onLiveState((state) => {
       useVoiceStore.getState().setLiveState(state);
+      if (state.status === 'speaking') {
+        useVoiceStore.getState().setStatus('speaking');
+      } else if (state.status === 'dormant') {
+        useVoiceStore.getState().setStatus('idle');
+      } else if (state.status === 'error' && state.error) {
+        useVoiceStore.getState().setNote(state.error);
+      }
     });
     const unsubLiveTranscript = window.nexus.voice.onLiveTranscript((event) => {
       useVoiceStore.getState().addLiveTranscript(event);
+      if (event.role === 'assistant' && event.final && event.text.trim()) {
+        useVoiceStore.getState().setSpoken(event.text.trim());
+        void window.nexus.voice.recordEcho(event.text).catch(() => {});
+      }
       onRealtimeTranscriptForActionBridge(event);
     });
     const unsubTranscriptAppend = window.nexus.voice.onTranscriptAppend((event) => {
@@ -451,6 +502,8 @@ export function useVoiceController(): void {
     // Áudio realtime (provider TTS PCM 24 kHz) → toca em fila contínua.
     const unsubLiveAudio = window.nexus.voice.onLiveAudioOut((b64) => {
       if (suppressRealtimeAudioOut) return;
+      useVoiceStore.getState().setStatus('speaking');
+      wakeMic.suppressWakeDetection(1_200);
       ensureLivePlayer().play(b64);
     });
     // Espelha o mic para o transporte realtime enquanto o comando é falado.
@@ -566,9 +619,12 @@ async function beginListening(
     if (isJarvisLiveEnabled()) {
       const info = useVoiceStore.getState().info;
       realtimeTurnActive =
-        REALTIME_ACTION_BRIDGE_ENABLED && info?.jarvisLive.transport !== 'classic';
+        REALTIME_ACTION_BRIDGE_ENABLED && canAttemptRealtime(info);
+      const liveContext = currentScreenSnapshot().context;
       void window.nexus.voice.liveStart({ reason }).then((state) => {
         store.setLiveState(state);
+        if (!state.realtimeReady) realtimeTurnActive = false;
+        if (state.realtimeReady) window.nexus.voice.liveContextIn(liveContext);
       }).catch((err) => {
         realtimeTurnActive = false;
         console.warn('[voice] liveStart falhou (classic segue):', errMsg(err));
@@ -623,16 +679,10 @@ async function finishAndProcess(
       const tRealtime = Date.now();
       store.setStatus('transcribing');
       liveStatus('thinking');
-      suppressRealtimeAudioOut = true;
+      suppressRealtimeAudioOut = false;
       liveEndTurn();
       const liveTranscript = await waitForRealtimeTranscript();
       if (liveTranscript) {
-        // The realtime model may start speaking after endTurn. For the action
-        // bridge, Classic/MCP owns the response, so cancel provider audio first.
-        livePlayer?.stop();
-        stopAllPlayback();
-        void window.nexus.voice.liveInterrupt('classic-action-bridge').catch(() => {});
-        realtimeTurnActive = false;
         const transcript =
           activeCaptureReason === 'wake'
             ? stripWakeAckEcho(liveTranscript, personaUserName())
@@ -640,7 +690,7 @@ async function finishAndProcess(
         if (!transcript) {
           console.log(`[voice] realtime transcript descartado como eco wake: "${liveTranscript}"`);
           store.setStatus('idle');
-          liveEndTurn();
+          void window.nexus.voice.liveInterrupt('empty-transcript').catch(() => {});
           return;
         }
         const inConversation =
@@ -648,7 +698,7 @@ async function finishAndProcess(
         if (isDiscardableTranscript(transcript, { inConversation })) {
           console.log(`[voice] realtime transcript lixo descartado: "${transcript}"`);
           store.setStatus('idle');
-          liveEndTurn();
+          void window.nexus.voice.liveInterrupt('discarded-transcript').catch(() => {});
           return;
         }
         store.setTranscript(transcript);
@@ -657,12 +707,26 @@ async function finishAndProcess(
         console.log(
           `[voice] realtime transcript (${Date.now() - tRealtime}ms): "${transcript}"`,
         );
-        await runJarvisTurn(transcript, capture, busy);
+        if (shouldUseClassicActionBridge(transcript)) {
+          // Action/app-control turns belong to the audited Classic/MCP executor.
+          // Stop any provider speech that may have started and reply once via
+          // the normal Jarvis voice path.
+          suppressRealtimeAudioOut = true;
+          livePlayer?.stop();
+          stopAllPlayback();
+          void window.nexus.voice.liveInterrupt('classic-action-bridge').catch(() => {});
+          realtimeTurnActive = false;
+          await runJarvisTurn(transcript, capture, busy);
+          return;
+        }
+        console.log('[voice] realtime owns conversational response');
+        realtimeTurnActive = false;
         return;
       }
       console.log(
         `[voice] realtime sem transcript final em ${Date.now() - tRealtime}ms — fallback Classic STT`,
       );
+      suppressRealtimeAudioOut = true;
       void window.nexus.voice.liveInterrupt('classic-action-bridge-timeout').catch(() => {});
       realtimeTurnActive = false;
     }
@@ -757,6 +821,7 @@ async function finishAndProcess(
         'TTS',
       );
       if (spoken.ok) {
+        surfaceTtsFallback(spoken);
         if (spoken.mode === 'audio') await playAudioBase64(spoken.audioBase64, spoken.format);
         store.setSpoken(reply);
       } else {
@@ -876,6 +941,7 @@ async function runJarvisTurn(
     store.setError(first.error);
     return;
   }
+  surfaceTtsFallback(first);
   const restPromise =
     split.rest && first.mode === 'audio'
       ? window.nexus.voice.speak({ text: split.rest, speakMode: 'full' })
@@ -891,6 +957,7 @@ async function runJarvisTurn(
       store.setError(rest.error);
       return;
     }
+    surfaceTtsFallback(rest);
     await playSpeakResult(rest);
   }
   store.setSpoken(sayText);
@@ -1014,4 +1081,8 @@ function captureResponse(paneId: string, promptEcho: string): Promise<string> {
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function surfaceTtsFallback(result: Extract<SpeakResult, { ok: true }>): void {
+  if (result.fallbackNote) useVoiceStore.getState().setNote(result.fallbackNote);
 }

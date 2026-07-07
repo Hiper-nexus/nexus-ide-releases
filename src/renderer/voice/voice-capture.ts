@@ -144,6 +144,7 @@ export class VoiceCapture {
       wavBase64: bytesToBase64(wav),
       sampleRate: TARGET_SAMPLE_RATE,
       durationSec: downsampled.length / TARGET_SAMPLE_RATE,
+      heardSpeech: this.heardSpeech,
     };
   }
 

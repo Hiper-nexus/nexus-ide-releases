@@ -84,7 +84,43 @@ describe('speak', () => {
     expect(fetchImpl).toHaveBeenCalledOnce(); // cloud was actually attempted
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.mode).toBe('played'); // spoken via say
+    if (result.ok) expect(result.fallbackNote).toContain('TTS fallback');
     expect(speakViaSay).toHaveBeenCalledOnce();
+  });
+
+  it('retries the configured primary voice after a temporary fallback', async () => {
+    const tts: VoicePlugin = {
+      type: 'tts',
+      provider: 'openai',
+      endpoint: 'https://api.openai.com/v1/audio/speech',
+      auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
+      model: 'gpt-4o-mini-tts',
+      voice: 'nova',
+      fallback: { type: 'tts', provider: 'macos-say', localBin: '/usr/bin/say', voice: 'Luciana' },
+    };
+    const config: VoiceConfig = { ...DEFAULT_VOICE_CONFIG, tts };
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response('quota', { status: 429 }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch;
+    const speakViaSay = vi.fn(async () => undefined);
+
+    await speak(
+      { text: 'Primeira fala.', speakMode: 'full' },
+      config,
+      { ...PROBES, hasEnv: () => true },
+      deps({ fetchImpl, getEnv: () => 'key', speakViaSay }),
+    );
+    const second = await speak(
+      { text: 'Segunda fala.', speakMode: 'full' },
+      config,
+      { ...PROBES, hasEnv: () => true },
+      deps({ fetchImpl, getEnv: () => 'key', speakViaSay }),
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(speakViaSay).toHaveBeenCalledOnce();
+    expect(second.ok).toBe(true);
+    if (second.ok) expect(second.provider).toBe('openai');
   });
 
   it('walks openai(429) → piper(broken) → say to keep the guarantee', async () => {

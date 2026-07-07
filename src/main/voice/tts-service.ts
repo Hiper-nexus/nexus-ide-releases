@@ -9,6 +9,7 @@ import { toSpeakable } from './speakable';
 import { echoSuppressor } from './echo-suppress';
 import { classifyKind, flattenChain, type ProviderProbes } from './provider-select';
 import { resolveVoiceApiKey } from './voice-secrets';
+import { logVoice } from './voice-log';
 
 /**
  * Text-to-speech — the Jarvis "talk back" step. Condenses the agent's output to
@@ -33,6 +34,7 @@ let stickyTtsProvider: string | null = null;
 
 function reorderTtsChain(chain: VoicePlugin[]): VoicePlugin[] {
   if (!stickyTtsProvider) return chain;
+  if (chain[0]?.provider !== stickyTtsProvider) return chain;
   const hit = chain.find((p) => p.provider === stickyTtsProvider);
   if (!hit) return chain;
   return [hit, ...chain.filter((p) => p.provider !== stickyTtsProvider)];
@@ -277,15 +279,24 @@ export async function speak(
   for (const plugin of chain) {
     const result = await speakVia(plugin, text, deps, config.persona);
     if (result.ok) {
-      stickyTtsProvider = plugin.provider;
-      console.log(`[tts] voz via ${plugin.provider} (${plugin.voice ?? plugin.model ?? 'default'})`);
+      const fallbackNote =
+        failures.length > 0
+          ? `TTS fallback: ${failures.join(' · ')} → ${plugin.provider}`
+          : undefined;
+      stickyTtsProvider = plugin.provider === chain[0]?.provider ? plugin.provider : null;
+      logVoice('info', 'tts.provider', `${plugin.provider} (${plugin.voice ?? plugin.model ?? 'default'})`, {
+        fallback: failures.length > 0,
+      });
+      if (fallbackNote) {
+        logVoice('warn', 'tts.fallback', fallbackNote);
+      }
       // Janela de eco: registra o que foi falado para o fluxo de STT poder
       // descartar transcrições que são o alto-falante vazando no microfone.
       // Acks/fillers curtos ("Sim?", "Deixa comigo.") pedem echoRecord:false —
       // registrá-los poluía a janela e censurava respostas legítimas do
       // usuário ("sim", "deixa") logo depois.
       if (req.echoRecord !== false) echoSuppressor.record(text);
-      return result;
+      return fallbackNote ? { ...result, fallbackNote } : result;
     }
     failures.push(`${plugin.provider}: ${result.error}`);
   }

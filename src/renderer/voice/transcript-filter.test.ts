@@ -15,7 +15,7 @@ describe('isDiscardableTranscript', () => {
   });
 
   it('descarta artefatos duros mesmo em conversa', () => {
-    for (const junk of ['.', 'amara.org', 'obrigado por assistir']) {
+    for (const junk of ['.', 'amara.org', 'obrigado por assistir', 'ai ai', 'hum']) {
       expect(isDiscardableTranscript(junk, { inConversation: true })).toBe(true);
     }
   });

@@ -23,6 +23,7 @@ const COLD_GHOSTS = new Set([
 const HARD_GHOSTS = new Set([
   '.', 'legendas pela comunidade amara.org', 'amara.org',
   'thanks for watching', 'thanks for watching!', 'obrigado por assistir',
+  'ah', 'ai', 'ai ai', 'hum', 'hmm', 'hm', 'uh', 'uhum',
 ]);
 
 /** Eco da própria JARVIS (TTS vazando no mic) — descarta mesmo em conversa. */

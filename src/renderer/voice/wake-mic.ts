@@ -35,6 +35,10 @@ import { SoftAgc } from './agc';
 const TARGET_SAMPLE_RATE = 16_000;
 const CHUNK = 1280;
 const SPEECH_RMS = 0.012;
+const RAW_SPEECH_RMS = 0.004;
+const SPEECH_PEAK = 0.045;
+const STRONG_SPEECH_RMS = 0.055;
+const STRONG_SPEECH_PEAK = 0.12;
 const MIN_SPEECH_MS = 320;
 const MAX_PREROLL_MS = 3_000;
 /** Ganho inicial do AGC próprio (ver agc.ts) — o valor 12x foi o melhor
@@ -198,15 +202,22 @@ export class WakeMic {
     };
   }
 
-  private trackUtterance(frame: Float32Array): void {
+  private trackUtterance(frame: Float32Array, rawRms: number): void {
     this.uttChunks.push(Float32Array.from(frame));
     // Jarvis Live realtime: espelha o frame para o transporte enquanto fala.
     this.uttFrameTap?.(frame, this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE);
     let sum = 0;
-    for (let i = 0; i < frame.length; i += 1) sum += frame[i] * frame[i];
+    let peak = 0;
+    for (let i = 0; i < frame.length; i += 1) {
+      const sample = frame[i];
+      sum += sample * sample;
+      peak = Math.max(peak, Math.abs(sample));
+    }
     const rms = Math.sqrt(sum / Math.max(1, frame.length));
     const now = Date.now();
-    if (rms >= SPEECH_RMS) {
+    const rawBackedSpeech = rawRms >= RAW_SPEECH_RMS && rms >= SPEECH_RMS && peak >= SPEECH_PEAK;
+    const strongSpeech = rms >= STRONG_SPEECH_RMS && peak >= STRONG_SPEECH_PEAK;
+    if (rawBackedSpeech || strongSpeech) {
       this.uttSpeechMs += (frame.length / (this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE)) * 1000;
       this.uttHeardSpeech = this.uttSpeechMs >= MIN_SPEECH_MS;
       this.uttLastSpeechAt = now;
@@ -299,7 +310,7 @@ export class WakeMic {
       // AGC próprio (ver agc.ts): o APM do Chromium foi desligado (897ce56)
       // e ganho FIXO não acompanha distância — perto satura, longe some.
       // O SoftAgc mira a FALA em RMS ~0.1 e ignora ruído de fundo.
-      this.agc.process(frame);
+      const rawRms = this.agc.process(frame);
       // Prova única (por grafo) de que frames têm sinal: RMS do 1º frame.
       if (!this.firstFrameLogged) {
         this.firstFrameLogged = true;
@@ -315,7 +326,7 @@ export class WakeMic {
       // Comando em gravação: acumula localmente (e NÃO alimenta o detector —
       // senão a própria fala do comando poderia re-disparar o wake).
       if (this.uttActive) {
-        this.trackUtterance(frame);
+        this.trackUtterance(frame, rawRms);
         return;
       }
       if (Date.now() < this.wakeSuppressedUntil) return;

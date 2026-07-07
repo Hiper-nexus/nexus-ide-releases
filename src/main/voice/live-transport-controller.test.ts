@@ -62,6 +62,50 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
 }
 
 describe('LiveTransportController', () => {
+  it('does not keep a realtime turn pending when credentials are unavailable', async () => {
+    vi.resetModules();
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'openai-realtime',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => undefined,
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => [],
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['openai'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    await controller.onStart();
+
+    expect(session.getState()).toMatchObject({
+      status: 'error',
+      realtimeReady: false,
+      error: 'realtime sem credencial disponível — usando Classic',
+    });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
   it('falls back from a failed OpenAI realtime provider to Gemini Live', async () => {
     vi.resetModules();
     const openai = fakeProvider(async () => {

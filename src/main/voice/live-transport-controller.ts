@@ -50,7 +50,11 @@ export class LiveTransportController {
   onStart(): Promise<void> {
     this.clearReconnectTimer();
     if (!this.isRealtimeConfigured()) {
-      this.patchRealtimeReady(false);
+      this.fsm.patchStatus({
+        status: 'error',
+        realtimeReady: false,
+        error: 'realtime sem credencial disponível — usando Classic',
+      });
       return Promise.resolve();
     }
     if (this.provider?.isReady) {

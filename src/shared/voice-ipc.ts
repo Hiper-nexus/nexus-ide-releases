@@ -262,9 +262,16 @@ export const jarvisRequestSchema = z.object({
 export type JarvisRequest = z.infer<typeof jarvisRequestSchema>;
 
 export type SpeakResult =
-  | { ok: true; provider: string; mode: 'played' }
-  | { ok: true; provider: string; mode: 'audio'; format: string; audioBase64: string }
-  | { ok: true; provider: string; mode: 'silent' }
+  | { ok: true; provider: string; mode: 'played'; fallbackNote?: string }
+  | {
+      ok: true;
+      provider: string;
+      mode: 'audio';
+      format: string;
+      audioBase64: string;
+      fallbackNote?: string;
+    }
+  | { ok: true; provider: string; mode: 'silent'; fallbackNote?: string }
   | { ok: false; error: string };
 
 // ── JARVIS LIVE (continuous session mode) ───────────────────────────────────
