@@ -22,6 +22,7 @@
     "rebuild:electron": "electron-rebuild -f -w @lydell/node-pty -w better-sqlite3",
     "rebuild:node": "npm rebuild better-sqlite3",
     "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
     "test": "vitest run"
   },
   "engines": {
