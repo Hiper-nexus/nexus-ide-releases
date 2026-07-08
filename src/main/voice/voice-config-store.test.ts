@@ -46,4 +46,44 @@ describe('voice-config-store', () => {
     };
     expect(updated.jarvisLive.enabled).toBe(false);
   });
+
+  it('migra TTS OpenAI nova para a voz realtime padrao', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
+    const file = path.join(
+      home,
+      '.nexus',
+      'plugins',
+      'voice',
+      'nexus-voice.json',
+    );
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      JSON.stringify(
+        {
+          ...DEFAULT_VOICE_CONFIG,
+          jarvisLive: {
+            ...DEFAULT_VOICE_CONFIG.jarvisLive,
+            enabled: true,
+            transport: 'openai-realtime',
+          },
+          tts: {
+            ...DEFAULT_VOICE_CONFIG.tts,
+            voice: 'nova',
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const loaded = store.loadVoiceConfig();
+    const saved = JSON.parse(fs.readFileSync(file, 'utf-8')) as {
+      tts: { voice: string };
+    };
+
+    expect(loaded.tts.voice).toBe('marin');
+    expect(saved.tts.voice).toBe('marin');
+  });
 });

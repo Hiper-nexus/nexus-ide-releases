@@ -184,7 +184,7 @@ async function speakCloud(
     signal: AbortSignal.timeout(TTS_CLOUD_TIMEOUT_MS),
     body: JSON.stringify({
       model: plugin.model ?? 'tts-1',
-      voice: plugin.voice ?? 'nova',
+      voice: plugin.voice ?? 'marin',
       // Persona JARVIS — só o gpt-4o-mini-tts aceita instructions.
       ...((plugin.model ?? 'gpt-4o-mini-tts').startsWith('gpt-4o-mini-tts')
         ? { instructions: ttsInstructions(persona) }

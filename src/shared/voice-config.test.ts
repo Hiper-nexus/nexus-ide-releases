@@ -18,6 +18,11 @@ describe('voiceConfigSchema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('ships one OpenAI voice across realtime and classic TTS', () => {
+    expect(DEFAULT_VOICE_CONFIG.jarvisLive.openaiVoice).toBe('marin');
+    expect(DEFAULT_VOICE_CONFIG.tts.voice).toBe('marin');
+  });
+
   it('applies defaults for omitted top-level fields', () => {
     const parsed = voiceConfigSchema.parse({
       stt: { type: 'stt', provider: 'groq' },

@@ -134,7 +134,7 @@ export function loadVoiceConfig(): VoiceConfig {
   if (userConfig) {
     let migrated = false;
     // Upgrade one-time: quem ficou no TTS low-latency (tts-1) ganha a voz
-    // natural nova (gpt-4o-mini-tts/nova) sem perder customização de provider.
+    // natural alinhada ao realtime sem perder customização de provider.
     if (
       userConfig.tts.provider === 'openai' &&
       userConfig.tts.model === 'tts-1'
@@ -142,10 +142,23 @@ export function loadVoiceConfig(): VoiceConfig {
       userConfig.tts = {
         ...userConfig.tts,
         model: 'gpt-4o-mini-tts',
-        voice: 'nova',
+        voice: DEFAULT_VOICE_CONFIG.tts.voice,
       };
       migrated = true;
       console.log('[voice] TTS migrado para gpt-4o-mini-tts (qualidade)');
+    }
+    if (
+      userConfig.tts.provider === 'openai' &&
+      userConfig.tts.model === 'gpt-4o-mini-tts' &&
+      userConfig.tts.voice === 'nova' &&
+      userConfig.jarvisLive.openaiVoice === DEFAULT_VOICE_CONFIG.jarvisLive.openaiVoice
+    ) {
+      userConfig.tts = {
+        ...userConfig.tts,
+        voice: DEFAULT_VOICE_CONFIG.tts.voice,
+      };
+      migrated = true;
+      console.log('[voice] TTS alinhado com a voz realtime (marin)');
     }
     // Saves antigos promoviam o fallback macos-say para o TOPO da chain — a
     // voz ficava robótica para sempre, mesmo com key OpenAI. Restaure a chain
