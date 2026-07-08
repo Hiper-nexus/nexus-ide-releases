@@ -35,13 +35,18 @@ describe('voice wake order', () => {
   });
 });
 
-describe('classic mode realtime bridge', () => {
-  it('disables the realtime STT bridge by default', () => {
-    expect(source).toContain('const REALTIME_ACTION_BRIDGE_ENABLED = false');
-    expect(source).toContain('const REALTIME_PROVIDER_AUDIO_ENABLED = false');
-    expect(source).toMatch(
-      /if \(!REALTIME_PROVIDER_AUDIO_ENABLED \|\| !REALTIME_ACTION_BRIDGE_ENABLED\) return false;/,
-    );
+describe('realtime bridge activation', () => {
+  it('enables the realtime audio + action bridge (paridade completa)', () => {
+    expect(source).toContain('const REALTIME_ACTION_BRIDGE_ENABLED = true');
+    expect(source).toContain('const REALTIME_PROVIDER_AUDIO_ENABLED = true');
+  });
+
+  it('keeps the runtime degradation-to-Classic guards in shouldStreamToRealtime', () => {
+    // Mesmo com os flags ligados, streamar realtime ainda exige config realtime,
+    // credencial (canAttemptRealtime) e um socket saudável (status !== 'error') —
+    // sem isso, cai para o Classic. Guarda contra remover a degradação em runtime.
+    expect(source).toContain('canAttemptRealtime(info)');
+    expect(source).toMatch(/liveState\?\.status !== 'error'/);
   });
 });
 

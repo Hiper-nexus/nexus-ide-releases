@@ -92,8 +92,13 @@ import type {
 const RESPONSE_QUIET_MS = 1_500; // speak once the pane has been quiet this long
 const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
 const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
-const REALTIME_ACTION_BRIDGE_ENABLED = false;
-const REALTIME_PROVIDER_AUDIO_ENABLED = false;
+// Realtime ATIVO (paridade completa — decisão aprovada 2026-07-08): o mic
+// streama de verdade ao transporte realtime e o áudio/tool-calls do provider
+// fluem. A degradação em runtime para Classic segue valendo (sem key →
+// canAttemptRealtime false; socket em erro → liveState.status==='error' →
+// shouldStreamToRealtime false).
+const REALTIME_ACTION_BRIDGE_ENABLED = true;
+const REALTIME_PROVIDER_AUDIO_ENABLED = true;
 const WAKE_ACK_SUPPRESS_MS = 8_000;
 const WAKE_PREROLL_MS = 2_500;
 const WAKE_SILENCE_MS = 700; // wake-word capture: quiet time that ends the utterance
