@@ -47,6 +47,56 @@ describe('voice-config-store', () => {
     expect(updated.jarvisLive.enabled).toBe(false);
   });
 
+  it('default é realtime (gemini-live) — hibernação revertida', async () => {
+    const { store } = await loadStoreInTempHome();
+    const config = store.loadVoiceConfig();
+    expect(config.jarvisLive.transport).toBe('gemini-live');
+  });
+
+  it('preserva o transporte escolhido pelo usuário (validador, sem coerção)', async () => {
+    const { store } = await loadStoreInTempHome();
+    store.loadVoiceConfig();
+    const openai = store.applyConfigPatch({ jarvisLiveTransport: 'openai-realtime' });
+    expect(openai.jarvisLive.transport).toBe('openai-realtime');
+    const classic = store.applyConfigPatch({ jarvisLiveTransport: 'classic' });
+    expect(classic.jarvisLive.transport).toBe('classic');
+    const gemini = store.applyConfigPatch({ jarvisLiveTransport: 'gemini-live' });
+    expect(gemini.jarvisLive.transport).toBe('gemini-live');
+  });
+
+  it('ITEM 5: sempre expõe GEMINI/OPENAI (keys do realtime) mesmo sem estar no brain/stt/tts', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    // Brain reduzido a groq-only (o caso "pre-groq" do incidente): sem GEMINI no chain.
+    fs.writeFileSync(
+      file,
+      JSON.stringify(
+        {
+          ...DEFAULT_VOICE_CONFIG,
+          jarvisBrain: {
+            provider: 'groq',
+            endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+            auth: { type: 'api_key', envVar: 'GROQ_API_KEY' },
+            model: 'llama-3.1-8b-instant',
+            jsonMode: true,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    store.loadVoiceConfig();
+
+    const info = store.buildRuntimeInfo();
+    const envVars = info.keys.map((k) => k.envVar);
+    expect(envVars).toContain('GEMINI_API_KEY');
+    expect(envVars).toContain('OPENAI_API_KEY');
+    // E o store aceita gravar a GEMINI key (gate do realtime resolve depois).
+    expect(store.knownVoiceEnvVars().has('GEMINI_API_KEY')).toBe(true);
+  });
+
   it('migra TTS OpenAI nova para a voz realtime padrao', async () => {
     const { home, store } = await loadStoreInTempHome();
     const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');

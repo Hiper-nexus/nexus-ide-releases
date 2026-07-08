@@ -13,6 +13,25 @@ import { AccountsManager } from './AccountsManager';
  * the UI, only a masked preview).
  */
 
+function modelLabel(provider: ProviderSettingsInfo, model: string): string {
+  const info = provider.modelInfo?.[model];
+  const tags = [
+    provider.customModels.includes(model) ? 'custom' : null,
+    info?.availability ?? null,
+    info?.costTier && info.costTier !== 'unknown' ? `cost:${info.costTier}` : null,
+  ].filter(Boolean);
+  return tags.length > 0 ? `${model} (${tags.join(', ')})` : model;
+}
+
+function providerRiskWarning(provider: ProviderSettingsInfo): string | null {
+  const risky = provider.models.filter((model) => {
+    const availability = provider.modelInfo?.[model]?.availability;
+    return availability === 'api-only' || availability === 'deprecated';
+  });
+  if (risky.length === 0) return null;
+  return `Modelos bloqueados no roteamento automático: ${risky.slice(0, 3).join(', ')}. Ainda podem ser escolhidos manualmente.`;
+}
+
 function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
   const setKey = useProviderStore((s) => s.setKey);
   const testKey = useProviderStore((s) => s.testKey);
@@ -274,6 +293,7 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
   const setConfig = useProviderStore((s) => s.setConfig);
   const [binDraft, setBinDraft] = useState(provider.binPath);
   const [argsDraft, setArgsDraft] = useState(provider.extraArgs.join(' '));
+  const riskWarning = providerRiskWarning(provider);
 
   const patch = (p: Partial<Parameters<typeof setConfig>[0]>) =>
     void setConfig({ adapterId: provider.adapterId, ...p });
@@ -336,11 +356,15 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
           >
             {provider.models.map((m) => (
               <option key={m} value={m}>
-                {m}
-                {provider.customModels.includes(m) ? ' (custom)' : ''}
+                {modelLabel(provider, m)}
               </option>
             ))}
           </select>
+          {provider.modelInfo?.[provider.defaultModel]?.warning && (
+            <span className="prov__hint">
+              {provider.modelInfo[provider.defaultModel].warning}
+            </span>
+          )}
         </label>
 
         <div className="prov__field prov__field--wide">
@@ -390,6 +414,7 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
       {provider.loginHint && (
         <p className="prov__hint">{provider.loginHint}</p>
       )}
+      {riskWarning && <p className="prov__warn">{riskWarning}</p>}
     </li>
   );
 }

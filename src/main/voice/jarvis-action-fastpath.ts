@@ -17,6 +17,12 @@ function norm(text: string): string {
     .replace(/\bwork\s*space\b/g, 'workspace')
     .replace(/\bespaco\s+de\s+trabalho\b/g, 'workspace')
     .replace(/\b(workpasce|workspac|workpace|workbase|workspay|workspais|workispaco)\b/g, 'workspace')
+    // STT often prefixes the command with the wake greeting itself.
+    .replace(
+      /^(?:e\s+ai|ei|oi|ola|hey)[,.]?\s*(?:jarvis|javes|jas|jarvs)?[,.?!]?\s*/i,
+      '',
+    )
+    .replace(/[.!?,;:]+$/g, '')
     .trim();
 }
 
@@ -237,8 +243,22 @@ export function jarvisActionFastPath(
   ) {
     return {
       say: say(ctx, 'Vou montar um squad para este projeto.'),
-      expectReply: false,
+      expectReply: true,
       action: { type: 'design_squad' },
+    };
+  }
+
+  // Overclock wizard-fire: user confirms the open squad review ("sim", "inicia", …).
+  if (
+    /\brevis[aã]o de squad|squad pronto|iniciar squad\b/i.test(ctx.screen ?? '') &&
+    /^(sim|confirma|confirmar|pode|pode iniciar|inicia|inicie|iniciar|dispara|dispare|vai|manda ver|ok|yes|go)\b/.test(
+      t,
+    )
+  ) {
+    return {
+      say: say(ctx, 'Confirmado — iniciando o squad.'),
+      expectReply: false,
+      action: { type: 'confirm_squad' },
     };
   }
 
@@ -256,15 +276,19 @@ export function jarvisActionFastPath(
     }
   }
 
+  // STT variants: "abrir novo o workspace", "abre um novo workspace", …
   if (
-    /\b(?:inicia|inicie|iniciar|cria|crie|criar|abre|abra|abrir|comeca|comece|comecar)\b(?:\s+o)?\s+(?:um\s+)?(?:novo\s+|nova\s+)?(?:workspace|projeto|ambiente)\s*$/.test(
+    /\b(?:inicia|inicie|iniciar|cria|crie|criar|abre|abra|abrir|comeca|comece|comecar)\b\s+(?:no|na)\s+(?:workspace|projeto|ambiente)\s*$/.test(
       t,
     ) ||
-    /\b(?:novo|nova)\s+(?:workspace|projeto|ambiente)\b/.test(t) ||
-    /\b(?:start|create|make|launch|initialize|init|begin)\b(?:\s+(?:a|an|one))?\s+(?:new\s+)?(?:workspace|project)\s*$/.test(
+    /\b(?:inicia|inicie|iniciar|cria|crie|criar|abre|abra|abrir|comeca|comece|comecar)\b(?:\s+(?:o|a|um|uma))?\s+(?:um\s+|uma\s+)?(?:novo\s+|nova\s+)?(?:(?:o|a|um|uma)\s+)?(?:workspace|projeto|ambiente)\b/.test(
       t,
     ) ||
-    /\bopen\b(?:\s+(?:a|an|one))?\s+new\s+(?:workspace|project)\s*$/.test(t) ||
+    /\b(?:novo|nova)\s+(?:(?:o|a|um|uma)\s+)?(?:workspace|projeto|ambiente)\b/.test(t) ||
+    /\b(?:start|create|make|launch|initialize|init|begin)\b(?:\s+(?:a|an|one))?\s+(?:new\s+)?(?:workspace|project)\b/.test(
+      t,
+    ) ||
+    /\bopen\b(?:\s+(?:a|an|one))?\s+new\s+(?:workspace|project)\b/.test(t) ||
     /\bnew\s+(?:workspace|project)\b/.test(t)
   ) {
     return {

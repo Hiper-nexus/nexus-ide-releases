@@ -41,6 +41,8 @@ function actionSummary(action: JarvisAction): string {
       return `abrir workspace ${action.workspaceName}`;
     case 'design_squad':
       return 'desenhar squad';
+    case 'confirm_squad':
+      return 'confirmar e iniciar squad';
     case 'new_mission':
       return 'nova missão';
     case 'new_workspace':
@@ -79,6 +81,10 @@ function actionSummary(action: JarvisAction): string {
       return `rodar comando: ${action.command}`;
     case 'mcp_tool':
       return action.tool;
+    case 'restore_mission_panes':
+      return action.alvo ? `restaurar missão ${action.alvo}` : 'restaurar missão';
+    case 'ask_pane':
+      return 'perguntar ao pane';
   }
 }
 

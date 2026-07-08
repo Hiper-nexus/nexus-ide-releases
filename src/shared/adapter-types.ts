@@ -170,6 +170,25 @@ export type CliPtyAdapter = z.infer<typeof cliPtyAdapterSchema>;
 export type ApiProviderAdapter = z.infer<typeof apiProviderAdapterSchema>;
 export type Adapter = z.infer<typeof adapterSchema>;
 
+export type ModelAvailability =
+  | 'free'
+  | 'cheap'
+  | 'paid'
+  | 'api-only'
+  | 'deprecated';
+
+export type ModelCostTier = 'free' | 'low' | 'medium' | 'high' | 'unknown';
+
+export interface ModelCatalogEntryInfo {
+  id: string;
+  availability?: ModelAvailability;
+  costTier?: ModelCostTier;
+  source?: string;
+  warning?: string;
+}
+
+export type ModelInfoMap = Record<string, ModelCatalogEntryInfo>;
+
 /**
  * Replace {{KEY}} placeholders in an argv array. Unknown keys resolve to empty
  * string. This is a pure function — safe to call in tests without side effects.
@@ -192,7 +211,7 @@ export interface AdapterInfo {
   kind: 'cli-pty' | 'api-provider';
   label: string;
   icon: string;
-  models: { list: string[]; default: string };
+  models: { list: string[]; default: string; info?: ModelInfoMap };
   installed: boolean;
   installCommand: string;
   loginHint?: string;

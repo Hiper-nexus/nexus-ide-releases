@@ -1,11 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  __resetLiveTransportSingleton,
   buildSetupMessage,
   GeminiLiveTransport,
   parseServerMessage,
   type LiveTransportEvents,
   type WsLike,
 } from './gemini-live-transport';
+import { NARRATION_ENVELOPE } from '../jarvis/realtime/live-narration';
+import { SCREEN_UPDATE_DEBOUNCE_MS } from '../jarvis/realtime/screen-coalescer';
+import { TURN_MAX_MS } from '../jarvis/realtime/turn-queue';
 
 function fakeWs(): WsLike & {
   sent: string[];
@@ -50,6 +54,13 @@ function events(): LiveTransportEvents & { calls: Record<string, unknown[]> } {
   };
 }
 
+type TranscriptCall = { role: string; text: string; final: boolean };
+function transcriptFinals(ev: { calls: Record<string, unknown[]> }): TranscriptCall[] {
+  return (ev.calls.transcript as TranscriptCall[]).filter(
+    (c) => c.role === 'user' && c.final,
+  );
+}
+
 function makeTransport(ws: WsLike, ev: LiveTransportEvents) {
   return new GeminiLiveTransport(ev, {
     wsFactory: () => ws,
@@ -76,6 +87,25 @@ describe('buildSetupMessage', () => {
     expect(msg.setup.contextWindowCompression).toEqual({ slidingWindow: {} });
     expect(msg.setup.inputAudioTranscription).toEqual({});
     expect(msg.setup.outputAudioTranscription).toEqual({});
+  });
+
+  it('declara as 4 tools coarse (delegar/consultar/ler/navegar) + encerrar no setup', () => {
+    const msg = buildSetupMessage({
+      model: 'm',
+      voiceName: 'Charon',
+      systemInstruction: 's',
+    });
+    const decls = msg.setup.tools[0].functionDeclarations.map((d) => d.name);
+    expect(decls).toEqual([
+      'delegar',
+      'consultar',
+      'ler',
+      'navegar',
+      'encerrar',
+      'comandar',
+      'restaurar',
+      'perguntar',
+    ]);
   });
 });
 
@@ -114,12 +144,36 @@ describe('parseServerMessage', () => {
     expect(turnDone.turnComplete).toBe(true);
   });
 
+  it('extrai chamadas de função (toolCall) e cancelamentos', () => {
+    const call = parseServerMessage(
+      JSON.stringify({
+        toolCall: {
+          functionCalls: [
+            { id: 'c1', name: 'delegar', args: { briefing: 'cria a landing' } },
+            { name: 'consultar', args: { pergunta: 'quais panes?' } },
+          ],
+        },
+      }),
+    );
+    expect(call.toolCalls).toEqual([
+      { id: 'c1', name: 'delegar', args: { briefing: 'cria a landing' } },
+      { id: '', name: 'consultar', args: { pergunta: 'quais panes?' } },
+    ]);
+
+    const cancel = parseServerMessage(
+      JSON.stringify({ toolCallCancellation: { ids: ['c1', 'c2'] } }),
+    );
+    expect(cancel.cancelledToolCallIds).toEqual(['c1', 'c2']);
+  });
+
   it('mensagem ilegível não explode', () => {
     expect(parseServerMessage('garbage')).toEqual({});
   });
 });
 
 describe('GeminiLiveTransport', () => {
+  beforeEach(() => __resetLiveTransportSingleton());
+
   it('bufferiza mic antes do setupComplete e faz flush depois (pendingMic)', () => {
     const ws = fakeWs();
     const ev = events();
@@ -180,6 +234,50 @@ describe('GeminiLiveTransport', () => {
     expect(ev.calls.turnComplete).toHaveLength(1);
   });
 
+  it('MUTE FIX: finaliza o transcript do usuário (final=true) quando o modelo responde', () => {
+    const ws = fakeWs();
+    const ev = events();
+    const t = makeTransport(ws, ev);
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    // usuário fala em pedaços — Gemini manda inputTranscription sempre final=false
+    ws.fire('message', JSON.stringify({ serverContent: { inputTranscription: { text: 'abre o ' } } }));
+    ws.fire('message', JSON.stringify({ serverContent: { inputTranscription: { text: 'terminal' } } }));
+    // nenhum final ainda
+    expect(transcriptFinals(ev)).toHaveLength(0);
+    // modelo começa a responder (áudio) → finaliza o transcript acumulado, UMA vez
+    ws.fire(
+      'message',
+      JSON.stringify({
+        serverContent: {
+          modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm', data: 'QUJD' } }] },
+        },
+      }),
+    );
+    const finals = transcriptFinals(ev);
+    expect(finals).toEqual([{ role: 'user', text: 'abre o terminal', final: true }]);
+  });
+
+  it('MUTE FIX: não vaza transcript final se o turno for interrompido (barge-in)', () => {
+    const ws = fakeWs();
+    const ev = events();
+    const t = makeTransport(ws, ev);
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    ws.fire('message', JSON.stringify({ serverContent: { inputTranscription: { text: 'oi' } } }));
+    ws.fire('message', JSON.stringify({ serverContent: { interrupted: true } }));
+    // buffer descartado no barge-in → o próximo áudio não finaliza o texto velho
+    ws.fire(
+      'message',
+      JSON.stringify({
+        serverContent: { modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm', data: 'QUJD' } }] } },
+      }),
+    );
+    expect(transcriptFinals(ev)).toHaveLength(0);
+  });
+
   it('envia contexto de tela como clientContent sem fechar o turno', () => {
     const ws = fakeWs();
     const t = makeTransport(ws, events());
@@ -219,15 +317,357 @@ describe('GeminiLiveTransport', () => {
     expect(ws1.close).toHaveBeenCalled();
   });
 
+  it('injectNarration embrulha no envelope e envia como turno completo', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    t.injectNarration('o build passou');
+    const last = JSON.parse(ws.sent.at(-1)!);
+    expect(last.clientContent.turnComplete).toBe(true);
+    const text = last.clientContent.turns[0].parts[0].text as string;
+    expect(text.startsWith(NARRATION_ENVELOPE)).toBe(true);
+    expect(text.endsWith('o build passou')).toBe(true);
+  });
+
+  it('serializa narrações concorrentes — 1 turno em voo, libera no turnComplete', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    const before = ws.sent.length;
+    t.injectNarration('primeiro');
+    t.injectNarration('segundo');
+    // só o primeiro foi ao socket
+    expect(ws.sent.length).toBe(before + 1);
+    expect(ws.sent.at(-1)).toContain('primeiro');
+    // turnComplete do servidor libera a fila → drena o segundo
+    ws.fire('message', JSON.stringify({ serverContent: { turnComplete: true } }));
+    expect(ws.sent.length).toBe(before + 2);
+    expect(ws.sent.at(-1)).toContain('segundo');
+  });
+
+  it('barge-in (interrupted) também libera a fila serializada', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    const before = ws.sent.length;
+    t.injectNarration('a');
+    t.injectNarration('b');
+    ws.fire('message', JSON.stringify({ serverContent: { interrupted: true } }));
+    expect(ws.sent.length).toBe(before + 2);
+    expect(ws.sent.at(-1)).toContain('b');
+  });
+
+  it('turnos injetados antes do setupComplete são bufferizados e drenados depois', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    // greeting injetado pré-setup → não vai ao socket ainda (só o setup foi)
+    t.injectContext('[wake] cumprimente o usuário');
+    expect(ws.sent).toHaveLength(1);
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    // agora drena
+    expect(ws.sent.at(-1)).toContain('[wake]');
+  });
+
+  it('injectContext([wake]) jumps a busy TurnQueue (priority)', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    t.injectNarration('stale narration still in flight');
+    const before = ws.sent.length;
+    t.injectContext('[wake] diga exatamente Olá.');
+    expect(ws.sent.length).toBe(before + 1);
+    expect(ws.sent.at(-1)).toContain('[wake]');
+    expect(ws.sent.at(-1)).not.toContain('stale narration');
+  });
+
+  it('interrupt ends audio turn and clears pending mic without waiting for server', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    t.sendMicChunk(Buffer.from([1, 0, 2, 0]).toString('base64'));
+    t.interrupt();
+    expect(ws.sent.some((s) => s.includes('audioStreamEnd'))).toBe(true);
+  });
+
+  it('endUserTurn is a no-op when no mic audio was streamed (cold wake)', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    const before = ws.sent.length;
+    t.endUserTurn();
+    expect(ws.sent.length).toBe(before);
+    expect(ws.sent.some((s) => s.includes('audioStreamEnd'))).toBe(false);
+  });
+
+  it('coalesce a rajada de [update] de tela — só o estado assentado como contexto silencioso', async () => {
+    vi.useFakeTimers();
+    const ws = fakeWs();
+    const t = new GeminiLiveTransport(events(), {
+      wsFactory: () => ws,
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    const before = ws.sent.length;
+    t.injectScreenUpdate('tela: passo 1');
+    t.injectScreenUpdate('tela: passo 2');
+    t.injectScreenUpdate('tela: passo 3 final');
+    // nada enviado antes do debounce
+    expect(ws.sent.length).toBe(before);
+    await vi.advanceTimersByTimeAsync(SCREEN_UPDATE_DEBOUNCE_MS);
+    expect(ws.sent.length).toBe(before + 1);
+    const last = JSON.parse(ws.sent.at(-1)!);
+    expect(last.clientContent.turnComplete).toBe(false);
+    expect(JSON.stringify(last)).toContain('passo 3 final');
+    vi.useRealTimers();
+  });
+
+  it('disjuntor TURN_MAX_MS libera a fila se um turno nunca sinaliza fim', async () => {
+    vi.useFakeTimers();
+    const ws = fakeWs();
+    const t = new GeminiLiveTransport(events(), {
+      wsFactory: () => ws,
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    const before = ws.sent.length;
+    t.injectNarration('a');
+    t.injectNarration('b');
+    expect(ws.sent.length).toBe(before + 1);
+    // servidor nunca manda turnComplete — o disjuntor precisa drenar 'b'
+    await vi.advanceTimersByTimeAsync(TURN_MAX_MS);
+    expect(ws.sent.length).toBe(before + 2);
+    expect(ws.sent.at(-1)).toContain('b');
+    vi.useRealTimers();
+  });
+
+  it('emite toolCall e devolve toolResponse; ignora callId desconhecido', () => {
+    const ws = fakeWs();
+    const calls: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
+    const ev = { ...events(), onToolCall: (c: typeof calls[number]) => calls.push(c) };
+    const t = makeTransport(ws, ev);
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    ws.fire(
+      'message',
+      JSON.stringify({
+        toolCall: { functionCalls: [{ id: 'c1', name: 'navegar', args: { target: 'grid' } }] },
+      }),
+    );
+    expect(calls).toEqual([{ id: 'c1', name: 'navegar', args: { target: 'grid' } }]);
+
+    const before = ws.sent.length;
+    // callId desconhecido não emite nada
+    t.sendToolResult('nope', 'navegar', { ok: true });
+    expect(ws.sent.length).toBe(before);
+    // callId pendente devolve toolResponse
+    t.sendToolResult('c1', 'navegar', { ok: true, output: 'grade aberta' });
+    const last = JSON.parse(ws.sent.at(-1)!);
+    expect(last.toolResponse.functionResponses[0]).toMatchObject({
+      id: 'c1',
+      name: 'navegar',
+      response: { output: { ok: true, output: 'grade aberta' } },
+    });
+    // reenviar o mesmo callId (já consumido) não duplica
+    const after = ws.sent.length;
+    t.sendToolResult('c1', 'navegar', { ok: true });
+    expect(ws.sent.length).toBe(after);
+  });
+
   it('audioStreamEnd fecha o turno de fala do usuário', () => {
     const ws = fakeWs();
     const t = makeTransport(ws, events());
     t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
     ws.fire('open');
     ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    t.sendMicChunk(Buffer.from([1, 0]).toString('base64'));
     t.endUserTurn();
     const last = JSON.parse(ws.sent.at(-1)!);
     expect(last.realtimeInput.audioStreamEnd).toBe(true);
+  });
+
+  it('watchdog de progresso: 30s sem mensagem do servidor fecha o socket zumbi', async () => {
+    vi.useFakeTimers();
+    const ws = fakeWs();
+    const ev = events();
+    const t = new GeminiLiveTransport(ev, {
+      wsFactory: () => ws,
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    // 30s de silêncio do servidor → watchdog fecha o socket + erra diagnóstico
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(ws.close).toHaveBeenCalled();
+    expect(ev.calls.error.some((m) => String(m).includes('progresso'))).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it('watchdog de progresso é re-armado a cada mensagem do servidor', async () => {
+    vi.useFakeTimers();
+    const ws = fakeWs();
+    const t = new GeminiLiveTransport(events(), {
+      wsFactory: () => ws,
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    // mensagens periódicas re-armam o watchdog → nunca fecha
+    for (let i = 0; i < 5; i += 1) {
+      await vi.advanceTimersByTimeAsync(20_000);
+      ws.fire('message', JSON.stringify({ serverContent: { outputTranscription: { text: 'oi' } } }));
+    }
+    expect(ws.close).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it('HIGH-3: para de reconectar um socket ocioso que só chega a setupComplete', async () => {
+    vi.useFakeTimers();
+    const sockets: Array<ReturnType<typeof fakeWs>> = [];
+    const ev = events();
+    const t = new GeminiLiveTransport(ev, {
+      wsFactory: () => {
+        const ws = fakeWs();
+        sockets.push(ws);
+        return ws;
+      },
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    // Relight ocioso repetido: open → setupComplete → 30s sem mic/mensagem →
+    // watchdog fecha → reconnect. Sem o fix, cada setupComplete zerava o contador
+    // de reconexão → loop eterno (um socket novo por iteração).
+    for (let i = 0; i < 8; i += 1) {
+      const ws = sockets[sockets.length - 1];
+      ws.fire('open');
+      ws.fire('message', JSON.stringify({ setupComplete: {} }));
+      await vi.advanceTimersByTimeAsync(30_000); // watchdog dispara → ws.close()
+      ws.fire('close'); // o socket cai de fato → agenda (ou não) reconexão
+      await vi.advanceTimersByTimeAsync(5_000); // deixa o backoff agendado disparar
+    }
+    // 1 socket inicial + no máximo MAX_RECONNECT_ATTEMPTS(3) reconexões = 4.
+    expect(sockets.length).toBeLessThanOrEqual(4);
+    expect(ev.calls.stateChange).toContain('closed');
+    vi.useRealTimers();
+  });
+
+  it('reseta o orçamento de reconexão só com progresso real do servidor (não no setupComplete)', async () => {
+    vi.useFakeTimers();
+    const sockets: Array<ReturnType<typeof fakeWs>> = [];
+    const t = new GeminiLiveTransport(events(), {
+      wsFactory: () => {
+        const ws = fakeWs();
+        sockets.push(ws);
+        return ws;
+      },
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    // Sessão saudável: relight com PROGRESSO real (transcrição) a cada volta
+    // zera o contador → reconecta indefinidamente (não é o loop ocioso do HIGH-3).
+    for (let i = 0; i < 6; i += 1) {
+      const ws = sockets[sockets.length - 1];
+      ws.fire('open');
+      ws.fire('message', JSON.stringify({ setupComplete: {} }));
+      ws.fire(
+        'message',
+        JSON.stringify({ serverContent: { outputTranscription: { text: 'oi' } } }),
+      );
+      ws.fire('close');
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+    // Progresso real a cada relight mantém o orçamento cheio → 1 inicial + 6.
+    expect(sockets.length).toBe(7);
+    vi.useRealTimers();
+  });
+
+  it('singleton cross-instância: conectar um 2º transporte encerra o 1º', () => {
+    const ws1 = fakeWs();
+    const ws2 = fakeWs();
+    const t1 = new GeminiLiveTransport(events(), {
+      wsFactory: () => ws1,
+      now: () => 1000,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    const t2 = new GeminiLiveTransport(events(), {
+      wsFactory: () => ws2,
+      now: () => 1000,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    t1.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws1.fire('open');
+    ws1.fire('message', JSON.stringify({ setupComplete: {} }));
+    expect(t1.isReady).toBe(true);
+    // t2 reivindica o slot → t1 é encerrado (F-133)
+    t2.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    expect(ws1.close).toHaveBeenCalled();
+    expect(t1.isReady).toBe(false);
+  });
+
+  it('órfã (perdeu o slot) não reconecta ao cair — auto-encerra', async () => {
+    vi.useFakeTimers();
+    const ws1 = fakeWs();
+    const ws2 = fakeWs();
+    const t1calls = { n: 0 };
+    const t1 = new GeminiLiveTransport(events(), {
+      wsFactory: () => {
+        t1calls.n += 1;
+        return ws1;
+      },
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    const t2 = new GeminiLiveTransport(events(), {
+      wsFactory: () => ws2,
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    t1.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws1.fire('open');
+    ws1.fire('message', JSON.stringify({ setupComplete: {} }));
+    // t2 toma o slot; t1 vira órfã
+    t2.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    const beforeCalls = t1calls.n;
+    // t1 nem tenta reconectar (já encerrado); avança tempo pra provar
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(t1calls.n).toBe(beforeCalls);
+    vi.useRealTimers();
   });
 
   it('ignores an obsolete reconnect timer after a manual reconnect', async () => {

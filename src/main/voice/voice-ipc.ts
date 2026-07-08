@@ -29,6 +29,7 @@ import {
   storeVoiceApiKey,
 } from './voice-config-store';
 import { jarvisThink } from './jarvis-brain';
+import { jarvisConversation } from './jarvis-conversation';
 import { WakeEngine } from './wake-engine';
 import { logVoice } from './voice-log';
 import { spawn } from 'node:child_process';
@@ -41,7 +42,11 @@ import {
   wakeLockHolder,
 } from './wake-lock';
 import { JarvisLiveSession } from './jarvis-live';
-import { LiveTransportController } from './live-transport-controller';
+import {
+  LiveTransportController,
+  type PendingQuestionSource,
+} from './live-transport-controller';
+import { listHandoffs } from '../orch/handoff-store';
 import { jarvisLatencyTracker } from '../jarvis/realtime/metrics';
 import { transcriptStore } from '../jarvis/transcript-store';
 import {
@@ -85,7 +90,25 @@ const liveSession = new JarvisLiveSession(broadcast, Date.now, (sessionId, line)
     ...record,
   });
 });
-const liveTransport = new LiveTransportController(broadcast, liveSession);
+// C-085 r3 (upstream QUESTION_POLL): um handoff `blocked` = uma pane delegada
+// travada precisando do usuário — i.e. uma pergunta narrada pendente. O poll do
+// controller registra cada uma para que a PRÓXIMA fala final do usuário seja
+// roteada de volta à pane (send_to_pane, modelo bypassado), sem re-wake.
+const pendingQuestionSource: PendingQuestionSource = {
+  poll: () =>
+    listHandoffs({ includeDelivered: false })
+      .filter((handoff) => handoff.status === 'blocked')
+      .map((handoff) => ({
+        paneId: handoff.sessionId ?? handoff.id,
+        questionHash: handoff.summary,
+      })),
+};
+const liveTransport = new LiveTransportController(
+  broadcast,
+  liveSession,
+  Date.now,
+  pendingQuestionSource,
+);
 
 // Módulo-level para o closeVoiceIpc() poder liberar as sessões ONNX no quit.
 let wakeEngine: WakeEngine | null = null;
@@ -113,6 +136,8 @@ function fullInfo(): VoiceRuntimeInfo {
 export function registerVoiceIpc(): void {
   loadVoiceConfig();
   wireHotkey();
+  const restartMarker = process.env.NEXUS_VOICE_RESTART_MARKER?.trim() || 'APP_RESTART';
+  logVoice('info', 'voice.restart', `=== ${restartMarker} ${new Date().toISOString()} ===`);
   // Narração proativa: handoff novo (entrega/travamento/falha) vira aviso de
   // voz — o renderer fala quando não houver turno ativo.
   initJarvisNarrator(broadcast);
@@ -158,11 +183,23 @@ export function registerVoiceIpc(): void {
       }
       try {
         const res = await transcribe(parsed.data, getVoiceConfig(), currentProbes());
+        // ITEM 7: a wake-path STT stall (cloud skipped to local por orçamento)
+        // nunca é silenciosa — o motivo/attempts entram no voice.log.
+        if (res.stalled) {
+          logVoice('warn', 'stt.stall', 'wake STT estourou o orçamento; pulou p/ local', {
+            budgetMs: parsed.data.budgetMs,
+            ok: res.ok,
+            provider: res.ok ? res.provider : null,
+            attempts: res.attempts.map((a) => `${a.provider}: ${a.reason}`),
+          });
+        }
         // Terceira camada anti-eco (após o AEC do mic e antes do filtro de
         // fantasmas do renderer): transcrição que é o próprio TTS recente
         // vazando do alto-falante volta marcada para descarte silencioso.
         if (res.ok && echoSuppressor.isEcho(res.text)) {
-          console.log(`[voice] eco do TTS descartado: "${res.text.slice(0, 80)}"`);
+          logVoice('info', 'stt.echoDiscarded', 'eco do TTS descartado', {
+            text: res.text.slice(0, 120),
+          });
           return { ...res, discarded: 'echo' };
         }
         return res;
@@ -259,11 +296,19 @@ export function registerVoiceIpc(): void {
       return { say: 'Não entendi o pedido.', action: { type: 'none' } };
     }
     try {
+      // Gap 9: se o renderer perdeu o histórico (morte/reinício da sessão),
+      // reinjeta a conversa persistida em disco dentro da janela de resume, para
+      // a JARVIS retomar o fio em vez de recomeçar e re-perguntar o que já sabia.
+      const history =
+        parsed.data.history.length > 0
+          ? parsed.data.history
+          : jarvisConversation.resume();
       const reply = await jarvisThink(
         parsed.data.transcript,
         parsed.data.context,
-        parsed.data.history,
+        history,
       );
+      jarvisConversation.record(parsed.data.transcript, reply.say);
       liveSession.onJarvisReply(parsed.data.transcript, reply);
       console.log(
         `[voice] jarvis: "${parsed.data.transcript}" → ${reply.action.type}` +
@@ -329,11 +374,12 @@ export function registerVoiceIpc(): void {
 
   ipcMain.handle(VOICE_CHANNELS.liveStart, async (_event, raw) => {
     const parsed = jarvisLiveStartRequestSchema.safeParse(raw ?? {});
-    let state = liveSession.start(parsed.success ? parsed.data : {});
+    const req = parsed.success ? parsed.data : {};
+    let state = liveSession.start(req);
     // Se a config pede transporte realtime, conecta o socket antes do mic;
     // senão isto é no-op e o Classic segue (fallback keyless).
     if (liveSession.getState().sessionId) {
-      await liveTransport.onStart();
+      await liveTransport.onStart({ forceFresh: req.forceFresh });
       state = liveSession.getState();
     }
     return state;
@@ -342,6 +388,19 @@ export function registerVoiceIpc(): void {
   ipcMain.handle(VOICE_CHANNELS.liveStop, () => {
     liveTransport.onStop();
     return liveSession.stop();
+  });
+  ipcMain.handle(VOICE_CHANNELS.liveHardRebuild, async () => {
+    logVoice('warn', 'live.hardRebuild', 'destruindo socket zumbi + nova conexão');
+    liveTransport.hardStop();
+    liveSession.start({ reason: 'manual' });
+    await liveTransport.onStart();
+    return liveSession.getState();
+  });
+  ipcMain.handle(VOICE_CHANNELS.liveHardTeardown, () => {
+    logVoice('warn', 'live.hardTeardown', 'destruindo socket — sem reconexão');
+    liveTransport.hardStop();
+    liveSession.stop();
+    return liveSession.getState();
   });
   ipcMain.handle(VOICE_CHANNELS.liveEndTurn, () => {
     liveTransport.endTurn();
@@ -402,6 +461,9 @@ export function closeVoiceIpc(): void {
   disposeVoiceHotkey();
   shutdownJarvisNarrator();
   stopSystemSpeech();
+  // P4: hard teardown on quit — never leave a grace socket dangling.
+  liveTransport.hardStop();
+  liveSession.stop();
   // Sessões ONNX do wake são memória nativa — sem release explícito vazam
   // em quit/restart.
   void wakeEngine?.dispose();

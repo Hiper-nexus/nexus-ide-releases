@@ -7,16 +7,32 @@ export const CLICK_REALTIME_TRANSCRIPT_WAIT_MS = 6_500;
 
 export interface RealtimeTranscriptWaitOptions {
   localSpeechUsable?: boolean;
+  /**
+   * MUTE FIX: true quando o realtime é o DONO da sessão (Classic suprimido por
+   * per-SESSION ownership). O atalho de 1,2s abaixo existia para largar RÁPIDO
+   * para o Classic STT quando havia fala local usável — mas com o Classic
+   * desligado (DEFECT 1) esse atalho só GARANTIA o timeout para o silêncio (o
+   * transcript realtime — Gemini finaliza no 1º áudio, OpenAI via whisper — não
+   * chega em 1,2s). Sendo dono, esperamos o orçamento CHEIO do wake/click; o
+   * áudio já enfileirado toca assim que o transcript finaliza (~1–2,5s), então
+   * não há silêncio extra no caminho feliz.
+   */
+  realtimeIsOwner?: boolean;
 }
 
 export function realtimeTranscriptWaitMs(
   reason: JarvisCaptureReason,
   opts: RealtimeTranscriptWaitOptions = {},
 ): number {
-  if (opts.localSpeechUsable && (reason === 'wake' || reason === 'click')) {
+  if (
+    !opts.realtimeIsOwner &&
+    opts.localSpeechUsable &&
+    (reason === 'wake' || reason === 'click')
+  ) {
     return LOCAL_SPEECH_REALTIME_TRANSCRIPT_WAIT_MS;
   }
   if (reason === 'click') return CLICK_REALTIME_TRANSCRIPT_WAIT_MS;
   if (reason === 'wake') return WAKE_REALTIME_TRANSCRIPT_WAIT_MS;
+  if (reason === 'reply' && opts.realtimeIsOwner) return WAKE_REALTIME_TRANSCRIPT_WAIT_MS;
   return REALTIME_TRANSCRIPT_WAIT_MS;
 }

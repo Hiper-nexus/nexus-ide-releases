@@ -36,6 +36,31 @@ describe('jarvisActionFastPath', () => {
     expect(reply?.action).toEqual({ type: 'new_workspace' });
   });
 
+  it('STT "iniciar no workspace" dispara new_workspace', () => {
+    for (const text of [
+      'Iniciar no Workspace.',
+      'abrir workspace novo',
+      'abrir novo workspace',
+      'iniciar workspace',
+    ]) {
+      const reply = jarvisActionFastPath(text, CTX);
+      expect(reply?.action).toEqual({ type: 'new_workspace' });
+      expect(reply?.say).toContain('workspace');
+    }
+  });
+
+  it('STT "abrir novo o workspace" (com artigo extra) dispara new_workspace', () => {
+    for (const text of [
+      'E aí, Jarvis? Abrir novo o Workspace.',
+      'abrir novo o workspace',
+      'abre um novo o workspace',
+      'abrir novo workspace',
+    ]) {
+      const reply = jarvisActionFastPath(text, CTX);
+      expect(reply?.action).toEqual({ type: 'new_workspace' });
+    }
+  });
+
   it('variantes faladas de espaço de trabalho disparam new_workspace', () => {
     for (const text of [
       'inicia um novo espaço de trabalho',
@@ -116,6 +141,15 @@ describe('jarvisActionFastPath', () => {
   it('iniciar um novo squad dispara design_squad', () => {
     const reply = jarvisActionFastPath('iniciar um novo squad', CTX);
     expect(reply?.action).toEqual({ type: 'design_squad' });
+    expect(reply?.expectReply).toBe(true);
+  });
+
+  it('sim na revisão de squad dispara confirm_squad', () => {
+    const reply = jarvisActionFastPath('sim', {
+      ...CTX,
+      screen: 'wizard: revisão de squad pronto — diga sim / inicia para confirmar e disparar',
+    });
+    expect(reply?.action).toEqual({ type: 'confirm_squad' });
   });
 
   it('inicia squad full stack dispara open_squad', () => {

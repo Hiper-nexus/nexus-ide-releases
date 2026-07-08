@@ -520,6 +520,8 @@ export interface NexusApi {
     confirmCommand(command: string): Promise<boolean>;
     liveStart(req?: JarvisLiveStartRequest): Promise<JarvisLiveState>;
     liveStop(): Promise<JarvisLiveState>;
+    liveHardRebuild(): Promise<JarvisLiveState>;
+    liveHardTeardown(): Promise<JarvisLiveState>;
     liveEndTurn(): Promise<JarvisLiveState>;
     liveSmokeTest(req: JarvisLiveSmokeTestRequest): Promise<JarvisLiveState>;
     liveSay(req: JarvisLiveSayRequest): Promise<JarvisLiveState>;

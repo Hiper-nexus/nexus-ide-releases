@@ -75,6 +75,7 @@ export function MissionWizard() {
   const open = useMissionWizardStore((s) => s.open);
   const variant = useMissionWizardStore((s) => s.variant);
   const presetSquadId = useMissionWizardStore((s) => s.presetSquadId);
+  const voiceLaunchNonce = useMissionWizardStore((s) => s.voiceLaunchNonce);
   const close = useMissionWizardStore((s) => s.close);
   const squads = useOrchStore((s) => s.squads);
   const providers = useProviderStore((s) => s.providers);
@@ -185,7 +186,6 @@ export function MissionWizard() {
         `Worker "${invalid.agentName}" está com tools bloqueadas (campo nulo). ` +
           'Liste tools explícitas (ex.: Bash, Read, Edit) ou deixe vazio para bloquear todas.',
       );
-      // Scroll the offending row into view.
       requestAnimationFrame(() => {
         document
           .querySelector(`[data-agent-id="${invalid.id}"]`)
@@ -194,6 +194,15 @@ export function MissionWizard() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
+
+  // Overclock wizard-fire: Live/Classic confirm_squad bumps voiceLaunchNonce.
+  // MUST live before any early return so the hook count is stable every render.
+  useEffect(() => {
+    if (!open || voiceLaunchNonce <= 0) return;
+    if (step !== 'squad-review' || !selectedSquad || spawning) return;
+    void handleLaunchSquad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire only on nonce
+  }, [voiceLaunchNonce]);
 
   function updateAgent(id: string, patch: Partial<SquadAgent>) {
     setRoster((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));

@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildJarvisPersonaInstruction,
+  emptyReplyReason,
   jarvisThink,
+  parseReply,
+  recoverSpokenText,
+  repairMissingAction,
   type BrainDeps,
 } from './jarvis-brain';
 import type { JarvisContext } from '../../shared/voice-ipc';
@@ -15,6 +19,72 @@ const CTX: JarvisContext = {
   orchestrator: null,
   missions: [],
 };
+
+describe('emptyReplyReason', () => {
+  const base = {
+    say: '',
+    transcriptIsNoise: false,
+    budgetFired: false,
+    providerFailures: 0,
+  };
+  it('returns null when the reply actually has speech', () => {
+    expect(emptyReplyReason({ ...base, say: 'Feito, patrão.' })).toBe(null);
+  });
+  it('classifies intentional silence on a noise transcript', () => {
+    expect(emptyReplyReason({ ...base, transcriptIsNoise: true })).toBe('noise-transcript');
+  });
+  it('classifies a provider-chain deadline (fallback won the race)', () => {
+    expect(emptyReplyReason({ ...base, budgetFired: true })).toBe('provider-chain-deadline');
+  });
+  it('classifies all-providers-failed', () => {
+    expect(emptyReplyReason({ ...base, providerFailures: 2 })).toBe('all-providers-failed');
+  });
+  it('classifies a provider that returned an empty say', () => {
+    expect(emptyReplyReason(base)).toBe('provider-returned-empty');
+  });
+});
+
+describe('parseReply — DEFECT 3: a brace must never reach TTS', () => {
+  const hasBrace = (s: string): boolean => /[{}[\]]/.test(s);
+
+  it('parses the strict {say,action} shape', () => {
+    const r = parseReply('{"say":"Olá, patrão.","action":{"type":"none"}}');
+    expect(r.say).toBe('Olá, patrão.');
+    expect(r.action.type).toBe('none');
+  });
+
+  it('recovers spoken text from a structured message envelope (no brace leak)', () => {
+    const raw = '{"type":"message","content":[{"type":"text","text":"Bom dia, patrão."}]}';
+    const r = parseReply(raw);
+    expect(r.say).toBe('Bom dia, patrão.');
+    expect(hasBrace(r.say)).toBe(false);
+  });
+
+  it('recovers from an OpenAI-compat choices envelope', () => {
+    const raw = '{"choices":[{"message":{"content":"Certo, patrão."}}]}';
+    expect(parseReply(raw).say).toBe('Certo, patrão.');
+  });
+
+  it('never speaks a raw brace from truncated/unparseable JSON', () => {
+    const raw = '{\n  "type": "message",\n  "content": [ { "type": "text", "tex';
+    const r = parseReply(raw);
+    expect(hasBrace(r.say)).toBe(false);
+  });
+
+  it('never speaks a brace for a pure-JSON reply with no natural text', () => {
+    const say = parseReply('{"foo":123,"bar":true}').say;
+    expect(hasBrace(say)).toBe(false);
+  });
+
+  it('passes plain non-JSON prose straight through', () => {
+    expect(parseReply('Certo, patrão.').say).toBe('Certo, patrão.');
+  });
+
+  it('recoverSpokenText silences a bare truncated brace', () => {
+    expect(recoverSpokenText('{')).toBe('');
+    expect(recoverSpokenText('{ "type": "message",')).toBe('');
+  });
+});
 
 function jsonResponse(status: number, content: string): Response {
   return new Response(
@@ -266,5 +336,62 @@ describe('jarvisThink brain providers', () => {
       tool: 'nexus_file_read',
       args: { path: 'package.json' },
     });
+  });
+
+  it('corrige LLM que diz terminal aberto sem action', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(
+        200,
+        '{"say":"Terminal aberto, patrão.","expectReply":false,"action":{"type":"none"}}',
+      ),
+    ) as unknown as typeof fetch;
+
+    const reply = await jarvisThink(
+      'preciso do console agora',
+      CTX,
+      [],
+      deps((envVar) => (envVar === 'GEMINI_API_KEY' ? 'gemini-key' : undefined), fetchImpl),
+    );
+
+    expect(reply.action).toEqual({ type: 'open_terminal' });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('repairMissingAction', () => {
+  it('injeta open_terminal quando a fala confirma abertura sem action', () => {
+    const fixed = repairMissingAction(
+      'ok',
+      { say: 'Pronto, terminal aberto.', expectReply: false, action: { type: 'none' } },
+      CTX,
+    );
+    expect(fixed.action).toEqual({ type: 'open_terminal' });
+  });
+});
+
+describe('jarvisThink chain deadline (Gap 8)', () => {
+  it('devolve o fallback gracioso antes do deadline quando os providers penduram', async () => {
+    // fetch que nunca resolve (rejeita só no abort) — simula provider pendurado.
+    const hangingFetch = vi.fn(
+      (_url: string, opts?: { signal?: AbortSignal }) =>
+        new Promise<Response>((_, reject) => {
+          opts?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    ) as unknown as typeof fetch;
+
+    const started = Date.now();
+    const reply = await jarvisThink(
+      'me conta uma novidade sobre o projeto',
+      CTX,
+      [],
+      deps((envVar) => (envVar === 'GEMINI_API_KEY' ? 'gemini-key' : undefined), hangingFetch),
+      40, // chainDeadlineMs curto: o fallback deve vencer a corrida
+    );
+
+    // Resolveu pelo budget bem antes do BRAIN_TIMEOUT_MS (15s) do provider.
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(reply.action).toEqual({ type: 'none' });
+    expect(reply.expectReply).toBe(true);
+    expect(reply.say.toLowerCase()).toContain('operando');
   });
 });

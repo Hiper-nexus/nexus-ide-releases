@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ModelInfoMap } from './adapter-types';
 
 /**
  * Per-provider (CLI/API adapter) user configuration and secrets surface for
@@ -56,6 +57,7 @@ export interface ProviderSettingsInfo {
   detectedBin: string;
   defaultModel: string;
   models: string[];
+  modelInfo?: ModelInfoMap;
   extraArgs: string[];
   /** Env var the key is injected as (e.g. ANTHROPIC_API_KEY). */
   keyEnvVar: string | null;

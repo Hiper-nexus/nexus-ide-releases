@@ -182,6 +182,45 @@ file change triggers a re-scan and re-validation. Invalid JSON or schema errors
 are logged to the Electron console and the bad file is silently skipped. Valid
 adapters immediately appear in the `+ Agent` picker without restarting the app.
 
+## Model catalog (new models / free→paid without a release)
+
+Besides adapter JSON, Nexus merges a **model catalog** that can add model ids
+and mark availability/cost (`free` | `cheap` | `paid` | `api-only` | `deprecated`,
+plus `costTier`). Sources, in order:
+
+1. Bundled defaults in `src/main/adapters/model-catalog.ts`
+2. Local overlay: `~/.nexus/model-catalog.json` (hot-reloaded)
+3. Startup refresh → writes that local file from URL / path / bundled published JSON
+
+**Publishable source of truth:** `resources/model-catalog.json`  
+**Publish lane:** branch `catalog` (JSON only).
+
+Default URL (GitHub raw — works when the repo is public or the machine has auth):
+
+```
+https://raw.githubusercontent.com/cleofasvolarehost/nexus-ide/catalog/resources/model-catalog.json
+```
+
+If that URL 404s (private repo), Nexus falls back to the same JSON **bundled**
+from `resources/model-catalog.json` and seeds `~/.nexus/model-catalog.json`.
+
+Override (HTTPS, `file://`, or absolute path):
+
+```bash
+# Remote
+export NEXUS_MODEL_CATALOG_URL='https://example.com/model-catalog.json'
+
+# Local file (dev / this machine)
+export NEXUS_MODEL_CATALOG_URL="$PWD/resources/model-catalog.json"
+# or: export NEXUS_MODEL_CATALOG_URL="file://$PWD/resources/model-catalog.json"
+```
+
+**Update when a model goes paid / a new Grok lands:**
+
+1. Edit `resources/model-catalog.json` (set `availability: "api-only"` / add the new id).
+2. Push to branch `catalog` (or copy into `~/.nexus/model-catalog.json`).
+3. Restart Nexus — boot refresh reloads the overlay; `fs.watch` also picks up local edits.
+
 ## Security notes
 
 - Adapters are **declarative only** — they specify argv arrays and env var

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.10.35 — Jarvis Live wake e catálogo de modelos
+
+Data: 2026-07-08
+
+Release de paridade operacional Live: wake mais confiável, um único caminho de voz,
+catálogo remoto de modelos e ações de workspace/squad.
+
+### Melhorias
+
+- Reset de sync no wake Live e rebuild forçado de socket zumbi no transporte realtime.
+- Caminho Live unificado (Charon) com menos corrida contra o Classic STT/brain/TTS.
+- Latência de wake, retenção de mic e coalescer de contexto de tela sem corrida no turno.
+- Fluxo de confirmação de squad e ações nativas de workspace na Jarvis.
+- Catálogo de modelos com refresh remoto (`NEXUS_MODEL_CATALOG_URL`), grok-4.5 e fable api-only.
+- Correção de crash de hooks no MissionWizard.
+
 ## 0.10.8 — Jarvis mais operacional
 
 Data: 2026-07-07

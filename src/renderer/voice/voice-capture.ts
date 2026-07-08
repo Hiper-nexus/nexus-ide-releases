@@ -204,6 +204,28 @@ export function frameRms(frame: Float32Array): number {
   return Math.sqrt(sum / Math.max(1, frame.length));
 }
 
+/** Média canais → mono (fifine USB entrega estéreo; só ler ch0 = silêncio). */
+export function downmixChannelsToMono(
+  channels: ReadonlyArray<Float32Array | undefined>,
+): Float32Array {
+  const usable = channels.filter(
+    (ch): ch is Float32Array => Boolean(ch && ch.length > 0),
+  );
+  if (usable.length === 0) return new Float32Array(0);
+  const len = usable[0].length;
+  const out = new Float32Array(len);
+  let count = 0;
+  for (const channel of usable) {
+    if (channel.length !== len) continue;
+    for (let i = 0; i < len; i += 1) out[i] += channel[i];
+    count += 1;
+  }
+  if (count > 1) {
+    for (let i = 0; i < len; i += 1) out[i] /= count;
+  }
+  return out;
+}
+
 export function mergeChunks(chunks: Float32Array[]): Float32Array {
   const total = chunks.reduce((n, c) => n + c.length, 0);
   const out = new Float32Array(total);

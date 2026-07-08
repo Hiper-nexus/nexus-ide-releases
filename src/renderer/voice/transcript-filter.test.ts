@@ -7,7 +7,17 @@ import {
 
 describe('isDiscardableTranscript', () => {
   it('descarta alucinações clássicas em captura fria', () => {
-    for (const ghost of ['you', 'Thank you.', 'obrigado', 'valeu', 'e aí', 'oi']) {
+    for (const ghost of [
+      'you',
+      'Thank you.',
+      'obrigado',
+      'valeu',
+      'e aí',
+      'oi',
+      'Beijos.',
+      'E já!',
+      'Se inscreve no canal!',
+    ]) {
       expect(isDiscardableTranscript(ghost, { inConversation: false })).toBe(true);
     }
   });
@@ -19,7 +29,14 @@ describe('isDiscardableTranscript', () => {
   });
 
   it('descarta artefatos duros mesmo em conversa', () => {
-    for (const junk of ['.', 'amara.org', 'obrigado por assistir', 'ai ai', 'hum']) {
+    for (const junk of [
+      '.',
+      'amara.org',
+      'obrigado por assistir',
+      'se inscreve no canal',
+      'ai ai',
+      'hum',
+    ]) {
       expect(isDiscardableTranscript(junk, { inConversation: true })).toBe(true);
     }
   });
@@ -68,6 +85,12 @@ describe('stripWakeAckEcho', () => {
   it('não mexe em fala real sem prefixo de wake', () => {
     expect(stripWakeAckEcho('abre o terminal agora', 'patrão')).toBe(
       'abre o terminal agora',
+    );
+  });
+
+  it('remove "E aí, Jarvis?" prefixado pelo Classic STT no mesmo utterance', () => {
+    expect(stripWakeAckEcho('E aí, Jarvis? Abrir novo o Workspace.', 'patrão')).toBe(
+      'Abrir novo o Workspace.',
     );
   });
 });

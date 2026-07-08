@@ -9,9 +9,15 @@
  *
  * Source of truth: ~/ai-launcher `ai` — PROVIDER_URLS / PROVIDER_MODELS /
  * PROVIDER_EXTRA_ENV (lines ~87-125) and the env-setup case (~213-240).
- * Behavior ported, not reinvented. Secrets stay in the OS keychain
- * (secrets-store); this module only computes env from a supplied token.
+ * Behavior ported, not reinvented. Preferred secret store is the OS keychain
+ * (secrets-store). As a runtime fallback we also read the launcher's
+ * `providers.conf` (same file `ai glm` uses) so a key already configured in
+ * the launcher works in Nexus without re-pasting.
  */
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 export interface UpstreamProvider {
   id: string;
@@ -214,4 +220,90 @@ export function buildProviderRoutingEnv(
     env[key] = value;
   }
   return env;
+}
+
+// ---------------------------------------------------------------------------
+// Launcher providers.conf — same store `ai glm` / `provider_load_key` uses.
+// Path: ~/.local/share/ai-launcher/providers.conf  (lines `provider=key`)
+// ---------------------------------------------------------------------------
+
+/** Default path of the ai-launcher credential file (mode 600). */
+export function defaultLauncherProvidersFile(): string {
+  return path.join(os.homedir(), '.local', 'share', 'ai-launcher', 'providers.conf');
+}
+
+const PROVIDER_NAME_RE = /^[a-z0-9_-]+$/;
+
+/** Aliases the launcher accepts for the same credential slot. */
+const LAUNCHER_KEY_ALIASES: Record<string, string[]> = {
+  glm: ['glm', 'zai', 'z.ai'],
+  sakana: ['sakana', 'fugu'],
+};
+
+let launcherKeyCache: {
+  file: string;
+  mtimeMs: number;
+  map: Map<string, string>;
+} | null = null;
+
+/** Test hook: force a providers.conf path (or null to restore default). */
+let launcherProvidersFileOverride: string | null = null;
+
+export function setLauncherProvidersFileForTests(file: string | null): void {
+  launcherProvidersFileOverride = file;
+  launcherKeyCache = null;
+}
+
+function parseProvidersConf(raw: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const name = trimmed.slice(0, eq).trim();
+    const value = trimmed.slice(eq + 1);
+    if (!PROVIDER_NAME_RE.test(name) || !value) continue;
+    map.set(name, value);
+  }
+  return map;
+}
+
+function readLauncherProvidersMap(file: string): Map<string, string> {
+  try {
+    const stat = fs.statSync(file);
+    if (
+      launcherKeyCache &&
+      launcherKeyCache.file === file &&
+      launcherKeyCache.mtimeMs === stat.mtimeMs
+    ) {
+      return launcherKeyCache.map;
+    }
+    const map = parseProvidersConf(fs.readFileSync(file, 'utf8'));
+    launcherKeyCache = { file, mtimeMs: stat.mtimeMs, map };
+    return map;
+  } catch {
+    launcherKeyCache = null;
+    return new Map();
+  }
+}
+
+/**
+ * Read a provider token the same way the launcher's `provider_load_key` does.
+ * Returns null when missing/invalid. Never logs the value.
+ */
+export function loadLauncherProviderKey(
+  providerId: string,
+  file = launcherProvidersFileOverride ?? defaultLauncherProvidersFile(),
+): string | null {
+  if (!providerId || !PROVIDER_NAME_RE.test(providerId)) return null;
+  const map = readLauncherProvidersMap(file);
+  const candidates = LAUNCHER_KEY_ALIASES[providerId] ?? [providerId];
+  for (const name of candidates) {
+    const value = map.get(name);
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return null;
 }

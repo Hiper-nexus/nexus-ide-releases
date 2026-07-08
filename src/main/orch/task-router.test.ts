@@ -87,8 +87,9 @@ describe('routeTask', () => {
     );
     expect(decision!.tier).toBe('critical');
     expect(decision!.adapterId).toBe('claude');
-    expect(decision!.model).toBe('claude-fable-5');
+    expect(decision!.model).toBe('claude-opus-4-8');
     expect(decision!.effort).toBe('xhigh');
+    expect(decision!.reason).toContain('evitou');
   });
 
   it('falls through to the next candidate when the first is not installed', () => {
@@ -152,7 +153,7 @@ describe('routeTask', () => {
   });
 
   it('reserva o claude OAuth para o orquestrador (reserveClaude)', () => {
-    // Sem reserva: crítico vai para claude-fable-5 (comportamento base).
+    // Sem reserva: crítico pula fable API-only e vai para opus.
     const base = routeTask(
       'auditar a segurança da autenticação e dos pagamentos',
       adapters('claude', 'codex', 'grok'),
@@ -184,12 +185,25 @@ describe('routeTask', () => {
   it('respects an explicit tier override', () => {
     const decision = routeTask(
       'tarefa qualquer sem sinais',
-      adapters('claude', 'grok'),
+      adapters('claude', 'grok', 'glm'),
       DEFAULT_ROUTING_TABLE,
       'critical',
     );
     expect(decision!.tier).toBe('critical');
-    expect(decision!.model).toBe('claude-fable-5');
+    expect(decision!.adapterId).toBe('claude');
+    expect(decision!.model).toBe('claude-opus-4-8');
+  });
+
+  it('keeps stronger critical candidates ahead of cheap fallback models', () => {
+    const decision = routeTask(
+      'auditar a segurança da autenticação e dos pagamentos',
+      adapters('claude', 'codex', 'glm'),
+    );
+
+    expect(decision!.tier).toBe('critical');
+    expect(decision!.adapterId).toBe('claude');
+    expect(decision!.model).toBe('claude-opus-4-8');
+    expect(decision!.reason).toContain('evitou');
   });
 
   it('returns null when no adapter is installed', () => {
@@ -202,6 +216,6 @@ describe('routeTask', () => {
       adapters('claude', 'codex'),
     );
     expect(decision!.alternatives.length).toBeGreaterThan(0);
-    expect(decision!.alternatives[0].adapterId).toBe('claude');
+    expect(decision!.alternatives.map((a) => a.adapterId)).toContain('codex');
   });
 });

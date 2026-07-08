@@ -44,6 +44,10 @@ describe('JarvisLiveSession', () => {
     expect(jarvisLiveStartRequestSchema.parse({ reason: 'click' })).toEqual({
       reason: 'click',
     });
+    expect(jarvisLiveStartRequestSchema.parse({ reason: 'wake', forceFresh: true })).toEqual({
+      reason: 'wake',
+      forceFresh: true,
+    });
   });
 
   it('ends a turn without destroying the live session', () => {

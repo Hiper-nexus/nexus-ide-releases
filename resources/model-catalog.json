@@ -1,0 +1,211 @@
+{
+  "version": 1,
+  "updatedAt": "2026-07-08T20:00:00.000Z",
+  "adapters": {
+    "claude": {
+      "default": "claude-sonnet-5",
+      "models": [
+        {
+          "id": "claude-fable-5",
+          "availability": "api-only",
+          "costTier": "high",
+          "source": "remote",
+          "warning": "Saiu do free tier / API-only: o roteador automático evita este modelo. Só use se escolher manualmente e aceitar o custo."
+        },
+        {
+          "id": "claude-opus-4-8",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "claude-opus-4-7",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "claude-sonnet-5",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        }
+      ]
+    },
+    "codex": {
+      "default": "gpt-5.5",
+      "models": [
+        {
+          "id": "gpt-5.5",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "gpt-5.4",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "gpt-5.4-mini",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "gpt-5.3-codex",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        }
+      ]
+    },
+    "grok": {
+      "default": "grok-build",
+      "models": [
+        {
+          "id": "grok-4.5",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote",
+          "warning": "Modelo novo da xAI — confirme pricing/tier antes de tornar default."
+        },
+        {
+          "id": "grok-4.1",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "grok-4",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "grok-4-fast",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "grok-code-fast-1",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "grok-build",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "grok-composer-2.5-fast",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        }
+      ]
+    },
+    "glm": {
+      "default": "glm-5.2",
+      "models": [
+        {
+          "id": "glm-5.2",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "glm-4.6",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "glm-4.5-air",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        }
+      ]
+    },
+    "agy": {
+      "default": "gemini-3.1-pro-high",
+      "models": [
+        {
+          "id": "gemini-3.5-flash-low",
+          "availability": "free",
+          "costTier": "free",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.5-flash-high",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.1-pro-high",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.1-pro-low",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        }
+      ]
+    },
+    "kimi": {
+      "default": "kimi-code/kimi-for-coding",
+      "models": [
+        {
+          "id": "kimi-code/kimi-for-coding",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "kimi-k2.7",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "kimi-k2-turbo",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        }
+      ]
+    },
+    "longcat": {
+      "default": "LongCat-2.0",
+      "models": [
+        {
+          "id": "LongCat-2.0",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        }
+      ]
+    }
+  }
+}

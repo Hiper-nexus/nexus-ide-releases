@@ -120,6 +120,66 @@ describe('transcribe — quota/rate-limit fallback (free-tier Groq)', () => {
     }
   });
 
+  // ITEM 7: on the wake path a hung cloud provider must NOT hold the turn ~16s.
+  it('wake budget: after one failed cloud attempt, skips the 2nd cloud straight to local', async () => {
+    const calledHosts: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      calledHosts.push(String(url));
+      return jsonResponse(500, {}); // groq errors
+    }) as unknown as typeof fetch;
+
+    const result = await transcribe(
+      { ...REQ, budgetMs: 8_000 },
+      config(),
+      PROBES,
+      deps({
+        fetchImpl,
+        findBin: vi.fn(() => 'whisper-cli'),
+        fileExists: vi.fn(() => true),
+        readText: vi.fn(() => '  local after stall  '),
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.provider).toBe('local-whisper');
+      expect(result.stalled).toBe(true);
+    }
+    // Only ONE cloud host was hit (groq); openai was skipped by the budget.
+    expect(calledHosts.filter((h) => h.includes('openai.com'))).toHaveLength(0);
+  });
+
+  it('wake budget: skips ALL cloud when the budget is already spent (injected clock)', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { text: 'should-not-run' })) as unknown as typeof fetch;
+    // Clock jumps 9s after the first read → budget (8s) is spent before any cloud call.
+    let t = 0;
+    const now = () => {
+      const v = t;
+      t += 9_000;
+      return v;
+    };
+
+    const result = await transcribe(
+      { ...REQ, budgetMs: 8_000 },
+      config(),
+      PROBES,
+      deps({
+        fetchImpl,
+        now,
+        findBin: vi.fn(() => 'whisper-cli'),
+        fileExists: vi.fn(() => true),
+        readText: vi.fn(() => '  local only  '),
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.provider).toBe('local-whisper');
+      expect(result.stalled).toBe(true);
+    }
+    expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+  });
+
   it('probes Homebrew whisper-cli paths for GUI-launched macOS apps', async () => {
     let candidates: string[] = [];
     const findBin = vi.fn((items: string[]) => {

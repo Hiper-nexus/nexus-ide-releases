@@ -105,10 +105,15 @@ export const jarvisLiveConfigSchema = z
     enabled: z.boolean().default(false),
     /**
      * Transporte da sessao live: 'classic' = FSM sobre pipeline batch;
-     * 'openai-realtime' = OpenAI Realtime via WSS; 'gemini-live' = fallback
-     * realtime. Quando realtime falha, o Classic segue valendo.
+     * 'openai-realtime' = OpenAI Realtime via WSS; 'gemini-live' = transporte
+     * realtime full-duplex nativo (padrão). A hibernação de 2026-07-06 (default
+     * 'classic') foi revertida pela Decisão aprovada 2026-07-08 — realtime é o
+     * default COM degradação automática: sem key / setup falho / reconexão
+     * esgotada, o Classic (agora muito melhor) segue valendo mid-session.
      */
-    transport: z.enum(['classic', 'openai-realtime', 'gemini-live']).default('classic'),
+    transport: z
+      .enum(['classic', 'openai-realtime', 'gemini-live'])
+      .default('gemini-live'),
     /** Modelo realtime OpenAI padrao. */
     openaiModel: z.string().min(1).max(128).default('gpt-realtime-2.1-mini'),
     /** Voz OpenAI Realtime padrao. */
@@ -130,7 +135,7 @@ export const jarvisLiveConfigSchema = z
   })
   .default({
     enabled: false,
-    transport: 'classic',
+    transport: 'gemini-live',
     openaiModel: 'gpt-realtime-2.1-mini',
     openaiVoice: 'marin',
     liveModel: 'gemini-2.5-flash-native-audio-preview-12-2025',
@@ -210,6 +215,45 @@ export function promoteJarvisBrainProvider(
   ]);
 }
 
+/**
+ * ITEM 4: guarantee a REAL cascade. A persisted config that was reduced to a
+ * single brain provider (e.g. groq-only) fails empty the moment that one
+ * provider errors. This appends any of the canonical providers (gemini / openai
+ * / groq, with their strong default tiers) that the user's chain is missing —
+ * WITHOUT reordering or re-modeling the providers the user already chose. So the
+ * head stays the user's preference and the tail gains the other two as
+ * fallbacks: "no empty replies while any provider has a valid key."
+ */
+export function ensureFullBrainCascade(
+  head: JarvisBrainProvider,
+  canonical: JarvisBrainProvider[] = flattenJarvisBrainProviders(
+    DEFAULT_VOICE_CONFIG.jarvisBrain,
+  ),
+): JarvisBrainProvider {
+  const chain = flattenJarvisBrainProviders(head);
+  const present = new Set(chain.map((p) => p.provider));
+  const missing = canonical.filter((p) => !present.has(p.provider));
+  if (missing.length === 0) return head;
+  return relinkJarvisBrainProviders([...chain, ...missing]);
+}
+
+/**
+ * ITEM 4/6: which brain provider + model will actually answer, given a key
+ * resolver — the first link in the (full) cascade whose key resolves. Pure so
+ * the engage/boot log can name it verbatim. Returns null when no key resolves.
+ */
+export function resolveActiveJarvisBrain(
+  head: JarvisBrainProvider,
+  hasKey: (envVar: string) => boolean,
+): { provider: JarvisBrainProviderId; model: string } | null {
+  for (const p of flattenJarvisBrainProviders(ensureFullBrainCascade(head))) {
+    const envVar = p.auth.envVar;
+    const resolves = p.auth.type === 'none' || (envVar ? hasKey(envVar) : false);
+    if (resolves) return { provider: p.provider, model: p.model };
+  }
+  return null;
+}
+
 export const voiceConfigSchema = z.object({
   enabled: z.boolean().default(true),
   input: inputSchema.default({
@@ -271,7 +315,7 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
   persona: { assistantName: 'Jarvis' },
   jarvisLive: {
     enabled: false,
-    transport: 'classic',
+    transport: 'gemini-live',
     openaiModel: 'gpt-realtime-2.1-mini',
     openaiVoice: 'marin',
     liveModel: 'gemini-2.5-flash-native-audio-preview-12-2025',

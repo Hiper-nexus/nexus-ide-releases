@@ -4,7 +4,12 @@ import { jarvisActionFastPath } from './jarvis-action-fastpath';
 import { jarvisFastPath } from './jarvis-fastpath';
 import { jarvisToolCatalogCompact } from './jarvis-tool-catalog';
 import { getVoiceConfig } from './voice-config-store';
-import { flattenJarvisBrainProviders } from '../../shared/voice-config';
+import { logVoice } from './voice-log';
+import {
+  ensureFullBrainCascade,
+  flattenJarvisBrainProviders,
+} from '../../shared/voice-config';
+import { isLikelyNoiseTranscript } from '../../shared/voice-noise';
 import type {
   JarvisContext,
   JarvisReply,
@@ -52,7 +57,8 @@ Action types:
 - {"type":"open_squad","squadName":"<approximate name>"} - start a squad now.
 - {"type":"open_workspace","workspaceName":"<approximate name>"} - open a
   recent project/workspace.
-- {"type":"design_squad"} - create a custom squad for the current project.
+- {"type":"design_squad"} - create a custom squad for the current project (opens review; ask confirmation).
+- {"type":"confirm_squad"} - confirm and launch the squad currently on the review wizard ("sim" / "inicia").
 - {"type":"new_mission"} - open a new mission flow without naming a squad.
 - {"type":"new_workspace"} - open the new workspace wizard (folder + setup).
 - {"type":"open_terminal"} - open an empty shell terminal in the current workspace.
@@ -98,6 +104,12 @@ agent pane. If the user utterance is truncated, meaningless, or looks like noise
 Golden rule: never say you did or will do something unless you return the
 matching action. Without an action, nothing happens in the app. For file/git/
 editor/browser/mission tasks, use mcp_tool with the correct nexus_* tool.
+
+Visibility rule: context.screen is structured state, NOT pixels. A shell pane
+listed in panes[] is NOT visible if surface mentions home deck, operator profile,
+wizard, settings, ops board, or blocking overlays. Never say "terminal aberto"
+unless view is grid, focused pane is shell, and no overlay covers the workspace.
+Use open_terminal action to reveal it; the app verifies visibility after execution.
 
 You can execute things through actions. Never claim you cannot. Examples:
 - "executa o comando ai" -> {"say":"Rodando o ai no terminal.","action":{"type":"run_command","command":"ai"}}
@@ -243,13 +255,95 @@ function applyMemoryOps(raw: string): void {
   }
 }
 
-function parseReply(raw: string): JarvisReply {
+/**
+ * DEFECT 3 (brain JSON leak): uma braçadeira NUNCA pode chegar ao TTS. Alguns
+ * providers (Gemini native-audio via OpenAI-compat) devolvem um envelope
+ * estruturado (`{"type":"message","content":[{"type":"text","text":"..."}]}`)
+ * ou um JSON truncado que estoura o `JSON.parse`. Recupera a fala de formas
+ * estruturadas conhecidas; se nada natural sobrar, devolve '' (silêncio) em vez
+ * de soletrar "{" caractere a caractere.
+ */
+export function spokenFromStructuredShape(obj: Record<string, unknown>): string {
+  const pickString = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+  // Campos "de fala" diretos.
+  for (const key of ['say', 'text', 'output_text', 'message'] as const) {
+    const val = pickString(obj[key]);
+    if (val) return val;
+  }
+  // content: string OU array de blocos {type:'text',text} / {text}.
+  const content = obj.content;
+  if (typeof content === 'string' && content.trim()) return content.trim();
+  if (Array.isArray(content)) {
+    const parts = content
+      .map((block) =>
+        block && typeof block === 'object'
+          ? pickString((block as Record<string, unknown>).text)
+          : typeof block === 'string'
+            ? block.trim()
+            : '',
+      )
+      .filter(Boolean);
+    if (parts.length) return parts.join(' ').trim();
+  }
+  // Envelope OpenAI-compat: choices[].message.content.
+  const choices = obj.choices;
+  if (Array.isArray(choices) && choices[0] && typeof choices[0] === 'object') {
+    const msg = (choices[0] as Record<string, unknown>).message;
+    if (msg && typeof msg === 'object') {
+      const c = pickString((msg as Record<string, unknown>).content);
+      if (c) return c;
+    }
+  }
+  return '';
+}
+
+/** Texto parece um payload JSON (e não fala natural)? */
+function looksLikeJsonPayload(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/^[{[]/.test(t)) return true;
+  // Assinatura estrutural "chave": (par de JSON) sem virar prosa.
+  return /"[\w-]+"\s*:/.test(t);
+}
+
+/**
+ * Garante que a fala NUNCA carregue sintaxe JSON. Tenta recuperar de uma forma
+ * estruturada; se falhar e o resto ainda parecer JSON, silencia.
+ */
+export function recoverSpokenText(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const objMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (objMatch) {
+    try {
+      const obj = JSON.parse(objMatch[0]) as Record<string, unknown>;
+      const recovered = spokenFromStructuredShape(obj);
+      if (recovered) return recovered.slice(0, 300);
+    } catch {
+      // JSON truncado/malformado — cai no strip abaixo.
+    }
+  }
+  // Remove qualquer bloco {…}/[…] residual e a cerca de código.
+  const stripped = trimmed
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\{[\s\S]*\}/g, ' ')
+    .replace(/\[[\s\S]*\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!stripped || looksLikeJsonPayload(stripped)) return '';
+  return stripped.slice(0, 300);
+}
+
+export function parseReply(raw: string): JarvisReply {
   // Modelos às vezes embrulham o JSON em cercas — extraia o primeiro objeto.
   const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return { say: raw.trim().slice(0, 300), action: { type: 'none' } };
+  if (!match) return { say: recoverSpokenText(raw), action: { type: 'none' } };
   try {
     const obj = JSON.parse(match[0]) as Partial<JarvisReply>;
-    const say = typeof obj.say === 'string' ? obj.say.trim() : 'Certo.';
+    const say =
+      typeof obj.say === 'string'
+        ? obj.say.trim()
+        : spokenFromStructuredShape(obj as Record<string, unknown>) || 'Certo.';
     let expectReply =
       typeof obj.expectReply === 'boolean' ? obj.expectReply : (say ? /\?\s*$/.test(say) : false);
     if (!say || /\b(n[aã]o entendi|n[aã]o compreendi|repita|pode repetir)\b/i.test(say)) {
@@ -263,6 +357,7 @@ function parseReply(raw: string): JarvisReply {
       return { say, expectReply, action: { type, workspaceName: obj.action.workspaceName } };
     }
     if (type === 'design_squad') return { say, expectReply, action: { type } };
+    if (type === 'confirm_squad') return { say, expectReply, action: { type } };
     if (type === 'new_mission') return { say, expectReply, action: { type } };
     if (type === 'new_workspace') return { say, expectReply, action: { type } };
     if (type === 'open_terminal') return { say, expectReply, action: { type } };
@@ -299,41 +394,10 @@ function parseReply(raw: string): JarvisReply {
     }
     return { say, expectReply, action: { type: 'none' } };
   } catch {
-    return { say: raw.trim().slice(0, 300), action: { type: 'none' } };
+    // JSON truncado/estruturado que não parseou: recupera fala natural OU
+    // silencia — NUNCA deixa a braçadeira crua virar TTS (DEFECT 3).
+    return { say: recoverSpokenText(raw), action: { type: 'none' } };
   }
-}
-
-const NOISE_WORDS = new Set([
-  'a',
-  'ah',
-  'ai',
-  'ok',
-  'okay',
-  'hum',
-  'hmm',
-  'ha',
-  'uh',
-  'e',
-  'ta',
-  'you',
-]);
-
-function isLikelyNoiseTranscript(text: string): boolean {
-  const normalized = text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[.!?,;:]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (normalized === 'oi' || normalized === 'e ai') return false;
-  if (!normalized || normalized.length <= 2) return true;
-  if (normalized === 'thank you' || normalized === 'obrigado por assistir') return true;
-  const words = normalized.split(' ');
-  return (
-    words.length <= 3 &&
-    words.every((word) => NOISE_WORDS.has(word) || /^h?u+m+$/.test(word) || /^a+h*$/.test(word))
-  );
 }
 
 function firstAvailableAction(ctx: JarvisContext): string {
@@ -342,6 +406,41 @@ function firstAvailableAction(ctx: JarvisContext): string {
   if (ctx.orchestrator) return 'posso mandar uma missão para o squad ou focar outro pane';
   if (ctx.workspace) return 'posso abrir terminal, canvas, quadro ou configurações';
   return 'posso iniciar um workspace novo ou abrir configurações';
+}
+
+/**
+ * LLM às vezes confirma em voz alta com action:none — nada executa no app.
+ * Reaplica fast-path no transcript e heurísticas na fala antes de devolver.
+ */
+export function repairMissingAction(
+  transcript: string,
+  reply: JarvisReply,
+  ctx: JarvisContext,
+): JarvisReply {
+  if (reply.action.type !== 'none') return reply;
+
+  const actionFast = jarvisActionFastPath(transcript, ctx);
+  if (actionFast) {
+    return {
+      ...actionFast,
+      say: reply.say.trim() ? reply.say : actionFast.say,
+      expectReply: actionFast.expectReply ?? false,
+    };
+  }
+
+  const spoken = reply.say
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  if (
+    /\b(terminal|shell|console)\b/.test(spoken) &&
+    /\b(abr|abrindo|aberto|abri|pronto|criei)\b/.test(spoken)
+  ) {
+    return { ...reply, expectReply: false, action: { type: 'open_terminal' } };
+  }
+
+  return reply;
 }
 
 function localBrainFallbackReply(
@@ -380,7 +479,9 @@ export async function chatViaBrainChain(
   deps: BrainDeps = defaultBrainDeps,
 ): Promise<string> {
   const attempts: string[] = [];
-  for (const provider of flattenJarvisBrainProviders(getVoiceConfig().jarvisBrain)) {
+  for (const provider of flattenJarvisBrainProviders(
+    ensureFullBrainCascade(getVoiceConfig().jarvisBrain),
+  )) {
     const key = providerKey(provider, deps);
     if (key === undefined) continue;
     try {
@@ -406,10 +507,38 @@ export async function chatViaBrainChain(
 }
 
 /**
+ * Classifica POR QUÊ o cérebro devolveu fala vazia — para o turno vazio nunca
+ * ser dead air silencioso (voice.log ganha o motivo + latência). Puro/testável.
+ * 'noise-transcript' é silêncio INTENCIONAL (ruído/eco); os demais são sinais
+ * de que a resposta cheia não chegou a tempo / o provider veio vazio.
+ */
+export function emptyReplyReason(opts: {
+  say: string;
+  transcriptIsNoise: boolean;
+  budgetFired: boolean;
+  providerFailures: number;
+}): string | null {
+  if (opts.say.trim()) return null;
+  if (opts.transcriptIsNoise) return 'noise-transcript';
+  if (opts.budgetFired) return 'provider-chain-deadline';
+  if (opts.providerFailures > 0) return 'all-providers-failed';
+  return 'provider-returned-empty';
+}
+
+/**
  * Deadline duro do cérebro: sem ele, um socket pendurado do provider segura o
  * turno inteiro (busy preso no renderer = "JARVIS não responde mais").
  */
 export const BRAIN_TIMEOUT_MS = 15_000;
+
+/**
+ * Deadline da CADEIA inteira de providers. Fica ABAIXO do BRAIN_DEADLINE_MS do
+ * renderer (35s): dois providers pendurando 15s cada somam 30s+, e o deadline
+ * de fora cortaria ANTES de a JARVIS alcançar o fallback local gracioso — ela
+ * ficaria muda. Correndo a cadeia contra este budget, o fallback vence a
+ * corrida a tempo e NUNCA é pré-emptado pelo deadline externo (Gap 8).
+ */
+export const BRAIN_CHAIN_DEADLINE_MS = 28_000;
 
 export async function chatOnce(
   endpoint: string,
@@ -466,6 +595,7 @@ export async function jarvisThink(
   ctx: JarvisContext,
   history: JarvisTurn[],
   deps: BrainDeps = defaultBrainDeps,
+  chainDeadlineMs = BRAIN_CHAIN_DEADLINE_MS,
 ): Promise<JarvisReply> {
   // Fast-path de ação: comando imperativo inequívoco executa sem LLM (~0ms).
   const actionFast = jarvisActionFastPath(transcript, ctx);
@@ -489,33 +619,82 @@ export async function jarvisThink(
     { role: 'user', content: transcript },
   ];
 
-  const providers = flattenJarvisBrainProviders(voiceConfig.jarvisBrain);
+  // ITEM 4: always walk the FULL cascade (gemini/openai/groq) so a config that
+  // was reduced to one provider still falls through to any other resolving key.
+  const providers = flattenJarvisBrainProviders(
+    ensureFullBrainCascade(voiceConfig.jarvisBrain),
+  );
   const attempts: string[] = [];
 
-  for (const provider of providers) {
-    const key = providerKey(provider, deps);
-    if (key === undefined) continue;
-    try {
-      const raw = await chatOnce(
-        provider.endpoint,
-        key,
-        provider.model,
-        messages,
-        deps,
-        provider.jsonMode ?? true,
-        600,
-      );
-      applyMemoryOps(raw);
-      return parseReply(raw);
-    } catch (err) {
-      attempts.push(
-        `${provider.provider}: ${err instanceof Error ? err.message : String(err)}`,
+  const runChain = async (): Promise<JarvisReply> => {
+    for (const provider of providers) {
+      const key = providerKey(provider, deps);
+      if (key === undefined) continue;
+      try {
+        const raw = await chatOnce(
+          provider.endpoint,
+          key,
+          provider.model,
+          messages,
+          deps,
+          provider.jsonMode ?? true,
+          600,
+        );
+        applyMemoryOps(raw);
+        return repairMissingAction(transcript, parseReply(raw), ctx);
+      } catch (err) {
+        attempts.push(
+          `${provider.provider}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    return attempts.length === 0
+      ? localBrainFallbackReply(transcript, ctx, false)
+      : localBrainFallbackReply(transcript, ctx, true);
+  };
+
+  // Gap 8: a cadeia corre contra um deadline PRÓPRIO (< BRAIN_DEADLINE_MS do
+  // renderer). Se os providers pendurarem, o fallback local gracioso vence a
+  // corrida a tempo — nunca é pré-emptado pelo deadline externo (que deixaria
+  // a JARVIS muda com um erro em vez de "continuo operando localmente").
+  // Invariante confirmado: BRAIN_TIMEOUT_MS (15s/provider) e BRAIN_CHAIN_
+  // DEADLINE_MS (28s) ficam ABAIXO do BRAIN_DEADLINE_MS do renderer (35s).
+  const tStart = Date.now();
+  let budgetFired = false;
+  let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<JarvisReply>((resolve) => {
+    budgetTimer = setTimeout(() => {
+      budgetFired = true;
+      resolve(localBrainFallbackReply(transcript, ctx, true));
+    }, chainDeadlineMs);
+  });
+  try {
+    const reply = await Promise.race([runChain(), budget]);
+    // ITEM-5: um turno de fala vazia nunca pode ser dead air silencioso — loga
+    // o MOTIVO + latência + orçamentos, para diferenciar silêncio intencional
+    // (ruído) de um provider lento/vazio que estourou o deadline da cadeia.
+    const reason = emptyReplyReason({
+      say: reply.say,
+      transcriptIsNoise: isLikelyNoiseTranscript(transcript),
+      budgetFired,
+      providerFailures: attempts.length,
+    });
+    if (reason) {
+      logVoice(
+        reason === 'noise-transcript' ? 'info' : 'warn',
+        'jarvis.emptyReply',
+        reason,
+        {
+          elapsedMs: Date.now() - tStart,
+          budgetFired,
+          providerFailures: attempts.length,
+          chainDeadlineMs,
+          providerTimeoutMs: BRAIN_TIMEOUT_MS,
+        },
       );
     }
+    return reply;
+  } finally {
+    if (budgetTimer) clearTimeout(budgetTimer);
   }
-
-  if (attempts.length === 0) {
-    return localBrainFallbackReply(transcript, ctx, false);
-  }
-  return localBrainFallbackReply(transcript, ctx, true);
 }

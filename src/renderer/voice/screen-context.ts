@@ -7,13 +7,16 @@ export interface ScreenSnapshot {
 
 export type ScreenSurface =
   | { kind: 'voice-settings' }
+  | { kind: 'operator-profile' }
   | { kind: 'settings' }
   | { kind: 'wizard'; mode: string }
-  | { kind: 'home'; readySquads: string[] }
+  | { kind: 'home'; readySquads: string[]; hiddenShellCount: number }
   | { kind: 'files'; file: string | null; dirty: boolean }
   | { kind: 'ops-board'; missionCount: number }
   | { kind: 'orch-panel'; tab: string }
-  | { kind: 'workspace' };
+  | { kind: 'onboarding' }
+  | { kind: 'close-workspace' }
+  | { kind: 'workspace'; blockingOverlays: string[] };
 
 export interface BuildScreenSnapshotInput {
   workspaceName: string | null;
@@ -85,6 +88,8 @@ function surfaceContext(surface: ScreenSurface, workspaceName: string): string {
   switch (surface.kind) {
     case 'voice-settings':
       return 'voice settings open: pipeline, keys, wake word, live mode, persona';
+    case 'operator-profile':
+      return 'operator profile overlay open (covers workspace panes; terminal NOT visible)';
     case 'settings':
       return 'settings drawer open: providers, accounts, catalog, media, shortcuts, modules';
     case 'wizard':
@@ -93,7 +98,11 @@ function surfaceContext(surface: ScreenSurface, workspaceName: string): string {
       const squads = surface.readySquads.length > 0
         ? `; ready squads: ${surface.readySquads.join(', ')}`
         : '';
-      return `home deck open in workspace ${workspaceName}; visible actions: start mission, custom squad, terminal${squads}`;
+      const hidden =
+        surface.hiddenShellCount > 0
+          ? `; ${surface.hiddenShellCount} shell pane(s) exist underneath but are NOT visible`
+          : '';
+      return `home deck open in workspace ${workspaceName}; visible actions: start mission, custom squad, terminal${squads}${hidden}`;
     }
     case 'files':
       return surface.file
@@ -103,8 +112,17 @@ function surfaceContext(surface: ScreenSurface, workspaceName: string): string {
       return `ops board open with ${surface.missionCount} missions`;
     case 'orch-panel':
       return `orchestration panel open on ${surface.tab}`;
-    case 'workspace':
-      return 'workspace canvas/grid surface';
+    case 'onboarding':
+      return 'onboarding wizard open (covers workspace; panes not visible)';
+    case 'close-workspace':
+      return 'close-workspace confirmation dialog open (blocks workspace view)';
+    case 'workspace': {
+      const blocked =
+        surface.blockingOverlays.length > 0
+          ? `; blocking overlays: ${surface.blockingOverlays.join(', ')}`
+          : '';
+      return `workspace canvas/grid surface${blocked}`;
+    }
   }
 }
 
@@ -112,12 +130,16 @@ function wakePrompt(surface: ScreenSurface, focused: string, workspaceName: stri
   switch (surface.kind) {
     case 'voice-settings':
       return 'Estou nas configuracoes de voz. O que voce quer ajustar agora?';
+    case 'operator-profile':
+      return 'Estou no perfil de operador cobrindo a tela. Quer fechar e abrir terminal ou missao?';
     case 'settings':
       return 'Estou nas configuracoes. Quer ajustar providers, keys ou outro modulo?';
     case 'wizard':
       return `Estou no assistente de ${surface.mode}. Qual opcao vamos escolher?`;
     case 'home':
-      return 'Estou na tela Pronto para operar. Quer iniciar uma missao, montar um squad sob medida ou usar um squad pronto?';
+      return surface.hiddenShellCount > 0
+        ? 'Estou na tela Pronto para operar; ha um terminal por baixo mas voce nao ve. Quer que eu mostre o terminal?'
+        : 'Estou na tela Pronto para operar. Quer iniciar uma missao, montar um squad sob medida ou usar um squad pronto?';
     case 'files':
       return surface.file
         ? `Estou no arquivo ${surface.file}. Quer que eu leia, edite ou salve algo nele?`
@@ -126,6 +148,10 @@ function wakePrompt(surface: ScreenSurface, focused: string, workspaceName: stri
       return 'Estou no quadro de missoes. Quer ver status, abrir uma missao ou criar outra?';
     case 'orch-panel':
       return `Estou no painel de orquestracao, aba ${surface.tab}. O que quer verificar?`;
+    case 'onboarding':
+      return 'Estou no onboarding inicial. Quer pular ou configurar antes de abrir terminal?';
+    case 'close-workspace':
+      return 'Estou no dialogo de fechar workspace. Quer cancelar e continuar no projeto?';
     case 'workspace':
       return focused === 'none'
         ? `Estou no workspace ${workspaceName}. Quer abrir missao, terminal ou squad?`
@@ -151,14 +177,16 @@ export function buildScreenSnapshot(input: BuildScreenSnapshotInput): ScreenSnap
   const missions = input.activeMissions.length > 0
     ? input.activeMissions.slice(0, 4).join('; ')
     : 'none';
+  const shellCount = input.panes.filter((pane) => pane.kind === 'shell').length;
   const parts = [
     `Current Nexus screen: ${surfaceContext(input.surface, workspaceName)}.`,
     `Workspace: ${workspaceName}.`,
     `View: ${input.viewKind}.`,
-    `Panes (${input.panes.length}): ${panesSummary(input.panes, input.orchestratorPaneId)}.`,
+    `Panes (${input.panes.length}, ${shellCount} shell): ${panesSummary(input.panes, input.orchestratorPaneId)}.`,
     `Focused: ${focused}.`,
     `Active orchestrator: ${orchestrator}.`,
     `Active missions: ${missions}.`,
+    'Jarvis does NOT see pixels — only this structured state. Do not claim a pane is visible unless surface and focus confirm it.',
   ];
 
   return {

@@ -33,6 +33,8 @@ export interface SttDeps {
   fileExists: (file: string) => boolean;
   findBin: (candidates: string[]) => string | null;
   getEnv: (name: string) => string | undefined;
+  /** Injectable clock for the wake-path budget (ITEM 7); defaults to Date.now. */
+  now?: () => number;
 }
 
 /**
@@ -42,6 +44,16 @@ export interface SttDeps {
  */
 export const STT_CLOUD_TIMEOUT_MS = 12_000;
 export const STT_LOCAL_TIMEOUT_MS = 30_000;
+/**
+ * ITEM 7 (STT stall bound on the WAKE path): 12s/cloud is too long for a
+ * conversational wake turn — a hung Whisper cloud held the turn ~16s and the HUD
+ * lapsed. On the wake path we tighten the per-cloud deadline AND cap the total
+ * wall-clock: after one cloud attempt (or once the budget is spent) we jump
+ * straight to keyless local whisper.cpp instead of burning a second cloud
+ * round-trip. Logged as stt.stall so the stall is visible, never silent.
+ */
+export const STT_WAKE_CLOUD_TIMEOUT_MS = 6_000;
+export const STT_WAKE_BUDGET_MS = 8_000;
 
 const defaultDeps: SttDeps = {
   fetchImpl: (...args) => fetch(...args),
@@ -112,6 +124,7 @@ async function attemptCloud(
   plugin: VoicePlugin,
   req: TranscribeRequest,
   deps: SttDeps,
+  cloudTimeoutMs: number = STT_CLOUD_TIMEOUT_MS,
 ): Promise<Attempt> {
   const envVar = plugin.auth?.envVar;
   const authRequired = (plugin.auth?.type ?? 'api_key') !== 'none';
@@ -146,15 +159,17 @@ async function attemptCloud(
       method: 'POST',
       headers: key ? { Authorization: `Bearer ${key}` } : {},
       body: form,
-      // Deadline duro: requisição pendurada nunca pode segurar o turno.
-      signal: AbortSignal.timeout(STT_CLOUD_TIMEOUT_MS),
+      // Deadline duro: requisição pendurada nunca pode segurar o turno. Na wake
+      // path este teto é apertado (STT_WAKE_CLOUD_TIMEOUT_MS) para o turno de
+      // conversa não pendurar 12s+ num provider cloud lento.
+      signal: AbortSignal.timeout(cloudTimeoutMs),
     });
   } catch (err) {
     if (err instanceof Error && err.name === 'TimeoutError') {
       return {
         ok: false,
         needsKey: false,
-        reason: `timeout (${STT_CLOUD_TIMEOUT_MS / 1000}s sem resposta)`,
+        reason: `timeout (${(cloudTimeoutMs / 1000).toFixed(1)}s sem resposta)`,
       };
     }
     // Network failure (offline, DNS, TLS) — treat as unavailable, fall through.
@@ -257,9 +272,10 @@ async function attemptProvider(
   plugin: VoicePlugin,
   req: TranscribeRequest,
   deps: SttDeps,
+  cloudTimeoutMs?: number,
 ): Promise<Attempt> {
   return classifyKind(plugin) === 'cloud'
-    ? attemptCloud(plugin, req, deps)
+    ? attemptCloud(plugin, req, deps, cloudTimeoutMs)
     : attemptLocal(plugin, req, deps);
 }
 
@@ -279,14 +295,48 @@ export async function transcribe(
   const attempts: SttAttempt[] = [];
   let anyNeedsKey = false;
 
+  // ITEM 7: wake-path budget. When set, the cloud chain is bounded — one cloud
+  // attempt on a tight deadline, then straight to keyless local whisper.cpp.
+  const budgetMs = req.budgetMs;
+  const now = deps.now ?? Date.now;
+  const tStart = now();
+  let cloudTried = false;
+  let stalled = false;
+
   for (const plugin of chain) {
-    const outcome = await attemptProvider(plugin, req, deps);
+    const isCloud = classifyKind(plugin) === 'cloud';
+    let cloudTimeoutMs: number | undefined;
+    if (budgetMs !== undefined && isCloud) {
+      const remaining = budgetMs - (now() - tStart);
+      // No time (or budget) left for a second cloud round-trip → skip to local.
+      if (cloudTried || remaining <= 1_000) {
+        stalled = true;
+        attempts.push({
+          provider: plugin.provider,
+          reason: cloudTried
+            ? 'wake budget: 1 cloud tried, skipped to local'
+            : `wake budget ${budgetMs}ms spent, skipped to local`,
+        });
+        continue;
+      }
+      cloudTimeoutMs = Math.min(STT_WAKE_CLOUD_TIMEOUT_MS, remaining);
+    }
+
+    const outcome = await attemptProvider(plugin, req, deps, cloudTimeoutMs);
+    if (isCloud) cloudTried = true;
     if (outcome.ok) {
       const note =
         attempts.length > 0
           ? `${attempts.map((a) => `${a.provider} ${a.reason}`).join('; ')} → ${plugin.provider}`
           : undefined;
-      return { ok: true, text: outcome.text, provider: plugin.provider, fallbackNote: note, attempts };
+      return {
+        ok: true,
+        text: outcome.text,
+        provider: plugin.provider,
+        fallbackNote: note,
+        attempts,
+        ...(stalled ? { stalled: true } : {}),
+      };
     }
     anyNeedsKey = anyNeedsKey || outcome.needsKey;
     attempts.push({ provider: plugin.provider, reason: outcome.reason });
@@ -297,6 +347,7 @@ export async function transcribe(
     ok: false,
     needsKey: anyNeedsKey,
     attempts,
+    ...(stalled ? { stalled: true } : {}),
     error:
       `No speech-to-text provider succeeded. Tried — ${tried}. ` +
       'Set GROQ_API_KEY or OPENAI_API_KEY, or install whisper.cpp for a keyless local fallback.',

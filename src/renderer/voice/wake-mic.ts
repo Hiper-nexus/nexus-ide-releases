@@ -4,13 +4,16 @@ import {
   downsample,
   encodeWav,
   bytesToBase64,
+  downmixChannelsToMono,
   frameRms,
   type AutoStopOptions,
   type CaptureResult,
 } from './voice-capture';
 import { RESTART_BACKOFF_MS, nextRearmDelay } from './wake-rearm';
+import { shouldEndpointUtterance } from './wake-endpoint';
 import { frameIsSilent, type MicPermissionState } from './wake-health';
 import { SoftAgc } from './agc';
+import { rmsToLevel } from './voice-level';
 
 /**
  * Mic sempre-ligado do wake word: stream 16 kHz mono de baixo custo que
@@ -47,6 +50,15 @@ const WAKE_INITIAL_GAIN = 24;
 
 const WATCHDOG_INTERVAL_MS = 4_000;
 const FRAME_STALL_MS = 8_000;
+/**
+ * Sinal-zero prolongado: o macOS ENTREGA frames, mas todos zerados (rms:0), ao
+ * conceder um grant TCC fantasma (reinstala/atualiza o app e o registro antigo
+ * fica inválido). O watchdog de stall (sem frames) não pega isso — os frames
+ * chegam. Se NADA de áudio real cruzou o piso desde que o grafo abriu e o
+ * silêncio passou disto, reconstrói o stream: reabrir costuma forçar um grant
+ * novo e válido. Uma vez por ciclo de grafo (restarting trava reentrância).
+ */
+const MIC_ZERO_REOPEN_MS = 15_000;
 /** Folga sobre o maxMs da captura: se os frames morrerem no meio da fala, o
  * deadline fecha o turno mesmo sem PCM chegando (senão busy trava). */
 const UTTERANCE_DEADLINE_SLACK_MS = 1_000;
@@ -75,6 +87,9 @@ export class WakeMic {
   private silentSince = 0;
   /** Log único do RMS do primeiro frame após abrir o grafo (prova sinal). */
   private firstFrameLogged = false;
+  /** Ouviu QUALQUER áudio real (acima do piso) neste ciclo de grafo? Distingue
+   * grant TCC fantasma (zeros desde o início) de sala silenciosa após fala. */
+  private heardRealAudio = false;
   /** Rolling buffer dos frames recentes para não perder comando emendado ao wake. */
   private preRoll: Array<{ at: number; frame: Float32Array }> = [];
 
@@ -82,6 +97,8 @@ export class WakeMic {
   onDied: ((reason: string) => void) | null = null;
   /** Stream reconstruído com sucesso após uma morte. */
   onRecovered: (() => void) | null = null;
+  /** Nível ao vivo (0–1) para orb/diagnóstico — mesmo contrato do VoiceCapture. */
+  onLevel: ((level: number) => void) | null = null;
 
   // Utterance capture (comando pós-wake/F6) sobre o MESMO stream quente.
   private uttChunks: Float32Array[] = [];
@@ -250,13 +267,16 @@ export class WakeMic {
     }
     const opts = this.uttAutoStop;
     if (!opts || this.uttFired) return;
-    const total = now - this.uttStartedAt;
-    const minListenMs = opts.minListenMs ?? 0;
     if (
-      (this.uttHeardSpeech &&
-        now - this.uttLastSpeechAt >= opts.silenceMs &&
-        total >= minListenMs) ||
-      total >= opts.maxMs
+      shouldEndpointUtterance({
+        heardSpeech: this.uttHeardSpeech,
+        speechMs: this.uttSpeechMs,
+        silentMs: now - this.uttLastSpeechAt,
+        totalMs: now - this.uttStartedAt,
+        silenceMs: opts.silenceMs,
+        minListenMs: opts.minListenMs ?? 0,
+        maxMs: opts.maxMs,
+      })
     ) {
       this.uttFired = true;
       opts.onAutoStop();
@@ -318,22 +338,36 @@ export class WakeMic {
   }
 
   /** Abre stream + grafo de áudio (comum ao start e à reconstrução). */
+  private async resolveAudioConstraints(): Promise<MediaTrackConstraints> {
+    const base: MediaTrackConstraints = {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    };
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices.filter(
+        (device) => device.kind === 'audioinput' && device.deviceId,
+      );
+      // Prefer the non-"default" USB device entry — "default" routing can
+      // deliver zeros in CoreAudio after a TCC reset even when granted.
+      const preferred =
+        inputs.find((device) => /fifine/i.test(device.label) && device.deviceId !== 'default') ??
+        inputs.find((device) => /fifine/i.test(device.label)) ??
+        inputs.find((device) => device.deviceId === 'default') ??
+        inputs[0];
+      if (preferred?.deviceId) {
+        return { ...base, deviceId: { ideal: preferred.deviceId } };
+      }
+    } catch {
+      // segue com constraints mínimas
+    }
+    return base;
+  }
+
   private async openGraph(): Promise<void> {
     this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        sampleRate: TARGET_SAMPLE_RATE,
-        // APM (WebRTC audio processing) DESLIGADO no stream de wake word.
-        // openWakeWord/KWS quer PCM limpo; o processamento corrompe as
-        // features do modelo. autoGainControl (default true do Chromium
-        // quando qualquer constraint é pedida) achata o sinal de mics USB
-        // sensíveis (fifine) perto de zero → "SO ouve, app mudo". Wake é
-        // pausado (suppressWakeDetection) enquanto a JARVIS fala, então eco
-        // não importa aqui.
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
+      audio: await this.resolveAudioConstraints(),
     });
     // Morte explícita do track (dispositivo removido, permissão revogada):
     // não espere o watchdog — reconstrói na hora.
@@ -350,7 +384,11 @@ export class WakeMic {
       });
     }
     this.firstFrameLogged = false;
+    this.heardRealAudio = false;
     this.ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+    if (this.ctx.state === 'suspended') {
+      await this.ctx.resume().catch(() => {});
+    }
     this.ctx.onstatechange = () => {
       // Sleep/wake do macOS pode deixar o contexto suspenso — retome.
       if (this.ctx?.state === 'suspended' && this.running) {
@@ -372,12 +410,16 @@ export class WakeMic {
         this.firstFrameLogged = true;
         this.log('info', 'mic.firstFrame', 'primeiro frame recebido', {
           rms: frameRms(frame),
+          channelCount: audioTrack?.getSettings().channelCount ?? null,
+          contextRate: this.ctx?.sampleRate ?? null,
         });
       }
+      const level = rmsToLevel(frameRms(frame));
+      this.onLevel?.(level);
       // Saúde do mic: acumula quanto tempo em silêncio (RMS abaixo do piso).
-      this.silentSince = frameIsSilent(frameRms(frame))
-        ? this.silentSince || Date.now()
-        : 0;
+      const silent = frameIsSilent(frameRms(frame));
+      if (!silent) this.heardRealAudio = true;
+      this.silentSince = silent ? this.silentSince || Date.now() : 0;
       this.rememberPreRoll(frame);
       // Comando em gravação: acumula localmente (e NÃO alimenta o detector —
       // senão a própria fala do comando poderia re-disparar o wake).
@@ -401,8 +443,15 @@ export class WakeMic {
       node.connect(this.ctx.destination);
       this.worklet = node;
     } catch {
-      const node = this.ctx.createScriptProcessor(4096, 1, 1);
-      node.onaudioprocess = (e) => onFrame(e.inputBuffer.getChannelData(0).slice(0));
+      const node = this.ctx.createScriptProcessor(4096, 2, 1);
+      node.onaudioprocess = (e) => {
+        const buffer = e.inputBuffer;
+        const channels: Float32Array[] = [];
+        for (let ch = 0; ch < buffer.numberOfChannels; ch += 1) {
+          channels.push(buffer.getChannelData(ch).slice(0));
+        }
+        onFrame(downmixChannelsToMono(channels));
+      };
       this.source.connect(node);
       node.connect(this.ctx.destination);
       this.scriptNode = node;
@@ -415,6 +464,13 @@ export class WakeMic {
       if (!this.running || this.restarting) return;
       if (Date.now() - this.lastFrameAt > FRAME_STALL_MS) {
         this.handleStreamDeath(`sem frames do mic há ${FRAME_STALL_MS / 1000}s`);
+        return;
+      }
+      // Grant TCC fantasma: frames chegam mas TODOS zerados. Se nada de áudio
+      // real cruzou o piso desde a abertura e o silêncio já passou do limiar,
+      // reconstrói (reabrir costuma forçar um grant válido). Uma vez por ciclo.
+      if (!this.heardRealAudio && this.getSilentMs() > MIC_ZERO_REOPEN_MS) {
+        this.handleStreamDeath(`sinal zero há ${MIC_ZERO_REOPEN_MS / 1000}s (grant TCC fantasma?)`);
       }
     }, WATCHDOG_INTERVAL_MS);
   }
@@ -500,6 +556,7 @@ export class WakeMic {
       this.uttDeadline = null;
     }
     this.uttActive = false;
+    this.onLevel?.(0);
     this.teardownGraph();
     console.log('[wake] mic do wake word desligado');
     this.log('info', 'mic.stopped', 'wake mic desligado');

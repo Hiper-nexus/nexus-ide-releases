@@ -61,6 +61,12 @@ describe('realtimeToolEventToJarvisAction', () => {
         event({ action: 'send_to_pane', text: 'Build the pixel game movement.' }),
       ),
     ).toEqual({ type: 'send_to_pane', text: 'Build the pixel game movement.' });
+    // NEW-B: a routed pending-question answer threads the ASKING paneId through.
+    expect(
+      realtimeToolEventToJarvisAction(
+        event({ action: 'send_to_pane', text: 'usa o Postgres', paneId: 'pane-42' }),
+      ),
+    ).toEqual({ type: 'send_to_pane', text: 'usa o Postgres', paneId: 'pane-42' });
     expect(
       realtimeToolEventToJarvisAction(
         event({ action: 'run_command', command: 'npm run typecheck' }),

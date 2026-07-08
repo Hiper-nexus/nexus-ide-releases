@@ -6,6 +6,7 @@ export const SAFE_REALTIME_ACTIONS = [
   'open_squad',
   'open_workspace',
   'design_squad',
+  'confirm_squad',
   'new_mission',
   'new_workspace',
   'open_terminal',
@@ -25,6 +26,8 @@ export const SAFE_REALTIME_ACTIONS = [
   'send_to_pane',
   'run_command',
   'mcp_tool',
+  'restore_mission_panes',
+  'ask_pane',
 ] as const;
 
 export type SafeRealtimeActionType = (typeof SAFE_REALTIME_ACTIONS)[number];
@@ -36,9 +39,15 @@ export interface NexusRealtimeActionArgs {
   workspaceName?: string;
   paneName?: string;
   text?: string;
+  /** NEW-B: target pane for a routed pending-question answer (send_to_pane). */
+  paneId?: string;
   command?: string;
   tool?: string;
   args?: Record<string, unknown>;
+  /** restaurar: filtro/nome da missão a restaurar. */
+  alvo?: string;
+  /** perguntar: pergunta de trabalho a enviar ao pane. */
+  pergunta?: string;
 }
 
 export function summarizeNexusRealtimeAction(args: NexusRealtimeActionArgs): string {
@@ -51,6 +60,8 @@ export function summarizeNexusRealtimeAction(args: NexusRealtimeActionArgs): str
         : 'abrir workspace';
     case 'design_squad':
       return 'desenhar squad';
+    case 'confirm_squad':
+      return 'confirmar e iniciar squad';
     case 'new_mission':
       return 'abrir assistente de missão';
     case 'new_workspace':
@@ -89,6 +100,10 @@ export function summarizeNexusRealtimeAction(args: NexusRealtimeActionArgs): str
       return args.command ? `rodar comando ${args.command}` : 'rodar comando';
     case 'mcp_tool':
       return args.tool ? `executar tool ${args.tool}` : 'executar tool MCP';
+    case 'restore_mission_panes':
+      return args.alvo ? `restaurar missão ${args.alvo}` : 'restaurar missão recente';
+    case 'ask_pane':
+      return 'perguntar ao pane';
     default:
       return 'ação realtime';
   }
@@ -126,7 +141,9 @@ export function realtimeArgsToJarvisAction(
   }
   if (args.action === 'send_to_pane') {
     const text = cleanText(args.text);
-    return text ? { type: 'send_to_pane', text } : null;
+    if (!text) return null;
+    const paneId = cleanText(args.paneId, 128);
+    return paneId ? { type: 'send_to_pane', text, paneId } : { type: 'send_to_pane', text };
   }
   if (args.action === 'run_command') {
     const command = cleanText(args.command, 2_000);
@@ -136,6 +153,16 @@ export function realtimeArgsToJarvisAction(
     const tool = cleanText(args.tool, 128);
     if (!/^nexus_[a-z0-9_]+$/i.test(tool)) return null;
     return { type: 'mcp_tool', tool, args: cleanArgs(args.args) };
+  }
+  if (args.action === 'restore_mission_panes') {
+    const alvo = cleanText(args.alvo, 128) || undefined;
+    return { type: 'restore_mission_panes', ...(alvo ? { alvo } : {}) };
+  }
+  if (args.action === 'ask_pane') {
+    const pergunta = cleanText(args.pergunta, 4_000);
+    if (!pergunta) return null;
+    const paneId = cleanText(args.paneId, 128) || undefined;
+    return { type: 'ask_pane', pergunta, ...(paneId ? { paneId } : {}) };
   }
   return { type: args.action };
 }

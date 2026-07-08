@@ -1,4 +1,9 @@
 import { useVoiceStore } from './voice-store';
+import { playbackWakeSuppressionMs } from './voice-suppression-window';
+import {
+  clearLocalAudioGate,
+  markLocalAudioPlaying,
+} from './live-local-audio-gate';
 import type { SpeakResult } from '../../shared/voice-ipc';
 
 /** Silencia detecção de wake word durante reprodução de TTS. */
@@ -23,6 +28,9 @@ export function stopAllPlayback(): void {
     void window.nexus.voice.liveInterrupt('barge-in');
   }
   void window.nexus.voice.stopSpeak().catch(() => {});
+  // Barge-in: o áudio local foi cortado — libera a retenção do mic realtime
+  // para o socket voltar a receber os frames do usuário imediatamente.
+  clearLocalAudioGate();
   playbackGen += 1;
   for (const src of liveSources) {
     try {
@@ -41,15 +49,27 @@ function base64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
-export async function playAudioBase64(base64: string, _format: string): Promise<void> {
+/** Plays the TTS bytes and returns the actual playback duration in ms (0 if a
+ *  newer playback superseded it). The returned duration lets callers tie the
+ *  post-TTS wake-suppression window to the REAL length of what was spoken. */
+export async function playAudioBase64(base64: string, _format: string): Promise<number> {
   const gen = playbackGen;
   const bytes = base64ToBytes(base64);
   const ctx = new AudioContext();
   try {
     const arrayBuffer = bytes.buffer.slice(0) as ArrayBuffer;
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-    if (gen !== playbackGen) return;
-    suppressWake?.(Math.ceil(audioBuffer.duration * 1000) + 500);
+    if (gen !== playbackGen) return 0;
+    const durationMs = Math.ceil(audioBuffer.duration * 1000);
+    // Suppress wake for the ACTUAL playback duration + acoustic tail (clamped).
+    // With APM/AEC off the speaker bleeds straight into the hot mic, so a fixed
+    // short window let "Hey Jarvis" self-fire mid-reply — the self-talk seed.
+    suppressWake?.(playbackWakeSuppressionMs(durationMs));
+    // FIX 1: withhold realtime mic frames from the socket for the SAME real
+    // playback duration + tail. Every LOCAL audio (wake ack, think-filler,
+    // classic/marin TTS) flows through here, so this single choke point stops
+    // her own voice from streaming to the provider as "user speech".
+    markLocalAudioPlaying(durationMs, Date.now());
     const source = ctx.createBufferSource();
     liveSources.push(source);
     source.buffer = audioBuffer;
@@ -59,13 +79,16 @@ export async function playAudioBase64(base64: string, _format: string): Promise<
       source.start();
     });
     liveSources = liveSources.filter((s) => s !== source);
+    return durationMs;
   } finally {
     void ctx.close();
   }
 }
 
-export async function playSpeakResult(result: SpeakResult): Promise<void> {
+/** Plays a SpeakResult (audio mode) and returns the playback duration in ms. */
+export async function playSpeakResult(result: SpeakResult): Promise<number> {
   if (result.ok && result.mode === 'audio') {
-    await playAudioBase64(result.audioBase64, result.format);
+    return playAudioBase64(result.audioBase64, result.format);
   }
+  return 0;
 }

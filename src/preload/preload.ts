@@ -381,6 +381,8 @@ const api: NexusApi = {
       ipcRenderer.invoke(VOICE_CHANNELS.confirmCommand, command),
     liveStart: (req) => ipcRenderer.invoke(VOICE_CHANNELS.liveStart, req ?? {}),
     liveStop: () => ipcRenderer.invoke(VOICE_CHANNELS.liveStop),
+    liveHardRebuild: () => ipcRenderer.invoke(VOICE_CHANNELS.liveHardRebuild),
+    liveHardTeardown: () => ipcRenderer.invoke(VOICE_CHANNELS.liveHardTeardown),
     liveEndTurn: () => ipcRenderer.invoke(VOICE_CHANNELS.liveEndTurn),
     liveSmokeTest: (req) => ipcRenderer.invoke(VOICE_CHANNELS.liveSmokeTest, req),
     liveSay: (req) => ipcRenderer.invoke(VOICE_CHANNELS.liveSay, req),

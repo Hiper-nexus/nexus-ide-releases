@@ -17,6 +17,15 @@ import { UpdateModal, UpdateStatusButton, useUpdateState } from './UpdateModal';
 import type { AdapterInfo } from '../../shared/types';
 import { setBrowserPaneSuppression } from '../browser/browser-host';
 
+function adapterModelLabel(adapter: AdapterInfo, model: string): string {
+  const info = adapter.models.info?.[model];
+  const tags = [
+    info?.availability ?? null,
+    info?.costTier && info.costTier !== 'unknown' ? `cost:${info.costTier}` : null,
+  ].filter(Boolean);
+  return tags.length > 0 ? `${model} (${tags.join(', ')})` : model;
+}
+
 /** Slim top chrome: brand, pane count, split shortcuts, view toggle, and the agent launcher. */
 export function WorkspaceBar() {
   const root = useLayoutStore((s) => s.root);
@@ -285,7 +294,7 @@ export function WorkspaceBar() {
                     >
                       {selectedAdapter.models.list.map((m) => (
                         <option key={m} value={m}>
-                          {m}
+                          {adapterModelLabel(selectedAdapter, m)}
                         </option>
                       ))}
                     </select>

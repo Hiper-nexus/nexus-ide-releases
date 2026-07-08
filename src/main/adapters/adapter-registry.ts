@@ -8,8 +8,18 @@ import type { Adapter, AdapterInfo } from '../../shared/adapter-types';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { ADAPTER_CHANNELS } from '../../shared/channels';
 import { getCustomModels } from './custom-models';
+import {
+  USER_MODEL_CATALOG_FILE,
+  applyModelCatalogToAdapter,
+  invalidateModelCatalogCache,
+  loadModelCatalog,
+  modelInfoForAdapter,
+  refreshRemoteModelCatalog,
+  seedLocalModelCatalogFromPublished,
+} from './model-catalog';
 
 const USER_ADAPTER_DIR = path.join(os.homedir(), '.nexus', 'plugins', 'adapters');
+const NEXUS_DIR = path.join(os.homedir(), '.nexus');
 
 /** Validate and load a single raw JSON object as an adapter. */
 function parseAdapter(raw: unknown, source: string): Adapter | null {
@@ -147,6 +157,7 @@ function toAdapterInfo(adapter: Adapter, installed: boolean): AdapterInfo {
   const custom = getCustomModels(adapter.id).filter(
     (m) => !adapter.models.list.includes(m),
   );
+  const modelList = [...adapter.models.list, ...custom];
   return {
     id: adapter.id,
     kind: adapter.kind,
@@ -154,7 +165,8 @@ function toAdapterInfo(adapter: Adapter, installed: boolean): AdapterInfo {
     icon: adapter.icon,
     models: {
       ...adapter.models,
-      list: [...adapter.models.list, ...custom],
+      list: modelList,
+      info: modelInfoForAdapter(loadModelCatalog(), adapter.id, modelList),
     },
     installed,
     installCommand,
@@ -169,6 +181,7 @@ let registry = new Map<string, Adapter>();
 let installedCache = new Map<string, boolean>();
 const listeners = new Set<WebContents>();
 let watcher: fs.FSWatcher | null = null;
+let modelCatalogWatcher: fs.FSWatcher | null = null;
 let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Atomic saves (write-temp + rename) fire 2-4 fs.watch events per file change,
@@ -186,7 +199,14 @@ function refreshInstalledCache(): void {
 }
 
 function reload(): void {
+  const catalog = loadModelCatalog();
   registry = mergeAdapters(loadBuiltins(), loadUserAdapters());
+  registry = new Map(
+    [...registry.entries()].map(([id, adapter]) => [
+      id,
+      applyModelCatalogToAdapter(adapter, catalog),
+    ]),
+  );
   refreshInstalledCache();
 }
 
@@ -224,20 +244,31 @@ export function notifyAdaptersChanged(): void {
   broadcast();
 }
 
+function scheduleReloadAndBroadcast(): void {
+  if (reloadTimer) clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(() => {
+    reloadTimer = null;
+    invalidateModelCatalogCache();
+    reload();
+    broadcast();
+  }, WATCH_DEBOUNCE_MS);
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 export function initAdapterRegistry(): void {
+  fs.mkdirSync(NEXUS_DIR, { recursive: true });
   fs.mkdirSync(USER_ADAPTER_DIR, { recursive: true });
+  // Seed ~/.nexus/model-catalog.json from the published JSON when missing so
+  // this machine has grok-4.5 / fable api-only flags without waiting on network.
+  if (seedLocalModelCatalogFromPublished()) {
+    invalidateModelCatalogCache();
+  }
   reload();
 
   try {
     watcher = fs.watch(USER_ADAPTER_DIR, { persistent: false }, () => {
-      if (reloadTimer) clearTimeout(reloadTimer);
-      reloadTimer = setTimeout(() => {
-        reloadTimer = null;
-        reload();
-        broadcast();
-      }, WATCH_DEBOUNCE_MS);
+      scheduleReloadAndBroadcast();
     });
     watcher.on('error', (err) => {
       console.error('[adapter-registry] watcher error:', err);
@@ -247,6 +278,22 @@ export function initAdapterRegistry(): void {
     // is best-effort; the registry still works without it.
     console.warn('[adapter-registry] hot-reload unavailable:', err);
   }
+
+  try {
+    modelCatalogWatcher = fs.watch(NEXUS_DIR, { persistent: false }, (_event, filename) => {
+      if (!filename || filename.toString() !== path.basename(USER_MODEL_CATALOG_FILE)) return;
+      scheduleReloadAndBroadcast();
+    });
+    modelCatalogWatcher.on('error', (err) => {
+      console.error('[model-catalog] watcher error:', err);
+    });
+  } catch (err) {
+    console.warn('[model-catalog] hot-reload unavailable:', err);
+  }
+
+  void refreshRemoteModelCatalog().then((updated) => {
+    if (updated) scheduleReloadAndBroadcast();
+  });
 }
 
 export function registerAdapterListener(wc: WebContents): void {
@@ -314,5 +361,7 @@ export function closeAdapterRegistry(): void {
   }
   watcher?.close();
   watcher = null;
+  modelCatalogWatcher?.close();
+  modelCatalogWatcher = null;
   listeners.clear();
 }

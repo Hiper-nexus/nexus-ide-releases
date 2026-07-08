@@ -22,6 +22,13 @@ export const transcribeRequestSchema = z.object({
   translate: z.boolean().optional(),
   /** Hint the spoken language when not translating (e.g. 'pt'). */
   language: z.string().min(2).max(8).optional(),
+  /**
+   * ITEM 7: total wall-clock budget (ms) for the STT chain on the WAKE path.
+   * When set, at most one cloud attempt runs (on a tight deadline) before
+   * jumping to keyless local whisper, so a hung cloud provider can't hold a
+   * conversational turn ~16s.
+   */
+  budgetMs: z.number().int().positive().max(60_000).optional(),
 });
 
 export type TranscribeRequest = z.infer<typeof transcribeRequestSchema>;
@@ -186,9 +193,18 @@ export type TranscribeResult =
        * silêncio, como faz com as alucinações do Whisper.
        */
       discarded?: 'echo';
+      /** ITEM 7: the wake-path budget forced an early jump to local (stt.stall). */
+      stalled?: boolean;
       attempts: SttAttempt[];
     }
-  | { ok: false; error: string; needsKey: boolean; attempts: SttAttempt[] };
+  | {
+      ok: false;
+      error: string;
+      needsKey: boolean;
+      /** ITEM 7: the wake-path budget forced an early jump to local (stt.stall). */
+      stalled?: boolean;
+      attempts: SttAttempt[];
+    };
 
 // ── JARVIS (assistente conversacional) ───────────────────────────────────────
 
@@ -221,6 +237,7 @@ export type JarvisAction =
   | { type: 'open_squad'; squadName: string }
   | { type: 'open_workspace'; workspaceName: string }
   | { type: 'design_squad' }
+  | { type: 'confirm_squad' }
   | { type: 'new_mission' }
   | { type: 'new_workspace' }
   | { type: 'open_terminal' }
@@ -237,9 +254,13 @@ export type JarvisAction =
   | { type: 'focus_next_pane' }
   | { type: 'focus_previous_pane' }
   | { type: 'focus_pane'; paneName: string }
-  | { type: 'send_to_pane'; text: string }
+  // NEW-B: paneId targets the ASKING pane for routed pending-question answers.
+  // Absent for model-emitted delegation (falls back to orchestrator/focused pane).
+  | { type: 'send_to_pane'; text: string; paneId?: string }
   | { type: 'run_command'; command: string }
-  | { type: 'mcp_tool'; tool: string; args: Record<string, unknown> };
+  | { type: 'mcp_tool'; tool: string; args: Record<string, unknown> }
+  | { type: 'restore_mission_panes'; alvo?: string }
+  | { type: 'ask_pane'; pergunta: string; paneId?: string };
 
 export interface JarvisReply {
   say: string;
@@ -317,6 +338,8 @@ export interface JarvisLiveState {
 
 export interface JarvisLiveStartRequest {
   reason?: 'manual' | 'wake' | 'click' | 'ptt' | 'reply';
+  /** Hard-stop any warm/grace socket and open a fresh connection (wake inject). */
+  forceFresh?: boolean;
 }
 
 export interface JarvisLiveSmokeTestRequest {
@@ -376,6 +399,7 @@ export interface JarvisLiveInterruptEvent {
 export const jarvisLiveStartRequestSchema = z
   .object({
     reason: z.enum(['manual', 'wake', 'click', 'ptt', 'reply']).optional(),
+    forceFresh: z.boolean().optional(),
   })
   .default({});
 
@@ -417,6 +441,7 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'open_squad',
     'open_workspace',
     'design_squad',
+    'confirm_squad',
     'new_mission',
     'new_workspace',
     'open_terminal',
@@ -436,6 +461,8 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'send_to_pane',
     'run_command',
     'mcp_tool',
+    'restore_mission_panes',
+    'ask_pane',
   ]),
   summary: z.string().max(1000),
   ok: z.boolean(),
