@@ -299,3 +299,30 @@ describe('repairMissingAction', () => {
     expect(fixed.action).toEqual({ type: 'open_terminal' });
   });
 });
+
+describe('jarvisThink chain deadline (Gap 8)', () => {
+  it('devolve o fallback gracioso antes do deadline quando os providers penduram', async () => {
+    // fetch que nunca resolve (rejeita só no abort) — simula provider pendurado.
+    const hangingFetch = vi.fn(
+      (_url: string, opts?: { signal?: AbortSignal }) =>
+        new Promise<Response>((_, reject) => {
+          opts?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    ) as unknown as typeof fetch;
+
+    const started = Date.now();
+    const reply = await jarvisThink(
+      'me conta uma novidade sobre o projeto',
+      CTX,
+      [],
+      deps((envVar) => (envVar === 'GEMINI_API_KEY' ? 'gemini-key' : undefined), hangingFetch),
+      40, // chainDeadlineMs curto: o fallback deve vencer a corrida
+    );
+
+    // Resolveu pelo budget bem antes do BRAIN_TIMEOUT_MS (15s) do provider.
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(reply.action).toEqual({ type: 'none' });
+    expect(reply.expectReply).toBe(true);
+    expect(reply.say.toLowerCase()).toContain('operando');
+  });
+});

@@ -452,6 +452,15 @@ export async function chatViaBrainChain(
  */
 export const BRAIN_TIMEOUT_MS = 15_000;
 
+/**
+ * Deadline da CADEIA inteira de providers. Fica ABAIXO do BRAIN_DEADLINE_MS do
+ * renderer (35s): dois providers pendurando 15s cada somam 30s+, e o deadline
+ * de fora cortaria ANTES de a JARVIS alcançar o fallback local gracioso — ela
+ * ficaria muda. Correndo a cadeia contra este budget, o fallback vence a
+ * corrida a tempo e NUNCA é pré-emptado pelo deadline externo (Gap 8).
+ */
+export const BRAIN_CHAIN_DEADLINE_MS = 28_000;
+
 export async function chatOnce(
   endpoint: string,
   key: string,
@@ -507,6 +516,7 @@ export async function jarvisThink(
   ctx: JarvisContext,
   history: JarvisTurn[],
   deps: BrainDeps = defaultBrainDeps,
+  chainDeadlineMs = BRAIN_CHAIN_DEADLINE_MS,
 ): Promise<JarvisReply> {
   // Fast-path de ação: comando imperativo inequívoco executa sem LLM (~0ms).
   const actionFast = jarvisActionFastPath(transcript, ctx);
@@ -533,30 +543,47 @@ export async function jarvisThink(
   const providers = flattenJarvisBrainProviders(voiceConfig.jarvisBrain);
   const attempts: string[] = [];
 
-  for (const provider of providers) {
-    const key = providerKey(provider, deps);
-    if (key === undefined) continue;
-    try {
-      const raw = await chatOnce(
-        provider.endpoint,
-        key,
-        provider.model,
-        messages,
-        deps,
-        provider.jsonMode ?? true,
-        600,
-      );
-      applyMemoryOps(raw);
-      return repairMissingAction(transcript, parseReply(raw), ctx);
-    } catch (err) {
-      attempts.push(
-        `${provider.provider}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+  const runChain = async (): Promise<JarvisReply> => {
+    for (const provider of providers) {
+      const key = providerKey(provider, deps);
+      if (key === undefined) continue;
+      try {
+        const raw = await chatOnce(
+          provider.endpoint,
+          key,
+          provider.model,
+          messages,
+          deps,
+          provider.jsonMode ?? true,
+          600,
+        );
+        applyMemoryOps(raw);
+        return repairMissingAction(transcript, parseReply(raw), ctx);
+      } catch (err) {
+        attempts.push(
+          `${provider.provider}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
-  }
+    return attempts.length === 0
+      ? localBrainFallbackReply(transcript, ctx, false)
+      : localBrainFallbackReply(transcript, ctx, true);
+  };
 
-  if (attempts.length === 0) {
-    return localBrainFallbackReply(transcript, ctx, false);
+  // Gap 8: a cadeia corre contra um deadline PRÓPRIO (< BRAIN_DEADLINE_MS do
+  // renderer). Se os providers pendurarem, o fallback local gracioso vence a
+  // corrida a tempo — nunca é pré-emptado pelo deadline externo (que deixaria
+  // a JARVIS muda com um erro em vez de "continuo operando localmente").
+  let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<JarvisReply>((resolve) => {
+    budgetTimer = setTimeout(
+      () => resolve(localBrainFallbackReply(transcript, ctx, true)),
+      chainDeadlineMs,
+    );
+  });
+  try {
+    return await Promise.race([runChain(), budget]);
+  } finally {
+    if (budgetTimer) clearTimeout(budgetTimer);
   }
-  return localBrainFallbackReply(transcript, ctx, true);
 }
