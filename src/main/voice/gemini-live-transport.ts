@@ -67,9 +67,26 @@ const LIVE_WS_BASE =
   'google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
 const SETUP_TIMEOUT_MS = 10_000;
+// F-059/2461: 30s sem NENHUMA mensagem do servidor numa sessão VIVA = socket
+// zumbi (local OPEN, servidor mudo — o caso F-138). Re-armado a cada mensagem;
+// dispara → fecha o socket → o handler de close reconecta com backoff.
+const SDK_PROGRESS_TIMEOUT_MS = 30_000;
 const PENDING_MIC_MAX_BYTES = 160 * 1024;
 const MAX_RECONNECT_ATTEMPTS = 3;
 const WS_OPEN = 1;
+
+/**
+ * F-133: SINGLETON cross-instância — no máximo 1 transporte Live vivo por
+ * processo. Duas GeminiLiveTransport reconectando em paralelo = "duas vozes".
+ * Toda conexão nova reivindica este slot e encerra a anterior; a órfã (não é a
+ * corrente) se auto-encerra ao tentar reconectar.
+ */
+let currentLiveTransport: GeminiLiveTransport | null = null;
+
+/** Test-only: limpa o slot singleton entre casos isolados. */
+export function __resetLiveTransportSingleton(): void {
+  currentLiveTransport = null;
+}
 
 export interface SetupMessage {
   setup: {
@@ -167,6 +184,7 @@ export class GeminiLiveTransport {
   private pendingMic: string[] = [];
   private pendingMicBytes = 0;
   private setupTimer: ReturnType<typeof setTimeout> | null = null;
+  private progressTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
   private connectionGeneration = 0;
@@ -207,7 +225,11 @@ export class GeminiLiveTransport {
     for (const turn of carriedTurns) this.turnQueue.enqueue(turn);
     this.screenCoalescer.clear();
     this.screenCoalescer.resetBaseline();
-    // Singleton: nunca duas sessões (= duas vozes) vivas.
+    // F-133: reivindica o slot singleton cross-instância — mata QUALQUER outro
+    // transporte Live vivo antes de conectar (evita "duas vozes"). Só a instância
+    // corrente reconecta; as outras se auto-encerram no reconnect.
+    this.claimSingleton();
+    // Singleton por instância: nunca duas sessões (= duas vozes) vivas.
     this.teardown(true);
     const generation = ++this.connectionGeneration;
     this.lastOptions = opts;
@@ -266,7 +288,14 @@ export class GeminiLiveTransport {
       if (generation !== this.connectionGeneration) return;
       const wasReady = this.setupDone;
       this.setupDone = false;
+      this.clearProgressWatchdog();
       if (this.closedByUs) {
+        this.events.onStateChange('closed');
+        return;
+      }
+      // F-133: instância órfã (perdeu o slot singleton) nunca reconecta — encerra.
+      if (currentLiveTransport !== this) {
+        this.teardown(true);
         this.events.onStateChange('closed');
         return;
       }
@@ -278,6 +307,9 @@ export class GeminiLiveTransport {
         this.reconnectTimer = this.deps.setTimeoutFn(() => {
           this.reconnectTimer = null;
           if (generation !== this.connectionGeneration) return;
+          // F-133: re-checa identidade no disparo — o slot pode ter sido tomado
+          // por outra sessão durante o backoff.
+          if (currentLiveTransport !== this) return;
           if (!this.closedByUs && this.lastOptions) this.connect(this.lastOptions);
         }, delay);
       } else {
@@ -294,6 +326,9 @@ export class GeminiLiveTransport {
 
   private handleServerMessage(raw: string): void {
     const msg = parseServerMessage(raw);
+    // F-138/2461: toda mensagem do servidor é PROGRESSO — re-arma o watchdog de
+    // sessão viva (30s de silêncio = socket zumbi → fecha → reconecta).
+    if (this.setupDone || msg.setupComplete) this.armProgressWatchdog();
     if (msg.setupComplete) {
       this.setupDone = true;
       this.reconnectAttempts = 0;
@@ -434,7 +469,48 @@ export class GeminiLiveTransport {
     this.turnQueue.reset();
     this.screenCoalescer.clear();
     this.teardown(true);
+    // F-133: libera o slot singleton se ESTA é a corrente (não derruba posse alheia).
+    if (currentLiveTransport === this) currentLiveTransport = null;
     this.events.onStateChange('closed');
+  }
+
+  /** F-133: reivindica o slot singleton, encerrando qualquer transporte Live anterior. */
+  private claimSingleton(): void {
+    if (currentLiveTransport && currentLiveTransport !== this) {
+      currentLiveTransport.disconnect();
+    }
+    currentLiveTransport = this;
+  }
+
+  /**
+   * F-138/2461: watchdog de progresso da sessão viva — re-armado a cada mensagem
+   * do servidor. 30s sem mensagem = socket zumbi: fecha o WS pra que o handler de
+   * close reconecte com backoff (não é terminal — a exaustão do reconnect é quem
+   * emite o 'closed' final).
+   */
+  private armProgressWatchdog(): void {
+    this.clearProgressWatchdog();
+    const generation = this.connectionGeneration;
+    this.progressTimer = this.deps.setTimeoutFn(() => {
+      this.progressTimer = null;
+      if (generation !== this.connectionGeneration || !this.setupDone) return;
+      this.events.onError(
+        `live: sem progresso do servidor (${SDK_PROGRESS_TIMEOUT_MS / 1000}s) — reconectando`,
+      );
+      if (this.ws) {
+        try {
+          this.ws.close();
+        } catch {
+          // socket já morto
+        }
+      }
+    }, SDK_PROGRESS_TIMEOUT_MS);
+  }
+
+  private clearProgressWatchdog(): void {
+    if (this.progressTimer === null) return;
+    this.deps.clearTimeoutFn(this.progressTimer);
+    this.progressTimer = null;
   }
 
   private teardown(markClosed: boolean): void {
@@ -444,6 +520,7 @@ export class GeminiLiveTransport {
     }
     if (this.setupTimer) this.deps.clearTimeoutFn(this.setupTimer);
     this.setupTimer = null;
+    this.clearProgressWatchdog();
     this.clearReconnectTimer();
     this.setupDone = false;
     if (this.ws) {

@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  __resetLiveTransportSingleton,
   buildSetupMessage,
   GeminiLiveTransport,
   parseServerMessage,
@@ -123,6 +124,8 @@ describe('parseServerMessage', () => {
 });
 
 describe('GeminiLiveTransport', () => {
+  beforeEach(() => __resetLiveTransportSingleton());
+
   it('bufferiza mic antes do setupComplete e faz flush depois (pendingMic)', () => {
     const ws = fakeWs();
     const ev = events();
@@ -339,6 +342,104 @@ describe('GeminiLiveTransport', () => {
     t.endUserTurn();
     const last = JSON.parse(ws.sent.at(-1)!);
     expect(last.realtimeInput.audioStreamEnd).toBe(true);
+  });
+
+  it('watchdog de progresso: 30s sem mensagem do servidor fecha o socket zumbi', async () => {
+    vi.useFakeTimers();
+    const ws = fakeWs();
+    const ev = events();
+    const t = new GeminiLiveTransport(ev, {
+      wsFactory: () => ws,
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    // 30s de silêncio do servidor → watchdog fecha o socket + erra diagnóstico
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(ws.close).toHaveBeenCalled();
+    expect(ev.calls.error.some((m) => String(m).includes('progresso'))).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it('watchdog de progresso é re-armado a cada mensagem do servidor', async () => {
+    vi.useFakeTimers();
+    const ws = fakeWs();
+    const t = new GeminiLiveTransport(events(), {
+      wsFactory: () => ws,
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    // mensagens periódicas re-armam o watchdog → nunca fecha
+    for (let i = 0; i < 5; i += 1) {
+      await vi.advanceTimersByTimeAsync(20_000);
+      ws.fire('message', JSON.stringify({ serverContent: { outputTranscription: { text: 'oi' } } }));
+    }
+    expect(ws.close).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it('singleton cross-instância: conectar um 2º transporte encerra o 1º', () => {
+    const ws1 = fakeWs();
+    const ws2 = fakeWs();
+    const t1 = new GeminiLiveTransport(events(), {
+      wsFactory: () => ws1,
+      now: () => 1000,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    const t2 = new GeminiLiveTransport(events(), {
+      wsFactory: () => ws2,
+      now: () => 1000,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    t1.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws1.fire('open');
+    ws1.fire('message', JSON.stringify({ setupComplete: {} }));
+    expect(t1.isReady).toBe(true);
+    // t2 reivindica o slot → t1 é encerrado (F-133)
+    t2.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    expect(ws1.close).toHaveBeenCalled();
+    expect(t1.isReady).toBe(false);
+  });
+
+  it('órfã (perdeu o slot) não reconecta ao cair — auto-encerra', async () => {
+    vi.useFakeTimers();
+    const ws1 = fakeWs();
+    const ws2 = fakeWs();
+    const t1calls = { n: 0 };
+    const t1 = new GeminiLiveTransport(events(), {
+      wsFactory: () => {
+        t1calls.n += 1;
+        return ws1;
+      },
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    const t2 = new GeminiLiveTransport(events(), {
+      wsFactory: () => ws2,
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    t1.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws1.fire('open');
+    ws1.fire('message', JSON.stringify({ setupComplete: {} }));
+    // t2 toma o slot; t1 vira órfã
+    t2.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    const beforeCalls = t1calls.n;
+    // t1 nem tenta reconectar (já encerrado); avança tempo pra provar
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(t1calls.n).toBe(beforeCalls);
+    vi.useRealTimers();
   });
 
   it('ignores an obsolete reconnect timer after a manual reconnect', async () => {
