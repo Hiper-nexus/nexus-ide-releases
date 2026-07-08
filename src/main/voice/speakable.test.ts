@@ -17,6 +17,46 @@ describe('cleanText', () => {
   it('collapses whitespace and trims prompt noise', () => {
     expect(cleanText('  $ foo   bar  ')).toBe('foo bar');
   });
+
+  it('strips a bare mcp__ tool call with args', () => {
+    const out = cleanText('Feito. mcp__overclock__handoff_list({ids:["h-5t"]}) pronto.');
+    expect(out).not.toMatch(/mcp__|handoff_list|\{|\}/);
+    expect(out).toContain('Feito.');
+    expect(out).toContain('pronto.');
+  });
+
+  it('strips a bare mcp__ tool name without args', () => {
+    const out = cleanText('Use mcp__nexus_git_status agora.');
+    expect(out).not.toContain('mcp__');
+    expect(out).toBe('Use agora.');
+  });
+
+  it('strips a bare JSON payload blob', () => {
+    const out = cleanText('Resultado {"status":"ok","id":42} salvo.');
+    expect(out).not.toMatch(/\{|status|"ok"/);
+    expect(out).toContain('Resultado');
+    expect(out).toContain('salvo.');
+  });
+
+  it('strips an orphaned "Mais detalhes:" pointer left after the mcp call is removed', () => {
+    const out = cleanText(
+      'Handoff entregue. Mais detalhes: mcp__overclock__handoff_list({ids:["h-5t"]})',
+    );
+    expect(out).not.toMatch(/Mais detalhes|mcp__|\{/);
+    expect(out).toContain('Handoff entregue.');
+  });
+
+  it('keeps "Mais detalhes" when it is real prose, not an orphan pointer', () => {
+    const out = cleanText('Mais detalhes sobre o deploy estão no pane.');
+    expect(out).toBe('Mais detalhes sobre o deploy estão no pane.');
+  });
+
+  it('unwinds shallow nested JSON across passes', () => {
+    const out = cleanText('Antes {"a":{"b":1},"c":2} depois.');
+    expect(out).not.toContain('{');
+    expect(out).toContain('Antes');
+    expect(out).toContain('depois.');
+  });
 });
 
 describe('splitSentences', () => {
