@@ -29,6 +29,7 @@ import {
   storeVoiceApiKey,
 } from './voice-config-store';
 import { jarvisThink } from './jarvis-brain';
+import { jarvisConversation } from './jarvis-conversation';
 import { WakeEngine } from './wake-engine';
 import { logVoice } from './voice-log';
 import { spawn } from 'node:child_process';
@@ -261,11 +262,19 @@ export function registerVoiceIpc(): void {
       return { say: 'Não entendi o pedido.', action: { type: 'none' } };
     }
     try {
+      // Gap 9: se o renderer perdeu o histórico (morte/reinício da sessão),
+      // reinjeta a conversa persistida em disco dentro da janela de resume, para
+      // a JARVIS retomar o fio em vez de recomeçar e re-perguntar o que já sabia.
+      const history =
+        parsed.data.history.length > 0
+          ? parsed.data.history
+          : jarvisConversation.resume();
       const reply = await jarvisThink(
         parsed.data.transcript,
         parsed.data.context,
-        parsed.data.history,
+        history,
       );
+      jarvisConversation.record(parsed.data.transcript, reply.say);
       liveSession.onJarvisReply(parsed.data.transcript, reply);
       console.log(
         `[voice] jarvis: "${parsed.data.transcript}" → ${reply.action.type}` +
