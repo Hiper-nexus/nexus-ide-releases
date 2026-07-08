@@ -227,8 +227,12 @@ function canAttemptRealtime(info: VoiceRuntimeInfo | null | undefined): boolean 
 function shouldStreamToRealtime(): boolean {
   // Classic mode: STT bridge off — evita +1,2–1,8s de espera por transcript realtime.
   if (!REALTIME_PROVIDER_AUDIO_ENABLED || !REALTIME_ACTION_BRIDGE_ENABLED) return false;
-  // Wake/click/reply: só Classic STT — evita 1,2s de espera + fallback e eco.
-  if (isAckGatedCapture() || activeCaptureReason === 'reply') return false;
+  // ITEM 1 (parity seam): wake/click ENTRAM na sessão live — o utterance streama
+  // ao socket e a transcrição/áudio realtime dona o turno. Só o REPLY (follow-on
+  // da escuta quente entre turnos) fica em Classic STT; a continuidade quente é
+  // Classic-owned. A degradação p/ Classic segue em finishAndProcess quando o
+  // realtime não engata ou o socket erra mid-turn.
+  if (activeCaptureReason === 'reply') return false;
   const info = useVoiceStore.getState().info;
   const liveState = useVoiceStore.getState().liveState;
   return Boolean(
@@ -822,6 +826,11 @@ export function useVoiceController(): void {
         let wakePreRoll =
           source === 'voice' ? wakeMic.snapshotPreRoll(WAKE_PREROLL_MS) : [];
         const ack = wakeGreetingText(personaUserName());
+        // ITEM 1: com o socket live agora engatando no wake, a ACK local ("Pois
+        // não?") pode vazar pelo mic (AEC off) e virar um transcript de "user".
+        // Registra a ACK na janela de eco (main) para o input-side isEcho
+        // descartá-la — a JARVIS não responde à própria saudação.
+        void window.nexus.voice.recordEcho(ack).catch(() => {});
         wakeMic.suppressWakeDetection(WAKE_ACK_SUPPRESS_MS);
         if (source === 'click') {
           // Mouse wake is user-paced: play the audible ACK first, then start
@@ -1119,11 +1128,16 @@ async function beginListening(
     } else {
       suppressRealtimeAudioOut = !REALTIME_PROVIDER_AUDIO_ENABLED;
     }
+    // ITEM 1 (parity seam): wake/click agora ENGAJAM a sessão live também —
+    // liveStart dispara o log de decisão de engate em TODO wake (onStart →
+    // logEngageDecision) e abre o socket para o utterance streamar (pendingMic
+    // bufferiza o áudio pré-setupComplete). Só o REPLY (follow-on da escuta
+    // quente) fica Classic-owned. O Classic segue como fallback quando o
+    // realtime não engata ou o socket erra (finishAndProcess trata).
     const allowRealtimeBridge =
       REALTIME_PROVIDER_AUDIO_ENABLED &&
       REALTIME_ACTION_BRIDGE_ENABLED &&
       isJarvisLiveEnabled() &&
-      !isAckGatedCapture(reason) &&
       reason !== 'reply';
     if (allowRealtimeBridge) {
       const info = useVoiceStore.getState().info;
@@ -1303,6 +1317,14 @@ async function finishAndProcess(
           shouldLetRealtimeProviderAnswer(transcript) &&
           isRealtimeLive()
         ) {
+          // ITEM 2: the live provider owns the SPOKEN reply for this turn. Claim
+          // it so a late Classic brain (or a stale transcribe fallback) cannot
+          // also answer — exactly one voice per utterance.
+          if (!turnExecution.claim('realtime-audio', turnToken)) {
+            console.log('[voice] turno já reivindicado (Classic/tool); provider realtime pulado');
+            store.setStatus('idle');
+            return;
+          }
           suppressRealtimeAudioOut = false;
           flushPendingRealtimeAudioOut();
           logVoiceEvent('info', 'jarvis.liveProviderAnswer', 'provider realtime', {

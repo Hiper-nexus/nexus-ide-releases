@@ -15,7 +15,15 @@
  * which IPC microtask runs first. The turn token additionally rejects a stale
  * claim from a PREVIOUS turn (a late toolCall landing after a new turn opened).
  */
-export type TurnExecutionPath = 'realtime-tool' | 'classic-brain';
+/**
+ * ITEM 2 (one responder per turn): the owner covers not just app ACTIONS but the
+ * spoken REPLY. `realtime-audio` is claimed when the live provider answers a turn
+ * with its own voice; once claimed, the Classic path (`classic-brain`) can no
+ * longer claim the same turn, so brain+TTS never runs alongside the realtime
+ * voice (the "two voices answered one utterance" kill). Symmetrically, when
+ * Classic claims first, a late realtime tool/audio path no-ops.
+ */
+export type TurnExecutionPath = 'realtime-tool' | 'realtime-audio' | 'classic-brain';
 
 export class TurnExecutionOwner {
   private token = 0;
