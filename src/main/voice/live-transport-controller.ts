@@ -2,11 +2,13 @@ import { VOICE_CHANNELS } from '../../shared/voice-channels';
 import { getVoiceConfig } from './voice-config-store';
 import { resolveVoiceApiKey, voiceApiKeySource } from './voice-secrets';
 import { logVoice } from './voice-log';
+import { echoSuppressor } from './echo-suppress';
 import { jarvisMemory } from './jarvis-memory';
 import {
   buildRealtimeEngageDecision,
   type EngageCandidate,
 } from '../jarvis/realtime/engage-decision';
+import { shouldWithholdLiveMicFrame } from '../jarvis/realtime/live-mic-gate';
 import type { JarvisLiveSession } from './jarvis-live';
 import type {
   JarvisLiveToolEvent,
@@ -118,6 +120,10 @@ export class LiveTransportController {
   private localCallSeq = 0;
   /** Última linha de decisão de engate já logada — dedupe (log só na mudança). */
   private lastEngageLine = '';
+  /** True enquanto o áudio do PROVIDER está saindo (onAudioOut→responseDone).
+   *  Distingue a fala do provider (barge-in preservado) de um TTS/ack LOCAL
+   *  (mic retido) — ambos deixam a FSM em 'speaking'. */
+  private providerSpeaking = false;
 
   constructor(
     private emit: Emit,
@@ -241,6 +247,14 @@ export class LiveTransportController {
   micIn(b64: string): void {
     const state = this.fsm.getState();
     if (!state.enabled || !state.sessionId) return;
+    // Input-side echo guard (parity with Overclock GeminiLiveSession isEcho):
+    // with AEC off the speaker bleeds into the hot mic, so streaming raw PCM
+    // while a LOCAL TTS/ack is playing would send her own voice back to the
+    // provider — she would answer herself. Drop (not buffer) those frames.
+    // During the provider's OWN audio we keep streaming so barge-in still works.
+    if (shouldWithholdLiveMicFrame({ status: state.status, providerSpeaking: this.providerSpeaking })) {
+      return;
+    }
     let samples: Int16Array;
     try {
       samples = base64ToInt16Array(b64);
@@ -348,6 +362,7 @@ export class LiveTransportController {
     if (status === 'speaking' || status === 'thinking') {
       this.provider?.interrupt();
     }
+    this.providerSpeaking = false;
     return this.fsm.interrupt(reason);
   }
 
@@ -358,6 +373,7 @@ export class LiveTransportController {
     this.provider?.close();
     this.provider = null;
     this.connecting = null;
+    this.providerSpeaking = false;
     this.clearPendingMic();
     this.patchRealtimeReady(false);
   }
@@ -441,12 +457,30 @@ export class LiveTransportController {
       if (this.provider !== provider) return;
       const sessionId = this.fsm.getState().sessionId;
       if (sessionId) jarvisLatencyTracker.markAudioOut(sessionId);
+      // Provider is speaking → keep mic streaming (barge-in), and remember her
+      // spoken output into the echo window (below, on the assistant transcript).
+      this.providerSpeaking = true;
       this.fsm.patchStatus({ status: 'speaking', realtimeReady: true });
       this.emit(VOICE_CHANNELS.liveAudioOut, int16ArrayToBase64(pcm16));
     });
     provider.onRoleTranscript((line) => {
       if (this.provider !== provider) return;
       if (!line.text.trim()) return;
+      // Record her OWN spoken output into the echo window so a garbled version
+      // that bled into the mic (full-duplex, AEC off) is guarded exactly like
+      // the Classic path (fuzzy isEcho). Parity with Overclock recentSpokenNorm.
+      if (line.role === 'assistant' && line.final) {
+        echoSuppressor.record(line.text);
+      }
+      // Input-side echo drop: a "user" transcript that is really her own TTS
+      // coming back through the mic is discarded, not answered. Genuine barge-in
+      // speech is not an echo, so it still passes.
+      if (line.role === 'user' && line.final && echoSuppressor.isEcho(line.text)) {
+        logVoice('info', 'stt.echoDiscarded', 'eco do TTS descartado (live)', {
+          text: line.text.slice(0, 120),
+        });
+        return;
+      }
       const event = this.fsm.transcript(line);
       if (!event) return;
       // C-085 r3: fala FINAL do usuário com pergunta pendente narrada é a
@@ -458,10 +492,12 @@ export class LiveTransportController {
     });
     provider.onInterrupted(() => {
       if (this.provider !== provider) return;
+      this.providerSpeaking = false;
       this.fsm.interrupt('barge-in');
     });
     provider.onResponseDone(() => {
       if (this.provider !== provider) return;
+      this.providerSpeaking = false;
       const sessionId = this.fsm.getState().sessionId;
       if (sessionId) jarvisLatencyTracker.markResponseDone(sessionId);
       this.fsm.patchStatus({ status: 'dormant', realtimeReady: true });
@@ -481,6 +517,7 @@ export class LiveTransportController {
     });
     provider.onDisconnected((err) => {
       if (this.provider !== provider) return;
+      this.providerSpeaking = false;
       console.warn('[live]', err.message);
       this.clearToolResultTimers();
       provider.close();
