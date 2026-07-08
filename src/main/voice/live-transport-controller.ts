@@ -27,6 +27,7 @@ import {
 type Emit = (channel: string, payload?: unknown) => void;
 const RUNTIME_RECONNECT_BASE_MS = 750;
 const RUNTIME_RECONNECT_MAX_ATTEMPTS = 3;
+const PENDING_MIC_MAX_BYTES = 512 * 1024;
 
 /** OpenAI devolve isto quando cancelamos sem response ativa — ruído, não falha real. */
 export function isIgnorableRealtimeError(message: string): boolean {
@@ -53,6 +54,8 @@ export class LiveTransportController {
   private reconnectGeneration = 0;
   private latestContext = '';
   private recentToolResults: string[] = [];
+  private pendingMic: Int16Array[] = [];
+  private pendingMicBytes = 0;
 
   constructor(
     private emit: Emit,
@@ -71,6 +74,7 @@ export class LiveTransportController {
   onStart(): Promise<void> {
     this.clearReconnectTimer();
     if (!this.isRealtimeConfigured()) {
+      this.clearPendingMic();
       this.fsm.patchStatus({
         status: 'error',
         realtimeReady: false,
@@ -88,6 +92,7 @@ export class LiveTransportController {
       instructions: this.buildSystemInstruction(),
     });
     if (candidates.length === 0) {
+      this.clearPendingMic();
       this.patchRealtimeReady(false);
       return Promise.resolve();
     }
@@ -111,17 +116,76 @@ export class LiveTransportController {
   }
 
   micIn(b64: string): void {
-    if (!this.provider) return;
-    const sessionId = this.fsm.getState().sessionId;
-    if (sessionId) jarvisLatencyTracker.markAudioIn(sessionId);
+    const state = this.fsm.getState();
+    if (!state.enabled || !state.sessionId) return;
+    let samples: Int16Array;
     try {
-      this.provider.sendAudioChunk(base64ToInt16Array(b64));
+      samples = base64ToInt16Array(b64);
     } catch (err) {
       this.fsm.patchStatus({
         status: 'error',
         realtimeReady: false,
         error: err instanceof Error ? err.message : String(err),
       });
+      return;
+    }
+    if (samples.length === 0) return;
+    if (!this.provider?.isReady) {
+      this.bufferMicChunk(samples);
+      return;
+    }
+    this.sendMicSamples(this.provider, samples);
+  }
+
+  private sendMicSamples(provider: TurnManagedRealtimeProvider, samples: Int16Array): void {
+    const sessionId = this.fsm.getState().sessionId;
+    if (sessionId) jarvisLatencyTracker.markAudioIn(sessionId);
+    try {
+      provider.sendAudioChunk(samples);
+    } catch (err) {
+      this.fsm.patchStatus({
+        status: 'error',
+        realtimeReady: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private bufferMicChunk(samples: Int16Array): void {
+    const bytes = samples.byteLength;
+    if (bytes <= 0 || bytes > PENDING_MIC_MAX_BYTES) return;
+    while (
+      this.pendingMicBytes + bytes > PENDING_MIC_MAX_BYTES &&
+      this.pendingMic.length > 0
+    ) {
+      const dropped = this.pendingMic.shift();
+      this.pendingMicBytes -= dropped?.byteLength ?? 0;
+    }
+    this.pendingMic.push(samples.slice());
+    this.pendingMicBytes += bytes;
+    const state = this.fsm.getState();
+    if (!state.pendingMic && state.status !== 'off') {
+      this.fsm.patchStatus({ status: state.status, pendingMic: true });
+    }
+  }
+
+  private flushPendingMic(provider: TurnManagedRealtimeProvider): void {
+    const chunks = this.pendingMic;
+    this.pendingMic = [];
+    this.pendingMicBytes = 0;
+    for (const chunk of chunks) this.sendMicSamples(provider, chunk);
+    const state = this.fsm.getState();
+    if (state.pendingMic && state.status !== 'off') {
+      this.fsm.patchStatus({ status: state.status, pendingMic: false });
+    }
+  }
+
+  private clearPendingMic(): void {
+    this.pendingMic = [];
+    this.pendingMicBytes = 0;
+    const state = this.fsm.getState();
+    if (state.pendingMic && state.status !== 'off') {
+      this.fsm.patchStatus({ status: state.status, pendingMic: false });
     }
   }
 
@@ -165,6 +229,7 @@ export class LiveTransportController {
     this.provider?.close();
     this.provider = null;
     this.connecting = null;
+    this.clearPendingMic();
     this.patchRealtimeReady(false);
   }
 
@@ -181,6 +246,8 @@ export class LiveTransportController {
         await provider.connect();
         if (this.provider === provider) {
           this.reconnectAttempt = 0;
+          this.sendProviderContext();
+          this.flushPendingMic(provider);
           this.fsm.patchStatus({ status: 'listening', realtimeReady: true });
         }
         return;
@@ -199,6 +266,7 @@ export class LiveTransportController {
       realtimeReady: false,
       error: 'transporte realtime falhou — usando Classic',
     });
+    this.clearPendingMic();
   }
 
   private bindProvider(provider: TurnManagedRealtimeProvider): void {

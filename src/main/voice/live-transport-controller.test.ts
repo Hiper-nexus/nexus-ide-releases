@@ -21,6 +21,13 @@ function deferred(): {
   return { promise, resolve, reject };
 }
 
+function pcmBase64(values: number[]): string {
+  const samples = new Int16Array(values);
+  return Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength).toString(
+    'base64',
+  );
+}
+
 function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider & {
   closeCalls: number;
   fireDisconnected(err: Error): void;
@@ -222,6 +229,125 @@ describe('LiveTransportController', () => {
     pending.resolve();
     await Promise.all([first, second]);
     expect(session.getState().realtimeReady).toBe(true);
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('buffers mic frames while the realtime provider is connecting', async () => {
+    vi.resetModules();
+    const pending = deferred();
+    const provider = fakeProvider(() => pending.promise);
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'openai', provider }];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'openai-realtime',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['openai'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    const started = controller.onStart();
+    controller.micIn(pcmBase64([1, 2, 3]));
+    controller.micIn(pcmBase64([4, 5, 6]));
+
+    expect(provider.sendAudioChunk).not.toHaveBeenCalled();
+    expect(session.getState()).toMatchObject({
+      status: 'listening',
+      realtimeReady: false,
+      pendingMic: true,
+    });
+
+    pending.resolve();
+    await started;
+
+    expect(provider.sendAudioChunk).toHaveBeenCalledTimes(2);
+    expect(Array.from(vi.mocked(provider.sendAudioChunk).mock.calls[0][0])).toEqual([
+      1, 2, 3,
+    ]);
+    expect(Array.from(vi.mocked(provider.sendAudioChunk).mock.calls[1][0])).toEqual([
+      4, 5, 6,
+    ]);
+    expect(session.getState()).toMatchObject({
+      status: 'listening',
+      realtimeReady: true,
+      pendingMic: false,
+    });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('replays screen context after the realtime provider becomes ready', async () => {
+    vi.resetModules();
+    const pending = deferred();
+    const provider = fakeProvider(() => pending.promise);
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'openai', provider }];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'openai-realtime',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['openai'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    const started = controller.onStart();
+    controller.contextIn('Workspace nexus em canvas com terminal focado.');
+
+    expect(provider.sendContext).not.toHaveBeenCalled();
+
+    pending.resolve();
+    await started;
+
+    expect(provider.sendContext).toHaveBeenCalledWith(
+      expect.stringContaining('Workspace nexus em canvas com terminal focado.'),
+    );
 
     vi.doUnmock('./voice-config-store');
     vi.doUnmock('./voice-secrets');
