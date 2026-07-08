@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildJarvisPersonaInstruction,
   jarvisThink,
+  repairMissingAction,
   type BrainDeps,
 } from './jarvis-brain';
 import type { JarvisContext } from '../../shared/voice-ipc';
@@ -266,5 +267,35 @@ describe('jarvisThink brain providers', () => {
       tool: 'nexus_file_read',
       args: { path: 'package.json' },
     });
+  });
+
+  it('corrige LLM que diz terminal aberto sem action', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(
+        200,
+        '{"say":"Terminal aberto, patrão.","expectReply":false,"action":{"type":"none"}}',
+      ),
+    ) as unknown as typeof fetch;
+
+    const reply = await jarvisThink(
+      'preciso do console agora',
+      CTX,
+      [],
+      deps((envVar) => (envVar === 'GEMINI_API_KEY' ? 'gemini-key' : undefined), fetchImpl),
+    );
+
+    expect(reply.action).toEqual({ type: 'open_terminal' });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('repairMissingAction', () => {
+  it('injeta open_terminal quando a fala confirma abertura sem action', () => {
+    const fixed = repairMissingAction(
+      'ok',
+      { say: 'Pronto, terminal aberto.', expectReply: false, action: { type: 'none' } },
+      CTX,
+    );
+    expect(fixed.action).toEqual({ type: 'open_terminal' });
   });
 });

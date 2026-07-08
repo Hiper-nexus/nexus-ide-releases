@@ -99,6 +99,12 @@ Golden rule: never say you did or will do something unless you return the
 matching action. Without an action, nothing happens in the app. For file/git/
 editor/browser/mission tasks, use mcp_tool with the correct nexus_* tool.
 
+Visibility rule: context.screen is structured state, NOT pixels. A shell pane
+listed in panes[] is NOT visible if surface mentions home deck, operator profile,
+wizard, settings, ops board, or blocking overlays. Never say "terminal aberto"
+unless view is grid, focused pane is shell, and no overlay covers the workspace.
+Use open_terminal action to reveal it; the app verifies visibility after execution.
+
 You can execute things through actions. Never claim you cannot. Examples:
 - "executa o comando ai" -> {"say":"Rodando o ai no terminal.","action":{"type":"run_command","command":"ai"}}
 - "roda npm test" -> {"say":"Rodando os testes.","action":{"type":"run_command","command":"npm test"}}
@@ -344,6 +350,41 @@ function firstAvailableAction(ctx: JarvisContext): string {
   return 'posso iniciar um workspace novo ou abrir configurações';
 }
 
+/**
+ * LLM às vezes confirma em voz alta com action:none — nada executa no app.
+ * Reaplica fast-path no transcript e heurísticas na fala antes de devolver.
+ */
+export function repairMissingAction(
+  transcript: string,
+  reply: JarvisReply,
+  ctx: JarvisContext,
+): JarvisReply {
+  if (reply.action.type !== 'none') return reply;
+
+  const actionFast = jarvisActionFastPath(transcript, ctx);
+  if (actionFast) {
+    return {
+      ...actionFast,
+      say: reply.say.trim() ? reply.say : actionFast.say,
+      expectReply: actionFast.expectReply ?? false,
+    };
+  }
+
+  const spoken = reply.say
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  if (
+    /\b(terminal|shell|console)\b/.test(spoken) &&
+    /\b(abr|abrindo|aberto|abri|pronto|criei)\b/.test(spoken)
+  ) {
+    return { ...reply, expectReply: false, action: { type: 'open_terminal' } };
+  }
+
+  return reply;
+}
+
 function localBrainFallbackReply(
   transcript: string,
   ctx: JarvisContext,
@@ -506,7 +547,7 @@ export async function jarvisThink(
         600,
       );
       applyMemoryOps(raw);
-      return parseReply(raw);
+      return repairMissingAction(transcript, parseReply(raw), ctx);
     } catch (err) {
       attempts.push(
         `${provider.provider}: ${err instanceof Error ? err.message : String(err)}`,
