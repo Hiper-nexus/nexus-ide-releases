@@ -229,9 +229,11 @@ export function SettingsDrawer() {
               </>
             )}
           </div>
-          <button type="button" className="settings-nav__close" onClick={close}>
-            Fechar
-          </button>
+          <div className="settings-nav__footer">
+            <button type="button" className="settings-nav__close" onClick={close}>
+              Fechar
+            </button>
+          </div>
         </nav>
 
         <div className="settings-detail">

@@ -1,7 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_VOICE_CONFIG, type VoiceConfig, type VoicePlugin } from '../../shared/voice-config';
 import type { ProviderProbes } from './provider-select';
-import { resetStickyTtsProvider, speak, type TtsDeps } from './tts-service';
+import {
+  resetStickyTtsProvider,
+  speak,
+  TTS_STICKY_FALLBACK_RETRY_MS,
+  type TtsDeps,
+} from './tts-service';
 
 const PROBES: ProviderProbes = { hasEnv: () => false, hasBin: () => true, platform: 'darwin' };
 
@@ -24,6 +29,10 @@ function sayConfig(): VoiceConfig {
 describe('speak', () => {
   beforeEach(() => {
     resetStickyTtsProvider();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('condenses to a summary and plays via macOS say', async () => {
@@ -122,7 +131,57 @@ describe('speak', () => {
     expect(second.ok).toBe(true);
     if (second.ok) {
       expect(second.provider).toBe('macos-say');
-      expect(second.fallbackNote).toContain('TTS fallback fixado');
+      expect(second.fallbackNote).toContain('TTS fallback temporário');
+    }
+  });
+
+  it('retries the configured primary voice after the fallback cooldown', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-08T12:00:00Z'));
+    const tts: VoicePlugin = {
+      type: 'tts',
+      provider: 'openai',
+      endpoint: 'https://api.openai.com/v1/audio/speech',
+      auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
+      model: 'gpt-4o-mini-tts',
+      voice: 'nova',
+      format: 'mp3',
+      fallback: { type: 'tts', provider: 'macos-say', localBin: '/usr/bin/say', voice: 'Luciana' },
+    };
+    const config: VoiceConfig = { ...DEFAULT_VOICE_CONFIG, tts };
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response('quota', { status: 429 }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as unknown as typeof fetch;
+    const speakViaSay = vi.fn(async () => undefined);
+    const sharedDeps = deps({ fetchImpl, getEnv: () => 'key', speakViaSay });
+
+    await speak(
+      { text: 'Primeira fala.', speakMode: 'full' },
+      config,
+      { ...PROBES, hasEnv: () => true },
+      sharedDeps,
+    );
+    await speak(
+      { text: 'Segunda fala.', speakMode: 'full' },
+      config,
+      { ...PROBES, hasEnv: () => true },
+      sharedDeps,
+    );
+    vi.setSystemTime(new Date(vi.getMockedSystemTime()!.getTime() + TTS_STICKY_FALLBACK_RETRY_MS + 1));
+    const recovered = await speak(
+      { text: 'Terceira fala.', speakMode: 'full' },
+      config,
+      { ...PROBES, hasEnv: () => true },
+      sharedDeps,
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(speakViaSay).toHaveBeenCalledTimes(2);
+    expect(recovered.ok).toBe(true);
+    if (recovered.ok) {
+      expect(recovered.provider).toBe('openai');
+      expect(recovered.mode).toBe('audio');
+      expect(recovered.fallbackNote).toBeUndefined();
     }
   });
 

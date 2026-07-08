@@ -64,7 +64,7 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 12px 12px 16px;
+  padding: 12px;
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
@@ -227,9 +227,16 @@
   font-variant-numeric: tabular-nums;
 }
 
-.settings-nav__close {
+.settings-nav__footer {
   flex: 0 0 auto;
-  margin: 8px 12px 12px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--border-strong);
+  background: rgba(8, 11, 17, 0.98);
+  box-shadow: 0 -12px 24px rgba(4, 6, 10, 0.3);
+}
+
+.settings-nav__close {
+  width: 100%;
   background: rgba(8, 11, 17, 0.96);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
@@ -239,7 +246,6 @@
   letter-spacing: 0.14em;
   padding: 10px 12px 11px;
   cursor: pointer;
-  box-shadow: 0 -10px 22px rgba(4, 6, 10, 0.22);
 }
 
 .settings-nav__close:hover {

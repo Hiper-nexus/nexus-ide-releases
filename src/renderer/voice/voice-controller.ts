@@ -57,6 +57,10 @@ import {
   shouldLetRealtimeProviderAnswer,
   shouldUseClassicActionBridge,
 } from './realtime-bridge-policy';
+import {
+  REALTIME_TRANSCRIPT_WAIT_MS,
+  realtimeTranscriptWaitMs,
+} from './realtime-transcript-wait';
 import type { AutoStopOptions } from './voice-capture';
 import type {
   JarvisAction,
@@ -82,7 +86,6 @@ const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
 const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
 const REALTIME_ACTION_BRIDGE_ENABLED = true;
 const REALTIME_PROVIDER_AUDIO_ENABLED = true;
-const REALTIME_TRANSCRIPT_WAIT_MS = 1_800;
 const WAKE_ACK_SUPPRESS_MS = 8_000;
 const WAKE_PREROLL_MS = 2_500;
 const CLICK_WAKE_PREROLL_MS = 2_500;
@@ -1057,12 +1060,13 @@ async function finishAndProcess(
 
     if (shouldTryRealtimeTranscript) {
       const tRealtime = Date.now();
+      const transcriptWaitMs = realtimeTranscriptWaitMs(activeCaptureReason);
       store.setStatus('transcribing');
       liveStatus('thinking');
       suppressRealtimeAudioOut = true;
       // Keep the live FSM open while the provider finalizes transcript/tool calls.
       // Ending here makes the HUD go dormant right after the wake ack/click wake.
-      const liveTranscript = await waitForRealtimeTranscript();
+      const liveTranscript = await waitForRealtimeTranscript(transcriptWaitMs);
       if (hasRealtimeNativeToolSince(tRealtime)) {
         realtimeTurnActive = false;
         store.setStatus('idle');
@@ -1150,14 +1154,14 @@ async function finishAndProcess(
       }
       if (!localSpeechUsable) {
         console.log(
-          `[voice] realtime sem transcript final em ${Date.now() - tRealtime}ms e captura local sem fala — descartada`,
+          `[voice] realtime sem transcript final em ${Date.now() - tRealtime}ms (janela ${transcriptWaitMs}ms) e captura local sem fala — descartada`,
         );
         store.setStatus('idle');
         liveEndTurn();
         return;
       }
       console.log(
-        `[voice] realtime sem transcript final em ${Date.now() - tRealtime}ms — fallback Classic STT`,
+        `[voice] realtime sem transcript final em ${Date.now() - tRealtime}ms (janela ${transcriptWaitMs}ms) — fallback Classic STT`,
       );
       suppressRealtimeAudioOut = true;
       resetPendingRealtimeAudioOut();

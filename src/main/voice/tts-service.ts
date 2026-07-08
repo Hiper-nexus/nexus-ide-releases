@@ -31,9 +31,26 @@ const SAY_BIN = '/usr/bin/say';
 
 /** Provedor TTS que funcionou por último — evita trocar de voz no meio da conversa. */
 let stickyTtsProvider: string | null = null;
+let stickyTtsPinnedAt = 0;
+
+/**
+ * Fallback de voz não pode virar permanente: se a OpenAI falhar uma vez por
+ * quota/rede, seguramos a mesma voz por alguns turnos, mas tentamos voltar para
+ * a voz principal logo depois. Isso preserva estabilidade sem "prender" a
+ * Jarvis no `say`/Piper até reiniciar o app.
+ */
+export const TTS_STICKY_FALLBACK_RETRY_MS = 60_000;
 
 function reorderTtsChain(chain: VoicePlugin[]): VoicePlugin[] {
   if (!stickyTtsProvider) return chain;
+  const configuredHeadProvider = chain[0]?.provider;
+  const isPinnedFallback = stickyTtsProvider !== configuredHeadProvider;
+  const pinAgeMs = Date.now() - stickyTtsPinnedAt;
+  if (isPinnedFallback && pinAgeMs >= TTS_STICKY_FALLBACK_RETRY_MS) {
+    stickyTtsProvider = null;
+    stickyTtsPinnedAt = 0;
+    return chain;
+  }
   const hit = chain.find((p) => p.provider === stickyTtsProvider);
   if (!hit) return chain;
   if (chain[0]?.provider === stickyTtsProvider) return chain;
@@ -43,6 +60,7 @@ function reorderTtsChain(chain: VoicePlugin[]): VoicePlugin[] {
 /** Testes: limpa voz sticky entre casos. */
 export function resetStickyTtsProvider(): void {
   stickyTtsProvider = null;
+  stickyTtsPinnedAt = 0;
 }
 
 /**
@@ -288,9 +306,10 @@ export async function speak(
         failures.length > 0
           ? `TTS fallback: ${failures.join(' · ')} → ${plugin.provider}`
           : pinnedFallback
-            ? `TTS fallback fixado: ${plugin.provider}; reinicie a voz ou ajuste o provider para tentar a voz principal.`
+            ? `TTS fallback temporário: ${plugin.provider}; a voz principal será tentada automaticamente.`
           : undefined;
       stickyTtsProvider = plugin.provider;
+      stickyTtsPinnedAt = Date.now();
       logVoice('info', 'tts.provider', `${plugin.provider} (${plugin.voice ?? plugin.model ?? 'default'})`, {
         fallback: failures.length > 0 || pinnedFallback,
       });

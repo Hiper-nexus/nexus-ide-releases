@@ -13,43 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.10.26',
+  version: '0.10.27',
   date: '2026-07-08',
-  codename: 'Jarvis Live Control',
+  codename: 'Jarvis Voice Lock',
   summary:
-    'A Jarvis Live ganhou mais consciência de tela em tempo real, HUD mais estável no wake por clique e controle de panes mais direto.',
+    'A Jarvis ficou mais estável em voz e wake/click, com retry automático da voz principal e menos desistência prematura no realtime.',
   highlights: [
     {
-      title: 'Contexto live mais rico',
+      title: 'Voz principal volta sozinha',
       detail:
-        'A sessão realtime recebe mais panes, foco, página atual, missões e horário local para responder “onde estamos?” sem cair no fluxo batch.',
+        'Quando o TTS cai para fallback por quota/rede, a Jarvis mantém a fala viva por alguns turnos, mas volta a tentar a voz OpenAI configurada automaticamente.',
     },
     {
-      title: 'Panes no caminho visual',
+      title: 'Wake por clique mais paciente',
       detail:
-        'Fechar e focar panes ficam no executor UI do renderer, evitando confirmação MCP desnecessária para ações visuais simples.',
+        'Turnos iniciados por Hey Jarvis ou clique ganham uma janela maior para receber transcript final realtime antes de desistir ou cair para o Classic.',
     },
     {
-      title: 'Wake por clique firme',
+      title: 'Menu de configurações alinhado',
       detail:
-        'Estados dormant do realtime não fecham mais visualmente o HUD enquanto o renderer ainda está ouvindo o comando.',
+        'O botão Fechar do painel de configurações virou rodapé próprio, sem raspar por cima dos itens do catálogo.',
     },
   ],
   fixes: [
     {
-      title: 'Menos latência em perguntas de tela',
+      title: 'Fallback TTS rastreável',
       detail:
-        'Perguntas de leitura do estado atual não são mais forçadas para o caminho Classic quando o realtime está pronto.',
+        'O log agora deixa claro quando a voz está em fallback temporário e quando a voz principal foi recuperada.',
     },
     {
-      title: 'Contexto sem corte prematuro',
+      title: 'Realtime com diagnóstico melhor',
       detail:
-        'O limite de contexto realtime foi ampliado para preservar mais informação útil antes do envio ao provedor live.',
+        'Mensagens de timeout do transcript realtime mostram a janela usada, separando wake/click de PTT/manual.',
     },
     {
-      title: 'Comandos de workspace mais tolerantes',
+      title: 'Manual e PTT continuam rápidos',
       detail:
-        'Variações como “novo espaço de trabalho” e transcrições imperfeitas de workspace agora disparam o assistente sem depender do LLM.',
+        'A janela maior foi limitada aos turnos hands-free; captura manual e push-to-talk seguem no caminho curto.',
     },
   ],
 };
