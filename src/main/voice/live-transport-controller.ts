@@ -120,8 +120,6 @@ export class LiveTransportController {
   private questionPollTimer: ReturnType<typeof setInterval> | null = null;
   private registeredQuestions = new Set<string>();
   private localCallSeq = 0;
-  /** Última linha de decisão de engate já logada — dedupe (log só na mudança). */
-  private lastEngageLine = '';
   /** ITEM 3: última fala FINAL do usuário — sinal de intenção para o guard do
    *  `encerrar` (a tool não carrega args, então a despedida vem do transcript). */
   private lastUserTranscript = '';
@@ -183,8 +181,10 @@ export class LiveTransportController {
     );
     const brainPart = brain ? `${brain.provider}:${brain.model}` : 'none';
     const line = `${decision.line} | brain=${brainPart}`;
-    if (line === this.lastEngageLine) return;
-    this.lastEngageLine = line;
+    // ITEM 1: fire on EVERY wake/turn-engage (onStart), not only on change — the
+    // brief requires the engage decision to be visible for each wake so a turn
+    // that silently degraded to Classic is never a mystery. onStart is the
+    // per-wake entrypoint (liveStart), so no dedupe here.
     logVoice(
       decision.degraded ? 'warn' : 'info',
       'jarvis.engageDecision',
