@@ -215,6 +215,45 @@ export function promoteJarvisBrainProvider(
   ]);
 }
 
+/**
+ * ITEM 4: guarantee a REAL cascade. A persisted config that was reduced to a
+ * single brain provider (e.g. groq-only) fails empty the moment that one
+ * provider errors. This appends any of the canonical providers (gemini / openai
+ * / groq, with their strong default tiers) that the user's chain is missing —
+ * WITHOUT reordering or re-modeling the providers the user already chose. So the
+ * head stays the user's preference and the tail gains the other two as
+ * fallbacks: "no empty replies while any provider has a valid key."
+ */
+export function ensureFullBrainCascade(
+  head: JarvisBrainProvider,
+  canonical: JarvisBrainProvider[] = flattenJarvisBrainProviders(
+    DEFAULT_VOICE_CONFIG.jarvisBrain,
+  ),
+): JarvisBrainProvider {
+  const chain = flattenJarvisBrainProviders(head);
+  const present = new Set(chain.map((p) => p.provider));
+  const missing = canonical.filter((p) => !present.has(p.provider));
+  if (missing.length === 0) return head;
+  return relinkJarvisBrainProviders([...chain, ...missing]);
+}
+
+/**
+ * ITEM 4/6: which brain provider + model will actually answer, given a key
+ * resolver — the first link in the (full) cascade whose key resolves. Pure so
+ * the engage/boot log can name it verbatim. Returns null when no key resolves.
+ */
+export function resolveActiveJarvisBrain(
+  head: JarvisBrainProvider,
+  hasKey: (envVar: string) => boolean,
+): { provider: JarvisBrainProviderId; model: string } | null {
+  for (const p of flattenJarvisBrainProviders(ensureFullBrainCascade(head))) {
+    const envVar = p.auth.envVar;
+    const resolves = p.auth.type === 'none' || (envVar ? hasKey(envVar) : false);
+    if (resolves) return { provider: p.provider, model: p.model };
+  }
+  return null;
+}
+
 export const voiceConfigSchema = z.object({
   enabled: z.boolean().default(true),
   input: inputSchema.default({

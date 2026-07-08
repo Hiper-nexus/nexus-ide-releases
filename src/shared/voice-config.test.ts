@@ -4,6 +4,8 @@ import {
   voicePluginSchema,
   DEFAULT_VOICE_CONFIG,
   flattenJarvisBrainProviders,
+  ensureFullBrainCascade,
+  resolveActiveJarvisBrain,
   migrateLegacyVoiceConfig,
   promoteJarvisBrainProvider,
   accelFromCode,
@@ -87,6 +89,47 @@ describe('jarvis brain providers', () => {
         (p) => p.provider,
       ),
     ).toEqual(['gemini', 'openai', 'groq']);
+  });
+
+  describe('ensureFullBrainCascade (ITEM 4)', () => {
+    it('appends the missing providers to a groq-only config as fallbacks', () => {
+      const groqOnly = {
+        provider: 'groq' as const,
+        endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+        auth: { type: 'api_key' as const, envVar: 'GROQ_API_KEY' },
+        model: 'llama-3.1-8b-instant',
+        jsonMode: true,
+      };
+      const full = flattenJarvisBrainProviders(ensureFullBrainCascade(groqOnly));
+      // Head (user's groq) preserved; the other two appended as fallbacks.
+      expect(full.map((p) => p.provider)).toEqual(['groq', 'gemini', 'openai']);
+      // The user's own head model is not rewritten.
+      expect(full[0].model).toBe('llama-3.1-8b-instant');
+    });
+
+    it('leaves the default (already full) chain untouched', () => {
+      expect(ensureFullBrainCascade(DEFAULT_VOICE_CONFIG.jarvisBrain)).toBe(
+        DEFAULT_VOICE_CONFIG.jarvisBrain,
+      );
+    });
+  });
+
+  describe('resolveActiveJarvisBrain (ITEM 4/6)', () => {
+    it('names the first provider whose key resolves in the full cascade', () => {
+      // Only groq resolves → even a gemini-head config answers via the groq tail.
+      const active = resolveActiveJarvisBrain(
+        DEFAULT_VOICE_CONFIG.jarvisBrain,
+        (envVar) => envVar === 'GROQ_API_KEY',
+      );
+      expect(active?.provider).toBe('groq');
+      expect(active?.model).toBe('llama-3.3-70b-versatile');
+    });
+
+    it('returns null when no key resolves', () => {
+      expect(
+        resolveActiveJarvisBrain(DEFAULT_VOICE_CONFIG.jarvisBrain, () => false),
+      ).toBeNull();
+    });
   });
 });
 

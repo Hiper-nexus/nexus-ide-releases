@@ -1,5 +1,6 @@
 import { VOICE_CHANNELS } from '../../shared/voice-channels';
 import { getVoiceConfig } from './voice-config-store';
+import { resolveActiveJarvisBrain } from '../../shared/voice-config';
 import { resolveVoiceApiKey, voiceApiKeySource } from './voice-secrets';
 import { logVoice } from './voice-log';
 import { echoSuppressor } from './echo-suppress';
@@ -170,13 +171,26 @@ export class LiveTransportController {
       transport: config.jarvisLive.transport,
       candidates,
     });
-    if (decision.line === this.lastEngageLine) return;
-    this.lastEngageLine = decision.line;
+    // ITEM 4/6: name the brain provider+model that will actually answer (first
+    // link in the full cascade whose key resolves) right on the engage line, so
+    // voice.log shows transport AND brain in one glance.
+    const brain = resolveActiveJarvisBrain(config.jarvisBrain, (envVar) =>
+      resolveVoiceApiKey(envVar) !== undefined,
+    );
+    const brainPart = brain ? `${brain.provider}:${brain.model}` : 'none';
+    const line = `${decision.line} | brain=${brainPart}`;
+    if (line === this.lastEngageLine) return;
+    this.lastEngageLine = line;
     logVoice(
       decision.degraded ? 'warn' : 'info',
       'jarvis.engageDecision',
-      decision.line,
-      { engaged: decision.engaged ?? 'classic', degraded: decision.degraded },
+      line,
+      {
+        engaged: decision.engaged ?? 'classic',
+        degraded: decision.degraded,
+        brainProvider: brain?.provider ?? null,
+        brainModel: brain?.model ?? null,
+      },
     );
   }
 

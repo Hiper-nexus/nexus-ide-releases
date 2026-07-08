@@ -5,7 +5,10 @@ import { jarvisFastPath } from './jarvis-fastpath';
 import { jarvisToolCatalogCompact } from './jarvis-tool-catalog';
 import { getVoiceConfig } from './voice-config-store';
 import { logVoice } from './voice-log';
-import { flattenJarvisBrainProviders } from '../../shared/voice-config';
+import {
+  ensureFullBrainCascade,
+  flattenJarvisBrainProviders,
+} from '../../shared/voice-config';
 import { isLikelyNoiseTranscript } from '../../shared/voice-noise';
 import type {
   JarvisContext,
@@ -390,7 +393,9 @@ export async function chatViaBrainChain(
   deps: BrainDeps = defaultBrainDeps,
 ): Promise<string> {
   const attempts: string[] = [];
-  for (const provider of flattenJarvisBrainProviders(getVoiceConfig().jarvisBrain)) {
+  for (const provider of flattenJarvisBrainProviders(
+    ensureFullBrainCascade(getVoiceConfig().jarvisBrain),
+  )) {
     const key = providerKey(provider, deps);
     if (key === undefined) continue;
     try {
@@ -528,7 +533,11 @@ export async function jarvisThink(
     { role: 'user', content: transcript },
   ];
 
-  const providers = flattenJarvisBrainProviders(voiceConfig.jarvisBrain);
+  // ITEM 4: always walk the FULL cascade (gemini/openai/groq) so a config that
+  // was reduced to one provider still falls through to any other resolving key.
+  const providers = flattenJarvisBrainProviders(
+    ensureFullBrainCascade(voiceConfig.jarvisBrain),
+  );
   const attempts: string[] = [];
 
   const runChain = async (): Promise<JarvisReply> => {
