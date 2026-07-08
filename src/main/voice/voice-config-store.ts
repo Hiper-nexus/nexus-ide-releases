@@ -320,12 +320,29 @@ function collectVoiceEnvVars(
   }));
 }
 
-export function knownVoiceEnvVars(): Set<string> {
-  return new Set(
-    collectVoiceEnvVars(current.stt, current.tts, current.jarvisBrain).map(
-      (key) => key.envVar,
-    ),
+/**
+ * ITEM 5: the realtime transport authenticates with GEMINI_API_KEY (gemini-live)
+ * or OPENAI_API_KEY (openai-realtime) — keys the STT/TTS/brain chains may not
+ * reference. Surfacing them as synthetic providers guarantees a settings field
+ * (and a valid store target) for each, so the user can paste the GEMINI key that
+ * the engage gate then resolves, even on a config that dropped the gemini brain.
+ */
+const REALTIME_KEY_PROVIDERS: VoicePlugin[] = [
+  { type: 'stt', provider: 'gemini-live', auth: { type: 'api_key', envVar: 'GEMINI_API_KEY' } },
+  { type: 'stt', provider: 'openai-realtime', auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' } },
+];
+
+function voiceKeyStatuses(): VoiceApiKeyStatus[] {
+  return collectVoiceEnvVars(
+    current.stt,
+    current.tts,
+    current.jarvisBrain,
+    ...REALTIME_KEY_PROVIDERS,
   );
+}
+
+export function knownVoiceEnvVars(): Set<string> {
+  return new Set(voiceKeyStatuses().map((key) => key.envVar));
 }
 
 export function storeVoiceApiKey(
@@ -394,7 +411,7 @@ export function buildRuntimeInfo(): VoiceRuntimeInfo {
     jarvisBrain: resolveJarvisBrainChain(current.jarvisBrain),
     // openWakeWord roda local e sem key — o campo fica por compat de UI.
     hasWakeKey: true,
-    keys: collectVoiceEnvVars(current.stt, current.tts, current.jarvisBrain),
+    keys: voiceKeyStatuses(),
     stt: resolveChain(current.stt, probes),
     tts: resolveChain(current.tts, probes),
   };
