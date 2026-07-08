@@ -88,6 +88,20 @@ describe('jarvisActionFastPath', () => {
     });
   });
 
+  it('foco de panes dispara ações nativas sem LLM', () => {
+    expect(jarvisActionFastPath('pane anterior', CTX)?.action).toEqual({
+      type: 'focus_previous_pane',
+    });
+    expect(jarvisActionFastPath('foca terminal', CTX)?.action).toEqual({
+      type: 'focus_pane',
+      paneName: 'terminal',
+    });
+    expect(jarvisActionFastPath('focus pane Code Review', CTX)?.action).toEqual({
+      type: 'focus_pane',
+      paneName: 'code review',
+    });
+  });
+
   it('iniciar um novo squad dispara design_squad', () => {
     const reply = jarvisActionFastPath('iniciar um novo squad', CTX);
     expect(reply?.action).toEqual({ type: 'design_squad' });

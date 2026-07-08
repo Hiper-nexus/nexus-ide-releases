@@ -69,6 +69,10 @@ function actionSummary(action: JarvisAction): string {
       return 'recarregar browser';
     case 'focus_next_pane':
       return 'focar próximo pane';
+    case 'focus_previous_pane':
+      return 'focar pane anterior';
+    case 'focus_pane':
+      return `focar pane ${action.paneName}`;
     case 'send_to_pane':
       return 'enviar tarefa ao pane';
     case 'run_command':

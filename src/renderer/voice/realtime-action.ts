@@ -39,7 +39,12 @@ export function realtimeToolEventToJarvisAction(
     case 'browser_forward':
     case 'browser_reload':
     case 'focus_next_pane':
+    case 'focus_previous_pane':
       return { type: action };
+    case 'focus_pane': {
+      const paneName = cleanText(event.args?.paneName, 128);
+      return paneName ? { type: 'focus_pane', paneName } : null;
+    }
     case 'open_browser': {
       const url = cleanText(event.args?.url, 4_096);
       return url ? { type: 'open_browser', url } : { type: 'open_browser' };

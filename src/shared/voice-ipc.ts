@@ -235,6 +235,8 @@ export type JarvisAction =
   | { type: 'browser_forward' }
   | { type: 'browser_reload' }
   | { type: 'focus_next_pane' }
+  | { type: 'focus_previous_pane' }
+  | { type: 'focus_pane'; paneName: string }
   | { type: 'send_to_pane'; text: string }
   | { type: 'run_command'; command: string }
   | { type: 'mcp_tool'; tool: string; args: Record<string, unknown> };
@@ -421,6 +423,8 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'browser_forward',
     'browser_reload',
     'focus_next_pane',
+    'focus_previous_pane',
+    'focus_pane',
     'send_to_pane',
     'run_command',
     'mcp_tool',

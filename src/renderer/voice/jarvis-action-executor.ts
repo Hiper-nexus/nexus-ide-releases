@@ -56,6 +56,49 @@ function focusedOrFirstBrowserPane(): { id: string; title: string } | null {
   return browser ? { id: browser.id, title: browser.title } : null;
 }
 
+function normPaneName(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function findPaneByVoiceName(
+  panes: ReturnType<typeof listPanes>,
+  paneName: string,
+): ReturnType<typeof listPanes>[number] | null {
+  const wanted = normPaneName(paneName);
+  if (!wanted) return null;
+  if (/\b(orquestrador|orchestrator)\b/.test(wanted)) {
+    return (
+      panes.find((pane) => pane.orchRequestId?.startsWith('squad-')) ??
+      panes.find((pane) => /(^|[ ·])orq\b/i.test(pane.title)) ??
+      null
+    );
+  }
+  if (/\b(terminal|shell|console)\b/.test(wanted)) {
+    return panes.find((pane) => pane.kind === 'shell') ?? null;
+  }
+  if (/\b(browser|navegador|pagina|page|site)\b/.test(wanted)) {
+    return panes.find((pane) => pane.kind === 'browser') ?? null;
+  }
+  if (/\b(agente|agent|worker|codex|claude|agy)\b/.test(wanted)) {
+    return (
+      panes.find((pane) => pane.kind === 'cli-agent' && normPaneName(pane.title).includes(wanted)) ??
+      panes.find((pane) => pane.kind === 'cli-agent') ??
+      null
+    );
+  }
+  return (
+    panes.find((pane) => normPaneName(pane.title) === wanted) ??
+    panes.find((pane) => normPaneName(pane.title).includes(wanted)) ??
+    panes.find((pane) => wanted.includes(normPaneName(pane.title))) ??
+    null
+  );
+}
+
 async function navigateBrowserPane(
   nav: 'back' | 'forward' | 'reload',
 ): Promise<{ ok: boolean; summary: string }> {
@@ -303,6 +346,31 @@ export async function executeJarvisAction(
       layout.focus(next.id);
       sayText = 'Próximo pane focado.';
       toolResult = { tool: action.type, ok: true, summary: `${next.title} focado` };
+    }
+  } else if (action.type === 'focus_previous_pane') {
+    const layout = useLayoutStore.getState();
+    const panes = listPanes(layout.root);
+    if (panes.length <= 1) {
+      sayText = 'Só tem um pane aberto.';
+      toolResult = { tool: action.type, ok: false, summary: 'apenas um pane aberto' };
+    } else {
+      const index = panes.findIndex((pane) => pane.id === layout.focusedPaneId);
+      const prev = index < 0 ? panes[0] : panes[(index - 1 + panes.length) % panes.length];
+      layout.focus(prev.id);
+      sayText = 'Pane anterior focado.';
+      toolResult = { tool: action.type, ok: true, summary: `${prev.title} focado` };
+    }
+  } else if (action.type === 'focus_pane') {
+    const layout = useLayoutStore.getState();
+    const panes = listPanes(layout.root);
+    const target = findPaneByVoiceName(panes, action.paneName);
+    if (!target) {
+      sayText = `Não achei um pane chamado ${action.paneName}.`;
+      toolResult = { tool: action.type, ok: false, summary: 'pane não encontrado' };
+    } else {
+      layout.focus(target.id);
+      sayText = `${target.title} focado.`;
+      toolResult = { tool: action.type, ok: true, summary: `${target.title} focado` };
     }
   } else if (action.type === 'send_to_pane') {
     const { root, focusedPaneId } = useLayoutStore.getState();

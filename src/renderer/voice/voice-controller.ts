@@ -84,8 +84,10 @@ const WAKE_ACK_SUPPRESS_MS = 8_000;
 const WAKE_PREROLL_MS = 2_500;
 const WAKE_SILENCE_MS = 1_200; // wake-word capture: quiet time that ends the utterance
 const WAKE_MIN_LISTEN_MS = 3_200; // keep the mic open after ack/pre-roll before silence can close it
-const CLICK_WAKE_MIN_LISTEN_MS = 4_500; // mouse wake has no pre-roll; give the user room to start talking
+const CLICK_WAKE_SILENCE_MS = 1_800; // click wake: a bit more tolerant after the spoken ack
+const CLICK_WAKE_MIN_LISTEN_MS = 6_500; // mouse wake has no pre-roll; give the user room to start talking
 const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
+const CLICK_WAKE_MAX_MS = 20_000; // click wake is intentional, so allow a slower follow-up
 const PTT_HOLD_MAX_MS = 60_000; // hold-to-talk sem keyup (tap morto) fecha aqui
 const JARVIS_MEMORY_MS = 240_000; // 4 min: conversa continua sem recomeçar do zero
 const PENDING_REALTIME_AUDIO_MAX_CHUNKS = 160;
@@ -624,9 +626,9 @@ function wakeAutoStop(
   reason: 'wake' | 'click' = 'wake',
 ): AutoStopOptions {
   return {
-    silenceMs: WAKE_SILENCE_MS,
+    silenceMs: reason === 'click' ? CLICK_WAKE_SILENCE_MS : WAKE_SILENCE_MS,
     minListenMs: reason === 'click' ? CLICK_WAKE_MIN_LISTEN_MS : WAKE_MIN_LISTEN_MS,
-    maxMs: WAKE_MAX_MS,
+    maxMs: reason === 'click' ? CLICK_WAKE_MAX_MS : WAKE_MAX_MS,
     onAutoStop: () => {
       if (isListening(capture)) void finishAndProcess(capture, busy);
     },

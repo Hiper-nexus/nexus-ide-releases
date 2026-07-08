@@ -37,6 +37,13 @@ function normalizeUrl(text: string): string {
   return `https://${value}`;
 }
 
+function cleanPaneName(text: string): string {
+  return stripTail(text)
+    .replace(/^(?:o|a|os|as|the)\s+/i, '')
+    .replace(/^(?:pane|painel|aba)\s+(?:de|do|da|chamado|chamada|called|named)\s+/i, '')
+    .trim();
+}
+
 function say(ctx: JarvisContext, text: string): string {
   const user = ctx.userName?.trim();
   if (!user) return text;
@@ -161,14 +168,57 @@ export function jarvisActionFastPath(
   }
 
   if (
-    /\b(?:proximo|proxima|next)\b.*\b(?:pane|painel|aba|terminal)\b/.test(t) ||
-    /\b(?:muda|troca|vai)\b.*\b(?:pane|painel|aba)\b/.test(t)
+    (/\b(?:proximo|proxima|next)\b.*\b(?:pane|painel|aba|terminal)\b/.test(t) ||
+      /\b(?:muda|troca|vai)\b.*\b(?:pane|painel|aba)\b/.test(t)) &&
+    !/\b(?:anterior|previous)\b/.test(t)
   ) {
     return {
       say: say(ctx, 'Focando o próximo pane.'),
       expectReply: false,
       action: { type: 'focus_next_pane' },
     };
+  }
+
+  if (
+    /\b(?:pane|painel|aba|terminal)\s+(?:anterior|previous)\b/.test(t) ||
+    /\b(?:anterior|previous)\b.*\b(?:pane|painel|aba|terminal)\b/.test(t) ||
+    /\b(?:volta|volte|back)\b.*\b(?:pane|painel|aba)\s+(?:anterior|previous)\b/.test(t)
+  ) {
+    return {
+      say: say(ctx, 'Focando o pane anterior.'),
+      expectReply: false,
+      action: { type: 'focus_previous_pane' },
+    };
+  }
+
+  const focusByKind =
+    t.match(
+      /\b(?:foca|foque|focar|seleciona|selecione|selecionar|vai|ir|troca|troque|muda|mude|mudar|focus|select|switch|go)\b.*\b(terminal|shell|browser|navegador|agente|agent|orquestrador|orchestrator)\b/,
+    ) ??
+    t.match(/\b(?:focus|select|switch to|go to)\s+(terminal|shell|browser|agent|orchestrator)\b/);
+  if (focusByKind) {
+    const paneName = cleanPaneName(focusByKind[1]);
+    if (paneName) {
+      return {
+        say: say(ctx, `Focando ${paneName}.`),
+        expectReply: false,
+        action: { type: 'focus_pane', paneName },
+      };
+    }
+  }
+
+  const focusByName = t.match(
+    /\b(?:foca|foque|focar|seleciona|selecione|selecionar|focus|select|switch to|go to)\b(?:\s+(?:o|a|the))?\s+(?:pane|painel|aba)\s+(.+)$/,
+  );
+  if (focusByName) {
+    const paneName = cleanPaneName(focusByName[1]);
+    if (paneName.length >= 2) {
+      return {
+        say: say(ctx, `Focando ${paneName}.`),
+        expectReply: false,
+        action: { type: 'focus_pane', paneName },
+      };
+    }
   }
 
   if (/\b(nova|novo|cria|crie|criar|abre|abra|abrir)\b.*\bmiss(ao|oes)\b/.test(t)) {

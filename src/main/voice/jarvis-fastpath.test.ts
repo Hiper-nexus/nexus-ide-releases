@@ -51,11 +51,27 @@ describe('jarvisFastPath', () => {
     expect(jarvisFastPath('onde estamos?', CTX)?.say).toContain('modo canvas');
   });
 
+  it('responde consultas de estado em inglês sem LLM', () => {
+    const browserCtx: JarvisContext = {
+      ...CTX,
+      focusedPane: 'Preview',
+      focusedPaneKind: 'browser',
+      focusedPaneUrl: 'https://example.com/docs',
+    };
+    expect(jarvisFastPath('what page are we on?', browserCtx)?.say).toContain(
+      'https://example.com/docs',
+    );
+    expect(jarvisFastPath('current workspace', CTX)?.say).toContain('nexus-ide');
+    expect(jarvisFastPath('where are we?', CTX)?.say).toContain('modo canvas');
+    expect(jarvisFastPath('what panes are open?', CTX)?.say).toContain('2 panes');
+  });
+
   it('NUNCA intercepta pedidos de ação — mesmo citando squad/pane', () => {
     expect(jarvisFastPath('abre o squad de code review', CTX)).toBeNull();
     expect(jarvisFastPath('roda npm test no pane', CTX)).toBeNull();
     expect(jarvisFastPath('cria uma missão nova', CTX)).toBeNull();
     expect(jarvisFastPath('fecha esses panes ai', CTX)).toBeNull();
+    expect(jarvisFastPath('focus terminal', CTX)).toBeNull();
   });
 
   it('conversa aberta vai para o LLM', () => {

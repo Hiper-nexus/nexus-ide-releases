@@ -19,6 +19,8 @@ describe('realtime bridge policy', () => {
       true,
     );
     expect(shouldUseClassicActionBridge('qual pagina estamos?')).toBe(true);
+    expect(shouldUseClassicActionBridge('focus terminal')).toBe(true);
+    expect(shouldUseClassicActionBridge('seleciona o browser')).toBe(true);
   });
 
   it('normalizes accents and punctuation before classifying commands', () => {

@@ -17,6 +17,8 @@ describe('nexus realtime tools', () => {
         'open_terminal',
         'send_to_pane',
         'run_command',
+        'focus_pane',
+        'focus_previous_pane',
         'mcp_tool',
       ]),
     );
@@ -67,6 +69,23 @@ describe('nexus realtime tools', () => {
     });
   });
 
+  it('maps pane focus operations into the shared executor contract', () => {
+    expect(
+      realtimeArgsToJarvisAction({
+        action: 'focus_pane',
+        paneName: 'terminal',
+      }),
+    ).toEqual({
+      type: 'focus_pane',
+      paneName: 'terminal',
+    });
+    expect(
+      realtimeArgsToJarvisAction({
+        action: 'focus_previous_pane',
+      }),
+    ).toEqual({ type: 'focus_previous_pane' });
+  });
+
   it('summarizes full app actions for live diagnostics', () => {
     expect(
       summarizeNexusRealtimeAction({
@@ -81,5 +100,11 @@ describe('nexus realtime tools', () => {
         workspaceName: 'nexus',
       }),
     ).toBe('abrir workspace nexus');
+    expect(
+      summarizeNexusRealtimeAction({
+        action: 'focus_pane',
+        paneName: 'terminal',
+      }),
+    ).toBe('focar pane terminal');
   });
 });

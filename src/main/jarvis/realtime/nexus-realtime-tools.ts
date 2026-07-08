@@ -21,6 +21,8 @@ export const SAFE_REALTIME_ACTIONS = [
   'browser_forward',
   'browser_reload',
   'focus_next_pane',
+  'focus_previous_pane',
+  'focus_pane',
   'send_to_pane',
   'run_command',
   'mcp_tool',
@@ -33,6 +35,7 @@ export interface NexusRealtimeActionArgs {
   url?: string;
   squadName?: string;
   workspaceName?: string;
+  paneName?: string;
   text?: string;
   command?: string;
   tool?: string;
@@ -67,6 +70,11 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
           workspaceName: {
             type: 'string',
             description: 'Required for open_workspace. Use the spoken workspace name.',
+          },
+          paneName: {
+            type: 'string',
+            description:
+              'Required for focus_pane. Use a pane title, agent name, or kind such as terminal, browser, agent, or orchestrator.',
           },
           text: {
             type: 'string',
@@ -133,6 +141,10 @@ export function summarizeNexusRealtimeAction(args: NexusRealtimeActionArgs): str
       return 'recarregar browser';
     case 'focus_next_pane':
       return 'focar próximo pane';
+    case 'focus_previous_pane':
+      return 'focar pane anterior';
+    case 'focus_pane':
+      return args.paneName ? `focar pane ${args.paneName}` : 'focar pane';
     case 'send_to_pane':
       return 'enviar missão ao pane';
     case 'run_command':
@@ -169,6 +181,10 @@ export function realtimeArgsToJarvisAction(
   if (args.action === 'open_browser') {
     const url = cleanText(args.url, 4_096);
     return url ? { type: 'open_browser', url } : { type: 'open_browser' };
+  }
+  if (args.action === 'focus_pane') {
+    const paneName = cleanText(args.paneName, 128);
+    return paneName ? { type: 'focus_pane', paneName } : null;
   }
   if (args.action === 'send_to_pane') {
     const text = cleanText(args.text);

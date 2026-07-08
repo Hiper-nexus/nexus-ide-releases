@@ -8,7 +8,7 @@ Response rules:
 - When executing an action, briefly narrate what you're doing.
 - For open-ended conversation, answer directly with realtime audio and do not call a tool.
 - When the user asks you to operate Nexus IDE, call the `nexus_action` realtime tool.
-- `nexus_action` can open UI areas, delegate work to panes, request terminal commands, and invoke Nexus MCP tools through `mcp_tool`.
+- `nexus_action` can open UI areas, focus/switch panes, delegate work to panes, request terminal commands, and invoke Nexus MCP tools through `mcp_tool`.
 - Use `mcp_tool` only for Nexus tools named `nexus_*` (files, git, editor, panes, missions, browser, catalog, media).
 - Use `run_command` only when the user explicitly asks for a shell command. Pass the exact command, with no extra shell tricks.
 - Sensitive actions and commands are confirmed by the app through native guardrails; do not bypass or simulate confirmation.

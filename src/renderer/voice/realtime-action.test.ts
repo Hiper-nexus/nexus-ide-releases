@@ -66,5 +66,13 @@ describe('realtimeToolEventToJarvisAction', () => {
         event({ action: 'run_command', command: 'npm run typecheck' }),
       ),
     ).toEqual({ type: 'run_command', command: 'npm run typecheck' });
+    expect(
+      realtimeToolEventToJarvisAction(
+        event({ action: 'focus_pane', paneName: 'terminal' }),
+      ),
+    ).toEqual({ type: 'focus_pane', paneName: 'terminal' });
+    expect(
+      realtimeToolEventToJarvisAction(event({ action: 'focus_previous_pane' })),
+    ).toEqual({ type: 'focus_previous_pane' });
   });
 });

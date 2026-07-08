@@ -22,7 +22,7 @@ function norm(text: string): string {
 }
 
 const ACTION_VERBS =
-  /\b(abre|abra|abrir|roda|rode|rodar|executa|execute|executar|cria|crie|criar|manda|mande|mandar|envia|envie|enviar|fecha|feche|fechar|inicia|inicie|iniciar|comeca|comecar|monta|monte|montar|mata|matar|para|pare|parar|retoma|retome|deleta|delete|apaga|apague|troca|troque|muda|mude|escreve|escreva|digita|digite|instala|instale)\b/;
+  /\b(abre|abra|abrir|roda|rode|rodar|run|executa|execute|executar|cria|crie|criar|create|manda|mande|mandar|send|envia|envie|enviar|fecha|feche|fechar|close|inicia|inicie|iniciar|start|comeca|comecar|begin|monta|monte|montar|design|mata|matar|kill|para|pare|parar|stop|retoma|retome|resume|deleta|delete|apaga|apague|troca|troque|muda|mude|switch|focus|select|escreve|escreva|write|digita|digite|type|instala|instale|install)\b/;
 
 function listOrNone(items: string[], max = 5): string {
   if (items.length === 0) return '';
@@ -66,7 +66,11 @@ export function jarvisFastPath(
   if (ACTION_VERBS.test(t)) return null;
 
   // Que horas são?
-  if (/\bque horas sao\b|\bme diz as horas\b|\bhora certa\b/.test(t)) {
+  if (
+    /\bque horas sao\b|\bme diz as horas\b|\bhora certa\b|\bwhat time is it\b|\bcurrent time\b/.test(
+      t,
+    )
+  ) {
     const time = new Date().toLocaleTimeString('pt-BR', {
       hour: '2-digit',
       minute: '2-digit',
@@ -75,7 +79,11 @@ export function jarvisFastPath(
   }
 
   // Panes/terminais abertos
-  if (/\b(quais|que|quantos)\b.*\b(panes?|paines?|terminais|abas)\b/.test(t)) {
+  if (
+    /\b(quais|que|quantos)\b.*\b(panes?|paines?|terminais|abas)\b/.test(t) ||
+    /\b(what|which|how many)\b.*\b(panes?|terminals?|tabs?)\b/.test(t) ||
+    /\b(panes?|terminals?|tabs?)\b.*\b(open|running|active)\b/.test(t)
+  ) {
     const list = listOrNone(ctx.panes);
     return {
       say:
@@ -92,7 +100,9 @@ export function jarvisFastPath(
     /\b(qual|que|em que|onde)\b.*\b(pane|painel|terminal|aba)\b.*\b(focado|atual|selecionado|estou|estamos)\b/.test(
       t,
     ) ||
-    /\b(qual|que)\b.*\b(pagina|url|site)\b.*\b(atual|aberta|estou|estamos)\b/.test(t)
+    /\b(qual|que|em que)\b.*\b(pagina|url|site)\b.*\b(atual|aberta|estou|estamos)\b/.test(t) ||
+    /\b(what|which)\b.*\b(pane|panel|terminal|tab)\b.*\b(focused|current|selected|on)\b/.test(t) ||
+    /\b(what|which)\b.*\b(page|url|site)\b.*\b(current|open|on)\b/.test(t)
   ) {
     return {
       say: address(ctx, focusedPaneDescription(ctx)),
@@ -101,7 +111,14 @@ export function jarvisFastPath(
     };
   }
 
-  if (/\b(onde estamos|onde eu estou|em que tela estamos|qual tela estou|qual tela estamos)\b/.test(t)) {
+  if (
+    /\b(onde estamos|onde eu estou|em que tela estamos|qual tela estou|qual tela estamos|onde estou no app)\b/.test(
+      t,
+    ) ||
+    /\b(where are we|where am i|what screen are we on|what screen am i on|current screen)\b/.test(
+      t,
+    )
+  ) {
     return {
       say: address(ctx, ctx.screen ?? focusedPaneDescription(ctx)),
       expectReply: false,
@@ -110,7 +127,10 @@ export function jarvisFastPath(
   }
 
   // Squads disponíveis
-  if (/\b(quais|que|quantos)\b.*\bsquads?\b/.test(t)) {
+  if (
+    /\b(quais|que|quantos)\b.*\bsquads?\b/.test(t) ||
+    /\b(what|which|how many)\b.*\bsquads?\b/.test(t)
+  ) {
     const list = listOrNone(ctx.squads);
     return {
       say:
@@ -123,7 +143,10 @@ export function jarvisFastPath(
   }
 
   // Missões ativas
-  if (/\b(quais|que|quantas)\b.*\bmissoes\b/.test(t)) {
+  if (
+    /\b(quais|que|quantas)\b.*\bmissoes\b/.test(t) ||
+    /\b(what|which|how many)\b.*\b(missions?|tasks?)\b/.test(t)
+  ) {
     const list = listOrNone(ctx.missions, 3);
     return {
       say:
@@ -136,7 +159,11 @@ export function jarvisFastPath(
   }
 
   // Workspace/projeto atual
-  if (/\b(qual|que)\b.*\b(projeto|workspace)\b.*\b(aberto|atual|agora|esse)\b/.test(t)) {
+  if (
+    /\b(qual|que)\b.*\b(projeto|workspace)\b.*\b(aberto|atual|agora|esse)\b/.test(t) ||
+    /\b(what|which)\b.*\b(project|workspace)\b.*\b(open|current|on)\b/.test(t) ||
+    /\bcurrent\s+(project|workspace)\b/.test(t)
+  ) {
     return {
       say: ctx.workspace
         ? address(ctx, `Estamos no ${ctx.workspace}.`)
@@ -147,7 +174,14 @@ export function jarvisFastPath(
   }
 
   // Orquestrador ativo?
-  if (/\borquestrador\b.*\b(ativo|rodando|ligado|tem|existe)\b|\b(tem|existe|ha)\b.*\borquestrador\b/.test(t)) {
+  if (
+    /\borquestrador\b.*\b(ativo|rodando|ligado|tem|existe)\b|\b(tem|existe|ha)\b.*\borquestrador\b/.test(
+      t,
+    ) ||
+    /\borchestrator\b.*\b(active|running|online|present)\b|\b(is|any)\b.*\borchestrator\b/.test(
+      t,
+    )
+  ) {
     return {
       say: ctx.orchestrator
         ? address(ctx, `Sim — ${ctx.orchestrator} está de pé esperando missão.`)
