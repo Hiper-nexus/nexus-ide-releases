@@ -208,7 +208,12 @@ function hasCredential(info: VoiceRuntimeInfo | null | undefined, envVar: string
 
 function canAttemptRealtime(info: VoiceRuntimeInfo | null | undefined): boolean {
   if (!info?.jarvisLive.enabled || info.jarvisLive.transport === 'classic') return false;
-  if (info.jarvisLive.transport === 'gemini-live') return hasCredential(info, 'GEMINI_API_KEY');
+  // Realtime engages with EITHER key regardless of the configured transport:
+  // gemini-live prefers GEMINI but the main-side resolution now falls back to
+  // OpenAI Realtime (gemini→openai→classic), and openai-realtime prefers OPENAI
+  // but can fall back to Gemini. `hasCredential` reflects the same source union
+  // (stored key OR env) that the main-side voice-secrets chain resolves — so a
+  // key that only lives in the encrypted secrets store still satisfies the gate.
   return hasCredential(info, 'OPENAI_API_KEY') || hasCredential(info, 'GEMINI_API_KEY');
 }
 

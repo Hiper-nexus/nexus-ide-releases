@@ -1,7 +1,12 @@
 import { VOICE_CHANNELS } from '../../shared/voice-channels';
 import { getVoiceConfig } from './voice-config-store';
-import { resolveVoiceApiKey } from './voice-secrets';
+import { resolveVoiceApiKey, voiceApiKeySource } from './voice-secrets';
+import { logVoice } from './voice-log';
 import { jarvisMemory } from './jarvis-memory';
+import {
+  buildRealtimeEngageDecision,
+  type EngageCandidate,
+} from '../jarvis/realtime/engage-decision';
 import type { JarvisLiveSession } from './jarvis-live';
 import type {
   JarvisLiveToolEvent,
@@ -111,6 +116,8 @@ export class LiveTransportController {
   private questionPollTimer: ReturnType<typeof setInterval> | null = null;
   private registeredQuestions = new Set<string>();
   private localCallSeq = 0;
+  /** Última linha de decisão de engate já logada — dedupe (log só na mudança). */
+  private lastEngageLine = '';
 
   constructor(
     private emit: Emit,
@@ -138,9 +145,39 @@ export class LiveTransportController {
     });
   }
 
+  /**
+   * Log ÚNICO (por mudança) da decisão de engate do realtime: transporte
+   * pedido, provider engatado e — quando degrada — POR QUÊ, com a FONTE de cada
+   * key (stored/env/missing, presença apenas). Usa a MESMA cadeia de resolução
+   * (voice-secrets) do resto do stack, então o que o log diz é o que o socket
+   * realmente vê. Fecha a maior lacuna de observabilidade do stack.
+   */
+  private logEngageDecision(): void {
+    const config = getVoiceConfig();
+    const candidates: EngageCandidate[] = resolveRealtimeProviderIds(config).map(
+      (id) => {
+        const envVar = id === 'openai' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY';
+        return { id, envVar, source: voiceApiKeySource(envVar) };
+      },
+    );
+    const decision = buildRealtimeEngageDecision({
+      transport: config.jarvisLive.transport,
+      candidates,
+    });
+    if (decision.line === this.lastEngageLine) return;
+    this.lastEngageLine = decision.line;
+    logVoice(
+      decision.degraded ? 'warn' : 'info',
+      'jarvis.engageDecision',
+      decision.line,
+      { engaged: decision.engaged ?? 'classic', degraded: decision.degraded },
+    );
+  }
+
   /** Chamado no start() do live: conecta o socket se o realtime estiver ligado. */
   onStart(): Promise<void> {
     this.clearReconnectTimer();
+    this.logEngageDecision();
     if (!this.isRealtimeConfigured()) {
       this.clearPendingMic();
       // Degradação benigna (não é erro): sem key o Classic assume de forma

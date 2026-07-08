@@ -111,6 +111,7 @@ describe('LiveTransportController', () => {
     }));
     vi.doMock('./voice-secrets', () => ({
       resolveVoiceApiKey: () => undefined,
+      voiceApiKeySource: () => 'missing',
     }));
     vi.doMock('./jarvis-memory', () => ({
       jarvisMemory: { factsBlock: () => '' },
@@ -165,6 +166,7 @@ describe('LiveTransportController', () => {
     }));
     vi.doMock('./voice-secrets', () => ({
       resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
     }));
     vi.doMock('./jarvis-memory', () => ({
       jarvisMemory: { factsBlock: () => '' },
@@ -216,6 +218,7 @@ describe('LiveTransportController', () => {
     }));
     vi.doMock('./voice-secrets', () => ({
       resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
     }));
     vi.doMock('./jarvis-memory', () => ({
       jarvisMemory: { factsBlock: () => '' },
@@ -263,6 +266,7 @@ describe('LiveTransportController', () => {
     }));
     vi.doMock('./voice-secrets', () => ({
       resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
     }));
     vi.doMock('./jarvis-memory', () => ({
       jarvisMemory: { factsBlock: () => '' },
@@ -311,6 +315,7 @@ describe('LiveTransportController', () => {
     }));
     vi.doMock('./voice-secrets', () => ({
       resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
     }));
     vi.doMock('./jarvis-memory', () => ({
       jarvisMemory: { factsBlock: () => '' },
@@ -378,6 +383,7 @@ describe('LiveTransportController', () => {
     }));
     vi.doMock('./voice-secrets', () => ({
       resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
     }));
     vi.doMock('./jarvis-memory', () => ({
       jarvisMemory: { factsBlock: () => '' },
@@ -429,6 +435,7 @@ describe('LiveTransportController', () => {
     }));
     vi.doMock('./voice-secrets', () => ({
       resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
     }));
     vi.doMock('./jarvis-memory', () => ({
       jarvisMemory: { factsBlock: () => '' },
@@ -486,6 +493,7 @@ describe('LiveTransportController', () => {
     }));
     vi.doMock('./voice-secrets', () => ({
       resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
     }));
     vi.doMock('./jarvis-memory', () => ({
       jarvisMemory: { factsBlock: () => '' },
@@ -574,6 +582,7 @@ describe('LiveTransportController', () => {
     }));
     vi.doMock('./voice-secrets', () => ({
       resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
     }));
     vi.doMock('./jarvis-memory', () => ({
       jarvisMemory: { factsBlock: () => '' },
@@ -621,6 +630,7 @@ describe('LiveTransportController', () => {
     }));
     vi.doMock('./voice-secrets', () => ({
       resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
     }));
     vi.doMock('./jarvis-memory', () => ({
       jarvisMemory: { factsBlock: () => '' },
@@ -691,6 +701,7 @@ describe('LiveTransportController', () => {
     }));
     vi.doMock('./voice-secrets', () => ({
       resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
     }));
     vi.doMock('./jarvis-memory', () => ({
       jarvisMemory: { factsBlock: () => '' },
@@ -758,6 +769,7 @@ describe('LiveTransportController', () => {
     }));
     vi.doMock('./voice-secrets', () => ({
       resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
     }));
     vi.doMock('./jarvis-memory', () => ({
       jarvisMemory: { factsBlock: () => '' },
@@ -831,6 +843,7 @@ describe('LiveTransportController', () => {
     }));
     vi.doMock('./voice-secrets', () => ({
       resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
     }));
     vi.doMock('./jarvis-memory', () => ({
       jarvisMemory: { factsBlock: () => '' },
@@ -889,7 +902,7 @@ describe('LiveTransportController', () => {
         },
       }),
     }));
-    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key', voiceApiKeySource: () => 'env' }));
     vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
     vi.doMock('../jarvis/realtime/factory', () => ({
       createRealtimeProviderCandidates: () => candidates,
@@ -955,7 +968,7 @@ describe('LiveTransportController', () => {
         },
       }),
     }));
-    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key', voiceApiKeySource: () => 'env' }));
     vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
     vi.doMock('../jarvis/realtime/factory', () => ({
       createRealtimeProviderCandidates: () => candidates,
@@ -1043,7 +1056,7 @@ describe('LiveTransportController', () => {
         },
       }),
     }));
-    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key', voiceApiKeySource: () => 'env' }));
     vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
     vi.doMock('../jarvis/realtime/factory', () => ({
       createRealtimeProviderCandidates: () => candidates,
@@ -1138,7 +1151,7 @@ describe('LiveTransportController', () => {
         },
       }),
     }));
-    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key', voiceApiKeySource: () => 'env' }));
     vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
     vi.doMock('../jarvis/realtime/factory', () => ({
       createRealtimeProviderCandidates: () => candidates,
@@ -1194,7 +1207,7 @@ describe('LiveTransportController', () => {
         },
       }),
     }));
-    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key', voiceApiKeySource: () => 'env' }));
     vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
     vi.doMock('../jarvis/realtime/factory', () => ({
       createRealtimeProviderCandidates: () => candidates,
@@ -1245,7 +1258,7 @@ describe('LiveTransportController', () => {
         },
       }),
     }));
-    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key', voiceApiKeySource: () => 'env' }));
     vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
     vi.doMock('../jarvis/realtime/factory', () => ({
       createRealtimeProviderCandidates: () => candidates,
@@ -1290,7 +1303,7 @@ describe('LiveTransportController', () => {
         },
       }),
     }));
-    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key', voiceApiKeySource: () => 'env' }));
     vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
     vi.doMock('../jarvis/realtime/factory', () => ({
       createRealtimeProviderCandidates: () => candidates,
@@ -1340,7 +1353,7 @@ describe('LiveTransportController', () => {
         },
       }),
     }));
-    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key', voiceApiKeySource: () => 'env' }));
     vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
     vi.doMock('../jarvis/realtime/factory', () => ({
       createRealtimeProviderCandidates: () => candidates,
@@ -1402,7 +1415,7 @@ describe('LiveTransportController', () => {
         },
       }),
     }));
-    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key', voiceApiKeySource: () => 'env' }));
     vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
     vi.doMock('../jarvis/realtime/factory', () => ({
       createRealtimeProviderCandidates: () => candidates,

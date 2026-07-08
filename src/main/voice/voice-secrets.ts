@@ -26,6 +26,16 @@ export function hasVoiceCredential(envVar: string): boolean {
   return resolveVoiceApiKey(envVar) !== undefined;
 }
 
+/** De onde a key resolveu — PRESENÇA apenas, nunca o valor. Mesma cadeia do
+ *  resolveVoiceApiKey (secrets store primeiro, env como fallback). */
+export type VoiceApiKeySource = 'stored' | 'env' | 'missing';
+
+export function voiceApiKeySource(envVar: string): VoiceApiKeySource {
+  if (getVoiceApiKey(envVar)?.trim()) return 'stored';
+  if (process.env[envVar]?.trim()) return 'env';
+  return 'missing';
+}
+
 export function hasStoredVoiceApiKey(envVar: string): boolean {
   return hasSecret(voiceSecretKey(envVar));
 }

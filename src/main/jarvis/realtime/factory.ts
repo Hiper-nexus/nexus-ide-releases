@@ -75,7 +75,12 @@ export function resolveRealtimeProviderIds(
   const forced = env.NEXUS_REALTIME_PROVIDER?.trim().toLowerCase();
   if (forced === 'openai' || forced === 'gemini') return [forced];
   if (config.jarvisLive.transport === 'openai-realtime') return ['openai', 'gemini'];
-  if (config.jarvisLive.transport === 'gemini-live') return ['gemini'];
+  // gemini-live prefers Gemini but falls back to OpenAI Realtime: if the
+  // configured Gemini key is absent while OPENAI_API_KEY resolves, realtime
+  // still engages (createRealtimeProviderCandidates only builds a candidate for
+  // a provider whose key resolves, so a keyless Gemini is skipped and OpenAI
+  // wins). Order encodes the gemini→openai→classic degrade path.
+  if (config.jarvisLive.transport === 'gemini-live') return ['gemini', 'openai'];
   return [];
 }
 

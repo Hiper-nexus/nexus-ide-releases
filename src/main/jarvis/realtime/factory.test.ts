@@ -57,6 +57,20 @@ describe('resolveRealtimeProviderId', () => {
       }),
     ).toEqual(['openai', 'gemini']);
   });
+
+  it('gemini-live prefers Gemini but keeps OpenAI Realtime as fallback', () => {
+    // A keyless Gemini is skipped by createRealtimeProviderCandidates, so an
+    // existing OPENAI_API_KEY still engages realtime instead of degrading.
+    expect(
+      resolveRealtimeProviderIds({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          transport: 'gemini-live',
+        },
+      }),
+    ).toEqual(['gemini', 'openai']);
+  });
 });
 
 describe('loadJarvisSystemPrompt', () => {
