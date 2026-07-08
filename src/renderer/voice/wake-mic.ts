@@ -50,6 +50,15 @@ const WAKE_INITIAL_GAIN = 24;
 
 const WATCHDOG_INTERVAL_MS = 4_000;
 const FRAME_STALL_MS = 8_000;
+/**
+ * Sinal-zero prolongado: o macOS ENTREGA frames, mas todos zerados (rms:0), ao
+ * conceder um grant TCC fantasma (reinstala/atualiza o app e o registro antigo
+ * fica inválido). O watchdog de stall (sem frames) não pega isso — os frames
+ * chegam. Se NADA de áudio real cruzou o piso desde que o grafo abriu e o
+ * silêncio passou disto, reconstrói o stream: reabrir costuma forçar um grant
+ * novo e válido. Uma vez por ciclo de grafo (restarting trava reentrância).
+ */
+const MIC_ZERO_REOPEN_MS = 15_000;
 /** Folga sobre o maxMs da captura: se os frames morrerem no meio da fala, o
  * deadline fecha o turno mesmo sem PCM chegando (senão busy trava). */
 const UTTERANCE_DEADLINE_SLACK_MS = 1_000;
@@ -78,6 +87,9 @@ export class WakeMic {
   private silentSince = 0;
   /** Log único do RMS do primeiro frame após abrir o grafo (prova sinal). */
   private firstFrameLogged = false;
+  /** Ouviu QUALQUER áudio real (acima do piso) neste ciclo de grafo? Distingue
+   * grant TCC fantasma (zeros desde o início) de sala silenciosa após fala. */
+  private heardRealAudio = false;
   /** Rolling buffer dos frames recentes para não perder comando emendado ao wake. */
   private preRoll: Array<{ at: number; frame: Float32Array }> = [];
 
@@ -369,6 +381,7 @@ export class WakeMic {
       });
     }
     this.firstFrameLogged = false;
+    this.heardRealAudio = false;
     this.ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
     if (this.ctx.state === 'suspended') {
       await this.ctx.resume().catch(() => {});
@@ -401,9 +414,9 @@ export class WakeMic {
       const level = rmsToLevel(frameRms(frame));
       this.onLevel?.(level);
       // Saúde do mic: acumula quanto tempo em silêncio (RMS abaixo do piso).
-      this.silentSince = frameIsSilent(frameRms(frame))
-        ? this.silentSince || Date.now()
-        : 0;
+      const silent = frameIsSilent(frameRms(frame));
+      if (!silent) this.heardRealAudio = true;
+      this.silentSince = silent ? this.silentSince || Date.now() : 0;
       this.rememberPreRoll(frame);
       // Comando em gravação: acumula localmente (e NÃO alimenta o detector —
       // senão a própria fala do comando poderia re-disparar o wake).
@@ -448,6 +461,13 @@ export class WakeMic {
       if (!this.running || this.restarting) return;
       if (Date.now() - this.lastFrameAt > FRAME_STALL_MS) {
         this.handleStreamDeath(`sem frames do mic há ${FRAME_STALL_MS / 1000}s`);
+        return;
+      }
+      // Grant TCC fantasma: frames chegam mas TODOS zerados. Se nada de áudio
+      // real cruzou o piso desde a abertura e o silêncio já passou do limiar,
+      // reconstrói (reabrir costuma forçar um grant válido). Uma vez por ciclo.
+      if (!this.heardRealAudio && this.getSilentMs() > MIC_ZERO_REOPEN_MS) {
+        this.handleStreamDeath(`sinal zero há ${MIC_ZERO_REOPEN_MS / 1000}s (grant TCC fantasma?)`);
       }
     }, WATCHDOG_INTERVAL_MS);
   }
