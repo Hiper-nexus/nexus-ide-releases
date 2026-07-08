@@ -32,18 +32,52 @@ import {
   type CoarseToolArgs,
   type CoarseToolResolution,
 } from '../jarvis/realtime/coarse-voice-tools';
-import { PendingQuestionRouter } from '../jarvis/realtime/pending-question-router';
+import {
+  PendingQuestionRouter,
+  QUESTION_POLL_MS,
+} from '../jarvis/realtime/pending-question-router';
 
 function isCoarseVoiceToolName(name: string): boolean {
   return (COARSE_VOICE_TOOL_NAMES as readonly string[]).includes(name);
 }
 
 type Emit = (channel: string, payload?: unknown) => void;
+
+/** A delegated pane currently narrating a question that needs the user. */
+export interface NarratedQuestion {
+  paneId: string;
+  questionHash: string;
+}
+
+/**
+ * Upstream signal for deterministic pending-question routing (C-085 r3): polled
+ * every QUESTION_POLL_MS while a live session is connected. Each returned
+ * question is registered so the user's NEXT final non-UI utterance is routed
+ * back to that pane (model bypassed). Injected → testable and keeps the
+ * controller decoupled from the orchestration/handoff store.
+ */
+export interface PendingQuestionSource {
+  poll(): NarratedQuestion[];
+}
+
 const RUNTIME_RECONNECT_BASE_MS = 750;
 const RUNTIME_RECONNECT_MAX_ATTEMPTS = 3;
 const PENDING_MIC_MAX_BYTES = 512 * 1024;
 const REALTIME_TOOL_RESULT_TIMEOUT_MS = 10_000;
 const LIVE_SAY_MAX_CHARS = 1_000;
+/**
+ * Synthetic callId prefix for tool calls the CONTROLLER initiates (not the
+ * model) — e.g. the deterministic pending-question route. The renderer still
+ * runs these through the SAME audited executor, but there is no model tool-call
+ * to answer, so the result must NOT be sent back to the provider as a
+ * toolResponse (a fabricated callId would confuse the model).
+ */
+const LOCAL_TOOL_CALL_PREFIX = 'local:';
+
+/** True for a controller-initiated (non-model) tool call — no toolResponse owed. */
+export function isLocalToolCallId(callId: string): boolean {
+  return callId.startsWith(LOCAL_TOOL_CALL_PREFIX);
+}
 
 /** OpenAI devolve isto quando cancelamos sem response ativa — ruído, não falha real. */
 export function isIgnorableRealtimeError(message: string): boolean {
@@ -74,11 +108,15 @@ export class LiveTransportController {
   private pendingMicBytes = 0;
   private pendingToolResultTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingQuestionRouter: PendingQuestionRouter;
+  private questionPollTimer: ReturnType<typeof setInterval> | null = null;
+  private registeredQuestions = new Set<string>();
+  private localCallSeq = 0;
 
   constructor(
     private emit: Emit,
     private fsm: JarvisLiveSession,
     now: () => number = Date.now,
+    private questionSource?: PendingQuestionSource,
   ) {
     this.pendingQuestionRouter = new PendingQuestionRouter({ now });
   }
@@ -105,11 +143,10 @@ export class LiveTransportController {
     this.clearReconnectTimer();
     if (!this.isRealtimeConfigured()) {
       this.clearPendingMic();
-      this.fsm.patchStatus({
-        status: 'error',
-        realtimeReady: false,
-        error: 'realtime sem credencial disponível — usando Classic',
-      });
+      // Degradação benigna (não é erro): sem key o Classic assume de forma
+      // transparente. Marca dormante e limpa qualquer erro anterior — nada de
+      // HUD vermelho para um estado de fallback saudável.
+      this.fsm.patchStatus({ status: 'dormant', realtimeReady: false });
       return Promise.resolve();
     }
     if (this.provider?.isReady) {
@@ -247,7 +284,10 @@ export class LiveTransportController {
     if (event.callId) this.clearToolResultTimer(event.callId);
     const status = event.ok ? 'ok' : 'failed';
     const summary = event.summary.trim() || status;
-    if (event.callId && this.provider?.isReady) {
+    // Ações iniciadas pelo controller (callId local, ex.: route-answer) NÃO têm
+    // uma tool-call do modelo para responder — executam no mesmo executor
+    // auditado mas nunca devolvem toolResponse.
+    if (event.callId && !isLocalToolCallId(event.callId) && this.provider?.isReady) {
       this.provider.sendToolResult(event.callId, {
         ok: event.ok,
         tool: event.tool,
@@ -277,11 +317,48 @@ export class LiveTransportController {
   onStop(): void {
     this.clearReconnectTimer();
     this.clearToolResultTimers();
+    this.stopQuestionPoll();
     this.provider?.close();
     this.provider = null;
     this.connecting = null;
     this.clearPendingMic();
     this.patchRealtimeReady(false);
+  }
+
+  /**
+   * C-085 r3 (upstream seam): enquanto a sessão live está conectada, poll das
+   * panes delegadas por uma pergunta narrada e registra cada uma para que a
+   * próxima resposta final seja roteada. Idempotente por (pane, pergunta) — uma
+   * pergunta ainda pendente não é re-timestampada a cada tick (o TTL segue
+   * correndo). No-op sem source injetado.
+   */
+  private startQuestionPoll(): void {
+    if (!this.questionSource || this.questionPollTimer) return;
+    const source = this.questionSource;
+    const tick = (): void => {
+      for (const q of source.poll()) {
+        const key = `${q.paneId}::${q.questionHash}`;
+        if (this.registeredQuestions.has(key)) continue;
+        this.registeredQuestions.add(key);
+        this.noteNarratedQuestion(q.paneId, q.questionHash);
+      }
+    };
+    tick();
+    this.questionPollTimer = setInterval(tick, QUESTION_POLL_MS);
+    this.questionPollTimer.unref?.();
+  }
+
+  private stopQuestionPoll(): void {
+    if (this.questionPollTimer) {
+      clearInterval(this.questionPollTimer);
+      this.questionPollTimer = null;
+    }
+    this.registeredQuestions.clear();
+  }
+
+  private nextLocalCallId(kind: string): string {
+    this.localCallSeq += 1;
+    return `${LOCAL_TOOL_CALL_PREFIX}${kind}:${this.localCallSeq}`;
   }
 
   private async connectFirstAvailable(
@@ -300,6 +377,7 @@ export class LiveTransportController {
           this.reconnectAttempt = 0;
           this.sendProviderContext();
           this.flushPendingMic(provider);
+          this.startQuestionPoll();
           this.fsm.patchStatus({ status: 'listening', realtimeReady: true });
         }
         return;
@@ -411,8 +489,16 @@ export class LiveTransportController {
     const decision = this.pendingQuestionRouter.decide(text);
     if (!decision.route) return;
     this.pendingQuestionRouter.markRouted(decision.paneId, decision.text);
+    // callId LOCAL (não vazio) + args em vocabulário Nexus: o renderer aceita e
+    // executa pelo MESMO executor auditado (send_to_pane), mas o controller não
+    // devolve toolResponse (isLocalToolCallId em toolResult).
     this.dispatchNexusAction(
-      { callId: '', name: 'route-answer', argumentsJson: '', arguments: {} },
+      {
+        callId: this.nextLocalCallId('route-answer'),
+        name: NEXUS_REALTIME_ACTION_TOOL,
+        argumentsJson: '',
+        arguments: {},
+      },
       { action: 'send_to_pane', text: decision.text },
     );
   }
@@ -424,10 +510,16 @@ export class LiveTransportController {
   ): void {
     const action = realtimeArgsToJarvisAction(args);
     const argsRecord = args as Record<string, unknown>;
+    // CRITICAL-1: emite SEMPRE name=nexus_action. As tools coarse do Gemini
+    // (delegar/navegar) já foram normalizadas para args em vocabulário Nexus
+    // acima; relabelar o nome faz o renderer roteá-las pelo MESMO executor
+    // auditado (o gate do renderer exige name==='nexus_action'). O toolResponse
+    // ao Gemini preserva o nome original da função via callId (pendingCallNames
+    // no provider), então o relabel não vaza para o socket.
     const event = this.fsm.realtimeToolCall({
       source: 'realtime',
       callId: call.callId,
-      name: call.name,
+      name: NEXUS_REALTIME_ACTION_TOOL,
       tool: action?.type ?? 'none',
       summary: summarizeNexusRealtimeAction(args),
       args: argsRecord,
@@ -534,7 +626,12 @@ export class LiveTransportController {
       summary: 'encerrar sessão',
       output: { ended: true },
     });
+    // MEDIUM-5: encerrar encerra de verdade. Devolve o toolResponse (despedida já
+    // foi falada antes da tool-call) e então derruba o turno e o socket realtime.
+    // O Classic segue armado — wake continua ouvindo "Hey Jarvis".
     if (result) this.toolResult(result);
+    this.fsm.endTurn();
+    this.onStop();
   }
 
   private rejectToolCall(

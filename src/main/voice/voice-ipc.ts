@@ -42,7 +42,11 @@ import {
   wakeLockHolder,
 } from './wake-lock';
 import { JarvisLiveSession } from './jarvis-live';
-import { LiveTransportController } from './live-transport-controller';
+import {
+  LiveTransportController,
+  type PendingQuestionSource,
+} from './live-transport-controller';
+import { listHandoffs } from '../orch/handoff-store';
 import { jarvisLatencyTracker } from '../jarvis/realtime/metrics';
 import { transcriptStore } from '../jarvis/transcript-store';
 import {
@@ -86,7 +90,25 @@ const liveSession = new JarvisLiveSession(broadcast, Date.now, (sessionId, line)
     ...record,
   });
 });
-const liveTransport = new LiveTransportController(broadcast, liveSession);
+// C-085 r3 (upstream QUESTION_POLL): um handoff `blocked` = uma pane delegada
+// travada precisando do usuário — i.e. uma pergunta narrada pendente. O poll do
+// controller registra cada uma para que a PRÓXIMA fala final do usuário seja
+// roteada de volta à pane (send_to_pane, modelo bypassado), sem re-wake.
+const pendingQuestionSource: PendingQuestionSource = {
+  poll: () =>
+    listHandoffs({ includeDelivered: false })
+      .filter((handoff) => handoff.status === 'blocked')
+      .map((handoff) => ({
+        paneId: handoff.sessionId ?? handoff.id,
+        questionHash: handoff.summary,
+      })),
+};
+const liveTransport = new LiveTransportController(
+  broadcast,
+  liveSession,
+  Date.now,
+  pendingQuestionSource,
+);
 
 // Módulo-level para o closeVoiceIpc() poder liberar as sessões ONNX no quit.
 let wakeEngine: WakeEngine | null = null;

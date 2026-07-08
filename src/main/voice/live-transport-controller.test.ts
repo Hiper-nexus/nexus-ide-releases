@@ -129,11 +129,12 @@ describe('LiveTransportController', () => {
 
     await controller.onStart();
 
+    // LOW-7: degradação benigna — dormante, sem erro (nada de HUD vermelho).
     expect(session.getState()).toMatchObject({
-      status: 'error',
+      status: 'dormant',
       realtimeReady: false,
-      error: 'realtime sem credencial disponível — usando Classic',
     });
+    expect(session.getState().error).toBeUndefined();
 
     vi.doUnmock('./voice-config-store');
     vi.doUnmock('./voice-secrets');
@@ -916,14 +917,259 @@ describe('LiveTransportController', () => {
       arguments: { briefing: 'cria a landing page' },
     });
 
+    // CRITICAL-1: o evento emitido ao renderer carrega name='nexus_action'
+    // (coarse relabelada) + args em vocabulário Nexus + o callId ORIGINAL.
     const toolCall = events.find((event) => event.channel === VOICE_CHANNELS.liveToolCall);
     expect(toolCall?.payload).toMatchObject({
       source: 'realtime',
       callId: 'call_delegar',
-      name: 'delegar',
+      name: 'nexus_action',
       tool: 'send_to_pane',
       args: { action: 'send_to_pane', text: 'cria a landing page' },
     });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  // CRITICAL-1 (integração, sem tautologia): um toolCall `delegar` FAKE do Gemini
+  // atravessa o transporte real → controller → o MESMO mapeamento do executor do
+  // RENDERER (realtimeToolEventToJarvisAction) → o resultado do renderer volta
+  // pelo controller e fecha o loop como toolResponse no provider. Prova que a
+  // costura coarse→executor→toolResponse funciona ponta-a-ponta.
+  it('leva um toolCall coarse (delegar) FAKE do Gemini pelo executor real do renderer até o toolResponse', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+    const emitted: Array<{ channel: string; payload: unknown }> = [];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { VOICE_CHANNELS } = await import('../../shared/voice-channels');
+    const { LiveTransportController } = await import('./live-transport-controller');
+    // Executor REAL do renderer (mapeia o evento emitido → JarvisAction). Se o
+    // name não fosse 'nexus_action' ou o callId fosse vazio, devolveria null e o
+    // toolResponse nunca fecharia — exatamente o CRITICAL-1.
+    const { realtimeToolEventToJarvisAction } = await import(
+      '../../renderer/voice/realtime-action'
+    );
+
+    const emit = (channel: string, payload: unknown) => emitted.push({ channel, payload });
+    const session = new JarvisLiveSession(emit, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(emit, session);
+
+    await controller.onStart();
+
+    // Gemini dispara a função coarse `delegar`.
+    provider.fireToolCall({
+      callId: 'call_delegar',
+      name: 'delegar',
+      arguments: { briefing: 'cria a landing page' },
+    });
+
+    const toolCallEvent = emitted.find(
+      (event) => event.channel === VOICE_CHANNELS.liveToolCall,
+    )?.payload as import('../../shared/voice-ipc').JarvisLiveToolEvent;
+    expect(toolCallEvent).toBeTruthy();
+
+    // O renderer só executa se o executor real aceitar este evento.
+    const action = realtimeToolEventToJarvisAction(toolCallEvent);
+    expect(action).toEqual({ type: 'send_to_pane', text: 'cria a landing page' });
+
+    // Renderer executou → devolve o liveToolResult com o MESMO callId. O
+    // controller precisa transformá-lo em toolResponse ao provider.
+    const rendererResult = session.toolResult({
+      source: 'realtime',
+      callId: toolCallEvent.callId!,
+      name: toolCallEvent.name!,
+      tool: action!.type,
+      args: toolCallEvent.args,
+      ok: true,
+      summary: 'tarefa enviada ao pane',
+      output: { ok: true, summary: 'tarefa enviada ao pane', tool: action!.type },
+    });
+    expect(rendererResult).toBeTruthy();
+    controller.toolResult(rendererResult!);
+
+    // Loop fechado: o provider recebeu o toolResponse com o callId original.
+    expect(provider.sendToolResult).toHaveBeenCalledWith(
+      'call_delegar',
+      expect.objectContaining({ ok: true, tool: 'send_to_pane' }),
+    );
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  // CRITICAL-2 (integração): uma pergunta pendente registrada + a próxima fala
+  // FINAL do usuário → o roteamento determinístico dispara send_to_pane pelo
+  // MESMO executor auditado do renderer, SEM devolver toolResponse ao modelo
+  // (callId local). Prova que a rota chega ao send_to_pane ponta-a-ponta.
+  it('roteia a resposta a uma pergunta pendente até o send_to_pane do executor real (sem toolResponse ao modelo)', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+    const emitted: Array<{ channel: string; payload: unknown }> = [];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { VOICE_CHANNELS } = await import('../../shared/voice-channels');
+    const { LiveTransportController, isLocalToolCallId } = await import(
+      './live-transport-controller'
+    );
+    const { realtimeToolEventToJarvisAction } = await import(
+      '../../renderer/voice/realtime-action'
+    );
+
+    const emit = (channel: string, payload: unknown) => emitted.push({ channel, payload });
+    const session = new JarvisLiveSession(emit, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(emit, session);
+
+    await controller.onStart();
+
+    // Upstream: uma pane delegada narrou uma pergunta pendente.
+    controller.noteNarratedQuestion('pane-42', 'Qual banco de dados devo usar?');
+
+    // A PRÓXIMA fala final do usuário (não-UI, curta) é a resposta.
+    provider.fireRoleTranscript({
+      role: 'user',
+      text: 'pode seguir com o postgres mesmo',
+      final: true,
+    });
+
+    const routed = emitted.find(
+      (event) => event.channel === VOICE_CHANNELS.liveToolCall,
+    )?.payload as import('../../shared/voice-ipc').JarvisLiveToolEvent;
+    expect(routed).toBeTruthy();
+    expect(routed).toMatchObject({
+      source: 'realtime',
+      name: 'nexus_action',
+      tool: 'send_to_pane',
+      args: { action: 'send_to_pane', text: 'pode seguir com o postgres mesmo' },
+    });
+    // callId LOCAL (não vazio) — o renderer aceita e executa.
+    expect(routed.callId).toBeTruthy();
+    expect(isLocalToolCallId(routed.callId!)).toBe(true);
+
+    // Executor real do renderer aceita e mapeia para send_to_pane.
+    expect(realtimeToolEventToJarvisAction(routed)).toEqual({
+      type: 'send_to_pane',
+      text: 'pode seguir com o postgres mesmo',
+    });
+
+    // Renderer executou → devolve o resultado. O controller NÃO manda
+    // toolResponse (callId local = ação iniciada pelo controller, não do modelo).
+    const rendererResult = session.toolResult({
+      source: 'realtime',
+      callId: routed.callId!,
+      name: routed.name!,
+      tool: 'send_to_pane',
+      args: routed.args,
+      ok: true,
+      summary: 'tarefa enviada ao pane',
+      output: { ok: true, summary: 'tarefa enviada ao pane', tool: 'send_to_pane' },
+    });
+    controller.toolResult(rendererResult!);
+    expect(provider.sendToolResult).not.toHaveBeenCalled();
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  // CRITICAL-2 (upstream): o QUESTION_POLL injetado alimenta noteNarratedQuestion
+  // — sem ele, o router nunca teria uma pergunta e a rota seria inerte.
+  it('QUESTION_POLL: registra perguntas pendentes da source injetada ao conectar', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+    const emitted: Array<{ channel: string; payload: unknown }> = [];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { VOICE_CHANNELS } = await import('../../shared/voice-channels');
+    const { LiveTransportController } = await import('./live-transport-controller');
+
+    const emit = (channel: string, payload: unknown) => emitted.push({ channel, payload });
+    const session = new JarvisLiveSession(emit, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const source = {
+      poll: () => [{ paneId: 'pane-7', questionHash: 'Menu com 3 opções. Qual?' }],
+    };
+    const controller = new LiveTransportController(emit, session, () => 1000, source);
+
+    await controller.onStart();
+
+    // O poll rodou uma vez ao conectar → a pergunta está registrada. Provamos
+    // roteando a próxima fala final (curta, não-UI) para send_to_pane.
+    provider.fireRoleTranscript({ role: 'user', text: 'a opção dois', final: true });
+    const routed = emitted.find(
+      (event) => event.channel === VOICE_CHANNELS.liveToolCall,
+    )?.payload as import('../../shared/voice-ipc').JarvisLiveToolEvent;
+    expect(routed).toMatchObject({
+      name: 'nexus_action',
+      args: { action: 'send_to_pane', text: 'a opção dois' },
+    });
+
+    controller.onStop();
 
     vi.doUnmock('./voice-config-store');
     vi.doUnmock('./voice-secrets');
@@ -1018,6 +1264,57 @@ describe('LiveTransportController', () => {
       'call_bad',
       expect.objectContaining({ ok: false, output: { error: 'invalid_action' } }),
     );
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  // MEDIUM-5: "encerrar" devolve a despedida E encerra de fato — fecha o
+  // provider/socket realtime (o Classic segue armado).
+  it('encerra a sessão realtime ao processar a tool "encerrar"', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    await controller.onStart();
+    expect(provider.isReady).toBe(true);
+    provider.fireToolCall({ callId: 'call_bye', name: 'encerrar', arguments: {} });
+
+    // Devolveu a despedida (toolResponse) …
+    expect(provider.sendToolResult).toHaveBeenCalledWith(
+      'call_bye',
+      expect.objectContaining({ ok: true, output: { ended: true } }),
+    );
+    // … e derrubou o socket realtime.
+    expect(provider.closeCalls).toBe(1);
+    expect(provider.isReady).toBe(false);
+    expect(session.getState()).toMatchObject({ realtimeReady: false });
 
     vi.doUnmock('./voice-config-store');
     vi.doUnmock('./voice-secrets');
