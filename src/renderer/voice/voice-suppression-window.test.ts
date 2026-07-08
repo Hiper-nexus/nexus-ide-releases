@@ -5,6 +5,7 @@ import {
   MS_PER_SPOKEN_CHAR,
   TTS_TAIL_GUARD_MS,
   estimatedSpeechMs,
+  localAudioMicWithholdMs,
   pcm16DurationMs,
   playbackWakeSuppressionMs,
   realtimeChunkSuppressionMs,
@@ -52,6 +53,25 @@ describe('realtimeChunkSuppressionMs', () => {
 
   it('is just the tail for an empty chunk (still guards briefly)', () => {
     expect(realtimeChunkSuppressionMs(0)).toBe(TTS_TAIL_GUARD_MS);
+  });
+});
+
+describe('localAudioMicWithholdMs', () => {
+  it('withholds the mic for the real audible duration plus the acoustic tail', () => {
+    // FIX 1: a 0.5s ack bleeds into the hot mic for ~0.5s + decay — withhold
+    // exactly that, not a fixed floor.
+    expect(localAudioMicWithholdMs(500)).toBe(500 + TTS_TAIL_GUARD_MS);
+  });
+
+  it('does NOT apply the wake floor — a short ack must not eat the command', () => {
+    // If this used MIN_WAKE_SUPPRESSION_MS (4.5s), a 0.3s ack would swallow the
+    // user's next 4s of speech. The withhold must track the audio, not the floor.
+    expect(localAudioMicWithholdMs(300)).toBeLessThan(MIN_WAKE_SUPPRESSION_MS);
+  });
+
+  it('is just the tail for an empty/NaN duration', () => {
+    expect(localAudioMicWithholdMs(0)).toBe(TTS_TAIL_GUARD_MS);
+    expect(localAudioMicWithholdMs(Number.NaN)).toBe(TTS_TAIL_GUARD_MS);
   });
 });
 

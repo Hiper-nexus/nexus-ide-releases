@@ -1505,6 +1505,129 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
+  // FIX 4: o mesmo gate de ruído do Classic vale no caminho live — um transcript
+  // "user" de ≤3 tokens todo-ruído (alucinação/ambiente) é descartado ANTES de
+  // virar turno. Prova: com pergunta pendente, um ruído NÃO roteia send_to_pane.
+  it('FIX 4: descarta transcript live de ruído/ambiente antes de virar turno', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+    const events: Array<{ channel: string; payload: unknown }> = [];
+    const logCalls: string[] = [];
+
+    vi.doMock('./voice-log', () => ({
+      logVoice: (_level: string, event: string) => logCalls.push(event),
+    }));
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key', voiceApiKeySource: () => 'env' }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { VOICE_CHANNELS } = await import('../../shared/voice-channels');
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const emit = (channel: string, payload: unknown) => events.push({ channel, payload });
+    const session = new JarvisLiveSession(emit, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(emit, session);
+
+    await controller.onStart();
+    controller.noteNarratedQuestion('pane-7', 'Qual banco?');
+    // Ruído puro (2 tokens, ambos ruído) — jamais um comando real.
+    provider.fireRoleTranscript({ role: 'user', text: 'hum ah', final: true });
+
+    const routed = events
+      .filter((e) => e.channel === VOICE_CHANNELS.liveToolCall)
+      .map((e) => e.payload)
+      .find((p) => (p as { tool?: string }).tool === 'send_to_pane');
+    expect(routed).toBeUndefined();
+    expect(logCalls).toContain('live.noiseDiscarded');
+
+    vi.doUnmock('./voice-log');
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  // FIX 2: eco do ack/TTS que volta pelo mic (full-duplex, AEC off) como
+  // transcript "user" é descartado pelo input-side isEcho — não vira turno nem
+  // resposta. O ack é gravado na janela de eco quando tocado (recordEcho).
+  it('FIX 2: descarta eco do ack no transcript live (input-side isEcho)', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+    const events: Array<{ channel: string; payload: unknown }> = [];
+    const logCalls: string[] = [];
+
+    vi.doMock('./voice-log', () => ({
+      logVoice: (_level: string, event: string) => logCalls.push(event),
+    }));
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key', voiceApiKeySource: () => 'env' }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { VOICE_CHANNELS } = await import('../../shared/voice-channels');
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const { echoSuppressor } = await import('./echo-suppress');
+    echoSuppressor.reset();
+    // Ack tocado → gravado na janela de eco (renderer chama recordEcho no wake).
+    echoSuppressor.record('Pois não?');
+
+    const emit = (channel: string, payload: unknown) => events.push({ channel, payload });
+    const session = new JarvisLiveSession(emit, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(emit, session);
+
+    await controller.onStart();
+    controller.noteNarratedQuestion('pane-7', 'Qual banco?');
+    // A própria saudação da JARVIS voltando pelo mic (não é ruído — 2 palavras
+    // reais — então só o gate de eco a pega, provando o input-side isEcho).
+    provider.fireRoleTranscript({ role: 'user', text: 'Pois não', final: true });
+
+    const routed = events
+      .filter((e) => e.channel === VOICE_CHANNELS.liveToolCall)
+      .map((e) => e.payload)
+      .find((p) => (p as { tool?: string }).tool === 'send_to_pane');
+    expect(routed).toBeUndefined();
+    expect(logCalls).toContain('live.inputEchoDiscarded');
+    echoSuppressor.reset();
+
+    vi.doUnmock('./voice-log');
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
   it('não chama response.cancel quando a sessão está dormant', async () => {
     const provider = fakeProvider(async () => {});
     const { LiveTransportController } = await import('./live-transport-controller');

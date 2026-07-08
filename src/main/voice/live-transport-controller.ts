@@ -4,6 +4,7 @@ import { resolveActiveJarvisBrain } from '../../shared/voice-config';
 import { resolveVoiceApiKey, voiceApiKeySource } from './voice-secrets';
 import { logVoice } from './voice-log';
 import { echoSuppressor } from './echo-suppress';
+import { isLikelyNoiseTranscript } from '../../shared/voice-noise';
 import { jarvisMemory } from './jarvis-memory';
 import {
   buildRealtimeEngageDecision,
@@ -531,11 +532,27 @@ export class LiveTransportController {
       if (line.role === 'assistant' && line.final) {
         echoSuppressor.record(line.text);
       }
-      // Input-side echo drop: a "user" transcript that is really her own TTS
-      // coming back through the mic is discarded, not answered. Genuine barge-in
-      // speech is not an echo, so it still passes.
+      // FIX 2 (input-side echo drop, safety net for tail leakage): a "user"
+      // transcript that is really her own TTS/ack coming back through the mic
+      // (full-duplex, AEC off) is DISCARDED, not answered. The wake ack is
+      // recorded into the echo window when played (renderer recordEcho), so
+      // "Pois não" bleeding in matches here. Genuine barge-in speech is not an
+      // echo, so it still passes. Note: the provider already answered this turn
+      // server-side — FIX 1 (mic gate) is the primary guard; this catches the
+      // tail that leaks past it.
       if (line.role === 'user' && line.final && echoSuppressor.isEcho(line.text)) {
-        logVoice('info', 'stt.echoDiscarded', 'eco do TTS descartado (live)', {
+        logVoice('info', 'live.inputEchoDiscarded', 'eco do TTS/ack descartado (live)', {
+          text: line.text.slice(0, 120),
+        });
+        return;
+      }
+      // FIX 4: same noise/garbage gate the Classic path uses — Whisper/Gemini
+      // hallucinate fixed interjections in silence/ambient noise and the mic
+      // carries background conversation. A ≤3-token all-noise "user" turn is not
+      // a real command; drop it before it becomes a turn (conservative: a short
+      // legit command like "abre"/"sim" is never noise).
+      if (line.role === 'user' && line.final && isLikelyNoiseTranscript(line.text)) {
+        logVoice('info', 'live.noiseDiscarded', 'transcript live ruído/ambiente descartado', {
           text: line.text.slice(0, 120),
         });
         return;

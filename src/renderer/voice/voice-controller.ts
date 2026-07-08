@@ -31,6 +31,7 @@ import {
   TTS_TAIL_GUARD_MS,
 } from './voice-suppression-window';
 import { classicSuppressedByRealtimeOwner } from './realtime-ownership';
+import { isLocalAudioAudible } from './live-local-audio-gate';
 import { ThrottledCounter } from '../../shared/live-flow-counter';
 import {
   bindWakeSuppressor,
@@ -76,9 +77,9 @@ import {
   shouldUseClassicActionBridge,
 } from './realtime-bridge-policy';
 import {
-  REALTIME_TRANSCRIPT_WAIT_MS,
   realtimeTranscriptWaitMs,
 } from './realtime-transcript-wait';
+import { RealtimeTranscriptWaiter } from './realtime-transcript-waiter';
 import type { AutoStopOptions } from './voice-capture';
 import type {
   JarvisAction,
@@ -124,6 +125,12 @@ const JARVIS_MEMORY_MS = 300_000; // 5 min: janela de continuidade (paridade com
 // um turno de conversa ~16s; após 1 tentativa cloud apertada, pula p/ local.
 const WAKE_STT_BUDGET_MS = 8_000;
 const PENDING_REALTIME_AUDIO_MAX_CHUNKS = 160;
+// FIX 3: teto para aguardar o socket realtime settlar (ready/falho) antes de
+// decidir a posse do turno. O connect interno tem timeout de 10s; num caminho
+// saudável o socket conecta em ~0,5–1,5s (< ack+comando+silêncio), então a
+// espera resolve quase na hora. Um socket mais lento que isto é degradação
+// genuína → cai no Classic narrado. Nunca bloqueia o usuário além deste teto.
+const LIVE_START_SETTLE_MS = 3_000;
 
 // Deadlines das invocações renderer→main (cinto E suspensório sobre os
 // timeouts do main): se QUALQUER etapa pendurar além disto, o turno morre com
@@ -170,13 +177,14 @@ function ensureLivePlayer(): LiveAudioPlayer {
 // but app actions still flow through the audited Classic Jarvis/MCP executor.
 let realtimeTurnActive = false;
 let suppressRealtimeAudioOut = false;
-let pendingRealtimeTranscript:
-  | {
-      resolve: (text: string | null) => void;
-      timer: ReturnType<typeof setTimeout>;
-    }
-  | null = null;
-let queuedRealtimeTranscript: string | null = null;
+// BUG A: pending/queued realtime transcript state is now turn-scoped in one
+// cohesive unit — a new wake supersedes the prior wait instead of resolving it
+// to a false `null` mute. See RealtimeTranscriptWaiter.
+const realtimeTranscriptWaiter = new RealtimeTranscriptWaiter();
+// FIX 3: promessa de settle do liveStart do turno atual (resolve ready OU falho).
+// finishAndProcess a aguarda (com teto LIVE_START_SETTLE_MS) antes de escolher
+// Classic vs realtime, para não correr contra um socket ainda conectando.
+let pendingLiveStartSettle: Promise<void> | null = null;
 let finishRealtimeCapture: (() => void) | null = null;
 let pendingRealtimeAudioOut: string[] = [];
 // Observabilidade do lado do RENDER: quantos chunks realtime TOCARAM vs foram
@@ -257,14 +265,6 @@ function shouldStreamToRealtime(): boolean {
   );
 }
 
-function resolvePendingRealtimeTranscript(text: string | null): void {
-  const pending = pendingRealtimeTranscript;
-  if (!pending) return;
-  clearTimeout(pending.timer);
-  pendingRealtimeTranscript = null;
-  pending.resolve(text);
-}
-
 function resetPendingRealtimeAudioOut(): void {
   pendingRealtimeAudioOut = [];
 }
@@ -305,24 +305,6 @@ function queuePendingRealtimeAudioOut(b64: string): void {
   pendingRealtimeAudioOut.push(b64);
 }
 
-function waitForRealtimeTranscript(timeoutMs = REALTIME_TRANSCRIPT_WAIT_MS): Promise<string | null> {
-  if (queuedRealtimeTranscript) {
-    const text = queuedRealtimeTranscript;
-    queuedRealtimeTranscript = null;
-    return Promise.resolve(text);
-  }
-  if (pendingRealtimeTranscript) resolvePendingRealtimeTranscript(null);
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      if (pendingRealtimeTranscript?.resolve === resolve) {
-        pendingRealtimeTranscript = null;
-      }
-      resolve(null);
-    }, timeoutMs);
-    pendingRealtimeTranscript = { resolve, timer };
-  });
-}
-
 function isAckGatedCapture(reason: JarvisCaptureReason = activeCaptureReason): boolean {
   return reason === 'wake' || reason === 'click';
 }
@@ -351,12 +333,9 @@ function onRealtimeTranscriptForActionBridge(event: JarvisLiveTranscriptEvent): 
     }
     return;
   }
-  queuedRealtimeTranscript = text;
-  if (pendingRealtimeTranscript) {
-    queuedRealtimeTranscript = null;
-    resolvePendingRealtimeTranscript(text);
-    return;
-  }
+  // Entrega ao wait em curso (se houver) como transcript REAL; senão enfileira e
+  // agenda o fechamento manual do turno (o await ainda não começou).
+  if (realtimeTranscriptWaiter.deliver(text)) return;
   window.setTimeout(() => finishRealtimeCapture?.(), 80);
 }
 
@@ -857,8 +836,10 @@ export function useVoiceController(): void {
         // Wake usa transcript live quando disponível, mas áudio/resposta ficam no executor clássico.
         suppressRealtimeAudioOut = true;
         realtimeTurnActive = false;
-        queuedRealtimeTranscript = null;
-        resolvePendingRealtimeTranscript(null);
+        // BUG A: um novo wake SUPERSEDE o wait do turno anterior (não é mute).
+        // Antes isto resolvia o pending com null e o turno anterior degradava
+        // p/ Classic em ~75ms — muito antes de um silêncio real de socket.
+        realtimeTranscriptWaiter.supersede();
         livePlayer?.stop();
         void window.nexus.voice.liveInterrupt('wake-ack').catch(() => {});
 
@@ -1041,8 +1022,12 @@ export function useVoiceController(): void {
       playRealtimeAudioOut(b64);
     });
     // Espelha o mic para o transporte realtime enquanto o comando é falado.
+    // FIX 1: retém os frames enquanto um áudio LOCAL (ack/filler/TTS clássico) é
+    // audível — sem isso o ack ("Pois não") vaza pelo mic (AEC off) e streama ao
+    // socket, e o provider responde à própria fala. O áudio do provider toca por
+    // outro caminho (LiveAudioPlayer), então o barge-in do realtime segue vivo.
     wakeMic.setUtteranceFrameTap((frame, sampleRate) => {
-      if (shouldStreamToRealtime()) {
+      if (shouldStreamToRealtime() && !isLocalAudioAudible(Date.now())) {
         window.nexus.voice.liveMicIn(micFrameToBase64(frame, sampleRate));
       }
     });
@@ -1149,7 +1134,7 @@ async function beginListening(
   const store = useVoiceStore.getState();
   try {
     store.setNote(null);
-    queuedRealtimeTranscript = null;
+    realtimeTranscriptWaiter.resetQueued();
     resetPendingRealtimeAudioOut();
     realtimeAudioPlayedCounter.reset();
     realtimeAudioSuppressedCounter.reset();
@@ -1180,11 +1165,17 @@ async function beginListening(
       REALTIME_ACTION_BRIDGE_ENABLED &&
       isJarvisLiveEnabled() &&
       reason !== 'reply';
+    pendingLiveStartSettle = null;
     if (allowRealtimeBridge) {
       const info = useVoiceStore.getState().info;
       realtimeTurnActive = canAttemptRealtime(info);
       const liveContext = liveContextText();
-      void window.nexus.voice.liveStart({ reason }).then((state) => {
+      // FIX 3: guarda a promessa de settle do socket. finishAndProcess aguarda
+      // ela (com teto) ANTES de decidir Classic vs realtime — assim a decisão de
+      // posse usa o estado JÁ resolvido do socket (ready ou falho), fechando a
+      // corrida em que o primeiro wake, com o socket ainda conectando, deixava o
+      // Classic responder antes de a posse realtime engajar (primeiro-turno leak).
+      pendingLiveStartSettle = window.nexus.voice.liveStart({ reason }).then((state) => {
         store.setLiveState(state);
         if (!state.realtimeReady) realtimeTurnActive = false;
         if (state.realtimeReady) {
@@ -1240,6 +1231,21 @@ async function finishAndProcess(
       ? wakeMic.finishUtterance()
       : await capture.stop();
     const routing = store.info?.routing ?? 'focused-pane';
+    // FIX 3 / BUG B: aguarda o socket realtime SETTLAR (ready ou falho) antes de
+    // decidir a posse. Sem isto, um primeiro wake com o socket ainda conectando
+    // avaliava `shouldStreamToRealtime()`/`isRealtimeLive()` como false e o
+    // Classic respondia ANTES da posse realtime engajar (primeiro-turno leak);
+    // e `realtimeIsOwner=false` acionava o atalho inútil de 1,2s. Com o settle
+    // resolvido, `isRealtimeLive()` reflete a realidade → posse correta e a
+    // janela de espera passa a ser a cheia (não o atalho). Se o socket falhar, a
+    // degradação Classic narrada abaixo cobre (realtimeTurnActive vira false).
+    if (pendingLiveStartSettle) {
+      await withTimeout(
+        pendingLiveStartSettle,
+        LIVE_START_SETTLE_MS,
+        'settle do socket realtime',
+      ).catch(() => {});
+    }
     const shouldTryRealtimeTranscript = routing === 'jarvis' && shouldStreamToRealtime();
     const captureGate = {
       wavBase64: result.wavBase64,
@@ -1256,7 +1262,7 @@ async function finishAndProcess(
         captureGate,
         {
           shouldTryRealtime: shouldTryRealtimeTranscript,
-          hasQueuedRealtimeTranscript: Boolean(queuedRealtimeTranscript),
+          hasQueuedRealtimeTranscript: realtimeTranscriptWaiter.hasQueued(),
           allowWeakSpeech,
         },
       )
@@ -1295,7 +1301,15 @@ async function finishAndProcess(
       suppressRealtimeAudioOut = true;
       // Keep the live FSM open while the provider finalizes transcript/tool calls.
       // Ending here makes the HUD go dormant right after the wake ack/click wake.
-      const liveTranscript = await waitForRealtimeTranscript(transcriptWaitMs);
+      const wait = await realtimeTranscriptWaiter.wait(transcriptWaitMs);
+      if (wait.superseded) {
+        // BUG A: um novo wake tomou a conversa enquanto esperávamos — NÃO é mute.
+        // Sai em silêncio (sem realtimeMuteDegraded, sem Classic racer); o novo
+        // turno é dono agora. Não mexe no status (o novo turno gere o dele).
+        console.log('[voice] wait de transcript superseded por novo turno — sem mute');
+        return;
+      }
+      const liveTranscript = wait.text;
       if (hasRealtimeNativeToolSince(tRealtime)) {
         realtimeTurnActive = false;
         store.setStatus('idle');
@@ -1494,7 +1508,13 @@ async function finishAndProcess(
     if (routing === 'jarvis') {
       const filler = THINK_FILLERS[Math.floor(Math.random() * THINK_FILLERS.length)];
       const cached = getThinkFillerCache().get(filler);
-      if (cached) void playAudioBase64(cached.audioBase64, cached.format).catch(() => {});
+      if (cached) {
+        // FIX 2: record the filler into the echo window before it plays — with
+        // AEC off it bleeds into the mic exactly like the wake ack, so the
+        // input-side isEcho guard (main) must know it to discard the leak.
+        void window.nexus.voice.recordEcho(filler).catch(() => {});
+        void playAudioBase64(cached.audioBase64, cached.format).catch(() => {});
+      }
     }
 
     const tTurn = Date.now();

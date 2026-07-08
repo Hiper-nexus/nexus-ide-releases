@@ -72,3 +72,21 @@ export function estimatedSpeechMs(charCount: number): number {
   const safe = Number.isFinite(charCount) && charCount > 0 ? charCount : 0;
   return safe * MS_PER_SPOKEN_CHAR;
 }
+
+/**
+ * Janela (ms) para RETER os frames de mic do socket realtime enquanto um áudio
+ * LOCAL (ack do wake, think-filler, TTS marin/clássico) toca. É a MESMA
+ * disciplina drain+cauda das demais janelas (duração real + cauda acústica),
+ * mas SEM o piso de supressão de wake (`MIN_WAKE_SUPPRESSION_MS`): o piso de
+ * 4,5s serve para não deixar o wake auto-disparar numa fala longa; aqui reter
+ * o mic por 4,5s comeria o comando do usuário logo após um ack de 0,5s. Reusa a
+ * cauda de `voice-suppression-window` — não é um segundo relógio, é a mesma
+ * matemática com o clamp apropriado ao propósito (reter ≈ duração audível).
+ */
+export function localAudioMicWithholdMs(
+  playbackMs: number,
+  tailMs: number = TTS_TAIL_GUARD_MS,
+): number {
+  const safe = Number.isFinite(playbackMs) && playbackMs > 0 ? playbackMs : 0;
+  return Math.ceil(safe) + tailMs;
+}
