@@ -57,7 +57,7 @@ describe('jarvis-reply-loop', () => {
       }),
     ).toBe(true);
 
-    noteAutoReplyOpened();
+    noteAutoReplyOpened({ sayText: 'Não entendi o pedido, patrão.' });
     expect(
       shouldReopenJarvisListening({
         expectReply: true,
@@ -80,7 +80,7 @@ describe('jarvis-reply-loop', () => {
       }),
     ).toBe(true);
 
-    noteAutoReplyOpened();
+    noteAutoReplyOpened({ sayText: 'Não entendi o pedido, patrão.' });
     expect(
       shouldReopenJarvisListening({
         expectReply: true,
@@ -94,7 +94,7 @@ describe('jarvis-reply-loop', () => {
 
   it('não reseta contador em captura automática de reply', () => {
     resetAutoReplyLoop();
-    noteAutoReplyOpened();
+    noteAutoReplyOpened({ sayText: 'Não entendi o pedido, patrão.' });
     resetAutoReplyLoopForCapture('reply');
     expect(
       shouldReopenJarvisListening({
@@ -131,6 +131,33 @@ describe('jarvis-reply-loop', () => {
         sayText: 'Me conta mais.',
         realtimeTurnActive: false,
         isRealtimeLive: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('não gasta a chance de correção em perguntas normais anteriores', () => {
+    resetAutoReplyLoop();
+    noteAutoReplyOpened({ sayText: 'Qual cidade você quer focar?' });
+    noteAutoReplyOpened({ sayText: 'Qual é o próximo passo?' });
+
+    expect(
+      shouldReopenJarvisListening({
+        expectReply: false,
+        sayText: "Não entendi, patrão. Pode explicar melhor?",
+        realtimeTurnActive: false,
+        isRealtimeLive: false,
+        captureReason: 'reply',
+      }),
+    ).toBe(true);
+
+    noteAutoReplyOpened({ sayText: "Não entendi, patrão. Pode explicar melhor?" });
+    expect(
+      shouldReopenJarvisListening({
+        expectReply: false,
+        sayText: 'Não compreendi ainda.',
+        realtimeTurnActive: false,
+        isRealtimeLive: false,
+        captureReason: 'reply',
       }),
     ).toBe(false);
   });

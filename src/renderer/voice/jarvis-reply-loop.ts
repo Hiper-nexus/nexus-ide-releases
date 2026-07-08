@@ -10,18 +10,25 @@ export const MAX_AUTO_REPLY_LOOPS = 5;
 export const MAX_CONFUSION_REPLY_REOPENS = 1;
 
 let autoReplyLoopCount = 0;
+let consecutiveConfusionReplyCount = 0;
 export type JarvisCaptureReason = 'manual' | 'wake' | 'click' | 'ptt' | 'reply';
 
 export function resetAutoReplyLoop(): void {
   autoReplyLoopCount = 0;
+  consecutiveConfusionReplyCount = 0;
 }
 
 export function resetAutoReplyLoopForCapture(reason: JarvisCaptureReason): void {
   if (reason !== 'reply') resetAutoReplyLoop();
 }
 
-export function noteAutoReplyOpened(): void {
+export function noteAutoReplyOpened(opts: { sayText?: string } = {}): void {
   autoReplyLoopCount += 1;
+  if (opts.sayText && isConfusionReply(opts.sayText)) {
+    consecutiveConfusionReplyCount += 1;
+  } else {
+    consecutiveConfusionReplyCount = 0;
+  }
 }
 
 function norm(text: string): string {
@@ -57,7 +64,7 @@ export function shouldReopenJarvisListening(opts: {
   }
   if (opts.realtimeTurnActive && opts.isRealtimeLive) return true;
   if (isConfusionReply(opts.sayText)) {
-    if (autoReplyLoopCount >= MAX_CONFUSION_REPLY_REOPENS) {
+    if (consecutiveConfusionReplyCount >= MAX_CONFUSION_REPLY_REOPENS) {
       console.log('[voice] trava anti-loop: confusão repetida, não reabrindo');
       return false;
     }

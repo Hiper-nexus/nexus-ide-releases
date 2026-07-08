@@ -1348,7 +1348,7 @@ async function runJarvisTurn(
     busy.current = false;
     wakeMic.suppressWakeDetection(REPLY_LISTEN_DELAY_MS + 500);
     await delay(REPLY_LISTEN_DELAY_MS);
-    noteAutoReplyOpened();
+    noteAutoReplyOpened({ sayText });
     void beginListening(capture, wakeAutoStop(capture, busy), 'reply', undefined, busy);
   } else {
     liveEndTurn();
