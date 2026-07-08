@@ -13,43 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.10.30',
+  version: '0.10.31',
   date: '2026-07-08',
-  codename: 'Jarvis Operational Fallback',
+  codename: 'Jarvis Local STT',
   summary:
-    'A Jarvis ficou mais resiliente quando modelos falham: ela mantém conversa local útil, silencia ruído curto e preserva ações de foco vindas do cérebro.',
+    'A Jarvis ganhou fallback local de transcrição mais confiável no macOS, preservando comandos em português quando os provedores de nuvem falham.',
   highlights: [
     {
-      title: 'Fallback local operacional',
+      title: 'whisper.cpp encontrado pela GUI',
       detail:
-        'Quando nenhuma chave/modelo responde, a Jarvis não despeja erro técnico: ela responde em português, mantém o turno aberto e sugere ações possíveis na tela atual.',
+        'O app agora procura o whisper.cpp nos caminhos comuns do Homebrew, mesmo quando aberto pelo Finder/Dock sem herdar o PATH do terminal.',
     },
     {
-      title: 'Menos auto-conversa por ruído',
+      title: 'Comandos locais em português',
       detail:
-        'Transcrições curtas típicas de ruído, como “ai ai” e ghosts de agradecimento, ficam silenciosas no fallback local em vez de reabrirem conversa sem necessidade.',
+        'Quando o turno da Jarvis pede transcrição sem tradução, o fallback local respeita `language: pt` e não converte comandos para inglês.',
     },
     {
-      title: 'Foco de pane completo',
+      title: 'Operação sem chave de STT',
       detail:
-        'O cérebro Classic agora preserva ações para focar pane específico e pane anterior, alinhando parser, prompt e executor.',
+        'Com o binário e o modelo local instalados, a cadeia STT continua operacional mesmo se Groq/OpenAI estiverem sem chave, quota ou rede.',
     },
   ],
   fixes: [
     {
-      title: 'Sem erro de chave falado ao usuário',
+      title: 'Menos falha invisível no macOS',
       detail:
-        'O modo sem provedor de brain não cita variáveis internas de API na fala e não chama rede quando já sabe que não há credencial disponível.',
+        'A busca explícita por `/opt/homebrew/bin/whisper-cli` e `/usr/local/bin/whisper-cli` evita fallback perdido em apps Electron iniciados fora do shell.',
     },
     {
-      title: 'Falha de provider vira conversa recuperável',
+      title: 'Prioridade do request corrigida',
       detail:
-        'Se um provider retorna erro ou rate limit, a Jarvis informa de forma breve que continua operando e pergunta o próximo comando.',
+        'O `translate` vindo do turno agora tem precedência sobre a configuração do provider local, evitando tradução indevida em comandos da Jarvis.',
     },
     {
-      title: 'Tokens de confirmação travados por teste',
+      title: 'Cobertura de STT reforçada',
       detail:
-        'O fluxo de confirmação MCP agora tem cobertura explícita para escopo exato, consumo único e expiração de 30 segundos.',
+        'A suíte cobre os caminhos Homebrew do whisper.cpp e o contrato de idioma do fallback local.',
     },
   ],
 };

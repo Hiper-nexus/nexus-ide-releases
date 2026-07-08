@@ -120,6 +120,58 @@ describe('transcribe — quota/rate-limit fallback (free-tier Groq)', () => {
     }
   });
 
+  it('probes Homebrew whisper-cli paths for GUI-launched macOS apps', async () => {
+    let candidates: string[] = [];
+    const findBin = vi.fn((items: string[]) => {
+      candidates = items;
+      return items.includes('/opt/homebrew/bin/whisper-cli')
+        ? '/opt/homebrew/bin/whisper-cli'
+        : null;
+    });
+
+    const result = await transcribe(
+      REQ,
+      config(),
+      PROBES,
+      deps({
+        findBin,
+        fileExists: vi.fn(() => true),
+        getEnv: vi.fn(() => undefined),
+        readText: vi.fn(() => '  local without shell path  '),
+      }),
+    );
+
+    expect(candidates).toContain('/opt/homebrew/bin/whisper-cli');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.provider).toBe('local-whisper');
+      expect(result.text).toBe('local without shell path');
+    }
+  });
+
+  it('honors the turn request language when local whisper is the fallback', async () => {
+    const runLocal = vi.fn();
+
+    const result = await transcribe(
+      { ...REQ, translate: false, language: 'pt' },
+      config(),
+      PROBES,
+      deps({
+        findBin: vi.fn(() => '/opt/homebrew/bin/whisper-cli'),
+        fileExists: vi.fn(() => true),
+        getEnv: vi.fn(() => undefined),
+        readText: vi.fn(() => '  abrir terminal  '),
+        runLocal,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    const args = runLocal.mock.calls[0]?.[1] ?? [];
+    expect(args).toContain('-l');
+    expect(args[args.indexOf('-l') + 1]).toBe('pt');
+    expect(args).not.toContain('-tr');
+  });
+
   it('reports a clear, actionable error when everything fails', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(429, {})) as unknown as typeof fetch;
     const result = await transcribe(REQ, config(), PROBES, deps({ fetchImpl }));

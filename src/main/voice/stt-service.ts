@@ -186,6 +186,12 @@ function whisperBinCandidates(plugin: VoicePlugin): string[] {
   const nexusBin = path.join(os.homedir(), '.nexus', 'bin');
   return [
     plugin.localBin,
+    // GUI-launched Electron apps do not reliably inherit the user's shell PATH.
+    // Probe common Homebrew locations explicitly before falling back to `which`.
+    '/opt/homebrew/bin/whisper-cli',
+    '/usr/local/bin/whisper-cli',
+    '/opt/homebrew/bin/whisper-cpp',
+    '/usr/local/bin/whisper-cpp',
     'whisper-cli',
     'whisper-cpp',
     'main',
@@ -230,7 +236,10 @@ async function attemptLocal(
   try {
     deps.writeFile(wav, base64ToBuffer(req.audioBase64));
     const args = ['-f', wav, '-m', model, '-otxt', '-nt'];
-    if (plugin.translate ?? false) args.push('-tr');
+    const translate = req.translate ?? plugin.translate ?? false;
+    const language = req.language ?? plugin.language ?? plugin.translateFrom;
+    if (language) args.push('-l', language);
+    if (translate) args.push('-tr');
     await deps.runLocal(bin, args);
     const text = deps.readText(txt).trim();
     if (!text) return { ok: false, needsKey: false, reason: 'local whisper returned empty text' };
