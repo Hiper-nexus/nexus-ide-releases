@@ -34,7 +34,16 @@ describe('resolveRealtimeProviderId', () => {
         },
       }),
     ).toBe('openai');
-    expect(resolveRealtimeProviderId(DEFAULT_VOICE_CONFIG)).toBe(null);
+    // Default transport is now realtime (gemini-live) — the 2026-07-06
+    // hibernation ('classic' → no provider) was reverted by the approved
+    // decision; runtime degradation to Classic replaces config coercion.
+    expect(resolveRealtimeProviderId(DEFAULT_VOICE_CONFIG)).toBe('gemini');
+    expect(
+      resolveRealtimeProviderId({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, transport: 'classic' },
+      }),
+    ).toBe(null);
   });
 
   it('orders OpenAI Realtime before Gemini Live fallback', () => {

@@ -55,10 +55,26 @@ const LEGACY_VOICE_CANDIDATES = [
 let current: VoiceConfig = DEFAULT_VOICE_CONFIG;
 let hotkeyMode: HotkeyMode = 'toggle';
 
+const VALID_JARVIS_LIVE_TRANSPORTS: ReadonlySet<string> = new Set([
+  'classic',
+  'openai-realtime',
+  'gemini-live',
+]);
+
+/**
+ * Validador do transporte Live. Durante a hibernação (2026-07-06) esta função
+ * COAGIA gemini-live→classic, mantendo o realtime adormecido. A Decisão aprovada
+ * (2026-07-08) reverteu isso: agora ela só VALIDA — um valor conhecido passa
+ * intacto (realtime é entregue), e um valor inválido cai no default realtime. A
+ * degradação para o Classic acontece em runtime (sem key / setup falho /
+ * reconexão esgotada), não por coerção da config.
+ */
 function stableJarvisLiveTransport(
   transport: VoiceConfig['jarvisLive']['transport'],
 ): VoiceConfig['jarvisLive']['transport'] {
-  return transport;
+  return VALID_JARVIS_LIVE_TRANSPORTS.has(transport)
+    ? transport
+    : DEFAULT_VOICE_CONFIG.jarvisLive.transport;
 }
 
 /** Env var present and non-empty. */

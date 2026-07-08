@@ -105,10 +105,15 @@ export const jarvisLiveConfigSchema = z
     enabled: z.boolean().default(false),
     /**
      * Transporte da sessao live: 'classic' = FSM sobre pipeline batch;
-     * 'openai-realtime' = OpenAI Realtime via WSS; 'gemini-live' = fallback
-     * realtime. Quando realtime falha, o Classic segue valendo.
+     * 'openai-realtime' = OpenAI Realtime via WSS; 'gemini-live' = transporte
+     * realtime full-duplex nativo (padrão). A hibernação de 2026-07-06 (default
+     * 'classic') foi revertida pela Decisão aprovada 2026-07-08 — realtime é o
+     * default COM degradação automática: sem key / setup falho / reconexão
+     * esgotada, o Classic (agora muito melhor) segue valendo mid-session.
      */
-    transport: z.enum(['classic', 'openai-realtime', 'gemini-live']).default('classic'),
+    transport: z
+      .enum(['classic', 'openai-realtime', 'gemini-live'])
+      .default('gemini-live'),
     /** Modelo realtime OpenAI padrao. */
     openaiModel: z.string().min(1).max(128).default('gpt-realtime-2.1-mini'),
     /** Voz OpenAI Realtime padrao. */
@@ -130,7 +135,7 @@ export const jarvisLiveConfigSchema = z
   })
   .default({
     enabled: false,
-    transport: 'classic',
+    transport: 'gemini-live',
     openaiModel: 'gpt-realtime-2.1-mini',
     openaiVoice: 'marin',
     liveModel: 'gemini-2.5-flash-native-audio-preview-12-2025',
@@ -271,7 +276,7 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
   persona: { assistantName: 'Jarvis' },
   jarvisLive: {
     enabled: false,
-    transport: 'classic',
+    transport: 'gemini-live',
     openaiModel: 'gpt-realtime-2.1-mini',
     openaiVoice: 'marin',
     liveModel: 'gemini-2.5-flash-native-audio-preview-12-2025',

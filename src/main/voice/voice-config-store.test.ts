@@ -47,6 +47,23 @@ describe('voice-config-store', () => {
     expect(updated.jarvisLive.enabled).toBe(false);
   });
 
+  it('default é realtime (gemini-live) — hibernação revertida', async () => {
+    const { store } = await loadStoreInTempHome();
+    const config = store.loadVoiceConfig();
+    expect(config.jarvisLive.transport).toBe('gemini-live');
+  });
+
+  it('preserva o transporte escolhido pelo usuário (validador, sem coerção)', async () => {
+    const { store } = await loadStoreInTempHome();
+    store.loadVoiceConfig();
+    const openai = store.applyConfigPatch({ jarvisLiveTransport: 'openai-realtime' });
+    expect(openai.jarvisLive.transport).toBe('openai-realtime');
+    const classic = store.applyConfigPatch({ jarvisLiveTransport: 'classic' });
+    expect(classic.jarvisLive.transport).toBe('classic');
+    const gemini = store.applyConfigPatch({ jarvisLiveTransport: 'gemini-live' });
+    expect(gemini.jarvisLive.transport).toBe('gemini-live');
+  });
+
   it('migra TTS OpenAI nova para a voz realtime padrao', async () => {
     const { home, store } = await loadStoreInTempHome();
     const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
