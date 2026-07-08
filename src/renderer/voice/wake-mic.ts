@@ -10,6 +10,7 @@ import {
   type CaptureResult,
 } from './voice-capture';
 import { RESTART_BACKOFF_MS, nextRearmDelay } from './wake-rearm';
+import { shouldEndpointUtterance } from './wake-endpoint';
 import { frameIsSilent, type MicPermissionState } from './wake-health';
 import { SoftAgc } from './agc';
 import { rmsToLevel } from './voice-level';
@@ -254,13 +255,16 @@ export class WakeMic {
     }
     const opts = this.uttAutoStop;
     if (!opts || this.uttFired) return;
-    const total = now - this.uttStartedAt;
-    const minListenMs = opts.minListenMs ?? 0;
     if (
-      (this.uttHeardSpeech &&
-        now - this.uttLastSpeechAt >= opts.silenceMs &&
-        total >= minListenMs) ||
-      total >= opts.maxMs
+      shouldEndpointUtterance({
+        heardSpeech: this.uttHeardSpeech,
+        speechMs: this.uttSpeechMs,
+        silentMs: now - this.uttLastSpeechAt,
+        totalMs: now - this.uttStartedAt,
+        silenceMs: opts.silenceMs,
+        minListenMs: opts.minListenMs ?? 0,
+        maxMs: opts.maxMs,
+      })
     ) {
       this.uttFired = true;
       opts.onAutoStop();
