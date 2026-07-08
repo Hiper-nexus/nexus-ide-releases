@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   isConfusionReply,
+  MAX_AUTO_REPLY_LOOPS,
   noteAutoReplyOpened,
   resetAutoReplyLoop,
   resetAutoReplyLoopForCapture,
   shouldReopenJarvisListening,
 } from './jarvis-reply-loop';
 
-describe('jarvis-reply-loop', () => {
-  it('não reabre só porque jarvisLive está habilitado no painel', () => {
+describe('jarvis-reply-loop (continuidade)', () => {
+  it('mantém a escuta quente após uma resposta comum (sem pergunta)', () => {
     resetAutoReplyLoop();
+    // Antes exigia pergunta; agora a conversa segue quente por padrão.
     expect(
       shouldReopenJarvisListening({
         expectReply: false,
@@ -17,7 +19,7 @@ describe('jarvis-reply-loop', () => {
         realtimeTurnActive: false,
         isRealtimeLive: false,
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('reabre após wake quando a resposta pede continuidade', () => {
@@ -33,19 +35,58 @@ describe('jarvis-reply-loop', () => {
     ).toBe(true);
   });
 
-  it('reabre quando o cérebro pediu resposta', () => {
+  it('encadeia reply→reply para uma conversa contínua', () => {
     resetAutoReplyLoop();
+    for (let turn = 0; turn < 5; turn += 1) {
+      expect(
+        shouldReopenJarvisListening({
+          expectReply: false,
+          sayText: 'Feito, patrão.',
+          realtimeTurnActive: false,
+          isRealtimeLive: false,
+          captureReason: 'reply',
+        }),
+      ).toBe(true);
+      noteAutoReplyOpened({ sayText: 'Feito, patrão.' });
+    }
+  });
+
+  it('trava no teto de continuidade e exige novo Hey Jarvis', () => {
+    resetAutoReplyLoop();
+    for (let i = 0; i < MAX_AUTO_REPLY_LOOPS; i += 1) {
+      noteAutoReplyOpened({ sayText: 'Feito.' });
+    }
     expect(
       shouldReopenJarvisListening({
         expectReply: true,
-        sayText: 'Qual projeto você quer abrir?',
+        sayText: 'Me conta mais.',
         realtimeTurnActive: false,
         isRealtimeLive: false,
+        captureReason: 'reply',
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it('reabre uma vez em respostas de confusão', () => {
+  it('sustenta ao menos 10 turnos sem re-wake antes do teto', () => {
+    resetAutoReplyLoop();
+    let reopens = 0;
+    while (
+      shouldReopenJarvisListening({
+        expectReply: false,
+        sayText: 'Certo.',
+        realtimeTurnActive: false,
+        isRealtimeLive: false,
+        captureReason: reopens === 0 ? 'wake' : 'reply',
+      })
+    ) {
+      reopens += 1;
+      noteAutoReplyOpened({ sayText: 'Certo.' });
+      if (reopens > 50) break; // guarda contra loop infinito no teste
+    }
+    expect(reopens).toBeGreaterThanOrEqual(10);
+  });
+
+  it('reabre confusão só uma vez para o usuário corrigir', () => {
     resetAutoReplyLoop();
     expect(isConfusionReply('Não entendi o pedido, patrão.')).toBe(true);
     expect(
@@ -61,60 +102,54 @@ describe('jarvis-reply-loop', () => {
     expect(
       shouldReopenJarvisListening({
         expectReply: true,
-        sayText: 'Não entendi o pedido, patrão.',
+        sayText: 'Não entendi de novo, patrão.',
         realtimeTurnActive: false,
         isRealtimeLive: false,
+        captureReason: 'reply',
       }),
     ).toBe(false);
   });
 
-  it('reabre confusão vinda de wake só uma vez', () => {
+  it('uma resposta comum reseta a contagem de confusão consecutiva', () => {
     resetAutoReplyLoop();
+    noteAutoReplyOpened({ sayText: 'Não entendi, patrão.' }); // confusão 1
+    noteAutoReplyOpened({ sayText: 'Abrindo o terminal.' }); // comum → zera confusão
+    // Nova confusão volta a ser permitida uma vez.
     expect(
       shouldReopenJarvisListening({
         expectReply: true,
-        sayText: 'Não entendi o pedido, patrão.',
+        sayText: 'Não entendi, patrão.',
         realtimeTurnActive: false,
         isRealtimeLive: false,
-        captureReason: 'wake',
+        captureReason: 'reply',
       }),
     ).toBe(true);
+  });
 
-    noteAutoReplyOpened({ sayText: 'Não entendi o pedido, patrão.' });
+  it('não reseta o contador em captura automática de reply', () => {
+    resetAutoReplyLoop();
+    noteAutoReplyOpened({ sayText: 'Feito.' });
+    resetAutoReplyLoopForCapture('reply'); // reply NÃO reseta
+    // Ainda dentro do teto, então segue reabrindo.
     expect(
       shouldReopenJarvisListening({
-        expectReply: true,
-        sayText: 'Não entendi o pedido, patrão.',
+        expectReply: false,
+        sayText: 'Feito.',
         realtimeTurnActive: false,
         isRealtimeLive: false,
         captureReason: 'reply',
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it('não reseta contador em captura automática de reply', () => {
+  it('reseta o contador quando a captura vem do clique na Jarvis', () => {
     resetAutoReplyLoop();
-    noteAutoReplyOpened({ sayText: 'Não entendi o pedido, patrão.' });
-    resetAutoReplyLoopForCapture('reply');
+    for (let i = 0; i < MAX_AUTO_REPLY_LOOPS; i += 1) noteAutoReplyOpened({ sayText: 'Feito.' });
+    resetAutoReplyLoopForCapture('click'); // wake/click/manual/ptt zeram
     expect(
       shouldReopenJarvisListening({
-        expectReply: true,
-        sayText: 'Não entendi o pedido, patrão.',
-        realtimeTurnActive: false,
-        isRealtimeLive: false,
-        captureReason: 'reply',
-      }),
-    ).toBe(false);
-  });
-
-  it('reseta contador quando a captura vem do clique na Jarvis', () => {
-    resetAutoReplyLoop();
-    noteAutoReplyOpened();
-    resetAutoReplyLoopForCapture('click');
-    expect(
-      shouldReopenJarvisListening({
-        expectReply: true,
-        sayText: 'Não entendi o pedido, patrão.',
+        expectReply: false,
+        sayText: 'Feito.',
         realtimeTurnActive: false,
         isRealtimeLive: false,
         captureReason: 'click',
@@ -122,42 +157,17 @@ describe('jarvis-reply-loop', () => {
     ).toBe(true);
   });
 
-  it('não reabre após reply automático mesmo com pergunta', () => {
+  it('respostas realtime full-duplex sempre reabrem', () => {
     resetAutoReplyLoop();
-    expect(
-      shouldReopenJarvisListening({
-        expectReply: true,
-        sayText: 'O que você gostaria de fazer agora?',
-        realtimeTurnActive: false,
-        isRealtimeLive: false,
-        captureReason: 'reply',
-      }),
-    ).toBe(false);
-  });
-
-  it('trava após muitas reaberturas seguidas', () => {
-    resetAutoReplyLoop();
-    for (let i = 0; i < 2; i += 1) noteAutoReplyOpened();
-    expect(
-      shouldReopenJarvisListening({
-        expectReply: true,
-        sayText: 'Me conta mais.',
-        realtimeTurnActive: false,
-        isRealtimeLive: false,
-      }),
-    ).toBe(false);
-  });
-
-  it('não reabre confusão vinda de reply automático', () => {
-    resetAutoReplyLoop();
+    for (let i = 0; i < MAX_AUTO_REPLY_LOOPS + 3; i += 1) noteAutoReplyOpened({ sayText: 'Feito.' });
     expect(
       shouldReopenJarvisListening({
         expectReply: false,
-        sayText: "Não entendi, patrão. Pode explicar melhor?",
-        realtimeTurnActive: false,
-        isRealtimeLive: false,
+        sayText: 'Feito.',
+        realtimeTurnActive: true,
+        isRealtimeLive: true,
         captureReason: 'reply',
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 });

@@ -103,7 +103,7 @@ const CLICK_WAKE_MIN_LISTEN_MS = 1_125; // mouse wake starts after ack; close qu
 const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
 const CLICK_WAKE_MAX_MS = 22_000; // click wake is intentional, so allow a slower follow-up
 const PTT_HOLD_MAX_MS = 60_000; // hold-to-talk sem keyup (tap morto) fecha aqui
-const JARVIS_MEMORY_MS = 240_000; // 4 min: conversa continua sem recomeçar do zero
+const JARVIS_MEMORY_MS = 300_000; // 5 min: janela de continuidade (paridade com IDLE_TIMEOUT do Overclock)
 const PENDING_REALTIME_AUDIO_MAX_CHUNKS = 160;
 
 // Deadlines das invocações renderer→main (cinto E suspensório sobre os
