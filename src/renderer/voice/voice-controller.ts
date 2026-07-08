@@ -51,6 +51,7 @@ import { executeJarvisAction } from './jarvis-action-executor';
 import { mcpClearSession } from '../services/mcp-bridge';
 import { splitForPipelinedSpeech } from './speech-segments';
 import { realtimeToolEventToJarvisAction } from './realtime-action';
+import { buildScreenSnapshot, type ScreenSnapshot } from './screen-context';
 import {
   shouldLetRealtimeProviderAnswer,
   shouldUseClassicActionBridge,
@@ -342,36 +343,40 @@ function personaUserName(): string {
   return useVoiceStore.getState().info?.persona.userName?.trim() ?? '';
 }
 
-
-interface ScreenSnapshot {
-  context: string;
-  wakePrompt: string;
-}
-
 function currentScreenSnapshot(): ScreenSnapshot {
   const workspace = useWorkspaceStore.getState().current;
   const { root, focusedPaneId, viewKind } = useLayoutStore.getState();
   const panes = listPanes(root);
-  const focused = panes.find((p) => p.id === focusedPaneId);
+  const orchPaneId = findOrchestratorPane(root);
   const orch = useOrchStore.getState();
   const wizard = useMissionWizardStore.getState();
   const files = useFilesStore.getState();
   const settings = useSettingsStore.getState();
   const homeVisible = useHomeStore.getState().visible;
   const voiceSettingsOpen = useVoiceStore.getState().settingsOpen;
-  const wsName = workspace?.name ?? 'nenhum projeto';
+  const activeMissions = orch.missions
+    .filter((m) => m.status !== 'done')
+    .map((m) => `${m.title} (${m.status})`);
+  const baseScreenInput = {
+    workspaceName: workspace?.name ?? null,
+    viewKind,
+    panes,
+    focusedPaneId,
+    orchestratorPaneId: orchPaneId,
+    activeMissions,
+  };
 
   if (voiceSettingsOpen) {
-    return {
-      context: 'Configurações de voz abertas: pipeline, keys, wake word, live mode e persona.',
-      wakePrompt: 'Estou nas configurações de voz. O que você quer ajustar agora?',
-    };
+    return buildScreenSnapshot({
+      ...baseScreenInput,
+      surface: { kind: 'voice-settings' },
+    });
   }
   if (settings.drawerOpen) {
-    return {
-      context: 'Drawer de configurações aberto: providers, contas, catálogo, mídia, shortcuts e módulos.',
-      wakePrompt: 'Estou nas configurações. Quer ajustar providers, keys ou outro módulo?',
-    };
+    return buildScreenSnapshot({
+      ...baseScreenInput,
+      surface: { kind: 'settings' },
+    });
   }
   if (wizard.open) {
     const mode = wizard.presetSquadId
@@ -379,56 +384,47 @@ function currentScreenSnapshot(): ScreenSnapshot {
       : wizard.variant === 'workspace'
         ? 'novo workspace'
         : 'nova missão';
-    return {
-      context: `Wizard aberto em ${mode}.`,
-      wakePrompt: `Estou no assistente de ${mode}. Qual opção vamos escolher?`,
-    };
+    return buildScreenSnapshot({
+      ...baseScreenInput,
+      surface: { kind: 'wizard', mode },
+    });
   }
   if (homeVisible) {
-    const squads = orch.squads.slice(0, 3).map((s) => s.name).join(', ');
-    return {
-      context:
-        `Tela "Pronto para operar" no workspace ${wsName}. ` +
-        `Ações visíveis: iniciar missão, squad sob medida, terminal` +
-        (squads ? `, squads prontos (${squads})` : '') +
-        '.',
-      wakePrompt:
-        'Estou na tela Pronto para operar. Quer iniciar uma missão, montar um squad sob medida ou usar um squad pronto?',
-    };
+    return buildScreenSnapshot({
+      ...baseScreenInput,
+      surface: {
+        kind: 'home',
+        readySquads: orch.squads.slice(0, 3).map((s) => s.name),
+      },
+    });
   }
   if (files.open) {
-    const file = files.openFile?.relPath;
-    return {
-      context: file
-        ? `Painel de arquivos aberto no arquivo ${file}${files.openFile?.dirty ? ' com alterações não salvas' : ''}.`
-        : 'Painel de arquivos aberto, sem arquivo selecionado.',
-      wakePrompt: file
-        ? `Estou no arquivo ${file}. Quer que eu leia, edite ou salve algo nele?`
-        : 'Estou no painel de arquivos. Qual arquivo quer abrir?',
-    };
+    return buildScreenSnapshot({
+      ...baseScreenInput,
+      surface: {
+        kind: 'files',
+        file: files.openFile?.relPath ?? null,
+        dirty: files.openFile?.dirty ?? false,
+      },
+    });
   }
   if (orch.boardOpen) {
-    return {
-      context: `Ops Board aberto com ${orch.missions.length} missões no workspace ${wsName}.`,
-      wakePrompt: 'Estou no quadro de missões. Quer ver status, abrir uma missão ou criar outra?',
-    };
+    return buildScreenSnapshot({
+      ...baseScreenInput,
+      surface: { kind: 'ops-board', missionCount: orch.missions.length },
+    });
   }
   if (orch.panelOpen) {
-    return {
-      context: `Painel de orquestração aberto na aba ${orch.panelTab}.`,
-      wakePrompt: `Estou no painel de orquestração, aba ${orch.panelTab}. O que quer verificar?`,
-    };
+    return buildScreenSnapshot({
+      ...baseScreenInput,
+      surface: { kind: 'orch-panel', tab: orch.panelTab },
+    });
   }
 
-  return {
-    context:
-      `Workspace ${wsName} em modo ${viewKind}. ` +
-      `${panes.length} pane${panes.length === 1 ? '' : 's'} aberto${panes.length === 1 ? '' : 's'}. ` +
-      `Pane focado: ${focused?.title ?? 'nenhum'}.`,
-    wakePrompt: focused
-      ? `Estou no pane ${focused.title}. O que vamos fazer nele?`
-      : `Estou no workspace ${wsName}. Quer abrir missão, terminal ou squad?`,
-  };
+  return buildScreenSnapshot({
+    ...baseScreenInput,
+    surface: { kind: 'workspace' },
+  });
 }
 
 function buildJarvisContext(): JarvisContext {

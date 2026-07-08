@@ -66,6 +66,19 @@ describe('jarvisFastPath', () => {
     expect(jarvisFastPath('what panes are open?', CTX)?.say).toContain('2 panes');
   });
 
+  it('fala em português mesmo quando o contexto interno da tela está em inglês', () => {
+    const reply = jarvisFastPath('onde estamos?', {
+      ...CTX,
+      screen:
+        'Current Nexus screen: files panel open on package.json with unsaved changes. Workspace: nexus-ide. View: canvas.',
+    });
+
+    expect(reply?.say).toContain('painel de arquivos');
+    expect(reply?.say).toContain('package.json');
+    expect(reply?.say).toContain('patrão');
+    expect(reply?.say).not.toContain('Current Nexus screen');
+  });
+
   it('NUNCA intercepta pedidos de ação — mesmo citando squad/pane', () => {
     expect(jarvisFastPath('abre o squad de code review', CTX)).toBeNull();
     expect(jarvisFastPath('roda npm test no pane', CTX)).toBeNull();

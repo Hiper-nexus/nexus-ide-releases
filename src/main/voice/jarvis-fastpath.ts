@@ -54,6 +54,46 @@ function focusedPaneDescription(ctx: JarvisContext): string {
   return `Pane focado: ${ctx.focusedPane} (${kind})${url}.`;
 }
 
+function currentScreenDescription(ctx: JarvisContext): string {
+  const screen = ctx.screen?.trim() ?? '';
+  const normalized = screen.toLowerCase();
+  if (normalized.includes('voice settings open')) {
+    return 'Estou nas configurações de voz.';
+  }
+  if (normalized.includes('settings drawer open')) {
+    return 'Estou nas configurações.';
+  }
+  const wizard = screen.match(/wizard open:\s*([^.;]+)/i);
+  if (wizard?.[1]) {
+    return `Estou no assistente de ${wizard[1].trim()}.`;
+  }
+  if (normalized.includes('home deck open')) {
+    return ctx.workspace
+      ? `Estou na tela Pronto para operar do ${ctx.workspace}.`
+      : 'Estou na tela Pronto para operar.';
+  }
+  const file = screen.match(
+    /files panel open on\s+(.+?)(?:\s+with unsaved changes|\. Workspace:|\. View:|\. Panes|\.$|$)/i,
+  );
+  if (file?.[1]) {
+    return `Estou no painel de arquivos, no arquivo ${file[1].trim()}.`;
+  }
+  if (normalized.includes('files panel open')) {
+    return 'Estou no painel de arquivos.';
+  }
+  if (normalized.includes('ops board open')) {
+    return ctx.workspace
+      ? `Estou no quadro de missões do ${ctx.workspace}.`
+      : 'Estou no quadro de missões.';
+  }
+  if (normalized.includes('orchestration panel open')) {
+    return 'Estou no painel de orquestração.';
+  }
+  if (screen && !normalized.startsWith('current nexus screen:')) return screen;
+  const workspace = ctx.workspace ? `Workspace ${ctx.workspace}. ` : '';
+  return `${workspace}${focusedPaneDescription(ctx)}`.trim();
+}
+
 /** Tenta responder a consulta direto do contexto. null = deixa para o LLM. */
 export function jarvisFastPath(
   transcript: string,
@@ -120,7 +160,7 @@ export function jarvisFastPath(
     )
   ) {
     return {
-      say: address(ctx, ctx.screen ?? focusedPaneDescription(ctx)),
+      say: address(ctx, currentScreenDescription(ctx)),
       expectReply: false,
       action: { type: 'none' },
     };
