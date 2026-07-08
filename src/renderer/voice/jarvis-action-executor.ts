@@ -9,6 +9,10 @@ import { useGamificationStore } from '../state/gamification-store';
 import { useVoiceStore } from './voice-store';
 import { useSettingsStore } from '../state/settings-store';
 import { waitForSession, writeToPane } from '../terminal/terminal-host';
+import {
+  assessTerminalVisibility,
+  readUiVisibilityState,
+} from './terminal-visibility';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { launchSquadMission } from '../orch/mission-launcher';
 import { isMissingModelKeyError } from '../lib/credential-errors';
@@ -42,6 +46,25 @@ function paneContext() {
 function mcpSummary(result: { ok: boolean; tool: string; error?: string }): string {
   if (result.ok) return `${result.tool} ok`;
   return result.error ?? `${result.tool} falhou`;
+}
+
+/** Fecha overlays que cobrem a área de panes (perfil, home, settings…). */
+function dismissBlockingOverlays(): void {
+  useGamificationStore.getState().closeProfile();
+  useHomeStore.getState().hide();
+  useMissionWizardStore.getState().close();
+  useOrchStore.getState().closeBoard();
+  useVoiceStore.getState().closeSettings();
+  const settings = useSettingsStore.getState();
+  if (settings.drawerOpen) settings.toggleDrawer();
+}
+
+/** Garante que o pane recém-aberto fique visível (grade + foco). */
+function revealPaneForUser(paneId: string): void {
+  dismissBlockingOverlays();
+  const layout = useLayoutStore.getState();
+  if (layout.viewKind !== 'grid') layout.toggleView();
+  layout.focus(paneId);
 }
 
 function focusedOrFirstBrowserPane(): { id: string; title: string } | null {
@@ -258,13 +281,37 @@ export async function executeJarvisAction(
     useMissionWizardStore.getState().openForNewWorkspace();
     toolResult = { tool: action.type, ok: true, summary: 'wizard de workspace aberto' };
   } else if (action.type === 'open_terminal') {
-    useGamificationStore.getState().closeProfile();
-    const paneId = useLayoutStore.getState().addShellPane();
-    useHomeStore.getState().hide();
-    const sessionId = await waitForSession(paneId, 5_000);
-    const ok = Boolean(sessionId);
-    sayText = ok ? 'Terminal aberto.' : 'Abri o painel, mas o terminal ainda não iniciou.';
-    toolResult = { tool: action.type, ok, summary: ok ? 'terminal aberto' : 'terminal sem sessão' };
+    const workspace = useWorkspaceStore.getState().current;
+    if (!workspace) {
+      sayText = 'Abre um projeto primeiro; aí eu abro o terminal nele.';
+      toolResult = { tool: action.type, ok: false, summary: 'sem workspace aberto' };
+    } else {
+      const layout = useLayoutStore.getState();
+      const panes = listPanes(layout.root);
+      const homeVisible = useHomeStore.getState().visible;
+      const loneShell =
+        panes.length === 1 && panes[0].kind === 'shell' && !panes[0].orchRequestId;
+      const paneId =
+        loneShell && homeVisible ? panes[0].id : layout.addShellPane();
+      revealPaneForUser(paneId);
+      const sessionId = await waitForSession(paneId, 5_000);
+      const visibility = assessTerminalVisibility(
+        paneId,
+        readUiVisibilityState(),
+        Boolean(sessionId),
+      );
+      if (visibility.visible) {
+        sayText = 'Terminal aberto.';
+        toolResult = { tool: action.type, ok: true, summary: 'terminal aberto e visível' };
+      } else if (sessionId) {
+        const blocked = visibility.reasons.join(', ');
+        sayText = `Criei o terminal, mas ainda não está visível (${blocked}).`;
+        toolResult = { tool: action.type, ok: false, summary: `terminal oculto: ${blocked}` };
+      } else {
+        sayText = 'Abri o painel, mas o terminal ainda não iniciou.';
+        toolResult = { tool: action.type, ok: false, summary: 'terminal sem sessão' };
+      }
+    }
   } else if (action.type === 'close_pane') {
     const layout = useLayoutStore.getState();
     const target = layout.focusedPaneId;
