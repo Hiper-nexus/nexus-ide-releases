@@ -335,12 +335,17 @@ export class LiveTransportController {
         args: call.arguments,
       });
       if (event) {
-        this.toolResult({
-          ...event,
+        const result = this.fsm.toolResult({
+          source: 'realtime',
+          callId: call.callId,
+          name: call.name,
+          tool: 'none',
+          args: call.arguments,
           ok: false,
           summary: `tool realtime não suportada: ${call.name}`,
           output: { error: 'unsupported_tool' },
         });
+        if (result) this.toolResult(result);
       }
       return;
     }
@@ -356,6 +361,21 @@ export class LiveTransportController {
       args: call.arguments,
     });
     if (!event || action) return;
+    const result = this.fsm.toolResult({
+      source: 'realtime',
+      callId: call.callId,
+      name: call.name,
+      tool: event.tool,
+      args: call.arguments,
+      ok: false,
+      summary: `ação realtime inválida: ${summarizeNexusRealtimeAction(args)}`,
+      output: {
+        error: 'invalid_action',
+        expected: 'valid Nexus action arguments',
+        args,
+      },
+    });
+    if (result) this.toolResult(result);
   }
 
   private sendProviderContext(): void {

@@ -491,6 +491,73 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
+  it('returns structured errors for invalid realtime action arguments', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'openai', provider }];
+    const events: Array<{ channel: string; payload: unknown }> = [];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'openai-realtime',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['openai'],
+    }));
+
+    const { VOICE_CHANNELS } = await import('../../shared/voice-channels');
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(
+      (channel, payload) => events.push({ channel, payload }),
+      () => 1000,
+    );
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(
+      (channel, payload) => events.push({ channel, payload }),
+      session,
+    );
+
+    await controller.onStart();
+    provider.fireToolCall({
+      callId: 'call_bad',
+      argumentsJson: '{"action":"open_workspace"}',
+      arguments: { action: 'open_workspace' },
+    });
+
+    expect(provider.sendToolResult).toHaveBeenCalledWith(
+      'call_bad',
+      expect.objectContaining({
+        ok: false,
+        tool: 'none',
+        summary: expect.stringContaining('ação realtime inválida'),
+        output: expect.objectContaining({ error: 'invalid_action' }),
+      }),
+    );
+    expect(events.some((event) => event.channel === VOICE_CHANNELS.liveToolResult)).toBe(
+      true,
+    );
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
   it('bridges realtime MCP tool calls through the audited Jarvis executor path', async () => {
     vi.resetModules();
     const provider = fakeProvider(async () => {});
