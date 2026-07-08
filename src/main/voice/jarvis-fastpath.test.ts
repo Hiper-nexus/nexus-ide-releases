@@ -39,6 +39,9 @@ describe('jarvisFastPath', () => {
     expect(jarvisFastPath('qual pane esta focado?', CTX)?.say).toContain(
       'pane-2 [agente]',
     );
+    expect(jarvisFastPath('qual pane está?', CTX)?.say).toContain(
+      'pane-2 [agente]',
+    );
     const browserCtx: JarvisContext = {
       ...CTX,
       focusedPane: 'Preview',
@@ -46,6 +49,9 @@ describe('jarvisFastPath', () => {
       focusedPaneUrl: 'https://example.com/docs',
     };
     expect(jarvisFastPath('qual pagina estamos?', browserCtx)?.say).toContain(
+      'https://example.com/docs',
+    );
+    expect(jarvisFastPath('onde a página está?', browserCtx)?.say).toContain(
       'https://example.com/docs',
     );
     expect(jarvisFastPath('onde estamos?', CTX)?.say).toContain('modo canvas');

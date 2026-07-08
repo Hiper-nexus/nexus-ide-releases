@@ -140,7 +140,11 @@ export function jarvisFastPath(
     /\b(qual|que|em que|onde)\b.*\b(pane|painel|terminal|aba)\b.*\b(focado|atual|selecionado|estou|estamos)\b/.test(
       t,
     ) ||
+    /\b(qual|em que|onde)\b.*\b(pane|painel|terminal|aba)\b.*\b(esta|to|tou|estamos)\b/.test(
+      t,
+    ) ||
     /\b(qual|que|em que)\b.*\b(pagina|url|site)\b.*\b(atual|aberta|estou|estamos)\b/.test(t) ||
+    /\b(qual|em que|onde)\b.*\b(pagina|url|site)\b.*\b(esta|to|tou|estamos)\b/.test(t) ||
     /\b(what|which)\b.*\b(pane|panel|terminal|tab)\b.*\b(focused|current|selected|on)\b/.test(t) ||
     /\b(what|which)\b.*\b(page|url|site)\b.*\b(current|open|on)\b/.test(t)
   ) {

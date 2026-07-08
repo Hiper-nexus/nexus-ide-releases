@@ -13,43 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.10.27',
+  version: '0.10.28',
   date: '2026-07-08',
-  codename: 'Jarvis Voice Lock',
+  codename: 'Jarvis Live Control',
   summary:
-    'A Jarvis ficou mais estável em voz e wake/click, com retry automático da voz principal e menos desistência prematura no realtime.',
+    'A Jarvis ficou mais operacional em wake, clique e realtime, com recuperação de fala fraca e contrato único para ações live.',
   highlights: [
     {
-      title: 'Voz principal volta sozinha',
+      title: 'Fala fraca não morre antes do STT',
       detail:
-        'Quando o TTS cai para fallback por quota/rede, a Jarvis mantém a fala viva por alguns turnos, mas volta a tentar a voz OpenAI configurada automaticamente.',
+        'Turnos iniciados por Hey Jarvis ou clique agora usam RMS/pico da captura para tentar STT mesmo quando o gate principal marcou sinal baixo.',
     },
     {
-      title: 'Wake por clique mais paciente',
+      title: 'Realtime actions com contrato único',
       detail:
-        'Turnos iniciados por Hey Jarvis ou clique ganham uma janela maior para receber transcript final realtime antes de desistir ou cair para o Classic.',
+        'OpenAI Realtime e Classic compartilham o mesmo mapeamento de ações Nexus, reduzindo drift entre conversa live e executor auditável.',
     },
     {
-      title: 'Menu de configurações alinhado',
+      title: 'Perguntas de contexto mais rápidas',
       detail:
-        'O botão Fechar do painel de configurações virou rodapé próprio, sem raspar por cima dos itens do catálogo.',
+        'Consultas como qual pane ou página estamos entram no fast-path local, sem esperar LLM para responder o estado atual do app.',
     },
   ],
   fixes: [
     {
-      title: 'Fallback TTS rastreável',
+      title: 'Diagnóstico de mic baixo',
       detail:
-        'O log agora deixa claro quando a voz está em fallback temporário e quando a voz principal foi recuperada.',
+        'O log persistente registra duração, RMS e pico de capturas fracas sem gravar conteúdo da fala, ajudando a calibrar o Fifine no teste real.',
     },
     {
-      title: 'Realtime com diagnóstico melhor',
+      title: 'Wake/click continuam protegidos contra eco',
       detail:
-        'Mensagens de timeout do transcript realtime mostram a janela usada, separando wake/click de PTT/manual.',
+        'A recuperação de fala fraca só vale para wake/clique e ainda passa pelos filtros de ACK, lixo de Whisper e eco de TTS.',
     },
     {
-      title: 'Manual e PTT continuam rápidos',
+      title: 'Sem referência externa no código',
       detail:
-        'A janela maior foi limitada aos turnos hands-free; captura manual e push-to-talk seguem no caminho curto.',
+        'A implementação mantém nomes e comparações privadas fora dos arquivos rastreados do produto.',
     },
   ],
 };

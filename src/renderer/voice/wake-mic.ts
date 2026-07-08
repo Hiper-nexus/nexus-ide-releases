@@ -90,6 +90,9 @@ export class WakeMic {
   private uttFired = false;
   private uttHeardSpeech = false;
   private uttSpeechMs = 0;
+  private uttMaxRms = 0;
+  private uttMaxPeak = 0;
+  private uttRawMaxRms = 0;
   private uttLastSpeechAt = 0;
   private uttStartedAt = 0;
   private uttDeadline: ReturnType<typeof setTimeout> | null = null;
@@ -173,6 +176,9 @@ export class WakeMic {
     this.uttFired = false;
     this.uttHeardSpeech = false;
     this.uttSpeechMs = 0;
+    this.uttMaxRms = 0;
+    this.uttMaxPeak = 0;
+    this.uttRawMaxRms = 0;
     this.uttStartedAt = Date.now();
     this.uttLastSpeechAt = this.uttStartedAt;
     this.markSeededSpeech(seeded);
@@ -200,11 +206,22 @@ export class WakeMic {
     this.uttChunks = [];
     const rate = this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE;
     const down = downsample(pcm, rate, TARGET_SAMPLE_RATE);
+    if (!this.uttHeardSpeech || this.uttMaxRms < SPEECH_RMS) {
+      this.log('info', 'utt.weakSignal', 'captura wake/clique com sinal fraco', {
+        durationSec: down.length / TARGET_SAMPLE_RATE,
+        heardSpeech: this.uttHeardSpeech,
+        maxRms: Number(this.uttMaxRms.toFixed(5)),
+        maxPeak: Number(this.uttMaxPeak.toFixed(5)),
+        rawMaxRms: Number(this.uttRawMaxRms.toFixed(5)),
+      });
+    }
     return {
       wavBase64: bytesToBase64(encodeWav(down, TARGET_SAMPLE_RATE)),
       sampleRate: TARGET_SAMPLE_RATE,
       durationSec: down.length / TARGET_SAMPLE_RATE,
       heardSpeech: this.uttHeardSpeech,
+      maxRms: this.uttMaxRms,
+      maxPeak: this.uttMaxPeak,
     };
   }
 
@@ -221,6 +238,9 @@ export class WakeMic {
     }
     const rms = Math.sqrt(sum / Math.max(1, frame.length));
     const now = Date.now();
+    this.uttMaxRms = Math.max(this.uttMaxRms, rms);
+    this.uttMaxPeak = Math.max(this.uttMaxPeak, peak);
+    this.uttRawMaxRms = Math.max(this.uttRawMaxRms, rawRms);
     const rawBackedSpeech = rawRms >= RAW_SPEECH_RMS && rms >= SPEECH_RMS && peak >= SPEECH_PEAK;
     const strongSpeech = rms >= STRONG_SPEECH_RMS && peak >= STRONG_SPEECH_PEAK;
     if (rawBackedSpeech || strongSpeech) {
@@ -274,6 +294,8 @@ export class WakeMic {
         peak = Math.max(peak, Math.abs(sample));
       }
       const rms = Math.sqrt(sum / Math.max(1, frame.length));
+      this.uttMaxRms = Math.max(this.uttMaxRms, rms);
+      this.uttMaxPeak = Math.max(this.uttMaxPeak, peak);
       if (rms >= SPEECH_RMS && peak >= SPEECH_PEAK) {
         this.uttSpeechMs += (frame.length / (this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE)) * 1000;
       }

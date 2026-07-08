@@ -1038,15 +1038,19 @@ async function finishAndProcess(
       wavBase64: result.wavBase64,
       durationSec: result.durationSec,
       heardSpeech: result.heardSpeech,
+      maxRms: result.maxRms,
+      maxPeak: result.maxPeak,
       minSpeechSec: MIN_SPEECH_SEC,
     };
-    const localSpeechUsable = hasUsableLocalSpeech(captureGate);
+    const allowWeakSpeech = isAckGatedCapture();
+    const localSpeechUsable = hasUsableLocalSpeech(captureGate, { allowWeakSpeech });
     if (
       shouldDiscardBeforeRealtime(
         captureGate,
         {
           shouldTryRealtime: shouldTryRealtimeTranscript,
           hasQueuedRealtimeTranscript: Boolean(queuedRealtimeTranscript),
+          allowWeakSpeech,
         },
       )
     ) {
@@ -1056,6 +1060,14 @@ async function finishAndProcess(
       store.setStatus('idle');
       liveEndTurn();
       return;
+    }
+    if (allowWeakSpeech && result.heardSpeech === false && localSpeechUsable) {
+      logVoiceEvent('info', 'jarvis.weakSpeechAccepted', 'wake/click enviado ao STT por sinal fraco', {
+        reason: activeCaptureReason,
+        durationSec: Number(result.durationSec.toFixed(2)),
+        maxRms: Number((result.maxRms ?? 0).toFixed(5)),
+        maxPeak: Number((result.maxPeak ?? 0).toFixed(5)),
+      });
     }
 
     if (shouldTryRealtimeTranscript) {

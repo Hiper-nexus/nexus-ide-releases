@@ -22,6 +22,10 @@ export interface CaptureResult {
   sampleRate: number;
   /** Total captured audio in seconds (0 when nothing was recorded). */
   durationSec: number;
+  /** Peak RMS measured after resampling/AGC. Useful for weak-mic gating. */
+  maxRms?: number;
+  /** Peak absolute sample measured after resampling/AGC. */
+  maxPeak?: number;
 }
 
 /**
@@ -147,6 +151,7 @@ export class VoiceCapture {
       sampleRate: TARGET_SAMPLE_RATE,
       durationSec: downsampled.length / TARGET_SAMPLE_RATE,
       heardSpeech: this.heardSpeech,
+      ...audioStats(downsampled),
     };
   }
 
@@ -208,6 +213,24 @@ export function mergeChunks(chunks: Float32Array[]): Float32Array {
     offset += c.length;
   }
   return out;
+}
+
+export function audioStats(samples: Float32Array): { maxRms: number; maxPeak: number } {
+  if (samples.length === 0) return { maxRms: 0, maxPeak: 0 };
+  const frameSize = Math.max(1, Math.round(TARGET_SAMPLE_RATE * 0.08));
+  let maxRms = 0;
+  let maxPeak = 0;
+  for (let offset = 0; offset < samples.length; offset += frameSize) {
+    let sum = 0;
+    const end = Math.min(samples.length, offset + frameSize);
+    for (let i = offset; i < end; i += 1) {
+      const sample = samples[i] ?? 0;
+      sum += sample * sample;
+      maxPeak = Math.max(maxPeak, Math.abs(sample));
+    }
+    maxRms = Math.max(maxRms, Math.sqrt(sum / Math.max(1, end - offset)));
+  }
+  return { maxRms, maxPeak };
 }
 
 /** Linear-interpolation resample from `inRate` to `outRate`. */

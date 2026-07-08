@@ -10,8 +10,39 @@ describe('capture-gate', () => {
         wavBase64: 'wav',
         durationSec: 2,
         heardSpeech: false,
+        maxRms: 0.008,
         minSpeechSec: MIN_SPEECH_SEC,
       }),
+    ).toBe(false);
+  });
+
+  it('recovers weak wake/click speech when the caller explicitly allows it', () => {
+    expect(
+      hasUsableLocalSpeech(
+        {
+          wavBase64: 'wav',
+          durationSec: 2,
+          heardSpeech: false,
+          maxRms: 0.008,
+          minSpeechSec: MIN_SPEECH_SEC,
+        },
+        { allowWeakSpeech: true },
+      ),
+    ).toBe(true);
+  });
+
+  it('does not recover empty weak captures even when weak speech is allowed', () => {
+    expect(
+      hasUsableLocalSpeech(
+        {
+          wavBase64: '',
+          durationSec: 0,
+          heardSpeech: false,
+          maxRms: 0.02,
+          minSpeechSec: MIN_SPEECH_SEC,
+        },
+        { allowWeakSpeech: true },
+      ),
     ).toBe(false);
   });
 
@@ -50,10 +81,30 @@ describe('capture-gate', () => {
           wavBase64: 'wav',
           durationSec: 2,
           heardSpeech: false,
+          maxRms: 0.001,
           minSpeechSec: MIN_SPEECH_SEC,
         },
         { shouldTryRealtime: false, hasQueuedRealtimeTranscript: false },
       ),
     ).toBe(true);
+  });
+
+  it('keeps weak wake/click speech for Classic STT when realtime is unavailable', () => {
+    expect(
+      shouldDiscardBeforeRealtime(
+        {
+          wavBase64: 'wav',
+          durationSec: 2,
+          heardSpeech: false,
+          maxPeak: 0.04,
+          minSpeechSec: MIN_SPEECH_SEC,
+        },
+        {
+          shouldTryRealtime: false,
+          hasQueuedRealtimeTranscript: false,
+          allowWeakSpeech: true,
+        },
+      ),
+    ).toBe(false);
   });
 });
