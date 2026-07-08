@@ -349,7 +349,10 @@ export class WakeMic {
       const inputs = devices.filter(
         (device) => device.kind === 'audioinput' && device.deviceId,
       );
+      // Prefer the non-"default" USB device entry — "default" routing can
+      // deliver zeros in CoreAudio after a TCC reset even when granted.
       const preferred =
+        inputs.find((device) => /fifine/i.test(device.label) && device.deviceId !== 'default') ??
         inputs.find((device) => /fifine/i.test(device.label)) ??
         inputs.find((device) => device.deviceId === 'default') ??
         inputs[0];
