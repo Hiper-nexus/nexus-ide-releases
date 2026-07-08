@@ -4,10 +4,14 @@ export interface SpeechSegments {
 }
 
 const FIRST_SEGMENT_MAX_CHARS = 180;
+/** Só divide TTS em duas chamadas em respostas longas — evita “duas vozes” por turno. */
+const PIPELINE_MIN_CHARS = 400;
 
 export function splitForPipelinedSpeech(text: string): SpeechSegments {
   const trimmed = text.trim();
-  if (!trimmed) return { first: '', rest: '' };
+  if (!trimmed || trimmed.length <= PIPELINE_MIN_CHARS) {
+    return { first: trimmed, rest: '' };
+  }
   const sentenceMatch = trimmed.match(/^(.{1,180}?[.!?])\s+(.+)$/s);
   if (sentenceMatch?.[1] && sentenceMatch[2]) {
     return {
