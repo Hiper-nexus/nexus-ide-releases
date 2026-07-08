@@ -304,6 +304,16 @@ function liveEndTurn(): void {
     .catch(() => {});
 }
 
+function sendLiveContextSnapshot(): void {
+  if (!isJarvisLiveEnabled()) return;
+  window.nexus.voice.liveContextIn(currentScreenSnapshot().context);
+}
+
+function queueLiveContextRefresh(): void {
+  sendLiveContextSnapshot();
+  window.setTimeout(sendLiveContextSnapshot, 120);
+}
+
 function logVoiceEvent(
   level: 'info' | 'warn' | 'error',
   event: string,
@@ -544,6 +554,7 @@ async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promise<void
         tool: toolResult.tool,
       },
     });
+    queueLiveContextRefresh();
 
     if (toolResult.ok) {
       void window.nexus.gamification
@@ -963,7 +974,10 @@ async function beginListening(
       void window.nexus.voice.liveStart({ reason }).then((state) => {
         store.setLiveState(state);
         if (!state.realtimeReady) realtimeTurnActive = false;
-        if (state.realtimeReady) window.nexus.voice.liveContextIn(liveContext);
+        if (state.realtimeReady) {
+          window.nexus.voice.liveContextIn(liveContext);
+          window.setTimeout(sendLiveContextSnapshot, 120);
+        }
       }).catch((err) => {
         realtimeTurnActive = false;
         console.warn('[voice] liveStart falhou (classic segue):', errMsg(err));
@@ -1034,7 +1048,8 @@ async function finishAndProcess(
       store.setStatus('transcribing');
       liveStatus('thinking');
       suppressRealtimeAudioOut = true;
-      liveEndTurn();
+      // Keep the live FSM open while the provider finalizes transcript/tool calls.
+      // Ending here makes the HUD go dormant right after the wake ack/click wake.
       const liveTranscript = await waitForRealtimeTranscript();
       if (hasRealtimeNativeToolSince(tRealtime)) {
         realtimeTurnActive = false;
@@ -1325,6 +1340,7 @@ async function runJarvisTurn(
 
   if (toolResult && isJarvisLiveEnabled()) {
     window.nexus.voice.liveToolResult(toolResult);
+    queueLiveContextRefresh();
   }
 
   if (!sayText.trim()) {
