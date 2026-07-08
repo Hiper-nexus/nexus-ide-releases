@@ -19,10 +19,16 @@ import {
   delay,
   noteAutoReplyOpened,
   resetAutoReplyLoopForCapture,
-  REPLY_LISTEN_DELAY_MS,
   type JarvisCaptureReason,
   shouldReopenJarvisListening,
 } from './jarvis-reply-loop';
+import {
+  estimatedSpeechMs,
+  playbackWakeSuppressionMs,
+  realtimeChunkSuppressionMs,
+  replyReopenDelayMs,
+  TTS_TAIL_GUARD_MS,
+} from './voice-suppression-window';
 import {
   bindWakeSuppressor,
   playAudioBase64,
@@ -247,8 +253,11 @@ function resetPendingRealtimeAudioOut(): void {
 
 function playRealtimeAudioOut(b64: string): void {
   useVoiceStore.getState().setStatus('speaking');
-  wakeMic.suppressWakeDetection(1_200);
-  ensureLivePlayer().play(b64);
+  // Tie suppression to the ACTUAL chunk duration + tail (was a fixed 1200 ms).
+  // Each streamed chunk re-extends the window, so a long realtime reply never
+  // leaves a gap for "Hey Jarvis" to self-fire on her own audio.
+  const chunkMs = ensureLivePlayer().play(b64);
+  wakeMic.suppressWakeDetection(realtimeChunkSuppressionMs(chunkMs));
 }
 
 function flushPendingRealtimeAudioOut(): void {
@@ -730,23 +739,23 @@ async function speakSegment(text: string, label: string): Promise<SpeakResult> {
 
 async function speakAndPlayPipelined(
   text: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true; playedMs: number } | { ok: false; error: string }> {
   const { first, rest } = splitForPipelinedSpeech(text);
-  if (!first) return { ok: true };
+  if (!first) return { ok: true, playedMs: 0 };
   const firstSpoken = await speakSegment(first, 'TTS');
   if (!firstSpoken.ok) return { ok: false, error: firstSpoken.error };
   surfaceTtsFallback(firstSpoken);
 
   const restPromise =
     rest && firstSpoken.mode === 'audio' ? speakSegment(rest, 'TTS continuação') : null;
-  await playSpeakResult(firstSpoken);
+  let playedMs = await playSpeakResult(firstSpoken);
 
-  if (!rest) return { ok: true };
+  if (!rest) return { ok: true, playedMs };
   const restSpoken = restPromise ? await restPromise : await speakSegment(rest, 'TTS continuação');
   if (!restSpoken.ok) return { ok: false, error: restSpoken.error };
   surfaceTtsFallback(restSpoken);
-  await playSpeakResult(restSpoken);
-  return { ok: true };
+  playedMs += await playSpeakResult(restSpoken);
+  return { ok: true, playedMs };
 }
 
 
@@ -1609,13 +1618,22 @@ async function runJarvisTurn(
   // Classic: só reabre escuta quando o cérebro pediu resposta de verdade.
   // jarvisLive.enabled no painel NÃO é full-duplex — reabrir sempre gerava loop
   // (TTS ecoando no mic → "não entendi" → TTS → …).
-  wakeMic.suppressWakeDetection(
-    Math.min(15_000, Math.max(4_500, sayText.length * 70 + REPLY_LISTEN_DELAY_MS + 2_500)),
-  );
+  // Playback de áudio já suprimiu o wake pela duração REAL (playAudioBase64);
+  // aqui, pós-drain, só resta a cauda acústica. No modo system-`say` (sem
+  // buffer no renderer, playedMs=0) estima do texto para cobrir a fala do main.
+  const postTtsSuppressionMs =
+    spoken.playedMs > 0
+      ? TTS_TAIL_GUARD_MS
+      : playbackWakeSuppressionMs(estimatedSpeechMs(sayText.length));
+  wakeMic.suppressWakeDetection(postTtsSuppressionMs);
   if (wantsReply) {
     busy.current = false;
-    wakeMic.suppressWakeDetection(REPLY_LISTEN_DELAY_MS + REPLY_MIN_LISTEN_MS);
-    await delay(REPLY_LISTEN_DELAY_MS);
+    // NUNCA reabrir o mic enquanto a cauda do próprio TTS ainda soa: o playback
+    // já drenou (speakAndPlayPipelined aguardou o onended); espera a guarda de
+    // cauda acústica antes de reabrir, e suprime o wake por toda essa janela.
+    const reopenDelay = replyReopenDelayMs();
+    wakeMic.suppressWakeDetection(reopenDelay + REPLY_MIN_LISTEN_MS);
+    await delay(reopenDelay);
     noteAutoReplyOpened({ sayText });
     void beginListening(
       capture,

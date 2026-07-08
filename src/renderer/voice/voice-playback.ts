@@ -1,4 +1,5 @@
 import { useVoiceStore } from './voice-store';
+import { playbackWakeSuppressionMs } from './voice-suppression-window';
 import type { SpeakResult } from '../../shared/voice-ipc';
 
 /** Silencia detecção de wake word durante reprodução de TTS. */
@@ -41,15 +42,22 @@ function base64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
-export async function playAudioBase64(base64: string, _format: string): Promise<void> {
+/** Plays the TTS bytes and returns the actual playback duration in ms (0 if a
+ *  newer playback superseded it). The returned duration lets callers tie the
+ *  post-TTS wake-suppression window to the REAL length of what was spoken. */
+export async function playAudioBase64(base64: string, _format: string): Promise<number> {
   const gen = playbackGen;
   const bytes = base64ToBytes(base64);
   const ctx = new AudioContext();
   try {
     const arrayBuffer = bytes.buffer.slice(0) as ArrayBuffer;
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-    if (gen !== playbackGen) return;
-    suppressWake?.(Math.ceil(audioBuffer.duration * 1000) + 500);
+    if (gen !== playbackGen) return 0;
+    const durationMs = Math.ceil(audioBuffer.duration * 1000);
+    // Suppress wake for the ACTUAL playback duration + acoustic tail (clamped).
+    // With APM/AEC off the speaker bleeds straight into the hot mic, so a fixed
+    // short window let "Hey Jarvis" self-fire mid-reply — the self-talk seed.
+    suppressWake?.(playbackWakeSuppressionMs(durationMs));
     const source = ctx.createBufferSource();
     liveSources.push(source);
     source.buffer = audioBuffer;
@@ -59,13 +67,16 @@ export async function playAudioBase64(base64: string, _format: string): Promise<
       source.start();
     });
     liveSources = liveSources.filter((s) => s !== source);
+    return durationMs;
   } finally {
     void ctx.close();
   }
 }
 
-export async function playSpeakResult(result: SpeakResult): Promise<void> {
+/** Plays a SpeakResult (audio mode) and returns the playback duration in ms. */
+export async function playSpeakResult(result: SpeakResult): Promise<number> {
   if (result.ok && result.mode === 'audio') {
-    await playAudioBase64(result.audioBase64, result.format);
+    return playAudioBase64(result.audioBase64, result.format);
   }
+  return 0;
 }

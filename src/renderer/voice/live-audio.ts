@@ -87,9 +87,11 @@ export class LiveAudioPlayer {
     return this.ctx;
   }
 
-  play(b64: string): void {
+  /** Enfileira um chunk PCM 24 kHz e devolve a duração dele em ms (0 se vazio),
+   *  para o chamador estender a supressão de wake pela duração REAL do áudio. */
+  play(b64: string): number {
     const floats = int16BytesToFloat(base64ToBytes(b64));
-    if (floats.length === 0) return;
+    if (floats.length === 0) return 0;
     const ctx = this.context();
     const buffer = ctx.createBuffer(1, floats.length, OUTPUT_SAMPLE_RATE);
     buffer.getChannelData(0).set(floats);
@@ -103,6 +105,7 @@ export class LiveAudioPlayer {
     source.onended = () => {
       this.active = this.active.filter((s) => s !== source);
     };
+    return Math.ceil(buffer.duration * 1000);
   }
 
   /** barge-in: corta tudo que está soando e zera a timeline. */
