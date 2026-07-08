@@ -6,6 +6,9 @@ import {
   type LiveTransportEvents,
   type WsLike,
 } from './gemini-live-transport';
+import { NARRATION_ENVELOPE } from '../jarvis/realtime/live-narration';
+import { SCREEN_UPDATE_DEBOUNCE_MS } from '../jarvis/realtime/screen-coalescer';
+import { TURN_MAX_MS } from '../jarvis/realtime/turn-queue';
 
 function fakeWs(): WsLike & {
   sent: string[];
@@ -217,6 +220,114 @@ describe('GeminiLiveTransport', () => {
     t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
     t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
     expect(ws1.close).toHaveBeenCalled();
+  });
+
+  it('injectNarration embrulha no envelope e envia como turno completo', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    t.injectNarration('o build passou');
+    const last = JSON.parse(ws.sent.at(-1)!);
+    expect(last.clientContent.turnComplete).toBe(true);
+    const text = last.clientContent.turns[0].parts[0].text as string;
+    expect(text.startsWith(NARRATION_ENVELOPE)).toBe(true);
+    expect(text.endsWith('o build passou')).toBe(true);
+  });
+
+  it('serializa narrações concorrentes — 1 turno em voo, libera no turnComplete', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    const before = ws.sent.length;
+    t.injectNarration('primeiro');
+    t.injectNarration('segundo');
+    // só o primeiro foi ao socket
+    expect(ws.sent.length).toBe(before + 1);
+    expect(ws.sent.at(-1)).toContain('primeiro');
+    // turnComplete do servidor libera a fila → drena o segundo
+    ws.fire('message', JSON.stringify({ serverContent: { turnComplete: true } }));
+    expect(ws.sent.length).toBe(before + 2);
+    expect(ws.sent.at(-1)).toContain('segundo');
+  });
+
+  it('barge-in (interrupted) também libera a fila serializada', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    const before = ws.sent.length;
+    t.injectNarration('a');
+    t.injectNarration('b');
+    ws.fire('message', JSON.stringify({ serverContent: { interrupted: true } }));
+    expect(ws.sent.length).toBe(before + 2);
+    expect(ws.sent.at(-1)).toContain('b');
+  });
+
+  it('turnos injetados antes do setupComplete são bufferizados e drenados depois', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    // greeting injetado pré-setup → não vai ao socket ainda (só o setup foi)
+    t.injectContext('[wake] cumprimente o usuário');
+    expect(ws.sent).toHaveLength(1);
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    // agora drena
+    expect(ws.sent.at(-1)).toContain('[wake]');
+  });
+
+  it('coalesce a rajada de [update] de tela — só o estado assentado como contexto silencioso', async () => {
+    vi.useFakeTimers();
+    const ws = fakeWs();
+    const t = new GeminiLiveTransport(events(), {
+      wsFactory: () => ws,
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    const before = ws.sent.length;
+    t.injectScreenUpdate('tela: passo 1');
+    t.injectScreenUpdate('tela: passo 2');
+    t.injectScreenUpdate('tela: passo 3 final');
+    // nada enviado antes do debounce
+    expect(ws.sent.length).toBe(before);
+    await vi.advanceTimersByTimeAsync(SCREEN_UPDATE_DEBOUNCE_MS);
+    expect(ws.sent.length).toBe(before + 1);
+    const last = JSON.parse(ws.sent.at(-1)!);
+    expect(last.clientContent.turnComplete).toBe(false);
+    expect(JSON.stringify(last)).toContain('passo 3 final');
+    vi.useRealTimers();
+  });
+
+  it('disjuntor TURN_MAX_MS libera a fila se um turno nunca sinaliza fim', async () => {
+    vi.useFakeTimers();
+    const ws = fakeWs();
+    const t = new GeminiLiveTransport(events(), {
+      wsFactory: () => ws,
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    const before = ws.sent.length;
+    t.injectNarration('a');
+    t.injectNarration('b');
+    expect(ws.sent.length).toBe(before + 1);
+    // servidor nunca manda turnComplete — o disjuntor precisa drenar 'b'
+    await vi.advanceTimersByTimeAsync(TURN_MAX_MS);
+    expect(ws.sent.length).toBe(before + 2);
+    expect(ws.sent.at(-1)).toContain('b');
+    vi.useRealTimers();
   });
 
   it('audioStreamEnd fecha o turno de fala do usuário', () => {

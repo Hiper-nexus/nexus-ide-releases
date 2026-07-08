@@ -12,7 +12,17 @@
  * - setup timeout 10 s, reconexão exponencial (máx. 3)
  *
  * Deps injetáveis (wsFactory/now/timers) — testável sem rede.
+ *
+ * Narração serializada (F-113) + coalescing de tela (C-092.7 b): contexto/
+ * narração/greeting viram TURNOS falados (turnComplete:true) drenados 1 por vez
+ * pela TurnQueue (disjuntor TURN_MAX_MS); a rajada de [update] de tela é
+ * coalescida pela ScreenCoalescer e injetada como contexto SILENCIOSO
+ * (turnComplete:false, sem resposta) só no estado assentado.
  */
+
+import { ScreenCoalescer } from '../jarvis/realtime/screen-coalescer';
+import { TurnQueue } from '../jarvis/realtime/turn-queue';
+import { wrapNarration } from '../jarvis/realtime/live-narration';
 
 export interface WsLike {
   readyState: number;
@@ -163,17 +173,40 @@ export class GeminiLiveTransport {
   private lastOptions: LiveConnectOptions | null = null;
   private resumptionHandle: string | undefined;
   private closedByUs = false;
+  private readonly turnQueue: TurnQueue;
+  private readonly screenCoalescer: ScreenCoalescer;
 
   constructor(
     private events: LiveTransportEvents,
     private deps: LiveTransportDeps,
-  ) {}
+  ) {
+    this.turnQueue = new TurnQueue({
+      send: (text) => this.sendTurn(text),
+      canSend: () => this.isReady,
+      setTimeoutFn: deps.setTimeoutFn,
+      clearTimeoutFn: deps.clearTimeoutFn,
+    });
+    this.screenCoalescer = new ScreenCoalescer({
+      flush: (text) => this.sendSilentContext(text),
+      setTimeoutFn: deps.setTimeoutFn,
+      clearTimeoutFn: deps.clearTimeoutFn,
+    });
+  }
 
   get isReady(): boolean {
     return this.setupDone && this.ws?.readyState === WS_OPEN;
   }
 
   connect(opts: LiveConnectOptions): void {
+    // F-113: turnos que ainda não foram enviados sobrevivem à reconexão — o
+    // in-flight (busy) do socket morto é perdido; os pendentes voltam pra fila
+    // e são drenados no próximo setupComplete. Coalescer zera o baseline (o
+    // socket novo não sabe o último [update] enviado).
+    const carriedTurns = this.turnQueue.flush();
+    this.turnQueue.reset();
+    for (const turn of carriedTurns) this.turnQueue.enqueue(turn);
+    this.screenCoalescer.clear();
+    this.screenCoalescer.resetBaseline();
     // Singleton: nunca duas sessões (= duas vozes) vivas.
     this.teardown(true);
     const generation = ++this.connectionGeneration;
@@ -266,6 +299,9 @@ export class GeminiLiveTransport {
       this.reconnectAttempts = 0;
       if (this.setupTimer) this.deps.clearTimeoutFn(this.setupTimer);
       this.flushPendingMic();
+      // F-113: drena os turnos que ficaram na fila até a sessão ficar viva
+      // (greeting/reconexão bufferizados pré-setupComplete).
+      this.turnQueue.drain();
       this.events.onStateChange('ready');
     }
     if (msg.audioB64) this.events.onAudioOut(msg.audioB64);
@@ -275,8 +311,15 @@ export class GeminiLiveTransport {
     if (msg.outputTranscription) {
       this.events.onTranscript('assistant', msg.outputTranscription, false);
     }
-    if (msg.interrupted) this.events.onInterrupted();
-    if (msg.turnComplete) this.events.onTurnComplete?.();
+    // F-113: turno abortado (barge-in) ou concluído libera a fila e drena o próximo.
+    if (msg.interrupted) {
+      this.events.onInterrupted();
+      this.turnQueue.release();
+    }
+    if (msg.turnComplete) {
+      this.events.onTurnComplete?.();
+      this.turnQueue.release();
+    }
     if (msg.resumptionHandle) this.resumptionHandle = msg.resumptionHandle;
     if (msg.goAway && this.lastOptions) {
       // O servidor vai derrubar — reconectar preservando o handle de resume.
@@ -315,8 +358,35 @@ export class GeminiLiveTransport {
     this.ws.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }));
   }
 
-  /** Contexto de tela como TEXTO (nunca pixels), sem fechar o turno. */
+  /** Contexto de tela como TEXTO (nunca pixels), sem fechar o turno. Imediato. */
   sendContext(text: string): void {
+    this.sendSilentContext(text);
+  }
+
+  /**
+   * C-092.7 (b): rajada de [update] de tela coalescida — só o estado ASSENTADO
+   * (após SCREEN_UPDATE_DEBOUNCE_MS) é injetado como contexto silencioso, e um
+   * estado final idêntico ao último é descartado.
+   */
+  injectScreenUpdate(text: string): void {
+    this.screenCoalescer.push(text);
+  }
+
+  /**
+   * F-113: narração (resultado delegado, progresso, handoff) — vai embrulhada no
+   * NARRATION_ENVELOPE (diretiva separada do dado) e entra na fila serializada.
+   */
+  injectNarration(payload: string): void {
+    this.routeTurn(wrapNarration(payload));
+  }
+
+  /** F-113: contexto que DEVE virar fala (greeting no wake, resumo de reconexão). */
+  injectContext(text: string): void {
+    const trimmed = text.trim();
+    if (trimmed) this.routeTurn(trimmed);
+  }
+
+  private sendSilentContext(text: string): void {
     if (!this.isReady || !this.ws) return;
     this.ws.send(
       JSON.stringify({
@@ -337,13 +407,23 @@ export class GeminiLiveTransport {
 
   /** Text prompt into the live conversation, used by smoke tests and fallback. */
   sendTextTurn(text: string): void {
-    if (!this.isReady || !this.ws) return;
     const trimmed = text.trim();
     if (!trimmed) return;
+    this.routeTurn(trimmed.slice(0, 4000));
+  }
+
+  /** F-113: enfileira um turno falável serializado (1 por vez, disjuntor TURN_MAX_MS). */
+  private routeTurn(text: string): void {
+    this.turnQueue.enqueue(text);
+  }
+
+  /** Callback de envio da TurnQueue — turno de usuário que dispara resposta do modelo. */
+  private sendTurn(text: string): void {
+    if (!this.isReady || !this.ws) return;
     this.ws.send(
       JSON.stringify({
         clientContent: {
-          turns: [{ role: 'user', parts: [{ text: trimmed.slice(0, 4000) }] }],
+          turns: [{ role: 'user', parts: [{ text }] }],
           turnComplete: true,
         },
       }),
@@ -351,6 +431,8 @@ export class GeminiLiveTransport {
   }
 
   disconnect(): void {
+    this.turnQueue.reset();
+    this.screenCoalescer.clear();
     this.teardown(true);
     this.events.onStateChange('closed');
   }
