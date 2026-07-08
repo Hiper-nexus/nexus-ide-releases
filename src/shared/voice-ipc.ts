@@ -255,7 +255,7 @@ export const jarvisRequestSchema = z.object({
   context: z.object({
     workspace: z.string().nullable(),
     userName: z.string().max(48).nullable().optional(),
-    screen: z.string().max(500).nullable().optional(),
+    screen: z.string().max(1000).nullable().optional(),
     recents: z.array(z.string().max(128)).max(20).default([]),
     squads: z.array(z.string().max(128)).max(50),
     panes: z.array(z.string().max(128)).max(50),

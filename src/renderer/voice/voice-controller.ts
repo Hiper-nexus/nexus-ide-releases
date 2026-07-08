@@ -304,9 +304,19 @@ function liveEndTurn(): void {
     .catch(() => {});
 }
 
+function liveContextText(): string {
+  const screen = currentScreenSnapshot().context;
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+  const now = new Date().toLocaleString('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  });
+  return `${screen} Local time: ${now} (${timeZone}).`;
+}
+
 function sendLiveContextSnapshot(): void {
   if (!isJarvisLiveEnabled()) return;
-  window.nexus.voice.liveContextIn(currentScreenSnapshot().context);
+  window.nexus.voice.liveContextIn(liveContextText());
 }
 
 function queueLiveContextRefresh(): void {
@@ -970,7 +980,7 @@ async function beginListening(
       const info = useVoiceStore.getState().info;
       realtimeTurnActive =
         REALTIME_ACTION_BRIDGE_ENABLED && canAttemptRealtime(info);
-      const liveContext = currentScreenSnapshot().context;
+      const liveContext = liveContextText();
       void window.nexus.voice.liveStart({ reason }).then((state) => {
         store.setLiveState(state);
         if (!state.realtimeReady) realtimeTurnActive = false;

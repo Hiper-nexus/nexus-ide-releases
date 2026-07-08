@@ -13,43 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.10.8',
-  date: '2026-07-07',
-  codename: 'Jarvis mais operacional',
+  version: '0.10.25',
+  date: '2026-07-08',
+  codename: 'Jarvis Live Context',
   summary:
-    'Hotfix de paridade operacional: a Jarvis ganhou mais controle nativo do app, limpeza de sessão MCP por turno, fala em uma única voz por resposta e seleção explícita do transporte realtime.',
+    'A Jarvis Live ganhou mais consciência de tela em tempo real, com perguntas de contexto respondidas direto pelo áudio realtime e comandos ainda passando pelo executor auditado.',
   highlights: [
     {
-      title: 'Mais ações nativas sem LLM',
+      title: 'Contexto live mais rico',
       detail:
-        'Comandos como abrir configurações, configurações de voz, modo canvas e grade agora usam fast-path e executor direto.',
+        'A sessão realtime recebe mais panes, foco, página atual, missões e horário local para responder “onde estamos?” sem cair no fluxo batch.',
     },
     {
-      title: 'Sessões de ação mais limpas',
+      title: 'Operação continua auditada',
       detail:
-        'Cada turno limpa o cache de permissões MCP depois de executar, evitando estado reaproveitado entre comandos por voz.',
+        'Ações como abrir terminal, rodar comando, focar pane e delegar trabalho seguem pelo mesmo executor Jarvis/MCP com confirmação de risco.',
     },
     {
-      title: 'Realtime configurável',
+      title: 'Prompts live em inglês',
       detail:
-        'O painel de voz permite escolher OpenAI Realtime ou Gemini Live, persiste a escolha na hora e mostra o diagnóstico da chave correta.',
+        'O prompt realtime orienta leitura de tela, pane, página, workspace e horário direto do contexto do Nexus.',
     },
   ],
   fixes: [
     {
-      title: 'Voz sem troca no meio da resposta',
+      title: 'Menos latência em perguntas de tela',
       detail:
-        'Respostas da Jarvis voltam a ser sintetizadas em uma chamada TTS, impedindo que primeira frase e restante caiam em vozes diferentes.',
+        'Perguntas de leitura do estado atual não são mais forçadas para o caminho Classic quando o realtime está pronto.',
     },
     {
-      title: 'UI operável pela Jarvis',
+      title: 'Contexto sem corte prematuro',
       detail:
-        'O parser do cérebro e o transcript live reconhecem as novas ações de settings/canvas/grade em vez de tratá-las como conversa.',
+        'O limite de contexto realtime foi ampliado para preservar mais informação útil antes do envio ao provedor live.',
     },
     {
-      title: 'Fast-paths com persona',
+      title: 'Fechar das configurações',
       detail:
-        'As ações novas mantêm o tratamento configurado do usuário e respostas curtas, sem round-trip para o modelo.',
+        'O botão Fechar do menu de configurações ganhou área própria e não fica visualmente sobre os itens do catálogo.',
     },
   ],
 };

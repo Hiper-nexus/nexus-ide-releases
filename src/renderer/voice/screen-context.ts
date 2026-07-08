@@ -25,8 +25,8 @@ export interface BuildScreenSnapshotInput {
   surface: ScreenSurface;
 }
 
-const MAX_CONTEXT_CHARS = 500;
-const MAX_PANES_IN_CONTEXT = 5;
+const MAX_CONTEXT_CHARS = 900;
+const MAX_PANES_IN_CONTEXT = 8;
 
 function clampContext(text: string): string {
   const clean = text.replace(/\s+/g, ' ').trim();

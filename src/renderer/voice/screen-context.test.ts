@@ -41,7 +41,7 @@ describe('buildScreenSnapshot', () => {
     expect(snapshot.context).toContain('Focused: [browser] Preview @ https://example.com/docs');
     expect(snapshot.context).toContain('Active orchestrator: Orq');
     expect(snapshot.context).toContain('Ship voice parity');
-    expect(snapshot.context.length).toBeLessThanOrEqual(500);
+    expect(snapshot.context.length).toBeLessThanOrEqual(900);
     expect(snapshot.wakePrompt).toContain('browser Preview');
     expect(snapshot.wakePrompt).not.toContain('[browser]');
   });
@@ -85,7 +85,7 @@ describe('buildScreenSnapshot', () => {
       surface: { kind: 'wizard', mode: 'novo workspace' },
     });
 
-    expect(snapshot.context.length).toBeLessThanOrEqual(500);
+    expect(snapshot.context.length).toBeLessThanOrEqual(900);
     expect(snapshot.context).toContain('...');
   });
 });

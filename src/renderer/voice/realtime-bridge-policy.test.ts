@@ -10,6 +10,8 @@ describe('realtime bridge policy', () => {
     expect(shouldLetRealtimeProviderAnswer('me explica essa ideia em uma frase')).toBe(
       true,
     );
+    expect(shouldLetRealtimeProviderAnswer('qual pagina estamos?')).toBe(true);
+    expect(shouldLetRealtimeProviderAnswer('onde estamos no app?')).toBe(true);
   });
 
   it('keeps app operations on the audited Classic/MCP executor path', () => {
@@ -18,9 +20,9 @@ describe('realtime bridge policy', () => {
     expect(shouldUseClassicActionBridge('manda para o agente corrigir o login')).toBe(
       true,
     );
-    expect(shouldUseClassicActionBridge('qual pagina estamos?')).toBe(true);
     expect(shouldUseClassicActionBridge('focus terminal')).toBe(true);
     expect(shouldUseClassicActionBridge('seleciona o browser')).toBe(true);
+    expect(shouldUseClassicActionBridge('qual o status do git?')).toBe(true);
   });
 
   it('normalizes accents and punctuation before classifying commands', () => {

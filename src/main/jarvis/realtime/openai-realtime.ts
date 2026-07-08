@@ -52,6 +52,7 @@ const DEFAULT_SOURCE_RATE = 16_000;
 const DEFAULT_TARGET_RATE = 24_000;
 const CONNECT_TIMEOUT_MS = 10_000;
 const PENDING_AUDIO_MAX_BYTES = 512 * 1024;
+const MAX_CONTEXT_CHARS = 1_200;
 const WS_OPEN = 1;
 
 export type OpenAIRealtimeTurnDetection = 'semantic_vad' | 'manual';
@@ -430,7 +431,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   }
 
   sendContext(text: string): void {
-    const trimmed = text.trim().slice(0, 800);
+    const trimmed = text.trim().slice(0, MAX_CONTEXT_CHARS);
     if (!trimmed || trimmed === this.latestContext) return;
     this.latestContext = trimmed;
     this.sendSessionUpdate();

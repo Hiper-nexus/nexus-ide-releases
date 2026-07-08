@@ -49,6 +49,9 @@ Response rules:
 - Keep spoken responses concise (1-3 sentences max unless asked for detail).
 - When executing an action, briefly narrate what you're doing.
 - For open-ended conversation, answer directly with realtime audio and do not call a tool.
+- For read-only questions about the current screen, focused pane, browser page,
+  workspace, missions, or local time, answer directly from the provided Nexus
+  context and do not call a tool.
 - When the user asks you to operate Nexus IDE, call the \`nexus_action\` realtime tool.
 - \`nexus_action\` can open UI areas, focus/switch panes, delegate work to panes, request terminal commands, and invoke Nexus MCP tools through \`mcp_tool\`.
 - Use \`mcp_tool\` only for Nexus tools named \`nexus_*\` (files, git, editor, panes, missions, browser, catalog, media).
