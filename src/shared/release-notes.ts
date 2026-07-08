@@ -13,43 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.10.31',
+  version: '0.10.32',
   date: '2026-07-08',
-  codename: 'Jarvis Local STT',
+  codename: 'Jarvis Click Wake',
   summary:
-    'A Jarvis ganhou fallback local de transcrição mais confiável no macOS, preservando comandos em português quando os provedores de nuvem falham.',
+    'A Jarvis ficou mais confiável no wake por clique: ela confirma que acordou e só então abre uma janela real de escuta para o comando.',
   highlights: [
     {
-      title: 'whisper.cpp encontrado pela GUI',
+      title: 'Clique acorda de verdade',
       detail:
-        'O app agora procura o whisper.cpp nos caminhos comuns do Homebrew, mesmo quando aberto pelo Finder/Dock sem herdar o PATH do terminal.',
+        'Ao clicar na Jarvis, o ACK audível toca primeiro e a captura do comando começa depois, evitando que a janela expire enquanto o TTS ainda está falando.',
     },
     {
-      title: 'Comandos locais em português',
+      title: 'Mais tempo para falar',
       detail:
-        'Quando o turno da Jarvis pede transcrição sem tradução, o fallback local respeita `language: pt` e não converte comandos para inglês.',
+        'A janela mínima de escuta por clique subiu para 8 segundos e o limite total para 22 segundos, sem afetar o wake por voz.',
     },
     {
-      title: 'Operação sem chave de STT',
+      title: 'Sessão live mais limpa',
       detail:
-        'Com o binário e o modelo local instalados, a cadeia STT continua operacional mesmo se Groq/OpenAI estiverem sem chave, quota ou rede.',
+        'O fim de turno realtime agora também limpa a sessão MCP da Jarvis, reduzindo risco de permissão ficar pendurada entre interações.',
     },
   ],
   fixes: [
     {
-      title: 'Menos falha invisível no macOS',
+      title: 'Sem capturar o próprio ACK no clique',
       detail:
-        'A busca explícita por `/opt/homebrew/bin/whisper-cli` e `/usr/local/bin/whisper-cli` evita fallback perdido em apps Electron iniciados fora do shell.',
+        'O click wake não injeta mais pre-roll da fala de confirmação na captura do comando.',
     },
     {
-      title: 'Prioridade do request corrigida',
+      title: 'Regressão travada por teste',
       detail:
-        'O `translate` vindo do turno agora tem precedência sobre a configuração do provider local, evitando tradução indevida em comandos da Jarvis.',
+        'Novos testes garantem ACK antes da escuta no clique e limpeza MCP no encerramento live.',
     },
     {
-      title: 'Cobertura de STT reforçada',
+      title: 'Paridade de sessão reforçada',
       detail:
-        'A suíte cobre os caminhos Homebrew do whisper.cpp e o contrato de idioma do fallback local.',
+        'A ponte live mantém o executor auditável e limpa concessões mesmo quando o turno foi conversacional.',
     },
   ],
 };
