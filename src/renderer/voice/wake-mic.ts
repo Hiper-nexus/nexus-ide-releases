@@ -4,6 +4,7 @@ import {
   downsample,
   encodeWav,
   bytesToBase64,
+  downmixChannelsToMono,
   frameRms,
   type AutoStopOptions,
   type CaptureResult,
@@ -11,6 +12,7 @@ import {
 import { RESTART_BACKOFF_MS, nextRearmDelay } from './wake-rearm';
 import { frameIsSilent, type MicPermissionState } from './wake-health';
 import { SoftAgc } from './agc';
+import { rmsToLevel } from './voice-level';
 
 /**
  * Mic sempre-ligado do wake word: stream 16 kHz mono de baixo custo que
@@ -82,6 +84,8 @@ export class WakeMic {
   onDied: ((reason: string) => void) | null = null;
   /** Stream reconstruído com sucesso após uma morte. */
   onRecovered: (() => void) | null = null;
+  /** Nível ao vivo (0–1) para orb/diagnóstico — mesmo contrato do VoiceCapture. */
+  onLevel: ((level: number) => void) | null = null;
 
   // Utterance capture (comando pós-wake/F6) sobre o MESMO stream quente.
   private uttChunks: Float32Array[] = [];
@@ -318,22 +322,33 @@ export class WakeMic {
   }
 
   /** Abre stream + grafo de áudio (comum ao start e à reconstrução). */
+  private async resolveAudioConstraints(): Promise<MediaTrackConstraints> {
+    const base: MediaTrackConstraints = {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    };
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices.filter(
+        (device) => device.kind === 'audioinput' && device.deviceId,
+      );
+      const preferred =
+        inputs.find((device) => /fifine/i.test(device.label)) ??
+        inputs.find((device) => device.deviceId === 'default') ??
+        inputs[0];
+      if (preferred?.deviceId) {
+        return { ...base, deviceId: { ideal: preferred.deviceId } };
+      }
+    } catch {
+      // segue com constraints mínimas
+    }
+    return base;
+  }
+
   private async openGraph(): Promise<void> {
     this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        sampleRate: TARGET_SAMPLE_RATE,
-        // APM (WebRTC audio processing) DESLIGADO no stream de wake word.
-        // openWakeWord/KWS quer PCM limpo; o processamento corrompe as
-        // features do modelo. autoGainControl (default true do Chromium
-        // quando qualquer constraint é pedida) achata o sinal de mics USB
-        // sensíveis (fifine) perto de zero → "SO ouve, app mudo". Wake é
-        // pausado (suppressWakeDetection) enquanto a JARVIS fala, então eco
-        // não importa aqui.
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
+      audio: await this.resolveAudioConstraints(),
     });
     // Morte explícita do track (dispositivo removido, permissão revogada):
     // não espere o watchdog — reconstrói na hora.
@@ -351,6 +366,9 @@ export class WakeMic {
     }
     this.firstFrameLogged = false;
     this.ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+    if (this.ctx.state === 'suspended') {
+      await this.ctx.resume().catch(() => {});
+    }
     this.ctx.onstatechange = () => {
       // Sleep/wake do macOS pode deixar o contexto suspenso — retome.
       if (this.ctx?.state === 'suspended' && this.running) {
@@ -372,8 +390,12 @@ export class WakeMic {
         this.firstFrameLogged = true;
         this.log('info', 'mic.firstFrame', 'primeiro frame recebido', {
           rms: frameRms(frame),
+          channelCount: audioTrack?.getSettings().channelCount ?? null,
+          contextRate: this.ctx?.sampleRate ?? null,
         });
       }
+      const level = rmsToLevel(frameRms(frame));
+      this.onLevel?.(level);
       // Saúde do mic: acumula quanto tempo em silêncio (RMS abaixo do piso).
       this.silentSince = frameIsSilent(frameRms(frame))
         ? this.silentSince || Date.now()
@@ -401,8 +423,15 @@ export class WakeMic {
       node.connect(this.ctx.destination);
       this.worklet = node;
     } catch {
-      const node = this.ctx.createScriptProcessor(4096, 1, 1);
-      node.onaudioprocess = (e) => onFrame(e.inputBuffer.getChannelData(0).slice(0));
+      const node = this.ctx.createScriptProcessor(4096, 2, 1);
+      node.onaudioprocess = (e) => {
+        const buffer = e.inputBuffer;
+        const channels: Float32Array[] = [];
+        for (let ch = 0; ch < buffer.numberOfChannels; ch += 1) {
+          channels.push(buffer.getChannelData(ch).slice(0));
+        }
+        onFrame(downmixChannelsToMono(channels));
+      };
       this.source.connect(node);
       node.connect(this.ctx.destination);
       this.scriptNode = node;
@@ -500,6 +529,7 @@ export class WakeMic {
       this.uttDeadline = null;
     }
     this.uttActive = false;
+    this.onLevel?.(0);
     this.teardownGraph();
     console.log('[wake] mic do wake word desligado');
     this.log('info', 'mic.stopped', 'wake mic desligado');
