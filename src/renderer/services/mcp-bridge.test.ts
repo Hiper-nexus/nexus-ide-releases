@@ -14,16 +14,9 @@ describe('mcp-bridge action mapping', () => {
     expect(mapActionToTool({ type: 'open_browser' })).toBeNull();
     expect(mapActionToTool({ type: 'browser_reload' })).toBeNull();
     expect(mapActionToTool({ type: 'focus_next_pane' })).toBeNull();
-  });
-
-  it('maps pane actions only when a pane target is available', () => {
+    expect(mapActionToTool({ type: 'focus_previous_pane' })).toBeNull();
+    expect(mapActionToTool({ type: 'focus_pane', paneName: 'terminal' })).toBeNull();
     expect(mapActionToTool({ type: 'close_pane' })).toBeNull();
-    expect(
-      mapActionToTool({ type: 'close_pane' }, { focusedPaneId: 'pane-1' }),
-    ).toEqual({
-      tool: 'nexus_pane_close',
-      args: { paneId: 'pane-1' },
-    });
   });
 
   it('maps explicit MCP tool calls without changing the args', () => {

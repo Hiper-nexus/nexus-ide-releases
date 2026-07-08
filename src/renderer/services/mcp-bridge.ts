@@ -12,7 +12,7 @@ export interface McpPaneContext {
 
 /**
  * Map a JarvisAction to the corresponding MCP tool name and args.
- * Returns null for actions that must stay on the UI path (squads, wizards).
+ * Returns null for actions that must stay on the UI path (squads, panes, wizards).
  */
 export function mapActionToTool(
   action: JarvisAction,
@@ -39,12 +39,10 @@ export function mapActionToTool(
     case 'browser_forward':
     case 'browser_reload':
     case 'focus_next_pane':
+    case 'focus_previous_pane':
+    case 'focus_pane':
+    case 'close_pane':
       return null;
-    case 'close_pane': {
-      const paneId = paneCtx?.focusedPaneId;
-      if (!paneId) return null;
-      return { tool: 'nexus_pane_close', args: { paneId } };
-    }
     case 'send_to_pane': {
       const paneId = paneCtx?.orchestratorPaneId ?? paneCtx?.focusedPaneId;
       if (!paneId) return null;

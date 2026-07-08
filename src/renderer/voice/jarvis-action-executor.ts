@@ -165,7 +165,6 @@ export async function executeJarvisAction(
   if (action.type !== 'none') {
     const mcpFirst = new Set<JarvisAction['type']>([
       'mcp_tool',
-      'close_pane',
       'send_to_pane',
       'run_command',
     ]);

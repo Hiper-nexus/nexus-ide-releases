@@ -52,6 +52,7 @@ import { mcpClearSession } from '../services/mcp-bridge';
 import { splitForPipelinedSpeech } from './speech-segments';
 import { realtimeToolEventToJarvisAction } from './realtime-action';
 import { buildScreenSnapshot, type ScreenSnapshot } from './screen-context';
+import { voiceHudStatusFromLiveState } from './live-hud-state';
 import {
   shouldLetRealtimeProviderAnswer,
   shouldUseClassicActionBridge,
@@ -806,11 +807,12 @@ export function useVoiceController(): void {
     });
     const unsubLiveState = window.nexus.voice.onLiveState((state) => {
       useVoiceStore.getState().setLiveState(state);
-      if (state.status === 'speaking') {
-        useVoiceStore.getState().setStatus('speaking');
-      } else if (state.status === 'dormant') {
-        useVoiceStore.getState().setStatus('idle');
-      } else if (state.status === 'error' && state.error) {
+      const hudStatus = voiceHudStatusFromLiveState(
+        state,
+        isListening(capture.current),
+      );
+      if (hudStatus) useVoiceStore.getState().setStatus(hudStatus);
+      if (state.status === 'error' && state.error) {
         useVoiceStore.getState().setNote(state.error);
       }
     });

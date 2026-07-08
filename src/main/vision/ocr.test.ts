@@ -113,17 +113,20 @@ describe('ocrImage', () => {
     vi.mocked(createWorker).mockResolvedValue(mockWorker as any);
 
     const result = ocrImage(KNOWN_TEXT_PNG);
-    const assertion = expect(result).rejects.toThrow(
-      'OCR timed out after 30000ms',
+    const rejection = result.then(
+      () => null,
+      (err: unknown) => err,
     );
-    for (let i = 0; i < 20 && mockWorker.recognize.mock.calls.length === 0; i++) {
-      await vi.advanceTimersByTimeAsync(0);
-      await Promise.resolve();
-    }
+
+    await vi.waitFor(() => {
+      expect(mockWorker.recognize).toHaveBeenCalledOnce();
+    });
     expect(mockWorker.recognize).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(30_000);
 
-    await assertion;
+    const err = await rejection;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain('OCR timed out after 30000ms');
     expect(mockWorker.terminate).toHaveBeenCalledOnce();
   });
 });

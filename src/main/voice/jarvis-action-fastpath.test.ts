@@ -36,6 +36,17 @@ describe('jarvisActionFastPath', () => {
     expect(reply?.action).toEqual({ type: 'new_workspace' });
   });
 
+  it('variantes faladas de espaço de trabalho disparam new_workspace', () => {
+    for (const text of [
+      'inicia um novo espaço de trabalho',
+      'cria novo espaço de trabalho',
+      'iniciar um novo workspais',
+    ]) {
+      const reply = jarvisActionFastPath(text, CTX);
+      expect(reply?.action).toEqual({ type: 'new_workspace' });
+    }
+  });
+
   it('transcrição realtime em inglês dispara new_workspace', () => {
     for (const text of [
       'start a new workspace',

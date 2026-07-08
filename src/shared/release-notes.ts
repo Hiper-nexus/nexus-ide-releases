@@ -13,11 +13,11 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.10.25',
+  version: '0.10.26',
   date: '2026-07-08',
-  codename: 'Jarvis Live Context',
+  codename: 'Jarvis Live Control',
   summary:
-    'A Jarvis Live ganhou mais consciência de tela em tempo real, com perguntas de contexto respondidas direto pelo áudio realtime e comandos ainda passando pelo executor auditado.',
+    'A Jarvis Live ganhou mais consciência de tela em tempo real, HUD mais estável no wake por clique e controle de panes mais direto.',
   highlights: [
     {
       title: 'Contexto live mais rico',
@@ -25,14 +25,14 @@ export const CURRENT_RELEASE: AppRelease = {
         'A sessão realtime recebe mais panes, foco, página atual, missões e horário local para responder “onde estamos?” sem cair no fluxo batch.',
     },
     {
-      title: 'Operação continua auditada',
+      title: 'Panes no caminho visual',
       detail:
-        'Ações como abrir terminal, rodar comando, focar pane e delegar trabalho seguem pelo mesmo executor Jarvis/MCP com confirmação de risco.',
+        'Fechar e focar panes ficam no executor UI do renderer, evitando confirmação MCP desnecessária para ações visuais simples.',
     },
     {
-      title: 'Prompts live em inglês',
+      title: 'Wake por clique firme',
       detail:
-        'O prompt realtime orienta leitura de tela, pane, página, workspace e horário direto do contexto do Nexus.',
+        'Estados dormant do realtime não fecham mais visualmente o HUD enquanto o renderer ainda está ouvindo o comando.',
     },
   ],
   fixes: [
@@ -47,9 +47,9 @@ export const CURRENT_RELEASE: AppRelease = {
         'O limite de contexto realtime foi ampliado para preservar mais informação útil antes do envio ao provedor live.',
     },
     {
-      title: 'Fechar das configurações',
+      title: 'Comandos de workspace mais tolerantes',
       detail:
-        'O botão Fechar do menu de configurações ganhou área própria e não fica visualmente sobre os itens do catálogo.',
+        'Variações como “novo espaço de trabalho” e transcrições imperfeitas de workspace agora disparam o assistente sem depender do LLM.',
     },
   ],
 };

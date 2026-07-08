@@ -15,7 +15,8 @@ function norm(text: string): string {
     .replace(/[.!?,;:]+$/g, '')
     .replace(/\s+/g, ' ')
     .replace(/\bwork\s*space\b/g, 'workspace')
-    .replace(/\b(workpasce|workspac|workpace|workbase|workspay)\b/g, 'workspace')
+    .replace(/\bespaco\s+de\s+trabalho\b/g, 'workspace')
+    .replace(/\b(workpasce|workspac|workpace|workbase|workspay|workspais|workispaco)\b/g, 'workspace')
     .trim();
 }
 
