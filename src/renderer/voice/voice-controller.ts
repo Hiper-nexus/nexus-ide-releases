@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useVoiceStore } from './voice-store';
-import { markVictory } from '../state/onboarding-store';
+import { markVictory, useOnboardingStore } from '../state/onboarding-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { VoiceCapture } from './voice-capture';
@@ -47,6 +47,8 @@ import { useHomeStore } from '../state/home-store';
 import { useFilesStore } from '../state/files-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useGamificationStore } from '../state/gamification-store';
+import { listBlockingOverlayLabels, readUiVisibilityState } from './terminal-visibility';
+import { useCloseWorkspaceStore } from '../components/CloseWorkspaceDialog';
 import { executeJarvisAction } from './jarvis-action-executor';
 import { mcpClearSession } from '../services/mcp-bridge';
 import { splitForPipelinedSpeech } from './speech-segments';
@@ -84,14 +86,14 @@ import type {
 const RESPONSE_QUIET_MS = 1_500; // speak once the pane has been quiet this long
 const RESPONSE_MAX_MS = 20_000; // hard cap on how long we wait for a reply
 const MIN_SPEECH_SEC = 0.25; // ignore accidental taps shorter than this
-const REALTIME_ACTION_BRIDGE_ENABLED = true;
-const REALTIME_PROVIDER_AUDIO_ENABLED = true;
+const REALTIME_ACTION_BRIDGE_ENABLED = false;
+const REALTIME_PROVIDER_AUDIO_ENABLED = false;
 const WAKE_ACK_SUPPRESS_MS = 8_000;
 const WAKE_PREROLL_MS = 2_500;
-const WAKE_SILENCE_MS = 1_200; // wake-word capture: quiet time that ends the utterance
-const WAKE_MIN_LISTEN_MS = 3_200; // keep the mic open after ack/pre-roll before silence can close it
-const CLICK_WAKE_SILENCE_MS = 1_800; // click wake: a bit more tolerant after the spoken ack
-const CLICK_WAKE_MIN_LISTEN_MS = 2_400; // mouse wake starts after ack; close quickly once speech ends
+const WAKE_SILENCE_MS = 700; // wake-word capture: quiet time that ends the utterance
+const WAKE_MIN_LISTEN_MS = 1_500; // pre-roll + parallel ack; silence can close once min elapsed
+const CLICK_WAKE_SILENCE_MS = 1_050; // click wake: proportional to voice thresholds
+const CLICK_WAKE_MIN_LISTEN_MS = 1_125; // mouse wake starts after ack; close quickly once speech ends
 const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
 const CLICK_WAKE_MAX_MS = 22_000; // click wake is intentional, so allow a slower follow-up
 const PTT_HOLD_MAX_MS = 60_000; // hold-to-talk sem keyup (tap morto) fecha aqui
@@ -192,6 +194,10 @@ function canAttemptRealtime(info: VoiceRuntimeInfo | null | undefined): boolean 
 }
 
 function shouldStreamToRealtime(): boolean {
+  // Classic mode: STT bridge off — evita +1,2–1,8s de espera por transcript realtime.
+  if (!REALTIME_PROVIDER_AUDIO_ENABLED || !REALTIME_ACTION_BRIDGE_ENABLED) return false;
+  // Wake/click/reply: só Classic STT — evita 1,2s de espera + fallback e eco.
+  if (isAckGatedCapture() || activeCaptureReason === 'reply') return false;
   const info = useVoiceStore.getState().info;
   const liveState = useVoiceStore.getState().liveState;
   return Boolean(
@@ -380,6 +386,12 @@ function currentScreenSnapshot(): ScreenSnapshot {
   const settings = useSettingsStore.getState();
   const homeVisible = useHomeStore.getState().visible;
   const voiceSettingsOpen = useVoiceStore.getState().settingsOpen;
+  const operatorProfileOpen = useGamificationStore.getState().profileOpen;
+  const closeWorkspaceOpen = useCloseWorkspaceStore.getState().open;
+  const onboarding = useOnboardingStore.getState();
+  const onboardingVisible =
+    onboarding.loaded && !onboarding.state.completed && !onboarding.state.skipped;
+  const hiddenShellCount = panes.filter((pane) => pane.kind === 'shell').length;
   const activeMissions = orch.missions
     .filter((m) => m.status !== 'done')
     .map((m) => `${m.title} (${m.status})`);
@@ -396,6 +408,24 @@ function currentScreenSnapshot(): ScreenSnapshot {
     return buildScreenSnapshot({
       ...baseScreenInput,
       surface: { kind: 'voice-settings' },
+    });
+  }
+  if (operatorProfileOpen) {
+    return buildScreenSnapshot({
+      ...baseScreenInput,
+      surface: { kind: 'operator-profile' },
+    });
+  }
+  if (onboardingVisible) {
+    return buildScreenSnapshot({
+      ...baseScreenInput,
+      surface: { kind: 'onboarding' },
+    });
+  }
+  if (closeWorkspaceOpen) {
+    return buildScreenSnapshot({
+      ...baseScreenInput,
+      surface: { kind: 'close-workspace' },
     });
   }
   if (settings.drawerOpen) {
@@ -421,6 +451,7 @@ function currentScreenSnapshot(): ScreenSnapshot {
       surface: {
         kind: 'home',
         readySquads: orch.squads.slice(0, 3).map((s) => s.name),
+        hiddenShellCount,
       },
     });
   }
@@ -447,9 +478,12 @@ function currentScreenSnapshot(): ScreenSnapshot {
     });
   }
 
+  const ui = readUiVisibilityState();
+  const blockingOverlays = listBlockingOverlayLabels(ui.overlays);
+
   return buildScreenSnapshot({
     ...baseScreenInput,
-    surface: { kind: 'workspace' },
+    surface: { kind: 'workspace', blockingOverlays },
   });
 }
 
@@ -697,6 +731,7 @@ export function useVoiceController(): void {
     capture.current = new VoiceCapture();
     // Nível de mic ao vivo → orb como visualizador REAL de amplitude.
     capture.current.onLevel = (level) => useVoiceStore.getState().setLevel(level);
+    wakeMic.onLevel = (level) => useVoiceStore.getState().setLevel(level);
     const store = useVoiceStore.getState();
 
     // Wake word ("Jarvis"): detection → ela RESPONDE ao chamado ("Pois não?")
@@ -723,6 +758,8 @@ export function useVoiceController(): void {
         // Wake usa transcript live quando disponível, mas áudio/resposta ficam no executor clássico.
         suppressRealtimeAudioOut = true;
         realtimeTurnActive = false;
+        queuedRealtimeTranscript = null;
+        resolvePendingRealtimeTranscript(null);
         livePlayer?.stop();
         void window.nexus.voice.liveInterrupt('wake-ack').catch(() => {});
 
@@ -745,17 +782,19 @@ export function useVoiceController(): void {
           );
           return;
         }
-        // Wake por voz mantém o ACK primeiro: a wake-word já trouxe pre-roll
-        // suficiente e o usuário percebe imediatamente que ela acordou.
-        await playWakePrompt(ack).catch(() => playCachedWakeAck(personaUserName()));
+        // Wake por voz: mic abre em paralelo com o ack — o usuário pode falar
+        // durante "Pois não?"; echoCancellation + stripWakeAckEcho filtram o eco.
         wakeMic.suppressWakeDetection(WAKE_ACK_SUPPRESS_MS);
-        await beginListening(
+        const listenPromise = beginListening(
           capture.current!,
           wakeAutoStop(capture.current!, busy, 'wake'),
           'wake',
           wakePreRoll,
           busy,
         );
+        await playWakePrompt(ack).catch(() => playCachedWakeAck(personaUserName()));
+        wakeMic.suppressWakeDetection(WAKE_ACK_SUPPRESS_MS);
+        await listenPromise;
       } catch (err) {
         busy.current = false;
         useVoiceStore.getState().setError(`Wake falhou: ${errMsg(err)}`);
@@ -769,11 +808,11 @@ export function useVoiceController(): void {
         return;
       }
       const voiceStatus = useVoiceStore.getState().status;
-      if (busy.current && !['idle', 'listening', 'speaking'].includes(voiceStatus)) {
-        console.log('[voice] wake ignorado (pipeline ocupado)');
-        return;
-      }
-      if (voiceStatus === 'transcribing' || voiceStatus === 'routing') {
+      // Barge-in: speaking/transcribing/routing são interrompidos pelo novo wake.
+      if (
+        busy.current &&
+        !['idle', 'listening', 'speaking', 'transcribing', 'routing'].includes(voiceStatus)
+      ) {
         console.log('[voice] wake ignorado (pipeline ocupado)');
         return;
       }
@@ -1021,10 +1060,15 @@ async function beginListening(
     } else {
       suppressRealtimeAudioOut = !REALTIME_PROVIDER_AUDIO_ENABLED;
     }
-    if (isJarvisLiveEnabled()) {
+    const allowRealtimeBridge =
+      REALTIME_PROVIDER_AUDIO_ENABLED &&
+      REALTIME_ACTION_BRIDGE_ENABLED &&
+      isJarvisLiveEnabled() &&
+      !isAckGatedCapture(reason) &&
+      reason !== 'reply';
+    if (allowRealtimeBridge) {
       const info = useVoiceStore.getState().info;
-      realtimeTurnActive =
-        REALTIME_ACTION_BRIDGE_ENABLED && canAttemptRealtime(info);
+      realtimeTurnActive = canAttemptRealtime(info);
       const liveContext = liveContextText();
       void window.nexus.voice.liveStart({ reason }).then((state) => {
         store.setLiveState(state);
@@ -1341,7 +1385,10 @@ async function finishAndProcess(
     store.setError(errMsg(err));
     liveStatus('error', errMsg(err));
   } finally {
-    busy.current = false;
+    // Barge-in wake já reabriu escuta — não soltar busy por turno obsoleto.
+    if (useVoiceStore.getState().status !== 'listening') {
+      busy.current = false;
+    }
   }
 }
 

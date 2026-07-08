@@ -122,9 +122,22 @@ describe('jarvis-reply-loop', () => {
     ).toBe(true);
   });
 
+  it('não reabre após reply automático mesmo com pergunta', () => {
+    resetAutoReplyLoop();
+    expect(
+      shouldReopenJarvisListening({
+        expectReply: true,
+        sayText: 'O que você gostaria de fazer agora?',
+        realtimeTurnActive: false,
+        isRealtimeLive: false,
+        captureReason: 'reply',
+      }),
+    ).toBe(false);
+  });
+
   it('trava após muitas reaberturas seguidas', () => {
     resetAutoReplyLoop();
-    for (let i = 0; i < 5; i += 1) noteAutoReplyOpened();
+    for (let i = 0; i < 2; i += 1) noteAutoReplyOpened();
     expect(
       shouldReopenJarvisListening({
         expectReply: true,
