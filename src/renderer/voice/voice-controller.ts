@@ -748,12 +748,23 @@ async function speakSegment(text: string, label: string): Promise<SpeakResult> {
 
 async function speakAndPlayPipelined(
   text: string,
-): Promise<{ ok: true; playedMs: number } | { ok: false; error: string }> {
+  isCurrent?: () => boolean,
+): Promise<
+  | { ok: true; playedMs: number; cancelled?: boolean }
+  | { ok: false; error: string }
+> {
   const { first, rest } = splitForPipelinedSpeech(text);
   if (!first) return { ok: true, playedMs: 0 };
   const firstSpoken = await speakSegment(first, 'TTS');
   if (!firstSpoken.ok) return { ok: false, error: firstSpoken.error };
   surfaceTtsFallback(firstSpoken);
+
+  // ITEM 8: synth can take seconds (cold provider). If the turn was superseded
+  // while we were synthesizing (user re-woke → new turn token), do NOT play — a
+  // reply spoken 7.8s late into a lapsed/reopened session is the "ghost voice".
+  if (isCurrent && !isCurrent()) {
+    return { ok: true, playedMs: 0, cancelled: true };
+  }
 
   const restPromise =
     rest && firstSpoken.mode === 'audio' ? speakSegment(rest, 'TTS continuação') : null;
@@ -763,6 +774,9 @@ async function speakAndPlayPipelined(
   const restSpoken = restPromise ? await restPromise : await speakSegment(rest, 'TTS continuação');
   if (!restSpoken.ok) return { ok: false, error: restSpoken.error };
   surfaceTtsFallback(restSpoken);
+  if (isCurrent && !isCurrent()) {
+    return { ok: true, playedMs, cancelled: true };
+  }
   playedMs += await playSpeakResult(restSpoken);
   return { ok: true, playedMs };
 }
@@ -1362,7 +1376,7 @@ async function finishAndProcess(
           store.setStatus('idle');
           return;
         }
-        await runJarvisTurn(transcript, capture, busy);
+        await runJarvisTurn(transcript, capture, busy, turnToken);
         return;
       }
       if (!localSpeechUsable) {
@@ -1512,7 +1526,7 @@ async function finishAndProcess(
         store.setStatus('idle');
         return;
       }
-      await runJarvisTurn(transcript, capture, busy);
+      await runJarvisTurn(transcript, capture, busy, turnToken);
       return;
     }
 
@@ -1563,8 +1577,13 @@ async function runJarvisTurn(
   transcript: string,
   capture: VoiceCapture,
   busy: React.MutableRefObject<boolean>,
+  turnToken: number = turnExecution.currentToken,
 ): Promise<void> {
   const store = useVoiceStore.getState();
+  // ITEM 8: the turn is "current" only while its token is the open one. A wake
+  // (or any new capture) advances the token, so a reply still synthesizing when
+  // the user re-wakes is detected here and its playback cancelled (no ghost).
+  const isTurnCurrent = (): boolean => turnExecution.currentToken === turnToken;
   const now = Date.now();
   if (now - jarvisLastTurnAt > JARVIS_MEMORY_MS) jarvisHistory = [];
   jarvisLastTurnAt = now;
@@ -1629,6 +1648,18 @@ async function runJarvisTurn(
     return;
   }
 
+  // ITEM 8: the brain reply is in hand, but if the user already re-woke while
+  // the brain was thinking, this turn is stale — do NOT speak a ghost reply into
+  // the new turn's session. The re-wake already advanced the token + stopped
+  // playback; bail silently so the current turn owns the voice.
+  if (!isTurnCurrent()) {
+    console.log('[voice] turno superado antes de falar — resposta fantasma descartada');
+    logVoiceEvent('info', 'jarvis.ghostReplyDiscarded', 'turno superado antes de falar', {
+      reason: activeCaptureReason,
+    });
+    return;
+  }
+
   const wantsReply = shouldReopenJarvisListening({
     expectReply: reply.expectReply === true,
     sayText,
@@ -1649,10 +1680,20 @@ async function runJarvisTurn(
   store.setStatus('speaking');
   liveStatus('speaking');
   const tTts = Date.now();
-  const spoken = await speakAndPlayPipelined(sayText);
+  const spoken = await speakAndPlayPipelined(sayText, isTurnCurrent);
   console.log(`[voice] tts: ${Date.now() - tTts}ms`);
   if (!spoken.ok) {
     store.setError(spoken.error);
+    return;
+  }
+  // ITEM 8: synth finished but the turn was superseded mid-synth — playback was
+  // cancelled. Do NOT reopen the reply loop or mark spoken; the new turn leads.
+  if (spoken.cancelled) {
+    console.log('[voice] síntese concluída em turno superado — playback cancelado (sem fantasma)');
+    logVoiceEvent('info', 'jarvis.ghostReplyDiscarded', 'síntese concluída em turno superado', {
+      reason: activeCaptureReason,
+      synthMs: Date.now() - tTts,
+    });
     return;
   }
   store.setSpoken(sayText);
