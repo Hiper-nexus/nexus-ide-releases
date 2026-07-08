@@ -6,6 +6,7 @@ import {
   PendingQuestionRouter,
   QUESTION_POLL_MS,
   ROUTED_ANSWER_DEDUP_MS,
+  isLikelyNewQuestion,
   isStatusQuestion,
   isUiUtterance,
   looksLikePendingAnswer,
@@ -39,10 +40,28 @@ describe('utterance classification', () => {
   });
 });
 
+describe('isLikelyNewQuestion', () => {
+  it('flags a leading wh-question but not a declarative answer', () => {
+    expect(isLikelyNewQuestion('que horas são?')).toBe(true);
+    expect(isLikelyNewQuestion('qual o clima hoje?')).toBe(true);
+    expect(isLikelyNewQuestion('quantos dias faltam?')).toBe(true);
+    expect(isLikelyNewQuestion('cadê o café')).toBe(true);
+    // Declarative short answers must NOT look like a new question.
+    expect(isLikelyNewQuestion('a opção dois')).toBe(false);
+    expect(isLikelyNewQuestion('pode ser o Postgres')).toBe(false);
+    expect(isLikelyNewQuestion('sim')).toBe(false);
+  });
+});
+
 describe('looksLikePendingAnswer', () => {
   it('treats short utterances as plausible answers', () => {
     expect(looksLikePendingAnswer('sim', 'Qual banco?')).toBe(true);
     expect(looksLikePendingAnswer('a opção 2', 'Qual banco?')).toBe(true);
+  });
+
+  it('rejects a short but fresh wh-question (bounds the ≤80-char blanket)', () => {
+    // "que horas são?" is short + non-UI, but it is a NEW query, not an answer.
+    expect(looksLikePendingAnswer('que horas são?', 'Qual banco: Postgres ou SQLite?')).toBe(false);
   });
 
   it('a long utterance must reference an option/number or share a word', () => {
@@ -93,6 +112,12 @@ describe('PendingQuestionRouter.decide', () => {
       'pesquisa os preços das placas de vídeo e monta uma planilha comparativa bem completa',
     );
     expect(decision).toMatchObject({ route: false, reason: 'not-an-answer' });
+  });
+
+  it('does not route a short fresh wh-question while a handoff blocks', () => {
+    const { r } = router();
+    r.noteNarratedQuestion('pane-1', 'Qual banco: Postgres ou SQLite?');
+    expect(r.decide('que horas são?')).toMatchObject({ route: false, reason: 'not-an-answer' });
   });
 
   it('clears and skips a stale narrated question past the TTL', () => {

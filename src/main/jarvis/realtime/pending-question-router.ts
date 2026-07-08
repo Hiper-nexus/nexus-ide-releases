@@ -47,12 +47,30 @@ export function isUiUtterance(text: string): boolean {
 }
 
 /**
+ * A fresh wh-question the user is ASKING (time/date/count/where/who/why), not an
+ * answer to a pending pane question. Anchored to a LEADING interrogative so plain
+ * declarative answers ("a opção dois", "usa o Postgres") never match. Bounds the
+ * short-utterance blanket below: because the narrated hash is only the handoff
+ * SUMMARY (a weak proxy for the literal question), an unrelated quick question
+ * like "que horas são?" must not be hijacked into the pane while a handoff blocks.
+ */
+const NEW_QUESTION_RE =
+  /^\s*(?:e\s+)?(?:qual|quais|quando|onde|quem|quantos?|quantas?|cad[êe]|por\s*que|pra\s+que|para\s+que|que\s+horas?|que\s+dia|que\s+data)(?![\p{L}])/iu;
+
+export function isLikelyNewQuestion(text: string): boolean {
+  return NEW_QUESTION_RE.test(text.trim());
+}
+
+/**
  * Plausible-answer heuristic (JarvisService.js:2204): a short utterance (typical
  * spoken answer), or one referencing an option/number, or sharing a significant
  * word with the narrated question. A long imperative with no relation = new work.
+ * A leading wh-question is a NEW query and is rejected even when short (bounds the
+ * ≤80-char blanket flagged in the release re-review).
  */
 export function looksLikePendingAnswer(utterance: string, question: string): boolean {
   const clean = utterance.trim();
+  if (isLikelyNewQuestion(clean)) return false;
   if (clean.length <= 80) return true;
   if (!question) return false;
   if (/\bop[çc][ãa]o\b|\bn[úu]mero\b/i.test(clean)) return true;
