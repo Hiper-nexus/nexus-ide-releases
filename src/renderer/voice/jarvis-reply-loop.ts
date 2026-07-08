@@ -63,7 +63,10 @@ export function shouldReopenJarvisListening(opts: {
   isRealtimeLive: boolean;
   captureReason?: JarvisCaptureReason;
 }): boolean {
-  if (opts.realtimeTurnActive && opts.isRealtimeLive) return true;
+  // Live full-duplex already keeps the mic hot — Classic reply reopen would
+  // race a second STT→brain→TTS path against the provider (self-talk / dual voice).
+  if (opts.isRealtimeLive) return false;
+  if (opts.realtimeTurnActive) return false;
 
   // Teto de continuidade: após MAX_AUTO_REPLY_LOOPS reaberturas automáticas sem
   // um novo "Hey Jarvis", exige re-wake (equivale à dormência de ~5min do

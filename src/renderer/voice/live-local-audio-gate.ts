@@ -10,8 +10,8 @@
  * LOCAL e nunca registra lá. Este é o gate paralelo do lado do RENDER: a mesma
  * disciplina drain+cauda (`localAudioMicWithholdMs`) fecha essa lacuna.
  *
- * O áudio do provider NÃO passa por aqui (toca via LiveAudioPlayer), então o
- * barge-in do realtime segue preservado — só o áudio local retém o mic.
+ * Também cobre o hold pós-[wake] inject: o mic fica retido até o áudio Live
+ * começar (ou o teto expirar), para ambient/pre-roll não cancelar o greeting.
  *
  * Estado mínimo + relógio injetável = puro e testável.
  */
@@ -28,6 +28,15 @@ let withholdUntil = 0;
 export function markLocalAudioPlaying(playbackMs: number, now: number): void {
   const until = now + localAudioMicWithholdMs(playbackMs);
   if (until > withholdUntil) withholdUntil = until;
+}
+
+/**
+ * Force-set the withhold deadline (wake greeting hold until Live audio starts).
+ * Unlike markLocalAudioPlaying, this may shorten an existing window when the
+ * greeting audio arrives early and we want the mic back for the command.
+ */
+export function setLocalAudioWithholdUntil(untilMs: number): void {
+  withholdUntil = untilMs;
 }
 
 /** True enquanto um áudio local ainda é audível (dentro da janela drain+cauda). */

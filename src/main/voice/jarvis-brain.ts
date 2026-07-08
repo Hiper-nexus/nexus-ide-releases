@@ -57,7 +57,8 @@ Action types:
 - {"type":"open_squad","squadName":"<approximate name>"} - start a squad now.
 - {"type":"open_workspace","workspaceName":"<approximate name>"} - open a
   recent project/workspace.
-- {"type":"design_squad"} - create a custom squad for the current project.
+- {"type":"design_squad"} - create a custom squad for the current project (opens review; ask confirmation).
+- {"type":"confirm_squad"} - confirm and launch the squad currently on the review wizard ("sim" / "inicia").
 - {"type":"new_mission"} - open a new mission flow without naming a squad.
 - {"type":"new_workspace"} - open the new workspace wizard (folder + setup).
 - {"type":"open_terminal"} - open an empty shell terminal in the current workspace.
@@ -356,6 +357,7 @@ export function parseReply(raw: string): JarvisReply {
       return { say, expectReply, action: { type, workspaceName: obj.action.workspaceName } };
     }
     if (type === 'design_squad') return { say, expectReply, action: { type } };
+    if (type === 'confirm_squad') return { say, expectReply, action: { type } };
     if (type === 'new_mission') return { say, expectReply, action: { type } };
     if (type === 'new_workspace') return { say, expectReply, action: { type } };
     if (type === 'open_terminal') return { say, expectReply, action: { type } };

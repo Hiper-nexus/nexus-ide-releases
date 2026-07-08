@@ -261,7 +261,7 @@
   width: min(720px, calc(100vw - 48px));
   max-height: min(86vh, 780px);
   overflow-y: auto;
-  padding: 22px;
+  padding: 28px 22px 22px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   background:
@@ -276,13 +276,15 @@
 
 .operator-profile::before {
   content: '';
-  position: sticky;
+  position: absolute;
   top: 0;
-  display: block;
+  left: 0;
+  right: 0;
   height: 3px;
-  margin: -22px -22px 18px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   background:
     linear-gradient(90deg, var(--accent) 0 18%, transparent 18% 22%, var(--ok) 22% 32%, transparent 32% 36%, var(--warn) 36% 44%, transparent 44%);
+  pointer-events: none;
 }
 @keyframes operator-profile-in {
   from {
@@ -295,25 +297,31 @@
   }
 }
 .operator-profile__header {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  padding-bottom: 18px;
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 18px 20px;
+  align-items: start;
+  padding: 4px 40px 18px 0;
   border-bottom: 1px solid var(--border);
   background: linear-gradient(90deg, rgba(110, 168, 254, 0.06), transparent 70%);
+}
+.operator-profile__header > :first-child {
+  flex-shrink: 0;
 }
 .operator-profile__identity {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
   min-width: 0;
-  flex: 1;
 }
 .operator-profile__branch {
-  font-size: 12px;
-  letter-spacing: 0.08em;
+  font-size: 11px;
+  line-height: 1.5;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-dim);
+  margin-bottom: 6px;
 }
 .operator-profile__stars {
   margin-left: 8px;
@@ -321,21 +329,24 @@
   letter-spacing: 0.12em;
 }
 .operator-profile__tier {
-  font-size: 20px;
+  font-size: 1.125rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
+  line-height: 1.25;
+  text-transform: uppercase;
 }
 .operator-profile__power {
   font-family: var(--font-mono);
-  font-size: 34px;
+  font-size: clamp(1.75rem, 5vw, 2rem);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  line-height: 1.1;
+  line-height: 1.15;
+  margin-top: 4px;
 }
 .operator-profile__bar {
   display: block;
   height: 7px;
-  margin-top: 6px;
+  margin-top: 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xs);
   background: rgba(4, 6, 10, 0.62);
@@ -352,16 +363,21 @@
 }
 .operator-profile__next {
   font-size: 11px;
+  line-height: 1.4;
   color: var(--text-dim);
+  margin-top: 6px;
 }
 .operator-profile__close {
-  align-self: flex-start;
+  position: absolute;
+  top: 2px;
+  right: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: rgba(4, 6, 10, 0.28);
   padding: 4px 8px;
   cursor: pointer;
   color: var(--text-dim);
+  z-index: 1;
 }
 .operator-profile__close:hover {
   color: var(--text);

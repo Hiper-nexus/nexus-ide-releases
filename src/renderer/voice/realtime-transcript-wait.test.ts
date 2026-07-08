@@ -11,7 +11,13 @@ describe('realtimeTranscriptWaitMs', () => {
   it('keeps manual and push-to-talk turns snappy', () => {
     expect(realtimeTranscriptWaitMs('manual')).toBe(REALTIME_TRANSCRIPT_WAIT_MS);
     expect(realtimeTranscriptWaitMs('ptt')).toBe(REALTIME_TRANSCRIPT_WAIT_MS);
+  });
+
+  it('reply without owner stays snappy (Classic fallback available)', () => {
     expect(realtimeTranscriptWaitMs('reply')).toBe(REALTIME_TRANSCRIPT_WAIT_MS);
+    expect(realtimeTranscriptWaitMs('reply', { realtimeIsOwner: false })).toBe(
+      REALTIME_TRANSCRIPT_WAIT_MS,
+    );
   });
 
   it('gives hands-free wake turns more room to receive a final realtime transcript', () => {
@@ -50,5 +56,14 @@ describe('realtimeTranscriptWaitMs', () => {
     expect(
       realtimeTranscriptWaitMs('wake', { localSpeechUsable: true, realtimeIsOwner: false }),
     ).toBe(LOCAL_SPEECH_REALTIME_TRANSCRIPT_WAIT_MS);
+  });
+
+  it('FIX D: reply + realtimeIsOwner gets full wake budget (no Classic to degrade to)', () => {
+    expect(
+      realtimeTranscriptWaitMs('reply', { realtimeIsOwner: true }),
+    ).toBe(WAKE_REALTIME_TRANSCRIPT_WAIT_MS);
+    expect(
+      realtimeTranscriptWaitMs('reply', { localSpeechUsable: true, realtimeIsOwner: true }),
+    ).toBe(WAKE_REALTIME_TRANSCRIPT_WAIT_MS);
   });
 });

@@ -1,0 +1,382 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import type {
+  Adapter,
+  ModelAvailability,
+  ModelCatalogEntryInfo,
+  ModelCostTier,
+  ModelInfoMap,
+} from '../../shared/adapter-types';
+import publishedCatalogRaw from '../../../resources/model-catalog.json';
+
+export interface AdapterModelCatalog {
+  models?: ModelCatalogEntryInfo[];
+  default?: string;
+}
+
+export interface ModelCatalog {
+  version?: number;
+  updatedAt?: string;
+  adapters?: Record<string, AdapterModelCatalog>;
+}
+
+const NEXUS_DIR = path.join(os.homedir(), '.nexus');
+export const USER_MODEL_CATALOG_FILE = path.join(NEXUS_DIR, 'model-catalog.json');
+export const MODEL_CATALOG_URL_ENV = 'NEXUS_MODEL_CATALOG_URL';
+
+/**
+ * Default remote catalog (GitHub raw), same hosting pattern as the aitmpl
+ * catalog in orch/catalog.ts. Override with NEXUS_MODEL_CATALOG_URL.
+ *
+ * Branch `catalog` hosts `resources/model-catalog.json`. For private repos
+ * raw.githubusercontent.com returns 404 without auth — the app then seeds
+ * from the bundled published JSON (same file, imported at build time).
+ * Prefer a public URL, gist, or `file:///…/resources/model-catalog.json` for
+ * local/dev refresh without GitHub auth.
+ */
+export const DEFAULT_MODEL_CATALOG_URL =
+  'https://raw.githubusercontent.com/cleofasvolarehost/nexus-ide/catalog/resources/model-catalog.json';
+
+/** Resolve the URL used for remote refresh (env wins, else default). */
+export function resolveModelCatalogUrl(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const fromEnv = env[MODEL_CATALOG_URL_ENV]?.trim();
+  if (!fromEnv) return DEFAULT_MODEL_CATALOG_URL;
+  // Absolute path → file URL so refresh can read without HTTP.
+  if (fromEnv.startsWith('/') || /^[A-Za-z]:[\\/]/.test(fromEnv)) {
+    return pathToFileURL(fromEnv).href;
+  }
+  return fromEnv;
+}
+
+const COST_RANK: Record<ModelCostTier, number> = {
+  free: 0,
+  low: 1,
+  unknown: 2,
+  medium: 3,
+  high: 4,
+};
+
+const AVAILABILITY_RANK: Record<ModelAvailability, number> = {
+  free: 0,
+  cheap: 1,
+  paid: 4,
+  'api-only': Number.POSITIVE_INFINITY,
+  deprecated: Number.POSITIVE_INFINITY,
+};
+
+export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
+  version: 1,
+  adapters: {
+    claude: {
+      models: [
+        {
+          id: 'claude-fable-5',
+          availability: 'api-only',
+          costTier: 'high',
+          source: 'bundled',
+          warning:
+            'API-only/high-cost: not used for automatic routing unless the user selects it manually.',
+        },
+        { id: 'claude-opus-4-8', availability: 'paid', costTier: 'high', source: 'bundled' },
+        { id: 'claude-sonnet-5', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        { id: 'claude-haiku-4-5', availability: 'cheap', costTier: 'low', source: 'bundled' },
+      ],
+    },
+    codex: {
+      models: [
+        { id: 'gpt-5.5', availability: 'paid', costTier: 'high', source: 'bundled' },
+        { id: 'gpt-5.4', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        { id: 'gpt-5.4-mini', availability: 'cheap', costTier: 'low', source: 'bundled' },
+      ],
+    },
+    grok: {
+      models: [
+        {
+          id: 'grok-4.5',
+          availability: 'paid',
+          costTier: 'high',
+          source: 'bundled',
+          warning: 'New xAI model; verify tier/pricing before making it the default.',
+        },
+        { id: 'grok-4.1', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        { id: 'grok-4-fast', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        { id: 'grok-code-fast-1', availability: 'cheap', costTier: 'low', source: 'bundled' },
+      ],
+    },
+    glm: {
+      models: [
+        { id: 'glm-5.2', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        { id: 'glm-4.5-air', availability: 'cheap', costTier: 'low', source: 'bundled' },
+      ],
+    },
+    agy: {
+      models: [
+        { id: 'gemini-3.5-flash-low', availability: 'free', costTier: 'free', source: 'bundled' },
+        { id: 'gemini-3.5-flash-high', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        { id: 'gemini-3.1-pro-high', availability: 'paid', costTier: 'medium', source: 'bundled' },
+      ],
+    },
+    kimi: {
+      models: [
+        { id: 'kimi-code/kimi-for-coding', availability: 'cheap', costTier: 'low', source: 'bundled' },
+      ],
+    },
+    longcat: {
+      models: [
+        { id: 'LongCat-2.0', availability: 'cheap', costTier: 'low', source: 'bundled' },
+      ],
+    },
+  },
+};
+
+let cachedCatalog: ModelCatalog | null = null;
+
+function safeModels(models: unknown, source: string): ModelCatalogEntryInfo[] {
+  if (!Array.isArray(models)) return [];
+  return models.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const raw = entry as Partial<ModelCatalogEntryInfo>;
+    if (typeof raw.id !== 'string' || raw.id.trim().length === 0) return [];
+    return [
+      {
+        id: raw.id.trim(),
+        availability: raw.availability,
+        costTier: raw.costTier,
+        source: raw.source ?? source,
+        warning: raw.warning,
+      },
+    ];
+  });
+}
+
+function normaliseCatalog(raw: unknown, source: string): ModelCatalog {
+  if (!raw || typeof raw !== 'object') return {};
+  const input = raw as ModelCatalog;
+  const adapters: Record<string, AdapterModelCatalog> = {};
+  for (const [adapterId, value] of Object.entries(input.adapters ?? {})) {
+    if (!value || typeof value !== 'object') continue;
+    const models = safeModels((value as AdapterModelCatalog).models, source);
+    const defaultModel =
+      typeof (value as AdapterModelCatalog).default === 'string'
+        ? (value as AdapterModelCatalog).default
+        : undefined;
+    if (models.length > 0 || defaultModel) {
+      adapters[adapterId] = { models, default: defaultModel };
+    }
+  }
+  return {
+    version: typeof input.version === 'number' ? input.version : undefined,
+    updatedAt: typeof input.updatedAt === 'string' ? input.updatedAt : undefined,
+    adapters,
+  };
+}
+
+/** In-repo published catalog (resources/model-catalog.json), bundled at build. */
+export const PUBLISHED_MODEL_CATALOG: ModelCatalog = normaliseCatalog(
+  publishedCatalogRaw,
+  'remote',
+);
+
+export function mergeModelCatalogs(base: ModelCatalog, overlay: ModelCatalog): ModelCatalog {
+  const adapters: Record<string, AdapterModelCatalog> = {};
+  const ids = new Set([
+    ...Object.keys(base.adapters ?? {}),
+    ...Object.keys(overlay.adapters ?? {}),
+  ]);
+
+  for (const adapterId of ids) {
+    const baseAdapter = base.adapters?.[adapterId] ?? {};
+    const overlayAdapter = overlay.adapters?.[adapterId] ?? {};
+    const byId = new Map<string, ModelCatalogEntryInfo>();
+    for (const entry of baseAdapter.models ?? []) byId.set(entry.id, entry);
+    for (const entry of overlayAdapter.models ?? []) {
+      byId.set(entry.id, { ...byId.get(entry.id), ...entry });
+    }
+    adapters[adapterId] = {
+      models: [...byId.values()],
+      default: overlayAdapter.default ?? baseAdapter.default,
+    };
+  }
+
+  return {
+    version: overlay.version ?? base.version,
+    updatedAt: overlay.updatedAt ?? base.updatedAt,
+    adapters,
+  };
+}
+
+export function invalidateModelCatalogCache(): void {
+  cachedCatalog = null;
+}
+
+export function loadUserModelCatalog(file = USER_MODEL_CATALOG_FILE): ModelCatalog {
+  try {
+    return normaliseCatalog(JSON.parse(fs.readFileSync(file, 'utf8')), 'local');
+  } catch {
+    return {};
+  }
+}
+
+export function loadModelCatalog(file = USER_MODEL_CATALOG_FILE): ModelCatalog {
+  if (file === USER_MODEL_CATALOG_FILE && cachedCatalog) return cachedCatalog;
+  const catalog = mergeModelCatalogs(BUILTIN_MODEL_CATALOG, loadUserModelCatalog(file));
+  if (file === USER_MODEL_CATALOG_FILE) cachedCatalog = catalog;
+  return catalog;
+}
+
+function writeCatalogFile(catalog: ModelCatalog, file: string): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(catalog, null, 2));
+  invalidateModelCatalogCache();
+}
+
+/**
+ * Seed ~/.nexus/model-catalog.json from the bundled published catalog when
+ * missing (or when force=true). Used so this machine picks up grok-4.5 /
+ * fable api-only without waiting on a public CDN.
+ */
+export function seedLocalModelCatalogFromPublished(
+  file = USER_MODEL_CATALOG_FILE,
+  force = false,
+): boolean {
+  if (!force && fs.existsSync(file)) return false;
+  if (Object.keys(PUBLISHED_MODEL_CATALOG.adapters ?? {}).length === 0) return false;
+  writeCatalogFile(PUBLISHED_MODEL_CATALOG, file);
+  return true;
+}
+
+function loadCatalogFromLocalPath(filePath: string): ModelCatalog | null {
+  try {
+    return normaliseCatalog(JSON.parse(fs.readFileSync(filePath, 'utf8')), 'remote');
+  } catch (err) {
+    console.warn('[model-catalog] local path load failed:', err);
+    return null;
+  }
+}
+
+async function loadCatalogFromUrl(url: string): Promise<ModelCatalog | null> {
+  if (url.startsWith('file://')) {
+    return loadCatalogFromLocalPath(fileURLToPath(url));
+  }
+  // Absolute filesystem path (dev convenience: NEXUS_MODEL_CATALOG_URL=/path/to.json)
+  if (url.startsWith('/') || /^[A-Za-z]:[\\/]/.test(url)) {
+    return loadCatalogFromLocalPath(url);
+  }
+
+  if (!globalThis.fetch) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const res = await globalThis.fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'nexus-ide' },
+    });
+    if (!res.ok) return null;
+    return normaliseCatalog(await res.json(), 'remote');
+  } catch (err) {
+    console.warn('[model-catalog] remote refresh failed:', err);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function refreshRemoteModelCatalog(
+  url = resolveModelCatalogUrl(),
+  file = USER_MODEL_CATALOG_FILE,
+): Promise<boolean> {
+  if (!url) return false;
+
+  let json = await loadCatalogFromUrl(url);
+
+  // Private GitHub raw → 404. Fall back to the same JSON shipped in the app.
+  if (
+    (!json || Object.keys(json.adapters ?? {}).length === 0) &&
+    url === DEFAULT_MODEL_CATALOG_URL
+  ) {
+    json = PUBLISHED_MODEL_CATALOG;
+  }
+
+  if (!json || Object.keys(json.adapters ?? {}).length === 0) return false;
+  writeCatalogFile(json, file);
+  return true;
+}
+
+export function modelCatalogInfo(
+  catalog: ModelCatalog,
+  adapterId: string,
+  modelId: string | undefined,
+): ModelCatalogEntryInfo | null {
+  if (!modelId) return null;
+  const entries = catalog.adapters?.[adapterId]?.models ?? [];
+  return (
+    entries.find((entry) => entry.id === modelId) ??
+    entries.find((entry) => entry.id.toLowerCase() === modelId.toLowerCase()) ??
+    null
+  );
+}
+
+export function isModelBlockedForAutoRouting(
+  info: ModelCatalogEntryInfo | null | undefined,
+): boolean {
+  return info?.availability === 'api-only' || info?.availability === 'deprecated';
+}
+
+export function modelRoutingRank(info: ModelCatalogEntryInfo | null | undefined): number {
+  if (!info) return COST_RANK.unknown;
+  if (isModelBlockedForAutoRouting(info)) return Number.POSITIVE_INFINITY;
+  if (info.costTier) return COST_RANK[info.costTier];
+  switch (info.availability) {
+    case 'free':
+      return COST_RANK.free;
+    case 'cheap':
+      return COST_RANK.low;
+    case 'paid':
+      return COST_RANK.high;
+    default:
+      return COST_RANK.unknown;
+  }
+}
+
+export function applyModelCatalogToAdapter(adapter: Adapter, catalog: ModelCatalog): Adapter {
+  const adapterCatalog = catalog.adapters?.[adapter.id];
+  if (!adapterCatalog) return adapter;
+
+  const list = [...adapter.models.list];
+  for (const entry of adapterCatalog.models ?? []) {
+    if (!list.includes(entry.id)) list.push(entry.id);
+  }
+
+  const requestedDefault = adapterCatalog.default ?? adapter.models.default;
+  const defaultInfo = modelCatalogInfo(catalog, adapter.id, requestedDefault);
+  const defaultModel = isModelBlockedForAutoRouting(defaultInfo)
+    ? (list.find((model) => !isModelBlockedForAutoRouting(modelCatalogInfo(catalog, adapter.id, model))) ??
+      requestedDefault)
+    : requestedDefault;
+
+  return {
+    ...adapter,
+    models: {
+      ...adapter.models,
+      list,
+      default: defaultModel,
+    },
+  };
+}
+
+export function modelInfoForAdapter(
+  catalog: ModelCatalog,
+  adapterId: string,
+  models: readonly string[],
+): ModelInfoMap {
+  const info: ModelInfoMap = {};
+  for (const model of models) {
+    const entry = modelCatalogInfo(catalog, adapterId, model);
+    if (entry) info[model] = entry;
+  }
+  return info;
+}

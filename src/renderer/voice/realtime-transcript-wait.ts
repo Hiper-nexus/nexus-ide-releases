@@ -33,5 +33,6 @@ export function realtimeTranscriptWaitMs(
   }
   if (reason === 'click') return CLICK_REALTIME_TRANSCRIPT_WAIT_MS;
   if (reason === 'wake') return WAKE_REALTIME_TRANSCRIPT_WAIT_MS;
+  if (reason === 'reply' && opts.realtimeIsOwner) return WAKE_REALTIME_TRANSCRIPT_WAIT_MS;
   return REALTIME_TRANSCRIPT_WAIT_MS;
 }

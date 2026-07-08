@@ -131,7 +131,9 @@ export class GeminiLiveProvider implements TurnManagedRealtimeProvider {
     this.disconnectedCallbacks.push(cb);
   }
 
-  interrupt(): void {}
+  interrupt(): void {
+    this.transport?.interrupt();
+  }
 
   close(): void {
     this.closing = true;
@@ -146,6 +148,10 @@ export class GeminiLiveProvider implements TurnManagedRealtimeProvider {
 
   sendContext(text: string): void {
     this.transport?.sendContext(text);
+  }
+
+  sendScreenUpdate(text: string): void {
+    this.transport?.injectScreenUpdate(text);
   }
 
   sendText(text: string): void {

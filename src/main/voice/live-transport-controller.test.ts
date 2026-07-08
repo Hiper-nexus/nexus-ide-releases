@@ -346,13 +346,9 @@ describe('LiveTransportController', () => {
     pending.resolve();
     await started;
 
-    expect(provider.sendAudioChunk).toHaveBeenCalledTimes(2);
-    expect(Array.from(vi.mocked(provider.sendAudioChunk).mock.calls[0][0])).toEqual([
-      1, 2, 3,
-    ]);
-    expect(Array.from(vi.mocked(provider.sendAudioChunk).mock.calls[1][0])).toEqual([
-      4, 5, 6,
-    ]);
+    // Wake latency fix: discard ambient/pre-roll buffered during connect —
+    // flushing it opened a competing audio user-turn ahead of [wake] (~20s RTT).
+    expect(provider.sendAudioChunk).not.toHaveBeenCalled();
     expect(session.getState()).toMatchObject({
       status: 'listening',
       realtimeReady: true,

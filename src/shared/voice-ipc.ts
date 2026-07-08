@@ -237,6 +237,7 @@ export type JarvisAction =
   | { type: 'open_squad'; squadName: string }
   | { type: 'open_workspace'; workspaceName: string }
   | { type: 'design_squad' }
+  | { type: 'confirm_squad' }
   | { type: 'new_mission' }
   | { type: 'new_workspace' }
   | { type: 'open_terminal' }
@@ -257,7 +258,9 @@ export type JarvisAction =
   // Absent for model-emitted delegation (falls back to orchestrator/focused pane).
   | { type: 'send_to_pane'; text: string; paneId?: string }
   | { type: 'run_command'; command: string }
-  | { type: 'mcp_tool'; tool: string; args: Record<string, unknown> };
+  | { type: 'mcp_tool'; tool: string; args: Record<string, unknown> }
+  | { type: 'restore_mission_panes'; alvo?: string }
+  | { type: 'ask_pane'; pergunta: string; paneId?: string };
 
 export interface JarvisReply {
   say: string;
@@ -335,6 +338,8 @@ export interface JarvisLiveState {
 
 export interface JarvisLiveStartRequest {
   reason?: 'manual' | 'wake' | 'click' | 'ptt' | 'reply';
+  /** Hard-stop any warm/grace socket and open a fresh connection (wake inject). */
+  forceFresh?: boolean;
 }
 
 export interface JarvisLiveSmokeTestRequest {
@@ -394,6 +399,7 @@ export interface JarvisLiveInterruptEvent {
 export const jarvisLiveStartRequestSchema = z
   .object({
     reason: z.enum(['manual', 'wake', 'click', 'ptt', 'reply']).optional(),
+    forceFresh: z.boolean().optional(),
   })
   .default({});
 
@@ -435,6 +441,7 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'open_squad',
     'open_workspace',
     'design_squad',
+    'confirm_squad',
     'new_mission',
     'new_workspace',
     'open_terminal',
@@ -454,6 +461,8 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'send_to_pane',
     'run_command',
     'mcp_tool',
+    'restore_mission_panes',
+    'ask_pane',
   ]),
   summary: z.string().max(1000),
   ok: z.boolean(),

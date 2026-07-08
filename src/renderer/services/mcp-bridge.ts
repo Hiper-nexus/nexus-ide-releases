@@ -26,6 +26,7 @@ export function mapActionToTool(
     case 'open_squad':
     case 'open_workspace':
     case 'design_squad':
+    case 'confirm_squad':
     case 'new_mission':
     case 'new_workspace':
     case 'open_board':
@@ -44,7 +45,7 @@ export function mapActionToTool(
     case 'close_pane':
       return null;
     case 'send_to_pane': {
-      const paneId = paneCtx?.orchestratorPaneId ?? paneCtx?.focusedPaneId;
+      const paneId = action.paneId || paneCtx?.orchestratorPaneId || paneCtx?.focusedPaneId;
       if (!paneId) return null;
       return {
         tool: 'nexus_pane_write',

@@ -31,6 +31,9 @@ export const COARSE_VOICE_TOOL_NAMES = [
   'ler',
   'navegar',
   'encerrar',
+  'comandar',
+  'restaurar',
+  'perguntar',
 ] as const;
 
 export type CoarseVoiceToolName = (typeof COARSE_VOICE_TOOL_NAMES)[number];
@@ -90,19 +93,19 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
   {
     name: 'navegar',
     description:
-      'Navega a UI do Nexus: abre/foca um workspace, squad, pane, terminal, browser ou tela (grid/board/settings/canvas/voz). Use SEMPRE que o usuário pedir para abrir/mostrar/ir/focar algo que JÁ EXISTE. NÃO delegue navegação.',
+      "Navega a UI do Nexus: abre/foca workspace, squad, pane, terminal, browser ou tela (grid/board/settings/canvas/voz). Também dirige o wizard: 'mission-new' abre Nova Missão; 'workspace-new' abre o assistente de NOVO workspace (pasta + setup — NÃO confundir com abrir um projeto existente); 'design-squad' monta um squad do projeto e abre a revisão; 'wizard-fire' confirma/inicia o squad na revisão (como o botão Iniciar Squad). Use SEMPRE que o usuário pedir para abrir/mostrar/ir/focar/criar missão/novo workspace/confirmar. NÃO delegue navegação.",
     parameters: {
       type: 'OBJECT',
       properties: {
         target: {
           type: 'STRING',
           description:
-            "O que navegar: 'workspace', 'squad', 'pane', 'terminal', 'browser' ou 'screen'.",
+            "O que navegar: 'workspace', 'workspace-new', 'squad', 'pane', 'terminal', 'browser', 'screen', 'mission-new', 'design-squad' ou 'wizard-fire'.",
         },
         query: {
           type: 'STRING',
           description:
-            'Nome/id do alvo; em screen use grid, board, settings, canvas ou voz; em browser use a URL.',
+            'Nome/id do alvo; em screen use grid, board, settings, canvas ou voz; em browser use a URL; em workspace use o nome do projeto; vazio em workspace-new/mission-new/design-squad/wizard-fire.',
         },
       },
       required: ['target'],
@@ -114,6 +117,65 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
       'Encerra a sessão de voz (o usuário se despediu: "tchau", "é só isso", "valeu", "pode desligar"). Responda 1 frase curta de despedida E chame esta função — nunca desligue sem chamá-la.',
     parameters: { type: 'OBJECT', properties: {} },
   },
+  {
+    name: 'comandar',
+    // Overclock GeminiLiveSession.js — literal pane_write; never invent text.
+    description:
+      'Digita e envia (Enter) um comando/prompt literal no terminal de um pane já aberto — ex. "/model opus", "/effort high", ou uma pergunta rápida. Use quando o usuário pedir EXPLICITAMENTE para mandar/digitar algo NUM PANE JÁ ABERTO. NÃO use para abrir pane novo (isso é "delegar") nem para trabalho substancial (isso também é "delegar"). NUNCA invente o texto — use exatamente o que o usuário pediu para mandar.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        paneId: {
+          type: 'STRING',
+          description:
+            'Id do pane alvo, "ativo" para o pane focado/mais recente, ou um trecho do nome/agente. Vazio = pane ativo.',
+        },
+        texto: {
+          type: 'STRING',
+          description:
+            'O comando/prompt EXATO a digitar e enviar, do jeito que o usuário pediu (ex. "/model opus").',
+        },
+      },
+      required: ['texto'],
+    },
+  },
+  {
+    name: 'restaurar',
+    // Overclock C-091 — same route as "Restaurar todos"; never re-implements spawn.
+    description:
+      'Restaura pane(s) SALVOS (fechados) da missão na tela — mesma ação do botão "Restaurar todos". Use quando o usuário pedir pra restaurar/reabrir panes salvos. Sem alvo = restaura todos.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        alvo: {
+          type: 'STRING',
+          description:
+            'Nome/filtro do pane ou missão a restaurar (opcional — sem ele restaura todos).',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'perguntar',
+    // Overclock — work/domain question to a pane; narrate the pane's answer.
+    description:
+      'Repassa uma pergunta de TRABALHO/domínio ao pane que o usuário está usando e narra a RESPOSTA do pane (nunca invente a resposta você mesmo). Use quando o usuário, com uma missão/pane ativo, perguntar sobre o TRABALHO em si. NÃO use para perguntas de UI/estado do app — isso é "consultar"/"navegar". NÃO use para mandar um comando literal (isso é "comandar").',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        pergunta: {
+          type: 'STRING',
+          description: 'A pergunta de trabalho a enviar ao pane.',
+        },
+        paneId: {
+          type: 'STRING',
+          description: 'Id do pane alvo (opcional — sem ele usa o pane ativo).',
+        },
+      },
+      required: ['pergunta'],
+    },
+  },
 ];
 
 export interface CoarseToolArgs {
@@ -122,17 +184,45 @@ export interface CoarseToolArgs {
   paneId?: string;
   target?: string;
   query?: string;
+  texto?: string;
+  alvo?: string;
 }
 
 /** Discriminated result of resolving a coarse voice tool call. */
 export type CoarseToolResolution =
   | { kind: 'action'; action: NexusRealtimeActionArgs; summary: string }
-  | { kind: 'direct'; intent: 'consult' | 'read'; query: string; paneId?: string }
+  | { kind: 'direct'; intent: 'consult' | 'read' | 'ask'; query: string; paneId?: string }
+  | { kind: 'restore'; alvo?: string }
   | { kind: 'end' }
   | { kind: 'invalid'; reason: string };
 
 function str(value: unknown, max = 4_000): string {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+function navToken(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[_\s]+/g, '-');
+}
+
+function isNewWorkspaceAlias(value: string): boolean {
+  const token = navToken(value);
+  if (!token) return true; // navegar workspace sem nome → wizard (não open_workspace vazio)
+  return [
+    'workspace-new',
+    'new-workspace',
+    'novo-workspace',
+    'nova-workspace',
+    'workspace-novo',
+    'workspace-nova',
+    'novo',
+    'nova',
+    'new',
+  ].includes(token);
 }
 
 function screenToAction(query: string): NexusRealtimeActionArgs | null {
@@ -161,9 +251,10 @@ function screenToAction(query: string): NexusRealtimeActionArgs | null {
 }
 
 function navegarToAction(target: string, query: string): NexusRealtimeActionArgs | null {
-  const t = target.trim().toLowerCase();
+  const t = navToken(target);
   switch (t) {
     case 'workspace':
+      if (isNewWorkspaceAlias(query)) return { action: 'new_workspace' };
       return { action: 'open_workspace', workspaceName: query };
     case 'squad':
       return { action: 'open_squad', squadName: query };
@@ -173,6 +264,26 @@ function navegarToAction(target: string, query: string): NexusRealtimeActionArgs
       return { action: 'open_terminal' };
     case 'browser':
       return query ? { action: 'open_browser', url: query } : { action: 'open_browser' };
+    case 'mission-new':
+    case 'mission':
+    case 'nova-missao':
+      return { action: 'new_mission' };
+    case 'workspace-new':
+    case 'new-workspace':
+    case 'new_workspace':
+    case 'novo-workspace':
+    case 'novo_workspace':
+      // "abrir novo workspace" — wizard, NOT open_workspace / new_mission.
+      return { action: 'new_workspace' };
+    case 'design-squad':
+    case 'design_squad':
+    case 'montar-squad':
+      return { action: 'design_squad' };
+    case 'wizard-fire':
+    case 'confirm-squad':
+    case 'confirm_squad':
+    case 'iniciar-squad':
+      return { action: 'confirm_squad' };
     case 'screen':
     case 'tela':
       return screenToAction(query);
@@ -218,6 +329,23 @@ export function resolveCoarseVoiceTool(
     }
     case 'encerrar':
       return { kind: 'end' };
+    case 'comandar': {
+      const texto = str(args.texto);
+      if (!texto) return { kind: 'invalid', reason: 'comandar requer um texto' };
+      const paneId = str(args.paneId, 128) || undefined;
+      const action: NexusRealtimeActionArgs = { action: 'send_to_pane', text: texto, ...(paneId ? { paneId } : {}) };
+      return { kind: 'action', action, summary: summarizeNexusRealtimeAction(action) };
+    }
+    case 'restaurar': {
+      const alvo = str(args.alvo, 128) || undefined;
+      return { kind: 'restore', alvo };
+    }
+    case 'perguntar': {
+      const pergunta = str(args.pergunta, 400);
+      if (!pergunta) return { kind: 'invalid', reason: 'perguntar requer uma pergunta' };
+      const paneId = str(args.paneId, 128) || undefined;
+      return { kind: 'direct', intent: 'ask', query: pergunta, paneId };
+    }
     default:
       return { kind: 'invalid', reason: `tool de voz não suportada: ${name}` };
   }

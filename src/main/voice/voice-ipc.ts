@@ -136,6 +136,8 @@ function fullInfo(): VoiceRuntimeInfo {
 export function registerVoiceIpc(): void {
   loadVoiceConfig();
   wireHotkey();
+  const restartMarker = process.env.NEXUS_VOICE_RESTART_MARKER?.trim() || 'APP_RESTART';
+  logVoice('info', 'voice.restart', `=== ${restartMarker} ${new Date().toISOString()} ===`);
   // Narração proativa: handoff novo (entrega/travamento/falha) vira aviso de
   // voz — o renderer fala quando não houver turno ativo.
   initJarvisNarrator(broadcast);
@@ -372,11 +374,12 @@ export function registerVoiceIpc(): void {
 
   ipcMain.handle(VOICE_CHANNELS.liveStart, async (_event, raw) => {
     const parsed = jarvisLiveStartRequestSchema.safeParse(raw ?? {});
-    let state = liveSession.start(parsed.success ? parsed.data : {});
+    const req = parsed.success ? parsed.data : {};
+    let state = liveSession.start(req);
     // Se a config pede transporte realtime, conecta o socket antes do mic;
     // senão isto é no-op e o Classic segue (fallback keyless).
     if (liveSession.getState().sessionId) {
-      await liveTransport.onStart();
+      await liveTransport.onStart({ forceFresh: req.forceFresh });
       state = liveSession.getState();
     }
     return state;
@@ -385,6 +388,19 @@ export function registerVoiceIpc(): void {
   ipcMain.handle(VOICE_CHANNELS.liveStop, () => {
     liveTransport.onStop();
     return liveSession.stop();
+  });
+  ipcMain.handle(VOICE_CHANNELS.liveHardRebuild, async () => {
+    logVoice('warn', 'live.hardRebuild', 'destruindo socket zumbi + nova conexão');
+    liveTransport.hardStop();
+    liveSession.start({ reason: 'manual' });
+    await liveTransport.onStart();
+    return liveSession.getState();
+  });
+  ipcMain.handle(VOICE_CHANNELS.liveHardTeardown, () => {
+    logVoice('warn', 'live.hardTeardown', 'destruindo socket — sem reconexão');
+    liveTransport.hardStop();
+    liveSession.stop();
+    return liveSession.getState();
   });
   ipcMain.handle(VOICE_CHANNELS.liveEndTurn, () => {
     liveTransport.endTurn();
@@ -445,6 +461,9 @@ export function closeVoiceIpc(): void {
   disposeVoiceHotkey();
   shutdownJarvisNarrator();
   stopSystemSpeech();
+  // P4: hard teardown on quit — never leave a grace socket dangling.
+  liveTransport.hardStop();
+  liveSession.stop();
   // Sessões ONNX do wake são memória nativa — sem release explícito vazam
   // em quit/restart.
   void wakeEngine?.dispose();

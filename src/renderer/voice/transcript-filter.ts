@@ -17,12 +17,17 @@ const COLD_GHOSTS = new Set([
   'thanks for watching!', 'you.', 'bye', 'bye.', '.', 'obrigado',
   'obrigado.', 'obrigado por assistir', 'valeu', 'tchau', 'até a próxima',
   'e aí', 'e ai', 'ei', 'oi', 'legendas pela comunidade amara.org', 'amara.org',
+  'se inscreve no canal', 'se inscreva no canal', 'inscreva-se no canal',
+  'se inscreve no canal!', 'se inscreva no canal!',
+  'beijos', 'beijos.', 'e ja', 'e ja!', 'eijabes', 'eijabes.',
 ]);
 
 /** Artefatos que NUNCA são fala real, mesmo em conversa. */
 const HARD_GHOSTS = new Set([
   '.', 'legendas pela comunidade amara.org', 'amara.org',
   'thanks for watching', 'thanks for watching!', 'obrigado por assistir',
+  'se inscreve no canal', 'se inscreva no canal', 'inscreva-se no canal',
+  'se inscreve no canal!', 'se inscreva no canal!',
   'ah', 'ai', 'ai ai', 'hum', 'hmm', 'hm', 'uh', 'uhum',
 ]);
 
@@ -97,6 +102,15 @@ function wakeEchoPatterns(userName: string): string[][] {
     ['e', 'jarvis'],
     ['e', 'javes'],
     ['ei', 'javes'],
+    // Classic STT often prefixes the command with the spoken wake itself.
+    ['e', 'ai', 'jarvis'],
+    ['e', 'ai', 'javes'],
+    ['e', 'ai'],
+    ['ei'],
+    ['oi', 'jarvis'],
+    ['oi'],
+    ['ola', 'jarvis'],
+    ['ola'],
     ['ok', 'jarvis'],
     ['jarvis'],
     ['javes'],

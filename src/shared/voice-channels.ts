@@ -37,6 +37,10 @@ export const VOICE_CHANNELS = {
   liveStart: 'voice:live.start',
   /** invoke: renderer → main. Stop the Jarvis Live session. */
   liveStop: 'voice:live.stop',
+  /** invoke: renderer → main. Hard-rebuild: destroy socket + fresh connect. */
+  liveHardRebuild: 'voice:live.hardRebuild',
+  /** invoke: renderer → main. Hard teardown: destroy socket, no reconnect. */
+  liveHardTeardown: 'voice:live.hardTeardown',
   /** invoke: renderer → main. End the current turn and keep the session dormant. */
   liveEndTurn: 'voice:live.endTurn',
   /** invoke: renderer → main. Send a text smoke prompt through the live transport. */

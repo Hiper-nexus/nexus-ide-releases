@@ -14,7 +14,7 @@ describe('realtime bridge policy', () => {
     expect(shouldLetRealtimeProviderAnswer('onde estamos no app?')).toBe(true);
   });
 
-  it('keeps app operations on the audited Classic/MCP executor path', () => {
+  it('keeps app operations on the audited Classic/MCP executor path when Live is down', () => {
     expect(shouldUseClassicActionBridge('abrir terminal')).toBe(true);
     expect(shouldUseClassicActionBridge('roda npm test')).toBe(true);
     expect(shouldUseClassicActionBridge('manda para o agente corrigir o login')).toBe(
@@ -23,6 +23,16 @@ describe('realtime bridge policy', () => {
     expect(shouldUseClassicActionBridge('focus terminal')).toBe(true);
     expect(shouldUseClassicActionBridge('seleciona o browser')).toBe(true);
     expect(shouldUseClassicActionBridge('qual o status do git?')).toBe(true);
+  });
+
+  it('lets Live own app actions when realtime is hot (no Classic interrupt)', () => {
+    expect(
+      shouldLetRealtimeProviderAnswer('iniciar um novo squad', { isRealtimeLive: true }),
+    ).toBe(true);
+    expect(
+      shouldLetRealtimeProviderAnswer('abrir terminal', { isRealtimeLive: true }),
+    ).toBe(true);
+    expect(shouldLetRealtimeProviderAnswer('iniciar um novo squad')).toBe(false);
   });
 
   it('normalizes accents and punctuation before classifying commands', () => {

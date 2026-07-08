@@ -122,6 +122,12 @@ export class LiveAudioPlayer {
     return scheduledTailMs(this.nextStartAt, ctx.currentTime);
   }
 
+  /** Ms ainda agendados na fila gapless (0 se vazia / sem contexto). */
+  remainingMs(): number {
+    if (!this.ctx) return 0;
+    return scheduledTailMs(this.nextStartAt, this.ctx.currentTime);
+  }
+
   /** barge-in: corta tudo que está soando e zera a timeline. */
   stop(): void {
     for (const source of this.active) {

@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const source = fs.readFileSync(path.join(__dirname, 'voice-controller.ts'), 'utf-8');
+// liveEndTurn was extracted to voice-live-ipc.ts for the controller size budget.
+const source = fs.readFileSync(path.join(__dirname, 'voice-live-ipc.ts'), 'utf-8');
 
 describe('live session cleanup', () => {
   it('clears Jarvis MCP grants when a live turn ends', () => {

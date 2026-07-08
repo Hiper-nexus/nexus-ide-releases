@@ -44,6 +44,17 @@ export function shouldUseClassicActionBridge(transcript: string): boolean {
   );
 }
 
-export function shouldLetRealtimeProviderAnswer(transcript: string): boolean {
+/**
+ * When Gemini/OpenAI Live is hot, Overclock keeps the provider as the sole
+ * owner of the turn (tools + audio). Classic action-bridge must NOT interrupt
+ * mid-speech — that was cutting "iniciar squad" before confirmation.
+ *
+ * Classic bridge remains only when Live is unavailable (degraded / classic transport).
+ */
+export function shouldLetRealtimeProviderAnswer(
+  transcript: string,
+  opts?: { isRealtimeLive?: boolean },
+): boolean {
+  if (opts?.isRealtimeLive === true) return true;
   return !shouldUseClassicActionBridge(transcript);
 }

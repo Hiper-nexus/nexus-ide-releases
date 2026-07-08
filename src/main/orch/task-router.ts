@@ -6,6 +6,13 @@
  * model. Pure logic (no electron imports) — fully unit-testable; the MCP tool
  * nexus_route_task feeds it the live adapter list.
  */
+import {
+  isModelBlockedForAutoRouting,
+  loadModelCatalog,
+  modelCatalogInfo,
+  modelRoutingRank,
+  type ModelCatalog,
+} from '../adapters/model-catalog';
 
 export type TaskTier = 'trivial' | 'easy' | 'medium' | 'hard' | 'critical';
 
@@ -166,6 +173,8 @@ export function classifyTask(taskText: string): TaskClassification {
 export interface AdapterAvailability {
   id: string;
   installed: boolean;
+  /** Optional resolved model list; when present, candidates outside it are skipped. */
+  models?: string[];
 }
 
 export interface RouteDecision {
@@ -195,11 +204,12 @@ export function routeTask(
   // zerados → todos deslogam). glm/longcat usam o mesmo binário mas autenticam
   // por ANTHROPIC_AUTH_TOKEN, então não disputam o keychain e seguem elegíveis.
   reserveClaude = false,
+  modelCatalog: ModelCatalog = loadModelCatalog(),
 ): RouteDecision | null {
-  const installed = new Set(
-    adapters.filter((a) => a.installed).map((a) => a.id),
+  const available = new Map(
+    adapters.filter((a) => a.installed).map((a) => [a.id, a]),
   );
-  if (installed.size === 0) return null;
+  if (available.size === 0) return null;
 
   const classification = classifyTask(taskText);
   const tier = tierOverride ?? classification.tier;
@@ -216,12 +226,35 @@ export function routeTask(
     ...TIER_ORDER.slice(tierIndex + 1),
   ];
   // Achata os candidatos instalados na ordem de busca (guardando o tier de
-  // origem para o motivo "melhor opção instalada").
+  // origem para o motivo "melhor opção instalada"). A ordem declarada da
+  // tabela continua sendo a fonte de capacidade; o catálogo só bloqueia riscos
+  // e anota custo, sem promover modelos baratos acima de modelos fortes.
   const ranked: Array<{ c: RouteCandidate; fromTier: TaskTier }> = [];
+  const skippedRisk: string[] = [];
   for (const candidateTier of searchOrder) {
-    for (const c of table[candidateTier]) {
-      if (installed.has(c.adapterId)) ranked.push({ c, fromTier: candidateTier });
-    }
+    const tierCandidates = table[candidateTier]
+      .filter((c) => {
+        const adapter = available.get(c.adapterId);
+        if (!adapter) return false;
+        if (
+          c.model &&
+          adapter.models &&
+          adapter.models.length > 0 &&
+          !adapter.models.includes(c.model)
+        ) {
+          return false;
+        }
+        const info = modelCatalogInfo(modelCatalog, c.adapterId, c.model);
+        if (isModelBlockedForAutoRouting(info)) {
+          skippedRisk.push(
+            `${c.adapterId}:${c.model ?? '(default)'} (${info?.availability ?? 'blocked'})`,
+          );
+          return false;
+        }
+        return true;
+      });
+
+    for (const c of tierCandidates) ranked.push({ c, fromTier: candidateTier });
   }
   if (ranked.length > 0) {
     let chosen = ranked[0];
@@ -236,18 +269,26 @@ export function routeTask(
       chosen.fromTier === tier
         ? ''
         : ` (tier ${chosen.fromTier} — melhor opção instalada)`;
+    const costRank = modelRoutingRank(
+      modelCatalogInfo(modelCatalog, pick.adapterId, pick.model),
+    );
+    const costNote = costRank <= 1 ? '; preferiu rota free/cheap' : '';
+    const riskNote =
+      skippedRisk.length > 0
+        ? `; evitou ${[...new Set(skippedRisk)].slice(0, 3).join(', ')}`
+        : '';
     return {
       tier,
       adapterId: pick.adapterId,
       model: pick.model,
       effort: pick.effort,
-      reason: `${tier}${borrowed}; ${why}`,
+      reason: `${tier}${borrowed}; ${why}${costNote}${riskNote}`,
       alternatives: ranked.filter((r) => r.c !== pick).map((r) => r.c),
     };
   }
 
   // No table adapter installed at all — degrade to whatever exists.
-  const fallback = [...installed][0];
+  const fallback = [...available.keys()][0];
   return {
     tier,
     adapterId: fallback,

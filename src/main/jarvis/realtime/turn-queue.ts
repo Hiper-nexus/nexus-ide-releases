@@ -48,6 +48,18 @@ export class TurnQueue {
     this.drain();
   }
 
+  /**
+   * Wake / barge-in: drop queued narrations and force-send now.
+   * A stale busy turn (grace reuse with no turnComplete) otherwise blocks
+   * `[wake]` until TURN_MAX_MS (~15s) — the ~20s "silent then Olá" symptom.
+   */
+  enqueuePriority(text: string): void {
+    this.queue = [];
+    this.clearBreaker();
+    this.busy = false;
+    this.enqueue(text);
+  }
+
   /** Prepend turns (e.g. re-queuing a dead socket's in-flight turns), FIFO order. */
   prepend(texts: string[]): void {
     this.queue.unshift(...texts);

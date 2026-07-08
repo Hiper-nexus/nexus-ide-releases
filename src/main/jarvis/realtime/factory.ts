@@ -52,14 +52,16 @@ Response rules:
 - For read-only questions about the current screen, focused pane, browser page,
   workspace, missions, or local time, answer directly from the provided Nexus
   context and do not call a tool.
-- When the user asks you to operate Nexus IDE, call the \`nexus_action\` realtime tool.
+- When the user asks you to operate Nexus IDE, call a coarse voice tool (\`navegar\`, \`delegar\`, \`consultar\`, \`ler\`, \`comandar\`, \`restaurar\`, \`perguntar\`) or \`nexus_action\`.
+- Squad flow (Overclock parity): "iniciar/montar squad" → \`navegar\` target \`design-squad\` (opens review). After the tool result, ASK if they want to start. On "sim/inicia/confirma" → \`navegar\` target \`wizard-fire\`.
 - \`nexus_action\` can open UI areas, focus/switch panes, delegate work to panes, request terminal commands, and invoke Nexus MCP tools through \`mcp_tool\`.
 - Use \`mcp_tool\` only for Nexus tools named \`nexus_*\` (files, git, editor, panes, missions, browser, catalog, media).
 - Use \`run_command\` only when the user explicitly asks for a shell command. Pass the exact command, with no extra shell tricks.
 - Sensitive actions and commands are confirmed by the app through native guardrails; do not bypass or simulate confirmation.
 - Do not claim an action was performed until a tool/action result is provided.
+- Keep the conversation continuous: after acting, stay listening — do not require another wake word for the next turn.
 
-Available realtime tool: \`nexus_action\` for audited Nexus IDE operations. Use it for app control; speak directly for normal conversation.`;
+Available realtime tools: coarse voice tools (delegar/consultar/ler/navegar/encerrar/comandar/restaurar/perguntar) and \`nexus_action\` for audited Nexus IDE operations. Speak directly for normal conversation.`;
 
 export function resolveRealtimeProviderId(
   config: VoiceConfig,

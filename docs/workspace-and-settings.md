@@ -63,8 +63,15 @@ When a routable CLI is pointed at a non-native upstream, the spawn injects
 `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (never `API_KEY` for third
 parties) plus the provider's extra env (e.g. GLM's `API_TIMEOUT_MS`,
 `ANTHROPIC_DEFAULT_SONNET_MODEL=glm-4.6`), exactly like the launcher's
-`provider_setup_env`. The token comes from the Keychain; env flows into the
-xterm PTY via the provider spawn overrides.
+`provider_setup_env`. Token resolution order:
+
+1. Nexus vault (`~/.nexus/secrets.enc` / OS keychain)
+2. ai-launcher `~/.local/share/ai-launcher/providers.conf` (same file `ai glm` uses)
+3. process env vars declared by the adapter
+
+So a z.ai key already working in the launcher is picked up automatically —
+no need to re-paste it into Nexus. Env flows into the xterm PTY via the
+provider spawn overrides.
 
 Multi-account support is live: saved Claude subscription sessions are snapshotted
 from the native Keychain, restored before spawn/activation, and API-key accounts

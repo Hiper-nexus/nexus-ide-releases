@@ -18,6 +18,7 @@ import { launchSquadMission } from '../orch/mission-launcher';
 import { isMissingModelKeyError } from '../lib/credential-errors';
 import { playAudioBase64 } from './voice-playback';
 import { invokeMcpWithConfirm, mapActionToTool } from '../services/mcp-bridge';
+import { reopenMission } from '../orch/mission-reopen';
 
 export interface JarvisExecutionResult {
   sayText: string;
@@ -233,22 +234,34 @@ export async function executeJarvisAction(
       toolResult = { tool: action.type, ok: false, summary: 'squad não encontrado' };
     }
   } else if (action.type === 'open_workspace') {
-    const wanted = action.workspaceName.toLowerCase();
-    const ws = useWorkspaceStore.getState();
-    const all = [...ws.recents];
-    const match =
-      all.find((r) => r.name.toLowerCase() === wanted) ??
-      all.find(
-        (r) =>
-          r.name.toLowerCase().includes(wanted) ||
-          wanted.includes(r.name.toLowerCase()),
-      );
-    if (match) {
-      void ws.open(match.path);
-      toolResult = { tool: action.type, ok: true, summary: `workspace ${match.name} aberto` };
+    const wanted = action.workspaceName.toLowerCase().trim();
+    // STT/Live often says "abrir workspace" / "iniciar no workspace" without a
+    // project name — treat as new_workspace wizard, not a failed open.
+    if (
+      !wanted ||
+      /^(novo|nova|new|workspace-new|new-workspace|novo-workspace)$/i.test(wanted)
+    ) {
+      useMissionWizardStore.getState().openForNewWorkspace();
+      sayText = sayText.trim() || 'Abrindo o assistente de novo workspace.';
+      toolResult = { tool: 'new_workspace', ok: true, summary: 'wizard de workspace aberto' };
     } else {
-      sayText = `Não achei o projeto "${action.workspaceName}" nos recentes.`;
-      toolResult = { tool: action.type, ok: false, summary: 'workspace não encontrado' };
+      const ws = useWorkspaceStore.getState();
+      const all = [...ws.recents];
+      const match =
+        all.find((r) => r.name.toLowerCase() === wanted) ??
+        all.find(
+          (r) =>
+            r.name.toLowerCase().includes(wanted) ||
+            wanted.includes(r.name.toLowerCase()),
+        );
+      if (match) {
+        void ws.open(match.path);
+        toolResult = { tool: action.type, ok: true, summary: `workspace ${match.name} aberto` };
+      } else {
+        sayText = `Não achei o projeto "${action.workspaceName}" nos recentes. Quer que eu abra o assistente de novo workspace?`;
+        expectReply = true;
+        toolResult = { tool: action.type, ok: false, summary: 'workspace não encontrado' };
+      }
     }
   } else if (action.type === 'design_squad') {
     const ws = useWorkspaceStore.getState().current;
@@ -256,23 +269,45 @@ export async function executeJarvisAction(
       sayText = 'Abre um projeto primeiro que eu monto o squad dele.';
       toolResult = { tool: action.type, ok: false, summary: 'sem workspace aberto' };
     } else {
-      void window.nexus.orch.designSquad(ws.path).then((res) => {
+      // Await design so Live gets a real tool result + confirmation prompt
+      // (Overclock: open review → ask "Disparo?" before wizard-fire).
+      try {
+        const res = await window.nexus.orch.designSquad(ws.path);
         if (res.ok && res.squad) {
           useMissionWizardStore.getState().openForSquad(res.squad.id);
-          void window.nexus.voice.speak({
-            text: `Squad ${res.squad.name} pronto — revise e inicie.`,
-            speakMode: 'full',
-          });
+          sayText = `Squad ${res.squad.name} pronto na revisão. Quer que eu inicie de verdade?`;
+          expectReply = true;
+          toolResult = {
+            tool: action.type,
+            ok: true,
+            summary: `squad ${res.squad.name} em revisão — aguardando confirmação`,
+          };
         } else {
           if (isMissingModelKeyError(res.error)) useVoiceStore.getState().openSettings();
-          void window.nexus.voice.speak({
-            text: `Não consegui montar o squad: ${res.error ?? 'erro'}.`,
-            speakMode: 'full',
-          });
+          sayText = `Não consegui montar o squad: ${res.error ?? 'erro'}.`;
+          toolResult = {
+            tool: action.type,
+            ok: false,
+            summary: res.error ?? 'design falhou',
+          };
         }
-      });
-      sayText = 'Deixa comigo — analisando o projeto para montar o time.';
-      toolResult = { tool: action.type, ok: true, summary: 'design de squad iniciado' };
+      } catch (err) {
+        sayText = `Não consegui montar o squad: ${err instanceof Error ? err.message : String(err)}.`;
+        toolResult = { tool: action.type, ok: false, summary: 'design falhou' };
+      }
+    }
+  } else if (action.type === 'confirm_squad') {
+    const wizard = useMissionWizardStore.getState();
+    if (!wizard.open || !wizard.presetSquadId) {
+      sayText =
+        'Não tem um squad na revisão agora. Diga "iniciar squad" pra eu montar um primeiro.';
+      expectReply = true;
+      toolResult = { tool: action.type, ok: false, summary: 'wizard de squad fechado' };
+    } else {
+      wizard.requestVoiceLaunch();
+      sayText = 'Confirmado — iniciando o squad.';
+      expectReply = false;
+      toolResult = { tool: action.type, ok: true, summary: 'squad confirmado e iniciando' };
     }
   } else if (action.type === 'new_mission') {
     useMissionWizardStore.getState().openForMission();
@@ -470,6 +505,46 @@ export async function executeJarvisAction(
   } else if (action.type === 'mcp_tool') {
     const mcp = await executeViaMcp(action, sayText);
     if (mcp) return { ...mcp, expectReply };
+  } else if (action.type === 'restore_mission_panes') {
+    const orch = useOrchStore.getState();
+    const missions = orch.missions ?? [];
+    if (missions.length === 0) {
+      sayText = 'Não tem nenhuma missão salva para restaurar.';
+      toolResult = { tool: action.type, ok: false, summary: 'sem missões' };
+    } else {
+      const alvo = action.alvo?.toLowerCase();
+      const target = alvo
+        ? missions.find((m) => m.title?.toLowerCase().includes(alvo)) ?? missions[0]
+        : missions[0];
+      const result = await reopenMission(target);
+      if (result.ok) {
+        sayText = `Missão restaurada com ${result.panes ?? 0} panes.`;
+        toolResult = { tool: action.type, ok: true, summary: `missão restaurada (${result.panes} panes)` };
+      } else {
+        sayText = result.error ?? 'Não consegui restaurar a missão.';
+        toolResult = { tool: action.type, ok: false, summary: result.error ?? 'falhou' };
+      }
+    }
+  } else if (action.type === 'ask_pane') {
+    const { root, focusedPaneId } = useLayoutStore.getState();
+    const panes = listPanes(root);
+    const targetPaneId =
+      (action.paneId && panes.some((p) => p.id === action.paneId) ? action.paneId : null)
+      ?? findOrchestratorPane(root)
+      ?? focusedPaneId;
+    if (!targetPaneId) {
+      sayText = 'Não tem nenhum pane para eu perguntar.';
+      toolResult = { tool: action.type, ok: false, summary: 'nenhum pane disponível' };
+    } else {
+      const ok = writeToPane(targetPaneId, `${action.pergunta}\n`);
+      if (ok) {
+        sayText = 'Pergunta enviada ao pane.';
+        toolResult = { tool: action.type, ok: true, summary: 'pergunta enviada' };
+      } else {
+        sayText = 'Não consegui escrever no pane.';
+        toolResult = { tool: action.type, ok: false, summary: 'falha ao escrever' };
+      }
+    }
   }
 
   return { sayText, expectReply, toolResult };

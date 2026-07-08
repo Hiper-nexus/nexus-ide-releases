@@ -6,20 +6,26 @@ import {
 } from './coarse-voice-tools';
 
 describe('COARSE_VOICE_TOOLS declarations', () => {
-  it('declares the 4 coarse tools (+ encerrar) with Gemini uppercase schema', () => {
+  it('declares all 8 coarse tools with Gemini uppercase schema', () => {
     const names = COARSE_VOICE_TOOLS.map((t) => t.name);
-    expect(names).toEqual(['delegar', 'consultar', 'ler', 'navegar', 'encerrar']);
+    expect(names).toEqual([
+      'delegar', 'consultar', 'ler', 'navegar', 'encerrar',
+      'comandar', 'restaurar', 'perguntar',
+    ]);
     for (const tool of COARSE_VOICE_TOOLS) {
       expect(tool.parameters.type).toBe('OBJECT');
     }
   });
 
-  it('delegar/consultar require their key argument; ler/encerrar do not', () => {
+  it('delegar/consultar/comandar/perguntar require their key argument', () => {
     const byName = Object.fromEntries(COARSE_VOICE_TOOLS.map((t) => [t.name, t]));
     expect(byName.delegar.parameters.required).toEqual(['briefing']);
     expect(byName.consultar.parameters.required).toEqual(['pergunta']);
     expect(byName.navegar.parameters.required).toEqual(['target']);
     expect(byName.ler.parameters.required ?? []).toEqual([]);
+    expect(byName.comandar.parameters.required).toEqual(['texto']);
+    expect(byName.restaurar.parameters.required ?? []).toEqual([]);
+    expect(byName.perguntar.parameters.required).toEqual(['pergunta']);
   });
 
   it('COARSE_VOICE_TOOL_NAMES matches the declarations', () => {
@@ -39,6 +45,58 @@ describe('resolveCoarseVoiceTool', () => {
 
   it('delegar without a briefing is invalid', () => {
     expect(resolveCoarseVoiceTool('delegar', {}).kind).toBe('invalid');
+  });
+
+  it('navegar design-squad / wizard-fire / mission-new map to squad flow', () => {
+    expect(resolveCoarseVoiceTool('navegar', { target: 'design-squad' })).toMatchObject({
+      kind: 'action',
+      action: { action: 'design_squad' },
+    });
+    expect(resolveCoarseVoiceTool('navegar', { target: 'wizard-fire' })).toMatchObject({
+      kind: 'action',
+      action: { action: 'confirm_squad' },
+    });
+    expect(resolveCoarseVoiceTool('navegar', { target: 'mission-new' })).toMatchObject({
+      kind: 'action',
+      action: { action: 'new_mission' },
+    });
+  });
+
+  it('navegar workspace-new abre o wizard de novo workspace (não new_mission)', () => {
+    expect(resolveCoarseVoiceTool('navegar', { target: 'workspace-new' })).toMatchObject({
+      kind: 'action',
+      action: { action: 'new_workspace' },
+    });
+    expect(resolveCoarseVoiceTool('navegar', { target: 'new_workspace' })).toMatchObject({
+      kind: 'action',
+      action: { action: 'new_workspace' },
+    });
+    expect(resolveCoarseVoiceTool('navegar', { target: 'novo-workspace' })).toMatchObject({
+      kind: 'action',
+      action: { action: 'new_workspace' },
+    });
+    expect(
+      resolveCoarseVoiceTool('navegar', { target: 'workspace', query: 'new_workspace' }),
+    ).toMatchObject({
+      kind: 'action',
+      action: { action: 'new_workspace' },
+    });
+    expect(
+      resolveCoarseVoiceTool('navegar', { target: 'workspace', query: 'workspace-new' }),
+    ).toMatchObject({
+      kind: 'action',
+      action: { action: 'new_workspace' },
+    });
+    expect(resolveCoarseVoiceTool('navegar', { target: 'workspace' })).toMatchObject({
+      kind: 'action',
+      action: { action: 'new_workspace' },
+    });
+    expect(
+      resolveCoarseVoiceTool('navegar', { target: 'workspace', query: 'novo' }),
+    ).toMatchObject({
+      kind: 'action',
+      action: { action: 'new_workspace' },
+    });
   });
 
   it('navegar workspace/squad/pane/terminal/browser map to nexus actions', () => {
@@ -106,5 +164,58 @@ describe('resolveCoarseVoiceTool', () => {
   it('encerrar resolves to end, unknown tools are invalid', () => {
     expect(resolveCoarseVoiceTool('encerrar', {})).toEqual({ kind: 'end' });
     expect(resolveCoarseVoiceTool('quux', {}).kind).toBe('invalid');
+  });
+
+  it('comandar maps to send_to_pane with literal texto', () => {
+    const r = resolveCoarseVoiceTool('comandar', { texto: 'npm test' });
+    expect(r).toEqual({
+      kind: 'action',
+      action: { action: 'send_to_pane', text: 'npm test' },
+      summary: 'enviar missão ao pane',
+    });
+  });
+
+  it('comandar with paneId carries it through', () => {
+    const r = resolveCoarseVoiceTool('comandar', { texto: 'ls -la', paneId: 'p1' });
+    expect(r).toMatchObject({
+      kind: 'action',
+      action: { action: 'send_to_pane', text: 'ls -la', paneId: 'p1' },
+    });
+  });
+
+  it('comandar without texto is invalid', () => {
+    expect(resolveCoarseVoiceTool('comandar', {}).kind).toBe('invalid');
+  });
+
+  it('restaurar resolves to restore with optional alvo', () => {
+    expect(resolveCoarseVoiceTool('restaurar', {})).toEqual({ kind: 'restore' });
+    expect(resolveCoarseVoiceTool('restaurar', { alvo: 'landing' })).toEqual({
+      kind: 'restore',
+      alvo: 'landing',
+    });
+  });
+
+  it('perguntar resolves to direct ask intent', () => {
+    const r = resolveCoarseVoiceTool('perguntar', { pergunta: 'qual o status?' });
+    expect(r).toEqual({
+      kind: 'direct',
+      intent: 'ask',
+      query: 'qual o status?',
+      paneId: undefined,
+    });
+  });
+
+  it('perguntar with paneId carries it through', () => {
+    const r = resolveCoarseVoiceTool('perguntar', { pergunta: 'está pronto?', paneId: 'p2' });
+    expect(r).toEqual({
+      kind: 'direct',
+      intent: 'ask',
+      query: 'está pronto?',
+      paneId: 'p2',
+    });
+  });
+
+  it('perguntar without pergunta is invalid', () => {
+    expect(resolveCoarseVoiceTool('perguntar', {}).kind).toBe('invalid');
   });
 });

@@ -157,16 +157,28 @@ describe('jarvis-reply-loop (continuidade)', () => {
     ).toBe(true);
   });
 
-  it('respostas realtime full-duplex sempre reabrem', () => {
+  it('com Live dono da sessão NÃO reabre Classic (P1 — evita racer)', () => {
     resetAutoReplyLoop();
-    for (let i = 0; i < MAX_AUTO_REPLY_LOOPS + 3; i += 1) noteAutoReplyOpened({ sayText: 'Feito.' });
     expect(
       shouldReopenJarvisListening({
-        expectReply: false,
+        expectReply: true,
         sayText: 'Feito.',
         realtimeTurnActive: true,
         isRealtimeLive: true,
         captureReason: 'reply',
+      }),
+    ).toBe(false);
+  });
+
+  it('Classic com expectReply=false ainda reabre (continuidade hot-listen)', () => {
+    resetAutoReplyLoop();
+    expect(
+      shouldReopenJarvisListening({
+        expectReply: false,
+        sayText: 'Feito.',
+        realtimeTurnActive: false,
+        isRealtimeLive: false,
+        captureReason: 'wake',
       }),
     ).toBe(true);
   });

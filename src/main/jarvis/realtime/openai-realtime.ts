@@ -7,6 +7,7 @@ import {
   type RealtimeTranscriptEvent,
   type TurnManagedRealtimeProvider,
 } from './provider';
+import { ScreenCoalescer } from './screen-coalescer';
 
 export interface RealtimeWsLike {
   readyState: number;
@@ -278,6 +279,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   private responseDoneCallbacks: Array<() => void> = [];
   private disconnectedCallbacks: Array<(err: Error) => void> = [];
   private latestContext = '';
+  private readonly screenCoalescer: ScreenCoalescer;
 
   private readonly apiKey: string;
   private readonly instructions: string;
@@ -303,6 +305,11 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     this.wsFactory = options.wsFactory ?? defaultWsFactory;
     this.setTimeoutFn = options.setTimeoutFn ?? setTimeout;
     this.clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
+    this.screenCoalescer = new ScreenCoalescer({
+      flush: (text) => this.sendContext(text),
+      setTimeoutFn: this.setTimeoutFn,
+      clearTimeoutFn: this.clearTimeoutFn,
+    });
   }
 
   get isReady(): boolean {
@@ -437,6 +444,10 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     this.sendSessionUpdate();
   }
 
+  sendScreenUpdate(text: string): void {
+    this.screenCoalescer.push(text);
+  }
+
   sendText(text: string): void {
     const trimmed = text.trim();
     if (!trimmed || !this.isReady) return;
@@ -478,6 +489,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     this.pendingAudio = [];
     this.pendingAudioBytes = 0;
     this.emittedToolCallIds.clear();
+    this.screenCoalescer.clear();
     if (!this.ws) return;
     try {
       this.ws.close();

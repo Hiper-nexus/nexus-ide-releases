@@ -96,7 +96,16 @@ describe('buildSetupMessage', () => {
       systemInstruction: 's',
     });
     const decls = msg.setup.tools[0].functionDeclarations.map((d) => d.name);
-    expect(decls).toEqual(['delegar', 'consultar', 'ler', 'navegar', 'encerrar']);
+    expect(decls).toEqual([
+      'delegar',
+      'consultar',
+      'ler',
+      'navegar',
+      'encerrar',
+      'comandar',
+      'restaurar',
+      'perguntar',
+    ]);
   });
 });
 
@@ -367,6 +376,43 @@ describe('GeminiLiveTransport', () => {
     expect(ws.sent.at(-1)).toContain('[wake]');
   });
 
+  it('injectContext([wake]) jumps a busy TurnQueue (priority)', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    t.injectNarration('stale narration still in flight');
+    const before = ws.sent.length;
+    t.injectContext('[wake] diga exatamente Olá.');
+    expect(ws.sent.length).toBe(before + 1);
+    expect(ws.sent.at(-1)).toContain('[wake]');
+    expect(ws.sent.at(-1)).not.toContain('stale narration');
+  });
+
+  it('interrupt ends audio turn and clears pending mic without waiting for server', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    t.sendMicChunk(Buffer.from([1, 0, 2, 0]).toString('base64'));
+    t.interrupt();
+    expect(ws.sent.some((s) => s.includes('audioStreamEnd'))).toBe(true);
+  });
+
+  it('endUserTurn is a no-op when no mic audio was streamed (cold wake)', () => {
+    const ws = fakeWs();
+    const t = makeTransport(ws, events());
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    const before = ws.sent.length;
+    t.endUserTurn();
+    expect(ws.sent.length).toBe(before);
+    expect(ws.sent.some((s) => s.includes('audioStreamEnd'))).toBe(false);
+  });
+
   it('coalesce a rajada de [update] de tela — só o estado assentado como contexto silencioso', async () => {
     vi.useFakeTimers();
     const ws = fakeWs();
@@ -456,6 +502,7 @@ describe('GeminiLiveTransport', () => {
     t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
     ws.fire('open');
     ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    t.sendMicChunk(Buffer.from([1, 0]).toString('base64'));
     t.endUserTurn();
     const last = JSON.parse(ws.sent.at(-1)!);
     expect(last.realtimeInput.audioStreamEnd).toBe(true);

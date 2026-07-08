@@ -225,6 +225,8 @@ export class GeminiLiveTransport {
   private setupDone = false;
   private pendingMic: string[] = [];
   private pendingMicBytes = 0;
+  /** True after at least one mic chunk hit the socket (needs audioStreamEnd). */
+  private audioStreamOpen = false;
   private setupTimer: ReturnType<typeof setTimeout> | null = null;
   private progressTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -475,6 +477,7 @@ export class GeminiLiveTransport {
           },
         }),
       );
+      this.audioStreamOpen = true;
       return;
     }
     const bytes = b64.length;
@@ -507,7 +510,26 @@ export class GeminiLiveTransport {
   /** Fecha o turno de fala do usuário (VAD manual / PTT soltou). */
   endUserTurn(): void {
     if (!this.isReady || !this.ws) return;
+    // Orphan audioStreamEnd (no prior mic) confuses Gemini Live — cold wake
+    // inject then stays silent until a later re-wake (~3s) or ~20s ambient reply.
+    if (!this.audioStreamOpen) return;
     this.ws.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }));
+    this.audioStreamOpen = false;
+  }
+
+  /**
+   * Barge-in / wake prep: close any open audio user-turn and free the TurnQueue
+   * so a `[wake]` inject is not stuck behind a phantom busy turn.
+   * Does NOT emit onInterrupted — that is reserved for server barge-in signals.
+   */
+  interrupt(): void {
+    this.endUserTurn();
+    this.userTranscriptBuffer = '';
+    this.pendingMic = [];
+    this.pendingMicBytes = 0;
+    this.audioStreamOpen = false;
+    this.turnQueue.reset();
+    this.screenCoalescer.clear();
   }
 
   /** Contexto de tela como TEXTO (nunca pixels), sem fechar o turno. Imediato. */
@@ -535,7 +557,12 @@ export class GeminiLiveTransport {
   /** F-113: contexto que DEVE virar fala (greeting no wake, resumo de reconexão). */
   injectContext(text: string): void {
     const trimmed = text.trim();
-    if (trimmed) this.routeTurn(trimmed);
+    if (!trimmed) return;
+    if (trimmed.startsWith('[wake]') || trimmed.startsWith('[reconexão]')) {
+      this.routePriorityTurn(trimmed);
+      return;
+    }
+    this.routeTurn(trimmed);
   }
 
   private sendSilentContext(text: string): void {
@@ -561,12 +588,22 @@ export class GeminiLiveTransport {
   sendTextTurn(text: string): void {
     const trimmed = text.trim();
     if (!trimmed) return;
-    this.routeTurn(trimmed.slice(0, 4000));
+    const clipped = trimmed.slice(0, 4000);
+    if (clipped.startsWith('[wake]') || clipped.startsWith('[reconexão]')) {
+      this.routePriorityTurn(clipped);
+      return;
+    }
+    this.routeTurn(clipped);
   }
 
   /** F-113: enfileira um turno falável serializado (1 por vez, disjuntor TURN_MAX_MS). */
   private routeTurn(text: string): void {
     this.turnQueue.enqueue(text);
+  }
+
+  /** Wake/reconexão: jump the queue (see TurnQueue.enqueuePriority). */
+  private routePriorityTurn(text: string): void {
+    this.turnQueue.enqueuePriority(text);
   }
 
   /** Callback de envio da TurnQueue — turno de usuário que dispara resposta do modelo. */
@@ -650,6 +687,7 @@ export class GeminiLiveTransport {
     }
     this.pendingMic = [];
     this.pendingMicBytes = 0;
+    this.audioStreamOpen = false;
     this.pendingToolCalls.clear();
   }
 

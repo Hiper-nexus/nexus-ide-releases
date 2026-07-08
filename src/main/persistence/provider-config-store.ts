@@ -48,7 +48,12 @@ import { testProviderKey } from '../adapters/provider-test';
 import {
   buildProviderRoutingEnv,
   listUpstreamProviders,
+  loadLauncherProviderKey,
 } from '../adapters/launcher-provider-manager';
+import {
+  loadModelCatalog,
+  modelInfoForAdapter,
+} from '../adapters/model-catalog';
 import {
   hasSubscriptionAuth,
   resolveAuthStrategy,
@@ -193,12 +198,44 @@ function authDecision(adapterId: string) {
   });
 }
 
-function hasRuntimeKey(adapterId: string): boolean {
-  if (hasKey(adapterId)) return true;
-  return keyEnvVarsOf(adapterId).some((name) => {
+/**
+ * Resolve the API key/token for an adapter at runtime.
+ * Priority (matches user mental model: launcher already works → Nexus must too):
+ *  1. Nexus vault (`~/.nexus/secrets.enc` / keychain)
+ *  2. ai-launcher `providers.conf` for this adapter id (e.g. `glm=…`)
+ *  3. ai-launcher key for a routed upstream (claude + upstream=glm → glm key)
+ *  4. process env vars declared by the adapter
+ * Never logs the value.
+ */
+function resolveApiKey(adapterId: string, upstream?: string): string | null {
+  const fromVault = getKey(adapterId);
+  if (fromVault) return fromVault;
+
+  const fromLauncher = loadLauncherProviderKey(adapterId);
+  if (fromLauncher) return fromLauncher;
+
+  const route = upstream ?? configFor(adapterId).upstream;
+  if (route && route !== 'anthropic' && route !== adapterId) {
+    const viaUpstream = loadLauncherProviderKey(route);
+    if (viaUpstream) return viaUpstream;
+  }
+
+  for (const name of keyEnvVarsOf(adapterId)) {
     const value = process.env[name];
-    return typeof value === 'string' && value.trim().length > 0;
-  });
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function hasRuntimeKey(adapterId: string): boolean {
+  return resolveApiKey(adapterId) !== null;
+}
+
+function maskToken(key: string): string {
+  if (key.length <= 8) return '••••';
+  return `${key.slice(0, 3)}…${key.slice(-4)}`;
 }
 
 export interface ProviderReadiness {
@@ -253,7 +290,7 @@ export function providerSpawnOverrides(
 ): ProviderSpawnOverrides {
   const cfg = configFor(adapterId);
   const adapter = getAdapter(adapterId);
-  const key = getKey(adapterId);
+  const key = resolveApiKey(adapterId, cfg.upstream);
   // Control flags (permission mode / effort / verbose) always apply, whatever
   // the auth/routing path — they're how the user turns on auto-operation.
   const base = {
@@ -283,7 +320,13 @@ export function providerSpawnOverrides(
         };
       }
       // api-key account: route to its upstream (GLM/Fugu/…) or inject native.
-      const accKey = accountKey(account);
+      // Fall back to launcher providers.conf when the account has no vault key.
+      const accKey =
+        accountKey(account) ??
+        (account.upstream && account.upstream !== 'anthropic'
+          ? loadLauncherProviderKey(account.upstream)
+          : null) ??
+        loadLauncherProviderKey(adapterId);
       if (account.upstream && account.upstream !== 'anthropic') {
         return { ...base, keyEnv: buildProviderRoutingEnv(account.upstream, accKey), suppressEnv: [] };
       }
@@ -333,6 +376,12 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
   const effectiveBin = cfg.binPath || detectedBin;
   const installed =
     adapter.kind === 'cli-pty' ? isBinResolvable(effectiveBin) : true;
+  const models = [
+    ...adapter.models.list,
+    ...getCustomModels(adapterId).filter(
+      (m) => !adapter.models.list.includes(m),
+    ),
+  ];
   return {
     adapterId,
     label: adapter.label,
@@ -343,17 +392,20 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
     binPath: cfg.binPath,
     detectedBin,
     defaultModel: cfg.defaultModel || adapter.models.default,
-    models: [
-      ...adapter.models.list,
-      ...getCustomModels(adapterId).filter(
-        (m) => !adapter.models.list.includes(m),
-      ),
-    ],
+    models,
+    modelInfo: modelInfoForAdapter(loadModelCatalog(), adapterId, models),
     customModels: getCustomModels(adapterId),
     extraArgs: cfg.extraArgs,
     keyEnvVar: primaryKeyEnvVar(adapter),
     hasKey: hasRuntimeKey(adapterId),
-    keyMasked: maskedKey(adapterId),
+    // Prefer vault mask; if only the launcher has the key, mask that instead
+    // so Settings doesn't look "empty" while readiness is already true.
+    keyMasked: (() => {
+      const vault = maskedKey(adapterId);
+      if (vault) return vault;
+      const resolved = resolveApiKey(adapterId, cfg.upstream);
+      return resolved ? maskToken(resolved) : null;
+    })(),
     authMethod: adapter.kind === 'cli-pty' ? adapter.auth.method : 'api_key',
     loginHint:
       adapter.kind === 'cli-pty' ? adapter.auth.loginHint : undefined,
@@ -531,7 +583,7 @@ export function registerProviderIpc(): void {
       if (!parsed.success) return { ok: false, detail: 'invalid request' };
       const adapter = getAdapter(parsed.data.adapterId);
       if (!adapter) return { ok: false, detail: 'unknown provider' };
-      const key = getKey(parsed.data.adapterId);
+      const key = resolveApiKey(parsed.data.adapterId);
       return testProviderKey(adapter, key);
     },
   );

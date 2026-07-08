@@ -92,12 +92,31 @@ describe('TurnQueue', () => {
   it('prepend keeps FIFO order for re-queued turns', () => {
     const { queue, sent } = harness();
     queue.enqueue('live');
-    // 'live' is in flight; queue two more, then prepend two that must come first.
     queue.enqueue('c');
     queue.prepend(['a', 'b']);
     queue.release();
     queue.release();
     queue.release();
     expect(sent).toEqual(['live', 'a', 'b', 'c']);
+  });
+
+  it('enqueuePriority clears busy and sends wake immediately', () => {
+    const { queue, sent } = harness();
+    queue.enqueue('stale-narration');
+    expect(queue.isBusy).toBe(true);
+    queue.enqueuePriority('[wake] diga Olá.');
+    expect(sent).toEqual(['stale-narration', '[wake] diga Olá.']);
+    expect(queue.size).toBe(0);
+    expect(queue.isBusy).toBe(true);
+  });
+
+  it('enqueuePriority drops queued turns behind a busy one', () => {
+    const { queue, sent } = harness();
+    queue.enqueue('a');
+    queue.enqueue('b');
+    queue.enqueue('c');
+    queue.enqueuePriority('[wake] agora');
+    expect(sent).toEqual(['a', '[wake] agora']);
+    expect(queue.size).toBe(0);
   });
 });

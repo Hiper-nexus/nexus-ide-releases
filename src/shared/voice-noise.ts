@@ -16,7 +16,7 @@ const NOISE_WORDS = new Set([
 ]);
 
 /** Nome do assistente garbled pelo STT (eco do wake), nunca um comando real. */
-const JARVIS_GARBLE = /^(jarvis|jarvi|jarv|javis|javes|jave|jarves|jervis)$/;
+const JARVIS_GARBLE = /^(jarvis|jarvi|jarv|javis|javes|jave|jarves|jervis|jives)$/;
 
 /** Vogal única alongada: "ooo", "aaaa", "ooooooooh" (com h final opcional). */
 const ELONGATED_VOWEL = /^([aeiou])\1{2,}h*$/;
@@ -47,6 +47,13 @@ export function isLikelyNoiseTranscript(text: string): boolean {
   if (normalized === 'oi' || normalized === 'e ai') return false;
   if (!normalized || normalized.length <= 2) return true;
   if (normalized === 'thank you' || normalized === 'obrigado por assistir') return true;
+  if (
+    normalized === 'se inscreve no canal' ||
+    normalized === 'se inscreva no canal' ||
+    normalized === 'inscreva-se no canal'
+  ) {
+    return true;
+  }
   const words = normalized.split(' ');
   return words.length <= 3 && words.every(isNoiseToken);
 }

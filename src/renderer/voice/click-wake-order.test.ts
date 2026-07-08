@@ -13,12 +13,17 @@ function clickWakeBlock(): string {
 }
 
 describe('click wake order', () => {
-  it('plays the audible ack before opening the command capture window', () => {
+  it('plays Classic ack before listen only when Live does not own the voice', () => {
     const block = clickWakeBlock();
-    expect(block.indexOf('await playWakePrompt')).toBeGreaterThanOrEqual(0);
-    expect(block.indexOf('await beginListening')).toBeGreaterThan(
-      block.indexOf('await playWakePrompt'),
-    );
+    // FIX A: Classic ack is gated by skipClassicAck — Live path opens listen silently.
+    expect(block).toContain('if (!skipClassicAck)');
+    expect(block).toContain('await playWakePrompt');
+    expect(block).toContain('await beginListening');
+    // When Classic ack runs, it still precedes beginListening inside that branch.
+    const ackIdx = block.indexOf('await playWakePrompt');
+    const listenIdx = block.indexOf('await beginListening');
+    expect(ackIdx).toBeGreaterThanOrEqual(0);
+    expect(listenIdx).toBeGreaterThan(ackIdx);
   });
 
   it('does not seed click capture with ack pre-roll audio', () => {

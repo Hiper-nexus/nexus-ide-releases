@@ -20,10 +20,16 @@ describe('isLikelyNoiseTranscript', () => {
       'you',
       'thank you',
       'obrigado por assistir',
+      'se inscreve no canal',
       'kkkk',
       'hahaha',
       'jarvis',
       'javes',
+      'jives',
+      'Ai Jives',
+      'ai jives',
+      'e ai jarvis',
+      'e aí jarvis',
     ]) {
       expect(isLikelyNoiseTranscript(t), t).toBe(true);
     }
