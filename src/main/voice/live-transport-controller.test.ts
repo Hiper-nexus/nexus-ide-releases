@@ -1085,16 +1085,18 @@ describe('LiveTransportController', () => {
       source: 'realtime',
       name: 'nexus_action',
       tool: 'send_to_pane',
-      args: { action: 'send_to_pane', text: 'pode seguir com o postgres mesmo' },
+      // NEW-B: the routed answer carries the ASKING pane (pane-42) verbatim.
+      args: { action: 'send_to_pane', text: 'pode seguir com o postgres mesmo', paneId: 'pane-42' },
     });
     // callId LOCAL (não vazio) — o renderer aceita e executa.
     expect(routed.callId).toBeTruthy();
     expect(isLocalToolCallId(routed.callId!)).toBe(true);
 
-    // Executor real do renderer aceita e mapeia para send_to_pane.
+    // Executor real do renderer aceita e mapeia para send_to_pane COM o paneId.
     expect(realtimeToolEventToJarvisAction(routed)).toEqual({
       type: 'send_to_pane',
       text: 'pode seguir com o postgres mesmo',
+      paneId: 'pane-42',
     });
 
     // Renderer executou → devolve o resultado. O controller NÃO manda
@@ -1166,7 +1168,7 @@ describe('LiveTransportController', () => {
     )?.payload as import('../../shared/voice-ipc').JarvisLiveToolEvent;
     expect(routed).toMatchObject({
       name: 'nexus_action',
-      args: { action: 'send_to_pane', text: 'a opção dois' },
+      args: { action: 'send_to_pane', text: 'a opção dois', paneId: 'pane-7' },
     });
 
     controller.onStop();
@@ -1372,7 +1374,8 @@ describe('LiveTransportController', () => {
     expect(routed).toMatchObject({
       source: 'realtime',
       tool: 'send_to_pane',
-      args: { action: 'send_to_pane', text: 'Postgres' },
+      // NEW-B: the ASKING pane (pane-7) is threaded into the routed action.
+      args: { action: 'send_to_pane', text: 'Postgres', paneId: 'pane-7' },
     });
     // callId vazio ⇒ nenhuma toolResponse ao modelo
     expect(provider.sendToolResult).not.toHaveBeenCalled();

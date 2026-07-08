@@ -237,7 +237,9 @@ export type JarvisAction =
   | { type: 'focus_next_pane' }
   | { type: 'focus_previous_pane' }
   | { type: 'focus_pane'; paneName: string }
-  | { type: 'send_to_pane'; text: string }
+  // NEW-B: paneId targets the ASKING pane for routed pending-question answers.
+  // Absent for model-emitted delegation (falls back to orchestrator/focused pane).
+  | { type: 'send_to_pane'; text: string; paneId?: string }
   | { type: 'run_command'; command: string }
   | { type: 'mcp_tool'; tool: string; args: Record<string, unknown> };
 

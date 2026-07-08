@@ -499,7 +499,10 @@ export class LiveTransportController {
         argumentsJson: '',
         arguments: {},
       },
-      { action: 'send_to_pane', text: decision.text },
+      // NEW-B: carry the ASKING pane so the executor writes the answer back to
+      // it, not to findOrchestratorPane ?? focusedPaneId (which mis-targets a
+      // non-focused sub-pane's question).
+      { action: 'send_to_pane', text: decision.text, paneId: decision.paneId },
     );
   }
 

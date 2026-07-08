@@ -420,7 +420,14 @@ export async function executeJarvisAction(
     }
   } else if (action.type === 'send_to_pane') {
     const { root, focusedPaneId } = useLayoutStore.getState();
-    const target = findOrchestratorPane(root) ?? focusedPaneId;
+    // NEW-B: a routed pending-question answer carries the ASKING pane — write it
+    // back there. Only fall back to orchestrator/focused pane for model-emitted
+    // delegation (no paneId), and only when the asking pane still exists.
+    const askingPane =
+      action.paneId && listPanes(root).some((pane) => pane.id === action.paneId)
+        ? action.paneId
+        : null;
+    const target = askingPane ?? findOrchestratorPane(root) ?? focusedPaneId;
     const ok = target ? writeToPane(target, `${action.text}\n`) : false;
     if (!ok) sayText = 'Não tem nenhum pane para eu mandar a tarefa.';
     toolResult = {

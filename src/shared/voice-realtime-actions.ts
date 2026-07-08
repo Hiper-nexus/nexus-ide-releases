@@ -36,6 +36,8 @@ export interface NexusRealtimeActionArgs {
   workspaceName?: string;
   paneName?: string;
   text?: string;
+  /** NEW-B: target pane for a routed pending-question answer (send_to_pane). */
+  paneId?: string;
   command?: string;
   tool?: string;
   args?: Record<string, unknown>;
@@ -126,7 +128,9 @@ export function realtimeArgsToJarvisAction(
   }
   if (args.action === 'send_to_pane') {
     const text = cleanText(args.text);
-    return text ? { type: 'send_to_pane', text } : null;
+    if (!text) return null;
+    const paneId = cleanText(args.paneId, 128);
+    return paneId ? { type: 'send_to_pane', text, paneId } : { type: 'send_to_pane', text };
   }
   if (args.action === 'run_command') {
     const command = cleanText(args.command, 2_000);
