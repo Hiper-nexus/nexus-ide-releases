@@ -32,6 +32,7 @@ import {
   type CoarseToolArgs,
   type CoarseToolResolution,
 } from '../jarvis/realtime/coarse-voice-tools';
+import { PendingQuestionRouter } from '../jarvis/realtime/pending-question-router';
 
 function isCoarseVoiceToolName(name: string): boolean {
   return (COARSE_VOICE_TOOL_NAMES as readonly string[]).includes(name);
@@ -72,11 +73,24 @@ export class LiveTransportController {
   private pendingMic: Int16Array[] = [];
   private pendingMicBytes = 0;
   private pendingToolResultTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly pendingQuestionRouter: PendingQuestionRouter;
 
   constructor(
     private emit: Emit,
     private fsm: JarvisLiveSession,
-  ) {}
+    now: () => number = Date.now,
+  ) {
+    this.pendingQuestionRouter = new PendingQuestionRouter({ now });
+  }
+
+  /**
+   * C-085 r3 (seam): um pane em trabalho narrou uma pergunta pendente. A PRÓXIMA
+   * fala final não-UI do usuário será roteada de volta a esse pane (modelo
+   * bypassado). Alimentado pelo poll de perguntas (follow-on).
+   */
+  noteNarratedQuestion(paneId: string, questionHash: string): void {
+    this.pendingQuestionRouter.noteNarratedQuestion(paneId, questionHash);
+  }
 
   /** True quando a config pede o transporte realtime E há key. */
   isRealtimeConfigured(): boolean {
@@ -320,6 +334,12 @@ export class LiveTransportController {
       if (!line.text.trim()) return;
       const event = this.fsm.transcript(line);
       if (!event) return;
+      // C-085 r3: fala FINAL do usuário com pergunta pendente narrada é a
+      // RESPOSTA — roteia técnico ao pane (send_to_pane verbatim), sem passar
+      // pela decisão do modelo. Inerte até um pane registrar uma pergunta.
+      if (line.role === 'user' && line.final) {
+        this.routePendingAnswer(line.text.trim());
+      }
     });
     provider.onInterrupted(() => {
       if (this.provider !== provider) return;
@@ -378,6 +398,23 @@ export class LiveTransportController {
     this.rejectToolCall(call, `tool realtime não suportada: ${call.name}`, {
       error: 'unsupported_tool',
     });
+  }
+
+  /**
+   * C-085 r3: roteia a resposta a uma pergunta pendente ao pane, verbatim, pelo
+   * MESMO executor auditado (send_to_pane). callId vazio ⇒ ação iniciada pelo
+   * controller, não uma tool-call do modelo — o toolResult correspondente não
+   * gera toolResponse (o controller.toolResult só envia com callId não-vazio).
+   */
+  private routePendingAnswer(text: string): void {
+    if (this.pendingQuestionRouter.wasAnswerJustRouted(text)) return;
+    const decision = this.pendingQuestionRouter.decide(text);
+    if (!decision.route) return;
+    this.pendingQuestionRouter.markRouted(decision.paneId, decision.text);
+    this.dispatchNexusAction(
+      { callId: '', name: 'route-answer', argumentsJson: '', arguments: {} },
+      { action: 'send_to_pane', text: decision.text },
+    );
   }
 
   /** Executa uma ação Nexus (nexus_action ou coarse resolvida) pelo caminho auditado. */
