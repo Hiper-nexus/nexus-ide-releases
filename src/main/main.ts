@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, systemPreferences } from 'electron';
 import { resolveUserPath } from './path-resolver';
 import { createMainWindow } from './window';
 import { registerAuthProbeIpc } from './adapters/auth-probe';
@@ -196,7 +196,15 @@ initSmokeTest();
 if (!wireDeepLinks()) {
   app.quit();
 } else {
-  app.whenReady().then(bootstrap);
+  app.whenReady().then(async () => {
+    // On macOS, Chromium's localhost exemption bypasses the TCC dialog, causing
+    // CoreAudio to return all-zero PCM even with a getUserMedia grant. Explicitly
+    // requesting mic access here forces a real TCC entry before the renderer opens.
+    if (process.platform === 'darwin') {
+      await systemPreferences.askForMediaAccess('microphone').catch(() => {});
+    }
+    bootstrap();
+  });
 }
 
 app.on('activate', () => {
