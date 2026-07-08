@@ -29,7 +29,7 @@ describe('click wake order', () => {
   });
 
   it('keeps mouse wake responsive after speech while preserving a long hard cap', () => {
-    expect(source).toContain('const CLICK_WAKE_MIN_LISTEN_MS = 2_400');
+    expect(source).toContain('const CLICK_WAKE_MIN_LISTEN_MS = 1_125');
     expect(source).toContain('const CLICK_WAKE_MAX_MS = 22_000');
   });
 });

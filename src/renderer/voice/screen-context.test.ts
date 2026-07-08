@@ -33,7 +33,7 @@ describe('buildScreenSnapshot', () => {
           role: 'orchestrator',
         }),
       ],
-      surface: { kind: 'workspace' },
+      surface: { kind: 'workspace' as const, blockingOverlays: [] as string[] },
     });
 
     expect(snapshot.context).toContain('Workspace: nexus-ide');
@@ -54,13 +54,61 @@ describe('buildScreenSnapshot', () => {
       orchestratorPaneId: null,
       activeMissions: [],
       panes: [],
-      surface: { kind: 'home', readySquads: ['Code Review', 'QA Swarm'] },
+      surface: {
+        kind: 'home' as const,
+        readySquads: ['Code Review', 'QA Swarm'],
+        hiddenShellCount: 0,
+      },
     });
 
     expect(snapshot.context).toContain('home deck open');
     expect(snapshot.context).toContain('visible actions: start mission, custom squad, terminal');
     expect(snapshot.context).toContain('ready squads: Code Review, QA Swarm');
     expect(snapshot.wakePrompt).toContain('Pronto para operar');
+  });
+
+  it('warns when home deck hides existing shell panes', () => {
+    const snapshot = buildScreenSnapshot({
+      workspaceName: 'cashback',
+      viewKind: 'grid',
+      focusedPaneId: 'shell-1',
+      orchestratorPaneId: null,
+      activeMissions: [],
+      panes: [pane({ id: 'shell-1', title: 'main', kind: 'shell' })],
+      surface: { kind: 'home', readySquads: [], hiddenShellCount: 1 },
+    });
+
+    expect(snapshot.context).toContain('shell pane(s) exist underneath but are NOT visible');
+    expect(snapshot.wakePrompt).toContain('terminal por baixo');
+  });
+
+  it('reports operator profile overlay blocking panes', () => {
+    const snapshot = buildScreenSnapshot({
+      workspaceName: 'nexus-ide',
+      viewKind: 'grid',
+      focusedPaneId: 'shell-1',
+      orchestratorPaneId: null,
+      activeMissions: [],
+      panes: [pane({ id: 'shell-1', title: 'main', kind: 'shell' })],
+      surface: { kind: 'operator-profile' },
+    });
+
+    expect(snapshot.context).toContain('operator profile overlay open');
+    expect(snapshot.context).toContain('terminal NOT visible');
+  });
+
+  it('lists blocking overlays on workspace surface', () => {
+    const snapshot = buildScreenSnapshot({
+      workspaceName: 'nexus-ide',
+      viewKind: 'grid',
+      focusedPaneId: 'shell-1',
+      orchestratorPaneId: null,
+      activeMissions: [],
+      panes: [pane({ id: 'shell-1', title: 'main', kind: 'shell' })],
+      surface: { kind: 'workspace', blockingOverlays: ['perfil operador'] },
+    });
+
+    expect(snapshot.context).toContain('blocking overlays: perfil operador');
   });
 
   it('keeps context inside the Jarvis IPC screen schema limit', () => {
