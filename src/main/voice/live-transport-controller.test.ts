@@ -1319,6 +1319,8 @@ describe('LiveTransportController', () => {
 
     await controller.onStart();
     expect(provider.isReady).toBe(true);
+    // ITEM 3: only honored after an explicit farewell utterance.
+    provider.fireRoleTranscript({ role: 'user', text: 'é só isso, valeu, tchau', final: true });
     provider.fireToolCall({ callId: 'call_bye', name: 'encerrar', arguments: {} });
 
     // Devolveu a despedida (toolResponse) …
@@ -1330,6 +1332,57 @@ describe('LiveTransportController', () => {
     expect(provider.closeCalls).toBe(1);
     expect(provider.isReady).toBe(false);
     expect(session.getState()).toMatchObject({ realtimeReady: false });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  // ITEM 3: `encerrar` misfire (no goodbye) must NOT end — session stays alive.
+  it('rejeita "encerrar" sem despedida explícita e mantém a sessão viva', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key', voiceApiKeySource: () => 'env' }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    await controller.onStart();
+    expect(provider.isReady).toBe(true);
+    // The user asked a normal question — the model misfires `encerrar`.
+    provider.fireRoleTranscript({ role: 'user', text: 'me explica o que é impersonar', final: true });
+    provider.fireToolCall({ callId: 'call_bye', name: 'encerrar', arguments: {} });
+
+    // Rejected (kept session), NOT ended.
+    expect(provider.sendToolResult).toHaveBeenCalledWith(
+      'call_bye',
+      expect.objectContaining({ ok: false }),
+    );
+    expect(provider.closeCalls).toBe(0);
+    expect(provider.isReady).toBe(true);
+    expect(session.getState()).toMatchObject({ realtimeReady: true });
 
     vi.doUnmock('./voice-config-store');
     vi.doUnmock('./voice-secrets');

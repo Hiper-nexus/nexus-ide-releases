@@ -10,6 +10,7 @@ import {
   type EngageCandidate,
 } from '../jarvis/realtime/engage-decision';
 import { shouldWithholdLiveMicFrame } from '../jarvis/realtime/live-mic-gate';
+import { isFarewellIntent } from '../jarvis/realtime/farewell-intent';
 import type { JarvisLiveSession } from './jarvis-live';
 import type {
   JarvisLiveToolEvent,
@@ -121,6 +122,9 @@ export class LiveTransportController {
   private localCallSeq = 0;
   /** Última linha de decisão de engate já logada — dedupe (log só na mudança). */
   private lastEngageLine = '';
+  /** ITEM 3: última fala FINAL do usuário — sinal de intenção para o guard do
+   *  `encerrar` (a tool não carrega args, então a despedida vem do transcript). */
+  private lastUserTranscript = '';
   /** True enquanto o áudio do PROVIDER está saindo (onAudioOut→responseDone).
    *  Distingue a fala do provider (barge-in preservado) de um TTS/ack LOCAL
    *  (mic retido) — ambos deixam a FSM em 'speaking'. */
@@ -501,6 +505,8 @@ export class LiveTransportController {
       // RESPOSTA — roteia técnico ao pane (send_to_pane verbatim), sem passar
       // pela decisão do modelo. Inerte até um pane registrar uma pergunta.
       if (line.role === 'user' && line.final) {
+        // ITEM 3: guarda o texto para o guard do `encerrar` (misfire protection).
+        this.lastUserTranscript = line.text.trim();
         this.routePendingAnswer(line.text.trim());
       }
     });
@@ -698,6 +704,21 @@ export class LiveTransportController {
   }
 
   private answerEndToolCall(call: RealtimeToolCallEvent): void {
+    // ITEM 3: `encerrar` really drops the socket → HUD dormant. Only honor it on
+    // an explicit farewell; otherwise the model misfired — answer normally and
+    // keep the session alive. The tool carries no args, so intent = the user's
+    // last final utterance.
+    if (!isFarewellIntent(this.lastUserTranscript)) {
+      logVoice('warn', 'encerrar.rejected', 'encerrar sem intenção de despedida — sessão mantida', {
+        lastUserTranscript: this.lastUserTranscript.slice(0, 120),
+      });
+      this.rejectToolCall(
+        call,
+        'não encerrei: sem despedida explícita, sigo na conversa',
+        { error: 'no_farewell_intent', kept: 'session' },
+      );
+      return;
+    }
     const event = this.fsm.realtimeToolCall({
       source: 'realtime',
       callId: call.callId,
