@@ -9,6 +9,7 @@ import { hasUsableLocalSpeech, shouldDiscardBeforeRealtime } from './capture-gat
 import { classifyMicHealth, type MicHealth } from './wake-health';
 import { LiveAudioPlayer, micFrameToBase64 } from './live-audio';
 import { stripPromptEcho } from './response-echo';
+import { isLikelyNoiseTranscript } from '../../shared/voice-noise';
 import {
   isDiscardableTranscript,
   isWakeAckOnlyTranscript,
@@ -1448,6 +1449,20 @@ async function finishAndProcess(
     );
     if (isDiscardableTranscript(transcript, { inConversation })) {
       console.log(`[voice] transcrição-lixo do Whisper descartada: "${transcript}"`);
+      store.setStatus('idle');
+      liveEndTurn();
+      return;
+    }
+    // Garbage gate no caminho de reply (Classic): a cauda do próprio TTS volta
+    // pelo mic (AEC off) como interjeição garbled ("o javis"/"Ooooooooh!") e o
+    // echo-guard textual não casa. Mata ANTES do cérebro, encerrando a cadeia
+    // de reply em silêncio (sem reabrir) em vez de a JARVIS responder a si mesma.
+    if (activeCaptureReason === 'reply' && isLikelyNoiseTranscript(transcript)) {
+      console.log(`[voice] reply-lixo descartado antes do cérebro: "${transcript}"`);
+      logVoiceEvent('info', 'jarvis.replyNoiseDiscarded', 'reply ruído/eco garbled descartado', {
+        text: transcript.slice(0, 120),
+        reason: activeCaptureReason,
+      });
       store.setStatus('idle');
       liveEndTurn();
       return;

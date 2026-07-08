@@ -33,6 +33,12 @@ describe('EchoSuppressor', () => {
     expect(sup.isEcho('abre o projeto da barbearia')).toBe(false);
   });
 
+  it('descarta eco GARBLED da cauda do próprio TTS (STT com erro de 1 letra)', () => {
+    const { sup } = makeSuppressor();
+    sup.record('Impersonar é acessar o sistema como se fosse outro usuário.');
+    expect(sup.isEcho('impersonai e acessai o sistema')).toBe(true);
+  });
+
   it('nunca marca eco sem fala recente ou com input muito curto', () => {
     const { sup } = makeSuppressor();
     expect(sup.isEcho('rodando os testes')).toBe(false);

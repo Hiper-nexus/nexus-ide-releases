@@ -5,6 +5,7 @@ import { jarvisFastPath } from './jarvis-fastpath';
 import { jarvisToolCatalogCompact } from './jarvis-tool-catalog';
 import { getVoiceConfig } from './voice-config-store';
 import { flattenJarvisBrainProviders } from '../../shared/voice-config';
+import { isLikelyNoiseTranscript } from '../../shared/voice-noise';
 import type {
   JarvisContext,
   JarvisReply,
@@ -307,39 +308,6 @@ function parseReply(raw: string): JarvisReply {
   } catch {
     return { say: raw.trim().slice(0, 300), action: { type: 'none' } };
   }
-}
-
-const NOISE_WORDS = new Set([
-  'a',
-  'ah',
-  'ai',
-  'ok',
-  'okay',
-  'hum',
-  'hmm',
-  'ha',
-  'uh',
-  'e',
-  'ta',
-  'you',
-]);
-
-function isLikelyNoiseTranscript(text: string): boolean {
-  const normalized = text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[.!?,;:]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (normalized === 'oi' || normalized === 'e ai') return false;
-  if (!normalized || normalized.length <= 2) return true;
-  if (normalized === 'thank you' || normalized === 'obrigado por assistir') return true;
-  const words = normalized.split(' ');
-  return (
-    words.length <= 3 &&
-    words.every((word) => NOISE_WORDS.has(word) || /^h?u+m+$/.test(word) || /^a+h*$/.test(word))
-  );
 }
 
 function firstAvailableAction(ctx: JarvisContext): string {

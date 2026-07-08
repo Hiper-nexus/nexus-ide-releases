@@ -29,4 +29,25 @@ describe('voice-echo-match', () => {
       isLikelySpokenEcho('abre o projeto da barbearia', 'Missão enviada ao squad.'),
     ).toBe(false);
   });
+
+  it('casa eco GARBLED do próprio TTS (STT errou letras da cauda)', () => {
+    // A cauda do TTS volta pelo mic e o STT transcreve com erros de 1 letra —
+    // o casamento exato falhava; o fuzzy (edit-distance ≤1 por palavra) pega.
+    expect(
+      isLikelySpokenEcho(
+        'impersonai e acessai o sistema',
+        'Impersonar é acessar o sistema como se fosse outro usuário.',
+      ),
+    ).toBe(true);
+  });
+
+  it('não confunde fala genuína parecida só por acaso', () => {
+    // Palavras diferentes (distância > 1) não casam mesmo compartilhando tema.
+    expect(
+      isLikelySpokenEcho(
+        'quero comprar um sistema novo de vendas',
+        'Missão enviada ao squad de deploy.',
+      ),
+    ).toBe(false);
+  });
 });
