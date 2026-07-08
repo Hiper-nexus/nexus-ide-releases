@@ -491,6 +491,77 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
+  it('returns a structured timeout when a realtime tool call never resolves', async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'openai', provider }];
+    const events: Array<{ channel: string; payload: unknown }> = [];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'openai-realtime',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['openai'],
+    }));
+
+    try {
+      const { VOICE_CHANNELS } = await import('../../shared/voice-channels');
+      const { LiveTransportController } = await import('./live-transport-controller');
+      const session = new JarvisLiveSession(
+        (channel, payload) => events.push({ channel, payload }),
+        () => 1000,
+      );
+      session.setEnabled(true);
+      session.start({ reason: 'manual' });
+      const controller = new LiveTransportController(
+        (channel, payload) => events.push({ channel, payload }),
+        session,
+      );
+
+      await controller.onStart();
+      provider.fireToolCall({ callId: 'call_timeout' });
+
+      expect(provider.sendToolResult).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(provider.sendToolResult).toHaveBeenCalledWith(
+        'call_timeout',
+        expect.objectContaining({
+          ok: false,
+          tool: 'open_terminal',
+          summary: expect.stringContaining('sem resposta do executor'),
+          output: { error: 'tool_result_timeout' },
+        }),
+      );
+      expect(events.some((event) => event.channel === VOICE_CHANNELS.liveToolResult)).toBe(
+        true,
+      );
+    } finally {
+      vi.useRealTimers();
+      vi.doUnmock('./voice-config-store');
+      vi.doUnmock('./voice-secrets');
+      vi.doUnmock('./jarvis-memory');
+      vi.doUnmock('../jarvis/realtime/factory');
+    }
+  });
+
   it('returns structured errors for invalid realtime action arguments', async () => {
     vi.resetModules();
     const provider = fakeProvider(async () => {});

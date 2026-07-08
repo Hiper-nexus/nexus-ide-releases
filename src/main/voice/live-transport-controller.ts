@@ -3,7 +3,10 @@ import { getVoiceConfig } from './voice-config-store';
 import { resolveVoiceApiKey } from './voice-secrets';
 import { jarvisMemory } from './jarvis-memory';
 import type { JarvisLiveSession } from './jarvis-live';
-import type { JarvisLiveToolResultEvent } from '../../shared/voice-ipc';
+import type {
+  JarvisLiveToolEvent,
+  JarvisLiveToolResultEvent,
+} from '../../shared/voice-ipc';
 import {
   createRealtimeProviderCandidates,
   loadJarvisSystemPrompt,
@@ -28,6 +31,7 @@ type Emit = (channel: string, payload?: unknown) => void;
 const RUNTIME_RECONNECT_BASE_MS = 750;
 const RUNTIME_RECONNECT_MAX_ATTEMPTS = 3;
 const PENDING_MIC_MAX_BYTES = 512 * 1024;
+const REALTIME_TOOL_RESULT_TIMEOUT_MS = 10_000;
 
 /** OpenAI devolve isto quando cancelamos sem response ativa — ruído, não falha real. */
 export function isIgnorableRealtimeError(message: string): boolean {
@@ -56,6 +60,7 @@ export class LiveTransportController {
   private recentToolResults: string[] = [];
   private pendingMic: Int16Array[] = [];
   private pendingMicBytes = 0;
+  private pendingToolResultTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private emit: Emit,
@@ -195,6 +200,7 @@ export class LiveTransportController {
   }
 
   toolResult(event: JarvisLiveToolResultEvent): void {
+    if (event.callId) this.clearToolResultTimer(event.callId);
     const status = event.ok ? 'ok' : 'failed';
     const summary = event.summary.trim() || status;
     if (event.callId && this.provider?.isReady) {
@@ -226,6 +232,7 @@ export class LiveTransportController {
 
   onStop(): void {
     this.clearReconnectTimer();
+    this.clearToolResultTimers();
     this.provider?.close();
     this.provider = null;
     this.connecting = null;
@@ -236,6 +243,7 @@ export class LiveTransportController {
   private async connectFirstAvailable(
     candidates: RealtimeProviderCandidate[],
   ): Promise<void> {
+    this.clearToolResultTimers();
     this.provider?.close();
     this.provider = null;
     for (const candidate of candidates) {
@@ -309,6 +317,7 @@ export class LiveTransportController {
     provider.onDisconnected((err) => {
       if (this.provider !== provider) return;
       console.warn('[live]', err.message);
+      this.clearToolResultTimers();
       provider.close();
       if (this.provider === provider) this.provider = null;
       this.fsm.patchStatus({
@@ -360,7 +369,11 @@ export class LiveTransportController {
       summary: summarizeNexusRealtimeAction(args),
       args: call.arguments,
     });
-    if (!event || action) return;
+    if (!event) return;
+    if (action) {
+      this.armToolResultTimeout(event);
+      return;
+    }
     const result = this.fsm.toolResult({
       source: 'realtime',
       callId: call.callId,
@@ -376,6 +389,39 @@ export class LiveTransportController {
       },
     });
     if (result) this.toolResult(result);
+  }
+
+  private armToolResultTimeout(event: JarvisLiveToolEvent): void {
+    const callId = event.callId;
+    if (!callId) return;
+    this.clearToolResultTimer(callId);
+    const timer = setTimeout(() => {
+      this.pendingToolResultTimers.delete(callId);
+      const result = this.fsm.toolResult({
+        source: 'realtime',
+        callId,
+        name: event.name,
+        tool: event.tool,
+        args: event.args,
+        ok: false,
+        summary: `ação realtime sem resposta do executor: ${event.summary}`,
+        output: { error: 'tool_result_timeout' },
+      });
+      if (result) this.toolResult(result);
+    }, REALTIME_TOOL_RESULT_TIMEOUT_MS);
+    this.pendingToolResultTimers.set(callId, timer);
+  }
+
+  private clearToolResultTimer(callId: string): void {
+    const timer = this.pendingToolResultTimers.get(callId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.pendingToolResultTimers.delete(callId);
+  }
+
+  private clearToolResultTimers(): void {
+    for (const timer of this.pendingToolResultTimers.values()) clearTimeout(timer);
+    this.pendingToolResultTimers.clear();
   }
 
   private sendProviderContext(): void {
