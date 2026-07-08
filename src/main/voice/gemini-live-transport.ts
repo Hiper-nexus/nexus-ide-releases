@@ -374,7 +374,6 @@ export class GeminiLiveTransport {
     if (this.setupDone || msg.setupComplete) this.armProgressWatchdog();
     if (msg.setupComplete) {
       this.setupDone = true;
-      this.reconnectAttempts = 0;
       if (this.setupTimer) this.deps.clearTimeoutFn(this.setupTimer);
       this.flushPendingMic();
       // F-113: drena os turnos que ficaram na fila até a sessão ficar viva
@@ -382,6 +381,20 @@ export class GeminiLiveTransport {
       this.turnQueue.drain();
       this.events.onStateChange('ready');
     }
+    // HIGH-3: o orçamento de reconexão só zera com PROGRESSO REAL (áudio,
+    // transcrição, tool-call, fim de turno) — NÃO no bare setupComplete. Um
+    // socket que só chega a setupComplete e nunca é alimentado (mic parado entre
+    // turnos no modelo turn-scoped do nexus) senão zerava o contador a cada
+    // relight → o watchdog de 30s reconectava para sempre. Agora exaure em
+    // MAX_RECONNECT_ATTEMPTS e emite 'closed' (o controller degrada p/ Classic).
+    const sawServerProgress =
+      msg.audioB64 !== undefined ||
+      msg.inputTranscription !== undefined ||
+      msg.outputTranscription !== undefined ||
+      msg.toolCalls !== undefined ||
+      msg.turnComplete === true ||
+      msg.interrupted === true;
+    if (sawServerProgress) this.reconnectAttempts = 0;
     if (msg.audioB64) this.events.onAudioOut(msg.audioB64);
     if (msg.inputTranscription) {
       this.events.onTranscript('user', msg.inputTranscription, false);

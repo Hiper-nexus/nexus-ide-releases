@@ -451,6 +451,70 @@ describe('GeminiLiveTransport', () => {
     vi.useRealTimers();
   });
 
+  it('HIGH-3: para de reconectar um socket ocioso que só chega a setupComplete', async () => {
+    vi.useFakeTimers();
+    const sockets: Array<ReturnType<typeof fakeWs>> = [];
+    const ev = events();
+    const t = new GeminiLiveTransport(ev, {
+      wsFactory: () => {
+        const ws = fakeWs();
+        sockets.push(ws);
+        return ws;
+      },
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    // Relight ocioso repetido: open → setupComplete → 30s sem mic/mensagem →
+    // watchdog fecha → reconnect. Sem o fix, cada setupComplete zerava o contador
+    // de reconexão → loop eterno (um socket novo por iteração).
+    for (let i = 0; i < 8; i += 1) {
+      const ws = sockets[sockets.length - 1];
+      ws.fire('open');
+      ws.fire('message', JSON.stringify({ setupComplete: {} }));
+      await vi.advanceTimersByTimeAsync(30_000); // watchdog dispara → ws.close()
+      ws.fire('close'); // o socket cai de fato → agenda (ou não) reconexão
+      await vi.advanceTimersByTimeAsync(5_000); // deixa o backoff agendado disparar
+    }
+    // 1 socket inicial + no máximo MAX_RECONNECT_ATTEMPTS(3) reconexões = 4.
+    expect(sockets.length).toBeLessThanOrEqual(4);
+    expect(ev.calls.stateChange).toContain('closed');
+    vi.useRealTimers();
+  });
+
+  it('reseta o orçamento de reconexão só com progresso real do servidor (não no setupComplete)', async () => {
+    vi.useFakeTimers();
+    const sockets: Array<ReturnType<typeof fakeWs>> = [];
+    const t = new GeminiLiveTransport(events(), {
+      wsFactory: () => {
+        const ws = fakeWs();
+        sockets.push(ws);
+        return ws;
+      },
+      now: () => 1000,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+    });
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    // Sessão saudável: relight com PROGRESSO real (transcrição) a cada volta
+    // zera o contador → reconecta indefinidamente (não é o loop ocioso do HIGH-3).
+    for (let i = 0; i < 6; i += 1) {
+      const ws = sockets[sockets.length - 1];
+      ws.fire('open');
+      ws.fire('message', JSON.stringify({ setupComplete: {} }));
+      ws.fire(
+        'message',
+        JSON.stringify({ serverContent: { outputTranscription: { text: 'oi' } } }),
+      );
+      ws.fire('close');
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+    // Progresso real a cada relight mantém o orçamento cheio → 1 inicial + 6.
+    expect(sockets.length).toBe(7);
+    vi.useRealTimers();
+  });
+
   it('singleton cross-instância: conectar um 2º transporte encerra o 1º', () => {
     const ws1 = fakeWs();
     const ws2 = fakeWs();
