@@ -54,6 +54,13 @@ function events(): LiveTransportEvents & { calls: Record<string, unknown[]> } {
   };
 }
 
+type TranscriptCall = { role: string; text: string; final: boolean };
+function transcriptFinals(ev: { calls: Record<string, unknown[]> }): TranscriptCall[] {
+  return (ev.calls.transcript as TranscriptCall[]).filter(
+    (c) => c.role === 'user' && c.final,
+  );
+}
+
 function makeTransport(ws: WsLike, ev: LiveTransportEvents) {
   return new GeminiLiveTransport(ev, {
     wsFactory: () => ws,
@@ -216,6 +223,50 @@ describe('GeminiLiveTransport', () => {
     expect(ev.calls.transcript).toContainEqual({ role: 'assistant', text: 'oi', final: false });
     expect(ev.calls.interrupted).toHaveLength(1);
     expect(ev.calls.turnComplete).toHaveLength(1);
+  });
+
+  it('MUTE FIX: finaliza o transcript do usuário (final=true) quando o modelo responde', () => {
+    const ws = fakeWs();
+    const ev = events();
+    const t = makeTransport(ws, ev);
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    // usuário fala em pedaços — Gemini manda inputTranscription sempre final=false
+    ws.fire('message', JSON.stringify({ serverContent: { inputTranscription: { text: 'abre o ' } } }));
+    ws.fire('message', JSON.stringify({ serverContent: { inputTranscription: { text: 'terminal' } } }));
+    // nenhum final ainda
+    expect(transcriptFinals(ev)).toHaveLength(0);
+    // modelo começa a responder (áudio) → finaliza o transcript acumulado, UMA vez
+    ws.fire(
+      'message',
+      JSON.stringify({
+        serverContent: {
+          modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm', data: 'QUJD' } }] },
+        },
+      }),
+    );
+    const finals = transcriptFinals(ev);
+    expect(finals).toEqual([{ role: 'user', text: 'abre o terminal', final: true }]);
+  });
+
+  it('MUTE FIX: não vaza transcript final se o turno for interrompido (barge-in)', () => {
+    const ws = fakeWs();
+    const ev = events();
+    const t = makeTransport(ws, ev);
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    ws.fire('message', JSON.stringify({ serverContent: { inputTranscription: { text: 'oi' } } }));
+    ws.fire('message', JSON.stringify({ serverContent: { interrupted: true } }));
+    // buffer descartado no barge-in → o próximo áudio não finaliza o texto velho
+    ws.fire(
+      'message',
+      JSON.stringify({
+        serverContent: { modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm', data: 'QUJD' } }] } },
+      }),
+    );
+    expect(transcriptFinals(ev)).toHaveLength(0);
   });
 
   it('envia contexto de tela como clientContent sem fechar o turno', () => {

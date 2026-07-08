@@ -33,4 +33,22 @@ describe('realtimeTranscriptWaitMs', () => {
       REALTIME_TRANSCRIPT_WAIT_MS,
     );
   });
+
+  it('MUTE FIX: when realtime OWNS the turn, keeps the full window despite usable local speech', () => {
+    // No Classic STT to hand off to (per-session ownership) → the 1.2s shortcut
+    // would only guarantee a timeout into silence. Owner turns wait the full
+    // wake/click budget so the realtime transcript can arrive and release audio.
+    expect(
+      realtimeTranscriptWaitMs('wake', { localSpeechUsable: true, realtimeIsOwner: true }),
+    ).toBe(WAKE_REALTIME_TRANSCRIPT_WAIT_MS);
+    expect(
+      realtimeTranscriptWaitMs('click', { localSpeechUsable: true, realtimeIsOwner: true }),
+    ).toBe(CLICK_REALTIME_TRANSCRIPT_WAIT_MS);
+  });
+
+  it('MUTE FIX: still shortens when realtime is NOT the owner (Classic will run)', () => {
+    expect(
+      realtimeTranscriptWaitMs('wake', { localSpeechUsable: true, realtimeIsOwner: false }),
+    ).toBe(LOCAL_SPEECH_REALTIME_TRANSCRIPT_WAIT_MS);
+  });
 });

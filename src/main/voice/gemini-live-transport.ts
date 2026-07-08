@@ -236,6 +236,16 @@ export class GeminiLiveTransport {
   private readonly pendingToolCalls = new Set<string>();
   private readonly turnQueue: TurnQueue;
   private readonly screenCoalescer: ScreenCoalescer;
+  /**
+   * MUTE FIX: o Gemini Live manda inputTranscription EM PARTES, sempre com
+   * final=false — nunca um evento "usuário terminou". O renderer, porém, só
+   * libera o ÁUDIO da resposta ao ver um transcript de usuário FINAL (paridade
+   * com o `.completed` do OpenAI). Sem finalização, a resposta realtime fica
+   * eternamente suprimida → sessão MUDA. Acumulamos os pedaços e emitimos UM
+   * transcript final quando o modelo começa a responder (primeiro áudio/output)
+   * ou no turnComplete. Fecha o gate que segurava a voz.
+   */
+  private userTranscriptBuffer = '';
 
   constructor(
     private events: LiveTransportEvents,
@@ -395,8 +405,13 @@ export class GeminiLiveTransport {
       msg.turnComplete === true ||
       msg.interrupted === true;
     if (sawServerProgress) this.reconnectAttempts = 0;
+    // MUTE FIX: o áudio ou a transcrição do MODELO marca o fim do turno do
+    // usuário. Se juntamos pedaços de inputTranscription, emitimos AGORA o
+    // transcript final do usuário (uma vez) para o renderer liberar a resposta.
+    if (msg.audioB64 || msg.outputTranscription) this.finalizeUserTranscript();
     if (msg.audioB64) this.events.onAudioOut(msg.audioB64);
     if (msg.inputTranscription) {
+      this.userTranscriptBuffer += msg.inputTranscription;
       this.events.onTranscript('user', msg.inputTranscription, false);
     }
     if (msg.outputTranscription) {
@@ -404,10 +419,16 @@ export class GeminiLiveTransport {
     }
     // F-113: turno abortado (barge-in) ou concluído libera a fila e drena o próximo.
     if (msg.interrupted) {
+      // Barge-in: o turno do usuário anterior nunca virou resposta — descarta o
+      // buffer para não vazar num transcript final tardio no próximo turno.
+      this.userTranscriptBuffer = '';
       this.events.onInterrupted();
       this.turnQueue.release();
     }
     if (msg.turnComplete) {
+      // Rede de segurança: se o modelo terminou sem que áudio/output tivessem
+      // finalizado o transcript (ex.: resposta só-tool), finaliza aqui.
+      this.finalizeUserTranscript();
       this.events.onTurnComplete?.();
       this.turnQueue.release();
     }
@@ -467,6 +488,20 @@ export class GeminiLiveTransport {
     this.pendingMic = [];
     this.pendingMicBytes = 0;
     for (const b64 of buffered) this.sendMicChunk(b64);
+  }
+
+  /**
+   * MUTE FIX: emite o transcript do usuário ACUMULADO como FINAL (uma vez) e
+   * limpa o buffer. Chamado quando o modelo começa a responder (áudio/output) ou
+   * no turnComplete — o equivalente Gemini ao `.completed` do OpenAI. Sem isto o
+   * renderer nunca via um transcript de usuário final e mantinha o áudio da
+   * resposta suprimido para sempre (sessão muda).
+   */
+  private finalizeUserTranscript(): void {
+    const text = this.userTranscriptBuffer.trim();
+    this.userTranscriptBuffer = '';
+    if (!text) return;
+    this.events.onTranscript('user', text, true);
   }
 
   /** Fecha o turno de fala do usuário (VAD manual / PTT soltou). */

@@ -61,3 +61,6 @@ out/
 .kimi/
 .codex/
 .claude/
+
+# Dev Electron shell with its own stable TCC identity (com.nexuside.dev)
+.dev-electron/

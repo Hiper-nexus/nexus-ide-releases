@@ -31,6 +31,7 @@ import {
   TTS_TAIL_GUARD_MS,
 } from './voice-suppression-window';
 import { classicSuppressedByRealtimeOwner } from './realtime-ownership';
+import { ThrottledCounter } from '../../shared/live-flow-counter';
 import {
   bindWakeSuppressor,
   playAudioBase64,
@@ -178,6 +179,13 @@ let pendingRealtimeTranscript:
 let queuedRealtimeTranscript: string | null = null;
 let finishRealtimeCapture: (() => void) | null = null;
 let pendingRealtimeAudioOut: string[] = [];
+// Observabilidade do lado do RENDER: quantos chunks realtime TOCARAM vs foram
+// SUPRIMIDOS (retidos em pendingRealtimeAudioOut). Fecha o ponto cego que fazia
+// um mute (áudio chega do socket mas nunca toca porque suppressRealtimeAudioOut
+// ficou preso true) parecer idêntico a uma sessão que nunca recebeu áudio. Com
+// isto o voice.log distingue "socket surdo" de "áudio retido".
+const realtimeAudioPlayedCounter = new ThrottledCounter(20, 2_000);
+const realtimeAudioSuppressedCounter = new ThrottledCounter(20, 2_000);
 let jarvisLastTurnAt = 0;
 let wakeOpenInProgress = false;
 let activeCaptureReason: JarvisCaptureReason = 'manual';
@@ -262,6 +270,12 @@ function resetPendingRealtimeAudioOut(): void {
 }
 
 function playRealtimeAudioOut(b64: string): void {
+  const tick = realtimeAudioPlayedCounter.tick(Date.now());
+  if (tick.fire) {
+    logVoiceEvent('info', 'live.audioPlayed', 'chunk realtime tocado', {
+      chunks: tick.count,
+    });
+  }
   useVoiceStore.getState().setStatus('speaking');
   // Tie suppression to the ACTUAL chunk duration + tail (was a fixed 1200 ms).
   // Each streamed chunk re-extends the window, so a long realtime reply never
@@ -279,6 +293,12 @@ function flushPendingRealtimeAudioOut(): void {
 
 function queuePendingRealtimeAudioOut(b64: string): void {
   if (!realtimeTurnActive) return;
+  const tick = realtimeAudioSuppressedCounter.tick(Date.now());
+  if (tick.fire) {
+    logVoiceEvent('warn', 'live.audioSuppressed', 'chunk realtime retido (suppress on)', {
+      chunks: tick.count,
+    });
+  }
   if (pendingRealtimeAudioOut.length >= PENDING_REALTIME_AUDIO_MAX_CHUNKS) {
     pendingRealtimeAudioOut.shift();
   }
@@ -1131,6 +1151,8 @@ async function beginListening(
     store.setNote(null);
     queuedRealtimeTranscript = null;
     resetPendingRealtimeAudioOut();
+    realtimeAudioPlayedCounter.reset();
+    realtimeAudioSuppressedCounter.reset();
     realtimeTurnActive = false;
     // NEW-A: open a fresh turn — both the realtime tool path and the Classic
     // brain path claim THIS token; first claimant executes, the loser no-ops.
@@ -1208,6 +1230,11 @@ async function finishAndProcess(
   // brain claims it before running; if a realtime tool-call already claimed it,
   // Classic no-ops (single execution regardless of IPC ordering).
   const turnToken = turnExecution.currentToken;
+  // MUTE FIX: set when the realtime owner produced NO audio and NO transcript in
+  // time — a genuine mute, not a racer. It unlocks the Classic STT degradation
+  // below (bypassing the per-session ownership suppression), so a silent
+  // realtime session ALWAYS becomes a narrated Classic answer instead of dead air.
+  let realtimeMuteDegrade = false;
   try {
     const result = wakeMic.isUtteranceActive()
       ? wakeMic.finishUtterance()
@@ -1252,8 +1279,16 @@ async function finishAndProcess(
 
     if (shouldTryRealtimeTranscript) {
       const tRealtime = Date.now();
+      // MUTE FIX: com o realtime DONO da sessão (Classic suprimido), não corta a
+      // janela para 1,2s — não há Classic STT para assumir; esperar o transcript
+      // realtime chegar (e liberar o áudio já enfileirado) é o único caminho.
+      const realtimeIsOwner = classicSuppressedByRealtimeOwner({
+        captureReason: activeCaptureReason,
+        isRealtimeLive: isRealtimeLive(),
+      });
       const transcriptWaitMs = realtimeTranscriptWaitMs(activeCaptureReason, {
         localSpeechUsable,
+        realtimeIsOwner,
       });
       store.setStatus('transcribing');
       liveStatus('thinking');
@@ -1388,25 +1423,38 @@ async function finishAndProcess(
         liveEndTurn();
         return;
       }
-      // DEFECT 1 (per-SESSION ownership): o realtime é o DONO enquanto vivo. Só
-      // degrada para o Classic quando o socket NÃO está saudável — senão o
-      // fallback aqui viraria um racer que fala por cima da resposta realtime
-      // (duas vozes). Com o realtime vivo: encerra o turno quieto, mantém a
-      // sessão QUENTE (sem liveInterrupt/liveEndTurn), Classic OFF.
-      if (
-        classicSuppressedByRealtimeOwner({
-          captureReason: activeCaptureReason,
-          isRealtimeLive: isRealtimeLive(),
-        })
-      ) {
-        console.log('[voice] realtime dona (live) sem transcript — Classic suprimido, turno encerrado');
-        logVoiceEvent('info', 'jarvis.classicSuppressed', 'realtime live — Classic fallback off', {
+      // MUTE FIX: o transcript não finalizou na janela. O contador de áudio
+      // retido distingue os DOIS casos que antes viravam o MESMO silêncio:
+      //  (a) o provider RESPONDEU (chunks de áudio enfileirados) mas o transcript
+      //      final atrasou — libera a resposta retida; é a voz realtime, não um
+      //      racer (o áudio só existe porque o modelo respondeu à fala real).
+      //  (b) o provider não mandou NADA (socket mudo) — falha REAL, não corrida:
+      //      degrada para o Classic STT (resposta narrada), nunca silêncio.
+      const heldAnswerChunks = realtimeAudioSuppressedCounter.total;
+      if (realtimeIsOwner && heldAnswerChunks > 0) {
+        if (turnExecution.claim('realtime-audio', turnToken)) {
+          suppressRealtimeAudioOut = false;
+          flushPendingRealtimeAudioOut();
+          logVoiceEvent('info', 'jarvis.liveProviderAnswer', 'provider realtime (áudio sem transcript final)', {
+            reason: activeCaptureReason,
+            waitedMs: Date.now() - tRealtime,
+            heldChunks: heldAnswerChunks,
+          });
+          realtimeTurnActive = false;
+        } else {
+          store.setStatus('idle');
+        }
+        return;
+      }
+      if (realtimeIsOwner) {
+        // Mute genuíno: nem áudio nem transcript do provider. Degrada para o
+        // Classic STT — NÃO é racer (o realtime não falou). Libera as travas de
+        // posse abaixo e cai no caminho Classic (transcribe do WAV).
+        realtimeMuteDegrade = true;
+        logVoiceEvent('warn', 'jarvis.realtimeMuteDegraded', 'realtime mudo (sem áudio/transcript) — Classic STT assume', {
           reason: activeCaptureReason,
           waitedMs: Date.now() - tRealtime,
         });
-        store.setStatus('idle');
-        realtimeTurnActive = false;
-        return;
       }
       console.log(
         `[voice] realtime sem transcript final em ${Date.now() - tRealtime}ms (janela ${transcriptWaitMs}ms) — fallback Classic STT (degradado)`,
@@ -1424,6 +1472,7 @@ async function finishAndProcess(
     // racer. Sem isto, um re-wake vencia a corrida e falava "Certo." por cima do
     // realtime. O reply (escuta quente) é Classic-owned e passa reto.
     if (
+      !realtimeMuteDegrade &&
       classicSuppressedByRealtimeOwner({
         captureReason: activeCaptureReason,
         isRealtimeLive: isRealtimeLive(),

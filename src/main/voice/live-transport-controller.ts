@@ -45,6 +45,7 @@ import {
   PendingQuestionRouter,
   QUESTION_POLL_MS,
 } from '../jarvis/realtime/pending-question-router';
+import { ThrottledCounter } from '../../shared/live-flow-counter';
 
 function isCoarseVoiceToolName(name: string): boolean {
   return (COARSE_VOICE_TOOL_NAMES as readonly string[]).includes(name);
@@ -127,6 +128,15 @@ export class LiveTransportController {
    *  Distingue a fala do provider (barge-in preservado) de um TTS/ack LOCAL
    *  (mic retido) — ambos deixam a FSM em 'speaking'. */
   private providerSpeaking = false;
+  /**
+   * Observabilidade do fluxo de áudio (por SESSÃO). Fecha o ponto cego que
+   * deixava uma sessão realtime MUDA indistinguível de uma saudável: agora o
+   * voice.log prova mic-frames-sent → server-audio-chunks recebidos, com
+   * throttle. Um mute agora tem assinatura no log em vez de silêncio total.
+   */
+  private readonly now: () => number;
+  private micFramesCounter = new ThrottledCounter(25, 2_000);
+  private serverAudioCounter = new ThrottledCounter(25, 2_000);
 
   constructor(
     private emit: Emit,
@@ -134,7 +144,14 @@ export class LiveTransportController {
     now: () => number = Date.now,
     private questionSource?: PendingQuestionSource,
   ) {
+    this.now = now;
     this.pendingQuestionRouter = new PendingQuestionRouter({ now });
+  }
+
+  /** Zera os contadores de fluxo de áudio no início de uma sessão live. */
+  private resetFlowCounters(): void {
+    this.micFramesCounter.reset();
+    this.serverAudioCounter.reset();
   }
 
   /**
@@ -202,6 +219,10 @@ export class LiveTransportController {
   onStart(): Promise<void> {
     this.clearReconnectTimer();
     this.logEngageDecision();
+    // Isola o fluxo de áudio POR WAKE: cada turno mostra seus próprios
+    // micFramesSent/serverAudioChunk no voice.log, correlacionáveis com a linha
+    // wake.detected acima. Um mute vira assinatura (mic>0, serverAudio=0).
+    this.resetFlowCounters();
     if (!this.isRealtimeConfigured()) {
       this.clearPendingMic();
       // Degradação benigna (não é erro): sem key o Classic assume de forma
@@ -295,6 +316,12 @@ export class LiveTransportController {
   private sendMicSamples(provider: TurnManagedRealtimeProvider, samples: Int16Array): void {
     const sessionId = this.fsm.getState().sessionId;
     if (sessionId) jarvisLatencyTracker.markAudioIn(sessionId);
+    const tick = this.micFramesCounter.tick(this.now());
+    if (tick.fire) {
+      logVoice('info', 'live.micFramesSent', 'frames de mic → socket', {
+        frames: tick.count,
+      });
+    }
     try {
       provider.sendAudioChunk(samples);
     } catch (err) {
@@ -385,6 +412,13 @@ export class LiveTransportController {
   }
 
   onStop(): void {
+    // Resumo POR SESSÃO do fluxo de áudio: prova final de que o socket ouviu
+    // (micFramesSent) e falou (serverAudioChunk). Um turno mudo termina aqui com
+    // serverAudioChunks:0 gritando no log em vez de silêncio invisível.
+    logVoice('info', 'live.flowSummary', 'resumo do fluxo de áudio da sessão', {
+      micFramesSent: this.micFramesCounter.total,
+      serverAudioChunks: this.serverAudioCounter.total,
+    });
     this.clearReconnectTimer();
     this.clearToolResultTimers();
     this.stopQuestionPoll();
@@ -475,6 +509,13 @@ export class LiveTransportController {
       if (this.provider !== provider) return;
       const sessionId = this.fsm.getState().sessionId;
       if (sessionId) jarvisLatencyTracker.markAudioOut(sessionId);
+      const audioTick = this.serverAudioCounter.tick(this.now());
+      if (audioTick.fire) {
+        logVoice('info', 'live.serverAudioChunk', 'áudio do servidor recebido', {
+          chunks: audioTick.count,
+          micFramesSent: this.micFramesCounter.total,
+        });
+      }
       // Provider is speaking → keep mic streaming (barge-in), and remember her
       // spoken output into the echo window (below, on the assistant transcript).
       this.providerSpeaking = true;
