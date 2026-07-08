@@ -254,13 +254,95 @@ function applyMemoryOps(raw: string): void {
   }
 }
 
-function parseReply(raw: string): JarvisReply {
+/**
+ * DEFECT 3 (brain JSON leak): uma braçadeira NUNCA pode chegar ao TTS. Alguns
+ * providers (Gemini native-audio via OpenAI-compat) devolvem um envelope
+ * estruturado (`{"type":"message","content":[{"type":"text","text":"..."}]}`)
+ * ou um JSON truncado que estoura o `JSON.parse`. Recupera a fala de formas
+ * estruturadas conhecidas; se nada natural sobrar, devolve '' (silêncio) em vez
+ * de soletrar "{" caractere a caractere.
+ */
+export function spokenFromStructuredShape(obj: Record<string, unknown>): string {
+  const pickString = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+  // Campos "de fala" diretos.
+  for (const key of ['say', 'text', 'output_text', 'message'] as const) {
+    const val = pickString(obj[key]);
+    if (val) return val;
+  }
+  // content: string OU array de blocos {type:'text',text} / {text}.
+  const content = obj.content;
+  if (typeof content === 'string' && content.trim()) return content.trim();
+  if (Array.isArray(content)) {
+    const parts = content
+      .map((block) =>
+        block && typeof block === 'object'
+          ? pickString((block as Record<string, unknown>).text)
+          : typeof block === 'string'
+            ? block.trim()
+            : '',
+      )
+      .filter(Boolean);
+    if (parts.length) return parts.join(' ').trim();
+  }
+  // Envelope OpenAI-compat: choices[].message.content.
+  const choices = obj.choices;
+  if (Array.isArray(choices) && choices[0] && typeof choices[0] === 'object') {
+    const msg = (choices[0] as Record<string, unknown>).message;
+    if (msg && typeof msg === 'object') {
+      const c = pickString((msg as Record<string, unknown>).content);
+      if (c) return c;
+    }
+  }
+  return '';
+}
+
+/** Texto parece um payload JSON (e não fala natural)? */
+function looksLikeJsonPayload(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/^[{[]/.test(t)) return true;
+  // Assinatura estrutural "chave": (par de JSON) sem virar prosa.
+  return /"[\w-]+"\s*:/.test(t);
+}
+
+/**
+ * Garante que a fala NUNCA carregue sintaxe JSON. Tenta recuperar de uma forma
+ * estruturada; se falhar e o resto ainda parecer JSON, silencia.
+ */
+export function recoverSpokenText(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const objMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (objMatch) {
+    try {
+      const obj = JSON.parse(objMatch[0]) as Record<string, unknown>;
+      const recovered = spokenFromStructuredShape(obj);
+      if (recovered) return recovered.slice(0, 300);
+    } catch {
+      // JSON truncado/malformado — cai no strip abaixo.
+    }
+  }
+  // Remove qualquer bloco {…}/[…] residual e a cerca de código.
+  const stripped = trimmed
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\{[\s\S]*\}/g, ' ')
+    .replace(/\[[\s\S]*\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!stripped || looksLikeJsonPayload(stripped)) return '';
+  return stripped.slice(0, 300);
+}
+
+export function parseReply(raw: string): JarvisReply {
   // Modelos às vezes embrulham o JSON em cercas — extraia o primeiro objeto.
   const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return { say: raw.trim().slice(0, 300), action: { type: 'none' } };
+  if (!match) return { say: recoverSpokenText(raw), action: { type: 'none' } };
   try {
     const obj = JSON.parse(match[0]) as Partial<JarvisReply>;
-    const say = typeof obj.say === 'string' ? obj.say.trim() : 'Certo.';
+    const say =
+      typeof obj.say === 'string'
+        ? obj.say.trim()
+        : spokenFromStructuredShape(obj as Record<string, unknown>) || 'Certo.';
     let expectReply =
       typeof obj.expectReply === 'boolean' ? obj.expectReply : (say ? /\?\s*$/.test(say) : false);
     if (!say || /\b(n[aã]o entendi|n[aã]o compreendi|repita|pode repetir)\b/i.test(say)) {
@@ -310,7 +392,9 @@ function parseReply(raw: string): JarvisReply {
     }
     return { say, expectReply, action: { type: 'none' } };
   } catch {
-    return { say: raw.trim().slice(0, 300), action: { type: 'none' } };
+    // JSON truncado/estruturado que não parseou: recupera fala natural OU
+    // silencia — NUNCA deixa a braçadeira crua virar TTS (DEFECT 3).
+    return { say: recoverSpokenText(raw), action: { type: 'none' } };
   }
 }
 

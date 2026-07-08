@@ -3,6 +3,8 @@ import {
   buildJarvisPersonaInstruction,
   emptyReplyReason,
   jarvisThink,
+  parseReply,
+  recoverSpokenText,
   repairMissingAction,
   type BrainDeps,
 } from './jarvis-brain';
@@ -39,6 +41,48 @@ describe('emptyReplyReason', () => {
   });
   it('classifies a provider that returned an empty say', () => {
     expect(emptyReplyReason(base)).toBe('provider-returned-empty');
+  });
+});
+
+describe('parseReply — DEFECT 3: a brace must never reach TTS', () => {
+  const hasBrace = (s: string): boolean => /[{}[\]]/.test(s);
+
+  it('parses the strict {say,action} shape', () => {
+    const r = parseReply('{"say":"Olá, patrão.","action":{"type":"none"}}');
+    expect(r.say).toBe('Olá, patrão.');
+    expect(r.action.type).toBe('none');
+  });
+
+  it('recovers spoken text from a structured message envelope (no brace leak)', () => {
+    const raw = '{"type":"message","content":[{"type":"text","text":"Bom dia, patrão."}]}';
+    const r = parseReply(raw);
+    expect(r.say).toBe('Bom dia, patrão.');
+    expect(hasBrace(r.say)).toBe(false);
+  });
+
+  it('recovers from an OpenAI-compat choices envelope', () => {
+    const raw = '{"choices":[{"message":{"content":"Certo, patrão."}}]}';
+    expect(parseReply(raw).say).toBe('Certo, patrão.');
+  });
+
+  it('never speaks a raw brace from truncated/unparseable JSON', () => {
+    const raw = '{\n  "type": "message",\n  "content": [ { "type": "text", "tex';
+    const r = parseReply(raw);
+    expect(hasBrace(r.say)).toBe(false);
+  });
+
+  it('never speaks a brace for a pure-JSON reply with no natural text', () => {
+    const say = parseReply('{"foo":123,"bar":true}').say;
+    expect(hasBrace(say)).toBe(false);
+  });
+
+  it('passes plain non-JSON prose straight through', () => {
+    expect(parseReply('Certo, patrão.').say).toBe('Certo, patrão.');
+  });
+
+  it('recoverSpokenText silences a bare truncated brace', () => {
+    expect(recoverSpokenText('{')).toBe('');
+    expect(recoverSpokenText('{ "type": "message",')).toBe('');
   });
 });
 
