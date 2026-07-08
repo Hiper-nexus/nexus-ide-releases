@@ -5,6 +5,7 @@ import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { VoiceCapture } from './voice-capture';
 import { WakeMic } from './wake-mic';
+import { hasUsableLocalSpeech, shouldDiscardBeforeRealtime } from './capture-gate';
 import { classifyMicHealth, type MicHealth } from './wake-health';
 import { LiveAudioPlayer, micFrameToBase64 } from './live-audio';
 import { stripPromptEcho } from './response-echo';
@@ -82,6 +83,7 @@ const REALTIME_PROVIDER_AUDIO_ENABLED = true;
 const REALTIME_TRANSCRIPT_WAIT_MS = 1_800;
 const WAKE_ACK_SUPPRESS_MS = 8_000;
 const WAKE_PREROLL_MS = 2_500;
+const CLICK_WAKE_PREROLL_MS = 2_500;
 const WAKE_SILENCE_MS = 1_200; // wake-word capture: quiet time that ends the utterance
 const WAKE_MIN_LISTEN_MS = 3_200; // keep the mic open after ack/pre-roll before silence can close it
 const CLICK_WAKE_SILENCE_MS = 1_800; // click wake: a bit more tolerant after the spoken ack
@@ -675,13 +677,17 @@ export function useVoiceController(): void {
         livePlayer?.stop();
         void window.nexus.voice.liveInterrupt('wake-ack').catch(() => {});
 
-        const wakePreRoll =
+        let wakePreRoll =
           source === 'voice' ? wakeMic.snapshotPreRoll(WAKE_PREROLL_MS) : [];
         const ack = wakeGreetingText(personaUserName());
         wakeMic.suppressWakeDetection(WAKE_ACK_SUPPRESS_MS);
-        // Ack PRIMEIRO: se gravar durante o TTS, o STT transcreve "Pois não" como comando.
+        // Ack primeiro para o usuário perceber que ela acordou. No clique,
+        // preservamos um pre-roll curto depois e o filtro remove o eco do ACK.
         await playWakePrompt(ack).catch(() => playCachedWakeAck(personaUserName()));
         wakeMic.suppressWakeDetection(WAKE_ACK_SUPPRESS_MS);
+        // Clique não tem wake-word/pre-roll natural. Se o usuário começa a falar
+        // enquanto o ACK toca, preservamos essa fala e o filtro remove o eco do ACK.
+        if (source === 'click') wakePreRoll = wakeMic.snapshotPreRoll(CLICK_WAKE_PREROLL_MS);
         await beginListening(
           capture.current!,
           wakeAutoStop(capture.current!, busy, source === 'voice' ? 'wake' : 'click'),
@@ -1002,13 +1008,22 @@ async function finishAndProcess(
       ? wakeMic.finishUtterance()
       : await capture.stop();
     const routing = store.info?.routing ?? 'focused-pane';
-    const realtimeTranscriptReady =
-      routing === 'jarvis' && shouldStreamToRealtime() && Boolean(queuedRealtimeTranscript);
+    const shouldTryRealtimeTranscript = routing === 'jarvis' && shouldStreamToRealtime();
+    const captureGate = {
+      wavBase64: result.wavBase64,
+      durationSec: result.durationSec,
+      heardSpeech: result.heardSpeech,
+      minSpeechSec: MIN_SPEECH_SEC,
+    };
+    const localSpeechUsable = hasUsableLocalSpeech(captureGate);
     if (
-      (!result.wavBase64 ||
-        result.durationSec < MIN_SPEECH_SEC ||
-        result.heardSpeech === false) &&
-      !realtimeTranscriptReady
+      shouldDiscardBeforeRealtime(
+        captureGate,
+        {
+          shouldTryRealtime: shouldTryRealtimeTranscript,
+          hasQueuedRealtimeTranscript: Boolean(queuedRealtimeTranscript),
+        },
+      )
     ) {
       if (result.heardSpeech === false) {
         console.log('[voice] captura sem fala real (silêncio/ruído) — descartada');
@@ -1018,7 +1033,7 @@ async function finishAndProcess(
       return;
     }
 
-    if (routing === 'jarvis' && shouldStreamToRealtime()) {
+    if (shouldTryRealtimeTranscript) {
       const tRealtime = Date.now();
       store.setStatus('transcribing');
       liveStatus('thinking');
@@ -1108,6 +1123,14 @@ async function finishAndProcess(
         }
         realtimeTurnActive = false;
         await runJarvisTurn(transcript, capture, busy);
+        return;
+      }
+      if (!localSpeechUsable) {
+        console.log(
+          `[voice] realtime sem transcript final em ${Date.now() - tRealtime}ms e captura local sem fala — descartada`,
+        );
+        store.setStatus('idle');
+        liveEndTurn();
         return;
       }
       console.log(
