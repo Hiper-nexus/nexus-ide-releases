@@ -30,6 +30,7 @@ import {
   replyReopenDelayMs,
   TTS_TAIL_GUARD_MS,
 } from './voice-suppression-window';
+import { classicSuppressedByRealtimeOwner } from './realtime-ownership';
 import {
   bindWakeSuppressor,
   playAudioBase64,
@@ -1387,13 +1388,53 @@ async function finishAndProcess(
         liveEndTurn();
         return;
       }
+      // DEFECT 1 (per-SESSION ownership): o realtime é o DONO enquanto vivo. Só
+      // degrada para o Classic quando o socket NÃO está saudável — senão o
+      // fallback aqui viraria um racer que fala por cima da resposta realtime
+      // (duas vozes). Com o realtime vivo: encerra o turno quieto, mantém a
+      // sessão QUENTE (sem liveInterrupt/liveEndTurn), Classic OFF.
+      if (
+        classicSuppressedByRealtimeOwner({
+          captureReason: activeCaptureReason,
+          isRealtimeLive: isRealtimeLive(),
+        })
+      ) {
+        console.log('[voice] realtime dona (live) sem transcript — Classic suprimido, turno encerrado');
+        logVoiceEvent('info', 'jarvis.classicSuppressed', 'realtime live — Classic fallback off', {
+          reason: activeCaptureReason,
+          waitedMs: Date.now() - tRealtime,
+        });
+        store.setStatus('idle');
+        realtimeTurnActive = false;
+        return;
+      }
       console.log(
-        `[voice] realtime sem transcript final em ${Date.now() - tRealtime}ms (janela ${transcriptWaitMs}ms) — fallback Classic STT`,
+        `[voice] realtime sem transcript final em ${Date.now() - tRealtime}ms (janela ${transcriptWaitMs}ms) — fallback Classic STT (degradado)`,
       );
       suppressRealtimeAudioOut = true;
       resetPendingRealtimeAudioOut();
       void window.nexus.voice.liveInterrupt('classic-action-bridge-timeout').catch(() => {});
       realtimeTurnActive = false;
+    }
+
+    // DEFECT 1 (per-SESSION ownership, trava geral): se chegamos aqui num turno
+    // de wake/click SEM ter tentado o transcript realtime (flip transitório de
+    // realtimeTurnActive) mas a sessão live está de fato viva/dona, o caminho
+    // Classic STT→cérebro→TTS NÃO pode rodar — é o fallback de degradação, não um
+    // racer. Sem isto, um re-wake vencia a corrida e falava "Certo." por cima do
+    // realtime. O reply (escuta quente) é Classic-owned e passa reto.
+    if (
+      classicSuppressedByRealtimeOwner({
+        captureReason: activeCaptureReason,
+        isRealtimeLive: isRealtimeLive(),
+      })
+    ) {
+      console.log('[voice] realtime dona a conversa — Classic STT/cérebro/TTS suprimido (sem racer)');
+      logVoiceEvent('info', 'jarvis.classicSuppressed', 'realtime dona — Classic off (sem racer)', {
+        reason: activeCaptureReason,
+      });
+      store.setStatus('idle');
+      return;
     }
 
     // Feedback INSTANTÂNEO: um micro-filler do cache cobre o tempo de
