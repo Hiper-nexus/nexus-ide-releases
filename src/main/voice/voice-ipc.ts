@@ -162,7 +162,9 @@ export function registerVoiceIpc(): void {
         // fantasmas do renderer): transcrição que é o próprio TTS recente
         // vazando do alto-falante volta marcada para descarte silencioso.
         if (res.ok && echoSuppressor.isEcho(res.text)) {
-          console.log(`[voice] eco do TTS descartado: "${res.text.slice(0, 80)}"`);
+          logVoice('info', 'stt.echoDiscarded', 'eco do TTS descartado', {
+            text: res.text.slice(0, 120),
+          });
           return { ...res, discarded: 'echo' };
         }
         return res;

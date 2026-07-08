@@ -5,7 +5,7 @@
  * (TTS → mic → "não entendi" → TTS → …).
  */
 
-export const REPLY_LISTEN_DELAY_MS = 700;
+export const REPLY_LISTEN_DELAY_MS = 1_200;
 export const MAX_AUTO_REPLY_LOOPS = 2;
 export const MAX_CONFUSION_REPLY_REOPENS = 1;
 
@@ -65,15 +65,8 @@ export function shouldReopenJarvisListening(opts: {
 }): boolean {
   if (opts.realtimeTurnActive && opts.isRealtimeLive) return true;
 
-  // Reply automático nunca encadeia reply→reply (monólogo). Só confusão 1x.
+  // Reply automático nunca reabre — TTS ecoando no mic virava monólogo infinito.
   if (opts.captureReason === 'reply') {
-    if (isConfusionReply(opts.sayText)) {
-      if (consecutiveConfusionReplyCount >= MAX_CONFUSION_REPLY_REOPENS) {
-        console.log('[voice] trava anti-loop: confusão repetida, não reabrindo');
-        return false;
-      }
-      return true;
-    }
     console.log('[voice] não reabre após reply automático — diga Hey Jarvis de novo');
     return false;
   }

@@ -148,26 +148,12 @@ describe('jarvis-reply-loop', () => {
     ).toBe(false);
   });
 
-  it('não gasta a chance de correção em perguntas normais anteriores', () => {
+  it('não reabre confusão vinda de reply automático', () => {
     resetAutoReplyLoop();
-    noteAutoReplyOpened({ sayText: 'Qual cidade você quer focar?' });
-    noteAutoReplyOpened({ sayText: 'Qual é o próximo passo?' });
-
     expect(
       shouldReopenJarvisListening({
         expectReply: false,
         sayText: "Não entendi, patrão. Pode explicar melhor?",
-        realtimeTurnActive: false,
-        isRealtimeLive: false,
-        captureReason: 'reply',
-      }),
-    ).toBe(true);
-
-    noteAutoReplyOpened({ sayText: "Não entendi, patrão. Pode explicar melhor?" });
-    expect(
-      shouldReopenJarvisListening({
-        expectReply: false,
-        sayText: 'Não compreendi ainda.',
         realtimeTurnActive: false,
         isRealtimeLive: false,
         captureReason: 'reply',

@@ -52,6 +52,12 @@ import { useCloseWorkspaceStore } from '../components/CloseWorkspaceDialog';
 import { executeJarvisAction } from './jarvis-action-executor';
 import { mcpClearSession } from '../services/mcp-bridge';
 import { splitForPipelinedSpeech } from './speech-segments';
+import {
+  buildReplyAutoStop,
+  discardSpokenEchoIfNeeded,
+  REPLY_MIN_LISTEN_MS,
+  transcriptInConversation,
+} from './voice-echo-guard';
 import { realtimeToolEventToJarvisAction } from './realtime-action';
 import { buildScreenSnapshot, type ScreenSnapshot } from './screen-context';
 import { voiceHudStatusFromLiveState } from './live-hud-state';
@@ -1195,8 +1201,29 @@ async function finishAndProcess(
           void window.nexus.voice.liveInterrupt('empty-transcript').catch(() => {});
           return;
         }
-        const inConversation =
-          jarvisHistory.length > 0 && Date.now() - jarvisLastTurnAt <= JARVIS_MEMORY_MS;
+        if (
+          discardSpokenEchoIfNeeded(transcript, activeCaptureReason, {
+            log: (source, t, reason) => {
+              console.log(`[voice] eco do TTS descartado (${source}): "${t}"`);
+              logVoiceEvent('info', 'stt.echoDiscarded', 'eco do TTS descartado', {
+                source,
+                text: t.slice(0, 120),
+                reason,
+              });
+            },
+            endTurn: liveEndTurn,
+          }, 'realtime')
+        ) {
+          resetPendingRealtimeAudioOut();
+          void window.nexus.voice.liveInterrupt('spoken-echo').catch(() => {});
+          return;
+        }
+        const inConversation = transcriptInConversation(
+          activeCaptureReason,
+          jarvisHistory.length,
+          jarvisLastTurnAt,
+          JARVIS_MEMORY_MS,
+        );
         if (isDiscardableTranscript(transcript, { inConversation })) {
           console.log(`[voice] realtime transcript lixo descartado: "${transcript}"`);
           store.setStatus('idle');
@@ -1300,6 +1327,11 @@ async function finishAndProcess(
     // acabou de ser falado) — descarte silencioso, mesmo tratamento do ghost.
     if (stt.discarded === 'echo') {
       console.log(`[voice] eco do TTS descartado: "${stt.text}"`);
+      logVoiceEvent('info', 'stt.echoDiscarded', 'eco do TTS descartado', {
+        source: 'classic',
+        text: stt.text.slice(0, 120),
+        reason: activeCaptureReason,
+      });
       store.setStatus('idle');
       liveEndTurn();
       return;
@@ -1329,10 +1361,27 @@ async function finishAndProcess(
     // Whisper ALUCINA frases fixas em silêncio/ruído ("you", "thank you",
     // "obrigado por assistir"…). Elas passam o gate de RMS quando há um
     // sussurro — descarta antes de virar turno (a JARVIS falando sozinha).
-    const inConversation =
-      isAckGatedCapture()
-        ? false
-        : jarvisHistory.length > 0 && Date.now() - jarvisLastTurnAt <= JARVIS_MEMORY_MS;
+    if (
+      discardSpokenEchoIfNeeded(transcript, activeCaptureReason, {
+        log: (source, t, reason) => {
+          console.log(`[voice] eco do TTS descartado (${source}): "${t}"`);
+          logVoiceEvent('info', 'stt.echoDiscarded', 'eco do TTS descartado', {
+            source,
+            text: t.slice(0, 120),
+            reason,
+          });
+        },
+        endTurn: liveEndTurn,
+      }, 'classic')
+    ) {
+      return;
+    }
+    const inConversation = transcriptInConversation(
+      activeCaptureReason,
+      jarvisHistory.length,
+      jarvisLastTurnAt,
+      JARVIS_MEMORY_MS,
+    );
     if (isDiscardableTranscript(transcript, { inConversation })) {
       console.log(`[voice] transcrição-lixo do Whisper descartada: "${transcript}"`);
       store.setStatus('idle');
@@ -1501,14 +1550,22 @@ async function runJarvisTurn(
   // jarvisLive.enabled no painel NÃO é full-duplex — reabrir sempre gerava loop
   // (TTS ecoando no mic → "não entendi" → TTS → …).
   wakeMic.suppressWakeDetection(
-    Math.min(12_000, Math.max(3_500, sayText.length * 70 + 2_000)),
+    Math.min(15_000, Math.max(4_500, sayText.length * 70 + REPLY_LISTEN_DELAY_MS + 2_500)),
   );
   if (wantsReply) {
     busy.current = false;
-    wakeMic.suppressWakeDetection(REPLY_LISTEN_DELAY_MS + 500);
+    wakeMic.suppressWakeDetection(REPLY_LISTEN_DELAY_MS + REPLY_MIN_LISTEN_MS);
     await delay(REPLY_LISTEN_DELAY_MS);
     noteAutoReplyOpened({ sayText });
-    void beginListening(capture, wakeAutoStop(capture, busy), 'reply', undefined, busy);
+    void beginListening(
+      capture,
+      buildReplyAutoStop(() => {
+        if (isListening(capture)) void finishAndProcess(capture, busy);
+      }),
+      'reply',
+      undefined,
+      busy,
+    );
   } else {
     liveEndTurn();
   }
