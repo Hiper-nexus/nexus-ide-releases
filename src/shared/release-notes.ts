@@ -13,43 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.10.33',
+  version: '0.10.34',
   date: '2026-07-08',
-  codename: 'Jarvis Realtime Observability',
+  codename: 'Jarvis Live Responsiveness',
   summary:
-    'A Jarvis ganhou telemetria realtime mais fiel e logs de teste isolados, para medir latência de ação sem contaminar o diagnóstico do microfone real.',
+    'A Jarvis ficou mais responsiva no clique e no bridge realtime: quando já há áudio local válido, ela cai rápido para o executor Classic em vez de esperar vários segundos por transcript final.',
   highlights: [
     {
-      title: 'Latência live mensurável',
+      title: 'Clique mais operacional',
       detail:
-        'O transporte realtime agora marca a ação no instante em que o provider chama a ferramenta, antes do resultado voltar do executor.',
+        'O wake por mouse continua falando o ACK antes de ouvir, mas deixa de segurar oito segundos depois que já detectou fala.',
     },
     {
-      title: 'Logs reais limpos',
+      title: 'Fallback realtime mais rápido',
       detail:
-        'A suíte Vitest grava voice.log e métricas realtime em diretório temporário, sem poluir ~/.nexus/logs/voice.log durante validações.',
+        'Wake e clique ainda dão mais tempo ao realtime quando o mic está fraco; com fala local aproveitável, o fallback para STT Classic acontece em janela curta.',
     },
     {
-      title: 'Métricas configuráveis',
+      title: 'Bridge MCP mais auditável',
       detail:
-        'As métricas da Jarvis aceitam override por NEXUS_JARVIS_METRICS_FILE, mantendo produção e testes separados.',
+        'A cobertura agora trava o fluxo invoke → confirmação nativa → retry para comandos e delegação de panes.',
     },
   ],
   fixes: [
     {
-      title: 'Diagnóstico de wake preservado',
+      title: 'Menos sensação de travamento',
       detail:
-        'Testes de TTS e fallback de voz não aparecem mais no log operacional usado para depurar o microfone físico.',
+        'Quando o provider realtime não devolve transcript final a tempo, a Jarvis não fica esperando a janela longa se o WAV local já pode seguir para STT.',
     },
     {
-      title: 'Regressão travada por teste',
+      title: 'Ações de terminal protegidas',
       detail:
-        'Novos testes cobrem o override de métricas e a marcação imediata de action latency no caminho realtime.',
+        'O caminho MCP de run_command mantém confirmação nativa e retorna user_denied sem retry quando o usuário recusa.',
     },
     {
       title: 'Release auditável',
       detail:
-        'Typecheck e suíte completa passam com a ponte realtime/MCP preservada e sem nomes de concorrentes em código rastreado.',
+        'Typecheck, suíte completa e varredura de nomes proibidos seguem como gates antes de publicar o build assinado.',
     },
   ],
 };

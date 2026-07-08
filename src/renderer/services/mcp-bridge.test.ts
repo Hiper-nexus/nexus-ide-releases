@@ -1,7 +1,32 @@
-import { describe, expect, it } from 'vitest';
-import { mapActionToTool } from './mcp-bridge';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  invokeActionViaMcp,
+  invokeMcpWithConfirm,
+  mapActionToTool,
+} from './mcp-bridge';
+
+type McpMocks = {
+  invoke: ReturnType<typeof vi.fn>;
+  confirm: ReturnType<typeof vi.fn>;
+  clearSession: ReturnType<typeof vi.fn>;
+};
 
 describe('mcp-bridge action mapping', () => {
+  let mcp: McpMocks;
+
+  beforeEach(() => {
+    mcp = {
+      invoke: vi.fn(),
+      confirm: vi.fn(),
+      clearSession: vi.fn(),
+    };
+    (globalThis as unknown as { window: { nexus: { mcp: McpMocks } } }).window = {
+      nexus: {
+        mcp,
+      },
+    };
+  });
+
   it('keeps open_terminal on the renderer UI shell path', () => {
     expect(mapActionToTool({ type: 'open_terminal' })).toBeNull();
   });
@@ -30,5 +55,105 @@ describe('mcp-bridge action mapping', () => {
       tool: 'nexus_git_status',
       args: { cwd: '/tmp/project' },
     });
+  });
+
+  it('maps delegated pane prompts to the orchestrator pane before the focused pane', () => {
+    expect(
+      mapActionToTool(
+        { type: 'send_to_pane', text: 'Fix the pixel movement bug.' },
+        { focusedPaneId: 'pane-focused', orchestratorPaneId: 'pane-orch' },
+      ),
+    ).toEqual({
+      tool: 'nexus_pane_write',
+      args: {
+        paneId: 'pane-orch',
+        text: 'Fix the pixel movement bug.',
+        submit: true,
+      },
+    });
+  });
+
+  it('maps delegated pane prompts to the focused pane when no orchestrator is active', () => {
+    expect(
+      mapActionToTool(
+        { type: 'send_to_pane', text: 'Run the focused agent review.' },
+        { focusedPaneId: 'pane-focused', orchestratorPaneId: null },
+      ),
+    ).toEqual({
+      tool: 'nexus_pane_write',
+      args: {
+        paneId: 'pane-focused',
+        text: 'Run the focused agent review.',
+        submit: true,
+      },
+    });
+  });
+
+  it('does not claim delegated pane execution when no pane context exists', () => {
+    expect(
+      mapActionToTool(
+        { type: 'send_to_pane', text: 'Do not drop this into nowhere.' },
+        { focusedPaneId: null, orchestratorPaneId: null },
+      ),
+    ).toBeNull();
+  });
+
+  it('routes shell commands through the audited terminal MCP tool', () => {
+    expect(
+      mapActionToTool({ type: 'run_command', command: 'npm test -- --run' }),
+    ).toEqual({
+      tool: 'nexus_terminal_run',
+      args: { command: 'npm test -- --run' },
+    });
+  });
+
+  it('confirms denied MCP calls and retries after native approval', async () => {
+    mcp.invoke
+      .mockResolvedValueOnce({
+        ok: false,
+        tool: 'nexus_terminal_run',
+        denied: true,
+        requiredConfirmation: true,
+        error: 'confirmation_required',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        tool: 'nexus_terminal_run',
+        output: { exitCode: 0 },
+      });
+    mcp.confirm.mockResolvedValueOnce({ ok: true });
+
+    const result = await invokeMcpWithConfirm('nexus_terminal_run', {
+      command: 'npm run typecheck',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(mcp.invoke).toHaveBeenCalledTimes(2);
+    expect(mcp.confirm).toHaveBeenCalledWith('nexus_terminal_run', {
+      command: 'npm run typecheck',
+    });
+  });
+
+  it('returns user_denied without retrying when native confirmation is refused', async () => {
+    mcp.invoke.mockResolvedValueOnce({
+      ok: false,
+      tool: 'nexus_terminal_run',
+      denied: true,
+      requiredConfirmation: true,
+      error: 'confirmation_required',
+    });
+    mcp.confirm.mockResolvedValueOnce({ ok: false });
+
+    const result = await invokeActionViaMcp({
+      type: 'run_command',
+      command: 'npm run typecheck',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      tool: 'nexus_terminal_run',
+      error: 'user_denied',
+    });
+    expect(mcp.invoke).toHaveBeenCalledTimes(1);
   });
 });

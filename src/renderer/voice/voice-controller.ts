@@ -91,7 +91,7 @@ const WAKE_PREROLL_MS = 2_500;
 const WAKE_SILENCE_MS = 1_200; // wake-word capture: quiet time that ends the utterance
 const WAKE_MIN_LISTEN_MS = 3_200; // keep the mic open after ack/pre-roll before silence can close it
 const CLICK_WAKE_SILENCE_MS = 1_800; // click wake: a bit more tolerant after the spoken ack
-const CLICK_WAKE_MIN_LISTEN_MS = 8_000; // mouse wake listens after ack; give the user room to start talking
+const CLICK_WAKE_MIN_LISTEN_MS = 2_400; // mouse wake starts after ack; close quickly once speech ends
 const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
 const CLICK_WAKE_MAX_MS = 22_000; // click wake is intentional, so allow a slower follow-up
 const PTT_HOLD_MAX_MS = 60_000; // hold-to-talk sem keyup (tap morto) fecha aqui
@@ -1112,7 +1112,9 @@ async function finishAndProcess(
 
     if (shouldTryRealtimeTranscript) {
       const tRealtime = Date.now();
-      const transcriptWaitMs = realtimeTranscriptWaitMs(activeCaptureReason);
+      const transcriptWaitMs = realtimeTranscriptWaitMs(activeCaptureReason, {
+        localSpeechUsable,
+      });
       store.setStatus('transcribing');
       liveStatus('thinking');
       suppressRealtimeAudioOut = true;

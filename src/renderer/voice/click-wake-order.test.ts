@@ -28,7 +28,8 @@ describe('click wake order', () => {
     expect(block).toContain('[],');
   });
 
-  it('keeps mouse wake open long enough after the ack', () => {
-    expect(source).toContain('const CLICK_WAKE_MIN_LISTEN_MS = 8_000');
+  it('keeps mouse wake responsive after speech while preserving a long hard cap', () => {
+    expect(source).toContain('const CLICK_WAKE_MIN_LISTEN_MS = 2_400');
+    expect(source).toContain('const CLICK_WAKE_MAX_MS = 22_000');
   });
 });
