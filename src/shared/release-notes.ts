@@ -13,43 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.10.29',
+  version: '0.10.30',
   date: '2026-07-08',
-  codename: 'Jarvis Live Parity',
+  codename: 'Jarvis Operational Fallback',
   summary:
-    'A Jarvis ficou mais live de verdade: prompt realtime em inglês, clique que já começa ouvindo, comandos com voz realtime e menos queda para TTS Classic.',
+    'A Jarvis ficou mais resiliente quando modelos falham: ela mantém conversa local útil, silencia ruído curto e preserva ações de foco vindas do cérebro.',
   highlights: [
     {
-      title: 'Prompt realtime em inglês',
+      title: 'Fallback local operacional',
       detail:
-        'A sessão live agora recebe instruções em inglês para melhorar aderência a ferramentas, mantendo a fala final em português brasileiro.',
+        'Quando nenhuma chave/modelo responde, a Jarvis não despeja erro técnico: ela responde em português, mantém o turno aberto e sugere ações possíveis na tela atual.',
     },
     {
-      title: 'Clique acorda e já escuta',
+      title: 'Menos auto-conversa por ruído',
       detail:
-        'O clique na Jarvis inicia a captura antes do ACK terminar, reduzindo perda do comando quando o usuário fala junto da saudação.',
+        'Transcrições curtas típicas de ruído, como “ai ai” e ghosts de agradecimento, ficam silenciosas no fallback local em vez de reabrirem conversa sem necessidade.',
     },
     {
-      title: 'Resposta de comandos pela voz live',
+      title: 'Foco de pane completo',
       detail:
-        'Quando a sessão realtime está pronta, respostas curtas de ações usam a própria voz live antes de cair no TTS Classic.',
+        'O cérebro Classic agora preserva ações para focar pane específico e pane anterior, alinhando parser, prompt e executor.',
     },
   ],
   fixes: [
     {
-      title: 'Wake/click esperam melhor o transcript',
+      title: 'Sem erro de chave falado ao usuário',
       detail:
-        'As janelas de finalização do transcript foram ampliadas para wake e clique sem piorar o tempo de PTT/manual.',
+        'O modo sem provedor de brain não cita variáveis internas de API na fala e não chama rede quando já sabe que não há credencial disponível.',
     },
     {
-      title: 'Tool-calling live mais assertivo',
+      title: 'Falha de provider vira conversa recuperável',
       detail:
-        'O contrato live agora manda executar ações de app por ferramenta imediatamente, sem apenas prometer que abriu ou fez algo.',
+        'Se um provider retorna erro ou rate limit, a Jarvis informa de forma breve que continua operando e pergunta o próximo comando.',
     },
     {
-      title: 'Sem referência externa no código',
+      title: 'Tokens de confirmação travados por teste',
       detail:
-        'A implementação mantém nomes e comparações privadas fora dos arquivos rastreados do produto.',
+        'O fluxo de confirmação MCP agora tem cobertura explícita para escopo exato, consumo único e expiração de 30 segundos.',
     },
   ],
 };

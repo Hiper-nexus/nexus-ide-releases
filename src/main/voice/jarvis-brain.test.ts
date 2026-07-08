@@ -112,8 +112,59 @@ describe('jarvisThink brain providers', () => {
       deps(() => undefined, fetchImpl),
     );
 
-    expect(reply.say).toContain('GEMINI_API_KEY');
+    expect(reply.say).toContain('continuo operando localmente');
+    expect(reply.say).not.toContain('GEMINI_API_KEY');
+    expect(reply.expectReply).toBe(true);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('keeps likely noise silent when the local brain fallback is active', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+
+    const reply = await jarvisThink('ai ai', CTX, [], deps(() => undefined, fetchImpl));
+
+    expect(reply).toEqual({
+      say: '',
+      expectReply: false,
+      action: { type: 'none' },
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('does not silence a deliberate short greeting in local fallback', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+
+    const reply = await jarvisThink('oi', CTX, [], deps(() => undefined, fetchImpl));
+    const casualReply = await jarvisThink(
+      'e aí',
+      CTX,
+      [],
+      deps(() => undefined, fetchImpl),
+    );
+
+    expect(reply.say).toContain('continuo operando localmente');
+    expect(casualReply.say).toContain('continuo operando localmente');
+    expect(reply.expectReply).toBe(true);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('falls back to an operational local reply when all providers fail', async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response('rate limit', { status: 429 }),
+    ) as unknown as typeof fetch;
+
+    const reply = await jarvisThink(
+      'o que você acha desse projeto?',
+      CTX,
+      [],
+      deps((envVar) => (envVar === 'GEMINI_API_KEY' ? 'gemini-key' : undefined), fetchImpl),
+    );
+
+    expect(reply.say).toContain('tive uma falha rápida');
+    expect(reply.say).toContain('continuo operando');
+    expect(reply.say).not.toContain('429');
+    expect(reply.expectReply).toBe(true);
+    expect(reply.action).toEqual({ type: 'none' });
   });
 
   it('parseia as ações close_pane e open_board do JSON do cérebro', async () => {
@@ -144,6 +195,8 @@ describe('jarvisThink brain providers', () => {
       '{"say":"Abrindo site.","expectReply":false,"action":{"type":"open_browser","url":"https://example.com"}}',
       '{"say":"Recarregando.","expectReply":false,"action":{"type":"browser_reload"}}',
       '{"say":"Próximo pane.","expectReply":false,"action":{"type":"focus_next_pane"}}',
+      '{"say":"Pane anterior.","expectReply":false,"action":{"type":"focus_previous_pane"}}',
+      '{"say":"Focando terminal.","expectReply":false,"action":{"type":"focus_pane","paneName":"terminal"}}',
     ];
     let call = 0;
     const fetchImpl = vi.fn(async () =>
@@ -159,6 +212,8 @@ describe('jarvisThink brain providers', () => {
     const browserReply = await jarvisThink('abre example.com', CTX, [], d);
     const reloadReply = await jarvisThink('recarrega a página', CTX, [], d);
     const focusReply = await jarvisThink('próximo pane', CTX, [], d);
+    const previousReply = await jarvisThink('pane anterior', CTX, [], d);
+    const focusTerminalReply = await jarvisThink('foca terminal', CTX, [], d);
 
     expect(canvasReply.action).toEqual({ type: 'open_canvas' });
     expect(voiceReply.action).toEqual({ type: 'open_voice_settings' });
@@ -168,6 +223,8 @@ describe('jarvisThink brain providers', () => {
     });
     expect(reloadReply.action).toEqual({ type: 'browser_reload' });
     expect(focusReply.action).toEqual({ type: 'focus_next_pane' });
+    expect(previousReply.action).toEqual({ type: 'focus_previous_pane' });
+    expect(focusTerminalReply.action).toEqual({ type: 'focus_pane', paneName: 'terminal' });
   });
 
   it('keeps an intentional empty say silent instead of turning it into filler', async () => {

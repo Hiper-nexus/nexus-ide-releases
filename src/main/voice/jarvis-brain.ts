@@ -66,6 +66,9 @@ Action types:
 - {"type":"browser_back"} / {"type":"browser_forward"} / {"type":"browser_reload"}
   - navigate the focused embedded browser pane.
 - {"type":"focus_next_pane"} - move focus to the next open pane.
+- {"type":"focus_previous_pane"} - move focus to the previous open pane.
+- {"type":"focus_pane","paneName":"<terminal|browser|agent|pane title>"} - focus
+  an open pane by title or kind.
 - {"type":"run_command","command":"<exact command>"} - run a program, command,
   or CLI in the terminal. Use the literal command with no explanation. If no
   terminal is focused, the app opens one and runs it after native confirmation.
@@ -107,6 +110,8 @@ You can execute things through actions. Never claim you cannot. Examples:
 - "abre o site https://example.com" -> {"say":"Abrindo o site.","action":{"type":"open_browser","url":"https://example.com"}}
 - "recarrega a pagina" -> {"say":"Recarregando a pagina.","action":{"type":"browser_reload"}}
 - "proximo pane" -> {"say":"Focando o proximo pane.","action":{"type":"focus_next_pane"}}
+- "pane anterior" -> {"say":"Focando o pane anterior.","action":{"type":"focus_previous_pane"}}
+- "foca terminal" -> {"say":"Focando terminal.","action":{"type":"focus_pane","paneName":"terminal"}}
 - "abre o squad de review" -> {"say":"Subindo o Code Review.","action":{"type":"open_squad","squadName":"Code Review"}}
 - "abre o projeto saasbarbearia" -> {"say":"Abrindo o saasbarbearia.","action":{"type":"open_workspace","workspaceName":"saasbarbearia"}}
 - "pede pro agente corrigir o bug do login" -> use send_to_pane with an English prompt.
@@ -275,6 +280,10 @@ function parseReply(raw: string): JarvisReply {
     if (type === 'browser_forward') return { say, expectReply, action: { type } };
     if (type === 'browser_reload') return { say, expectReply, action: { type } };
     if (type === 'focus_next_pane') return { say, expectReply, action: { type } };
+    if (type === 'focus_previous_pane') return { say, expectReply, action: { type } };
+    if (type === 'focus_pane' && typeof obj.action?.paneName === 'string') {
+      return { say, expectReply, action: { type, paneName: obj.action.paneName } };
+    }
     if (type === 'send_to_pane' && typeof obj.action?.text === 'string') {
       return { say, expectReply, action: { type, text: obj.action.text } };
     }
@@ -292,6 +301,71 @@ function parseReply(raw: string): JarvisReply {
   } catch {
     return { say: raw.trim().slice(0, 300), action: { type: 'none' } };
   }
+}
+
+const NOISE_WORDS = new Set([
+  'a',
+  'ah',
+  'ai',
+  'ok',
+  'okay',
+  'hum',
+  'hmm',
+  'ha',
+  'uh',
+  'e',
+  'ta',
+  'you',
+]);
+
+function isLikelyNoiseTranscript(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.!?,;:]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (normalized === 'oi' || normalized === 'e ai') return false;
+  if (!normalized || normalized.length <= 2) return true;
+  if (normalized === 'thank you' || normalized === 'obrigado por assistir') return true;
+  const words = normalized.split(' ');
+  return (
+    words.length <= 3 &&
+    words.every((word) => NOISE_WORDS.has(word) || /^h?u+m+$/.test(word) || /^a+h*$/.test(word))
+  );
+}
+
+function firstAvailableAction(ctx: JarvisContext): string {
+  if (ctx.focusedPaneKind === 'browser') return 'posso recarregar a página ou abrir outro site';
+  if (ctx.focusedPaneKind === 'shell') return 'posso rodar um comando ou abrir outro terminal';
+  if (ctx.orchestrator) return 'posso mandar uma missão para o squad ou focar outro pane';
+  if (ctx.workspace) return 'posso abrir terminal, canvas, quadro ou configurações';
+  return 'posso iniciar um workspace novo ou abrir configurações';
+}
+
+function localBrainFallbackReply(
+  transcript: string,
+  ctx: JarvisContext,
+  hadProviderFailure: boolean,
+): JarvisReply {
+  const clean = transcript.trim();
+  if (isLikelyNoiseTranscript(clean)) {
+    return { say: '', expectReply: false, action: { type: 'none' } };
+  }
+
+  const user = ctx.userName?.trim();
+  const address = user ? `${user}, ` : '';
+  const suffix = firstAvailableAction(ctx);
+  const prefix = hadProviderFailure
+    ? 'tive uma falha rápida no cérebro online, mas continuo operando.'
+    : 'estou aqui e continuo operando localmente.';
+
+  return {
+    say: `${address}${prefix} ${suffix}. O que quer que eu faça agora?`,
+    expectReply: true,
+    action: { type: 'none' },
+  };
 }
 
 /**
@@ -441,15 +515,7 @@ export async function jarvisThink(
   }
 
   if (attempts.length === 0) {
-    return {
-      say:
-        'Preciso de uma chave de modelo para conversar — cole a GEMINI_API_KEY, ' +
-        'OPENAI_API_KEY ou GROQ_API_KEY nas configurações de voz.',
-      action: { type: 'none' },
-    };
+    return localBrainFallbackReply(transcript, ctx, false);
   }
-  return {
-    say: `Não consegui pensar agora: ${attempts[0]}`,
-    action: { type: 'none' },
-  };
+  return localBrainFallbackReply(transcript, ctx, true);
 }
