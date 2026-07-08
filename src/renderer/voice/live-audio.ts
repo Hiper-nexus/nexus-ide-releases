@@ -72,6 +72,19 @@ export function micFrameToBase64(
 }
 
 /**
+ * DEFECT 2: ms de áudio realtime AINDA agendado (do relógio atual até o fim da
+ * fila gapless). Cada chunk é agendado em `nextStartAt`, então a supressão de
+ * wake precisa cobrir a fila INTEIRA — não só a duração de um chunk. Sem isto,
+ * um flush de N chunks (~20s) suprimia só ~1 chunk+cauda e o detector reabria no
+ * meio da própria fala realtime (ela acorda na própria voz). Puro/testável.
+ */
+export function scheduledTailMs(nextStartAt: number, currentTime: number): number {
+  const remaining = nextStartAt - currentTime;
+  if (!Number.isFinite(remaining) || remaining <= 0) return 0;
+  return Math.ceil(remaining * 1_000);
+}
+
+/**
  * Fila de reprodução do áudio realtime: enfileira chunks PCM 24 kHz na
  * timeline do AudioContext para tocar contínuo sem gaps. barge-in limpa a fila.
  */
@@ -87,8 +100,9 @@ export class LiveAudioPlayer {
     return this.ctx;
   }
 
-  /** Enfileira um chunk PCM 24 kHz e devolve a duração dele em ms (0 se vazio),
-   *  para o chamador estender a supressão de wake pela duração REAL do áudio. */
+  /** Enfileira um chunk PCM 24 kHz e devolve os ms de áudio AINDA agendado
+   *  (chunk atual + tudo já na fila gapless), para o chamador suprimir o wake
+   *  pela fila INTEIRA — não só por um chunk (DEFECT 2). 0 se vazio. */
   play(b64: string): number {
     const floats = int16BytesToFloat(base64ToBytes(b64));
     if (floats.length === 0) return 0;
@@ -105,7 +119,7 @@ export class LiveAudioPlayer {
     source.onended = () => {
       this.active = this.active.filter((s) => s !== source);
     };
-    return Math.ceil(buffer.duration * 1000);
+    return scheduledTailMs(this.nextStartAt, ctx.currentTime);
   }
 
   /** barge-in: corta tudo que está soando e zera a timeline. */

@@ -6,7 +6,25 @@ import {
   floatToInt16Bytes,
   int16BytesToFloat,
   micFrameToBase64,
+  scheduledTailMs,
 } from './live-audio';
+
+describe('scheduledTailMs — DEFECT 2: cobre a fila gapless inteira', () => {
+  it('devolve o tempo até a fila DRENAR, não só um chunk', () => {
+    // 20s de áudio agendado à frente do relógio atual → suprime ~20s.
+    expect(scheduledTailMs(20.5, 0.5)).toBe(20_000);
+  });
+
+  it('é zero quando nada está agendado à frente', () => {
+    expect(scheduledTailMs(1, 1)).toBe(0);
+    expect(scheduledTailMs(0.5, 1)).toBe(0);
+  });
+
+  it('ignora valores não-finitos', () => {
+    expect(scheduledTailMs(Number.NaN, 0)).toBe(0);
+    expect(scheduledTailMs(Infinity, 0)).toBe(0);
+  });
+});
 
 describe('float ↔ int16', () => {
   it('roundtrip preserva o sinal dentro da precisão do int16', () => {
