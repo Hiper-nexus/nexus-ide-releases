@@ -117,6 +117,10 @@ const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
 const CLICK_WAKE_MAX_MS = 22_000; // click wake is intentional, so allow a slower follow-up
 const PTT_HOLD_MAX_MS = 60_000; // hold-to-talk sem keyup (tap morto) fecha aqui
 const JARVIS_MEMORY_MS = 300_000; // 5 min: janela de continuidade (paridade com IDLE_TIMEOUT do Overclock)
+// ITEM 7: orçamento total (wall-clock) da STT Classic na wake path. Espelha
+// STT_WAKE_BUDGET_MS do stt-service — um provider cloud pendurado nunca segura
+// um turno de conversa ~16s; após 1 tentativa cloud apertada, pula p/ local.
+const WAKE_STT_BUDGET_MS = 8_000;
 const PENDING_REALTIME_AUDIO_MAX_CHUNKS = 160;
 
 // Deadlines das invocações renderer→main (cinto E suspensório sobre os
@@ -1401,6 +1405,9 @@ async function finishAndProcess(
         sampleRate: result.sampleRate,
         // Modo JARVIS conversa em PT — transcreve cru, sem traduzir para EN.
         ...(routing === 'jarvis' ? { translate: false, language: 'pt' } : {}),
+        // ITEM 7: wake/click são turnos de conversa — bound the STT wall-clock so
+        // um Whisper cloud pendurado não segura o turno ~16s (pula p/ local).
+        ...(isAckGatedCapture() ? { budgetMs: WAKE_STT_BUDGET_MS } : {}),
       }),
       TRANSCRIBE_DEADLINE_MS,
       'transcrição',

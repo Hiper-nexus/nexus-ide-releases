@@ -22,6 +22,13 @@ export const transcribeRequestSchema = z.object({
   translate: z.boolean().optional(),
   /** Hint the spoken language when not translating (e.g. 'pt'). */
   language: z.string().min(2).max(8).optional(),
+  /**
+   * ITEM 7: total wall-clock budget (ms) for the STT chain on the WAKE path.
+   * When set, at most one cloud attempt runs (on a tight deadline) before
+   * jumping to keyless local whisper, so a hung cloud provider can't hold a
+   * conversational turn ~16s.
+   */
+  budgetMs: z.number().int().positive().max(60_000).optional(),
 });
 
 export type TranscribeRequest = z.infer<typeof transcribeRequestSchema>;
@@ -186,9 +193,18 @@ export type TranscribeResult =
        * silêncio, como faz com as alucinações do Whisper.
        */
       discarded?: 'echo';
+      /** ITEM 7: the wake-path budget forced an early jump to local (stt.stall). */
+      stalled?: boolean;
       attempts: SttAttempt[];
     }
-  | { ok: false; error: string; needsKey: boolean; attempts: SttAttempt[] };
+  | {
+      ok: false;
+      error: string;
+      needsKey: boolean;
+      /** ITEM 7: the wake-path budget forced an early jump to local (stt.stall). */
+      stalled?: boolean;
+      attempts: SttAttempt[];
+    };
 
 // ── JARVIS (assistente conversacional) ───────────────────────────────────────
 

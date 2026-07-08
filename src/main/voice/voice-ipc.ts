@@ -181,6 +181,16 @@ export function registerVoiceIpc(): void {
       }
       try {
         const res = await transcribe(parsed.data, getVoiceConfig(), currentProbes());
+        // ITEM 7: a wake-path STT stall (cloud skipped to local por orçamento)
+        // nunca é silenciosa — o motivo/attempts entram no voice.log.
+        if (res.stalled) {
+          logVoice('warn', 'stt.stall', 'wake STT estourou o orçamento; pulou p/ local', {
+            budgetMs: parsed.data.budgetMs,
+            ok: res.ok,
+            provider: res.ok ? res.provider : null,
+            attempts: res.attempts.map((a) => `${a.provider}: ${a.reason}`),
+          });
+        }
         // Terceira camada anti-eco (após o AEC do mic e antes do filtro de
         // fantasmas do renderer): transcrição que é o próprio TTS recente
         // vazando do alto-falante volta marcada para descarte silencioso.
