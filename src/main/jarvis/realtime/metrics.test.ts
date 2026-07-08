@@ -5,6 +5,28 @@ import { describe, expect, it } from 'vitest';
 import { JarvisLatencyTracker, JarvisMetricsLogger } from './metrics';
 
 describe('JarvisMetricsLogger', () => {
+  it('honors the test/runtime metrics file override', () => {
+    const filePath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-metrics-')),
+      'override.log',
+    );
+    const previous = process.env.NEXUS_JARVIS_METRICS_FILE;
+    process.env.NEXUS_JARVIS_METRICS_FILE = filePath;
+    try {
+      const logger = new JarvisMetricsLogger({
+        now: () => new Date('2026-07-07T12:00:00.000Z'),
+      });
+
+      logger.log('roundtrip_ms', 99, 's-env');
+
+      expect(fs.existsSync(filePath)).toBe(true);
+      expect(fs.readFileSync(filePath, 'utf-8')).toContain('"session_id":"s-env"');
+    } finally {
+      if (previous === undefined) delete process.env.NEXUS_JARVIS_METRICS_FILE;
+      else process.env.NEXUS_JARVIS_METRICS_FILE = previous;
+    }
+  });
+
   it('writes metrics as JSONL records', () => {
     const filePath = path.join(
       fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-metrics-')),

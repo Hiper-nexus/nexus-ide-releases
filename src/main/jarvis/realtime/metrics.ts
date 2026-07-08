@@ -38,12 +38,16 @@ const DEFAULT_METRICS_FILE = path.join(
   'jarvis-metrics.log',
 );
 
+function resolveMetricsFile(): string {
+  return process.env.NEXUS_JARVIS_METRICS_FILE?.trim() || DEFAULT_METRICS_FILE;
+}
+
 export class JarvisMetricsLogger {
   private readonly filePath: string;
   private readonly now: () => Date;
 
   constructor(options: JarvisMetricsLoggerOptions = {}) {
-    this.filePath = options.filePath ?? DEFAULT_METRICS_FILE;
+    this.filePath = options.filePath ?? resolveMetricsFile();
     this.now = options.now ?? (() => new Date());
   }
 

@@ -391,6 +391,7 @@ export class LiveTransportController {
     });
     if (!event) return;
     if (action) {
+      jarvisLatencyTracker.markAction(event.sessionId);
       this.armToolResultTimeout(event);
       return;
     }

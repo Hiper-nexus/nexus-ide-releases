@@ -538,6 +538,60 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
+  it('marks realtime action latency as soon as the provider requests a tool', async () => {
+    vi.resetModules();
+    const markAction = vi.fn();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'openai', provider }];
+
+    vi.doMock('../jarvis/realtime/metrics', () => ({
+      jarvisLatencyTracker: {
+        markAction,
+        markAudioIn: vi.fn(),
+        markAudioOut: vi.fn(),
+        markResponseDone: vi.fn(),
+      },
+    }));
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'openai-realtime',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['openai'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    await controller.onStart();
+    provider.fireToolCall({ callId: 'call_metrics' });
+
+    expect(markAction).toHaveBeenCalledWith(session.getState().sessionId);
+
+    vi.doUnmock('../jarvis/realtime/metrics');
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
   it('returns a structured timeout when a realtime tool call never resolves', async () => {
     vi.useFakeTimers();
     vi.resetModules();

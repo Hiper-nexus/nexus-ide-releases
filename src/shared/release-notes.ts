@@ -13,43 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.10.32',
+  version: '0.10.33',
   date: '2026-07-08',
-  codename: 'Jarvis Click Wake',
+  codename: 'Jarvis Realtime Observability',
   summary:
-    'A Jarvis ficou mais confiável no wake por clique: ela confirma que acordou e só então abre uma janela real de escuta para o comando.',
+    'A Jarvis ganhou telemetria realtime mais fiel e logs de teste isolados, para medir latência de ação sem contaminar o diagnóstico do microfone real.',
   highlights: [
     {
-      title: 'Clique acorda de verdade',
+      title: 'Latência live mensurável',
       detail:
-        'Ao clicar na Jarvis, o ACK audível toca primeiro e a captura do comando começa depois, evitando que a janela expire enquanto o TTS ainda está falando.',
+        'O transporte realtime agora marca a ação no instante em que o provider chama a ferramenta, antes do resultado voltar do executor.',
     },
     {
-      title: 'Mais tempo para falar',
+      title: 'Logs reais limpos',
       detail:
-        'A janela mínima de escuta por clique subiu para 8 segundos e o limite total para 22 segundos, sem afetar o wake por voz.',
+        'A suíte Vitest grava voice.log e métricas realtime em diretório temporário, sem poluir ~/.nexus/logs/voice.log durante validações.',
     },
     {
-      title: 'Sessão live mais limpa',
+      title: 'Métricas configuráveis',
       detail:
-        'O fim de turno realtime agora também limpa a sessão MCP da Jarvis, reduzindo risco de permissão ficar pendurada entre interações.',
+        'As métricas da Jarvis aceitam override por NEXUS_JARVIS_METRICS_FILE, mantendo produção e testes separados.',
     },
   ],
   fixes: [
     {
-      title: 'Sem capturar o próprio ACK no clique',
+      title: 'Diagnóstico de wake preservado',
       detail:
-        'O click wake não injeta mais pre-roll da fala de confirmação na captura do comando.',
+        'Testes de TTS e fallback de voz não aparecem mais no log operacional usado para depurar o microfone físico.',
     },
     {
       title: 'Regressão travada por teste',
       detail:
-        'Novos testes garantem ACK antes da escuta no clique e limpeza MCP no encerramento live.',
+        'Novos testes cobrem o override de métricas e a marcação imediata de action latency no caminho realtime.',
     },
     {
-      title: 'Paridade de sessão reforçada',
+      title: 'Release auditável',
       detail:
-        'A ponte live mantém o executor auditável e limpa concessões mesmo quando o turno foi conversacional.',
+        'Typecheck e suíte completa passam com a ponte realtime/MCP preservada e sem nomes de concorrentes em código rastreado.',
     },
   ],
 };
