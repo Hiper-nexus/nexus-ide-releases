@@ -22,7 +22,7 @@ export interface RealtimeProviderCandidate {
 }
 
 const SYSTEM_PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'system.en.md');
-const OPENAI_REALTIME_FALLBACK_VOICE = 'alloy';
+const OPENAI_REALTIME_FALLBACK_VOICE = 'marin';
 const OPENAI_REALTIME_VOICES = new Set([
   'alloy',
   'ash',
@@ -36,7 +36,7 @@ const OPENAI_REALTIME_VOICES = new Set([
   'cedar',
 ]);
 
-function resolveOpenAiRealtimeVoice(configured: string): string {
+export function resolveOpenAiRealtimeVoice(configured: string): string {
   const voice = configured.trim().toLowerCase();
   return OPENAI_REALTIME_VOICES.has(voice) ? voice : OPENAI_REALTIME_FALLBACK_VOICE;
 }

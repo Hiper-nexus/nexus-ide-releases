@@ -31,10 +31,10 @@ function fakeWs(): RealtimeWsLike & {
 }
 
 describe('buildOpenAISessionUpdate', () => {
-  it('builds the GA realtime session shape with manual turn control', () => {
+  it('builds the GA realtime session shape with semantic VAD', () => {
     const update = buildOpenAISessionUpdate({
       model: 'gpt-realtime-2.1',
-      voice: 'alloy',
+      voice: 'marin',
       instructions: 'You are Jarvis.',
       tools: [
         {
@@ -57,12 +57,12 @@ describe('buildOpenAISessionUpdate', () => {
           input: {
             format: { type: 'audio/pcm', rate: 24_000 },
             transcription: { model: 'gpt-realtime-whisper' },
-            turn_detection: null,
+            turn_detection: { type: 'semantic_vad' },
           },
           output: {
             // rate é obrigatório no output também (erro da API sem ele).
             format: { type: 'audio/pcm', rate: 24_000 },
-            voice: 'alloy',
+            voice: 'marin',
           },
         },
         tools: [
@@ -72,6 +72,24 @@ describe('buildOpenAISessionUpdate', () => {
           },
         ],
         tool_choice: 'auto',
+      },
+    });
+  });
+
+  it('can still build manual turn control for push-to-talk fallback', () => {
+    const update = buildOpenAISessionUpdate({
+      model: 'gpt-realtime-2.1',
+      voice: 'marin',
+      instructions: 'You are Jarvis.',
+      turnDetection: 'manual',
+    });
+    expect(update).toMatchObject({
+      session: {
+        audio: {
+          input: {
+            turn_detection: null,
+          },
+        },
       },
     });
   });
@@ -197,11 +215,12 @@ describe('OpenAIRealtimeProvider', () => {
     expect(base64ToInt16Array(append.audio)).toHaveLength(5);
   });
 
-  it('commits a turn and requests an audio/text response', async () => {
+  it('commits a manual turn and requests an audio response', async () => {
     const ws = fakeWs();
     const provider = new OpenAIRealtimeProvider({
       apiKey: 'sk-test',
       instructions: 'You are Jarvis.',
+      turnDetection: 'manual',
       wsFactory: () => ws,
       setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
       clearTimeoutFn: () => {},
@@ -219,7 +238,7 @@ describe('OpenAIRealtimeProvider', () => {
     ]);
   });
 
-  it('does not create a server-VAD response before manual endUserTurn', async () => {
+  it('keeps endUserTurn as a no-op while semantic VAD owns turn end', async () => {
     const ws = fakeWs();
     const provider = new OpenAIRealtimeProvider({
       apiKey: 'sk-test',
@@ -237,11 +256,7 @@ describe('OpenAIRealtimeProvider', () => {
     expect(ws.sent.map((item) => JSON.parse(item).type)).toEqual(['session.update']);
 
     provider.endUserTurn();
-    expect(ws.sent.map((item) => JSON.parse(item).type)).toEqual([
-      'session.update',
-      'input_audio_buffer.commit',
-      'response.create',
-    ]);
+    expect(ws.sent.map((item) => JSON.parse(item).type)).toEqual(['session.update']);
   });
 
   it('notifies when the socket closes after setup', async () => {

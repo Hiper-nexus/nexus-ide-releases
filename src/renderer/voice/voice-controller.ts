@@ -88,6 +88,7 @@ const CLICK_WAKE_MIN_LISTEN_MS = 4_500; // mouse wake has no pre-roll; give the 
 const WAKE_MAX_MS = 15_000; // wake-word capture: hard cap
 const PTT_HOLD_MAX_MS = 60_000; // hold-to-talk sem keyup (tap morto) fecha aqui
 const JARVIS_MEMORY_MS = 240_000; // 4 min: conversa continua sem recomeçar do zero
+const PENDING_REALTIME_AUDIO_MAX_CHUNKS = 160;
 
 // Deadlines das invocações renderer→main (cinto E suspensório sobre os
 // timeouts do main): se QUALQUER etapa pendurar além disto, o turno morre com
@@ -142,6 +143,7 @@ let pendingRealtimeTranscript:
   | null = null;
 let queuedRealtimeTranscript: string | null = null;
 let finishRealtimeCapture: (() => void) | null = null;
+let pendingRealtimeAudioOut: string[] = [];
 let jarvisLastTurnAt = 0;
 let wakeOpenInProgress = false;
 let activeCaptureReason: JarvisCaptureReason = 'manual';
@@ -199,6 +201,31 @@ function resolvePendingRealtimeTranscript(text: string | null): void {
   clearTimeout(pending.timer);
   pendingRealtimeTranscript = null;
   pending.resolve(text);
+}
+
+function resetPendingRealtimeAudioOut(): void {
+  pendingRealtimeAudioOut = [];
+}
+
+function playRealtimeAudioOut(b64: string): void {
+  useVoiceStore.getState().setStatus('speaking');
+  wakeMic.suppressWakeDetection(1_200);
+  ensureLivePlayer().play(b64);
+}
+
+function flushPendingRealtimeAudioOut(): void {
+  if (suppressRealtimeAudioOut || pendingRealtimeAudioOut.length === 0) return;
+  const chunks = pendingRealtimeAudioOut;
+  pendingRealtimeAudioOut = [];
+  for (const chunk of chunks) playRealtimeAudioOut(chunk);
+}
+
+function queuePendingRealtimeAudioOut(b64: string): void {
+  if (!realtimeTurnActive) return;
+  if (pendingRealtimeAudioOut.length >= PENDING_REALTIME_AUDIO_MAX_CHUNKS) {
+    pendingRealtimeAudioOut.shift();
+  }
+  pendingRealtimeAudioOut.push(b64);
 }
 
 function waitForRealtimeTranscript(timeoutMs = REALTIME_TRANSCRIPT_WAIT_MS): Promise<string | null> {
@@ -530,6 +557,9 @@ async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promise<void
         exec.sayText.trim() ||
         (toolResult.ok ? 'Feito, patrão.' : `Não consegui: ${toolResult.summary}.`);
       await speakRealtimeToolResult(sayText);
+    } else {
+      suppressRealtimeAudioOut = false;
+      flushPendingRealtimeAudioOut();
     }
   } catch (err) {
     const message = errMsg(err);
@@ -791,10 +821,11 @@ export function useVoiceController(): void {
     });
     // Áudio realtime (provider TTS PCM 24 kHz) → toca em fila contínua.
     const unsubLiveAudio = window.nexus.voice.onLiveAudioOut((b64) => {
-      if (suppressRealtimeAudioOut) return;
-      useVoiceStore.getState().setStatus('speaking');
-      wakeMic.suppressWakeDetection(1_200);
-      ensureLivePlayer().play(b64);
+      if (suppressRealtimeAudioOut) {
+        queuePendingRealtimeAudioOut(b64);
+        return;
+      }
+      playRealtimeAudioOut(b64);
     });
     // Espelha o mic para o transporte realtime enquanto o comando é falado.
     wakeMic.setUtteranceFrameTap((frame, sampleRate) => {
@@ -906,6 +937,7 @@ async function beginListening(
   try {
     store.setNote(null);
     queuedRealtimeTranscript = null;
+    resetPendingRealtimeAudioOut();
     realtimeTurnActive = false;
     activeCaptureReason = reason;
     finishRealtimeCapture = busy
@@ -988,7 +1020,7 @@ async function finishAndProcess(
       const tRealtime = Date.now();
       store.setStatus('transcribing');
       liveStatus('thinking');
-      suppressRealtimeAudioOut = !REALTIME_PROVIDER_AUDIO_ENABLED;
+      suppressRealtimeAudioOut = true;
       liveEndTurn();
       const liveTranscript = await waitForRealtimeTranscript();
       if (hasRealtimeNativeToolSince(tRealtime)) {
@@ -1005,6 +1037,7 @@ async function finishAndProcess(
         ) {
           console.log(`[voice] realtime wake/click só ack/eco: "${liveTranscript}"`);
           store.setStatus('idle');
+          resetPendingRealtimeAudioOut();
           void window.nexus.voice.liveInterrupt('ack-only-transcript').catch(() => {});
           liveEndTurn();
           return;
@@ -1016,6 +1049,7 @@ async function finishAndProcess(
         if (!transcript) {
           console.log(`[voice] realtime transcript descartado como eco wake: "${liveTranscript}"`);
           store.setStatus('idle');
+          resetPendingRealtimeAudioOut();
           void window.nexus.voice.liveInterrupt('empty-transcript').catch(() => {});
           return;
         }
@@ -1024,6 +1058,7 @@ async function finishAndProcess(
         if (isDiscardableTranscript(transcript, { inConversation })) {
           console.log(`[voice] realtime transcript lixo descartado: "${transcript}"`);
           store.setStatus('idle');
+          resetPendingRealtimeAudioOut();
           void window.nexus.voice.liveInterrupt('discarded-transcript').catch(() => {});
           return;
         }
@@ -1042,6 +1077,8 @@ async function finishAndProcess(
           shouldLetRealtimeProviderAnswer(transcript) &&
           isRealtimeLive()
         ) {
+          suppressRealtimeAudioOut = false;
+          flushPendingRealtimeAudioOut();
           logVoiceEvent('info', 'jarvis.liveProviderAnswer', 'provider realtime', {
             reason: activeCaptureReason,
             transcript: transcript.slice(0, 180),
@@ -1051,6 +1088,7 @@ async function finishAndProcess(
         }
 
         suppressRealtimeAudioOut = true;
+        resetPendingRealtimeAudioOut();
         livePlayer?.stop();
         stopAllPlayback();
         liveStatus('thinking');
@@ -1074,6 +1112,7 @@ async function finishAndProcess(
         `[voice] realtime sem transcript final em ${Date.now() - tRealtime}ms — fallback Classic STT`,
       );
       suppressRealtimeAudioOut = true;
+      resetPendingRealtimeAudioOut();
       void window.nexus.voice.liveInterrupt('classic-action-bridge-timeout').catch(() => {});
       realtimeTurnActive = false;
     }

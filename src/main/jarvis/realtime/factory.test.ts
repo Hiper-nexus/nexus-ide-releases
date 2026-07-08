@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_VOICE_CONFIG } from '../../../shared/voice-config';
 import {
   loadJarvisSystemPrompt,
+  resolveOpenAiRealtimeVoice,
   resolveRealtimeProviderId,
   resolveRealtimeProviderIds,
 } from './factory';
@@ -131,7 +132,10 @@ describe('createRealtimeProvider', () => {
     vi.doUnmock('../../voice/voice-secrets');
   });
 
-  it('maps unsupported OpenAI TTS voices (nova) to alloy for realtime', async () => {
+  it('maps unsupported OpenAI TTS voices (nova) to the stable realtime voice', async () => {
+    expect(resolveOpenAiRealtimeVoice('nova')).toBe('marin');
+    expect(resolveOpenAiRealtimeVoice('cedar')).toBe('cedar');
+
     vi.resetModules();
     vi.doMock('../../voice/voice-secrets', () => ({
       resolveVoiceApiKey: (envVar: string) =>

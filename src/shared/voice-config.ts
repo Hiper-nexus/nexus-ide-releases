@@ -112,7 +112,7 @@ export const jarvisLiveConfigSchema = z
     /** Modelo realtime OpenAI padrao. */
     openaiModel: z.string().min(1).max(128).default('gpt-realtime-2.1-mini'),
     /** Voz OpenAI Realtime padrao. */
-    openaiVoice: z.string().min(1).max(64).default('alloy'),
+    openaiVoice: z.string().min(1).max(64).default('marin'),
     /** Modelo realtime (audio nativo) usado pelo transporte gemini-live. */
     liveModel: z
       .string()
@@ -132,7 +132,7 @@ export const jarvisLiveConfigSchema = z
     enabled: false,
     transport: 'classic',
     openaiModel: 'gpt-realtime-2.1-mini',
-    openaiVoice: 'alloy',
+    openaiVoice: 'marin',
     liveModel: 'gemini-2.5-flash-native-audio-preview-12-2025',
     voiceName: 'Charon',
     graceReuseMs: 90_000,
@@ -273,7 +273,7 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
     enabled: false,
     transport: 'classic',
     openaiModel: 'gpt-realtime-2.1-mini',
-    openaiVoice: 'alloy',
+    openaiVoice: 'marin',
     liveModel: 'gemini-2.5-flash-native-audio-preview-12-2025',
     voiceName: 'Charon',
     graceReuseMs: 90_000,

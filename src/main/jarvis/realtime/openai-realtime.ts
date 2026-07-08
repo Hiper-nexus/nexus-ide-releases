@@ -24,6 +24,7 @@ export interface OpenAIRealtimeProviderOptions {
   instructions: string;
   model?: string;
   voice?: string;
+  turnDetection?: OpenAIRealtimeTurnDetection;
   inputSourceRate?: number;
   inputTargetRate?: number;
   tools?: RealtimeToolDefinition[];
@@ -46,21 +47,25 @@ export interface ParsedOpenAIRealtimeEvent {
 }
 
 const DEFAULT_MODEL = 'gpt-realtime-2.1-mini';
-const DEFAULT_VOICE = 'alloy';
+const DEFAULT_VOICE = 'marin';
 const DEFAULT_SOURCE_RATE = 16_000;
 const DEFAULT_TARGET_RATE = 24_000;
 const CONNECT_TIMEOUT_MS = 10_000;
 const PENDING_AUDIO_MAX_BYTES = 512 * 1024;
 const WS_OPEN = 1;
 
+export type OpenAIRealtimeTurnDetection = 'semantic_vad' | 'manual';
+
 export function buildOpenAISessionUpdate(opts: {
   model: string;
   voice: string;
   instructions: string;
+  turnDetection?: OpenAIRealtimeTurnDetection;
   inputRate?: number;
   tools?: RealtimeToolDefinition[];
 }): Record<string, unknown> {
   const tools = opts.tools ?? [];
+  const turnDetection = opts.turnDetection ?? 'semantic_vad';
   return {
     type: 'session.update',
     session: {
@@ -79,7 +84,8 @@ export function buildOpenAISessionUpdate(opts: {
           transcription: {
             model: 'gpt-realtime-whisper',
           },
-          turn_detection: null,
+          turn_detection:
+            turnDetection === 'manual' ? null : { type: 'semantic_vad' },
         },
         output: {
           format: {
@@ -276,6 +282,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   private readonly instructions: string;
   private readonly model: string;
   private readonly voice: string;
+  private readonly turnDetection: OpenAIRealtimeTurnDetection;
   private readonly sourceRate: number;
   private readonly targetRate: number;
   private readonly tools: RealtimeToolDefinition[];
@@ -288,6 +295,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     this.instructions = options.instructions;
     this.model = options.model ?? DEFAULT_MODEL;
     this.voice = options.voice ?? DEFAULT_VOICE;
+    this.turnDetection = options.turnDetection ?? 'semantic_vad';
     this.sourceRate = options.inputSourceRate ?? DEFAULT_SOURCE_RATE;
     this.targetRate = options.inputTargetRate ?? DEFAULT_TARGET_RATE;
     this.tools = options.tools ?? [];
@@ -413,6 +421,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
 
   endUserTurn(): void {
     if (!this.isReady) return;
+    if (this.turnDetection !== 'manual') return;
     this.sendEvent({ type: 'input_audio_buffer.commit' });
     this.sendEvent({
       type: 'response.create',
@@ -486,6 +495,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
         model: this.model,
         voice: this.voice,
         instructions: contextBlock,
+        turnDetection: this.turnDetection,
         inputRate: this.targetRate,
         tools: this.tools,
       }),
