@@ -13,38 +13,38 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.10.28',
+  version: '0.10.29',
   date: '2026-07-08',
-  codename: 'Jarvis Live Control',
+  codename: 'Jarvis Live Parity',
   summary:
-    'A Jarvis ficou mais operacional em wake, clique e realtime, com recuperação de fala fraca e contrato único para ações live.',
+    'A Jarvis ficou mais live de verdade: prompt realtime em inglês, clique que já começa ouvindo, comandos com voz realtime e menos queda para TTS Classic.',
   highlights: [
     {
-      title: 'Fala fraca não morre antes do STT',
+      title: 'Prompt realtime em inglês',
       detail:
-        'Turnos iniciados por Hey Jarvis ou clique agora usam RMS/pico da captura para tentar STT mesmo quando o gate principal marcou sinal baixo.',
+        'A sessão live agora recebe instruções em inglês para melhorar aderência a ferramentas, mantendo a fala final em português brasileiro.',
     },
     {
-      title: 'Realtime actions com contrato único',
+      title: 'Clique acorda e já escuta',
       detail:
-        'OpenAI Realtime e Classic compartilham o mesmo mapeamento de ações Nexus, reduzindo drift entre conversa live e executor auditável.',
+        'O clique na Jarvis inicia a captura antes do ACK terminar, reduzindo perda do comando quando o usuário fala junto da saudação.',
     },
     {
-      title: 'Perguntas de contexto mais rápidas',
+      title: 'Resposta de comandos pela voz live',
       detail:
-        'Consultas como qual pane ou página estamos entram no fast-path local, sem esperar LLM para responder o estado atual do app.',
+        'Quando a sessão realtime está pronta, respostas curtas de ações usam a própria voz live antes de cair no TTS Classic.',
     },
   ],
   fixes: [
     {
-      title: 'Diagnóstico de mic baixo',
+      title: 'Wake/click esperam melhor o transcript',
       detail:
-        'O log persistente registra duração, RMS e pico de capturas fracas sem gravar conteúdo da fala, ajudando a calibrar o Fifine no teste real.',
+        'As janelas de finalização do transcript foram ampliadas para wake e clique sem piorar o tempo de PTT/manual.',
     },
     {
-      title: 'Wake/click continuam protegidos contra eco',
+      title: 'Tool-calling live mais assertivo',
       detail:
-        'A recuperação de fala fraca só vale para wake/clique e ainda passa pelos filtros de ACK, lixo de Whisper e eco de TTS.',
+        'O contrato live agora manda executar ações de app por ferramenta imediatamente, sem apenas prometer que abriu ou fez algo.',
     },
     {
       title: 'Sem referência externa no código',

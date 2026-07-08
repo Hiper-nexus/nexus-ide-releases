@@ -4,15 +4,16 @@ import { buildLiveSystemInstruction } from './jarvis-live-prompt';
 describe('buildLiveSystemInstruction', () => {
   it('default: identifica como Jarvis, com as leis', () => {
     const s = buildLiveSystemInstruction({ assistantName: 'Jarvis' });
-    expect(s).toContain('Você é Jarvis');
-    expect(s).toContain('NUNCA leia em voz alta');
-    expect(s).not.toContain('nunca como Jarvis');
+    expect(s).toContain('You are Jarvis');
+    expect(s).toContain('call nexus_action immediately');
+    expect(s).toContain('Speak only in Brazilian Portuguese');
+    expect(s).not.toContain('never call yourself Jarvis');
   });
 
   it('nome custom pede para se apresentar como tal', () => {
     const s = buildLiveSystemInstruction({ assistantName: 'Sexta-feira' });
-    expect(s).toContain('Você é Sexta-feira');
-    expect(s).toContain('nunca como Jarvis');
+    expect(s).toContain('You are Sexta-feira');
+    expect(s).toContain('never call yourself Jarvis');
   });
 
   it('inclui nome do usuário e instruções custom e memória', () => {
@@ -24,7 +25,7 @@ describe('buildLiveSystemInstruction', () => {
       },
       'MEMÓRIA: - [deploy] sexta à tarde',
     );
-    expect(s).toContain('O usuário se chama "Chefe"');
+    expect(s).toContain('preferred name is "Chefe"');
     expect(s).toContain('bom humor');
     expect(s).toContain('deploy');
   });

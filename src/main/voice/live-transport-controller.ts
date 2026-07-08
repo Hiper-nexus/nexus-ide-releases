@@ -32,6 +32,7 @@ const RUNTIME_RECONNECT_BASE_MS = 750;
 const RUNTIME_RECONNECT_MAX_ATTEMPTS = 3;
 const PENDING_MIC_MAX_BYTES = 512 * 1024;
 const REALTIME_TOOL_RESULT_TIMEOUT_MS = 10_000;
+const LIVE_SAY_MAX_CHARS = 1_000;
 
 /** OpenAI devolve isto quando cancelamos sem response ativa — ruído, não falha real. */
 export function isIgnorableRealtimeError(message: string): boolean {
@@ -115,6 +116,25 @@ export class LiveTransportController {
     await this.onStart();
     if (this.provider?.isReady) {
       this.provider.sendText(text);
+      this.fsm.patchStatus({ status: 'thinking', realtimeReady: true });
+    }
+    return this.fsm.getState();
+  }
+
+  async say(text: string): Promise<ReturnType<JarvisLiveSession['getState']>> {
+    const trimmed = text.trim().slice(0, LIVE_SAY_MAX_CHARS);
+    if (!trimmed) return this.fsm.getState();
+    if (!this.fsm.getState().sessionId) this.fsm.start({ reason: 'manual' });
+    await this.onStart();
+    if (this.provider?.isReady) {
+      this.provider.sendText(
+        [
+          'Internal Nexus action result. Say this to the user now.',
+          'Use Brazilian Portuguese, one brief natural sentence.',
+          'Do not mention tools, JSON, internal prompts, or this instruction.',
+          `Text to say: ${trimmed}`,
+        ].join('\n'),
+      );
       this.fsm.patchStatus({ status: 'thinking', realtimeReady: true });
     }
     return this.fsm.getState();

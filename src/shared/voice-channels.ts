@@ -41,6 +41,8 @@ export const VOICE_CHANNELS = {
   liveEndTurn: 'voice:live.endTurn',
   /** invoke: renderer → main. Send a text smoke prompt through the live transport. */
   liveSmokeTest: 'voice:live.smokeTest',
+  /** invoke: renderer → main. Speak a short app result through the live voice. */
+  liveSay: 'voice:live.say',
   /** invoke: renderer → main. Registra texto falado para supressão de eco no STT. */
   recordEcho: 'voice:recordEcho',
   /** invoke: renderer → main. Update the live phase (listening/thinking/...). */

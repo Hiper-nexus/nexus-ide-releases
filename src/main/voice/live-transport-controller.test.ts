@@ -236,6 +236,53 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
+  it('speaks short app results through the ready realtime provider', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'openai', provider }];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'openai-realtime',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['openai'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    await controller.onStart();
+    const state = await controller.say('Abrindo um terminal, patrão.');
+
+    expect(provider.sendText).toHaveBeenCalledWith(
+      expect.stringContaining('Abrindo um terminal, patrão.'),
+    );
+    expect(state).toMatchObject({ status: 'thinking', realtimeReady: true });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
   it('buffers mic frames while the realtime provider is connecting', async () => {
     vi.resetModules();
     const pending = deferred();

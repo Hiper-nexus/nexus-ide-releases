@@ -512,6 +512,32 @@ async function speakRealtimeToolResult(text: string): Promise<void> {
   );
 }
 
+async function speakViaLiveProvider(text: string): Promise<boolean> {
+  const trimmed = text.trim();
+  if (!trimmed || !REALTIME_PROVIDER_AUDIO_ENABLED || !isRealtimeLive()) return false;
+  suppressRealtimeAudioOut = false;
+  resetPendingRealtimeAudioOut();
+  livePlayer?.stop();
+  stopAllPlayback();
+  wakeMic.suppressWakeDetection(
+    Math.min(12_000, Math.max(3_500, trimmed.length * 70 + 2_000)),
+  );
+  try {
+    const state = await window.nexus.voice.liveSay({ text: trimmed });
+    useVoiceStore.getState().setLiveState(state);
+    if (!state.realtimeReady || state.status === 'error') {
+      suppressRealtimeAudioOut = true;
+      return false;
+    }
+    useVoiceStore.getState().setStatus('speaking');
+    return true;
+  } catch (err) {
+    suppressRealtimeAudioOut = true;
+    console.warn('[voice] liveSay falhou; TTS Classic assume:', errMsg(err));
+    return false;
+  }
+}
+
 async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promise<void> {
   if (!event.callId || !event.name || event.source !== 'realtime') return;
   if (event.name !== 'nexus_action') return;
@@ -702,17 +728,27 @@ export function useVoiceController(): void {
           source === 'voice' ? wakeMic.snapshotPreRoll(WAKE_PREROLL_MS) : [];
         const ack = wakeGreetingText(personaUserName());
         wakeMic.suppressWakeDetection(WAKE_ACK_SUPPRESS_MS);
-        // Ack primeiro para o usuário perceber que ela acordou. No clique,
-        // preservamos um pre-roll curto depois e o filtro remove o eco do ACK.
+        if (source === 'click') {
+          wakePreRoll = wakeMic.snapshotPreRoll(CLICK_WAKE_PREROLL_MS);
+          await beginListening(
+            capture.current!,
+            wakeAutoStop(capture.current!, busy, 'click'),
+            'click',
+            wakePreRoll,
+            busy,
+          );
+          await playWakePrompt(ack).catch(() => playCachedWakeAck(personaUserName()));
+          wakeMic.suppressWakeDetection(WAKE_ACK_SUPPRESS_MS);
+          return;
+        }
+        // Wake por voz mantém o ACK primeiro: a wake-word já trouxe pre-roll
+        // suficiente e o usuário percebe imediatamente que ela acordou.
         await playWakePrompt(ack).catch(() => playCachedWakeAck(personaUserName()));
         wakeMic.suppressWakeDetection(WAKE_ACK_SUPPRESS_MS);
-        // Clique não tem wake-word/pre-roll natural. Se o usuário começa a falar
-        // enquanto o ACK toca, preservamos essa fala e o filtro remove o eco do ACK.
-        if (source === 'click') wakePreRoll = wakeMic.snapshotPreRoll(CLICK_WAKE_PREROLL_MS);
         await beginListening(
           capture.current!,
-          wakeAutoStop(capture.current!, busy, source === 'voice' ? 'wake' : 'click'),
-          source === 'voice' ? 'wake' : 'click',
+          wakeAutoStop(capture.current!, busy, 'wake'),
+          'wake',
           wakePreRoll,
           busy,
         );
@@ -1378,6 +1414,18 @@ async function runJarvisTurn(
     return;
   }
 
+  const wantsReply = shouldReopenJarvisListening({
+    expectReply: reply.expectReply === true,
+    sayText,
+    realtimeTurnActive,
+    isRealtimeLive: isRealtimeLive(),
+    captureReason: activeCaptureReason,
+  });
+  if (!wantsReply && (await speakViaLiveProvider(sayText))) {
+    store.setSpoken(sayText);
+    return;
+  }
+
   // Classic TTS é a única voz — corta qualquer áudio realtime pendente.
   suppressRealtimeAudioOut = true;
   livePlayer?.stop();
@@ -1402,13 +1450,6 @@ async function runJarvisTurn(
   wakeMic.suppressWakeDetection(
     Math.min(12_000, Math.max(3_500, sayText.length * 70 + 2_000)),
   );
-  const wantsReply = shouldReopenJarvisListening({
-    expectReply: reply.expectReply === true,
-    sayText,
-    realtimeTurnActive,
-    isRealtimeLive: isRealtimeLive(),
-    captureReason: activeCaptureReason,
-  });
   if (wantsReply) {
     busy.current = false;
     wakeMic.suppressWakeDetection(REPLY_LISTEN_DELAY_MS + 500);

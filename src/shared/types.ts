@@ -17,6 +17,7 @@ import type {
   JarvisRequest,
   JarvisReply,
   JarvisLiveInterruptEvent,
+  JarvisLiveSayRequest,
   JarvisLiveStartRequest,
   JarvisLiveSmokeTestRequest,
   JarvisLiveState,
@@ -521,6 +522,7 @@ export interface NexusApi {
     liveStop(): Promise<JarvisLiveState>;
     liveEndTurn(): Promise<JarvisLiveState>;
     liveSmokeTest(req: JarvisLiveSmokeTestRequest): Promise<JarvisLiveState>;
+    liveSay(req: JarvisLiveSayRequest): Promise<JarvisLiveState>;
     liveStatus(patch: JarvisLiveStatusPatch): Promise<JarvisLiveState>;
     liveTranscript(event: Omit<JarvisLiveTranscriptEvent, 'sessionId' | 'at'>): void;
     liveToolResult(event: Omit<JarvisLiveToolResultEvent, 'sessionId' | 'at'>): void;

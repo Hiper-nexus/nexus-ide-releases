@@ -323,6 +323,10 @@ export interface JarvisLiveSmokeTestRequest {
   text: string;
 }
 
+export interface JarvisLiveSayRequest {
+  text: string;
+}
+
 export interface JarvisLiveStatusPatch {
   status: Exclude<JarvisLiveStatus, 'off'>;
   pendingMic?: boolean;
@@ -376,6 +380,10 @@ export const jarvisLiveStartRequestSchema = z
   .default({});
 
 export const jarvisLiveSmokeTestRequestSchema = z.object({
+  text: z.string().min(1).max(1000),
+});
+
+export const jarvisLiveSayRequestSchema = z.object({
   text: z.string().min(1).max(1000),
 });
 
