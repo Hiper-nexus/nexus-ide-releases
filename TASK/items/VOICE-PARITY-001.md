@@ -226,3 +226,14 @@ Rodada de paridade DEFINITIVA + correção h-27 (o incidente real foi stall de S
 - **ITEM 3 (`encerrar`):** guard de intenção de despedida (`isFarewellIntent`, allowlist) + log `encerrar.rejected`; testes honrar/rejeitar. `2a249b3`.
 
 `tsc` limpo; suíte de voz verde; app dev religado com o código final e mantido vivo.
+
+## Correção / notas de builder (2026-07-08 · sessão pane-74 · brief DRn8dxrW-2 · LOG-PROVEN FIX ROUND)
+
+Rodada guiada por 4 defeitos PROVADOS em `voice.log:3483-3497` (dual-voice + JSON cru + auto-wake). Commits atômicos `fix(voice)` (sem push):
+
+- **DEFECT 1 (dois motores respondem a mesma fala):** a posse era por-turno (`TurnExecutionOwner`/token) — cada re-wake abria turno novo que o Classic vencia enquanto o realtime respondia o anterior (`16:08:54 classicTranscript→brainReply "Certo."→marin` falando por cima). Fix: posse por **SESSÃO** — enquanto `isRealtimeLive()`, o caminho Classic STT→cérebro→TTS fica **OFF** num turno wake/click (fallback de degradação, não racer). Predicado puro `classicSuppressedByRealtimeOwner` (novo `realtime-ownership.ts` + 5 testes); trava nas 2 entradas do `finishAndProcess` (timeout realtime + direto-para-Classic). `reply` segue Classic-owned. **Prova ao vivo:** 3 wakes no run novo → cada `jarvis.classicSuppressed`, ZERO classicTranscript/brainReply.
+- **DEFECT 2 (áudio realtime não suprime o wake):** `LiveAudioPlayer.play()` devolvia só 1 chunk enquanto a fila gapless tinha ~20s à frente → supressão lapsava no meio da fala. Fix: `play()` devolve o tempo até a fila **INTEIRA** drenar (`scheduledTailMs`, puro + 3 testes); `suppressWakeDetection` é monotônico (`Math.max`).
+- **DEFECT 3 (vazamento de JSON no TTS):** `parseReply` no catch dumpava o texto cru (`{ "type": "message"`) como `say` quando o JSON estruturado/truncado do Gemini falhava o parse. Fix: `recoverSpokenText` recupera fala de formas estruturadas (`content[].text`, `choices[].message.content`, `text/output_text/message`) ou **silencia** — braçadeira NUNCA chega ao TTS. `parseReply` exportado + 7 testes.
+- **DEFECT 4 (STT embaralha PT):** VERIFICADO já correto — wake/jarvis envia `translate:false, language:'pt'` (`voice-controller.ts:1421`) e o `stt-service` honra (`:136,:151-152`, endpoint transcribe sem `-tr`). O embaralho é Whisper errando PT acentuado com AEC off, não vazamento de translate. Sem código.
+
+`tsc` verde; suíte de voz 389/389; suíte completa 1178 verdes + 3 falhas pré-existentes de ABI do better-sqlite3 (`orch/squad-store.test.ts`, fora de escopo). App dev religado limpo (1 instância: forge 79072/main 79125) e mantido vivo. Engage line verbatim: `transport=gemini-live engaged=gemini … brain=gemini:gemini-3.5-flash` (degraded=false).
