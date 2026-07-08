@@ -4,6 +4,7 @@ import { jarvisActionFastPath } from './jarvis-action-fastpath';
 import { jarvisFastPath } from './jarvis-fastpath';
 import { jarvisToolCatalogCompact } from './jarvis-tool-catalog';
 import { getVoiceConfig } from './voice-config-store';
+import { logVoice } from './voice-log';
 import { flattenJarvisBrainProviders } from '../../shared/voice-config';
 import { isLikelyNoiseTranscript } from '../../shared/voice-noise';
 import type {
@@ -415,6 +416,25 @@ export async function chatViaBrainChain(
 }
 
 /**
+ * Classifica POR QUÊ o cérebro devolveu fala vazia — para o turno vazio nunca
+ * ser dead air silencioso (voice.log ganha o motivo + latência). Puro/testável.
+ * 'noise-transcript' é silêncio INTENCIONAL (ruído/eco); os demais são sinais
+ * de que a resposta cheia não chegou a tempo / o provider veio vazio.
+ */
+export function emptyReplyReason(opts: {
+  say: string;
+  transcriptIsNoise: boolean;
+  budgetFired: boolean;
+  providerFailures: number;
+}): string | null {
+  if (opts.say.trim()) return null;
+  if (opts.transcriptIsNoise) return 'noise-transcript';
+  if (opts.budgetFired) return 'provider-chain-deadline';
+  if (opts.providerFailures > 0) return 'all-providers-failed';
+  return 'provider-returned-empty';
+}
+
+/**
  * Deadline duro do cérebro: sem ele, um socket pendurado do provider segura o
  * turno inteiro (busy preso no renderer = "JARVIS não responde mais").
  */
@@ -542,15 +562,43 @@ export async function jarvisThink(
   // renderer). Se os providers pendurarem, o fallback local gracioso vence a
   // corrida a tempo — nunca é pré-emptado pelo deadline externo (que deixaria
   // a JARVIS muda com um erro em vez de "continuo operando localmente").
+  // Invariante confirmado: BRAIN_TIMEOUT_MS (15s/provider) e BRAIN_CHAIN_
+  // DEADLINE_MS (28s) ficam ABAIXO do BRAIN_DEADLINE_MS do renderer (35s).
+  const tStart = Date.now();
+  let budgetFired = false;
   let budgetTimer: ReturnType<typeof setTimeout> | undefined;
   const budget = new Promise<JarvisReply>((resolve) => {
-    budgetTimer = setTimeout(
-      () => resolve(localBrainFallbackReply(transcript, ctx, true)),
-      chainDeadlineMs,
-    );
+    budgetTimer = setTimeout(() => {
+      budgetFired = true;
+      resolve(localBrainFallbackReply(transcript, ctx, true));
+    }, chainDeadlineMs);
   });
   try {
-    return await Promise.race([runChain(), budget]);
+    const reply = await Promise.race([runChain(), budget]);
+    // ITEM-5: um turno de fala vazia nunca pode ser dead air silencioso — loga
+    // o MOTIVO + latência + orçamentos, para diferenciar silêncio intencional
+    // (ruído) de um provider lento/vazio que estourou o deadline da cadeia.
+    const reason = emptyReplyReason({
+      say: reply.say,
+      transcriptIsNoise: isLikelyNoiseTranscript(transcript),
+      budgetFired,
+      providerFailures: attempts.length,
+    });
+    if (reason) {
+      logVoice(
+        reason === 'noise-transcript' ? 'info' : 'warn',
+        'jarvis.emptyReply',
+        reason,
+        {
+          elapsedMs: Date.now() - tStart,
+          budgetFired,
+          providerFailures: attempts.length,
+          chainDeadlineMs,
+          providerTimeoutMs: BRAIN_TIMEOUT_MS,
+        },
+      );
+    }
+    return reply;
   } finally {
     if (budgetTimer) clearTimeout(budgetTimer);
   }

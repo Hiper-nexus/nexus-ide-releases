@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildJarvisPersonaInstruction,
+  emptyReplyReason,
   jarvisThink,
   repairMissingAction,
   type BrainDeps,
@@ -16,6 +17,30 @@ const CTX: JarvisContext = {
   orchestrator: null,
   missions: [],
 };
+
+describe('emptyReplyReason', () => {
+  const base = {
+    say: '',
+    transcriptIsNoise: false,
+    budgetFired: false,
+    providerFailures: 0,
+  };
+  it('returns null when the reply actually has speech', () => {
+    expect(emptyReplyReason({ ...base, say: 'Feito, patrão.' })).toBe(null);
+  });
+  it('classifies intentional silence on a noise transcript', () => {
+    expect(emptyReplyReason({ ...base, transcriptIsNoise: true })).toBe('noise-transcript');
+  });
+  it('classifies a provider-chain deadline (fallback won the race)', () => {
+    expect(emptyReplyReason({ ...base, budgetFired: true })).toBe('provider-chain-deadline');
+  });
+  it('classifies all-providers-failed', () => {
+    expect(emptyReplyReason({ ...base, providerFailures: 2 })).toBe('all-providers-failed');
+  });
+  it('classifies a provider that returned an empty say', () => {
+    expect(emptyReplyReason(base)).toBe('provider-returned-empty');
+  });
+});
 
 function jsonResponse(status: number, content: string): Response {
   return new Response(
