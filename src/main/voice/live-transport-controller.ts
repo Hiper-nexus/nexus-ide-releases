@@ -26,6 +26,16 @@ import {
   summarizeNexusRealtimeAction,
   type NexusRealtimeActionArgs,
 } from '../jarvis/realtime/nexus-realtime-tools';
+import {
+  COARSE_VOICE_TOOL_NAMES,
+  resolveCoarseVoiceTool,
+  type CoarseToolArgs,
+  type CoarseToolResolution,
+} from '../jarvis/realtime/coarse-voice-tools';
+
+function isCoarseVoiceToolName(name: string): boolean {
+  return (COARSE_VOICE_TOOL_NAMES as readonly string[]).includes(name);
+}
 
 type Emit = (channel: string, payload?: unknown) => void;
 const RUNTIME_RECONNECT_BASE_MS = 750;
@@ -354,40 +364,36 @@ export class LiveTransportController {
   }
 
   private handleRealtimeToolCall(call: RealtimeToolCallEvent): void {
-    if (call.name !== NEXUS_REALTIME_ACTION_TOOL) {
-      const event = this.fsm.realtimeToolCall({
-        source: 'realtime',
-        callId: call.callId,
-        name: call.name,
-        tool: 'none',
-        summary: `tool realtime não suportada: ${call.name}`,
-        args: call.arguments,
-      });
-      if (event) {
-        const result = this.fsm.toolResult({
-          source: 'realtime',
-          callId: call.callId,
-          name: call.name,
-          tool: 'none',
-          args: call.arguments,
-          ok: false,
-          summary: `tool realtime não suportada: ${call.name}`,
-          output: { error: 'unsupported_tool' },
-        });
-        if (result) this.toolResult(result);
-      }
+    // OpenAI Realtime usa a tool única nexus_action; Gemini Live usa as 4 tools
+    // coarse (delegar/consultar/ler/navegar) + encerrar. As duas convergem no
+    // MESMO executor auditado abaixo.
+    if (call.name === NEXUS_REALTIME_ACTION_TOOL) {
+      this.dispatchNexusAction(call, call.arguments as NexusRealtimeActionArgs);
       return;
     }
+    if (isCoarseVoiceToolName(call.name)) {
+      this.handleCoarseVoiceToolCall(call);
+      return;
+    }
+    this.rejectToolCall(call, `tool realtime não suportada: ${call.name}`, {
+      error: 'unsupported_tool',
+    });
+  }
 
-    const args = call.arguments as NexusRealtimeActionArgs;
+  /** Executa uma ação Nexus (nexus_action ou coarse resolvida) pelo caminho auditado. */
+  private dispatchNexusAction(
+    call: RealtimeToolCallEvent,
+    args: NexusRealtimeActionArgs,
+  ): void {
     const action = realtimeArgsToJarvisAction(args);
+    const argsRecord = args as Record<string, unknown>;
     const event = this.fsm.realtimeToolCall({
       source: 'realtime',
       callId: call.callId,
       name: call.name,
       tool: action?.type ?? 'none',
       summary: summarizeNexusRealtimeAction(args),
-      args: call.arguments,
+      args: argsRecord,
     });
     if (!event) return;
     if (action) {
@@ -400,16 +406,134 @@ export class LiveTransportController {
       callId: call.callId,
       name: call.name,
       tool: event.tool,
-      args: call.arguments,
+      args: argsRecord,
       ok: false,
       summary: `ação realtime inválida: ${summarizeNexusRealtimeAction(args)}`,
       output: {
         error: 'invalid_action',
         expected: 'valid Nexus action arguments',
-        args,
+        args: argsRecord,
       },
     });
     if (result) this.toolResult(result);
+  }
+
+  /** Gemini Live coarse tools: delegar/navegar → ação; consultar/ler → direto; encerrar → fim. */
+  private handleCoarseVoiceToolCall(call: RealtimeToolCallEvent): void {
+    const resolution = resolveCoarseVoiceTool(
+      call.name,
+      call.arguments as CoarseToolArgs,
+    );
+    switch (resolution.kind) {
+      case 'action':
+        this.dispatchNexusAction(call, resolution.action);
+        return;
+      case 'direct':
+        this.answerDirectToolCall(call, resolution);
+        return;
+      case 'end':
+        this.answerEndToolCall(call);
+        return;
+      case 'invalid':
+        this.rejectToolCall(call, resolution.reason, { error: 'invalid_action' });
+        return;
+    }
+  }
+
+  /**
+   * consultar/ler são respondidas DIRETO do contexto injetado (tela/últimos
+   * resultados) — o modelo narra a partir do output, sem bloquear o loop no brain.
+   */
+  private answerDirectToolCall(
+    call: RealtimeToolCallEvent,
+    resolution: Extract<CoarseToolResolution, { kind: 'direct' }>,
+  ): void {
+    const summary = resolution.intent === 'consult' ? 'consultar estado' : 'ler pane';
+    const event = this.fsm.realtimeToolCall({
+      source: 'realtime',
+      callId: call.callId,
+      name: call.name,
+      tool: 'none',
+      summary,
+      args: call.arguments,
+    });
+    if (!event) return;
+    const context = this.buildDirectAnswerContext();
+    const output =
+      context ||
+      (resolution.intent === 'consult'
+        ? 'Sem contexto de tela disponível agora.'
+        : 'Sem output de pane disponível agora.');
+    const result = this.fsm.toolResult({
+      source: 'realtime',
+      callId: call.callId,
+      name: call.name,
+      tool: 'none',
+      args: call.arguments,
+      ok: true,
+      summary,
+      output,
+    });
+    if (result) this.toolResult(result);
+  }
+
+  private answerEndToolCall(call: RealtimeToolCallEvent): void {
+    const event = this.fsm.realtimeToolCall({
+      source: 'realtime',
+      callId: call.callId,
+      name: call.name,
+      tool: 'none',
+      summary: 'encerrar sessão',
+      args: call.arguments,
+    });
+    if (!event) return;
+    const result = this.fsm.toolResult({
+      source: 'realtime',
+      callId: call.callId,
+      name: call.name,
+      tool: 'none',
+      args: call.arguments,
+      ok: true,
+      summary: 'encerrar sessão',
+      output: { ended: true },
+    });
+    if (result) this.toolResult(result);
+  }
+
+  private rejectToolCall(
+    call: RealtimeToolCallEvent,
+    reason: string,
+    output: Record<string, unknown>,
+  ): void {
+    const event = this.fsm.realtimeToolCall({
+      source: 'realtime',
+      callId: call.callId,
+      name: call.name,
+      tool: 'none',
+      summary: reason,
+      args: call.arguments,
+    });
+    if (!event) return;
+    const result = this.fsm.toolResult({
+      source: 'realtime',
+      callId: call.callId,
+      name: call.name,
+      tool: 'none',
+      args: call.arguments,
+      ok: false,
+      summary: reason,
+      output,
+    });
+    if (result) this.toolResult(result);
+  }
+
+  private buildDirectAnswerContext(): string {
+    const parts: string[] = [];
+    if (this.latestContext) parts.push(this.latestContext);
+    if (this.recentToolResults.length > 0) {
+      parts.push(this.recentToolResults.join('\n'));
+    }
+    return parts.join('\n\n').trim().slice(0, 1_200);
   }
 
   private armToolResultTimeout(event: JarvisLiveToolEvent): void {

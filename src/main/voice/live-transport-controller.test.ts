@@ -863,6 +863,159 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
+  it('roteia a coarse tool "delegar" pelo mesmo executor auditado (send_to_pane)', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+    const events: Array<{ channel: string; payload: unknown }> = [];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { VOICE_CHANNELS } = await import('../../shared/voice-channels');
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(
+      (channel, payload) => events.push({ channel, payload }),
+      () => 1000,
+    );
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(
+      (channel, payload) => events.push({ channel, payload }),
+      session,
+    );
+
+    await controller.onStart();
+    provider.fireToolCall({
+      callId: 'call_delegar',
+      name: 'delegar',
+      arguments: { briefing: 'cria a landing page' },
+    });
+
+    const toolCall = events.find((event) => event.channel === VOICE_CHANNELS.liveToolCall);
+    expect(toolCall?.payload).toMatchObject({
+      source: 'realtime',
+      callId: 'call_delegar',
+      name: 'delegar',
+      tool: 'send_to_pane',
+      args: { action: 'send_to_pane', text: 'cria a landing page' },
+    });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('responde "consultar" direto do contexto injetado (sem bloquear no brain)', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    await controller.onStart();
+    controller.contextIn('Tela: 3 panes abertos, terminal focado.');
+    provider.fireToolCall({
+      callId: 'call_consultar',
+      name: 'consultar',
+      arguments: { pergunta: 'quais panes?' },
+    });
+
+    expect(provider.sendToolResult).toHaveBeenCalledWith(
+      'call_consultar',
+      expect.objectContaining({
+        ok: true,
+        output: expect.stringContaining('3 panes abertos'),
+      }),
+    );
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('rejeita coarse tool inválida (delegar sem briefing) com erro estruturado', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key' }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    await controller.onStart();
+    provider.fireToolCall({ callId: 'call_bad', name: 'delegar', arguments: {} });
+
+    expect(provider.sendToolResult).toHaveBeenCalledWith(
+      'call_bad',
+      expect.objectContaining({ ok: false, output: { error: 'invalid_action' } }),
+    );
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
   it('não chama response.cancel quando a sessão está dormant', async () => {
     const provider = fakeProvider(async () => {});
     const { LiveTransportController } = await import('./live-transport-controller');

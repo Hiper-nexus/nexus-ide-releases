@@ -81,6 +81,16 @@ describe('buildSetupMessage', () => {
     expect(msg.setup.inputAudioTranscription).toEqual({});
     expect(msg.setup.outputAudioTranscription).toEqual({});
   });
+
+  it('declara as 4 tools coarse (delegar/consultar/ler/navegar) + encerrar no setup', () => {
+    const msg = buildSetupMessage({
+      model: 'm',
+      voiceName: 'Charon',
+      systemInstruction: 's',
+    });
+    const decls = msg.setup.tools[0].functionDeclarations.map((d) => d.name);
+    expect(decls).toEqual(['delegar', 'consultar', 'ler', 'navegar', 'encerrar']);
+  });
 });
 
 describe('parseServerMessage', () => {
@@ -116,6 +126,28 @@ describe('parseServerMessage', () => {
       JSON.stringify({ serverContent: { turnComplete: true } }),
     );
     expect(turnDone.turnComplete).toBe(true);
+  });
+
+  it('extrai chamadas de função (toolCall) e cancelamentos', () => {
+    const call = parseServerMessage(
+      JSON.stringify({
+        toolCall: {
+          functionCalls: [
+            { id: 'c1', name: 'delegar', args: { briefing: 'cria a landing' } },
+            { name: 'consultar', args: { pergunta: 'quais panes?' } },
+          ],
+        },
+      }),
+    );
+    expect(call.toolCalls).toEqual([
+      { id: 'c1', name: 'delegar', args: { briefing: 'cria a landing' } },
+      { id: '', name: 'consultar', args: { pergunta: 'quais panes?' } },
+    ]);
+
+    const cancel = parseServerMessage(
+      JSON.stringify({ toolCallCancellation: { ids: ['c1', 'c2'] } }),
+    );
+    expect(cancel.cancelledToolCallIds).toEqual(['c1', 'c2']);
   });
 
   it('mensagem ilegível não explode', () => {
@@ -331,6 +363,40 @@ describe('GeminiLiveTransport', () => {
     expect(ws.sent.length).toBe(before + 2);
     expect(ws.sent.at(-1)).toContain('b');
     vi.useRealTimers();
+  });
+
+  it('emite toolCall e devolve toolResponse; ignora callId desconhecido', () => {
+    const ws = fakeWs();
+    const calls: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
+    const ev = { ...events(), onToolCall: (c: typeof calls[number]) => calls.push(c) };
+    const t = makeTransport(ws, ev);
+    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ setupComplete: {} }));
+    ws.fire(
+      'message',
+      JSON.stringify({
+        toolCall: { functionCalls: [{ id: 'c1', name: 'navegar', args: { target: 'grid' } }] },
+      }),
+    );
+    expect(calls).toEqual([{ id: 'c1', name: 'navegar', args: { target: 'grid' } }]);
+
+    const before = ws.sent.length;
+    // callId desconhecido não emite nada
+    t.sendToolResult('nope', 'navegar', { ok: true });
+    expect(ws.sent.length).toBe(before);
+    // callId pendente devolve toolResponse
+    t.sendToolResult('c1', 'navegar', { ok: true, output: 'grade aberta' });
+    const last = JSON.parse(ws.sent.at(-1)!);
+    expect(last.toolResponse.functionResponses[0]).toMatchObject({
+      id: 'c1',
+      name: 'navegar',
+      response: { output: { ok: true, output: 'grade aberta' } },
+    });
+    // reenviar o mesmo callId (já consumido) não duplica
+    const after = ws.sent.length;
+    t.sendToolResult('c1', 'navegar', { ok: true });
+    expect(ws.sent.length).toBe(after);
   });
 
   it('audioStreamEnd fecha o turno de fala do usuário', () => {

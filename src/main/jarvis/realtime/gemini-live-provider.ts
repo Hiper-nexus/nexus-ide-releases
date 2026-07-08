@@ -29,6 +29,8 @@ export class GeminiLiveProvider implements TurnManagedRealtimeProvider {
   private interruptedCallbacks: Array<() => void> = [];
   private responseDoneCallbacks: Array<() => void> = [];
   private disconnectedCallbacks: Array<(err: Error) => void> = [];
+  private toolCallCallbacks: Array<(event: RealtimeToolCallEvent) => void> = [];
+  private pendingCallNames = new Map<string, string>();
   private closing = false;
 
   private readonly deps: LiveTransportDeps;
@@ -61,6 +63,7 @@ export class GeminiLiveProvider implements TurnManagedRealtimeProvider {
           onAudioOut: (b64) => this.emitAudioOut(base64ToInt16Array(b64)),
           onTranscript: (role, text, final) =>
             this.emitRoleTranscript({ role, text, final }),
+          onToolCall: (call) => this.emitToolCall(call),
           onInterrupted: () => {
             for (const cb of this.interruptedCallbacks) cb();
           },
@@ -149,9 +152,26 @@ export class GeminiLiveProvider implements TurnManagedRealtimeProvider {
     this.transport?.sendTextTurn(text);
   }
 
-  sendToolResult(_callId: string, _output: unknown): void {}
+  sendToolResult(callId: string, output: unknown): void {
+    const name = this.pendingCallNames.get(callId) ?? '';
+    this.pendingCallNames.delete(callId);
+    this.transport?.sendToolResult(callId, name, output);
+  }
 
-  onToolCall(_cb: (event: RealtimeToolCallEvent) => void): void {}
+  onToolCall(cb: (event: RealtimeToolCallEvent) => void): void {
+    this.toolCallCallbacks.push(cb);
+  }
+
+  private emitToolCall(call: { id: string; name: string; args: Record<string, unknown> }): void {
+    if (call.id) this.pendingCallNames.set(call.id, call.name);
+    const event: RealtimeToolCallEvent = {
+      callId: call.id,
+      name: call.name,
+      argumentsJson: JSON.stringify(call.args ?? {}),
+      arguments: call.args ?? {},
+    };
+    for (const cb of this.toolCallCallbacks) cb(event);
+  }
 
   private emitAudioOut(pcm16: Int16Array): void {
     for (const cb of this.audioCallbacks) cb(pcm16);

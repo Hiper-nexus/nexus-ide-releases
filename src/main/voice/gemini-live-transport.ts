@@ -23,12 +23,23 @@
 import { ScreenCoalescer } from '../jarvis/realtime/screen-coalescer';
 import { TurnQueue } from '../jarvis/realtime/turn-queue';
 import { wrapNarration } from '../jarvis/realtime/live-narration';
+import {
+  COARSE_VOICE_TOOLS,
+  type GeminiFunctionDeclaration,
+} from '../jarvis/realtime/coarse-voice-tools';
 
 export interface WsLike {
   readyState: number;
   send(data: string): void;
   close(): void;
   on(event: 'open' | 'message' | 'close' | 'error', cb: (payload?: unknown) => void): void;
+}
+
+/** A Gemini Live function call parsed off a `toolCall` server message. */
+export interface LiveToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
 }
 
 export interface LiveTransportEvents {
@@ -39,6 +50,8 @@ export interface LiveTransportEvents {
   onTurnComplete?(): void;
   onStateChange(state: LiveTransportState): void;
   onError(message: string): void;
+  /** Chamada de função coarse (delegar/consultar/ler/navegar/encerrar). */
+  onToolCall?(call: LiveToolCall): void;
 }
 
 export type LiveTransportState =
@@ -93,6 +106,7 @@ export interface SetupMessage {
     model: string;
     generationConfig: Record<string, unknown>;
     systemInstruction: { parts: Array<{ text: string }> };
+    tools: Array<{ functionDeclarations: GeminiFunctionDeclaration[] }>;
     inputAudioTranscription: Record<string, never>;
     outputAudioTranscription: Record<string, never>;
     contextWindowCompression: { slidingWindow: Record<string, never> };
@@ -106,6 +120,7 @@ export function buildSetupMessage(opts: {
   systemInstruction: string;
   languageCode?: string;
   resumeHandle?: string;
+  tools?: GeminiFunctionDeclaration[];
 }): SetupMessage {
   return {
     setup: {
@@ -119,6 +134,9 @@ export function buildSetupMessage(opts: {
         },
       },
       systemInstruction: { parts: [{ text: opts.systemInstruction }] },
+      // 4 coarse voice tools (delegar/consultar/ler/navegar) + encerrar declared
+      // inline (Overclock F-056) — NOT the full action catalog.
+      tools: [{ functionDeclarations: opts.tools ?? COARSE_VOICE_TOOLS }],
       inputAudioTranscription: {},
       outputAudioTranscription: {},
       contextWindowCompression: { slidingWindow: {} },
@@ -136,6 +154,8 @@ export interface ParsedServerMessage {
   turnComplete?: boolean;
   resumptionHandle?: string;
   goAway?: boolean;
+  toolCalls?: LiveToolCall[];
+  cancelledToolCallIds?: string[];
 }
 
 export function parseServerMessage(raw: string): ParsedServerMessage {
@@ -168,6 +188,28 @@ export function parseServerMessage(raw: string): ParsedServerMessage {
     if (content.interrupted) out.interrupted = true;
     if (content.turnComplete) out.turnComplete = true;
   }
+  const toolCall = msg.toolCall as
+    | { functionCalls?: Array<{ id?: string; name?: string; args?: unknown }> }
+    | undefined;
+  if (Array.isArray(toolCall?.functionCalls)) {
+    const calls: LiveToolCall[] = [];
+    for (const fc of toolCall.functionCalls) {
+      if (typeof fc?.name !== 'string') continue;
+      calls.push({
+        id: typeof fc.id === 'string' ? fc.id : '',
+        name: fc.name,
+        args:
+          fc.args && typeof fc.args === 'object' && !Array.isArray(fc.args)
+            ? (fc.args as Record<string, unknown>)
+            : {},
+      });
+    }
+    if (calls.length > 0) out.toolCalls = calls;
+  }
+  const cancel = msg.toolCallCancellation as { ids?: unknown } | undefined;
+  if (Array.isArray(cancel?.ids)) {
+    out.cancelledToolCallIds = cancel.ids.filter((id): id is string => typeof id === 'string');
+  }
   const resumption = msg.sessionResumptionUpdate as
     | { newHandle?: string; resumable?: boolean }
     | undefined;
@@ -191,6 +233,7 @@ export class GeminiLiveTransport {
   private lastOptions: LiveConnectOptions | null = null;
   private resumptionHandle: string | undefined;
   private closedByUs = false;
+  private readonly pendingToolCalls = new Set<string>();
   private readonly turnQueue: TurnQueue;
   private readonly screenCoalescer: ScreenCoalescer;
 
@@ -355,11 +398,37 @@ export class GeminiLiveTransport {
       this.events.onTurnComplete?.();
       this.turnQueue.release();
     }
+    if (msg.toolCalls) {
+      for (const call of msg.toolCalls) {
+        if (call.id) this.pendingToolCalls.add(call.id);
+        this.events.onToolCall?.(call);
+      }
+    }
+    if (msg.cancelledToolCallIds) {
+      for (const id of msg.cancelledToolCallIds) this.pendingToolCalls.delete(id);
+    }
     if (msg.resumptionHandle) this.resumptionHandle = msg.resumptionHandle;
     if (msg.goAway && this.lastOptions) {
       // O servidor vai derrubar — reconectar preservando o handle de resume.
       this.connect(this.lastOptions);
     }
+  }
+
+  /**
+   * Devolve o resultado de uma função coarse ao modelo (toolResponse). Ignora
+   * calls já cancelados (o servidor mandou toolCallCancellation no meio-tempo).
+   */
+  sendToolResult(callId: string, name: string, output: unknown): void {
+    if (callId && !this.pendingToolCalls.has(callId)) return;
+    if (callId) this.pendingToolCalls.delete(callId);
+    if (!this.isReady || !this.ws) return;
+    this.ws.send(
+      JSON.stringify({
+        toolResponse: {
+          functionResponses: [{ id: callId, name, response: { output } }],
+        },
+      }),
+    );
   }
 
   /** Mic PCM 16 kHz base64. Antes do setupComplete, bufferiza (teto 160 KB). */
@@ -533,6 +602,7 @@ export class GeminiLiveTransport {
     }
     this.pendingMic = [];
     this.pendingMicBytes = 0;
+    this.pendingToolCalls.clear();
   }
 
   private clearReconnectTimer(): void {
