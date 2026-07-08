@@ -59,6 +59,7 @@ import {
   transcriptInConversation,
 } from './voice-echo-guard';
 import { realtimeToolEventToJarvisAction } from './realtime-action';
+import { TurnExecutionOwner } from './turn-execution-owner';
 import { buildScreenSnapshot, type ScreenSnapshot } from './screen-context';
 import { voiceHudStatusFromLiveState } from './live-hud-state';
 import {
@@ -170,6 +171,13 @@ let wakeOpenInProgress = false;
 let activeCaptureReason: JarvisCaptureReason = 'manual';
 let realtimeNativeToolInFlight = 0;
 let lastRealtimeNativeToolAt = 0;
+// NEW-A: single execution owner per conversational turn. The realtime toolCall
+// (fire-and-forget onLiveToolCall IPC) and Classic runJarvisTurn (driven off the
+// transcript) can both target the SAME utterance; IPC ordering is not guaranteed,
+// so whichever path CLAIMS the turn first wins and the loser no-ops. This is the
+// authoritative race-closer — hasRealtimeNativeToolSince stays only as a cheap
+// fast-path that avoids interrupting the provider when a tool clearly already fired.
+const turnExecution = new TurnExecutionOwner();
 type WakeSource = 'voice' | 'click';
 // Início do turno em processamento (0 = nenhum) — o wake usa para detectar
 // turno PRESO (fetch pendurado etc.) e retomar o controle.
@@ -603,6 +611,28 @@ async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promise<void
         summary: 'ação realtime inválida',
         args: event.args,
         output: { error: 'invalid_action' },
+      });
+      return;
+    }
+
+    // NEW-A: claim the current turn. If the Classic brain already claimed it
+    // (transcript path won the IPC race), do NOT execute again — just ack the
+    // provider so its function call does not self-starve on the result timeout.
+    if (!turnExecution.claim('realtime-tool', turnExecution.currentToken)) {
+      console.log('[voice] tool-call realtime ignorado; turno já reivindicado pelo Classic');
+      logVoiceEvent('info', 'jarvis.realtimeActionSkipped', 'turno já reivindicado pelo Classic', {
+        callId: event.callId,
+        tool: action.type,
+      });
+      window.nexus.voice.liveToolResult({
+        source: 'realtime',
+        callId: event.callId,
+        name: event.name,
+        tool: action.type,
+        ok: true,
+        summary: 'já processado',
+        args: event.args,
+        output: { ok: true, summary: 'já processado pelo Classic', tool: action.type },
       });
       return;
     }
@@ -1059,6 +1089,9 @@ async function beginListening(
     queuedRealtimeTranscript = null;
     resetPendingRealtimeAudioOut();
     realtimeTurnActive = false;
+    // NEW-A: open a fresh turn — both the realtime tool path and the Classic
+    // brain path claim THIS token; first claimant executes, the loser no-ops.
+    turnExecution.beginTurn();
     activeCaptureReason = reason;
     finishRealtimeCapture = busy
       ? () => {
@@ -1123,6 +1156,10 @@ async function finishAndProcess(
 ): Promise<void> {
   const store = useVoiceStore.getState();
   busy.current = true;
+  // NEW-A: the turn token minted at beginListening for THIS capture. The Classic
+  // brain claims it before running; if a realtime tool-call already claimed it,
+  // Classic no-ops (single execution regardless of IPC ordering).
+  const turnToken = turnExecution.currentToken;
   try {
     const result = wakeMic.isUtteranceActive()
       ? wakeMic.finishUtterance()
@@ -1279,6 +1316,11 @@ async function finishAndProcess(
           });
         }
         realtimeTurnActive = false;
+        if (!turnExecution.claim('classic-brain', turnToken)) {
+          console.log('[voice] turno já reivindicado por tool-call realtime; Classic pulado');
+          store.setStatus('idle');
+          return;
+        }
         await runJarvisTurn(transcript, capture, busy);
         return;
       }
@@ -1407,6 +1449,11 @@ async function finishAndProcess(
     store.setNote(stt.fallbackNote ?? null);
 
     if (routing === 'jarvis') {
+      if (!turnExecution.claim('classic-brain', turnToken)) {
+        console.log('[voice] turno já reivindicado por tool-call realtime; Classic pulado');
+        store.setStatus('idle');
+        return;
+      }
       await runJarvisTurn(transcript, capture, busy);
       return;
     }
