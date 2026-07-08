@@ -1295,8 +1295,11 @@ async function finishAndProcess(
     }
 
     // Feedback INSTANTÂNEO: um micro-filler do cache cobre o tempo de
-    // STT+cérebro (fire-and-forget; echoCancellation filtra do próximo turno).
-    if (routing === 'jarvis' && activeCaptureReason !== 'wake') {
+    // STT+cérebro entre o fim da fala e a resposta do cérebro — SEM ele, o wake
+    // ("Hey Jarvis") ouvia silêncio morto após o comando (Gap 3). Toca em todos
+    // os turnos jarvis, inclusive wake. O filler é cacheado com echoRecord:false,
+    // então não censura a próxima resposta curta do usuário (echo-suppress).
+    if (routing === 'jarvis') {
       const filler = THINK_FILLERS[Math.floor(Math.random() * THINK_FILLERS.length)];
       const cached = getThinkFillerCache().get(filler);
       if (cached) void playAudioBase64(cached.audioBase64, cached.format).catch(() => {});
