@@ -44,6 +44,7 @@ import {
   livePlayer,
 } from './voice-session-state';
 import { openLiveAudioGate } from './voice-live-audio-out';
+import { shouldOpenGateOnTurnExit } from './turn-gate';
 import {
   canAttemptRealtime,
   isJarvisLiveEnabled,
@@ -567,6 +568,12 @@ export async function finishAndProcess(
     store.setError(errMsg(err));
     liveStatus('error', errMsg(err));
   } finally {
+    // INVARIANTE DE MUTE (C2): nenhuma saída deste turno pode deixar
+    // suppressRealtimeAudioOut preso em true. Só o turno atual toca o gate;
+    // um turno mais novo (superseded) é dono da própria supressão.
+    if (shouldOpenGateOnTurnExit(turnExecution.currentToken, turnToken)) {
+      openLiveAudioGate();
+    }
     // Live provider answer already cleared busy via releaseAfterLiveProviderAnswer
     // and may be waiting to re-arm follow-up while status is still 'speaking'.
     // Do not leave busy stuck true on early Live returns.
