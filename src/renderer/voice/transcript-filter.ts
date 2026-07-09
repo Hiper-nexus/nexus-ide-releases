@@ -94,7 +94,18 @@ function stripLeadingPatterns(
   return rest;
 }
 
-function wakeEchoPatterns(userName: string): string[][] {
+/**
+ * C3 Fase 1: há um "Confirmo?" aguardando resposta neste turno. O "sim" SECO
+ * de um re-wake é a confirmação do usuário — a JARVIS nunca fala "sim" isolado
+ * (o ack tocado é "Pois não[, nome]?"; ver wakeGreetingText + pin em
+ * delegation-confirm.test.ts), então poupá-lo do stripper é seguro. Só o
+ * padrão ['sim'] é poupado: "Sim, <nome>" continua morrendo como eco de ack.
+ */
+export interface WakeStripOptions {
+  protectConfirmation?: boolean;
+}
+
+function wakeEchoPatterns(userName: string, protectConfirmation: boolean): string[][] {
   const user = normalizeToken(userName);
   const patterns = [
     ['hey', 'jarvis'],
@@ -117,12 +128,13 @@ function wakeEchoPatterns(userName: string): string[][] {
     ['jave'],
     ['estou', 'ouvindo'],
   ];
+  const bareSim: string[][] = protectConfirmation ? [] : [['sim']];
   if (!user) {
     return [
       ...patterns,
       ['pois', 'nao'],
       ['pues', 'no'],
-      ['sim'],
+      ...bareSim,
       ['diga'],
     ];
   }
@@ -134,7 +146,7 @@ function wakeEchoPatterns(userName: string): string[][] {
     ...patterns,
     ['pois', 'nao'],
     ['pues', 'no'],
-    ['sim'],
+    ...bareSim,
     ['diga'],
   ];
 }
@@ -145,10 +157,17 @@ function wakeEchoPatterns(userName: string): string[][] {
  * assistant/wake fragments so "Hey Jarvis, pois não patrão, abre terminal"
  * becomes just "abre terminal" before the fast-path/brain sees it.
  */
-export function stripWakeAckEcho(text: string, userName: string): string {
+export function stripWakeAckEcho(
+  text: string,
+  userName: string,
+  opts: WakeStripOptions = {},
+): string {
   const tokens = tokenized(text);
   if (tokens.length === 0) return '';
-  const rest = stripLeadingPatterns(tokens, wakeEchoPatterns(userName));
+  const rest = stripLeadingPatterns(
+    tokens,
+    wakeEchoPatterns(userName, opts.protectConfirmation === true),
+  );
   let out = rest.map((token) => token.raw).join(' ').trim();
   const user = normalizeToken(userName);
   if (user) {
@@ -160,8 +179,12 @@ export function stripWakeAckEcho(text: string, userName: string): string {
 }
 
 /** Só eco do ack / wake — nada que deva virar turno ou resposta realtime. */
-export function isWakeAckOnlyTranscript(text: string, userName: string): boolean {
-  const stripped = stripWakeAckEcho(text, userName);
+export function isWakeAckOnlyTranscript(
+  text: string,
+  userName: string,
+  opts: WakeStripOptions = {},
+): boolean {
+  const stripped = stripWakeAckEcho(text, userName, opts);
   if (!stripped.trim()) return true;
   return isDiscardableTranscript(stripped, { inConversation: false });
 }

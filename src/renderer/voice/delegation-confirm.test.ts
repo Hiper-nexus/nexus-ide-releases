@@ -5,9 +5,12 @@ import {
   DELEGATION_CONFIRM_TTL_MS,
   delegationConfirmPrompt,
   peekPendingDelegation,
+  PENDING_REASK_PROMPT,
+  refreshPendingDelegation,
   resolveDelegationReply,
   setPendingDelegation,
 } from './delegation-confirm';
+import { wakeGreetingText } from './voice-wake-ack';
 
 const T0 = 1_000_000;
 
@@ -112,6 +115,54 @@ describe('pending delegation lifecycle', () => {
 
   it('sem pendência → none', () => {
     expect(resolveDelegationReply('sim', T0)).toEqual({ kind: 'none' });
+  });
+});
+
+describe('refreshPendingDelegation (re-ask C3 Fase 1)', () => {
+  const delegation = {
+    targetPaneId: 'pane-1',
+    text: 'Fix the flaky test in auth',
+    createdAt: T0,
+  };
+
+  it('renova o TTL de uma pendência viva — a resposta ao re-ask não nasce morta', () => {
+    setPendingDelegation(delegation);
+    const at = T0 + 10_000;
+    const refreshed = refreshPendingDelegation(at);
+    expect(refreshed?.createdAt).toBe(at);
+    expect(refreshed?.text).toBe(delegation.text);
+    // Sobrevive além do TTL contado do createdAt ORIGINAL.
+    expect(peekPendingDelegation(T0 + DELEGATION_CONFIRM_TTL_MS + 1)).not.toBeNull();
+    // Mas continua expirando a partir do refresh.
+    expect(peekPendingDelegation(at + DELEGATION_CONFIRM_TTL_MS + 1)).toBeNull();
+  });
+
+  it('NÃO ressuscita pendência expirada', () => {
+    setPendingDelegation(delegation);
+    expect(refreshPendingDelegation(T0 + DELEGATION_CONFIRM_TTL_MS + 1)).toBeNull();
+    expect(peekPendingDelegation(T0 + DELEGATION_CONFIRM_TTL_MS + 2)).toBeNull();
+  });
+
+  it('sem pendência → null', () => {
+    expect(refreshPendingDelegation(T0)).toBeNull();
+  });
+});
+
+describe('PERIGO C3 — nenhuma fala da PRÓPRIA JARVIS pode auto-confirmar via eco', () => {
+  it('eco do re-ask classifica como other (nunca yes, nunca no)', () => {
+    expect(classifyConfirmationReply(PENDING_REASK_PROMPT)).toBe('other');
+  });
+
+  it('eco do prompt de confirmação original classifica como other', () => {
+    expect(
+      classifyConfirmationReply(delegationConfirmPrompt('Fix the flaky test in auth')),
+    ).toBe('other');
+  });
+
+  it('o ack de wake escolhido (wakeGreetingText) nunca classifica como yes', () => {
+    for (const user of ['', 'patrão', 'Cleofas']) {
+      expect(classifyConfirmationReply(wakeGreetingText(user))).not.toBe('yes');
+    }
   });
 });
 

@@ -1,6 +1,9 @@
 import { playAudioBase64 } from './voice-playback';
 import type { VoiceRuntimeInfo } from '../../shared/voice-ipc';
 
+// INVARIANTE C3: o ack tocado no wake (wakeGreetingText = índice [0]) NUNCA
+// pode soar afirmativo ("Sim?"), senão o eco dele poderia responder um
+// "Confirmo?" pendente. Pin: delegation-confirm.test.ts (classifyConfirmationReply).
 const BASE_WAKE_ACKS = ['Pois não?', 'Sim?', 'Às ordens.', 'Diga.'];
 export const THINK_FILLERS = ['Deixa comigo.', 'Um instante.', 'Certo.', 'Já vejo.'];
 const SPEAK_DEADLINE_MS = 40_000;

@@ -36,6 +36,26 @@ export function peekPendingDelegation(now: number): PendingDelegation | null {
   return pending;
 }
 
+/**
+ * C3 Fase 1 (re-ask): quando a JARVIS re-pergunta ("confirma?"), o relógio do
+ * TTL reinicia — a pergunta acabou de ser re-posta em voz alta, então uma
+ * resposta nos próximos 15s é fresca. NUNCA ressuscita pendência já expirada.
+ */
+export function refreshPendingDelegation(now: number): PendingDelegation | null {
+  const alive = peekPendingDelegation(now);
+  if (!alive) return null;
+  pending = { ...alive, createdAt: now };
+  return pending;
+}
+
+/**
+ * Falado quando um re-wake stripa pra vazio com pendência viva. Mais de 6
+ * palavras DE PROPÓSITO: o próprio eco nunca passa no matcher de afirmativa
+ * isolada (pin em delegation-confirm.test.ts).
+ */
+export const PENDING_REASK_PROMPT =
+  'Ainda tenho a missão pendente pro squad — confirma?';
+
 function norm(text: string): string {
   return text
     .toLowerCase()

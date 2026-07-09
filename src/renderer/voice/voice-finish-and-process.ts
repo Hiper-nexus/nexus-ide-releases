@@ -46,6 +46,7 @@ import {
 import { openLiveAudioGate } from './voice-live-audio-out';
 import { shouldOpenGateOnTurnExit } from './turn-gate';
 import { clearPendingDelegation, peekPendingDelegation } from './delegation-confirm';
+import { reaskPendingDelegation } from './delegation-reask';
 import {
   canAttemptRealtime,
   isJarvisLiveEnabled,
@@ -205,23 +206,44 @@ export async function finishAndProcess(
       }
       if (liveTranscript) {
         const rawTranscript = liveTranscript.trim();
-        if (isAckGatedCapture() && isWakeAckOnlyTranscript(rawTranscript, personaUserName())) {
+        // C3 Fase 1: com pendência viva, o "sim" seco de um re-wake é a
+        // resposta do usuário — o stripper poupa o padrão ['sim'] neste turno.
+        const stripOpts = {
+          protectConfirmation:
+            isAckGatedCapture() && peekPendingDelegation(Date.now()) !== null,
+        };
+        if (
+          isAckGatedCapture() &&
+          isWakeAckOnlyTranscript(rawTranscript, personaUserName(), stripOpts)
+        ) {
           console.log(`[voice] realtime wake/click só ack/eco: "${liveTranscript}"`);
-          store.setStatus('idle');
           resetPendingRealtimeAudioOut();
+          if (
+            stripOpts.protectConfirmation &&
+            (await reaskPendingDelegation(capture, busy, turnToken, deps))
+          ) {
+            return;
+          }
+          store.setStatus('idle');
           void window.nexus.voice.liveInterrupt('ack-only-transcript').catch(() => {});
           liveEndTurn();
           return;
         }
         const transcript = isAckGatedCapture()
-          ? stripWakeAckEcho(rawTranscript, personaUserName())
+          ? stripWakeAckEcho(rawTranscript, personaUserName(), stripOpts)
           : rawTranscript;
         if (!transcript) {
           console.log(
             `[voice] realtime transcript descartado como eco wake: "${liveTranscript}"`,
           );
-          store.setStatus('idle');
           resetPendingRealtimeAudioOut();
+          if (
+            stripOpts.protectConfirmation &&
+            (await reaskPendingDelegation(capture, busy, turnToken, deps))
+          ) {
+            return;
+          }
+          store.setStatus('idle');
           void window.nexus.voice.liveInterrupt('empty-transcript').catch(() => {});
           return;
         }
@@ -485,18 +507,36 @@ export async function finishAndProcess(
       return;
     }
     const tStt = Date.now() - tTurn;
-    if (isAckGatedCapture() && isWakeAckOnlyTranscript(stt.text, personaUserName())) {
+    // C3 Fase 1: mesmo contrato do caminho realtime — pendência viva poupa o
+    // "sim" seco do stripper, e strip-pra-vazio re-pergunta em vez de morrer mudo.
+    const stripOpts = {
+      protectConfirmation:
+        isAckGatedCapture() && peekPendingDelegation(Date.now()) !== null,
+    };
+    if (isAckGatedCapture() && isWakeAckOnlyTranscript(stt.text, personaUserName(), stripOpts)) {
       console.log(`[voice] turno wake/click só ack/eco descartado: "${stt.text}"`);
+      if (
+        stripOpts.protectConfirmation &&
+        (await reaskPendingDelegation(capture, busy, turnToken, deps))
+      ) {
+        return;
+      }
       store.setStatus('idle');
       liveEndTurn();
       return;
     }
     const transcript = isAckGatedCapture()
-      ? stripWakeAckEcho(stt.text, personaUserName())
+      ? stripWakeAckEcho(stt.text, personaUserName(), stripOpts)
       : stt.text.trim();
     if (!transcript) {
       const reason = isAckGatedCapture() ? 'eco do wake/click/ack' : 'transcrição vazia';
       console.log(`[voice] ${reason} descartado: "${stt.text}"`);
+      if (
+        stripOpts.protectConfirmation &&
+        (await reaskPendingDelegation(capture, busy, turnToken, deps))
+      ) {
+        return;
+      }
       store.setStatus('idle');
       liveEndTurn();
       return;

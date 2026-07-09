@@ -103,12 +103,43 @@ describe('isWakeAckOnlyTranscript', () => {
   });
 });
 
-describe('C3 item 7 — pin do fix-followups: "sim" seco morre no stripper de eco do ack', () => {
-  it('LIMITAÇÃO CONHECIDA: "sim" isolado é tratado como ack/wake (comportamento atual, fail-safe)', () => {
-    expect(isWakeAckOnlyTranscript('sim', 'patrão')).toBe(true);
+describe('C3 Fase 1 — fix real do "sim" seco: stripper consciente de confirmação pendente', () => {
+  it('com pendência viva, "sim" seco sobrevive ao stripper (re-wake confirma)', () => {
+    expect(stripWakeAckEcho('sim', 'patrão', { protectConfirmation: true })).toBe('sim');
+    expect(
+      isWakeAckOnlyTranscript('sim', 'patrão', { protectConfirmation: true }),
+    ).toBe(false);
   });
 
-  it('o caminho que FUNCIONA ("confirmo") não regride: sobrevive ao stripper', () => {
+  it('com pendência viva, "Hey Jarvis, sim" vira "sim" (invocação ainda é stripada)', () => {
+    expect(
+      stripWakeAckEcho('Hey Jarvis, sim', 'patrão', { protectConfirmation: true }),
+    ).toBe('sim');
+  });
+
+  it('protege o "sim" seco também sem userName configurado', () => {
+    expect(stripWakeAckEcho('sim', '', { protectConfirmation: true })).toBe('sim');
+    expect(isWakeAckOnlyTranscript('sim', '', { protectConfirmation: true })).toBe(false);
+  });
+
+  it('SEM pendência (default), "sim" seco continua fail-safe: tratado como eco de ack', () => {
+    expect(isWakeAckOnlyTranscript('sim', 'patrão')).toBe(true);
+    expect(stripWakeAckEcho('sim', 'patrão')).toBe('');
+  });
+
+  it('PERIGO C3: eco do ack da JARVIS continua morto mesmo com pendência viva', () => {
+    // "Pois não, patrão?" é o ack que a JARVIS realmente toca no wake.
+    expect(
+      isWakeAckOnlyTranscript('Pois não, patrão?', 'patrão', { protectConfirmation: true }),
+    ).toBe(true);
+    // "Sim, patrão" (ack nominal com vocativo) também continua stripado: só o
+    // "sim" SECO — que a JARVIS nunca fala — é poupado.
+    expect(
+      stripWakeAckEcho('Sim, patrão', 'patrão', { protectConfirmation: true }),
+    ).toBe('');
+  });
+
+  it('o caminho que já funcionava ("confirmo") não regride', () => {
     expect(isWakeAckOnlyTranscript('confirmo', 'patrão')).toBe(false);
     expect(stripWakeAckEcho('confirmo', 'patrão')).toBe('confirmo');
   });

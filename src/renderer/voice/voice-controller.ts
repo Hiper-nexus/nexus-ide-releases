@@ -571,9 +571,9 @@ async function beginListening(
     // Jarvis, sim" agora CONFIRMA em vez de descartar mudo. As guardas contra
     // despacho espúrio são o matcher estrito (afirmativa isolada), o consumo
     // na primeira fala (runJarvisTurn) e o TTL de 15s.
-    // LIMITAÇÃO CONHECIDA: re-wake com "sim" SECO é descartado pelo stripper
-    // de eco do ack ("Sim?" é um dos wake acks) — use "confirmo"/"pode mandar"
-    // por voz; o fix real (ack-aware) fica pra Fase 1.
+    // C3 Fase 1: o re-wake com "sim" SECO funciona — com pendência viva o
+    // stripper poupa o padrão ['sim'] (transcript-filter, protectConfirmation)
+    // e um strip-pra-vazio re-pergunta em vez de morrer mudo (delegation-reask).
     setFinishRealtimeCapture(
       busy
         ? () => {

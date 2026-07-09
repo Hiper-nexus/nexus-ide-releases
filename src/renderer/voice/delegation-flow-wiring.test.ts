@@ -36,6 +36,36 @@ describe('pendência sobrevive ao re-wake (follow-up 4a)', () => {
   });
 });
 
+describe('re-wake com pendência viva confirma em vez de morrer no stripper (C3 Fase 1)', () => {
+  const reaskSource = fs.readFileSync(
+    path.join(__dirname, 'delegation-reask.ts'),
+    'utf-8',
+  );
+  // O caminho classic começa no STT local; tudo antes é o caminho realtime.
+  const classicStart = finishSource.indexOf('const stt = await withTimeout(');
+  const realtimeHalf = finishSource.slice(0, classicStart);
+  const classicHalf = finishSource.slice(classicStart);
+
+  it('o stripper recebe protectConfirmation nos DOIS caminhos (realtime e classic)', () => {
+    expect(classicStart).toBeGreaterThan(0);
+    expect(realtimeHalf).toContain('protectConfirmation');
+    expect(classicHalf).toContain('protectConfirmation');
+  });
+
+  it('descarte vazio de wake/click com pendência re-pergunta nos DOIS caminhos', () => {
+    expect(realtimeHalf).toContain('reaskPendingDelegation(');
+    expect(classicHalf).toContain('reaskPendingDelegation(');
+  });
+
+  it('o re-ask NUNCA despacha: só fala, renova TTL e reabre escuta de reply', () => {
+    expect(reaskSource).not.toContain('writeToPane');
+    expect(reaskSource).toContain('refreshPendingDelegation(');
+    expect(reaskSource).toContain('recordEcho(PENDING_REASK_PROMPT)');
+    // Reabre como 'reply' — caminho SEM stripper de ack, onde "sim" seco já funciona.
+    expect(reaskSource).toContain("'reply'");
+  });
+});
+
 describe('tool nativa do Live consome a pendência (review final, item 3)', () => {
   it('o early-return de tool nativa descarta a pendência ANTES de liberar o turno', () => {
     const branchIdx = finishSource.indexOf('if (hasRealtimeNativeToolSince(tRealtime))');
