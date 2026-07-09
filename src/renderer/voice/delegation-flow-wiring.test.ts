@@ -35,3 +35,18 @@ describe('pendência sobrevive ao re-wake (follow-up 4a)', () => {
     expect(controllerSource.slice(beginIdx)).not.toContain('clearPendingDelegation');
   });
 });
+
+describe('tool nativa do Live consome a pendência (review final, item 3)', () => {
+  it('o early-return de tool nativa descarta a pendência ANTES de liberar o turno', () => {
+    const branchIdx = finishSource.indexOf('if (hasRealtimeNativeToolSince(tRealtime))');
+    expect(branchIdx).toBeGreaterThanOrEqual(0);
+    const clearIdx = finishSource.indexOf('clearPendingDelegation()', branchIdx);
+    const dropLogIdx = finishSource.indexOf("'jarvis.delegationDropped'", branchIdx);
+    const releaseIdx = finishSource.indexOf('releaseAfterLiveProviderAnswer({', branchIdx);
+    expect(clearIdx).toBeGreaterThan(branchIdx);
+    expect(dropLogIdx).toBeGreaterThan(branchIdx);
+    // Descarte (clear + log) acontece antes do release que encerra o turno.
+    expect(releaseIdx).toBeGreaterThan(clearIdx);
+    expect(releaseIdx).toBeGreaterThan(dropLogIdx);
+  });
+});
