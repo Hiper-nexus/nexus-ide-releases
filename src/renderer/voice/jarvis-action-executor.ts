@@ -188,9 +188,9 @@ export async function executeJarvisAction(
   const action = reply.action;
 
   if (action.type !== 'none') {
+    // send_to_pane is intentionally NOT mcp-first: it must reach the voice-confirmation gate in the branch below (C3). run_command/mcp_tool keep their own native confirm on the MCP path.
     const mcpFirst = new Set<JarvisAction['type']>([
       'mcp_tool',
-      'send_to_pane',
       'run_command',
     ]);
     if (mcpFirst.has(action.type)) {
