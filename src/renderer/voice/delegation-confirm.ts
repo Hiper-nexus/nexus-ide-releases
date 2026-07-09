@@ -111,11 +111,14 @@ export function classifyConfirmationReply(text: string): 'yes' | 'no' | 'other' 
 export type DelegationReply =
   | { kind: 'dispatch'; delegation: PendingDelegation }
   | { kind: 'cancel' }
+  | { kind: 'drop'; delegation: PendingDelegation }
   | { kind: 'none' };
 
 /**
  * Resolve a fala seguinte contra a pendência. QUALQUER desfecho limpa o
- * estado: sim despacha, não cancela, outro assunto descarta a missão.
+ * estado: sim despacha, não cancela, outro assunto descarta ('drop' — o
+ * chamador AVISA em vez de sumir mudo; follow-up 4a). 'none' = não havia
+ * pendência viva.
  */
 export function resolveDelegationReply(
   transcript: string,
@@ -127,7 +130,7 @@ export function resolveDelegationReply(
   const reply = classifyConfirmationReply(transcript);
   if (reply === 'yes') return { kind: 'dispatch', delegation };
   if (reply === 'no') return { kind: 'cancel' };
-  return { kind: 'none' };
+  return { kind: 'drop', delegation };
 }
 
 /** Frase falada em PT com a primeira linha da missão (truncada). */

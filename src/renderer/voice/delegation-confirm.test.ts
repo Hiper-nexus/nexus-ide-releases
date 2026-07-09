@@ -88,9 +88,12 @@ describe('pending delegation lifecycle', () => {
     expect(peekPendingDelegation(T0 + 2_000)).toBeNull();
   });
 
-  it('mudou de assunto → none, missão descartada (NUNCA despacha sem sim)', () => {
+  it('mudou de assunto → drop com a delegação (descartada, mas NUNCA muda: sem sim não despacha)', () => {
     setPendingDelegation(delegation);
-    expect(resolveDelegationReply('que horas são?', T0 + 1_000)).toEqual({ kind: 'none' });
+    expect(resolveDelegationReply('que horas são?', T0 + 1_000)).toEqual({
+      kind: 'drop',
+      delegation,
+    });
     expect(peekPendingDelegation(T0 + 2_000)).toBeNull();
   });
 

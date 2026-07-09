@@ -89,7 +89,15 @@ export async function runJarvisTurn(
   // C3: se há missão aguardando "Confirmo?", esta fala é a resposta — resolve
   // ANTES do cérebro (o cérebro veria "sim" solto e responderia qualquer coisa).
   const delegationReply = resolveDelegationReply(transcript, Date.now());
-  if (delegationReply.kind !== 'none') {
+  if (delegationReply.kind === 'drop') {
+    // Follow-up 4a: descarte não pode ser MUDO — HUD avisa e o turno segue
+    // normal pro cérebro (a fala era outro assunto, ela ainda merece resposta).
+    store.setNote('Missão pro squad descartada — confirmação não veio.');
+    logVoiceEvent('info', 'jarvis.delegationDropped', 'pendência descartada sem confirmação', {
+      transcript: transcript.slice(0, 120),
+      chars: delegationReply.delegation.text.length,
+    });
+  } else if (delegationReply.kind !== 'none') {
     let say = 'Cancelei a missão.';
     if (delegationReply.kind === 'dispatch') {
       const ok = writeToPane(
