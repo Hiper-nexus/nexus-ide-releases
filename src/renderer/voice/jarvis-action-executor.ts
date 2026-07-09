@@ -20,6 +20,7 @@ import { playAudioBase64 } from './voice-playback';
 import { invokeMcpWithConfirm, mapActionToTool } from '../services/mcp-bridge';
 import { reopenMission } from '../orch/mission-reopen';
 import { delegationConfirmPrompt, setPendingDelegation } from './delegation-confirm';
+import { isOrchestratorPane, resolveSendToPaneTarget } from './send-to-pane-target';
 
 export interface JarvisExecutionResult {
   sayText: string;
@@ -30,11 +31,7 @@ export interface JarvisExecutionResult {
 function findOrchestratorPane(
   root: ReturnType<typeof useLayoutStore.getState>['root'],
 ): string | null {
-  const panes = listPanes(root);
-  const pane = panes.find(
-    (p) => p.orchRequestId?.startsWith('squad-') || /(^|[ ·])orq\b/i.test(p.title),
-  );
-  return pane?.id ?? null;
+  return listPanes(root).find(isOrchestratorPane)?.id ?? null;
 }
 
 function paneContext() {
@@ -456,48 +453,58 @@ export async function executeJarvisAction(
     }
   } else if (action.type === 'send_to_pane') {
     const { root } = useLayoutStore.getState();
-    // NEW-B: a routed pending-question ANSWER carries the ASKING pane — it is a
-    // deterministic relay of the user's own answer, not a delegation, so it is
-    // written back directly (no "Confirmo?"). Only model-emitted delegation
-    // (no asking pane) is gated (C3): it targets the ORCHESTRATOR pane and needs
-    // a voice confirmation. The old silent focused-pane fallback stays dead.
-    const askingPane =
-      action.paneId && listPanes(root).some((pane) => pane.id === action.paneId)
-        ? action.paneId
-        : null;
-    if (askingPane) {
-      const ok = writeToPane(askingPane, `${action.text}\n`);
+    // NEW-B + C3 (follow-ups 2/4b): resposta roteada de pergunta pendente
+    // (paneId presente) escreve de volta SÓ em pane de agente/orquestrador
+    // vivo; pane sumido/inválido AVISA e re-pergunta — nunca vira "Confirmo?"
+    // da resposta nem escrita em shell. Delegação (sem paneId) segue no gate
+    // de confirmação por voz; o fallback silencioso pro pane focado fica morto.
+    const target = resolveSendToPaneTarget(action.paneId, listPanes(root));
+    if (target.kind === 'asking-pane') {
+      const ok = writeToPane(target.paneId, `${action.text}\n`);
       if (!ok) sayText = 'Não consegui escrever no pane.';
       toolResult = {
         tool: action.type,
         ok,
         summary: ok ? 'resposta enviada ao pane' : 'falha ao escrever no pane',
       };
+    } else if (target.kind === 'asking-pane-gone') {
+      sayText =
+        'O pane que tinha perguntado já fechou. Se ainda precisar, me diz de novo o que fazer.';
+      expectReply = true;
+      toolResult = {
+        tool: action.type,
+        ok: false,
+        summary: 'pane da pergunta fechado — resposta não roteada',
+      };
+    } else if (target.kind === 'asking-pane-not-agent') {
+      sayText = 'Esse pane não é de agente — não escrevo comando nele.';
+      toolResult = {
+        tool: action.type,
+        ok: false,
+        summary: `alvo não é pane de agente: ${target.title}`,
+      };
+    } else if (target.kind === 'no-agent-pane') {
+      sayText =
+        'Não achei um pane de agente pra receber a missão — abre o orquestrador primeiro.';
+      toolResult = {
+        tool: action.type,
+        ok: false,
+        summary: 'sem pane de agente válido (fallback silencioso bloqueado)',
+      };
     } else {
-      const target = findOrchestratorPane(root);
-      if (!target) {
-        sayText =
-          'Não achei um pane de agente pra receber a missão — abre o orquestrador primeiro.';
-        toolResult = {
-          tool: action.type,
-          ok: false,
-          summary: 'sem pane de agente válido (fallback silencioso bloqueado)',
-        };
-      } else {
-        // C3: delegação NÃO dispara direto — arma a pendência e pergunta.
-        setPendingDelegation({
-          targetPaneId: target,
-          text: action.text,
-          createdAt: Date.now(),
-        });
-        sayText = delegationConfirmPrompt(action.text);
-        expectReply = true;
-        toolResult = {
-          tool: action.type,
-          ok: true,
-          summary: 'missão aguardando confirmação por voz',
-        };
-      }
+      // C3: delegação NÃO dispara direto — arma a pendência e pergunta.
+      setPendingDelegation({
+        targetPaneId: target.orchestratorPaneId,
+        text: action.text,
+        createdAt: Date.now(),
+      });
+      sayText = delegationConfirmPrompt(action.text);
+      expectReply = true;
+      toolResult = {
+        tool: action.type,
+        ok: true,
+        summary: 'missão aguardando confirmação por voz',
+      };
     }
   } else if (action.type === 'run_command') {
     const { focusedPaneId: fp, root: rc } = useLayoutStore.getState();
