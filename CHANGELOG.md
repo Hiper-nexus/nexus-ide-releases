@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.11.0 — Voz destravada e delegação segura (Fase 0 do refactor Jarvis)
+
+Data: 2026-07-09
+
+Release de estabilidade e segurança da voz: os três críticos documentados morrem
+(mute preso, surdez por TCC fantasma, delegação sem confirmação) e o gate de
+missão ganha confirmação por voz com hardening completo.
+
+### Melhorias
+
+- Invariante de mute estrutural: o gate de áudio Live reabre em TODA saída de
+  turno (finally token-aware) — fim do silêncio permanente pós-degrade.
+- Watchdog de status preso: transcribing/routing/speaking têm saída garantida;
+  fala longa (Live ou TTS clássico audível) conta como progresso, sem falso idle.
+- Grant TCC fantasma do macOS detectado (rms 0 sustentado com permissão OK) com
+  recuperação guiada em 1 clique: `tccutil reset` + relançamento + re-Allow.
+- Delegação de código (`send_to_pane`) agora confirma por voz ("Confirmo?") e só
+  aceita pane de agente/orquestrador — o fallback silencioso pro pane focado morreu.
+- Hardening do gate: matcher de confirmação restrito a respostas curtas, paneId
+  validado contra pergunta pendente real (main + renderer, incluindo ask_pane),
+  pendência sobrevive re-wake e "sim" seco confirma; re-ask quando o eco engole
+  a resposta.
+- Observabilidade "duas vozes": identidade da instância no boot e início de cada
+  playback local registrados no voice.log para atribuição de áudio duplicado.
+- Spec + planos do refactor Jarvis (fases 0-4) versionados em docs/superpowers.
+
 ## 0.10.35 — Jarvis Live wake e catálogo de modelos
 
 Data: 2026-07-08
