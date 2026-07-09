@@ -25,3 +25,25 @@ export function statusWatchdogAction(
   if (deadline === undefined) return 'none';
   return stuckMs >= deadline ? 'force-idle' : 'none';
 }
+
+export interface SpeakingProgressSignals {
+  /** Áudio Live restante no player (ms). */
+  liveRemainingMs: number;
+  /** Chunks Live retidos aguardando o gate. */
+  pendingLiveChunks: number;
+  /** TTS/ack CLÁSSICO ainda audível (janela do live-local-audio-gate). */
+  localAudioAudible: boolean;
+}
+
+/**
+ * Follow-up 5: fala longa é progresso, não travamento — e isso vale para o
+ * playback CLÁSSICO também, não só o Live. Um TTS clássico >90s não pode ser
+ * force-idled no meio da frase.
+ */
+export function speakingHasAudioProgress(signals: SpeakingProgressSignals): boolean {
+  return (
+    signals.liveRemainingMs > 0 ||
+    signals.pendingLiveChunks > 0 ||
+    signals.localAudioAudible
+  );
+}

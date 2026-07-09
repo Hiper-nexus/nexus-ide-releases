@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   STATUS_STUCK_DEADLINES_MS,
   statusWatchdogAction,
+  speakingHasAudioProgress,
 } from './status-watchdog';
 
 describe('statusWatchdogAction', () => {
@@ -30,5 +33,43 @@ describe('statusWatchdogAction', () => {
     expect(STATUS_STUCK_DEADLINES_MS.transcribing!).toBeGreaterThan(60_000);
     expect(STATUS_STUCK_DEADLINES_MS.routing!).toBeGreaterThan(35_000);
     expect(STATUS_STUCK_DEADLINES_MS.speaking!).toBeGreaterThan(40_000);
+  });
+});
+
+describe('speakingHasAudioProgress (follow-up 5)', () => {
+  it('áudio Live tocando/pendente OU TTS clássico audível = progresso (re-arma o relógio)', () => {
+    expect(
+      speakingHasAudioProgress({ liveRemainingMs: 500, pendingLiveChunks: 0, localAudioAudible: false }),
+    ).toBe(true);
+    expect(
+      speakingHasAudioProgress({ liveRemainingMs: 0, pendingLiveChunks: 3, localAudioAudible: false }),
+    ).toBe(true);
+    expect(
+      speakingHasAudioProgress({ liveRemainingMs: 0, pendingLiveChunks: 0, localAudioAudible: true }),
+    ).toBe(true);
+  });
+
+  it('sem nenhum áudio = sem progresso (o deadline de speaking conta)', () => {
+    expect(
+      speakingHasAudioProgress({ liveRemainingMs: 0, pendingLiveChunks: 0, localAudioAudible: false }),
+    ).toBe(false);
+  });
+});
+
+describe('wiring do watchdog no voice-controller (follow-up 3iii)', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'voice-controller.ts'), 'utf-8');
+
+  it('o tick usa speakingHasAudioProgress com os 3 sinais (Live + clássico)', () => {
+    expect(source).toContain('speakingHasAudioProgress({');
+    expect(source).toContain('localAudioAudible: isLocalAudioAudible(Date.now())');
+  });
+
+  it('force-idle LIBERA busy antes de setar idle (pipeline nunca fica preso)', () => {
+    const tickIdx = source.indexOf("statusWatchdogAction(watchedStatus, stuckMs) === 'force-idle'");
+    expect(tickIdx).toBeGreaterThanOrEqual(0);
+    const busyIdx = source.indexOf('busy.current = false;', tickIdx);
+    const idleIdx = source.indexOf("setStatus('idle')", tickIdx);
+    expect(busyIdx).toBeGreaterThan(tickIdx);
+    expect(idleIdx).toBeGreaterThan(busyIdx);
   });
 });

@@ -5,6 +5,7 @@ import { VoiceCapture } from './voice-capture';
 import { classifyMicHealth, type MicHealth } from './wake-health';
 import {
   STATUS_WATCHDOG_POLL_MS,
+  speakingHasAudioProgress,
   statusWatchdogAction,
 } from './status-watchdog';
 import { micFrameToBase64 } from './live-audio';
@@ -359,12 +360,17 @@ export function useVoiceController(): void {
       }
     });
     const statusWatchdogTimer = setInterval(() => {
-      // Fala longa do Live é progresso, não travamento: enquanto há áudio
-      // tocando ou pendente, o relógio do watchdog re-arma (senão uma resposta
-      // contínua de 90s+ dispararia force-idle no meio da frase).
+      // Fala longa (Live OU clássica) é progresso, não travamento: enquanto há
+      // áudio tocando/pendente o relógio re-arma (senão uma resposta contínua
+      // de 90s+ dispararia force-idle no meio da frase). Follow-up 5: o TTS
+      // clássico conta via isLocalAudioAudible.
       if (
         watchedStatus === 'speaking' &&
-        ((livePlayer?.remainingMs() ?? 0) > 0 || pendingRealtimeAudioOut.length > 0)
+        speakingHasAudioProgress({
+          liveRemainingMs: livePlayer?.remainingMs() ?? 0,
+          pendingLiveChunks: pendingRealtimeAudioOut.length,
+          localAudioAudible: isLocalAudioAudible(Date.now()),
+        })
       ) {
         watchedStatusAt = Date.now();
         return;
