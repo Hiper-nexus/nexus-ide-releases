@@ -45,6 +45,7 @@ import {
 } from './voice-session-state';
 import { openLiveAudioGate } from './voice-live-audio-out';
 import { shouldOpenGateOnTurnExit } from './turn-gate';
+import { classifyConfirmationReply, peekPendingDelegation } from './delegation-confirm';
 import {
   canAttemptRealtime,
   isJarvisLiveEnabled,
@@ -259,7 +260,13 @@ export async function finishAndProcess(
         // App actions (squad, terminal, …) go through Live tools; Classic only
         // when Live is down. Interrupting here cut TTS mid-sentence and killed
         // the confirmation step after design_squad.
+        // C3: resposta a um "Confirmo?" pendente NUNCA vai pro provider Live —
+        // desce pro caminho Classic, onde runJarvisTurn intercepta e resolve.
+        const isPendingDelegationReply =
+          peekPendingDelegation(Date.now()) !== null &&
+          classifyConfirmationReply(transcript) !== 'other';
         if (
+          !isPendingDelegationReply &&
           REALTIME_PROVIDER_AUDIO_ENABLED &&
           shouldLetRealtimeProviderAnswer(transcript, { isRealtimeLive: isRealtimeLive() }) &&
           isRealtimeLive()

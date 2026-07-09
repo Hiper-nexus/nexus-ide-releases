@@ -53,6 +53,7 @@ import {
 } from './voice-suppression-window';
 import { stripPromptEcho } from './response-echo';
 import type { VoiceCapture, AutoStopOptions } from './voice-capture';
+import { resolveDelegationReply } from './delegation-confirm';
 
 const BRAIN_DEADLINE_MS_LOCAL = 35_000;
 const JARVIS_MEMORY_MS_LOCAL = 300_000;
@@ -84,6 +85,46 @@ export async function runJarvisTurn(
 ): Promise<void> {
   const store = useVoiceStore.getState();
   const isTurnCurrent = (): boolean => turnExecution.currentToken === turnToken;
+
+  // C3: se há missão aguardando "Confirmo?", esta fala é a resposta — resolve
+  // ANTES do cérebro (o cérebro veria "sim" solto e responderia qualquer coisa).
+  const delegationReply = resolveDelegationReply(transcript, Date.now());
+  if (delegationReply.kind !== 'none') {
+    let say = 'Cancelei a missão.';
+    if (delegationReply.kind === 'dispatch') {
+      const ok = writeToPane(
+        delegationReply.delegation.targetPaneId,
+        `${delegationReply.delegation.text}\n`,
+      );
+      say = ok
+        ? 'Missão confirmada e enviada ao squad.'
+        : 'Não consegui escrever no pane do squad.';
+      logVoiceEvent(ok ? 'info' : 'warn', 'jarvis.delegationDispatched', say, {
+        ok,
+        chars: delegationReply.delegation.text.length,
+      });
+    } else {
+      logVoiceEvent('info', 'jarvis.delegationCancelled', 'usuário recusou a missão', {});
+    }
+    setSuppressRealtimeAudioOut(true);
+    livePlayer?.stop();
+    void window.nexus.voice.liveInterrupt('classic-tts').catch(() => {});
+    store.setStatus('speaking');
+    const spoken = await speakAndPlayPipelined(say, isTurnCurrent);
+    if (spoken.ok && !spoken.cancelled) {
+      store.setSpoken(say);
+      void window.nexus.voice.recordEcho(say);
+      wakeMic.suppressWakeDetection(
+        spoken.playedMs > 0
+          ? TTS_TAIL_GUARD_MS
+          : playbackWakeSuppressionMs(estimatedSpeechMs(say.length)),
+      );
+    }
+    store.setStatus('idle');
+    liveEndTurn();
+    return;
+  }
+
   const now = Date.now();
   if (now - jarvisLastTurnAt > JARVIS_MEMORY_MS_LOCAL) setJarvisHistory([]);
   setJarvisLastTurnAt(now);

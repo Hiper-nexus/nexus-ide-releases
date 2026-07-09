@@ -19,6 +19,7 @@ import { isMissingModelKeyError } from '../lib/credential-errors';
 import { playAudioBase64 } from './voice-playback';
 import { invokeMcpWithConfirm, mapActionToTool } from '../services/mcp-bridge';
 import { reopenMission } from '../orch/mission-reopen';
+import { delegationConfirmPrompt, setPendingDelegation } from './delegation-confirm';
 
 export interface JarvisExecutionResult {
   sayText: string;
@@ -454,22 +455,39 @@ export async function executeJarvisAction(
       toolResult = { tool: action.type, ok: true, summary: `${target.title} focado` };
     }
   } else if (action.type === 'send_to_pane') {
-    const { root, focusedPaneId } = useLayoutStore.getState();
+    const { root } = useLayoutStore.getState();
     // NEW-B: a routed pending-question answer carries the ASKING pane — write it
-    // back there. Only fall back to orchestrator/focused pane for model-emitted
-    // delegation (no paneId), and only when the asking pane still exists.
+    // back there. Model-emitted delegation (no paneId) only goes to the
+    // ORCHESTRATOR pane. The old silent focused-pane fallback is dead (C3):
+    // it typed engineering briefs into bare bash shells.
     const askingPane =
       action.paneId && listPanes(root).some((pane) => pane.id === action.paneId)
         ? action.paneId
         : null;
-    const target = askingPane ?? findOrchestratorPane(root) ?? focusedPaneId;
-    const ok = target ? writeToPane(target, `${action.text}\n`) : false;
-    if (!ok) sayText = 'Não tem nenhum pane para eu mandar a tarefa.';
-    toolResult = {
-      tool: action.type,
-      ok,
-      summary: ok ? 'tarefa enviada ao pane' : 'nenhum pane disponível',
-    };
+    const target = askingPane ?? findOrchestratorPane(root);
+    if (!target) {
+      sayText =
+        'Não achei um pane de agente pra receber a missão — abre o orquestrador primeiro.';
+      toolResult = {
+        tool: action.type,
+        ok: false,
+        summary: 'sem pane de agente válido (fallback silencioso bloqueado)',
+      };
+    } else {
+      // C3: delegação NÃO dispara direto — arma a pendência e pergunta.
+      setPendingDelegation({
+        targetPaneId: target,
+        text: action.text,
+        createdAt: Date.now(),
+      });
+      sayText = delegationConfirmPrompt(action.text);
+      expectReply = true;
+      toolResult = {
+        tool: action.type,
+        ok: true,
+        summary: 'missão aguardando confirmação por voz',
+      };
+    }
   } else if (action.type === 'run_command') {
     const { focusedPaneId: fp, root: rc } = useLayoutStore.getState();
     const panesNow = listPanes(rc);
