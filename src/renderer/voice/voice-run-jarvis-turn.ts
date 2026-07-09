@@ -176,8 +176,12 @@ export async function runJarvisTurn(
     });
   }
 
+  // Follow-up 4a: se este turno começou com um drop de delegação, a nota de
+  // aviso já foi setada acima — não deixa a limpeza de nota da ação seguinte
+  // apagar a mensagem de descarte no mesmo turno.
+  const keepDropNote = delegationReply.kind === 'drop';
   if (reply.action.type !== 'none' && toolResult?.ok) {
-    useVoiceStore.getState().setNote(null);
+    if (!keepDropNote) useVoiceStore.getState().setNote(null);
     void window.nexus.gamification
       .recordJarvisAction({ actionType: reply.action.type, ok: true })
       .then((snap) => useGamificationStore.getState().receive(snap))

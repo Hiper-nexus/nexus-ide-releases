@@ -141,9 +141,14 @@ export class LiveTransportController {
     this.pendingQuestionRouter.noteNarratedQuestion(paneId, questionHash);
   }
 
-  /** C3 defesa (follow-up 2): o pane tem pergunta pendente narrada no router? */
+  /**
+   * C3 defesa (follow-up 2): o pane tem pergunta pendente narrada no router?
+   * Usa hasLiveQuestion (com TTL) em vez de questionFor — uma pergunta
+   * narrada velha (além do NARRATED_QUESTION_TTL_MS) não autoriza escrita
+   * direta no pane.
+   */
   hasPendingQuestion(paneId: string): boolean {
-    return this.pendingQuestionRouter.questionFor(paneId) !== null;
+    return this.pendingQuestionRouter.hasLiveQuestion(paneId);
   }
 
   isRealtimeConfigured(): boolean {

@@ -75,6 +75,7 @@ const AFFIRMATIVE_CORE = new Set([
   'isso',
 ]);
 /** Apoio tolerado dentro de uma confirmação curta ("manda ver", "isso aí"). */
+// 'para'/'pare' está em NEGATIVE_RE, que tem precedência — mantê-lo aqui seria código morto e convite a enfraquecer a negativa.
 const AFFIRMATIVE_FILLER = new Set([
   'com',
   'ver',
@@ -84,7 +85,6 @@ const AFFIRMATIVE_FILLER = new Set([
   'jarvis',
   'pro',
   'pra',
-  'para',
   'o',
   'a',
   'squad',

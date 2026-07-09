@@ -45,7 +45,7 @@ import {
 } from './voice-session-state';
 import { openLiveAudioGate } from './voice-live-audio-out';
 import { shouldOpenGateOnTurnExit } from './turn-gate';
-import { peekPendingDelegation } from './delegation-confirm';
+import { clearPendingDelegation, peekPendingDelegation } from './delegation-confirm';
 import {
   canAttemptRealtime,
   isJarvisLiveEnabled,
@@ -181,6 +181,20 @@ export async function finishAndProcess(
         openLiveAudioGate();
         store.setStatus('idle');
         console.log('[voice] realtime tool-call resolveu o turno; Classic pulado');
+        // C3: a primeira fala consome a pendência mesmo quando o turno é
+        // resolvido por tool nativa do Live — senão um "sim" isolado depois,
+        // dentro do TTL, despacharia a missão obsoleta respondendo outra
+        // pergunta que não tem nada a ver com a delegação.
+        if (peekPendingDelegation(Date.now()) !== null) {
+          clearPendingDelegation();
+          store.setNote('Missão pro squad descartada — o turno virou outra ação.');
+          logVoiceEvent(
+            'info',
+            'jarvis.delegationDropped',
+            'pendência descartada — turno resolvido por tool nativa',
+            {},
+          );
+        }
         releaseAfterLiveProviderAnswer({
           busy,
           capture,

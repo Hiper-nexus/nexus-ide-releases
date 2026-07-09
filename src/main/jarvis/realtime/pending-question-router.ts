@@ -112,6 +112,23 @@ export class PendingQuestionRouter {
   }
 
   /**
+   * Defesa C3: pergunta narrada velha não autoriza escrita direta. Igual ao
+   * TTL de `decide`, mas sem exigir uma nova utterance — usado pelo guard de
+   * `send_to_pane`/`ask_pane` que só quer saber "esse pane tem pergunta viva
+   * agora?". Uma entrada expirada é removida (não fica pendurada até o
+   * próximo `decide`).
+   */
+  hasLiveQuestion(paneId: string): boolean {
+    const entry = this.narratedQuestion.get(paneId);
+    if (!entry) return false;
+    if (this.deps.now() - entry.at > NARRATED_QUESTION_TTL_MS) {
+      this.narratedQuestion.delete(paneId);
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * The pane with a live pending question — prefers the focused pane, else the
    * most recent one (Map insertion order). null = no pending dialog.
    */

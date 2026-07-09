@@ -98,6 +98,7 @@ import {
   peekPendingDelegation,
   setPendingDelegation,
 } from './delegation-confirm';
+import { executeJarvisActionForTurn } from './voice-realtime-tools';
 import type { VoiceCapture } from './voice-capture';
 
 const brain = vi.fn(async () => ({ say: 'resposta do cérebro', action: { type: 'none' } }));
@@ -169,6 +170,20 @@ describe('interceptação C3 em runJarvisTurn (follow-up 3i)', () => {
     );
     expect(brain).toHaveBeenCalledTimes(1);
     expect(peekPendingDelegation(Date.now())).toBeNull();
+  });
+
+  it('drop seguido de ação ok NÃO apaga a nota de descarte no mesmo turno (item 4)', async () => {
+    pending();
+    brain.mockResolvedValueOnce({ say: 'feito', action: { type: 'open_browser' } });
+    vi.mocked(executeJarvisActionForTurn).mockResolvedValueOnce({
+      sayText: 'feito',
+      toolResult: { tool: 'open_browser', ok: true, summary: 'ok' },
+    });
+    await turn('abre o navegador pra mim');
+    expect(setNote).toHaveBeenCalledWith(expect.stringContaining('descartada'));
+    // A limpeza de nota pós-ação (reply.action.type !== 'none' && toolResult?.ok)
+    // não pode rodar por cima da nota de descarte deste mesmo turno.
+    expect(setNote).not.toHaveBeenCalledWith(null);
   });
 
   it('sem pendência, "sim" é turno normal → cérebro chamado', async () => {

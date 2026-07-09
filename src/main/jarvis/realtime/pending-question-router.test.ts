@@ -139,6 +139,31 @@ describe('PendingQuestionRouter.decide', () => {
   });
 });
 
+describe('PendingQuestionRouter.hasLiveQuestion (TTL do follow-up 2)', () => {
+  function router(now = { t: 1_000 }) {
+    return { r: new PendingQuestionRouter({ now: () => now.t }), clock: now };
+  }
+
+  it('sem pergunta narrada → false', () => {
+    const { r } = router();
+    expect(r.hasLiveQuestion('pane-1')).toBe(false);
+  });
+
+  it('pergunta fresca → true', () => {
+    const { r } = router();
+    r.noteNarratedQuestion('pane-1', 'Qual banco?');
+    expect(r.hasLiveQuestion('pane-1')).toBe(true);
+  });
+
+  it('além do TTL → false E a entrada é removida (questionFor null depois)', () => {
+    const { r, clock } = router();
+    r.noteNarratedQuestion('pane-1', 'Qual banco?');
+    clock.t += NARRATED_QUESTION_TTL_MS + 1;
+    expect(r.hasLiveQuestion('pane-1')).toBe(false);
+    expect(r.questionFor('pane-1')).toBeNull();
+  });
+});
+
 describe('PendingQuestionRouter.wasAnswerJustRouted (dedup)', () => {
   function router(now = { t: 1_000 }) {
     return { r: new PendingQuestionRouter({ now: () => now.t }), clock: now };

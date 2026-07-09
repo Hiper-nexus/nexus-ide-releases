@@ -562,24 +562,41 @@ export async function executeJarvisAction(
       }
     }
   } else if (action.type === 'ask_pane') {
-    const { root, focusedPaneId } = useLayoutStore.getState();
-    const panes = listPanes(root);
-    const targetPaneId =
-      (action.paneId && panes.some((p) => p.id === action.paneId) ? action.paneId : null)
-      ?? findOrchestratorPane(root)
-      ?? focusedPaneId;
-    if (!targetPaneId) {
-      sayText = 'Não tem nenhum pane para eu perguntar.';
-      toolResult = { tool: action.type, ok: false, summary: 'nenhum pane disponível' };
+    // C3: pergunta autorada por LLM só pode ir pra pane de agente/orquestrador
+    // — mesmo guard do send_to_pane. O fallback silencioso pro focusedPaneId
+    // (que podia ser um shell) morre aqui: nunca escrever texto do LLM fora
+    // de um pane de agente/orquestrador.
+    const { root } = useLayoutStore.getState();
+    const target = resolveSendToPaneTarget(action.paneId, listPanes(root));
+    if (target.kind === 'asking-pane') {
+      const ok = writeToPane(target.paneId, `${action.pergunta}\n`);
+      sayText = ok ? 'Pergunta enviada ao pane.' : 'Não consegui escrever no pane.';
+      toolResult = {
+        tool: action.type,
+        ok,
+        summary: ok ? 'pergunta enviada' : 'falha ao escrever',
+      };
+    } else if (target.kind === 'delegation') {
+      const ok = writeToPane(target.orchestratorPaneId, `${action.pergunta}\n`);
+      sayText = ok ? 'Pergunta enviada ao pane.' : 'Não consegui escrever no pane.';
+      toolResult = {
+        tool: action.type,
+        ok,
+        summary: ok ? 'pergunta enviada' : 'falha ao escrever',
+      };
+    } else if (target.kind === 'asking-pane-gone') {
+      sayText = 'Esse pane já fechou — não tenho pra quem perguntar.';
+      toolResult = { tool: action.type, ok: false, summary: 'pane da pergunta fechado' };
+    } else if (target.kind === 'asking-pane-not-agent') {
+      sayText = 'Esse pane não é de agente — não escrevo pergunta nele.';
+      toolResult = {
+        tool: action.type,
+        ok: false,
+        summary: `alvo não é pane de agente: ${target.title}`,
+      };
     } else {
-      const ok = writeToPane(targetPaneId, `${action.pergunta}\n`);
-      if (ok) {
-        sayText = 'Pergunta enviada ao pane.';
-        toolResult = { tool: action.type, ok: true, summary: 'pergunta enviada' };
-      } else {
-        sayText = 'Não consegui escrever no pane.';
-        toolResult = { tool: action.type, ok: false, summary: 'falha ao escrever' };
-      }
+      sayText = 'Não achei um pane de agente pra perguntar.';
+      toolResult = { tool: action.type, ok: false, summary: 'sem pane de agente válido' };
     }
   }
 
