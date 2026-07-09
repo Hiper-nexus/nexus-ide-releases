@@ -376,6 +376,7 @@ const api: NexusApi = {
     logVoice: (payload) => ipcRenderer.send(VOICE_CHANNELS.logEvent, payload),
     openMicSettings: () => ipcRenderer.send(VOICE_CHANNELS.openMicSettings),
     openSoundSettings: () => ipcRenderer.send(VOICE_CHANNELS.openSoundSettings),
+    resetMicPermission: () => ipcRenderer.invoke(VOICE_CHANNELS.micResetTcc),
     jarvis: (req) => ipcRenderer.invoke(VOICE_CHANNELS.jarvis, req),
     confirmCommand: (command: string) =>
       ipcRenderer.invoke(VOICE_CHANNELS.confirmCommand, command),

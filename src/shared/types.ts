@@ -518,6 +518,8 @@ export interface NexusApi {
     jarvis(req: JarvisRequest): Promise<JarvisReply>;
     /** Native confirmation before a voice-issued shell command runs (SEC#6). */
     confirmCommand(command: string): Promise<boolean>;
+    /** macOS: tccutil reset Microphone <bundleId> + relaunch (grant TCC fantasma). */
+    resetMicPermission(): Promise<{ ok: boolean; error?: string }>;
     liveStart(req?: JarvisLiveStartRequest): Promise<JarvisLiveState>;
     liveStop(): Promise<JarvisLiveState>;
     liveHardRebuild(): Promise<JarvisLiveState>;

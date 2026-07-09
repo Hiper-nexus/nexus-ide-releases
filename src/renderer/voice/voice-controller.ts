@@ -329,7 +329,9 @@ export function useVoiceController(): void {
         return;
       }
       const perm = await wakeMic.checkPermission();
-      const health = classifyMicHealth(perm, wakeMic.getSilentMs(), MIC_SILENT_THRESHOLD_MS);
+      const health = classifyMicHealth(perm, wakeMic.getSilentMs(), MIC_SILENT_THRESHOLD_MS, {
+        zeroMs: wakeMic.getZeroMs(),
+      });
       if (health !== lastMicHealth) {
         useVoiceStore.getState().setMicHealth(health);
         lastMicHealth = health;

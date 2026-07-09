@@ -53,3 +53,36 @@ describe('wake-health classifyMicHealth', () => {
     expect(classifyMicHealth('unknown', 99_000, TH)).toBe('ok');
   });
 });
+
+describe('phantomGrant (TCC fantasma — WAKE-BROKEN-001)', () => {
+  it('granted + zeros sustentados = phantomGrant (prioridade sobre silent)', () => {
+    expect(
+      classifyMicHealth('granted', 15_000, 12_000, {
+        zeroMs: 11_000,
+        zeroThresholdMs: 10_000,
+      }),
+    ).toBe('phantomGrant');
+  });
+
+  it('granted + silêncio ambiente (rms > 0) continua silent, não phantom', () => {
+    expect(
+      classifyMicHealth('granted', 15_000, 12_000, { zeroMs: 0 }),
+    ).toBe('silent');
+  });
+
+  it('zeros abaixo do limiar ainda não alarmam', () => {
+    expect(
+      classifyMicHealth('granted', 3_000, 12_000, { zeroMs: 3_000 }),
+    ).toBe('ok');
+  });
+
+  it('sem permissão ganha de phantom (o fix é outro)', () => {
+    expect(
+      classifyMicHealth('denied', 15_000, 12_000, { zeroMs: 15_000 }),
+    ).toBe('needsPermission');
+  });
+
+  it('assinatura antiga (3 args) continua funcionando', () => {
+    expect(classifyMicHealth('granted', 15_000, 12_000)).toBe('silent');
+  });
+});

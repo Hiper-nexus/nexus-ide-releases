@@ -362,6 +362,26 @@ export function VoiceHud() {
                   </button>
                 </span>
               )}
+              {micHealth === 'phantomGrant' && (
+                <span className="voice-hud__detail voice-hud__detail--error">
+                  Permissão de mic fantasma — o macOS diz OK mas entrega silêncio.
+                  <button
+                    type="button"
+                    className="voice-hud__action"
+                    onClick={() => {
+                      void window.nexus.voice.resetMicPermission().then((r) => {
+                        if (!r.ok) {
+                          useVoiceStore
+                            .getState()
+                            .setNote(`Reset falhou: ${r.error ?? 'erro desconhecido'}`);
+                        }
+                      });
+                    }}
+                  >
+                    Resetar e reiniciar
+                  </button>
+                </span>
+              )}
               {micHealth === 'silent' && (
                 <span className="voice-hud__detail voice-hud__detail--error">
                   Não estou ouvindo nada — mic mudo ou dispositivo errado.

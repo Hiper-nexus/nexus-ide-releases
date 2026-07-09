@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, dialog } from 'electron';
+import { ipcMain, BrowserWindow, dialog, app } from 'electron';
 import { VOICE_CHANNELS } from '../../shared/voice-channels';
 import {
   transcribeRequestSchema,
@@ -36,6 +36,11 @@ import { spawn } from 'node:child_process';
 import { transcribe } from './stt-service';
 import { speak, stopSystemSpeech } from './tts-service';
 import { echoSuppressor } from './echo-suppress';
+import {
+  appBundlePathFromExecPath,
+  readBundleId,
+  resetMicrophoneTcc,
+} from './mic-tcc';
 import {
   acquireWakeLock,
   releaseWakeLock,
@@ -289,6 +294,42 @@ export function registerVoiceIpc(): void {
     spawn('open', ['x-apple.systempreferences:com.apple.preference.sound']);
     logVoice('info', 'mic.openSoundSettings', 'abriu Ajustes → Som');
   });
+
+  // Grant TCC fantasma (WAKE-BROKEN-001 Rank 1): macOS diz 'granted' mas
+  // entrega PCM zerado. Reset guiado com confirmação nativa + relaunch.
+  ipcMain.handle(
+    VOICE_CHANNELS.micResetTcc,
+    async (): Promise<{ ok: boolean; error?: string }> => {
+      if (process.platform !== 'darwin') return { ok: false, error: 'só macOS' };
+      const appPath = appBundlePathFromExecPath(process.execPath);
+      const bundleId = appPath ? await readBundleId(appPath) : null;
+      if (!bundleId) {
+        return {
+          ok: false,
+          error: 'bundle id não resolvido — rode: tccutil reset Microphone <seu-bundle-id>',
+        };
+      }
+      const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        buttons: ['Resetar e reiniciar', 'Cancelar'],
+        defaultId: 0,
+        cancelId: 1,
+        message: 'Resetar a permissão de microfone?',
+        detail: `Vou rodar "tccutil reset Microphone ${bundleId}" e reiniciar o app. Na volta, clique Permitir quando o macOS pedir o microfone.`,
+      });
+      if (response !== 0) return { ok: false, error: 'cancelado' };
+      try {
+        await resetMicrophoneTcc(bundleId);
+      } catch (err) {
+        logVoice('warn', 'mic.tccResetFailed', 'tccutil falhou', { error: String(err) });
+        return { ok: false, error: `tccutil falhou: ${String(err)}` };
+      }
+      logVoice('warn', 'mic.tccReset', 'TCC Microphone resetado — relançando', { bundleId });
+      app.relaunch();
+      app.exit(0);
+      return { ok: true };
+    },
+  );
 
   ipcMain.handle(VOICE_CHANNELS.jarvis, async (_event, raw): Promise<JarvisReply> => {
     const parsed = jarvisRequestSchema.safeParse(raw);

@@ -25,6 +25,9 @@ export const VOICE_CHANNELS = {
   logEvent: 'voice:log',
   /** send: renderer → main. Abrir Ajustes do macOS → Microfone (permissão). */
   openMicSettings: 'voice:openMicSettings',
+  /** invoke: renderer → main. tccutil reset Microphone <bundleId> + relaunch
+   *  (grant TCC fantasma — WAKE-BROKEN-001). */
+  micResetTcc: 'voice:micResetTcc',
   /** send: renderer → main. Abrir Ajustes do macOS → Som (entrada). */
   openSoundSettings: 'voice:openSoundSettings',
   /** invoke: renderer → main. Fala transcrita → resposta JARVIS {say, action}. */

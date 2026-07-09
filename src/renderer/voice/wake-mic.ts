@@ -85,6 +85,9 @@ export class WakeMic {
   private dead = false;
   /** Início do silêncio contínuo atual (epoch ms); 0 = ouvindo áudio real. */
   private silentSince = 0;
+  /** Início dos zeros DIGITAIS puros (rms === 0) atuais; 0 = já ouviu sinal
+   *  não-zero. Distinto de silentSince: sala quieta tem ruído > 0. */
+  private zeroSince = 0;
   /** Log único do RMS do primeiro frame após abrir o grafo (prova sinal). */
   private firstFrameLogged = false;
   /** Ouviu QUALQUER áudio real (acima do piso) neste ciclo de grafo? Distingue
@@ -142,6 +145,11 @@ export class WakeMic {
   /** ms em silêncio contínuo; 0 se o mic está ouvindo áudio real. */
   getSilentMs(): number {
     return this.silentSince ? Date.now() - this.silentSince : 0;
+  }
+
+  /** Há quanto tempo os frames são ZERO digital puro (0 = já ouviu sinal). */
+  getZeroMs(): number {
+    return this.zeroSince ? Date.now() - this.zeroSince : 0;
   }
 
   /** Estado da permissão de mic (Permissions API / macOS); 'unknown' se indisponível. */
@@ -332,6 +340,7 @@ export class WakeMic {
     this.running = true;
     this.restartAttempt = 0;
     this.silentSince = 0;
+    this.zeroSince = 0;
     this.startWatchdog();
     console.log('[wake] mic do wake word ligado (openWakeWord, sem key)');
     this.log('info', 'mic.started', 'wake mic ligado');
@@ -414,12 +423,15 @@ export class WakeMic {
           contextRate: this.ctx?.sampleRate ?? null,
         });
       }
-      const level = rmsToLevel(frameRms(frame));
+      const rms = frameRms(frame);
+      const level = rmsToLevel(rms);
       this.onLevel?.(level);
       // Saúde do mic: acumula quanto tempo em silêncio (RMS abaixo do piso).
-      const silent = frameIsSilent(frameRms(frame));
+      const silent = frameIsSilent(rms);
       if (!silent) this.heardRealAudio = true;
       this.silentSince = silent ? this.silentSince || Date.now() : 0;
+      // TCC fantasma: zeros DIGITAIS puros (rms === 0), distintos de sala quieta.
+      this.zeroSince = rms === 0 ? this.zeroSince || Date.now() : 0;
       this.rememberPreRoll(frame);
       // Comando em gravação: acumula localmente (e NÃO alimenta o detector —
       // senão a própria fala do comando poderia re-disparar o wake).
@@ -546,6 +558,7 @@ export class WakeMic {
     this.restarting = false;
     this.dead = false;
     this.silentSince = 0;
+    this.zeroSince = 0;
     this.restartAttempt = 0;
     this.stopWatchdog();
     this.pending = [];
