@@ -141,6 +141,11 @@ export class LiveTransportController {
     this.pendingQuestionRouter.noteNarratedQuestion(paneId, questionHash);
   }
 
+  /** C3 defesa (follow-up 2): o pane tem pergunta pendente narrada no router? */
+  hasPendingQuestion(paneId: string): boolean {
+    return this.pendingQuestionRouter.questionFor(paneId) !== null;
+  }
+
   isRealtimeConfigured(): boolean {
     return resolveRealtimeProviderIds(getVoiceConfig()).some((providerId) => {
       const envVar = providerId === 'openai' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY';

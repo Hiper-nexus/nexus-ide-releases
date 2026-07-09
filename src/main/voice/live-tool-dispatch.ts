@@ -30,6 +30,8 @@ export interface ToolDispatchHost {
   recentToolResults: string[];
   toolResult(event: JarvisLiveToolResultEvent): void;
   armToolResultTimeout(event: JarvisLiveToolEvent): void;
+  /** C3 defesa (follow-up 2): o pane tem pergunta pendente narrada no router? */
+  hasPendingQuestion(paneId: string): boolean;
   /** Soft-stop (grace). Prefer hardStop for farewell. */
   onStop(): void;
   /** Hard teardown — closes the socket immediately (encerrar / farewell). */
@@ -60,11 +62,40 @@ export function handleCoarseVoiceToolCall(host: ToolDispatchHost, call: Realtime
   }
 }
 
+/**
+ * C3 defesa (follow-up 2): paneId em send_to_pane só é legítimo quando veio do
+ * roteamento de pergunta pendente (PendingQuestionRouter). Um paneId inventado
+ * pelo modelo (fora do schema) seria escrita direta SEM confirmação em qualquer
+ * pane — aqui ele é removido, derrubando a ação no gate de confirmação de
+ * delegação do renderer.
+ */
+export function sanitizeNexusActionArgs(
+  args: NexusRealtimeActionArgs,
+  hasPendingQuestion: (paneId: string) => boolean,
+): { args: NexusRealtimeActionArgs; strippedPaneId: string | null } {
+  if (args.action !== 'send_to_pane' || !args.paneId || hasPendingQuestion(args.paneId)) {
+    return { args, strippedPaneId: null };
+  }
+  const { paneId, ...rest } = args;
+  return { args: rest, strippedPaneId: paneId };
+}
+
 export function dispatchNexusAction(
   host: ToolDispatchHost,
   call: RealtimeToolCallEvent,
-  args: NexusRealtimeActionArgs,
+  rawArgs: NexusRealtimeActionArgs,
 ): void {
+  const { args, strippedPaneId } = sanitizeNexusActionArgs(rawArgs, (paneId) =>
+    host.hasPendingQuestion(paneId),
+  );
+  if (strippedPaneId) {
+    logVoice(
+      'warn',
+      'live.paneIdStripped',
+      'send_to_pane com paneId sem pergunta pendente — rebaixado pro gate de delegação',
+      { paneId: strippedPaneId },
+    );
+  }
   const action = realtimeArgsToJarvisAction(args);
   const argsRecord = args as Record<string, unknown>;
   const event = host.fsm.realtimeToolCall({
