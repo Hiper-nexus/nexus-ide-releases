@@ -87,7 +87,7 @@ describe('loadJarvisSystemPrompt', () => {
     expect(prompt).toContain('voice assistant embedded in Nexus IDE');
     expect(prompt).toContain('nexus_action');
     expect(prompt).toContain('mcp_tool');
-    expect(prompt).toContain('speak directly for normal conversation');
+    expect(prompt).toContain('Speak directly for normal conversation');
     expect(prompt).not.toContain('safe Nexus UI actions only');
   });
 });
