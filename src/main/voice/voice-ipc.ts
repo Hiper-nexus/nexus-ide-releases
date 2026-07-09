@@ -139,6 +139,13 @@ function fullInfo(): VoiceRuntimeInfo {
 }
 
 export function registerVoiceIpc(): void {
+  // Atribuição de "duas vozes": identifica ESTA instância no voice.log para
+  // distinguir colisão interna de colisão cross-app (sidecar do Overclock).
+  logVoice('info', 'voice.instanceBoot', 'instância de voz iniciada', {
+    pid: process.pid,
+    execPath: process.execPath,
+    version: app.getVersion(),
+  });
   loadVoiceConfig();
   wireHotkey();
   const restartMarker = process.env.NEXUS_VOICE_RESTART_MARKER?.trim() || 'APP_RESTART';

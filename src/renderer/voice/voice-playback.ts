@@ -61,6 +61,14 @@ export async function playAudioBase64(base64: string, _format: string): Promise<
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
     if (gen !== playbackGen) return 0;
     const durationMs = Math.ceil(audioBuffer.duration * 1000);
+    // Atribuição de "duas vozes": todo áudio local audível fica no voice.log;
+    // voz ouvida sem linha correspondente = veio de OUTRO app.
+    window.nexus.voice.logVoice({
+      level: 'info',
+      event: 'audio.playbackStart',
+      msg: 'playback local iniciado',
+      data: { durationMs },
+    });
     // Suppress wake for the ACTUAL playback duration + acoustic tail (clamped).
     // With APM/AEC off the speaker bleeds straight into the hot mic, so a fixed
     // short window let "Hey Jarvis" self-fire mid-reply — the self-talk seed.
