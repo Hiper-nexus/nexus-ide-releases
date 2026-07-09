@@ -16,7 +16,7 @@ export interface McpPaneContext {
  */
 export function mapActionToTool(
   action: JarvisAction,
-  paneCtx?: McpPaneContext,
+  _paneCtx?: McpPaneContext,
 ): { tool: string; args: Record<string, unknown> } | null {
   switch (action.type) {
     case 'none':
@@ -44,14 +44,12 @@ export function mapActionToTool(
     case 'focus_pane':
     case 'close_pane':
       return null;
-    case 'send_to_pane': {
-      const paneId = action.paneId || paneCtx?.orchestratorPaneId || paneCtx?.focusedPaneId;
-      if (!paneId) return null;
-      return {
-        tool: 'nexus_pane_write',
-        args: { paneId, text: action.text, submit: true },
-      };
-    }
+    case 'send_to_pane':
+      // C3: send_to_pane must NEVER dispatch via the MCP fast path — it has to
+      // reach the voice-confirmation + agent-pane-only gate in
+      // jarvis-action-executor's send_to_pane branch. Returning null keeps the
+      // gate reachable even if this action is ever re-added to `mcpFirst`.
+      return null;
     case 'run_command':
       return { tool: 'nexus_terminal_run', args: { command: action.command } };
     default:

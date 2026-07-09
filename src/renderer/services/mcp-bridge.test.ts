@@ -57,39 +57,28 @@ describe('mcp-bridge action mapping', () => {
     });
   });
 
-  it('maps delegated pane prompts to the orchestrator pane before the focused pane', () => {
+  it('send_to_pane returns null so it reaches the C3 voice-confirm gate, not the MCP path', () => {
+    // C3: send_to_pane must never dispatch via executeViaMcp. It must reach the
+    // voice-confirmation gate in jarvis-action-executor, which enforces
+    // agent-pane-only writes. Returning null keeps that gate reachable.
     expect(
       mapActionToTool(
         { type: 'send_to_pane', text: 'Fix the pixel movement bug.' },
         { focusedPaneId: 'pane-focused', orchestratorPaneId: 'pane-orch' },
       ),
-    ).toEqual({
-      tool: 'nexus_pane_write',
-      args: {
-        paneId: 'pane-orch',
-        text: 'Fix the pixel movement bug.',
-        submit: true,
-      },
-    });
+    ).toBeNull();
   });
 
-  it('maps delegated pane prompts to the focused pane when no orchestrator is active', () => {
+  it('send_to_pane returns null even with only focused pane context', () => {
     expect(
       mapActionToTool(
         { type: 'send_to_pane', text: 'Run the focused agent review.' },
         { focusedPaneId: 'pane-focused', orchestratorPaneId: null },
       ),
-    ).toEqual({
-      tool: 'nexus_pane_write',
-      args: {
-        paneId: 'pane-focused',
-        text: 'Run the focused agent review.',
-        submit: true,
-      },
-    });
+    ).toBeNull();
   });
 
-  it('does not claim delegated pane execution when no pane context exists', () => {
+  it('send_to_pane returns null when no pane context exists', () => {
     expect(
       mapActionToTool(
         { type: 'send_to_pane', text: 'Do not drop this into nowhere.' },
