@@ -357,6 +357,17 @@ export function useVoiceController(): void {
       }
     });
     const statusWatchdogTimer = setInterval(() => {
+      // Fala longa do Live é progresso, não travamento: enquanto há áudio
+      // tocando ou pendente, o relógio do watchdog re-arma (senão uma resposta
+      // contínua de 90s+ dispararia force-idle no meio da frase).
+      if (
+        watchedStatus === 'speaking' &&
+        ((livePlayer?.remainingMs() ?? 0) > 0 || pendingRealtimeAudioOut.length > 0)
+      ) {
+        watchedStatusAt = Date.now();
+        return;
+      }
+
       const stuckMs = Date.now() - watchedStatusAt;
       if (statusWatchdogAction(watchedStatus, stuckMs) === 'force-idle') {
         logVoiceEvent('warn', 'voice.statusWatchdog', 'status preso — forçando idle', {
