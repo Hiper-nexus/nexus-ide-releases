@@ -48,15 +48,63 @@ function norm(text: string): string {
 
 const NEGATIVE_RE =
   /\b(nao|cancela|cancelar|espera|pera|para|deixa|esquece|negativo)\b/;
-const AFFIRMATIVE_RE =
-  /\b(sim|pode|confirmo|confirma|confirmado|manda|vai|bora|positivo|isso|beleza|ok|okay|claro|com certeza|demorou)\b/;
+
+/**
+ * Follow-up 1: afirmativa só vale ISOLADA — a fala inteira precisa ser uma
+ * confirmação curta ("sim", "pode mandar", "beleza, manda ver"). Um comando não
+ * relacionado que apenas CONTÉM palavra afirmativa ("pode abrir o terminal")
+ * não despacha: com o mic quente do Live por 15s, substring era gatilho de
+ * despacho espúrio. Negativa continua ampla — cancelar é sempre barato.
+ */
+const AFFIRMATIVE_CORE = new Set([
+  'sim',
+  'confirmo',
+  'confirma',
+  'confirmado',
+  'pode',
+  'manda',
+  'mandar',
+  'bora',
+  'beleza',
+  'ok',
+  'okay',
+  'claro',
+  'positivo',
+  'demorou',
+  'certeza',
+  'isso',
+]);
+/** Apoio tolerado dentro de uma confirmação curta ("manda ver", "isso aí"). */
+const AFFIRMATIVE_FILLER = new Set([
+  'com',
+  'ver',
+  'ai',
+  'la',
+  'e',
+  'jarvis',
+  'pro',
+  'pra',
+  'para',
+  'o',
+  'a',
+  'squad',
+  'missao',
+]);
+const AFFIRMATIVE_MAX_WORDS = 6;
+
+function isIsolatedAffirmative(normalized: string): boolean {
+  const words = normalized.split(' ');
+  if (words.length > AFFIRMATIVE_MAX_WORDS) return false;
+  if (!words.some((w) => AFFIRMATIVE_CORE.has(w))) return false;
+  return words.every((w) => AFFIRMATIVE_CORE.has(w) || AFFIRMATIVE_FILLER.has(w));
+}
 
 /** Negativa GANHA de afirmativa: "não pode" é não. */
 export function classifyConfirmationReply(text: string): 'yes' | 'no' | 'other' {
   const n = norm(text);
   if (!n) return 'other';
   if (NEGATIVE_RE.test(n)) return 'no';
-  if (AFFIRMATIVE_RE.test(n)) return 'yes';
+  if (isIsolatedAffirmative(n)) return 'yes';
   return 'other';
 }
 

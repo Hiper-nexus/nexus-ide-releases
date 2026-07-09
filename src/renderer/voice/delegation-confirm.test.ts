@@ -36,6 +36,36 @@ describe('classifyConfirmationReply', () => {
     expect(classifyConfirmationReply('abre o navegador pra mim')).toBe('other');
     expect(classifyConfirmationReply('')).toBe('other');
   });
+
+  it('afirmativa embutida em comando NÃO confirma — só confirmação isolada (follow-up 1)', () => {
+    for (const t of [
+      'pode abrir o terminal',
+      'vai lá e conserta o bug do login',
+      'isso que eu falei ontem tá errado',
+      'manda um email pro chefe',
+      'beleza, agora abre o navegador',
+      'ok jarvis me mostra o board de missões agora',
+    ]) {
+      expect(classifyConfirmationReply(t)).toBe('other');
+    }
+  });
+
+  it('confirmações curtas naturais seguem valendo', () => {
+    for (const t of [
+      'sim',
+      'sim, pode mandar',
+      'confirmo',
+      'confirmado',
+      'pode mandar pro squad',
+      'manda ver',
+      'isso aí',
+      'demorou',
+      'com certeza',
+      'beleza, manda',
+    ]) {
+      expect(classifyConfirmationReply(t)).toBe('yes');
+    }
+  });
 });
 
 describe('pending delegation lifecycle', () => {
