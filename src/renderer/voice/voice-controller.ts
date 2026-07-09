@@ -3,6 +3,10 @@ import { useVoiceStore } from './voice-store';
 import { markVictory } from '../state/onboarding-store';
 import { VoiceCapture } from './voice-capture';
 import { classifyMicHealth, type MicHealth } from './wake-health';
+import {
+  STATUS_WATCHDOG_POLL_MS,
+  statusWatchdogAction,
+} from './status-watchdog';
 import { micFrameToBase64 } from './live-audio';
 import {
   isWakeAckOnlyTranscript,
@@ -342,6 +346,28 @@ export function useVoiceController(): void {
     const micHealthTimer = setInterval(checkMicHealth, MIC_HEALTH_CHECK_MS);
     void checkMicHealth();
 
+    // Watchdog de status preso (C1b): força idle se uma fase passar do
+    // deadline da etapa — STT falho não pode deixar 'transcribing' eterno.
+    let watchedStatus = useVoiceStore.getState().status;
+    let watchedStatusAt = Date.now();
+    const unsubStatusWatchdog = useVoiceStore.subscribe((s) => {
+      if (s.status !== watchedStatus) {
+        watchedStatus = s.status;
+        watchedStatusAt = Date.now();
+      }
+    });
+    const statusWatchdogTimer = setInterval(() => {
+      const stuckMs = Date.now() - watchedStatusAt;
+      if (statusWatchdogAction(watchedStatus, stuckMs) === 'force-idle') {
+        logVoiceEvent('warn', 'voice.statusWatchdog', 'status preso — forçando idle', {
+          status: watchedStatus,
+          stuckMs,
+        });
+        busy.current = false;
+        useVoiceStore.getState().setStatus('idle');
+      }
+    }, STATUS_WATCHDOG_POLL_MS);
+
     const syncWakeWord = (info: VoiceRuntimeInfo) => {
       if (info.enabled && info.wakeWordEnabled) {
         invalidateAckCacheIfPersonaChanged(info);
@@ -476,6 +502,8 @@ export function useVoiceController(): void {
 
     const cleanup = () => {
       clearInterval(micHealthTimer);
+      clearInterval(statusWatchdogTimer);
+      unsubStatusWatchdog();
       unsubInfo();
       unsubStart();
       unsubStop();
