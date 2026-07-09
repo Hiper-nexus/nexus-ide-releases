@@ -50,6 +50,11 @@ describe('classifyConfirmationReply', () => {
     }
   });
 
+  it('borda de AFFIRMATIVE_MAX_WORDS: 6 palavras ainda confirma, 7 não', () => {
+    expect(classifyConfirmationReply('sim sim sim sim sim sim')).toBe('yes');
+    expect(classifyConfirmationReply('sim sim sim sim sim sim sim')).toBe('other');
+  });
+
   it('confirmações curtas naturais seguem valendo', () => {
     for (const t of [
       'sim',

@@ -102,3 +102,14 @@ describe('isWakeAckOnlyTranscript', () => {
     expect(isWakeAckOnlyTranscript('abrir terminal', 'patrão')).toBe(false);
   });
 });
+
+describe('C3 item 7 — pin do fix-followups: "sim" seco morre no stripper de eco do ack', () => {
+  it('LIMITAÇÃO CONHECIDA: "sim" isolado é tratado como ack/wake (comportamento atual, fail-safe)', () => {
+    expect(isWakeAckOnlyTranscript('sim', 'patrão')).toBe(true);
+  });
+
+  it('o caminho que FUNCIONA ("confirmo") não regride: sobrevive ao stripper', () => {
+    expect(isWakeAckOnlyTranscript('confirmo', 'patrão')).toBe(false);
+    expect(stripWakeAckEcho('confirmo', 'patrão')).toBe('confirmo');
+  });
+});
