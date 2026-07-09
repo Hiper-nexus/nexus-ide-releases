@@ -45,7 +45,7 @@ import {
 } from './voice-session-state';
 import { openLiveAudioGate } from './voice-live-audio-out';
 import { shouldOpenGateOnTurnExit } from './turn-gate';
-import { classifyConfirmationReply, peekPendingDelegation } from './delegation-confirm';
+import { peekPendingDelegation } from './delegation-confirm';
 import {
   canAttemptRealtime,
   isJarvisLiveEnabled,
@@ -262,9 +262,11 @@ export async function finishAndProcess(
         // the confirmation step after design_squad.
         // C3: resposta a um "Confirmo?" pendente NUNCA vai pro provider Live —
         // desce pro caminho Classic, onde runJarvisTurn intercepta e resolve.
-        const isPendingDelegationReply =
-          peekPendingDelegation(Date.now()) !== null &&
-          classifyConfirmationReply(transcript) !== 'other';
+        // C3: a PRIMEIRA fala após "Confirmo?" É a resposta — force-a pro caminho
+        // Classic (runJarvisTurn resolve sim/não/outro e SEMPRE limpa a
+        // pendência). Sem isso um comando Live não relacionado nunca consumiria a
+        // pendência e ela vazaria até o TTL.
+        const isPendingDelegationReply = peekPendingDelegation(Date.now()) !== null;
         if (
           !isPendingDelegationReply &&
           REALTIME_PROVIDER_AUDIO_ENABLED &&

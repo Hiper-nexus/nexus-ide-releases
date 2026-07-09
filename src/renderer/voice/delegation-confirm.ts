@@ -15,7 +15,7 @@ export interface PendingDelegation {
   createdAt: number;
 }
 
-export const DELEGATION_CONFIRM_TTL_MS = 45_000;
+export const DELEGATION_CONFIRM_TTL_MS = 15_000;
 export const CONFIRM_SUMMARY_MAX_CHARS = 80;
 
 let pending: PendingDelegation | null = null;

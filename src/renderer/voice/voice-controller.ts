@@ -91,6 +91,7 @@ import {
   shouldSendLiveWakeGreeting,
 } from './live-wake-greeting';
 import { cancelLiveFollowUp } from './live-followup';
+import { clearPendingDelegation } from './delegation-confirm';
 
 /**
  * Jarvis voice pipeline. Mounted once from App.
@@ -561,6 +562,11 @@ async function beginListening(
     setRealtimeTurnActive(false);
     turnExecution.beginTurn();
     setActiveCaptureReason(reason);
+    // C3: um comando NOVO (wake/click/manual/ptt) descarta qualquer confirmação
+    // de missão ainda pendente — só a resposta de continuidade ('reply') logo
+    // após "Confirmo?" pode resolvê-la, senão uma fala não relacionada mais
+    // tarde despacharia a missão obsoleta.
+    if (reason !== 'reply') clearPendingDelegation();
     setFinishRealtimeCapture(
       busy
         ? () => {

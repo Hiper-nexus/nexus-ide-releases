@@ -13,6 +13,12 @@ const T0 = 1_000_000;
 
 beforeEach(() => clearPendingDelegation());
 
+describe('DELEGATION_CONFIRM_TTL_MS', () => {
+  it('janela apertada — no máximo 15s (C3: pendência não pode viver sessão inteira)', () => {
+    expect(DELEGATION_CONFIRM_TTL_MS).toBeLessThanOrEqual(15_000);
+  });
+});
+
 describe('classifyConfirmationReply', () => {
   it('afirmativas PT-BR viram yes', () => {
     for (const t of ['sim', 'pode mandar', 'confirmo', 'manda ver', 'beleza', 'ok']) {
