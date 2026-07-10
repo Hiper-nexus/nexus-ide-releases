@@ -11,7 +11,6 @@ import type {
   ScreenCaptureMetadata,
   ScreenCaptureResultInternal,
   ScreenPermissionStatus,
-  VisionContext,
   VisionContextOptions,
   VisionGetImageResult,
   VisionImageConsentResult,
@@ -206,7 +205,7 @@ export function registerVisionIpc(overrides: Partial<VisionIpcDeps> = {}): void 
   // Combined local vision context. Raw image stays main-process only.
   ipcMain.handle(
     VISION_CHANNELS.context,
-    async (_event, rawOptions: unknown): Promise<VisionContext> =>
+    async (_event, rawOptions: unknown) =>
       collectVisionContext(parseVisionContextOptions(rawOptions), {
         capture: () => captureWithRateLimit(deps),
         readAxTree: deps.readAxTree,
