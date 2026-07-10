@@ -90,3 +90,6 @@ out/
 
 # Generated codebase graph and extraction cache (kept locally for audits).
 graphify-out/
+
+# packaged release artifacts (generated)
+release-assets/
