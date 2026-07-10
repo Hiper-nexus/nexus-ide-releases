@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   createMacSignOptions,
@@ -6,8 +8,48 @@ import {
   EXPECTED_DEVELOPER_ID_IDENTITY,
   isAppleReleaseSigning,
 } from './mac-signing';
+import {
+  createMacDmgMakerConfig,
+  createMacNotarizeCredentials,
+  createWindowsSignOptions,
+  notarizeMacDmgArtifacts,
+  shouldPackageFile,
+} from '../forge.config';
 
 describe('macOS signing modes', () => {
+  it('signs and notarizes the distributed DMG in release mode', async () => {
+    const environment = {
+      APPLE_TEAM_ID: '35P5XL3JN6',
+      APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+    };
+    expect(createMacDmgMakerConfig(environment)).toMatchObject({
+      additionalDMGOptions: {
+        'code-sign': {
+          'signing-identity': `${EXPECTED_DEVELOPER_ID_IDENTITY} (35P5XL3JN6)`,
+          identifier: 'com.nexuside.app',
+        },
+      },
+    });
+    expect(createMacNotarizeCredentials(environment)).toEqual({
+      keychainProfile: 'nexus-notary',
+    });
+    const notarizeArtifact = vi.fn(async () => undefined);
+    const makeResults = [{
+      artifacts: ['/tmp/NexusIDE.dmg', '/tmp/NexusIDE.zip'],
+      packageJSON: {},
+      platform: 'darwin' as const,
+      arch: 'arm64' as const,
+    }];
+
+    await expect(
+      notarizeMacDmgArtifacts(makeResults, environment, notarizeArtifact),
+    ).resolves.toBe(makeResults);
+    expect(notarizeArtifact).toHaveBeenCalledWith({
+      appPath: '/tmp/NexusIDE.dmg',
+      keychainProfile: 'nexus-notary',
+    });
+  });
+
   it('keeps local ad-hoc packages runnable without enabling library validation', () => {
     expect(isAppleReleaseSigning(undefined)).toBe(false);
     const options = createMacSignOptions(undefined);
@@ -33,6 +75,12 @@ describe('macOS signing modes', () => {
     });
     expect(options.optionsForFile('/tmp/NexusIDE').timestamp).toBeUndefined();
     expect(options.identityValidation).toBeUndefined();
+  });
+
+  it('rejects malformed non-empty Team IDs instead of downgrading the build', () => {
+    expect(isAppleReleaseSigning('not-a-team')).toBe(false);
+    expect(() => createMacSignOptions('not-a-team')).toThrow(/Team ID/i);
+    expect(() => createMacSignOptions('          ')).toThrow(/Team ID/i);
   });
 
   it.each([
@@ -62,6 +110,14 @@ describe('macOS signing modes', () => {
       '/tmp/NexusIDE.app/Contents/Resources/app.asar.unpacked/native.node',
       'build/entitlements.mac.none.plist',
     ],
+    [
+      '/tmp/NexusIDE.app/Contents/Frameworks/NexusIDE Helper (Renderer).app/Contents/Frameworks/libinternal.dylib',
+      'build/entitlements.mac.none.plist',
+    ],
+    [
+      '/tmp/NexusIDE.app/Contents/Frameworks/NexusIDE Helper.app/Contents/Resources/native.node',
+      'build/entitlements.mac.none.plist',
+    ],
   ])('assigns least-privilege entitlements to %s', (filePath, entitlementPath) => {
     expect(entitlementProfileForMacTarget(filePath)).toBe(entitlementPath);
     expect(
@@ -79,5 +135,61 @@ describe('macOS signing modes', () => {
 
     expect(renderer.entitlements).toBe('build/entitlements.mac.renderer.plist');
     expect(gpu.entitlements).toBe('build/entitlements.mac.helper.plist');
+  });
+});
+
+describe('Windows release signing mode', () => {
+  it('keeps local Windows packages unsigned only outside release mode', () => {
+    expect(createWindowsSignOptions({})).toBeUndefined();
+  });
+
+  it('fails closed when release signing configuration is incomplete', () => {
+    expect(() => createWindowsSignOptions({
+      NEXUS_WINDOWS_RELEASE_SIGNING: 'yes',
+    })).toThrow(/NEXUS_WINDOWS_RELEASE_SIGNING/);
+    expect(() => createWindowsSignOptions({
+      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
+    })).toThrow(/WINDOWS_CERTIFICATE_FILE/);
+    expect(() => createWindowsSignOptions({
+      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
+      WINDOWS_CERTIFICATE_FILE: 'C:\\release.pfx',
+    })).toThrow(/WINDOWS_CERTIFICATE_PASSWORD/);
+  });
+
+  it('uses one SHA-256 PFX signing policy for app payload and Squirrel', () => {
+    expect(createWindowsSignOptions({
+      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
+      WINDOWS_CERTIFICATE_FILE: ' C:\\release.pfx ',
+      WINDOWS_CERTIFICATE_PASSWORD: 'secret with spaces',
+    })).toEqual({
+      certificateFile: 'C:\\release.pfx',
+      certificatePassword: 'secret with spaces',
+      continueOnError: false,
+      hashes: ['sha256'],
+      timestampServer: 'http://timestamp.digicert.com',
+    });
+  });
+});
+
+describe('packaged legal notices', () => {
+  it('ships license and third-party notices without broadening app contents', () => {
+    expect(shouldPackageFile('/LICENSE')).toBe(true);
+    expect(shouldPackageFile('/THIRD_PARTY_NOTICES.md')).toBe(true);
+    expect(shouldPackageFile('/third_party')).toBe(true);
+    expect(shouldPackageFile('/third_party/licenses')).toBe(true);
+    expect(shouldPackageFile('/third_party/licenses/Apache-2.0.txt')).toBe(true);
+    expect(shouldPackageFile('/third_party/licenses/OFL-1.1.txt')).toBe(true);
+    expect(shouldPackageFile('/src/main/main.ts')).toBe(false);
+  });
+
+  it('attributes the vendored Onlook translator in the packaged notice', () => {
+    const notice = readFileSync(
+      path.resolve('THIRD_PARTY_NOTICES.md'),
+      'utf8',
+    );
+    expect(notice).toContain('Onlook CSS-to-Tailwind translator');
+    expect(notice).toContain('onlook-dev/onlook');
+    expect(notice).toContain('Apache License 2.0');
+    expect(notice).toContain('hymhub/css-to-tailwind');
   });
 });

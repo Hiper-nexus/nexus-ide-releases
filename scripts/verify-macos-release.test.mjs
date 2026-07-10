@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assertPackagedSmokeOutput,
   assertReleaseArtifacts,
   assertSignatureMetadata,
   expectedEntitlementKeysForPath,
@@ -73,5 +74,22 @@ describe('macOS release artifact contract', () => {
       `${app}/Contents/Resources/app.asar.unpacked/native.node`,
       app,
     )).toEqual([]);
+    expect(expectedEntitlementKeysForPath(
+      `${app}/Contents/Frameworks/NexusIDE Helper (Renderer).app/Contents/Frameworks/libinternal.dylib`,
+      app,
+    )).toEqual([]);
+  });
+
+  it('requires both renderer and functional readiness proof from the real app', () => {
+    expect(() => assertPackagedSmokeOutput('[smoke] renderer-mounted\n')).toThrow(
+      /functional-ready/,
+    );
+    expect(() => assertPackagedSmokeOutput('[smoke] functional-ready\n')).toThrow(
+      /renderer-mounted/,
+    );
+    expect(() => assertPackagedSmokeOutput([
+      '[smoke] renderer-mounted',
+      '[smoke] functional-ready',
+    ].join('\n'))).not.toThrow();
   });
 });

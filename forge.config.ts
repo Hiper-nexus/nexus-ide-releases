@@ -1,15 +1,20 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { signAsync } from '@electron/osx-sign';
-import type { ForgeConfig } from '@electron-forge/shared-types';
-import { MakerSquirrel } from '@electron-forge/maker-squirrel';
+import { notarize } from '@electron/notarize';
+import type { ForgeConfig, ForgeMakeResult } from '@electron-forge/shared-types';
+import {
+  MakerSquirrel,
+  type MakerSquirrelConfig,
+} from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
-import { MakerDMG } from '@electron-forge/maker-dmg';
+import { MakerDMG, type MakerDMGConfig } from '@electron-forge/maker-dmg';
 import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerRpm } from '@electron-forge/maker-rpm';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
+import type { WindowsSignOptions } from '@electron/packager';
 import { pruneNativePayload } from './build/prune-native-payload';
 import { removeUnusedMacPrivacyDescriptions } from './build/macos-info-plist';
 import {
@@ -21,6 +26,146 @@ const MICROPHONE_USAGE_DESCRIPTION =
   'NexusIDE uses the microphone for push-to-talk voice commands (Jarvis mode).';
 const SCREEN_CAPTURE_USAGE_DESCRIPTION =
   'NexusIDE uses screen capture to give Jarvis visual context of your workspace.';
+const APP_BUNDLE_ID = 'com.nexuside.app';
+
+export function shouldPackageFile(file: string): boolean {
+  if (!file) return true;
+  return (
+    file === '/package.json' ||
+    file === '/LICENSE' ||
+    file === '/THIRD_PARTY_NOTICES.md' ||
+    file === '/third_party' ||
+    file === '/third_party/licenses' ||
+    file.startsWith('/third_party/licenses/') ||
+    file.startsWith('/.vite') ||
+    file.startsWith('/node_modules')
+  );
+}
+
+type MacNotarizeCredentials =
+  | { readonly keychainProfile: string }
+  | {
+      readonly appleId: string;
+      readonly appleIdPassword: string;
+      readonly teamId: string;
+    };
+
+type NotarizeArtifact = (
+  options: { readonly appPath: string } & MacNotarizeCredentials,
+) => Promise<void>;
+
+function requiredAppleValue(
+  environment: NodeJS.ProcessEnv,
+  name: 'APPLE_ID' | 'APPLE_APP_SPECIFIC_PASSWORD' | 'APPLE_TEAM_ID',
+): string {
+  const value = environment[name]?.trim();
+  if (!value) throw new Error(`${name} is required for macOS notarization.`);
+  return value;
+}
+
+export function createMacNotarizeCredentials(
+  environment: NodeJS.ProcessEnv,
+): MacNotarizeCredentials | undefined {
+  if (!isAppleReleaseSigning(environment.APPLE_TEAM_ID)) return undefined;
+  const keychainProfile = environment.APPLE_KEYCHAIN_PROFILE?.trim();
+  if (keychainProfile) return { keychainProfile };
+  return {
+    appleId: requiredAppleValue(environment, 'APPLE_ID'),
+    appleIdPassword: requiredAppleValue(
+      environment,
+      'APPLE_APP_SPECIFIC_PASSWORD',
+    ),
+    teamId: requiredAppleValue(environment, 'APPLE_TEAM_ID'),
+  };
+}
+
+export function createMacDmgMakerConfig(
+  environment: NodeJS.ProcessEnv,
+): MakerDMGConfig {
+  const teamId = environment.APPLE_TEAM_ID;
+  return {
+    format: 'ULFO',
+    icon: 'assets/icon.icns',
+    ...(isAppleReleaseSigning(teamId)
+      ? {
+          additionalDMGOptions: {
+            'code-sign': {
+              'signing-identity': createMacSignOptions(teamId).identity as string,
+              identifier: APP_BUNDLE_ID,
+            },
+          },
+        }
+      : {}),
+  };
+}
+
+export async function notarizeMacDmgArtifacts(
+  makeResults: ForgeMakeResult[],
+  environment: NodeJS.ProcessEnv,
+  notarizeArtifact: NotarizeArtifact = notarize,
+): Promise<ForgeMakeResult[]> {
+  const credentials = createMacNotarizeCredentials(environment);
+  if (!credentials) return makeResults;
+  const dmgs = makeResults
+    .filter((result) => result.platform === 'darwin')
+    .flatMap((result) => result.artifacts)
+    .filter((artifact) => artifact.toLowerCase().endsWith('.dmg'));
+  if (dmgs.length !== 1) {
+    throw new Error(`macOS release must produce exactly one DMG; found ${dmgs.length}.`);
+  }
+  await notarizeArtifact({ appPath: path.resolve(dmgs[0]), ...credentials });
+  return makeResults;
+}
+
+type WindowsReleaseSignOptions = WindowsSignOptions & {
+  continueOnError: false;
+};
+
+function requiredWindowsSigningValue(
+  environment: NodeJS.ProcessEnv,
+  name: 'WINDOWS_CERTIFICATE_FILE' | 'WINDOWS_CERTIFICATE_PASSWORD',
+): string {
+  const value = environment[name];
+  if (!value || (name === 'WINDOWS_CERTIFICATE_FILE' && !value.trim())) {
+    throw new Error(`${name} is required for Windows release signing.`);
+  }
+  return name === 'WINDOWS_CERTIFICATE_FILE' ? value.trim() : value;
+}
+
+export function createWindowsSignOptions(
+  environment: NodeJS.ProcessEnv,
+): WindowsReleaseSignOptions | undefined {
+  const mode = environment.NEXUS_WINDOWS_RELEASE_SIGNING;
+  if (mode === undefined) return undefined;
+  if (mode !== '1') {
+    throw new Error('NEXUS_WINDOWS_RELEASE_SIGNING must be exactly "1".');
+  }
+  return {
+    certificateFile: requiredWindowsSigningValue(
+      environment,
+      'WINDOWS_CERTIFICATE_FILE',
+    ),
+    certificatePassword: requiredWindowsSigningValue(
+      environment,
+      'WINDOWS_CERTIFICATE_PASSWORD',
+    ),
+    continueOnError: false,
+    hashes: [
+      'sha256' as NonNullable<WindowsSignOptions['hashes']>[number],
+    ],
+    timestampServer: 'http://timestamp.digicert.com',
+  };
+}
+
+const windowsSignOptions = createWindowsSignOptions(
+  process.platform === 'win32' ? process.env : {},
+);
+const squirrelWindowsSignOptions = windowsSignOptions
+  ? (({ continueOnError: _continueOnError, ...options }) => options)(
+      windowsSignOptions,
+    )
+  : undefined;
+const macNotarizeCredentials = createMacNotarizeCredentials(process.env);
 
 const config: ForgeConfig = {
   hooks: {
@@ -68,9 +213,11 @@ const config: ForgeConfig = {
         });
       }
     },
+    postMake: async (_forgeConfig, makeResults) =>
+      notarizeMacDmgArtifacts(makeResults, process.env),
   },
   packagerConfig: {
-    appBundleId: 'com.nexuside.app',
+    appBundleId: APP_BUNDLE_ID,
     appCategoryType: 'public.app-category.developer-tools',
     // App icon (Matrix-hacker mark): packager appends .icns on macOS. Read at
     // build time from the project root — not shipped inside the asar.
@@ -88,13 +235,7 @@ const config: ForgeConfig = {
     // plugin-vite's default ignore ships ONLY the .vite bundles, silently
     // dropping the runtime externals (@lydell/node-pty, better-sqlite3, …).
     // Ship node_modules too; packager's prune keeps production deps only.
-    ignore: (file: string) => {
-      if (!file) return false;
-      if (file === '/package.json') return false;
-      if (file.startsWith('/.vite')) return false;
-      if (file.startsWith('/node_modules')) return false;
-      return true;
-    },
+    ignore: (file: string) => !shouldPackageFile(file),
     // Voice capture: macOS shows this string on the first mic-permission prompt.
     // The matching hardened-runtime entitlement lives in the app and Renderer
     // Helper profiles; getUserMedia executes in that helper. Helper/native
@@ -159,19 +300,14 @@ const config: ForgeConfig = {
     // own frameworks at dyld time; keep it off only for that non-distributable
     // validation package.
     osxSign: createMacSignOptions(process.env.APPLE_TEAM_ID),
-    ...(process.env.APPLE_TEAM_ID
+    ...(windowsSignOptions ? { windowsSign: windowsSignOptions } : {}),
+    ...(macNotarizeCredentials
       ? {
           // Prefer a stored notarytool keychain profile (APPLE_KEYCHAIN_PROFILE)
           // for local builds — no app-specific password in plaintext/env. CI,
           // which has no profile but exports the Apple credentials as secrets,
           // falls back to the appleId/password/teamId trio unchanged.
-          osxNotarize: process.env.APPLE_KEYCHAIN_PROFILE
-            ? { keychainProfile: process.env.APPLE_KEYCHAIN_PROFILE }
-            : {
-                appleId: process.env.APPLE_ID as string,
-                appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD as string,
-                teamId: process.env.APPLE_TEAM_ID as string,
-              },
+          osxNotarize: macNotarizeCredentials,
         }
       : {}),
   },
@@ -181,8 +317,17 @@ const config: ForgeConfig = {
     // Squirrel.Mac auto-update payload.
     // Code signing/notarization (osxSign/osxNotarize in packagerConfig)
     // activates when a Developer ID identity is present on the build machine.
-    new MakerDMG({ format: 'ULFO', icon: 'assets/icon.icns' }, ['darwin']),
-    new MakerSquirrel({}),
+    new MakerDMG(createMacDmgMakerConfig(process.env), ['darwin']),
+    new MakerSquirrel(
+      squirrelWindowsSignOptions
+        ? {
+            windowsSign:
+              squirrelWindowsSignOptions as NonNullable<
+                MakerSquirrelConfig['windowsSign']
+              >,
+          }
+        : {},
+    ),
     new MakerZIP({}, ['darwin']),
     new MakerRpm({}),
     new MakerDeb({}),

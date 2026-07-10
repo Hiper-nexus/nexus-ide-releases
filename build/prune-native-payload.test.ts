@@ -29,6 +29,24 @@ function fixture(): string {
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, 'binding.node'), target);
   }
+  const linuxX64 = path.join(runtimeRoot, 'linux/x64');
+  writeFileSync(path.join(linuxX64, 'libonnxruntime.so'), 'cpu');
+  writeFileSync(path.join(linuxX64, 'libonnxruntime_providers_cuda.so'), 'gpu');
+  writeFileSync(path.join(linuxX64, 'libonnxruntime_providers_tensorrt.so'), 'gpu');
+  writeFileSync(path.join(linuxX64, 'libonnxruntime_providers_shared.so'), 'gpu');
+  for (const language of ['eng', 'por']) {
+    for (const dataset of ['4.0.0', '4.0.0_best_int']) {
+      const dir = path.join(
+        root,
+        'node_modules',
+        '@tesseract.js-data',
+        language,
+        dataset,
+      );
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, `${language}.traineddata.gz`), dataset);
+    }
+  }
   return root;
 }
 
@@ -62,5 +80,51 @@ describe('pruneNativePayload', () => {
     expect(removed).not.toContain(
       'node_modules/onnxruntime-node/bin/napi-v3/darwin/x64',
     );
+  });
+
+  it('removes GPU provider libraries from the CPU-only Linux package', () => {
+    const root = fixture();
+    const removed = pruneNativePayload(root, 'linux', 'x64');
+    const prefix = 'node_modules/onnxruntime-node/bin/napi-v3/linux/x64/';
+
+    expect(removed).toEqual(
+      expect.arrayContaining([
+        `${prefix}libonnxruntime_providers_cuda.so`,
+        `${prefix}libonnxruntime_providers_tensorrt.so`,
+        `${prefix}libonnxruntime_providers_shared.so`,
+      ]),
+    );
+    expect(() =>
+      writeFileSync(
+        path.join(root, `${prefix}libonnxruntime.so`),
+        'cpu-still-present',
+      ),
+    ).not.toThrow();
+  });
+
+  it('keeps only the pinned compact OCR dataset used by the runtime', () => {
+    const root = fixture();
+    const removed = pruneNativePayload(root, 'darwin', 'arm64');
+
+    expect(removed).toEqual(
+      expect.arrayContaining([
+        'node_modules/@tesseract.js-data/eng/4.0.0',
+        'node_modules/@tesseract.js-data/por/4.0.0',
+      ]),
+    );
+    for (const language of ['eng', 'por']) {
+      expect(() =>
+        writeFileSync(
+          path.join(
+            root,
+            'node_modules/@tesseract.js-data',
+            language,
+            '4.0.0_best_int',
+            `${language}.traineddata.gz`,
+          ),
+          'still-present',
+        ),
+      ).not.toThrow();
+    }
   });
 });

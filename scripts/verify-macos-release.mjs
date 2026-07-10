@@ -68,18 +68,25 @@ export function expectedEntitlementKeysForPath(filePath, appPath) {
   const normalized = filePath.replaceAll('\\', '/');
   const normalizedApp = appPath.replaceAll('\\', '/').replace(/\/$/u, '');
 
-  if (normalized.includes(' Helper (Plugin).app/')) {
+  const isBundleExecutable = (bundleName) => {
+    const executableName = bundleName.slice(0, -'.app'.length);
+    return normalized.endsWith(
+      `/${bundleName}/Contents/MacOS/${executableName}`,
+    );
+  };
+
+  if (isBundleExecutable('NexusIDE Helper (Plugin).app')) {
     return ['com.apple.security.cs.allow-unsigned-executable-memory'];
   }
-  if (normalized.includes(' Helper (Renderer).app/')) {
+  if (isBundleExecutable('NexusIDE Helper (Renderer).app')) {
     return [
       'com.apple.security.cs.allow-jit',
       'com.apple.security.device.audio-input',
     ];
   }
   if (
-    normalized.includes(' Helper.app/') ||
-    normalized.includes(' Helper (GPU).app/')
+    isBundleExecutable('NexusIDE Helper.app') ||
+    isBundleExecutable('NexusIDE Helper (GPU).app')
   ) {
     return ['com.apple.security.cs.allow-jit'];
   }
@@ -90,6 +97,14 @@ export function expectedEntitlementKeysForPath(filePath, appPath) {
     ];
   }
   return [];
+}
+
+export function assertPackagedSmokeOutput(output) {
+  for (const proof of ['[smoke] renderer-mounted', '[smoke] functional-ready']) {
+    if (!output.includes(proof)) {
+      throw new Error(`artifact smoke lacked ${proof} proof`);
+    }
+  }
 }
 
 function runChecked(command, args, options = {}) {
@@ -244,9 +259,25 @@ async function verifyApp(appPath, expected, signing) {
   const smoke = runChecked(process.execPath, [
     path.join(scriptDir, 'smoke-packaged-app.mjs'), '--app', appPath,
   ]).combined;
-  if (!smoke.includes('[smoke] renderer-mounted')) {
-    throw new Error(`artifact smoke lacked renderer proof: ${appPath}`);
-  }
+  assertPackagedSmokeOutput(smoke);
+}
+
+function verifyDmgContainer(dmgPath, signing) {
+  runChecked('/usr/bin/codesign', [
+    '--verify', '--strict', '--verbose=2', dmgPath,
+  ]);
+  assertSignatureMetadata(
+    parseCodesignMetadata(runChecked('/usr/bin/codesign', [
+      '-dv', '--verbose=4', dmgPath,
+    ]).combined),
+    signing.teamId,
+    signing.identityName,
+  );
+  runChecked('/usr/sbin/spctl', [
+    '--assess', '--type', 'open', '--context', 'context:primary-signature',
+    '--verbose=2', dmgPath,
+  ]);
+  runChecked('/usr/bin/xcrun', ['stapler', 'validate', dmgPath]);
 }
 
 function parseArgs(args) {
@@ -294,6 +325,7 @@ async function main() {
   assertConfiguration({ ...expected, ...signing });
 
   const artifacts = await discoverArtifacts(artifactsRoot);
+  verifyDmgContainer(artifacts.dmg, signing);
 
   const temporaryRoot = await fs.mkdtemp(
     path.join(os.tmpdir(), 'nexus-release-verify-'),

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Main-world bridge spike</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="../../../node_modules/react/umd/react.development.js"></script>
+    <script src="../../../node_modules/react-dom/umd/react-dom.development.js"></script>
+    <script>
+      const { createElement: h } = React;
+      function SaveButton() {
+        return h(
+          'button',
+          { id: 'save', className: 'btn btn-primary' },
+          'Salvar',
+        );
+      }
+      function App() {
+        return h('main', null, h(SaveButton));
+      }
+      ReactDOM.createRoot(document.getElementById('root')).render(h(App));
+    </script>
+  </body>
+</html>
