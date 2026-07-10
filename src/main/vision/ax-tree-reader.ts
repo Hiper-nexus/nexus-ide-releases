@@ -186,9 +186,11 @@ function focusedWebContents(): WebContents {
   return selected.webContents;
 }
 
-export async function readFocusedNexusAxTree(): Promise<AxNode> {
+export async function readNexusAxTree(webContents: WebContents): Promise<AxNode> {
   lastSnapshot = null;
-  const webContents = focusedWebContents();
+  if (webContents.isDestroyed() || webContents.isCrashed()) {
+    throw new Error('A janela Nexus autorizada não está mais disponível.');
+  }
   let rawTree: unknown;
   try {
     rawTree = await webContents.executeJavaScript(
@@ -196,6 +198,9 @@ export async function readFocusedNexusAxTree(): Promise<AxNode> {
     );
   } catch {
     throw new Error('A página atual não forneceu uma árvore de acessibilidade.');
+  }
+  if (webContents.isDestroyed() || webContents.isCrashed()) {
+    throw new Error('A janela Nexus autorizada não está mais disponível.');
   }
   const parsed = parseAxTree(rawTree);
   if (parsed.snapshotId !== null) {
@@ -206,6 +211,10 @@ export async function readFocusedNexusAxTree(): Promise<AxNode> {
     };
   }
   return parsed.tree;
+}
+
+export async function readFocusedNexusAxTree(): Promise<AxNode> {
+  return readNexusAxTree(focusedWebContents());
 }
 
 function parseActionRequest(raw: AxActionRequest): AxActionRequest {
@@ -278,11 +287,14 @@ function parseRendererActionResult(
   };
 }
 
-export async function performFocusedNexusAxAction(
+export async function performNexusAxAction(
+  webContents: WebContents,
   rawRequest: AxActionRequest,
 ): Promise<AxActionResult> {
   const request = parseActionRequest(rawRequest);
-  const webContents = focusedWebContents();
+  if (webContents.isDestroyed() || webContents.isCrashed()) {
+    throw new Error('The authorized Nexus window is no longer available.');
+  }
   const match = AX_REF_RE.exec(request.ref)!;
   if (
     !lastSnapshot ||
@@ -306,7 +318,16 @@ export async function performFocusedNexusAxAction(
   } catch {
     throw new Error('A página atual não conseguiu executar a ação solicitada.');
   }
+  if (webContents.isDestroyed() || webContents.isCrashed()) {
+    throw new Error('The authorized Nexus window is no longer available.');
+  }
   return parseRendererActionResult(rawResult, request);
+}
+
+export async function performFocusedNexusAxAction(
+  rawRequest: AxActionRequest,
+): Promise<AxActionResult> {
+  return performNexusAxAction(focusedWebContents(), rawRequest);
 }
 
 function clean(value: string | null | undefined): string | null {

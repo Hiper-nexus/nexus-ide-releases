@@ -76,6 +76,8 @@ export function MissionWizard() {
   const open = useMissionWizardStore((s) => s.open);
   const variant = useMissionWizardStore((s) => s.variant);
   const presetSquadId = useMissionWizardStore((s) => s.presetSquadId);
+  const agenticIntent = useMissionWizardStore((s) => s.agenticIntent);
+  const agenticLaunchNonce = useMissionWizardStore((s) => s.agenticLaunchNonce);
   const voiceLaunchNonce = useMissionWizardStore((s) => s.voiceLaunchNonce);
   const close = useMissionWizardStore((s) => s.close);
   const squads = useOrchStore((s) => s.squads);
@@ -141,15 +143,24 @@ export function MissionWizard() {
           );
         }
       });
+    // Voice may target Modo Agêntico directly. The nonce matters when this
+    // wizard was already open on another mode or with a previous objective.
+    if (agenticLaunchNonce > 0) {
+      setMode('agentic');
+      setSquadId('');
+      setIntent(agenticIntent ?? '');
+      setStep('agentic-intent');
     // A preset squad (Home deck shortcut) skips MODO/SQUAD straight to review.
-    if (presetSquadId) {
+    } else if (presetSquadId) {
       setMode('squad');
       setSquadId(presetSquadId);
+      setIntent('');
       setStep('squad-review');
     } else {
       setStep(hasNewWsStep ? 'new-ws' : 'mode');
       setMode(null);
       setSquadId('');
+      setIntent('');
     }
     setWsPath(hasNewWsStep ? currentWorkspace?.path ?? recents[0]?.path ?? '' : '');
     setCount(2);
@@ -158,7 +169,15 @@ export function MissionWizard() {
     return () => {
       cancelled = true;
     };
-  }, [open, hasNewWsStep, presetSquadId, currentWorkspace?.path, recents]);
+  }, [
+    open,
+    hasNewWsStep,
+    presetSquadId,
+    agenticIntent,
+    agenticLaunchNonce,
+    currentWorkspace?.path,
+    recents,
+  ]);
 
   useEffect(() => {
     if (!open) return;
@@ -364,7 +383,7 @@ export function MissionWizard() {
       }
       // O squad já foi salvo no main — garantir que a lista local o contém
       // antes de renderizar a revisão.
-      await useOrchStore.getState().hydrate();
+      await useOrchStore.getState().hydrate(workspacePath);
       setSquadId(res.squad.id);
       setStep('squad-review');
     } finally {

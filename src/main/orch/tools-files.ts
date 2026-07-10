@@ -1,11 +1,15 @@
 import type { McpToolDef } from './mcp-protocol';
+import { executionScopeFor } from './gate';
 import { requireStr, str } from './tool-util';
 import fs from 'node:fs';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
+import { StringDecoder } from 'node:string_decoder';
 import {
-  activeWorkspaceRoot,
-  resolveWorkspacePath,
-} from './workspace-path';
+  openWorkspaceFileForRead,
+  writeWorkspaceTextFile,
+} from './workspace-file';
+import { resolveCwdForScope } from './workspace-path';
 
 /**
  * File-system MCP tools for Jarvis agent.
@@ -15,12 +19,28 @@ import {
 
 const MAX_FULL_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_RANGE_LINES = 10_000;
+const DEFAULT_SEARCH_MAX_RESULTS = 100;
+const HARD_SEARCH_MAX_RESULTS = 1_000;
+const DEFAULT_SEARCH_MAX_FILES = 20_000;
+const HARD_SEARCH_MAX_FILES = 100_000;
+const DEFAULT_SEARCH_MAX_DIRECTORIES = 2_000;
+const HARD_SEARCH_MAX_DIRECTORIES = 20_000;
+const DEFAULT_SEARCH_TIMEOUT_MS = 1_500;
+const HARD_SEARCH_TIMEOUT_MS = 10_000;
+const SEARCH_YIELD_EVERY_ENTRIES = 128;
+const MAX_SEARCH_PATTERN_CHARS = 512;
 
-function assertReadableFile(absolutePath: string, relativePath: string): fs.Stats {
-  if (!fs.existsSync(absolutePath)) throw new Error(`file not found: ${relativePath}`);
-  const stat = fs.statSync(absolutePath);
-  if (stat.isDirectory()) throw new Error(`path is a directory: ${relativePath}`);
-  return stat;
+type SearchStopReason =
+  | 'maxResults'
+  | 'maxFiles'
+  | 'maxDirectories'
+  | 'timeout';
+
+interface SearchBudgets {
+  maxResults: number;
+  maxFiles: number;
+  maxDirectories: number;
+  timeoutMs: number;
 }
 
 function assertFullReadSize(stat: fs.Stats): void {
@@ -31,48 +51,54 @@ function assertFullReadSize(stat: fs.Stats): void {
   }
 }
 
-async function readLineRange(
-  absolutePath: string,
+function readLineRange(
+  fd: number,
   encoding: BufferEncoding,
   start: number,
   limit: number,
-): Promise<string[]> {
-  const input = fs.createReadStream(absolutePath, { encoding });
+): string[] {
+  const decoder = new StringDecoder(encoding);
+  const buffer = Buffer.allocUnsafe(64 * 1024);
   const selected: string[] = [];
-  let lineNumber = 0;
+  let lineNumber = 1;
   let current = '';
   let selectedChars = 0;
-  try {
-    lineNumber = 1;
-    for await (const rawChunk of input) {
-      const chunk = String(rawChunk);
-      let cursor = 0;
-      while (cursor <= chunk.length) {
-        const newline = chunk.indexOf('\n', cursor);
-        const end = newline === -1 ? chunk.length : newline;
-        if (lineNumber >= start && selected.length < limit) {
-          const part = chunk.slice(cursor, end);
-          selectedChars += part.length;
-          if (selectedChars > MAX_FULL_FILE_BYTES) {
-            throw new Error(`requested line range exceeds ${MAX_FULL_FILE_BYTES} characters`);
-          }
-          current += part;
+
+  const consume = (chunk: string): boolean => {
+    let cursor = 0;
+    while (cursor <= chunk.length) {
+      const newline = chunk.indexOf('\n', cursor);
+      const end = newline === -1 ? chunk.length : newline;
+      if (lineNumber >= start && selected.length < limit) {
+        const part = chunk.slice(cursor, end);
+        selectedChars += part.length;
+        if (selectedChars > MAX_FULL_FILE_BYTES) {
+          throw new Error(`requested line range exceeds ${MAX_FULL_FILE_BYTES} characters`);
         }
-        if (newline === -1) break;
-        if (lineNumber >= start && selected.length < limit) {
-          selected.push(current.endsWith('\r') ? current.slice(0, -1) : current);
-          current = '';
-          if (selected.length >= limit) return selected;
-        }
-        lineNumber += 1;
-        cursor = newline + 1;
+        current += part;
       }
+      if (newline === -1) break;
+      if (lineNumber >= start && selected.length < limit) {
+        selected.push(current.endsWith('\r') ? current.slice(0, -1) : current);
+        current = '';
+        if (selected.length >= limit) return true;
+      }
+      lineNumber += 1;
+      cursor = newline + 1;
     }
-    if (lineNumber >= start && selected.length < limit && current) {
-      selected.push(current.endsWith('\r') ? current.slice(0, -1) : current);
-    }
-  } finally {
-    input.destroy();
+    return false;
+  };
+
+  let position = 0;
+  while (selected.length < limit) {
+    const bytesRead = fs.readSync(fd, buffer, 0, buffer.byteLength, position);
+    if (bytesRead === 0) break;
+    position += bytesRead;
+    if (consume(decoder.write(buffer.subarray(0, bytesRead)))) return selected;
+  }
+  consume(decoder.end());
+  if (lineNumber >= start && selected.length < limit && current) {
+    selected.push(current.endsWith('\r') ? current.slice(0, -1) : current);
   }
   return selected;
 }
@@ -97,18 +123,23 @@ const fileOpen: McpToolDef = {
     },
     required: ['path'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
     const encoding = str(args, 'encoding') ?? 'utf-8';
-    const absolutePath = resolveWorkspacePath(relativePath);
-    const stat = assertReadableFile(absolutePath, relativePath);
-    assertFullReadSize(stat);
-    const content = fs.readFileSync(absolutePath, encoding as BufferEncoding);
-    return {
-      path: relativePath,
-      size: stat.size,
-      content,
-    };
+    const handle = openWorkspaceFileForRead(executionScopeFor(ctx), relativePath);
+    try {
+      assertFullReadSize(handle.stat);
+      const content = fs.readFileSync(handle.fd, {
+        encoding: encoding as BufferEncoding,
+      });
+      return {
+        path: relativePath,
+        size: handle.stat.size,
+        content,
+      };
+    } finally {
+      handle.close();
+    }
   },
 };
 
@@ -128,9 +159,10 @@ const fileClose: McpToolDef = {
     },
     required: ['path'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
-    resolveWorkspacePath(relativePath);
+    const handle = openWorkspaceFileForRead(executionScopeFor(ctx), relativePath);
+    handle.close();
     return { path: relativePath, closed: true };
   },
 };
@@ -162,36 +194,41 @@ const fileRead: McpToolDef = {
     },
     required: ['path'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
     const encoding = str(args, 'encoding') ?? 'utf-8';
-    const absolutePath = resolveWorkspacePath(relativePath);
-    const stat = assertReadableFile(absolutePath, relativePath);
-    const offset = typeof args.offset === 'number' ? args.offset : undefined;
-    const limit = typeof args.limit === 'number' ? args.limit : undefined;
-    if (offset === undefined && limit === undefined) {
-      assertFullReadSize(stat);
-      const raw = fs.readFileSync(absolutePath, encoding as BufferEncoding);
-      return { path: relativePath, content: raw };
+    const handle = openWorkspaceFileForRead(executionScopeFor(ctx), relativePath);
+    try {
+      const offset = typeof args.offset === 'number' ? args.offset : undefined;
+      const limit = typeof args.limit === 'number' ? args.limit : undefined;
+      if (offset === undefined && limit === undefined) {
+        assertFullReadSize(handle.stat);
+        const raw = fs.readFileSync(handle.fd, {
+          encoding: encoding as BufferEncoding,
+        });
+        return { path: relativePath, content: raw };
+      }
+      const start = Math.max(1, Math.trunc(offset ?? 1));
+      const boundedLimit = Math.max(
+        1,
+        Math.min(MAX_RANGE_LINES, Math.trunc(limit ?? MAX_RANGE_LINES)),
+      );
+      const selected = await readLineRange(
+        handle.fd,
+        encoding as BufferEncoding,
+        start,
+        boundedLimit,
+      );
+      const sliced = selected.join('\n');
+      return {
+        path: relativePath,
+        offset: start,
+        limit: selected.length,
+        content: sliced,
+      };
+    } finally {
+      handle.close();
     }
-    const start = Math.max(1, Math.trunc(offset ?? 1));
-    const boundedLimit = Math.max(
-      1,
-      Math.min(MAX_RANGE_LINES, Math.trunc(limit ?? MAX_RANGE_LINES)),
-    );
-    const selected = await readLineRange(
-      absolutePath,
-      encoding as BufferEncoding,
-      start,
-      boundedLimit,
-    );
-    const sliced = selected.join('\n');
-    return {
-      path: relativePath,
-      offset: start,
-      limit: selected.length,
-      content: sliced,
-    };
   },
 };
 
@@ -220,21 +257,19 @@ const fileWrite: McpToolDef = {
     },
     required: ['path', 'content'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
     const content = requireStr(args, 'content');
     const encoding = str(args, 'encoding') ?? 'utf-8';
-    const absolutePath = resolveWorkspacePath(relativePath);
-    const dir = path.dirname(absolutePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    const existed = fs.existsSync(absolutePath);
-    fs.writeFileSync(absolutePath, content, encoding as BufferEncoding);
+    const result = writeWorkspaceTextFile(
+      executionScopeFor(ctx),
+      relativePath,
+      content,
+      encoding as BufferEncoding,
+    );
     return {
       path: relativePath,
-      existed,
-      written: Buffer.byteLength(content, encoding as BufferEncoding),
+      ...result,
     };
   },
 };
@@ -254,50 +289,222 @@ const fileSearch: McpToolDef = {
       },
       maxResults: {
         type: 'number',
-        description: 'Maximum number of results (default: 100)',
+        description: 'Maximum number of results (default: 100, hard max: 1000)',
+      },
+      maxFiles: {
+        type: 'number',
+        description: 'Maximum regular files inspected (default: 20000)',
+      },
+      maxDirectories: {
+        type: 'number',
+        description: 'Maximum directories traversed (default: 2000)',
+      },
+      timeoutMs: {
+        type: 'number',
+        description: 'Wall-clock search budget in milliseconds (default: 1500)',
       },
     },
     required: ['pattern'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const pattern = requireStr(args, 'pattern');
-    const cwd = activeWorkspaceRoot();
-    const maxResults = typeof args.maxResults === 'number' ? args.maxResults : 100;
-
-    // Simple glob implementation using fs.readdirSync recursively
-    const results: string[] = [];
-    const searchDir = (dir: string, base: string) => {
-      if (results.length >= maxResults) return;
-      let entries: fs.Dirent[];
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        if (results.length >= maxResults) return;
-        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-        const fullPath = path.join(dir, entry.name);
-        const relPath = path.relative(base, fullPath);
-        if (entry.isDirectory()) {
-          searchDir(fullPath, base);
-        } else if (matchGlob(relPath, pattern)) {
-          results.push(relPath);
-        }
-      }
+    if (pattern.length > MAX_SEARCH_PATTERN_CHARS) {
+      throw new Error(
+        `search pattern exceeds ${MAX_SEARCH_PATTERN_CHARS} characters`,
+      );
+    }
+    const cwd = resolveCwdForScope(executionScopeFor(ctx));
+    const budgets: SearchBudgets = {
+      maxResults: boundedSearchBudget(
+        args.maxResults,
+        DEFAULT_SEARCH_MAX_RESULTS,
+        HARD_SEARCH_MAX_RESULTS,
+      ),
+      maxFiles: boundedSearchBudget(
+        args.maxFiles,
+        DEFAULT_SEARCH_MAX_FILES,
+        HARD_SEARCH_MAX_FILES,
+      ),
+      maxDirectories: boundedSearchBudget(
+        args.maxDirectories,
+        DEFAULT_SEARCH_MAX_DIRECTORIES,
+        HARD_SEARCH_MAX_DIRECTORIES,
+      ),
+      timeoutMs: boundedSearchBudget(
+        args.timeoutMs,
+        DEFAULT_SEARCH_TIMEOUT_MS,
+        HARD_SEARCH_TIMEOUT_MS,
+      ),
     };
-    searchDir(cwd, cwd);
-    return { pattern, count: results.length, files: results };
+    return searchWorkspaceFiles(cwd, pattern, budgets);
   },
 };
+
+function boundedSearchBudget(
+  value: unknown,
+  fallback: number,
+  hardMaximum: number,
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(hardMaximum, Math.trunc(value)));
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+async function readDirectoryUntil(
+  directory: string,
+  deadline: number,
+): Promise<fs.Dirent[] | null> {
+  const remainingMs = deadline - performance.now();
+  if (remainingMs <= 0) return null;
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<null>((resolve) => {
+    timeout = setTimeout(resolve, Math.max(1, Math.ceil(remainingMs)), null);
+    timeout.unref?.();
+  });
+  const entriesPromise: Promise<fs.Dirent[]> = fs.promises.readdir(directory, {
+    withFileTypes: true,
+  });
+  try {
+    return await Promise.race([entriesPromise, timeoutPromise]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function searchWorkspaceFiles(
+  root: string,
+  pattern: string,
+  budgets: SearchBudgets,
+): Promise<{
+  pattern: string;
+  count: number;
+  files: string[];
+  truncated: boolean;
+  stoppedBy: SearchStopReason | null;
+  scanned: { files: number; directories: number; elapsedMs: number };
+  limits: SearchBudgets;
+}> {
+  const startedAt = performance.now();
+  const deadline = startedAt + budgets.timeoutMs;
+  const results: string[] = [];
+  const pendingDirectories = [root];
+  let nextDirectory = 0;
+  let scheduledDirectories = 1;
+  let scannedDirectories = 0;
+  let scannedFiles = 0;
+  let visitedEntries = 0;
+  let stoppedBy: SearchStopReason | null = null;
+
+  const hasTimedOut = () => performance.now() >= deadline;
+
+  // Garante que até buscas pequenas nunca executem toda a caminhada no turno
+  // do chamador do processo principal.
+  await yieldToEventLoop();
+  const matchesPattern = createGlobMatcher(pattern);
+
+  search: while (nextDirectory < pendingDirectories.length) {
+    if (hasTimedOut()) {
+      stoppedBy = 'timeout';
+      break;
+    }
+    if (results.length >= budgets.maxResults) {
+      stoppedBy = 'maxResults';
+      break;
+    }
+    if (scannedDirectories >= budgets.maxDirectories) {
+      stoppedBy = 'maxDirectories';
+      break;
+    }
+
+    const directory = pendingDirectories[nextDirectory];
+    nextDirectory += 1;
+    scannedDirectories += 1;
+    let entries: fs.Dirent[];
+    try {
+      const read = await readDirectoryUntil(directory, deadline);
+      if (read === null) {
+        stoppedBy = 'timeout';
+        break;
+      }
+      entries = read;
+    } catch {
+      continue;
+    }
+    if (hasTimedOut()) {
+      stoppedBy = 'timeout';
+      break;
+    }
+
+    for (const entry of entries) {
+      visitedEntries += 1;
+      if (visitedEntries % SEARCH_YIELD_EVERY_ENTRIES === 0) {
+        await yieldToEventLoop();
+      }
+      if (hasTimedOut()) {
+        stoppedBy = 'timeout';
+        break search;
+      }
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (scheduledDirectories >= budgets.maxDirectories) {
+          stoppedBy = 'maxDirectories';
+          break search;
+        }
+        pendingDirectories.push(fullPath);
+        scheduledDirectories += 1;
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (scannedFiles >= budgets.maxFiles) {
+        stoppedBy = 'maxFiles';
+        break search;
+      }
+
+      scannedFiles += 1;
+      const relativePath = path.relative(root, fullPath).split(path.sep).join('/');
+      if (matchesPattern(relativePath)) results.push(relativePath);
+      if (results.length >= budgets.maxResults) {
+        stoppedBy = 'maxResults';
+        break search;
+      }
+      if (scannedFiles >= budgets.maxFiles) {
+        stoppedBy = 'maxFiles';
+        break search;
+      }
+    }
+  }
+
+  return {
+    pattern,
+    count: results.length,
+    files: results,
+    truncated: stoppedBy !== null,
+    stoppedBy,
+    scanned: {
+      files: scannedFiles,
+      directories: scannedDirectories,
+      elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+    },
+    limits: budgets,
+  };
+}
 
 /**
  * Simple glob matcher for common patterns.
  * Supports **, *, and ? wildcards.
  */
-function matchGlob(filePath: string, pattern: string): boolean {
+function createGlobMatcher(pattern: string): (filePath: string) => boolean {
   const regex = globToRegex(pattern);
-  return regex.test(filePath) || (!pattern.includes('/') && regex.test(path.basename(filePath)));
+  const matchesBasename = !pattern.includes('/');
+  return (filePath) =>
+    regex.test(filePath) ||
+    (matchesBasename && regex.test(path.basename(filePath)));
 }
 
 function globToRegex(pattern: string): RegExp {

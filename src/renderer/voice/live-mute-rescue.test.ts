@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  hasInsufficientLiveMicFrames,
   liveMuteRescueCount,
   markLiveMuteRescueAttempt,
   markLiveMicFrameOffered,
+  MIN_USABLE_LIVE_MIC_FRAMES,
   resetLiveMuteRescues,
   resetOfferedLiveMicFramesThisTurn,
   shouldAttemptLiveMuteRescue,
@@ -16,7 +18,11 @@ beforeEach(() => {
 });
 
 describe('live mute rescue', () => {
-  it('only replays an explicit usable turn when zero frames were sent', () => {
+  it('treats zero or one socket frame as insufficient Live capture', () => {
+    expect(hasInsufficientLiveMicFrames(0)).toBe(true);
+    expect(hasInsufficientLiveMicFrames(1)).toBe(true);
+    expect(hasInsufficientLiveMicFrames(MIN_USABLE_LIVE_MIC_FRAMES)).toBe(false);
+
     expect(
       shouldAttemptLiveMuteRescue({
         realtimeIsOwner: true,
@@ -31,6 +37,14 @@ describe('live mute rescue', () => {
         localSpeechUsable: true,
         explicitCapture: true,
         offeredFrames: 1,
+      }),
+    ).toBe(true);
+    expect(
+      shouldAttemptLiveMuteRescue({
+        realtimeIsOwner: true,
+        localSpeechUsable: true,
+        explicitCapture: true,
+        offeredFrames: 2,
       }),
     ).toBe(false);
     expect(

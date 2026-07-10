@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { BrowserPaneState, PaneModel } from '../../shared/types';
 import { attachBrowserPane } from '../browser/browser-host';
 import { useLayoutStore } from '../state/layout-store';
+import { BrowserDesignBar } from './BrowserDesignBar';
+import { DesignSidebar } from './DesignSidebar';
 import { PaneToolbar } from './PaneToolbar';
 
 interface Props {
@@ -27,6 +29,7 @@ export function BrowserPane({ pane, isCanvas }: Props) {
     url: pane.browserUrl ?? 'about:blank',
   });
   const [draftUrl, setDraftUrl] = useState(state.url);
+  const [stylesOpen, setStylesOpen] = useState(false);
 
   useEffect(() => {
     const slot = slotRef.current;
@@ -114,8 +117,16 @@ export function BrowserPane({ pane, isCanvas }: Props) {
           aria-label="URL do browser"
         />
       </form>
+      <BrowserDesignBar
+        paneId={pane.id}
+        stylesOpen={stylesOpen}
+        onToggleStyles={() => setStylesOpen((open) => !open)}
+      />
       {state.error && <div className="browser-pane__error nodrag">{state.error}</div>}
-      <div ref={slotRef} className="browser-pane__surface nodrag" />
+      <div className="browser-pane__body">
+        <div ref={slotRef} className="browser-pane__surface nodrag" />
+        {stylesOpen && <DesignSidebar paneId={pane.id} />}
+      </div>
     </div>
   );
 }

@@ -1,6 +1,12 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import type Database from 'better-sqlite3';
+import { z } from 'zod';
+import {
+  projectExecutionScopeSchema,
+  type ProjectExecutionScope,
+} from '../../shared/types';
+import { ScopedStoreCorruptionError } from '../orch/scoped-store';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 
 export type TranscriptRole = 'user' | 'assistant';
 
@@ -12,133 +18,218 @@ export interface TranscriptAppend {
 }
 
 export interface TranscriptRecord extends TranscriptAppend {
-  ts: string;
-  audio_url: string | null;
+  readonly id: string;
+  readonly sessionId: string;
+  readonly sequence: number;
+  readonly ts: string;
+  readonly audio_url: string | null;
+  readonly projectId: string;
+  readonly checkoutId: string;
 }
 
 export interface TranscriptStoreOptions {
-  baseDir?: string;
   now?: () => Date;
-  maxFileBytes?: number;
+  idFactory?: () => string;
   maxTextChars?: number;
   retentionDays?: number;
 }
 
-const DEFAULT_APP_SUPPORT_DIR = path.join(
-  os.homedir(),
-  'Library',
-  'Application Support',
-  'NexusIDE',
-  'transcripts',
-);
-const DEFAULT_MAX_FILE_BYTES = 1024 * 1024;
 const DEFAULT_MAX_TEXT_CHARS = 4_000;
 const DEFAULT_RETENTION_DAYS = 30;
+const MAX_INPUT_TEXT_CHARS = 1_048_576;
 
-interface SessionFile {
-  dateKey: string;
-  index: number;
-  file: string;
+const sessionIdSchema = z.string().min(1).max(256);
+const transcriptAppendSchema = z
+  .object({
+    role: z.enum(['user', 'assistant']),
+    text: z.string().max(MAX_INPUT_TEXT_CHARS),
+    final: z.boolean(),
+    audio_url: z.string().max(4_096).nullable().optional(),
+  })
+  .strict();
+const transcriptRowSchema = z
+  .object({
+    id: z.string().min(1).max(256),
+    session_id: sessionIdSchema,
+    sequence: z.number().int().positive(),
+    role: z.enum(['user', 'assistant']),
+    text: z.string().max(DEFAULT_MAX_TEXT_CHARS),
+    audio_url: z.string().max(4_096).nullable(),
+    created_at: z.number().int().nonnegative(),
+  })
+  .strict();
+
+function immutableScope(scope: ProjectExecutionScope): ProjectExecutionScope {
+  return Object.freeze(projectExecutionScopeSchema.parse({ ...scope }));
 }
 
+function validateOptions(options: TranscriptStoreOptions): {
+  now: () => Date;
+  idFactory: () => string;
+  maxTextChars: number;
+  retentionDays: number;
+} {
+  return {
+    now: options.now ?? (() => new Date()),
+    idFactory: options.idFactory ?? (() => `voice-transcript-${randomUUID()}`),
+    maxTextChars: z
+      .number()
+      .int()
+      .positive()
+      .max(DEFAULT_MAX_TEXT_CHARS)
+      .parse(options.maxTextChars ?? DEFAULT_MAX_TEXT_CHARS),
+    retentionDays: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(3_650)
+      .parse(options.retentionDays ?? DEFAULT_RETENTION_DAYS),
+  };
+}
+
+/**
+ * Append-only voice transcript bound to one immutable project/checkout.
+ * Session ids order rows inside that physical runtime but never select it.
+ */
 export class TranscriptStore {
-  private readonly baseDir: string;
-  private readonly now: () => Date;
-  private readonly maxFileBytes: number;
-  private readonly maxTextChars: number;
-  private readonly retentionDays: number;
-  private readonly sessionFiles = new Map<string, SessionFile>();
+  readonly scope: ProjectExecutionScope;
+  readonly #runtimeManager: ProjectRuntimeManager;
+  readonly #now: () => Date;
+  readonly #idFactory: () => string;
+  readonly #maxTextChars: number;
+  readonly #retentionDays: number;
 
-  constructor(options: TranscriptStoreOptions = {}) {
-    this.baseDir = options.baseDir ?? DEFAULT_APP_SUPPORT_DIR;
-    this.now = options.now ?? (() => new Date());
-    this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
-    this.maxTextChars = options.maxTextChars ?? DEFAULT_MAX_TEXT_CHARS;
-    this.retentionDays = options.retentionDays ?? DEFAULT_RETENTION_DAYS;
+  constructor(
+    runtimeManager: ProjectRuntimeManager,
+    scope: ProjectExecutionScope,
+    options: TranscriptStoreOptions = {},
+  ) {
+    const validated = validateOptions(options);
+    this.#runtimeManager = runtimeManager;
+    this.scope = immutableScope(scope);
+    this.#now = validated.now;
+    this.#idFactory = validated.idFactory;
+    this.#maxTextChars = validated.maxTextChars;
+    this.#retentionDays = validated.retentionDays;
   }
 
-  append(sessionId: string, line: TranscriptAppend): TranscriptRecord | null {
+  append(
+    rawSessionId: string,
+    rawLine: TranscriptAppend,
+  ): TranscriptRecord | null {
+    const sessionId = sessionIdSchema.parse(rawSessionId);
+    const line = transcriptAppendSchema.parse(rawLine);
     if (!line.final) return null;
-    const now = this.now();
-    const record: TranscriptRecord = {
-      ts: now.toISOString(),
-      role: line.role,
-      text: this.truncateText(line.text),
-      audio_url: line.audio_url ?? null,
-      final: line.final,
-    };
-    const serialized = `${JSON.stringify(record)}\n`;
-    fs.mkdirSync(this.baseDir, { recursive: true });
-    this.pruneExpired(now);
-    let target = this.pathForSessionAt(sessionId, now);
-    if (this.wouldOverflow(target.file, serialized)) {
-      target = this.rotateSessionFile(sessionId, now, target.index + 1);
+    const now = this.#validNow();
+    const id = z.string().min(1).max(256).parse(this.#idFactory());
+    const db = this.#runtimeManager.open(this.scope);
+    db.assertWritable();
+
+    return db.db
+      .transaction(() => {
+        this.#pruneExpired(db.db, now);
+        const row = db.db
+          .prepare(
+            `SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+             FROM voice_transcript_entries WHERE session_id = ?`,
+          )
+          .get(sessionId) as { next_sequence?: unknown } | undefined;
+        const sequence = z.number().int().positive().parse(row?.next_sequence);
+        const text = line.text.slice(0, this.#maxTextChars);
+        db.db
+          .prepare(
+            `INSERT INTO voice_transcript_entries
+               (id, session_id, sequence, role, text, audio_url, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            id,
+            sessionId,
+            sequence,
+            line.role,
+            text,
+            line.audio_url ?? null,
+            now.getTime(),
+          );
+        return this.#record({
+          id,
+          session_id: sessionId,
+          sequence,
+          role: line.role,
+          text,
+          audio_url: line.audio_url ?? null,
+          created_at: now.getTime(),
+        });
+      })
+      .immediate();
+  }
+
+  list(rawSessionId: string): TranscriptRecord[] {
+    const sessionId = sessionIdSchema.parse(rawSessionId);
+    const rows = this.#runtimeManager
+      .open(this.scope)
+      .db.prepare(
+        `SELECT id, session_id, sequence, role, text, audio_url, created_at
+         FROM voice_transcript_entries
+         WHERE session_id = ?
+         ORDER BY sequence ASC`,
+      )
+      .all(sessionId);
+    return rows.map((row) => this.#record(row));
+  }
+
+  #validNow(): Date {
+    const now = this.#now();
+    if (
+      !(now instanceof Date) ||
+      !Number.isSafeInteger(now.getTime()) ||
+      now.getTime() < 0
+    ) {
+      throw new Error('transcript store clock returned an invalid date');
     }
-    fs.appendFileSync(target.file, serialized, 'utf-8');
-    return record;
+    return new Date(now.getTime());
   }
 
-  pathForSession(sessionId: string): string {
-    return this.pathForSessionAt(sessionId, this.now()).file;
-  }
-
-  private pathForSessionAt(sessionId: string, now: Date): SessionFile {
-    const existing = this.sessionFiles.get(sessionId);
-    const dateKey = dateKeyFor(now);
-    if (existing?.dateKey === dateKey) return existing;
-    return this.rotateSessionFile(sessionId, now, 0);
-  }
-
-  private rotateSessionFile(sessionId: string, now: Date, index: number): SessionFile {
-    const dateKey = dateKeyFor(now);
-    const startedAt = now.toISOString().replace(/[:.]/g, '-');
-    const safeSessionId = sessionId.replace(/[^a-zA-Z0-9_.-]/g, '_');
-    const suffix = index === 0 ? '' : `.${index}`;
-    const entry = {
-      dateKey,
-      index,
-      file: path.join(this.baseDir, `${startedAt}-${safeSessionId}${suffix}.jsonl`),
-    };
-    this.sessionFiles.set(sessionId, entry);
-    return entry;
-  }
-
-  private truncateText(text: string): string {
-    if (text.length <= this.maxTextChars) return text;
-    return text.slice(0, this.maxTextChars);
-  }
-
-  private wouldOverflow(file: string, nextLine: string): boolean {
-    const nextBytes = Buffer.byteLength(nextLine, 'utf-8');
-    if (nextBytes > this.maxFileBytes) return true;
-    if (!fs.existsSync(file)) return false;
-    return fs.statSync(file).size + nextBytes > this.maxFileBytes;
-  }
-
-  private pruneExpired(now: Date): void {
-    if (this.retentionDays <= 0 || !fs.existsSync(this.baseDir)) return;
+  #pruneExpired(
+    db: Database.Database,
+    now: Date,
+  ): void {
+    if (this.#retentionDays <= 0) return;
     const cutoff = new Date(now);
-    cutoff.setUTCDate(cutoff.getUTCDate() - this.retentionDays);
-    const cutoffKey = dateKeyFor(cutoff);
-    for (const name of fs.readdirSync(this.baseDir)) {
-      if (!name.endsWith('.jsonl')) continue;
-      const fileDate = name.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
-      if (!fileDate || fileDate >= cutoffKey) continue;
-      const file = path.join(this.baseDir, name);
-      try {
-        fs.unlinkSync(file);
-      } catch {
-        // Retention is best-effort; append must not fail because cleanup raced.
-      }
-      for (const [sessionId, entry] of this.sessionFiles) {
-        if (entry.file === file) this.sessionFiles.delete(sessionId);
-      }
+    cutoff.setUTCDate(cutoff.getUTCDate() - this.#retentionDays);
+    db.prepare('DELETE FROM voice_transcript_entries WHERE created_at < ?').run(
+      cutoff.getTime(),
+    );
+  }
+
+  #record(rawRow: unknown): TranscriptRecord {
+    let row: z.infer<typeof transcriptRowSchema>;
+    try {
+      row = transcriptRowSchema.parse(rawRow);
+    } catch (error) {
+      throw new ScopedStoreCorruptionError('voice transcript', {
+        cause: error,
+      });
     }
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      sequence: row.sequence,
+      ts: new Date(row.created_at).toISOString(),
+      role: row.role,
+      text: row.text,
+      audio_url: row.audio_url,
+      final: true,
+      projectId: this.scope.projectId,
+      checkoutId: this.scope.checkoutId,
+    };
   }
 }
 
-export const transcriptStore = new TranscriptStore();
-
-function dateKeyFor(date: Date): string {
-  return date.toISOString().slice(0, 10);
+export function createScopedTranscriptStore(
+  runtimeManager: ProjectRuntimeManager,
+  scope: ProjectExecutionScope,
+  options: TranscriptStoreOptions = {},
+): TranscriptStore {
+  return new TranscriptStore(runtimeManager, scope, options);
 }

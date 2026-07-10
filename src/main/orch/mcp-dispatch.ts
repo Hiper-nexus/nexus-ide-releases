@@ -1,7 +1,5 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { activeWorkspaceOrNull } from '../persistence/workspace-store';
+import type { ProjectExecutionScope } from '../../shared/types';
 import { requiresConfirmation, confirmationReason } from '../jarvis/guardrails';
 import {
   auditDenied,
@@ -16,12 +14,18 @@ import {
   type PermissionScope,
 } from '../jarvis/permissions';
 import {
+  bindContextRevision,
   canonicalToolName,
   isToolAllowed,
   type AgentGateContext,
 } from './gate';
+import {
+  effectPolicyForTool,
+  isEffectfulTool,
+} from './mcp-effect-policy';
 import { validateToolArgs } from './mcp-args-validation';
 import type { McpRegistry, McpToolDef } from './mcp-protocol';
+import { getContextWorkflowService } from '../context/context-workflow-registry';
 
 export type McpDispatchSource = AuditSource;
 
@@ -42,6 +46,10 @@ export interface McpConfirmationRequest {
   source: McpDispatchSource;
   sessionId: string;
   workspaceId: string;
+  projectId: string;
+  checkoutId: string;
+  missionId?: string;
+  contextRevision?: string;
   toolName: string;
   args: Record<string, unknown>;
   reason: string;
@@ -54,9 +62,42 @@ export type McpConfirmationHandler = (
 
 export interface McpDispatchOptions {
   confirm?: McpConfirmationHandler;
+  /** Internal seam for isolated dispatch tests; production uses PREVC. */
+  resolveWorkflowAuthority?: WorkflowAuthorityResolver;
 }
 
+export interface WorkflowEffectAuthority {
+  readonly contextRevision: string;
+  assertExecutionEffectAllowed(
+    toolName: string,
+    args: Readonly<Record<string, unknown>>,
+  ): void;
+}
+
+export type WorkflowAuthorityResolver = (
+  scope: ProjectExecutionScope,
+  missionId: string,
+) => WorkflowEffectAuthority;
+
 const RENDERER_SESSION_ID = 'jarvis-renderer';
+
+function resolveProductionWorkflowAuthority(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): WorkflowEffectAuthority {
+  const service = getContextWorkflowService(scope);
+  const stored = service.getMissionWorkflow(missionId).contract;
+  if (!stored) {
+    throw new Error('mission effect blocked until context and contract are frozen');
+  }
+  return Object.freeze({
+    contextRevision: stored.contract.contextRevision,
+    assertExecutionEffectAllowed: (
+      toolName: string,
+      args: Readonly<Record<string, unknown>>,
+    ) => service.assertMutationAllowed(missionId, toolName, args),
+  });
+}
 
 function normalizeSessionId(source: McpDispatchSource, ctx: AgentGateContext): string {
   if (source === 'ipc-renderer') return RENDERER_SESSION_ID;
@@ -64,19 +105,20 @@ function normalizeSessionId(source: McpDispatchSource, ctx: AgentGateContext): s
   return ctx.sessionId ?? `http:${ctx.token.slice(0, 16)}`;
 }
 
-export function currentPermissionWorkspaceId(): string {
-  const workspace = activeWorkspaceOrNull();
-  if (!workspace) return 'no-workspace';
-  return fs.realpathSync(path.resolve(workspace));
-}
-
 export function permissionScopeForTool(
   sessionId: string,
-  workspaceId: string,
+  projectScope: ProjectExecutionScope,
   toolName: string,
   args: Record<string, unknown>,
 ): PermissionScope {
-  return { sessionId, workspaceId, toolName, args };
+  return {
+    sessionId,
+    workspaceId: projectScope.rootRealPath,
+    projectId: projectScope.projectId,
+    checkoutId: projectScope.checkoutId,
+    toolName,
+    args,
+  };
 }
 
 function auditUnavailableResult(
@@ -107,10 +149,10 @@ function writeAudit(
 }
 
 function needsConfirmation(
-  tool: McpToolDef,
+  toolName: string,
   args: Record<string, unknown>,
 ): boolean {
-  return tool.requiresConfirm === true || requiresConfirmation(tool.name, args);
+  return requiresConfirmation(toolName, args);
 }
 
 function resolveDispatchTool(
@@ -124,6 +166,42 @@ function resolveDispatchTool(
   );
 }
 
+function bindEffectAuthority(
+  source: McpDispatchSource,
+  ctx: AgentGateContext,
+  toolName: string,
+  args: Readonly<Record<string, unknown>>,
+  resolver: WorkflowAuthorityResolver,
+): string | undefined {
+  const policy = effectPolicyForTool(toolName);
+  if (
+    policy === 'read-only' ||
+    policy === 'bootstrap-authority' ||
+    policy === 'handoff-authority'
+  ) {
+    return ctx.contextRevision;
+  }
+  if (policy === 'renderer-authorized-effect') {
+    if (source !== 'ipc-renderer' || ctx.role !== 'user') {
+      throw new Error(
+        'renderer-authorized effect requires renderer user authority',
+      );
+    }
+    return ctx.contextRevision;
+  }
+  if (!ctx.missionId) {
+    throw new Error(
+      'mission effect blocked: projectId, checkoutId, missionId and contextRevision are required',
+    );
+  }
+  const authority = resolver(ctx.scope, ctx.missionId);
+  bindContextRevision(ctx, authority.contextRevision);
+  if (policy === 'execution-effect') {
+    authority.assertExecutionEffectAllowed(toolName, args);
+  }
+  return ctx.contextRevision;
+}
+
 export async function dispatchToolCall(
   source: McpDispatchSource,
   registry: McpRegistry,
@@ -134,9 +212,14 @@ export async function dispatchToolCall(
 ): Promise<ToolDispatchResult> {
   const startMs = Date.now();
   const sessionId = normalizeSessionId(source, ctx);
+  let auditContext = {
+    scope: ctx.scope,
+    missionId: ctx.missionId,
+    contextRevision: ctx.contextRevision,
+  };
 
   try {
-    ensureAuditLogWritable();
+    ensureAuditLogWritable(auditContext);
   } catch (err) {
     return auditUnavailableResult(toolName, err);
   }
@@ -149,6 +232,7 @@ export async function dispatchToolCall(
     const auditFailure = writeAudit(
       () =>
         auditError(
+          auditContext,
           sessionId,
           toolName,
           args,
@@ -156,6 +240,7 @@ export async function dispatchToolCall(
           `unknown tool: ${toolName}`,
           false,
           source,
+          undefined,
         ),
       toolName,
     );
@@ -171,6 +256,7 @@ export async function dispatchToolCall(
     const auditFailure = writeAudit(
       () =>
         auditError(
+          auditContext,
           sessionId,
           tool.name,
           {},
@@ -178,6 +264,7 @@ export async function dispatchToolCall(
           `invalid arguments: ${detail}`,
           false,
           source,
+          undefined,
         ),
       tool.name,
     );
@@ -192,6 +279,7 @@ export async function dispatchToolCall(
     const auditFailure = writeAudit(
       () =>
         auditDenied(
+          auditContext,
           sessionId,
           tool.name,
           args,
@@ -210,19 +298,45 @@ export async function dispatchToolCall(
     };
   }
 
-  const confirmationRequired = needsConfirmation(tool, args);
+  try {
+    const contextRevision = bindEffectAuthority(
+      source,
+      ctx,
+      tool.name,
+      args,
+      options.resolveWorkflowAuthority ?? resolveProductionWorkflowAuthority,
+    );
+    auditContext = {
+      scope: ctx.scope,
+      missionId: ctx.missionId,
+      contextRevision,
+    };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    const auditFailure = writeAudit(
+      () =>
+        auditDenied(
+          auditContext,
+          sessionId,
+          tool.name,
+          args,
+          Date.now() - startMs,
+          reason,
+          source,
+        ),
+      tool.name,
+    );
+    if (auditFailure) return auditFailure;
+    return { ok: false, tool: tool.name, denied: true, error: reason };
+  }
+
+  const confirmationRequired = needsConfirmation(tool.name, args);
+  const effectful = isEffectfulTool(tool.name);
   let userAuthorized = false;
 
   if (confirmationRequired) {
-    let workspaceId: string;
-    try {
-      workspaceId = currentPermissionWorkspaceId();
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      return { ok: false, tool: tool.name, error: `workspace_unavailable: ${detail}` };
-    }
-
-    const scope = permissionScopeForTool(sessionId, workspaceId, tool.name, args);
+    const workspaceId = ctx.scope.rootRealPath;
+    const scope = permissionScopeForTool(sessionId, ctx.scope, tool.name, args);
     userAuthorized = consumePermission(scope);
     if (!userAuthorized) {
       const reason = confirmationReason(tool.name, args);
@@ -233,6 +347,10 @@ export async function dispatchToolCall(
             source,
             sessionId,
             workspaceId,
+            projectId: ctx.scope.projectId,
+            checkoutId: ctx.scope.checkoutId,
+            missionId: ctx.missionId,
+            contextRevision: ctx.contextRevision,
             toolName: tool.name,
             args,
             reason,
@@ -244,6 +362,7 @@ export async function dispatchToolCall(
           const auditFailure = writeAudit(
             () =>
               auditDenied(
+                auditContext,
                 sessionId,
                 tool.name,
                 args,
@@ -271,6 +390,7 @@ export async function dispatchToolCall(
           const auditFailure = writeAudit(
             () =>
               auditDenied(
+                auditContext,
                 sessionId,
                 tool.name,
                 args,
@@ -299,6 +419,7 @@ export async function dispatchToolCall(
         const auditFailure = writeAudit(
           () =>
             auditDenied(
+              auditContext,
               sessionId,
               tool.name,
               args,
@@ -321,11 +442,12 @@ export async function dispatchToolCall(
     }
   }
 
-  const invocationId = confirmationRequired ? randomUUID() : undefined;
+  const invocationId = effectful ? randomUUID() : undefined;
   if (invocationId) {
     const auditFailure = writeAudit(
       () =>
         auditIntent(
+          auditContext,
           sessionId,
           tool.name,
           args,
@@ -344,6 +466,7 @@ export async function dispatchToolCall(
     const auditFailure = writeAudit(
       () =>
         auditSuccess(
+          auditContext,
           sessionId,
           tool.name,
           args,
@@ -353,7 +476,7 @@ export async function dispatchToolCall(
           invocationId,
         ),
       tool.name,
-      confirmationRequired,
+      effectful,
     );
     if (auditFailure) return auditFailure;
     return {
@@ -367,6 +490,7 @@ export async function dispatchToolCall(
     const auditFailure = writeAudit(
       () =>
         auditError(
+          auditContext,
           sessionId,
           tool.name,
           args,
@@ -377,7 +501,7 @@ export async function dispatchToolCall(
           invocationId,
         ),
       tool.name,
-      confirmationRequired,
+      effectful,
     );
     if (auditFailure) return auditFailure;
     return {
@@ -385,7 +509,7 @@ export async function dispatchToolCall(
       tool: tool.name,
       error: errorMsg,
       userAuthorized,
-      effectMayHaveCommitted: confirmationRequired,
+      effectMayHaveCommitted: effectful,
     };
   }
 }

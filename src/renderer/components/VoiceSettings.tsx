@@ -364,13 +364,28 @@ export function VoiceSettings() {
   const activeBrain =
     info?.jarvisBrain.active?.provider ?? info?.jarvisBrain.chain[0]?.provider ?? 'fallback';
   const realtimeActive = Boolean(jarvisLiveOn && liveRealtime && liveState?.realtimeReady);
-  const liveMode = realtimeActive
-    ? 'Realtime ativo'
-    : jarvisLiveOn
-      ? liveRealtime
-        ? `${realtimeTransport === 'gemini-live' ? 'Gemini Live' : 'OpenAI Realtime'} conectando`
-        : 'live classic'
-      : 'push-to-talk';
+  const liveTransportLabel =
+    realtimeTransport === 'gemini-live' ? 'Gemini Live' : 'OpenAI Realtime';
+  const realtimeConfigured = Boolean(jarvisLiveOn && liveRealtime);
+  const liveConnectionTone = realtimeActive
+    ? 'online'
+    : realtimeConfigured
+      ? 'connecting'
+      : 'idle';
+  const liveConnectionLabel = realtimeActive
+    ? `${liveTransportLabel} conectado`
+    : realtimeConfigured
+      ? `${liveTransportLabel} conectando`
+      : jarvisLiveOn
+        ? 'Jarvis Live clássico'
+        : 'Jarvis em modo manual';
+  const liveConnectionDetail = realtimeActive
+    ? `Wake word e conversa seguem direto pelo ${liveTransportLabel}. O TTS clássico só entra como fallback.`
+    : realtimeConfigured
+      ? `O canal ${liveTransportLabel} será usado assim que a sessão terminar de conectar.`
+      : jarvisLiveOn
+        ? 'A sessão contínua está ativa, mas usa o pipeline clássico de voz.'
+        : 'Ative Jarvis Live para manter uma sessão de voz contínua.';
   const wakeMode =
     wakeWordOn && info?.wakeLockHolderPid
       ? `wake word preso pelo PID ${info.wakeLockHolderPid}`
@@ -392,10 +407,18 @@ export function VoiceSettings() {
             J
           </span>
           <div className="voice-settings__hero-copy">
-            <span className="voice-settings__eyebrow">VOICE CONTROL</span>
-            <h3 className="voice-settings__title">Jarvis</h3>
+            <div className="voice-settings__title-row">
+              <h3 className="voice-settings__title">Jarvis</h3>
+              <span
+                className={`voice-settings__connection voice-settings__connection--${liveConnectionTone}`}
+                aria-live="polite"
+              >
+                <span aria-hidden />
+                {liveConnectionLabel}
+              </span>
+            </div>
             <p className="voice-settings__subtitle">
-              Pipeline de voz, wake word, live mode e persona em um painel único.
+              Controle de wake word, áudio Live e rotas de fallback.
             </p>
           </div>
           <CloseButton
@@ -409,28 +432,41 @@ export function VoiceSettings() {
           <p className="agent-picker__empty">Carregando pipeline de voz…</p>
         ) : (
           <>
-            <div className="voice-settings__status-grid" aria-label="Estado do Jarvis">
-              <span className="voice-settings__status-card">
-                <span>STT</span>
-                <strong>{activeStt}</strong>
-              </span>
-              <span className="voice-settings__status-card">
-                <span>TTS</span>
-                <strong>{activeTts}</strong>
-              </span>
-              <span className="voice-settings__status-card">
-                <span>BRAIN</span>
-                <strong>{activeBrain}</strong>
-              </span>
-              <span className="voice-settings__status-card voice-settings__status-card--accent">
-                <span>MODE</span>
-                <strong>{liveMode}</strong>
-              </span>
-            </div>
+            <section className="voice-settings__signal" aria-label="Estado do Jarvis">
+              <div className="voice-settings__signal-summary">
+                <span>Canal de voz</span>
+                <strong>{liveConnectionLabel}</strong>
+                <p>{liveConnectionDetail}</p>
+              </div>
+              <div className="voice-settings__route" aria-label="Rota de atendimento">
+                <span>Wake word</span>
+                <i aria-hidden>→</i>
+                <strong>{realtimeConfigured ? liveTransportLabel : 'Pipeline clássico'}</strong>
+                <i aria-hidden>→</i>
+                <span>{realtimeConfigured ? 'áudio ao vivo' : 'resposta por TTS'}</span>
+              </div>
+              <div className="voice-settings__fallback-strip" aria-label="Fallbacks configurados">
+                <span>
+                  <b>STT fallback</b>
+                  {activeStt}
+                </span>
+                <span>
+                  <b>TTS fallback</b>
+                  {activeTts}
+                </span>
+                <span>
+                  <b>Cérebro fallback</b>
+                  {activeBrain}
+                </span>
+              </div>
+            </section>
 
             {transcriptAppend.length > 0 && (
               <section className="voice-settings__section" aria-label="Transcrição live">
-                <h4 className="voice-settings__section-title">Transcript</h4>
+                <div className="voice-settings__section-head">
+                  <h4 className="voice-settings__section-title">Atividade recente</h4>
+                  <span>{Math.min(transcriptAppend.length, 6)} eventos</span>
+                </div>
                 <div className="voice-settings__transcript-list">
                   {transcriptAppend.slice(-6).map((line, index) => (
                     <p
@@ -445,11 +481,14 @@ export function VoiceSettings() {
               </section>
             )}
 
-            <section className="voice-settings__section" aria-label="Pipeline de voz">
-              <h4 className="voice-settings__section-title">Pipeline</h4>
+            <section className="voice-settings__section" aria-label="Fallback clássico">
+              <div className="voice-settings__section-head voice-settings__section-head--stacked">
+                <h4 className="voice-settings__section-title">Fallback clássico</h4>
+                <p>Usado apenas quando o canal Live não estiver disponível.</p>
+              </div>
               <div className="voice-settings__form-grid">
                 <label className="agent-picker__label">
-                  STT · traduz PT→EN
+                  STT de fallback
                   <select
                     className="agent-picker__select"
                     value={sttProvider}
@@ -464,7 +503,7 @@ export function VoiceSettings() {
                 </label>
 
                 <label className="agent-picker__label">
-                  TTS · voz de saída
+                  TTS de fallback
                   <select
                     className="agent-picker__select"
                     value={ttsProvider}
@@ -479,7 +518,7 @@ export function VoiceSettings() {
                 </label>
 
                 <label className="agent-picker__label">
-                  Cérebro Jarvis
+                  Cérebro de fallback
                   <select
                     className="agent-picker__select"
                     value={jarvisBrainProvider}
@@ -497,7 +536,10 @@ export function VoiceSettings() {
 
             {info.keys.length > 0 && (
               <section className="voice-settings__section" aria-label="Voice API keys">
-                <h4 className="voice-settings__section-title">Credenciais</h4>
+                <div className="voice-settings__section-head voice-settings__section-head--stacked">
+                  <h4 className="voice-settings__section-title">Credenciais</h4>
+                  <p>As chaves ficam protegidas no cofre local deste Mac.</p>
+                </div>
                 {info.keys.map((key) => {
                   const credentialLink = credentialLinkForEnv(key.envVar);
                   return (
@@ -545,7 +587,10 @@ export function VoiceSettings() {
             )}
 
             <section className="voice-settings__section" aria-label="Operação Jarvis">
-              <h4 className="voice-settings__section-title">Operação</h4>
+              <div className="voice-settings__section-head voice-settings__section-head--stacked">
+                <h4 className="voice-settings__section-title">Como Jarvis atende</h4>
+                <p>As opções Live são aplicadas na hora. Os demais ajustes usam Salvar alterações.</p>
+              </div>
               <div className="voice-settings__form-grid voice-settings__form-grid--compact">
                 <label className="agent-picker__label">
                   Modo de fala
@@ -612,22 +657,14 @@ export function VoiceSettings() {
               )}
 
               <div className="voice-settings__toggle-stack">
-                <label className="voice-settings__toggle">
-                  <span>
-                    <strong>Wake word</strong>
-                    <span>Diga "Hey Jarvis"; detecção local/offline via openWakeWord.</span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={wakeWordOn}
-                    onChange={(e) => setWakeWordOn(e.target.checked)}
-                  />
-                </label>
-
-                <label className="voice-settings__toggle">
+                <label
+                  className={`voice-settings__toggle voice-settings__toggle--primary ${
+                    jarvisLiveOn ? 'voice-settings__toggle--selected' : ''
+                  }`}
+                >
                   <span>
                     <strong>Jarvis Live</strong>
-                    <span>Sessão contínua com grace reuse, contexto curto e barge-in.</span>
+                    <span>Sessão contínua, contexto curto e resposta por voz sem reiniciar a conversa.</span>
                   </span>
                   <input
                     type="checkbox"
@@ -636,15 +673,29 @@ export function VoiceSettings() {
                   />
                 </label>
 
+                <label className="voice-settings__toggle">
+                  <span>
+                    <strong>Wake word</strong>
+                    <span>Diga “Hey Jarvis”; a detecção acontece localmente no Mac.</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={wakeWordOn}
+                    onChange={(e) => setWakeWordOn(e.target.checked)}
+                  />
+                </label>
+
                 {jarvisLiveOn && (
-                  <label className="voice-settings__toggle">
+                  <label
+                    className={`voice-settings__toggle ${
+                      liveRealtime ? 'voice-settings__toggle--selected' : ''
+                    }`}
+                  >
                     <span>
                       <strong>Áudio realtime</strong>
                       <span>
-                        {realtimeTransport === 'gemini-live'
-                          ? 'Gemini Live'
-                          : 'OpenAI Realtime'}
-                        {realtimeActive ? ' · ativo' : ' · standby'}
+                        {liveTransportLabel}
+                        {realtimeActive ? ' · conectado' : ' · em espera'}
                       </span>
                     </span>
                     <input
@@ -657,7 +708,7 @@ export function VoiceSettings() {
                 )}
 
                 {jarvisLiveOn && liveRealtime && (
-                  <label className="agent-picker__label">
+                  <label className="agent-picker__label voice-settings__transport-field">
                     Transporte realtime
                     <select
                       className="agent-picker__select"
@@ -711,7 +762,9 @@ export function VoiceSettings() {
 
               <p className="agent-picker__hint voice-settings__mode-hint">
                 {jarvisLiveOn
-                  ? 'No Live, a JARVIS reabre a escuta depois de cada resposta e entra em dormant quando você fica em silêncio.'
+                  ? realtimeConfigured
+                    ? 'O áudio Live recebe prioridade desde o wake. Ao ficar em silêncio, a JARVIS volta para pronta sem trocar de voz.'
+                    : 'No Live clássico, a JARVIS reabre a escuta depois de cada resposta e entra em espera quando você fica em silêncio.'
                   : info.hotkeyMode === 'hold'
                   ? `Segure ${info.shortcut} para falar e solte para enviar.`
                   : `Pressione ${info.shortcut} para começar a falar e pressione de novo para enviar.`}{' '}
@@ -720,7 +773,9 @@ export function VoiceSettings() {
             </section>
 
             <section className="voice-settings__section" aria-label="Persona Jarvis">
-              <h4 className="voice-settings__section-title">Persona</h4>
+              <div className="voice-settings__section-head">
+                <h4 className="voice-settings__section-title">Persona</h4>
+              </div>
               <div className="voice-settings__persona">
                 <label className="agent-picker__label">
                   <span>Seu nome</span>
@@ -761,7 +816,7 @@ export function VoiceSettings() {
 
             <div className="agent-picker__actions">
               <button className="agent-picker__btn" onClick={testVoice} disabled={testing}>
-                {testing ? 'Falando…' : 'Testar voz'}
+                {testing ? 'Testando TTS…' : 'Testar TTS fallback'}
               </button>
               <button
                 className="agent-picker__btn"
@@ -773,17 +828,21 @@ export function VoiceSettings() {
                     : undefined
                 }
               >
-                {testingJarvis ? 'Diagnosticando…' : 'Testar JARVIS'}
+                {testingJarvis
+                  ? 'Testando Live…'
+                  : realtimeConfigured
+                    ? `Testar ${liveTransportLabel}`
+                    : 'Testar Jarvis'}
               </button>
               <button className="agent-picker__btn" onClick={close} disabled={saving}>
-                Cancel
+                Cancelar
               </button>
               <button
                 className="agent-picker__btn agent-picker__btn--primary"
                 onClick={save}
                 disabled={saving}
               >
-                {saving ? 'Saving…' : 'Save'}
+                {saving ? 'Salvando…' : 'Salvar alterações'}
               </button>
             </div>
           </>

@@ -3,11 +3,9 @@ import { z } from 'zod';
 import { MEDIA_CHANNELS, type MediaUsageTotals } from '../../shared/media-types';
 import { listMediaProviders } from './media-providers';
 import { hasMediaKey, maskedMediaKey, setMediaKey } from './media-keys';
-import {
-  initMediaUsageStore,
-  mediaUsageTotalsGlobal,
-} from '../usage/media-usage-store';
-import { getDb } from '../persistence/db';
+import { createScopedMediaUsageStore } from '../usage/media-usage-store';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 
 /**
  * Renderer-facing IPC for media generation providers: list (with masked key
@@ -26,7 +24,7 @@ const setKeySchema = z.object({
   key: z.string().max(512),
 });
 
-export function registerMediaIpc(): void {
+export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
   ipcMain.handle(MEDIA_CHANNELS.listProviders, () =>
     listMediaProviders(hasMediaKey, maskedMediaKey),
   );
@@ -37,14 +35,12 @@ export function registerMediaIpc(): void {
     return setMediaKey(parsed.data.providerId, parsed.data.key);
   });
 
-  ipcMain.handle(MEDIA_CHANNELS.usageTotals, (): MediaUsageTotals => {
-    const db = getDb();
-    if (!db) return { generations: 0, costUsd: 0 };
-    try {
-      initMediaUsageStore(db);
-      return mediaUsageTotalsGlobal(db);
-    } catch {
-      return { generations: 0, costUsd: 0 };
-    }
-  });
+  ipcMain.handle(
+    MEDIA_CHANNELS.usageTotals,
+    (event): MediaUsageTotals =>
+      createScopedMediaUsageStore(
+        runtimeManager,
+        requireRendererWorkspaceScope(event.sender),
+      ).totals(),
+  );
 }

@@ -7,11 +7,12 @@ import type {
   TodoList,
 } from '../../shared/orch-types';
 import { markVictory } from './onboarding-store';
+import { getActiveWorkspacePath } from './active-workspace';
 
 /**
  * Renderer mirror of the orchestration domain (missions / handoffs / todos /
- * squads) plus pane→mission bindings for canvas edges. Hydrated once on boot
- * and kept fresh by main-process change events.
+ * squads) plus pane→mission bindings for canvas edges. Project data is reset
+ * and rehydrated whenever the main-authorized workspace changes.
  */
 
 export type OrchPanelTab = 'missions' | 'handoffs' | 'todos' | 'squads';
@@ -29,7 +30,8 @@ interface OrchState {
   /** paneId → missionId for panes spawned by the orchestration layer. */
   paneMissions: Record<string, string>;
 
-  hydrate(): Promise<void>;
+  hydrate(workspacePath: string): Promise<void>;
+  resetProjectState(): void;
   togglePanel(): void;
   openPanel(tab: OrchPanelTab): void;
   setPanelTab(tab: OrchPanelTab): void;
@@ -56,7 +58,8 @@ export const useOrchStore = create<OrchState>((set) => ({
   boardOpen: false,
   paneMissions: {},
 
-  hydrate: async () => {
+  hydrate: async (workspacePath) => {
+    if (getActiveWorkspacePath() !== workspacePath) return;
     try {
       const [missions, handoffs, todoLists, squads, mcpInfo] =
         await Promise.all([
@@ -66,11 +69,22 @@ export const useOrchStore = create<OrchState>((set) => ({
           window.nexus.orch.listSquads(),
           window.nexus.orch.getMcpInfo(),
         ]);
+      if (getActiveWorkspacePath() !== workspacePath) return;
       set({ missions, handoffs, todoLists, squads, mcpInfo });
     } catch (err) {
-      console.warn('[orch] failed to hydrate orchestration state:', err);
+      if (getActiveWorkspacePath() === workspacePath) {
+        console.warn('[orch] failed to hydrate orchestration state:', err);
+      }
     }
   },
+
+  resetProjectState: () =>
+    set({
+      missions: [],
+      handoffs: [],
+      todoLists: [],
+      paneMissions: {},
+    }),
 
   togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
   openPanel: (tab) => set({ panelOpen: true, panelTab: tab }),

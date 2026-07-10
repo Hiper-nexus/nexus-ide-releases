@@ -10,6 +10,8 @@ function job(over: Partial<CronJob> = {}): CronJob {
     brief: 'roda os testes',
     status: 'active',
     workspacePath: '/ws',
+    projectId: 'project-a',
+    checkoutId: 'checkout-a',
     agentName: 'qa',
     createdAt: 1,
     updatedAt: 1,
@@ -31,6 +33,18 @@ function deps(
       load: () => jobs,
       save: (j) => saved.push(JSON.parse(JSON.stringify(j))),
       fire,
+      executeOccurrence: async (scheduledJob, _scheduledFor, invoke) => {
+        try {
+          await invoke(scheduledJob);
+          return { fired: true, disposition: 'completed' as const };
+        } catch (error) {
+          return {
+            fired: false,
+            disposition: 'fire-failed' as const,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
       now: () => now,
     },
   };
@@ -87,5 +101,23 @@ describe('runCronTick', () => {
     const { deps: d, fire } = deps([job({ schedule: 'lixo' })], now);
     await runCronTick(d);
     expect(fire).not.toHaveBeenCalled();
+  });
+
+  it('avança sem catch-up quando o lease remoto está indisponível', async () => {
+    const jobs = [job()];
+    const now = new Date('2026-07-06T00:00:30').getTime();
+    const fixture = deps(jobs, now);
+    fixture.deps.executeOccurrence = vi.fn(async () => ({
+      fired: false,
+      disposition: 'backend-unavailable' as const,
+      error: 'remote cron lease backend is not configured',
+    }));
+
+    expect(await runCronTick(fixture.deps)).toBe(0);
+    expect(fixture.fire).not.toHaveBeenCalled();
+    expect(fixture.saved.at(-1)?.[0]).toMatchObject({
+      lastError: 'remote cron lease backend is not configured',
+    });
+    expect(fixture.saved.at(-1)![0].nextFireAt).toBeGreaterThan(now);
   });
 });

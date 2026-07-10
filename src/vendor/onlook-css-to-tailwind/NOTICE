@@ -1,0 +1,12 @@
+This directory vendors the CSS → Tailwind translator from the Onlook project.
+
+  Source:  https://github.com/onlook-dev/onlook
+           packages/utility/src/tailwind.ts (fetched 2026-07-10, branch main)
+  License: Apache License 2.0 (see LICENSE in this directory)
+  Copyright: Onlook (onlook-dev) contributors
+
+Onlook's tailwind.ts credits its own origin as an adaptation of
+css-to-tailwind-translator (MIT, https://github.com/hymhub/css-to-tailwind).
+
+Local modifications (NexusIDE, VISUAL-EDIT-001 F3):
+  - none to the translator logic; consumed as-is via CssToTailwindTranslator.

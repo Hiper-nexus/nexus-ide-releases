@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { create } from 'zustand';
 import type { GamificationSnapshot } from '../../shared/gamification-types';
+import { getActiveWorkspacePath } from './active-workspace';
+import { useWorkspaceStore } from './workspace-store';
 
 /**
  * Espelho no renderer do snapshot de gamificação (gamification-service no
@@ -41,6 +43,7 @@ interface GamificationStore {
   profileOpen: boolean;
   hydrate(): Promise<void>;
   receive(snapshot: GamificationSnapshot): void;
+  reset(): void;
   setSober(sober: boolean): void;
   openProfile(): void;
   closeProfile(): void;
@@ -54,9 +57,13 @@ export const useGamificationStore = create<GamificationStore>((set) => ({
 
   hydrate: async () => {
     const api = gamificationApi();
-    if (!api) return;
+    const requestedWorkspace = getActiveWorkspacePath();
+    if (!api || !requestedWorkspace) return;
     try {
-      set({ snapshot: await api.snapshot() });
+      const snapshot = await api.snapshot();
+      if (getActiveWorkspacePath() === requestedWorkspace) {
+        useGamificationStore.getState().receive(snapshot);
+      }
     } catch (err) {
       console.warn('[gamification] hydrate failed:', err);
     }
@@ -68,7 +75,21 @@ export const useGamificationStore = create<GamificationStore>((set) => ({
     }
   },
 
-  receive: (snapshot) => set({ snapshot }),
+  receive: (snapshot) => {
+    const activeWorkspace = getActiveWorkspacePath();
+    if (
+      !activeWorkspace ||
+      snapshot.rootRealPath !== activeWorkspace
+    ) {
+      return;
+    }
+    set({ snapshot });
+  },
+  reset: () =>
+    set({
+      snapshot: EMPTY_GAMIFICATION_SNAPSHOT,
+      profileOpen: false,
+    }),
   setSober: (sober) => set({ sober }),
   openProfile: () => set({ profileOpen: true }),
   closeProfile: () => set({ profileOpen: false }),
@@ -78,12 +99,18 @@ export const useGamificationStore = create<GamificationStore>((set) => ({
 /** Montar uma vez no App (junto do useUsageSync) — hydrate + subscribe. */
 export function useGamificationSync(): void {
   const hydrate = useGamificationStore((s) => s.hydrate);
+  const reset = useGamificationStore((s) => s.reset);
+  const workspacePath = useWorkspaceStore((s) => s.current?.path ?? null);
   useEffect(() => {
-    void hydrate();
+    reset();
+    if (workspacePath) void hydrate();
+  }, [hydrate, reset, workspacePath]);
+
+  useEffect(() => {
     const api = gamificationApi();
     if (!api) return;
     return api.onChanged((snapshot) =>
       useGamificationStore.getState().receive(snapshot),
     );
-  }, [hydrate]);
+  }, []);
 }

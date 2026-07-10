@@ -2,7 +2,7 @@
  * Context / system-instruction builders for LiveTransportController.
  */
 import { getVoiceConfig } from './voice-config-store';
-import { jarvisMemory } from './jarvis-memory';
+import type { JarvisMemoryAccess } from './jarvis-memory';
 import { loadJarvisSystemPrompt } from '../jarvis/realtime/factory';
 import type { TurnManagedRealtimeProvider } from '../jarvis/realtime/provider';
 import { buildResumeContext } from './live-transport-helpers';
@@ -27,6 +27,7 @@ export interface LiveInstructionContext {
   latestContext?: string;
   recentToolResults?: readonly string[];
   recentHistory?: ReadonlyArray<{ role: 'user' | 'assistant'; text: string }>;
+  memory?: JarvisMemoryAccess;
 }
 
 export function buildSystemInstruction(
@@ -40,8 +41,10 @@ export function buildSystemInstruction(
   if (persona.customInstructions?.trim()) {
     parts.push(`User custom instructions:\n${persona.customInstructions.trim()}`);
   }
-  const memory = jarvisMemory.factsBlock();
-  if (memory.trim()) parts.push(`Long-term memory:\n${memory.trim()}`);
+  const memory = session.memory?.factsBlock() ?? '';
+  if (memory.trim()) {
+    parts.push(`Project memory for the current checkout only:\n${memory.trim()}`);
+  }
   if (session.latestContext?.trim()) {
     parts.push(
       'Initial Nexus screen snapshot (it may change during the session):\n' +

@@ -36,7 +36,14 @@ describe('migrateSchema', () => {
 
     expect(columns.get('squads')).toContain('native_instructions');
     expect(columns.get('mission_panes')).toEqual(
-      new Set(['effort', 'pane_id', 'account_id']),
+      new Set([
+        'effort',
+        'pane_id',
+        'account_id',
+        'scope_json',
+        'allowed_tools_json',
+        'allowed_skills_json',
+      ]),
     );
     expect(calls.at(0)).toBe('BEGIN IMMEDIATE');
     expect(calls.at(-1)).toBe('COMMIT');
@@ -56,7 +63,14 @@ describe('migrateSchema', () => {
   it('does not alter a schema that is already current', () => {
     const { db, calls } = fakeDb({
       squads: ['native_instructions'],
-      mission_panes: ['effort', 'pane_id', 'account_id'],
+      mission_panes: [
+        'effort',
+        'pane_id',
+        'account_id',
+        'scope_json',
+        'allowed_tools_json',
+        'allowed_skills_json',
+      ],
     });
 
     migrateSchema(db);

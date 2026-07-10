@@ -17,6 +17,8 @@ interface FileState {
   remainder: string;
   ingest: CodexFileIngest;
   skip: boolean;
+  /** Known cwd not currently owned by an active project scope. */
+  inactiveCwd: string | null;
 }
 
 export interface CodexScannerOptions {
@@ -40,14 +42,20 @@ function dayDir(root: string, date: Date): string {
 export class CodexUsageScanner {
   private files = new Map<string, FileState>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private scanInFlight: Promise<void> | null = null;
   private stopped = false;
 
   constructor(private opts: CodexScannerOptions) {}
 
   start(): void {
-    this.timer = setInterval(() => void this.scan(), this.opts.pollMs ?? DEFAULT_POLL_MS);
+    if (this.timer) return;
+    this.stopped = false;
+    this.timer = setInterval(
+      () => this.scheduleScan(),
+      this.opts.pollMs ?? DEFAULT_POLL_MS,
+    );
     this.timer.unref?.();
-    void this.scan();
+    this.scheduleScan();
   }
 
   stop(): void {
@@ -60,11 +68,26 @@ export class CodexUsageScanner {
     return this.opts.sessionsDir ?? path.join(os.homedir(), '.codex', 'sessions');
   }
 
+  private scheduleScan(): void {
+    if (this.stopped || this.scanInFlight) return;
+    const scan = this.scan();
+    this.scanInFlight = scan;
+    void scan.then(
+      () => {
+        if (this.scanInFlight === scan) this.scanInFlight = null;
+      },
+      () => {
+        if (this.scanInFlight === scan) this.scanInFlight = null;
+      },
+    );
+  }
+
   private async scan(): Promise<void> {
     if (this.stopped) return;
     const now = new Date();
     const dirs = [dayDir(this.root(), now), dayDir(this.root(), new Date(now.getTime() - 86_400_000))];
     for (const dir of dirs) {
+      if (this.stopped) return;
       let names: string[];
       try {
         names = fs.readdirSync(dir);
@@ -72,6 +95,7 @@ export class CodexUsageScanner {
         continue;
       }
       for (const name of names) {
+        if (this.stopped) return;
         if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue;
         await this.ingestTail(path.join(dir, name));
       }
@@ -79,12 +103,29 @@ export class CodexUsageScanner {
   }
 
   private async ingestTail(file: string): Promise<void> {
+    if (this.stopped) return;
     let state = this.files.get(file);
     if (!state) {
-      state = { offset: 0, remainder: '', ingest: new CodexFileIngest(), skip: false };
+      state = {
+        offset: 0,
+        remainder: '',
+        ingest: new CodexFileIngest(),
+        skip: false,
+        inactiveCwd: null,
+      };
       this.files.set(file, state);
     }
     if (state.skip) return;
+    if (state.inactiveCwd) {
+      if (!this.opts.isWatched(state.inactiveCwd)) return;
+      // The project became active after this rollout was first discovered.
+      // Replay from the head exactly once so restart/historical accounting is
+      // complete without repeatedly scanning unrelated projects.
+      state.offset = 0;
+      state.remainder = '';
+      state.ingest = new CodexFileIngest();
+      state.inactiveCwd = null;
+    }
 
     let size: number;
     try {
@@ -99,6 +140,7 @@ export class CodexUsageScanner {
         remainder: '',
         ingest: new CodexFileIngest(),
         skip: false,
+        inactiveCwd: null,
       });
       state = this.files.get(file)!;
     }
@@ -125,12 +167,14 @@ export class CodexUsageScanner {
     for (const line of lines) {
       const event = state.ingest.ingestLine(line);
       const cwd = state.ingest.cwd;
-      // cwd conhecido e fora dos workspaces observados → skip permanente.
+      // A workspace can become active later. Park the rollout and replay it
+      // from the head when its immutable scope is registered.
       if (cwd && !this.opts.isWatched(cwd)) {
-        state.skip = true;
+        state.inactiveCwd = cwd;
         return;
       }
       if (event && cwd) {
+        if (this.stopped) return;
         try {
           this.opts.onEvent(event, cwd);
         } catch {

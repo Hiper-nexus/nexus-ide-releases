@@ -1,65 +1,188 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
-  addTask,
-  getTodoList,
-  initTodoStore,
-  markAllDone,
-  moveToTask,
-  setTasks,
-} from './todo-store';
+  INITIAL_PROJECT_MIGRATIONS,
+  createProjectMigration,
+  type ProjectMigration,
+} from '../runtime/project-runtime-schema';
+import { testProjectScope } from './__tests__/scope-fixture';
+import { createScopedTodoStore } from './todo-store';
 
-describe('todo-store (nexus_todo_manager semantics)', () => {
-  beforeEach(() => initTodoStore(null)); // in-memory only
+let baseDir = '';
+const managers: ProjectRuntimeManager[] = [];
 
-  it('set_tasks puts the first task in_progress and the rest todo', () => {
-    const list = setTasks(['one', 'two', 'three']);
-    expect(list.items.map((i) => i.status)).toEqual([
+function manager(migrations?: readonly ProjectMigration[]): ProjectRuntimeManager {
+  const value = new ProjectRuntimeManager({
+    baseDir,
+    appVersion: '0.12.0-test',
+    ...(migrations ? { migrations } : {}),
+  });
+  managers.push(value);
+  return value;
+}
+
+beforeEach(() => {
+  baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-todo-store-'));
+});
+
+afterEach(() => {
+  for (const value of managers.splice(0)) value.closeAll();
+  fs.rmSync(baseDir, { recursive: true, force: true });
+});
+
+describe('scoped todo store', () => {
+  it('preserves set/move/add/mark semantics without an in-memory source of truth', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    let sequence = 0;
+    const todos = createScopedTodoStore(runtimeManager, scope, {
+      now: () => 100,
+      idFactory: () => `todo-${++sequence}`,
+    });
+
+    const initial = todos.setTasks(['one', 'two', 'three']);
+    expect(initial.items.map((item) => item.status)).toEqual([
       'in_progress',
       'todo',
       'todo',
     ]);
-  });
-
-  it('move_to_task completes everything before the target', () => {
-    setTasks(['one', 'two', 'three']);
-    const list = moveToTask('three');
-    expect(list?.items.map((i) => i.status)).toEqual([
+    expect(todos.moveToTask(initial.items[2].id)?.items.map((item) => item.status)).toEqual([
       'done',
       'done',
       'in_progress',
     ]);
+    expect(todos.addTask('four').items.at(-1)?.status).toBe('todo');
+    expect(todos.markAllDone().items.every((item) => item.status === 'done')).toBe(true);
+
+    runtimeManager.close(scope);
+    const restored = createScopedTodoStore(runtimeManager, scope).get();
+    expect(restored.items).toHaveLength(4);
+    expect(restored).toMatchObject({
+      projectId: scope.projectId,
+      checkoutId: scope.checkoutId,
+    });
   });
 
-  it('move_to_task accepts task ids as well as names', () => {
-    const initial = setTasks(['one', 'two']);
-    const second = initial.items[1];
-    const list = moveToTask(second.id);
-    expect(list?.items[1].status).toBe('in_progress');
+  it('supports item status updates and returns immutable snapshots', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const todos = createScopedTodoStore(runtimeManager, scope);
+    const initial = todos.setTasks(['one', 'two'], 'mission-list');
+    initial.items[0].name = 'mutated outside';
+
+    const updated = todos.setItemStatus(
+      'mission-list',
+      initial.items[1].id,
+      'done',
+    );
+    expect(updated?.items).toEqual([
+      expect.objectContaining({ name: 'one', status: 'in_progress' }),
+      expect.objectContaining({ name: 'two', status: 'done' }),
+    ]);
+    expect(todos.setItemStatus('missing', 'missing', 'done')).toBeNull();
   });
 
-  it('move_to_task returns null for an unknown task', () => {
-    setTasks(['one']);
-    expect(moveToTask('missing')).toBeNull();
+  it('persists empty lists and isolates lists plus observers by checkout', () => {
+    const runtimeManager = manager();
+    const scopeA = testProjectScope({ checkoutId: 'checkout-a' });
+    const scopeB = testProjectScope({ checkoutId: 'checkout-b' });
+    const todosA = createScopedTodoStore(runtimeManager, scopeA);
+    const todosB = createScopedTodoStore(runtimeManager, scopeB);
+    const listenerA = vi.fn();
+    const listenerB = vi.fn();
+    todosA.onChange(listenerA);
+    todosB.onChange(listenerB);
+
+    todosA.setTasks([], 'empty-list');
+
+    expect(todosA.list()).toEqual([
+      expect.objectContaining({ id: 'empty-list', items: [] }),
+    ]);
+    expect(todosB.list()).toEqual([]);
+    expect(listenerA).toHaveBeenCalledWith({
+      projectId: scopeA.projectId,
+      checkoutId: scopeA.checkoutId,
+    });
+    expect(listenerB).not.toHaveBeenCalled();
   });
 
-  it('add_task appends as todo without disturbing progress', () => {
-    setTasks(['one', 'two']);
-    const list = addTask('three');
-    expect(list.items).toHaveLength(3);
-    expect(list.items[0].status).toBe('in_progress');
-    expect(list.items[2].status).toBe('todo');
+  it('upgrades v1 todo rows into a durable global list', () => {
+    const scope = testProjectScope({ checkoutId: 'upgrade-v1' });
+    const firstManager = manager([INITIAL_PROJECT_MIGRATIONS[0]]);
+    const runtime = firstManager.open(scope);
+    runtime.db
+      .prepare(
+        `INSERT INTO missions
+           (id, title, description, status, created_at, updated_at)
+         VALUES (?, ?, '', 'running', ?, ?)`,
+      )
+      .run('mission-v1', 'Legacy mission', 1, 1);
+    const insertLegacy = runtime.db.prepare(
+      `INSERT INTO todos
+         (id, mission_id, text, completed, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertLegacy.run('legacy-todo', null, 'legacy row', 1, 0, 10, 20);
+    insertLegacy.run(
+      'legacy-mission-todo',
+      'mission-v1',
+      'mission row',
+      0,
+      0,
+      11,
+      21,
+    );
+    firstManager.closeAll();
+
+    const upgraded = manager();
+    expect(createScopedTodoStore(upgraded, scope).get()).toMatchObject({
+      id: 'global',
+      updatedAt: 20,
+      items: [
+        expect.objectContaining({
+          id: 'legacy-todo',
+          name: 'legacy row',
+          status: 'done',
+        }),
+      ],
+    });
+    expect(createScopedTodoStore(upgraded, scope).get('mission-v1')).toMatchObject({
+      id: 'mission-v1',
+      updatedAt: 21,
+      items: [
+        expect.objectContaining({
+          id: 'legacy-mission-todo',
+          name: 'mission row',
+          status: 'todo',
+        }),
+      ],
+    });
   });
 
-  it('mark_all_done completes everything', () => {
-    setTasks(['one', 'two']);
-    const list = markAllDone();
-    expect(list.items.every((i) => i.status === 'done')).toBe(true);
-  });
+  it('allows inspection but rejects every mutation in safe read-only mode', () => {
+    const scope = testProjectScope({ checkoutId: 'read-only-todos' });
+    const writable = manager();
+    const saved = createScopedTodoStore(writable, scope).setTasks(['preserved']);
+    writable.closeAll();
 
-  it('keeps lists isolated by listId (mission-scoped lists)', () => {
-    setTasks(['global task']);
-    setTasks(['mission task'], 'mission-1');
-    expect(getTodoList().items[0].name).toBe('global task');
-    expect(getTodoList('mission-1').items[0].name).toBe('mission task');
+    const original = INITIAL_PROJECT_MIGRATIONS[0];
+    const changed = createProjectMigration({
+      id: original.id,
+      schemaVersion: original.schemaVersion,
+      appVersion: original.appVersion,
+      sql: `${original.sql}\n-- immutable checksum changed`,
+    });
+    const readOnly = manager([changed]);
+    const todos = createScopedTodoStore(readOnly, scope);
+
+    expect(todos.get().items).toHaveLength(1);
+    expect(() => todos.setTasks(['forbidden'])).toThrow(/read-only/i);
+    expect(() =>
+      todos.setItemStatus('global', saved.items[0].id, 'done'),
+    ).toThrow(/read-only/i);
+    expect(todos.get().items[0].status).toBe('in_progress');
   });
 });

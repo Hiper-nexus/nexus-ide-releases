@@ -1,10 +1,11 @@
-import { ipcRenderer } from 'electron';
+import { ipcRenderer, webFrame } from 'electron';
 import {
   BROWSER_AUTOMATION_CHANNELS,
   type BrowserAutomationCommand,
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
 } from '../shared/browser-automation';
+import { BROWSER_DESIGN_CHANNELS } from '../shared/browser-design';
 import { createBrowserAutomation } from './browser-automation';
 
 const REQUEST_ID = /^[a-f0-9-]{16,64}$/i;
@@ -14,6 +15,10 @@ const COMMANDS = new Set<BrowserAutomationCommand>([
   'click',
   'fill',
   'wait',
+  'design_enable',
+  'design_disable',
+  'design_set_style_preview',
+  'design_clear_style_preview',
 ]);
 const MAX_ARGS_BYTES = 16 * 1024;
 
@@ -48,7 +53,16 @@ function safeError(err: unknown): string {
   return message.replace(/[\r\n\t]+/g, ' ').slice(0, 512);
 }
 
-const automation = createBrowserAutomation(window);
+const automation = createBrowserAutomation(window, {
+  // Design-mode picker events (selection/mode) are page→main PUSH: no pending
+  // request to answer, so they ride their own closed channel.
+  onDesignEvent: (event) => {
+    ipcRenderer.send(BROWSER_DESIGN_CHANNELS.event, event);
+  },
+  // L1 bridge: framework expandos live in the MAIN world only (spike Fase
+  // 0.4). Runs like the DevTools console — not blocked by the page's CSP.
+  evalInMainWorld: (source) => webFrame.executeJavaScript(source),
+});
 
 ipcRenderer.on(BROWSER_AUTOMATION_CHANNELS.request, (_event, raw: unknown) => {
   const request = parseRequest(raw);

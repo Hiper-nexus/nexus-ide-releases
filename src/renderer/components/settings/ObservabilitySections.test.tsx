@@ -84,16 +84,18 @@ describe('Observability settings sections', () => {
     act(() => root.unmount());
   });
 
-  it('renders redacted JSONL audit entries without exposing secret values', async () => {
+  it('renders redacted project audit entries without exposing secret values', async () => {
     setNexusApi({
       ops: {
         auditLog: vi.fn(async () => ({
-          path: '/Users/test/Library/Logs/NexusIDE/jarvis-actions.log',
+          path: '/Users/test/project-runtime/runtime.sqlite3',
           readAt: '2026-07-07T12:00:00.000Z',
           entries: [
             {
               timestamp: '2026-07-07T12:00:00.000Z',
               session: 'jarvis-renderer',
+              project_id: 'project-test',
+              checkout_id: 'checkout-test',
               source: 'ipc-renderer',
               tool: 'nexus_file_write',
               args: {

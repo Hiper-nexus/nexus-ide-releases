@@ -1,178 +1,255 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  auditSuccess,
-  auditError,
+  AuditLogCorruptionError,
   auditDenied,
+  auditError,
   auditIntent,
+  auditSuccess,
+  clearAuditLogForTests,
+  configureAuditLogRuntime,
+  disposeAuditLogRuntime,
+  ensureAuditLogWritable,
+  getAuditStoragePath,
   readAuditLog,
-  clearAuditLog,
-  getAuditLogPath,
-  resolveAuditLogPath,
-  closeAuditLog,
-  setAuditLogPathForTests,
   writeAuditEntry,
 } from '../../jarvis/audit-log';
+import { ProjectRuntimeManager } from '../../runtime/project-runtime-manager';
+import {
+  INITIAL_PROJECT_MIGRATIONS,
+  createProjectMigration,
+} from '../../runtime/project-runtime-schema';
+import { testProjectScope } from './scope-fixture';
 
-describe('audit-log', () => {
-  const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-audit-log');
-  const testAuditLog = path.join(testDir, 'jarvis-actions.log');
+let baseDir = '';
+const managers: ProjectRuntimeManager[] = [];
 
-  it('keeps packaged smoke audit entries inside its isolated user-data directory', () => {
-    expect(
-      resolveAuditLogPath(
-        null,
-        ['NexusIDE', '--smoke-test'],
-        { NEXUS_USER_DATA_DIR: '/tmp/nexus-packaged-smoke' },
-      ),
-    ).toBe('/tmp/nexus-packaged-smoke/jarvis-actions.log');
+function manager(
+  options: Partial<ConstructorParameters<typeof ProjectRuntimeManager>[0]> = {},
+): ProjectRuntimeManager {
+  const value = new ProjectRuntimeManager({
+    baseDir,
+    appVersion: 'audit-test',
+    ...options,
   });
+  managers.push(value);
+  return value;
+}
 
-  it('does not honor the smoke user-data override outside the smoke process', () => {
-    expect(
-      resolveAuditLogPath(
-        null,
-        ['NexusIDE'],
-        { NEXUS_USER_DATA_DIR: '/tmp/nexus-packaged-smoke' },
-      ),
-    ).not.toBe('/tmp/nexus-packaged-smoke/jarvis-actions.log');
-  });
+beforeEach(() => {
+  baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-audit-sqlite-'));
+  configureAuditLogRuntime(manager());
+});
 
-  beforeEach(() => {
-    fs.mkdirSync(testDir, { recursive: true });
-    setAuditLogPathForTests(testAuditLog);
-    clearAuditLog();
-  });
+afterEach(() => {
+  disposeAuditLogRuntime();
+  for (const value of managers.splice(0)) value.closeAll();
+  fs.rmSync(baseDir, { recursive: true, force: true });
+});
 
-  afterEach(() => {
-    closeAuditLog();
-    setAuditLogPathForTests(null);
-    fs.rmSync(testDir, { recursive: true, force: true });
-  });
+describe('project-scoped audit log', () => {
+  it('physically isolates projects and checkouts while preserving redaction', () => {
+    const projectA = testProjectScope({ projectId: 'project-a', checkoutId: 'checkout-a' });
+    const checkoutB = testProjectScope({ projectId: 'project-a', checkoutId: 'checkout-b' });
+    const projectB = testProjectScope({ projectId: 'project-b', checkoutId: 'checkout-a' });
 
-  it('writes and reads audit entries (JSONL)', () => {
-    auditSuccess('sess1', 'nexus_file_read', { path: 'test.ts' }, 42, false);
-    auditError('sess1', 'nexus_file_write', { path: 'test.ts', content: 'x' }, 100, 'disk full', true);
-    auditDenied('sess1', 'nexus_terminal_run', { command: 'rm -rf /' }, 5, 'destructive');
-
-    const entries = readAuditLog();
-    expect(entries.length).toBe(3);
-
-    expect(entries[0].session).toBe('sess1');
-    expect(entries[0].source).toBe('ipc-renderer');
-    expect(entries[0].tool).toBe('nexus_file_read');
-    expect(entries[0].result).toBe('ok');
-    expect(entries[0].duration_ms).toBe(42);
-    expect(entries[0].user_authorized).toBe(false);
-
-    expect(entries[1].result).toBe('error');
-    expect(entries[1].error).toBe('disk full');
-    expect(entries[1].user_authorized).toBe(true);
-
-    expect(entries[2].result).toBe('denied');
-    expect(entries[2].error).toBe('destructive');
-  });
-
-  it('correlates pre-effect intent with its outcome', () => {
-    auditIntent(
-      'sess1',
-      'nexus_file_write',
-      { path: 'test.ts', content: 'x' },
-      5,
-      true,
-      'http-mcp',
-      'invocation-1',
-    );
     auditSuccess(
-      'sess1',
+      { scope: projectA },
+      'session-a',
       'nexus_file_write',
-      { path: 'test.ts', content: 'x' },
-      10,
-      true,
-      'http-mcp',
-      'invocation-1',
-    );
-
-    const entries = readAuditLog();
-    expect(entries.map((entry) => entry.result)).toEqual(['intent', 'ok']);
-    expect(entries.every((entry) => entry.invocation_id === 'invocation-1')).toBe(true);
-  });
-
-  it('each entry has required fields', () => {
-    auditSuccess('sess1', 'nexus_file_read', { path: 'test.ts' }, 10, false);
-    const entries = readAuditLog();
-    expect(entries.length).toBe(1);
-    const entry = entries[0];
-    expect(entry.timestamp).toBeTruthy();
-    expect(entry.session).toBe('sess1');
-    expect(entry.tool).toBe('nexus_file_read');
-    expect(entry.args).toBeTruthy();
-    expect(entry.result).toBe('ok');
-    expect(typeof entry.duration_ms).toBe('number');
-    expect(typeof entry.user_authorized).toBe('boolean');
-  });
-
-  it('clears log file', () => {
-    auditSuccess('sess1', 'nexus_file_read', { path: 'test.ts' }, 10, false);
-    expect(readAuditLog().length).toBe(1);
-    clearAuditLog();
-    expect(readAuditLog().length).toBe(0);
-  });
-
-  it('limits read entries', () => {
-    for (let i = 0; i < 10; i++) {
-      auditSuccess('sess1', 'nexus_file_read', { path: `test${i}.ts` }, 1, false);
-    }
-    const entries = readAuditLog(5);
-    expect(entries.length).toBe(5);
-  });
-
-  it('readAuditLog returns empty array for missing file', () => {
-    clearAuditLog();
-    const entries = readAuditLog();
-    expect(entries).toEqual([]);
-  });
-
-  it('getAuditLogPath returns the correct path', () => {
-    expect(getAuditLogPath()).toBe(testAuditLog);
-  });
-
-  it('handles concurrent writes without errors', () => {
-    for (let i = 0; i < 50; i++) {
-      auditSuccess('sess1', 'nexus_file_read', { path: `test${i}.ts` }, 1, false);
-    }
-    const entries = readAuditLog();
-    expect(entries.length).toBe(50);
-  });
-
-  it('args are serialized as JSON string', () => {
-    const args = { path: 'test.ts', nested: { key: 'value' } };
-    auditSuccess('sess1', 'nexus_file_read', args, 10, false);
-    const entries = readAuditLog();
-    expect(entries[0].args).toEqual(args);
-  });
-
-  it('redacts sensitive args before persisting', () => {
-    auditSuccess(
-      'sess1',
-      'nexus_file_write',
-      { path: 'test.ts', content: 'secret source', token: 'abc' },
-      10,
+      { path: 'a.ts', content: 'source secret', token: 'raw-token' },
+      12,
       true,
     );
-    const entries = readAuditLog();
-    expect(entries[0].args).toMatchObject({
-      path: 'test.ts',
-      content: '[REDACTED_TEXT]',
-      token: '[REDACTED]',
+    auditDenied(
+      { scope: checkoutB },
+      'session-b',
+      'nexus_terminal_run',
+      { command: 'TOKEN=secret npm test' },
+      4,
+      'Bearer should-not-leak',
+    );
+    auditError(
+      { scope: projectB },
+      'session-c',
+      'nexus_pane_read',
+      {},
+      2,
+      'failure',
+      false,
+    );
+
+    expect(readAuditLog({ scope: projectA })).toEqual([
+      expect.objectContaining({
+        project_id: 'project-a',
+        checkout_id: 'checkout-a',
+        session: 'session-a',
+        args: {
+          path: 'a.ts',
+          content: '[REDACTED_TEXT]',
+          token: '[REDACTED]',
+        },
+      }),
+    ]);
+    expect(readAuditLog({ scope: checkoutB })).toEqual([
+      expect.objectContaining({
+        project_id: 'project-a',
+        checkout_id: 'checkout-b',
+        args: { command: '[REDACTED]' },
+        error: 'Bearer [REDACTED]',
+      }),
+    ]);
+    expect(readAuditLog({ scope: projectB })[0]).toMatchObject({
+      project_id: 'project-b',
+      checkout_id: 'checkout-a',
+      result: 'error',
     });
+    expect(new Set([
+      getAuditStoragePath({ scope: projectA }),
+      getAuditStoragePath({ scope: checkoutB }),
+      getAuditStoragePath({ scope: projectB }),
+    ]).size).toBe(3);
   });
 
-  it('redacts high-risk headers, env-shaped content, and editor text', () => {
+  it('persists correlated intent and outcome across a manager restart', () => {
+    const scope = testProjectScope({ checkoutId: 'restart' });
+    auditIntent(
+      { scope },
+      'session-restart',
+      'nexus_file_write',
+      { path: 'restart.ts', content: 'hidden' },
+      1,
+      true,
+      'http-mcp',
+      'invocation-restart',
+    );
     auditSuccess(
-      'sess1',
+      { scope },
+      'session-restart',
+      'nexus_file_write',
+      { path: 'restart.ts', content: 'hidden' },
+      3,
+      true,
+      'http-mcp',
+      'invocation-restart',
+    );
+    managers[0]?.closeAll();
+    disposeAuditLogRuntime();
+    configureAuditLogRuntime(manager());
+
+    const entries = readAuditLog({ scope });
+    expect(entries.map((entry) => entry.result)).toEqual(['intent', 'ok']);
+    expect(entries.every(
+      (entry) => entry.invocation_id === 'invocation-restart',
+    )).toBe(true);
+  });
+
+  it('allows scoped inspection but rejects writes in safe read-only mode', () => {
+    const scope = testProjectScope({ checkoutId: 'read-only-audit' });
+    auditSuccess({ scope }, 'session', 'nexus_pane_read', {}, 1, false);
+    managers[0]?.closeAll();
+    disposeAuditLogRuntime();
+
+    const original = INITIAL_PROJECT_MIGRATIONS[0];
+    const changed = createProjectMigration({
+      id: original.id,
+      schemaVersion: original.schemaVersion,
+      appVersion: original.appVersion,
+      sql: `${original.sql}\n-- immutable checksum changed for audit test`,
+    });
+    const readOnly = manager({
+      migrations: [changed, ...INITIAL_PROJECT_MIGRATIONS.slice(1)],
+    });
+    configureAuditLogRuntime(readOnly);
+
+    expect(readOnly.open(scope).mode).toBe('safe-read-only');
+    expect(readAuditLog({ scope })).toHaveLength(1);
+    expect(() => ensureAuditLogWritable({ scope })).toThrow(/read-only/i);
+    expect(() =>
+      auditSuccess({ scope }, 'session', 'nexus_pane_read', {}, 1, false),
+    ).toThrow(/read-only/i);
+    expect(readAuditLog({ scope })).toHaveLength(1);
+  });
+
+  it('fails reads and writes closed when project persistence is unavailable', () => {
+    disposeAuditLogRuntime();
+    const unavailable = manager({
+      databaseFactory: (() => {
+        throw new Error('SQLite unavailable');
+      }) as never,
+    });
+    configureAuditLogRuntime(unavailable);
+    const scope = testProjectScope({ checkoutId: 'unavailable-audit' });
+
+    expect(() => readAuditLog({ scope })).toThrow(/no persistence fallback/i);
+    expect(() => ensureAuditLogWritable({ scope })).toThrow(
+      /no persistence fallback/i,
+    );
+    expect(() =>
+      auditSuccess({ scope }, 'session', 'nexus_pane_read', {}, 1, false),
+    ).toThrow(/no persistence fallback/i);
+  });
+
+  it('serializes concurrent callers without losing or crossing events', async () => {
+    const scope = testProjectScope({ checkoutId: 'concurrent-audit' });
+    await Promise.all(
+      Array.from({ length: 75 }, async (_, index) => {
+        auditSuccess(
+          { scope },
+          `session-${index}`,
+          'nexus_pane_read',
+          { index },
+          index,
+          false,
+        );
+      }),
+    );
+
+    const entries = readAuditLog({ scope }, 100);
+    expect(entries).toHaveLength(75);
+    expect(new Set(entries.map((entry) => entry.session)).size).toBe(75);
+    expect(readAuditLog({ scope }, 5).map((entry) => entry.session)).toEqual([
+      'session-70',
+      'session-71',
+      'session-72',
+      'session-73',
+      'session-74',
+    ]);
+  });
+
+  it('redacts secrets on the lowest-level scoped write boundary', () => {
+    const scope = testProjectScope({ checkoutId: 'direct-entry' });
+    writeAuditEntry(
+      { scope },
+      {
+        timestamp: new Date().toISOString(),
+        session: 'direct',
+        source: 'ipc-renderer',
+        tool: 'nexus_terminal_run',
+        args: { token: 'raw', command: 'echo safe' },
+        result: 'denied',
+        duration_ms: 1,
+        user_authorized: false,
+        error: 'Bearer abc.def --api-key super-secret TOKEN=also-secret',
+      },
+    );
+
+    const [entry] = readAuditLog({ scope });
+    expect(entry.args).toEqual({ token: '[REDACTED]', command: 'echo safe' });
+    expect(entry.error).not.toContain('abc.def');
+    expect(entry.error).not.toContain('super-secret');
+    expect(entry.error).not.toContain('also-secret');
+    clearAuditLogForTests({ scope });
+    expect(readAuditLog({ scope })).toEqual([]);
+  });
+
+  it('redacts high-risk headers, env content, commands, and editor text', () => {
+    const scope = testProjectScope({ checkoutId: 'redaction-matrix' });
+    auditSuccess(
+      { scope },
+      'session-redaction',
       'nexus_terminal_run',
       {
         authorization: 'Bearer abc',
@@ -190,9 +267,7 @@ describe('audit-log', () => {
       'http-mcp',
     );
 
-    const [entry] = readAuditLog();
-    expect(entry.source).toBe('http-mcp');
-    expect(entry.args).toMatchObject({
+    expect(readAuditLog({ scope })[0]?.args).toMatchObject({
       authorization: '[REDACTED]',
       cookie: '[REDACTED]',
       'set-cookie': '[REDACTED]',
@@ -205,22 +280,41 @@ describe('audit-log', () => {
     });
   });
 
-  it('redacts direct-entry args and secrets embedded in denial/error messages', () => {
-    writeAuditEntry({
-      timestamp: new Date().toISOString(),
-      session: 'sess1',
-      source: 'ipc-renderer',
-      tool: 'nexus_terminal_run',
-      args: { token: 'raw-token', command: 'echo safe' },
-      result: 'denied',
-      duration_ms: 1,
-      user_authorized: false,
-      error: 'provider failed: Bearer abc.def --api-key super-secret TOKEN=also-secret',
-    });
-    const [entry] = readAuditLog();
-    expect(entry.args).toMatchObject({ token: '[REDACTED]' });
-    expect(entry.error).not.toContain('abc.def');
-    expect(entry.error).not.toContain('super-secret');
-    expect(entry.error).not.toContain('also-secret');
+  it('rejects a row whose payload claims a different physical scope', () => {
+    const scope = testProjectScope({ checkoutId: 'tampered-audit' });
+    const timestamp = new Date().toISOString();
+    const runtimeManager = managers[0];
+    if (!runtimeManager) throw new Error('audit manager missing');
+    runtimeManager.open(scope).db.prepare(
+      `INSERT INTO audit_events
+         (id, mission_id, actor, action, outcome, payload_json, occurred_at)
+       VALUES (?, NULL, ?, ?, ?, ?, ?)`,
+    ).run(
+      'audit-tampered',
+      'attacker',
+      'nexus_pane_read',
+      'ok',
+      JSON.stringify({
+        schema: 'nexus.mcp-audit/v1',
+        timestamp,
+        project_id: 'another-project',
+        checkout_id: scope.checkoutId,
+        source: 'ipc-renderer',
+        args: {},
+        duration_ms: 1,
+        user_authorized: false,
+      }),
+      Date.parse(timestamp),
+    );
+
+    expect(() => readAuditLog({ scope })).toThrow(AuditLogCorruptionError);
+  });
+
+  it('requires an initialized runtime and never creates an implicit fallback', () => {
+    const scope = testProjectScope({ checkoutId: 'not-configured' });
+    disposeAuditLogRuntime();
+
+    expect(() => ensureAuditLogWritable({ scope })).toThrow(/not initialized/i);
+    expect(() => readAuditLog({ scope })).toThrow(/not initialized/i);
   });
 });

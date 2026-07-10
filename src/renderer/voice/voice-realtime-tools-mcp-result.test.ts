@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   recordJarvisAction: vi.fn(async () => ({})),
   setStatus: vi.fn(),
   setError: vi.fn(),
+  cancelLiveFollowUp: vi.fn(),
 }));
 
 vi.mock('./jarvis-action-executor', () => ({
@@ -38,6 +39,7 @@ vi.mock('./voice-session-state', () => ({
   bumpRealtimeNativeToolInFlight: vi.fn(),
   ensureLivePlayer: () => ({ stop: vi.fn() }),
   setLastRealtimeNativeToolAt: vi.fn(),
+  setLastRealtimeNativeToolCallId: vi.fn(),
   setSuppressRealtimeAudioOut: vi.fn(),
   turnExecution: {
     currentToken: 1,
@@ -54,6 +56,9 @@ vi.mock('./voice-realtime-gates', () => ({ isRealtimeLive: () => true }));
 vi.mock('./voice-playback', () => ({ stopAllPlayback: vi.fn() }));
 vi.mock('./voice-speak-pipeline', () => ({
   speakAndPlayPipelined: vi.fn(async () => ({ ok: true })),
+}));
+vi.mock('./live-followup', () => ({
+  cancelLiveFollowUp: mocks.cancelLiveFollowUp,
 }));
 
 import { executeRealtimeToolCall } from './voice-realtime-tools';
@@ -121,6 +126,7 @@ describe('Realtime MCP result propagation', () => {
         onEffectMayHaveCommitted: expect.any(Function),
       }),
     );
+    expect(mocks.cancelLiveFollowUp).toHaveBeenCalledTimes(1);
     expect(mocks.liveToolResult).toHaveBeenCalledWith(
       expect.objectContaining({
         callId: `call-${tool}`,

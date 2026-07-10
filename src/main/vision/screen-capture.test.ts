@@ -5,15 +5,12 @@ vi.mock('electron', () => ({
   desktopCapturer: {
     getSources: vi.fn(),
   },
-  BrowserWindow: {
-    getAllWindows: vi.fn(),
-  },
   systemPreferences: {
     getMediaAccessStatus: vi.fn(),
   },
 }));
 
-import { desktopCapturer, BrowserWindow, systemPreferences } from 'electron';
+import { desktopCapturer, systemPreferences } from 'electron';
 import { captureNexusWindow, getScreenPermissionStatus, assertScreenPermission } from './screen-capture';
 import { ScreenRecordingPermissionDenied } from '../../shared/vision-ipc';
 
@@ -66,12 +63,6 @@ describe('captureNexusWindow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(systemPreferences.getMediaAccessStatus).mockReturnValue('granted' as any);
-    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([
-      {
-        isDestroyed: () => false,
-        getMediaSourceId: () => 'window:nexus:1',
-      } as any,
-    ]);
   });
 
   it('captures the NexusIDE window when the media source id matches exactly', async () => {
@@ -80,7 +71,7 @@ describe('captureNexusWindow', () => {
       { id: 'window:nexus:1', name: 'Renamed Window', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
       { id: 'window:finder:1', name: 'Finder', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
     ]);
-    const result = await captureNexusWindow();
+    const result = await captureNexusWindow({ mediaSourceId: 'window:nexus:1' });
     expect(result.format).toBe('png');
     expect(result.width).toBe(1920);
     expect(result.height).toBe(1080);
@@ -98,7 +89,9 @@ describe('captureNexusWindow', () => {
       { id: 'window:someapp:1', name: 'SomeApp', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
     ]);
 
-    await expect(captureNexusWindow()).rejects.toThrow(
+    await expect(
+      captureNexusWindow({ mediaSourceId: 'window:nexus:1' }),
+    ).rejects.toThrow(
       'nexus_window_not_identified',
     );
   });
@@ -112,14 +105,41 @@ describe('captureNexusWindow', () => {
       { id: 'window:nexus:1', name: 'NexusIDE', thumbnail: thumbnail as any, appIcon: null as any, display_id: '' } as any,
     ]);
 
-    await expect(captureNexusWindow()).rejects.toThrow('valid PNG');
+    await expect(
+      captureNexusWindow({ mediaSourceId: 'window:nexus:1' }),
+    ).rejects.toThrow('valid PNG');
   });
 
   it('throws when no windows available', async () => {
     vi.mocked(desktopCapturer.getSources).mockResolvedValue([]);
-    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([]);
-    await expect(captureNexusWindow()).rejects.toThrow(
+    await expect(
+      captureNexusWindow({ mediaSourceId: 'window:nexus:1' }),
+    ).rejects.toThrow(
       'nexus_window_not_identified',
     );
+  });
+
+  it('fails closed without an exact owner media source id', async () => {
+    await expect(captureNexusWindow()).rejects.toThrow(
+      'vision_capture_owner_required',
+    );
+    expect(desktopCapturer.getSources).not.toHaveBeenCalled();
+  });
+
+  it('never falls back to another Nexus window or a matching title', async () => {
+    const thumbnail = mockThumbnail(640, 480);
+    vi.mocked(desktopCapturer.getSources).mockResolvedValue([
+      {
+        id: 'window:nexus:B',
+        name: 'NexusIDE',
+        thumbnail: thumbnail as any,
+        appIcon: null as any,
+        display_id: '',
+      } as any,
+    ]);
+
+    await expect(
+      captureNexusWindow({ mediaSourceId: 'window:nexus:A' }),
+    ).rejects.toThrow('nexus_window_not_identified');
   });
 });

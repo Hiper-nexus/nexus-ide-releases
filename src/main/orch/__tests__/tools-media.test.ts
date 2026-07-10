@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildMediaTools } from '../tools-media';
+import { testProjectScope } from './scope-fixture';
 
 const mocks = vi.hoisted(() => ({
   workspaceRoot: vi.fn(() => '/authorized/workspace'),
@@ -10,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../workspace-path', () => ({
-  activeWorkspaceRoot: mocks.workspaceRoot,
+  resolveCwdForScope: mocks.workspaceRoot,
 }));
 vi.mock('../../media/media-generation', () => ({
   generateImage: mocks.generateImage,
@@ -24,7 +25,7 @@ vi.mock('../../media/media-keys', () => ({
   hasMediaKey: () => false,
   maskedMediaKey: () => null,
 }));
-vi.mock('../../usage/media-usage-store', () => ({
+vi.mock('../../usage/media-usage-recorder', () => ({
   recordMediaUsage: mocks.recordUsage,
 }));
 
@@ -78,6 +79,20 @@ describe('media MCP tools', () => {
     ).rejects.toThrow(/no workspace open/);
     expect(mocks.generateImage).not.toHaveBeenCalled();
   });
+
+  it('does not report generation success when scoped accounting fails', async () => {
+    mocks.recordUsage.mockRejectedValueOnce(
+      new Error('project runtime is safe read-only'),
+    );
+    const image = buildMediaTools().find(
+      (tool) => tool.name === 'nexus_image_generate',
+    )!;
+    await expect(
+      image.handler({ prompt: 'safe prompt' }, fakeCtx()),
+    ).rejects.toThrow(/safe read-only/i);
+    expect(mocks.generateImage).toHaveBeenCalledOnce();
+    expect(mocks.recordUsage).toHaveBeenCalledWith(result, fakeCtx());
+  });
 });
 
 function fakeCtx() {
@@ -89,5 +104,6 @@ function fakeCtx() {
     allowedSkills: null,
     stopAttempts: 0,
     handoffSubmitted: false,
+    scope: testProjectScope({ rootRealPath: '/authorized/workspace' }),
   };
 }

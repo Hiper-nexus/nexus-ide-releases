@@ -9,14 +9,15 @@ import {
 } from '../../jarvis/mcp-ipc';
 import { clearAll } from '../../jarvis/permissions';
 import {
-  clearAuditLog,
-  closeAuditLog,
+  clearAuditLogForTests,
+  configureAuditLogRuntime,
+  disposeAuditLogRuntime,
   readAuditLog,
-  setAuditLogPathForTests,
+  type AuditContext,
 } from '../../jarvis/audit-log';
 import { clearConfirmationTokensForTests } from '../../jarvis/confirmation-tokens';
-
-const workspace = vi.hoisted(() => ({ current: '' }));
+import { ProjectRuntimeManager } from '../../runtime/project-runtime-manager';
+import type { ProjectExecutionScope } from '../../../shared/types';
 
 vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn() },
@@ -25,104 +26,132 @@ vi.mock('electron', () => ({
   },
 }));
 
-vi.mock('../../persistence/workspace-store', () => ({
-  activeWorkspaceOrNull: () => workspace.current,
-}));
-
 const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-mcp-ipc');
-const testAuditLog = path.join(testDir, 'jarvis-actions.log');
+let auditManager: ProjectRuntimeManager;
+let auditContext: AuditContext;
+let projectScope: ProjectExecutionScope;
 
 describe('mcp-ipc security flow', () => {
   beforeAll(() => {
-    workspace.current = testDir;
     fs.mkdirSync(testDir, { recursive: true });
-    setAuditLogPathForTests(testAuditLog);
+    projectScope = {
+      version: 1,
+      installationId: 'installation-mcp-ipc-test',
+      projectId: 'project-mcp-ipc-test',
+      checkoutId: 'checkout-mcp-ipc-test',
+      rootRealPath: fs.realpathSync(testDir),
+      identitySource: 'manifest',
+    };
+    auditManager = new ProjectRuntimeManager({
+      baseDir: path.join(testDir, 'audit-runtime'),
+      appVersion: 'mcp-ipc-test',
+    });
+    configureAuditLogRuntime(auditManager);
+    auditContext = { scope: projectScope };
   });
 
   beforeEach(() => {
     clearAll();
     clearConfirmationTokensForTests();
     clearMcpRendererSession();
-    clearAuditLog();
+    clearAuditLogForTests(auditContext);
   });
 
   afterAll(() => {
-    closeAuditLog();
-    setAuditLogPathForTests(null);
+    disposeAuditLogRuntime();
+    auditManager.closeAll();
     fs.rmSync(testDir, { recursive: true, force: true });
   });
 
-  it('blocks rm -rf without explicit confirmation', async () => {
+  it('blocks rm -rf without a frozen mission context', async () => {
     const target = path.join(testDir, 'do-not-delete');
     fs.mkdirSync(target, { recursive: true });
 
-    const result = await invokeMcpTool({
-      tool: 'nexus_terminal_run',
-      args: { command: 'rm -rf do-not-delete', cwd: testDir },
-    });
+    const result = await invokeMcpTool(
+      {
+        tool: 'nexus_terminal_run',
+        args: { command: 'rm -rf do-not-delete', cwd: testDir },
+      },
+      projectScope,
+    );
 
     expect(result).toMatchObject({
       ok: false,
       denied: true,
-      requiredConfirmation: true,
+      error: expect.stringContaining('missionId and contextRevision'),
     });
-    expect(result.confirmationReason).toContain('destructive command');
     expect(fs.existsSync(target)).toBe(true);
   });
 
-  it('blocks git push --force without explicit confirmation', async () => {
-    const result = await invokeMcpTool({
-      tool: 'nexus_terminal_run',
-      args: { command: 'git push --force origin main', cwd: testDir },
-    });
+  it('blocks git push --force without a frozen mission context', async () => {
+    const result = await invokeMcpTool(
+      {
+        tool: 'nexus_terminal_run',
+        args: { command: 'git push --force origin main', cwd: testDir },
+      },
+      projectScope,
+    );
 
     expect(result).toMatchObject({
       ok: false,
       denied: true,
-      requiredConfirmation: true,
+      error: expect.stringContaining('missionId and contextRevision'),
     });
-    expect(result.confirmationReason).toContain('destructive command');
   });
 
-  it('persists an audit entry with tool call result', async () => {
+  it('does not let native confirmation substitute for workflow authority', async () => {
     const args = { command: 'echo audit-ok', cwd: testDir };
-    await expect(confirmMcpTool({ tool: 'terminal_run', args })).resolves.toEqual({
+    await expect(confirmMcpTool({ tool: 'terminal_run', args }, projectScope)).resolves.toEqual({
       ok: true,
     });
 
-    const result = await invokeMcpTool({ tool: 'nexus_terminal_run', args });
-    expect(result.ok).toBe(true);
-    expect(JSON.stringify(result.result)).toContain('audit-ok');
+    const result = await invokeMcpTool(
+      { tool: 'nexus_terminal_run', args },
+      projectScope,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining('missionId and contextRevision'),
+    });
 
-    const entries = readAuditLog();
-    expect(entries).toHaveLength(2);
-    expect(entries.map((entry) => entry.result)).toEqual(['intent', 'ok']);
-    expect(entries[1]).toMatchObject({
+    const entries = readAuditLog(auditContext);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
       source: 'ipc-renderer',
       tool: 'nexus_terminal_run',
-      result: 'ok',
-      user_authorized: true,
+      result: 'denied',
+      user_authorized: false,
       args: { command: 'echo audit-ok', cwd: testDir },
     });
-    expect(entries[0].invocation_id).toBe(entries[1].invocation_id);
-    expect(entries[1].timestamp).toBeTruthy();
-    expect(typeof entries[1].duration_ms).toBe('number');
+    expect(entries[0].timestamp).toBeTruthy();
+    expect(typeof entries[0].duration_ms).toBe('number');
   });
 
-  it('consumes a native approval after exactly one matching invocation', async () => {
+  it('keeps repeated confirmed renderer effects fail-closed', async () => {
     const args = { command: 'echo one-shot', cwd: testDir };
     await expect(
-      confirmMcpTool({ tool: 'nexus_terminal_run', args }),
+      confirmMcpTool({ tool: 'nexus_terminal_run', args }, projectScope),
     ).resolves.toEqual({ ok: true });
 
-    const first = await invokeMcpTool({ tool: 'nexus_terminal_run', args });
-    const second = await invokeMcpTool({ tool: 'nexus_terminal_run', args });
+    const first = await invokeMcpTool(
+      { tool: 'nexus_terminal_run', args },
+      projectScope,
+    );
+    const second = await invokeMcpTool(
+      { tool: 'nexus_terminal_run', args },
+      projectScope,
+    );
 
-    expect(first.ok).toBe(true);
+    expect(first).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining('missionId and contextRevision'),
+    });
     expect(second).toMatchObject({
       ok: false,
       denied: true,
-      requiredConfirmation: true,
+      error: expect.stringContaining('missionId and contextRevision'),
     });
   });
 
@@ -132,33 +161,39 @@ describe('mcp-ipc security flow', () => {
     await expect(confirmMcpTool({
       tool: 'nexus_terminal_run',
       args: allowedArgs,
-    })).resolves.toEqual({
+    }, projectScope)).resolves.toEqual({
       ok: true,
     });
 
-    const result = await invokeMcpTool({
-      tool: 'nexus_terminal_run',
-      args: otherArgs,
-    });
+    const result = await invokeMcpTool(
+      {
+        tool: 'nexus_terminal_run',
+        args: otherArgs,
+      },
+      projectScope,
+    );
 
     expect(result).toMatchObject({
       ok: false,
       denied: true,
-      requiredConfirmation: true,
+      error: expect.stringContaining('missionId and contextRevision'),
     });
   });
 
-  it('offers native confirmation for explicitly exposed high-impact Jarvis tools', async () => {
-    const result = await invokeMcpTool({
-      tool: 'nexus_remote_spawn',
-      args: { target: 'build-host', cli: 'codex' },
-    });
+  it('blocks high-impact Jarvis tools before their confirmation boundary', async () => {
+    const result = await invokeMcpTool(
+      {
+        tool: 'nexus_remote_spawn',
+        args: { target: 'build-host', cli: 'codex' },
+      },
+      projectScope,
+    );
 
     expect(result).toMatchObject({
       ok: false,
       denied: true,
-      requiredConfirmation: true,
       tool: 'nexus_remote_spawn',
+      error: expect.stringContaining('missionId and contextRevision'),
     });
   });
 });

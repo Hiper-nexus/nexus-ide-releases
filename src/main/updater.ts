@@ -7,6 +7,7 @@ import path from 'node:path';
 import { UPDATE_CHANNELS, type UpdateState } from '../shared/update-ipc';
 import {
   buildSquirrelFeed,
+  isMacUpdatePlatform,
   parseGhRelease,
   type ParsedRelease,
 } from './update-source';
@@ -144,12 +145,26 @@ class UpdateManager {
       phase: 'idle',
       currentVersion: fakeCurrent || app.getVersion(),
       source: 'none',
-      canInstall: app.isPackaged,
+      canInstall: app.isPackaged && isMacUpdatePlatform(process.platform),
     };
   }
 
   init(): void {
     this.registerIpcHandlers();
+    if (!isMacUpdatePlatform(process.platform)) {
+      this.patch({
+        phase: 'unsupported',
+        source: 'none',
+        canInstall: false,
+        error: undefined,
+      });
+      writeUpdateLog('info', 'init:unsupported-platform', {
+        platform: process.platform,
+        packaged: app.isPackaged,
+        currentVersion: this.state.currentVersion,
+      });
+      return;
+    }
     if (!this.networkEnabled) {
       this.patch({
         phase: 'unsupported',

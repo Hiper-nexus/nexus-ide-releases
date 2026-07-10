@@ -46,6 +46,8 @@ function actionSummary(action: JarvisAction): string {
       return 'confirmar e iniciar squad';
     case 'new_mission':
       return 'nova missão';
+    case 'new_agentic_mission':
+      return action.intent ? 'nova missão agêntica com objetivo' : 'nova missão agêntica';
     case 'new_workspace':
       return 'novo workspace';
     case 'open_terminal':
@@ -78,6 +80,8 @@ function actionSummary(action: JarvisAction): string {
       return `focar pane ${action.paneName}`;
     case 'read_pane':
       return action.paneId ? `ler pane ${action.paneId}` : 'ler pane ativo';
+    case 'read_current_view':
+      return 'ler visão atual';
     case 'send_to_pane':
       return 'enviar tarefa ao pane';
     case 'run_command':

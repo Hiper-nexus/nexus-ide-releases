@@ -54,6 +54,22 @@ export const STT_LOCAL_TIMEOUT_MS = 30_000;
  */
 export const STT_WAKE_CLOUD_TIMEOUT_MS = 6_000;
 export const STT_WAKE_BUDGET_MS = 8_000;
+/**
+ * Passive wake is a recovery path for an acoustic-model miss, not a normal
+ * command transcription. It must decide quickly or get out of the way so the
+ * always-on acoustic detector can keep listening.
+ */
+export const STT_PASSIVE_WAKE_CLOUD_TIMEOUT_MS = 2_000;
+const PASSIVE_WAKE_MIN_REMAINING_MS = 250;
+const PASSIVE_WAKE_FAST_PROVIDER = 'groq';
+
+function passiveWakeTranscriptionPrompt(wakeWord: string | undefined): string {
+  const word = wakeWord?.trim().replace(/\s+/g, ' ').slice(0, 48) || 'Jarvis';
+  return (
+    'Transcrição curta em português do Brasil. A palavra de ativação é "' +
+    `${word}". Preserve essa palavra literalmente quando ela for dita.`
+  );
+}
 
 const defaultDeps: SttDeps = {
   fetchImpl: (...args) => fetch(...args),
@@ -148,6 +164,11 @@ async function attemptCloud(
   const form = new FormData();
   form.append('model', model);
   form.append('response_format', 'json');
+  if (req.purpose === 'passive-wake') {
+    // Whisper-compatible APIs use this as vocabulary bias; it improves a
+    // two-word wake without changing the user's normal STT configuration.
+    form.append('prompt', passiveWakeTranscriptionPrompt(req.passiveWakeWord));
+  }
   const language = req.language ?? plugin.language;
   if (!translate && language) form.append('language', language);
   const ext = req.mime === 'audio/webm' ? 'webm' : 'wav';
@@ -280,6 +301,18 @@ async function attemptProvider(
 }
 
 /**
+ * Groq's Whisper Turbo is normally the shortest cloud hop for a tiny PT-BR
+ * wake sample. This reorders only the ephemeral passive-wake request; it
+ * never changes the user's persisted STT preference for normal commands.
+ */
+function prioritizePassiveWakeChain(chain: readonly VoicePlugin[]): VoicePlugin[] {
+  return [
+    ...chain.filter((plugin) => plugin.provider === PASSIVE_WAKE_FAST_PROVIDER),
+    ...chain.filter((plugin) => plugin.provider !== PASSIVE_WAKE_FAST_PROVIDER),
+  ];
+}
+
+/**
  * Walk the STT chain, returning the first success. Every failure (missing key,
  * throttle, quota, server error, missing local binary) is recorded and the loop
  * continues to the next provider, so no single provider's failure aborts the
@@ -291,7 +324,10 @@ export async function transcribe(
   _probes: ProviderProbes,
   deps: SttDeps = defaultDeps,
 ): Promise<TranscribeResult> {
-  const chain = flattenChain(config.stt);
+  const passiveWake = req.purpose === 'passive-wake';
+  const chain = passiveWake
+    ? prioritizePassiveWakeChain(flattenChain(config.stt))
+    : flattenChain(config.stt);
   const attempts: SttAttempt[] = [];
   let anyNeedsKey = false;
 
@@ -305,21 +341,46 @@ export async function transcribe(
 
   for (const plugin of chain) {
     const isCloud = classifyKind(plugin) === 'cloud';
+    // Local whisper is a useful durable fallback for a normal command, but it
+    // can take many seconds to load/infer. A passive wake must never surface
+    // 14 seconds late and steal the next user turn, so only bounded clouds
+    // participate here.
+    if (passiveWake && !isCloud) {
+      attempts.push({
+        provider: plugin.provider,
+        reason: 'passive wake skips local fallback to keep wake realtime',
+      });
+      continue;
+    }
     let cloudTimeoutMs: number | undefined;
     if (budgetMs !== undefined && isCloud) {
       const remaining = budgetMs - (now() - tStart);
+      if (passiveWake) {
+        if (remaining <= PASSIVE_WAKE_MIN_REMAINING_MS) {
+          stalled = true;
+          attempts.push({
+            provider: plugin.provider,
+            reason: `passive wake budget ${budgetMs}ms spent`,
+          });
+          break;
+        }
+        cloudTimeoutMs = Math.min(STT_PASSIVE_WAKE_CLOUD_TIMEOUT_MS, remaining);
+      } else {
       // No time (or budget) left for a second cloud round-trip → skip to local.
-      if (cloudTried || remaining <= 1_000) {
-        stalled = true;
-        attempts.push({
-          provider: plugin.provider,
-          reason: cloudTried
-            ? 'wake budget: 1 cloud tried, skipped to local'
-            : `wake budget ${budgetMs}ms spent, skipped to local`,
-        });
-        continue;
+        if (cloudTried || remaining <= 1_000) {
+          stalled = true;
+          attempts.push({
+            provider: plugin.provider,
+            reason: cloudTried
+              ? 'wake budget: 1 cloud tried, skipped to local'
+              : `wake budget ${budgetMs}ms spent, skipped to local`,
+          });
+          continue;
+        }
+        cloudTimeoutMs = Math.min(STT_WAKE_CLOUD_TIMEOUT_MS, remaining);
       }
-      cloudTimeoutMs = Math.min(STT_WAKE_CLOUD_TIMEOUT_MS, remaining);
+    } else if (passiveWake && isCloud) {
+      cloudTimeoutMs = STT_PASSIVE_WAKE_CLOUD_TIMEOUT_MS;
     }
 
     const outcome = await attemptProvider(plugin, req, deps, cloudTimeoutMs);
@@ -343,6 +404,9 @@ export async function transcribe(
   }
 
   const tried = attempts.map((a) => `${a.provider}: ${a.reason}`).join(' · ');
+  const recoveryHint = passiveWake
+    ? 'Passive wake ended before a realtime STT provider confirmed the name. The acoustic wake detector remains active.'
+    : 'Set GROQ_API_KEY or OPENAI_API_KEY, or install whisper.cpp for a keyless local fallback.';
   return {
     ok: false,
     needsKey: anyNeedsKey,
@@ -350,7 +414,7 @@ export async function transcribe(
     ...(stalled ? { stalled: true } : {}),
     error:
       `No speech-to-text provider succeeded. Tried — ${tried}. ` +
-      'Set GROQ_API_KEY or OPENAI_API_KEY, or install whisper.cpp for a keyless local fallback.',
+      recoveryHint,
   };
 }
 

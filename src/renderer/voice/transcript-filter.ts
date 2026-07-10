@@ -43,6 +43,9 @@ const JARVIS_SELF_ECHO = new Set([
   'desculpa nao entendi',
 ]);
 
+/** Whisper-style non-speech annotations are never commands or user replies. */
+const NON_SPEECH_TAG = /^\[(?:risos?|laughter|laughing|musica|music|palmas|applause|silencio|silence|inaudible|noise|ruido)\]$/;
+
 function normalize(text: string): string {
   return text
     .trim()
@@ -115,6 +118,8 @@ function wakeEchoPatterns(userName: string, protectConfirmation: boolean): strin
     ['e', 'jarvis'],
     ['e', 'javes'],
     ['ei', 'javes'],
+    ['e', 'jackson'],
+    ['ei', 'jackson'],
     // Classic STT often prefixes the command with the spoken wake itself.
     ['e', 'ai', 'jarvis'],
     ['e', 'ai', 'javes'],
@@ -126,8 +131,14 @@ function wakeEchoPatterns(userName: string, protectConfirmation: boolean): strin
     ['ola'],
     ['ok', 'jarvis'],
     ['jarvis'],
+    ['javis'],
     ['javes'],
     ['jave'],
+    ['jarves'],
+    ['jarbis'],
+    ['jarbas'],
+    // Groq/Whisper can render the Portuguese wake "Jarvis" as this name.
+    ['jackson'],
     ['estou', 'ouvindo'],
   ];
   const bareSim: string[][] = protectConfirmation ? [] : [['sim']];
@@ -201,6 +212,7 @@ export function isDiscardableTranscript(
 ): boolean {
   const clean = normalize(text);
   if (clean.length === 0) return true;
+  if (NON_SPEECH_TAG.test(clean)) return true;
   if (isMediaBoilerplateTranscript(clean)) return true;
   if (JARVIS_SELF_ECHO.has(clean)) return true;
   return opts.inConversation ? HARD_GHOSTS.has(clean) : COLD_GHOSTS.has(clean);

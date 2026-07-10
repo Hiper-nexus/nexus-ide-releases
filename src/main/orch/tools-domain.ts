@@ -1,36 +1,27 @@
-import { markHandoffSubmitted } from './gate';
+import { assertOrchestratorMission } from './gate';
 import type { McpToolDef } from './mcp-protocol';
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
-import { recordMissionPane } from './mission-pane-store';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
-import {
-  handoffStatusSchema,
-  missionStatusSchema,
-} from '../../shared/orch-types';
-import {
-  createMission,
-  getMission,
-  listMissions,
-  setMissionStatus,
-} from './mission-store';
-import { listHandoffs, submitHandoff } from './handoff-store';
+import { missionStatusSchema } from '../../shared/orch-types';
 import { findAgent, listAgents, saveSquad } from './squad-store';
-import {
-  addTask as todoAddTask,
-  DEFAULT_TODO_LIST,
-  getTodoList,
-  markAllDone,
-  moveToTask,
-  setTasks,
-} from './todo-store';
-import { createTask, listTasks, updateTask } from './task-store';
+import { DEFAULT_TODO_LIST } from './todo-store';
+import { getProjectDomainStores } from './project-domain-store-registry';
+import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { installCatalogItem } from './catalog';
 import { saveCatalogOverlay, proposeRecipes } from './catalog-overlay';
 import { writeAgentSpec } from './agent-spec-writer';
-import { addCronJob, deleteCronJob, listCronJobs } from './cron-runtime';
-import { onHandoffSubmitted } from './idle-delivery';
-import { paneSpawnTool } from './tools-panes';
+import {
+  addCronJob,
+  deleteCronJob,
+  listCronJobs,
+  syncCronJobsForScope,
+  updateCronJob,
+} from './cron-runtime';
+import {
+  childMissionId,
+  paneSpawnTool,
+} from './tools-panes';
 import { buildBrowserTools } from './tools-browser';
 import { runRemoteBridgeToolAction } from './remote-bridge-tool';
 import {
@@ -41,78 +32,15 @@ import {
 import {
   num,
   requireStr,
-  spawnPaneAndMaybePrompt,
   str,
   strArray,
 } from './tool-util';
+import { buildHandoffTools } from './tools-handoff';
 
 /**
  * MCP tools for handoffs (2), agents (3), missions (5), squad/catalog/task
  * (3) and todos (1) — orchestration tool groups 2-6.
  */
-
-const handoffSubmitTool: McpToolDef = {
-  name: 'nexus_handoff_submit',
-  description:
-    'Submit your work handoff to the orchestrator: ' +
-    '{status: success|partial|blocked|failed, summary, artifacts?}. Always ' +
-    'allowed regardless of allowlists. Required before a worker finishes. ' +
-    'Attach {kind:"verification", command, exitCode:0} in artifacts to count ' +
-    'as a VERIFIED (green) delivery.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      status: {
-        type: 'string',
-        enum: ['success', 'partial', 'blocked', 'failed'],
-      },
-      summary: { type: 'string' },
-      artifacts: { type: 'array', items: {} },
-    },
-    required: ['status', 'summary'],
-  },
-  handler: async (args, ctx) => {
-    const summary = requireStr(args, 'summary').trim();
-    // Workers ocasionalmente colam o TEMPLATE do contrato como resumo
-    // ("<resumo objetivo do que fez>") — rejeitar força uma reentrega real.
-    if (summary.length < 20 || /^<.*>$/.test(summary)) {
-      throw new Error(
-        'summary inválido: descreva de verdade o que foi feito (mínimo 20 ' +
-          'caracteres, sem placeholders como "<resumo...>").',
-      );
-    }
-    const handoff = submitHandoff({
-      status: handoffStatusSchema.parse(args.status),
-      summary,
-      artifacts: Array.isArray(args.artifacts) ? args.artifacts : [],
-      missionId: ctx.missionId,
-      sessionId: ctx.sessionId,
-      fromAgent: ctx.agentName ?? ctx.label,
-    });
-    markHandoffSubmitted(ctx);
-    onHandoffSubmitted(handoff);
-    return { ok: true, handoffId: handoff.id };
-  },
-};
-
-const handoffListTool: McpToolDef = {
-  name: 'nexus_handoff_list',
-  description:
-    'List submitted handoffs (undelivered by default; includeDelivered: true ' +
-    'for the full audit trail). Optionally filter by missionId.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      missionId: { type: 'string' },
-      includeDelivered: { type: 'boolean' },
-    },
-  },
-  handler: async (args, ctx) =>
-    listHandoffs({
-      missionId: str(args, 'missionId') ?? ctx.missionId,
-      includeDelivered: args.includeDelivered === true,
-    }),
-};
 
 const agentListTool: McpToolDef = {
   name: 'nexus_agent_list',
@@ -147,6 +75,7 @@ const agentInvokeTool: McpToolDef = {
     properties: {
       agent: { type: 'string', description: 'Agent id or agentName' },
       prompt: { type: 'string' },
+      taskId: { type: 'string' },
       cwd: { type: 'string' },
       timeoutMs: { type: 'number', description: 'Default 300000' },
     },
@@ -157,18 +86,20 @@ const agentInvokeTool: McpToolDef = {
     if (!found) throw new Error('agent not found');
     const { agent } = found;
     const role = agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
-    const { paneId, sessionId } = await spawnPaneAndMaybePrompt({
+    if (ctx.role === 'worker' && role === 'orchestrator') {
+      throw new Error('not authorized: workers cannot invoke orchestrators');
+    }
+    const spawned = (await paneSpawnTool.handler({
       adapterId: agent.cli,
       model: agent.model,
       cwd: str(args, 'cwd'),
       title: agent.agentName,
-      missionId: ctx.missionId,
+      missionId: childMissionId(ctx),
+      taskId: str(args, 'taskId'),
       agentName: agent.agentName,
-      allowedTools: agent.allowedTools ?? (role === 'orchestrator' ? null : []),
-      allowedSkills: agent.allowedSkills ?? null,
-      role,
       prompt: requireStr(args, 'prompt'),
-    });
+    }, ctx)) as { paneId: string; sessionId: string };
+    const { paneId, sessionId } = spawned;
     const state = await waitForIdle(
       sessionId,
       num(args, 'timeoutMs') ?? 300_000,
@@ -198,7 +129,13 @@ const missionCreateTool: McpToolDef = {
     required: ['title'],
   },
   handler: async (args, ctx) => {
-    const mission = createMission({
+    if (ctx.role !== 'user') {
+      throw new Error(
+        'not authorized: only a user-owned session may create a mission',
+      );
+    }
+    const stores = getProjectDomainStores(ctx.scope);
+    const mission = stores.missions.create({
       title: requireStr(args, 'title'),
       description: str(args, 'description'),
       squadId: str(args, 'squadId'),
@@ -206,17 +143,20 @@ const missionCreateTool: McpToolDef = {
       orchestratorSessionId: ctx.sessionId,
     });
     ctx.missionId = mission.id;
+    ctx.role = 'orchestrator';
     // The creator's own pane is part of the mission composition too, so a
     // history reopen restores the orchestrator alongside the workers.
     const orchPane = ctx.sessionId ? findPane(ctx.sessionId) : null;
     if (orchPane?.adapterId) {
-      recordMissionPane({
+      stores.missionPanes.record({
         missionId: mission.id,
         adapterId: orchPane.adapterId,
         model: orchPane.model,
         title: orchPane.title,
         role: 'orchestrator',
         paneId: orchPane.paneId,
+        allowedTools: ctx.allowedTools,
+        allowedSkills: ctx.allowedSkills,
       });
     }
     return mission;
@@ -231,8 +171,10 @@ const missionGetTool: McpToolDef = {
     properties: { missionId: { type: 'string' } },
     required: ['missionId'],
   },
-  handler: async (args) => {
-    const mission = getMission(requireStr(args, 'missionId'));
+  handler: async (args, ctx) => {
+    const mission = getProjectDomainStores(ctx.scope).missions.get(
+      requireStr(args, 'missionId'),
+    );
     if (!mission) throw new Error('mission not found');
     return mission;
   },
@@ -250,9 +192,11 @@ const missionListTool: McpToolDef = {
       },
     },
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const status = str(args, 'status');
-    return listMissions(status ? missionStatusSchema.parse(status) : undefined);
+    return getProjectDomainStores(ctx.scope).missions.list(
+      status ? missionStatusSchema.parse(status) : undefined,
+    );
   },
 };
 
@@ -271,10 +215,22 @@ const missionSetStatusTool: McpToolDef = {
     },
     required: ['missionId', 'status'],
   },
-  handler: async (args) => {
-    const mission = setMissionStatus(
-      requireStr(args, 'missionId'),
-      missionStatusSchema.parse(args.status),
+  handler: async (args, ctx) => {
+    const missionId = requireStr(args, 'missionId');
+    const status = missionStatusSchema.parse(args.status);
+    assertOrchestratorMission(ctx, missionId);
+    if (status === 'done') {
+      const workflow = getContextWorkflowService(ctx.scope)
+        .getMissionWorkflow(missionId).workflow;
+      if (workflow?.stage !== 'complete') {
+        throw new Error(
+          'mission done is computed by nexus_workflow_advance after PREVC; direct done is forbidden',
+        );
+      }
+    }
+    const mission = getProjectDomainStores(ctx.scope).missions.setStatus(
+      missionId,
+      status,
     );
     if (!mission) throw new Error('mission not found');
     return mission;
@@ -300,7 +256,9 @@ const missionSpawnPaneTool: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const missionId = requireStr(args, 'missionId');
-    if (!getMission(missionId)) throw new Error('mission not found');
+    if (!getProjectDomainStores(ctx.scope).missions.get(missionId)) {
+      throw new Error('mission not found');
+    }
     return paneSpawnTool.handler({ ...args, missionId }, ctx);
   },
 };
@@ -451,8 +409,12 @@ const remoteBridgeTool: McpToolDef = {
       port: { type: 'number' },
     },
   },
-  handler: async (args) =>
-    runRemoteBridgeToolAction(str(args, 'action') ?? 'status', num(args, 'port')),
+  handler: async (args, ctx) =>
+    runRemoteBridgeToolAction(
+      str(args, 'action') ?? 'status',
+      num(args, 'port'),
+      ctx.scope,
+    ),
 };
 
 const remoteCliDetectTool: McpToolDef = {
@@ -527,15 +489,16 @@ const taskTool: McpToolDef = {
     required: ['action'],
   },
   handler: async (args, ctx) => {
+    const tasks = getProjectDomainStores(ctx.scope).tasks;
     switch (args.action) {
       case 'create':
-        return createTask({
+        return tasks.create({
           title: requireStr(args, 'title'),
           detail: str(args, 'detail'),
           missionId: str(args, 'missionId') ?? ctx.missionId,
         });
       case 'update': {
-        const updated = updateTask(requireStr(args, 'taskId'), {
+        const updated = tasks.update(requireStr(args, 'taskId'), {
           status: str(args, 'status') as
             | 'pending'
             | 'running'
@@ -549,7 +512,7 @@ const taskTool: McpToolDef = {
         return updated;
       }
       case 'list':
-        return listTasks(str(args, 'missionId') ?? ctx.missionId);
+        return tasks.list(str(args, 'missionId') ?? ctx.missionId);
       default:
         throw new Error(`unknown action: ${String(args.action)}`);
     }
@@ -583,23 +546,24 @@ const todoManagerTool: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const listId = str(args, 'listId') ?? ctx.missionId ?? DEFAULT_TODO_LIST;
+    const todos = getProjectDomainStores(ctx.scope).todos;
     switch (args.action) {
       case 'set_tasks': {
         const tasks = strArray(args, 'tasks');
         if (tasks.length === 0) throw new Error('set_tasks requires tasks[]');
-        return setTasks(tasks, listId);
+        return todos.setTasks(tasks, listId);
       }
       case 'move_to_task': {
-        const moved = moveToTask(requireStr(args, 'task'), listId);
+        const moved = todos.moveToTask(requireStr(args, 'task'), listId);
         if (!moved) throw new Error('task not found in list');
         return moved;
       }
       case 'add_task':
-        return todoAddTask(requireStr(args, 'task'), listId);
+        return todos.addTask(requireStr(args, 'task'), listId);
       case 'read_list':
-        return getTodoList(listId);
+        return todos.get(listId);
       case 'mark_all_done':
-        return markAllDone(listId);
+        return todos.markAllDone(listId);
       default:
         throw new Error(`unknown action: ${String(args.action)}`);
     }
@@ -669,24 +633,29 @@ const cronTool: McpToolDef = {
   name: 'nexus_cron',
   description:
     'Agendar squads/agentes: action "create" {name, schedule (cron 5 campos ' +
-    '"min hora dom mês dow"), brief, workspacePath?, agentName? XOR squadId?}, ' +
-    '"list", "delete" {id}. O job dispara o brief no horário; atraso > 5min ' +
+    '"min hora dom mês dow"), brief, workspacePath?, agentName? XOR squadId?, ' +
+    'executionMode?: "shared" | "local"}. Shared é o padrão e exige lease ' +
+    'remoto; local só existe quando solicitado explicitamente. ' +
+    '"list", "update" {id, campos}, "delete" {id}. Shared usa definição ' +
+    'portátil versionada com conflito CAS explícito. O job dispara o brief no horário; atraso > 5min ' +
     '(laptop fechado) é pulado, sem catch-up em rajada.',
   inputSchema: {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: ['create', 'list', 'delete'] },
+      action: { type: 'string', enum: ['create', 'list', 'update', 'delete'] },
       name: { type: 'string' },
       schedule: { type: 'string' },
       brief: { type: 'string' },
       workspacePath: { type: 'string' },
+      executionMode: { type: 'string', enum: ['shared', 'local'] },
       agentName: { type: 'string' },
       squadId: { type: 'string' },
       id: { type: 'string' },
+      status: { type: 'string', enum: ['active', 'paused'] },
     },
     required: ['action'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     switch (args.action) {
       case 'create': {
         const agentName = str(args, 'agentName');
@@ -694,19 +663,54 @@ const cronTool: McpToolDef = {
         if (!agentName && !squadId) {
           throw new Error('informe agentName OU squadId');
         }
-        return addCronJob({
+        const requestedMode = str(args, 'executionMode');
+        if (
+          requestedMode !== undefined &&
+          requestedMode !== 'shared' &&
+          requestedMode !== 'local'
+        ) {
+          throw new Error('executionMode deve ser "shared" ou "local"');
+        }
+        return await addCronJob({
           name: requireStr(args, 'name'),
           schedule: requireStr(args, 'schedule'),
           brief: requireStr(args, 'brief'),
           workspacePath: str(args, 'workspacePath'),
+          executionMode: requestedMode ?? 'shared',
           agentName,
           squadId,
-        });
+        }, ctx.scope);
       }
       case 'list':
-        return listCronJobs();
+        await syncCronJobsForScope(ctx.scope);
+        return listCronJobs(ctx.scope);
+      case 'update': {
+        const status = str(args, 'status');
+        if (
+          status !== undefined &&
+          status !== 'active' &&
+          status !== 'paused'
+        ) {
+          throw new Error('status deve ser active ou paused');
+        }
+        return await updateCronJob(
+          requireStr(args, 'id'),
+          {
+            name: str(args, 'name'),
+            schedule: str(args, 'schedule'),
+            brief: str(args, 'brief'),
+            workspacePath: str(args, 'workspacePath'),
+            agentName: str(args, 'agentName'),
+            squadId: str(args, 'squadId'),
+            status,
+          },
+          ctx.scope,
+        );
+      }
       case 'delete':
-        return { deleted: deleteCronJob(requireStr(args, 'id')) };
+        return {
+          deleted: await deleteCronJob(requireStr(args, 'id'), ctx.scope),
+        };
       default:
         throw new Error(`unknown action: ${String(args.action)}`);
     }
@@ -716,8 +720,7 @@ const cronTool: McpToolDef = {
 export function buildDomainTools(): McpToolDef[] {
   return [
     routeTaskTool,
-    handoffSubmitTool,
-    handoffListTool,
+    ...buildHandoffTools(),
     agentInvokeTool,
     agentListTool,
     agentGetTool,

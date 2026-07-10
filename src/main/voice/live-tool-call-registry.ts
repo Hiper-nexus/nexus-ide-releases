@@ -103,6 +103,14 @@ export interface LiveToolCallCoordinatorDeps {
     status: 'ok' | 'failed',
     summary: string,
   ): void;
+  /**
+   * Fired immediately before sending a function response. A provider is allowed
+   * to synchronously complete its response from inside sendToolResult(), so the
+   * owner must be armed before that call begins.
+   */
+  onResultSending?(event: JarvisLiveToolResultEvent): void;
+  /** Clears an optimistic pre-send arm when no provider accepted the result. */
+  onResultSendFailed?(event: JarvisLiveToolResultEvent): void;
 }
 
 /** Main-owned exactly-once/cancellation lifecycle for Live function calls. */
@@ -155,7 +163,9 @@ export class LiveToolCallCoordinator {
       });
       return false;
     }
-    this.sendResponse(callId, response, record.call.name);
+    this.deps.onResultSending?.(event);
+    const sent = this.sendResponse(callId, response, record.call.name);
+    if (!sent) this.deps.onResultSendFailed?.(event);
     this.deps.onResultContext(event.tool, status, summary);
     return true;
   }
@@ -242,14 +252,15 @@ export class LiveToolCallCoordinator {
     this.deps.onResultContext(event.tool, 'failed', summary);
   }
 
-  private sendResponse(callId: string, response: unknown, name: string): void {
+  private sendResponse(callId: string, response: unknown, name: string): boolean {
     const provider = this.deps.getProvider();
-    if (!provider?.isReady) return;
+    if (!provider?.isReady) return false;
     if (provider.sendNamedToolResult) {
       provider.sendNamedToolResult(callId, name, response);
-      return;
+      return true;
     }
     provider.sendToolResult(callId, response);
+    return true;
   }
 
   private clearTimer(callId: string): void {

@@ -1,0 +1,269 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Handoff } from '../../shared/orch-types';
+import type { ProjectExecutionScope } from '../../shared/types';
+import { testProjectScope } from './__tests__/scope-fixture';
+
+const ptyMocks = vi.hoisted(() => ({
+  state: 'busy' as string | null,
+  writes: vi.fn(() => true),
+  stateTaps: [] as Array<(sessionId: string, state: string) => void>,
+  exitTaps: [] as Array<(sessionId: string) => void>,
+}));
+
+const paneMocks = vi.hoisted(() => ({
+  authorities: new Map<string, unknown>(),
+}));
+
+const scopeMocks = vi.hoisted(() => ({
+  scopesByOwner: new Map<number, ProjectExecutionScope>(),
+  listeners: [] as Array<
+    (
+      owner: { id: number },
+      previous: ProjectExecutionScope | null,
+      next: ProjectExecutionScope | null,
+    ) => void
+  >,
+}));
+
+const storeMocks = vi.hoisted(() => ({
+  missions: new Map<string, { orchestratorSessionId?: string }>(),
+  handoffs: new Map<string, Handoff>(),
+  delivered: [] as Array<{ scope: ProjectExecutionScope; id: string }>,
+}));
+
+vi.mock('../pty/pty-manager', () => ({
+  getSessionState: vi.fn(() => ptyMocks.state),
+  orchWriteSession: ptyMocks.writes,
+  tapSessionState: vi.fn(
+    (tap: (sessionId: string, state: string) => void) => {
+      ptyMocks.stateTaps.push(tap);
+      return () => {
+        const index = ptyMocks.stateTaps.indexOf(tap);
+        if (index >= 0) ptyMocks.stateTaps.splice(index, 1);
+      };
+    },
+  ),
+  tapSessionExit: vi.fn((tap: (sessionId: string) => void) => {
+    ptyMocks.exitTaps.push(tap);
+    return () => {
+      const index = ptyMocks.exitTaps.indexOf(tap);
+      if (index >= 0) ptyMocks.exitTaps.splice(index, 1);
+    };
+  }),
+}));
+
+vi.mock('./pane-registry', () => ({
+  getOwnedPaneAuthzInfoBySession: vi.fn(
+    (ref: string) => paneMocks.authorities.get(ref) ?? null,
+  ),
+}));
+
+vi.mock('../persistence/renderer-workspace-scope', () => ({
+  getRendererWorkspaceScope: vi.fn(
+    (owner: { id: number }) => scopeMocks.scopesByOwner.get(owner.id) ?? null,
+  ),
+  onRendererWorkspaceScopeChange: vi.fn(
+    (
+      listener: (
+        owner: { id: number },
+        previous: ProjectExecutionScope | null,
+        next: ProjectExecutionScope | null,
+      ) => void,
+    ) => {
+      scopeMocks.listeners.push(listener);
+      return () => {
+        const index = scopeMocks.listeners.indexOf(listener);
+        if (index >= 0) scopeMocks.listeners.splice(index, 1);
+      };
+    },
+  ),
+}));
+
+vi.mock('./project-domain-store-registry', () => ({
+  getProjectDomainStores: vi.fn((scope: ProjectExecutionScope) => ({
+    missions: {
+      get: (id: string) =>
+        storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:${id}`) ??
+        null,
+    },
+    handoffs: {
+      get: (id: string) =>
+        storeMocks.handoffs.get(id) ?? handoff({ id }),
+      markDelivered: (id: string) => storeMocks.delivered.push({ scope, id }),
+    },
+  })),
+}));
+
+function handoff(overrides: Partial<Handoff> = {}): Handoff {
+  return {
+    id: 'handoff-a',
+    missionId: 'mission-a',
+    sessionId: 'worker-session',
+    fromAgent: 'worker-a',
+    status: 'success',
+    claimTrust: 'untrusted',
+    summary: 'completed the requested work',
+    artifacts: [],
+    evidenceIds: [],
+    evidenceTrust: 'unverified',
+    delivered: false,
+    createdAt: 1,
+    ...overrides,
+  };
+}
+
+function authorizeTarget(
+  scope: ProjectExecutionScope,
+  owner: { id: number } = { id: 101 },
+): void {
+  storeMocks.missions.set(
+    `${scope.projectId}:${scope.checkoutId}:mission-a`,
+    { orchestratorSessionId: 'orchestrator-session' },
+  );
+  paneMocks.authorities.set('orchestrator-session', {
+    owner,
+    paneId: 'orchestrator-pane',
+    sessionId: 'orchestrator-session',
+    kind: 'cli-agent',
+    missionId: 'mission-a',
+    role: 'orchestrator',
+    scope,
+  });
+  scopeMocks.scopesByOwner.set(owner.id, scope);
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.resetModules();
+  ptyMocks.state = 'busy';
+  ptyMocks.writes.mockClear();
+  ptyMocks.stateTaps.length = 0;
+  ptyMocks.exitTaps.length = 0;
+  paneMocks.authorities.clear();
+  scopeMocks.scopesByOwner.clear();
+  scopeMocks.listeners.length = 0;
+  storeMocks.missions.clear();
+  storeMocks.handoffs.clear();
+  storeMocks.delivered.length = 0;
+});
+
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+});
+
+describe('idle delivery authority and lifecycle', () => {
+  it('labels success as an untrusted worker report that cannot complete a mission', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+
+    expect(ptyMocks.writes).toHaveBeenCalledWith(
+      'orchestrator-session',
+      expect.stringMatching(
+        /reported_status=success.*claim_trust=untrusted.*evidence=unverified.*does_not_complete_mission/i,
+      ),
+    );
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('rechecks queued evidence and labels it stale after the workflow changes', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    delivery.initIdleDelivery();
+    const trusted = handoff({
+      evidenceIds: ['evidence-a'],
+      evidenceTrust: 'nexus-trusted',
+    });
+
+    delivery.onHandoffSubmitted(trusted, scope);
+    storeMocks.handoffs.set(
+      trusted.id,
+      handoff({
+        evidenceIds: ['evidence-a'],
+        evidenceTrust: 'stale',
+      }),
+    );
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+
+    expect(ptyMocks.writes).toHaveBeenCalledWith(
+      'orchestrator-session',
+      expect.stringMatching(/evidence=stale.*does_not_complete_mission/i),
+    );
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('cancels the delayed submit Enter when the exact session exits', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    ptyMocks.exitTaps[0]('orchestrator-session');
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(ptyMocks.writes).toHaveBeenCalledTimes(1);
+    expect(ptyMocks.writes).not.toHaveBeenCalledWith(
+      'orchestrator-session',
+      '\r',
+    );
+    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('drops queued state when its owning renderer changes workspace', async () => {
+    const delivery = await import('./idle-delivery');
+    const scopeA = testProjectScope();
+    const scopeB = testProjectScope({
+      projectId: 'project-b',
+      checkoutId: 'checkout-b',
+      rootRealPath: '/workspace/b',
+    });
+    const owner = { id: 202 };
+    authorizeTarget(scopeA, owner);
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scopeA);
+    scopeMocks.listeners[0](owner, scopeA, scopeB);
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+
+    expect(ptyMocks.writes).not.toHaveBeenCalled();
+    expect(storeMocks.delivered).toEqual([]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('fails closed on ambiguous, cross-scope, or wrong-mission targets', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    const foreignRoot = testProjectScope({ rootRealPath: '/workspace/other' });
+    authorizeTarget(scope);
+    delivery.initIdleDelivery();
+    ptyMocks.state = 'idle';
+
+    paneMocks.authorities.set('orchestrator-session', null);
+    delivery.onHandoffSubmitted(handoff({ id: 'ambiguous' }), scope);
+    authorizeTarget(scope);
+    paneMocks.authorities.set('orchestrator-session', {
+      ...(paneMocks.authorities.get('orchestrator-session') as object),
+      scope: foreignRoot,
+    });
+    delivery.onHandoffSubmitted(handoff({ id: 'foreign' }), scope);
+    authorizeTarget(scope);
+    paneMocks.authorities.set('orchestrator-session', {
+      ...(paneMocks.authorities.get('orchestrator-session') as object),
+      missionId: 'mission-b',
+    });
+    delivery.onHandoffSubmitted(handoff({ id: 'wrong-mission' }), scope);
+
+    expect(ptyMocks.writes).not.toHaveBeenCalled();
+    expect(storeMocks.delivered).toEqual([]);
+    delivery.shutdownIdleDelivery();
+  });
+});

@@ -90,9 +90,13 @@ export function currentScreenSnapshot(): ScreenSnapshot {
       surface: { kind: 'settings' },
     });
   }
-    if (wizard.open) {
+  if (wizard.open) {
     const mode = wizard.presetSquadId
       ? 'revisão de squad pronto — diga sim / inicia para confirmar e disparar'
+      : wizard.agenticLaunchNonce > 0
+        ? `nova missão no modo agêntico${
+            wizard.agenticIntent ? ` — objetivo: ${wizard.agenticIntent.slice(0, 240)}` : ''
+          }`
       : wizard.variant === 'workspace'
         ? 'novo workspace'
         : 'nova missão';

@@ -19,7 +19,7 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
       type: 'function',
       name: NEXUS_REALTIME_ACTION_TOOL,
       description:
-        'Operate Nexus IDE through the same audited action executor used by Classic Jarvis. Use safe UI actions directly, use send_to_pane for agent delegation, run_command only when the user explicitly asks to run a shell command, and mcp_tool for Nexus MCP tools. Sensitive tools still require native confirmation.',
+        'Operate Nexus IDE through the same audited action executor used by Classic Jarvis. Use safe UI actions directly, use read_current_view when the user asks to read what is visibly on the current screen/page (local accessibility and OCR context), use send_to_pane for agent delegation, run_command only when the user explicitly asks to run a shell command, and mcp_tool for Nexus MCP tools. Sensitive tools still require native confirmation.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -27,7 +27,8 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
           action: {
             type: 'string',
             enum: SAFE_REALTIME_ACTIONS,
-            description: 'The safe Nexus IDE action to execute.',
+            description:
+              'The safe Nexus IDE action to execute. read_current_view reads the current visible view; read_pane reads a specific pane.',
           },
           url: {
             type: 'string',
@@ -41,6 +42,11 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
           workspaceName: {
             type: 'string',
             description: 'Required for open_workspace. Use the spoken workspace name.',
+          },
+          intent: {
+            type: 'string',
+            description:
+              'Optional work objective for new_agentic_mission. Omit it when the user only asks to open Agentic mode.',
           },
           paneName: {
             type: 'string',

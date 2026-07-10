@@ -1,11 +1,21 @@
 import type { Handoff } from '../../shared/orch-types';
+import type { ProjectExecutionScope } from '../../shared/types';
 import {
   getSessionState,
   orchWriteSession,
+  tapSessionExit,
   tapSessionState,
 } from '../pty/pty-manager';
-import { getMission } from './mission-store';
-import { markDelivered } from './handoff-store';
+import {
+  getRendererWorkspaceScope,
+  onRendererWorkspaceScopeChange,
+} from '../persistence/renderer-workspace-scope';
+import { getProjectDomainStores } from './project-domain-store-registry';
+import {
+  getOwnedPaneAuthzInfoBySession,
+  type OwnedPaneAuthzInfo,
+} from './pane-registry';
+import { sameProjectScope } from './project-scoped-broadcast';
 
 /**
  * Automatic handoff delivery: when a worker submits a
@@ -15,10 +25,41 @@ import { markDelivered } from './handoff-store';
  * transition.
  */
 
-const queues = new Map<string, Handoff[]>(); // orchestrator sessionId → queue
-let tapInstalled = false;
+interface QueuedHandoff {
+  handoff: Handoff;
+  authority: DeliveryAuthority;
+}
+
+interface DeliveryAuthority {
+  readonly owner: OwnedPaneAuthzInfo['owner'];
+  readonly paneId: string;
+  readonly sessionId: string;
+  readonly missionId: string;
+  readonly scope: ProjectExecutionScope;
+}
+
+interface PendingEnter {
+  readonly authority: DeliveryAuthority;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
+const queues = new Map<string, QueuedHandoff[]>();
+const pendingEnters = new Set<PendingEnter>();
+const ownerKeys = new WeakMap<OwnedPaneAuthzInfo['owner'], number>();
+let nextOwnerKey = 1;
+let untapState: (() => void) | null = null;
+let untapExit: (() => void) | null = null;
+let unsubscribeScopeChanges: (() => void) | null = null;
 
 const MAX_DELIVERY_SUMMARY = 4000;
+
+function ownerKey(owner: OwnedPaneAuthzInfo['owner']): number {
+  const existing = ownerKeys.get(owner);
+  if (existing) return existing;
+  const key = nextOwnerKey++;
+  ownerKeys.set(owner, key);
+  return key;
+}
 
 /**
  * A worker controls its own handoff `summary`; it is injected into the
@@ -42,59 +83,209 @@ function formatDelivery(handoff: Handoff): string {
   );
   const artifacts =
     handoff.artifacts.length > 0
-      ? ` artifacts: ${sanitizeForTerminal(JSON.stringify(handoff.artifacts)).slice(0, MAX_DELIVERY_SUMMARY)}`
+      ? ` artifacts: ${sanitizeForTerminal(
+          JSON.stringify(handoff.artifacts),
+        ).slice(0, MAX_DELIVERY_SUMMARY)}`
       : '';
+  const evidenceIds = sanitizeForTerminal(
+    JSON.stringify(handoff.evidenceIds),
+  );
+  const evidence =
+    handoff.evidenceTrust === 'nexus-trusted'
+      ? `nexus-trusted evidence_ids=${evidenceIds}`
+      : handoff.evidenceTrust === 'stale'
+        ? `stale evidence_ids=${evidenceIds}`
+        : 'unverified';
   return (
-    `[nexus handoff] from=${from} status=${handoff.status} ` +
+    `[nexus handoff delivery_metadata] from=${from} ` +
+    `reported_status=${handoff.status} claim_trust=untrusted ` +
+    `evidence=${evidence} does_not_complete_mission=true ` +
     `summary: ${summary}${artifacts}`
   );
 }
 
-function deliverNow(sessionId: string, handoff: Handoff): boolean {
-  const ok = orchWriteSession(sessionId, formatDelivery(handoff));
+function authorityKey(authority: DeliveryAuthority): string {
+  return JSON.stringify([
+    ownerKey(authority.owner),
+    authority.scope.installationId,
+    authority.scope.projectId,
+    authority.scope.checkoutId,
+    authority.scope.rootRealPath,
+    authority.missionId,
+    authority.paneId,
+    authority.sessionId,
+  ]);
+}
+
+function isCurrentAuthority(authority: DeliveryAuthority): boolean {
+  const rendererScope = getRendererWorkspaceScope(authority.owner);
+  if (!rendererScope || !sameProjectScope(rendererScope, authority.scope)) {
+    return false;
+  }
+  const mission = getProjectDomainStores(authority.scope).missions.get(
+    authority.missionId,
+  );
+  if (mission?.orchestratorSessionId !== authority.sessionId) return false;
+  const pane = getOwnedPaneAuthzInfoBySession(authority.sessionId);
+  return Boolean(
+    pane &&
+      pane.owner === authority.owner &&
+      pane.paneId === authority.paneId &&
+      pane.sessionId === authority.sessionId &&
+      pane.kind === 'cli-agent' &&
+      pane.role === 'orchestrator' &&
+      pane.missionId === authority.missionId &&
+      pane.scope &&
+      sameProjectScope(pane.scope, authority.scope),
+  );
+}
+
+function scheduleEnter(authority: DeliveryAuthority): void {
+  let pending: PendingEnter;
+  const timer = setTimeout(() => {
+    pendingEnters.delete(pending);
+    if (isCurrentAuthority(authority)) {
+      orchWriteSession(authority.sessionId, '\r');
+    }
+  }, 150);
+  pending = { authority, timer };
+  pendingEnters.add(pending);
+}
+
+function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
+  if (!isCurrentAuthority(authority)) return false;
+  const stores = getProjectDomainStores(authority.scope);
+  const current = stores.handoffs.get(handoff.id);
+  if (!current) return false;
+  const ok = orchWriteSession(authority.sessionId, formatDelivery(current));
   if (!ok) return false;
   // Enter arrives as a separate write so TUIs treat it as a submit keypress.
-  setTimeout(() => orchWriteSession(sessionId, '\r'), 150);
-  markDelivered(handoff.id);
+  scheduleEnter(authority);
+  stores.handoffs.markDelivered(current.id);
   return true;
 }
 
 function flushQueue(sessionId: string): void {
-  const queue = queues.get(sessionId);
-  if (!queue || queue.length === 0) return;
+  const matches = [...queues.entries()].filter(
+    ([, queue]) => queue[0]?.authority.sessionId === sessionId,
+  );
+  if (matches.length === 0) return;
+  if (matches.length !== 1) {
+    for (const [key] of matches) queues.delete(key);
+    return;
+  }
+  const [key, queue] = matches[0];
   // One handoff per idle transition: after delivery the orchestrator goes
   // busy processing it; remaining handoffs flush on subsequent idles.
   const next = queue.shift()!;
-  if (queue.length === 0) queues.delete(sessionId);
-  if (!deliverNow(sessionId, next)) {
+  if (queue.length === 0) queues.delete(key);
+  if (!deliverNow(next.authority, next.handoff)) {
     // Session died — drop the rest of its queue.
-    queues.delete(sessionId);
+    queues.delete(key);
   }
 }
 
 export function initIdleDelivery(): void {
-  if (tapInstalled) return;
-  tapInstalled = true;
-  tapSessionState((sessionId, state) => {
+  if (untapState) return;
+  untapState = tapSessionState((sessionId, state) => {
     if (state === 'idle') flushQueue(sessionId);
+  });
+  untapExit = tapSessionExit((sessionId) => {
+    for (const [key, queue] of [...queues]) {
+      if (queue[0]?.authority.sessionId === sessionId) queues.delete(key);
+    }
+    for (const pending of [...pendingEnters]) {
+      if (pending.authority.sessionId !== sessionId) continue;
+      clearTimeout(pending.timer);
+      pendingEnters.delete(pending);
+    }
+  });
+  unsubscribeScopeChanges = onRendererWorkspaceScopeChange(
+    (owner, previous) => {
+      if (!previous) return;
+      for (const [key, queue] of [...queues]) {
+        const authority = queue[0]?.authority;
+        if (
+          authority?.owner.id === owner.id &&
+          sameProjectScope(authority.scope, previous)
+        ) {
+          queues.delete(key);
+        }
+      }
+      for (const pending of [...pendingEnters]) {
+        if (
+          pending.authority.owner.id !== owner.id ||
+          !sameProjectScope(pending.authority.scope, previous)
+        ) {
+          continue;
+        }
+        clearTimeout(pending.timer);
+        pendingEnters.delete(pending);
+      }
+    },
+  );
+}
+
+export function shutdownIdleDelivery(): void {
+  untapState?.();
+  untapExit?.();
+  unsubscribeScopeChanges?.();
+  untapState = null;
+  untapExit = null;
+  unsubscribeScopeChanges = null;
+  queues.clear();
+  for (const pending of pendingEnters) clearTimeout(pending.timer);
+  pendingEnters.clear();
+}
+
+/** Resolve the exact owner/scope/mission authority for the orchestrator. */
+function targetAuthority(
+  handoff: Handoff,
+  scope: ProjectExecutionScope,
+): DeliveryAuthority | null {
+  if (!handoff.missionId) return null;
+  const missionId = handoff.missionId;
+  const sessionId = getProjectDomainStores(scope).missions.get(
+    missionId,
+  )?.orchestratorSessionId;
+  if (!sessionId) return null;
+  const pane = getOwnedPaneAuthzInfoBySession(sessionId);
+  const rendererScope = pane ? getRendererWorkspaceScope(pane.owner) : null;
+  if (
+    !pane ||
+    pane.sessionId !== sessionId ||
+    pane.kind !== 'cli-agent' ||
+    pane.role !== 'orchestrator' ||
+    pane.missionId !== missionId ||
+    !pane.scope ||
+    !sameProjectScope(pane.scope, scope) ||
+    !rendererScope ||
+    !sameProjectScope(rendererScope, scope)
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    owner: pane.owner,
+    paneId: pane.paneId,
+    sessionId,
+    missionId,
+    scope: Object.freeze({ ...scope }),
   });
 }
 
-/** Resolve the delivery target for a handoff: its mission's orchestrator. */
-function targetSession(handoff: Handoff): string | null {
-  if (!handoff.missionId) return null;
-  return getMission(handoff.missionId)?.orchestratorSessionId ?? null;
-}
-
 /** Called by nexus_handoff_submit (and the legacy stream parser). */
-export function onHandoffSubmitted(handoff: Handoff): void {
-  const sessionId = targetSession(handoff);
-  if (!sessionId) return; // No orchestrator to notify — stays listed as pending.
-  if (getSessionState(sessionId) === 'idle') {
-    deliverNow(sessionId, handoff);
+export function onHandoffSubmitted(
+  handoff: Handoff,
+  scope: ProjectExecutionScope,
+): void {
+  const authority = targetAuthority(handoff, scope);
+  if (!authority) return; // No trusted orchestrator — stays listed as pending.
+  if (getSessionState(authority.sessionId) === 'idle') {
+    deliverNow(authority, handoff);
     return;
   }
-  const queue = queues.get(sessionId) ?? [];
-  queue.push(handoff);
-  queues.set(sessionId, queue);
+  const key = authorityKey(authority);
+  const queue = queues.get(key) ?? [];
+  queue.push({ handoff, authority });
+  queues.set(key, queue);
 }

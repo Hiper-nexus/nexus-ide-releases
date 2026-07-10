@@ -13,6 +13,7 @@ import {
   FUNCTIONAL_SMOKE_FILE_CONTENT,
   parseFunctionalSmokeResult,
 } from '../shared/smoke-types';
+import { grantWorkspacePathFromTrustedMain } from './persistence/workspace-store';
 
 // CI smoke test: `NexusIDE --smoke-test` boots the app for real (full main
 // init + window + renderer bundle) and exits 0 only after React commits a real
@@ -98,8 +99,17 @@ export function initSmokeTest(): void {
           FUNCTIONAL_SMOKE_FILE_CONTENT,
           { encoding: 'utf8', mode: 0o600 },
         );
-        wc.send(WINDOW_CHANNELS.functionalSmokeRun, { workspacePath });
-      } catch {
+        const canonicalWorkspacePath = grantWorkspacePathFromTrustedMain(wc, workspacePath);
+        if (!canonicalWorkspacePath) {
+          throw new Error('could not grant smoke workspace');
+        }
+        wc.send(WINDOW_CHANNELS.functionalSmokeRun, {
+          workspacePath: canonicalWorkspacePath,
+        });
+      } catch (error) {
+        console.error(
+          `[smoke] workspace setup error: ${smokeErrorMessage(error)}`,
+        );
         ipcMain.removeListener(WINDOW_CHANNELS.functionalSmokeResult, onFunctionalResult);
         settle('functional-failed', 'workspace-open');
       }
@@ -115,4 +125,9 @@ export function initSmokeTest(): void {
       }
     });
   });
+}
+
+function smokeErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/[\r\n]+/gu, ' ').slice(0, 512);
 }

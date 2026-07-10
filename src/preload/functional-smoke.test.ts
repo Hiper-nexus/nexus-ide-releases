@@ -105,6 +105,40 @@ describe('runFunctionalSmokeProbes', () => {
     expect(getMcpInfo).toHaveBeenCalledTimes(2);
   });
 
+  it('accepts the PREVC mission-authority guard as stronger write protection', async () => {
+    const api = successfulApi();
+    const invoke = vi.mocked(api.mcp.invoke);
+    invoke.mockImplementation(async (tool: string) => {
+      if (tool === 'nexus_file_write') {
+        return {
+          ok: false,
+          tool,
+          denied: true,
+          error:
+            'mission effect blocked: projectId, checkoutId, missionId and contextRevision are required',
+        };
+      }
+      if (tool === 'nexus_file_read') {
+        return {
+          ok: true,
+          tool,
+          result: { path: 'smoke.txt', content: FUNCTIONAL_SMOKE_FILE_CONTENT },
+        };
+      }
+      if (tool === 'nexus_ui_read') {
+        return { ok: true, tool, result: { surface: 'nexus-ui' } };
+      }
+      return { ok: true, tool, result: {} };
+    });
+
+    const result = await runFunctionalSmokeProbes(api, '/tmp/workspace', {
+      delay: async () => {},
+      probeTimeoutMs: 100,
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it('fails closed when the packaged adapter registry is incomplete', async () => {
     const api = successfulApi();
     vi.mocked(api.adapters.list).mockResolvedValue([]);

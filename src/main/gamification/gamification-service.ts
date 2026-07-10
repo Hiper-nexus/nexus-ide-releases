@@ -1,19 +1,24 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { Db } from '../persistence/db';
+import type Database from 'better-sqlite3';
+import { z } from 'zod';
 import type {
   GamificationSnapshot,
-  GamificationTier,
+  StoredXpEvent,
   XpEventInput,
-  XpEventKind,
 } from '../../shared/gamification-types';
 import {
   GAMIFICATION_CHANNELS,
   GAMIFICATION_COPY,
 } from '../../shared/gamification-types';
-import { efficiencyBonus, PRESTIGE_THRESHOLD, RULE_VERSION, TIER_THRESHOLDS, tierForPower, nextTierAt } from './xp-rules';
-import { computePoints, foldAggregate } from './xp-engine';
-import { advanceStreak, SHIELDS_PER_MONTH, type StreakState } from './streak';
+import type { ProjectExecutionScope } from '../../shared/types';
+import type {
+  ProjectDomainStoreName,
+  ProjectDomainStoreRegistry,
+  ProjectDomainStoreSuite,
+} from '../orch/project-domain-store-registry';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { evaluateAchievements } from './achievements';
+import { computePoints, foldAggregate } from './xp-engine';
 import {
   countTodaySameBucket,
   dumpMeta,
@@ -24,649 +29,722 @@ import {
   replaceProfile,
   setMeta,
 } from './gamification-store';
-import type { StoredXpEvent } from '../../shared/gamification-types';
-import { listHandoffs, onHandoffsChange } from '../orch/handoff-store';
-import { listMissions, onMissionsChange } from '../orch/mission-store';
-import { listTasks, onTasksChange } from '../orch/task-store';
-import { listMissionPanes } from '../orch/mission-pane-store';
-import { findAgent } from '../orch/squad-store';
-import { usageTotalsByMission } from '../usage/usage-store';
-import { mediaUsageTotalsByMission } from '../usage/media-usage-store';
-import type { Handoff } from '../../shared/orch-types';
+import {
+  bumpExtra,
+  countersSchema,
+  dayStartOf,
+  DELIVERY_KINDS,
+  EMPTY_STREAK,
+  handoffEffort,
+  maxTier,
+  metaJson,
+  metaNumber,
+  missionCost,
+  missionEffort,
+  monthKeyOf,
+  sameScope,
+  scopeKey,
+  streakSchema,
+  stringListSchema,
+  tierRank,
+  tierSchema,
+} from './gamification-service-support';
+import { advanceStreak, SHIELDS_PER_MONTH } from './streak';
+import {
+  efficiencyBonus,
+  nextTierAt,
+  PRESTIGE_THRESHOLD,
+  RULE_VERSION,
+  tierForPower,
+} from './xp-rules';
 
-/**
- * Borda da gamificação — read-model sobre os stores REAIS (handoff/missão/
- * task/mídia): resolve evidência, effort e custo, delega pontos ao engine
- * puro (Partes 1–2) e mantém o estado derivado (streak, piso de tier,
- * conquistas, skins, prestígio) no gamification_meta. Broadcast coalescido
- * (padrão usage-service) + narração via 'voice:narrate' (jarvis-narrator).
- *
- * Electron/settings ficam atrás de lazy require nos defaults — o módulo em si
- * permanece puro e unit-testável com deps injetadas.
- */
+export { hasGreenEvidence } from './gamification-service-support';
 
-export interface ServiceDeps {
-  db: Db | null;
-  broadcast(channel: string, payload?: unknown): void;
-  now(): number;
-  soberMode(): boolean;
+export interface ScopedGamificationSnapshot extends GamificationSnapshot {
+  readonly projectId: string;
+  readonly checkoutId: string;
+  readonly rootRealPath: string;
 }
 
-/** Chave de idempotência ESTÁVEL por entidade (não por kind): a mesma missão
- *  re-varrida como verde depois de contada como simples NÃO pode pontuar de
- *  novo — o kind vive na coluna, a chave prende a entidade. */
-const missionKey = (id: string) => `mission:${id}`;
-const handoffKey = (id: string) => `handoff:${id}`;
-const taskKey = (id: string) => `task_done:${id}`;
+export type ScopedGamificationBroadcast = (
+  scope: ProjectExecutionScope,
+  channel: string,
+  payload?: unknown,
+) => void;
 
-const DELIVERY_KINDS: ReadonlySet<XpEventKind> = new Set([
-  'mission_green',
-  'mission_done',
-  'handoff_green',
-  'handoff_success',
-  'task_done',
-]);
-
-const EMPTY_STREAK: StreakState = {
-  streakDays: 0,
-  lastDeliveryDay: null,
-  shieldsUsedMonth: null,
-  shieldsUsed: 0,
-};
-
-let deps: ServiceDeps | null = null;
-let unsubscribes: Array<() => void> = [];
-let changedTimer: ReturnType<typeof setTimeout> | null = null;
-
-function defaultDeps(): ServiceDeps {
-  return {
-    db: (() => {
-      try {
-        // Lazy require: persistence/db importa electron — manter fora do topo
-        // preserva este módulo importável em unit tests (padrão do repo).
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { getDb } = require('../persistence/db') as typeof import('../persistence/db');
-        return getDb();
-      } catch {
-        return null;
-      }
-    })(),
-    broadcast: (channel, payload) => {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { BrowserWindow } = require('electron') as typeof import('electron');
-        for (const win of BrowserWindow.getAllWindows()) {
-          const wc = win.webContents;
-          if (!wc.isDestroyed() && !wc.isCrashed()) wc.send(channel, payload);
-        }
-      } catch {
-        // sem janelas/electron (teste) — silencioso
-      }
-    },
-    now: () => Date.now(),
-    soberMode: () => {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { getOrchSettings } =
-          require('../persistence/settings-store') as typeof import('../persistence/settings-store');
-        return (getOrchSettings() as { soberMode?: boolean }).soberMode === true;
-      } catch {
-        return false;
-      }
-    },
-  };
+export interface ProjectGamificationServiceOptions {
+  runtimeManager: ProjectRuntimeManager;
+  domainStores: ProjectDomainStoreRegistry;
+  broadcast: ScopedGamificationBroadcast;
+  now?: () => number;
+  soberMode?: (scope: ProjectExecutionScope) => boolean;
+  agentCategory?: (agentName: string) => string | null;
 }
 
-// ── Meta helpers ─────────────────────────────────────────────────────────────
-
-function metaJson<T>(db: Db, key: string, fallback: T): T {
-  const raw = getMeta(db, key);
-  if (!raw) return fallback;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
+interface ScopeState {
+  readonly scope: ProjectExecutionScope;
+  activated: boolean;
+  schemaVerified: boolean;
+  changedTimer: ReturnType<typeof setTimeout> | null;
 }
-
-function metaNumber(db: Db, key: string, fallback: number): number {
-  const raw = getMeta(db, key);
-  const n = raw === null ? NaN : Number(raw);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-const TIER_ORDER: GamificationTier[] = TIER_THRESHOLDS.map((t) => t.tier);
-
-function tierRank(tier: GamificationTier): number {
-  const i = TIER_ORDER.indexOf(tier);
-  return i < 0 ? 0 : i;
-}
-
-function maxTier(a: GamificationTier, b: GamificationTier): GamificationTier {
-  return tierRank(a) >= tierRank(b) ? a : b;
-}
-
-function monthKeyOf(epochMs: number): string {
-  const d = new Date(epochMs);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function dayStartOf(epochMs: number): number {
-  const d = new Date(epochMs);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-// ── Evidência / effort / custo ───────────────────────────────────────────────
-
-/** Artifact {kind:'verification', command, exitCode:0} → "cmd (exit 0)". */
-export function hasGreenEvidence(artifacts: unknown[]): string | null {
-  for (const artifact of artifacts) {
-    if (!artifact || typeof artifact !== 'object') continue;
-    const rec = artifact as Record<string, unknown>;
-    if (
-      rec.kind === 'verification' &&
-      typeof rec.command === 'string' &&
-      rec.exitCode === 0
-    ) {
-      return `${rec.command} (exit 0)`;
-    }
-  }
-  return null;
-}
-
-const EFFORT_RANK: Record<string, number> = { low: 1, medium: 2, high: 3 };
-
-/** Maior effort entre os panes da missão (proxy do tier do router). */
-function missionEffort(missionId: string): string | null {
-  let best: string | null = null;
-  let bestRank = 0;
-  for (const pane of listMissionPanes(missionId)) {
-    const rank = pane.effort ? EFFORT_RANK[pane.effort] ?? 0 : 0;
-    if (rank > bestRank) {
-      bestRank = rank;
-      best = pane.effort ?? null;
-    }
-  }
-  return best;
-}
-
-/** Effort do pane do agente que entregou (fallback: 1º pane worker). */
-function handoffEffort(handoff: Handoff): string | null {
-  if (!handoff.missionId) return null;
-  const panes = listMissionPanes(handoff.missionId);
-  if (handoff.fromAgent) {
-    const own = panes.find((p) => p.agentName === handoff.fromAgent);
-    if (own?.effort) return own.effort;
-  }
-  return panes.find((p) => p.role === 'worker')?.effort ?? null;
-}
-
-/** Custo real da missão (tokens + mídia); null quando não medido. */
-function missionCost(db: Db, missionId: string): number | null {
-  try {
-    const total =
-      usageTotalsByMission(db, missionId).costUsd +
-      mediaUsageTotalsByMission(db, missionId).costUsd;
-    return total > 0 ? total : null;
-  } catch {
-    return null;
-  }
-}
-
-// ── Varredura (read-model) ───────────────────────────────────────────────────
 
 interface ScanResult {
   insertedAny: boolean;
   deliveries: XpEventInput[];
 }
 
-function insertEvent(db: Db, input: XpEventInput, retro: boolean): boolean {
-  const prior = retro
-    ? 0
-    : countTodaySameBucket(db, input.kind, input.effort, dayStartOf(depsOf().now()));
-  const points = computePoints(input, prior);
-  return insertXpEvent(db, input, points);
+interface FinalizedChange {
+  before: ScopedGamificationSnapshot;
+  after: ScopedGamificationSnapshot;
+  retro: boolean;
 }
 
-function bumpExtra(extra: Record<string, number>, key: string): void {
-  extra[key] = (extra[key] ?? 0) + 1;
-}
+const missionKey = (id: string) => `mission:${id}`;
+const handoffKey = (id: string) => `handoff:${id}`;
+const taskKey = (id: string) => `task_done:${id}`;
 
-function scanStores(db: Db, retro: boolean): ScanResult {
-  const result: ScanResult = { insertedAny: false, deliveries: [] };
-  const extra = metaJson<Record<string, number>>(db, 'counters_extra', {});
-  let extraDirty = false;
+const OBSERVED_STORES: ReadonlySet<ProjectDomainStoreName> = new Set([
+  'missions',
+  'handoffs',
+  'tasks',
+]);
 
-  for (const handoff of listHandoffs({ includeDelivered: true })) {
-    if (handoff.status !== 'success') continue;
-    // Verde histórico não existe: evidência só vale em eventos ao vivo.
-    const evidence = retro ? null : hasGreenEvidence(handoff.artifacts);
-    const input: XpEventInput = {
-      kind: evidence ? 'handoff_green' : 'handoff_success',
-      entityKey: handoffKey(handoff.id),
-      missionId: handoff.missionId ?? null,
-      agentCategory: handoff.fromAgent
-        ? findAgent(handoff.fromAgent)?.agent.category ?? null
-        : null,
-      effort: handoffEffort(handoff),
-      evidence,
-      retro,
-      createdAt: handoff.createdAt,
-    };
-    if (insertEvent(db, input, retro)) {
-      result.insertedAny = true;
-      result.deliveries.push(input);
-    }
+export class ProjectGamificationService {
+  readonly #runtimeManager: ProjectRuntimeManager;
+  readonly #domainStores: ProjectDomainStoreRegistry;
+  readonly #broadcast: ScopedGamificationBroadcast;
+  readonly #now: () => number;
+  readonly #soberMode: (scope: ProjectExecutionScope) => boolean;
+  readonly #agentCategory: (agentName: string) => string | null;
+  readonly #states = new Map<string, ScopeState>();
+  readonly #unsubscribes: Array<() => void> = [];
+  #started = false;
+  #disposed = false;
+
+  constructor(options: ProjectGamificationServiceOptions) {
+    this.#runtimeManager = options.runtimeManager;
+    this.#domainStores = options.domainStores;
+    this.#broadcast = options.broadcast;
+    this.#now = options.now ?? Date.now;
+    this.#soberMode = options.soberMode ?? (() => false);
+    this.#agentCategory = options.agentCategory ?? (() => null);
   }
 
-  for (const mission of listMissions()) {
-    if (mission.status !== 'done') continue;
-    const greenHandoff = retro
-      ? null
-      : listHandoffs({ missionId: mission.id, includeDelivered: true }).find(
-          (h) => h.status === 'success' && hasGreenEvidence(h.artifacts),
+  start(): void {
+    if (this.#disposed) throw new Error('gamification service is disposed');
+    if (this.#started) return;
+    this.#started = true;
+    this.#unsubscribes.push(
+      this.#domainStores.onScope((scope) => {
+        try {
+          this.#activateScope(scope);
+        } catch (error) {
+          console.warn('[gamification] scope activation failed:', error);
+        }
+      }),
+      this.#domainStores.onChange((scope, store) => {
+        if (!OBSERVED_STORES.has(store)) return;
+        try {
+          const wasActive = this.#state(scope).activated;
+          this.#activateScope(scope);
+          if (wasActive) this.#scanLive(scope);
+        } catch (error) {
+          console.warn('[gamification] scoped scan failed:', error);
+        }
+      }),
+    );
+  }
+
+  snapshot(scope: ProjectExecutionScope): ScopedGamificationSnapshot {
+    this.#activateScope(scope);
+    const db = this.#database(scope, false);
+    return this.#buildSnapshot(scope, db);
+  }
+
+  runRetroReplayOnce(scope: ProjectExecutionScope): void {
+    const db = this.#database(scope, true);
+    const suite = this.#domainStores.forScope(scope);
+    this.#runRetroReplay(db, suite, scope);
+    this.#state(scope).activated = true;
+  }
+
+  recordMediaGenerated(
+    scope: ProjectExecutionScope,
+    rawKind: string,
+    missionId: string | null,
+  ): ScopedGamificationSnapshot {
+    const kind = z.string().min(1).max(64).parse(rawKind);
+    this.#activateScope(scope);
+    const db = this.#database(scope, true);
+    const change = db.transaction(() => {
+      const before = this.#buildSnapshot(scope, db);
+      const extra = metaJson(db, 'counters_extra', countersSchema, {});
+      bumpExtra(extra, `media_${kind}`);
+      setMeta(db, 'counters_extra', JSON.stringify(extra));
+      const input: XpEventInput = {
+        kind: 'media_generated',
+        entityKey: `media_generated:${randomUUID()}`,
+        missionId,
+        createdAt: this.#now(),
+      };
+      const scan: ScanResult = { insertedAny: false, deliveries: [] };
+      if (this.#insertEvent(db, input, false)) scan.insertedAny = true;
+      const after = this.#finalize(scope, db, scan, false);
+      return after ? { before, after, retro: false } : null;
+    })();
+    if (change) this.#celebrateAndBroadcast(scope, change);
+    return this.#buildSnapshot(scope, db);
+  }
+
+  recordJarvisAction(
+    scope: ProjectExecutionScope,
+    rawActionType: string,
+    ok: boolean,
+  ): ScopedGamificationSnapshot {
+    const actionType = z.string().min(1).max(64).parse(rawActionType);
+    if (!ok || actionType === 'none') return this.snapshot(scope);
+    this.#activateScope(scope);
+    const db = this.#database(scope, true);
+    const change = db.transaction(() => {
+      const before = this.#buildSnapshot(scope, db);
+      const input: XpEventInput = {
+        kind: 'jarvis_action',
+        entityKey: `jarvis_action:${actionType}:${randomUUID()}`,
+        createdAt: this.#now(),
+      };
+      const scan: ScanResult = { insertedAny: false, deliveries: [] };
+      if (this.#insertEvent(db, input, false)) scan.insertedAny = true;
+      const after = this.#finalize(scope, db, scan, false);
+      return after ? { before, after, retro: false } : null;
+    })();
+    if (change) this.#celebrateAndBroadcast(scope, change);
+    return this.#buildSnapshot(scope, db);
+  }
+
+  prestige(scope: ProjectExecutionScope): ScopedGamificationSnapshot {
+    this.#activateScope(scope);
+    const db = this.#database(scope, true);
+    const result = db.transaction(() => {
+      const snapshot = this.#buildSnapshot(scope, db);
+      if (!snapshot.prestigeReady) return { snapshot, stars: null };
+      const stars = snapshot.prestige + 1;
+      setMeta(db, 'prestige', String(stars));
+      setMeta(db, 'prestigeBaseline', String(this.#rawPower(db)));
+      setMeta(db, 'tierFloor', 'RECRUTA');
+      return { snapshot: this.#buildSnapshot(scope, db), stars };
+    })();
+    if (result.stars === null) return result.snapshot;
+    if (!this.#soberMode(scope)) {
+      this.#broadcast(scope, 'voice:narrate', {
+        text: GAMIFICATION_COPY.prestigeUp(result.stars),
+      });
+    }
+    this.#scheduleChangedBroadcast(scope);
+    return result.snapshot;
+  }
+
+  selectSkin(
+    scope: ProjectExecutionScope,
+    rawSkin: string | null,
+  ): ScopedGamificationSnapshot {
+    const skin = z.string().min(1).max(64).nullable().parse(rawSkin);
+    this.#activateScope(scope);
+    const db = this.#database(scope, true);
+    const snapshot = this.#buildSnapshot(scope, db);
+    if (skin !== null && !snapshot.skins.includes(skin)) return snapshot;
+    setMeta(db, 'selectedSkin', skin ?? '');
+    this.#scheduleChangedBroadcast(scope);
+    return this.#buildSnapshot(scope, db);
+  }
+
+  exportProfile(scope: ProjectExecutionScope): ProfileExport {
+    this.#activateScope(scope);
+    const db = this.#database(scope, false);
+    const events = listXpEvents(db);
+    const meta = dumpMeta(db);
+    return {
+      version: 2,
+      ruleVersion: RULE_VERSION,
+      projectId: scope.projectId,
+      checkoutId: scope.checkoutId,
+      events,
+      meta,
+      checksum: profileChecksum(
+        scope.projectId,
+        scope.checkoutId,
+        events,
+        meta,
+      ),
+    };
+  }
+
+  importProfile(
+    scope: ProjectExecutionScope,
+    raw: unknown,
+  ): { ok: boolean; error?: string } {
+    this.#activateScope(scope);
+    const db = this.#database(scope, true);
+    if (!raw || typeof raw !== 'object') {
+      return { ok: false, error: 'Arquivo de perfil inválido.' };
+    }
+    const profile = raw as Partial<ProfileExport>;
+    if (
+      profile.version !== 2 ||
+      profile.projectId !== scope.projectId ||
+      profile.checkoutId !== scope.checkoutId ||
+      !Array.isArray(profile.events) ||
+      !profile.meta ||
+      typeof profile.meta !== 'object' ||
+      typeof profile.checksum !== 'string'
+    ) {
+      return {
+        ok: false,
+        error: 'Perfil pertence a outro projeto/checkout ou é inválido.',
+      };
+    }
+    if (
+      profileChecksum(
+        profile.projectId,
+        profile.checkoutId,
+        profile.events,
+        profile.meta,
+      ) !== profile.checksum
+    ) {
+      return {
+        ok: false,
+        error: 'Checksum não confere — arquivo alterado ou corrompido.',
+      };
+    }
+    try {
+      replaceProfile(
+        db,
+        profile.events as StoredXpEvent[],
+        profile.meta as Record<string, string>,
+      );
+    } catch {
+      return { ok: false, error: 'Falha ao gravar o perfil importado.' };
+    }
+    this.#scheduleChangedBroadcast(scope);
+    return { ok: true };
+  }
+
+  dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    for (const unsubscribe of this.#unsubscribes.splice(0)) unsubscribe();
+    for (const state of this.#states.values()) {
+      if (state.changedTimer) clearTimeout(state.changedTimer);
+    }
+    this.#states.clear();
+  }
+
+  #activateScope(scope: ProjectExecutionScope): void {
+    const state = this.#state(scope);
+    if (state.activated) return;
+    const runtime = this.#runtimeManager.open(state.scope);
+    this.#verifySchema(state, runtime.db);
+    if (runtime.mode !== 'read-write') {
+      this.#scheduleChangedBroadcast(state.scope);
+      return;
+    }
+    runtime.assertWritable();
+    const suite = this.#domainStores.forScope(state.scope);
+    this.#runRetroReplay(runtime.db, suite, state.scope);
+    this.#scanAndFinalize(runtime.db, suite, state.scope, false);
+    state.activated = true;
+    this.#scheduleChangedBroadcast(state.scope);
+  }
+
+  #scanLive(scope: ProjectExecutionScope): void {
+    const db = this.#database(scope, true);
+    const suite = this.#domainStores.forScope(scope);
+    this.#scanAndFinalize(db, suite, scope, false);
+  }
+
+  #scanAndFinalize(
+    db: Database.Database,
+    suite: ProjectDomainStoreSuite,
+    scope: ProjectExecutionScope,
+    retro: boolean,
+  ): void {
+    const change = db.transaction(() => {
+      const before = this.#buildSnapshot(scope, db);
+      const after = this.#finalize(
+        scope,
+        db,
+        this.#scanStores(db, suite, retro),
+        retro,
+      );
+      return after ? { before, after, retro } : null;
+    })();
+    if (change) this.#celebrateAndBroadcast(scope, change);
+  }
+
+  #runRetroReplay(
+    db: Database.Database,
+    suite: ProjectDomainStoreSuite,
+    scope: ProjectExecutionScope,
+  ): void {
+    if (getMeta(db, 'replayDone')) return;
+    const change = db.transaction(() => {
+      const before = this.#buildSnapshot(scope, db);
+      const after = this.#finalize(
+        scope,
+        db,
+        this.#scanStores(db, suite, true),
+        true,
+      );
+      setMeta(db, 'replayDone', '1');
+      return after ? { before, after, retro: true } : null;
+    })();
+    if (change) this.#celebrateAndBroadcast(scope, change);
+  }
+
+  #scanStores(
+    db: Database.Database,
+    suite: ProjectDomainStoreSuite,
+    retro: boolean,
+  ): ScanResult {
+    const result: ScanResult = { insertedAny: false, deliveries: [] };
+    const extra = metaJson(db, 'counters_extra', countersSchema, {});
+    let extraDirty = false;
+
+    for (const handoff of suite.handoffs.list({ includeDelivered: true })) {
+      if (
+        handoff.status !== 'success' ||
+        handoff.evidenceTrust !== 'nexus-trusted'
+      ) continue;
+      const evidence = retro ? null : handoff.evidenceIds.join(', ');
+      const input: XpEventInput = {
+        kind: evidence ? 'handoff_green' : 'handoff_success',
+        entityKey: handoffKey(handoff.id),
+        missionId: handoff.missionId ?? null,
+        agentCategory: handoff.fromAgent
+          ? this.#agentCategory(handoff.fromAgent)
+          : null,
+        effort: handoffEffort(suite, handoff),
+        evidence,
+        retro,
+        createdAt: handoff.createdAt,
+      };
+      if (this.#insertEvent(db, input, retro)) {
+        result.insertedAny = true;
+        result.deliveries.push(input);
+      }
+    }
+
+    for (const mission of suite.missions.list()) {
+      if (mission.status !== 'done') continue;
+      const greenHandoff = retro
+        ? null
+        : suite.handoffs
+            .list({ missionId: mission.id, includeDelivered: true })
+            .find(
+              (handoff) =>
+                handoff.status === 'success' &&
+                handoff.evidenceTrust === 'nexus-trusted',
+            );
+      const effort = missionEffort(suite, mission.id);
+      const costUsd = missionCost(db, mission.id);
+      const input: XpEventInput = {
+        kind: greenHandoff ? 'mission_green' : 'mission_done',
+        entityKey: missionKey(mission.id),
+        missionId: mission.id,
+        effort,
+        costUsd,
+        evidence: greenHandoff
+          ? greenHandoff.evidenceIds.join(', ')
+          : null,
+        retro,
+        createdAt: mission.updatedAt,
+      };
+      if (this.#insertEvent(db, input, retro)) {
+        result.insertedAny = true;
+        result.deliveries.push(input);
+        if (efficiencyBonus(input.kind, effort, costUsd) > 0) {
+          bumpExtra(extra, 'efficient_mission');
+          extraDirty = true;
+        }
+        if (mission.squadId?.startsWith('agentic-')) {
+          bumpExtra(extra, 'agentic_mission');
+          extraDirty = true;
+        }
+      }
+    }
+
+    for (const task of suite.tasks.list()) {
+      if (task.status !== 'done') continue;
+      const input: XpEventInput = {
+        kind: 'task_done',
+        entityKey: taskKey(task.id),
+        missionId: task.missionId ?? null,
+        retro,
+        createdAt: task.updatedAt,
+      };
+      if (this.#insertEvent(db, input, retro)) {
+        result.insertedAny = true;
+        result.deliveries.push(input);
+      }
+    }
+
+    if (extraDirty) setMeta(db, 'counters_extra', JSON.stringify(extra));
+    return result;
+  }
+
+  #insertEvent(
+    db: Database.Database,
+    input: XpEventInput,
+    retro: boolean,
+  ): boolean {
+    const prior = retro
+      ? 0
+      : countTodaySameBucket(
+          db,
+          input.kind,
+          input.effort,
+          dayStartOf(this.#now()),
         );
-    const effort = missionEffort(mission.id);
-    const costUsd = missionCost(db, mission.id);
-    const input: XpEventInput = {
-      kind: greenHandoff ? 'mission_green' : 'mission_done',
-      entityKey: missionKey(mission.id),
-      missionId: mission.id,
-      effort,
-      costUsd,
-      evidence: greenHandoff ? hasGreenEvidence(greenHandoff.artifacts) : null,
-      retro,
-      createdAt: mission.updatedAt,
-    };
-    if (insertEvent(db, input, retro)) {
-      result.insertedAny = true;
-      result.deliveries.push(input);
-      if (efficiencyBonus(input.kind, effort, costUsd) > 0) {
-        bumpExtra(extra, 'efficient_mission');
-        extraDirty = true;
+    return insertXpEvent(db, input, computePoints(input, prior));
+  }
+
+  #finalize(
+    scope: ProjectExecutionScope,
+    db: Database.Database,
+    scan: ScanResult,
+    retro: boolean,
+  ): ScopedGamificationSnapshot | null {
+    if (!scan.insertedAny) return null;
+    if (!retro) {
+      let streak = metaJson(db, 'streak', streakSchema, EMPTY_STREAK);
+      const deliveries = scan.deliveries
+        .filter((delivery) => DELIVERY_KINDS.has(delivery.kind))
+        .sort((a, b) => a.createdAt - b.createdAt);
+      for (const delivery of deliveries) {
+        streak = advanceStreak(streak, new Date(delivery.createdAt));
       }
-      if (mission.squadId?.startsWith('agentic-')) {
-        bumpExtra(extra, 'agentic_mission');
-        extraDirty = true;
+      setMeta(db, 'streak', JSON.stringify(streak));
+    }
+    return this.#computeAndPersistDerived(scope, db);
+  }
+
+  #celebrateAndBroadcast(
+    scope: ProjectExecutionScope,
+    change: FinalizedChange,
+  ): void {
+    if (!change.retro && !this.#soberMode(scope)) {
+      if (tierRank(change.after.tier) > tierRank(change.before.tier)) {
+        this.#broadcast(scope, 'voice:narrate', {
+          text: GAMIFICATION_COPY.levelUp(change.after.tier),
+        });
       }
-    }
-  }
-
-  for (const task of listTasks()) {
-    if (task.status !== 'done') continue;
-    const input: XpEventInput = {
-      kind: 'task_done',
-      entityKey: taskKey(task.id),
-      missionId: task.missionId ?? null,
-      retro,
-      createdAt: task.updatedAt,
-    };
-    if (insertEvent(db, input, retro)) {
-      result.insertedAny = true;
-      result.deliveries.push(input);
-    }
-  }
-
-  if (extraDirty) setMeta(db, 'counters_extra', JSON.stringify(extra));
-  return result;
-}
-
-// ── Estado derivado + celebração ─────────────────────────────────────────────
-
-function rawPower(db: Db): number {
-  return foldAggregate(listXpEvents(db), 0).powerLevel;
-}
-
-/** `before` DEVE ser capturado antes de inserir eventos — o diff de tier/ramo
- *  compara snapshots pré/pós-varredura. */
-function finalize(
-  db: Db,
-  scan: ScanResult,
-  retro: boolean,
-  before: GamificationSnapshot,
-): void {
-  if (!scan.insertedAny) return;
-
-  // Streak: só entregas ao vivo movem o ritmo (replay não é hábito).
-  if (!retro) {
-    let streak = metaJson<StreakState>(db, 'streak', EMPTY_STREAK);
-    const deliveries = scan.deliveries
-      .filter((d) => DELIVERY_KINDS.has(d.kind))
-      .sort((a, b) => a.createdAt - b.createdAt);
-    for (const delivery of deliveries) {
-      streak = advanceStreak(streak, new Date(delivery.createdAt));
-    }
-    setMeta(db, 'streak', JSON.stringify(streak));
-  }
-
-  celebrateAndBroadcast(db, before, retro);
-}
-
-/** Recalcula piso/conquistas/skins, narra o que mudou e agenda o broadcast. */
-function celebrateAndBroadcast(
-  db: Db,
-  before: GamificationSnapshot,
-  retro: boolean,
-): void {
-  const d = depsOf();
-  const after = computeAndPersistDerived(db);
-
-  if (!retro && !d.soberMode()) {
-    if (tierRank(after.tier) > tierRank(before.tier)) {
-      d.broadcast('voice:narrate', { text: GAMIFICATION_COPY.levelUp(after.tier) });
-    }
-    for (const id of after.achievements) {
-      if (before.achievements.includes(id)) continue;
-      const copy = GAMIFICATION_COPY.achievements[id];
-      if (copy) {
-        d.broadcast('voice:narrate', {
-          text: GAMIFICATION_COPY.achievementUnlocked(copy.title),
+      for (const id of change.after.achievements) {
+        if (change.before.achievements.includes(id)) continue;
+        const copy = GAMIFICATION_COPY.achievements[id];
+        if (copy) {
+          this.#broadcast(scope, 'voice:narrate', {
+            text: GAMIFICATION_COPY.achievementUnlocked(copy.title),
+          });
+        }
+      }
+      if (change.after.branch !== change.before.branch) {
+        this.#broadcast(scope, 'voice:narrate', {
+          text: GAMIFICATION_COPY.branchEvolved(
+            GAMIFICATION_COPY.branches[change.after.branch],
+          ),
         });
       }
     }
-    if (after.branch !== before.branch) {
-      d.broadcast('voice:narrate', {
-        text: GAMIFICATION_COPY.branchEvolved(GAMIFICATION_COPY.branches[after.branch]),
-      });
-    }
-  }
-  scheduleChangedBroadcast();
-}
-
-/** Aplica piso de tier e desbloqueios ao meta; retorna o snapshot novo. */
-function computeAndPersistDerived(db: Db): GamificationSnapshot {
-  const snap = buildSnapshot();
-
-  const storedFloor = (getMeta(db, 'tierFloor') as GamificationTier | null) ?? 'RECRUTA';
-  if (tierRank(snap.tier) > tierRank(storedFloor)) {
-    setMeta(db, 'tierFloor', snap.tier);
+    this.#scheduleChangedBroadcast(scope);
   }
 
-  const unlocked = metaJson<string[]>(db, 'achievements', []);
-  const fresh = evaluateAchievements(
-    {
-      counters: snap.counters,
-      streakDays: snap.streakDays,
-      prestige: snap.prestige,
-      branch: snap.branch,
-    },
-    new Set(unlocked),
-  );
-  if (fresh.length > 0) {
-    setMeta(db, 'achievements', JSON.stringify([...unlocked, ...fresh.map((a) => a.id)]));
-    const skins = metaJson<string[]>(db, 'skins', []);
-    const newSkins = fresh
-      .map((a) => a.skin)
-      .filter((s): s is string => Boolean(s) && !skins.includes(s as string));
-    if (newSkins.length > 0) {
-      setMeta(db, 'skins', JSON.stringify([...skins, ...newSkins]));
+  #computeAndPersistDerived(
+    scope: ProjectExecutionScope,
+    db: Database.Database,
+  ): ScopedGamificationSnapshot {
+    const snapshot = this.#buildSnapshot(scope, db);
+    const storedFloor = tierSchema.parse(getMeta(db, 'tierFloor') ?? 'RECRUTA');
+    if (tierRank(snapshot.tier) > tierRank(storedFloor)) {
+      setMeta(db, 'tierFloor', snapshot.tier);
     }
+    const unlocked = metaJson(db, 'achievements', stringListSchema, []);
+    const fresh = evaluateAchievements(
+      {
+        counters: snapshot.counters,
+        streakDays: snapshot.streakDays,
+        prestige: snapshot.prestige,
+        branch: snapshot.branch,
+      },
+      new Set(unlocked),
+    );
+    if (fresh.length > 0) {
+      setMeta(
+        db,
+        'achievements',
+        JSON.stringify([...unlocked, ...fresh.map((achievement) => achievement.id)]),
+      );
+      const skins = metaJson(db, 'skins', stringListSchema, []);
+      const newSkins = fresh
+        .map((achievement) => achievement.skin)
+        .filter(
+          (skin): skin is string =>
+            Boolean(skin) && !skins.includes(skin as string),
+        );
+      if (newSkins.length > 0) {
+        setMeta(db, 'skins', JSON.stringify([...skins, ...newSkins]));
+      }
+    }
+    return this.#buildSnapshot(scope, db);
   }
-  return buildSnapshot();
-}
 
-/** Broadcast coalescido (máx. 1/s) — padrão usage-service. */
-function scheduleChangedBroadcast(): void {
-  if (changedTimer) return;
-  changedTimer = setTimeout(() => {
-    changedTimer = null;
-    if (!deps) return; // shutdown entre o agendamento e o disparo
-    try {
-      deps.broadcast(GAMIFICATION_CHANNELS.changed, buildSnapshot());
-    } catch (err) {
-      console.warn('[gamification] broadcast falhou:', err);
+  #buildSnapshot(
+    scope: ProjectExecutionScope,
+    db: Database.Database,
+  ): ScopedGamificationSnapshot {
+    const prestige = metaNumber(db, 'prestige', 0);
+    const baseline = metaNumber(db, 'prestigeBaseline', 0);
+    const aggregate = foldAggregate(listXpEvents(db), prestige);
+    const counters = { ...aggregate.counters };
+    const extra = metaJson(db, 'counters_extra', countersSchema, {});
+    for (const [key, value] of Object.entries(extra)) {
+      counters[key] = (counters[key] ?? 0) + value;
     }
-  }, 1000);
-  changedTimer.unref?.();
-}
-
-function depsOf(): ServiceDeps {
-  if (!deps) throw new Error('gamification-service não inicializado');
-  return deps;
-}
-
-// ── API pública (IPC/borda) ──────────────────────────────────────────────────
-
-export function buildSnapshot(): GamificationSnapshot {
-  const db = deps?.db ?? null;
-  const now = deps?.now() ?? Date.now();
-  if (!db) {
+    const power = Math.max(0, aggregate.powerLevel - baseline);
+    const floor = tierSchema.parse(getMeta(db, 'tierFloor') ?? 'RECRUTA');
+    const tier = maxTier(tierForPower(power), floor);
+    const streak = metaJson(db, 'streak', streakSchema, EMPTY_STREAK);
+    const shieldsUsed =
+      streak.shieldsUsedMonth === monthKeyOf(this.#now())
+        ? streak.shieldsUsed
+        : 0;
+    const selectedSkinRaw = getMeta(db, 'selectedSkin');
+    const selectedSkin =
+      selectedSkinRaw === null || selectedSkinRaw === ''
+        ? null
+        : z.string().min(1).max(64).parse(selectedSkinRaw);
     return {
-      powerLevel: 0,
-      tier: 'RECRUTA',
-      tierFloor: 'RECRUTA',
-      nextTierAt: nextTierAt(0),
-      prestige: 0,
-      prestigeReady: false,
-      branch: 'base',
-      streakDays: 0,
-      shieldsLeft: SHIELDS_PER_MONTH,
-      achievements: [],
-      skins: [],
-      selectedSkin: null,
-      counters: {},
+      powerLevel: power,
+      tier,
+      tierFloor: floor,
+      nextTierAt: nextTierAt(power),
+      prestige,
+      prestigeReady: tier === 'LENDA' && power >= PRESTIGE_THRESHOLD,
+      branch: aggregate.branch,
+      streakDays: streak.streakDays,
+      shieldsLeft: Math.max(0, SHIELDS_PER_MONTH - shieldsUsed),
+      achievements: metaJson(db, 'achievements', stringListSchema, []),
+      skins: metaJson(db, 'skins', stringListSchema, []),
+      selectedSkin,
+      counters,
       ruleVersion: RULE_VERSION,
+      projectId: scope.projectId,
+      checkoutId: scope.checkoutId,
+      rootRealPath: scope.rootRealPath,
     };
   }
-  const prestige = metaNumber(db, 'prestige', 0);
-  const baseline = metaNumber(db, 'prestigeBaseline', 0);
-  const agg = foldAggregate(listXpEvents(db), prestige);
-  const counters = { ...agg.counters };
-  const extra = metaJson<Record<string, number>>(db, 'counters_extra', {});
-  for (const [key, value] of Object.entries(extra)) {
-    counters[key] = (counters[key] ?? 0) + value;
-  }
-  const power = Math.max(0, agg.powerLevel - baseline);
-  const floor = (getMeta(db, 'tierFloor') as GamificationTier | null) ?? 'RECRUTA';
-  const tier = maxTier(tierForPower(power), floor);
-  const streak = metaJson<StreakState>(db, 'streak', EMPTY_STREAK);
-  const shieldsUsed =
-    streak.shieldsUsedMonth === monthKeyOf(now) ? streak.shieldsUsed : 0;
-  return {
-    powerLevel: power,
-    tier,
-    tierFloor: floor,
-    nextTierAt: nextTierAt(power),
-    prestige,
-    prestigeReady: tier === 'LENDA' && power >= PRESTIGE_THRESHOLD,
-    branch: agg.branch,
-    streakDays: streak.streakDays,
-    shieldsLeft: Math.max(0, SHIELDS_PER_MONTH - shieldsUsed),
-    achievements: metaJson<string[]>(db, 'achievements', []),
-    skins: metaJson<string[]>(db, 'skins', []),
-    selectedSkin: getMeta(db, 'selectedSkin') || null,
-    counters,
-    ruleVersion: RULE_VERSION,
-  };
-}
 
-/** Replay do histórico existente (uma vez): a estreia nasce com o power do
- *  jogador. Peso simples, sem narração — spec §4 "Estreia". */
-export function runRetroReplayOnce(): void {
-  const db = deps?.db;
-  if (!db) return;
-  if (getMeta(db, 'replayDone')) return;
-  const before = buildSnapshot();
-  const scan = scanStores(db, true);
-  finalize(db, scan, true, before);
-  setMeta(db, 'replayDone', '1');
-}
-
-/** Mídia gerada (tap do media-usage-store): evento leve + counter por tipo. */
-export function recordMediaGeneratedForGamification(
-  kind: string,
-  missionId: string | null,
-): void {
-  const db = deps?.db;
-  if (!db) return;
-  const extra = metaJson<Record<string, number>>(db, 'counters_extra', {});
-  bumpExtra(extra, `media_${kind}`);
-  setMeta(db, 'counters_extra', JSON.stringify(extra));
-  const before = buildSnapshot();
-  const input: XpEventInput = {
-    kind: 'media_generated',
-    entityKey: `media_generated:${randomUUID()}`,
-    missionId,
-    createdAt: depsOf().now(),
-  };
-  const scan: ScanResult = { insertedAny: false, deliveries: [] };
-  if (insertEvent(db, input, false)) {
-    scan.insertedAny = true;
+  #rawPower(db: Database.Database): number {
+    return foldAggregate(listXpEvents(db), 0).powerLevel;
   }
-  finalize(db, scan, false, before);
-}
 
-/** Ação operacional da Jarvis concluída (terminal, MCP, squad, etc.). */
-export function recordJarvisActionForGamification(
-  actionType: string,
-  ok: boolean,
-): void {
-  if (!ok || !actionType || actionType === 'none') return;
-  const db = deps?.db;
-  if (!db) return;
-  const before = buildSnapshot();
-  const input: XpEventInput = {
-    kind: 'jarvis_action',
-    entityKey: `jarvis_action:${actionType}:${randomUUID()}`,
-    createdAt: depsOf().now(),
-  };
-  const scan: ScanResult = { insertedAny: false, deliveries: [] };
-  if (insertEvent(db, input, false)) {
-    scan.insertedAny = true;
+  #scheduleChangedBroadcast(scope: ProjectExecutionScope): void {
+    const state = this.#state(scope);
+    if (state.changedTimer || this.#disposed) return;
+    state.changedTimer = setTimeout(() => {
+      state.changedTimer = null;
+      if (this.#disposed) return;
+      try {
+        this.#broadcast(
+          state.scope,
+          GAMIFICATION_CHANNELS.changed,
+          this.#buildSnapshot(
+            state.scope,
+            this.#database(state.scope, false),
+          ),
+        );
+      } catch (error) {
+        console.warn('[gamification] scoped broadcast failed:', error);
+      }
+    }, 1_000);
+    state.changedTimer.unref?.();
   }
-  finalize(db, scan, false, before);
-}
 
-/** Transcender: só em LENDA com o limiar cruzado. Reseta a jornada (baseline)
- *  e ganha estrela permanente; piso volta ao início da nova jornada. */
-export function doPrestige(): GamificationSnapshot {
-  const db = deps?.db;
-  if (!db) return buildSnapshot();
-  const snap = buildSnapshot();
-  if (!snap.prestigeReady) return snap;
-  const stars = snap.prestige + 1;
-  setMeta(db, 'prestige', String(stars));
-  setMeta(db, 'prestigeBaseline', String(rawPower(db)));
-  setMeta(db, 'tierFloor', 'RECRUTA');
-  const d = depsOf();
-  if (!d.soberMode()) {
-    d.broadcast('voice:narrate', { text: GAMIFICATION_COPY.prestigeUp(stars) });
-  }
-  scheduleChangedBroadcast();
-  return buildSnapshot();
-}
-
-/** Skin ativa ('' persistido = padrão/null). Validação de posse fica no IPC. */
-export function selectSkin(skin: string | null): GamificationSnapshot {
-  const db = deps?.db;
-  if (db) {
-    setMeta(db, 'selectedSkin', skin ?? '');
-    scheduleChangedBroadcast();
-  }
-  return buildSnapshot();
-}
-
-export function initGamificationService(over?: Partial<ServiceDeps>): void {
-  shutdownGamificationService();
-  const base = defaultDeps();
-  deps = { ...base, ...over };
-  const db = deps.db;
-  if (!db) return;
-  try {
-    initGamificationStore(db);
-  } catch (err) {
-    console.warn('[gamification] schema falhou — serviço desativado:', err);
-    deps = { ...deps, db: null };
-    return;
-  }
-  runRetroReplayOnce();
-  const scanLive = () => {
-    try {
-      const before = buildSnapshot();
-      finalize(db, scanStores(db, false), false, before);
-    } catch (err) {
-      console.warn('[gamification] varredura falhou:', err);
+  #state(scope: ProjectExecutionScope): ScopeState {
+    if (this.#disposed) throw new Error('gamification service is disposed');
+    const key = scopeKey(scope);
+    const existing = this.#states.get(key);
+    if (existing) {
+      if (!sameScope(existing.scope, scope)) {
+        throw new Error('gamification scope identity collision');
+      }
+      return existing;
     }
-  };
-  // Varredura de partida: cobre entregas perdidas entre o último scan e o boot.
-  scanLive();
-  unsubscribes = [
-    onHandoffsChange(scanLive),
-    onMissionsChange(scanLive),
-    onTasksChange(scanLive),
-  ];
-  // Janela pode ter montado antes do init (orchestration é async): empurra o
-  // snapshot real mesmo sem evento novo.
-  scheduleChangedBroadcast();
-}
+    const state: ScopeState = {
+      scope: Object.freeze({ ...scope }),
+      activated: false,
+      schemaVerified: false,
+      changedTimer: null,
+    };
+    this.#states.set(key, state);
+    return state;
+  }
 
-// ── Export/import de perfil (multi-máquina hoje; semente do sync do SaaS) ───
+  #database(
+    scope: ProjectExecutionScope,
+    writable: boolean,
+  ): Database.Database {
+    const state = this.#state(scope);
+    const runtime = this.#runtimeManager.open(state.scope);
+    if (writable) runtime.assertWritable();
+    this.#verifySchema(state, runtime.db);
+    return runtime.db;
+  }
+
+  #verifySchema(state: ScopeState, db: Database.Database): void {
+    if (state.schemaVerified) return;
+    initGamificationStore(db);
+    state.schemaVerified = true;
+  }
+}
 
 export interface ProfileExport {
-  version: 1;
+  version: 2;
   ruleVersion: number;
+  projectId: string;
+  checkoutId: string;
   events: StoredXpEvent[];
   meta: Record<string, string>;
-  /** sha256 de JSON.stringify({events, meta}) — integridade; assinatura
-   *  criptográfica real fica para o backend. */
   checksum: string;
 }
 
-function profileChecksum(events: unknown, meta: unknown): string {
+function profileChecksum(
+  projectId: string,
+  checkoutId: string,
+  events: unknown,
+  meta: unknown,
+): string {
   return createHash('sha256')
-    .update(JSON.stringify({ events, meta }))
+    .update(JSON.stringify({ projectId, checkoutId, events, meta }))
     .digest('hex');
 }
 
-export function exportProfileData(): ProfileExport | null {
-  const db = deps?.db;
-  if (!db) return null;
-  const events = listXpEvents(db);
-  const meta = dumpMeta(db);
-  return {
-    version: 1,
-    ruleVersion: RULE_VERSION,
-    events,
-    meta,
-    checksum: profileChecksum(events, meta),
-  };
+let configuredService: ProjectGamificationService | null = null;
+
+export function configureGamificationService(
+  options: ProjectGamificationServiceOptions,
+): ProjectGamificationService {
+  configuredService?.dispose();
+  configuredService = new ProjectGamificationService(options);
+  return configuredService;
 }
 
-export function importProfileData(raw: unknown): { ok: boolean; error?: string } {
-  const db = deps?.db;
-  if (!db) return { ok: false, error: 'Banco de dados indisponível.' };
-  if (!raw || typeof raw !== 'object') {
-    return { ok: false, error: 'Arquivo de perfil inválido.' };
+export function requireGamificationService(): ProjectGamificationService {
+  if (!configuredService) {
+    throw new Error('project-scoped gamification service is not configured');
   }
-  const profile = raw as Partial<ProfileExport>;
-  if (
-    profile.version !== 1 ||
-    !Array.isArray(profile.events) ||
-    !profile.meta ||
-    typeof profile.meta !== 'object' ||
-    typeof profile.checksum !== 'string'
-  ) {
-    return { ok: false, error: 'Arquivo de perfil inválido.' };
-  }
-  if (profileChecksum(profile.events, profile.meta) !== profile.checksum) {
-    return { ok: false, error: 'Checksum não confere — arquivo alterado ou corrompido.' };
-  }
-  try {
-    replaceProfile(db, profile.events, profile.meta as Record<string, string>);
-  } catch {
-    return { ok: false, error: 'Falha ao gravar o perfil importado.' };
-  }
-  scheduleChangedBroadcast();
-  return { ok: true };
+  return configuredService;
 }
 
 export function shutdownGamificationService(): void {
-  for (const unsubscribe of unsubscribes) unsubscribe();
-  unsubscribes = [];
-  if (changedTimer) {
-    clearTimeout(changedTimer);
-    changedTimer = null;
-  }
-  deps = null;
+  configuredService?.dispose();
+  configuredService = null;
 }

@@ -24,9 +24,9 @@ function isJarvisLiveEnabled(): boolean {
 }
 
 /** Corta áudio atual e invalida reproduções pendentes (barge-in). */
-export function stopAllPlayback(): void {
+export function stopAllPlayback(interruptReason = 'barge-in'): void {
   if (isJarvisLiveEnabled() && useVoiceStore.getState().status === 'speaking') {
-    void window.nexus.voice.liveInterrupt('barge-in');
+    void window.nexus.voice.liveInterrupt(interruptReason);
   }
   void window.nexus.voice.stopSpeak().catch(() => {});
   // Barge-in: o áudio local foi cortado — libera a retenção do mic realtime

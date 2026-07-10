@@ -4,6 +4,20 @@ import type {
   BrowserPageReadResult,
   BrowserWaitCondition,
 } from '../shared/browser-automation';
+import type { BrowserDesignEvent } from '../shared/browser-design';
+import { redactVisibleSecrets } from '../shared/vision-ipc';
+import {
+  createDesignMode,
+  type DesignModeController,
+} from './browser-design-mode';
+import {
+  introspectElementFrameworks,
+  type MainWorldEvaluator,
+} from './browser-framework-introspect';
+import {
+  createStylePreview,
+  type StylePreviewController,
+} from './browser-style-preview';
 
 const DEFAULT_TEXT_CHARS = 12_000;
 const MAX_TEXT_CHARS = 20_000;
@@ -17,6 +31,8 @@ const MAX_FILL_CHARS = 8_192;
 const MAX_WAIT_MS = 15_000;
 const POLL_MS = 50;
 const ELEMENT_REF_PATTERN = /^e[1-9]\d{0,7}$/;
+const DESIGN_GENERATION_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type BrowserDomWindow = Window & typeof globalThis;
 
@@ -58,27 +74,10 @@ function normalizedText(value: string): string {
 }
 
 export function redactBrowserText(value: string): string {
-  return value
-    .replace(
-      /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-      '[REDACTED_PRIVATE_KEY]',
-    )
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi, 'Bearer [REDACTED]')
-    .replace(
-      /\b[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
-      '[REDACTED_JWT]',
-    )
-    .replace(/\b(?:sk|rk|pk)-[A-Za-z0-9_-]{12,}\b/g, '[REDACTED_KEY]')
-    .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, '[REDACTED_KEY]')
-    .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, '[REDACTED_TOKEN]')
-    .replace(/\bAKIA[0-9A-Z]{12,}\b/g, '[REDACTED_KEY]')
-    .replace(
-      /(\b(?:api[_ -]?key|access[_ -]?key|private[_ -]?key|password|passwd|secret|token|authorization|cookie|credential)\b\s*[:=]\s*)([^\s,;]{4,})/gi,
-      '$1[REDACTED]',
-    );
+  return redactVisibleSecrets(value);
 }
 
-function redactPageUrl(raw: string): string {
+export function redactPageUrl(raw: string): string {
   try {
     const url = new URL(raw);
     url.username = '';
@@ -121,7 +120,7 @@ function elementHasSensitiveMarker(element: Element): boolean {
   return SENSITIVE_MARKER.test(marker);
 }
 
-function isSensitiveTree(element: Element): boolean {
+export function isSensitiveTree(element: Element): boolean {
   let current: Element | null = element;
   for (let depth = 0; current && depth < 4; depth += 1) {
     if (elementHasSensitiveMarker(current)) return true;
@@ -268,7 +267,24 @@ export interface BrowserAutomation {
   run(command: BrowserAutomationCommand, args: Record<string, unknown>): Promise<unknown>;
 }
 
-export function createBrowserAutomation(win: BrowserDomWindow): BrowserAutomation {
+export interface BrowserAutomationOptions {
+  /** Push sink for design-mode events (VISUAL-EDIT-001); wired by the preload. */
+  onDesignEvent?: (event: BrowserDesignEvent) => void;
+  /**
+   * Main-world evaluator for L1 framework introspection (VISUAL-EDIT-001,
+   * Fase 1). In production this is `webFrame.executeJavaScript` — the spike
+   * (Fase 0.4) proved it works under sandbox+contextIsolation. Absent in
+   * plain L0 environments.
+   */
+  evalInMainWorld?: MainWorldEvaluator;
+  /** Test-only native-event oracle; production deliberately leaves this unset. */
+  isTrustedDesignEvent?: (event: Event) => boolean;
+}
+
+export function createBrowserAutomation(
+  win: BrowserDomWindow,
+  options: BrowserAutomationOptions = {},
+): BrowserAutomation {
   const references = new Map<string, Element>();
   const ids = new WeakMap<Element, string>();
   let sequence = 0;
@@ -499,6 +515,62 @@ export function createBrowserAutomation(win: BrowserDomWindow): BrowserAutomatio
     });
   }
 
+  // Lazy: pages that never enter design mode pay zero cost. Shares refFor so
+  // a picked element's ref works with inspect/click/fill afterwards.
+  let designMode: DesignModeController | null = null;
+  function ensureDesignMode(): DesignModeController {
+    if (!designMode) {
+      const evalInMainWorld = options.evalInMainWorld;
+      designMode = createDesignMode(win, {
+        refFor,
+        emit: (event) => options.onDesignEvent?.(event),
+        ...(options.isTrustedDesignEvent
+          ? { isTrustedEvent: options.isTrustedDesignEvent }
+          : {}),
+        ...(evalInMainWorld
+          ? {
+              introspect: (element: Element) =>
+                introspectElementFrameworks(win, element, evalInMainWorld),
+            }
+          : {}),
+      });
+    }
+    return designMode;
+  }
+
+  function designGeneration(args: Record<string, unknown>): string {
+    if (
+      typeof args.generation !== 'string' ||
+      !DESIGN_GENERATION_PATTERN.test(args.generation)
+    ) {
+      throw new Error('design mode requires a valid generation');
+    }
+    return args.generation;
+  }
+
+  // Lazy like the picker: pages that never preview styles pay zero cost.
+  let stylePreview: StylePreviewController | null = null;
+  function ensureStylePreview(): StylePreviewController {
+    if (!stylePreview) stylePreview = createStylePreview(win);
+    return stylePreview;
+  }
+
+  function stylePreviewArgs(args: Record<string, unknown>): {
+    selector: string;
+    styles: Record<string, string>;
+  } {
+    if (typeof args.selector !== 'string' || !args.selector) {
+      throw new Error('style preview requires a selector');
+    }
+    if (!args.styles || typeof args.styles !== 'object' || Array.isArray(args.styles)) {
+      throw new Error('style preview requires a styles object');
+    }
+    return {
+      selector: args.selector,
+      styles: args.styles as Record<string, string>,
+    };
+  }
+
   return {
     async run(command, args) {
       if (command === 'read') return read(args);
@@ -506,6 +578,23 @@ export function createBrowserAutomation(win: BrowserDomWindow): BrowserAutomatio
       if (command === 'click') return click(args);
       if (command === 'fill') return fill(args);
       if (command === 'wait') return wait(args);
+      if (command === 'design_enable') {
+        return ensureDesignMode().enable(designGeneration(args));
+      }
+      if (command === 'design_disable') {
+        const generation = designGeneration(args);
+        return designMode ? designMode.disable(generation) : { active: false };
+      }
+      if (command === 'design_set_style_preview') {
+        const { selector, styles } = stylePreviewArgs(args);
+        return ensureStylePreview().set(selector, styles);
+      }
+      if (command === 'design_clear_style_preview') {
+        if (!stylePreview) return { cleared: 0 };
+        const selector =
+          typeof args.selector === 'string' && args.selector ? args.selector : undefined;
+        return stylePreview.clear(selector);
+      }
       throw new Error('unsupported browser automation command');
     },
   };

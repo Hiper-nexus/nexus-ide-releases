@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import {
   PTY_CHANNELS,
   BROWSER_CHANNELS,
+  DESIGN_WRITEBACK_CHANNELS,
+  DEV_SERVER_CHANNELS,
   PERF_CHANNELS,
   MCP_CHANNELS,
   LAYOUT_CHANNELS,
@@ -50,7 +52,9 @@ import { ONBOARDING_CHANNELS } from '../shared/onboarding-types';
 import type { OnboardingPatch } from '../shared/onboarding-types';
 import type {
   NexusApi,
+  BrowserDesignEventPayload,
   BrowserPaneState,
+  DevServerDetectedPayload,
   SpawnRequest,
   SpawnResult,
   WorkspaceLayout,
@@ -69,6 +73,7 @@ import type {
   JarvisLiveToolEvent,
   JarvisLiveToolCancellationEvent,
   JarvisLiveToolResultEvent,
+  JarvisLiveToolTurnCompleteEvent,
   JarvisLiveTranscriptEvent,
   VoiceRuntimeInfo,
 } from '../shared/voice-ipc';
@@ -98,6 +103,10 @@ const dataSubs = new Map<string, Set<DataCb>>();
 const exitSubs = new Map<string, Set<ExitCb>>();
 const stateSubs = new Map<string, Set<StateCb>>();
 const browserStateListeners = new Set<(state: BrowserPaneState) => void>();
+const browserDesignListeners = new Set<
+  (payload: BrowserDesignEventPayload) => void
+>();
+const devServerListeners = new Set<(payload: DevServerDetectedPayload) => void>();
 const deepOpenListeners = new Set<(payload: { path: string; isDir: boolean }) => void>();
 ipcRenderer.on(
   WINDOW_CHANNELS.deepOpenPath,
@@ -122,6 +131,20 @@ ipcRenderer.on(PTY_CHANNELS.stateChange, (_event, payload: PtyStateChangeEvent) 
 ipcRenderer.on(BROWSER_CHANNELS.state, (_event, payload: BrowserPaneState) => {
   browserStateListeners.forEach((cb) => cb(payload));
 });
+
+ipcRenderer.on(
+  BROWSER_CHANNELS.designEvent,
+  (_event, payload: BrowserDesignEventPayload) => {
+    browserDesignListeners.forEach((cb) => cb(payload));
+  },
+);
+
+ipcRenderer.on(
+  DEV_SERVER_CHANNELS.detected,
+  (_event, payload: DevServerDetectedPayload) => {
+    devServerListeners.forEach((cb) => cb(payload));
+  },
+);
 
 function subscribe<T>(
   map: Map<string, Set<T>>,
@@ -175,6 +198,9 @@ const liveToolCancelledListeners = new Set<
   (event: JarvisLiveToolCancellationEvent) => void
 >();
 const liveToolResultListeners = new Set<(event: JarvisLiveToolResultEvent) => void>();
+const liveToolTurnCompleteListeners = new Set<
+  (event: JarvisLiveToolTurnCompleteEvent) => void
+>();
 const liveInterruptedListeners = new Set<(event: JarvisLiveInterruptEvent) => void>();
 const liveAudioOutListeners = new Set<(event: JarvisLiveAudioOutEvent) => void>();
 const updateStateListeners = new Set<(state: UpdateState) => void>();
@@ -215,6 +241,11 @@ ipcRenderer.on(
   VOICE_CHANNELS.liveToolResult,
   (_event, event: JarvisLiveToolResultEvent) =>
     liveToolResultListeners.forEach((cb) => cb(event)),
+);
+ipcRenderer.on(
+  VOICE_CHANNELS.liveToolTurnComplete,
+  (_event, event: JarvisLiveToolTurnCompleteEvent) =>
+    liveToolTurnCompleteListeners.forEach((cb) => cb(event)),
 );
 ipcRenderer.on(
   VOICE_CHANNELS.liveInterrupted,
@@ -357,6 +388,34 @@ const api: NexusApi = {
       ipcRenderer.invoke(BROWSER_CHANNELS.reload, { paneId }),
     stop: (paneId) => ipcRenderer.invoke(BROWSER_CHANNELS.stop, { paneId }),
     onState: (cb) => addListener(browserStateListeners, cb),
+    setDesignMode: (paneId: string, active: boolean) =>
+      ipcRenderer.invoke(BROWSER_CHANNELS.designMode, { paneId, active }),
+    sendDesignSelection: (paneId, payload) =>
+      ipcRenderer.invoke(BROWSER_CHANNELS.designSend, { paneId, ...payload }),
+    onDesignEvent: (cb) => addListener(browserDesignListeners, cb),
+    setStylePreview: (paneId, selector, styles) =>
+      ipcRenderer.invoke(BROWSER_CHANNELS.designPreview, {
+        paneId,
+        selector,
+        styles,
+      }),
+    clearStylePreview: (paneId, selector) =>
+      ipcRenderer.invoke(BROWSER_CHANNELS.designPreviewClear, {
+        paneId,
+        ...(selector ? { selector } : {}),
+      }),
+  },
+  devServer: {
+    onDetected: (cb) => addListener(devServerListeners, cb),
+  },
+  design: {
+    status: (binding) => ipcRenderer.invoke(DESIGN_WRITEBACK_CHANNELS.status, binding),
+    start: (binding) => ipcRenderer.invoke(DESIGN_WRITEBACK_CHANNELS.start, binding),
+    stop: (binding) => ipcRenderer.invoke(DESIGN_WRITEBACK_CHANNELS.stop, binding),
+    apply: (binding, action) =>
+      ipcRenderer.invoke(DESIGN_WRITEBACK_CHANNELS.action, { binding, action }),
+    undo: (binding) => ipcRenderer.invoke(DESIGN_WRITEBACK_CHANNELS.undo, binding),
+    redo: (binding) => ipcRenderer.invoke(DESIGN_WRITEBACK_CHANNELS.redo, binding),
   },
   layout: {
     save: (workspacePath: string, layout: WorkspaceLayout) =>
@@ -442,6 +501,7 @@ const api: NexusApi = {
     onLiveToolCall: (cb) => addListener(liveToolCallListeners, cb),
     onLiveToolCancelled: (cb) => addListener(liveToolCancelledListeners, cb),
     onLiveToolResult: (cb) => addListener(liveToolResultListeners, cb),
+    onLiveToolTurnComplete: (cb) => addListener(liveToolTurnCompleteListeners, cb),
     onLiveInterrupted: (cb) => addListener(liveInterruptedListeners, cb),
   },
   orch: {
@@ -717,7 +777,11 @@ ipcRenderer.on(WINDOW_CHANNELS.functionalSmokeRun, (_event, payload: unknown) =>
     .then((result) => {
       ipcRenderer.send(WINDOW_CHANNELS.functionalSmokeResult, result);
     })
-    .catch(() => {
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[smoke] functional probe runner failed: ${message.replace(/[\r\n]+/gu, ' ').slice(0, 512)}`,
+      );
       ipcRenderer.send(WINDOW_CHANNELS.functionalSmokeResult, {
         ok: false,
         probes: [],

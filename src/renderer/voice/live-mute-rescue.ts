@@ -1,10 +1,19 @@
 export const MAX_CONSECUTIVE_RESCUES = 2;
-export const ZERO_FRAMES_TRANSCRIPT_WAIT_MS = 800;
+/**
+ * A single frame is normally only the capture hand-off/pre-roll. It is not
+ * enough speech for Gemini Live to reliably infer the user's command.
+ */
+export const MIN_USABLE_LIVE_MIC_FRAMES = 2;
+export const INSUFFICIENT_LIVE_MIC_FRAMES_TRANSCRIPT_WAIT_MS = 800;
 export const LIVE_RESCUE_RESPONSE_TIMEOUT_MS = 6_000;
 const LIVE_RESCUE_POLL_MS = 50;
 
 let consecutiveRescues = 0;
 let offeredFramesThisTurn = 0;
+
+export function hasInsufficientLiveMicFrames(offeredFrames: number): boolean {
+  return offeredFrames < MIN_USABLE_LIVE_MIC_FRAMES;
+}
 
 export function shouldAttemptLiveMuteRescue(opts: {
   realtimeIsOwner: boolean;
@@ -18,7 +27,7 @@ export function shouldAttemptLiveMuteRescue(opts: {
     opts.realtimeIsOwner &&
     opts.localSpeechUsable &&
     opts.explicitCapture &&
-    opts.offeredFrames === 0 &&
+    hasInsufficientLiveMicFrames(opts.offeredFrames) &&
     used < MAX_CONSECUTIVE_RESCUES
   );
 }

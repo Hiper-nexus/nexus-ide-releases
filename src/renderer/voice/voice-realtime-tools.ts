@@ -18,6 +18,7 @@ import {
   REALTIME_PROVIDER_AUDIO_ENABLED,
   bumpRealtimeNativeToolInFlight,
   ensureLivePlayer,
+  setLastRealtimeNativeToolCallId,
   lastRealtimeNativeToolAt,
   realtimeAudioPlayedCounter,
   realtimeNativeToolInFlight,
@@ -43,6 +44,7 @@ import {
   beginRealtimeToolExecution,
   type RealtimeToolExecution,
 } from './realtime-tool-execution';
+import { cancelLiveFollowUp } from './live-followup';
 
 export async function executeJarvisActionForTurn(
   ...args: Parameters<typeof executeJarvisAction>
@@ -183,6 +185,12 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
       });
       return;
     }
+
+    // A provider may send a tool after its first audio/transcript already
+    // armed conversational continuity. The tool result can still be narrated
+    // later, so invalidate that pending reply mic before executing the action.
+    cancelLiveFollowUp();
+    setLastRealtimeNativeToolCallId(event.callId);
 
     store.setStatus('routing');
     liveStatus('thinking');

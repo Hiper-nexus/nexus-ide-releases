@@ -1,7 +1,17 @@
-import { tapSessionData } from '../pty/pty-manager';
-import { listPaneSnapshots, getPaneAuthzInfo } from './pane-registry';
-import { submitHandoff } from './handoff-store';
+import type { ProjectExecutionScope } from '../../shared/types';
+import { tapSessionData, tapSessionExit } from '../pty/pty-manager';
+import {
+  getRendererWorkspaceScope,
+  onRendererWorkspaceScopeChange,
+} from '../persistence/renderer-workspace-scope';
+import {
+  getOwnedPaneAuthzInfoBySession,
+  listPaneSnapshots,
+  type OwnedPaneAuthzInfo,
+} from './pane-registry';
+import { getProjectDomainStores } from './project-domain-store-registry';
 import { onHandoffSubmitted } from './idle-delivery';
+import { sameProjectScope } from './project-scoped-broadcast';
 
 /**
  * Watchdog de stall (benchmark §4.4): um worker que fica BUSY em silêncio por
@@ -39,56 +49,155 @@ export function shouldFlagStall(
   return now - c.lastDataAt >= stallMs;
 }
 
-const lastData = new Map<string, number>();
-const flagged = new Set<string>();
+interface WatchAuthority {
+  readonly owner: OwnedPaneAuthzInfo['owner'];
+  readonly paneId: string;
+  readonly sessionId: string;
+  readonly missionId: string;
+  readonly scope: ProjectExecutionScope;
+}
+
+interface WatchState {
+  readonly authority: WatchAuthority;
+  lastDataAt: number;
+  isFlagged: boolean;
+}
+
+const watches = new Map<string, WatchState>();
+const ownerKeys = new WeakMap<OwnedPaneAuthzInfo['owner'], number>();
+let nextOwnerKey = 1;
 let scanTimer: ReturnType<typeof setInterval> | null = null;
 let untapData: (() => void) | null = null;
+let untapExit: (() => void) | null = null;
+let unsubscribeScopeChanges: (() => void) | null = null;
+
+function ownerKey(owner: OwnedPaneAuthzInfo['owner']): number {
+  const existing = ownerKeys.get(owner);
+  if (existing) return existing;
+  const key = nextOwnerKey++;
+  ownerKeys.set(owner, key);
+  return key;
+}
+
+function watchKey(authority: WatchAuthority): string {
+  return JSON.stringify([
+    ownerKey(authority.owner),
+    authority.scope.installationId,
+    authority.scope.projectId,
+    authority.scope.checkoutId,
+    authority.scope.rootRealPath,
+    authority.missionId,
+    authority.paneId,
+    authority.sessionId,
+  ]);
+}
+
+function resolveAuthority(sessionId: string): WatchAuthority | null {
+  const pane = getOwnedPaneAuthzInfoBySession(sessionId);
+  const rendererScope = pane ? getRendererWorkspaceScope(pane.owner) : null;
+  if (
+    !pane ||
+    pane.sessionId !== sessionId ||
+    pane.kind !== 'cli-agent' ||
+    pane.role !== 'worker' ||
+    !pane.missionId ||
+    !pane.scope ||
+    !rendererScope ||
+    !sameProjectScope(rendererScope, pane.scope)
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    owner: pane.owner,
+    paneId: pane.paneId,
+    sessionId,
+    missionId: pane.missionId,
+    scope: Object.freeze({ ...pane.scope }),
+  });
+}
 
 function scan(now: number = Date.now(), stallMs: number = STALL_MS): void {
+  const liveKeys = new Set<string>();
   for (const pane of listPaneSnapshots()) {
     if (!pane.sessionId) continue;
-    const authz = getPaneAuthzInfo(pane.paneId);
+    const authority = resolveAuthority(pane.sessionId);
+    if (!authority || authority.paneId !== pane.paneId) continue;
+    const key = watchKey(authority);
+    liveKeys.add(key);
+    let watch = watches.get(key);
+    if (!watch) {
+      watch = { authority, lastDataAt: now, isFlagged: false };
+      watches.set(key, watch);
+    }
     const candidate: StallCandidate = {
-      role: authz?.role,
+      role: 'worker',
       state: pane.state,
       // Sessão que nunca emitiu output desde o boot do watchdog conta a partir
       // de agora (semeia no primeiro scan) — nunca flagra no arranque.
-      lastDataAt: lastData.get(pane.sessionId) ?? seedNow(pane.sessionId, now),
-      alreadyFlagged: flagged.has(pane.sessionId),
+      lastDataAt: watch.lastDataAt,
+      alreadyFlagged: watch.isFlagged,
     };
     if (!shouldFlagStall(candidate, now, stallMs)) continue;
 
-    flagged.add(pane.sessionId);
+    watch.isFlagged = true;
     const minutes = Math.round((now - candidate.lastDataAt) / 60_000);
-    const handoff = submitHandoff({
+    const handoff = getProjectDomainStores(authority.scope).handoffs.submit({
       status: 'stalled',
       summary:
         `watchdog: o worker "${pane.agentName ?? pane.title}" (${pane.paneId}) ` +
         `está sem output há ${minutes} min e não submeteu handoff. ` +
         `Leia o pane (nexus_pane_read) para diagnosticar: pode ser prompt de ` +
         `permissão pendente, CLI travada ou tarefa legítima longa.`,
-      missionId: authz?.missionId,
+      missionId: authority.missionId,
       sessionId: pane.sessionId,
       fromAgent: 'nexus-watchdog',
     });
-    onHandoffSubmitted(handoff);
+    onHandoffSubmitted(handoff, authority.scope);
     console.warn(`[watchdog] worker stalled: ${pane.paneId} (${minutes} min)`);
   }
-}
-
-function seedNow(sessionId: string, now: number): number {
-  lastData.set(sessionId, now);
-  return now;
+  for (const key of [...watches.keys()]) {
+    if (!liveKeys.has(key)) watches.delete(key);
+  }
 }
 
 export function initStallWatchdog(): void {
   if (scanTimer) return;
   untapData = tapSessionData((sessionId) => {
-    lastData.set(sessionId, Date.now());
+    const authority = resolveAuthority(sessionId);
+    if (!authority) return;
+    const key = watchKey(authority);
+    watches.set(key, {
+      authority,
+      lastDataAt: Date.now(),
+      isFlagged: false,
+    });
     // Voltou a falar: re-arma o alerta para um eventual novo travamento.
-    flagged.delete(sessionId);
   });
-  scanTimer = setInterval(() => scan(), STALL_SCAN_MS);
+  untapExit = tapSessionExit((sessionId) => {
+    for (const [key, watch] of [...watches]) {
+      if (watch.authority.sessionId === sessionId) watches.delete(key);
+    }
+  });
+  unsubscribeScopeChanges = onRendererWorkspaceScopeChange(
+    (owner, previous) => {
+      if (!previous) return;
+      for (const [key, watch] of [...watches]) {
+        if (
+          watch.authority.owner.id === owner.id &&
+          sameProjectScope(watch.authority.scope, previous)
+        ) {
+          watches.delete(key);
+        }
+      }
+    },
+  );
+  scanTimer = setInterval(() => {
+    try {
+      scan();
+    } catch (error) {
+      console.warn('[watchdog] scan failed:', error);
+    }
+  }, STALL_SCAN_MS);
   scanTimer.unref?.();
 }
 
@@ -97,6 +206,9 @@ export function shutdownStallWatchdog(): void {
   scanTimer = null;
   untapData?.();
   untapData = null;
-  lastData.clear();
-  flagged.clear();
+  untapExit?.();
+  untapExit = null;
+  unsubscribeScopeChanges?.();
+  unsubscribeScopeChanges = null;
+  watches.clear();
 }

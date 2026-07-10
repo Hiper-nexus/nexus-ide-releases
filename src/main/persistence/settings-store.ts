@@ -24,7 +24,10 @@ import {
   type UiSettings,
   type VisionSettings,
 } from '../../shared/settings-types';
-import { listAvailableShells } from './shell-catalog';
+import {
+  listAvailableShells,
+  resolveConfiguredShell,
+} from './shell-catalog';
 import { setRuntimeOutputDeviceId } from '../voice/audio-output-runtime';
 import { writeJsonFileAtomic } from './atomic-json-file';
 
@@ -49,7 +52,20 @@ function load(): void {
   try {
     const raw = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
     const parsed = terminalSettingsSchema.safeParse(raw?.terminal ?? raw);
-    if (parsed.success) current = parsed.data;
+    if (parsed.success) {
+      try {
+        if (parsed.data.shell) {
+          resolveConfiguredShell(
+            parsed.data.shell,
+            parsed.data.shell,
+            listAvailableShells(),
+          );
+        }
+        current = parsed.data;
+      } catch {
+        current = { ...parsed.data, shell: '' };
+      }
+    }
     const orchParsed = orchSettingsSchema.safeParse(raw?.orch ?? {});
     if (orchParsed.success) orchSettings = orchParsed.data;
     const audioParsed = audioSettingsSchema.safeParse(raw?.audio ?? {});
@@ -169,6 +185,13 @@ export function registerSettingsIpc(): void {
     const parsed = terminalSettingsPatchSchema.safeParse(raw);
     if (!parsed.success) return current;
     const next = { ...current, ...parsed.data };
+    if (next.shell) {
+      try {
+        resolveConfiguredShell(next.shell, next.shell, listAvailableShells());
+      } catch {
+        return current;
+      }
+    }
     persist(snapshot({ terminal: next }));
     current = next;
     broadcast();

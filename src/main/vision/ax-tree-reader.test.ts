@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { AxNode } from '../../shared/vision-ipc';
-import { selectNexusWindow, summarizeAxTree } from './ax-tree-reader';
+import {
+  performNexusAxAction,
+  readNexusAxTree,
+  selectNexusWindow,
+  summarizeAxTree,
+} from './ax-tree-reader';
 
 function windowCandidate(options: { destroyed?: boolean; crashed?: boolean } = {}) {
   return {
@@ -33,6 +38,96 @@ describe('selectNexusWindow', () => {
 
     expect(selectNexusWindow(null, [healthyA, healthyB])).toBeNull();
     expect(selectNexusWindow(null, [crashed])).toBeNull();
+  });
+});
+
+describe('readNexusAxTree', () => {
+  it('executes only in the explicitly authorized WebContents', async () => {
+    const tree = node('body', null, [node('button', 'Projeto A')]);
+    const ownerA = {
+      id: 1,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      executeJavaScript: vi.fn(async () => tree),
+    };
+    const ownerB = {
+      id: 2,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      executeJavaScript: vi.fn(async () => node('body', null)),
+    };
+
+    await expect(readNexusAxTree(ownerA as never)).resolves.toEqual(tree);
+    expect(ownerA.executeJavaScript).toHaveBeenCalledOnce();
+    expect(ownerB.executeJavaScript).not.toHaveBeenCalled();
+  });
+
+  it('fails before executing in a destroyed or crashed owner', async () => {
+    const executeJavaScript = vi.fn();
+    const owner = {
+      id: 1,
+      isDestroyed: () => true,
+      isCrashed: () => false,
+      executeJavaScript,
+    };
+
+    await expect(readNexusAxTree(owner as never)).rejects.toThrow(
+      'não está mais disponível',
+    );
+    expect(executeJavaScript).not.toHaveBeenCalled();
+  });
+});
+
+describe('performNexusAxAction', () => {
+  it('executes a fresh ref only in the WebContents that produced it', async () => {
+    const tree = {
+      tag: 'body',
+      role: null,
+      aria: {},
+      text: null,
+      children: [
+        { tag: 'button', role: null, aria: {}, text: 'Start', ref: 'u12e1', children: [] },
+      ],
+    };
+    const ownerA = {
+      id: 1,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      executeJavaScript: vi
+        .fn()
+        .mockResolvedValueOnce(tree)
+        .mockResolvedValueOnce({ ok: true, action: 'click', ref: 'u12e1' }),
+    };
+    const ownerB = {
+      id: 2,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      executeJavaScript: vi.fn(),
+    };
+
+    await readNexusAxTree(ownerA as never);
+    await expect(
+      performNexusAxAction(ownerB as never, { action: 'click', ref: 'u12e1' }),
+    ).resolves.toMatchObject({ ok: false, error: 'stale_ref' });
+    await expect(
+      performNexusAxAction(ownerA as never, { action: 'click', ref: 'u12e1' }),
+    ).resolves.toEqual({ ok: true, action: 'click', ref: 'u12e1' });
+    expect(ownerB.executeJavaScript).not.toHaveBeenCalled();
+  });
+
+  it('fails before executing when the exact owner is no longer healthy', async () => {
+    const executeJavaScript = vi.fn();
+    const owner = {
+      id: 1,
+      isDestroyed: () => true,
+      isCrashed: () => false,
+      executeJavaScript,
+    };
+
+    await expect(
+      performNexusAxAction(owner as never, { action: 'click', ref: 'u12e1' }),
+    ).rejects.toThrow(/no longer available/i);
+    expect(executeJavaScript).not.toHaveBeenCalled();
   });
 });
 

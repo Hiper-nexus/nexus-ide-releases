@@ -28,6 +28,8 @@ vi.mock('../remote/remote-bridge', () => mocks);
 
 import { runRemoteBridgeToolAction } from './remote-bridge-tool';
 import { buildDomainTools } from './tools-domain';
+import { testProjectScope } from './__tests__/scope-fixture';
+const scope = testProjectScope();
 
 describe('remote bridge MCP tool boundary', () => {
   beforeEach(() => {
@@ -41,7 +43,7 @@ describe('remote bridge MCP tool boundary', () => {
   it.each(['status', 'start', 'stop', 'rotate_pairing'] as const)(
     'never exposes the pairing secret for action %s',
     async (action) => {
-      const result = await runRemoteBridgeToolAction(action, 4242);
+      const result = await runRemoteBridgeToolAction(action, 4242, scope);
 
       expect(result).toMatchObject({ running: true, port: 4242 });
       expect(result).not.toHaveProperty('pairingCode');
@@ -65,6 +67,7 @@ describe('remote bridge MCP tool boundary', () => {
         allowedSkills: null,
         stopAttempts: 0,
         handoffSubmitted: false,
+        scope: testProjectScope(),
       },
     );
 

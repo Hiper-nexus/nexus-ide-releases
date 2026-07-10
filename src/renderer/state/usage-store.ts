@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { create } from 'zustand';
 import type { UsageSnapshot } from '../../shared/usage-types';
+import { getActiveWorkspacePath } from './active-workspace';
+import { useWorkspaceStore } from './workspace-store';
 
 /**
  * Espelho no renderer da telemetria REAL de tokens (usage-service no main).
@@ -25,33 +27,48 @@ export const EMPTY_USAGE_SNAPSHOT: UsageSnapshot = {
 
 interface UsageStore {
   snapshot: UsageSnapshot;
-  hydrate(): Promise<void>;
+  hydrate(workspacePath: string): Promise<void>;
   receive(snapshot: UsageSnapshot): void;
+  reset(): void;
 }
 
 export const useUsageStore = create<UsageStore>((set) => ({
   snapshot: EMPTY_USAGE_SNAPSHOT,
 
-  hydrate: async () => {
+  hydrate: async (workspacePath) => {
+    if (getActiveWorkspacePath() !== workspacePath) return;
     const api = usageApi();
     if (!api) return;
     try {
-      set({ snapshot: await api.snapshot() });
+      const snapshot = await api.snapshot();
+      if (getActiveWorkspacePath() === workspacePath) set({ snapshot });
     } catch (err) {
-      console.warn('[usage] hydrate failed:', err);
+      if (getActiveWorkspacePath() === workspacePath) {
+        console.warn('[usage] hydrate failed:', err);
+      }
     }
   },
 
   receive: (snapshot) => set({ snapshot }),
+  reset: () => set({ snapshot: EMPTY_USAGE_SNAPSHOT }),
 }));
 
-/** Montar uma vez (junto do useCostSync) — hydrate + subscribe. */
+/** Mount once — rehydrates per authorized workspace and keeps one listener. */
 export function useUsageSync(): void {
   const hydrate = useUsageStore((s) => s.hydrate);
+  const reset = useUsageStore((s) => s.reset);
+  const workspaceHydrated = useWorkspaceStore((s) => s.hydrated);
+  const workspacePath = useWorkspaceStore((s) => s.current?.path ?? null);
   useEffect(() => {
-    void hydrate();
+    reset();
+    if (workspaceHydrated && workspacePath) void hydrate(workspacePath);
+  }, [hydrate, reset, workspaceHydrated, workspacePath]);
+
+  useEffect(() => {
     const api = usageApi();
     if (!api) return;
-    return api.onChanged((snapshot) => useUsageStore.getState().receive(snapshot));
-  }, [hydrate]);
+    return api.onChanged((snapshot) => {
+      if (getActiveWorkspacePath()) useUsageStore.getState().receive(snapshot);
+    });
+  }, []);
 }

@@ -34,6 +34,14 @@ describe('terminalSettingsSchema', () => {
   it('accepts an empty shell (default) or an absolute path only', () => {
     expect(terminalSettingsSchema.safeParse({ shell: '' }).success).toBe(true);
     expect(terminalSettingsSchema.safeParse({ shell: '/bin/bash' }).success).toBe(true);
+    expect(
+      terminalSettingsSchema.safeParse({ shell: 'C:\\Program Files\\PowerShell\\pwsh.exe' })
+        .success,
+    ).toBe(true);
+    expect(
+      terminalSettingsSchema.safeParse({ shell: '\\\\server\\tools\\pwsh.exe' })
+        .success,
+    ).toBe(true);
     expect(terminalSettingsSchema.safeParse({ shell: 'zsh' }).success).toBe(false);
   });
 

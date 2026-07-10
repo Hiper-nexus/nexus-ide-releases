@@ -5,55 +5,108 @@ import {
   addPipeSchema,
   pipeIdSchema,
 } from '../../shared/pipe-types';
+import type { ProjectExecutionScope } from '../../shared/types';
+import {
+  getRendererWorkspaceScope,
+  onRendererWorkspaceScopeChange,
+  requireRendererWorkspaceScope,
+} from '../persistence/renderer-workspace-scope';
 import {
   addPipe,
+  clearPipePartitions,
   initPanePipes,
   listPipes,
   onPipesChange,
   removePipe,
 } from './pane-pipe';
+import { sameProjectScope } from './project-scoped-broadcast';
 
-/** Renderer-facing IPC for pane pipes (same shape as account-ipc). */
+/** Renderer-facing IPC for owner/project-partitioned pane pipes. */
 
 const listeners = new Set<WebContents>();
+const destroyHandlers = new Map<WebContents, () => void>();
+let unsubscribeScopeChanges: (() => void) | null = null;
 
-function broadcast(): void {
-  const snapshot = listPipes();
-  for (const wc of listeners) {
-    if (!wc.isDestroyed()) wc.send(PIPE_CHANNELS.changed, snapshot);
+function broadcast(owner: WebContents, scope: ProjectExecutionScope): void {
+  if (!listeners.has(owner) || owner.isDestroyed() || owner.isCrashed()) {
+    return;
   }
+  const currentScope = getRendererWorkspaceScope(owner);
+  if (!currentScope || !sameProjectScope(currentScope, scope)) return;
+  owner.send(PIPE_CHANNELS.changed, listPipes(owner, scope));
+}
+
+function ensureScopeChangeListener(): void {
+  if (unsubscribeScopeChanges) return;
+  unsubscribeScopeChanges = onRendererWorkspaceScopeChange(
+    (changedOwner, previous) => {
+      if (!previous) return;
+      for (const owner of listeners) {
+        if (owner.id === changedOwner.id) {
+          clearPipePartitions(owner, previous);
+        }
+      }
+    },
+  );
 }
 
 export function registerPipeListener(wc: WebContents): void {
   listeners.add(wc);
+  ensureScopeChangeListener();
+  if (destroyHandlers.has(wc)) return;
+  const onDestroyed = () => unregisterPipeListener(wc);
+  destroyHandlers.set(wc, onDestroyed);
+  wc.once('destroyed', onDestroyed);
 }
 
 export function unregisterPipeListener(wc: WebContents): void {
   listeners.delete(wc);
+  const onDestroyed = destroyHandlers.get(wc);
+  if (onDestroyed) wc.removeListener('destroyed', onDestroyed);
+  destroyHandlers.delete(wc);
+  clearPipePartitions(wc);
+  if (listeners.size === 0) {
+    unsubscribeScopeChanges?.();
+    unsubscribeScopeChanges = null;
+  }
+}
+
+function requireRegisteredScope(wc: WebContents): ProjectExecutionScope {
+  if (!listeners.has(wc)) {
+    throw new Error('renderer is not registered for pane pipes');
+  }
+  return requireRendererWorkspaceScope(wc);
 }
 
 export function registerPipeIpc(): void {
   initPanePipes();
   onPipesChange(broadcast);
 
-  ipcMain.handle(PIPE_CHANNELS.list, () => listPipes());
+  ipcMain.handle(PIPE_CHANNELS.list, (event) => {
+    const scope = requireRegisteredScope(event.sender);
+    return listPipes(event.sender, scope);
+  });
 
-  ipcMain.handle(PIPE_CHANNELS.add, (_e, raw) => {
+  ipcMain.handle(PIPE_CHANNELS.add, (event, raw) => {
+    const scope = requireRegisteredScope(event.sender);
     const parsed = addPipeSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid pipe' };
     const pipe = addPipe(
+      event.sender,
+      scope,
       parsed.data.sourcePaneId,
       parsed.data.targetPaneId,
       parsed.data.mode,
     );
     return pipe
       ? { ok: true, id: pipe.id }
-      : { ok: false, error: 'source and target must be different panes' };
+      : { ok: false, error: 'pane authority mismatch' };
   });
 
-  ipcMain.handle(PIPE_CHANNELS.remove, (_e, raw) => {
+  ipcMain.handle(PIPE_CHANNELS.remove, (event, raw) => {
+    const scope = requireRegisteredScope(event.sender);
     const parsed = pipeIdSchema.safeParse(raw);
     if (!parsed.success) return { ok: false };
-    return { ok: removePipe(parsed.data.id) };
+    return { ok: removePipe(event.sender, scope, parsed.data.id) };
   });
 }

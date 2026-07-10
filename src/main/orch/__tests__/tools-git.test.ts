@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { buildGitTools } from '../tools-git';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
+import { testProjectScope } from './scope-fixture';
 
 const workspace = vi.hoisted(() => ({ current: '' }));
 vi.mock('../../persistence/workspace-store', () => ({
@@ -107,6 +108,56 @@ describe('tools-git', () => {
     const push = tools.find((t) => t.name === 'nexus_git_push')!;
     expect(push.requiresConfirm).toBe(true);
   });
+
+  it('rejects executable repository config before any Git tool runs', async () => {
+    execFileSync('git', ['config', '--local', 'core.fsmonitor', 'malicious-command'], {
+      cwd: wsDir,
+    });
+    const status = buildGitTools().find((tool) => tool.name === 'nexus_git_status')!;
+    try {
+      await expect(status.handler({}, fakeCtx())).rejects.toThrow(
+        /executable Git config/i,
+      );
+    } finally {
+      execFileSync('git', ['config', '--local', '--unset-all', 'core.fsmonitor'], {
+        cwd: wsDir,
+      });
+    }
+  });
+
+  it('disables repository hooks even for a commit operation', async () => {
+    const marker = path.join(wsDir, 'hook-executed');
+    const hook = path.join(wsDir, '.git', 'hooks', 'pre-commit');
+    fs.writeFileSync(
+      hook,
+      `#!/bin/sh\nprintf blocked > "${marker.replace(/"/g, '\\"')}"\n`,
+      { encoding: 'utf8', mode: 0o700 },
+    );
+    fs.writeFileSync(path.join(wsDir, 'safe-commit.txt'), 'safe\n', 'utf8');
+    execFileSync('git', ['add', 'safe-commit.txt'], { cwd: wsDir });
+    const commit = buildGitTools().find((tool) => tool.name === 'nexus_git_commit')!;
+
+    await commit.handler({ message: 'test: safe runner' }, fakeCtx());
+
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  it('rejects local and ext remote transports before push execution', async () => {
+    execFileSync(
+      'git',
+      ['remote', 'add', 'unsafe-local', `ext::sh -c 'touch should-not-run'`],
+      { cwd: wsDir },
+    );
+    const push = buildGitTools().find((tool) => tool.name === 'nexus_git_push')!;
+    try {
+      await expect(
+        push.handler({ remote: 'unsafe-local', branch: 'main' }, fakeCtx()),
+      ).rejects.toThrow(/HTTPS or SSH/i);
+    } finally {
+      execFileSync('git', ['remote', 'remove', 'unsafe-local'], { cwd: wsDir });
+    }
+    expect(fs.existsSync(path.join(wsDir, 'should-not-run'))).toBe(false);
+  });
 });
 
 function fakeCtx() {
@@ -118,5 +169,6 @@ function fakeCtx() {
     allowedSkills: null as string[] | null,
     stopAttempts: 0,
     handoffSubmitted: false,
+    scope: testProjectScope({ rootRealPath: fs.realpathSync(wsDir) }),
   };
 }

@@ -9,7 +9,9 @@ import {
   type ReleaseReadinessSnapshot,
 } from '../../shared/ops-ipc';
 import { CURRENT_RELEASE } from '../../shared/release-notes';
-import { getAuditLogPath, readAuditLog } from '../jarvis/audit-log';
+import type { ProjectExecutionScope } from '../../shared/types';
+import { getAuditStoragePath, readAuditLog } from '../jarvis/audit-log';
+import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 import { validateUpdateFeedUrl } from '../update-feed-policy';
 
 const PACKAGE_JSON = 'package.json';
@@ -187,18 +189,25 @@ export function buildReleaseReadinessSnapshot(): ReleaseReadinessSnapshot {
   };
 }
 
-export function buildAuditLogSnapshot(limit = 80): AuditLogSnapshot {
+export function buildAuditLogSnapshot(
+  scope: ProjectExecutionScope,
+  limit = 80,
+): AuditLogSnapshot {
   const boundedLimit = Math.max(1, Math.min(200, Math.trunc(limit)));
+  const context = { scope };
   return {
-    path: getAuditLogPath(),
+    path: getAuditStoragePath(context),
     readAt: new Date().toISOString(),
-    entries: readAuditLog(boundedLimit),
+    entries: readAuditLog(context, boundedLimit),
   };
 }
 
 export function registerOpsIpc(): void {
-  ipcMain.handle(OPS_CHANNELS.auditLog, (_event, rawLimit?: unknown) =>
-    buildAuditLogSnapshot(typeof rawLimit === 'number' ? rawLimit : 80),
+  ipcMain.handle(OPS_CHANNELS.auditLog, (event, rawLimit?: unknown) =>
+    buildAuditLogSnapshot(
+      requireRendererWorkspaceScope(event.sender),
+      typeof rawLimit === 'number' ? rawLimit : 80,
+    ),
   );
   ipcMain.handle(OPS_CHANNELS.releaseReadiness, () =>
     buildReleaseReadinessSnapshot(),

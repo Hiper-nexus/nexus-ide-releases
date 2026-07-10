@@ -51,6 +51,22 @@ function cleanPaneName(text: string): string {
     .trim();
 }
 
+function agenticMissionIntent(text: string): string | undefined {
+  const match = text.match(/\b(?:para|com\s+(?:o\s+)?objetivo(?:\s+de)?)\s+(.+)$/i);
+  const intent = match ? stripTail(match[1]).slice(0, 4_000) : '';
+  return intent || undefined;
+}
+
+function requestsCurrentViewRead(text: string): boolean {
+  return (
+    /\b(?:le|leia|ler|descreve|descreva|mostra|mostre)\b.*\b(?:esta|essa|a|aquela)\s+(?:tela|pagina|page|visao|view)\b/.test(
+      text,
+    ) ||
+    /\b(?:o\s+que\s+(?:tem|ha|aparece|esta))\s+(?:aqui|nesta|nessa)\b/.test(text) ||
+    /\b(?:o\s+que\s+(?:tem|ha|aparece|esta))\b.*\b(?:tela|pagina|page|visao|view)\b/.test(text)
+  );
+}
+
 function say(ctx: JarvisContext, text: string): string {
   const user = ctx.userName?.trim();
   if (!user) return text;
@@ -228,7 +244,29 @@ export function jarvisActionFastPath(
     }
   }
 
-  if (/\b(nova|novo|cria|crie|criar|abre|abra|abrir)\b.*\bmiss(ao|oes)\b/.test(t)) {
+  if (requestsCurrentViewRead(t)) {
+    return {
+      say: say(ctx, 'Vou ler o que está visível agora.'),
+      expectReply: false,
+      action: { type: 'read_current_view' },
+    };
+  }
+
+  const requestsMission =
+    /\b(nova|novo|cria|crie|criar|abre|abra|abrir|inicia|inicie|iniciar|comeca|comece|comecar)\b/.test(
+      t,
+    ) && /\bmiss(ao|oes)\b/.test(t);
+  const requestsAgenticMode = /\b(?:modo\s+)?agentic(?:o|a)?\b/.test(t);
+  if (requestsMission && requestsAgenticMode) {
+    const intent = agenticMissionIntent(t);
+    return {
+      say: say(ctx, 'Abrindo a missão no modo agêntico.'),
+      expectReply: false,
+      action: { type: 'new_agentic_mission', ...(intent ? { intent } : {}) },
+    };
+  }
+
+  if (/\b(nova|novo|cria|crie|criar|abre|abra|abrir|inicia|inicie|iniciar)\b.*\bmiss(ao|oes)\b/.test(t)) {
     return { say: say(ctx, 'Abrindo o assistente de missão.'), expectReply: false, action: { type: 'new_mission' } };
   }
 

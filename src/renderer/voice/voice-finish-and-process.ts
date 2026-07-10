@@ -38,6 +38,7 @@ import {
   activeCaptureReason,
   jarvisLastTurnAt,
   jarvisHistory,
+  lastRealtimeNativeToolCallId,
   lastRealtimeNativeToolAt,
   pendingLiveStartSettle,
   realtimeAudioPlayedCounter,
@@ -63,7 +64,8 @@ import {
 } from './voice-realtime-gates';
 import { realtimeTranscriptWaitMs } from './realtime-transcript-wait';
 import {
-  ZERO_FRAMES_TRANSCRIPT_WAIT_MS,
+  hasInsufficientLiveMicFrames,
+  INSUFFICIENT_LIVE_MIC_FRAMES_TRANSCRIPT_WAIT_MS,
   markLiveMuteRescueAttempt,
   offeredLiveMicFramesThisTurn,
   resetLiveMuteRescues,
@@ -71,7 +73,10 @@ import {
   waitForLiveRescueEvidence,
 } from './live-mute-rescue';
 import { shouldLetRealtimeProviderAnswer, shouldUseClassicActionBridge } from './realtime-bridge-policy';
-import { releaseAfterLiveProviderAnswer } from './live-followup';
+import {
+  releaseAfterLiveProviderAnswer,
+  releaseAfterLiveToolAnswer,
+} from './live-followup';
 import { hasRealtimeProviderAudioAnswer } from './live-wake-greeting';
 import { personaUserName } from './jarvis-screen-context';
 import { withTimeout } from './voice-speak-pipeline';
@@ -108,7 +113,54 @@ export async function finishAndProcess(
   const store = useVoiceStore.getState();
   busy.current = true;
   const turnToken = turnExecution.currentToken;
+  const canReopenLiveFollowUp = (): boolean =>
+    turnExecution.currentToken === turnToken && turnExecution.owner === 'realtime-audio';
+  const canReopenLiveToolFollowUp = (): boolean =>
+    turnExecution.currentToken === turnToken && turnExecution.owner === 'realtime-tool';
+  const releaseAfterRealtimeTool = (): void => {
+    const sessionId = useVoiceStore.getState().liveState?.sessionId;
+    const callId = lastRealtimeNativeToolCallId;
+    if (sessionId && callId) {
+      releaseAfterLiveToolAnswer({
+        busy,
+        capture,
+        beginListening: deps.beginListening,
+        wakeAutoStop: deps.wakeAutoStop,
+        sessionId,
+        turnId: String(turnToken),
+        callId,
+        canReopen: canReopenLiveToolFollowUp,
+      });
+      return;
+    }
+    // A missing correlation must stay safe: never open the mic into unknown
+    // provider audio. The normal wake remains available and the condition is
+    // logged for diagnosis rather than silently pretending continuity worked.
+    logVoiceEvent(
+      'warn',
+      'jarvis.liveToolFollowUpUncorrelated',
+      'tool realtime sem correlação para continuidade',
+      { hasSessionId: Boolean(sessionId), hasCallId: Boolean(callId) },
+    );
+    releaseAfterLiveProviderAnswer({
+      busy,
+      capture,
+      beginListening: deps.beginListening,
+      wakeAutoStop: deps.wakeAutoStop,
+      armFollowUp: false,
+      followUpSkipReason: 'realtime-tool',
+    });
+  };
   let realtimeMuteDegrade = false;
+  let quiesceLiveBeforeClassic = false;
+  let realtimeStartedAt = 0;
+  let realtimeHeldChunksBaseline = 0;
+  let realtimePlayedChunksBaseline = 0;
+  const cancelMutedLiveValidation = (reason: string): void => {
+    if (!quiesceLiveBeforeClassic) return;
+    resetPendingRealtimeAudioOut();
+    void window.nexus.voice.liveInterrupt(reason).catch(() => {});
+  };
   let cachedStt: TranscribeResult | null = null;
   let cachedSttLatencyMs = 0;
   try {
@@ -185,26 +237,30 @@ export async function finishAndProcess(
 
     if (shouldTryRealtimeTranscript) {
       const tRealtime = Date.now();
+      realtimeStartedAt = tRealtime;
       const realtimeIsOwner = classicSuppressedByRealtimeOwner({
         captureReason: activeCaptureReason,
         isRealtimeLive: isRealtimeLive(),
       });
       const heldChunksBaseline = realtimeAudioSuppressedCounter.total;
       const playedChunksBaseline = realtimeAudioPlayedCounter.total;
+      realtimeHeldChunksBaseline = heldChunksBaseline;
+      realtimePlayedChunksBaseline = playedChunksBaseline;
       const offeredFrames = offeredLiveMicFramesThisTurn();
+      const hasInsufficientFrames = hasInsufficientLiveMicFrames(offeredFrames);
       const transcriptWaitMs =
-        realtimeIsOwner && offeredFrames === 0
-          ? ZERO_FRAMES_TRANSCRIPT_WAIT_MS
+        realtimeIsOwner && hasInsufficientFrames
+          ? INSUFFICIENT_LIVE_MIC_FRAMES_TRANSCRIPT_WAIT_MS
           : realtimeTranscriptWaitMs(activeCaptureReason, {
               localSpeechUsable,
               realtimeIsOwner,
             });
-      if (realtimeIsOwner && offeredFrames === 0) {
+      if (realtimeIsOwner && hasInsufficientFrames) {
         logVoiceEvent(
           'warn',
           'jarvis.zeroOfferedFrames',
-          'nenhum frame do turno foi oferecido ao transporte realtime',
-          { reason: activeCaptureReason, localSpeechUsable },
+          'frames insuficientes do turno foram oferecidos ao transporte realtime',
+          { reason: activeCaptureReason, localSpeechUsable, offeredFrames },
         );
       }
       store.setStatus('transcribing');
@@ -248,12 +304,7 @@ export async function finishAndProcess(
             {},
           );
         }
-        releaseAfterLiveProviderAnswer({
-          busy,
-          capture,
-          beginListening: deps.beginListening,
-          wakeAutoStop: deps.wakeAutoStop,
-        });
+        releaseAfterRealtimeTool();
         return;
       }
       if (liveTranscript) {
@@ -382,12 +433,19 @@ export async function finishAndProcess(
           }
           // FIX B+C: keep realtimeTurnActive=true (chunks keep arriving),
           // release busy and arm follow-up instead of liveEndTurn.
-          releaseAfterLiveProviderAnswer({
-            busy,
-            capture,
-            beginListening: deps.beginListening,
-            wakeAutoStop: deps.wakeAutoStop,
-          });
+          if (!claimed && turnExecution.owner === 'realtime-tool') {
+            releaseAfterRealtimeTool();
+          } else {
+            releaseAfterLiveProviderAnswer({
+              busy,
+              capture,
+              beginListening: deps.beginListening,
+              wakeAutoStop: deps.wakeAutoStop,
+              armFollowUp: claimed,
+              followUpSkipReason: 'turn-owned-before-audio',
+              canReopen: canReopenLiveFollowUp,
+            });
+          }
           return;
         }
 
@@ -454,12 +512,19 @@ export async function finishAndProcess(
           );
         }
         // FIX C: don't set realtimeTurnActive=false; release + arm follow-up
-        releaseAfterLiveProviderAnswer({
-          busy,
-          capture,
-          beginListening: deps.beginListening,
-          wakeAutoStop: deps.wakeAutoStop,
-        });
+        if (!claimed && turnExecution.owner === 'realtime-tool') {
+          releaseAfterRealtimeTool();
+        } else {
+          releaseAfterLiveProviderAnswer({
+            busy,
+            capture,
+            beginListening: deps.beginListening,
+            wakeAutoStop: deps.wakeAutoStop,
+            armFollowUp: claimed,
+            followUpSkipReason: 'turn-owned-before-audio',
+            canReopen: canReopenLiveFollowUp,
+          });
+        }
         return;
       }
       const explicitCapture = shouldFallbackClassicAfterRealtimeMute(
@@ -520,9 +585,8 @@ export async function finishAndProcess(
             });
             if (evidence === 'superseded') return;
             if (evidence === 'audio' || evidence === 'tool') {
-              if (evidence === 'audio') {
-                turnExecution.claim('realtime-audio', turnToken);
-              }
+              const claimedRealtimeAudio =
+                evidence === 'audio' && turnExecution.claim('realtime-audio', turnToken);
               resetLiveMuteRescues();
               store.setNote(null);
               logVoiceEvent(
@@ -531,12 +595,19 @@ export async function finishAndProcess(
                 'resgate confirmado por evidência do provider',
                 { turnId: rescueTurnId, evidence },
               );
-              releaseAfterLiveProviderAnswer({
-                busy,
-                capture,
-                beginListening: deps.beginListening,
-                wakeAutoStop: deps.wakeAutoStop,
-              });
+              if (evidence === 'tool') {
+                releaseAfterRealtimeTool();
+              } else {
+                releaseAfterLiveProviderAnswer({
+                  busy,
+                  capture,
+                  beginListening: deps.beginListening,
+                  wakeAutoStop: deps.wakeAutoStop,
+                  armFollowUp: claimedRealtimeAudio,
+                  followUpSkipReason: 'turn-owned-before-audio',
+                  canReopen: canReopenLiveFollowUp,
+                });
+              }
               return;
             }
           }
@@ -566,22 +637,21 @@ export async function finishAndProcess(
         store.setStatus('idle');
         return;
       }
-      // No realtime response for an explicit user capture: cancel any late
-      // provider response before the single Classic fallback takes ownership.
+      // No realtime response for an explicit user capture. Keep the socket warm
+      // until local STT proves this was meaningful speech: a bare wake/noise
+      // (for example Whisper's "[risos]") must not tear down Gemini or invoke
+      // Classic TTS just because the provider missed that one turn.
       realtimeMuteDegrade = true;
+      quiesceLiveBeforeClassic = true;
       logVoiceEvent(
         'warn',
         'jarvis.realtimeMuteDegraded',
-        'realtime mudo (sem áudio/transcript) — Classic STT assume',
+        'realtime mudo (sem áudio/transcript) — validando STT antes do fallback Classic',
         { reason: activeCaptureReason, waitedMs: Date.now() - tRealtime },
       );
       console.log(
         `[voice] realtime sem transcript final em ${Date.now() - tRealtime}ms (janela ${transcriptWaitMs}ms) — fallback Classic STT (degradado)`,
       );
-      setSuppressRealtimeAudioOut(true);
-      resetPendingRealtimeAudioOut();
-      await quiesceLiveForClassic('classic-action-bridge-timeout');
-      setRealtimeTurnActive(false);
     }
 
     if (
@@ -622,11 +692,25 @@ export async function finishAndProcess(
     }
     const stt = cachedStt ?? (await transcribeCapture());
     if (!stt.ok) {
+      if (quiesceLiveBeforeClassic) {
+        cancelMutedLiveValidation('classic-validation-stt-failed');
+        logVoiceEvent(
+          'warn',
+          'jarvis.classicValidationFailed',
+          'STT local não confirmou o fallback; Gemini permanece disponível',
+          { reason: activeCaptureReason },
+        );
+        store.setNote('Não consegui confirmar sua fala. Pode repetir?');
+        store.setStatus('idle');
+        liveEndTurn();
+        return;
+      }
       store.setError(stt.error);
       liveStatus('error', stt.error);
       return;
     }
     if (stt.discarded === 'echo') {
+      cancelMutedLiveValidation('classic-validation-echo');
       console.log(`[voice] eco do TTS descartado: "${stt.text}"`);
       logVoiceEvent('info', 'stt.echoDiscarded', 'eco do TTS descartado', {
         source: 'classic',
@@ -645,6 +729,7 @@ export async function finishAndProcess(
         isAckGatedCapture() && peekPendingDelegation(Date.now()) !== null,
     };
     if (isAckGatedCapture() && isWakeAckOnlyTranscript(stt.text, personaUserName(), stripOpts)) {
+      cancelMutedLiveValidation('classic-validation-ack-only');
       console.log(`[voice] turno wake/click só ack/eco descartado: "${stt.text}"`);
       if (
         stripOpts.protectConfirmation &&
@@ -660,6 +745,7 @@ export async function finishAndProcess(
       ? stripWakeAckEcho(stt.text, personaUserName(), stripOpts)
       : stt.text.trim();
     if (!transcript) {
+      cancelMutedLiveValidation('classic-validation-empty');
       const reason = isAckGatedCapture() ? 'eco do wake/click/ack' : 'transcrição vazia';
       console.log(`[voice] ${reason} descartado: "${stt.text}"`);
       if (
@@ -699,12 +785,14 @@ export async function finishAndProcess(
       JARVIS_MEMORY_MS_LOCAL,
     );
     if (isDiscardableTranscript(transcript, { inConversation })) {
+      cancelMutedLiveValidation('classic-validation-discarded');
       console.log(`[voice] transcrição-lixo do Whisper descartada: "${transcript}"`);
       store.setStatus('idle');
       liveEndTurn();
       return;
     }
     if (activeCaptureReason === 'reply' && isLikelyNoiseTranscript(transcript)) {
+      cancelMutedLiveValidation('classic-validation-noise');
       console.log(`[voice] reply-lixo descartado antes do cérebro: "${transcript}"`);
       logVoiceEvent('info', 'jarvis.replyNoiseDiscarded', 'reply ruído/eco garbled descartado', {
         text: transcript.slice(0, 120),
@@ -713,6 +801,32 @@ export async function finishAndProcess(
       store.setStatus('idle');
       liveEndTurn();
       return;
+    }
+    if (quiesceLiveBeforeClassic) {
+      const lateProviderAudio = hasRealtimeProviderAudioAnswer({
+        heldChunks: realtimeAudioSuppressedCounter.total - realtimeHeldChunksBaseline,
+        playedChunks: realtimeAudioPlayedCounter.total - realtimePlayedChunksBaseline,
+      });
+      // A late provider tool/audio event owns this turn. Never tear down that
+      // healthy Live response underneath it while local STT is still finishing.
+      if (
+        turnExecution.currentToken !== turnToken ||
+        turnExecution.owner !== null ||
+        hasRealtimeNativeToolSince(realtimeStartedAt) ||
+        lateProviderAudio
+      ) {
+        logVoiceEvent(
+          'info',
+          'jarvis.classicFallbackCancelled',
+          'fallback Classic cancelado — provider retomou o turno',
+          { owner: turnExecution.owner, lateProviderAudio },
+        );
+        return;
+      }
+      setSuppressRealtimeAudioOut(true);
+      resetPendingRealtimeAudioOut();
+      await quiesceLiveForClassic('classic-action-bridge-timeout');
+      setRealtimeTurnActive(false);
     }
     store.setTranscript(transcript);
     console.log(`[voice] transcrito (${tStt}ms): "${transcript}"`);

@@ -65,6 +65,9 @@ CREATE TABLE IF NOT EXISTS mission_panes (
   agent_name TEXT,
   role       TEXT NOT NULL DEFAULT 'worker',
   effort     TEXT,
+  scope_json TEXT,
+  allowed_tools_json TEXT,
+  allowed_skills_json TEXT,
   created_at INTEGER NOT NULL
 );
 

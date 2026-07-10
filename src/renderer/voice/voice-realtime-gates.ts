@@ -62,11 +62,22 @@ export function shouldStreamToRealtime(): boolean {
   );
 }
 
-/** True when wake should stay silent — Live owns the voice (one voice). */
-export function shouldSkipClassicWakeAck(): boolean {
-  // A key only means Live can be attempted. Skip local feedback only after the
-  // socket is actually ready; invalid keys/offline cold starts must not be mute.
-  return isRealtimeLive();
+/**
+ * Reserve the wake for Live as soon as a valid realtime route is configured.
+ *
+ * A cold Gemini socket becomes ready only after the wake handler begins capture.
+ * Playing the Classic acknowledgement in that gap made OpenAI TTS speak first,
+ * then its own audio reached the microphone and delayed Gemini's first turn.
+ * A known failed Live session still falls back to the Classic acknowledgement.
+ */
+export function shouldReserveWakeForRealtime(): boolean {
+  const info = useVoiceStore.getState().info;
+  const liveState = useVoiceStore.getState().liveState;
+  return Boolean(
+    isJarvisLiveEnabled() &&
+      canAttemptRealtime(info) &&
+      liveState?.status !== 'error',
+  );
 }
 
 /**

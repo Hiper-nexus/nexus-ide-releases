@@ -41,6 +41,7 @@ export function mapActionToTool(
     case 'design_squad':
     case 'confirm_squad':
     case 'new_mission':
+    case 'new_agentic_mission':
     case 'new_workspace':
     case 'open_board':
     case 'open_terminal':
@@ -56,6 +57,7 @@ export function mapActionToTool(
     case 'focus_previous_pane':
     case 'focus_pane':
     case 'read_pane':
+    case 'read_current_view':
     case 'close_pane':
       return null;
     case 'send_to_pane':

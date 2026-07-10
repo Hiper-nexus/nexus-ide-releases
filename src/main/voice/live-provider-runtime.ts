@@ -27,6 +27,8 @@ export interface LiveProviderRuntimeHost {
   setLastUserTranscript(text: string): void;
   settleSmokeResponseDone(): void;
   settleSmokeFailure(reason: JarvisLiveSmokeFailureReason): void;
+  /** Emits a renderer event only when a completed provider response follows a tool result. */
+  onProviderResponseDone?(): void;
   recordLiveHistory(role: 'user' | 'assistant', text: string): void;
   touchIdle(): void;
   routePendingAnswer(text: string): void;
@@ -202,6 +204,7 @@ function bindResponseLifecycle(
       jarvisLatencyTracker.markResponseDone(sessionId, host.getActiveTurnId());
     }
     host.fsm.patchStatus({ status: 'dormant', realtimeReady: true });
+    host.onProviderResponseDone?.();
   });
 }
 

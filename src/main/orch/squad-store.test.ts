@@ -2,7 +2,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import type { Db } from '../persistence/db';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
-import { initSquadStore, getSquad, saveSquad } from './squad-store';
+import {
+  deleteSquad,
+  getSquad,
+  importSquadsJson,
+  initSquadStore,
+  isSquadStoreReadOnly,
+  saveSquad,
+} from './squad-store';
 
 /**
  * Real-path regression test for "não consigo iniciar squad".
@@ -189,6 +196,137 @@ describe('squad-store save path', () => {
 
     // And the gate is satisfied.
     expect(findBlockingWorker(saved.agents)).toBeNull();
+  });
+
+  it('fails closed without a database and does not publish an in-memory save', () => {
+    initSquadStore(null);
+
+    expect(() =>
+      saveSquad({
+        id: 'memory-only',
+        name: 'Must not exist',
+        createdAt: '1704067200000',
+        builtin: false,
+        orchestratorInstructions: '',
+        agents: [],
+      }),
+    ).toThrow(/read-only.*SQLite.*unavailable/i);
+
+    expect(isSquadStoreReadOnly()).toBe(true);
+    expect(getSquad('memory-only')).toBeNull();
+  });
+
+  it('keeps the last durable value when a later update cannot be persisted', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    saveSquad({
+      id: 'durable-squad',
+      name: 'Durable',
+      createdAt: '1704067200000',
+      builtin: false,
+      orchestratorInstructions: '',
+      agents: [],
+    });
+    db.close();
+    openDb = null;
+
+    expect(() =>
+      saveSquad({
+        id: 'durable-squad',
+        name: 'Memory-only overwrite',
+        createdAt: '1704067200000',
+        builtin: false,
+        orchestratorInstructions: '',
+        agents: [],
+      }),
+    ).toThrow(/failed to persist/i);
+
+    expect(isSquadStoreReadOnly()).toBe(true);
+    expect(getSquad('durable-squad')?.name).toBe('Durable');
+  });
+
+  it('does not remove the cached durable squad when SQLite deletion fails', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    saveSquad({
+      id: 'keep-on-delete-failure',
+      name: 'Keep me',
+      createdAt: '1704067200000',
+      builtin: false,
+      orchestratorInstructions: '',
+      agents: [],
+    });
+    db.close();
+    openDb = null;
+
+    expect(() => deleteSquad('keep-on-delete-failure')).toThrow(
+      /failed to persist/i,
+    );
+    expect(getSquad('keep-on-delete-failure')?.name).toBe('Keep me');
+  });
+
+  it('rolls back a failed multi-squad import without publishing partial cache state', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    db.exec(`
+      CREATE TRIGGER reject_second_import
+      BEFORE INSERT ON squads
+      WHEN NEW.id = 'import-2'
+      BEGIN
+        SELECT RAISE(ABORT, 'rejected import');
+      END;
+    `);
+
+    expect(() =>
+      importSquadsJson(
+        JSON.stringify({
+          squads: [
+            {
+              id: 'import-1',
+              name: 'First',
+              createdAt: '1704067200000',
+              builtin: false,
+              orchestratorInstructions: '',
+              agents: [],
+            },
+            {
+              id: 'import-2',
+              name: 'Second',
+              createdAt: '1704067200000',
+              builtin: false,
+              orchestratorInstructions: '',
+              agents: [],
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/failed to persist/i);
+
+    expect(getSquad('import-1')).toBeNull();
+    expect(getSquad('import-2')).toBeNull();
+    const count = db
+      .prepare("SELECT COUNT(*) AS count FROM squads WHERE id LIKE 'import-%'")
+      .get() as { count: number };
+    expect(count.count).toBe(0);
+  });
+
+  it('preserves already-hydrated reads when reinitialized without SQLite', () => {
+    const db = makeDb();
+    openDb = db;
+    insertRawSquad(db, {
+      id: 'cached-durable',
+      name: 'Cached durable',
+      agents: [],
+    });
+    initSquadStore(db);
+
+    initSquadStore(null);
+
+    expect(isSquadStoreReadOnly()).toBe(true);
+    expect(getSquad('cached-durable')?.name).toBe('Cached durable');
   });
 
   it('orchestrator null is excluded from the fire-gate', () => {

@@ -15,6 +15,8 @@ import { frameIsSilent, type MicPermissionState } from './wake-health';
 import { SoftAgc } from './agc';
 import { rmsToLevel } from './voice-level';
 import { preferredInputConstraints } from './audio-device-preferences';
+import { LiveFrameGate } from './live-frame-gate';
+import { PassiveWakeCapture } from './passive-wake-capture';
 
 /**
  * Mic sempre-ligado do wake word: stream 16 kHz mono de baixo custo que
@@ -46,6 +48,13 @@ const STRONG_SPEECH_PEAK = 0.12;
 const MIN_SPEECH_MS = 320;
 const MAX_PREROLL_MS = 3_000;
 const REALTIME_PREROLL_MS = 750;
+const LIVE_FRAME_PREROLL_MS = 750;
+/** Pequeno contexto antes da fala para o STT textual não comer o “Hey”. */
+const PASSIVE_WAKE_PREROLL_MS = 300;
+/** Janela que será reaproveitada quando o STT confirmar o wake. */
+const PASSIVE_WAKE_HANDOFF_MS = 2_500;
+/** Piso cru: independente do AGC para não disparar com ruído amplificado. */
+const PASSIVE_WAKE_RAW_SPEECH_RMS = 0.008;
 /** Ganho inicial do AGC próprio (ver agc.ts) — o valor 12x foi o melhor
  * fixo medido ao vivo em 2026-07-07; o AGC parte dele e adapta. */
 const WAKE_INITIAL_GAIN = 24;
@@ -64,6 +73,17 @@ const MIC_ZERO_REOPEN_MS = 15_000;
 /** Folga sobre o maxMs da captura: se os frames morrerem no meio da fala, o
  * deadline fecha o turno mesmo sem PCM chegando (senão busy trava). */
 const UTTERANCE_DEADLINE_SLACK_MS = 1_000;
+
+/**
+ * Uma frase curta que atravessou o VAD passivo e será checada pelo STT.
+ * `preRoll` é entregue ao turno real se o texto confirmar o wake, evitando
+ * perder “Hey Jarvis, ...” enquanto a confirmação acontece.
+ */
+export interface PassiveWakeUtterance extends CaptureResult {
+  preRoll: Float32Array[];
+  rawSpeechMs: number;
+  rawMaxRms: number;
+}
 
 export class WakeMic {
   private ctx: AudioContext | null = null;
@@ -107,6 +127,15 @@ export class WakeMic {
   onRecovered: (() => void) | null = null;
   /** Nível ao vivo (0–1) para orb/diagnóstico — mesmo contrato do VoiceCapture. */
   onLevel: ((level: number) => void) | null = null;
+  /**
+   * Segundo trilho do wake: VAD local produz uma frase curta; o controlador
+   * decide se deve enviá-la ao STT e se o texto realmente chama a Jarvis.
+   */
+  onPassiveUtterance: ((utterance: PassiveWakeUtterance) => void) | null = null;
+
+  private readonly passiveWake = new PassiveWakeCapture({
+    rawSpeechRms: PASSIVE_WAKE_RAW_SPEECH_RMS,
+  });
 
   // Utterance capture (comando pós-wake/F6) sobre o MESMO stream quente.
   private uttChunks: Float32Array[] = [];
@@ -127,6 +156,10 @@ export class WakeMic {
   // Tap de frames da fala (Jarvis Live realtime): recebe cada frame do mic
   // enquanto o comando está sendo capturado, junto com o sample rate real.
   private uttFrameTap: ((frame: Float32Array, sampleRate: number) => void) | null = null;
+  /** Live só recebe áudio após VAD local, com um pequeno pre-roll da fala. */
+  private readonly liveFrameGate = new LiveFrameGate(
+    Math.round(TARGET_SAMPLE_RATE * (LIVE_FRAME_PREROLL_MS / 1_000)),
+  );
 
   /** Registra (ou limpa) o tap de frames de fala para o transporte realtime. */
   setUtteranceFrameTap(
@@ -191,6 +224,12 @@ export class WakeMic {
     }
     this.uttChunks = [];
     this.uttAutoStop = null;
+    this.liveFrameGate.reset();
+  }
+
+  /** Cancela uma frase passiva quando um wake acústico/turno real vence a corrida. */
+  cancelPassiveWake(): void {
+    this.passiveWake.cancel();
   }
 
   /** Abre a escuta de comando INSTANTANEAMENTE (stream já está quente). */
@@ -200,6 +239,7 @@ export class WakeMic {
     preRollSeed?: Float32Array[],
   ): void {
     if (!this.running) return;
+    this.cancelPassiveWake();
     if (this.uttActive) this.cancelUtterance();
     const seeded = preRollSeed?.map((frame) => Float32Array.from(frame)) ?? this.seedPreRoll(preRollMs);
     this.uttChunks = seeded;
@@ -214,6 +254,7 @@ export class WakeMic {
     this.uttRawMaxRms = 0;
     this.uttStartedAt = Date.now();
     this.uttLastSpeechAt = this.uttStartedAt;
+    this.liveFrameGate.reset();
     this.markSeededSpeech(seeded);
     // The local WAV retains the full wake seed for fallback STT. Live gets only
     // the trailing window: enough to preserve a command glued to the wake word,
@@ -244,6 +285,7 @@ export class WakeMic {
     }
     const pcm = mergeChunks(this.uttChunks);
     this.uttChunks = [];
+    this.liveFrameGate.reset();
     const rate = this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE;
     const down = downsample(pcm, rate, TARGET_SAMPLE_RATE);
     if (!this.uttHeardSpeech || this.uttMaxRms < SPEECH_RMS) {
@@ -267,8 +309,6 @@ export class WakeMic {
 
   private trackUtterance(frame: Float32Array, rawRms: number): void {
     this.uttChunks.push(Float32Array.from(frame));
-    // Jarvis Live realtime: espelha o frame para o transporte enquanto fala.
-    this.uttFrameTap?.(frame, this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE);
     let sum = 0;
     let peak = 0;
     for (let i = 0; i < frame.length; i += 1) {
@@ -281,15 +321,28 @@ export class WakeMic {
     this.uttMaxRms = Math.max(this.uttMaxRms, rms);
     this.uttMaxPeak = Math.max(this.uttMaxPeak, peak);
     this.uttRawMaxRms = Math.max(this.uttRawMaxRms, rawRms);
-    const rawBackedSpeech = rawRms >= RAW_SPEECH_RMS && rms >= SPEECH_RMS && peak >= SPEECH_PEAK;
+    const rawSpeechFloor = this.uttAutoStop?.rawSpeechRms ?? RAW_SPEECH_RMS;
+    const rawBackedSpeech = rawRms >= rawSpeechFloor && rms >= SPEECH_RMS && peak >= SPEECH_PEAK;
     const strongSpeech = rms >= STRONG_SPEECH_RMS && peak >= STRONG_SPEECH_PEAK;
-    if (rawBackedSpeech || strongSpeech) {
+    const hasSpeech = rawBackedSpeech || strongSpeech;
+    // The realtime gate can open on a weaker raw speech onset than the local
+    // endpoint detector. This preserves quiet first syllables while still
+    // rejecting AGC-amplified room noise.
+    const hasLiveSpeech = rawRms >= rawSpeechFloor || strongSpeech;
+    if (hasSpeech) {
       const frameMs =
         (frame.length / (this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE)) * 1000;
       this.uttSpeechMs += frameMs;
       this.uttLiveSpeechMs += frameMs;
       this.uttHeardSpeech = this.uttSpeechMs >= MIN_SPEECH_MS;
       this.uttLastSpeechAt = now;
+    }
+    // Do not stream ambient silence to Gemini while the auto-reply window is
+    // open. The gate preserves the start of a real utterance, then forwards
+    // its trailing silence so the provider can endpoint normally.
+    const sampleRate = this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE;
+    for (const queued of this.liveFrameGate.offer(frame, hasLiveSpeech)) {
+      this.uttFrameTap?.(queued, sampleRate);
     }
     const opts = this.uttAutoStop;
     if (!opts || this.uttFired) return;
@@ -307,6 +360,58 @@ export class WakeMic {
       this.uttFired = true;
       opts.onAutoStop();
     }
+  }
+
+  /**
+   * Captura uma única frase por VAD para o fallback textual. O áudio só sai
+   * desta classe depois de fala real + silêncio; aqui não há STT nem decisão
+   * de wake, portanto o stream acústico continua em paralelo sem bloqueio.
+   */
+  private trackPassiveWake(
+    frame: Float32Array,
+    rawRms: number,
+    preRoll: readonly Float32Array[],
+  ): void {
+    const listener = this.onPassiveUtterance;
+    if (!listener) return;
+    const sampleRate = this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE;
+    const sample = this.passiveWake.offer({
+      frame,
+      rawRms,
+      now: Date.now(),
+      sampleRate,
+      preRoll,
+    });
+    if (!sample) return;
+
+    const pcm = mergeChunks(sample.frames);
+    const down = downsample(pcm, sampleRate, TARGET_SAMPLE_RATE);
+    const durationSec = down.length / TARGET_SAMPLE_RATE;
+    // O VAD inclui o silêncio que confirmou o endpoint. Para o handoff Live
+    // isso é nocivo: `beginUtterance` transmite apenas o fim do pre-roll e
+    // acabaria entregando silêncio em vez de “Hey Jarvis, ...”. O WAV do STT
+    // mantém a frase completa; o seed do turno termina no último frame falado.
+    const handoffFrames = tailFrames(
+      trimTrailingFrames(sample.frames, sampleRate, sample.trailingSilenceMs),
+      sampleRate,
+      PASSIVE_WAKE_HANDOFF_MS,
+    );
+    const utterance: PassiveWakeUtterance = {
+      wavBase64: bytesToBase64(encodeWav(down, TARGET_SAMPLE_RATE)),
+      sampleRate: TARGET_SAMPLE_RATE,
+      durationSec,
+      heardSpeech: true,
+      maxRms: sample.maxRawRms,
+      preRoll: handoffFrames,
+      rawSpeechMs: sample.speechMs,
+      rawMaxRms: sample.maxRawRms,
+    };
+    this.log('info', 'wake.passiveSample', 'frase VAD enviada ao STT de wake', {
+      durationSec: Number(durationSec.toFixed(2)),
+      speechMs: Math.round(sample.speechMs),
+      rawMaxRms: Number(sample.maxRawRms.toFixed(5)),
+    });
+    listener(utterance);
   }
 
   private rememberPreRoll(frame: Float32Array): void {
@@ -432,14 +537,25 @@ export class WakeMic {
       this.silentSince = silent ? this.silentSince || Date.now() : 0;
       // TCC fantasma: zeros DIGITAIS puros (rms === 0), distintos de sala quieta.
       this.zeroSince = rms === 0 ? this.zeroSince || Date.now() : 0;
+      // Obtém o pre-roll ANTES do frame atual para não duplicar a primeira
+      // sílaba quando o VAD iniciar a captura passiva logo abaixo.
+      const passivePreRoll =
+        !this.passiveWake.isActive() && rawRms >= PASSIVE_WAKE_RAW_SPEECH_RMS
+          ? this.seedPreRoll(PASSIVE_WAKE_PREROLL_MS)
+          : [];
       this.rememberPreRoll(frame);
       // Comando em gravação: acumula localmente (e NÃO alimenta o detector —
       // senão a própria fala do comando poderia re-disparar o wake).
       if (this.uttActive) {
+        this.cancelPassiveWake();
         this.trackUtterance(frame, rawRms);
         return;
       }
-      if (Date.now() < this.wakeSuppressedUntil) return;
+      if (Date.now() < this.wakeSuppressedUntil) {
+        this.cancelPassiveWake();
+        return;
+      }
+      this.trackPassiveWake(frame, rawRms, passivePreRoll);
       for (let i = 0; i < frame.length; i += 1) this.pending.push(frame[i]);
       while (this.pending.length >= CHUNK) {
         const chunk = Float32Array.from(this.pending.splice(0, CHUNK));
@@ -567,6 +683,7 @@ export class WakeMic {
     this.stopWatchdog();
     this.pending = [];
     this.preRoll = [];
+    this.cancelPassiveWake();
     this.wakeSuppressedUntil = 0;
     if (this.uttDeadline) {
       clearTimeout(this.uttDeadline);
@@ -616,4 +733,25 @@ function tailFrames(
     remaining -= take;
   }
   return tail;
+}
+
+/** Remove só o silêncio que o endpoint VAD acrescentou ao sample passivo. */
+export function trimTrailingFrames(
+  frames: readonly Float32Array[],
+  sampleRate: number,
+  durationMs: number,
+): Float32Array[] {
+  let remaining = Math.max(0, Math.ceil((sampleRate * durationMs) / 1_000));
+  const trimmed = frames.map((frame) => Float32Array.from(frame));
+  for (let index = trimmed.length - 1; index >= 0 && remaining > 0; index -= 1) {
+    const frame = trimmed[index];
+    if (remaining >= frame.length) {
+      trimmed.pop();
+      remaining -= frame.length;
+      continue;
+    }
+    trimmed[index] = Float32Array.from(frame.subarray(0, frame.length - remaining));
+    remaining = 0;
+  }
+  return trimmed.filter((frame) => frame.length > 0);
 }

@@ -1,12 +1,13 @@
-import { ipcMain } from 'electron';
-import { PTY_CHANNELS } from '../../shared/channels';
+import { ipcMain } from "electron";
+import type { WebContents } from "electron";
+import { PTY_CHANNELS } from "../../shared/channels";
 import {
   spawnRequestSchema,
   writeSchema,
   resizeSchema,
   killSchema,
-} from '../../shared/ipc';
-import type { SpawnResult } from '../../shared/types';
+} from "../../shared/ipc";
+import type { SpawnResult } from "../../shared/types";
 import {
   spawnSession,
   spawnAgentSession,
@@ -14,10 +15,45 @@ import {
   resizeSession,
   killSession,
   setPtyHost,
-} from './pty-manager';
-import { createRealPtyHost } from './pty-host-client';
-import { getAdapter, isAdapterInstalled } from '../adapters/adapter-registry';
-import { prepareProviderSpawn } from '../persistence/provider-config-store';
+} from "./pty-manager";
+import { createRealPtyHost } from "./pty-host-client";
+import { getAdapter, isAdapterInstalled } from "../adapters/adapter-registry";
+import { prepareProviderSpawn } from "../persistence/provider-config-store";
+import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
+import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
+import {
+  attachSessionScope,
+  bindPendingSpawnSession,
+  claimPendingSpawnMeta,
+} from "../orch/pane-registry";
+import { createScopedMissionPaneStore } from "../orch/mission-pane-store";
+import { listSquads } from "../orch/squad-store";
+import { bindSpawnAuthority } from "../orch/spawn-authority";
+
+let projectRuntimeManager: ProjectRuntimeManager | null = null;
+
+export function configurePtyProjectRuntimeManager(
+  runtimeManager: ProjectRuntimeManager,
+): void {
+  projectRuntimeManager = runtimeManager;
+}
+
+function findPersistedPane(owner: WebContents, paneId: string) {
+  if (!projectRuntimeManager) {
+    throw new Error("project-scoped PTY runtime is not initialized");
+  }
+  const scope = requireRendererWorkspaceScope(owner);
+  return createScopedMissionPaneStore(
+    projectRuntimeManager,
+    scope,
+  ).findByPaneId(paneId);
+}
+import { resolveCwdForScope } from "../orch/workspace-path";
+import { getTerminalSettings } from "../persistence/settings-store";
+import {
+  listAvailableShells,
+  resolveConfiguredShell,
+} from "../persistence/shell-catalog";
 
 /**
  * Registers the PTY IPC surface. Every handler validates its payload with zod
@@ -32,20 +68,23 @@ export function registerPtyIpc(): void {
   ipcMain.handle(PTY_CHANNELS.spawn, (event, raw): SpawnResult => {
     const parsed = spawnRequestSchema.safeParse(raw);
     if (!parsed.success) {
-      return { ok: false, error: 'invalid spawn request' };
+      return { ok: false, error: "invalid spawn request" };
     }
     const req = parsed.data;
 
-    if (req.kind === 'cli-agent') {
+    if (req.kind === "cli-agent") {
       if (!req.adapterId) {
-        return { ok: false, error: 'cli-agent spawn requires adapterId' };
+        return { ok: false, error: "cli-agent spawn requires adapterId" };
       }
       const adapter = getAdapter(req.adapterId);
       if (!adapter) {
         return { ok: false, error: `unknown adapter: ${req.adapterId}` };
       }
-      if (adapter.kind !== 'cli-pty') {
-        return { ok: false, error: `adapter ${req.adapterId} is not a cli-pty adapter` };
+      if (adapter.kind !== "cli-pty") {
+        return {
+          ok: false,
+          error: `adapter ${req.adapterId} is not a cli-pty adapter`,
+        };
       }
       const preparation = prepareProviderSpawn(adapter.id, {
         effort: req.effort,
@@ -67,26 +106,82 @@ export function registerPtyIpc(): void {
         };
       }
       try {
+        const pending = req.orchRequestId
+          ? claimPendingSpawnMeta(req.orchRequestId, event.sender)
+          : null;
+        const persistedPane =
+          req.resume && req.paneId
+            ? findPersistedPane(event.sender, req.paneId)
+            : null;
+        if (persistedPane && persistedPane.adapterId !== adapter.id) {
+          throw new Error(
+            "persisted pane adapter does not match spawn request",
+          );
+        }
+        const needsActiveScope = !pending?.scope && !persistedPane?.scope;
+        const trustedUserScope = needsActiveScope
+          ? requireRendererWorkspaceScope(event.sender)
+          : null;
+        const authority = bindSpawnAuthority({
+          requestId: req.orchRequestId,
+          pending,
+          squads: listSquads(),
+          persistedPane,
+          trustedUserScope,
+          requestedCwd: req.cwd,
+        });
+        // Downstream code receives the canonical value as defense in depth;
+        // spawnAgentSession independently ignores renderer cwd and consumes
+        // authority.cwd as the actual PTY working directory.
+        const authorizedRequest = { ...req, cwd: authority.cwd };
         const { sessionId } = spawnAgentSession(
           event.sender,
-          req,
+          authorizedRequest,
           adapter,
           overrides,
+          authority,
         );
+        if (
+          authority.source === "pending" &&
+          (!req.orchRequestId ||
+            !bindPendingSpawnSession(
+              req.orchRequestId,
+              event.sender,
+              sessionId,
+            ))
+        ) {
+          killSession(event.sender, sessionId);
+          throw new Error(
+            "orchestration request could not bind spawned PTY session",
+          );
+        }
+        attachSessionScope(sessionId, authority.scope);
         return { ok: true, sessionId };
       } catch (err) {
         const message =
-          err instanceof Error ? err.message : 'failed to spawn agent';
+          err instanceof Error ? err.message : "failed to spawn agent";
         return { ok: false, error: message };
       }
     }
 
     try {
-      const { sessionId } = spawnSession(event.sender, req);
+      const scope = requireRendererWorkspaceScope(event.sender);
+      const cwd = resolveCwdForScope(scope, req.cwd);
+      const shell = resolveConfiguredShell(
+        req.shell,
+        getTerminalSettings().shell,
+        listAvailableShells(),
+      );
+      const { sessionId } = spawnSession(
+        event.sender,
+        { ...req, cwd, shell },
+        { scope, cwd, shell },
+      );
+      attachSessionScope(sessionId, scope);
       return { ok: true, sessionId };
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : 'failed to spawn shell';
+        err instanceof Error ? err.message : "failed to spawn shell";
       return { ok: false, error: message };
     }
   });

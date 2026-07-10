@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import * as ort from 'onnxruntime-node';
@@ -8,11 +9,18 @@ import {
   HEY_JARVIS_ONNX_B64,
 } from './wake-models';
 import { PcmRingBuffer } from './pcm-ring-buffer';
+import {
+  CUSTOM_WAKE_SCORE_THRESHOLD,
+  OFFICIAL_WAKE_SCORE_THRESHOLD,
+  resolveWakeDetection,
+  WAKE_SCORE_THRESHOLD,
+  type WakeScoreSource,
+} from './wake-score-gate';
 
 /**
- * Modelo custom do usuário (ex.: "Ei Jarvis" treinado em PT-BR): se
- * ~/.nexus/models/wake/custom.onnx existir, ele substitui o hey_jarvis
- * embutido. Treino: ver training/ei-jarvis/README.md no repositório.
+ * Modelo candidato PT-BR do usuário (ex.: "Ei/Hey Jarvis"). Quando presente,
+ * ele roda EM PARALELO ao head SpeechKit permissivo embutido; nunca remove a
+ * cobertura do modelo base. Treino: training/wake-ptbr/ no repositório.
  */
 const CUSTOM_WAKE_MODEL = path.join(
   os.homedir(),
@@ -21,6 +29,21 @@ const CUSTOM_WAKE_MODEL = path.join(
   'wake',
   'custom.onnx',
 );
+
+/**
+ * Verified third-party Apache-2.0 OpenWakeWord head. It is downloaded by our
+ * installer only after checksum + runtime-shape verification, then remains an
+ * optional second detector beside the embedded model.
+ */
+const OFFICIAL_OPEN_SOURCE_WAKE_MODEL = path.join(
+  os.homedir(),
+  '.nexus',
+  'models',
+  'wake',
+  'speechkit-hey-jarvis.onnx',
+);
+const OFFICIAL_OPEN_SOURCE_WAKE_SHA256 =
+  '7256019a18029c7bea33abc3344f7a3d0e07655cf4a5f18e65c9b6329eac3fb6';
 
 /**
  * Wake word "Hey Jarvis" via openWakeWord — port fiel do streaming oficial
@@ -32,7 +55,7 @@ const CUSTOM_WAKE_MODEL = path.join(
  *      por chunk em vez de ~8 e a linha do tempo desalinha → score 0).
  *   2. embedding_model.onnx — janela dos últimos 76 mel frames, UM embedding
  *      por chunk de 1280.
- *   3. hey_jarvis_v0.1.onnx — últimos 16 embeddings → score.
+ *   3. SpeechKit hey_jarvis.onnx — últimos 16 embeddings → score.
  *
  * Buffers pré-semeados como no oficial: mel = 76 frames de 1s; features =
  * embeddings de 4 s de ruído aleatório.
@@ -44,10 +67,12 @@ const MEL_WINDOW = 76;
 const MEL_MAX = 400;
 const EMB_WINDOW = 16;
 const FEAT_MAX = 120;
-// Ambiente marca picos de 0.2-0.4 (um falso disparo real registrado a 0.39);
-// um "hey jarvis" de verdade marca ~0.97. 0.48 tolera fifine com RMS baixo no macOS.
-const THRESHOLD = 0.48;
+// O gate calibrado aceita o wake curto falado emendado sem cruzar o teto de
+// não-wake medido no Fifine; a decisão pura fica testável em wake-score-gate.
+const THRESHOLD = WAKE_SCORE_THRESHOLD;
 const DEBOUNCE_MS = 2_500;
+const SCORE_TELEMETRY_MS = 2_000;
+const SCORE_TELEMETRY_MIN_RMS = 0.03;
 // Cap da fila de PCM: ~50 chunks (≈4 s de áudio). Se o mic produz mais rápido
 // que o drain() consome, descartamos os samples mais ANTIGOS em vez de deixar
 // a fila crescer sem limite.
@@ -56,6 +81,14 @@ const DROP_WARN_EVERY = 50; // 1 warn a cada N chunks descartados
 // Limites de sanidade do custom.onnx antes de tocar o runtime nativo.
 const CUSTOM_MODEL_MIN_BYTES = 1024;
 const CUSTOM_MODEL_MAX_BYTES = 500 * 1024 * 1024;
+
+export interface WakeScoreTelemetry {
+  peakScore: number;
+  peakRms: number;
+  threshold: number;
+  source: WakeScoreSource;
+  chunks: number;
+}
 
 function fromB64(b64: string): Uint8Array {
   return new Uint8Array(Buffer.from(b64, 'base64'));
@@ -67,10 +100,10 @@ function fromB64(b64: string): Uint8Array {
  * Retorna null se o arquivo é plausível, ou o motivo da rejeição
  * ('ausente' quando simplesmente não existe — caso normal, sem warn).
  */
-function checkCustomWakeModel(): string | null {
+function checkWakeModel(filePath: string): string | null {
   let stat: fs.Stats;
   try {
-    stat = fs.statSync(CUSTOM_WAKE_MODEL);
+    stat = fs.statSync(filePath);
   } catch {
     return 'ausente';
   }
@@ -80,10 +113,48 @@ function checkCustomWakeModel(): string | null {
   return null;
 }
 
+function checkCustomWakeModel(): string | null {
+  return checkWakeModel(CUSTOM_WAKE_MODEL);
+}
+
+function checkOfficialWakeModel(): string | null {
+  const rejected = checkWakeModel(OFFICIAL_OPEN_SOURCE_WAKE_MODEL);
+  if (rejected !== null) return rejected;
+  try {
+    const bytes = fs.readFileSync(OFFICIAL_OPEN_SOURCE_WAKE_MODEL);
+    const checksum = createHash('sha256').update(bytes).digest('hex');
+    return checksum === OFFICIAL_OPEN_SOURCE_WAKE_SHA256
+      ? null
+      : `checksum inesperado (${checksum.slice(0, 12)})`;
+  } catch {
+    return 'não pôde ser lido';
+  }
+}
+
+/** Guard against a valid-looking ONNX file with an incompatible wake head. */
+async function verifyWakeHead(wake: ort.InferenceSession): Promise<void> {
+  if (wake.inputNames.length !== 1 || wake.outputNames.length !== 1) {
+    throw new Error('contrato ONNX inválido: esperado um input e um output');
+  }
+  const output = await wake.run({
+    [wake.inputNames[0]]: new ort.Tensor(
+      'float32',
+      new Float32Array(EMB_WINDOW * 96),
+      [1, EMB_WINDOW, 96],
+    ),
+  });
+  const score = (output[wake.outputNames[0]].data as Float32Array)[0];
+  if (!Number.isFinite(score)) {
+    throw new Error('contrato ONNX inválido: score não numérico');
+  }
+}
+
 export class WakeEngine {
   private mel: ort.InferenceSession | null = null;
   private emb: ort.InferenceSession | null = null;
-  private wake: ort.InferenceSession | null = null;
+  private baseWake: ort.InferenceSession | null = null;
+  private customWake: ort.InferenceSession | null = null;
+  private officialWake: ort.InferenceSession | null = null;
 
   private readonly pcmQueue = new PcmRingBuffer(PCM_QUEUE_MAX);
   private rawTail: Float32Array = new Float32Array(0); // últimos CTX samples
@@ -95,9 +166,16 @@ export class WakeEngine {
   private disposed = false;
   private droppedSinceWarn = 0;
   private peakScore = 0;
+  private peakSource: WakeScoreTelemetry['source'] = 'embedded';
+  private peakThreshold = THRESHOLD;
   private lastScoreLogAt = 0;
+  private peakRms = 0;
+  private scoredChunks = 0;
 
-  constructor(private readonly onDetected: () => void) {}
+  constructor(
+    private readonly onDetected: () => void,
+    private readonly onScore?: (telemetry: WakeScoreTelemetry) => void,
+  ) {}
 
   async init(): Promise<void> {
     if (this.mel) return;
@@ -108,7 +186,9 @@ export class WakeEngine {
     };
     this.mel = await ort.InferenceSession.create(fromB64(MELSPEC_ONNX_B64), opts);
     this.emb = await ort.InferenceSession.create(fromB64(EMBEDDING_ONNX_B64), opts);
-    this.wake = await this.loadWakeModel(opts);
+    this.baseWake = await ort.InferenceSession.create(fromB64(HEY_JARVIS_ONNX_B64), opts);
+    this.customWake = await this.loadCustomWakeModel(opts);
+    this.officialWake = await this.loadOfficialWakeModel(opts);
     await this.seedBuffers();
     this.ready = true;
     // Frames que chegaram DURANTE a init ficaram na fila — processa agora
@@ -119,13 +199,13 @@ export class WakeEngine {
   }
 
   /**
-   * Carrega o modelo wake: o CUSTOM só entra se passar nas validações baratas
+   * Carrega o candidato PT-BR apenas se ele passar nas validações baratas
    * (tamanho plausível + cabeçalho de protobuf) E se o runtime aceitar.
-   * Qualquer falha cai no hey_jarvis embutido, com log do motivo.
+   * Falhas mantêm o modelo base ativo, sem substituir comportamento existente.
    */
-  private async loadWakeModel(
+  private async loadCustomWakeModel(
     opts: ort.InferenceSession.SessionOptions,
-  ): Promise<ort.InferenceSession> {
+  ): Promise<ort.InferenceSession | null> {
     const rejected = checkCustomWakeModel();
     if (rejected === null) {
       try {
@@ -135,16 +215,46 @@ export class WakeEngine {
           throw new Error('cabeçalho não parece um ONNX/protobuf');
         }
         const wake = await ort.InferenceSession.create(bytes, opts);
-        console.log(`[wake] modelo CUSTOM carregado: ${CUSTOM_WAKE_MODEL}`);
+        await verifyWakeHead(wake);
+        console.log(`[wake] modelo PT-BR adicional carregado: ${CUSTOM_WAKE_MODEL}`);
         return wake;
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);
-        console.warn(`[wake] modelo CUSTOM rejeitado (${m}) — usando o embutido`);
+        console.warn(`[wake] modelo PT-BR rejeitado (${m}) — mantendo o embutido`);
       }
     } else if (rejected !== 'ausente') {
-      console.warn(`[wake] modelo CUSTOM ignorado (${rejected}) — usando o embutido`);
+      console.warn(`[wake] modelo PT-BR ignorado (${rejected}) — mantendo o embutido`);
     }
-    return ort.InferenceSession.create(fromB64(HEY_JARVIS_ONNX_B64), opts);
+    return null;
+  }
+
+  /**
+   * Loads the pinned open-source head only when its exact expected checksum
+   * and OpenWakeWord input/output contract validate locally. A bad download
+   * therefore cannot degrade or replace the embedded detector.
+   */
+  private async loadOfficialWakeModel(
+    opts: ort.InferenceSession.SessionOptions,
+  ): Promise<ort.InferenceSession | null> {
+    const rejected = checkOfficialWakeModel();
+    if (rejected === 'ausente') return null;
+    if (rejected !== null) {
+      console.warn(`[wake] modelo open-source ignorado (${rejected}) — mantendo o embutido`);
+      return null;
+    }
+    try {
+      const bytes = new Uint8Array(fs.readFileSync(OFFICIAL_OPEN_SOURCE_WAKE_MODEL));
+      const wake = await ort.InferenceSession.create(bytes, opts);
+      await verifyWakeHead(wake);
+      console.log(
+        `[wake] modelo open-source adicional carregado: ${OFFICIAL_OPEN_SOURCE_WAKE_MODEL}`,
+      );
+      return wake;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[wake] modelo open-source rejeitado (${message}) — mantendo o embutido`);
+      return null;
+    }
   }
 
   /** Espelha o init oficial: mel = ones(76,32); features = ruído de 4 s. */
@@ -210,10 +320,23 @@ export class WakeEngine {
     this.rawTail = new Float32Array(0);
     this.melFrames = [];
     this.features = [];
-    const sessions = [this.mel, this.emb, this.wake];
+    this.peakScore = 0;
+    this.peakSource = 'embedded';
+    this.peakThreshold = THRESHOLD;
+    this.peakRms = 0;
+    this.scoredChunks = 0;
+    const sessions = [
+      this.mel,
+      this.emb,
+      this.baseWake,
+      this.customWake,
+      this.officialWake,
+    ];
     this.mel = null;
     this.emb = null;
-    this.wake = null;
+    this.baseWake = null;
+    this.customWake = null;
+    this.officialWake = null;
     for (const session of sessions) {
       try {
         await session?.release();
@@ -232,6 +355,11 @@ export class WakeEngine {
     for (let i = 0; i < MEL_WINDOW; i += 1) {
       this.melFrames.push(new Float32Array(32).fill(1));
     }
+    this.peakScore = 0;
+    this.peakSource = 'embedded';
+    this.peakThreshold = THRESHOLD;
+    this.peakRms = 0;
+    this.scoredChunks = 0;
   }
 
   /** Alimenta PCM mono 16 kHz normalizado [-1,1]; dispara onDetected. */
@@ -271,7 +399,14 @@ export class WakeEngine {
   }
 
   private async processChunk(samples: Float32Array): Promise<void> {
-    if (!this.mel || !this.emb || !this.wake) return;
+    if (!this.mel || !this.emb || !this.baseWake) return;
+    let squaredSum = 0;
+    for (let index = 0; index < samples.length; index += 1) {
+      squaredSum += samples[index] * samples[index];
+    }
+    const rms = Math.sqrt(squaredSum / Math.max(1, samples.length));
+    this.peakRms = Math.max(this.peakRms, rms);
+    this.scoredChunks += 1;
     // Escala int16 (o mel espera amplitude de int16, não [-1,1]).
     const chunk = new Float32Array(samples.length);
     for (let index = 0; index < samples.length; index += 1) {
@@ -300,22 +435,100 @@ export class WakeEngine {
     if (this.features.length < EMB_WINDOW) return;
     const feat = new Float32Array(EMB_WINDOW * 96);
     this.features.slice(-EMB_WINDOW).forEach((e, i) => feat.set(e, i * 96));
-    const wakeOut = await this.wake.run({
-      [this.wake.inputNames[0]]: new ort.Tensor('float32', feat, [1, EMB_WINDOW, 96]),
+    const embeddedScore = await this.runWakeHead(this.baseWake, feat);
+    const customScore = this.customWake
+      ? await this.runWakeHead(this.customWake, feat)
+      : undefined;
+    const officialScore = this.officialWake
+      ? await this.runWakeHead(this.officialWake, feat)
+      : undefined;
+    // Keep telemetry finite even if a candidate ONNX model emits NaN. The
+    // detection gate below also validates scores, but Math.max(NaN, x) would
+    // otherwise poison the diagnostic peak for the whole window.
+    const scores: Array<{
+      source: WakeScoreTelemetry['source'];
+      threshold: number;
+      value: number;
+    }> = [
+      {
+        source: 'embedded',
+        threshold: WAKE_SCORE_THRESHOLD,
+        value: Number.isFinite(embeddedScore) ? embeddedScore : 0,
+      },
+      {
+        source: 'custom',
+        threshold: CUSTOM_WAKE_SCORE_THRESHOLD,
+        value:
+          typeof customScore === 'number' && Number.isFinite(customScore)
+            ? customScore
+            : 0,
+      },
+      {
+        source: 'official',
+        threshold: OFFICIAL_WAKE_SCORE_THRESHOLD,
+        value:
+          typeof officialScore === 'number' && Number.isFinite(officialScore)
+            ? officialScore
+            : 0,
+      },
+    ];
+    const highest = scores.reduce((best, candidate) =>
+      candidate.value > best.value ? candidate : best,
+    );
+    const detection = resolveWakeDetection({
+      embedded: embeddedScore,
+      custom: customScore,
+      official: officialScore,
     });
-    const score = (wakeOut[this.wake.outputNames[0]].data as Float32Array)[0];
     const now = Date.now();
-    if (score > this.peakScore) this.peakScore = score;
-    // Telemetria discreta: só quando há sinal, no máx. 1 linha/5s.
-    if (now - this.lastScoreLogAt > 5_000 && this.peakScore >= 0.05) {
-      console.log(`[wake] pico de score: ${this.peakScore.toFixed(3)}`);
-      this.peakScore = 0;
-      this.lastScoreLogAt = now;
+    if (detection) {
+      // Forced telemetry must name the head that crossed its own threshold,
+      // not merely the one with the largest raw score.
+      this.peakScore = detection.score;
+      this.peakSource = detection.source;
+      this.peakThreshold = detection.threshold;
+    } else if (highest.value > this.peakScore) {
+      this.peakScore = highest.value;
+      this.peakSource = highest.source;
+      this.peakThreshold = highest.threshold;
     }
-    if (score >= THRESHOLD && now - this.lastFireAt > DEBOUNCE_MS) {
+    const detected = detection !== null;
+    this.emitScoreTelemetry(now, detected);
+    if (detection && now - this.lastFireAt > DEBOUNCE_MS) {
       this.lastFireAt = now;
-      console.log(`[wake] "Hey Jarvis" detectado (score ${score.toFixed(2)})`);
+      console.log(
+        `[wake] "Hey Jarvis" detectado (${detection.source}, score ${detection.score.toFixed(2)})`,
+      );
       this.onDetected();
     }
+  }
+
+  private async runWakeHead(
+    wake: ort.InferenceSession,
+    features: Float32Array,
+  ): Promise<number> {
+    const wakeOut = await wake.run({
+      [wake.inputNames[0]]: new ort.Tensor('float32', features, [1, EMB_WINDOW, 96]),
+    });
+    return (wakeOut[wake.outputNames[0]].data as Float32Array)[0] ?? 0;
+  }
+
+  private emitScoreTelemetry(now: number, force = false): void {
+    if (!force && now - this.lastScoreLogAt < SCORE_TELEMETRY_MS) return;
+    if (!force && this.peakRms < SCORE_TELEMETRY_MIN_RMS) return;
+    if (this.scoredChunks === 0) return;
+    this.onScore?.({
+      peakScore: Number(this.peakScore.toFixed(4)),
+      peakRms: Number(this.peakRms.toFixed(4)),
+      threshold: this.peakThreshold,
+      source: this.peakSource,
+      chunks: this.scoredChunks,
+    });
+    this.peakScore = 0;
+    this.peakSource = 'embedded';
+    this.peakThreshold = THRESHOLD;
+    this.peakRms = 0;
+    this.scoredChunks = 0;
+    this.lastScoreLogAt = now;
   }
 }

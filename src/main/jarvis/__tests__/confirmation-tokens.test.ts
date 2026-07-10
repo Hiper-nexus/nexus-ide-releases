@@ -9,6 +9,8 @@ import type { PermissionScope } from '../permissions';
 const SCOPE: PermissionScope = {
   sessionId: 'jarvis-renderer',
   workspaceId: '/tmp/nexus',
+  projectId: 'project-a',
+  checkoutId: 'checkout-a',
   toolName: 'nexus_terminal_run',
   args: { command: 'npm test' },
 };
@@ -40,6 +42,14 @@ describe('confirmation tokens', () => {
         ...SCOPE,
         args: { command: 'npm run typecheck' },
       }),
+    ).toBe(false);
+  });
+
+  it('rejects the same token in another checkout of the same project', () => {
+    const token = createConfirmationToken(SCOPE);
+
+    expect(
+      consumeConfirmationToken(token, { ...SCOPE, checkoutId: 'checkout-b' }),
     ).toBe(false);
   });
 

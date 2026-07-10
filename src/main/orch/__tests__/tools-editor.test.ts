@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { buildEditorTools } from '../tools-editor';
+import { testProjectScope } from './scope-fixture';
 
 const workspace = vi.hoisted(() => ({ current: '' }));
 vi.mock('../../persistence/workspace-store', () => ({
@@ -43,6 +44,19 @@ describe('tools-editor', () => {
     expect(result.line).toBe(2);
   });
 
+  it('nexus_editor_focus rejects a workspace-internal symbolic link', async () => {
+    const target = path.join(wsDir, 'focus-target.ts');
+    const link = path.join(wsDir, 'focus-link.ts');
+    fs.writeFileSync(target, 'export const safe = true;\n');
+    fs.rmSync(link, { force: true });
+    fs.symlinkSync(target, link, 'file');
+    const focus = buildEditorTools().find((tool) => tool.name === 'nexus_editor_focus')!;
+
+    await expect(focus.handler({ path: 'focus-link.ts' }, fakeCtx())).rejects.toThrow(
+      /symbolic link/i,
+    );
+  });
+
   it('nexus_editor_insert inserts text at line', async () => {
     const tools = buildEditorTools();
     const insert = tools.find((t) => t.name === 'nexus_editor_insert')!;
@@ -73,6 +87,20 @@ describe('tools-editor', () => {
     expect(content).toContain('const x = 42;');
   });
 
+  it('nexus_editor_insert rejects mutable hardlinks without changing the external inode', async () => {
+    const outside = path.join(testDir, 'outside-editor.ts');
+    const linked = path.join(wsDir, 'linked-editor.ts');
+    fs.writeFileSync(outside, 'export const outside = true;\n');
+    fs.rmSync(linked, { force: true });
+    fs.linkSync(outside, linked);
+    const insert = buildEditorTools().find((tool) => tool.name === 'nexus_editor_insert')!;
+
+    await expect(
+      insert.handler({ path: 'linked-editor.ts', text: '// injected\n', line: 1 }, fakeCtx()),
+    ).rejects.toThrow(/hardlink/i);
+    expect(fs.readFileSync(outside, 'utf8')).toBe('export const outside = true;\n');
+  });
+
   it('nexus_editor_goto_line returns line content', async () => {
     const tools = buildEditorTools();
     const goto = tools.find((t) => t.name === 'nexus_editor_goto_line')!;
@@ -91,5 +119,6 @@ function fakeCtx() {
     allowedSkills: null as string[] | null,
     stopAttempts: 0,
     handoffSubmitted: false,
+    scope: testProjectScope({ rootRealPath: fs.realpathSync(wsDir) }),
   };
 }

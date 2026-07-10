@@ -1,18 +1,24 @@
-import path from 'node:path';
-import { app, BrowserWindow, dialog, protocol, systemPreferences } from 'electron';
-import { resolveUserPath } from './path-resolver';
-import { createMainWindow } from './window';
+import path from "node:path";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  protocol,
+  systemPreferences,
+} from "electron";
+import { resolveUserPath } from "./path-resolver";
+import { createMainWindow } from "./window";
 import {
   installRendererProtocol,
   registerRendererProtocolScheme,
-} from './renderer-protocol';
-import { registerAuthProbeIpc } from './adapters/auth-probe';
+} from "./renderer-protocol";
+import { registerAuthProbeIpc } from "./adapters/auth-probe";
 import {
   isSmokeTest,
   shouldInitializeAutoUpdater,
   shouldRequestMicrophoneAccess,
   shouldUseUserDataOverride,
-} from './smoke-core';
+} from "./smoke-core";
 
 // Must run before Electron emits `ready`. The handler itself is installed in
 // bootstrap (after ready), before the first BrowserWindow is created.
@@ -26,7 +32,7 @@ if (
   userDataOverride &&
   shouldUseUserDataOverride(app.isPackaged, process.argv, userDataOverride)
 ) {
-  app.setPath('userData', userDataOverride);
+  app.setPath("userData", userDataOverride);
 }
 
 // Remote debugging (Chrome DevTools Protocol) is a full local-RCE surface: any
@@ -42,107 +48,173 @@ if (!app.isPackaged && remoteDebug) {
   const port =
     Number.isInteger(requested) && requested >= 1024 && requested <= 65535
       ? String(requested)
-      : '0';
-  app.commandLine.appendSwitch('remote-debugging-port', port);
+      : "0";
+  app.commandLine.appendSwitch("remote-debugging-port", port);
   console.warn(
-    '[main] AVISO: remote debugging (CDP) habilitado na porta ' +
-      (port === '0' ? 'aleatória (ver DevToolsActivePort)' : port) +
-      '. Qualquer processo local pode executar JS no renderer — use só em máquina confiável.',
+    "[main] AVISO: remote debugging (CDP) habilitado na porta " +
+      (port === "0" ? "aleatória (ver DevToolsActivePort)" : port) +
+      ". Qualquer processo local pode executar JS no renderer — use só em máquina confiável.",
   );
 }
-import { registerPtyIpc } from './pty/pty-ipc';
+import {
+  configurePtyProjectRuntimeManager,
+  registerPtyIpc,
+} from "./pty/pty-ipc";
 import {
   registerBrowserIpc,
   destroyBrowsersFor,
-} from './browser/browser-manager';
-import { registerPerfIpc } from './perf/perf-ipc';
-import { registerLayoutIpc } from './persistence/layout-ipc';
-import { registerAdapterIpc } from './adapters/adapter-ipc';
-import { registerVoiceIpc, closeVoiceIpc } from './voice/voice-ipc';
-import { registerVisionIpc } from './vision/ipc-bridge';
+} from "./browser/browser-manager";
+import { registerPerfIpc } from "./perf/perf-ipc";
+import {
+  closeAllDesignWritebacks,
+  closeDesignWritebackFor,
+  registerDesignWritebackIpc,
+} from "./design/design-ipc";
+import { registerLayoutIpc } from "./persistence/layout-ipc";
+import { registerAdapterIpc } from "./adapters/adapter-ipc";
+import { registerVoiceIpc, closeVoiceIpc } from "./voice/voice-ipc";
+import { registerVisionIpc } from "./vision/ipc-bridge";
 import {
   initAdapterRegistry,
   registerAdapterListener,
   unregisterAdapterListener,
   closeAdapterRegistry,
-} from './adapters/adapter-registry';
+} from "./adapters/adapter-registry";
 import {
   initOrchestration,
   registerOrchIpc,
   registerOrchListener,
   unregisterOrchListener,
   closeOrchestration,
-} from './orch/orch-ipc';
-import { killAllSessions, liveSessionSummary } from './pty/pty-manager';
-import { shutdownPtyHost } from './pty/pty-host-client';
-import { initUsageTelemetry, shutdownUsageTelemetry } from './usage/usage-service';
-import { closeDb } from './persistence/db';
+  configureRendererMissionAuthority,
+} from "./orch/orch-ipc";
+import { ProjectRuntimeManager } from "./runtime/project-runtime-manager";
 import {
+  configureNexusDoctorRuntime,
+  disposeNexusDoctorRuntime,
+} from "./runtime/nexus-doctor-bootstrap";
+import {
+  configureContextWorkflowRegistry,
+  disposeContextWorkflowRegistry,
+} from "./context/context-workflow-registry";
+import {
+  configureWorktreeRuntimeRegistry,
+  disposeWorktreeRuntimeRegistry,
+} from "./runtime/worktree-runtime-registry";
+import { killAllSessions, liveSessionSummary } from "./pty/pty-manager";
+import { shutdownPtyHost } from "./pty/pty-host-client";
+import {
+  initUsageTelemetry,
+  shutdownUsageTelemetry,
+} from "./usage/usage-service";
+import { closeDb } from "./persistence/db";
+import {
+  getOrchSettings,
   registerSettingsIpc,
   registerSettingsListener,
   unregisterSettingsListener,
-} from './persistence/settings-store';
+} from "./persistence/settings-store";
 import {
+  getWorkspaceState,
   registerWorkspaceIpc,
   registerWorkspaceListener,
   unregisterWorkspaceListener,
-} from './persistence/workspace-store';
+} from "./persistence/workspace-store";
+import { resolveProjectExecutionScope } from "./persistence/project-identity";
 import {
   registerProviderIpc,
   registerProviderListener,
   unregisterProviderListener,
-} from './persistence/provider-config-store';
-import { registerFilesIpc } from './persistence/files-ipc';
+} from "./persistence/provider-config-store";
+import { registerFilesIpc } from "./persistence/files-ipc";
 import {
   registerAccountIpc,
   registerAccountListener,
   unregisterAccountListener,
-} from './persistence/account-ipc';
+} from "./persistence/account-ipc";
 import {
   registerCostIpc,
   registerCostListener,
   unregisterCostListener,
-} from './orch/cost-ipc';
-import { registerBillingIpc } from './persistence/billing-ipc';
-import { syncLicenseOnBoot } from './license-sync';
-import { registerTeamIpc } from './team-ipc';
-import { registerOnboardingIpc } from './persistence/onboarding-store';
+} from "./orch/cost-ipc";
+import { registerBillingIpc } from "./persistence/billing-ipc";
+import { syncLicenseOnBoot } from "./license-sync";
+import { registerTeamIpc } from "./team-ipc";
+import { registerOnboardingIpc } from "./persistence/onboarding-store";
 import {
   registerNotesIpc,
   registerNotesListener,
   unregisterNotesListener,
-} from './persistence/notes-ipc';
+} from "./persistence/notes-ipc";
 import {
   registerPipeIpc,
   registerPipeListener,
   unregisterPipeListener,
-} from './orch/pane-pipe-ipc';
-import { registerRemoteIpc } from './remote/remote-ipc';
-import { registerMediaIpc } from './media/media-ipc';
-import { registerGamificationIpc } from './gamification/gamification-ipc';
-import { registerMcpIpc } from './jarvis/mcp-ipc';
-import { registerOpsIpc } from './ops/ops-ipc';
-import { closeAuditLog } from './jarvis/audit-log';
+} from "./orch/pane-pipe-ipc";
+import { registerRemoteIpc } from "./remote/remote-ipc";
+import { registerMediaIpc } from "./media/media-ipc";
 import {
-  initGamificationService,
+  broadcastGamificationToProject,
+  registerGamificationIpc,
+  registerGamificationListener,
+  unregisterGamificationListener,
+} from "./gamification/gamification-ipc";
+import { registerMcpIpc } from "./jarvis/mcp-ipc";
+import { registerOpsIpc } from "./ops/ops-ipc";
+import {
+  configureAuditLogRuntime,
+  disposeAuditLogRuntime,
+} from "./jarvis/audit-log";
+import {
+  configureGamificationService,
   shutdownGamificationService,
-} from './gamification/gamification-service';
-import { startCronLoop, stopCronLoop } from './orch/cron-runtime';
-import { wireDeepLinks, consumeLaunchDeepLink } from './deep-link';
-import { initAutoUpdater } from './updater';
-import { stopRemoteBridge } from './remote/remote-bridge';
-import { initSmokeTest } from './smoke-test';
+} from "./gamification/gamification-service";
+import { requireProjectDomainStoreRegistry } from "./orch/project-domain-store-registry";
+import {
+  configureCronRuntime,
+  disposeCronRuntime,
+  startCronLoop,
+  stopCronLoop,
+} from "./orch/cron-runtime";
+import { createHttpCronBackendFromEnvironment } from "./orch/http-cron-backend";
+import {
+  configureSyncRuntime,
+  disposeSyncRuntime,
+} from "./context/sync-runtime";
+import { wireDeepLinks, consumeLaunchDeepLink } from "./deep-link";
+import { initAutoUpdater } from "./updater";
+import { stopRemoteBridge } from "./remote/remote-bridge";
+import { initSmokeTest } from "./smoke-test";
 import {
   authorizeAppQuit,
   closeNeedsConfirmation,
   isAppQuitAuthorized,
-} from './close-authorization';
+} from "./close-authorization";
+
+let projectRuntimeManager: ProjectRuntimeManager | null = null;
+
+function knownCronScopes() {
+  const state = getWorkspaceState();
+  const paths = [state.current?.path, ...state.recents.map((item) => item.path)];
+  const scopes: ReturnType<typeof resolveProjectExecutionScope>[] = [];
+  const seen = new Set<string>();
+  for (const workspacePath of paths) {
+    if (!workspacePath || seen.has(workspacePath)) continue;
+    seen.add(workspacePath);
+    try {
+      scopes.push(resolveProjectExecutionScope(workspacePath));
+    } catch (error) {
+      console.warn("[cron] ignoring invalid known workspace:", error);
+    }
+  }
+  return scopes;
+}
 
 // Windows installer housekeeping (no-op elsewhere).
-if (process.platform === 'win32') {
+if (process.platform === "win32") {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    if (require('electron-squirrel-startup')) {
+    if (require("electron-squirrel-startup")) {
       app.quit();
     }
   } catch {
@@ -159,12 +231,48 @@ function bootstrap(): void {
   // Finder/dmg launch has a minimal PATH that hides claude/codex/kimi/grok.
   resolveUserPath();
   initAdapterRegistry();
+  projectRuntimeManager = new ProjectRuntimeManager({
+    baseDir: path.join(app.getPath("userData"), "project-runtime"),
+    appVersion: app.getVersion(),
+  });
+  configureAuditLogRuntime(projectRuntimeManager);
+  configurePtyProjectRuntimeManager(projectRuntimeManager);
+  configureRendererMissionAuthority(projectRuntimeManager);
+  const worktreeRuntime = configureWorktreeRuntimeRegistry(projectRuntimeManager);
+  configureContextWorkflowRegistry(projectRuntimeManager, {
+    appVersion: app.getVersion(),
+    resolveIntegratedMission: (scope, missionId, baseSha) =>
+      worktreeRuntime.resolveIntegratedMission(scope, missionId, baseSha),
+  });
+  const gamificationService = configureGamificationService({
+    runtimeManager: projectRuntimeManager,
+    domainStores: requireProjectDomainStoreRegistry(),
+    broadcast: broadcastGamificationToProject,
+    soberMode: () => getOrchSettings().soberMode === true,
+  });
+  const cronBackend = createHttpCronBackendFromEnvironment();
+  const syncCapability = configureSyncRuntime();
+  configureCronRuntime({
+    runtimeManager: projectRuntimeManager,
+    leaseBackend: cronBackend ?? undefined,
+    scheduleBackend: cronBackend ?? undefined,
+    listScopes: knownCronScopes,
+  });
+  configureNexusDoctorRuntime({
+    runtimeManager: projectRuntimeManager,
+    multiPc: {
+      leaseBackendConfigured: cronBackend !== null,
+      syncBackendConfigured: syncCapability.backendConfigured,
+      requireSharedExecution: true,
+    },
+  });
   registerPtyIpc();
-  registerBrowserIpc();
+  registerBrowserIpc(projectRuntimeManager);
+  registerDesignWritebackIpc({ allowSourceMutation: !app.isPackaged });
   registerPerfIpc();
-  registerLayoutIpc();
+  registerLayoutIpc(projectRuntimeManager);
   registerAdapterIpc();
-  registerVoiceIpc();
+  registerVoiceIpc(projectRuntimeManager);
   registerVisionIpc();
   registerOrchIpc();
   registerSettingsIpc();
@@ -174,14 +282,14 @@ function bootstrap(): void {
   registerFilesIpc();
   registerAccountIpc();
   registerCostIpc();
-  registerMediaIpc();
-  registerGamificationIpc();
+  registerMediaIpc(projectRuntimeManager);
+  registerGamificationIpc(gamificationService);
   registerMcpIpc();
   registerOpsIpc();
   // Telemetria REAL de tokens (transcript watchers → SQLite). Convive com o
   // cost-tracker heurístico: a UI prefere o real quando ele existe.
-  initUsageTelemetry();
-  registerNotesIpc();
+  initUsageTelemetry(projectRuntimeManager);
+  registerNotesIpc(projectRuntimeManager);
   registerBillingIpc();
   registerTeamIpc();
   // Packaged smoke must prove the app can boot without touching the user's
@@ -198,10 +306,10 @@ function bootstrap(): void {
   // Gamificação SÓ depois: o retro replay precisa dos stores orch hidratados
   // (senão a estreia gravaria replayDone com zero eventos).
   void initOrchestration()
-    .then(() => initGamificationService())
+    .then(() => gamificationService.start())
     .catch((err) => {
-      console.warn('[nexus] orchestration failed to start:', err);
-      initGamificationService();
+      console.warn("[nexus] orchestration failed to start:", err);
+      gamificationService.start();
     });
   // Cron: squads/agentes agendados (tick 60s, skip-if-stale).
   startCronLoop();
@@ -226,19 +334,19 @@ if (!wireDeepLinks()) {
     // CoreAudio to return all-zero PCM even with a getUserMedia grant. Explicitly
     // requesting mic access here forces a real TCC entry before the renderer opens.
     if (shouldRequestMicrophoneAccess(process.platform, process.argv)) {
-      await systemPreferences.askForMediaAccess('microphone').catch(() => {});
+      await systemPreferences.askForMediaAccess("microphone").catch(() => {});
     }
     bootstrap();
   });
 }
 
-app.on('activate', () => {
+app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createMainWindow();
   }
 });
 
-app.on('browser-window-created', (_event, win) => {
+app.on("browser-window-created", (_event, win) => {
   // Capture the webContents reference NOW, while the window is alive. By the time
   // the 'closed' event fires the native BrowserWindow is already destroyed, and
   // the `win.webContents` getter throws "Object has been destroyed" — which, as an
@@ -253,7 +361,11 @@ app.on('browser-window-created', (_event, win) => {
   registerCostListener(wc);
   registerNotesListener(wc);
   registerPipeListener(wc);
-  win.once('closed', () => {
+  registerGamificationListener(wc);
+  win.once("closed", () => {
+    void closeDesignWritebackFor(wc).catch((error) => {
+      console.error("[design] window cleanup failed:", error);
+    });
     unregisterAdapterListener(wc);
     unregisterOrchListener(wc);
     unregisterSettingsListener(wc);
@@ -263,36 +375,50 @@ app.on('browser-window-created', (_event, win) => {
     unregisterCostListener(wc);
     unregisterNotesListener(wc);
     unregisterPipeListener(wc);
+    unregisterGamificationListener(wc);
     destroyBrowsersFor(wc);
   });
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
     app.quit();
   }
 });
 
 let quitPromptOpen = false;
 let shutdownComplete = false;
+let shutdownPromise: Promise<void> | null = null;
 
-function shutdown(): void {
-  if (shutdownComplete) return;
-  shutdownComplete = true;
-  killAllSessions();
-  shutdownPtyHost();
-  stopRemoteBridge();
-  closeOrchestration();
-  closeAdapterRegistry();
-  closeVoiceIpc();
-  shutdownUsageTelemetry();
-  shutdownGamificationService();
-  stopCronLoop();
-  closeAuditLog();
-  closeDb();
+function shutdown(): Promise<void> {
+  if (shutdownComplete) return Promise.resolve();
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    killAllSessions();
+    shutdownPtyHost();
+    await closeAllDesignWritebacks();
+    stopRemoteBridge();
+    closeOrchestration();
+    closeAdapterRegistry();
+    closeVoiceIpc();
+    shutdownUsageTelemetry();
+    shutdownGamificationService();
+    stopCronLoop();
+    disposeCronRuntime();
+    disposeSyncRuntime();
+    disposeNexusDoctorRuntime();
+    disposeAuditLogRuntime();
+    disposeContextWorkflowRegistry();
+    disposeWorktreeRuntimeRegistry();
+    closeDb();
+    projectRuntimeManager?.closeAll();
+    projectRuntimeManager = null;
+    shutdownComplete = true;
+  })();
+  return shutdownPromise;
 }
 
-app.on('before-quit', (event) => {
+app.on("before-quit", (event) => {
   const summary = liveSessionSummary();
   if (
     closeNeedsConfirmation({
@@ -305,14 +431,14 @@ app.on('before-quit', (event) => {
     if (quitPromptOpen) return;
     quitPromptOpen = true;
     const options = {
-      type: 'warning' as const,
-      title: 'Sair do NexusIDE?',
-      message: `${summary.total} terminal${summary.total === 1 ? '' : 'is'} ainda em execução`,
+      type: "warning" as const,
+      title: "Sair do NexusIDE?",
+      message: `${summary.total} terminal${summary.total === 1 ? "" : "is"} ainda em execução`,
       detail:
         summary.busy > 0
           ? `${summary.busy} ainda estão trabalhando. Sair encerra esses processos e tarefas.`
-          : 'Sair encerra os processos de todos os panes.',
-      buttons: ['Cancelar', 'Sair e encerrar processos'],
+          : "Sair encerra os processos de todos os panes.",
+      buttons: ["Cancelar", "Sair e encerrar processos"],
       defaultId: 0,
       cancelId: 0,
       noLink: true,
@@ -333,5 +459,16 @@ app.on('before-quit', (event) => {
       });
     return;
   }
-  shutdown();
+  if (!shutdownComplete) {
+    event.preventDefault();
+    void shutdown()
+      .then(() => {
+        authorizeAppQuit();
+        app.quit();
+      })
+      .catch((error) => {
+        console.error("[main] shutdown failed:", error);
+        app.exit(1);
+      });
+  }
 });

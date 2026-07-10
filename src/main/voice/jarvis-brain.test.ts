@@ -80,6 +80,27 @@ describe('parseReply — DEFECT 3: a brace must never reach TTS', () => {
     expect(parseReply('Certo, patrão.').say).toBe('Certo, patrão.');
   });
 
+  it('parses an agentic mission action with an optional objective', () => {
+    expect(
+      parseReply(
+        '{"say":"Abrindo o modo agêntico.","action":{"type":"new_agentic_mission","intent":"corrigir os testes"}}',
+      ).action,
+    ).toEqual({ type: 'new_agentic_mission', intent: 'corrigir os testes' });
+    expect(
+      parseReply(
+        '{"say":"Abrindo o modo agêntico.","action":{"type":"new_agentic_mission"}}',
+      ).action,
+    ).toEqual({ type: 'new_agentic_mission' });
+  });
+
+  it('parses a current-view read action from brain JSON', () => {
+    expect(
+      parseReply(
+        '{"say":"Vou ler a tela.","action":{"type":"read_current_view"}}',
+      ).action,
+    ).toEqual({ type: 'read_current_view' });
+  });
+
   it('recoverSpokenText silences a bare truncated brace', () => {
     expect(recoverSpokenText('{')).toBe('');
     expect(recoverSpokenText('{ "type": "message",')).toBe('');
@@ -101,6 +122,38 @@ function deps(
 }
 
 describe('jarvisThink brain providers', () => {
+  it('reads and writes only the memory explicitly injected for this project', async () => {
+    const memory = {
+      remember: vi.fn(),
+      forget: vi.fn(() => false),
+      list: vi.fn(() => []),
+      factsBlock: vi.fn(() => '- deploy: use project A'),
+    };
+    const fetchImpl = vi.fn(async (_url, init) => {
+      const messages = JSON.parse(String(init?.body)).messages as Array<{
+        content: string;
+      }>;
+      expect(messages.some((item) => item.content.includes('use project A'))).toBe(
+        true,
+      );
+      expect(
+        messages.some((item) =>
+          item.content.includes('current checkout only'),
+        ),
+      ).toBe(true);
+      return jsonResponse(
+        200,
+        '{"say":"Anotado.","action":{"type":"none"},"remember":{"key":"stack","fact":"TypeScript"}}',
+      );
+    }) as unknown as typeof fetch;
+
+    await jarvisThink('lembre disso', CTX, [], {
+      ...deps(() => 'key', fetchImpl),
+      memory,
+    });
+    expect(memory.remember).toHaveBeenCalledWith('stack', 'TypeScript');
+  });
+
   it('builds a hard persona instruction with the configured user name', () => {
     const prompt = buildJarvisPersonaInstruction({
       assistantName: 'Jarvis',

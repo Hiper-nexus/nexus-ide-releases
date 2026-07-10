@@ -1,0 +1,391 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import { INITIAL_PROJECT_MIGRATIONS } from '../runtime/project-runtime-schema';
+import type { ProjectExecutionScope } from '../../shared/types';
+import { createWorkflowState, type EvidenceBinding } from '../context/prevc-engine';
+import { ReviewCouncil } from '../context/review-council';
+import type { TrustedEvidence } from '../context/sensor-broker';
+import { testProjectScope } from './__tests__/scope-fixture';
+import { createScopedHandoffStore } from './handoff-store';
+import { createScopedMissionStore } from './mission-store';
+
+let baseDir = '';
+const managers: ProjectRuntimeManager[] = [];
+
+function manager(
+  migrations = INITIAL_PROJECT_MIGRATIONS,
+): ProjectRuntimeManager {
+  const value = new ProjectRuntimeManager({
+    baseDir,
+    appVersion: '0.12.0-test',
+    migrations,
+  });
+  managers.push(value);
+  return value;
+}
+
+const CONTRACT_HASH = 'c'.repeat(64);
+const CONTEXT_REVISION = 'd'.repeat(64);
+const BASE_SHA = 'a'.repeat(40);
+const HEAD_SHA = 'b'.repeat(40);
+const DIFF_HASH = 'e'.repeat(64);
+
+function binding(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  overrides: Partial<EvidenceBinding> = {},
+): EvidenceBinding {
+  return {
+    projectId: scope.projectId,
+    checkoutId: scope.checkoutId,
+    missionId,
+    contractHash: CONTRACT_HASH,
+    contextHash: CONTEXT_REVISION,
+    baseSha: BASE_SHA,
+    headSha: HEAD_SHA,
+    diffHash: DIFF_HASH,
+    ...overrides,
+  };
+}
+
+function seedWorkflowAndEvidence(
+  runtimeManager: ProjectRuntimeManager,
+  scope: ProjectExecutionScope,
+  missionId: string,
+  evidenceId = 'evidence-a',
+  bindingOverrides: Partial<EvidenceBinding> = {},
+  overrides: Partial<TrustedEvidence> = {},
+): EvidenceBinding {
+  const currentBinding = binding(scope, missionId, bindingOverrides);
+  const workflow = createWorkflowState('low', currentBinding);
+  const db = runtimeManager.open(scope).db;
+  db.prepare(
+    `INSERT INTO mission_contracts
+       (mission_id, revision, contract_hash, context_revision, contract_json,
+        author_id, author_session_id, author_provider, frozen_at)
+     VALUES (?, 1, ?, ?, '{}', 'author', 'author-session', 'codex', 1)`,
+  ).run(missionId, currentBinding.contractHash, currentBinding.contextHash);
+  db.prepare(
+    `INSERT INTO workflow_states
+       (mission_id, revision, stage, workflow_json, updated_at)
+     VALUES (?, ?, ?, ?, 1)`,
+  ).run(missionId, workflow.revision, workflow.stage, JSON.stringify(workflow));
+  const evidence: TrustedEvidence = {
+    id: evidenceId,
+    producer: 'nexus',
+    ...currentBinding,
+    contextHash: currentBinding.contextHash,
+    sensorId: 'unit',
+    sensorConfigHash: 'f'.repeat(64),
+    command: ['npm', 'test'],
+    exitCode: 0,
+    stdoutHash: '1'.repeat(64),
+    stderrHash: '2'.repeat(64),
+    timedOut: false,
+    truncated: false,
+    startedAt: '2026-07-10T00:00:00.000Z',
+    finishedAt: '2026-07-10T00:00:01.000Z',
+    ...overrides,
+  };
+  db.prepare(
+    `INSERT INTO sensor_evidence
+       (id, mission_id, sensor_id, head_sha, diff_hash, passed,
+        evidence_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    evidence.id,
+    evidence.missionId,
+    evidence.sensorId,
+    evidence.headSha,
+    evidence.diffHash,
+    evidence.exitCode === 0 && !evidence.timedOut ? 1 : 0,
+    JSON.stringify(evidence),
+    Date.parse(evidence.finishedAt),
+  );
+  return currentBinding;
+}
+
+beforeEach(() => {
+  baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-handoff-store-'));
+});
+
+afterEach(() => {
+  for (const value of managers.splice(0)) value.closeAll();
+  fs.rmSync(baseDir, { recursive: true, force: true });
+});
+
+describe('scoped handoff store', () => {
+  it('persists unverified delivery metadata without satisfying the trusted stop receipt', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => 'mission-a',
+    });
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
+      now: () => 55,
+      idFactory: () => 'handoff-a',
+    });
+    missions.create({ title: 'Mission A' });
+
+    const submitted = handoffs.submit({
+      missionId: 'mission-a',
+      sessionId: 'session-a',
+      fromAgent: 'reviewer',
+      status: 'success',
+      summary: 'Reviewed the complete implementation.',
+      artifacts: [{ path: 'src/a.ts' }],
+    });
+
+    expect(submitted).toMatchObject({
+      id: 'handoff-a',
+      delivered: false,
+      claimTrust: 'untrusted',
+      evidenceTrust: 'unverified',
+      evidenceIds: [],
+      projectId: scope.projectId,
+      checkoutId: scope.checkoutId,
+    });
+    submitted.artifacts.push('outside mutation');
+    expect(handoffs.hasTrustedFromSession('session-a')).toBe(false);
+    expect(handoffs.list()).toHaveLength(1);
+    expect(handoffs.list()[0].artifacts).toEqual([{ path: 'src/a.ts' }]);
+    expect(handoffs.markDelivered('handoff-a')).toBe(true);
+    expect(handoffs.markDelivered('handoff-a')).toBe(false);
+    expect(handoffs.list()).toEqual([]);
+    expect(handoffs.list({ includeDelivered: true })[0].delivered).toBe(true);
+
+    runtimeManager.close(scope);
+    expect(
+      createScopedHandoffStore(runtimeManager, scope).list({
+        missionId: 'mission-a',
+        includeDelivered: true,
+      }),
+    ).toHaveLength(1);
+  });
+
+  it('accepts only persisted Nexus evidence bound to the current mission revision and diff', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => 'mission-a',
+    });
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
+      idFactory: () => 'handoff-trusted',
+    });
+    missions.create({ title: 'Mission A' });
+    const expectedBinding = seedWorkflowAndEvidence(
+      runtimeManager,
+      scope,
+      'mission-a',
+    );
+    const review = new ReviewCouncil('low', expectedBinding).submit({
+      reviewId: 'review-a',
+      reviewerId: 'reviewer-a',
+      reviewerSessionId: 'reviewer-session',
+      reviewerProvider: 'claude',
+      authorId: 'author-a',
+      authorSessionId: 'author-session',
+      authorProvider: 'codex',
+      binding: expectedBinding,
+      findings: [],
+    });
+    runtimeManager.open(scope).db.prepare(
+      `INSERT INTO review_reports
+         (review_id, mission_id, diff_hash, report_json, created_at)
+       VALUES (?, ?, ?, ?, 2)`,
+    ).run(
+      review.reviewId,
+      expectedBinding.missionId,
+      expectedBinding.diffHash,
+      JSON.stringify(review),
+    );
+
+    const submitted = handoffs.submit({
+      missionId: 'mission-a',
+      sessionId: 'session-a',
+      fromAgent: 'worker-a',
+      status: 'success',
+      summary: 'Worker reports that implementation is complete.',
+      evidenceIds: ['evidence-a', 'review:review-a'],
+    });
+
+    expect(submitted).toMatchObject({
+      claimTrust: 'untrusted',
+      evidenceTrust: 'nexus-trusted',
+      evidenceIds: ['evidence-a', 'review:review-a'],
+      evidenceBinding: {
+        missionId: 'mission-a',
+        contextRevision: expectedBinding.contextHash,
+        contractHash: expectedBinding.contractHash,
+        baseSha: expectedBinding.baseSha,
+        headSha: expectedBinding.headSha,
+        diffHash: expectedBinding.diffHash,
+        workflowRevision: 1,
+      },
+    });
+    expect(handoffs.hasTrustedFromSession('session-a')).toBe(true);
+  });
+
+  it('invalidates previously trusted evidence when the workflow diff changes', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => 'mission-a',
+    });
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
+      idFactory: () => 'handoff-trusted',
+    });
+    missions.create({ title: 'Mission A' });
+    seedWorkflowAndEvidence(runtimeManager, scope, 'mission-a');
+    handoffs.submit({
+      missionId: 'mission-a',
+      sessionId: 'session-a',
+      status: 'success',
+      summary: 'Worker reports that implementation is complete.',
+      evidenceIds: ['evidence-a'],
+    });
+    const changedWorkflow = createWorkflowState(
+      'low',
+      binding(scope, 'mission-a', { diffHash: '9'.repeat(64) }),
+    );
+    runtimeManager.open(scope).db.prepare(
+      `UPDATE workflow_states
+       SET revision = ?, stage = ?, workflow_json = ?, updated_at = 2
+       WHERE mission_id = 'mission-a'`,
+    ).run(
+      changedWorkflow.revision,
+      changedWorkflow.stage,
+      JSON.stringify(changedWorkflow),
+    );
+
+    expect(handoffs.get('handoff-trusted')).toMatchObject({
+      evidenceTrust: 'stale',
+      claimTrust: 'untrusted',
+    });
+    expect(handoffs.hasTrustedFromSession('session-a')).toBe(false);
+  });
+
+  it('rejects missing, cross-mission and stale evidence IDs without persisting a claim', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope);
+    const handoffs = createScopedHandoffStore(runtimeManager, scope);
+    const missionA = missions.create({ title: 'Mission A' });
+    const missionB = missions.create({ title: 'Mission B' });
+    seedWorkflowAndEvidence(runtimeManager, scope, missionA.id, 'evidence-a');
+    seedWorkflowAndEvidence(
+      runtimeManager,
+      scope,
+      missionB.id,
+      'evidence-b',
+      { contractHash: '8'.repeat(64) },
+    );
+    const db = runtimeManager.open(scope).db;
+    const stale = JSON.parse(
+      (db.prepare('SELECT evidence_json FROM sensor_evidence WHERE id = ?')
+        .get('evidence-a') as { evidence_json: string }).evidence_json,
+    ) as TrustedEvidence;
+    db.prepare(
+      `INSERT INTO sensor_evidence
+         (id, mission_id, sensor_id, head_sha, diff_hash, passed,
+          evidence_json, created_at)
+       VALUES ('evidence-stale', ?, 'unit', ?, ?, 1, ?, 3)`,
+    ).run(
+      missionA.id,
+      stale.headSha,
+      '9'.repeat(64),
+      JSON.stringify({ ...stale, id: 'evidence-stale', diffHash: '9'.repeat(64) }),
+    );
+    db.prepare(
+      `INSERT INTO sensor_evidence
+         (id, mission_id, sensor_id, head_sha, diff_hash, passed,
+          evidence_json, created_at)
+       VALUES ('evidence-old-context', ?, 'unit', ?, ?, 1, ?, 4)`,
+    ).run(
+      missionA.id,
+      stale.headSha,
+      stale.diffHash,
+      JSON.stringify({
+        ...stale,
+        id: 'evidence-old-context',
+        contextHash: '7'.repeat(64),
+      }),
+    );
+
+    const submit = (evidenceIds: string[]) =>
+      handoffs.submit({
+        missionId: missionA.id,
+        sessionId: 'session-a',
+        status: 'success',
+        summary: 'Worker reports that implementation is complete.',
+        evidenceIds,
+      });
+
+    expect(() => submit(['missing-evidence'])).toThrow(/trusted evidence.*not found/i);
+    expect(() => submit(['evidence-b'])).toThrow(/another mission/i);
+    expect(() => submit(['evidence-stale'])).toThrow(/current workflow binding/i);
+    expect(() => submit(['evidence-old-context'])).toThrow(
+      /current workflow binding/i,
+    );
+    expect(handoffs.list({ includeDelivered: true })).toEqual([]);
+    expect(handoffs.hasTrustedFromSession('session-a')).toBe(false);
+  });
+
+  it('migrates legacy handoffs as unverified and makes evidence bindings immutable', () => {
+    const scope = testProjectScope();
+    const legacyManager = manager(INITIAL_PROJECT_MIGRATIONS.slice(0, 7));
+    const missions = createScopedMissionStore(legacyManager, scope, {
+      idFactory: () => 'mission-a',
+    });
+    missions.create({ title: 'Mission A' });
+    legacyManager.open(scope).db.prepare(
+      `INSERT INTO handoffs
+         (id, mission_id, session_id, status, summary, artifacts_json,
+          delivered, created_at)
+       VALUES ('legacy-handoff', 'mission-a', 'legacy-session', 'success',
+               'legacy report', '[]', 0, 1)`,
+    ).run();
+    legacyManager.closeAll();
+
+    const upgradedManager = manager();
+    const handoffs = createScopedHandoffStore(upgradedManager, scope);
+    expect(handoffs.list({ includeDelivered: true })[0]).toMatchObject({
+      id: 'legacy-handoff',
+      claimTrust: 'untrusted',
+      evidenceTrust: 'unverified',
+      evidenceIds: [],
+    });
+    expect(handoffs.hasTrustedFromSession('legacy-session')).toBe(false);
+
+    const db = upgradedManager.open(scope).db;
+    expect(() =>
+      db.prepare("UPDATE handoffs SET diff_hash = ? WHERE id = 'legacy-handoff'")
+        .run('f'.repeat(64)),
+    ).toThrow(/immutable/i);
+  });
+
+  it('isolates handoffs and observers by checkout', () => {
+    const runtimeManager = manager();
+    const scopeA = testProjectScope({ checkoutId: 'checkout-a' });
+    const scopeB = testProjectScope({ checkoutId: 'checkout-b' });
+    const storeA = createScopedHandoffStore(runtimeManager, scopeA);
+    const storeB = createScopedHandoffStore(runtimeManager, scopeB);
+    const listenerA = vi.fn();
+    const listenerB = vi.fn();
+    storeA.onChange(listenerA);
+    storeB.onChange(listenerB);
+
+    storeA.submit({ status: 'partial', summary: 'Only checkout A changed.' });
+
+    expect(storeA.list()).toHaveLength(1);
+    expect(storeB.list()).toEqual([]);
+    expect(listenerA).toHaveBeenCalledWith({
+      projectId: scopeA.projectId,
+      checkoutId: scopeA.checkoutId,
+    });
+    expect(listenerB).not.toHaveBeenCalled();
+  });
+});

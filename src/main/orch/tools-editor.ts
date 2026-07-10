@@ -1,7 +1,10 @@
 import type { McpToolDef } from './mcp-protocol';
+import { executionScopeFor } from './gate';
 import { num, requireStr } from './tool-util';
-import fs from 'node:fs';
-import { resolveWorkspacePath } from './workspace-path';
+import {
+  readWorkspaceTextFile,
+  updateWorkspaceTextFile,
+} from './workspace-file';
 
 /**
  * Editor manipulation MCP tools for Jarvis agent.
@@ -40,13 +43,9 @@ const editorFocus: McpToolDef = {
     },
     required: ['path'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
-    const absolutePath = resolveWorkspacePath(relativePath);
-    if (!fs.existsSync(absolutePath)) {
-      throw new Error(`file not found: ${relativePath}`);
-    }
-    const content = fs.readFileSync(absolutePath, 'utf-8');
+    const { content } = readWorkspaceTextFile(executionScopeFor(ctx), relativePath);
     const line = typeof args.line === 'number' ? args.line : undefined;
     const column = typeof args.column === 'number' ? args.column : undefined;
     return {
@@ -88,39 +87,36 @@ const editorInsert: McpToolDef = {
     },
     required: ['path', 'text', 'line'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
     const text = requireStr(args, 'text');
     const lineNum = num(args, 'line') ?? parseInt(requireStr(args, 'line'), 10);
     if (isNaN(lineNum) || lineNum < 1) {
       throw new Error('line must be a positive integer');
     }
-    const absolutePath = resolveWorkspacePath(relativePath);
-    if (!fs.existsSync(absolutePath)) {
-      throw new Error(`file not found: ${relativePath}`);
-    }
-    const raw = fs.readFileSync(absolutePath, 'utf-8');
-    const lines = raw.split('\n');
     const column =
       typeof args.column === 'number' && args.column >= 0
         ? args.column
         : 0;
-    const targetIdx = lineNum - 1;
-    if (targetIdx >= lines.length) {
-      // Pad with empty lines if needed
-      while (lines.length <= targetIdx) lines.push('');
-    }
-    const targetLine = lines[targetIdx];
-    lines[targetIdx] =
-      targetLine.slice(0, column) + text + targetLine.slice(column);
-    const newContent = lines.join('\n');
-    fs.writeFileSync(absolutePath, newContent, 'utf-8');
-    return {
-      path: relativePath,
-      line: lineNum,
-      column,
-      inserted: text.length,
-    };
+    return updateWorkspaceTextFile(executionScopeFor(ctx), relativePath, (raw) => {
+      const lines = raw.split('\n');
+      const targetIdx = lineNum - 1;
+      if (targetIdx >= lines.length) {
+        while (lines.length <= targetIdx) lines.push('');
+      }
+      const targetLine = lines[targetIdx];
+      lines[targetIdx] =
+        targetLine.slice(0, column) + text + targetLine.slice(column);
+      return {
+        content: lines.join('\n'),
+        result: {
+          path: relativePath,
+          line: lineNum,
+          column,
+          inserted: text.length,
+        },
+      };
+    });
   },
 };
 
@@ -152,36 +148,35 @@ const editorReplaceSelection: McpToolDef = {
     },
     required: ['path', 'oldText', 'newText'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
     const oldText = requireStr(args, 'oldText');
     const newText = requireStr(args, 'newText');
     const replaceAll = args.replaceAll === true;
-    const absolutePath = resolveWorkspacePath(relativePath);
-    if (!fs.existsSync(absolutePath)) {
-      throw new Error(`file not found: ${relativePath}`);
-    }
-    const raw = fs.readFileSync(absolutePath, 'utf-8');
-    if (!raw.includes(oldText)) {
-      throw new Error(`old text not found in file: ${relativePath}`);
-    }
-    let count = 0;
-    const newContent = replaceAll
-      ? (() => {
-          const parts = raw.split(oldText);
-          count = parts.length - 1;
-          return parts.join(newText);
-        })()
-      : (() => {
-          count = 1;
-          return raw.replace(oldText, newText);
-        })();
-    fs.writeFileSync(absolutePath, newContent, 'utf-8');
-    return {
-      path: relativePath,
-      replaced: count,
-      replaceAll,
-    };
+    return updateWorkspaceTextFile(executionScopeFor(ctx), relativePath, (raw) => {
+      if (!raw.includes(oldText)) {
+        throw new Error(`old text not found in file: ${relativePath}`);
+      }
+      let count = 0;
+      const content = replaceAll
+        ? (() => {
+            const parts = raw.split(oldText);
+            count = parts.length - 1;
+            return parts.join(newText);
+          })()
+        : (() => {
+            count = 1;
+            return raw.replace(oldText, newText);
+          })();
+      return {
+        content,
+        result: {
+          path: relativePath,
+          replaced: count,
+          replaceAll,
+        },
+      };
+    });
   },
 };
 
@@ -208,21 +203,17 @@ const editorGotoLine: McpToolDef = {
     },
     required: ['path', 'line'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
     const lineNum = typeof args.line === 'number' ? args.line : parseInt(requireStr(args, 'line'), 10);
     if (isNaN(lineNum) || lineNum < 1) {
       throw new Error('line must be a positive integer');
     }
-    const absolutePath = resolveWorkspacePath(relativePath);
-    if (!fs.existsSync(absolutePath)) {
-      throw new Error(`file not found: ${relativePath}`);
-    }
     const column =
       typeof args.column === 'number' && args.column >= 1
         ? args.column
         : 1;
-    const raw = fs.readFileSync(absolutePath, 'utf-8');
+    const { content: raw } = readWorkspaceTextFile(executionScopeFor(ctx), relativePath);
     const lines = raw.split('\n');
     const targetLine = lineNum <= lines.length ? lines[lineNum - 1] : '';
     return {

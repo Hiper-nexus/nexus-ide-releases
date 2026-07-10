@@ -23,6 +23,14 @@ export const transcribeRequestSchema = z.object({
   /** Hint the spoken language when not translating (e.g. 'pt'). */
   language: z.string().min(2).max(8).optional(),
   /**
+   * A short VAD sample used only to verify a passive wake word. This is a
+   * bounded, latency-first path: it may prioritize a fast cloud provider and
+   * never waits on a slow local model after the deadline.
+   */
+  purpose: z.enum(['passive-wake']).optional(),
+  /** Name expected in a passive wake transcription; never persisted as audio text. */
+  passiveWakeWord: z.string().min(1).max(48).optional(),
+  /**
    * ITEM 7: total wall-clock budget (ms) for the STT chain on the WAKE path.
    * When set, at most one cloud attempt runs (on a tight deadline) before
    * jumping to keyless local whisper, so a hung cloud provider can't hold a
@@ -239,6 +247,8 @@ export type JarvisAction =
   | { type: 'design_squad' }
   | { type: 'confirm_squad' }
   | { type: 'new_mission' }
+  /** Opens Nova Missão directly at Modo Agêntico; an optional goal seeds its objective. */
+  | { type: 'new_agentic_mission'; intent?: string }
   | { type: 'new_workspace' }
   | { type: 'open_terminal' }
   | { type: 'close_pane' }
@@ -255,6 +265,8 @@ export type JarvisAction =
   | { type: 'focus_previous_pane' }
   | { type: 'focus_pane'; paneName: string }
   | { type: 'read_pane'; paneId?: string }
+  /** Reads the visible Nexus view through local accessibility + OCR context. */
+  | { type: 'read_current_view' }
   // NEW-B: paneId targets the ASKING pane for routed pending-question answers.
   // Absent for model-emitted delegation (falls back to orchestrator/focused pane).
   | { type: 'send_to_pane'; text: string; paneId?: string }
@@ -424,7 +436,11 @@ export interface JarvisLiveTranscriptEvent {
 }
 
 export interface JarvisTranscriptAppendEvent {
+  id: string;
   sessionId: string;
+  sequence: number;
+  projectId: string;
+  checkoutId: string;
   ts: string;
   role: 'user' | 'assistant';
   text: string;
@@ -446,6 +462,15 @@ export interface JarvisLiveToolEvent {
 export interface JarvisLiveToolResultEvent extends JarvisLiveToolEvent {
   ok: boolean;
   output?: unknown;
+}
+
+/** Provider turn completion correlated to a realtime tool result. */
+export interface JarvisLiveToolTurnCompleteEvent {
+  sessionId: string;
+  /** Renderer turn id that issued the tool result. */
+  turnId: string;
+  callId: string;
+  at: number;
 }
 
 export type JarvisLiveToolCancellationReason =
@@ -531,6 +556,7 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'design_squad',
     'confirm_squad',
     'new_mission',
+    'new_agentic_mission',
     'new_workspace',
     'open_terminal',
     'close_pane',
@@ -546,6 +572,8 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'focus_next_pane',
     'focus_previous_pane',
     'focus_pane',
+    'read_pane',
+    'read_current_view',
     'send_to_pane',
     'run_command',
     'mcp_tool',

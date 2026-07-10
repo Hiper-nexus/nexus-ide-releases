@@ -33,7 +33,12 @@ describe('cmpSemver', () => {
 
 describe('parseGhRelease', () => {
   it('extrai versão nova com o zip darwin-arm64', () => {
-    const parsed = parseGhRelease(JSON.stringify(RELEASE), '0.8.2');
+    const parsed = parseGhRelease(
+      JSON.stringify(RELEASE),
+      '0.8.2',
+      'arm64',
+      'darwin',
+    );
     expect(parsed).toMatchObject({
       version: '0.9.0',
       tag: 'v0.9.0',
@@ -44,21 +49,31 @@ describe('parseGhRelease', () => {
   });
 
   it('retorna null quando a versão não é mais nova', () => {
-    expect(parseGhRelease(JSON.stringify(RELEASE), '0.9.0')).toBeNull();
-    expect(parseGhRelease(JSON.stringify(RELEASE), '1.0.0')).toBeNull();
+    expect(
+      parseGhRelease(JSON.stringify(RELEASE), '0.9.0', 'arm64', 'darwin'),
+    ).toBeNull();
+    expect(
+      parseGhRelease(JSON.stringify(RELEASE), '1.0.0', 'arm64', 'darwin'),
+    ).toBeNull();
   });
 
   it('retorna null sem zip darwin-arm64 ou com JSON inválido', () => {
     const noZip = { ...RELEASE, assets: [{ name: 'NexusIDE-0.9.0-arm64.dmg' }] };
-    expect(parseGhRelease(JSON.stringify(noZip), '0.8.2')).toBeNull();
-    expect(parseGhRelease('{{{lixo', '0.8.2')).toBeNull();
-    expect(parseGhRelease(JSON.stringify({}), '0.8.2')).toBeNull();
+    expect(
+      parseGhRelease(JSON.stringify(noZip), '0.8.2', 'arm64', 'darwin'),
+    ).toBeNull();
+    expect(
+      parseGhRelease('{{{lixo', '0.8.2', 'arm64', 'darwin'),
+    ).toBeNull();
+    expect(
+      parseGhRelease(JSON.stringify({}), '0.8.2', 'arm64', 'darwin'),
+    ).toBeNull();
   });
 
   it('selects only the updater ZIP matching the running Mac architecture', () => {
-    expect(parseGhRelease(JSON.stringify(RELEASE), '0.8.2', 'x64')).toMatchObject({
-      zipAsset: 'NexusIDE-darwin-x64-0.9.0.zip',
-    });
+    expect(
+      parseGhRelease(JSON.stringify(RELEASE), '0.8.2', 'x64', 'darwin'),
+    ).toMatchObject({ zipAsset: 'NexusIDE-darwin-x64-0.9.0.zip' });
     expect(
       parseGhRelease(
         JSON.stringify({
@@ -67,6 +82,7 @@ describe('parseGhRelease', () => {
         }),
         '0.8.2',
         'x64',
+        'darwin',
       ),
     ).toBeNull();
   });
@@ -75,19 +91,49 @@ describe('parseGhRelease', () => {
     expect(macUpdateArchitecture('arm64')).toBe('arm64');
     expect(macUpdateArchitecture('x64')).toBe('x64');
     expect(macUpdateArchitecture('ia32')).toBeNull();
-    expect(parseGhRelease(JSON.stringify(RELEASE), '0.8.2', 'ia32')).toBeNull();
+    expect(
+      parseGhRelease(JSON.stringify(RELEASE), '0.8.2', 'ia32', 'darwin'),
+    ).toBeNull();
+  });
+
+  it.each(['linux', 'win32'] as const)(
+    'never selects the macOS updater payload while running on %s',
+    (platform) => {
+      expect(
+        parseGhRelease(JSON.stringify(RELEASE), '0.8.2', 'x64', platform),
+      ).toBeNull();
+    },
+  );
+
+  it('uses the real platform by default instead of inferring macOS from x64', () => {
+    const parsed = parseGhRelease(JSON.stringify(RELEASE), '0.8.2', 'x64');
+    if (process.platform === 'darwin') {
+      expect(parsed).not.toBeNull();
+    } else {
+      expect(parsed).toBeNull();
+    }
   });
 
   it('trunca notas longas', () => {
     const longBody = { ...RELEASE, body: 'x'.repeat(2000) };
-    const parsed = parseGhRelease(JSON.stringify(longBody), '0.8.2');
+    const parsed = parseGhRelease(
+      JSON.stringify(longBody),
+      '0.8.2',
+      'arm64',
+      'darwin',
+    );
     expect(parsed?.notes?.length).toBeLessThanOrEqual(600);
   });
 });
 
 describe('buildSquirrelFeed', () => {
   it('gera o JSON do feed com url/name/notes/pub_date', () => {
-    const parsed = parseGhRelease(JSON.stringify(RELEASE), '0.8.2')!;
+    const parsed = parseGhRelease(
+      JSON.stringify(RELEASE),
+      '0.8.2',
+      'arm64',
+      'darwin',
+    )!;
     const feed = JSON.parse(
       buildSquirrelFeed(parsed, 'http://127.0.0.1:5555/update.zip'),
     );

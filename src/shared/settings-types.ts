@@ -1,5 +1,14 @@
 import { z } from 'zod';
 
+function isAbsoluteShellPath(value: string): boolean {
+  return (
+    value === '' ||
+    value.startsWith('/') ||
+    /^[A-Za-z]:[\\/]/.test(value) ||
+    /^\\\\[^\\]+\\[^\\]+/.test(value)
+  );
+}
+
 /**
  * User-facing terminal settings (theme / font / shell) — the TERMINAL module
  * of the settings drawer. JSON-safe; persisted by the main process in
@@ -27,7 +36,7 @@ export const terminalSettingsSchema = z.object({
   shell: z
     .string()
     .max(4096)
-    .refine((value) => value === '' || value.startsWith('/'), {
+    .refine(isAbsoluteShellPath, {
       message: 'shell must be an absolute path',
     })
     .default(''),
@@ -51,7 +60,7 @@ export const terminalSettingsPatchSchema = z.object({
   shell: z
     .string()
     .max(4096)
-    .refine((value) => value === '' || value.startsWith('/'), {
+    .refine(isAbsoluteShellPath, {
       message: 'shell must be an absolute path',
     })
     .optional(),

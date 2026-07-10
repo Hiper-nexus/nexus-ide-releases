@@ -1,17 +1,23 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import { randomUUID } from 'node:crypto';
-import type { WebContents } from 'electron';
-import { PTY_CHANNELS } from '../../shared/channels';
-import type { SpawnRequest, PaneSessionState } from '../../shared/types';
-import type { CliPtyAdapter } from '../../shared/adapter-types';
-import { resolvePlaceholders } from '../../shared/adapter-types';
+import fs from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import type { WebContents } from "electron";
+import { PTY_CHANNELS } from "../../shared/channels";
+import type { SpawnRequest, PaneSessionState } from "../../shared/types";
+import type { ProjectExecutionScope } from "../../shared/types";
+import type { CliPtyAdapter } from "../../shared/adapter-types";
+import { resolvePlaceholders } from "../../shared/adapter-types";
+import type { BoundSpawnAuthority } from "../orch/spawn-authority";
+import {
+  requiresReadOnlyNativeAuthority,
+  secureAutonomousCliArgs,
+} from "./autonomous-cli-policy";
 import type {
   PtyHost,
   PtyProcHandle,
   PtySessionHandlers,
   PtySpawnSpec,
-} from './pty-host-core';
+} from "./pty-host-core";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -33,6 +39,27 @@ interface Session {
   state: PaneSessionState;
   /** Spawn cwd — workspace attribution (media output, telemetry). */
   cwd: string;
+  /** Main-owned identity for cli-agent panes; never sourced from pane sync. */
+  agent: OwnedAgentSessionInfo | null;
+  missionOrchestratorGrantAvailable: boolean;
+}
+
+export interface OwnedAgentSessionInfo {
+  sessionId: string;
+  paneId?: string;
+  adapterId: string;
+  model?: string;
+  accountId?: string;
+  effort?: string;
+  cwd: string;
+  scope: BoundSpawnAuthority["scope"];
+  source: BoundSpawnAuthority["source"];
+  role: "orchestrator" | "worker" | "user";
+  missionId?: string;
+  squadId?: string;
+  agentName?: string;
+  allowedTools: string[] | null;
+  allowedSkills: string[] | null;
 }
 
 const sessions = new Map<string, Session>();
@@ -46,7 +73,7 @@ export function setPtyHost(host: PtyHost): void {
 }
 
 function requireHost(): PtyHost {
-  if (!ptyHost) throw new Error('PTY host not initialized');
+  if (!ptyHost) throw new Error("PTY host not initialized");
   return ptyHost;
 }
 
@@ -100,7 +127,7 @@ function fireTaps<T extends (...args: never[]) => void>(
     try {
       tap(...args);
     } catch (err) {
-      console.warn('[pty-manager] orchestration tap threw:', err);
+      console.warn("[pty-manager] orchestration tap threw:", err);
     }
   }
 }
@@ -122,6 +149,7 @@ export interface AgentSpawnDecoration {
 export type AgentSpawnHook = (
   adapter: CliPtyAdapter,
   req: SpawnRequest,
+  authority: BoundSpawnAuthority,
 ) => AgentSpawnDecoration | null;
 
 let agentSpawnHook: AgentSpawnHook | null = null;
@@ -137,7 +165,8 @@ export function setAgentSpawnHook(hook: AgentSpawnHook | null): void {
  * para o pty-manager continuar livre de dependências de cima.
  */
 export interface DictatedSessionInfo {
-  providerSessionId: string;
+  /** Null for providers (for example Codex) that choose their own id. */
+  providerSessionId: string | null;
   ptySessionId: string;
   adapterId: string;
   cwd: string;
@@ -147,40 +176,78 @@ export type SessionDictationHook = (info: DictatedSessionInfo) => void;
 
 let sessionDictationHook: SessionDictationHook | null = null;
 
-export function setSessionDictationHook(hook: SessionDictationHook | null): void {
+export function setSessionDictationHook(
+  hook: SessionDictationHook | null,
+): void {
   sessionDictationHook = hook;
 }
 
 /**
- * Lookup injetado de sessão de provider capturada (workspace, paneId) →
+ * Lookup injetado de sessão de provider capturada (project scope, paneId) →
  * session id real — permite resume DIRECIONADO (`--resume <id>`) em vez do
- * genérico `--continue`. Injetado pelo usage-service (dono do store).
+ * genérico `--continue`. O caminho local nunca seleciona o store.
  */
-export type ResumeSessionLookup = (cwd: string, paneId: string) => string | null;
+export type ResumeSessionLookup = (
+  scope: Readonly<ProjectExecutionScope>,
+  paneId: string,
+  adapterId: string,
+) => string | null;
 
 let resumeSessionLookup: ResumeSessionLookup | null = null;
 
-export function setResumeSessionLookup(lookup: ResumeSessionLookup | null): void {
+export function setResumeSessionLookup(
+  lookup: ResumeSessionLookup | null,
+): void {
   resumeSessionLookup = lookup;
 }
 
-function resolveShell(requested?: string): string {
-  if (requested) return requested;
-  if (process.platform === 'win32') {
-    return process.env.COMSPEC || 'powershell.exe';
+function requireTrustedAgentCwd(
+  authority: BoundSpawnAuthority | undefined,
+): string {
+  if (!authority?.scope || !authority.cwd) {
+    throw new Error("cli-agent spawn requires trusted spawn authority");
   }
-  return process.env.SHELL || '/bin/zsh';
+  let root: string;
+  let cwd: string;
+  try {
+    root = fs.realpathSync(authority.scope.rootRealPath);
+    cwd = fs.realpathSync(authority.cwd);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`authorized cli-agent cwd cannot be resolved: ${detail}`);
+  }
+  if (root !== authority.scope.rootRealPath || cwd !== authority.cwd) {
+    throw new Error("authorized cli-agent workspace identity changed on disk");
+  }
+  const relative = path.relative(root, cwd);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("authorized cli-agent cwd escapes project scope");
+  }
+  if (!fs.statSync(cwd).isDirectory()) {
+    throw new Error("authorized cli-agent cwd is not a directory");
+  }
+  return cwd;
 }
 
-function resolveCwd(requested?: string): string {
-  if (requested && requested.length > 0) {
-    try {
-      if (fs.statSync(requested).isDirectory()) return requested;
-    } catch {
-      // Missing or inaccessible — fall through to the home directory.
-    }
+export interface ShellSpawnAuthority {
+  scope: BoundSpawnAuthority["scope"];
+  cwd: string;
+  shell: string;
+}
+
+function requireTrustedShellAuthority(
+  authority: ShellSpawnAuthority | undefined,
+): ShellSpawnAuthority {
+  if (!authority?.shell || !path.isAbsolute(authority.shell)) {
+    throw new Error("shell spawn requires trusted main-process authority");
   }
-  return os.homedir();
+  requireTrustedAgentCwd({
+    source: "direct-user",
+    context: null,
+    scope: authority.scope,
+    cwd: authority.cwd,
+  });
+  return authority;
 }
 
 /**
@@ -191,20 +258,61 @@ function resolveCwd(requested?: string): string {
  * forwarded to shell panes.
  */
 const ENV_ALLOWLIST = new Set<string>([
-  'PATH', 'HOME', 'SHELL', 'USER', 'LOGNAME', 'PWD', 'TMPDIR', 'TZ',
-  'LANG', 'LANGUAGE', 'LC_ALL', 'TERM', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION',
-  'COLORTERM', 'EDITOR', 'VISUAL', 'PAGER', 'MANPATH', 'INFOPATH',
-  'LSCOLORS', 'LS_COLORS', 'DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY',
-  'XDG_RUNTIME_DIR', 'XDG_DATA_DIRS', 'XDG_CONFIG_DIRS',
-  'SSH_AUTH_SOCK', 'SSH_AGENT_PID',
-  'SystemRoot', 'SystemDrive', 'windir', 'WINDIR', 'COMSPEC', 'ComSpec',
-  'PATHEXT', 'USERPROFILE', 'USERNAME', 'HOMEDRIVE', 'HOMEPATH',
-  'APPDATA', 'LOCALAPPDATA', 'ALLUSERSPROFILE', 'ProgramData',
-  'ProgramFiles', 'ProgramFiles(x86)', 'CommonProgramFiles',
-  'TEMP', 'TMP', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE',
+  "PATH",
+  "HOME",
+  "SHELL",
+  "USER",
+  "LOGNAME",
+  "PWD",
+  "TMPDIR",
+  "TZ",
+  "LANG",
+  "LANGUAGE",
+  "LC_ALL",
+  "TERM",
+  "TERM_PROGRAM",
+  "TERM_PROGRAM_VERSION",
+  "COLORTERM",
+  "EDITOR",
+  "VISUAL",
+  "PAGER",
+  "MANPATH",
+  "INFOPATH",
+  "LSCOLORS",
+  "LS_COLORS",
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+  "XDG_RUNTIME_DIR",
+  "XDG_DATA_DIRS",
+  "XDG_CONFIG_DIRS",
+  "SSH_AUTH_SOCK",
+  "SSH_AGENT_PID",
+  "SystemRoot",
+  "SystemDrive",
+  "windir",
+  "WINDIR",
+  "COMSPEC",
+  "ComSpec",
+  "PATHEXT",
+  "USERPROFILE",
+  "USERNAME",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "ALLUSERSPROFILE",
+  "ProgramData",
+  "ProgramFiles",
+  "ProgramFiles(x86)",
+  "CommonProgramFiles",
+  "TEMP",
+  "TMP",
+  "NUMBER_OF_PROCESSORS",
+  "PROCESSOR_ARCHITECTURE",
 ]);
 
-const ENV_ALLOW_PREFIXES = ['LC_'];
+const ENV_ALLOW_PREFIXES = ["LC_"];
 
 function baseChildEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
@@ -215,8 +323,8 @@ function baseChildEnv(): NodeJS.ProcessEnv {
       ENV_ALLOW_PREFIXES.some((prefix) => key.startsWith(prefix));
     if (allowed) env[key] = value;
   }
-  env.TERM = 'xterm-256color';
-  env.COLORTERM = 'truecolor';
+  env.TERM = "xterm-256color";
+  env.COLORTERM = "truecolor";
   return env;
 }
 
@@ -228,7 +336,7 @@ function baseChildEnv(): NodeJS.ProcessEnv {
  * into the agent process. Any adapter-declared env key matching these prefixes is
  * dropped, regardless of whether it came from `static` or `passthrough`.
  */
-const DANGEROUS_ENV_PREFIXES = ['DYLD_', 'LD_'];
+const DANGEROUS_ENV_PREFIXES = ["DYLD_", "LD_"];
 
 function isDangerousEnvKey(key: string): boolean {
   return DANGEROUS_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
@@ -244,7 +352,9 @@ export function agentEnv(adapter: CliPtyAdapter): NodeJS.ProcessEnv {
   const env = baseChildEnv();
   for (const key of adapter.env.passthrough) {
     if (isDangerousEnvKey(key)) {
-      console.warn(`[pty-manager] refusing linker-injection passthrough env "${key}" from adapter "${adapter.id}"`);
+      console.warn(
+        `[pty-manager] refusing linker-injection passthrough env "${key}" from adapter "${adapter.id}"`,
+      );
       continue;
     }
     const value = process.env[key];
@@ -252,7 +362,9 @@ export function agentEnv(adapter: CliPtyAdapter): NodeJS.ProcessEnv {
   }
   for (const [key, value] of Object.entries(adapter.env.static)) {
     if (isDangerousEnvKey(key)) {
-      console.warn(`[pty-manager] refusing linker-injection static env "${key}" from adapter "${adapter.id}"`);
+      console.warn(
+        `[pty-manager] refusing linker-injection static env "${key}" from adapter "${adapter.id}"`,
+      );
       continue;
     }
     env[key] = value;
@@ -288,8 +400,8 @@ function armIdleTimer(sessionId: string, session: Session): void {
   session.idleTimer = setTimeout(() => {
     session.idleTimer = null;
     if (!sessions.has(sessionId)) return;
-    session.state = 'idle';
-    emitStateChange(session.wc, sessionId, 'idle');
+    session.state = "idle";
+    emitStateChange(session.wc, sessionId, "idle");
   }, session.idleTimeoutMs);
 }
 
@@ -303,14 +415,18 @@ function makeSessionId(): string {
  * old attachProc so a spawn path can build the host session handlers without
  * ever holding a live node-pty handle.
  */
-function onSessionData(session: Session, sessionId: string, data: string): void {
+function onSessionData(
+  session: Session,
+  sessionId: string,
+  data: string,
+): void {
   if (canSend(session.wc)) {
     session.wc.send(PTY_CHANNELS.data, { sessionId, data });
   }
   fireTaps(dataTaps, sessionId, data);
-  if (session.state !== 'busy') {
-    session.state = 'busy';
-    emitStateChange(session.wc, sessionId, 'busy');
+  if (session.state !== "busy") {
+    session.state = "busy";
+    emitStateChange(session.wc, sessionId, "busy");
   }
   if (session.idleTimeoutMs > 0) armIdleTimer(sessionId, session);
 }
@@ -352,9 +468,14 @@ export interface SpawnedSession {
 }
 
 /** Spawn a shell PTY. */
-export function spawnSession(wc: WebContents, req: SpawnRequest): SpawnedSession {
-  const shell = resolveShell(req.shell);
-  const cwd = resolveCwd(req.cwd);
+export function spawnSession(
+  wc: WebContents,
+  req: SpawnRequest,
+  authority: ShellSpawnAuthority,
+): SpawnedSession {
+  const trusted = requireTrustedShellAuthority(authority);
+  const shell = trusted.shell;
+  const cwd = trusted.cwd;
   const sessionId = makeSessionId();
   const spec: PtySpawnSpec = {
     sessionId,
@@ -375,8 +496,10 @@ export function spawnSession(wc: WebContents, req: SpawnRequest): SpawnedSession
     wc,
     idleTimer: null,
     idleTimeoutMs: 0,
-    state: 'spawning',
+    state: "spawning",
     cwd,
+    agent: null,
+    missionOrchestratorGrantAvailable: false,
   };
   sessions.set(sessionId, session);
   return { sessionId };
@@ -397,14 +520,14 @@ export interface AgentSpawnOverrides {
 }
 
 function normalizeAgentModel(adapter: CliPtyAdapter, model: string): string {
-  if (adapter.id === 'kimi' && model === 'kimi-for-coding') {
-    return 'kimi-code/kimi-for-coding';
+  if (adapter.id === "kimi" && model === "kimi-for-coding") {
+    return "kimi-code/kimi-for-coding";
   }
   // OpenCode 1.17 requires provider/model. A stale unqualified preference is
   // not a valid fallback: omit --model and let OpenCode use its own configured
   // default instead of failing the pane at startup.
-  if (adapter.id === 'opencode' && model && !model.includes('/')) {
-    return '';
+  if (adapter.id === "opencode" && model && !model.includes("/")) {
+    return "";
   }
   return model;
 }
@@ -415,8 +538,9 @@ export function spawnAgentSession(
   req: SpawnRequest,
   adapter: CliPtyAdapter,
   overrides: AgentSpawnOverrides = {},
+  authority: BoundSpawnAuthority,
 ): SpawnedSession {
-  const cwd = resolveCwd(req.cwd);
+  const cwd = requireTrustedAgentCwd(authority);
   const model = normalizeAgentModel(
     adapter,
     req.model ?? overrides.defaultModel ?? adapter.models.default,
@@ -424,23 +548,23 @@ export function spawnAgentSession(
   const argv = resolvePlaceholders(adapter.spawn.interactive, {
     MODEL: model,
     CWD: cwd,
-    SESSION_ID: '',
-    PROMPT: '',
+    SESSION_ID: "",
+    PROMPT: "",
   }).filter((a) => a.length > 0);
 
   // A user-set absolute binary path overrides the adapter's declared command.
   const bin = overrides.binPath || argv[0];
-  const args = argv.slice(1);
+  let args = argv.slice(1);
   // Adapters whose interactive argv has no {{MODEL}} placeholder would
   // silently DROP the requested model (route_task picks grok-code-fast-1,
   // grok boots on its default). When a model was explicitly requested and the
   // adapter declares a model flag, append it.
   const explicitModel = req.model ?? overrides.defaultModel;
   const templateHasModel = adapter.spawn.interactive.some((a) =>
-    a.includes('{{MODEL}}'),
+    a.includes("{{MODEL}}"),
   );
   const usesKimiTransientModel =
-    adapter.id === 'kimi' && Boolean(overrides.keyEnv?.KIMI_MODEL_NAME);
+    adapter.id === "kimi" && Boolean(overrides.keyEnv?.KIMI_MODEL_NAME);
   if (
     explicitModel &&
     model &&
@@ -456,7 +580,11 @@ export function spawnAgentSession(
   if (req.resume) {
     const captured =
       req.paneId && adapter.spawn.resumeIdArgs?.length
-        ? resumeSessionLookup?.(cwd, req.paneId) ?? null
+        ? (resumeSessionLookup?.(
+            authority.scope,
+            req.paneId,
+            adapter.id,
+          ) ?? null)
         : null;
     if (captured) {
       args.push(...adapter.spawn.resumeIdArgs!, captured);
@@ -487,19 +615,29 @@ export function spawnAgentSession(
 
   // Orchestration decoration: MCP endpoint env, optional HOME override and
   // extra argv (e.g. --mcp-config). The hook is trusted main-process code.
-  const decoration = agentSpawnHook ? agentSpawnHook(adapter, req) : null;
+  const decoration = agentSpawnHook
+    ? agentSpawnHook(adapter, req, authority)
+    : null;
   if (decoration) {
     Object.assign(env, decoration.env);
     args.push(...decoration.extraArgs);
   }
-  // Adapter-enforced argv goes last so user/provider settings cannot soften
-  // security invariants such as Claude's hidden-subagent Task deny.
-  if (adapter.spawn.extraArgs.length > 0) {
-    args.push(...adapter.spawn.extraArgs);
-  }
+  // Adapter-enforced argv is included before the autonomous policy. The final
+  // policy removes inherited YOLO/bypass flags and is therefore the last word.
+  args.push(...adapter.spawn.extraArgs);
+  args = secureAutonomousCliArgs(
+    adapter,
+    args,
+    requiresReadOnlyNativeAuthority({
+      source: authority.source,
+      role: authority.context?.role,
+      contextRevision: authority.context?.contextRevision,
+      readOnly: authority.context?.readOnly,
+    }),
+  );
 
   const idleMs =
-    adapter.stateParsing.idle.type === 'timeout'
+    adapter.stateParsing.idle.type === "timeout"
       ? adapter.stateParsing.idle.ms
       : 800;
 
@@ -534,13 +672,42 @@ export function spawnAgentSession(
     wc,
     idleTimer: null,
     idleTimeoutMs: idleMs,
-    state: 'spawning',
+    state: "spawning",
     cwd,
+    agent: {
+      sessionId,
+      paneId: req.paneId,
+      adapterId: adapter.id,
+      model: model || undefined,
+      accountId: req.accountId,
+      effort: req.effort,
+      cwd,
+      scope: Object.freeze({ ...authority.scope }),
+      source: authority.source,
+      role: authority.context?.role ?? "user",
+      missionId: authority.context?.missionId,
+      squadId: authority.context?.squadId,
+      agentName: authority.context?.agentName,
+      allowedTools:
+        authority.context?.allowedTools === null ||
+        authority.context?.allowedTools === undefined
+          ? null
+          : [...authority.context.allowedTools],
+      allowedSkills:
+        authority.context?.allowedSkills === null ||
+        authority.context?.allowedSkills === undefined
+          ? null
+          : [...authority.context.allowedSkills],
+    },
+    missionOrchestratorGrantAvailable:
+      authority.source === "legacy-squad" &&
+      authority.context?.role === "orchestrator" &&
+      Boolean(authority.context.squadId),
   };
   sessions.set(sessionId, session);
-  emitStateChange(wc, sessionId, 'spawning');
+  emitStateChange(wc, sessionId, "spawning");
   decoration?.onSpawned?.(sessionId);
-  if (dictatedSessionId && sessionDictationHook) {
+  if (sessionDictationHook) {
     try {
       sessionDictationHook({
         providerSessionId: dictatedSessionId,
@@ -549,7 +716,7 @@ export function spawnAgentSession(
         cwd,
       });
     } catch (err) {
-      console.warn('[pty-manager] session dictation hook threw:', err);
+      console.warn("[pty-manager] session dictation hook threw:", err);
     }
   }
   return { sessionId };
@@ -561,6 +728,91 @@ function ownedSession(wc: WebContents, sessionId: string): Session | null {
   return session;
 }
 
+function cloneAgentInfo(info: OwnedAgentSessionInfo): OwnedAgentSessionInfo {
+  return {
+    ...info,
+    scope: Object.freeze({ ...info.scope }),
+    allowedTools: info.allowedTools === null ? null : [...info.allowedTools],
+    allowedSkills: info.allowedSkills === null ? null : [...info.allowedSkills],
+  };
+}
+
+export function isSessionOwnedBy(wc: WebContents, sessionId: string): boolean {
+  return ownedSession(wc, sessionId) !== null;
+}
+
+export function getOwnedAgentSessionInfo(
+  wc: WebContents,
+  sessionId: string,
+): OwnedAgentSessionInfo | null {
+  const info = ownedSession(wc, sessionId)?.agent;
+  return info ? cloneAgentInfo(info) : null;
+}
+
+/** Consume the single main-owned grant attached to an initial squad spawn. */
+export function consumeMissionOrchestratorGrant(
+  wc: WebContents,
+  sessionId: string,
+  squadId: string,
+): OwnedAgentSessionInfo | null {
+  const session = ownedSession(wc, sessionId);
+  const info = session?.agent;
+  if (
+    !session ||
+    !info ||
+    !session.missionOrchestratorGrantAvailable ||
+    info.source !== "legacy-squad" ||
+    info.role !== "orchestrator" ||
+    info.squadId !== squadId
+  ) {
+    return null;
+  }
+  session.missionOrchestratorGrantAvailable = false;
+  return cloneAgentInfo(info);
+}
+
+export function hasMissionOrchestratorGrant(
+  wc: WebContents,
+  sessionId: string,
+  squadId: string,
+): boolean {
+  const session = ownedSession(wc, sessionId);
+  const info = session?.agent;
+  return Boolean(
+    session?.missionOrchestratorGrantAvailable &&
+    info?.source === "legacy-squad" &&
+    info.role === "orchestrator" &&
+    info.squadId === squadId,
+  );
+}
+
+export function bindOwnedAgentSessionMission(
+  wc: WebContents,
+  sessionId: string,
+  missionId: string,
+): boolean {
+  const session = ownedSession(wc, sessionId);
+  const info = session?.agent;
+  if (!session || !info || (info.missionId && info.missionId !== missionId)) {
+    return false;
+  }
+  session.agent = { ...info, missionId };
+  return true;
+}
+
+export function rollbackOwnedAgentSessionMission(
+  wc: WebContents,
+  sessionId: string,
+  missionId: string,
+): boolean {
+  const session = ownedSession(wc, sessionId);
+  const info = session?.agent;
+  if (!session || !info || info.missionId !== missionId) return false;
+  const { missionId: _discarded, ...restored } = info;
+  session.agent = restored;
+  return true;
+}
+
 function destroySession(sessionId: string, session: Session): void {
   finalizeSession(sessionId, 0);
   try {
@@ -570,13 +822,17 @@ function destroySession(sessionId: string, session: Session): void {
   }
 }
 
-export function writeSession(wc: WebContents, sessionId: string, data: string): void {
+export function writeSession(
+  wc: WebContents,
+  sessionId: string,
+  data: string,
+): void {
   const session = ownedSession(wc, sessionId);
   if (!session) return;
   // User wrote input → re-arm the idle timer if applicable.
-  if (session.state === 'idle') {
-    session.state = 'busy';
-    emitStateChange(wc, sessionId, 'busy');
+  if (session.state === "idle") {
+    session.state = "busy";
+    emitStateChange(wc, sessionId, "busy");
   }
   if (session.idleTimeoutMs > 0) armIdleTimer(sessionId, session);
   session.proc.write(data);
@@ -618,7 +874,7 @@ export function liveSessionSummary(wc?: WebContents): {
   for (const session of sessions.values()) {
     if (wc && session.wc !== wc) continue;
     total += 1;
-    if (session.state === 'busy' || session.state === 'spawning') busy += 1;
+    if (session.state === "busy" || session.state === "spawning") busy += 1;
   }
   return { total, busy };
 }
@@ -637,9 +893,9 @@ export function killAllSessions(): void {
 export function orchWriteSession(sessionId: string, data: string): boolean {
   const session = sessions.get(sessionId);
   if (!session) return false;
-  if (session.state === 'idle') {
-    session.state = 'busy';
-    emitStateChange(session.wc, sessionId, 'busy');
+  if (session.state === "idle") {
+    session.state = "busy";
+    emitStateChange(session.wc, sessionId, "busy");
   }
   if (session.idleTimeoutMs > 0) armIdleTimer(sessionId, session);
   session.proc.write(data);

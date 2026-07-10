@@ -51,6 +51,7 @@ import {
   buildSystemInstruction as buildLiveSystemInstruction,
   sendProviderContext as sendLiveProviderContext,
 } from './live-transport-context';
+import type { JarvisMemoryAccess } from './jarvis-memory';
 import { LiveToolCallCoordinator } from './live-tool-call-registry';
 import {
   connectFirstLiveProvider,
@@ -93,6 +94,20 @@ interface PendingRendererAudioDelivery {
   smokeOwnerWebContentsId?: number;
 }
 
+interface PendingToolFollowUp {
+  sessionId: string;
+  turnId: string;
+  callId: string;
+  sentAt: number;
+}
+
+interface ToolTurnOrigin {
+  sessionId: string;
+  turnId: string;
+}
+
+const MAX_TOOL_TURN_ORIGINS = 64;
+
 export class LiveTransportController {
   private _provider: TurnManagedRealtimeProvider | null = null;
   private connecting: Promise<void> | null = null;
@@ -129,12 +144,17 @@ export class LiveTransportController {
   /** Main-owned delivery ids prevent stale renderer events proving a newer delivery. */
   private pendingRendererAudio = new Map<string, PendingRendererAudioDelivery>();
   private activeSmokeOwnerWebContentsId: number | undefined;
+  /** Tool result sent to Gemini; completion reopens the renderer reply mic. */
+  private pendingToolFollowUp: PendingToolFollowUp | null = null;
+  /** Captures a tool's originating user turn before the renderer action can outlive it. */
+  private readonly toolTurnOrigins = new Map<string, ToolTurnOrigin>();
 
   constructor(
     private emit: Emit,
     private _fsm: JarvisLiveSession,
     now: () => number = Date.now,
     questionSource?: PendingQuestionSource,
+    private readonly memory?: JarvisMemoryAccess,
   ) {
     this.now = now;
     this.pendingQuestionRouter = new PendingQuestionRouter({ now });
@@ -147,6 +167,8 @@ export class LiveTransportController {
       getProvider: () => this._provider,
       onResultContext: (tool, status, summary) =>
         this.recordToolResultContext(tool, status, summary),
+      onResultSending: (event) => this.noteToolResultSending(event),
+      onResultSendFailed: (event) => this.clearPendingToolFollowUp(event),
     });
   }
 
@@ -202,6 +224,9 @@ export class LiveTransportController {
       jarvisLatencyTracker.discard(sessionId, this.activeTurnId);
     }
     this.activeTurnId = normalized;
+    if (this.pendingToolFollowUp?.turnId !== normalized) {
+      this.pendingToolFollowUp = null;
+    }
     this._provider?.beginUserTurn?.(normalized);
   }
 
@@ -563,6 +588,8 @@ export class LiveTransportController {
     const sessionId = this._fsm.getState().sessionId;
     if (sessionId) jarvisLatencyTracker.discard(sessionId, this.activeTurnId);
     this.providerSpeaking = false;
+    this.pendingToolFollowUp = null;
+    this.toolTurnOrigins.clear();
     return this._fsm.interrupt(reason);
   }
 
@@ -575,6 +602,8 @@ export class LiveTransportController {
   onStop(): void {
     this.smokeProbe.settleFailure('session_closed');
     this.clearPendingRendererAudio();
+    this.pendingToolFollowUp = null;
+    this.toolTurnOrigins.clear();
     logVoice('info', 'live.flowSummary', 'resumo do fluxo de áudio da sessão', {
       micFramesSent: this.micFramesCounter.total,
       serverAudioChunks: this.serverAudioCounter.total,
@@ -601,6 +630,8 @@ export class LiveTransportController {
   hardStop(): void {
     this.smokeProbe.settleFailure('session_closed');
     this.clearPendingRendererAudio();
+    this.pendingToolFollowUp = null;
+    this.toolTurnOrigins.clear();
     this.clearReconnectTimer();
     this.clearReconnectStabilityTimer();
     this.reconnectAttempt = 0;
@@ -655,6 +686,8 @@ export class LiveTransportController {
   enterDormant(): void {
     this.smokeProbe.settleFailure('session_closed');
     this.clearPendingRendererAudio();
+    this.pendingToolFollowUp = null;
+    this.toolTurnOrigins.clear();
     this.clearIdleTimer();
     this.clearGraceTimer();
     this.clearReconnectStabilityTimer();
@@ -726,12 +759,14 @@ export class LiveTransportController {
       setLastUserTranscript: (text) => { this._lastUserTranscript = text; },
       settleSmokeResponseDone: () => this.smokeProbe.settleResponseDone(),
       settleSmokeFailure: (reason) => this.smokeProbe.settleFailure(reason),
+      onProviderResponseDone: () => this.emitToolTurnComplete(),
       recordLiveHistory: (role, text) => this.recordLiveHistory(role, text),
       touchIdle: () => this.touchIdle(),
       routePendingAnswer: (text) => this.routePendingAnswer(text),
       clearReconnectStabilityTimer: () => this.clearReconnectStabilityTimer(),
       scheduleReconnect: () => this.scheduleReconnect(),
       handleToolCall: (call: RealtimeToolCallEvent) => {
+        this.noteToolTurnOrigin(call);
         handleRealtimeToolCall(this as unknown as ToolDispatchHost, call);
       },
       armReconnectStability: (provider) => this.armReconnectStability(provider),
@@ -745,6 +780,67 @@ export class LiveTransportController {
       startQuestionPoll: () => this.questionPoller.start(),
       clearPendingMic: () => this.clearPendingMic(),
     };
+  }
+
+  private noteToolResultSending(event: JarvisLiveToolResultEvent): void {
+    if (event.source !== 'realtime' || !event.callId) return;
+    const sessionId = this._fsm.getState().sessionId;
+    const turnId = this.activeTurnId;
+    const origin = this.toolTurnOrigins.get(this.toolTurnKey(event.sessionId, event.callId));
+    if (
+      !sessionId ||
+      !turnId ||
+      sessionId !== event.sessionId ||
+      !origin ||
+      origin.sessionId !== sessionId ||
+      origin.turnId !== turnId
+    ) {
+      this.toolTurnOrigins.delete(this.toolTurnKey(event.sessionId, event.callId));
+      logVoice('info', 'live.toolFollowUpStaleTurnDiscarded', 'resultado de tool de turno antigo não reabre mic', {
+        callId: event.callId,
+      });
+      return;
+    }
+    this.pendingToolFollowUp = {
+      sessionId,
+      turnId,
+      callId: event.callId,
+      sentAt: this.now(),
+    };
+  }
+
+  private clearPendingToolFollowUp(event: JarvisLiveToolResultEvent): void {
+    const pending = this.pendingToolFollowUp;
+    if (
+      pending &&
+      pending.sessionId === event.sessionId &&
+      pending.callId === event.callId
+    ) {
+      this.pendingToolFollowUp = null;
+    }
+    if (event.callId) {
+      this.toolTurnOrigins.delete(this.toolTurnKey(event.sessionId, event.callId));
+    }
+  }
+
+  private emitToolTurnComplete(): void {
+    const pending = this.pendingToolFollowUp;
+    if (!pending) return;
+    this.pendingToolFollowUp = null;
+    this.toolTurnOrigins.delete(this.toolTurnKey(pending.sessionId, pending.callId));
+    const sessionId = this._fsm.getState().sessionId;
+    if (sessionId !== pending.sessionId || this.activeTurnId !== pending.turnId) return;
+    this.emit(VOICE_CHANNELS.liveToolTurnComplete, {
+      sessionId,
+      turnId: pending.turnId,
+      callId: pending.callId,
+      at: this.now(),
+    });
+    logVoice('info', 'live.toolTurnComplete', 'resposta Gemini após ferramenta concluída', {
+      callId: pending.callId,
+      turnId: pending.turnId,
+      waitedMs: Math.max(0, this.now() - pending.sentAt),
+    });
   }
 
   private routePendingAnswer(text: string): void {
@@ -829,6 +925,7 @@ export class LiveTransportController {
       latestContext: this._latestContext,
       recentToolResults: this._recentToolResults,
       recentHistory: this._liveHistory,
+      memory: this.memory,
     });
   }
 
@@ -843,6 +940,10 @@ export class LiveTransportController {
   }
 
   private scheduleReconnect(): void {
+    // A responseDone from a new socket must never release a mic arm belonging
+    // to a tool result sent over the disconnected socket.
+    this.pendingToolFollowUp = null;
+    this.toolTurnOrigins.clear();
     const state = this._fsm.getState();
     if (!state.enabled || !state.sessionId) return;
     if (this.reconnectAttempt >= RUNTIME_RECONNECT_MAX_ATTEMPTS) {
@@ -866,6 +967,22 @@ export class LiveTransportController {
         .then(() => { if (!this._provider?.isReady) this.scheduleReconnect(); })
         .catch((err) => { console.warn('[live] reconnect failed', err); this.scheduleReconnect(); });
     }, delay);
+  }
+
+  private noteToolTurnOrigin(call: RealtimeToolCallEvent): void {
+    const sessionId = this._fsm.getState().sessionId;
+    const turnId = this.activeTurnId;
+    if (!sessionId || !turnId || !call.callId) return;
+    this.toolTurnOrigins.set(this.toolTurnKey(sessionId, call.callId), { sessionId, turnId });
+    while (this.toolTurnOrigins.size > MAX_TOOL_TURN_ORIGINS) {
+      const oldest = this.toolTurnOrigins.keys().next().value;
+      if (oldest === undefined) return;
+      this.toolTurnOrigins.delete(oldest);
+    }
+  }
+
+  private toolTurnKey(sessionId: string, callId: string): string {
+    return `${sessionId}\u0000${callId}`;
   }
 
   private clearReconnectTimer(): void {

@@ -122,7 +122,7 @@ describe('getAxTree', () => {
     expect(onChange).toHaveBeenCalledOnce();
   });
 
-  it('refuses password, file and disabled controls', () => {
+  it('refuses password and file as non-targets and blocks disabled controls', () => {
     document.body.innerHTML = `
       <input type="password" />
       <input type="file" />
@@ -130,12 +130,8 @@ describe('getAxTree', () => {
     `;
     const tree = getAxTree();
 
-    expect(
-      performAxAction({ action: 'fill', ref: tree.children[0].ref!, text: 'secret' }),
-    ).toMatchObject({ ok: false, error: 'sensitive_control' });
-    expect(
-      performAxAction({ action: 'fill', ref: tree.children[1].ref!, text: 'file' }),
-    ).toMatchObject({ ok: false, error: 'sensitive_control' });
+    expect(tree.children[0].ref).toBeUndefined();
+    expect(tree.children[1].ref).toBeUndefined();
     expect(
       performAxAction({ action: 'click', ref: tree.children[2].ref! }),
     ).toMatchObject({ ok: false, error: 'disabled_control' });
@@ -162,17 +158,10 @@ describe('getAxTree', () => {
     expect(
       performAxAction({ action: 'fill', ref: visibleInput.ref!, text: 'hidden' }),
     ).toMatchObject({ ok: false, error: 'hidden_control' });
-    expect(
-      performAxAction({
-        action: 'fill',
-        ref: secretLabel.children[0].ref!,
-        text: 'secret',
-      }),
-    ).toMatchObject({ ok: false, error: 'sensitive_control' });
+    // Sensitive controls are never action targets (no ref).
+    expect(secretLabel.children[0]?.ref).toBeUndefined();
     expect(paymentLabel.tag).toBe('label');
-    expect(
-      performAxAction({ action: 'fill', ref: paymentInput.ref!, text: '4111' }),
-    ).toMatchObject({ ok: false, error: 'sensitive_control' });
+    expect(paymentInput.ref).toBeUndefined();
   });
 
   it('selects an existing option but rejects an unknown value', () => {
@@ -194,4 +183,152 @@ describe('getAxTree', () => {
       error: 'option_not_found',
     });
   });
+
+  it('never exposes password field values and never assigns action refs', () => {
+    const secret = 'SuperSecretPassword!99';
+    document.body.innerHTML = `
+      <label for="pwd">Password</label>
+      <input id="pwd" type="password" value="${secret}" />
+    `;
+    const tree = getAxTree();
+    const serialized = JSON.stringify(tree);
+    const passwordInput = findByTag(tree, 'input');
+
+    expect(serialized).not.toContain(secret);
+    expect(passwordInput).toBeDefined();
+    expect(passwordInput?.ref).toBeUndefined();
+    expect(passwordInput?.text).toBeNull();
+    expect(passwordInput?.aria.valuetext).toBeUndefined();
+  });
+
+  it('omits values and action refs for text inputs labelled as API key', () => {
+    const secret = 'sk-testleakvalueabcdef1234567890';
+    document.body.innerHTML = `
+      <label>API key <input type="text" value="${secret}" /></label>
+    `;
+    const tree = getAxTree();
+    const input = findByTag(tree, 'input');
+    const serialized = JSON.stringify(tree);
+
+    expect(serialized).not.toContain(secret);
+    expect(input?.ref).toBeUndefined();
+    expect(input?.text).toBeNull();
+  });
+
+  it('detects sensitivity via label for, aria-labelledby, name, id, placeholder and autocomplete', () => {
+    document.body.innerHTML = `
+      <label for="tok">Access token</label>
+      <input id="tok" name="access_token" value="tok-value-must-not-leak" />
+      <span id="lbl-secret">Private secret</span>
+      <input aria-labelledby="lbl-secret" value="aria-labelled-secret" />
+      <input id="api_key_field" value="id-secret-value" />
+      <input name="user_password" value="name-secret-value" />
+      <input placeholder="Enter API key" value="ph-secret-value" />
+      <input autocomplete="current-password" value="ac-secret-value" />
+      <input type="text" aria-label="Mission title" value="benign-visible" />
+    `;
+    const tree = getAxTree();
+    const serialized = JSON.stringify(tree);
+    const inputs = collectByTag(tree, 'input');
+
+    for (const leak of [
+      'tok-value-must-not-leak',
+      'aria-labelled-secret',
+      'id-secret-value',
+      'name-secret-value',
+      'ph-secret-value',
+      'ac-secret-value',
+    ]) {
+      expect(serialized).not.toContain(leak);
+    }
+
+    const sensitive = inputs.filter((node) => node.aria.label !== 'Mission title');
+    // aria-label lands on aria.label; mission title is the only safe control.
+    const safe = inputs.find((node) => node.aria.label === 'Mission title');
+    expect(safe?.ref).toMatch(/^u\d+e\d+$/);
+    for (const node of sensitive) {
+      expect(node.ref).toBeUndefined();
+      expect(node.text).toBeNull();
+    }
+  });
+
+  it('never exposes textarea or select values in the AX snapshot', () => {
+    document.body.innerHTML = `
+      <textarea aria-label="Notes">typed-secret-in-textarea</textarea>
+      <select aria-label="Region">
+        <option value="us-east" selected>US East</option>
+      </select>
+    `;
+    const tree = getAxTree();
+    const serialized = JSON.stringify(tree);
+    const textarea = findByTag(tree, 'textarea');
+    const select = findByTag(tree, 'select');
+
+    expect(serialized).not.toContain('typed-secret-in-textarea');
+    expect(serialized).not.toContain('us-east');
+    expect(textarea?.text).toBeNull();
+    // Option labels may still appear as children; the control value must not.
+    expect(select?.aria.valuetext).toBeUndefined();
+  });
+
+  it('preserves nested semantic labels without aggregating form values', () => {
+    document.body.innerHTML = `
+      <button><span>Run nested mission</span></button>
+      <h1><span>Nested heading</span></h1>
+      <main><textarea>must-not-reach-main</textarea></main>
+    `;
+    const tree = getAxTree();
+    const button = findByTag(tree, 'button');
+    const heading = findByTag(tree, 'h1');
+    const main = findByTag(tree, 'main');
+
+    expect(button?.text).toBe('Run nested mission');
+    expect(heading?.text).toBe('Nested heading');
+    expect(main?.text).toBeNull();
+    expect(JSON.stringify(tree)).not.toContain('must-not-reach-main');
+  });
+
+  it('keeps depth and node caps fail-closed on huge trees', () => {
+    const depth = 14;
+    let html = '';
+    for (let i = 0; i < depth; i += 1) html += `<div data-d="${i}">`;
+    html += '<button>Deep leaf</button>';
+    for (let i = 0; i < depth; i += 1) html += '</div>';
+    document.body.innerHTML = html;
+
+    const tree = getAxTree();
+    expect(maxDepth(tree)).toBeLessThanOrEqual(10);
+  });
 });
+
+type AxLike = {
+  tag: string;
+  text: string | null;
+  ref?: string;
+  aria: Record<string, string>;
+  children: AxLike[];
+};
+
+function findByTag(node: AxLike, tag: string): AxLike | undefined {
+  if (node.tag === tag) return node;
+  for (const child of node.children) {
+    const found = findByTag(child, tag);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function collectByTag(node: AxLike, tag: string, out: AxLike[] = []): AxLike[] {
+  if (node.tag === tag) out.push(node);
+  for (const child of node.children) {
+    collectByTag(child, tag, out);
+  }
+  return out;
+}
+
+function maxDepth(node: { children: unknown[] }, depth = 0): number {
+  if (!node.children.length) return depth;
+  return Math.max(
+    ...node.children.map((child) => maxDepth(child as { children: unknown[] }, depth + 1)),
+  );
+}

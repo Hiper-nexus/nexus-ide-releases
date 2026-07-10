@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ProjectExecutionScope } from './types';
 
 /**
  * Orchestration domain types shared across main / preload / renderer and the
@@ -116,15 +117,42 @@ export const handoffStatusSchema = z.enum([
 ]);
 export type HandoffStatus = z.infer<typeof handoffStatusSchema>;
 
+export const handoffEvidenceTrustSchema = z.enum([
+  'unverified',
+  'nexus-trusted',
+  'stale',
+]);
+export type HandoffEvidenceTrust = z.infer<
+  typeof handoffEvidenceTrustSchema
+>;
+
+export interface HandoffEvidenceBinding {
+  readonly missionId: string;
+  readonly contextRevision: string;
+  readonly contractHash: string;
+  readonly baseSha: string;
+  readonly headSha: string;
+  readonly diffHash: string;
+  readonly workflowRevision: number;
+}
+
 export interface Handoff {
   id: string;
   missionId?: string;
   /** PTY session of the worker that submitted. */
   sessionId?: string;
   fromAgent?: string;
+  /** Reporter-supplied metadata. `success` never completes a mission. */
   status: HandoffStatus;
+  readonly claimTrust: 'untrusted';
   summary: string;
+  /** Reporter-supplied metadata; never interpreted as verification evidence. */
   artifacts: unknown[];
+  /** IDs resolved against Nexus-owned evidence tables at submission time. */
+  evidenceIds: string[];
+  evidenceTrust: HandoffEvidenceTrust;
+  /** Immutable Nexus-derived binding, present only for trusted evidence IDs. */
+  evidenceBinding?: HandoffEvidenceBinding;
   delivered: boolean;
   createdAt: number;
 }
@@ -174,6 +202,13 @@ export interface MissionPaneSpec {
   title: string;
   agentName?: string;
   role: 'orchestrator' | 'worker';
+  /** Exact Nexus capability snapshot restored with this pane. */
+  allowedTools?: string[] | null;
+  allowedSkills?: string[] | null;
+  /** Trusted main-side execution authority captured when the pane was created. */
+  scope?: ProjectExecutionScope;
+  /** Task worktree filesystem authority; defaults to scope for legacy panes. */
+  executionScope?: ProjectExecutionScope;
   /**
    * paneId ORIGINAL do pane no layout — a captura de session-id de resume é
    * chaveada por (cwd, paneId); sem reutilizá-lo, o reopen criava ids novos e

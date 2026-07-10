@@ -1,18 +1,24 @@
+import type { WebContents } from 'electron';
 import type { Pipe, PipeMode } from '../../shared/pipe-types';
+import type { ProjectExecutionScope } from '../../shared/types';
 import {
+  getSessionState,
   orchWriteSession,
   tapSessionData,
   tapSessionExit,
   tapSessionState,
-  getSessionState,
 } from '../pty/pty-manager';
+import { getRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 import {
+  getOwnedPaneAuthzInfoBySession,
+  getPaneAuthzInfoOwnedByPane,
   getPanesVersion,
-  findPane,
   readSessionOutput,
   stripAnsi,
 } from './pane-registry';
-import { ChangeHub, makeId } from './store-util';
+import type { PaneAuthzInfo } from './pane-authz';
+import { sameProjectScope } from './project-scoped-broadcast';
+import { makeId } from './store-util';
 import {
   InjectionGuard,
   PIPE_MARKER,
@@ -22,150 +28,273 @@ import {
 } from './pane-pipe-core';
 
 /**
- * Pane pipes runtime — the "edges que conversam" engine. Each pipe observes
- * the SOURCE pane's PTY output (via tapSessionData) and injects it into the
- * TARGET pane's PTY (via orchWriteSession), as if the source agent typed into
- * the target's terminal.
- *
- * paneId → sessionId is resolved through findPane at FORWARDING time, never
- * cached: a failover re-spawn gives the pane a new sessionId and the pipe
- * must follow it.
- *
- * Loop safety: a pipe can't target its own source (canForward), and every
- * injected line is recorded in an InjectionGuard so its terminal echo is
- * swallowed instead of re-forwarded by a reverse pipe. onIdle deliveries are
- * additionally tagged with PIPE_MARKER, which is filtered on read-back.
+ * Pane pipes are runtime resources owned by one renderer and one immutable
+ * project checkout. Pane ids remain stable across PTY respawns, while every
+ * forwarding operation re-resolves the current session from that authority.
  */
 
-const MAX_PIPES = 64;
-/** Stream mode: queued lines flush in small batches on this cadence. */
+const MAX_PIPES_PER_PARTITION = 64;
 const FLUSH_INTERVAL_MS = 150;
 const MAX_LINES_PER_FLUSH = 8;
 const MAX_QUEUED_LINES = 400;
-/** onIdle mode: minimum gap between deliveries + tail size read from source. */
 const IDLE_THROTTLE_MS = 3_000;
 const IDLE_TAIL_LINES = 60;
 const MAX_IDLE_DELIVERY_CHARS = 4_000;
-/** Delay before the submit Enter, so TUIs register it as a keypress. */
 const SUBMIT_ENTER_DELAY_MS = 150;
 
 interface StreamState {
-  /** Session the pending partial line belongs to — reset on re-spawn. */
   sessionId: string;
   rest: string;
 }
 
-const pipes = new Map<string, Pipe>();
-const streamStates = new Map<string, StreamState>();
-const outQueues = new Map<string, string[]>();
-const flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const idleDirty = new Set<string>();
-const lastIdleDeliveryAt = new Map<string, number>();
-const lastIdleDeliveryText = new Map<string, string>();
-const deliveryCounts = new Map<string, number>();
-const lastDeliveryAt = new Map<string, number>();
-const guard = new InjectionGuard();
-const hub = new ChangeHub();
-let tapsInstalled = false;
-
-function clearPipeState(pipeId: string): void {
-  streamStates.delete(pipeId);
-  outQueues.delete(pipeId);
-  const timer = flushTimers.get(pipeId);
-  if (timer) clearTimeout(timer);
-  flushTimers.delete(pipeId);
-  idleDirty.delete(pipeId);
-  lastIdleDeliveryAt.delete(pipeId);
-  lastIdleDeliveryText.delete(pipeId);
-  deliveryCounts.delete(pipeId);
-  lastDeliveryAt.delete(pipeId);
+interface EndpointIdentity {
+  readonly paneId: string;
+  readonly missionId?: string;
+  readonly role?: PaneAuthzInfo['role'];
+  readonly kind: PaneAuthzInfo['kind'];
 }
 
-/**
- * Resolve the live target session for a pipe, or null when the pipe can't
- * deliver right now (pane gone, no session, or it would write back into the
- * very session that produced the data).
- */
-function resolveTargetSession(pipe: Pipe, sourceSessionId: string): string | null {
-  const target = findPane(pipe.targetPaneId);
-  if (!target) {
-    console.warn(`[pipe ${pipe.id}] target pane ${pipe.targetPaneId} not found`);
-    return null;
+interface ScopedPipe {
+  readonly pipe: Pipe;
+  readonly source: EndpointIdentity;
+  readonly target: EndpointIdentity;
+}
+
+interface PendingSubmit {
+  readonly sessionId: string;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
+interface SourceIndex {
+  panesVersion: number;
+  pipesVersion: number;
+  map: Map<string, ScopedPipe[]>;
+}
+
+interface PipePartition {
+  readonly owner: WebContents;
+  readonly scope: ProjectExecutionScope;
+  readonly pipes: Map<string, ScopedPipe>;
+  readonly streamStates: Map<string, StreamState>;
+  readonly outQueues: Map<string, string[]>;
+  readonly flushTimers: Map<string, ReturnType<typeof setTimeout>>;
+  readonly idleDirty: Set<string>;
+  readonly lastIdleDeliveryAt: Map<string, number>;
+  readonly lastIdleDeliveryText: Map<string, string>;
+  readonly deliveryCounts: Map<string, number>;
+  readonly lastDeliveryAt: Map<string, number>;
+  readonly submitTimers: Map<string, PendingSubmit>;
+  readonly guard: InjectionGuard;
+  pipesVersion: number;
+  sourceIndex: SourceIndex | null;
+}
+
+export type PipesChangeListener = (
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+) => void;
+
+const partitionsByOwner = new Map<WebContents, Map<string, PipePartition>>();
+const listeners = new Set<PipesChangeListener>();
+let tapsInstalled = false;
+
+function scopeKey(scope: ProjectExecutionScope): string {
+  return JSON.stringify([
+    scope.installationId,
+    scope.projectId,
+    scope.checkoutId,
+    scope.rootRealPath,
+  ]);
+}
+
+function partitionFor(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+  create: boolean,
+): PipePartition | null {
+  let byScope = partitionsByOwner.get(owner);
+  const key = scopeKey(scope);
+  const existing = byScope?.get(key);
+  if (existing) {
+    if (!sameProjectScope(existing.scope, scope)) {
+      throw new Error('pane pipe scope identity collision');
+    }
+    return existing;
   }
-  if (!target.sessionId) {
-    console.warn(
-      `[pipe ${pipe.id}] target pane ${pipe.targetPaneId} has no live session`,
-    );
-    return null;
+  if (!create) return null;
+  if (!byScope) {
+    byScope = new Map();
+    partitionsByOwner.set(owner, byScope);
   }
-  if (target.sessionId === sourceSessionId) {
-    console.warn(`[pipe ${pipe.id}] source and target share session ${sourceSessionId}`);
-    return null;
+  const partition: PipePartition = {
+    owner,
+    scope: Object.freeze({ ...scope }),
+    pipes: new Map(),
+    streamStates: new Map(),
+    outQueues: new Map(),
+    flushTimers: new Map(),
+    idleDirty: new Set(),
+    lastIdleDeliveryAt: new Map(),
+    lastIdleDeliveryText: new Map(),
+    deliveryCounts: new Map(),
+    lastDeliveryAt: new Map(),
+    submitTimers: new Map(),
+    guard: new InjectionGuard(),
+    pipesVersion: 0,
+    sourceIndex: null,
+  };
+  byScope.set(key, partition);
+  return partition;
+}
+
+function emitChange(partition: PipePartition): void {
+  for (const listener of [...listeners]) {
+    try {
+      listener(partition.owner, partition.scope);
+    } catch (error) {
+      console.warn('[pipes] change listener threw:', error);
+    }
   }
+}
+
+function currentPartitionScope(partition: PipePartition): boolean {
+  const current = getRendererWorkspaceScope(partition.owner);
+  return Boolean(current && sameProjectScope(current, partition.scope));
+}
+
+function endpointIdentity(pane: PaneAuthzInfo): EndpointIdentity | null {
+  if (!pane.sessionId) return null;
+  return Object.freeze({
+    paneId: pane.paneId,
+    missionId: pane.missionId,
+    role: pane.role,
+    kind: pane.kind,
+  });
+}
+
+function sameEndpoint(
+  current: PaneAuthzInfo,
+  expected: EndpointIdentity,
+): boolean {
+  return (
+    current.paneId === expected.paneId &&
+    current.missionId === expected.missionId &&
+    current.role === expected.role &&
+    current.kind === expected.kind
+  );
+}
+
+function resolveEndpoint(
+  partition: PipePartition,
+  expected: EndpointIdentity,
+): PaneAuthzInfo | null {
+  if (!currentPartitionScope(partition)) return null;
+  const pane = getPaneAuthzInfoOwnedByPane(partition.owner, expected.paneId);
+  return pane?.scope &&
+    pane.sessionId &&
+    sameProjectScope(pane.scope, partition.scope) &&
+    sameEndpoint(pane, expected)
+    ? pane
+    : null;
+}
+
+function clearTransientPipeState(
+  partition: PipePartition,
+  pipeId: string,
+): void {
+  partition.streamStates.delete(pipeId);
+  partition.outQueues.delete(pipeId);
+  const flushTimer = partition.flushTimers.get(pipeId);
+  if (flushTimer) clearTimeout(flushTimer);
+  partition.flushTimers.delete(pipeId);
+  const submit = partition.submitTimers.get(pipeId);
+  if (submit) clearTimeout(submit.timer);
+  partition.submitTimers.delete(pipeId);
+  partition.idleDirty.delete(pipeId);
+  partition.lastIdleDeliveryAt.delete(pipeId);
+  partition.lastIdleDeliveryText.delete(pipeId);
+}
+
+function clearPipeState(partition: PipePartition, pipeId: string): void {
+  clearTransientPipeState(partition, pipeId);
+  partition.deliveryCounts.delete(pipeId);
+  partition.lastDeliveryAt.delete(pipeId);
+}
+
+function resolveTargetSession(
+  partition: PipePartition,
+  scopedPipe: ScopedPipe,
+  sourceSessionId: string,
+): string | null {
+  const target = resolveEndpoint(partition, scopedPipe.target);
+  if (!target?.sessionId) return null;
+  if (target.sessionId === sourceSessionId) return null;
   return target.sessionId;
 }
 
-function scheduleFlush(pipeId: string): void {
-  if (flushTimers.has(pipeId)) return;
-  flushTimers.set(
+function scheduleFlush(partition: PipePartition, pipeId: string): void {
+  if (partition.flushTimers.has(pipeId)) return;
+  partition.flushTimers.set(
     pipeId,
     setTimeout(() => {
-      flushTimers.delete(pipeId);
-      flushQueue(pipeId);
+      partition.flushTimers.delete(pipeId);
+      flushQueue(partition, pipeId);
     }, FLUSH_INTERVAL_MS),
   );
 }
 
-function flushQueue(pipeId: string): void {
-  const pipe = pipes.get(pipeId);
-  const queue = outQueues.get(pipeId);
-  if (!pipe || !queue || queue.length === 0) return;
-
-  const source = findPane(pipe.sourcePaneId);
-  const targetSessionId = resolveTargetSession(pipe, source?.sessionId ?? '');
+function flushQueue(partition: PipePartition, pipeId: string): void {
+  const scopedPipe = partition.pipes.get(pipeId);
+  const queue = partition.outQueues.get(pipeId);
+  if (!scopedPipe || !queue || queue.length === 0) return;
+  const source = resolveEndpoint(partition, scopedPipe.source);
+  const targetSessionId = resolveTargetSession(
+    partition,
+    scopedPipe,
+    source?.sessionId ?? '',
+  );
   if (!targetSessionId) {
-    // Target unavailable — drop this batch instead of piling up forever.
-    outQueues.delete(pipeId);
+    partition.outQueues.delete(pipeId);
     return;
   }
 
   const batch = queue.splice(0, MAX_LINES_PER_FLUSH);
   let delivered = 0;
   for (const line of batch) {
-    guard.markInjected(targetSessionId, line);
+    partition.guard.markInjected(targetSessionId, line);
     if (!orchWriteSession(targetSessionId, `${line}\r`)) {
-      outQueues.delete(pipeId);
+      partition.outQueues.delete(pipeId);
       return;
     }
     delivered += 1;
   }
   if (delivered > 0) {
-    deliveryCounts.set(pipeId, (deliveryCounts.get(pipeId) ?? 0) + delivered);
-    lastDeliveryAt.set(pipeId, Date.now());
-    hub.emit();
+    partition.deliveryCounts.set(
+      pipeId,
+      (partition.deliveryCounts.get(pipeId) ?? 0) + delivered,
+    );
+    partition.lastDeliveryAt.set(pipeId, Date.now());
+    emitChange(partition);
   }
-  if (queue.length > 0) scheduleFlush(pipeId);
-  else outQueues.delete(pipeId);
+  if (queue.length > 0) scheduleFlush(partition, pipeId);
+  else partition.outQueues.delete(pipeId);
 }
 
-function enqueueLine(pipeId: string, line: string): void {
-  let queue = outQueues.get(pipeId);
+function enqueueLine(
+  partition: PipePartition,
+  pipeId: string,
+  line: string,
+): void {
+  let queue = partition.outQueues.get(pipeId);
   if (!queue) {
     queue = [];
-    outQueues.set(pipeId, queue);
+    partition.outQueues.set(pipeId, queue);
   }
   queue.push(line);
-  // Throttle backstop: a source flooding output loses its OLDEST lines so
-  // the target still receives the most recent state.
   while (queue.length > MAX_QUEUED_LINES) queue.shift();
-  scheduleFlush(pipeId);
+  scheduleFlush(partition, pipeId);
 }
 
-/**
- * A raw line may hide `\r`-based redraws (progress bars). stripAnsi turns
- * lone `\r` into `\n`; the last non-empty segment is what the terminal would
- * actually show for that line.
- */
 function renderedLine(rawLine: string): string {
   const segments = stripAnsi(rawLine).split('\n');
   for (let index = segments.length - 1; index >= 0; index -= 1) {
@@ -175,11 +304,17 @@ function renderedLine(rawLine: string): string {
   return '';
 }
 
-function handleStreamChunk(pipe: Pipe, sourceSessionId: string, data: string): void {
-  let state = streamStates.get(pipe.id);
+function handleStreamChunk(
+  partition: PipePartition,
+  scopedPipe: ScopedPipe,
+  sourceSessionId: string,
+  data: string,
+): void {
+  const pipeId = scopedPipe.pipe.id;
+  let state = partition.streamStates.get(pipeId);
   if (!state || state.sessionId !== sourceSessionId) {
     state = { sessionId: sourceSessionId, rest: '' };
-    streamStates.set(pipe.id, state);
+    partition.streamStates.set(pipeId, state);
   }
   const { lines, rest } = extractCompleteLines(state.rest, data);
   state.rest = rest;
@@ -187,210 +322,285 @@ function handleStreamChunk(pipe: Pipe, sourceSessionId: string, data: string): v
   for (const rawLine of lines) {
     const line = renderedLine(rawLine);
     if (line.length === 0) continue;
-    // Never re-forward our own injections: echoes of what a pipe just typed
-    // into this session, or a marker-tagged onIdle delivery.
     if (line.includes(PIPE_MARKER)) continue;
-    if (guard.isEcho(sourceSessionId, line)) continue;
-    enqueueLine(pipe.id, line);
+    if (partition.guard.isEcho(sourceSessionId, line)) continue;
+    enqueueLine(partition, pipeId, line);
   }
 }
 
-function deliverIdle(pipe: Pipe, sourceSessionId: string): void {
-  const now = Date.now();
-  const lastAt = lastIdleDeliveryAt.get(pipe.id) ?? 0;
-  if (now - lastAt < IDLE_THROTTLE_MS) {
-    console.log(
-      `[pipe ${pipe.id}] idle delivery throttled (${now - lastAt}ms since last)`,
-    );
-    return;
-  }
+function scheduleSubmit(
+  partition: PipePartition,
+  scopedPipe: ScopedPipe,
+  targetSessionId: string,
+): void {
+  const pipeId = scopedPipe.pipe.id;
+  const previous = partition.submitTimers.get(pipeId);
+  if (previous) clearTimeout(previous.timer);
+  const timer = setTimeout(() => {
+    partition.submitTimers.delete(pipeId);
+    const livePipe = partition.pipes.get(pipeId);
+    const target = livePipe
+      ? resolveEndpoint(partition, livePipe.target)
+      : null;
+    if (target?.sessionId === targetSessionId) {
+      orchWriteSession(targetSessionId, '\r');
+    }
+  }, SUBMIT_ENTER_DELAY_MS);
+  partition.submitTimers.set(pipeId, { sessionId: targetSessionId, timer });
+}
 
-  const targetSessionId = resolveTargetSession(pipe, sourceSessionId);
+function deliverIdle(
+  partition: PipePartition,
+  scopedPipe: ScopedPipe,
+  sourceSessionId: string,
+): void {
+  const pipe = scopedPipe.pipe;
+  const now = Date.now();
+  const lastAt = partition.lastIdleDeliveryAt.get(pipe.id) ?? 0;
+  if (now - lastAt < IDLE_THROTTLE_MS) return;
+  const targetSessionId = resolveTargetSession(
+    partition,
+    scopedPipe,
+    sourceSessionId,
+  );
   if (!targetSessionId) return;
 
   const tail = readSessionOutput(sourceSessionId, IDLE_TAIL_LINES);
-  // Drop echoes of previous pipe deliveries still sitting in the buffer.
   const text = sanitizeForInjection(
     tail
       .split('\n')
       .filter((line) => !line.includes(PIPE_MARKER))
       .join('\n'),
   ).slice(0, MAX_IDLE_DELIVERY_CHARS);
-  if (text.length === 0) {
-    console.log(`[pipe ${pipe.id}] idle delivery skipped: sanitized tail is empty`);
-    return;
-  }
-  if (text === lastIdleDeliveryText.get(pipe.id)) {
-    console.log(`[pipe ${pipe.id}] idle delivery skipped: same text as last`);
+  if (
+    text.length === 0 ||
+    text === partition.lastIdleDeliveryText.get(pipe.id)
+  ) {
     return;
   }
 
-  const message = `${PIPE_MARKER} from=${sanitizeForInjection(pipe.sourcePaneId).slice(0, 128)} ${text}`;
-  console.log(
-    `[pipe ${pipe.id}] delivering ${message.length} chars to target ${pipe.targetPaneId} (session ${targetSessionId})`,
+  const message =
+    `${PIPE_MARKER} from=${sanitizeForInjection(pipe.sourcePaneId).slice(0, 128)} ` +
+    text;
+  partition.guard.markInjected(targetSessionId, message);
+  if (!orchWriteSession(targetSessionId, message)) return;
+  partition.deliveryCounts.set(
+    pipe.id,
+    (partition.deliveryCounts.get(pipe.id) ?? 0) + 1,
   );
-  guard.markInjected(targetSessionId, message);
-  if (!orchWriteSession(targetSessionId, message)) {
-    console.warn(`[pipe ${pipe.id}] orchWriteSession failed for ${targetSessionId}`);
-    return;
-  }
-  deliveryCounts.set(pipe.id, (deliveryCounts.get(pipe.id) ?? 0) + 1);
-  lastDeliveryAt.set(pipe.id, now);
-  hub.emit();
-  // Enter arrives as a separate write so TUIs treat it as a submit keypress.
-  setTimeout(() => {
-    const ok = orchWriteSession(targetSessionId, '\r');
-    if (!ok) console.warn(`[pipe ${pipe.id}] submit Enter failed for ${targetSessionId}`);
-  }, SUBMIT_ENTER_DELAY_MS);
-
-  lastIdleDeliveryAt.set(pipe.id, now);
-  lastIdleDeliveryText.set(pipe.id, text);
+  partition.lastDeliveryAt.set(pipe.id, now);
+  partition.lastIdleDeliveryAt.set(pipe.id, now);
+  partition.lastIdleDeliveryText.set(pipe.id, text);
+  emitChange(partition);
+  scheduleSubmit(partition, scopedPipe, targetSessionId);
 }
 
-/**
- * Try to deliver an onIdle pipe now. Used both when the source transitions to
- * idle and when a new pipe is created while its source is already idle.
- */
-function tryDeliverIdle(pipe: Pipe, reason: string): void {
-  if (pipe.mode !== 'onIdle') return;
-  const source = findPane(pipe.sourcePaneId);
-  if (!source || !source.sessionId) {
-    console.log(
-      `[pipe ${pipe.id}] cannot deliver (${reason}): source ${pipe.sourcePaneId} has no session`,
-    );
-    return;
-  }
-  const liveState = getSessionState(source.sessionId);
-  if (liveState !== 'idle') {
-    console.log(
-      `[pipe ${pipe.id}] cannot deliver (${reason}): source session ${source.sessionId} is ${liveState}`,
-    );
-    return;
-  }
-  console.log(
-    `[pipe ${pipe.id}] attempting idle delivery (${reason}) from ${pipe.sourcePaneId} → ${pipe.targetPaneId}`,
-  );
-  idleDirty.delete(pipe.id);
-  deliverIdle(pipe, source.sessionId);
+function tryDeliverIdle(
+  partition: PipePartition,
+  scopedPipe: ScopedPipe,
+): void {
+  if (scopedPipe.pipe.mode !== 'onIdle') return;
+  const source = resolveEndpoint(partition, scopedPipe.source);
+  if (!source?.sessionId || getSessionState(source.sessionId) !== 'idle') return;
+  partition.idleDirty.delete(scopedPipe.pipe.id);
+  deliverIdle(partition, scopedPipe, source.sessionId);
 }
 
-let pipesVersion = 0;
-let sourceIndex: {
-  panesV: number;
-  pipesV: number;
-  map: Map<string, Pipe[]>;
-} | null = null;
-
-/**
- * Índice sessionId→pipes, reconstruído só quando panes ou pipes mudam. O tap
- * de dados varria pipes×panes (com findPane linear) em TODO chunk de TODO
- * PTY — 87ms/10k chunks a 64 panes, no main process.
- */
-function pipesBySource(): Map<string, Pipe[]> {
-  const panesV = getPanesVersion();
-  if (sourceIndex && sourceIndex.panesV === panesV && sourceIndex.pipesV === pipesVersion) {
-    return sourceIndex.map;
+function pipesBySource(partition: PipePartition): Map<string, ScopedPipe[]> {
+  if (!currentPartitionScope(partition)) return new Map();
+  const panesVersion = getPanesVersion();
+  if (
+    partition.sourceIndex?.panesVersion === panesVersion &&
+    partition.sourceIndex.pipesVersion === partition.pipesVersion
+  ) {
+    return partition.sourceIndex.map;
   }
-  const map = new Map<string, Pipe[]>();
-  for (const pipe of pipes.values()) {
-    const source = findPane(pipe.sourcePaneId);
+  const map = new Map<string, ScopedPipe[]>();
+  for (const scopedPipe of partition.pipes.values()) {
+    const source = resolveEndpoint(partition, scopedPipe.source);
     if (!source?.sessionId) continue;
-    const list = map.get(source.sessionId) ?? [];
-    list.push(pipe);
-    map.set(source.sessionId, list);
+    const attached = map.get(source.sessionId) ?? [];
+    attached.push(scopedPipe);
+    map.set(source.sessionId, attached);
   }
-  sourceIndex = { panesV, pipesV: pipesVersion, map };
+  partition.sourceIndex = {
+    panesVersion,
+    pipesVersion: partition.pipesVersion,
+    map,
+  };
   return map;
 }
 
-/** Install the PTY taps. Idempotent — safe to call from multiple boot paths. */
+function partitionForSession(sessionId: string): PipePartition | null {
+  const authority = getOwnedPaneAuthzInfoBySession(sessionId);
+  return authority?.scope
+    ? partitionFor(authority.owner, authority.scope, false)
+    : null;
+}
+
 export function initPanePipes(): void {
   if (tapsInstalled) return;
   tapsInstalled = true;
 
   tapSessionData((sessionId, data) => {
-    if (pipes.size === 0) return;
-    const attached = pipesBySource().get(sessionId);
+    const partition = partitionForSession(sessionId);
+    if (!partition) return;
+    const attached = pipesBySource(partition).get(sessionId);
     if (!attached) return;
-    for (const pipe of attached) {
-      if (pipe.mode === 'stream') handleStreamChunk(pipe, sessionId, data);
-      else idleDirty.add(pipe.id);
+    for (const scopedPipe of attached) {
+      if (scopedPipe.pipe.mode === 'stream') {
+        handleStreamChunk(partition, scopedPipe, sessionId, data);
+      } else {
+        partition.idleDirty.add(scopedPipe.pipe.id);
+      }
     }
   });
 
   tapSessionState((sessionId, state) => {
-    if (state !== 'idle' || pipes.size === 0) return;
-    for (const pipe of pipes.values()) {
-      if (pipe.mode !== 'onIdle' || !idleDirty.has(pipe.id)) continue;
-      const source = findPane(pipe.sourcePaneId);
-      if (!source || source.sessionId !== sessionId) continue;
-      tryDeliverIdle(pipe, 'source became idle');
+    if (state !== 'idle') return;
+    const partition = partitionForSession(sessionId);
+    if (!partition) return;
+    for (const scopedPipe of pipesBySource(partition).get(sessionId) ?? []) {
+      if (
+        scopedPipe.pipe.mode === 'onIdle' &&
+        partition.idleDirty.has(scopedPipe.pipe.id)
+      ) {
+        tryDeliverIdle(partition, scopedPipe);
+      }
     }
   });
 
   tapSessionExit((sessionId) => {
-    guard.clearSession(sessionId);
-    for (const [pipeId, state] of streamStates) {
-      if (state.sessionId === sessionId) streamStates.delete(pipeId);
+    for (const byScope of partitionsByOwner.values()) {
+      for (const partition of byScope.values()) {
+        partition.guard.clearSession(sessionId);
+        for (const [pipeId, scopedPipe] of partition.pipes) {
+          const source = getPaneAuthzInfoOwnedByPane(
+            partition.owner,
+            scopedPipe.source.paneId,
+          );
+          const streamState = partition.streamStates.get(pipeId);
+          if (
+            source?.sessionId === sessionId ||
+            streamState?.sessionId === sessionId
+          ) {
+            clearTransientPipeState(partition, pipeId);
+          }
+        }
+        for (const [pipeId, submit] of [...partition.submitTimers]) {
+          if (submit.sessionId !== sessionId) continue;
+          clearTimeout(submit.timer);
+          partition.submitTimers.delete(pipeId);
+        }
+      }
     }
   });
 }
 
-export function listPipes(): Pipe[] {
-  return [...pipes.values()].map((pipe) => ({
+export function listPipes(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+): Pipe[] {
+  const partition = partitionFor(owner, scope, false);
+  if (!partition || !currentPartitionScope(partition)) return [];
+  return [...partition.pipes.values()].map(({ pipe }) => ({
     ...pipe,
-    deliveryCount: deliveryCounts.get(pipe.id) ?? 0,
-    lastDeliveredAt: lastDeliveryAt.get(pipe.id),
+    deliveryCount: partition.deliveryCounts.get(pipe.id) ?? 0,
+    lastDeliveredAt: partition.lastDeliveryAt.get(pipe.id),
   }));
 }
 
-/**
- * Create a pipe. Returns null when the pair is invalid (self-pipe / empty
- * ids / capacity). Adding an already-existing (source, target, mode) triple
- * returns the existing pipe instead of duplicating the forwarding.
- */
 export function addPipe(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
   sourcePaneId: string,
   targetPaneId: string,
   mode: PipeMode,
 ): Pipe | null {
   if (!canForward(sourcePaneId, targetPaneId)) return null;
-  for (const existing of pipes.values()) {
-    if (
-      existing.sourcePaneId === sourcePaneId &&
-      existing.targetPaneId === targetPaneId &&
-      existing.mode === mode
-    ) {
-      console.log(`[pipe ${existing.id}] reusing existing ${mode} pipe ${sourcePaneId} → ${targetPaneId}`);
-      return existing;
-    }
-  }
-  if (pipes.size >= MAX_PIPES) {
-    console.warn(`[pipes] addPipe rejected: max ${MAX_PIPES} pipes reached`);
+  const currentScope = getRendererWorkspaceScope(owner);
+  if (!currentScope || !sameProjectScope(currentScope, scope)) return null;
+  const sourcePane = getPaneAuthzInfoOwnedByPane(owner, sourcePaneId);
+  const targetPane = getPaneAuthzInfoOwnedByPane(owner, targetPaneId);
+  const source = sourcePane?.scope ? endpointIdentity(sourcePane) : null;
+  const target = targetPane?.scope ? endpointIdentity(targetPane) : null;
+  if (
+    !sourcePane?.scope ||
+    !targetPane?.scope ||
+    !sameProjectScope(sourcePane.scope, scope) ||
+    !sameProjectScope(targetPane.scope, scope) ||
+    !source ||
+    !target ||
+    sourcePane.sessionId === targetPane.sessionId
+  ) {
     return null;
   }
-  const pipe: Pipe = { id: makeId('pipe'), sourcePaneId, targetPaneId, mode };
-  pipes.set(pipe.id, pipe);
-  pipesVersion += 1;
-  hub.emit();
-  console.log(`[pipe ${pipe.id}] created ${mode} pipe ${sourcePaneId} → ${targetPaneId}`);
-  // If the source is already idle, deliver immediately instead of waiting for
-  // the next output cycle (which may never come if the agent is done).
+
+  const partition = partitionFor(owner, scope, true)!;
+  for (const existing of partition.pipes.values()) {
+    if (
+      existing.pipe.sourcePaneId === sourcePaneId &&
+      existing.pipe.targetPaneId === targetPaneId &&
+      existing.pipe.mode === mode
+    ) {
+      return existing.pipe;
+    }
+  }
+  if (partition.pipes.size >= MAX_PIPES_PER_PARTITION) return null;
+  const pipe: Pipe = {
+    id: makeId('pipe'),
+    sourcePaneId,
+    targetPaneId,
+    mode,
+  };
+  const scopedPipe: ScopedPipe = { pipe, source, target };
+  partition.pipes.set(pipe.id, scopedPipe);
+  partition.pipesVersion += 1;
+  partition.sourceIndex = null;
+  emitChange(partition);
   if (mode === 'onIdle') {
-    idleDirty.add(pipe.id);
-    tryDeliverIdle(pipe, 'pipe created while source idle');
+    partition.idleDirty.add(pipe.id);
+    tryDeliverIdle(partition, scopedPipe);
   }
   return pipe;
 }
 
-export function removePipe(id: string): boolean {
-  if (!pipes.delete(id)) return false;
-  pipesVersion += 1;
-  clearPipeState(id);
-  hub.emit();
+export function removePipe(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+  id: string,
+): boolean {
+  const partition = partitionFor(owner, scope, false);
+  if (!partition || !currentPartitionScope(partition)) return false;
+  if (!partition.pipes.delete(id)) return false;
+  partition.pipesVersion += 1;
+  partition.sourceIndex = null;
+  clearPipeState(partition, id);
+  emitChange(partition);
   return true;
 }
 
-export function onPipesChange(cb: () => void): () => void {
-  return hub.onChange(cb);
+export function clearPipePartitions(
+  owner: WebContents,
+  scope?: ProjectExecutionScope,
+): void {
+  const byScope = partitionsByOwner.get(owner);
+  if (!byScope) return;
+  const targets = [...byScope.entries()].filter(([, partition]) =>
+    scope ? sameProjectScope(partition.scope, scope) : true,
+  );
+  for (const [key, partition] of targets) {
+    for (const pipeId of partition.pipes.keys()) {
+      clearPipeState(partition, pipeId);
+    }
+    partition.pipes.clear();
+    byScope.delete(key);
+    emitChange(partition);
+  }
+  if (byScope.size === 0) partitionsByOwner.delete(owner);
+}
+
+export function onPipesChange(listener: PipesChangeListener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }

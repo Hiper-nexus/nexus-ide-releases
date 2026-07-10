@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('tesseract.js', () => ({
   createWorker: vi.fn(),
 }));
+vi.mock('./ocr-language-data', () => ({
+  ensureOcrLanguageData: vi.fn(async () => '/tmp/nexus-ocr-languages'),
+}));
 
 import { createWorker } from 'tesseract.js';
 import { clearOcrCache, ocrImage } from './ocr';
@@ -38,7 +41,16 @@ describe('ocrImage', () => {
 
     expect(result.text).toBe(KNOWN_TEXT);
     expect(result.confidence).toBe(85);
-    expect(createWorker).toHaveBeenCalledWith('eng', 1, expect.any(Object));
+    expect(createWorker).toHaveBeenCalledWith(
+      'eng',
+      1,
+      expect.objectContaining({
+        langPath: '/tmp/nexus-ocr-languages',
+        cachePath: '/tmp/nexus-ocr-languages',
+        cacheMethod: 'none',
+        gzip: true,
+      }),
+    );
     expect(mockWorker.recognize).toHaveBeenCalledWith(KNOWN_TEXT_PNG);
     expect(mockWorker.terminate).toHaveBeenCalled();
   });
@@ -83,6 +95,13 @@ describe('ocrImage', () => {
   it('rejects invalid PNG buffers before creating a worker', async () => {
     await expect(ocrImage(Buffer.from('not-a-png'))).rejects.toThrow(
       'valid PNG',
+    );
+    expect(createWorker).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-vendored languages without attempting a network fallback', async () => {
+    await expect(ocrImage(KNOWN_TEXT_PNG, 'fra')).rejects.toThrow(
+      'Unsupported OCR language',
     );
     expect(createWorker).not.toHaveBeenCalled();
   });

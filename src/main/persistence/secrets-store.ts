@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import Database from 'better-sqlite3';
 import { safeStorage } from 'electron';
 import { shouldAccessSecureStorage } from '../smoke-core';
 
@@ -11,19 +12,34 @@ import { shouldAccessSecureStorage } from '../smoke-core';
  *
  * This supersedes an earlier home-rolled crypto scheme (which broke twice
  * and leaked a JWT in plaintext — see docs/ARCHITECTURE.md §E.6). If
- * safeStorage is unavailable we refuse to store rather than degrade to
- * plaintext; the value simply lives only for the process lifetime.
+ * safeStorage is unavailable (or Linux selected the weak `basic_text`
+ * backend), we refuse the operation rather than degrade to plaintext.
  */
 
 const SECRETS_FILE = path.join(os.homedir(), '.nexus', 'secrets.enc');
+const SECURE_STORAGE_ERROR =
+  'OS secure storage is unavailable; secret was not persisted.';
+const SECRET_PERSISTENCE_ERROR =
+  'Encrypted secret could not be published durably.';
+const SECRETS_LOCK_DATABASE = `${SECRETS_FILE}.lock.sqlite`;
+const LOCK_ACQUIRE_TIMEOUT_MS = 500;
 
 // adapterId → decrypted key (in-memory cache; the disk copy is encrypted).
 let cache: Map<string, string> | null = null;
+let temporaryFileSequence = 0;
+
+export interface SecretWriteResult {
+  ok: boolean;
+  error?: string;
+}
 
 export function isSecureStorageAvailable(): boolean {
   if (!shouldAccessSecureStorage(process.argv)) return false;
   try {
-    return safeStorage.isEncryptionAvailable();
+    return (
+      safeStorage.isEncryptionAvailable() &&
+      safeStorage.getSelectedStorageBackend() !== 'basic_text'
+    );
   } catch {
     return false;
   }
@@ -58,11 +74,158 @@ function ensureCache(): Map<string, string> {
 function readRawFromDisk(): Record<string, string> {
   try {
     const parsed = JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf8')) as unknown;
-    return parsed && typeof parsed === 'object'
-      ? (parsed as Record<string, string>)
-      : {};
-  } catch {
-    return {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('invalid encrypted vault');
+    }
+    const entries = Object.entries(parsed);
+    if (!entries.every(([, value]) => typeof value === 'string')) {
+      throw new Error('invalid encrypted vault entry');
+    }
+    return Object.fromEntries(entries) as Record<string, string>;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw error;
+  }
+}
+
+function syncDirectory(directory: string): void {
+  if (process.platform === 'win32') return;
+  const directoryFd = fs.openSync(directory, 'r');
+  try {
+    fs.fsyncSync(directoryFd);
+  } finally {
+    fs.closeSync(directoryFd);
+  }
+}
+
+function syncFile(file: string): void {
+  const fd = fs.openSync(file, 'r');
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function removeFile(file: string): void {
+  try {
+    fs.unlinkSync(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
+function acquireVaultLock(): Database.Database {
+  const directory = path.dirname(SECRETS_FILE);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  fs.chmodSync(directory, 0o700);
+  let lock: Database.Database | null = null;
+  try {
+    lock = new Database(SECRETS_LOCK_DATABASE, {
+      timeout: LOCK_ACQUIRE_TIMEOUT_MS,
+    });
+    fs.chmodSync(SECRETS_LOCK_DATABASE, 0o600);
+    lock.pragma(`busy_timeout = ${LOCK_ACQUIRE_TIMEOUT_MS}`);
+    lock.exec('BEGIN EXCLUSIVE');
+    return lock;
+  } catch (error) {
+    lock?.close();
+    throw error;
+  }
+}
+
+function withVaultLock<T>(operation: () => T): T {
+  const lock = acquireVaultLock();
+  let isCommitted = false;
+  try {
+    const result = operation();
+    lock.exec('COMMIT');
+    isCommitted = true;
+    return result;
+  } catch (error) {
+    try {
+      if (lock.inTransaction) lock.exec('ROLLBACK');
+    } catch {
+      // Preserve the authoritative vault operation failure.
+    }
+    throw error;
+  } finally {
+    try {
+      lock.close();
+    } catch (error) {
+      if (!isCommitted) throw error;
+      // COMMIT already released the interprocess lock durably.
+    }
+  }
+}
+
+function restoreVaultAfterPublishFailure(
+  backupFile: string,
+  hadPreviousVault: boolean,
+  directory: string,
+): void {
+  if (hadPreviousVault) {
+    fs.renameSync(backupFile, SECRETS_FILE);
+  } else {
+    removeFile(SECRETS_FILE);
+  }
+  syncDirectory(directory);
+}
+
+function publishEncryptedVault(raw: Readonly<Record<string, string>>): void {
+  const directory = path.dirname(SECRETS_FILE);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  fs.chmodSync(directory, 0o700);
+  const sequence = ++temporaryFileSequence;
+  const temporaryFile = `${SECRETS_FILE}.tmp-${process.pid}-${sequence}`;
+  const backupFile = `${SECRETS_FILE}.bak-${process.pid}-${sequence}`;
+  const hadPreviousVault = fs.existsSync(SECRETS_FILE);
+  let fileFd: number | null = null;
+  let published = false;
+  try {
+    fileFd = fs.openSync(temporaryFile, 'wx', 0o600);
+    fs.writeFileSync(fileFd, JSON.stringify(raw), 'utf8');
+    fs.fchmodSync(fileFd, 0o600);
+    fs.fsyncSync(fileFd);
+    fs.closeSync(fileFd);
+    fileFd = null;
+    if (hadPreviousVault) {
+      fs.copyFileSync(SECRETS_FILE, backupFile, fs.constants.COPYFILE_EXCL);
+      fs.chmodSync(backupFile, 0o600);
+      syncFile(backupFile);
+    }
+    fs.renameSync(temporaryFile, SECRETS_FILE);
+    published = true;
+    try {
+      syncDirectory(directory);
+    } catch (error) {
+      restoreVaultAfterPublishFailure(
+        backupFile,
+        hadPreviousVault,
+        directory,
+      );
+      published = false;
+      throw error;
+    }
+    // The target rename is durable. Backup deletion is cleanup only; an old
+    // encrypted backup is never read and is removed again on the next write.
+    removeFile(backupFile);
+    try {
+      syncDirectory(directory);
+    } catch {
+      // The published target was already synced above.
+    }
+  } catch (error) {
+    if (fileFd !== null) {
+      try {
+        fs.closeSync(fileFd);
+      } catch {
+        // The original persistence failure remains authoritative.
+      }
+    }
+    removeFile(temporaryFile);
+    if (!published) removeFile(backupFile);
+    throw error;
   }
 }
 
@@ -75,26 +238,23 @@ function readRawFromDisk(): Record<string, string> {
  * newer one saved — that bug silently ate stored API keys. Merging at the
  * raw level also preserves entries this instance cannot decrypt.
  */
-function persistDelta(key: string, plainValue: string | null): void {
-  if (!isSecureStorageAvailable()) return;
-  const raw = readRawFromDisk();
-  if (plainValue === null) {
-    delete raw[key];
-  } else {
-    try {
-      raw[key] = safeStorage.encryptString(plainValue).toString('base64');
-    } catch (err) {
-      console.warn('[secrets] failed to encrypt value:', err);
-      return;
-    }
+function persistDelta(key: string, plainValue: string | null): SecretWriteResult {
+  if (!isSecureStorageAvailable()) {
+    return { ok: false, error: SECURE_STORAGE_ERROR };
   }
   try {
-    fs.mkdirSync(path.dirname(SECRETS_FILE), { recursive: true });
-    const tmp = `${SECRETS_FILE}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(raw), { mode: 0o600 });
-    fs.renameSync(tmp, SECRETS_FILE);
-  } catch (err) {
-    console.warn('[secrets] failed to persist encrypted secrets:', err);
+    withVaultLock(() => {
+      const raw = readRawFromDisk();
+      if (plainValue === null) {
+        delete raw[key];
+      } else {
+        raw[key] = safeStorage.encryptString(plainValue).toString('base64');
+      }
+      publishEncryptedVault(raw);
+    });
+    return { ok: true };
+  } catch {
+    return { ok: false, error: SECRET_PERSISTENCE_ERROR };
   }
 }
 
@@ -110,29 +270,24 @@ export function hasSecret(key: string): boolean {
   return ensureCache().has(key);
 }
 
-export function setSecret(key: string, value: string): { ok: boolean; error?: string } {
+export function setSecret(key: string, value: string): SecretWriteResult {
   const store = ensureCache();
-  if (value === '') {
-    store.delete(key);
-    persistDelta(key, null);
-    return { ok: true };
-  }
+  if (value === '') return deleteSecret(key);
   if (!isSecureStorageAvailable()) {
-    return {
-      ok: false,
-      error:
-        'OS secure storage (Keychain) unavailable — refusing to store in ' +
-        'plaintext. Kept for this session only.',
-    };
+    return { ok: false, error: SECURE_STORAGE_ERROR };
   }
+  const result = persistDelta(key, value);
+  if (!result.ok) return result;
   store.set(key, value);
-  persistDelta(key, value);
   return { ok: true };
 }
 
-export function deleteSecret(key: string): void {
-  ensureCache().delete(key);
-  persistDelta(key, null);
+export function deleteSecret(key: string): SecretWriteResult {
+  const store = ensureCache();
+  const result = persistDelta(key, null);
+  if (!result.ok) return result;
+  store.delete(key);
+  return { ok: true };
 }
 
 export function hasKey(adapterId: string): boolean {
@@ -152,23 +307,15 @@ export function maskedKey(adapterId: string): string | null {
 }
 
 /** Store (or clear, when key === '') a provider's API key. */
-export function setKey(adapterId: string, key: string): { ok: boolean; error?: string } {
+export function setKey(adapterId: string, key: string): SecretWriteResult {
   const store = ensureCache();
-  if (key === '') {
-    store.delete(adapterId);
-    persistDelta(adapterId, null);
-    return { ok: true };
-  }
+  if (key === '') return deleteSecret(adapterId);
   if (!isSecureStorageAvailable()) {
-    return {
-      ok: false,
-      error:
-        'OS secure storage (Keychain) is unavailable — refusing to store the ' +
-        'key in plaintext. It will be kept only for this session.',
-    };
+    return { ok: false, error: SECURE_STORAGE_ERROR };
   }
+  const result = persistDelta(adapterId, key);
+  if (!result.ok) return result;
   store.set(adapterId, key);
-  persistDelta(adapterId, key);
   return { ok: true };
 }
 

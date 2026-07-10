@@ -1,11 +1,11 @@
 import { z } from 'zod';
-
 /**
  * Shared, transport-safe types used across main / preload / renderer.
  * Everything here must be JSON-serializable (it crosses the IPC boundary).
  */
 
 import type { AdapterInfo } from './adapter-types';
+import type { BrowserDesignEvent } from './browser-design';
 import type { OnboardingState, OnboardingPatch } from './onboarding-types';
 import type { UpdateState } from './update-ipc';
 import type {
@@ -32,6 +32,7 @@ import type {
   JarvisLiveToolEvent,
   JarvisLiveToolCancellationEvent,
   JarvisLiveToolResultEvent,
+  JarvisLiveToolTurnCompleteEvent,
   JarvisLiveTranscriptEvent,
   JarvisTranscriptAppendEvent,
   VoiceLogPayload,
@@ -186,13 +187,85 @@ export interface BrowserPaneState {
 }
 
 export interface BrowserScreenshotResult {
+  artifactId: string;
+  projectId: string;
+  checkoutId: string;
   paneId: string;
   path: string;
+  storageKey: string;
+  sha256: string;
   width: number;
   height: number;
   url: string;
   title: string;
   capturedAt: number;
+}
+
+/** Dev server announced by a PTY pane's output (VISUAL-EDIT-001, F1.5). */
+export interface DevServerDetectedPayload {
+  paneId: string | null;
+  sessionId: string;
+  url: string;
+  urls: string[];
+  detectedAt: number;
+}
+
+/** Deterministic write-back status (VISUAL-EDIT-001, F3). */
+export interface DesignWritebackStatusPayload {
+  enabled: boolean;
+  active: boolean;
+  styleMode: 'tailwind' | 'inline';
+  canUndo: boolean;
+  canRedo: boolean;
+  /** Main-verified mission/PREVC authority for direct filesystem effects. */
+  authorityReady: boolean;
+  authorityError?: string;
+}
+
+export interface DesignMissionBindingPayload {
+  browserPaneId: string;
+  paneId: string;
+  missionId: string;
+}
+
+export type DesignWritebackActionPayload =
+  | { kind: 'style'; nexusId: string; styles: Record<string, string> }
+  | { kind: 'text'; nexusId: string; text: string }
+  | { kind: 'move'; nexusId: string; direction: 'up' | 'down' }
+  | {
+      kind: 'reorder';
+      parentNexusId: string;
+      fromIndex: number;
+      toIndex: number;
+    }
+  | { kind: 'delete'; nexusId: string }
+  | { kind: 'duplicate'; nexusId: string };
+
+export interface DesignActionResultPayload {
+  ok: true;
+  file: string;
+  kind: string;
+}
+
+export interface BrowserDesignEventPayload {
+  paneId: string;
+  event: BrowserDesignEvent;
+}
+
+export interface BrowserDesignSendPayload {
+  targetPaneId: string;
+  instruction?: string;
+  dir?: string;
+  styleDiff?: Record<string, { from: string; to: string }>;
+  intent?: 'context' | 'clone';
+}
+
+export interface BrowserDesignSendResult {
+  ok: true;
+  targetPaneId: string;
+  targetSessionId: string;
+  promptChars: number;
+  screenshotPath?: string;
 }
 
 export interface PerfSnapshot {
@@ -485,6 +558,38 @@ export interface NexusApi {
     reload(paneId: string): Promise<BrowserPaneState>;
     stop(paneId: string): Promise<BrowserPaneState>;
     onState(cb: (state: BrowserPaneState) => void): Unsubscribe;
+    setDesignMode(
+      paneId: string,
+      active: boolean,
+    ): Promise<{ paneId: string; active: boolean }>;
+    sendDesignSelection(
+      paneId: string,
+      payload: BrowserDesignSendPayload,
+    ): Promise<BrowserDesignSendResult>;
+    onDesignEvent(cb: (payload: BrowserDesignEventPayload) => void): Unsubscribe;
+    setStylePreview(
+      paneId: string,
+      selector: string,
+      styles: Record<string, string>,
+    ): Promise<{ paneId: string; applied: true; selector: string; properties: number }>;
+    clearStylePreview(
+      paneId: string,
+      selector?: string,
+    ): Promise<{ paneId: string; cleared: number }>;
+  };
+  devServer: {
+    onDetected(cb: (payload: DevServerDetectedPayload) => void): Unsubscribe;
+  };
+  design: {
+    status(binding?: DesignMissionBindingPayload): Promise<DesignWritebackStatusPayload>;
+    start(binding: DesignMissionBindingPayload): Promise<{ ok: true; files: number; elements: number }>;
+    stop(binding: DesignMissionBindingPayload): Promise<{ ok: true }>;
+    apply(
+      binding: DesignMissionBindingPayload,
+      action: DesignWritebackActionPayload,
+    ): Promise<DesignActionResultPayload>;
+    undo(binding: DesignMissionBindingPayload): Promise<DesignActionResultPayload | null>;
+    redo(binding: DesignMissionBindingPayload): Promise<DesignActionResultPayload | null>;
   };
   layout: {
     /** Layouts are keyed per workspace folder. */
@@ -570,6 +675,9 @@ export interface NexusApi {
     onLiveToolCall(cb: (event: JarvisLiveToolEvent) => void): Unsubscribe;
     onLiveToolCancelled(cb: (event: JarvisLiveToolCancellationEvent) => void): Unsubscribe;
     onLiveToolResult(cb: (event: JarvisLiveToolResultEvent) => void): Unsubscribe;
+    onLiveToolTurnComplete(
+      cb: (event: JarvisLiveToolTurnCompleteEvent) => void,
+    ): Unsubscribe;
     onLiveInterrupted(cb: (event: JarvisLiveInterruptEvent) => void): Unsubscribe;
   };
   orch: {
@@ -764,7 +872,6 @@ export interface NexusApi {
   vision: VisionApi;
   platform: NodeJS.Platform;
 }
-
 
 // Portable project identity v2 -------------------------------------------------
 export const PROJECT_IDENTITY_VERSION = 1 as const;

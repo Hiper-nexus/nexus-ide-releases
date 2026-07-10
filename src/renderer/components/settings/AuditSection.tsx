@@ -79,8 +79,8 @@ export function AuditSection() {
         <div>
           <h3 className="settings-detail__title">Auditoria</h3>
           <p className="settings-detail__hint">
-            Leitura read-only do JSONL redigido de Jarvis/MCP. Conteúdo de
-            texto, comandos com segredos e tokens chegam mascarados pelo main.
+            Leitura read-only dos eventos SQLite isolados por projeto e
+            checkout. Textos, comandos com segredos e tokens chegam mascarados.
           </p>
         </div>
         <button className="settings-btn" type="button" onClick={() => void refresh()} disabled={loading}>

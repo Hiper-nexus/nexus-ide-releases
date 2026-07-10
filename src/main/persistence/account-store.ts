@@ -12,12 +12,17 @@ import {
   writeActiveClaudeCredential,
 } from '../adapters/claude-credential';
 import { chooseAccount } from './account-select';
+import {
+  failedPersistenceError,
+  PersistenceUnavailableError,
+  readOnlyPersistenceError,
+} from './persistence-error';
 
 /**
  * Account registry with per-adapter active selection and failover-aware
  * pick-next. Metadata lives in SQLite; secrets (api keys, Claude credential
- * blobs) live in the encrypted vault keyed by account id. In-memory map is the
- * source of truth for the running process.
+ * blobs) live in the encrypted vault keyed by account id. The in-memory maps
+ * are read caches and only change after the SQLite mutation succeeds.
  */
 
 const KEY_PREFIX = 'acctkey:'; // api-key accounts
@@ -26,8 +31,29 @@ const CRED_PREFIX = 'acctcred:'; // subscription credential blobs
 const accounts = new Map<string, Account>();
 const activeByAdapter = new Map<string, string>();
 let db: Db | null = null;
+let readOnly = true;
 let counter = 0;
 const listeners = new Set<() => void>();
+
+function replaceMap<K, V>(target: Map<K, V>, next: ReadonlyMap<K, V>): void {
+  target.clear();
+  for (const [key, value] of next) target.set(key, value);
+}
+
+function requireWritableDb(): Db {
+  if (!db || readOnly) throw readOnlyPersistenceError('account');
+  return db;
+}
+
+function failPersistence(operation: string, error: unknown): never {
+  readOnly = true;
+  db = null;
+  throw failedPersistenceError('account', operation, error);
+}
+
+export function isAccountStoreReadOnly(): boolean {
+  return readOnly;
+}
 
 function makeId(): string {
   return `acct-${Date.now().toString(36)}-${(++counter).toString(36)}`;
@@ -62,13 +88,14 @@ interface Row {
 
 export function initAccountStore(database: Db | null): void {
   db = database;
-  accounts.clear();
-  activeByAdapter.clear();
-  activeHydrated = false;
-  if (!db) return;
+  readOnly = true;
+  if (!database) return;
+
+  const hydratedAccounts = new Map<string, Account>();
+  const hydratedActive = new Map<string, string>();
   try {
-    for (const row of db.prepare('SELECT * FROM accounts').all() as Row[]) {
-      accounts.set(row.id, {
+    for (const row of database.prepare('SELECT * FROM accounts').all() as Row[]) {
+      const account: Account = {
         id: row.id,
         adapterId: row.adapter_id,
         label: row.label,
@@ -78,66 +105,73 @@ export function initAccountStore(database: Db | null): void {
         cooldownUntil: row.cooldown_until ?? undefined,
         lastError: row.last_error ?? undefined,
         createdAt: row.created_at,
-      });
-      (accounts.get(row.id) as Account & { _active?: boolean })._active =
-        row.active === 1;
+      };
+      hydratedAccounts.set(row.id, account);
+      if (row.active === 1) hydratedActive.set(account.adapterId, account.id);
     }
-  } catch (err) {
-    console.warn('[accounts] failed to hydrate:', err);
+  } catch (error) {
+    console.warn('[accounts] failed to hydrate; using read-only cache:', error);
+    db = null;
+    return;
   }
+
+  replaceMap(accounts, hydratedAccounts);
+  replaceMap(activeByAdapter, hydratedActive);
+  readOnly = false;
 }
 
-function persist(account: Account, active: boolean): void {
-  if (!db) return;
+function writeAccount(database: Db, account: Account, active: boolean): void {
+  database.prepare(
+    `INSERT OR REPLACE INTO accounts
+       (id, adapter_id, label, mode, upstream, email, cooldown_until,
+        last_error, active, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    account.id,
+    account.adapterId,
+    account.label,
+    account.mode,
+    account.upstream,
+    account.email ?? null,
+    account.cooldownUntil ?? null,
+    account.lastError ?? null,
+    active ? 1 : 0,
+    account.createdAt,
+  );
+}
+
+function persistSnapshot(
+  nextAccounts: ReadonlyMap<string, Account>,
+  nextActive: ReadonlyMap<string, string>,
+  operation: string,
+): void {
+  const database = requireWritableDb();
   try {
-    db.prepare(
-      `INSERT OR REPLACE INTO accounts
-         (id, adapter_id, label, mode, upstream, email, cooldown_until,
-          last_error, active, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      account.id,
-      account.adapterId,
-      account.label,
-      account.mode,
-      account.upstream,
-      account.email ?? null,
-      account.cooldownUntil ?? null,
-      account.lastError ?? null,
-      active ? 1 : 0,
-      account.createdAt,
-    );
-  } catch (err) {
-    console.warn('[accounts] failed to persist:', err);
-  }
-}
-
-function persistAll(): void {
-  for (const account of accounts.values()) {
-    persist(account, activeByAdapter.get(account.adapterId) === account.id);
-  }
-}
-
-// Rebuild activeByAdapter from the hydrated _active flags on first use.
-let activeHydrated = false;
-function ensureActiveHydrated(): void {
-  if (activeHydrated) return;
-  activeHydrated = true;
-  for (const account of accounts.values()) {
-    if ((account as Account & { _active?: boolean })._active) {
-      activeByAdapter.set(account.adapterId, account.id);
+    database.exec('BEGIN IMMEDIATE');
+    for (const account of nextAccounts.values()) {
+      writeAccount(
+        database,
+        account,
+        nextActive.get(account.adapterId) === account.id,
+      );
     }
+    database.exec('COMMIT');
+  } catch (error) {
+    try {
+      database.exec('ROLLBACK');
+    } catch {
+      // The original persistence failure remains authoritative.
+    }
+    failPersistence(operation, error);
   }
 }
 
 export function listAccounts(adapterId?: string): Account[] {
-  ensureActiveHydrated();
   const all = [...accounts.values()].sort((a, b) => a.createdAt - b.createdAt);
   return adapterId ? all.filter((a) => a.adapterId === adapterId) : all;
 }
 
 export function getActiveAccount(adapterId: string): Account | null {
-  ensureActiveHydrated();
   const id = activeByAdapter.get(adapterId);
   if (id) return accounts.get(id) ?? null;
   // No explicit active → the first non-cooldown account, if any.
@@ -268,7 +302,6 @@ export function pickAvailable(
   excludeId: string | null,
   now = Date.now(),
 ): Account | null {
-  ensureActiveHydrated();
   return chooseAccount(
     listAccounts(adapterId),
     activeByAdapter.get(adapterId) ?? null,
@@ -287,6 +320,7 @@ export interface AddAccountInput {
 
 /** Add an api-key account (GLM/z.ai, Fugu, native-key, …). */
 export function addAccount(input: AddAccountInput): Account {
+  requireWritableDb();
   const account: Account = {
     id: makeId(),
     adapterId: input.adapterId,
@@ -295,14 +329,37 @@ export function addAccount(input: AddAccountInput): Account {
     upstream: input.upstream ?? 'anthropic',
     createdAt: Date.now(),
   };
-  accounts.set(account.id, account);
+  const nextAccounts = new Map(accounts);
+  const nextActive = new Map(activeByAdapter);
+  nextAccounts.set(account.id, account);
+  nextActive.set(account.adapterId, account.id);
+
+  let secretKey: string | null = null;
   if (input.mode === 'api-key' && input.key) {
-    setSecret(KEY_PREFIX + account.id, input.key);
+    secretKey = KEY_PREFIX + account.id;
+    const result = setSecret(secretKey, input.key);
+    if (!result.ok) {
+      throw new PersistenceUnavailableError(
+        result.error ?? 'failed to persist account credential',
+      );
+    }
   }
-  // A newly saved account is the user's immediate intent; make it the active
-  // spawn source and persist every other account as inactive for this adapter.
-  activeByAdapter.set(account.adapterId, account.id);
-  persistAll();
+  try {
+    persistSnapshot(nextAccounts, nextActive, 'add');
+  } catch (error) {
+    if (secretKey) {
+      const rollback = deleteSecret(secretKey);
+      if (!rollback.ok) {
+        throw new PersistenceUnavailableError(
+          'account metadata failed and credential rollback was not durable',
+        );
+      }
+    }
+    throw error;
+  }
+
+  replaceMap(accounts, nextAccounts);
+  replaceMap(activeByAdapter, nextActive);
   emit();
   return account;
 }
@@ -315,6 +372,7 @@ export function addAccount(input: AddAccountInput): Account {
 export function addActiveClaudeAccount(label: string): Account | null {
   const blob = readActiveClaudeCredential();
   if (!blob) return null;
+  requireWritableDb();
   const account: Account = {
     id: makeId(),
     adapterId: 'claude',
@@ -324,10 +382,32 @@ export function addActiveClaudeAccount(label: string): Account | null {
     email: activeClaudeEmail() ?? undefined,
     createdAt: Date.now(),
   };
-  accounts.set(account.id, account);
-  setSecret(CRED_PREFIX + account.id, blob);
-  activeByAdapter.set('claude', account.id);
-  persistAll();
+  const nextAccounts = new Map(accounts);
+  const nextActive = new Map(activeByAdapter);
+  nextAccounts.set(account.id, account);
+  nextActive.set('claude', account.id);
+
+  const secretKey = CRED_PREFIX + account.id;
+  const result = setSecret(secretKey, blob);
+  if (!result.ok) {
+    throw new PersistenceUnavailableError(
+      result.error ?? 'failed to persist account credential',
+    );
+  }
+  try {
+    persistSnapshot(nextAccounts, nextActive, 'add subscription');
+  } catch (error) {
+    const rollback = deleteSecret(secretKey);
+    if (!rollback.ok) {
+      throw new PersistenceUnavailableError(
+        'account metadata failed and credential rollback was not durable',
+      );
+    }
+    throw error;
+  }
+
+  replaceMap(accounts, nextAccounts);
+  replaceMap(activeByAdapter, nextActive);
   emit();
   return account;
 }
@@ -335,24 +415,45 @@ export function addActiveClaudeAccount(label: string): Account | null {
 export function renameAccount(id: string, label: string): void {
   const account = accounts.get(id);
   if (!account) return;
-  accounts.set(id, { ...account, label });
-  persistAll();
+  const nextAccounts = new Map(accounts);
+  nextAccounts.set(id, { ...account, label });
+  persistSnapshot(nextAccounts, activeByAdapter, 'rename');
+  replaceMap(accounts, nextAccounts);
   emit();
 }
 
 export function removeAccount(id: string): void {
   const account = accounts.get(id);
   if (!account) return;
-  accounts.delete(id);
-  deleteSecret(KEY_PREFIX + id);
-  deleteSecret(CRED_PREFIX + id);
-  if (activeByAdapter.get(account.adapterId) === id) {
-    activeByAdapter.delete(account.adapterId);
+  const database = requireWritableDb();
+  const secretKey =
+    account.mode === 'subscription' ? CRED_PREFIX + id : KEY_PREFIX + id;
+  const previousSecret = getSecret(secretKey);
+  const secretDeletion = deleteSecret(secretKey);
+  if (!secretDeletion.ok) {
+    throw new PersistenceUnavailableError(
+      secretDeletion.error ?? 'failed to delete account credential durably',
+    );
   }
   try {
-    db?.prepare('DELETE FROM accounts WHERE id = ?').run(id);
-  } catch (err) {
-    console.warn('[accounts] failed to delete row:', err);
+    database.prepare('DELETE FROM accounts WHERE id = ?').run(id);
+  } catch (error) {
+    if (previousSecret !== null) {
+      const restore = setSecret(secretKey, previousSecret);
+      if (!restore.ok) {
+        readOnly = true;
+        db = null;
+        throw new PersistenceUnavailableError(
+          'account deletion failed and credential rollback was not durable',
+        );
+      }
+    }
+    failPersistence('delete', error);
+  }
+
+  accounts.delete(id);
+  if (activeByAdapter.get(account.adapterId) === id) {
+    activeByAdapter.delete(account.adapterId);
   }
   emit();
 }
@@ -360,12 +461,15 @@ export function removeAccount(id: string): void {
 export function activateAccount(id: string): boolean {
   const account = accounts.get(id);
   if (!account) return false;
+  requireWritableDb();
   // Subscription accounts must swap the Claude keychain credential now.
   if (account.mode === 'subscription' && !ensureSubscriptionActive(account)) {
     return false;
   }
-  activeByAdapter.set(account.adapterId, id);
-  persistAll();
+  const nextActive = new Map(activeByAdapter);
+  nextActive.set(account.adapterId, id);
+  persistSnapshot(accounts, nextActive, 'activate');
+  replaceMap(activeByAdapter, nextActive);
   emit();
   return true;
 }
@@ -373,13 +477,14 @@ export function activateAccount(id: string): boolean {
 export function setCooldown(id: string, until: number, reason: string): void {
   const account = accounts.get(id);
   if (!account) return;
-  accounts.set(id, { ...account, cooldownUntil: until, lastError: reason });
-  persistAll();
+  const nextAccounts = new Map(accounts);
+  nextAccounts.set(id, { ...account, cooldownUntil: until, lastError: reason });
+  persistSnapshot(nextAccounts, activeByAdapter, 'cooldown');
+  replaceMap(accounts, nextAccounts);
   emit();
 }
 
 export function listAccountInfos(): AccountInfo[] {
-  ensureActiveHydrated();
   const now = Date.now();
   return listAccounts().map((a) => ({
     ...a,

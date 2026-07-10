@@ -1,182 +1,275 @@
-import type { Db } from '../persistence/db';
-import type { Mission, MissionPatch, MissionStatus } from '../../shared/orch-types';
-import { ChangeHub, makeId, parseJsonColumn } from './store-util';
+import { z } from 'zod';
+import type Database from 'better-sqlite3';
+import {
+  missionPatchSchema,
+  missionStatusSchema,
+  type Mission,
+  type MissionPatch,
+  type MissionStatus,
+} from '../../shared/orch-types';
+import type { ProjectExecutionScope } from '../../shared/types';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import {
+  ScopedStoreBinding,
+  ScopedStoreCorruptionError,
+  type ScopedEntity,
+  type ScopedStoreChangeListener,
+  type ScopedStoreOptions,
+} from './scoped-store';
 
-/**
- * Mission store — create/get/list/set_status backing the nexus_mission_* MCP
- * tools. The orchestratorSessionId (the PTY session that created the mission)
- * is the delivery target for handoffs once it goes idle.
- */
+const createMissionInputSchema = z
+  .object({
+    title: z.string().min(1).max(512),
+    description: z.string().max(65_536).optional(),
+    squadId: z.string().min(1).max(128).optional(),
+    milestones: z.array(z.string().max(1_024)).max(256).optional(),
+    orchestratorSessionId: z.string().min(1).max(256).optional(),
+  })
+  .strict();
 
-interface MissionRow {
-  id: string;
-  title: string;
-  description: string;
-  status: string;
-  squad_id: string | null;
-  milestones_json: string;
-  orch_session_id: string | null;
-  created_at: number;
-  updated_at: number;
-}
+const missionRowSchema = z
+  .object({
+    id: z.string().min(1).max(256),
+    title: z.string().min(1).max(512),
+    description: z.string().max(65_536),
+    status: missionStatusSchema,
+    squad_id: z.string().min(1).max(128).nullable(),
+    milestones_json: z.string(),
+    orch_session_id: z.string().min(1).max(256).nullable(),
+    created_at: z.number().int().nonnegative(),
+    updated_at: z.number().int().nonnegative(),
+  })
+  .strict();
 
-const missions = new Map<string, Mission>();
-const hub = new ChangeHub();
-let db: Db | null = null;
+const milestoneListSchema = z.array(z.string().max(1_024)).max(256);
+const entityIdSchema = z.string().min(1).max(256);
+const sessionIdSchema = z.string().min(1).max(256);
 
-export function initMissionStore(database: Db | null): void {
-  db = database;
-  missions.clear();
-  if (!db) return;
+export type ScopedMission = ScopedEntity<Mission>;
+export type CreateMissionInput = z.input<typeof createMissionInputSchema>;
+
+interface MissionRow extends z.infer<typeof missionRowSchema> {}
+
+function parseMilestones(raw: string): string[] {
   try {
-    const rows = db.prepare('SELECT * FROM missions').all() as MissionRow[];
-    for (const row of rows) {
-      missions.set(row.id, {
-        id: row.id,
-        title: row.title,
-        description: row.description,
-        status: row.status as MissionStatus,
-        squadId: row.squad_id ?? undefined,
-        milestones: parseJsonColumn<string[]>(row.milestones_json, []),
-        orchestratorSessionId: row.orch_session_id ?? undefined,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      });
-    }
-  } catch (err) {
-    console.warn('[orch] failed to hydrate missions:', err);
+    return milestoneListSchema.parse(JSON.parse(raw));
+  } catch (error) {
+    throw new ScopedStoreCorruptionError('mission milestones', { cause: error });
   }
 }
 
-function persist(mission: Mission): void {
-  if (!db) return;
-  try {
-    db.prepare(
-      `INSERT OR REPLACE INTO missions
-         (id, title, description, status, squad_id, milestones_json,
-          orch_session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      mission.id,
-      mission.title,
-      mission.description,
-      mission.status,
-      mission.squadId ?? null,
-      JSON.stringify(mission.milestones),
-      mission.orchestratorSessionId ?? null,
-      mission.createdAt,
-      mission.updatedAt,
-    );
-  } catch (err) {
-    console.warn('[orch] failed to persist mission:', err);
+function cloneMission(mission: ScopedMission): ScopedMission {
+  return { ...mission, milestones: [...mission.milestones] };
+}
+
+export class ScopedMissionStore {
+  readonly #binding: ScopedStoreBinding;
+
+  constructor(
+    runtimeManager: ProjectRuntimeManager,
+    scope: ProjectExecutionScope,
+    options: ScopedStoreOptions = {},
+  ) {
+    this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
   }
-}
 
-export function onMissionsChange(cb: () => void): () => void {
-  return hub.onChange(cb);
-}
+  get scope(): ProjectExecutionScope {
+    return this.#binding.scope;
+  }
 
-export interface CreateMissionInput {
-  title: string;
-  description?: string;
-  squadId?: string;
-  milestones?: string[];
-  orchestratorSessionId?: string;
-}
+  onChange(listener: ScopedStoreChangeListener): () => void {
+    return this.#binding.onChange(listener);
+  }
 
-export function createMission(input: CreateMissionInput): Mission {
-  const now = Date.now();
-  const mission: Mission = {
-    id: makeId('mission'),
-    title: input.title,
-    description: input.description ?? '',
-    status: 'pending',
-    squadId: input.squadId,
-    milestones: input.milestones ?? [],
-    orchestratorSessionId: input.orchestratorSessionId,
-    createdAt: now,
-    updatedAt: now,
-  };
-  missions.set(mission.id, mission);
-  persist(mission);
-  hub.emit();
-  return mission;
-}
+  create(rawInput: CreateMissionInput): ScopedMission {
+    const input = createMissionInputSchema.parse(rawInput);
+    const now = this.#binding.now();
+    const mission: ScopedMission = {
+      id: this.#binding.makeId('mission'),
+      title: input.title,
+      description: input.description ?? '',
+      status: 'pending',
+      squadId: input.squadId,
+      milestones: [...(input.milestones ?? [])],
+      orchestratorSessionId: input.orchestratorSessionId,
+      createdAt: now,
+      updatedAt: now,
+      ...this.#binding.coordinates,
+    };
+    this.#binding
+      .writeDatabase()
+      .prepare(
+        `INSERT INTO missions
+           (id, title, description, status, squad_id, milestones_json,
+            orch_session_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        mission.id,
+        mission.title,
+        mission.description,
+        mission.status,
+        mission.squadId ?? null,
+        JSON.stringify(mission.milestones),
+        mission.orchestratorSessionId ?? null,
+        mission.createdAt,
+        mission.updatedAt,
+      );
+    this.#binding.emitChange();
+    return cloneMission(mission);
+  }
 
-export function getMission(id: string): Mission | null {
-  return missions.get(id) ?? null;
-}
+  get(rawId: string): ScopedMission | null {
+    const id = entityIdSchema.parse(rawId);
+    return this.#getFromDatabase(this.#binding.readDatabase(), id);
+  }
 
-export function listMissions(status?: MissionStatus): Mission[] {
-  const all = [...missions.values()].sort((a, b) => b.createdAt - a.createdAt);
-  return status ? all.filter((m) => m.status === status) : all;
-}
+  #getFromDatabase(
+    db: Database.Database,
+    id: string,
+  ): ScopedMission | null {
+    const row = db
+      .prepare(
+        `SELECT id, title, description, status, squad_id, milestones_json,
+                orch_session_id, created_at, updated_at
+         FROM missions WHERE id = ?`,
+      )
+      .get(id);
+    return row === undefined ? null : this.#fromRow(row);
+  }
 
-/**
- * Point handoff delivery at a NEW orchestrator session — used when a mission
- * is reopened from history and its original session is long gone.
- */
-export function setMissionOrchestratorSession(
-  id: string,
-  sessionId: string,
-): Mission | null {
-  const existing = missions.get(id);
-  if (!existing) return null;
-  const updated: Mission = {
-    ...existing,
-    orchestratorSessionId: sessionId,
-    updatedAt: Date.now(),
-  };
-  missions.set(id, updated);
-  persist(updated);
-  hub.emit();
-  return updated;
-}
+  list(status?: MissionStatus): ScopedMission[] {
+    const parsedStatus = status === undefined ? undefined : missionStatusSchema.parse(status);
+    const rows = parsedStatus
+      ? this.#binding
+          .readDatabase()
+          .prepare(
+            `SELECT id, title, description, status, squad_id, milestones_json,
+                    orch_session_id, created_at, updated_at
+             FROM missions WHERE status = ?
+             ORDER BY created_at DESC, id ASC`,
+          )
+          .all(parsedStatus)
+      : this.#binding
+          .readDatabase()
+          .prepare(
+            `SELECT id, title, description, status, squad_id, milestones_json,
+                    orch_session_id, created_at, updated_at
+             FROM missions ORDER BY created_at DESC, id ASC`,
+          )
+          .all();
+    return rows.map((row) => this.#fromRow(row));
+  }
 
-/**
- * Renderer-facing patch mutator — applies any subset of title/description/
- * status/milestones. Returns null when the mission doesn't exist.
- */
-export function updateMission(id: string, patch: MissionPatch): Mission | null {
-  const existing = missions.get(id);
-  if (!existing) return null;
-  const updated: Mission = {
-    ...existing,
-    ...(patch.title !== undefined ? { title: patch.title } : {}),
-    ...(patch.description !== undefined ? { description: patch.description } : {}),
-    ...(patch.status !== undefined ? { status: patch.status } : {}),
-    ...(patch.milestones !== undefined ? { milestones: patch.milestones } : {}),
-    updatedAt: Date.now(),
-  };
-  missions.set(id, updated);
-  persist(updated);
-  hub.emit();
-  return updated;
-}
+  setOrchestratorSession(
+    rawId: string,
+    rawSessionId: string,
+  ): ScopedMission | null {
+    const id = entityIdSchema.parse(rawId);
+    const sessionId = sessionIdSchema.parse(rawSessionId);
+    const result = this.#binding
+      .writeDatabase()
+      .prepare(
+        `UPDATE missions
+         SET orch_session_id = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(sessionId, this.#binding.now(), id);
+    if (result.changes === 0) return null;
+    this.#binding.emitChange();
+    return this.get(id);
+  }
 
-/** Remove a missão da lista e do disco. Idempotente (false se não existia). */
-export function removeMission(id: string): boolean {
-  if (!missions.delete(id)) return false;
-  if (db) {
+  update(rawId: string, rawPatch: MissionPatch): ScopedMission | null {
+    const id = entityIdSchema.parse(rawId);
+    const patch = missionPatchSchema.parse(rawPatch);
+    const db = this.#binding.writeDatabase();
+    const updated = db.transaction(() => {
+      const existing = this.#getFromDatabase(db, id);
+      if (!existing) return null;
+      const next: ScopedMission = {
+        ...existing,
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.description !== undefined
+          ? { description: patch.description }
+          : {}),
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.milestones !== undefined
+          ? { milestones: [...patch.milestones] }
+          : {}),
+        updatedAt: this.#binding.now(),
+      };
+      const result = db
+        .prepare(
+          `UPDATE missions
+           SET title = ?, description = ?, status = ?, milestones_json = ?,
+               updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          next.title,
+          next.description,
+          next.status,
+          JSON.stringify(next.milestones),
+          next.updatedAt,
+          id,
+        );
+      return result.changes === 1 ? next : null;
+    })();
+    if (!updated) return null;
+    this.#binding.emitChange();
+    return cloneMission(updated);
+  }
+
+  remove(rawId: string): boolean {
+    const id = entityIdSchema.parse(rawId);
+    const result = this.#binding
+      .writeDatabase()
+      .prepare('DELETE FROM missions WHERE id = ?')
+      .run(id);
+    if (result.changes === 0) return false;
+    this.#binding.emitChange();
+    return true;
+  }
+
+  setStatus(rawId: string, rawStatus: MissionStatus): ScopedMission | null {
+    const id = entityIdSchema.parse(rawId);
+    const status = missionStatusSchema.parse(rawStatus);
+    const result = this.#binding
+      .writeDatabase()
+      .prepare('UPDATE missions SET status = ?, updated_at = ? WHERE id = ?')
+      .run(status, this.#binding.now(), id);
+    if (result.changes === 0) return null;
+    this.#binding.emitChange();
+    return this.get(id);
+  }
+
+  #fromRow(rawRow: unknown): ScopedMission {
+    let row: MissionRow;
     try {
-      db.prepare('DELETE FROM missions WHERE id = ?').run(id);
-    } catch (err) {
-      console.warn('[orch] failed to delete mission:', err);
+      row = missionRowSchema.parse(rawRow);
+    } catch (error) {
+      throw new ScopedStoreCorruptionError('mission', { cause: error });
     }
+    return {
+      id: row.id,
+      title: row.title,
+      description: row.description,
+      status: row.status,
+      squadId: row.squad_id ?? undefined,
+      milestones: parseMilestones(row.milestones_json),
+      orchestratorSessionId: row.orch_session_id ?? undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      ...this.#binding.coordinates,
+    };
   }
-  hub.emit();
-  return true;
 }
 
-export function setMissionStatus(
-  id: string,
-  status: MissionStatus,
-): Mission | null {
-  const existing = missions.get(id);
-  if (!existing) return null;
-  const updated: Mission = { ...existing, status, updatedAt: Date.now() };
-  missions.set(id, updated);
-  persist(updated);
-  hub.emit();
-  return updated;
+export function createScopedMissionStore(
+  runtimeManager: ProjectRuntimeManager,
+  scope: ProjectExecutionScope,
+  options: ScopedStoreOptions = {},
+): ScopedMissionStore {
+  return new ScopedMissionStore(runtimeManager, scope, options);
 }

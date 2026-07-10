@@ -15,6 +15,7 @@ import type {
   McpInvokeRequest,
   McpInvokeResult,
 } from '../../shared/mcp-types';
+import type { ProjectExecutionScope } from '../../shared/types';
 import { resolveTool } from '../orch/mcp-protocol';
 import type { McpRegistry } from '../orch/mcp-protocol';
 import { buildToolset } from '../orch/tools';
@@ -29,11 +30,11 @@ import {
   createConfirmationToken,
 } from './confirmation-tokens';
 import {
-  currentPermissionWorkspaceId,
   dispatchToolCall,
   permissionScopeForTool,
 } from '../orch/mcp-dispatch';
 import { validateToolArgs } from '../orch/mcp-args-validation';
+import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 
 let registry: McpRegistry | null = null;
 const RENDERER_SESSION_ID = 'jarvis-renderer';
@@ -49,7 +50,7 @@ function getRegistry(): McpRegistry {
   return registry;
 }
 
-function rendererToolContext() {
+function rendererToolContext(scope: ProjectExecutionScope) {
   return {
     token: 'renderer-ipc',
     label: 'Jarvis Renderer',
@@ -62,10 +63,15 @@ function rendererToolContext() {
     allowedSkills: null,
     stopAttempts: 0,
     handoffSubmitted: false,
+    scope,
+    executionScope: scope,
   };
 }
 
-export async function invokeMcpTool(raw: McpInvokeRequest): Promise<McpInvokeResult> {
+export async function invokeMcpTool(
+  raw: McpInvokeRequest,
+  projectScope: ProjectExecutionScope,
+): Promise<McpInvokeResult> {
   const toolName = raw?.tool;
 
   if (!toolName || typeof toolName !== 'string') {
@@ -77,7 +83,7 @@ export async function invokeMcpTool(raw: McpInvokeRequest): Promise<McpInvokeRes
     getRegistry(),
     toolName,
     raw?.args ?? {},
-    rendererToolContext(),
+    rendererToolContext(projectScope),
   );
 }
 
@@ -104,7 +110,10 @@ async function requestNativeConfirmation(
   return result.response === 1;
 }
 
-export async function confirmMcpTool(raw: McpConfirmRequest): Promise<McpConfirmResult> {
+export async function confirmMcpTool(
+  raw: McpConfirmRequest,
+  projectScope: ProjectExecutionScope,
+): Promise<McpConfirmResult> {
   const toolName = raw?.tool;
   if (!toolName || typeof toolName !== 'string') {
     return { ok: false, error: 'invalid tool name' };
@@ -122,17 +131,9 @@ export async function confirmMcpTool(raw: McpConfirmRequest): Promise<McpConfirm
     return { ok: false, error: `invalid arguments: ${detail}` };
   }
 
-  let workspaceId: string;
-  try {
-    workspaceId = currentPermissionWorkspaceId();
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: `workspace_unavailable: ${detail}` };
-  }
-
   const scope = permissionScopeForTool(
     RENDERER_SESSION_ID,
-    workspaceId,
+    projectScope,
     tool.name,
     args,
   );
@@ -145,7 +146,7 @@ export async function confirmMcpTool(raw: McpConfirmRequest): Promise<McpConfirm
     return { ok: true };
   }
 
-  if (!requiresConfirmation(tool.name, args) && tool.requiresConfirm !== true) {
+  if (!requiresConfirmation(tool.name, args)) {
     return { ok: true };
   }
 
@@ -154,7 +155,7 @@ export async function confirmMcpTool(raw: McpConfirmRequest): Promise<McpConfirm
     tool.name,
     args,
     reason,
-    workspaceId,
+    projectScope.rootRealPath,
   );
   if (!approved) return { ok: false, error: 'user_denied' };
 
@@ -178,8 +179,8 @@ export function clearMcpRendererSession(): { ok: boolean } {
 export function registerMcpInvokeIpc(): void {
   ipcMain.handle(
     MCP_CHANNELS.invoke,
-    async (_event, raw: McpInvokeRequest): Promise<McpInvokeResult> =>
-      invokeMcpTool(raw),
+    async (event, raw: McpInvokeRequest): Promise<McpInvokeResult> =>
+      invokeMcpTool(raw, requireRendererWorkspaceScope(event.sender)),
   );
 }
 
@@ -189,8 +190,8 @@ export function registerMcpInvokeIpc(): void {
 export function registerMcpConfirmIpc(): void {
   ipcMain.handle(
     MCP_CHANNELS.confirm,
-    async (_event, raw: McpConfirmRequest): Promise<McpConfirmResult> =>
-      confirmMcpTool(raw),
+    async (event, raw: McpConfirmRequest): Promise<McpConfirmResult> =>
+      confirmMcpTool(raw, requireRendererWorkspaceScope(event.sender)),
   );
 }
 

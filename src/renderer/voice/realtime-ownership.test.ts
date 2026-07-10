@@ -61,4 +61,25 @@ describe('Live mute degradation', () => {
     expect(source).toContain('jarvis.replyMuteIdle');
     expect(source).toContain('jarvis.realtimeMuteDegraded');
   });
+
+  it('keeps Gemini warm until local STT proves a muted wake is meaningful', () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, 'voice-finish-and-process.ts'),
+      'utf-8',
+    );
+    const muteIdx = source.indexOf('quiesceLiveBeforeClassic = true;');
+    const discardIdx = source.indexOf(
+      'if (isDiscardableTranscript(transcript, { inConversation }))',
+      muteIdx,
+    );
+    const suppressIdx = source.indexOf('setSuppressRealtimeAudioOut(true);', muteIdx);
+    const endTurnIdx = source.indexOf('setRealtimeTurnActive(false);', muteIdx);
+    const quiesceIdx = source.indexOf("await quiesceLiveForClassic('classic-action-bridge-timeout');");
+    expect(muteIdx).toBeGreaterThanOrEqual(0);
+    expect(discardIdx).toBeGreaterThan(muteIdx);
+    expect(suppressIdx).toBeGreaterThan(discardIdx);
+    expect(endTurnIdx).toBeGreaterThan(discardIdx);
+    expect(quiesceIdx).toBeGreaterThan(discardIdx);
+    expect(source).toContain("cancelMutedLiveValidation('classic-validation-discarded')");
+  });
 });

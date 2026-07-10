@@ -113,6 +113,22 @@ describe('requiresConfirmation', () => {
     expect(requiresConfirmation('nexus_ui_read', {})).toBe(false);
   });
 
+  it('does not put Nexus-owned PREVC or handoff authority behind a human prompt', () => {
+    expect(requiresConfirmation('nexus_context_commit', {})).toBe(false);
+    expect(requiresConfirmation('nexus_review_submit', {})).toBe(false);
+    expect(requiresConfirmation('nexus_sensor_run', {})).toBe(false);
+    expect(requiresConfirmation('nexus_workflow_advance', {})).toBe(false);
+    expect(requiresConfirmation('nexus_handoff_submit', {})).toBe(false);
+  });
+
+  it('keeps renderer UI actions and unknown effects confirmation-gated', () => {
+    expect(requiresConfirmation('nexus_ui_action', {
+      action: 'click',
+      ref: 'u1e1',
+    })).toBe(true);
+    expect(requiresConfirmation('nexus_future_unknown_tool', {})).toBe(true);
+  });
+
   it('always confirms write tools', () => {
     expect(requiresConfirmation('nexus_file_write', { path: 'foo.ts', content: 'x' })).toBe(true);
     expect(requiresConfirmation('nexus_terminal_run', { command: 'echo hi' })).toBe(true);

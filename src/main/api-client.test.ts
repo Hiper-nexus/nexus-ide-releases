@@ -85,4 +85,52 @@ describe('apiFetch', () => {
 
     expect(result).toEqual({ status: 0, json: null });
   });
+
+  it('aplica timeout e rejeita resposta acima do budget', async () => {
+    const d = deps();
+    let sawSignal = false;
+    (d.fetchFn as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_url: string, init: RequestInit) => {
+        sawSignal = init.signal instanceof AbortSignal;
+        return json({ payload: 'x'.repeat(200) });
+      },
+    );
+
+    const result = await apiFetch(
+      '/v1/cron/test',
+      { timeoutMs: 1_000, maxResponseBytes: 64 },
+      d as never,
+    );
+
+    expect(sawSignal).toBe(true);
+    expect(result).toEqual({ status: 0, json: null });
+  });
+
+  it('faz uma única rotação quando requests concorrentes recebem 401', async () => {
+    const d = deps();
+    let refreshCalls = 0;
+    (d.fetchFn as ReturnType<typeof vi.fn>).mockImplementation(
+      async (url: string) => {
+        if (url.endsWith('/v1/auth/refresh')) {
+          refreshCalls += 1;
+          await Promise.resolve();
+          return json({ ok: true, data: { session: 's2', refresh: 'r2' } });
+        }
+        const session = d.store['auth:session'];
+        return session === 's2'
+          ? json({ ok: true, data: 42 })
+          : json({ ok: false }, 401);
+      },
+    );
+
+    const [first, second] = await Promise.all([
+      apiFetch('/v1/cron/a', {}, d as never),
+      apiFetch('/v1/cron/b', {}, d as never),
+    ]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(refreshCalls).toBe(1);
+    expect(d.store['auth:refresh']).toBe('r2');
+  });
 });

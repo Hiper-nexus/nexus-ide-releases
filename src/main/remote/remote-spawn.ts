@@ -13,6 +13,30 @@ const execFileAsync = promisify(execFile);
 const ALLOWED_CLIS = ['claude', 'codex', 'agy', 'kimi'] as const;
 const TARGET_RE = /^[a-zA-Z0-9._-]+(?:@[a-zA-Z0-9._-]+)?(?::[0-9]{2,5})?$/;
 const SESSION_RE = /^[a-zA-Z0-9_.-]{1,80}$/;
+const SSH_ENV_KEYS = [
+  'HOME',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'LOGNAME',
+  'PATH',
+  'PATHEXT',
+  'SystemRoot',
+  'SSH_AGENT_PID',
+  'SSH_AUTH_SOCK',
+  'TERM',
+  'TEMP',
+  'TMP',
+  'TMPDIR',
+  'USER',
+  'USERPROFILE',
+  'WINDIR',
+  'XDG_CONFIG_HOME',
+  'XDG_RUNTIME_DIR',
+] as const;
+const DEFAULT_EXEC_PATH = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 
 function validateTarget(target: string): string {
   const clean = target.trim();
@@ -37,12 +61,26 @@ function sessionName(input?: string): string {
   return `nexus-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
 }
 
+function sanitizedSshEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of SSH_ENV_KEYS) {
+    const value = source[key];
+    if (value !== undefined) env[key] = value;
+  }
+  env.PATH ||= DEFAULT_EXEC_PATH;
+  return env;
+}
+
 async function ssh(target: string, script: string): Promise<string> {
   const result = await execFileAsync(
     'ssh',
     // `--` ends option parsing so the target can never be read as a flag.
     ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '--', target, 'sh', '-lc', script],
-    { timeout: 20_000, maxBuffer: 512_000 },
+    {
+      timeout: 20_000,
+      maxBuffer: 512_000,
+      env: sanitizedSshEnvironment(process.env),
+    },
   );
   return result.stdout;
 }

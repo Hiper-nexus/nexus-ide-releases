@@ -2,7 +2,7 @@
  * Screen capture module — Fase 5 Jarvis Vision.
  * Captures the Nexus IDE window using desktopCapturer.
  */
-import { desktopCapturer, BrowserWindow, systemPreferences } from 'electron';
+import { desktopCapturer, systemPreferences } from 'electron';
 import type {
   ScreenCaptureResultInternal,
   ScreenPermissionStatus,
@@ -20,12 +20,8 @@ function isPng(buffer: Buffer): boolean {
   );
 }
 
-function nexusWindowSourceIds(): Set<string> {
-  const ids = BrowserWindow.getAllWindows()
-    .filter((window) => !window.isDestroyed())
-    .map((window) => window.getMediaSourceId())
-    .filter((id) => id.length > 0);
-  return new Set(ids);
+export interface NexusCaptureTarget {
+  readonly mediaSourceId: string;
 }
 
 /** Resolve screen permission via macOS systemPreferences. */
@@ -51,9 +47,13 @@ export function assertScreenPermission(): void {
  * Capture the Nexus IDE window as a PNG buffer.
  * Matches Electron's canonical media source id for an app-owned BrowserWindow.
  */
-export async function captureNexusWindow(): Promise<ScreenCaptureResultInternal> {
+export async function captureNexusWindow(
+  target?: NexusCaptureTarget,
+): Promise<ScreenCaptureResultInternal> {
   assertScreenPermission();
-  const expectedSourceIds = nexusWindowSourceIds();
+  if (!target?.mediaSourceId) {
+    throw new Error('vision_capture_owner_required');
+  }
 
   const sources = await desktopCapturer.getSources({
     types: ['window'],
@@ -61,16 +61,9 @@ export async function captureNexusWindow(): Promise<ScreenCaptureResultInternal>
     fetchWindowIcons: false,
   });
 
-  let source = sources.find((candidate) => expectedSourceIds.has(candidate.id));
-
-  if (!source && process.env.NEXUS_VISION_DEBUG_ALLOW_NAME_MATCH === '1') {
-    source = sources.find((candidate) => candidate.name.includes('NexusIDE'));
-    if (source) {
-      console.warn(
-        '[vision] NEXUS_VISION_DEBUG_ALLOW_NAME_MATCH matched source by name; do not enable in release.',
-      );
-    }
-  }
+  const source = sources.find(
+    (candidate) => candidate.id === target.mediaSourceId,
+  );
 
   if (!source) {
     throw new Error('nexus_window_not_identified');

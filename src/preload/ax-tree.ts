@@ -53,6 +53,21 @@ const SENSITIVE_FIELD_RE =
   /(password|passcode|secret|token|api[-_ ]?key|credential|private[-_ ]?key|payment|credit[-_ ]?card|card[-_ ]?(?:number|no)|cc[-_ ]?(?:number|csc|cvv|exp)|cvv|cvc|iban|routing[-_ ]?number|account[-_ ]?number)/i;
 const SENSITIVE_AUTOCOMPLETE_RE =
   /(?:current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp|cc-name)/i;
+const NESTED_TEXT_TAGS = new Set([
+  'A',
+  'BUTTON',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+  'LABEL',
+  'LI',
+  'OPTION',
+  'P',
+  'SUMMARY',
+]);
 
 function randomInteger(minimum: number, range: number): number {
   const values = new Uint32Array(1);
@@ -123,6 +138,8 @@ function isActionCandidate(element: Element): boolean {
 
 function assignRef(element: Element): string | undefined {
   if (!isActionCandidate(element)) return undefined;
+  // Sensitive controls must never become action targets.
+  if (isSensitiveControl(element)) return undefined;
   let ref = '';
   do {
     ref = `u${activeSnapshotId}e${randomInteger(10_000_000, 90_000_000)}`;
@@ -134,6 +151,7 @@ function assignRef(element: Element): string | undefined {
 function ariaOf(element: Element): Record<string, string> {
   const aria: Record<string, string> = {};
   const sensitive = isSensitiveControl(element);
+  const formField = isFormField(element);
   const keys = [
     'role', 'label', 'labelledby', 'describedby', 'level',
     'disabled', 'hidden', 'expanded', 'pressed', 'selected',
@@ -143,7 +161,14 @@ function ariaOf(element: Element): Record<string, string> {
     'readonly', 'required', 'sort',
   ];
   for (const key of keys) {
-    if (sensitive && key === 'valuetext') continue;
+    // Never surface control values: valuetext/valuenow on form fields or any
+    // value-bearing aria on sensitive controls.
+    if (
+      (sensitive || formField) &&
+      (key === 'valuetext' || key === 'valuenow')
+    ) {
+      continue;
+    }
     const value = element.getAttribute(`aria-${key}`);
     if (value !== null) aria[key] = value.slice(0, 500);
   }
@@ -151,15 +176,46 @@ function ariaOf(element: Element): Record<string, string> {
 }
 
 function textOf(element: Element): string | null {
+  // Never return the value of input/textarea/select (or contenteditable fields).
+  if (isFormField(element)) return null;
   if (isSensitiveControl(element)) return null;
-  let text: string | null = null;
+  const parts: string[] = [];
   for (const child of element.childNodes) {
     if (child.nodeType !== Node.TEXT_NODE) continue;
     const value = child.textContent?.trim();
-    if (value) text = (text ? `${text} ` : '') + value;
+    if (value) parts.push(value);
   }
-  if (text) return text.slice(0, 200);
-  return element.textContent?.trim().slice(0, 200) || null;
+  if (parts.length > 0) return parts.join(' ').slice(0, 200);
+  if (!NESTED_TEXT_TAGS.has(element.tagName)) return null;
+
+  // Semantic controls/headings often wrap their label in spans. Traverse only
+  // those bounded subtrees and skip every form/sensitive descendant.
+  const stack = [...element.childNodes].reverse();
+  let characters = 0;
+  while (stack.length > 0 && characters < 200) {
+    const node = stack.pop()!;
+    if (node.nodeType === Node.TEXT_NODE) {
+      const value = node.textContent?.replace(/\s+/g, ' ').trim();
+      if (value) {
+        const remaining = 200 - characters;
+        parts.push(value.slice(0, remaining));
+        characters += Math.min(value.length, remaining) + 1;
+      }
+      continue;
+    }
+    if (!(node instanceof Element)) continue;
+    if (
+      SKIP_TAGS.has(node.tagName) ||
+      isFormField(node) ||
+      isSensitiveControl(node) ||
+      isHidden(node)
+    ) {
+      continue;
+    }
+    stack.push(...[...node.childNodes].reverse());
+  }
+  const text = parts.join(' ').replace(/\s+/g, ' ').trim();
+  return text ? text.slice(0, 200) : null;
 }
 
 function extractNode(

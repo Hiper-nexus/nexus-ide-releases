@@ -5,6 +5,7 @@
  */
 import type { OcrResult } from '../../shared/vision-ipc';
 import { createHash } from 'node:crypto';
+import { ensureOcrLanguageData } from './ocr-language-data';
 
 interface CacheEntry {
   text: string;
@@ -30,6 +31,7 @@ const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
 ]);
+const SUPPORTED_OCR_LANGUAGES = new Set(['eng', 'por', 'eng+por', 'por+eng']);
 
 function hashBuffer(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex').slice(0, 32);
@@ -106,6 +108,9 @@ export async function ocrImage(
   lang: string = 'eng+por',
 ): Promise<OcrResult> {
   validateImage(buffer);
+  if (!SUPPORTED_OCR_LANGUAGES.has(lang)) {
+    throw new Error(`Unsupported OCR language: ${lang}.`);
+  }
 
   // Check cache
   const hash = hashBuffer(buffer);
@@ -115,11 +120,16 @@ export async function ocrImage(
   }
 
   // Dynamic import tesseract (it's heavy, only load on first use)
+  const languageDirectory = await ensureOcrLanguageData();
   const { createWorker } = await import('tesseract.js');
   let worker: OcrWorker | null = null;
 
   try {
     worker = await createWorker(lang, 1, {
+      langPath: languageDirectory,
+      cachePath: languageDirectory,
+      cacheMethod: 'none',
+      gzip: true,
       logger: () => {
         // Silent — no progress logging
       },

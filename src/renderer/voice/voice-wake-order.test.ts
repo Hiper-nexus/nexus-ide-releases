@@ -37,15 +37,36 @@ describe('voice wake order', () => {
     expect(block).toContain("'wake'");
   });
 
-  it('skips Classic ack when Live owns the voice (shouldSkipClassicWakeAck)', () => {
-    // FIX A: Live path guard must exist in the voice-wake block.
+  it('reserves a cold configured Live wake before the socket reports ready', () => {
+    // Cold Gemini connects after wake. It must still own the greeting, otherwise
+    // OpenAI TTS speaks first and leaks into the microphone capture.
     const block = voiceWakeBlock();
-    expect(block).toContain('skipClassicAck');
+    expect(gatesSource).toContain('export function shouldReserveWakeForRealtime');
+    expect(source).toContain('const skipClassicAck = shouldReserveWakeForRealtime()');
+    expect(source).toContain('if (!shouldReserveWakeForRealtime())');
+    expect(block).toContain('if (!skipClassicAck)');
   });
 
   it('uses lowered wake capture thresholds', () => {
     expect(source).toContain('const WAKE_MIN_LISTEN_MS = 1_500');
     expect(source).toContain('const WAKE_SILENCE_MS = 700');
+  });
+
+  it('keeps the VAD → STT textual fallback for acoustic wake misses', () => {
+    expect(source).toContain('wakeMic.onPassiveUtterance');
+    expect(source).toContain('matchPassiveWakeWord');
+    expect(source).toContain("purpose: 'passive-wake'");
+    expect(source).toContain('budgetMs: PASSIVE_WAKE_STT_BUDGET_MS');
+    expect(source).toContain("onWake('voice', utterance.preRoll)");
+    const passiveStart = source.indexOf('const handlePassiveWake');
+    const passiveEnd = source.indexOf('wakeMic.onDied', passiveStart);
+    expect(passiveStart).toBeGreaterThanOrEqual(0);
+    expect(passiveEnd).toBeGreaterThan(passiveStart);
+    const passiveBlock = source.slice(passiveStart, passiveEnd);
+    expect(passiveBlock).toContain('passiveWakeChecking || wakeOpenInProgress');
+    expect(passiveBlock).toContain('shouldIgnoreLiveReWake({ status: voiceStatus })');
+    expect(passiveBlock).toContain('passiveWakeWord: info.persona.assistantName');
+    expect(source).toContain('wakeMic.cancelPassiveWake()');
   });
 });
 
@@ -79,21 +100,17 @@ describe('wake barge-in guards', () => {
     expect(gatesSource).toContain('export function shouldIgnoreLiveReWake');
   });
 
-  it('keeps the Live greeting non-blocking and never rebuilds on ordinary silence', () => {
-    expect(source).toContain('micHoldMs: 0');
-    expect(source).toContain('wake greeting interrompível');
-    expect(source).not.toContain('jarvis.liveWakeGreetingSilent');
-    expect(source).not.toContain('liveHardRebuild');
-    expect(source).not.toContain('jarvis.liveWakeGreetingFallback');
-    expect(source).not.toContain('Classic fala o Olá');
+  it('starts Live without injecting a competing spoken greeting', () => {
+    expect(source).toContain('.liveStart({ reason })');
+    expect(source).not.toContain('jarvis.liveWakeGreeting');
+    expect(source).not.toContain('liveWakeInjectPrompt');
+    expect(source).not.toContain('forceFresh:');
   });
 
-  it('starts Live without forceFresh and serializes an optional greeting in main', () => {
-    expect(source).toContain('.liveStart({ reason, ...(greeting ? { greeting } : {}) })');
-    expect(source).toContain('micHoldMs: 0');
-    expect(source).not.toContain('forceFresh:');
-    expect(source).not.toContain('LIVE_WAKE_GREETING_MIC_HOLD_MS');
-    expect(source).not.toContain('setLocalAudioWithholdUntil');
+  it('keeps a natural follow-up window before returning wake ownership', () => {
+    expect(source).toContain('const REPLY_MAX_LISTEN_MS = 15_000');
+    expect(source).toContain("reason === 'reply' && autoStop");
+    expect(source).toContain('Math.min(autoStop.maxMs, REPLY_MAX_LISTEN_MS)');
   });
 
   it('resets the turn without tearing down the healthy Live session', () => {

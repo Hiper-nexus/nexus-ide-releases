@@ -23,6 +23,7 @@ import { delegationConfirmPrompt, setPendingDelegation } from './delegation-conf
 import { isOrchestratorPane, resolveSendToPaneTarget } from './send-to-pane-target';
 import { requestPaneClose } from '../terminal/pane-close-guard';
 import { sanitizeMcpResultOutput } from './mcp-result-output';
+import { currentViewNarration, currentViewToolOutput } from './current-view-read';
 
 export interface JarvisExecutionResult {
   sayText: string;
@@ -237,7 +238,33 @@ export async function executeJarvisAction(
   let toolResult: JarvisExecutionResult['toolResult'] =
     action.type === 'none' ? null : { tool: action.type, ok: true, summary: 'executado' };
 
-  if (action.type === 'read_pane') {
+  if (action.type === 'read_current_view') {
+    try {
+      // Vision keeps the PNG inside the main process. Jarvis receives only
+      // bounded AX labels and local OCR, redacted before the Live tool result.
+      const vision = await window.nexus.vision.context({
+        includeScreenshot: true,
+        includeOcr: true,
+        allowCloudImage: false,
+      });
+      checkpoint(control);
+      sayText = currentViewNarration(vision);
+      toolResult = {
+        tool: action.type,
+        ok: true,
+        summary: `visão atual lida localmente (AX ${vision.ax.status}; OCR ${vision.ocr.status})`,
+        output: currentViewToolOutput(vision),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sayText = 'Não consegui ler esta tela agora.';
+      toolResult = {
+        tool: action.type,
+        ok: false,
+        summary: `leitura visual indisponível: ${message}`,
+      };
+    }
+  } else if (action.type === 'read_pane') {
     const layout = useLayoutStore.getState();
     const panes = listPanes(layout.root);
     const requested = action.paneId?.trim() ?? '';
@@ -418,6 +445,21 @@ export async function executeJarvisAction(
       expectReply = false;
       toolResult = { tool: action.type, ok: true, summary: 'squad confirmado e iniciando' };
     }
+  } else if (action.type === 'new_agentic_mission') {
+    useMissionWizardStore.getState().openForAgentic(action.intent);
+    sayText =
+      sayText.trim() ||
+      (action.intent
+        ? 'Abrindo a missão no modo agêntico com o objetivo preenchido.'
+        : 'Abrindo a missão no modo agêntico.');
+    toolResult = {
+      tool: action.type,
+      ok: true,
+      summary: action.intent
+        ? 'wizard de missão aberto no modo agêntico com objetivo'
+        : 'wizard de missão aberto no modo agêntico',
+      ...(action.intent ? { output: { intent: action.intent } } : {}),
+    };
   } else if (action.type === 'new_mission') {
     useMissionWizardStore.getState().openForMission();
     toolResult = { tool: action.type, ok: true, summary: 'wizard de missão aberto' };

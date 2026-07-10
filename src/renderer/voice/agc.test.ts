@@ -29,6 +29,18 @@ describe('SoftAgc', () => {
     expect(agc.currentGain()).toBeLessThanOrEqual(AGC_MAX_GAIN);
   });
 
+  it('recupera ganho já no primeiro quadro de uma nova frase de wake', () => {
+    // Depois de uma fala alta, o ganho pode ficar baixo. "Hey Jarvis" dura
+    // menos de um segundo, então subir 6% por frame faria o detector receber
+    // toda a palavra-chave quase muda.
+    const agc = new SoftAgc(0.2);
+    const f = frameWithRms(0.02);
+
+    agc.process(f);
+
+    expect(rmsOf(f)).toBeGreaterThanOrEqual(AGC_TARGET_RMS * 0.7);
+  });
+
   it('reduz o ganho rapidamente quando o usuário fala perto/alto', () => {
     const agc = new SoftAgc(12);
     // Grito perto do mic: RMS cru 0.4 — com ganho 12 estouraria.

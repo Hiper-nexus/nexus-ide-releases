@@ -1,14 +1,18 @@
+import { BrowserWindow, type WebContents } from 'electron';
 import type { McpToolDef } from './mcp-protocol';
+import type { ProjectExecutionScope } from '../../shared/types';
 import type {
   AxActionError,
   AxActionKind,
   AxActionRequest,
 } from '../../shared/vision-ipc';
 import {
-  performFocusedNexusAxAction,
-  readFocusedNexusAxTree,
+  performNexusAxAction,
+  readNexusAxTree,
+  selectNexusWindow,
   summarizeAxTree,
 } from '../vision/ax-tree-reader';
+import { getRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 
 const UI_ACTIONS = new Set<AxActionKind>(['click', 'focus', 'fill', 'select']);
 const UI_ACTION_ERRORS = new Set<AxActionError>([
@@ -27,6 +31,46 @@ const UI_ACTION_ERRORS = new Set<AxActionError>([
 const UI_REF_RE = /^u[1-9]\d{0,15}e[1-9]\d{0,7}$/;
 const MAX_UI_ACTION_TEXT_CHARS = 8_192;
 
+function hasExactScope(
+  expected: Readonly<ProjectExecutionScope>,
+  actual: Readonly<ProjectExecutionScope> | null,
+): boolean {
+  return (
+    actual !== null &&
+    actual.installationId === expected.installationId &&
+    actual.projectId === expected.projectId &&
+    actual.checkoutId === expected.checkoutId &&
+    actual.rootRealPath === expected.rootRealPath
+  );
+}
+
+function resolveAuthorizedWebContents(
+  scope: Readonly<ProjectExecutionScope>,
+): WebContents {
+  const selected = selectNexusWindow(
+    BrowserWindow.getFocusedWindow(),
+    BrowserWindow.getAllWindows(),
+  );
+  if (!selected) {
+    throw new Error('No healthy authorized Nexus window is available.');
+  }
+  assertAuthorizedWebContents(scope, selected.webContents);
+  return selected.webContents;
+}
+
+function assertAuthorizedWebContents(
+  scope: Readonly<ProjectExecutionScope>,
+  webContents: WebContents,
+): void {
+  if (
+    webContents.isDestroyed() ||
+    webContents.isCrashed() ||
+    !hasExactScope(scope, getRendererWorkspaceScope(webContents))
+  ) {
+    throw new Error('Nexus window is not bound to the authorized project scope.');
+  }
+}
+
 const uiReadTool: McpToolDef = {
   name: 'nexus_ui_read',
   description:
@@ -35,8 +79,11 @@ const uiReadTool: McpToolDef = {
     'terminal output use nexus_pane_read; for embedded web-page content use ' +
     'the nexus_browser_* inspection tools.',
   inputSchema: { type: 'object', properties: {} },
-  handler: async () => {
-    const summary = summarizeAxTree(await readFocusedNexusAxTree());
+  handler: async (_args, ctx) => {
+    const webContents = resolveAuthorizedWebContents(ctx.scope);
+    const tree = await readNexusAxTree(webContents);
+    assertAuthorizedWebContents(ctx.scope, webContents);
+    const summary = summarizeAxTree(tree);
     return {
       surface: 'nexus-ui',
       ...summary,
@@ -96,9 +143,11 @@ const uiActionTool: McpToolDef = {
       text: { type: 'string', maxLength: 8192 },
     },
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const request = actionRequest(args);
-    const rawResult: unknown = await performFocusedNexusAxAction(request);
+    const webContents = resolveAuthorizedWebContents(ctx.scope);
+    const rawResult: unknown = await performNexusAxAction(webContents, request);
+    assertAuthorizedWebContents(ctx.scope, webContents);
     if (
       !rawResult ||
       typeof rawResult !== 'object' ||

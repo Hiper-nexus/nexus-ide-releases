@@ -3,6 +3,7 @@ import type { PaneRegistryEntry } from '../../shared/orch-types';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { useWorkspaceStore } from '../state/workspace-store';
 import { listPanes } from '../lib/split-tree';
 import {
   getPaneSessionId,
@@ -37,10 +38,15 @@ function snapshotPanes(): PaneRegistryEntry[] {
 
 export function useOrchBridge(): void {
   const hydrate = useOrchStore((s) => s.hydrate);
+  const workspaceHydrated = useWorkspaceStore((s) => s.hydrated);
+  const workspacePath = useWorkspaceStore((s) => s.current?.path ?? null);
 
   useEffect(() => {
-    void hydrate();
+    useOrchStore.getState().resetProjectState();
+    if (workspaceHydrated && workspacePath) void hydrate(workspacePath);
+  }, [hydrate, workspaceHydrated, workspacePath]);
 
+  useEffect(() => {
     const un = [
       window.nexus.orch.onPaneSpawnRequest((req) => {
         void (async () => {
@@ -163,5 +169,5 @@ export function useOrchBridge(): void {
       unsubLayout();
       unsubSession();
     };
-  }, [hydrate]);
+  }, []);
 }

@@ -6,7 +6,10 @@ import type {
   VisionContextOptions,
   VisionSourceStatus,
 } from '../../shared/vision-ipc';
-import { ScreenRecordingPermissionDenied } from '../../shared/vision-ipc';
+import {
+  redactVisibleSecrets,
+  ScreenRecordingPermissionDenied,
+} from '../../shared/vision-ipc';
 import { captureNexusWindow } from './screen-capture';
 import { ocrImage } from './ocr';
 
@@ -163,15 +166,42 @@ async function runOcr(
   }
 }
 
-function flattenAxText(node: AxNode | null, out: string[] = []): string[] {
-  if (!node || out.length >= 12) return out;
-  const label = node.aria.label ?? node.aria.labelledby ?? node.text;
-  if (label) out.push(`${node.tag}${node.role ? `:${node.role}` : ''} "${label}"`);
+const MAX_PROMPT_AX_ITEMS = 12;
+const MAX_PROMPT_AX_CHARS = 2_400;
+const MAX_PROMPT_OCR_CHARS = 2_400;
+const MAX_PROMPT_TOTAL_CHARS = 8_000;
+
+function flattenAxText(node: AxNode | null, out: string[] = [], chars = { n: 0 }): string[] {
+  if (!node || out.length >= MAX_PROMPT_AX_ITEMS || chars.n >= MAX_PROMPT_AX_CHARS) return out;
+  const rawLabel = node.aria.label ?? node.aria.labelledby ?? node.text;
+  if (rawLabel) {
+    const label = redactVisibleSecrets(rawLabel).replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (label) {
+      const line = `${node.tag}${node.role ? `:${node.role}` : ''} "${label}"`;
+      if (chars.n + line.length + 3 > MAX_PROMPT_AX_CHARS) {
+        out.push('[TRUNCATED]');
+        chars.n = MAX_PROMPT_AX_CHARS;
+        return out;
+      }
+      out.push(line);
+      chars.n += line.length + 3;
+    }
+  }
   for (const child of node.children) {
-    flattenAxText(child, out);
-    if (out.length >= 12) break;
+    flattenAxText(child, out, chars);
+    if (out.length >= MAX_PROMPT_AX_ITEMS || chars.n >= MAX_PROMPT_AX_CHARS) break;
   }
   return out;
+}
+
+function boundedRedactedText(text: string | null | undefined, maxChars: number): string {
+  const normalized = text
+    ? redactVisibleSecrets(text).replace(/\s+/g, ' ').trim()
+    : '';
+  if (!normalized) return '(empty)';
+  return normalized.length <= maxChars
+    ? normalized
+    : `${normalized.slice(0, maxChars)}… [TRUNCATED]`;
 }
 
 export function buildVisionPrompt(context: Omit<VisionContext, 'llmPrompt'>): string {
@@ -179,23 +209,38 @@ export function buildVisionPrompt(context: Omit<VisionContext, 'llmPrompt'>): st
   const screenshotLine =
     context.screenshot.status === 'ok'
       ? `Screenshot: ${context.screenshot.width}x${context.screenshot.height} ${context.screenshot.format}. Raw image included for cloud vision: no.`
-      : `Screenshot unavailable: ${context.screenshot.status}${context.screenshot.error ? ` (${context.screenshot.error})` : ''}.`;
+      : `Screenshot unavailable: ${context.screenshot.status}${
+          context.screenshot.error
+            ? ` (${redactVisibleSecrets(context.screenshot.error).slice(0, 200)})`
+            : ''
+        }.`;
   const ocrLine =
     context.ocr.status === 'ok'
-      ? `Local OCR text: ${context.ocr.text || '(empty)'}`
-      : `Local OCR unavailable: ${context.ocr.status}${context.ocr.error ? ` (${context.ocr.error})` : ''}.`;
+      ? `Local OCR text: ${boundedRedactedText(context.ocr.text, MAX_PROMPT_OCR_CHARS)}`
+      : `Local OCR unavailable: ${context.ocr.status}${
+          context.ocr.error
+            ? ` (${redactVisibleSecrets(context.ocr.error).slice(0, 200)})`
+            : ''
+        }.`;
   const axLine =
     context.ax.status === 'ok'
       ? `Accessibility summary: ${axLines.join(' | ') || '(empty tree)'}`
-      : `Accessibility tree unavailable: ${context.ax.status}${context.ax.error ? ` (${context.ax.error})` : ''}.`;
+      : `Accessibility tree unavailable: ${context.ax.status}${
+          context.ax.error
+            ? ` (${redactVisibleSecrets(context.ax.error).slice(0, 200)})`
+            : ''
+        }.`;
 
-  return [
+  const prompt = [
     'Use this local vision context to understand the current NexusIDE workspace.',
     'Do not assume information that is not present in the accessibility tree or OCR text.',
     screenshotLine,
     axLine,
     ocrLine,
   ].join('\n');
+
+  if (prompt.length <= MAX_PROMPT_TOTAL_CHARS) return prompt;
+  return `${prompt.slice(0, MAX_PROMPT_TOTAL_CHARS)}… [TRUNCATED]`;
 }
 
 export async function collectVisionContext(

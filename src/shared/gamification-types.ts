@@ -48,6 +48,10 @@ export interface StoredXpEvent extends XpEventInput {
 }
 
 export interface GamificationSnapshot {
+  /** Present on main-process snapshots; omitted only by renderer empty state. */
+  readonly projectId?: string;
+  readonly checkoutId?: string;
+  readonly rootRealPath?: string;
   powerLevel: number;
   tier: GamificationTier;
   /** Piso: nunca rebaixa tier já alcançado, mesmo re-score de regras. */

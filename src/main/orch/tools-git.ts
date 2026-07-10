@@ -1,32 +1,37 @@
 import type { McpToolDef } from './mcp-protocol';
 import { requireStr, str } from './tool-util';
-import { execFile } from 'node:child_process';
-import { resolveWorkspaceCwd } from './workspace-path';
+import { resolveCwdForScope } from './workspace-path';
+import type { ProjectExecutionScope } from '../../shared/types';
+import { executionScopeFor } from './gate';
+import {
+  assertSafeLocalGitConfig,
+  ProcessGitRunner,
+} from '../runtime/git-command';
 
 /**
  * Git operations MCP tools for Jarvis agent.
  * All commands run in the workspace directory.
  */
 
-function gitExec(args: string[], cwd: string): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      'git',
-      args,
-      { cwd, timeout: 30000, maxBuffer: 5 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        if (err) {
-          reject(new Error(stderr || err.message));
-        } else {
-          resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
-        }
-      },
-    );
+const gitRunner = new ProcessGitRunner();
+
+function gitExec(
+  args: readonly string[],
+  cwd: string,
+): Promise<{ stdout: string; stderr: string }> {
+  assertSafeLocalGitConfig(gitRunner, cwd);
+  const result = gitRunner.run(cwd, args);
+  return Promise.resolve({
+    stdout: result.stdout.trim(),
+    stderr: result.stderr.trim(),
   });
 }
 
-function resolveCwd(cwdOverride?: string): string {
-  return resolveWorkspaceCwd(cwdOverride);
+function resolveCwd(
+  scope: ProjectExecutionScope,
+  cwdOverride?: string,
+): string {
+  return resolveCwdForScope(scope, cwdOverride);
 }
 
 const DANGEROUS_PUSH_FLAGS = [
@@ -85,6 +90,35 @@ function assertSafePushBranch(value: string): void {
   }
 }
 
+function assertSafeRemoteUrl(value: string): void {
+  assertNoControlChars(value, 'remote URL');
+  const scp = /^(?:[^@/\s]+@)?([^:/\s]+):[^\s]+$/.exec(value);
+  if (scp) {
+    if (scp[1].startsWith('-')) throw new Error('remote URL has an unsafe host');
+    return;
+  }
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('remote URL must use HTTPS or SSH');
+  }
+  if (!['https:', 'ssh:'].includes(url.protocol)) {
+    throw new Error('remote URL must use HTTPS or SSH');
+  }
+  if (!url.hostname || url.hostname.startsWith('-') || url.password) {
+    throw new Error('remote URL contains unsafe credentials or host');
+  }
+}
+
+async function assertSafeConfiguredRemote(
+  cwd: string,
+  remote: string,
+): Promise<void> {
+  const { stdout } = await gitExec(['remote', 'get-url', remote], cwd);
+  assertSafeRemoteUrl(stdout);
+}
+
 const gitStatus: McpToolDef = {
   name: 'nexus_git_status',
   description:
@@ -99,8 +133,8 @@ const gitStatus: McpToolDef = {
       },
     },
   },
-  handler: async (args) => {
-    const cwd = resolveCwd(str(args, 'cwd'));
+  handler: async (args, ctx) => {
+    const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const { stdout } = await gitExec(['status', '--short', '--branch'], cwd);
     return { cwd, output: stdout };
   },
@@ -125,8 +159,8 @@ const gitAdd: McpToolDef = {
       },
     },
   },
-  handler: async (args) => {
-    const cwd = resolveCwd(str(args, 'cwd'));
+  handler: async (args, ctx) => {
+    const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const paths = Array.isArray(args.paths) && args.paths.length > 0
       ? args.paths.filter((p): p is string => typeof p === 'string')
       : ['.'];
@@ -155,8 +189,8 @@ const gitCommit: McpToolDef = {
     },
     required: ['message'],
   },
-  handler: async (args) => {
-    const cwd = resolveCwd(str(args, 'cwd'));
+  handler: async (args, ctx) => {
+    const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const message = requireStr(args, 'message');
     const { stdout } = await gitExec(['commit', '-m', message], cwd);
     return { cwd, output: stdout };
@@ -186,12 +220,13 @@ const gitPush: McpToolDef = {
       },
     },
   },
-  handler: async (args) => {
-    const cwd = resolveCwd(str(args, 'cwd'));
+  handler: async (args, ctx) => {
+    const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const remote = str(args, 'remote') ?? 'origin';
     const branch = str(args, 'branch');
     assertSafePushArg(remote, 'remote');
     if (branch) assertSafePushBranch(branch);
+    await assertSafeConfiguredRemote(cwd, remote);
     const cmdArgs = ['push', remote];
     if (branch) cmdArgs.push(branch);
     const { stdout } = await gitExec(cmdArgs, cwd);
@@ -225,12 +260,13 @@ const gitPull: McpToolDef = {
       },
     },
   },
-  handler: async (args) => {
-    const cwd = resolveCwd(str(args, 'cwd'));
+  handler: async (args, ctx) => {
+    const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const remote = str(args, 'remote') ?? 'origin';
     const branch = str(args, 'branch');
     assertSafeGitName(remote, 'remote');
     if (branch) assertSafeGitName(branch, 'branch');
+    await assertSafeConfiguredRemote(cwd, remote);
     const cmdArgs = ['pull'];
     if (args.rebase === true) cmdArgs.push('--rebase');
     cmdArgs.push(remote);
@@ -258,8 +294,8 @@ const gitDiff: McpToolDef = {
       },
     },
   },
-  handler: async (args) => {
-    const cwd = resolveCwd(str(args, 'cwd'));
+  handler: async (args, ctx) => {
+    const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const cmdArgs = ['diff'];
     if (args.staged === true) cmdArgs.push('--cached');
     const { stdout } = await gitExec(cmdArgs, cwd);
@@ -285,8 +321,8 @@ const gitLog: McpToolDef = {
       },
     },
   },
-  handler: async (args) => {
-    const cwd = resolveCwd(str(args, 'cwd'));
+  handler: async (args, ctx) => {
+    const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const rawCount = typeof args.count === 'number' ? args.count : 10;
     const count = Number.isInteger(rawCount) && rawCount > 0
       ? Math.min(rawCount, 100)
@@ -313,8 +349,8 @@ const gitBranchList: McpToolDef = {
       },
     },
   },
-  handler: async (args) => {
-    const cwd = resolveCwd(str(args, 'cwd'));
+  handler: async (args, ctx) => {
+    const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const { stdout } = await gitExec(['branch'], cwd);
     const branches = stdout.split('\n').map((b) => b.trim()).filter(Boolean);
     const current = branches.find((b) => b.startsWith('*'))?.replace('* ', '') ?? null;
@@ -340,8 +376,8 @@ const gitBranchCreate: McpToolDef = {
     },
     required: ['name'],
   },
-  handler: async (args) => {
-    const cwd = resolveCwd(str(args, 'cwd'));
+  handler: async (args, ctx) => {
+    const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const name = requireStr(args, 'name');
     assertSafeGitName(name, 'branch');
     const { stdout } = await gitExec(['branch', name], cwd);
@@ -368,8 +404,8 @@ const gitBranchSwitch: McpToolDef = {
     },
     required: ['name'],
   },
-  handler: async (args) => {
-    const cwd = resolveCwd(str(args, 'cwd'));
+  handler: async (args, ctx) => {
+    const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const name = requireStr(args, 'name');
     assertSafeGitName(name, 'branch');
     const { stdout } = await gitExec(['checkout', name], cwd);

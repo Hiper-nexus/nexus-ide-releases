@@ -113,6 +113,10 @@ describe('geminiInstructions', () => {
     expect(prompt).toContain('nexus_action');
     expect(prompt).toContain('mcp_tool');
     expect(prompt).toContain('run_command');
+    expect(prompt).toContain('mission-agentic');
+    expect(prompt).toContain('never use `open_voice_settings`');
+    expect(prompt).toContain('scope `view`');
+    expect(prompt).toContain('nexus_ui_action');
     for (const tool of COARSE_VOICE_TOOLS) {
       expect(prompt).toContain(`\`${tool.name}\``);
     }

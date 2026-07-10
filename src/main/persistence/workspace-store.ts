@@ -9,6 +9,11 @@ import {
   type WorkspaceInfo,
   type WorkspaceState,
 } from '../../shared/workspace-types';
+import {
+  bindRendererWorkspaceScope,
+  clearRendererWorkspaceScope,
+} from './renderer-workspace-scope';
+import { WorkspaceGrantRegistry } from './workspace-grants';
 
 /**
  * Workspace store: current + recent workspaces, persisted in
@@ -18,37 +23,59 @@ import {
 
 const STORE_FILE = path.join(os.homedir(), '.nexus', 'workspaces.json');
 const MAX_RECENTS = 12;
+const WORKSPACE_GRANT_TTL_MS = 30 * 60 * 1000;
 
 let state: WorkspaceState = { current: null, recents: [] };
 const listeners = new Set<WebContents>();
+const workspaceGrants = new WorkspaceGrantRegistry(WORKSPACE_GRANT_TTL_MS);
+
+function canonicalDirectory(candidate: string): string | null {
+  try {
+    const real = fs.realpathSync(path.resolve(candidate));
+    return fs.statSync(real).isDirectory() ? real : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeWorkspaceInfo(value: unknown): WorkspaceInfo | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<WorkspaceInfo>;
+  if (typeof candidate.path !== 'string') return null;
+  const canonical = canonicalDirectory(candidate.path);
+  if (!canonical) return null;
+  return {
+    path: canonical,
+    name:
+      typeof candidate.name === 'string' && candidate.name.length > 0
+        ? candidate.name
+        : path.basename(canonical) || canonical,
+    lastOpenedAt:
+      typeof candidate.lastOpenedAt === 'number' &&
+      Number.isFinite(candidate.lastOpenedAt)
+        ? candidate.lastOpenedAt
+        : 0,
+  };
+}
 
 function load(): void {
   try {
-    const raw = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
-    const recents = Array.isArray(raw?.recents)
-      ? raw.recents.filter(
-          (w: unknown): w is WorkspaceInfo =>
-            typeof (w as WorkspaceInfo)?.path === 'string',
-        )
-      : [];
-    const current =
-      raw?.current && typeof raw.current.path === 'string' ? raw.current : null;
-    // Drop entries whose directory no longer exists.
-    const alive = recents.filter((w: WorkspaceInfo) => dirExists(w.path));
+    const raw = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8')) as unknown;
+    const value = raw as { recents?: unknown; current?: unknown };
+    const alive = (Array.isArray(value?.recents) ? value.recents : [])
+      .map(normalizeWorkspaceInfo)
+      .filter((workspace): workspace is WorkspaceInfo => workspace !== null)
+      .filter(
+        (workspace, index, all) =>
+          all.findIndex((candidate) => candidate.path === workspace.path) === index,
+      );
+    const current = normalizeWorkspaceInfo(value?.current);
     state = {
-      current: current && dirExists(current.path) ? current : null,
+      current,
       recents: alive,
     };
   } catch {
     state = { current: null, recents: [] };
-  }
-}
-
-function dirExists(p: string): boolean {
-  try {
-    return fs.statSync(p).isDirectory();
-  } catch {
-    return false;
   }
 }
 
@@ -85,12 +112,14 @@ function toInfo(dir: string): WorkspaceInfo {
   return { path: dir, name: path.basename(dir) || dir, lastOpenedAt: Date.now() };
 }
 
-function openWorkspace(dir: string): WorkspaceState {
-  if (!dirExists(dir)) return state;
-  const info = toInfo(dir);
+function openWorkspace(dir: string, owner: WebContents): WorkspaceState {
+  const canonical = canonicalDirectory(dir);
+  if (!canonical) return state;
+  bindRendererWorkspaceScope(owner, canonical);
+  const info = toInfo(canonical);
   const recents = [
     info,
-    ...state.recents.filter((w) => w.path !== dir),
+    ...state.recents.filter((w) => w.path !== canonical),
   ].slice(0, MAX_RECENTS);
   state = { current: info, recents };
   persist();
@@ -104,49 +133,83 @@ export function registerWorkspaceListener(wc: WebContents): void {
 
 export function unregisterWorkspaceListener(wc: WebContents): void {
   listeners.delete(wc);
+  workspaceGrants.clear(wc);
+  clearRendererWorkspaceScope(wc);
+}
+
+/**
+ * Internal main-process capability for a directory it already created. The
+ * normal IPC handler still consumes this owner-bound, one-use grant; no new
+ * renderer-accessible bypass is introduced.
+ */
+export function grantWorkspacePathFromTrustedMain(
+  owner: WebContents,
+  candidate: string,
+): string | null {
+  const canonical = canonicalDirectory(candidate);
+  if (!canonical) return null;
+  workspaceGrants.grant(owner, canonical);
+  return canonical;
 }
 
 export function registerWorkspaceIpc(): void {
   load();
 
-  ipcMain.handle(WORKSPACE_CHANNELS.get, () => state);
+  ipcMain.handle(WORKSPACE_CHANNELS.get, (event) => {
+    if (state.current) {
+      bindRendererWorkspaceScope(event.sender, state.current.path);
+    }
+    return state;
+  });
 
-  ipcMain.handle(WORKSPACE_CHANNELS.pick, async () => {
+  ipcMain.handle(WORKSPACE_CHANNELS.pick, async (event) => {
     const result = await dialog.showOpenDialog({
       title: 'Escolher pasta do workspace',
       properties: ['openDirectory', 'createDirectory'],
     });
     if (result.canceled || result.filePaths.length === 0) return state;
-    return openWorkspace(result.filePaths[0]);
+    return openWorkspace(result.filePaths[0], event.sender);
   });
 
   // Folder picker WITHOUT opening the workspace — the "Novo workspace" wizard
   // uses it for the PASTA step (the workspace only opens on the final launch).
-  ipcMain.handle(WORKSPACE_CHANNELS.pickPath, async (): Promise<string | null> => {
+  ipcMain.handle(WORKSPACE_CHANNELS.pickPath, async (event): Promise<string | null> => {
     const result = await dialog.showOpenDialog({
       title: 'Escolher pasta do workspace',
       properties: ['openDirectory', 'createDirectory'],
     });
     if (result.canceled || result.filePaths.length === 0) return null;
-    return result.filePaths[0];
+    const canonical = canonicalDirectory(result.filePaths[0]);
+    if (!canonical) return null;
+    workspaceGrants.grant(event.sender, canonical);
+    return canonical;
   });
 
-  ipcMain.handle(WORKSPACE_CHANNELS.open, (_event, raw) => {
+  ipcMain.handle(WORKSPACE_CHANNELS.open, (event, raw) => {
     const parsed = openWorkspaceSchema.safeParse(raw);
     if (!parsed.success) return state;
-    return openWorkspace(parsed.data.path);
+    const canonical = canonicalDirectory(parsed.data.path);
+    if (!canonical) return state;
+    const isRecent = state.recents.some((workspace) => workspace.path === canonical);
+    if (!isRecent && !workspaceGrants.consume(event.sender, canonical)) {
+      throw new Error('workspace path was not authorized by the folder picker');
+    }
+    return openWorkspace(canonical, event.sender);
   });
 
-  ipcMain.handle(WORKSPACE_CHANNELS.close, () => {
+  ipcMain.handle(WORKSPACE_CHANNELS.close, (event) => {
+    clearRendererWorkspaceScope(event.sender);
     state = { ...state, current: null };
     persist();
     broadcast();
     return state;
   });
 
-  ipcMain.handle(WORKSPACE_CHANNELS.remove, (_event, raw) => {
+  ipcMain.handle(WORKSPACE_CHANNELS.remove, (event, raw) => {
     const parsed = openWorkspaceSchema.safeParse(raw);
     if (!parsed.success) return state;
+    const removedCurrent = state.current?.path === parsed.data.path;
+    if (removedCurrent) clearRendererWorkspaceScope(event.sender);
     state = {
       current:
         state.current?.path === parsed.data.path ? null : state.current,

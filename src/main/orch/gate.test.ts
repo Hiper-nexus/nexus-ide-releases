@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  assertOrchestratorMission,
+  bindContextRevision,
   bindTokenToSession,
   canonicalToolName,
   evaluateStop,
@@ -12,7 +14,13 @@ import {
   mintToken,
   releaseSession,
   resetGateForTests,
+  restoreSessionAuthority,
 } from './gate';
+import { testProjectScope } from './__tests__/scope-fixture';
+
+function token(label: string, role: 'worker' | 'orchestrator' | 'user') {
+  return mintToken({ label, role, scope: testProjectScope() });
+}
 
 describe('canonicalToolName', () => {
   it('strips the nexus_ namespace', () => {
@@ -80,8 +88,8 @@ describe('token registry + stop gate', () => {
   beforeEach(() => resetGateForTests());
 
   it('mints unique tokens and binds them to sessions', () => {
-    const a = mintToken({ label: 'worker-a', role: 'worker' });
-    const b = mintToken({ label: 'worker-b', role: 'worker' });
+    const a = token('worker-a', 'worker');
+    const b = token('worker-b', 'worker');
     expect(a.token).not.toBe(b.token);
 
     bindTokenToSession(a.token, 'pty-1');
@@ -94,14 +102,22 @@ describe('token registry + stop gate', () => {
   });
 
   it('blocks a worker stop until handoff, then allows', () => {
-    const ctx = mintToken({ label: 'w', role: 'worker' });
+    const ctx = token('w', 'worker');
     expect(evaluateStop(ctx).allow).toBe(false);
     markHandoffSubmitted(ctx);
     expect(evaluateStop(ctx).allow).toBe(true);
   });
 
+  it('revokes a cached stop receipt when its evidence becomes stale', () => {
+    const ctx = token('w-stale', 'worker');
+    markHandoffSubmitted(ctx);
+
+    expect(evaluateStop(ctx, false).allow).toBe(false);
+    expect(ctx.handoffSubmitted).toBe(false);
+  });
+
   it('gives up blocking after MAX_STOP_ATTEMPTS (never traps an agent)', () => {
-    const ctx = mintToken({ label: 'w', role: 'worker' });
+    const ctx = token('w', 'worker');
     let allowed = false;
     for (let i = 0; i < MAX_STOP_ATTEMPTS; i++) {
       allowed = evaluateStop(ctx).allow;
@@ -110,7 +126,153 @@ describe('token registry + stop gate', () => {
   });
 
   it('never blocks orchestrators or user panes', () => {
-    expect(evaluateStop(mintToken({ label: 'o', role: 'orchestrator' })).allow).toBe(true);
-    expect(evaluateStop(mintToken({ label: 'u', role: 'user' })).allow).toBe(true);
+    expect(evaluateStop(token('o', 'orchestrator')).allow).toBe(true);
+    expect(evaluateStop(token('u', 'user')).allow).toBe(true);
+  });
+
+  it('reserves mission authority to its exact orchestrator', () => {
+    expect(() =>
+      assertOrchestratorMission(
+        { role: 'orchestrator', missionId: 'mission-a' },
+        'mission-a',
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertOrchestratorMission(
+        { role: 'worker', missionId: 'mission-a' },
+        'mission-a',
+      ),
+    ).toThrow(/only the mission orchestrator/);
+    expect(() =>
+      assertOrchestratorMission(
+        { role: 'orchestrator', missionId: 'mission-b' },
+        'mission-a',
+      ),
+    ).toThrow(/does not match/);
+  });
+
+  it('copies and freezes the project scope at mint time', () => {
+    const scope = testProjectScope({ projectId: 'project-a' });
+    const ctx = mintToken({ label: 'scoped', role: 'worker', scope });
+
+    expect(ctx.scope).not.toBe(scope);
+    expect(Object.isFrozen(ctx.scope)).toBe(true);
+    expect(ctx.scope.projectId).toBe('project-a');
+  });
+
+  it('binds one immutable frozen context revision to a token', () => {
+    const ctx = mintToken({
+      label: 'revision-bound',
+      role: 'worker',
+      missionId: 'mission-a',
+      contextRevision: 'context-revision-a',
+      scope: testProjectScope(),
+    });
+
+    expect(ctx.contextRevision).toBe('context-revision-a');
+    expect(() => bindContextRevision(ctx, 'context-revision-a')).not.toThrow();
+    expect(() => bindContextRevision(ctx, 'context-revision-b')).toThrow(
+      /does not match the frozen mission/,
+    );
+  });
+
+  it('never mints revision authority without its mission coordinate', () => {
+    expect(() => mintToken({
+      label: 'invalid-revision',
+      role: 'worker',
+      contextRevision: 'context-revision-a',
+      scope: testProjectScope(),
+    })).toThrow(/requires a mission/);
+  });
+
+  it('never rebinds a token or session to another PTY', () => {
+    const a = token('a', 'worker');
+    const b = token('b', 'worker');
+    bindTokenToSession(a.token, 'pty-a');
+
+    expect(() => bindTokenToSession(a.token, 'pty-b')).toThrow(/already bound/i);
+    expect(() => bindTokenToSession(b.token, 'pty-a')).toThrow(/already bound/i);
+  });
+
+  it('restores a resumed user pane as a mission-scoped worker with no MCP powers', () => {
+    const resumed = token('resumed', 'user');
+    bindTokenToSession(resumed.token, 'pty-resumed');
+
+    expect(
+      restoreSessionAuthority('pty-resumed', {
+        missionId: 'mission-a',
+        role: 'worker',
+        agentName: 'QA',
+      }),
+    ).toBe(true);
+    expect(getContextBySession('pty-resumed')).toMatchObject({
+      missionId: 'mission-a',
+      role: 'worker',
+      agentName: 'QA',
+      allowedTools: [],
+    });
+  });
+
+  it('preserves an existing worker allowlist when its persisted binding is replayed', () => {
+    const worker = mintToken({
+      label: 'worker',
+      role: 'worker',
+      missionId: 'mission-a',
+      scope: testProjectScope(),
+      allowedTools: ['nexus_file_read'],
+    });
+    bindTokenToSession(worker.token, 'pty-worker');
+
+    expect(
+      restoreSessionAuthority('pty-worker', {
+        missionId: 'mission-a',
+        role: 'worker',
+      }),
+    ).toBe(true);
+    expect(worker.allowedTools).toEqual(['nexus_file_read']);
+  });
+
+  it('restores the persisted worker capability snapshot on a resumed user token', () => {
+    const resumed = token('resumed-custom', 'user');
+    bindTokenToSession(resumed.token, 'pty-resumed-custom');
+
+    expect(
+      restoreSessionAuthority('pty-resumed-custom', {
+        missionId: 'mission-a',
+        contextRevision: 'context-revision-a',
+        role: 'worker',
+        allowedTools: ['nexus_file_read'],
+        allowedSkills: ['review'],
+      }),
+    ).toBe(true);
+    expect(getContextBySession('pty-resumed-custom')).toMatchObject({
+      role: 'worker',
+      contextRevision: 'context-revision-a',
+      allowedTools: ['nexus_file_read'],
+      allowedSkills: ['review'],
+    });
+  });
+
+  it('refuses mission changes and worker-to-orchestrator escalation', () => {
+    const worker = mintToken({
+      label: 'worker',
+      role: 'worker',
+      missionId: 'mission-a',
+      scope: testProjectScope(),
+    });
+    bindTokenToSession(worker.token, 'pty-worker');
+
+    expect(
+      restoreSessionAuthority('pty-worker', {
+        missionId: 'mission-b',
+        role: 'worker',
+      }),
+    ).toBe(false);
+    expect(
+      restoreSessionAuthority('pty-worker', {
+        missionId: 'mission-a',
+        role: 'orchestrator',
+      }),
+    ).toBe(false);
   });
 });

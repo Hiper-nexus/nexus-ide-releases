@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import type { ProjectExecutionScope } from '../../shared/types';
 
 /**
  * Preview server local (benchmark §7): serve um diretório estático (build de
@@ -9,7 +11,8 @@ import path from 'node:path';
  *
  * Segurança: só GET/HEAD, bind exclusivo em loopback, raiz fixada no spawn e
  * path traversal bloqueado por resolução canônica (o path servido PRECISA
- * continuar dentro da raiz). Um servidor por diretório (idempotente).
+ * continuar dentro da raiz). Um servidor por projeto + checkout + diretório
+ * canônico (idempotente inclusive sob starts concorrentes).
  */
 
 const MIME: Record<string, string> = {
@@ -32,9 +35,27 @@ const MIME: Record<string, string> = {
 };
 
 interface RunningPreview {
+  id: string;
+  key: string;
   server: http.Server;
   port: number;
   root: string;
+  projectId: string;
+  checkoutId: string;
+}
+
+type PreviewScope = Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>;
+
+export interface PreviewDescriptor {
+  id: string;
+  dir: string;
+  url: string;
+}
+
+interface PreviewStartResult {
+  id: string;
+  url: string;
+  port: number;
 }
 
 interface OpenedPreviewFile {
@@ -45,7 +66,28 @@ interface OpenedPreviewFile {
 
 class ForbiddenPreviewPathError extends Error {}
 
-const running = new Map<string, RunningPreview>(); // root canônica → server
+const runningById = new Map<string, RunningPreview>();
+const previewIdByKey = new Map<string, string>();
+const startingByKey = new Map<string, Promise<PreviewStartResult>>();
+
+function previewKey(root: string, scope: PreviewScope): string {
+  return JSON.stringify([scope.projectId, scope.checkoutId, root]);
+}
+
+function isOwnedBy(entry: RunningPreview, scope: PreviewScope): boolean {
+  return (
+    entry.projectId === scope.projectId &&
+    entry.checkoutId === scope.checkoutId
+  );
+}
+
+function describePreview(entry: RunningPreview): PreviewDescriptor {
+  return {
+    id: entry.id,
+    dir: entry.root,
+    url: `http://127.0.0.1:${entry.port}/`,
+  };
+}
 
 function resolveSafe(root: string, urlPath: string): string | null {
   const decoded = decodeURIComponent(urlPath.split('?')[0]);
@@ -115,16 +157,43 @@ function serve(root: string, req: http.IncomingMessage, res: http.ServerResponse
   }
 }
 
-export async function startPreview(dir: string): Promise<{ url: string; port: number }> {
+export async function startPreview(
+  dir: string,
+  scope: PreviewScope,
+): Promise<PreviewStartResult> {
   const root = fs.realpathSync.native(path.resolve(dir));
   const stat = fs.statSync(root); // lança se não existe — o caller traduz
   if (!stat.isDirectory()) throw new Error(`não é um diretório: ${root}`);
 
-  const existing = running.get(root);
+  const key = previewKey(root, scope);
+  const existingId = previewIdByKey.get(key);
+  const existing = existingId ? runningById.get(existingId) : undefined;
   if (existing) {
-    return { url: `http://127.0.0.1:${existing.port}/`, port: existing.port };
+    return {
+      id: existing.id,
+      url: `http://127.0.0.1:${existing.port}/`,
+      port: existing.port,
+    };
   }
+  if (existingId) previewIdByKey.delete(key);
 
+  const pending = startingByKey.get(key);
+  if (pending) return pending;
+
+  const starting = createPreview(root, key, scope);
+  startingByKey.set(key, starting);
+  try {
+    return await starting;
+  } finally {
+    if (startingByKey.get(key) === starting) startingByKey.delete(key);
+  }
+}
+
+async function createPreview(
+  root: string,
+  key: string,
+  scope: PreviewScope,
+): Promise<PreviewStartResult> {
   const server = http.createServer((req, res) => serve(root, req, res));
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -132,35 +201,42 @@ export async function startPreview(dir: string): Promise<{ url: string; port: nu
   });
   const address = server.address();
   const port = typeof address === 'object' && address ? address.port : 0;
-  running.set(root, { server, port, root });
-  console.log(`[preview] servindo ${root} em http://127.0.0.1:${port}/`);
-  return { url: `http://127.0.0.1:${port}/`, port };
+  const id = `preview-${randomUUID()}`;
+  const entry: RunningPreview = {
+    id,
+    key,
+    server,
+    port,
+    root,
+    projectId: scope.projectId,
+    checkoutId: scope.checkoutId,
+  };
+  runningById.set(id, entry);
+  previewIdByKey.set(key, id);
+  console.log(`[preview] ${id} servindo ${root} em http://127.0.0.1:${port}/`);
+  return { id, url: `http://127.0.0.1:${port}/`, port };
 }
 
-export function stopPreview(dir: string): boolean {
-  let root: string;
-  try {
-    root = fs.realpathSync.native(path.resolve(dir));
-  } catch {
-    root = path.resolve(dir);
-  }
-  const entry = running.get(root);
-  if (!entry) return false;
+export function stopPreview(id: string, scope: PreviewScope): boolean {
+  const entry = runningById.get(id);
+  if (!entry || !isOwnedBy(entry, scope)) return false;
+  runningById.delete(id);
+  if (previewIdByKey.get(entry.key) === id) previewIdByKey.delete(entry.key);
   entry.server.close();
-  running.delete(root);
   return true;
 }
 
 export function stopAllPreviews(): void {
-  for (const entry of running.values()) entry.server.close();
-  running.clear();
+  for (const entry of runningById.values()) entry.server.close();
+  runningById.clear();
+  previewIdByKey.clear();
+  startingByKey.clear();
 }
 
-export function listPreviews(): Array<{ dir: string; url: string }> {
-  return [...running.values()].map((p) => ({
-    dir: p.root,
-    url: `http://127.0.0.1:${p.port}/`,
-  }));
+export function listPreviews(scope: PreviewScope): PreviewDescriptor[] {
+  return [...runningById.values()]
+    .filter((entry) => isOwnedBy(entry, scope))
+    .map(describePreview);
 }
 
 /**
@@ -173,7 +249,30 @@ export function isRunningPreviewUrl(raw: string | URL): boolean {
     const url = typeof raw === 'string' ? new URL(raw) : raw;
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1') return false;
     const port = Number.parseInt(url.port, 10);
-    return Number.isInteger(port) && [...running.values()].some((entry) => entry.port === port);
+    return (
+      Number.isInteger(port) &&
+      [...runningById.values()].some((entry) => entry.port === port)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Process-minted preview whose canonical directory belongs to this scope. */
+export function isRunningPreviewUrlForScope(
+  raw: string | URL,
+  scope: ProjectExecutionScope,
+): boolean {
+  try {
+    const url = typeof raw === 'string' ? new URL(raw) : raw;
+    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1') return false;
+    const port = Number.parseInt(url.port, 10);
+    const root = fs.realpathSync.native(path.resolve(scope.rootRealPath));
+    return [...runningById.values()].some((entry) => {
+      if (entry.port !== port || !isOwnedBy(entry, scope)) return false;
+      const relative = path.relative(root, entry.root);
+      return !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`);
+    });
   } catch {
     return false;
   }

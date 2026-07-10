@@ -74,11 +74,40 @@ describe('tool nativa do Live consome a pendência (review final, item 3)', () =
     expect(branchIdx).toBeGreaterThanOrEqual(0);
     const clearIdx = finishSource.indexOf('clearPendingDelegation()', branchIdx);
     const dropLogIdx = finishSource.indexOf("'jarvis.delegationDropped'", branchIdx);
-    const releaseIdx = finishSource.indexOf('releaseAfterLiveProviderAnswer({', branchIdx);
+    const releaseIdx = finishSource.indexOf('releaseAfterRealtimeTool();', branchIdx);
     expect(clearIdx).toBeGreaterThan(branchIdx);
     expect(dropLogIdx).toBeGreaterThan(branchIdx);
     // Descarte (clear + log) acontece antes do release que encerra o turno.
     expect(releaseIdx).toBeGreaterThan(clearIdx);
     expect(releaseIdx).toBeGreaterThan(dropLogIdx);
+    const toolBranch = finishSource.slice(branchIdx, finishSource.indexOf('if (liveTranscript)', branchIdx));
+    // Ferramentas podem narrar áudio depois do resultado; a reabertura agora
+    // espera o completion correlacionado em vez de abrir cedo ou dormir.
+    expect(toolBranch).toContain('releaseAfterRealtimeTool();');
+  });
+});
+
+describe('continuidade pós-tool do Gemini Live', () => {
+  it('recebe e limpa o evento IPC de conclusão correlacionada', () => {
+    expect(controllerSource).toContain('onLiveToolTurnComplete((event) =>');
+    expect(controllerSource).toContain('notifyLiveToolTurnComplete(event);');
+    expect(controllerSource).toContain('unsubLiveToolTurnComplete();');
+  });
+
+  it('mantém a guarda do dono realtime-tool ao reabrir o microfone', () => {
+    expect(finishSource).toContain("turnExecution.owner === 'realtime-tool'");
+    expect(finishSource).toContain('releaseAfterLiveToolAnswer({');
+    expect(finishSource).toContain('callId,');
+  });
+});
+
+describe('follow-up Live não compete com uma tool que já possui o turno', () => {
+  it('só arma continuidade quando o caminho realmente conquistou o áudio realtime', () => {
+    const claimIdx = finishSource.indexOf("const claimed = turnExecution.claim('realtime-audio', turnToken);");
+    expect(claimIdx).toBeGreaterThanOrEqual(0);
+    const replyReleaseIdx = finishSource.indexOf('releaseAfterLiveProviderAnswer({', claimIdx);
+    expect(replyReleaseIdx).toBeGreaterThan(claimIdx);
+    const releaseBlock = finishSource.slice(replyReleaseIdx, replyReleaseIdx + 260);
+    expect(releaseBlock).toContain('armFollowUp: claimed');
   });
 });

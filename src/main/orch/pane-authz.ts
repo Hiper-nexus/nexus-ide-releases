@@ -1,3 +1,5 @@
+import type { ProjectExecutionScope } from '../../shared/types';
+
 /**
  * Object-level authorization for the pane MCP tools (SEC#5). The skill-gate
  * (gate.ts) only checks whether a tool NAME is allowed; it does nothing about
@@ -20,8 +22,11 @@ export type CallerRole = 'orchestrator' | 'worker' | 'user';
 
 export interface CallerCtx {
   role: CallerRole;
+  scope: ProjectExecutionScope;
   /** The mission the caller belongs to (undefined before mission_create). */
   missionId?: string;
+  /** Frozen PREVC revision restored by main; never renderer-authored. */
+  contextRevision?: string;
   /** The caller's own PTY session — acting on it is always allowed. */
   sessionId?: string;
 }
@@ -31,7 +36,12 @@ export interface PaneAuthzInfo {
   sessionId: string | null;
   kind: 'shell' | 'cli-agent' | 'browser';
   missionId?: string;
+  /** Frozen PREVC revision restored by main; never renderer-authored. */
+  contextRevision?: string;
   role?: 'orchestrator' | 'worker';
+  scope?: ProjectExecutionScope;
+  /** Narrower worktree authority used by mission workers, when present. */
+  executionScope?: ProjectExecutionScope;
 }
 
 export interface AuthzDecision {
@@ -46,6 +56,13 @@ export function authorizePaneAccess(
   pane: PaneAuthzInfo,
   action: PaneAction,
 ): AuthzDecision {
+  if (
+    !pane.scope ||
+    caller.scope.projectId !== pane.scope.projectId ||
+    caller.scope.checkoutId !== pane.scope.checkoutId
+  ) {
+    return { allow: false, reason: 'pane belongs to another project checkout' };
+  }
   // Acting on your own pane is always fine (read your own tail, etc.).
   if (caller.sessionId && pane.sessionId && caller.sessionId === pane.sessionId) {
     return { allow: true };

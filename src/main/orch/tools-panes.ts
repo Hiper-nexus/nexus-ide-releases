@@ -19,8 +19,44 @@ import {
   strArray,
   type SpawnToolOptions,
 } from './tool-util';
+import { canonicalToolName, type AgentGateContext } from './gate';
+import { getContextWorkflowService } from '../context/context-workflow-registry';
+import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 
 /** The 10 pane tools of the embedded MCP server (tool group 1). */
+
+export function childMissionId(
+  ctx: AgentGateContext,
+  requested?: string,
+): string | undefined {
+  if (ctx.missionId && requested && requested !== ctx.missionId) {
+    throw new Error('not authorized: child mission must match its parent');
+  }
+  if (!ctx.missionId && requested && ctx.role !== 'user') {
+    throw new Error('not authorized: only the user can attach an unbound agent to a mission');
+  }
+  return ctx.missionId ?? requested;
+}
+
+export function attenuateTools(
+  parent: string[] | null,
+  requested: string[] | null,
+): string[] | null {
+  if (parent === null) return requested;
+  if (requested === null) return [...parent];
+  const allowed = new Set(parent.map(canonicalToolName));
+  return requested.filter((tool) => allowed.has(canonicalToolName(tool)));
+}
+
+export function attenuateSkills(
+  parent: string[] | null,
+  requested: string[] | null,
+): string[] | null {
+  if (parent === null) return requested;
+  if (requested === null) return [...parent];
+  const allowed = new Set(parent.map((skill) => skill.toLowerCase()));
+  return requested.filter((skill) => allowed.has(skill.toLowerCase()));
+}
 
 const paneSpawn: McpToolDef = {
   name: 'nexus_pane_spawn',
@@ -45,6 +81,7 @@ const paneSpawn: McpToolDef = {
       cwd: { type: 'string' },
       title: { type: 'string' },
       missionId: { type: 'string' },
+      taskId: { type: 'string' },
       prompt: { type: 'string' },
     },
   },
@@ -56,6 +93,10 @@ const paneSpawn: McpToolDef = {
       if (!found) throw new Error(`unknown squad agent: ${agentRef}`);
       const { agent } = found;
       const role = agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
+      if (ctx.role === 'worker' && role === 'orchestrator') {
+        throw new Error('not authorized: workers cannot create orchestrators');
+      }
+      const requestedMissionId = str(args, 'missionId');
       options = {
         // Roteamento de custo: o adapterId vindo do route_task vence o
         // default do roster — senão o squad inteiro cai num modelo só.
@@ -64,12 +105,17 @@ const paneSpawn: McpToolDef = {
         effort: str(args, 'effort') ?? agent.effort,
         cwd: str(args, 'cwd'),
         title: str(args, 'title') ?? agent.agentName,
-        missionId: str(args, 'missionId') ?? ctx.missionId,
+        missionId: childMissionId(ctx, requestedMissionId),
+        contextRevision: ctx.contextRevision,
         agentName: agent.agentName,
-        allowedTools: agent.allowedTools ?? (role === 'orchestrator' ? null : []),
-        allowedSkills: agent.allowedSkills ?? null,
+        allowedTools: attenuateTools(
+          ctx.allowedTools,
+          agent.allowedTools ?? (role === 'orchestrator' ? null : []),
+        ),
+        allowedSkills: attenuateSkills(ctx.allowedSkills, agent.allowedSkills ?? null),
         role,
         prompt: str(args, 'prompt'),
+        scope: ctx.scope,
       };
     } else {
       options = {
@@ -78,13 +124,55 @@ const paneSpawn: McpToolDef = {
         effort: str(args, 'effort'),
         cwd: str(args, 'cwd'),
         title: str(args, 'title'),
-        missionId: str(args, 'missionId') ?? ctx.missionId,
+        missionId: childMissionId(ctx, str(args, 'missionId')),
+        contextRevision: ctx.contextRevision,
         // An MCP-initiated spawn is the orchestrator delegating: default to a
         // WORKER (gated) so an ad-hoc spawn without agentName never lands as an
         // unrestricted 'user'-role token (SEC#5).
+        allowedTools: attenuateTools(ctx.allowedTools, []),
+        allowedSkills: attenuateSkills(ctx.allowedSkills, null),
         role: 'worker',
         prompt: str(args, 'prompt'),
+        scope: ctx.scope,
       };
+    }
+    if (options.role === 'worker' && options.missionId) {
+      const missionId = options.missionId;
+      const workflowService = getContextWorkflowService(ctx.scope);
+      const missionWorkflow = workflowService.getMissionWorkflow(missionId);
+      if (missionWorkflow.contract) {
+        const taskId = str(args, 'taskId');
+        if (!taskId) {
+          throw new Error('frozen missions require taskId and an allocated worktree');
+        }
+        const worktree = requireWorktreeRuntimeRegistry().get(
+          ctx.scope,
+          missionId,
+          taskId,
+        );
+        if (!worktree || worktree.status !== 'ready') {
+          throw new Error('task worktree is not ready');
+        }
+        if (options.agentName && worktree.workerId !== options.agentName) {
+          throw new Error('task worktree belongs to another worker');
+        }
+        options = {
+          ...options,
+          cwd: worktree.worktreePath,
+          executionScope: Object.freeze({
+            ...ctx.scope,
+            rootRealPath: worktree.worktreePath,
+          }),
+        };
+        if (options.prompt) {
+          const snapshot = workflowService.compileMissionSnapshot(missionId);
+          options.prompt =
+            `${snapshot.markdown}\n\n` +
+            `Contract hash: ${missionWorkflow.contract.contract.contractHash}\n` +
+            `Task ownership: ${JSON.stringify(worktree.ownership)}\n\n` +
+            options.prompt;
+        }
+      }
     }
     return spawnPaneAndMaybePrompt(options);
   },

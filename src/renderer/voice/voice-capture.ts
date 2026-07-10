@@ -39,6 +39,11 @@ export interface AutoStopOptions {
   silenceMs: number;
   /** Minimum open window before silence is allowed to end the utterance. */
   minListenMs?: number;
+  /**
+   * Optional raw-input energy floor for speech onset. This is evaluated before
+   * the local AGC so a noisy room cannot close an automatic reply window.
+   */
+  rawSpeechRms?: number;
   /** Hard cap on the whole capture. */
   maxMs: number;
   onAutoStop: () => void;

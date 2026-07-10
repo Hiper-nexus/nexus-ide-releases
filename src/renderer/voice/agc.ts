@@ -23,6 +23,11 @@ export const AGC_SPEECH_FLOOR = 0.006;
 const AGC_UP_RATE = 1.06;
 /** Descida por frame (~1.4dB) — reage rápido a saturação. */
 const AGC_DOWN_RATE = 0.85;
+/**
+ * Fração do alvo que precisa existir já no primeiro frame de fala. Um wake
+ * word curto não pode esperar a recuperação suave normal do AGC.
+ */
+const AGC_WAKE_ONSET_TARGET_RATIO = 0.75;
 
 export class SoftAgc {
   private gain: number;
@@ -50,8 +55,15 @@ export class SoftAgc {
         // Sinal forte demais para o ganho atual: desce rápido até o ideal.
         this.gain = Math.max(ideal, this.gain * AGC_DOWN_RATE, AGC_MIN_GAIN);
       } else {
-        // Sinal fraco: sobe devagar, sem passar do ideal nem do teto.
-        this.gain = Math.min(this.gain * AGC_UP_RATE, ideal, AGC_MAX_GAIN);
+        // Sinal fraco: preserve a subida suave depois do onset, mas recupere
+        // imediatamente o bastante para não perder o começo de "Hey Jarvis"
+        // após uma fala anterior ter reduzido o ganho.
+        const targetGain = Math.min(ideal, AGC_MAX_GAIN);
+        const wakeOnsetGain = targetGain * AGC_WAKE_ONSET_TARGET_RATIO;
+        this.gain = Math.min(
+          targetGain,
+          Math.max(this.gain * AGC_UP_RATE, wakeOnsetGain, AGC_MIN_GAIN),
+        );
       }
     }
 

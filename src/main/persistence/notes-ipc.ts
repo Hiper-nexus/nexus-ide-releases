@@ -7,32 +7,33 @@ import {
   saveNoteSchema,
   type NotesChangedEvent,
 } from '../../shared/note-types';
-import { getDb } from './db';
-import {
-  initNotesStore,
-  listNotes,
-  onNotesChange,
-  removeNote,
-  saveNote,
-} from './notes-store';
+import type { ProjectExecutionScope } from '../../shared/types';
+import { broadcastToProject } from '../orch/project-scoped-broadcast';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import { createScopedNotesStore, type ScopedNote } from './notes-store';
+import { requireRendererWorkspaceScope } from './renderer-workspace-scope';
 
-/**
- * Renderer-facing IPC for sticky notes. Every boundary is zod-validated —
- * agent-written notes flow through the same channels as user edits, so a
- * malformed payload (non-finite geometry, oversized text) is rejected here
- * and can never corrupt the store. Broadcast pattern mirrors account-ipc.ts.
- */
-
+/** Registered windows are filtered by their current main-owned scope. */
 const listeners = new Set<WebContents>();
 
-function broadcast(workspacePath: string): void {
-  const event: NotesChangedEvent = {
-    workspacePath,
-    notes: listNotes(workspacePath),
-  };
-  for (const wc of listeners) {
-    if (!wc.isDestroyed()) wc.send(NOTE_CHANNELS.changed, event);
+function assertWorkspaceIntent(
+  scope: ProjectExecutionScope,
+  workspacePath: string,
+): void {
+  if (workspacePath !== scope.rootRealPath) {
+    throw new Error('workspace request does not match renderer scope');
   }
+}
+
+function broadcast(
+  scope: ProjectExecutionScope,
+  notes: ScopedNote[],
+): void {
+  const event: NotesChangedEvent = {
+    workspacePath: scope.rootRealPath,
+    notes,
+  };
+  broadcastToProject(listeners, scope, NOTE_CHANNELS.changed, event);
 }
 
 export function registerNotesListener(wc: WebContents): void {
@@ -43,27 +44,39 @@ export function unregisterNotesListener(wc: WebContents): void {
   listeners.delete(wc);
 }
 
-export function registerNotesIpc(): void {
-  initNotesStore(getDb());
-  onNotesChange(broadcast);
-
-  ipcMain.handle(NOTE_CHANNELS.list, (_e, raw) => {
+/**
+ * Renderer paths remain in the wire format for compatibility, but they never
+ * select storage. Every handler captures its sender's trusted scope first.
+ */
+export function registerNotesIpc(
+  runtimeManager: ProjectRuntimeManager,
+): void {
+  ipcMain.handle(NOTE_CHANNELS.list, (event, raw) => {
+    const scope = requireRendererWorkspaceScope(event.sender);
     const parsed = listNotesSchema.safeParse(raw);
     if (!parsed.success) return [];
-    return listNotes(parsed.data.workspacePath);
+    assertWorkspaceIntent(scope, parsed.data.workspacePath);
+    return createScopedNotesStore(runtimeManager, scope).list();
   });
 
-  ipcMain.handle(NOTE_CHANNELS.save, (_e, raw) => {
+  ipcMain.handle(NOTE_CHANNELS.save, (event, raw) => {
+    const scope = requireRendererWorkspaceScope(event.sender);
     const parsed = saveNoteSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid note' };
-    saveNote(parsed.data.workspacePath, parsed.data.note);
+    assertWorkspaceIntent(scope, parsed.data.workspacePath);
+    const store = createScopedNotesStore(runtimeManager, scope);
+    store.save(parsed.data.note);
+    broadcast(scope, store.list());
     return { ok: true };
   });
 
-  ipcMain.handle(NOTE_CHANNELS.remove, (_e, raw) => {
+  ipcMain.handle(NOTE_CHANNELS.remove, (event, raw) => {
+    const scope = requireRendererWorkspaceScope(event.sender);
     const parsed = removeNoteSchema.safeParse(raw);
     if (!parsed.success) return { ok: false };
-    removeNote(parsed.data.id);
-    return { ok: true };
+    const store = createScopedNotesStore(runtimeManager, scope);
+    const removed = store.remove(parsed.data.id);
+    if (removed) broadcast(scope, store.list());
+    return { ok: removed };
   });
 }

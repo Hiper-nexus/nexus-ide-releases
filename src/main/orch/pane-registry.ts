@@ -1,5 +1,5 @@
-import type { WebContents } from 'electron';
-import type { PaneSessionState } from '../../shared/types';
+import type { WebContents } from "electron";
+import type { PaneSessionState } from "../../shared/types";
 import type {
   OrchPaneSpawnRequest,
   OrchPaneSpawnResult,
@@ -7,16 +7,23 @@ import type {
   BrowserPaneOpenResult,
   PaneRegistryEntry,
   PaneSnapshot,
-} from '../../shared/orch-types';
-import { ORCH_CHANNELS } from '../../shared/orch-channels';
+} from "../../shared/orch-types";
+import { ORCH_CHANNELS } from "../../shared/orch-channels";
+import { DEV_SERVER_CHANNELS } from "../../shared/channels";
 import {
   getSessionState,
+  isSessionOwnedBy,
   tapSessionData,
   tapSessionExit,
   tapSessionState,
-} from '../pty/pty-manager';
-import { canListPane, type CallerCtx, type PaneAuthzInfo } from './pane-authz';
-import { makeId } from './store-util';
+} from "../pty/pty-manager";
+import { canListPane, type CallerCtx, type PaneAuthzInfo } from "./pane-authz";
+import { makeId } from "./store-util";
+import type { ProjectExecutionScope } from "../../shared/types";
+import {
+  createDevServerScanner,
+  type DevServerEntry,
+} from "./dev-server-registry";
 
 /**
  * Main-process mirror of the renderer's pane grid plus per-session output ring
@@ -53,21 +60,35 @@ setInterval(() => {
 
 interface OrchMeta {
   missionId?: string;
+  contextRevision?: string;
   agentName?: string;
   /** Skill-gate allowlists for the agent behind this pane (null = open). */
   allowedTools?: string[] | null;
   allowedSkills?: string[] | null;
-  role?: 'orchestrator' | 'worker';
+  role?: "orchestrator" | "worker";
+  scope?: Readonly<ProjectExecutionScope>;
+  executionScope?: Readonly<ProjectExecutionScope>;
+  readOnly?: boolean;
 }
 
-let panes: PaneRegistryEntry[] = [];
+interface RegisteredPane {
+  entry: PaneRegistryEntry;
+  owner: WebContents;
+}
+
+let panes: RegisteredPane[] = [];
 const buffers = new Map<string, RingBuffer>();
 const sessionStates = new Map<string, PaneSessionState>();
+const scopeBySession = new Map<string, Readonly<ProjectExecutionScope>>();
 const orchMetaByPane = new Map<string, OrchMeta>();
+
+function paneMetaKey(owner: WebContents, paneId: string): string {
+  return `${owner.id}:${paneId}`;
+}
 
 interface IdleWaiter {
   sessionId: string;
-  resolve: (state: 'idle' | 'exited') => void;
+  resolve: (state: "idle" | "exited") => void;
   /** Limpo ao resolver — waits longos deixavam timers de 120-300s vivos. */
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -77,6 +98,10 @@ interface PendingSpawn {
   resolve: (result: OrchPaneSpawnResult) => void;
   timer: ReturnType<typeof setTimeout>;
   meta: OrchMeta;
+  requestedCwd?: string;
+  owner: WebContents;
+  claimed: boolean;
+  claimedSessionId: string | null;
 }
 const pendingSpawns = new Map<string, PendingSpawn>();
 
@@ -84,10 +109,38 @@ interface PendingBrowserOpen {
   resolve: (result: BrowserPaneOpenResult) => void;
   timer: ReturnType<typeof setTimeout>;
   meta: OrchMeta;
+  owner: WebContents;
 }
 const pendingBrowserOpens = new Map<string, PendingBrowserOpen>();
 
 let orchRenderer: WebContents | null = null;
+
+function liveOwnerForSession(sessionId: string): WebContents | null {
+  const matches = panes.filter(
+    ({ entry, owner }) =>
+      entry.sessionId === sessionId &&
+      !owner.isDestroyed() &&
+      !owner.isCrashed(),
+  );
+  return matches.length === 1 ? matches[0].owner : null;
+}
+
+// Passive PTY scanning is process-global, but each finding is sent only to
+// the renderer that owns the exact session. This prevents a dev-server URL
+// from leaking into another project window.
+const devServerScanner = createDevServerScanner({
+  paneIdOf: (sessionId) => findPane(sessionId)?.paneId ?? null,
+  emit: (entry) => {
+    liveOwnerForSession(entry.sessionId)?.send(
+      DEV_SERVER_CHANNELS.detected,
+      entry,
+    );
+  },
+});
+
+export function getDevServerForPane(paneRef: string): DevServerEntry | null {
+  return devServerScanner.get(paneRef);
+}
 
 /** The window that hosts the pane grid — target of orchestration requests. */
 export function registerOrchRenderer(wc: WebContents): void {
@@ -96,24 +149,33 @@ export function registerOrchRenderer(wc: WebContents): void {
 
 export function unregisterOrchRenderer(wc: WebContents): void {
   if (orchRenderer === wc) orchRenderer = null;
+  const removedPaneIds = panes
+    .filter((registered) => registered.owner === wc)
+    .map((registered) => registered.entry.paneId);
+  panes = panes.filter((registered) => registered.owner !== wc);
+  for (const paneId of removedPaneIds) {
+    orchMetaByPane.delete(paneMetaKey(wc, paneId));
+  }
   // Sem renderer não há como o spawn completar — resolver já, senão cada
   // nexus_pane_spawn pendura o orquestrador por 30s até o timeout.
   for (const [requestId, pending] of [...pendingSpawns]) {
+    if (pending.owner !== wc) continue;
     clearTimeout(pending.timer);
     pendingSpawns.delete(requestId);
     pending.resolve({
       requestId,
       ok: false,
-      error: 'renderer window closed during spawn',
+      error: "renderer window closed during spawn",
     });
   }
   for (const [requestId, pending] of [...pendingBrowserOpens]) {
+    if (pending.owner !== wc) continue;
     clearTimeout(pending.timer);
     pendingBrowserOpens.delete(requestId);
     pending.resolve({
       requestId,
       ok: false,
-      error: 'renderer window closed during browser open',
+      error: "renderer window closed during browser open",
     });
   }
 }
@@ -139,23 +201,26 @@ export function initPaneRegistry(): void {
       buffer.size -= buffer.chunks[0].length;
       buffer.chunks.shift();
     }
+    devServerScanner.onData(sessionId, data);
   });
 
   tapSessionState((sessionId, state) => {
     sessionStates.set(sessionId, state);
-    if (state === 'idle') {
+    if (state === "idle") {
       for (const waiter of [...idleWaiters]) {
         if (waiter.sessionId === sessionId) {
           idleWaiters.delete(waiter);
           if (waiter.timer) clearTimeout(waiter.timer);
-          waiter.resolve('idle');
+          waiter.resolve("idle");
         }
       }
     }
   });
 
   tapSessionExit((sessionId) => {
+    devServerScanner.onExit(sessionId);
     sessionStates.delete(sessionId);
+    scopeBySession.delete(sessionId);
     const buffer = buffers.get(sessionId);
     if (buffer) {
       buffer.exited = true;
@@ -165,7 +230,7 @@ export function initPaneRegistry(): void {
       if (waiter.sessionId === sessionId) {
         idleWaiters.delete(waiter);
         if (waiter.timer) clearTimeout(waiter.timer);
-        waiter.resolve('exited');
+        waiter.resolve("exited");
       }
     }
   });
@@ -178,31 +243,65 @@ export function getPanesVersion(): number {
   return panesVersion;
 }
 
-export function syncPanes(entries: PaneRegistryEntry[]): void {
+export function syncPanes(
+  entries: PaneRegistryEntry[],
+  owner: WebContents,
+): void {
   panesVersion += 1;
-  panes = entries;
-  const liveIds = new Set(entries.map((entry) => entry.paneId));
-  for (const paneId of [...orchMetaByPane.keys()]) {
-    if (!liveIds.has(paneId)) orchMetaByPane.delete(paneId);
+  const paneIdCounts = new Map<string, number>();
+  for (const entry of entries) {
+    paneIdCounts.set(entry.paneId, (paneIdCounts.get(entry.paneId) ?? 0) + 1);
+  }
+  const accepted = entries.filter(
+    (entry) =>
+      paneIdCounts.get(entry.paneId) === 1 &&
+      (!entry.sessionId || isSessionOwnedBy(owner, entry.sessionId)),
+  );
+  panes = [
+    ...panes.filter((registered) => registered.owner !== owner),
+    ...accepted.map((entry) => ({ entry, owner })),
+  ];
+  const liveIds = new Set(accepted.map((entry) => entry.paneId));
+  for (const key of [...orchMetaByPane.keys()]) {
+    const prefix = `${owner.id}:`;
+    if (key.startsWith(prefix) && !liveIds.has(key.slice(prefix.length))) {
+      orchMetaByPane.delete(key);
+    }
   }
 }
 
-export function attachOrchMeta(paneId: string, meta: OrchMeta): void {
-  orchMetaByPane.set(paneId, meta);
+export function attachOrchMeta(
+  owner: WebContents,
+  paneId: string,
+  meta: OrchMeta,
+): void {
+  orchMetaByPane.set(paneMetaKey(owner, paneId), meta);
 }
 
-function paneState(entry: PaneRegistryEntry): PaneSnapshot['state'] {
-  if (!entry.sessionId) return entry.state ?? 'unknown';
-  const live = sessionStates.get(entry.sessionId) ?? getSessionState(entry.sessionId);
+/** Trusted main-side binding for direct panes that have no pending OrchMeta. */
+export function attachSessionScope(
+  sessionId: string,
+  scope: Readonly<ProjectExecutionScope>,
+): void {
+  scopeBySession.set(sessionId, scope);
+}
+
+function paneState(entry: PaneRegistryEntry): PaneSnapshot["state"] {
+  if (!entry.sessionId) return entry.state ?? "unknown";
+  const live =
+    sessionStates.get(entry.sessionId) ?? getSessionState(entry.sessionId);
   if (live) return live;
-  return buffers.get(entry.sessionId)?.exited ? 'exited' : entry.state ?? 'unknown';
+  return buffers.get(entry.sessionId)?.exited
+    ? "exited"
+    : (entry.state ?? "unknown");
 }
 
-function snapshotOf(entry: PaneRegistryEntry): PaneSnapshot {
+function snapshotOf(registered: RegisteredPane): PaneSnapshot {
+  const { entry, owner } = registered;
   return {
     ...entry,
     state: paneState(entry),
-    ...orchMetaByPane.get(entry.paneId),
+    ...orchMetaByPane.get(paneMetaKey(owner, entry.paneId)),
   };
 }
 
@@ -214,35 +313,146 @@ export function listPaneSnapshots(): PaneSnapshot[] {
  * a worker sees only its own mission's panes, never the user's shells. */
 export function listVisiblePaneSnapshots(caller: CallerCtx): PaneSnapshot[] {
   return panes
-    .filter((entry) => canListPane(caller, authzInfoOf(entry)))
+    .filter((registered) => canListPane(caller, authzInfoOf(registered)))
     .map(snapshotOf);
 }
 
 export function findPane(paneIdOrSessionId: string): PaneRegistryEntry | null {
-  return (
-    panes.find(
-      (entry) =>
-        entry.paneId === paneIdOrSessionId ||
-        entry.sessionId === paneIdOrSessionId,
-    ) ?? null
+  const matches = panes.filter(
+    ({ entry }) =>
+      entry.paneId === paneIdOrSessionId ||
+      entry.sessionId === paneIdOrSessionId,
   );
+  return matches.length === 1 ? matches[0].entry : null;
 }
 
-function authzInfoOf(entry: PaneRegistryEntry): PaneAuthzInfo {
-  const meta = orchMetaByPane.get(entry.paneId);
+export function findPaneOwnedBy(
+  owner: WebContents,
+  paneIdOrSessionId: string,
+): PaneRegistryEntry | null {
+  const matches = panes.filter(
+    (registered) =>
+      registered.owner === owner &&
+      (registered.entry.paneId === paneIdOrSessionId ||
+        registered.entry.sessionId === paneIdOrSessionId),
+  );
+  return matches.length === 1 ? matches[0].entry : null;
+}
+
+/** Exact owner+session lookup for callers that must not mix id namespaces. */
+export function findPaneBySessionOwnedBy(
+  owner: WebContents,
+  sessionId: string,
+): Readonly<PaneRegistryEntry> | null {
+  const matches = panes.filter(
+    (registered) =>
+      registered.owner === owner && registered.entry.sessionId === sessionId,
+  );
+  return matches.length === 1
+    ? Object.freeze({ ...matches[0].entry })
+    : null;
+}
+
+function authzInfoOf(registered: RegisteredPane): PaneAuthzInfo {
+  const { entry, owner } = registered;
+  const meta = orchMetaByPane.get(paneMetaKey(owner, entry.paneId));
   return {
     paneId: entry.paneId,
     sessionId: entry.sessionId,
     kind: entry.kind,
     missionId: meta?.missionId,
+    contextRevision: meta?.contextRevision,
     role: meta?.role,
+    scope:
+      meta?.scope ??
+      (entry.sessionId ? scopeBySession.get(entry.sessionId) : undefined),
+    executionScope: meta?.executionScope,
   };
 }
 
 /** Resolve a pane (by paneId or sessionId) to the info the authz check needs. */
 export function getPaneAuthzInfo(paneRef: string): PaneAuthzInfo | null {
-  const pane = findPane(paneRef);
-  return pane ? authzInfoOf(pane) : null;
+  const matches = panes.filter(
+    ({ entry }) => entry.paneId === paneRef || entry.sessionId === paneRef,
+  );
+  return matches.length === 1 ? authzInfoOf(matches[0]) : null;
+}
+
+export type OwnedPaneAuthzInfo = Readonly<PaneAuthzInfo> & {
+  readonly owner: WebContents;
+};
+
+/**
+ * Main-process authority for a pane/session. Duplicate renderer-controlled ids
+ * are deliberately ambiguous and fail closed; callers never guess an owner.
+ */
+export function getOwnedPaneAuthzInfo(
+  paneRef: string,
+): OwnedPaneAuthzInfo | null {
+  const matches = panes.filter(
+    ({ entry }) => entry.paneId === paneRef || entry.sessionId === paneRef,
+  );
+  if (matches.length !== 1) return null;
+  const registered = matches[0];
+  const info = authzInfoOf(registered);
+  return Object.freeze({
+    ...info,
+    scope: info.scope ? Object.freeze({ ...info.scope }) : undefined,
+    owner: registered.owner,
+  });
+}
+
+/** Exact session lookup; a renderer-controlled paneId cannot shadow it. */
+export function getOwnedPaneAuthzInfoBySession(
+  sessionId: string,
+): OwnedPaneAuthzInfo | null {
+  const matches = panes.filter(
+    ({ entry }) => entry.sessionId === sessionId,
+  );
+  if (matches.length !== 1) return null;
+  const registered = matches[0];
+  const info = authzInfoOf(registered);
+  return Object.freeze({
+    ...info,
+    scope: info.scope ? Object.freeze({ ...info.scope }) : undefined,
+    owner: registered.owner,
+  });
+}
+
+/** Resolve duplicate pane ids safely when the trusted WebContents is known. */
+export function getPaneAuthzInfoOwnedBy(
+  owner: WebContents,
+  paneRef: string,
+): Readonly<PaneAuthzInfo> | null {
+  const matches = panes.filter(
+    (registered) =>
+      registered.owner === owner &&
+      (registered.entry.paneId === paneRef ||
+        registered.entry.sessionId === paneRef),
+  );
+  if (matches.length !== 1) return null;
+  const info = authzInfoOf(matches[0]);
+  return Object.freeze({
+    ...info,
+    scope: info.scope ? Object.freeze({ ...info.scope }) : undefined,
+  });
+}
+
+/** Exact owner+pane lookup; a sessionId cannot collide with the pane id. */
+export function getPaneAuthzInfoOwnedByPane(
+  owner: WebContents,
+  paneId: string,
+): Readonly<PaneAuthzInfo> | null {
+  const matches = panes.filter(
+    (registered) =>
+      registered.owner === owner && registered.entry.paneId === paneId,
+  );
+  if (matches.length !== 1) return null;
+  const info = authzInfoOf(matches[0]);
+  return Object.freeze({
+    ...info,
+    scope: info.scope ? Object.freeze({ ...info.scope }) : undefined,
+  });
 }
 
 // CSI sequences (colors, cursor moves), OSC sequences (titles; BEL or ST
@@ -257,41 +467,43 @@ const CONTROL_PATTERN = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
 /** Strip ANSI escapes and normalize line endings for tool consumption. */
 export function stripAnsi(raw: string): string {
   return raw
-    .replace(OSC_PATTERN, '')
-    .replace(CSI_PATTERN, '')
-    .replace(ESC_PATTERN, '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(CONTROL_PATTERN, '');
+    .replace(OSC_PATTERN, "")
+    .replace(CSI_PATTERN, "")
+    .replace(ESC_PATTERN, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(CONTROL_PATTERN, "");
 }
 
 /** Read the tail of a session's output as plain text. */
 export function readSessionOutput(sessionId: string, lines = 200): string {
   const buffer = buffers.get(sessionId);
-  if (!buffer) return '';
+  if (!buffer) return "";
   const key = `${buffer.chunks.length}:${buffer.size}`;
   if (buffer.stripCache?.key !== key) {
-    buffer.stripCache = { key, text: stripAnsi(buffer.chunks.join('')) };
+    buffer.stripCache = { key, text: stripAnsi(buffer.chunks.join("")) };
   }
-  const allLines = buffer.stripCache.text.split('\n');
-  return allLines.slice(Math.max(0, allLines.length - lines)).join('\n');
+  const allLines = buffer.stripCache.text.split("\n");
+  return allLines.slice(Math.max(0, allLines.length - lines)).join("\n");
 }
 
 /** Resolve when the session goes idle (or exits / times out). */
 export function waitForIdle(
   sessionId: string,
   timeoutMs = 120_000,
-): Promise<'idle' | 'exited' | 'timeout'> {
+): Promise<"idle" | "exited" | "timeout"> {
   const current = sessionStates.get(sessionId) ?? getSessionState(sessionId);
-  if (current === 'idle') return Promise.resolve('idle');
+  if (current === "idle") return Promise.resolve("idle");
   if (current === null || current === undefined) {
-    return Promise.resolve(buffers.get(sessionId)?.exited ? 'exited' : 'timeout');
+    return Promise.resolve(
+      buffers.get(sessionId)?.exited ? "exited" : "timeout",
+    );
   }
   return new Promise((resolve) => {
     const waiter: IdleWaiter = { sessionId, resolve };
     idleWaiters.add(waiter);
     waiter.timer = setTimeout(() => {
-      if (idleWaiters.delete(waiter)) resolve('timeout');
+      if (idleWaiters.delete(waiter)) resolve("timeout");
     }, timeoutMs);
   });
 }
@@ -304,17 +516,53 @@ export interface PaneSpawnOptions {
   cwd?: string;
   title?: string;
   missionId?: string;
+  contextRevision?: string;
   agentName?: string;
   allowedTools?: string[] | null;
   allowedSkills?: string[] | null;
-  role?: 'orchestrator' | 'worker';
+  role?: "orchestrator" | "worker";
+  scope: Readonly<ProjectExecutionScope>;
+  executionScope?: Readonly<ProjectExecutionScope>;
+  readOnly?: boolean;
 }
 
 /** Pending gate context consumed by the agent-spawn hook via orchRequestId. */
-export type PendingSpawnMeta = OrchMeta;
+export type PendingSpawnMeta = OrchMeta & { requestedCwd?: string };
 
-export function getPendingSpawnMeta(requestId: string): PendingSpawnMeta | null {
-  return pendingSpawns.get(requestId)?.meta ?? null;
+/**
+ * Claim a pending spawn exactly once. The opaque request id is insufficient:
+ * it must return through the same WebContents that received the main-process
+ * spawn command, otherwise another renderer could replay/steal its authority.
+ */
+export function claimPendingSpawnMeta(
+  requestId: string,
+  owner: WebContents,
+): PendingSpawnMeta | null {
+  const pending = pendingSpawns.get(requestId);
+  if (!pending || pending.owner !== owner || pending.claimed) return null;
+  pending.claimed = true;
+  return pending.requestedCwd === undefined
+    ? pending.meta
+    : { ...pending.meta, requestedCwd: pending.requestedCwd };
+}
+
+/** Bind the claimed orchestration request to the concrete PTY it created. */
+export function bindPendingSpawnSession(
+  requestId: string,
+  owner: WebContents,
+  sessionId: string,
+): boolean {
+  const pending = pendingSpawns.get(requestId);
+  if (
+    !pending ||
+    pending.owner !== owner ||
+    !pending.claimed ||
+    pending.claimedSessionId !== null
+  ) {
+    return false;
+  }
+  pending.claimedSessionId = sessionId;
+  return true;
 }
 
 /**
@@ -326,12 +574,13 @@ export function requestPaneSpawn(
 ): Promise<OrchPaneSpawnResult> {
   if (!rendererAvailable()) {
     return Promise.resolve({
-      requestId: '',
+      requestId: "",
       ok: false,
-      error: 'no renderer window available',
+      error: "no renderer window available",
     });
   }
-  const requestId = makeId('orchspawn');
+  const owner = orchRenderer!;
+  const requestId = makeId("orchspawn");
   const request: OrchPaneSpawnRequest = {
     requestId,
     adapterId: options.adapterId,
@@ -346,20 +595,28 @@ export function requestPaneSpawn(
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       pendingSpawns.delete(requestId);
-      resolve({ requestId, ok: false, error: 'pane spawn timed out' });
+      resolve({ requestId, ok: false, error: "pane spawn timed out" });
     }, SPAWN_TIMEOUT_MS);
     pendingSpawns.set(requestId, {
       resolve,
       timer,
+      owner,
+      claimed: false,
+      claimedSessionId: null,
+      requestedCwd: options.cwd,
       meta: {
         missionId: options.missionId,
+        contextRevision: options.contextRevision,
         agentName: options.agentName,
         allowedTools: options.allowedTools,
         allowedSkills: options.allowedSkills,
         role: options.role,
+        scope: options.scope,
+        executionScope: options.executionScope,
+        readOnly: options.readOnly === true,
       },
     });
-    orchRenderer!.send(ORCH_CHANNELS.paneSpawnRequest, request);
+    owner.send(ORCH_CHANNELS.paneSpawnRequest, request);
   });
 }
 
@@ -368,16 +625,18 @@ export function requestBrowserPane(options: {
   title?: string;
   missionId?: string;
   agentName?: string;
-  role?: 'orchestrator' | 'worker';
+  role?: "orchestrator" | "worker";
+  scope: Readonly<ProjectExecutionScope>;
 }): Promise<BrowserPaneOpenResult> {
   if (!rendererAvailable()) {
     return Promise.resolve({
-      requestId: '',
+      requestId: "",
       ok: false,
-      error: 'no renderer window available',
+      error: "no renderer window available",
     });
   }
-  const requestId = makeId('browseropen');
+  const owner = orchRenderer!;
+  const requestId = makeId("browseropen");
   const request: BrowserPaneOpenRequest = {
     requestId,
     url: options.url,
@@ -386,42 +645,58 @@ export function requestBrowserPane(options: {
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       pendingBrowserOpens.delete(requestId);
-      resolve({ requestId, ok: false, error: 'browser open timed out' });
+      resolve({ requestId, ok: false, error: "browser open timed out" });
     }, SPAWN_TIMEOUT_MS);
     pendingBrowserOpens.set(requestId, {
       resolve,
       timer,
+      owner,
       meta: {
         missionId: options.missionId,
         agentName: options.agentName,
         role: options.role,
+        scope: options.scope,
       },
     });
-    orchRenderer!.send(ORCH_CHANNELS.browserOpenRequest, request);
+    owner.send(ORCH_CHANNELS.browserOpenRequest, request);
   });
 }
 
 /** Renderer → main: outcome of a pane spawn request. */
-export function resolvePaneSpawn(result: OrchPaneSpawnResult): void {
+export function resolvePaneSpawn(
+  result: OrchPaneSpawnResult,
+  owner: WebContents,
+): boolean {
   const pending = pendingSpawns.get(result.requestId);
-  if (!pending) return;
+  if (!pending || pending.owner !== owner) return false;
+  if (
+    result.ok &&
+    (!pending.claimedSessionId || result.sessionId !== pending.claimedSessionId)
+  ) {
+    return false;
+  }
   clearTimeout(pending.timer);
   pendingSpawns.delete(result.requestId);
   if (result.ok && result.paneId) {
-    attachOrchMeta(result.paneId, pending.meta);
+    attachOrchMeta(owner, result.paneId, pending.meta);
   }
   pending.resolve(result);
+  return true;
 }
 
-export function resolveBrowserOpen(result: BrowserPaneOpenResult): void {
+export function resolveBrowserOpen(
+  result: BrowserPaneOpenResult,
+  owner: WebContents,
+): boolean {
   const pending = pendingBrowserOpens.get(result.requestId);
-  if (!pending) return;
+  if (!pending || pending.owner !== owner) return false;
   clearTimeout(pending.timer);
   pendingBrowserOpens.delete(result.requestId);
   if (result.ok && result.paneId) {
-    attachOrchMeta(result.paneId, pending.meta);
+    attachOrchMeta(owner, result.paneId, pending.meta);
   }
   pending.resolve(result);
+  return true;
 }
 
 /** Ask the renderer to close a pane (layout collapse + session kill). */

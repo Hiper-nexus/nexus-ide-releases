@@ -6,11 +6,16 @@ import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { squadSchema, squadsFileSchema } from '../../shared/orch-types';
 import { BUILTIN_SQUADS, withAllowlists } from './builtin-squads';
 import { ChangeHub, parseJsonColumn } from './store-util';
+import {
+  failedPersistenceError,
+  PersistenceUnavailableError,
+  readOnlyPersistenceError,
+} from '../persistence/persistence-error';
 
 /**
- * Squad store. Squads round-trip through export/import unchanged (JSON). The
- * in-memory map is authoritative; SQLite is a write-through mirror hydrated at
- * init.
+ * Squad store. SQLite is authoritative. The in-memory map is a read cache that
+ * is only changed after a write succeeds; when SQLite is unavailable it stays
+ * readable but every mutation fails closed.
  */
 
 interface SquadRow {
@@ -26,6 +31,27 @@ interface SquadRow {
 const squads = new Map<string, Squad>();
 const hub = new ChangeHub();
 let db: Db | null = null;
+let readOnly = true;
+
+function replaceSquadCache(next: ReadonlyMap<string, Squad>): void {
+  squads.clear();
+  for (const [id, squad] of next) squads.set(id, squad);
+}
+
+function requireWritableDb(): Db {
+  if (!db || readOnly) throw readOnlyPersistenceError('squad');
+  return db;
+}
+
+function failPersistence(operation: string, error: unknown): never {
+  readOnly = true;
+  db = null;
+  throw failedPersistenceError('squad', operation, error);
+}
+
+export function isSquadStoreReadOnly(): boolean {
+  return readOnly;
+}
 
 /** Candidate squads.json files migrated on first run. */
 const MIGRATION_CANDIDATES = [
@@ -61,7 +87,8 @@ function migrateFromDiskIfEmpty(): void {
         console.log(`[orch] migrated ${count} squad(s) from ${candidate}`);
         return;
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof PersistenceUnavailableError) throw error;
       // Missing or invalid — try the next candidate.
     }
   }
@@ -106,14 +133,15 @@ function recoverMissingUserSquadsFromSiblingDbs(): void {
             ...parsed.data,
             agents: withAllowlists(parsed.data.agents),
           };
+          persist(squad, 'sibling recovery');
           squads.set(squad.id, squad);
-          persist(squad);
           recovered += 1;
         }
       } finally {
         source.close();
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof PersistenceUnavailableError) throw error;
       // Best-effort profile recovery; normal DB hydration remains authoritative.
     }
   }
@@ -124,57 +152,59 @@ function recoverMissingUserSquadsFromSiblingDbs(): void {
 
 export function initSquadStore(database: Db | null): void {
   db = database;
-  squads.clear();
-  if (db) {
-    try {
-      const rows = db.prepare('SELECT * FROM squads').all() as SquadRow[];
-      for (const row of rows) {
-        const candidate = {
-          id: row.id,
-          name: row.name,
-          createdAt: row.created_at,
-          builtin: row.builtin === 1,
-          orchestratorInstructions: row.orchestrator_instructions,
-          nativeInstructions: row.native_instructions || undefined,
-          agents: parseJsonColumn<SquadAgent[]>(row.roster_json, []),
-        };
-        const parsed = squadSchema.safeParse(candidate);
-        if (!parsed.success) continue;
-        // Self-heal on load (SEC#5): squads persisted BEFORE the allowlist
-        // normalization landed carry workers with `allowedTools` undefined,
-        // which the wizard's fire-gate (validateWorkerToolScopes) rejects — so
-        // those existing squads never launched. saveSquad/importSquadsJson only
-        // normalized NEW writes; the hydration path loaded old rows verbatim.
-        // Apply the same canonical rule here so EXISTING squads start too, and
-        // re-persist when it actually changed the roster to heal the DB row
-        // durably (idempotent for already-normalized rosters).
-        const healed: Squad = {
-          ...parsed.data,
-          agents: withAllowlists(parsed.data.agents),
-        };
-        squads.set(healed.id, healed);
-        if (
-          JSON.stringify(healed.agents) !== JSON.stringify(parsed.data.agents)
-        ) {
-          persist(healed);
-        }
-      }
-    } catch (err) {
-      console.warn('[orch] failed to hydrate squads:', err);
-    }
+  readOnly = true;
+  if (!database) {
+    ensureBuiltinsReadable();
+    return;
   }
-  recoverMissingUserSquadsFromSiblingDbs();
-  migrateFromDiskIfEmpty();
-  seedBuiltinsIfEmpty();
+
+  const hydrated = new Map<string, Squad>();
+  const repairs: Squad[] = [];
+  try {
+    const rows = database.prepare('SELECT * FROM squads').all() as SquadRow[];
+    for (const row of rows) {
+      const candidate = {
+        id: row.id,
+        name: row.name,
+        createdAt: row.created_at,
+        builtin: row.builtin === 1,
+        orchestratorInstructions: row.orchestrator_instructions,
+        nativeInstructions: row.native_instructions || undefined,
+        agents: parseJsonColumn<SquadAgent[]>(row.roster_json, []),
+      };
+      const parsed = squadSchema.safeParse(candidate);
+      if (!parsed.success) continue;
+      const healed: Squad = {
+        ...parsed.data,
+        agents: withAllowlists(parsed.data.agents),
+      };
+      hydrated.set(healed.id, healed);
+      if (JSON.stringify(healed.agents) !== JSON.stringify(parsed.data.agents)) {
+        repairs.push(healed);
+      }
+    }
+  } catch (error) {
+    console.warn('[orch] failed to hydrate squads; using read-only cache:', error);
+    db = null;
+    ensureBuiltinsReadable();
+    return;
+  }
+
+  replaceSquadCache(hydrated);
+  readOnly = false;
+  try {
+    for (const squad of repairs) persist(squad, 'hydration repair');
+    recoverMissingUserSquadsFromSiblingDbs();
+    migrateFromDiskIfEmpty();
+    syncBuiltins();
+  } catch (error) {
+    console.warn('[orch] squad persistence unavailable; store is read-only:', error);
+    ensureBuiltinsReadable();
+  }
 }
 
-/**
- * First-run seed of the NEXUS ORIGINALS. Runs only when the store is still
- * empty after hydration + migration, so a returning user (or one who removed
- * some originals) is never overwritten. Guarantees the Squad mode has presets
- * out-of-the-box.
- */
-function seedBuiltinsIfEmpty(): void {
+/** Keep managed built-ins current without touching user-owned squads. */
+function syncBuiltins(): void {
   // Builtin squads são gerenciados pelo app: sempre re-sincronizados no boot
   // (rosters/instruções evoluem com o produto). Squads do usuário (ids
   // próprios / builtin=false) nunca são tocados.
@@ -184,33 +214,46 @@ function seedBuiltinsIfEmpty(): void {
     if (!parsed.success) continue;
     const existing = squads.get(parsed.data.id);
     if (!existing || existing.builtin) {
+      persist(parsed.data, 'built-in sync');
       squads.set(parsed.data.id, parsed.data);
-      persist(parsed.data);
       refreshed += 1;
     }
   }
   if (refreshed > 0) console.log(`[orch] built-in squads sincronizados: ${refreshed}`);
 }
 
-function persist(squad: Squad): void {
-  if (!db) return;
+function ensureBuiltinsReadable(): void {
+  for (const squad of BUILTIN_SQUADS) {
+    const parsed = squadSchema.safeParse(squad);
+    if (parsed.success && !squads.has(parsed.data.id)) {
+      squads.set(parsed.data.id, parsed.data);
+    }
+  }
+}
+
+function writeSquad(database: Db, squad: Squad): void {
+  database.prepare(
+    `INSERT OR REPLACE INTO squads
+       (id, name, created_at, builtin, orchestrator_instructions,
+        native_instructions, roster_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    squad.id,
+    squad.name,
+    squad.createdAt,
+    squad.builtin ? 1 : 0,
+    squad.orchestratorInstructions,
+    squad.nativeInstructions ?? '',
+    JSON.stringify(squad.agents),
+  );
+}
+
+function persist(squad: Squad, operation: string): void {
+  const database = requireWritableDb();
   try {
-    db.prepare(
-      `INSERT OR REPLACE INTO squads
-         (id, name, created_at, builtin, orchestrator_instructions,
-          native_instructions, roster_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      squad.id,
-      squad.name,
-      squad.createdAt,
-      squad.builtin ? 1 : 0,
-      squad.orchestratorInstructions,
-      squad.nativeInstructions ?? '',
-      JSON.stringify(squad.agents),
-    );
-  } catch (err) {
-    console.warn('[orch] failed to persist squad:', err);
+    writeSquad(database, squad);
+  } catch (error) {
+    failPersistence(operation, error);
   }
 }
 
@@ -234,23 +277,23 @@ export function saveSquad(raw: unknown): Squad {
   // so it passes the wizard's fire-gate (validateWorkerToolScopes). Custom and
   // architect-generated squads (designSquad → saveSquad) both funnel here.
   const squad: Squad = { ...parsed, agents: withAllowlists(parsed.agents) };
+  persist(squad, 'save');
   squads.set(squad.id, squad);
-  persist(squad);
   hub.emit();
   return squad;
 }
 
 export function deleteSquad(id: string): boolean {
-  const existed = squads.delete(id);
-  if (existed) {
-    try {
-      db?.prepare('DELETE FROM squads WHERE id = ?').run(id);
-    } catch (err) {
-      console.warn('[orch] failed to delete squad row:', err);
-    }
-    hub.emit();
+  if (!squads.has(id)) return false;
+  const database = requireWritableDb();
+  try {
+    database.prepare('DELETE FROM squads WHERE id = ?').run(id);
+  } catch (error) {
+    failPersistence('delete', error);
   }
-  return existed;
+  squads.delete(id);
+  hub.emit();
+  return true;
 }
 
 /** Find an agent across all squads by id or agentName. */
@@ -283,15 +326,29 @@ export function exportSquadsJson(): string {
 /** Import a squads file. Returns how many were saved. */
 export function importSquadsJson(json: string): number {
   const parsed = squadsFileSchema.parse(JSON.parse(json));
-  for (const imported of parsed.squads) {
-    // Same canonical allowlist normalization as saveSquad: imported/migrated
-    // rosters that omit `allowedTools` would otherwise die at the wizard's
-    // fire-gate. Built-ins carry `builtin: true` and are already normalized at
-    // module load, so re-applying is idempotent.
-    const squad: Squad = { ...imported, agents: withAllowlists(imported.agents) };
-    squads.set(squad.id, squad);
-    persist(squad);
+  const importedSquads = parsed.squads.map(
+    (squad): Squad => ({
+      ...squad,
+      agents: withAllowlists(squad.agents),
+    }),
+  );
+  if (importedSquads.length === 0) return 0;
+
+  const database = requireWritableDb();
+  try {
+    database.exec('BEGIN IMMEDIATE');
+    for (const squad of importedSquads) writeSquad(database, squad);
+    database.exec('COMMIT');
+  } catch (error) {
+    try {
+      database.exec('ROLLBACK');
+    } catch {
+      // The original persistence failure remains authoritative.
+    }
+    failPersistence('import', error);
   }
-  if (parsed.squads.length > 0) hub.emit();
-  return parsed.squads.length;
+
+  for (const squad of importedSquads) squads.set(squad.id, squad);
+  hub.emit();
+  return importedSquads.length;
 }

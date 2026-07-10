@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JarvisContext, JarvisReply } from '../../shared/voice-ipc';
 
-const { invokeMcpWithConfirm, layoutState } = vi.hoisted(() => ({
+const { invokeMcpWithConfirm, layoutState, missionWizardState } = vi.hoisted(() => ({
   invokeMcpWithConfirm: vi.fn(),
+  missionWizardState: {
+    openForAgentic: vi.fn(),
+  },
   layoutState: {
     focusedPaneId: null as string | null,
     panes: [] as Array<{ id: string; kind: 'shell' | 'cli-agent' | 'browser'; title: string }>,
@@ -23,7 +26,7 @@ vi.mock('../state/workspace-store', () => ({
 }));
 vi.mock('../state/orch-store', () => ({ useOrchStore: { getState: vi.fn() } }));
 vi.mock('../state/mission-wizard-store', () => ({
-  useMissionWizardStore: { getState: vi.fn() },
+  useMissionWizardStore: { getState: () => missionWizardState },
 }));
 vi.mock('../state/home-store', () => ({ useHomeStore: { getState: vi.fn() } }));
 vi.mock('../state/gamification-store', () => ({
@@ -78,6 +81,7 @@ function mcpReply(tool: string): JarvisReply {
 describe('Jarvis MCP result propagation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
     layoutState.focusedPaneId = null;
     layoutState.panes = [];
   });
@@ -108,6 +112,78 @@ describe('Jarvis MCP result propagation', () => {
       ok: true,
       summary: 'nexus_pane_read ok',
       output: 'TEST_OUTPUT_MARKER',
+    });
+  });
+
+  it('reads the visible Nexus surface through local AX + OCR without a cloud image', async () => {
+    const contextView = {
+      capturedAt: '2026-07-10T15:00:00.000Z',
+      ax: {
+        status: 'ok',
+        tree: {
+          tag: 'body',
+          role: null,
+          aria: {},
+          text: null,
+          children: [
+            {
+              tag: 'h1',
+              role: 'heading',
+              aria: {},
+              text: 'Nova Missão',
+              children: [],
+            },
+          ],
+        },
+      },
+      ocr: { status: 'ok', text: 'Modo Agêntico', confidence: 95 },
+      screenshot: {
+        status: 'ok',
+        format: 'png',
+        width: 1280,
+        height: 720,
+        capturedAt: '2026-07-10T15:00:00.000Z',
+        sourceId: 'window:nexus:1',
+        hasImage: true,
+        cloudAllowed: false,
+      },
+      llmPrompt: 'unused',
+    } as const;
+    const readView = vi.fn(async () => contextView);
+    vi.stubGlobal('window', { nexus: { vision: { context: readView } } });
+
+    const execution = await executeJarvisAction(
+      { say: 'Vou ler a tela.', action: { type: 'read_current_view' } },
+      context,
+    );
+
+    expect(readView).toHaveBeenCalledWith({
+      includeScreenshot: true,
+      includeOcr: true,
+      allowCloudImage: false,
+    });
+    expect(execution.sayText).toContain('Nova Missão');
+    expect(execution.toolResult).toMatchObject({
+      tool: 'read_current_view',
+      ok: true,
+      summary: expect.stringContaining('localmente'),
+    });
+    expect(JSON.stringify(execution.toolResult?.output)).toContain('Modo Agêntico');
+  });
+
+  it('opens the mission wizard directly in agentic mode', async () => {
+    const execution = await executeJarvisAction(
+      {
+        say: '',
+        action: { type: 'new_agentic_mission', intent: 'auditar os logs da Jarvis' },
+      },
+      context,
+    );
+
+    expect(missionWizardState.openForAgentic).toHaveBeenCalledWith('auditar os logs da Jarvis');
+    expect(execution.toolResult).toMatchObject({
+      tool: 'new_agentic_mission',
+      ok: true,
     });
   });
 

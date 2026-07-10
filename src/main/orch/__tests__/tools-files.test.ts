@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { buildFileTools } from '../tools-files';
+import { testProjectScope } from './scope-fixture';
 
 const workspace = vi.hoisted(() => ({ current: '' }));
 vi.mock('../../persistence/workspace-store', () => ({
@@ -80,12 +81,95 @@ describe('tools-files', () => {
     expect(content).toBe('test content');
   });
 
+  it('nexus_file_write creates missing parent directories without leaving the workspace', async () => {
+    const write = buildFileTools().find((tool) => tool.name === 'nexus_file_write')!;
+
+    await expect(
+      write.handler(
+        { path: 'generated/nested/result.txt', content: 'scoped' },
+        fakeCtx(),
+      ),
+    ).resolves.toMatchObject({ existed: false, path: 'generated/nested/result.txt' });
+    expect(
+      fs.readFileSync(path.join(wsDir, 'generated', 'nested', 'result.txt'), 'utf8'),
+    ).toBe('scoped');
+  });
+
+  it('rejects creation through a symbolic-link parent outside the workspace', async () => {
+    const outsideDir = path.join(testDir, 'outside-create');
+    const linkedParent = path.join(wsDir, 'linked-parent');
+    fs.mkdirSync(outsideDir, { recursive: true });
+    fs.rmSync(linkedParent, { recursive: true, force: true });
+    fs.symlinkSync(outsideDir, linkedParent, 'dir');
+    const write = buildFileTools().find((tool) => tool.name === 'nexus_file_write')!;
+
+    await expect(
+      write.handler({ path: 'linked-parent/owned.txt', content: 'escaped' }, fakeCtx()),
+    ).rejects.toThrow(/symbolic link/i);
+    expect(fs.existsSync(path.join(outsideDir, 'owned.txt'))).toBe(false);
+  });
+
+  it('rejects a workspace-internal symlink instead of following it for reads', async () => {
+    const target = path.join(wsDir, 'symlink-target.txt');
+    const link = path.join(wsDir, 'symlink-read.txt');
+    fs.writeFileSync(target, 'target-content');
+    fs.rmSync(link, { force: true });
+    fs.symlinkSync(target, link, 'file');
+    const read = buildFileTools().find((tool) => tool.name === 'nexus_file_read')!;
+
+    await expect(read.handler({ path: 'symlink-read.txt' }, fakeCtx())).rejects.toThrow(
+      /symbolic link/i,
+    );
+  });
+
+  it('rejects mutable hardlinks so an external inode cannot be overwritten', async () => {
+    const outside = path.join(testDir, 'outside-hardlink.txt');
+    const linked = path.join(wsDir, 'linked-hardlink.txt');
+    fs.writeFileSync(outside, 'outside-original');
+    fs.rmSync(linked, { force: true });
+    fs.linkSync(outside, linked);
+    const write = buildFileTools().find((tool) => tool.name === 'nexus_file_write')!;
+
+    await expect(
+      write.handler({ path: 'linked-hardlink.txt', content: 'attacker-write' }, fakeCtx()),
+    ).rejects.toThrow(/hardlink/i);
+    expect(fs.readFileSync(outside, 'utf8')).toBe('outside-original');
+  });
+
+  it('rejects hardlinks for reads so external inode contents cannot cross scope', async () => {
+    const outside = path.join(testDir, 'outside-hardlink-read.txt');
+    const linked = path.join(wsDir, 'linked-hardlink-read.txt');
+    fs.writeFileSync(outside, 'outside-private-content');
+    fs.rmSync(linked, { force: true });
+    fs.linkSync(outside, linked);
+    const read = buildFileTools().find((tool) => tool.name === 'nexus_file_read')!;
+
+    await expect(
+      read.handler({ path: 'linked-hardlink-read.txt' }, fakeCtx()),
+    ).rejects.toThrow(/hardlink/i);
+  });
+
   it('nexus_file_search finds files by pattern', async () => {
     const tools = buildFileTools();
     const search = tools.find((t) => t.name === 'nexus_file_search')!;
     const result = await search.handler({ pattern: '*.ts' }, fakeCtx()) as { files: string[] };
     expect(result).toHaveProperty('files');
     expect(result.files).toContain('src/index.ts');
+  });
+
+  it('nexus_file_search omits symbolic links and other non-regular entries', async () => {
+    const target = path.join(wsDir, 'search-target.ts');
+    const link = path.join(wsDir, 'search-link.ts');
+    fs.writeFileSync(target, 'export {};');
+    fs.rmSync(link, { force: true });
+    fs.symlinkSync(target, link, 'file');
+    const search = buildFileTools().find((tool) => tool.name === 'nexus_file_search')!;
+
+    const result = (await search.handler({ pattern: '*.ts' }, fakeCtx())) as {
+      files: string[];
+    };
+    expect(result.files).toContain('search-target.ts');
+    expect(result.files).not.toContain('search-link.ts');
   });
 
   it('denies paths outside the active workspace', async () => {
@@ -106,5 +190,6 @@ function fakeCtx() {
     allowedSkills: null as string[] | null,
     stopAttempts: 0,
     handoffSubmitted: false,
+    scope: testProjectScope({ rootRealPath: fs.realpathSync(wsDir) }),
   };
 }

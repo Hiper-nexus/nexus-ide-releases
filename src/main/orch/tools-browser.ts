@@ -12,23 +12,26 @@ import { collectPerfSnapshot } from '../perf/perf-ipc';
 import { listPreviews, startPreview, stopPreview } from './preview-server';
 import { requestBrowserPane } from './pane-registry';
 import { authorizePaneRef, num, requireStr, str } from './tool-util';
-import { resolveWorkspaceCwd } from './workspace-path';
+import { resolveCwdForScope } from './workspace-path';
+import { executionScopeFor } from './gate';
 
 const previewStartTool: McpToolDef = {
   name: 'nexus_preview_start',
   description:
     'Serve a built static web app inside the active workspace on a Nexus-owned ' +
-    '127.0.0.1 preview URL. Returns {url}; idempotent per canonical directory.',
+    '127.0.0.1 preview URL. Returns an opaque {id, url}; idempotent per project, ' +
+    'checkout and canonical directory.',
   inputSchema: {
     type: 'object',
     properties: { dir: { type: 'string' } },
     required: ['dir'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const dir = requireStr(args, 'dir');
-    const workspaceDir = resolveWorkspaceCwd(dir);
+    const executionScope = executionScopeFor(ctx);
+    const workspaceDir = resolveCwdForScope(executionScope, dir);
     try {
-      return await startPreview(workspaceDir);
+      return await startPreview(workspaceDir, executionScope);
     } catch (err) {
       throw new Error(
         `preview falhou para ${workspaceDir}: ${err instanceof Error ? err.message : String(err)}`,
@@ -40,11 +43,15 @@ const previewStartTool: McpToolDef = {
 const previewStopTool: McpToolDef = {
   name: 'nexus_preview_stop',
   description:
-    'Stop a preview by its original directory; omit dir to list running previews.',
-  inputSchema: { type: 'object', properties: { dir: { type: 'string' } } },
-  handler: async (args) => {
-    const dir = str(args, 'dir');
-    return dir ? { stopped: stopPreview(dir) } : { running: listPreviews() };
+    'Stop a project-scoped preview by its opaque id; omit id to list previews ' +
+    'owned by the current project and checkout.',
+  inputSchema: { type: 'object', properties: { id: { type: 'string' } } },
+  handler: async (args, ctx) => {
+    const id = str(args, 'id');
+    if (id) {
+      return { stopped: stopPreview(id, executionScopeFor(ctx)) };
+    }
+    return { running: listPreviews(executionScopeFor(ctx)) };
   },
 };
 
@@ -72,11 +79,13 @@ const browserOpenTool: McpToolDef = {
       missionId: ctx.missionId,
       agentName: ctx.agentName ?? ctx.label,
       ...(ctx.role === 'orchestrator' ? { role: 'orchestrator' as const } : {}),
+      scope: ctx.scope,
     });
     if (!result.ok || !result.paneId) {
       throw new Error(result.error ?? 'browser open failed');
     }
     const state = await loadBrowser(result.paneId, url, {
+      scope: ctx.scope,
       privateAccessConfirmed: true,
     });
     return { ok: true, paneId: result.paneId, state };
@@ -98,6 +107,7 @@ const browserNavigateTool: McpToolDef = {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'write');
     return loadBrowser(paneId, requireStr(args, 'url'), {
+      scope: ctx.scope,
       privateAccessConfirmed: true,
     });
   },
@@ -114,7 +124,7 @@ const browserScreenshotTool: McpToolDef = {
   handler: async (args, ctx) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'read');
-    return captureBrowserScreenshot(paneId);
+    return captureBrowserScreenshot(paneId, ctx.scope, ctx.missionId);
   },
 };
 
@@ -135,7 +145,7 @@ const browserReadTool: McpToolDef = {
   handler: async (args, ctx) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'read');
-    return readBrowserPage(paneId, {
+    return readBrowserPage(paneId, ctx.scope, {
       maxChars: num(args, 'maxChars'),
       maxElements: num(args, 'maxElements'),
     });
@@ -154,7 +164,7 @@ const browserInspectTool: McpToolDef = {
   handler: async (args, ctx) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'read');
-    return inspectBrowserElement(paneId, requireStr(args, 'ref'));
+    return inspectBrowserElement(paneId, ctx.scope, requireStr(args, 'ref'));
   },
 };
 
@@ -172,7 +182,7 @@ const browserClickTool: McpToolDef = {
   handler: async (args, ctx) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'write');
-    return clickBrowserElement(paneId, requireStr(args, 'ref'));
+    return clickBrowserElement(paneId, ctx.scope, requireStr(args, 'ref'));
   },
 };
 
@@ -195,7 +205,12 @@ const browserFillTool: McpToolDef = {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'write');
     if (typeof args.text !== 'string') throw new Error('missing required argument: text');
-    return fillBrowserElement(paneId, requireStr(args, 'ref'), args.text);
+    return fillBrowserElement(
+      paneId,
+      ctx.scope,
+      requireStr(args, 'ref'),
+      args.text,
+    );
   },
 };
 
@@ -222,7 +237,7 @@ const browserWaitTool: McpToolDef = {
     if (condition !== 'load' && condition !== 'text' && condition !== 'ref') {
       throw new Error('invalid browser wait condition');
     }
-    return waitForBrowser(paneId, {
+    return waitForBrowser(paneId, ctx.scope, {
       condition,
       value: str(args, 'value'),
       ref: str(args, 'ref'),

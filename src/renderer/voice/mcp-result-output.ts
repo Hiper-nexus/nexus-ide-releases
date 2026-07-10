@@ -1,3 +1,7 @@
+import { redactVisibleSecrets } from '../../shared/vision-ipc';
+
+export { redactVisibleSecrets };
+
 const REDACTED = '[REDACTED]';
 const TRUNCATED = '[TRUNCATED]';
 const UNSUPPORTED = '[UNSUPPORTED]';
@@ -11,46 +15,10 @@ const MAX_DEPTH = 7;
 const INITIAL_PREVIEW_CHARS = 7_500;
 
 const SECRET_KEY_RE =
-  /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[_-]?key|access[_-]?key|private[_-]?key|password|passwd|secret|token|access[_-]?token|refresh[_-]?token|credential|bearer)$/i;
-
-const PRIVATE_KEY_RE =
-  /-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----[\s\S]*?-----END(?: [A-Z0-9]+)* PRIVATE KEY-----/gi;
-const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/-]{8,}=*/gi;
-const OPENAI_KEY_RE = /\bsk-[A-Za-z0-9_-]{12,}\b/g;
-const GEMINI_KEY_RE = /\bAIza[0-9A-Za-z_-]{20,}\b/g;
-const GITHUB_KEY_RE = /\bgh[pousr]_[A-Za-z0-9_]{16,}\b/g;
-const NPM_KEY_RE = /\bnpm_[A-Za-z0-9_]{16,}\b/g;
-const ENV_ASSIGNMENT_RE =
-  /(^|[\r\n])(\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*)([^\r\n]*)/g;
-const SECRET_ENV_NAME_RE =
-  /(^|_)(token|secret|password|pass|key|credential|auth|bearer)($|_)/i;
-const URL_CREDENTIAL_RE =
-  /\b([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^@\s/]+)@/gi;
-const SECRET_ASSIGNMENT_RE =
-  /(\b(?:api[_-]?key|access[_-]?key|private[_-]?key|password|passwd|secret|token|access[_-]?token|refresh[_-]?token|authorization|cookie|credential)\b\s*[:=]\s*)(["'`]?)([^\s,"'`;]+)/gi;
-
-function redactSensitiveText(value: string): string {
-  return value
-    .replace(PRIVATE_KEY_RE, '[REDACTED_PRIVATE_KEY]')
-    .replace(
-      ENV_ASSIGNMENT_RE,
-      (match, lineStart: string, prefix: string, name: string) =>
-        SECRET_ENV_NAME_RE.test(name) ? `${lineStart}${prefix}${REDACTED}` : match,
-    )
-    .replace(URL_CREDENTIAL_RE, '$1[REDACTED]@')
-    .replace(BEARER_RE, 'Bearer [REDACTED]')
-    .replace(OPENAI_KEY_RE, REDACTED)
-    .replace(GEMINI_KEY_RE, REDACTED)
-    .replace(GITHUB_KEY_RE, REDACTED)
-    .replace(NPM_KEY_RE, REDACTED)
-    .replace(
-      SECRET_ASSIGNMENT_RE,
-      (_match, prefix: string, quote: string) => `${prefix}${quote}${REDACTED}`,
-    );
-}
+  /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[_-]?key|access[_-]?key|private[_-]?key|password|passwd|secret|token|access[_-]?token|refresh[_-]?token|credential|bearer|auth)$/i;
 
 function boundedString(value: string): string {
-  const redacted = redactSensitiveText(value);
+  const redacted = redactVisibleSecrets(value);
   if (redacted.length <= MAX_STRING_CHARS) return redacted;
   return `${redacted.slice(0, MAX_STRING_CHARS)}...${TRUNCATED}`;
 }

@@ -30,8 +30,9 @@ vi.mock('../persistence/settings-store', () => ({
 }));
 
 import { spawnPaneAndMaybePrompt, withHandoffContract } from './tool-util';
+import { testProjectScope } from './__tests__/scope-fixture';
 
-const scope = Object.freeze({ rootRealPath: '/workspace' });
+const scope = testProjectScope();
 
 describe('agent pane workspace confinement', () => {
   beforeEach(() => {

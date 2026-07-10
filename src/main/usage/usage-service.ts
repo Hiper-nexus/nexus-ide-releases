@@ -1,221 +1,442 @@
-import { ipcMain, BrowserWindow } from 'electron';
-import { getDb } from '../persistence/db';
+import fs from 'node:fs';
+import path from 'node:path';
+import { BrowserWindow, ipcMain } from 'electron';
+import type { ProjectExecutionScope } from '../../shared/types';
 import {
-  setSessionDictationHook,
+  USAGE_CHANNELS,
+  type PaneUsage,
+  type UsageSnapshot,
+} from '../../shared/usage-types';
+import { getContextBySession } from '../orch/gate';
+import { getPaneAuthzInfo } from '../orch/pane-registry';
+import {
+  broadcastToProject,
+  sameProjectScope,
+} from '../orch/project-scoped-broadcast';
+import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
+import {
   setResumeSessionLookup,
+  setSessionDictationHook,
   type DictatedSessionInfo,
 } from '../pty/pty-manager';
-import {
-  captureProviderSession,
-  getProviderSession,
-} from '../persistence/provider-session-store';
-import { findPane, getPaneAuthzInfo } from '../orch/pane-registry';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { ClaudeTranscriptWatcher } from './claude-transcript-watcher';
+import type { UsageEvent } from './claude-transcript';
 import { CodexUsageScanner } from './codex-scanner';
 import {
-  computeRealCost,
-  initUsageStore,
-  recordUsage,
-  usageTotalsGlobal,
-} from './usage-store';
-import { initMediaUsageStore, mediaUsageTotalsGlobal } from './media-usage-store';
-import { USAGE_CHANNELS, type UsageSnapshot, type PaneUsage } from '../../shared/usage-types';
-import type { UsageEvent } from './claude-transcript';
-import type { Db } from '../persistence/db';
+  configureProjectUsageStoreRegistry,
+  disposeProjectUsageStoreRegistry,
+  type ProjectUsageStoreSuite,
+  type ProjectUsageStoreRegistry,
+} from './usage-store-registry';
 
 /**
- * Orquestra a telemetria REAL de tokens (relatório de benchmark §4.2):
- *
- *   spawn de agente (pty-manager dita --session-id)
- *     → registro providerSessionId → ptySessionId          (aqui)
- *     → ClaudeTranscriptWatcher do workspace (cwd)          (tail do JSONL)
- *     → recordUsage no SQLite (dedupe last-wins)            (usage-store)
- *     → broadcast throttled `usage:changed` para a UI       (aqui)
- *
- * Atribuição: determinística quando o session id foi ditado; caso contrário o
- * evento ainda é gravado (workspace-level), nunca descartado. A resolução de
- * pane/missão é LAZY no momento do evento via pane-registry — o pane pode ter
- * sido registrado depois do spawn.
+ * Real usage telemetry routed through immutable project/checkout authority.
+ * Process resources live inside this service and each watcher/timer/attribution
+ * belongs to exactly one scope. Every snapshot is rebuilt from scoped SQLite.
  */
 
-interface Attribution {
+interface DictatedAttribution {
   ptySessionId: string;
   adapterId: string;
-  cwd: string;
 }
 
-const dictated = new Map<string, Attribution>(); // providerSessionId → attribution
-const watchers = new Map<string, ClaudeTranscriptWatcher>(); // workspacePath → watcher
-const paneTotals = new Map<string, PaneUsage>(); // agregados em memória p/ snapshot
+interface ScopeTelemetryState {
+  readonly scope: ProjectExecutionScope;
+  readonly stores: ProjectUsageStoreSuite;
+  readonly dictated: Map<string, DictatedAttribution>;
+  readonly resumedPaneIds: Map<string, Set<string>>;
+  readonly pendingResumePanes: Map<string, number>;
+  readonly pendingLaunches: Map<
+    string,
+    { readonly adapterId: string; readonly startedAt: number }
+  >;
+  watcher: ClaudeTranscriptWatcher | null;
+  broadcastTimer: ReturnType<typeof setTimeout> | null;
+}
 
-let db: Db | null = null;
-let codexScanner: CodexUsageScanner | null = null;
-let broadcastTimer: ReturnType<typeof setTimeout> | null = null;
+const SESSION_CLOCK_SKEW_MS = 5 * 60_000;
+const SESSION_BIND_WINDOW_MS = 24 * 60 * 60_000;
 
-function buildSnapshot(): UsageSnapshot {
-  const global = db
-    ? usageTotalsGlobal(db)
-    : { costUsd: 0, inputTokens: 0, outputTokens: 0, turns: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
-  let media = { generations: 0, costUsd: 0 };
-  if (db) {
-    try {
-      media = mediaUsageTotalsGlobal(db);
-    } catch {
-      // tabela de mídia ainda não criada — sem gerações, totais zerados
-    }
-  }
+function scopeKey(scope: ProjectExecutionScope): string {
+  return `${scope.projectId}\0${scope.checkoutId}`;
+}
+
+function isInside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === '' ||
+    (relative !== '..' &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative))
+  );
+}
+
+function paneUsage(row: ReturnType<ProjectUsageStoreSuite['usage']['totalsByPane']>[number]): PaneUsage {
   return {
-    byPane: Object.fromEntries(paneTotals),
-    global: {
-      costUsd: global.costUsd,
-      inputTokens: global.inputTokens,
-      outputTokens: global.outputTokens,
-      turns: global.turns,
-    },
-    media,
+    paneId: row.paneId,
+    costUsd: row.costUsd,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    cacheReadTokens: row.cacheReadTokens,
+    turns: row.turns,
+    source: 'real',
   };
 }
 
-/** Poke externo (geração de mídia gravada) — reaproveita o broadcast coalescido. */
-export function notifyMediaGenerated(): void {
-  scheduleBroadcast();
-}
+export class UsageTelemetryService {
+  readonly #registry: ProjectUsageStoreRegistry;
+  readonly #states = new Map<string, ScopeTelemetryState>();
+  readonly #rootOwners = new Map<string, string>();
+  #codexScanner: CodexUsageScanner | null = null;
+  #stopped = false;
 
-/** Broadcast coalescido (máx. 1/s) — o transcript chega em rajadas. */
-function scheduleBroadcast(): void {
-  if (broadcastTimer) return;
-  broadcastTimer = setTimeout(() => {
-    broadcastTimer = null;
-    const snapshot = buildSnapshot();
-    for (const win of BrowserWindow.getAllWindows()) {
-      const wc = win.webContents;
-      if (!wc.isDestroyed() && !wc.isCrashed()) wc.send(USAGE_CHANNELS.changed, snapshot);
+  constructor(registry: ProjectUsageStoreRegistry) {
+    this.#registry = registry;
+  }
+
+  start(): void {
+    if (this.#stopped) throw new Error('usage telemetry service is stopped');
+    setSessionDictationHook((info) => this.#onSessionDictated(info));
+    setResumeSessionLookup((scope, paneId, adapterId) =>
+      this.#resumeSessionForPane(scope, paneId, adapterId),
+    );
+  }
+
+  snapshot(scope: ProjectExecutionScope): UsageSnapshot {
+    const state = this.#ensureScope(scope);
+    const global = state.stores.usage.totals();
+    const byPane = Object.fromEntries(
+      state.stores.usage
+        .totalsByPane()
+        .map((row) => [row.paneId, paneUsage(row)]),
+    );
+    return {
+      byPane,
+      global: {
+        costUsd: global.costUsd,
+        inputTokens: global.inputTokens,
+        outputTokens: global.outputTokens,
+        turns: global.turns,
+      },
+      media: state.stores.media.totals(),
+    };
+  }
+
+  notifyMediaGenerated(scope: ProjectExecutionScope): void {
+    this.#scheduleBroadcast(this.#ensureScope(scope));
+  }
+
+  #watchProvider(
+    scope: ProjectExecutionScope,
+    provider: 'claude' | 'codex',
+  ): void {
+    const state = this.#ensureScope(scope);
+    if (provider === 'claude' && !state.watcher) {
+      const watcher = new ClaudeTranscriptWatcher({
+        workspacePath: state.scope.rootRealPath,
+        onEvent: (event) => this.#onClaudeEvent(state, event),
+      });
+      watcher.start();
+      state.watcher = watcher;
     }
-  }, 1000);
-  broadcastTimer.unref?.();
-}
-
-function accumulatePane(paneId: string, ev: UsageEvent, costUsd: number): void {
-  const prev = paneTotals.get(paneId) ?? {
-    paneId,
-    costUsd: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    turns: 0,
-    source: 'real' as const,
-  };
-  // Nota: o agregado em memória soma snapshots (o dedupe fino vive no SQLite);
-  // como o CLI só regrava a mensagem DENTRO do mesmo turno de streaming e o
-  // watcher lê o tail consolidado, a distorção prática é desprezível — e o
-  // snapshot pull (usage:snapshot) reconstrói do SQLite quando a UI recarrega.
-  paneTotals.set(paneId, {
-    ...prev,
-    costUsd: prev.costUsd + costUsd,
-    inputTokens: prev.inputTokens + ev.inputTokens,
-    outputTokens: prev.outputTokens + ev.outputTokens,
-    cacheReadTokens: prev.cacheReadTokens + ev.cacheReadTokens,
-    turns: prev.turns + 1,
-  });
-}
-
-function onClaudeEvent(workspacePath: string, ev: UsageEvent): void {
-  if (!db) return;
-  const attribution = dictated.get(ev.sessionId);
-  let paneId: string | null = null;
-  let missionId: string | null = null;
-  if (attribution) {
-    const pane = findPane(attribution.ptySessionId);
-    paneId = pane?.paneId ?? null;
-    if (paneId) missionId = getPaneAuthzInfo(paneId)?.missionId ?? null;
+    if (provider === 'codex') this.#ensureCodexScanner();
   }
-  try {
-    recordUsage(db, { ...ev, paneId, missionId, workspacePath });
-  } catch (err) {
-    console.warn('[usage] recordUsage falhou:', err);
-    return;
+
+  stop(): void {
+    if (this.#stopped) return;
+    this.#stopped = true;
+    setSessionDictationHook(null);
+    setResumeSessionLookup(null);
+    for (const state of this.#states.values()) {
+      state.watcher?.stop();
+      state.watcher = null;
+      if (state.broadcastTimer) clearTimeout(state.broadcastTimer);
+      state.broadcastTimer = null;
+      state.dictated.clear();
+      state.resumedPaneIds.clear();
+      state.pendingResumePanes.clear();
+      state.pendingLaunches.clear();
+    }
+    this.#states.clear();
+    this.#rootOwners.clear();
+    this.#codexScanner?.stop();
+    this.#codexScanner = null;
   }
-  if (paneId) {
-    accumulatePane(paneId, ev, computeRealCost(ev));
-    // Sessão durável: o session id REAL deste pane fica persistido — no reopen
-    // o spawn usa `--resume <id>` e o pane volta para a SUA conversa.
-    captureProviderSession(workspacePath, paneId, {
-      provider: 'claude',
-      sessionId: ev.sessionId,
-      source: 'transcript-file',
-      confidence: 'high',
+
+  #ensureScope(scope: ProjectExecutionScope): ScopeTelemetryState {
+    if (this.#stopped) throw new Error('usage telemetry service is stopped');
+    const key = scopeKey(scope);
+    const existing = this.#states.get(key);
+    if (existing) {
+      if (!sameProjectScope(existing.scope, scope)) {
+        throw new Error('usage telemetry scope identity collision');
+      }
+      return existing;
+    }
+    const root = fs.realpathSync(scope.rootRealPath);
+    if (root !== scope.rootRealPath) {
+      throw new Error('usage telemetry project root identity changed');
+    }
+    const rootOwner = this.#rootOwners.get(root);
+    if (rootOwner && rootOwner !== key) {
+      throw new Error('one checkout path resolved to multiple project scopes');
+    }
+    const immutableScope = Object.freeze({ ...scope });
+    const state: ScopeTelemetryState = {
+      scope: immutableScope,
+      stores: this.#registry.forScope(immutableScope),
+      dictated: new Map(),
+      resumedPaneIds: new Map(),
+      pendingResumePanes: new Map(),
+      pendingLaunches: new Map(),
+      watcher: null,
+      broadcastTimer: null,
+    };
+    this.#states.set(key, state);
+    this.#rootOwners.set(root, key);
+    return state;
+  }
+
+  #onSessionDictated(info: DictatedSessionInfo): void {
+    if (info.adapterId !== 'claude' && info.adapterId !== 'codex') return;
+    const ctx = getContextBySession(info.ptySessionId);
+    if (!ctx) {
+      console.warn('[usage] agent session has no bound project authority');
+      return;
+    }
+    const state = this.#ensureScope(ctx.scope);
+    const cwd = fs.realpathSync(info.cwd);
+    if (!isInside(state.scope.rootRealPath, cwd)) {
+      throw new Error('dictated session cwd escapes its project scope');
+    }
+    if (info.providerSessionId) {
+      const existing = state.dictated.get(info.providerSessionId);
+      if (existing && existing.ptySessionId !== info.ptySessionId) {
+        throw new Error('provider session is attributed to multiple PTYs');
+      }
+      state.dictated.set(info.providerSessionId, {
+        ptySessionId: info.ptySessionId,
+        adapterId: info.adapterId,
+      });
+    } else {
+      state.pendingLaunches.set(info.ptySessionId, {
+        adapterId: info.adapterId,
+        startedAt: Date.now(),
+      });
+    }
+    this.#watchProvider(state.scope, info.adapterId);
+  }
+
+  #resumeSessionForPane(
+    scope: ProjectExecutionScope,
+    paneId: string,
+    adapterId: string,
+  ): string | null {
+    if (adapterId !== 'claude' && adapterId !== 'codex') return null;
+    const state = this.#ensureScope(scope);
+    const captured = state.stores.usage.latestProviderSessionByPane(paneId);
+    if (!captured) return null;
+    if (captured.provider !== adapterId) return null;
+    state.pendingResumePanes.set(paneId, Date.now());
+    const paneIds = state.resumedPaneIds.get(captured.sessionId) ?? new Set();
+    paneIds.add(paneId);
+    state.resumedPaneIds.set(captured.sessionId, paneIds);
+    this.#watchProvider(scope, adapterId);
+    return captured.sessionId;
+  }
+
+  #onClaudeEvent(state: ScopeTelemetryState, event: UsageEvent): void {
+    if (!this.#acceptProviderEvent(state, 'claude', event)) return;
+    const attribution = this.#attributionForEvent(state, event.sessionId);
+    state.stores.usage.record('claude', {
+      ...event,
+      paneId: attribution?.paneId ?? null,
+      missionId: attribution?.missionId ?? null,
     });
+    this.#scheduleBroadcast(state);
   }
-  scheduleBroadcast();
-}
 
-/** Garante um watcher de transcript para o workspace (idempotente). */
-export function watchWorkspaceUsage(workspacePath: string): void {
-  if (!db || watchers.has(workspacePath)) return;
-  const watcher = new ClaudeTranscriptWatcher({
-    workspacePath,
-    onEvent: (ev) => onClaudeEvent(workspacePath, ev),
-  });
-  watcher.start();
-  watchers.set(workspacePath, watcher);
-  console.log(`[usage] transcript watcher ligado para ${workspacePath}`);
-}
+  #onCodexEvent(state: ScopeTelemetryState, event: UsageEvent): void {
+    if (!this.#acceptProviderEvent(state, 'codex', event)) return;
+    const attribution = this.#attributionForEvent(state, event.sessionId);
+    state.stores.usage.record('codex', {
+      ...event,
+      paneId: attribution?.paneId ?? null,
+      missionId: attribution?.missionId ?? null,
+    });
+    this.#scheduleBroadcast(state);
+  }
 
-function onSessionDictated(info: DictatedSessionInfo): void {
-  dictated.set(info.providerSessionId, {
-    ptySessionId: info.ptySessionId,
-    adapterId: info.adapterId,
-    cwd: info.cwd,
-  });
-  // O cwd do spawn de agente é o workspace — liga o watcher na primeira vez.
-  watchWorkspaceUsage(info.cwd);
-  // Codex não aceita session id ditado: o scanner global resolve por cwd.
-  if (!codexScanner && db) {
-    codexScanner = new CodexUsageScanner({
-      isWatched: (cwd) => watchers.has(cwd),
-      onEvent: (ev, cwd) => {
-        if (!db) return;
-        try {
-          recordUsage(db, { ...ev, paneId: null, missionId: null, workspacePath: cwd });
-          scheduleBroadcast();
-        } catch (err) {
-          console.warn('[usage] recordUsage (codex) falhou:', err);
+  #attributionForEvent(
+    state: ScopeTelemetryState,
+    providerSessionId: string,
+  ): { paneId: string; missionId: string | null } | null {
+    const dictated = state.dictated.get(providerSessionId);
+    let paneId: string | null = null;
+    if (dictated) {
+      paneId = getPaneAuthzInfo(dictated.ptySessionId)?.paneId ?? null;
+    } else {
+      const resumed = state.resumedPaneIds.get(providerSessionId);
+      if (resumed?.size === 1) paneId = [...resumed][0];
+    }
+    if (!paneId) return null;
+    const pane = getPaneAuthzInfo(paneId);
+    if (!pane?.scope || !sameProjectScope(pane.scope, state.scope)) {
+      return null;
+    }
+    return { paneId, missionId: pane.missionId ?? null };
+  }
+
+  /**
+   * Provider transcript locations are path-based and can outlive a checkout.
+   * Accept only sessions already proven in this scoped DB, explicitly dictated
+   * by this process, or freshly observed after a scoped launch/resume.
+   */
+  #acceptProviderEvent(
+    state: ScopeTelemetryState,
+    provider: 'claude' | 'codex',
+    event: UsageEvent,
+  ): boolean {
+    const dictated = state.dictated.get(event.sessionId);
+    if (
+      dictated?.adapterId === provider ||
+      state.stores.usage.hasProviderSession(provider, event.sessionId)
+    ) {
+      return true;
+    }
+    const timestamp = event.timestamp;
+    const now = Date.now();
+    if (timestamp === null || timestamp > now + SESSION_CLOCK_SKEW_MS) {
+      return false;
+    }
+
+    const candidatePaneIds = new Set<string>();
+    const recentResumePanes = new Set<string>();
+    for (const [paneId, startedAt] of state.pendingResumePanes) {
+      if (
+        now - startedAt <= SESSION_BIND_WINDOW_MS &&
+        timestamp >= startedAt - SESSION_CLOCK_SKEW_MS
+      ) {
+        recentResumePanes.add(paneId);
+        candidatePaneIds.add(paneId);
+      } else if (now - startedAt > SESSION_BIND_WINDOW_MS) {
+        state.pendingResumePanes.delete(paneId);
+      }
+    }
+    const recentLaunches = new Set<string>();
+    for (const [ptySessionId, launch] of state.pendingLaunches) {
+      if (
+        launch.adapterId !== provider ||
+        timestamp < launch.startedAt - SESSION_CLOCK_SKEW_MS ||
+        now - launch.startedAt > SESSION_BIND_WINDOW_MS
+      ) {
+        if (now - launch.startedAt > SESSION_BIND_WINDOW_MS) {
+          state.pendingLaunches.delete(ptySessionId);
         }
+        continue;
+      }
+      recentLaunches.add(ptySessionId);
+      const pane = getPaneAuthzInfo(ptySessionId);
+      if (pane?.scope && sameProjectScope(pane.scope, state.scope)) {
+        candidatePaneIds.add(pane.paneId);
+      }
+    }
+    if (recentResumePanes.size === 0 && recentLaunches.size === 0) return false;
+    if (candidatePaneIds.size === 1) {
+      state.resumedPaneIds.set(event.sessionId, candidatePaneIds);
+    }
+    for (const paneId of recentResumePanes) {
+      state.pendingResumePanes.delete(paneId);
+    }
+    for (const ptySessionId of recentLaunches) {
+      state.pendingLaunches.delete(ptySessionId);
+    }
+    return true;
+  }
+
+  #ensureCodexScanner(): void {
+    if (this.#codexScanner) return;
+    this.#codexScanner = new CodexUsageScanner({
+      isWatched: (cwd) => this.#scopeForCwd(cwd) !== null,
+      onEvent: (event, cwd) => {
+        const state = this.#scopeForCwd(cwd);
+        if (!state) return;
+        this.#onCodexEvent(state, event);
       },
     });
-    codexScanner.start();
-    console.log('[usage] codex scanner ligado');
+    this.#codexScanner.start();
+  }
+
+  #scopeForCwd(cwd: string): ScopeTelemetryState | null {
+    let real: string;
+    try {
+      real = fs.realpathSync(cwd);
+    } catch {
+      return null;
+    }
+    const matches = [...this.#states.values()].filter((state) =>
+      isInside(state.scope.rootRealPath, real),
+    );
+    if (matches.length === 0) return null;
+    matches.sort(
+      (left, right) =>
+        right.scope.rootRealPath.length - left.scope.rootRealPath.length,
+    );
+    if (
+      matches.length > 1 &&
+      matches[0].scope.rootRealPath.length ===
+        matches[1].scope.rootRealPath.length
+    ) {
+      return null;
+    }
+    return matches[0];
+  }
+
+  #scheduleBroadcast(state: ScopeTelemetryState): void {
+    if (state.broadcastTimer) return;
+    state.broadcastTimer = setTimeout(() => {
+      state.broadcastTimer = null;
+      const snapshot = this.snapshot(state.scope);
+      broadcastToProject(
+        BrowserWindow.getAllWindows().map((window) => window.webContents),
+        state.scope,
+        USAGE_CHANNELS.changed,
+        snapshot,
+      );
+    }, 1_000);
+    state.broadcastTimer.unref?.();
   }
 }
 
-export function initUsageTelemetry(): void {
-  db = getDb();
-  if (!db) {
-    console.warn('[usage] SQLite indisponível — telemetria real desativada (fallback: estimativa)');
-    return;
+let configuredService: UsageTelemetryService | null = null;
+
+export function initUsageTelemetry(
+  runtimeManager: ProjectRuntimeManager,
+): UsageTelemetryService {
+  configuredService?.stop();
+  const registry = configureProjectUsageStoreRegistry(runtimeManager);
+  configuredService = new UsageTelemetryService(registry);
+  configuredService.start();
+  ipcMain.removeHandler(USAGE_CHANNELS.snapshot);
+  ipcMain.handle(USAGE_CHANNELS.snapshot, (event): UsageSnapshot => {
+    return configuredService!.snapshot(
+      requireRendererWorkspaceScope(event.sender),
+    );
+  });
+  return configuredService;
+}
+
+export function notifyMediaGenerated(scope: ProjectExecutionScope): void {
+  if (!configuredService) {
+    throw new Error('project-scoped usage telemetry is not initialized');
   }
-  try {
-    initUsageStore(db);
-    initMediaUsageStore(db);
-  } catch (err) {
-    console.warn('[usage] schema falhou — telemetria real desativada:', err);
-    db = null;
-    return;
-  }
-  setSessionDictationHook(onSessionDictated);
-  setResumeSessionLookup(
-    (cwd, paneId) => getProviderSession(cwd, paneId)?.sessionId ?? null,
-  );
-  ipcMain.handle(USAGE_CHANNELS.snapshot, (): UsageSnapshot => buildSnapshot());
+  configuredService.notifyMediaGenerated(scope);
 }
 
 export function shutdownUsageTelemetry(): void {
-  for (const watcher of watchers.values()) watcher.stop();
-  watchers.clear();
-  codexScanner?.stop();
-  codexScanner = null;
-  setSessionDictationHook(null);
-  setResumeSessionLookup(null);
-  if (broadcastTimer) clearTimeout(broadcastTimer);
-  broadcastTimer = null;
+  ipcMain.removeHandler(USAGE_CHANNELS.snapshot);
+  configuredService?.stop();
+  configuredService = null;
+  disposeProjectUsageStoreRegistry();
 }

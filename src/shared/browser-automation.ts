@@ -13,7 +13,11 @@ export type BrowserAutomationCommand =
   | 'inspect'
   | 'click'
   | 'fill'
-  | 'wait';
+  | 'wait'
+  | 'design_enable'
+  | 'design_disable'
+  | 'design_set_style_preview'
+  | 'design_clear_style_preview';
 
 export interface BrowserAutomationRequest {
   requestId: string;

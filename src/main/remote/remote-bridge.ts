@@ -10,15 +10,17 @@ import type {
   RemoteBridgeInfo,
   RemoteBridgeStartRequest,
 } from '../../shared/remote-types';
+import type { ProjectExecutionScope } from '../../shared/types';
 import { writeJsonAtomic } from '../util/atomic-write';
 import { REMOTE_CLIENT_HTML } from './remote-client-page';
-import { listMissions } from '../orch/mission-store';
 import {
-  findPane,
-  listPaneSnapshots,
+  getPaneAuthzInfo,
+  listVisiblePaneSnapshots,
   readSessionOutput,
   requestPaneClose,
 } from '../orch/pane-registry';
+import { authorizePaneAccess } from '../orch/pane-authz';
+import { getProjectDomainStores } from '../orch/project-domain-store-registry';
 import {
   orchResizeSession,
   orchWriteSession,
@@ -36,6 +38,8 @@ interface TokenRecord {
   hash: string;
   createdAt: number;
   expiresAt: number;
+  projectId: string;
+  checkoutId: string;
 }
 
 interface TokenFile {
@@ -46,6 +50,7 @@ interface AuthenticatedClient {
   tokenId: string;
   expiresAt: number;
   expiryTimer: ReturnType<typeof setTimeout>;
+  scope: ProjectExecutionScope;
 }
 
 const ROOT = path.join(os.homedir(), '.nexus', 'remote-bridge');
@@ -82,6 +87,7 @@ let tlsRecord: TlsRecord | null = null;
 let pairingFailures = 0;
 let pairing = makePairing();
 let tokenCache: TokenRecord[] | null = null;
+let activeBridgeScope: ProjectExecutionScope | null = null;
 const clients = new Set<WebSocket>();
 const authenticatedClients = new Map<WebSocket, AuthenticatedClient>();
 const rate = new Map<string, { count: number; resetAt: number }>();
@@ -116,7 +122,11 @@ function loadTokens(): TokenRecord[] {
   if (tokenCache) return tokenCache;
   try {
     const raw = JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf8')) as TokenFile;
-    tokenCache = raw.tokens ?? [];
+    tokenCache = (raw.tokens ?? []).filter(
+      (token) =>
+        typeof token.projectId === 'string' &&
+        typeof token.checkoutId === 'string',
+    );
   } catch {
     tokenCache = [];
   }
@@ -137,7 +147,9 @@ function writeTokens(tokens: TokenRecord[]): void {
   tokenCache = tokens;
 }
 
-function issueToken(): { token: string; expiresAt: number; record: TokenRecord } {
+function issueToken(
+  scope: ProjectExecutionScope,
+): { token: string; expiresAt: number; record: TokenRecord } {
   const token = crypto.randomBytes(32).toString('base64url');
   const expiresAt = Date.now() + TOKEN_TTL_MS;
   const record = {
@@ -145,16 +157,27 @@ function issueToken(): { token: string; expiresAt: number; record: TokenRecord }
     hash: sha256Hex(token),
     createdAt: Date.now(),
     expiresAt,
+    projectId: scope.projectId,
+    checkoutId: scope.checkoutId,
   };
   writeTokens([...readTokens(), record]);
   return { token, expiresAt, record };
 }
 
-function findValidToken(token: string): TokenRecord | undefined {
+function findValidToken(
+  token: string,
+  scope: ProjectExecutionScope,
+): TokenRecord | undefined {
   if (!token) return undefined;
   const hash = sha256Hex(token);
   const right = Buffer.from(hash, 'hex');
   return readTokens().find((record) => {
+    if (
+      record.projectId !== scope.projectId ||
+      record.checkoutId !== scope.checkoutId
+    ) {
+      return false;
+    }
     const left = Buffer.from(record.hash, 'hex');
     return left.length === right.length && crypto.timingSafeEqual(left, right);
   });
@@ -173,7 +196,12 @@ function closeAuthenticatedClient(ws: WebSocket, reason: string): void {
   }
 }
 
-function scheduleExpiry(ws: WebSocket, tokenId: string, expiresAt: number): void {
+function scheduleExpiry(
+  ws: WebSocket,
+  tokenId: string,
+  expiresAt: number,
+  scope: ProjectExecutionScope,
+): void {
   const remaining = expiresAt - Date.now();
   if (remaining <= 0) {
     closeAuthenticatedClient(ws, 'token expired');
@@ -182,15 +210,24 @@ function scheduleExpiry(ws: WebSocket, tokenId: string, expiresAt: number): void
   const expiryTimer = setTimeout(() => {
     const current = authenticatedClients.get(ws);
     if (!current || current.tokenId !== tokenId) return;
-    scheduleExpiry(ws, tokenId, expiresAt);
+    scheduleExpiry(ws, tokenId, expiresAt, current.scope);
   }, Math.min(remaining, MAX_TIMER_DELAY_MS));
   expiryTimer.unref?.();
-  authenticatedClients.set(ws, { tokenId, expiresAt, expiryTimer });
+  authenticatedClients.set(ws, {
+    tokenId,
+    expiresAt,
+    expiryTimer,
+    scope: Object.freeze({ ...scope }),
+  });
 }
 
-function authenticateClient(ws: WebSocket, token: TokenRecord): void {
+function authenticateClient(
+  ws: WebSocket,
+  token: TokenRecord,
+  scope: ProjectExecutionScope,
+): void {
   clearAuthenticatedClient(ws);
-  scheduleExpiry(ws, token.id, token.expiresAt);
+  scheduleExpiry(ws, token.id, token.expiresAt, scope);
 }
 
 function isClientAuthenticated(ws: WebSocket): boolean {
@@ -200,7 +237,12 @@ function isClientAuthenticated(ws: WebSocket): boolean {
     closeAuthenticatedClient(ws, 'token expired');
     return false;
   }
-  const tokenStillExists = readTokens().some((token) => token.id === current.tokenId);
+  const tokenStillExists = readTokens().some(
+    (token) =>
+      token.id === current.tokenId &&
+      token.projectId === current.scope.projectId &&
+      token.checkoutId === current.scope.checkoutId,
+  );
   if (!tokenStillExists) {
     closeAuthenticatedClient(ws, 'tokens revoked');
     return false;
@@ -353,28 +395,46 @@ function command(raw: unknown): { id?: string; type: string; [key: string]: unkn
   return out;
 }
 
-function sessionIdOf(ref: unknown): string {
+function remoteCaller(scope: ProjectExecutionScope) {
+  return { role: 'user' as const, scope };
+}
+
+function sessionIdOf(
+  ref: unknown,
+  scope: ProjectExecutionScope,
+  action: 'read' | 'write' | 'close',
+): string {
   if (typeof ref !== 'string' || ref.length === 0 || ref.length > 128) {
     throw new Error('invalid paneId');
   }
-  const pane = findPane(ref);
+  const pane = getPaneAuthzInfo(ref);
   if (!pane?.sessionId) throw new Error('pane/session not found');
+  const decision = authorizePaneAccess(remoteCaller(scope), pane, action);
+  if (!decision.allow) throw new Error(`not authorized: ${decision.reason}`);
   return pane.sessionId;
 }
 
-async function handleAuthedMessage(msg: ReturnType<typeof command>) {
+async function handleAuthedMessage(
+  msg: ReturnType<typeof command>,
+  scope: ProjectExecutionScope,
+) {
   switch (msg.type) {
     case 'panes.list':
-      return listPaneSnapshots();
+      return listVisiblePaneSnapshots(remoteCaller(scope));
     case 'pane.read':
       return {
-        output: readSessionOutput(sessionIdOf(msg.paneId), Number(msg.lines) || 120),
+        output: readSessionOutput(
+          sessionIdOf(msg.paneId, scope, 'read'),
+          Number(msg.lines) || 120,
+        ),
       };
     case 'pane.input': {
       const data = typeof msg.data === 'string' ? msg.data : '';
       if (!data || data.length > 8192) throw new Error('invalid input');
       const text = msg.submit === false ? data : `${data}\n`;
-      return { ok: orchWriteSession(sessionIdOf(msg.paneId), text) };
+      return {
+        ok: orchWriteSession(sessionIdOf(msg.paneId, scope, 'write'), text),
+      };
     }
     case 'pane.resize': {
       const cols = Number(msg.cols);
@@ -382,20 +442,28 @@ async function handleAuthedMessage(msg: ReturnType<typeof command>) {
       if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 10 || rows < 3) {
         throw new Error('invalid size');
       }
-      return { ok: orchResizeSession(sessionIdOf(msg.paneId), cols, rows) };
+      return {
+        ok: orchResizeSession(
+          sessionIdOf(msg.paneId, scope, 'write'),
+          cols,
+          rows,
+        ),
+      };
     }
     case 'pane.close': {
       if (typeof msg.paneId !== 'string' || msg.paneId.length > 128) {
         throw new Error('invalid paneId');
       }
-      const pane = findPane(msg.paneId);
+      const pane = getPaneAuthzInfo(msg.paneId);
       if (!pane) throw new Error('pane not found');
+      const decision = authorizePaneAccess(remoteCaller(scope), pane, 'close');
+      if (!decision.allow) throw new Error(`not authorized: ${decision.reason}`);
       return { ok: requestPaneClose(pane.paneId) };
     }
     case 'mission.list':
-      return listMissions();
+      return getProjectDomainStores(scope).missions.list();
     case 'status':
-      return redactRemoteBridgeSecrets(getRemoteBridgeInfo());
+      return redactRemoteBridgeSecrets(getRemoteBridgeInfo(scope));
     default:
       throw new Error(`unknown command: ${msg.type}`);
   }
@@ -448,6 +516,8 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
         return;
       }
       if (msg.type === 'pair') {
+        const scope = activeBridgeScope;
+        if (!scope) throw new Error('bridge project scope is unavailable');
         const code = typeof msg.code === 'string' ? msg.code.trim().toUpperCase() : '';
         const current = pairingCode();
         const supplied = Buffer.from(code);
@@ -461,8 +531,8 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
           if (pairingFailures >= MAX_PAIRING_FAILURES) pairing = makePairing();
           throw new Error('invalid pairing code');
         }
-        const issued = issueToken();
-        authenticateClient(ws, issued.record);
+        const issued = issueToken(scope);
+        authenticateClient(ws, issued.record, scope);
         clearTimeout(unauthTimer);
         pairing = makePairing();
         send(ws, {
@@ -473,16 +543,20 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
         return;
       }
       if (msg.type === 'auth') {
+        const scope = activeBridgeScope;
+        if (!scope) throw new Error('bridge project scope is unavailable');
         const token = typeof msg.token === 'string' ? msg.token : '';
-        const record = findValidToken(token);
+        const record = findValidToken(token, scope);
         if (!record) throw new Error('invalid token');
-        authenticateClient(ws, record);
+        authenticateClient(ws, record, scope);
         clearTimeout(unauthTimer);
         send(ws, { id: msg.id, ok: true, result: { ok: true } });
         return;
       }
       if (!isClientAuthenticated(ws)) throw new Error('auth required');
-      const result = await handleAuthedMessage(msg);
+      const authenticated = authenticatedClients.get(ws);
+      if (!authenticated) throw new Error('auth required');
+      const result = await handleAuthedMessage(msg, authenticated.scope);
       send(ws, { id: msg.id, ok: true, result });
     } catch (err) {
       send(ws, {
@@ -519,9 +593,15 @@ function serveClientPage(req: IncomingMessage, res: ServerResponse): void {
 }
 
 export async function startRemoteBridge(
-  req: RemoteBridgeStartRequest = {},
+  req: RemoteBridgeStartRequest,
+  scope: ProjectExecutionScope,
 ): Promise<RemoteBridgeInfo> {
-  if (server && port) return getRemoteBridgeInfo();
+  if (!scope) throw new Error('remote bridge requires a project scope');
+  if (server && port) {
+    assertBridgeScope(scope);
+    return getRemoteBridgeInfo(scope);
+  }
+  activeBridgeScope = Object.freeze({ ...scope });
   const tls = await ensureTls();
   // Default seguro: só localhost. Expor na LAN (0.0.0.0/::) exige pedido
   // explícito do usuário — a bridge controla PTYs reais.
@@ -539,10 +619,11 @@ export async function startRemoteBridge(
       resolve();
     });
   });
-  return getRemoteBridgeInfo();
+  return getRemoteBridgeInfo(scope);
 }
 
-export function stopRemoteBridge(): RemoteBridgeInfo {
+export function stopRemoteBridge(scope?: ProjectExecutionScope): RemoteBridgeInfo {
+  if (scope && activeBridgeScope) assertBridgeScope(scope);
   for (const client of clients) client.close(1001, 'bridge stopped');
   clients.clear();
   clearAllAuthenticatedClients();
@@ -554,18 +635,30 @@ export function stopRemoteBridge(): RemoteBridgeInfo {
   port = null;
   boundHost = null;
   pairing = makePairing();
+  activeBridgeScope = null;
   return getRemoteBridgeInfo();
 }
 
-export function rotateRemotePairing(): RemoteBridgeInfo {
+export function rotateRemotePairing(scope?: ProjectExecutionScope): RemoteBridgeInfo {
+  if (scope && activeBridgeScope) assertBridgeScope(scope);
   pairing = makePairing();
-  return getRemoteBridgeInfo();
+  return getRemoteBridgeInfo(scope);
 }
 
-export function revokeRemoteTokens(): RemoteBridgeInfo {
-  writeTokens([]);
+export function revokeRemoteTokens(scope?: ProjectExecutionScope): RemoteBridgeInfo {
+  if (scope && activeBridgeScope) assertBridgeScope(scope);
+  const target = scope ?? activeBridgeScope;
+  writeTokens(
+    target
+      ? readTokens().filter(
+          (token) =>
+            token.projectId !== target.projectId ||
+            token.checkoutId !== target.checkoutId,
+        )
+      : [],
+  );
   closeAllAuthenticatedClients('tokens revoked');
-  return getRemoteBridgeInfo();
+  return getRemoteBridgeInfo(scope);
 }
 
 export type RemoteBridgeRedactedInfo = Omit<
@@ -584,15 +677,38 @@ export function redactRemoteBridgeSecrets(
   return safeInfo;
 }
 
-export function getRemoteBridgeInfo(): RemoteBridgeInfo {
+function sameScopeCoordinates(
+  left: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  right: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+): boolean {
+  return (
+    left.projectId === right.projectId && left.checkoutId === right.checkoutId
+  );
+}
+
+function assertBridgeScope(scope: ProjectExecutionScope): void {
+  if (!activeBridgeScope || !sameScopeCoordinates(activeBridgeScope, scope)) {
+    throw new Error('remote bridge belongs to another project checkout');
+  }
+}
+
+export function getRemoteBridgeInfo(
+  scope?: ProjectExecutionScope,
+): RemoteBridgeInfo {
+  if (scope && activeBridgeScope) assertBridgeScope(scope);
   const current = pairingCode();
+  const tokenScope = scope ?? activeBridgeScope;
   return {
     running: Boolean(server && port),
     port: port ?? undefined,
     urls: port ? localUrls(port) : [],
     pairingCode: current.code,
     pairingExpiresAt: current.expiresAt,
-    tokenCount: readTokens().length,
+    tokenCount: tokenScope
+      ? readTokens().filter((token) =>
+          sameScopeCoordinates(token, tokenScope),
+        ).length
+      : 0,
     clientCount: clients.size,
     certFingerprint: tlsRecord?.fingerprint,
   };

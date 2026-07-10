@@ -1,5 +1,6 @@
 import type { BrowserPaneState, PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
+import { applyViewportOverride } from './viewport-override';
 
 interface BrowserHost {
   paneId: string;
@@ -16,6 +17,8 @@ const CREATE_TIMEOUT_MS = 25_000;
 const hosts = new Map<string, BrowserHost>();
 const attachedSlots = new Map<string, HTMLElement>();
 const suppressionReasons = new Set<string>();
+/** Breakpoint preview widths per pane (F4); null/absent = full slot. */
+const viewportOverrides = new Map<string, number>();
 const lastStates = new Map<string, BrowserPaneState>();
 const creationWaiters = new Map<string, CreationWaiter[]>();
 
@@ -53,7 +56,31 @@ function suppressedBounds(slot: HTMLElement): ReturnType<typeof boundsOf> {
 }
 
 function syncPaneBounds(paneId: string, slot: HTMLElement): void {
-  window.nexus.browser.setBounds(paneId, suppressedBounds(slot));
+  window.nexus.browser.setBounds(
+    paneId,
+    applyViewportOverride(
+      suppressedBounds(slot),
+      viewportOverrides.get(paneId) ?? null,
+    ),
+  );
+}
+
+/** Breakpoint preview (F4): narrow the view to `width` CSS px (null = full). */
+export function setBrowserViewportOverride(
+  paneId: string,
+  width: number | null,
+): void {
+  if (width) {
+    viewportOverrides.set(paneId, width);
+  } else {
+    viewportOverrides.delete(paneId);
+  }
+  const slot = attachedSlots.get(paneId);
+  if (slot) syncPaneBounds(paneId, slot);
+}
+
+export function getBrowserViewportOverride(paneId: string): number | null {
+  return viewportOverrides.get(paneId) ?? null;
 }
 
 function ensureHost(pane: PaneModel): BrowserHost {

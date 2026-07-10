@@ -34,13 +34,13 @@ import { redactArgs } from '../jarvis/audit-log';
 import { clearSession as clearMcpPermissionSession } from '../jarvis/permissions';
 import { MAX_MCP_PAYLOAD_BYTES } from './mcp-args-validation';
 import { buildToolset } from './tools';
-import { getPendingSpawnMeta, stripAnsi } from './pane-registry';
+import { stripAnsi } from './pane-registry';
 import {
   isPlaceholderSummary,
   LegacyHandoffDedupe,
   LegacyHandoffParser,
 } from './legacy-handoff';
-import { submitHandoff } from './handoff-store';
+import { getProjectDomainStores } from './project-domain-store-registry';
 import { onHandoffSubmitted } from './idle-delivery';
 import {
   CliPromptAutoResponder,
@@ -108,6 +108,8 @@ async function showHttpMcpConfirmation(
       `Agente: ${request.agentLabel}\n` +
       `Ferramenta: ${request.toolName}\n` +
       `Workspace: ${request.workspaceId}\n` +
+      `Missão: ${request.missionId ?? 'bootstrap'}\n` +
+      `Contexto: ${request.contextRevision ?? 'bootstrap'}\n` +
       `Motivo: ${request.reason}\n\n` +
       `Argumentos (segredos ocultos):\n${boundedConfirmationArgs(request.args)}`,
   });
@@ -273,7 +275,22 @@ async function handleGateRequest(
       sendJson(res, 200, { allow: true });
       return;
     case 'stop': {
-      const verdict = evaluateStop(ctx);
+      let hasTrustedHandoff = false;
+      try {
+        hasTrustedHandoff = Boolean(
+          ctx.sessionId &&
+          getProjectDomainStores(ctx.scope).handoffs
+            .hasTrustedFromSession(ctx.sessionId),
+        );
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        sendJson(res, 200, {
+          allow: false,
+          reason: `trusted handoff could not be revalidated: ${detail}`,
+        });
+        return;
+      }
+      const verdict = evaluateStop(ctx, hasTrustedHandoff);
       sendJson(res, 200, verdict);
       return;
     }
@@ -296,10 +313,8 @@ function buildMcpConfig(token: string): object {
 
 /** Wire per-agent spawn decoration: gate tokens, MCP config and skill mirrors. */
 function installSpawnHook(): void {
-  setAgentSpawnHook((adapter, req) => {
-    const meta = req.orchRequestId
-      ? getPendingSpawnMeta(req.orchRequestId)
-      : null;
+  setAgentSpawnHook((adapter, _req, authority) => {
+    const meta = authority.context;
     const gated =
       (meta?.allowedTools ?? null) !== null ||
       (meta?.allowedSkills ?? null) !== null;
@@ -307,9 +322,14 @@ function installSpawnHook(): void {
       label: meta?.agentName ?? adapter.label,
       role: meta?.role ?? 'user',
       missionId: meta?.missionId,
+      contextRevision: meta?.contextRevision,
       agentName: meta?.agentName,
+      providerId: adapter.id,
+      readOnly: meta?.readOnly === true,
       allowedTools: meta?.allowedTools ?? null,
       allowedSkills: meta?.allowedSkills ?? null,
+      scope: authority.coordinationScope ?? authority.scope,
+      executionScope: authority.scope,
     });
 
     const env: Record<string, string> = {
@@ -428,16 +448,22 @@ function installLegacyParser(): void {
     // Repaint do TUI re-emite o MESMO bloco — uma entrega só por conteúdo.
     if (dedupe.isDuplicate(sessionId, payload)) return;
     const ctx = getContextBySession(sessionId);
-    const handoff = submitHandoff({
+    if (!ctx) {
+      console.warn(`[handoff] legacy handoff without scoped session ignored (${sessionId})`);
+      return;
+    }
+    const handoff = getProjectDomainStores(ctx.scope).handoffs.submit({
       status: payload.status,
       summary: payload.summary,
       artifacts: payload.artifacts,
-      missionId: ctx?.missionId,
+      missionId: ctx.missionId,
       sessionId,
-      fromAgent: ctx?.agentName ?? ctx?.label ?? 'legacy',
+      fromAgent: ctx.agentName ?? ctx.label ?? 'legacy',
     });
-    if (ctx) ctx.handoffSubmitted = true;
-    onHandoffSubmitted(handoff);
+    if (handoff.evidenceTrust === 'nexus-trusted') {
+      ctx.handoffSubmitted = true;
+    }
+    onHandoffSubmitted(handoff, ctx.scope);
   });
   // Prefiltro: stripAnsi + parse custam ~104ms/10k chunks e rodavam em TODO
   // output de PTY. Só paga quando o chunk pode conter o marker (tail cru curto

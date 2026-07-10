@@ -1,141 +1,191 @@
-import type { Db } from '../persistence/db';
-import type { AgentGateContext } from '../orch/gate';
-import type {
-  MediaGenerationResult,
-  MediaUsageTotals,
-} from '../../shared/media-types';
+import path from 'node:path';
+import { z } from 'zod';
+import type { ProjectExecutionScope } from '../../shared/types';
+import type { MediaUsageTotals } from '../../shared/media-types';
+import {
+  ScopedStoreBinding,
+  ScopedStoreCorruptionError,
+  type ScopedStoreChangeListener,
+  type ScopedStoreOptions,
+} from '../orch/scoped-store';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 
-/**
- * Persistência de custo de GERAÇÃO DE MÍDIA (imagem/vídeo/áudio) no SQLite
- * compartilhado — mesma filosofia do token_usage: auditável, sobrevive ao
- * restart, alimenta o painel de custo (mídia entra no total de gasto do
- * workspace, não só os tokens).
- */
+/** Project-scoped media accounting backed by the V1 `media_artifacts` table. */
 
 export interface MediaUsageRecord {
   kind: string;
   provider: string;
   model: string;
-  path: string;
+  storageKey: string;
+  sha256: string;
   costUsd: number | null;
+  durationMs: number;
   missionId?: string | null;
   agentName?: string | null;
-  sessionId?: string | null;
 }
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS media_usage (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  created_at  INTEGER NOT NULL,
-  kind        TEXT    NOT NULL,
-  provider    TEXT    NOT NULL,
-  model       TEXT    NOT NULL,
-  path        TEXT    NOT NULL,
-  cost_usd    REAL,
-  mission_id  TEXT,
-  agent_name  TEXT,
-  session_id  TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_media_usage_mission ON media_usage(mission_id);
-`;
-
-export function initMediaUsageStore(db: Db): void {
-  db.exec(SCHEMA);
+interface MediaMetadata {
+  schemaVersion: 1;
+  model: string;
+  estimatedCostUsd: number | null;
+  costMicros: number | null;
+  durationMs: number;
+  agentName: string | null;
 }
 
-export function insertMediaUsage(
-  db: Db,
-  rec: MediaUsageRecord,
-  now: number = Date.now(),
-): void {
-  db.prepare(
-    `INSERT INTO media_usage
-       (created_at, kind, provider, model, path, cost_usd, mission_id, agent_name, session_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    now,
-    rec.kind,
-    rec.provider,
-    rec.model,
-    rec.path,
-    rec.costUsd,
-    rec.missionId ?? null,
-    rec.agentName ?? null,
-    rec.sessionId ?? null,
+const MICROS_PER_USD = 1_000_000;
+const entityIdSchema = z.string().min(1).max(256);
+const storageKeySchema = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((value) => !path.isAbsolute(value), 'storageKey must be relative')
+  .refine(
+    (value) => {
+      const posix = value.replaceAll('\\', '/');
+      const normalized = path.posix.normalize(posix);
+      return (
+        value === posix &&
+        value === normalized &&
+        normalized !== '..' &&
+        !normalized.startsWith('../')
+      );
+    },
+    'storageKey must be a canonical project-relative POSIX path',
   );
-}
+const mediaUsageRecordSchema = z
+  .object({
+    kind: z.string().min(1).max(64),
+    provider: z.string().min(1).max(128),
+    model: z.string().min(1).max(256),
+    storageKey: storageKeySchema,
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    costUsd: z.number().finite().nonnegative().nullable(),
+    durationMs: z.number().int().nonnegative().max(24 * 60 * 60 * 1000),
+    missionId: entityIdSchema.nullish(),
+    agentName: z.string().min(1).max(256).nullish(),
+  })
+  .strict();
+const mediaMetadataSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    model: z.string().min(1).max(256),
+    estimatedCostUsd: z.number().finite().nonnegative().nullable(),
+    costMicros: z.number().int().nonnegative().nullable(),
+    durationMs: z.number().int().nonnegative(),
+    agentName: z.string().min(1).max(256).nullable(),
+  })
+  .strict();
 
-interface TotalsRow {
-  generations: number;
-  cost_usd: number | null;
-}
+export class ScopedMediaUsageStore {
+  readonly #binding: ScopedStoreBinding;
 
-const TOTALS_SELECT =
-  'SELECT COUNT(*) AS generations, SUM(cost_usd) AS cost_usd FROM media_usage';
+  constructor(
+    runtimeManager: ProjectRuntimeManager,
+    scope: ProjectExecutionScope,
+    options: ScopedStoreOptions = {},
+  ) {
+    this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
+  }
 
-export function mediaUsageTotalsGlobal(db: Db): MediaUsageTotals {
-  const row = db.prepare(TOTALS_SELECT).get() as TotalsRow | undefined;
-  return {
-    generations: row?.generations ?? 0,
-    costUsd: row?.cost_usd ?? 0,
-  };
-}
+  get scope(): ProjectExecutionScope {
+    return this.#binding.scope;
+  }
 
-export function mediaUsageTotalsByMission(
-  db: Db,
-  missionId: string,
-): MediaUsageTotals {
-  const row = db
-    .prepare(`${TOTALS_SELECT} WHERE mission_id = ?`)
-    .get(missionId) as TotalsRow | undefined;
-  return {
-    generations: row?.generations ?? 0,
-    costUsd: row?.cost_usd ?? 0,
-  };
-}
+  onChange(listener: ScopedStoreChangeListener): () => void {
+    return this.#binding.onChange(listener);
+  }
 
-// ── Edge: conveniência para as MCP tools (nunca lança) ──────────────────────
-
-let schemaReady = false;
-
-export function recordMediaUsage(
-  result: MediaGenerationResult,
-  ctx: Pick<AgentGateContext, 'missionId' | 'agentName' | 'label' | 'sessionId'>,
-): void {
-  try {
-    // Lazy require: persistence/db importa electron; manter fora do topo
-    // preserva este módulo importável em unit tests (padrão do repo).
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { getDb } = require('../persistence/db') as typeof import('../persistence/db');
-    const db = getDb();
-    if (!db) return;
-    if (!schemaReady) {
-      initMediaUsageStore(db);
-      schemaReady = true;
+  record(rawRecord: MediaUsageRecord): string {
+    const record = mediaUsageRecordSchema.parse(rawRecord);
+    const costMicros =
+      record.costUsd === null
+        ? null
+        : Math.round(record.costUsd * MICROS_PER_USD);
+    if (
+      costMicros !== null &&
+      (!Number.isSafeInteger(costMicros) || costMicros < 0)
+    ) {
+      throw new Error('media cost exceeds the supported range');
     }
-    insertMediaUsage(db, {
-      kind: result.kind,
-      provider: result.provider,
-      model: result.model,
-      path: result.path,
-      costUsd: result.estimatedCostUsd,
-      missionId: ctx.missionId ?? null,
-      agentName: ctx.agentName ?? ctx.label ?? null,
-      sessionId: ctx.sessionId ?? null,
+    const metadata: MediaMetadata = mediaMetadataSchema.parse({
+      schemaVersion: 1,
+      model: record.model,
+      estimatedCostUsd: record.costUsd,
+      costMicros,
+      durationMs: record.durationMs,
+      agentName: record.agentName ?? null,
     });
-    const { notifyMediaGenerated } =
-      require('./usage-service') as typeof import('./usage-service');
-    notifyMediaGenerated();
-    const { recordMediaGeneratedForGamification } =
-      require('../gamification/gamification-service') as typeof import('../gamification/gamification-service');
-    recordMediaGeneratedForGamification(result.kind, ctx.missionId ?? null);
-  } catch (err) {
-    // Telemetria nunca derruba a geração — o arquivo já foi entregue.
-    console.warn('[media-usage] falha ao registrar:', err);
+    const id = this.#binding.makeId('media');
+    this.#binding
+      .writeDatabase()
+      .prepare(
+        `INSERT INTO media_artifacts
+           (id, mission_id, media_type, provider, storage_key, sha256,
+            metadata_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        record.missionId ?? null,
+        record.kind,
+        record.provider,
+        record.storageKey,
+        record.sha256,
+        JSON.stringify(metadata),
+        this.#binding.now(),
+      );
+    this.#binding.emitChange();
+    return id;
+  }
+
+  totals(): MediaUsageTotals {
+    return this.#totals();
+  }
+
+  totalsByMission(rawMissionId: string): MediaUsageTotals {
+    return this.#totals(entityIdSchema.parse(rawMissionId));
+  }
+
+  #totals(missionId?: string): MediaUsageTotals {
+    const rows = missionId
+      ? this.#binding
+          .readDatabase()
+          .prepare(
+            `SELECT metadata_json FROM media_artifacts
+             WHERE mission_id = ?`,
+          )
+          .all(missionId)
+      : this.#binding
+          .readDatabase()
+          .prepare('SELECT metadata_json FROM media_artifacts')
+          .all();
+    let costMicros = 0;
+    for (const rawRow of rows as Array<{ metadata_json?: unknown }>) {
+      try {
+        const rawJson = z.string().parse(rawRow.metadata_json);
+        const metadata = mediaMetadataSchema.parse(JSON.parse(rawJson));
+        costMicros += metadata.costMicros ?? 0;
+      } catch (error) {
+        throw new ScopedStoreCorruptionError('media artifact metadata', {
+          cause: error,
+        });
+      }
+    }
+    if (!Number.isSafeInteger(costMicros) || costMicros < 0) {
+      throw new ScopedStoreCorruptionError('media usage totals');
+    }
+    return {
+      generations: rows.length,
+      costUsd: costMicros / MICROS_PER_USD,
+    };
   }
 }
 
-/** Test-only reset. */
-export function resetMediaUsageForTests(): void {
-  schemaReady = false;
+export function createScopedMediaUsageStore(
+  runtimeManager: ProjectRuntimeManager,
+  scope: ProjectExecutionScope,
+  options: ScopedStoreOptions = {},
+): ScopedMediaUsageStore {
+  return new ScopedMediaUsageStore(runtimeManager, scope, options);
 }

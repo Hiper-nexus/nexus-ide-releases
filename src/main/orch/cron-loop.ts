@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { z } from 'zod';
 
 /**
  * Cron — squads/agentes agendados. Tick de 60s: jobs vencidos disparam o brief
@@ -18,7 +19,20 @@ export interface CronJob {
   /** O que rodar (prompt para o agente/squad). */
   brief: string;
   status: 'active' | 'paused';
+  /** Shared is fail-closed behind a remote lease; local must be explicit. */
+  executionMode?: 'shared' | 'local';
+  /** Remote, project-portable identity. Required for shared execution. */
+  portableScheduleId?: string;
+  /** Optimistic definition version accepted by the remote authority. */
+  definitionVersion?: number;
+  /** Hash of the exact portable definition represented by this local job. */
+  definitionHash?: string;
+  /** Canonical project root used to rebuild the immutable execution scope. */
   workspacePath?: string;
+  /** Optional canonical working directory inside workspacePath. */
+  workingDirectory?: string;
+  projectId?: string;
+  checkoutId?: string;
   /** Um dos dois: agente do squad OU squad inteiro. */
   agentName?: string;
   squadId?: string;
@@ -142,20 +156,60 @@ function cronFilePath(): string {
   return path.join(os.homedir(), '.nexus', 'crons.json');
 }
 
+const cronJobSchema = z
+  .object({
+    id: z.string().min(1).max(256),
+    name: z.string().min(1).max(120),
+    schedule: z.string().min(1).max(512),
+    brief: z.string().max(1_048_576),
+    status: z.enum(['active', 'paused']),
+    executionMode: z.enum(['shared', 'local']).optional(),
+    portableScheduleId: z.string().uuid().optional(),
+    definitionVersion: z.number().int().positive().optional(),
+    definitionHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    workspacePath: z.string().min(1).max(4_096).optional(),
+    workingDirectory: z.string().min(1).max(4_096).optional(),
+    projectId: z.string().min(1).max(128).optional(),
+    checkoutId: z.string().min(1).max(128).optional(),
+    agentName: z.string().min(1).max(256).optional(),
+    squadId: z.string().min(1).max(256).optional(),
+    createdAt: z.number().int().nonnegative(),
+    updatedAt: z.number().int().nonnegative(),
+    nextFireAt: z.number().int().nonnegative().optional(),
+    lastFiredAt: z.number().int().nonnegative().optional(),
+    lastError: z.string().max(4_096).optional(),
+  })
+  .strict();
+
+const cronJobsSchema = z.array(cronJobSchema).max(10_000);
+
+export function parseCronJobs(raw: unknown): CronJob[] {
+  return cronJobsSchema.parse(raw);
+}
+
 export function loadCronJobs(): CronJob[] {
   try {
-    const parsed = JSON.parse(fs.readFileSync(cronFilePath(), 'utf8'));
-    return Array.isArray(parsed) ? (parsed as CronJob[]) : [];
-  } catch {
-    return [];
+    return parseCronJobs(JSON.parse(fs.readFileSync(cronFilePath(), 'utf8')));
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      (error as NodeJS.ErrnoException).code === 'ENOENT'
+    ) {
+      return [];
+    }
+    throw new Error('cron job store is invalid; refusing an empty fallback', {
+      cause: error,
+    });
   }
 }
 
 export function saveCronJobs(jobs: CronJob[]): void {
+  const validated = parseCronJobs(jobs);
   const file = cronFilePath();
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(jobs, null, 2));
+  fs.writeFileSync(tmp, JSON.stringify(validated, null, 2), { mode: 0o600 });
   fs.renameSync(tmp, file);
 }
 
@@ -163,7 +217,11 @@ export interface CreateCronInput {
   name: string;
   schedule: string;
   brief: string;
+  executionMode?: 'shared' | 'local';
   workspacePath?: string;
+  workingDirectory?: string;
+  projectId?: string;
+  checkoutId?: string;
   agentName?: string;
   squadId?: string;
 }
@@ -182,7 +240,11 @@ export function createCronJob(
     schedule: input.schedule,
     brief: input.brief,
     status: 'active',
+    executionMode: input.executionMode ?? 'shared',
     workspacePath: input.workspacePath,
+    workingDirectory: input.workingDirectory,
+    projectId: input.projectId,
+    checkoutId: input.checkoutId,
     agentName: input.agentName,
     squadId: input.squadId,
     createdAt: now,

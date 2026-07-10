@@ -20,7 +20,9 @@ describe('nexus realtime tools', () => {
         'focus_pane',
         'focus_previous_pane',
         'read_pane',
+        'read_current_view',
         'mcp_tool',
+        'new_agentic_mission',
       ]),
     );
   });
@@ -88,6 +90,24 @@ describe('nexus realtime tools', () => {
     expect(
       realtimeArgsToJarvisAction({ action: 'read_pane', paneId: 'ativo' }),
     ).toEqual({ type: 'read_pane', paneId: 'ativo' });
+    expect(realtimeArgsToJarvisAction({ action: 'read_current_view' })).toEqual({
+      type: 'read_current_view',
+    });
+  });
+
+  it('maps an agentic mission with an optional bounded objective', () => {
+    expect(
+      realtimeArgsToJarvisAction({
+        action: 'new_agentic_mission',
+        intent: 'corrigir todos os testes quebrados',
+      }),
+    ).toEqual({
+      type: 'new_agentic_mission',
+      intent: 'corrigir todos os testes quebrados',
+    });
+    expect(realtimeArgsToJarvisAction({ action: 'new_agentic_mission' })).toEqual({
+      type: 'new_agentic_mission',
+    });
   });
 
   it('summarizes full app actions for live diagnostics', () => {

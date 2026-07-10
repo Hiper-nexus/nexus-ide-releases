@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { activeWorkspaceOrNull } from '../persistence/workspace-store';
+import type { ProjectExecutionScope } from '../../shared/types';
 
 function realpathOrThrow(targetPath: string, label: string): string {
   try {
@@ -17,16 +18,25 @@ export function activeWorkspaceRoot(): string {
   return realpathOrThrow(path.resolve(root), 'workspace');
 }
 
+export function resolveRootForScope(scope: ProjectExecutionScope): string {
+  const expected = path.resolve(scope.rootRealPath);
+  const actual = realpathOrThrow(expected, 'scoped workspace');
+  if (actual !== expected) {
+    throw new Error('scoped workspace identity changed on disk');
+  }
+  if (!fs.statSync(actual).isDirectory()) {
+    throw new Error('scoped workspace is not a directory');
+  }
+  return actual;
+}
+
 export function isInsidePath(root: string, target: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(target));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-export function resolveWorkspacePath(inputPath: string): string {
-  const root = activeWorkspaceRoot();
-  const resolved = path.isAbsolute(inputPath)
-    ? path.resolve(inputPath)
-    : path.resolve(root, inputPath);
+function resolvePathInsideRoot(root: string, inputPath: string): string {
+  const resolved = resolvePathCandidateInsideRoot(root, inputPath);
 
   const realTarget = fs.existsSync(resolved)
     ? realpathOrThrow(resolved, 'path')
@@ -42,20 +52,37 @@ export function resolveWorkspacePath(inputPath: string): string {
   return realTarget;
 }
 
-export interface WorkspaceScopeLike {
-  rootRealPath: string;
+function resolvePathCandidateInsideRoot(root: string, inputPath: string): string {
+  const resolved = path.isAbsolute(inputPath)
+    ? path.resolve(inputPath)
+    : path.resolve(root, inputPath);
+  if (!isInsidePath(root, resolved)) {
+    throw new Error(`path escapes workspace: ${inputPath}`);
+  }
+  return resolved;
 }
 
-export function resolveRootForScope(scope: WorkspaceScopeLike): string {
-  const expected = path.resolve(scope.rootRealPath);
-  const actual = realpathOrThrow(expected, 'scoped workspace');
-  if (actual !== expected) {
-    throw new Error('scoped workspace identity changed on disk');
-  }
-  if (!fs.statSync(actual).isDirectory()) {
-    throw new Error('scoped workspace is not a directory');
-  }
-  return actual;
+/**
+ * Resolve only the lexical candidate under a stable project root. Filesystem
+ * callers that bind validation to an opened descriptor use this instead of
+ * following the leaf with realpath before open.
+ */
+export function resolvePathCandidateForScope(
+  scope: ProjectExecutionScope,
+  inputPath: string,
+): string {
+  return resolvePathCandidateInsideRoot(resolveRootForScope(scope), inputPath);
+}
+
+export function resolvePathForScope(
+  scope: ProjectExecutionScope,
+  inputPath: string,
+): string {
+  return resolvePathInsideRoot(resolveRootForScope(scope), inputPath);
+}
+
+export function resolveWorkspacePath(inputPath: string): string {
+  return resolvePathInsideRoot(activeWorkspaceRoot(), inputPath);
 }
 
 function resolveCwdInsideRoot(root: string, cwdOverride?: string): string {
@@ -75,7 +102,7 @@ function resolveCwdInsideRoot(root: string, cwdOverride?: string): string {
 }
 
 export function resolveCwdForScope(
-  scope: WorkspaceScopeLike,
+  scope: ProjectExecutionScope,
   cwdOverride?: string,
 ): string {
   return resolveCwdInsideRoot(resolveRootForScope(scope), cwdOverride);

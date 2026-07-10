@@ -138,10 +138,33 @@ describe('jarvisActionFastPath', () => {
     });
   });
 
+  it('ler a tela atual dispara Vision/OCR em vez de ler um pane', () => {
+    for (const text of ['leia esta tela', 'leia essa página', 'o que tem aqui?']) {
+      expect(jarvisActionFastPath(text, CTX)?.action).toEqual({
+        type: 'read_current_view',
+      });
+    }
+  });
+
   it('iniciar um novo squad dispara design_squad', () => {
     const reply = jarvisActionFastPath('iniciar um novo squad', CTX);
     expect(reply?.action).toEqual({ type: 'design_squad' });
     expect(reply?.expectReply).toBe(true);
+  });
+
+  it('iniciar missão no modo agêntico preserva o modo antes do fast-path genérico', () => {
+    expect(jarvisActionFastPath('iniciar missão no modo agêntico', CTX)?.action).toEqual({
+      type: 'new_agentic_mission',
+    });
+    expect(
+      jarvisActionFastPath(
+        'criar missão agêntica para corrigir todos os testes',
+        CTX,
+      )?.action,
+    ).toEqual({
+      type: 'new_agentic_mission',
+      intent: 'corrigir todos os testes',
+    });
   });
 
   it('sim na revisão de squad dispara confirm_squad', () => {

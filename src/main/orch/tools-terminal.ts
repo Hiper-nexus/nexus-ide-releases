@@ -1,14 +1,30 @@
 import type { McpToolDef } from './mcp-protocol';
 import { requireStr, str } from './tool-util';
-import { exec, type ChildProcess } from 'node:child_process';
-import { resolveWorkspaceCwd } from './workspace-path';
+import { spawn, type ChildProcess } from 'node:child_process';
+import fs from 'node:fs';
+import { resolveCwdForScope } from './workspace-path';
+import type { ProjectExecutionScope } from '../../shared/types';
+import { executionScopeFor } from './gate';
+import {
+  buildScopedShellPlan,
+  createScopedSandboxHome,
+} from '../runtime/process-sandbox';
 
 /**
  * Terminal execution MCP tools for Jarvis agent.
  * Runs shell commands in the workspace directory with output streaming.
  */
 
-const activeProcesses = new Map<string, ChildProcess>();
+interface ActiveProcess {
+  proc: ChildProcess;
+  projectId: string;
+  checkoutId: string;
+  rootRealPath: string;
+  killTree: (signal: NodeJS.Signals) => void;
+  killRequested: boolean;
+}
+
+const activeProcesses = new Map<string, ActiveProcess>();
 let processCounter = 0;
 
 const SAFE_ENV_KEYS = new Set(['PATH', 'HOME', 'LANG', 'USER', 'SHELL']);
@@ -61,6 +77,36 @@ function boundedTimeout(raw: unknown): number {
   return Math.min(Math.max(1, Math.floor(raw)), MAX_TIMEOUT_MS);
 }
 
+function isSameCheckout(
+  entry: ActiveProcess,
+  scope: ProjectExecutionScope,
+): boolean {
+  return (
+    entry.projectId === scope.projectId && entry.checkoutId === scope.checkoutId
+    && entry.rootRealPath === scope.rootRealPath
+  );
+}
+
+function signalProcessTree(
+  proc: ChildProcess,
+  signal: NodeJS.Signals,
+): void {
+  if (proc.pid === undefined) return;
+  try {
+    if (process.platform === 'win32') {
+      proc.kill(signal);
+    } else {
+      process.kill(-proc.pid, signal);
+    }
+  } catch {
+    try {
+      proc.kill(signal);
+    } catch {
+      // The process tree already exited.
+    }
+  }
+}
+
 const terminalRun: McpToolDef = {
   name: 'nexus_terminal_run',
   description:
@@ -90,9 +136,10 @@ const terminalRun: McpToolDef = {
     },
     required: ['command'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
+    const executionScope = executionScopeFor(ctx);
     const command = requireStr(args, 'command');
-    const cwd = resolveWorkspaceCwd(str(args, 'cwd'));
+    const cwd = resolveCwdForScope(executionScope, str(args, 'cwd'));
     const timeoutMs = boundedTimeout(args.timeoutMs);
     const env = sanitizeEnv(args.env);
 
@@ -102,15 +149,40 @@ const terminalRun: McpToolDef = {
       stderr: string;
       killed: boolean;
     }>((resolve, reject) => {
-      const proc = exec(command, {
-        cwd,
-        timeout: timeoutMs,
-        env,
-        maxBuffer: OUTPUT_CAP_BYTES,
+      const sandbox = createScopedSandboxHome(executionScope);
+      let plan;
+      try {
+        plan = buildScopedShellPlan({
+          platform: process.platform,
+          command,
+          cwd,
+          rootRealPath: executionScope.rootRealPath,
+          sandboxDir: sandbox.dir,
+          env,
+        });
+      } catch (error) {
+        fs.rmSync(sandbox.dir, { recursive: true, force: true });
+        reject(error);
+        return;
+      }
+      const proc = spawn(plan.file, plan.args, {
+        cwd: plan.cwd,
+        env: plan.env,
+        detached: plan.detached,
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
+      const killTree = (signal: NodeJS.Signals) =>
+        signalProcessTree(proc, signal);
 
       const id = String(++processCounter);
-      activeProcesses.set(id, proc);
+      activeProcesses.set(id, {
+        proc,
+        projectId: ctx.scope.projectId,
+        checkoutId: ctx.scope.checkoutId,
+        rootRealPath: executionScope.rootRealPath,
+        killTree,
+        killRequested: false,
+      });
 
       const stdout: OutputBuffer = { value: '', bytes: 0, truncated: false };
       const stderr: OutputBuffer = { value: '', bytes: 0, truncated: false };
@@ -118,11 +190,13 @@ const terminalRun: McpToolDef = {
 
       const timer = setTimeout(() => {
         killed = true;
-        proc.kill('SIGTERM');
+        const entry = activeProcesses.get(id);
+        if (entry) entry.killRequested = true;
+        killTree('SIGTERM');
         // Force kill after 3s if still alive
         setTimeout(() => {
           if (proc.exitCode === null) {
-            proc.kill('SIGKILL');
+            killTree('SIGKILL');
           }
         }, 3000);
       }, timeoutMs);
@@ -136,18 +210,25 @@ const terminalRun: McpToolDef = {
 
       proc.on('close', (code) => {
         clearTimeout(timer);
+        // A shell can exit after daemonizing a child. End the entire detached
+        // process group before releasing its private runtime directory.
+        killTree(killed ? 'SIGKILL' : 'SIGTERM');
         activeProcesses.delete(id);
-        resolve({
-          exitCode: code,
-          stdout: stdout.value,
-          stderr: stderr.value,
-          killed,
-        });
+        setTimeout(() => {
+          fs.rmSync(sandbox.dir, { recursive: true, force: true });
+          resolve({
+            exitCode: code,
+            stdout: stdout.value,
+            stderr: stderr.value,
+            killed,
+          });
+        }, killed ? 25 : 0);
       });
 
       proc.on('error', (err) => {
         clearTimeout(timer);
         activeProcesses.delete(id);
+        fs.rmSync(sandbox.dir, { recursive: true, force: true });
         reject(err);
       });
     });
@@ -169,26 +250,31 @@ const terminalKill: McpToolDef = {
       },
     },
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const pid = str(args, 'processId');
     if (pid) {
-      const proc = activeProcesses.get(pid);
-      if (!proc) {
+      const entry = activeProcesses.get(pid);
+      if (!entry) {
         return { killed: false, reason: `process ${pid} not found or already exited` };
       }
-      proc.kill('SIGTERM');
-      activeProcesses.delete(pid);
+      if (!isSameCheckout(entry, executionScopeFor(ctx))) {
+        throw new Error('not authorized: process belongs to another project checkout');
+      }
+      entry.killRequested = true;
+      entry.killTree('SIGTERM');
       return { killed: true, processId: pid };
     }
     // Kill the most recent
     if (activeProcesses.size === 0) {
       return { killed: false, reason: 'no running processes' };
     }
-    const lastId = String(processCounter);
-    const proc = activeProcesses.get(lastId);
-    if (proc) {
-      proc.kill('SIGTERM');
-      activeProcesses.delete(lastId);
+    const latest = [...activeProcesses.entries()]
+      .reverse()
+      .find(([, entry]) => isSameCheckout(entry, executionScopeFor(ctx)));
+    if (latest) {
+      const [lastId, entry] = latest;
+      entry.killRequested = true;
+      entry.killTree('SIGTERM');
       return { killed: true, processId: lastId };
     }
     return { killed: false, reason: 'no running processes' };

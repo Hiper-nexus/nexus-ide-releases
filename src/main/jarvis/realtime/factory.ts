@@ -56,6 +56,10 @@ Response rules:
   Answer only facts explicitly present there (for example title, URL, workspace,
   missions, or local time). For pane output call a read-only tool. If no tool
   returns the requested content, say you cannot inspect it; never invent it.
+- For a visible Nexus screen/page, use \`read_current_view\`. Its result may contain
+  fresh opaque \`actions\` refs. Act only after an explicit user request by calling
+  \`mcp_tool\` \`nexus_ui_action\` with that exact ref; it keeps native confirmation.
+  Never invent a ref, CSS selector, or JavaScript.
 - When the user asks you to operate Nexus IDE, call a coarse voice tool (\`navegar\`, \`delegar\`, \`consultar\`, \`ler\`, \`comandar\`, \`restaurar\`, \`perguntar\`) or \`nexus_action\`.
 - Squad flow (Overclock parity): "iniciar/montar squad" → \`navegar\` target \`design-squad\` (opens review). After the tool result, ASK if they want to start. On "sim/inicia/confirma" → \`navegar\` target \`wizard-fire\`.
 - \`nexus_action\` can open UI areas, focus/switch panes, delegate work to panes, request terminal commands, and invoke Nexus MCP tools through \`mcp_tool\`.
@@ -70,6 +74,9 @@ Available realtime tools: coarse voice tools (delegar/consultar/ler/navegar/ence
 const GEMINI_COARSE_TOOLS_ADDENDUM = `Gemini Live tools:
 - When the user asks you to operate Nexus IDE, use one of the declared coarse voice tools: \`navegar\`, \`delegar\`, \`consultar\`, \`ler\`, \`encerrar\`, \`comandar\`, \`restaurar\`, or \`perguntar\`.
 - \`nexus_action\` is also declared for audited Nexus operations. Its \`run_command\` and \`mcp_tool\` actions keep the native confirmation and MCP guardrails; never bypass them.
+- Visible view read: “leia esta tela/página” or “o que tem aqui” → \`ler\` with scope \`view\`. This uses local accessibility + OCR context; do not use a pane read or invent what is visible.
+- After that read, only an explicit request to activate a returned control may use \`mcp_tool\` \`nexus_ui_action\` with its fresh opaque ref. Native confirmation remains mandatory; never invent refs or selectors.
+- Mission modes: “iniciar/criar missão no modo agêntico” → \`navegar\` target \`mission-agentic\`, with \`query\` only for an objective the user already stated. This opens the Agentic objective step; never use \`open_voice_settings\`, \`design-squad\`, or \`wizard-fire\` for this request.
 - Squad flow: "iniciar/montar squad" → \`navegar\` target \`design-squad\`. After the tool result, ask if they want to start. On "sim/inicia/confirma" → \`navegar\` target \`wizard-fire\`.`;
 
 export function geminiInstructions(base: string): string {

@@ -257,3 +257,81 @@ describe('transcribe — quota/rate-limit fallback (free-tier Groq)', () => {
     if (!result.ok) expect(result.needsKey).toBe(true);
   });
 });
+
+describe('transcribe — passive wake', () => {
+  it('biases the short transcription toward the configured Jarvis wake word', async () => {
+    let prompt: FormDataEntryValue | null = null;
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      prompt = (init?.body as FormData).get('prompt');
+      return jsonResponse(200, { text: 'jarvis' });
+    }) as unknown as typeof fetch;
+
+    const result = await transcribe(
+      { ...REQ, purpose: 'passive-wake', budgetMs: 3_500 },
+      config(),
+      PROBES,
+      deps({ fetchImpl }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(prompt).toBeTypeOf('string');
+    expect(prompt).toContain('Jarvis');
+  });
+
+  it('promotes Groq for a short textual wake instead of waiting on an OpenAI head', async () => {
+    const openaiHead: VoiceConfig = {
+      ...config(),
+      stt: {
+        type: 'stt',
+        provider: 'openai',
+        endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+        auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
+        fallback: config().stt,
+      },
+    };
+    const calledHosts: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const host = String(url);
+      calledHosts.push(host);
+      return jsonResponse(200, { text: 'ei jarvis' });
+    }) as unknown as typeof fetch;
+    const runLocal = vi.fn();
+
+    const result = await transcribe(
+      { ...REQ, purpose: 'passive-wake', budgetMs: 3_500 },
+      openaiHead,
+      PROBES,
+      deps({ fetchImpl, runLocal }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.provider).toBe('groq');
+    expect(calledHosts).toHaveLength(1);
+    expect(calledHosts[0]).toContain('groq.com');
+    expect(runLocal).not.toHaveBeenCalled();
+  });
+
+  it('never lets a local Whisper fallback delay a passive wake', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(500, {})) as unknown as typeof fetch;
+    const runLocal = vi.fn();
+
+    const result = await transcribe(
+      { ...REQ, purpose: 'passive-wake', budgetMs: 3_500 },
+      config(),
+      PROBES,
+      deps({
+        fetchImpl,
+        runLocal,
+        findBin: vi.fn(() => 'whisper-cli'),
+        fileExists: vi.fn(() => true),
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(runLocal).not.toHaveBeenCalled();
+    if (!result.ok) {
+      expect(result.attempts.map((attempt) => attempt.provider)).toContain('local-whisper');
+      expect(result.attempts.map((attempt) => attempt.reason).join(' ')).toContain('passive wake');
+    }
+  });
+});

@@ -1,29 +1,22 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
-import { isSmokeTest } from '../smoke-core';
+import { randomUUID } from 'node:crypto';
+import {
+  projectExecutionScopeSchema,
+  type ProjectExecutionScope,
+} from '../../shared/types';
+import { ScopedStoreBinding } from '../orch/scoped-store';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 
-/**
- * Audit log for Jarvis agent actions.
- *
- * Every MCP tool invocation (whether allowed, denied, successful, or failed)
- * is written to a JSONL file at:
- *   ~/Library/Logs/NexusIDE/jarvis-actions.log
- *
- * Format (one JSON object per line):
- *   {timestamp, session, tool, args, result, duration_ms, user_authorized, error?}
- */
-
-const LOG_DIR = path.join(os.homedir(), 'Library', 'Logs', 'NexusIDE');
-const LOG_FILE = path.join(LOG_DIR, 'jarvis-actions.log');
 const REDACTED = '[REDACTED]';
 const REDACTED_TEXT = '[REDACTED_TEXT]';
 const TRUNCATED = '[TRUNCATED]';
-const MAX_STRING_LENGTH = 2000;
+const LARGE_ARGS_REDACTION = '[REDACTED_LARGE_ARGS]';
+const PAYLOAD_SCHEMA = 'nexus.mcp-audit/v1';
+const MAX_STRING_LENGTH = 2_000;
 const MAX_ARRAY_ITEMS = 50;
 const MAX_OBJECT_KEYS = 100;
 const MAX_REDACTION_DEPTH = 8;
-const MAX_AUDIT_LINE_BYTES = 64 * 1024;
+const MAX_AUDIT_PAYLOAD_BYTES = 64 * 1024;
+const MAX_READ_LIMIT = 10_000;
 const SECRET_KEY_RE =
   /(authorization|cookie|set-cookie|x-api-key|password|secret|token|api[_-]?key|access[_-]?key|credential|bearer)/i;
 const CONTENT_KEY_RE = /^(content|oldText|newText|text)$/i;
@@ -35,60 +28,73 @@ const COMMAND_SECRET_RE =
   /(--?(token|secret|password|pass|api-key|authorization|cookie|credential)\b|Bearer\s+|(?=[A-Za-z_][A-Za-z0-9_]*=)[A-Za-z0-9_]*(TOKEN|SECRET|PASSWORD|PASS|API_KEY|CREDENTIAL|AUTH|BEARER)[A-Za-z0-9_]*=)/i;
 
 export type AuditSource = 'http-mcp' | 'ipc-renderer' | 'jarvis-voice';
+export type AuditResult = 'intent' | 'ok' | 'error' | 'denied';
 
-let auditLogFileOverride: string | null = null;
+export interface AuditContext {
+  readonly scope: ProjectExecutionScope;
+  readonly missionId?: string;
+  readonly contextRevision?: string;
+}
 
 export interface AuditEntry {
-  /** ISO 8601 timestamp */
-  timestamp: string;
-  /** Session identifier */
-  session: string;
-  /** Transport/source that requested the tool call */
-  source: AuditSource;
-  /** MCP tool name (e.g. "nexus_file_write") */
-  tool: string;
-  /** Redacted tool arguments */
-  args: Record<string, unknown>;
-  /** Intent is appended before a high-impact effect; outcomes follow it. */
-  result: 'intent' | 'ok' | 'error' | 'denied';
-  /** Correlates a pre-effect intent with its eventual outcome. */
-  invocation_id?: string;
-  /** Duration in milliseconds */
-  duration_ms: number;
-  /** Whether the user explicitly confirmed this action */
-  user_authorized: boolean;
-  /** Error message, if result is 'error' */
-  error?: string;
+  readonly timestamp: string;
+  readonly session: string;
+  readonly project_id: string;
+  readonly checkout_id: string;
+  readonly mission_id?: string;
+  readonly context_revision?: string;
+  readonly source: AuditSource;
+  readonly tool: string;
+  readonly args: Record<string, unknown>;
+  readonly result: AuditResult;
+  readonly invocation_id?: string;
+  readonly duration_ms: number;
+  readonly user_authorized: boolean;
+  readonly error?: string;
 }
 
-function smokeAuditLogPath(
-  argv: readonly string[],
-  env: NodeJS.ProcessEnv,
-): string | null {
-  const userData = env.NEXUS_USER_DATA_DIR;
-  if (!isSmokeTest(argv) || !userData) return null;
-  return path.join(path.resolve(userData), 'jarvis-actions.log');
+export type AuditEntryInput = Omit<
+  AuditEntry,
+  'project_id' | 'checkout_id' | 'mission_id' | 'context_revision'
+>;
+
+interface ValidAuditContext {
+  readonly scope: ProjectExecutionScope;
+  readonly missionId?: string;
+  readonly contextRevision?: string;
 }
 
-/**
- * The packaged smoke must not append synthetic tool calls to the operator's
- * real audit history. Its user-data directory is created per run and removed
- * by the smoke harness after process exit.
- */
-export function resolveAuditLogPath(
-  override: string | null,
-  argv: readonly string[],
-  env: NodeJS.ProcessEnv,
-): string {
-  return override ?? smokeAuditLogPath(argv, env) ?? LOG_FILE;
+interface AuditPayload {
+  readonly schema: typeof PAYLOAD_SCHEMA;
+  readonly timestamp: string;
+  readonly project_id: string;
+  readonly checkout_id: string;
+  readonly context_revision?: string;
+  readonly source: AuditSource;
+  readonly args: Record<string, unknown>;
+  readonly invocation_id?: string;
+  readonly duration_ms: number;
+  readonly user_authorized: boolean;
+  readonly error?: string;
 }
 
-function currentLogFile(): string {
-  return resolveAuditLogPath(auditLogFileOverride, process.argv, process.env);
+interface AuditRow {
+  readonly mission_id: string | null;
+  readonly actor: string;
+  readonly action: string;
+  readonly outcome: string;
+  readonly payload_json: string;
+  readonly occurred_at: number;
 }
 
-function currentLogDir(): string {
-  return path.dirname(currentLogFile());
+export class AuditLogCorruptionError extends Error {
+  constructor(options: { cause?: unknown } = {}) {
+    super(
+      'project runtime contains an invalid audit event',
+      options.cause === undefined ? undefined : { cause: options.cause },
+    );
+    this.name = 'AuditLogCorruptionError';
+  }
 }
 
 function redactValue(
@@ -137,7 +143,9 @@ function redactValue(
   return value;
 }
 
-export function redactArgs(args: Record<string, unknown>): Record<string, unknown> {
+export function redactArgs(
+  args: Record<string, unknown>,
+): Record<string, unknown> {
   return redactValue(args) as Record<string, unknown>;
 }
 
@@ -160,51 +168,307 @@ export function redactAuditText(value: string): string {
     .slice(0, MAX_STRING_LENGTH);
 }
 
-export function setAuditLogPathForTests(filePath: string | null): void {
-  auditLogFileOverride = filePath;
+function assertIdentifier(value: unknown, label: string): asserts value is string {
+  if (
+    typeof value !== 'string' ||
+    value.trim().length === 0 ||
+    value.length > 256 ||
+    value.includes('\0')
+  ) {
+    throw new Error(`invalid audit ${label}`);
+  }
 }
 
-export function ensureAuditLogWritable(): void {
-  const dir = currentLogDir();
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+function validateContext(context: AuditContext): ValidAuditContext {
+  if (!context || typeof context !== 'object') {
+    throw new Error('audit context is required');
   }
-  const fd = fs.openSync(currentLogFile(), 'a');
-  fs.closeSync(fd);
+  const scope = Object.freeze(
+    projectExecutionScopeSchema.parse({ ...context.scope }),
+  );
+  if (context.missionId !== undefined) {
+    assertIdentifier(context.missionId, 'missionId');
+  }
+  if (context.contextRevision !== undefined) {
+    assertIdentifier(context.contextRevision, 'contextRevision');
+    if (!context.missionId) {
+      throw new Error('audit contextRevision requires missionId');
+    }
+  }
+  return Object.freeze({
+    scope,
+    ...(context.missionId ? { missionId: context.missionId } : {}),
+    ...(context.contextRevision
+      ? { contextRevision: context.contextRevision }
+      : {}),
+  });
+}
+
+function isAuditSource(value: unknown): value is AuditSource {
+  return value === 'http-mcp' || value === 'ipc-renderer' || value === 'jarvis-voice';
+}
+
+function isAuditResult(value: unknown): value is AuditResult {
+  return value === 'intent' || value === 'ok' || value === 'error' || value === 'denied';
 }
 
 function boundedEntry(entry: AuditEntry): AuditEntry {
-  const sanitized: AuditEntry = {
+  assertIdentifier(entry.session, 'session');
+  assertIdentifier(entry.tool, 'tool');
+  if (!isAuditSource(entry.source) || !isAuditResult(entry.result)) {
+    throw new Error('invalid audit source or result');
+  }
+  if (
+    !Number.isSafeInteger(entry.duration_ms) ||
+    entry.duration_ms < 0 ||
+    typeof entry.user_authorized !== 'boolean' ||
+    !Number.isSafeInteger(Date.parse(entry.timestamp))
+  ) {
+    throw new Error('invalid audit timing or authorization');
+  }
+  if (entry.invocation_id !== undefined) {
+    assertIdentifier(entry.invocation_id, 'invocationId');
+  }
+  const sanitized: AuditEntry = Object.freeze({
     ...entry,
     args: redactArgs(
-      entry.args && typeof entry.args === 'object' ? entry.args : {},
+      entry.args && typeof entry.args === 'object' && !Array.isArray(entry.args)
+        ? entry.args
+        : {},
     ),
     ...(entry.error ? { error: redactAuditText(entry.error) } : {}),
-  };
-  const line = JSON.stringify(sanitized);
-  if (Buffer.byteLength(line) <= MAX_AUDIT_LINE_BYTES) return sanitized;
-  return {
+  });
+  if (Buffer.byteLength(JSON.stringify(sanitized), 'utf8') <= MAX_AUDIT_PAYLOAD_BYTES) {
+    return sanitized;
+  }
+  return Object.freeze({
     ...sanitized,
-    args: { redacted: '[REDACTED_LARGE_ARGS]' },
-    error: sanitized.error,
-  };
+    args: Object.freeze({ redacted: LARGE_ARGS_REDACTION }),
+  });
 }
 
-/**
- * Append an audit entry to the JSONL log file.
- * Uses synchronous writes to ensure entries are never lost during process exit
- * and to make tests deterministic.
- */
-export function writeAuditEntry(entry: AuditEntry): void {
-  ensureAuditLogWritable();
-  const line = JSON.stringify(boundedEntry(entry)) + '\n';
-  fs.appendFileSync(currentLogFile(), line, 'utf-8');
+function payloadFor(entry: AuditEntry): AuditPayload {
+  return Object.freeze({
+    schema: PAYLOAD_SCHEMA,
+    timestamp: entry.timestamp,
+    project_id: entry.project_id,
+    checkout_id: entry.checkout_id,
+    ...(entry.context_revision
+      ? { context_revision: entry.context_revision }
+      : {}),
+    source: entry.source,
+    args: entry.args,
+    ...(entry.invocation_id ? { invocation_id: entry.invocation_id } : {}),
+    duration_ms: entry.duration_ms,
+    user_authorized: entry.user_authorized,
+    ...(entry.error ? { error: entry.error } : {}),
+  });
 }
 
-/**
- * Convenience: log a successful tool invocation.
- */
+function serializePayload(payload: AuditPayload): string {
+  const value = JSON.stringify(payload);
+  if (Buffer.byteLength(value, 'utf8') > MAX_AUDIT_PAYLOAD_BYTES) {
+    throw new Error('audit payload exceeds the persistence limit');
+  }
+  return value;
+}
+
+function parsePayload(raw: string): AuditPayload {
+  try {
+    if (Buffer.byteLength(raw, 'utf8') > MAX_AUDIT_PAYLOAD_BYTES) {
+      throw new Error('audit payload exceeds the read limit');
+    }
+    const value = JSON.parse(raw) as Partial<AuditPayload>;
+    if (
+      !value ||
+      value.schema !== PAYLOAD_SCHEMA ||
+      typeof value.timestamp !== 'string' ||
+      typeof value.project_id !== 'string' ||
+      typeof value.checkout_id !== 'string' ||
+      !isAuditSource(value.source) ||
+      !value.args ||
+      typeof value.args !== 'object' ||
+      Array.isArray(value.args) ||
+      !Number.isSafeInteger(value.duration_ms) ||
+      (value.duration_ms as number) < 0 ||
+      typeof value.user_authorized !== 'boolean' ||
+      (value.invocation_id !== undefined && typeof value.invocation_id !== 'string') ||
+      (value.context_revision !== undefined &&
+        typeof value.context_revision !== 'string') ||
+      (value.error !== undefined && typeof value.error !== 'string')
+    ) {
+      throw new Error('audit payload shape is invalid');
+    }
+    return value as AuditPayload;
+  } catch (error) {
+    throw new AuditLogCorruptionError({ cause: error });
+  }
+}
+
+class ProjectAuditStore {
+  readonly #runtimeManager: ProjectRuntimeManager;
+  readonly #context: ValidAuditContext;
+  readonly #binding: ScopedStoreBinding;
+
+  constructor(runtimeManager: ProjectRuntimeManager, context: AuditContext) {
+    this.#runtimeManager = runtimeManager;
+    this.#context = validateContext(context);
+    this.#binding = new ScopedStoreBinding(runtimeManager, this.#context.scope);
+  }
+
+  ensureWritable(): void {
+    this.#binding.writeDatabase()
+      .prepare('SELECT 1 FROM audit_events LIMIT 1')
+      .get();
+  }
+
+  append(input: AuditEntryInput): AuditEntry {
+    const entry = boundedEntry({
+      timestamp: input.timestamp,
+      session: input.session,
+      project_id: this.#context.scope.projectId,
+      checkout_id: this.#context.scope.checkoutId,
+      ...(this.#context.missionId ? { mission_id: this.#context.missionId } : {}),
+      ...(this.#context.contextRevision
+        ? { context_revision: this.#context.contextRevision }
+        : {}),
+      source: input.source,
+      tool: input.tool,
+      args: input.args,
+      result: input.result,
+      ...(input.invocation_id ? { invocation_id: input.invocation_id } : {}),
+      duration_ms: input.duration_ms,
+      user_authorized: input.user_authorized,
+      ...(input.error ? { error: input.error } : {}),
+    });
+    const occurredAt = Date.parse(entry.timestamp);
+    const db = this.#binding.writeDatabase();
+    db.prepare(
+      `INSERT INTO audit_events
+         (id, mission_id, actor, action, outcome, payload_json, occurred_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      `audit-${randomUUID()}`,
+      entry.mission_id ?? null,
+      entry.session,
+      entry.tool,
+      entry.result,
+      serializePayload(payloadFor(entry)),
+      occurredAt,
+    );
+    return entry;
+  }
+
+  list(limit: number): AuditEntry[] {
+    const rows = this.#binding.readDatabase()
+      .prepare(
+        `SELECT mission_id, actor, action, outcome, payload_json, occurred_at
+         FROM audit_events
+         ORDER BY occurred_at DESC, rowid DESC
+         LIMIT ?`,
+      )
+      .all(limit) as AuditRow[];
+    return rows.reverse().map((row) => this.#entryFromRow(row));
+  }
+
+  clear(): void {
+    this.#binding.writeDatabase().prepare('DELETE FROM audit_events').run();
+  }
+
+  storagePath(): string {
+    return this.#runtimeManager.open(this.#context.scope).databasePath;
+  }
+
+  #entryFromRow(row: AuditRow): AuditEntry {
+    try {
+      const payload = parsePayload(row.payload_json);
+      if (
+        payload.project_id !== this.#context.scope.projectId ||
+        payload.checkout_id !== this.#context.scope.checkoutId ||
+        Date.parse(payload.timestamp) !== row.occurred_at ||
+        !isAuditResult(row.outcome)
+      ) {
+        throw new Error('audit row does not match its physical project scope');
+      }
+      return boundedEntry({
+        timestamp: payload.timestamp,
+        session: row.actor,
+        project_id: payload.project_id,
+        checkout_id: payload.checkout_id,
+        ...(row.mission_id ? { mission_id: row.mission_id } : {}),
+        ...(payload.context_revision
+          ? { context_revision: payload.context_revision }
+          : {}),
+        source: payload.source,
+        tool: row.action,
+        args: payload.args,
+        result: row.outcome,
+        ...(payload.invocation_id ? { invocation_id: payload.invocation_id } : {}),
+        duration_ms: payload.duration_ms,
+        user_authorized: payload.user_authorized,
+        ...(payload.error ? { error: payload.error } : {}),
+      });
+    } catch (error) {
+      if (error instanceof AuditLogCorruptionError) throw error;
+      throw new AuditLogCorruptionError({ cause: error });
+    }
+  }
+}
+
+class AuditLogRuntime {
+  readonly #manager: ProjectRuntimeManager;
+
+  constructor(manager: ProjectRuntimeManager) {
+    this.#manager = manager;
+  }
+
+  forContext(context: AuditContext): ProjectAuditStore {
+    return new ProjectAuditStore(this.#manager, context);
+  }
+}
+
+let runtime: AuditLogRuntime | null = null;
+
+export function configureAuditLogRuntime(
+  manager: ProjectRuntimeManager,
+): void {
+  if (!manager || typeof manager.open !== 'function') {
+    throw new Error('a ProjectRuntimeManager is required for audit persistence');
+  }
+  runtime = new AuditLogRuntime(manager);
+}
+
+export function disposeAuditLogRuntime(): void {
+  runtime = null;
+}
+
+function storeFor(context: AuditContext): ProjectAuditStore {
+  if (!runtime) {
+    throw new Error('project-scoped audit persistence is not initialized');
+  }
+  return runtime.forContext(context);
+}
+
+function readLimit(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_READ_LIMIT) {
+    throw new Error(`audit read limit must be between 1 and ${MAX_READ_LIMIT}`);
+  }
+  return value;
+}
+
+export function ensureAuditLogWritable(context: AuditContext): void {
+  storeFor(context).ensureWritable();
+}
+
+export function writeAuditEntry(
+  context: AuditContext,
+  entry: AuditEntryInput,
+): AuditEntry {
+  return storeFor(context).append(entry);
+}
+
 export function auditSuccess(
+  context: AuditContext,
   session: string,
   tool: string,
   args: Record<string, unknown>,
@@ -213,12 +477,12 @@ export function auditSuccess(
   source: AuditSource = 'ipc-renderer',
   invocationId?: string,
 ): void {
-  writeAuditEntry({
+  writeAuditEntry(context, {
     timestamp: new Date().toISOString(),
     session,
     source,
     tool,
-    args: redactArgs(args),
+    args,
     result: 'ok',
     ...(invocationId ? { invocation_id: invocationId } : {}),
     duration_ms: durationMs,
@@ -226,10 +490,8 @@ export function auditSuccess(
   });
 }
 
-/**
- * Convenience: log a failed tool invocation.
- */
 export function auditError(
+  context: AuditContext,
   session: string,
   tool: string,
   args: Record<string, unknown>,
@@ -239,12 +501,12 @@ export function auditError(
   source: AuditSource = 'ipc-renderer',
   invocationId?: string,
 ): void {
-  writeAuditEntry({
+  writeAuditEntry(context, {
     timestamp: new Date().toISOString(),
     session,
     source,
     tool,
-    args: redactArgs(args),
+    args,
     result: 'error',
     ...(invocationId ? { invocation_id: invocationId } : {}),
     duration_ms: durationMs,
@@ -253,10 +515,8 @@ export function auditError(
   });
 }
 
-/**
- * Convenience: log a denied tool invocation.
- */
 export function auditDenied(
+  context: AuditContext,
   session: string,
   tool: string,
   args: Record<string, unknown>,
@@ -264,12 +524,12 @@ export function auditDenied(
   reason: string,
   source: AuditSource = 'ipc-renderer',
 ): void {
-  writeAuditEntry({
+  writeAuditEntry(context, {
     timestamp: new Date().toISOString(),
     session,
     source,
     tool,
-    args: redactArgs(args),
+    args,
     result: 'denied',
     duration_ms: durationMs,
     user_authorized: false,
@@ -277,11 +537,8 @@ export function auditDenied(
   });
 }
 
-/**
- * Persist the authorized intent before starting a high-impact handler. If
- * this append fails, dispatch must fail closed and the effect must not start.
- */
 export function auditIntent(
+  context: AuditContext,
   session: string,
   tool: string,
   args: Record<string, unknown>,
@@ -290,12 +547,12 @@ export function auditIntent(
   source: AuditSource,
   invocationId: string,
 ): void {
-  writeAuditEntry({
+  writeAuditEntry(context, {
     timestamp: new Date().toISOString(),
     session,
     source,
     tool,
-    args: redactArgs(args),
+    args,
     result: 'intent',
     invocation_id: invocationId,
     duration_ms: durationMs,
@@ -303,94 +560,20 @@ export function auditIntent(
   });
 }
 
-function parseLegacyArgs(args: unknown): Record<string, unknown> {
-  if (typeof args !== 'string') {
-    return args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
-  }
-  try {
-    const parsed = JSON.parse(args);
-    return parsed && typeof parsed === 'object'
-      ? redactArgs(parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
+export function readAuditLog(
+  context: AuditContext,
+  limit = 100,
+): AuditEntry[] {
+  return storeFor(context).list(readLimit(limit));
 }
 
-function parseAuditEntry(line: string): AuditEntry | null {
-  try {
-    const raw = JSON.parse(line) as Partial<AuditEntry> & {
-      ts?: string;
-      durationMs?: number;
-      userConfirmed?: boolean;
-    };
-    if (typeof raw.timestamp === 'string') {
-      return boundedEntry({
-        ...(raw as AuditEntry),
-        source: raw.source ?? 'ipc-renderer',
-      });
-    }
-    if (typeof raw.ts === 'string') {
-      return {
-        timestamp: raw.ts,
-        session: String(raw.session ?? ''),
-        source: 'ipc-renderer',
-        tool: String(raw.tool ?? ''),
-        args: parseLegacyArgs(raw.args),
-        result: raw.result ?? 'error',
-        duration_ms: raw.durationMs ?? 0,
-        user_authorized: raw.userConfirmed ?? false,
-        error: raw.error,
-      };
-    }
-    return null;
-  } catch {
-    return null;
+export function clearAuditLogForTests(context: AuditContext): void {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('audit events are append-only outside tests');
   }
+  storeFor(context).clear();
 }
 
-/**
- * Read the audit log back as an array of entries.
- * Returns the last N entries (default 100).
- */
-export function readAuditLog(limit = 100): AuditEntry[] {
-  try {
-    const logFile = currentLogFile();
-    if (!fs.existsSync(logFile)) return [];
-    const raw = fs.readFileSync(logFile, 'utf-8');
-    const lines = raw.trim().split('\n');
-    const entries = lines
-      .slice(-limit)
-      .map(parseAuditEntry)
-      .filter((e): e is AuditEntry => e !== null);
-    return entries;
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Clear the audit log file (for testing).
- */
-export function clearAuditLog(): void {
-  if (!auditLogFileOverride) {
-    throw new Error('clearAuditLog requires a test audit log path override');
-  }
-  if (fs.existsSync(auditLogFileOverride)) {
-    fs.unlinkSync(auditLogFileOverride);
-  }
-}
-
-/**
- * Get the audit log file path.
- */
-export function getAuditLogPath(): string {
-  return currentLogFile();
-}
-
-/**
- * Close the log stream (for graceful shutdown).
- */
-export function closeAuditLog(): void {
-  // Synchronous appends keep no open handle.
+export function getAuditStoragePath(context: AuditContext): string {
+  return storeFor(context).storagePath();
 }

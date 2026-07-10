@@ -22,6 +22,17 @@ const ADD_COLUMN_MIGRATIONS: AddColumnMigration[] = [
   { table: 'mission_panes', column: 'effort', definition: 'effort TEXT' },
   { table: 'mission_panes', column: 'pane_id', definition: 'pane_id TEXT' },
   { table: 'mission_panes', column: 'account_id', definition: 'account_id TEXT' },
+  { table: 'mission_panes', column: 'scope_json', definition: 'scope_json TEXT' },
+  {
+    table: 'mission_panes',
+    column: 'allowed_tools_json',
+    definition: 'allowed_tools_json TEXT',
+  },
+  {
+    table: 'mission_panes',
+    column: 'allowed_skills_json',
+    definition: 'allowed_skills_json TEXT',
+  },
 ];
 
 function columnNames(db: MigrationDb, table: AddColumnMigration['table']): Set<string> {

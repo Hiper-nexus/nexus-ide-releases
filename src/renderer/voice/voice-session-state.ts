@@ -59,15 +59,11 @@ export let wakeOpenInProgress = false;
 export let activeCaptureReason: JarvisCaptureReason = 'manual';
 export let realtimeNativeToolInFlight = 0;
 export let lastRealtimeNativeToolAt = 0;
-/** Timestamp of the last Live [wake] greeting inject (0 = none this session). */
-export let liveWakeGreetingInjectedAt = 0;
+export let lastRealtimeNativeToolCallId: string | null = null;
 export const turnExecution = new TurnExecutionOwner();
 
 export function setRealtimeTurnActive(v: boolean): void {
   realtimeTurnActive = v;
-}
-export function setLiveWakeGreetingInjectedAt(t: number): void {
-  liveWakeGreetingInjectedAt = t;
 }
 export function setSuppressRealtimeAudioOut(v: boolean): void {
   suppressRealtimeAudioOut = v;
@@ -98,6 +94,9 @@ export function bumpRealtimeNativeToolInFlight(delta: number): void {
 }
 export function setLastRealtimeNativeToolAt(t: number): void {
   lastRealtimeNativeToolAt = t;
+}
+export function setLastRealtimeNativeToolCallId(callId: string | null): void {
+  lastRealtimeNativeToolCallId = callId;
 }
 export function resetPendingRealtimeAudioOut(): void {
   pendingRealtimeAudioOut = [];

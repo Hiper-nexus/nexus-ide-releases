@@ -8,6 +8,7 @@ export const SAFE_REALTIME_ACTIONS = [
   'design_squad',
   'confirm_squad',
   'new_mission',
+  'new_agentic_mission',
   'new_workspace',
   'open_terminal',
   'close_pane',
@@ -24,6 +25,7 @@ export const SAFE_REALTIME_ACTIONS = [
   'focus_previous_pane',
   'focus_pane',
   'read_pane',
+  'read_current_view',
   'send_to_pane',
   'run_command',
   'mcp_tool',
@@ -38,6 +40,8 @@ export interface NexusRealtimeActionArgs {
   url?: string;
   squadName?: string;
   workspaceName?: string;
+  /** Optional spoken objective when opening an agentic mission. */
+  intent?: string;
   paneName?: string;
   text?: string;
   /** NEW-B: target pane for a routed pending-question answer (send_to_pane). */
@@ -65,6 +69,10 @@ export function summarizeNexusRealtimeAction(args: NexusRealtimeActionArgs): str
       return 'confirmar e iniciar squad';
     case 'new_mission':
       return 'abrir assistente de missão';
+    case 'new_agentic_mission':
+      return args.intent
+        ? 'abrir missão no modo agêntico com objetivo'
+        : 'abrir missão no modo agêntico';
     case 'new_workspace':
       return 'abrir assistente de workspace';
     case 'open_terminal':
@@ -97,6 +105,8 @@ export function summarizeNexusRealtimeAction(args: NexusRealtimeActionArgs): str
       return args.paneName ? `focar pane ${args.paneName}` : 'focar pane';
     case 'read_pane':
       return args.paneId ? `ler pane ${args.paneId}` : 'ler pane ativo';
+    case 'read_current_view':
+      return 'ler visão atual';
     case 'send_to_pane':
       return 'enviar missão ao pane';
     case 'run_command':
@@ -133,6 +143,10 @@ export function realtimeArgsToJarvisAction(
   if (args.action === 'open_workspace') {
     const workspaceName = cleanText(args.workspaceName, 128);
     return workspaceName ? { type: 'open_workspace', workspaceName } : null;
+  }
+  if (args.action === 'new_agentic_mission') {
+    const intent = cleanText(args.intent, 4_000) || undefined;
+    return { type: 'new_agentic_mission', ...(intent ? { intent } : {}) };
   }
   if (args.action === 'open_browser') {
     const url = cleanText(args.url, 4_096);

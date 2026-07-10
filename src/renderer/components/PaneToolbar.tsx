@@ -9,6 +9,7 @@ import {
   wakeHost,
 } from '../terminal/terminal-host';
 import { CostBadge } from './CostBadge';
+import { DevServerChip } from './DevServerChip';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { requestPaneClose } from '../terminal/pane-close-guard';
 
@@ -124,6 +125,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       )}
       {pane.kind === 'cli-agent' && <StateIndicator paneId={pane.id} />}
       {pane.kind === 'cli-agent' && <CostBadge paneId={pane.id} />}
+      <DevServerChip pane={pane} />
       <div className="toolbar__spacer" />
       {pane.kind !== 'browser' && (
         <button

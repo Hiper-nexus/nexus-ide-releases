@@ -1,153 +1,149 @@
-import type { Db } from './db';
-import type { Note } from '../../shared/note-types';
+import { z } from 'zod';
+import {
+  noteSchema,
+  type Note,
+} from '../../shared/note-types';
+import type { ProjectExecutionScope } from '../../shared/types';
+import {
+  ScopedStoreBinding,
+  ScopedStoreCorruptionError,
+  type ScopedEntity,
+  type ScopedStoreChangeListener,
+  type ScopedStoreOptions,
+} from '../orch/scoped-store';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 
-/**
- * Sticky-note registry, per workspace. In-memory map is the source of truth
- * for the running process; SQLite (when available) mirrors it so notes survive
- * restarts — same discipline as account-store.ts. The `notes` table is created
- * here additively (CREATE TABLE IF NOT EXISTS) so db.ts stays untouched.
- */
+const noteInputSchema = noteSchema.strict();
+const noteIdSchema = noteSchema.shape.id;
+const noteRowSchema = z
+  .object({
+    id: noteSchema.shape.id,
+    text: noteSchema.shape.text,
+    x: noteSchema.shape.x,
+    y: noteSchema.shape.y,
+    w: noteSchema.shape.w,
+    h: noteSchema.shape.h,
+    color: noteSchema.shape.color,
+    linked_pane_id: z.string().min(1).max(128).nullable(),
+    updated_at: z.number().int().nonnegative(),
+  })
+  .strict();
 
-interface StoredNote {
-  workspacePath: string;
-  note: Note;
+export type ScopedNote = ScopedEntity<Note>;
+export type SaveNoteInput = z.input<typeof noteInputSchema>;
+
+type NoteRow = z.infer<typeof noteRowSchema>;
+
+function cloneNote(note: ScopedNote): ScopedNote {
+  return { ...note };
 }
 
-const notes = new Map<string, StoredNote>(); // keyed by note id
-let db: Db | null = null;
+export class ScopedNotesStore {
+  readonly #binding: ScopedStoreBinding;
 
-type ChangeListener = (workspacePath: string) => void;
-const listeners = new Set<ChangeListener>();
+  constructor(
+    runtimeManager: ProjectRuntimeManager,
+    scope: ProjectExecutionScope,
+    options: ScopedStoreOptions = {},
+  ) {
+    this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
+  }
 
-export function onNotesChange(cb: ChangeListener): () => void {
-  listeners.add(cb);
-  return () => listeners.delete(cb);
-}
+  get scope(): ProjectExecutionScope {
+    return this.#binding.scope;
+  }
 
-function emit(workspacePath: string): void {
-  for (const cb of [...listeners]) {
+  onChange(listener: ScopedStoreChangeListener): () => void {
+    return this.#binding.onChange(listener);
+  }
+
+  list(): ScopedNote[] {
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT id, text, x, y, w, h, color, linked_pane_id, updated_at
+         FROM sticky_notes
+         ORDER BY updated_at DESC, id ASC`,
+      )
+      .all();
+    return rows.map((row) => this.#fromRow(row));
+  }
+
+  save(rawNote: SaveNoteInput): ScopedNote {
+    const note = noteInputSchema.parse(rawNote);
+    const stored: ScopedNote = {
+      ...note,
+      ...this.#binding.coordinates,
+    };
+    this.#binding
+      .writeDatabase()
+      .prepare(
+        `INSERT INTO sticky_notes
+           (id, text, x, y, w, h, color, linked_pane_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           text = excluded.text,
+           x = excluded.x,
+           y = excluded.y,
+           w = excluded.w,
+           h = excluded.h,
+           color = excluded.color,
+           linked_pane_id = excluded.linked_pane_id,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        stored.id,
+        stored.text,
+        stored.x,
+        stored.y,
+        stored.w,
+        stored.h,
+        stored.color,
+        stored.linkedPaneId ?? null,
+        this.#binding.now(),
+      );
+    this.#binding.emitChange();
+    return cloneNote(stored);
+  }
+
+  remove(rawId: string): boolean {
+    const id = noteIdSchema.parse(rawId);
+    const result = this.#binding
+      .writeDatabase()
+      .prepare('DELETE FROM sticky_notes WHERE id = ?')
+      .run(id);
+    if (result.changes === 0) return false;
+    this.#binding.emitChange();
+    return true;
+  }
+
+  #fromRow(rawRow: unknown): ScopedNote {
+    let row: NoteRow;
     try {
-      cb(workspacePath);
-    } catch (err) {
-      console.warn('[notes] listener threw:', err);
+      row = noteRowSchema.parse(rawRow);
+    } catch (error) {
+      throw new ScopedStoreCorruptionError('sticky note', { cause: error });
     }
+    return {
+      id: row.id,
+      text: row.text,
+      x: row.x,
+      y: row.y,
+      w: row.w,
+      h: row.h,
+      color: row.color,
+      ...(row.linked_pane_id === null
+        ? {}
+        : { linkedPaneId: row.linked_pane_id }),
+      ...this.#binding.coordinates,
+    };
   }
 }
 
-const NOTES_SCHEMA = `
-CREATE TABLE IF NOT EXISTS notes (
-  id             TEXT PRIMARY KEY,
-  workspace_path TEXT NOT NULL,
-  text           TEXT NOT NULL DEFAULT '',
-  x              REAL NOT NULL,
-  y              REAL NOT NULL,
-  w              REAL NOT NULL,
-  h              REAL NOT NULL,
-  color          TEXT NOT NULL,
-  linked_pane_id TEXT,
-  updated_at     INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_notes_workspace ON notes (workspace_path);
-`;
-
-interface Row {
-  id: string;
-  workspace_path: string;
-  text: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  color: string;
-  linked_pane_id: string | null;
-}
-
-/** Hydrate the in-memory map from SQLite. Safe to call with null (JSON-less). */
-export function initNotesStore(database: Db | null): void {
-  db = database;
-  notes.clear();
-  if (!db) return;
-  try {
-    db.exec(NOTES_SCHEMA);
-    for (const row of db.prepare('SELECT * FROM notes').all() as Row[]) {
-      // Defensive re-check: a corrupted row (non-finite / zero-size geometry)
-      // must never reach the renderer — Maestri crashed on exactly this.
-      if (
-        !Number.isFinite(row.x) ||
-        !Number.isFinite(row.y) ||
-        !Number.isFinite(row.w) ||
-        !Number.isFinite(row.h) ||
-        row.w <= 0 ||
-        row.h <= 0
-      ) {
-        continue;
-      }
-      notes.set(row.id, {
-        workspacePath: row.workspace_path,
-        note: {
-          id: row.id,
-          text: row.text,
-          x: row.x,
-          y: row.y,
-          w: row.w,
-          h: row.h,
-          color: row.color as Note['color'],
-          linkedPaneId: row.linked_pane_id ?? undefined,
-        },
-      });
-    }
-  } catch (err) {
-    console.warn('[notes] failed to hydrate:', err);
-  }
-}
-
-function persist(workspacePath: string, note: Note): void {
-  if (!db) return;
-  try {
-    db.prepare(
-      `INSERT OR REPLACE INTO notes
-         (id, workspace_path, text, x, y, w, h, color, linked_pane_id, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      note.id,
-      workspacePath,
-      note.text,
-      note.x,
-      note.y,
-      note.w,
-      note.h,
-      note.color,
-      note.linkedPaneId ?? null,
-      Date.now(),
-    );
-  } catch (err) {
-    console.warn('[notes] failed to persist:', err);
-  }
-}
-
-export function listNotes(workspacePath: string): Note[] {
-  return [...notes.values()]
-    .filter((s) => s.workspacePath === workspacePath)
-    .map((s) => s.note);
-}
-
-/** Insert-or-update a note in `workspacePath`. Returns the stored copy. */
-export function saveNote(workspacePath: string, note: Note): Note {
-  const stored: StoredNote = { workspacePath, note: { ...note } };
-  notes.set(note.id, stored);
-  persist(workspacePath, stored.note);
-  emit(workspacePath);
-  return stored.note;
-}
-
-export function removeNote(id: string): void {
-  const existing = notes.get(id);
-  if (!existing) return;
-  notes.delete(id);
-  try {
-    db?.prepare('DELETE FROM notes WHERE id = ?').run(id);
-  } catch (err) {
-    console.warn('[notes] failed to delete row:', err);
-  }
-  emit(existing.workspacePath);
+export function createScopedNotesStore(
+  runtimeManager: ProjectRuntimeManager,
+  scope: ProjectExecutionScope,
+  options: ScopedStoreOptions = {},
+): ScopedNotesStore {
+  return new ScopedNotesStore(runtimeManager, scope, options);
 }

@@ -6,9 +6,11 @@ import {
 } from '../media/media-generation';
 import { listMediaProviders } from '../media/media-providers';
 import { hasMediaKey, maskedMediaKey } from '../media/media-keys';
-import { recordMediaUsage } from '../usage/media-usage-store';
+import { recordMediaUsage } from '../usage/media-usage-recorder';
 import { num, requireStr, str } from './tool-util';
-import { activeWorkspaceRoot } from './workspace-path';
+import { resolveCwdForScope } from './workspace-path';
+import type { AgentGateContext } from './gate';
+import { executionScopeFor } from './gate';
 
 /**
  * Media generation MCP tools — image/video/audio providers become tools any
@@ -20,8 +22,8 @@ import { activeWorkspaceRoot } from './workspace-path';
  * Media is intentionally workspace-bound. Without an active workspace the
  * operation fails closed instead of reading/writing a global fallback path.
  */
-function baseDirFor(): string {
-  return activeWorkspaceRoot();
+function baseDirFor(ctx: AgentGateContext): string {
+  return resolveCwdForScope(executionScopeFor(ctx));
 }
 
 const mediaProvidersTool: McpToolDef = {
@@ -65,9 +67,9 @@ const imageGenerateTool: McpToolDef = {
       model: str(args, 'model'),
       outPath: str(args, 'outPath'),
       imagePath: str(args, 'imagePath'),
-      baseDir: baseDirFor(),
+      baseDir: baseDirFor(ctx),
     });
-    recordMediaUsage(result, ctx);
+    await recordMediaUsage(result, ctx);
     return result;
   },
 };
@@ -108,9 +110,9 @@ const videoGenerateTool: McpToolDef = {
       aspectRatio: str(args, 'aspectRatio'),
       imagePath: str(args, 'imagePath'),
       endImagePath: str(args, 'endImagePath'),
-      baseDir: baseDirFor(),
+      baseDir: baseDirFor(ctx),
     });
-    recordMediaUsage(result, ctx);
+    await recordMediaUsage(result, ctx);
     return result;
   },
 };
@@ -141,9 +143,9 @@ const audioGenerateTool: McpToolDef = {
       model: str(args, 'model'),
       voiceId: str(args, 'voiceId'),
       outPath: str(args, 'outPath'),
-      baseDir: baseDirFor(),
+      baseDir: baseDirFor(ctx),
     });
-    recordMediaUsage(result, ctx);
+    await recordMediaUsage(result, ctx);
     return result;
   },
 };

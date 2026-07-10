@@ -6,12 +6,17 @@ import WebSocket from 'ws';
 
 // The bridge pulls orchestration/pty modules that transitively need electron;
 // stub them so this stays a pure network test.
-vi.mock('../orch/mission-store', () => ({ listMissions: () => [] }));
+vi.mock('../orch/project-domain-store-registry', () => ({
+  getProjectDomainStores: () => ({ missions: { list: () => [] } }),
+}));
 vi.mock('../orch/pane-registry', () => ({
-  findPane: () => null,
-  listPaneSnapshots: () => [],
+  getPaneAuthzInfo: () => null,
+  listVisiblePaneSnapshots: () => [],
   readSessionOutput: () => '',
   requestPaneClose: () => true,
+}));
+vi.mock('../orch/pane-authz', () => ({
+  authorizePaneAccess: () => ({ allow: false }),
 }));
 vi.mock('../pty/pty-manager', () => ({
   orchWriteSession: () => true,
@@ -23,6 +28,14 @@ let bridge: Bridge;
 let home: string;
 let url: string;
 let previousTokenTtl: string | undefined;
+const projectScope = {
+  version: 1 as const,
+  installationId: 'install-test',
+  projectId: 'project-a',
+  checkoutId: 'checkout-a',
+  rootRealPath: '/workspace/a',
+  identitySource: 'manifest' as const,
+};
 
 async function rpc(
   socket: WebSocket,
@@ -78,7 +91,10 @@ beforeAll(async () => {
   process.env.NEXUS_REMOTE_TOKEN_TTL_MS = '500';
   vi.spyOn(os, 'homedir').mockReturnValue(home);
   bridge = await import('./remote-bridge');
-  const info = await bridge.startRemoteBridge({ host: '127.0.0.1' });
+  const info = await bridge.startRemoteBridge(
+    { host: '127.0.0.1' },
+    projectScope,
+  );
   url = `wss://127.0.0.1:${info.port}`;
 });
 

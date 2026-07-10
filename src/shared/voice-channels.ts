@@ -100,6 +100,8 @@ export const VOICE_CHANNELS = {
   liveToolCancelled: 'voice:live.tool.cancelled',
   /** event: main → renderer. Jarvis Live tool/action finished. */
   liveToolResult: 'voice:live.tool.result',
+  /** event: main → renderer. Provider finished the response after a tool result. */
+  liveToolTurnComplete: 'voice:live.tool.turn-complete',
   /** event: main → renderer. Jarvis Live speech was interrupted. */
   liveInterrupted: 'voice:live.interrupted',
 } as const;

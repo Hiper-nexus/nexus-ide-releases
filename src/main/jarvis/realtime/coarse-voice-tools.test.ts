@@ -62,6 +62,25 @@ describe('resolveCoarseVoiceTool', () => {
     });
   });
 
+  it('navegar mission-agentic preserves an optional objective', () => {
+    expect(resolveCoarseVoiceTool('navegar', { target: 'mission-agentic' })).toMatchObject({
+      kind: 'action',
+      action: { action: 'new_agentic_mission' },
+    });
+    expect(
+      resolveCoarseVoiceTool('navegar', {
+        target: 'missão agêntica',
+        query: 'corrigir todos os testes quebrados',
+      }),
+    ).toMatchObject({
+      kind: 'action',
+      action: {
+        action: 'new_agentic_mission',
+        intent: 'corrigir todos os testes quebrados',
+      },
+    });
+  });
+
   it('navegar workspace-new abre o wizard de novo workspace (não new_mission)', () => {
     expect(resolveCoarseVoiceTool('navegar', { target: 'workspace-new' })).toMatchObject({
       kind: 'action',
@@ -156,6 +175,18 @@ describe('resolveCoarseVoiceTool', () => {
       kind: 'action',
       action: { action: 'read_pane' },
       summary: 'ler pane ativo',
+    });
+  });
+
+  it('ler com escopo de tela/visão executa a leitura da view atual', () => {
+    expect(resolveCoarseVoiceTool('ler', { scope: 'view' })).toEqual({
+      kind: 'action',
+      action: { action: 'read_current_view' },
+      summary: 'ler visão atual',
+    });
+    expect(resolveCoarseVoiceTool('ler', { scope: 'tela' })).toMatchObject({
+      kind: 'action',
+      action: { action: 'read_current_view' },
     });
   });
 

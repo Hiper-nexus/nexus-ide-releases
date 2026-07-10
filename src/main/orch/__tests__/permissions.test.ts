@@ -12,14 +12,20 @@ import {
 
 const workspaceA = '/tmp/nexus-workspace-a';
 const workspaceB = '/tmp/nexus-workspace-b';
+const projectA = 'project-a';
+const projectB = 'project-b';
+const checkoutA = 'checkout-a';
+const checkoutB = 'checkout-b';
 
 function scope(
   sessionId: string,
   toolName: string,
   args: Record<string, unknown>,
   workspaceId = workspaceA,
+  projectId = projectA,
+  checkoutId = checkoutA,
 ) {
-  return { sessionId, workspaceId, toolName, args };
+  return { sessionId, workspaceId, projectId, checkoutId, toolName, args };
 }
 
 describe('permissions', () => {
@@ -78,6 +84,48 @@ describe('permissions', () => {
     const args = { path: 'package.json', content: 'x' };
     grantPermission(scope('sess1', 'nexus_file_write', args, workspaceA));
     expect(hasPermission(scope('sess1', 'nexus_file_write', args, workspaceB))).toBe(false);
+  });
+
+  it('different projects are isolated even when the workspace path matches', () => {
+    const args = { path: 'package.json', content: 'x' };
+    grantPermission(scope(
+      'sess1',
+      'nexus_file_write',
+      args,
+      workspaceA,
+      projectA,
+      checkoutA,
+    ));
+
+    expect(hasPermission(scope(
+      'sess1',
+      'nexus_file_write',
+      args,
+      workspaceA,
+      projectB,
+      checkoutA,
+    ))).toBe(false);
+  });
+
+  it('different checkouts are isolated even within the same project', () => {
+    const args = { path: 'package.json', content: 'x' };
+    grantPermission(scope(
+      'sess1',
+      'nexus_file_write',
+      args,
+      workspaceA,
+      projectA,
+      checkoutA,
+    ));
+
+    expect(hasPermission(scope(
+      'sess1',
+      'nexus_file_write',
+      args,
+      workspaceA,
+      projectA,
+      checkoutB,
+    ))).toBe(false);
   });
 
   it('revokes specific permission', () => {

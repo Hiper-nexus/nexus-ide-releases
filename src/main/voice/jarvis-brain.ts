@@ -1,5 +1,5 @@
 import { resolveVoiceApiKey } from './voice-secrets';
-import { jarvisMemory } from './jarvis-memory';
+import type { JarvisMemoryAccess } from './jarvis-memory';
 import { jarvisActionFastPath } from './jarvis-action-fastpath';
 import { jarvisFastPath } from './jarvis-fastpath';
 import { jarvisToolCatalogCompact } from './jarvis-tool-catalog';
@@ -60,6 +60,7 @@ Action types:
 - {"type":"design_squad"} - create a custom squad for the current project (opens review; ask confirmation).
 - {"type":"confirm_squad"} - confirm and launch the squad currently on the review wizard ("sim" / "inicia").
 - {"type":"new_mission"} - open a new mission flow without naming a squad.
+- {"type":"new_agentic_mission","intent":"<optional objective>"} - open a new mission directly in Agentic mode. Use this, never voice settings or design_squad, when the user asks to start/create a mission in "modo agêntico". It opens the objective step; it does not launch a squad.
 - {"type":"new_workspace"} - open the new workspace wizard (folder + setup).
 - {"type":"open_terminal"} - open an empty shell terminal in the current workspace.
 - {"type":"close_pane"} - close the focused pane/terminal.
@@ -75,6 +76,8 @@ Action types:
 - {"type":"focus_previous_pane"} - move focus to the previous open pane.
 - {"type":"focus_pane","paneName":"<terminal|browser|agent|pane title>"} - focus
   an open pane by title or kind.
+- {"type":"read_current_view"} - read what is visibly on the current Nexus screen/page through local accessibility and OCR context. Use for "leia esta tela/página" or "o que tem aqui"; it is not a pane-output read.
+- For an explicit request to activate a control returned by a fresh realtime view read, use {"type":"mcp_tool","tool":"nexus_ui_action","args":{"action":"<click|focus|fill|select>","ref":"<fresh opaque ref>"}}. Native confirmation is mandatory; never invent refs, CSS selectors, or JavaScript.
 - {"type":"run_command","command":"<exact command>"} - run a program, command,
   or CLI in the terminal. Use the literal command with no explanation. If no
   terminal is focused, the app opens one and runs it after native confirmation.
@@ -116,6 +119,8 @@ You can execute things through actions. Never claim you cannot. Examples:
 - "roda npm test" -> {"say":"Rodando os testes.","action":{"type":"run_command","command":"npm test"}}
 - "abre um terminal" -> {"say":"Abrindo um terminal.","action":{"type":"open_terminal"}}
 - "iniciar um novo workspace" -> {"say":"Abrindo o assistente de workspace.","action":{"type":"new_workspace"}}
+- "iniciar missão no modo agêntico" -> {"say":"Abrindo a missão no modo agêntico.","action":{"type":"new_agentic_mission"}}
+- "criar missão agêntica para corrigir os testes" -> {"say":"Abrindo a missão no modo agêntico.","action":{"type":"new_agentic_mission","intent":"corrigir os testes"}}
 - "abre configuracoes de voz" -> {"say":"Abrindo as configuracoes de voz.","action":{"type":"open_voice_settings"}}
 - "abre o modo canvas" -> {"say":"Abrindo o canvas.","action":{"type":"open_canvas"}}
 - "abre um browser" -> {"say":"Abrindo o browser.","action":{"type":"open_browser"}}
@@ -124,6 +129,7 @@ You can execute things through actions. Never claim you cannot. Examples:
 - "proximo pane" -> {"say":"Focando o proximo pane.","action":{"type":"focus_next_pane"}}
 - "pane anterior" -> {"say":"Focando o pane anterior.","action":{"type":"focus_previous_pane"}}
 - "foca terminal" -> {"say":"Focando terminal.","action":{"type":"focus_pane","paneName":"terminal"}}
+- "leia esta tela" -> {"say":"Vou ler o que está visível.","action":{"type":"read_current_view"}}
 - "abre o squad de review" -> {"say":"Subindo o Code Review.","action":{"type":"open_squad","squadName":"Code Review"}}
 - "abre o projeto saasbarbearia" -> {"say":"Abrindo o saasbarbearia.","action":{"type":"open_workspace","workspaceName":"saasbarbearia"}}
 - "pede pro agente corrigir o bug do login" -> use send_to_pane with an English prompt.
@@ -147,11 +153,12 @@ If the user only calls you ("Jarvis?", "voce esta ai?"), answer that you are
 present and ask what to do based on the current screen, naming 1-2 real actions
 that fit it. Ask a question only when it helps continue the conversation.
 
-Persistent memory: you have long-term memory across sessions. Remembered facts
-arrive in a context block; use them without asking again. When the user states a
-durable fact about themselves, the project, or a preference ("prefiro respostas
-curtas", "o deploy e sempre na sexta", "me chama de chefe"), include an extra
-JSON field:
+Project memory: remembered facts survive sessions only inside the currently
+authorized project checkout. Use them without asking again, but never infer that
+a fact belongs to another project. Remember only durable project, business-domain,
+or project-workflow facts (for example, "o deploy e sempre na sexta"). Global
+personal preferences and persona settings belong in Voice Settings and must not
+be stored as project facts. To remember a project fact, include an extra JSON field:
 "remember": {"key":"<short-stable-slug>","fact":"<one-sentence fact>"}.
 To forget a fact at the user's request, return "forget":"<slug>". Do not store
 temporary conversation, current tasks, or secrets such as keys and passwords.`;
@@ -197,6 +204,8 @@ export function buildJarvisPersonaInstruction(persona: VoicePersona): string {
 export interface BrainDeps {
   fetchImpl: typeof fetch;
   getKey: (envVar: string) => string | undefined;
+  /** Project-bound memory. Omission is a no-retention diagnostic/test mode. */
+  memory?: JarvisMemoryAccess;
 }
 
 export const defaultBrainDeps: BrainDeps = {
@@ -236,7 +245,8 @@ function contextBlock(ctx: JarvisContext): string {
  * Efeitos de memória vêm como campos extras do JSON do cérebro
  * ("remember"/"forget") e são aplicados aqui no main — o renderer nunca vê.
  */
-function applyMemoryOps(raw: string): void {
+function applyMemoryOps(raw: string, memory?: JarvisMemoryAccess): void {
+  if (!memory) return;
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) return;
   try {
@@ -245,10 +255,10 @@ function applyMemoryOps(raw: string): void {
       forget?: string;
     };
     if (typeof obj.remember?.fact === 'string' && obj.remember.fact.trim()) {
-      jarvisMemory.remember(obj.remember.key ?? '', obj.remember.fact);
+      memory.remember(obj.remember.key ?? '', obj.remember.fact);
     }
     if (typeof obj.forget === 'string' && obj.forget.trim()) {
-      jarvisMemory.forget(obj.forget);
+      memory.forget(obj.forget);
     }
   } catch {
     // JSON inválido já é tratado por parseReply; memória é best-effort.
@@ -359,6 +369,12 @@ export function parseReply(raw: string): JarvisReply {
     if (type === 'design_squad') return { say, expectReply, action: { type } };
     if (type === 'confirm_squad') return { say, expectReply, action: { type } };
     if (type === 'new_mission') return { say, expectReply, action: { type } };
+    if (type === 'new_agentic_mission') {
+      const intent = typeof obj.action?.intent === 'string'
+        ? obj.action.intent.trim().slice(0, 4_000)
+        : '';
+      return { say, expectReply, action: { type, ...(intent ? { intent } : {}) } };
+    }
     if (type === 'new_workspace') return { say, expectReply, action: { type } };
     if (type === 'open_terminal') return { say, expectReply, action: { type } };
     if (type === 'close_pane') return { say, expectReply, action: { type } };
@@ -379,6 +395,7 @@ export function parseReply(raw: string): JarvisReply {
     if (type === 'focus_pane' && typeof obj.action?.paneName === 'string') {
       return { say, expectReply, action: { type, paneName: obj.action.paneName } };
     }
+    if (type === 'read_current_view') return { say, expectReply, action: { type } };
     if (type === 'send_to_pane' && typeof obj.action?.text === 'string') {
       return { say, expectReply, action: { type, text: obj.action.text } };
     }
@@ -605,7 +622,8 @@ export async function jarvisThink(
   const fast = jarvisFastPath(transcript, ctx);
   if (fast) return fast;
 
-  const facts = jarvisMemory.factsBlock();
+  const memory = deps.memory;
+  const facts = memory?.factsBlock() ?? '';
   const voiceConfig = getVoiceConfig();
   const messages: Array<{ role: string; content: string }> = [
     { role: 'system', content: SYSTEM_PROMPT },
@@ -613,7 +631,10 @@ export async function jarvisThink(
     { role: 'system', content: buildJarvisPersonaInstruction(voiceConfig.persona) },
     { role: 'system', content: contextBlock(ctx) },
     ...(facts
-      ? [{ role: 'system', content: `Remembered facts (persistent memory):\n${facts}` }]
+      ? [{
+          role: 'system',
+          content: `Remembered project facts (current checkout only):\n${facts}`,
+        }]
       : []),
     ...history.slice(-8).map((t) => ({ role: t.role, content: t.content })),
     { role: 'user', content: transcript },
@@ -640,7 +661,7 @@ export async function jarvisThink(
           provider.jsonMode ?? true,
           600,
         );
-        applyMemoryOps(raw);
+        applyMemoryOps(raw, memory);
         return repairMissingAction(transcript, parseReply(raw), ctx);
       } catch (err) {
         attempts.push(

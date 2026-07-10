@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import type { Db } from '../persistence/db';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { XpEventInput } from '../../shared/gamification-types';
+import { testProjectScope } from '../orch/__tests__/scope-fixture';
+import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
   countTodaySameBucket,
   dumpMeta,
@@ -12,96 +16,139 @@ import {
   setMeta,
 } from './gamification-store';
 
-// better-sqlite3 é módulo nativo; rebuildado p/ Electron não carrega no node
-// do vitest — os testes de SQL viram skip, não falha (padrão do repo).
-let sqlite: (new (file: string) => Db) | null = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  sqlite = require('better-sqlite3') as new (file: string) => Db;
-  new sqlite(':memory:').close();
-} catch {
-  sqlite = null;
+let baseDir = '';
+const managers: ProjectRuntimeManager[] = [];
+
+function manager(): ProjectRuntimeManager {
+  const value = new ProjectRuntimeManager({
+    baseDir,
+    appVersion: '0.12.0-test',
+  });
+  managers.push(value);
+  return value;
 }
 
-function ev(over: Partial<XpEventInput> = {}): XpEventInput {
+function ev(overrides: Partial<XpEventInput> = {}): XpEventInput {
   return {
     kind: 'handoff_green',
-    entityKey: 'handoff_green:h1',
+    entityKey: 'handoff:h1',
     effort: 'medium',
     createdAt: 1_000,
-    ...over,
+    ...overrides,
   };
 }
 
-describe.skipIf(!sqlite)('gamification-store (SQLite real)', () => {
-  function makeDb(): Db {
-    const db = new (sqlite as new (file: string) => Db)(':memory:');
-    initGamificationStore(db);
-    return db;
-  }
+beforeEach(() => {
+  baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-gamification-store-'));
+});
 
-  it('insere evento e lista com pontos e ruleVersion', () => {
-    const db = makeDb();
-    expect(insertXpEvent(db, ev(), 8_000)).toBe(true);
-    const events = listXpEvents(db);
-    expect(events).toHaveLength(1);
-    expect(events[0].points).toBe(8_000);
-    expect(events[0].ruleVersion).toBe(1);
-    db.close();
+afterEach(() => {
+  for (const value of managers.splice(0)) value.closeAll();
+  fs.rmSync(baseDir, { recursive: true, force: true });
+});
+
+describe('gamification-store on project runtime SQLite', () => {
+  it('uses migrated schema and preserves event points/idempotency', () => {
+    const runtime = manager().open(testProjectScope());
+    initGamificationStore(runtime.db);
+
+    expect(insertXpEvent(runtime.db, ev(), 8_000)).toBe(true);
+    expect(insertXpEvent(runtime.db, ev(), 8_000)).toBe(false);
+    expect(listXpEvents(runtime.db)).toEqual([
+      expect.objectContaining({
+        entityKey: 'handoff:h1',
+        points: 8_000,
+        ruleVersion: 1,
+      }),
+    ]);
   });
 
-  it('idempotência: mesma entityKey não insere duas vezes', () => {
-    const db = makeDb();
-    expect(insertXpEvent(db, ev(), 8_000)).toBe(true);
-    expect(insertXpEvent(db, ev(), 8_000)).toBe(false);
-    expect(listXpEvents(db)).toHaveLength(1);
-    db.close();
-  });
-
-  it('countTodaySameBucket conta só o mesmo dia + mesmo bucket de effort', () => {
-    const db = makeDb();
-    insertXpEvent(db, ev({ entityKey: 'handoff_green:a', createdAt: 100 }), 1);
-    insertXpEvent(db, ev({ entityKey: 'handoff_green:b', createdAt: 200 }), 1);
+  it('counts only same live day and effort bucket', () => {
+    const db = manager().open(testProjectScope()).db;
+    insertXpEvent(db, ev({ entityKey: 'handoff:a', createdAt: 100 }), 1);
+    insertXpEvent(db, ev({ entityKey: 'handoff:b', createdAt: 200 }), 1);
     insertXpEvent(
       db,
-      ev({ entityKey: 'handoff_green:c', createdAt: 300, effort: 'high' }),
+      ev({ entityKey: 'handoff:c', createdAt: 300, effort: 'high' }),
       1,
     );
+    insertXpEvent(
+      db,
+      ev({ entityKey: 'handoff:retro', createdAt: 400, retro: true }),
+      1,
+    );
+
     expect(countTodaySameBucket(db, 'handoff_green', 'medium', 0)).toBe(2);
     expect(countTodaySameBucket(db, 'handoff_green', 'high', 0)).toBe(1);
-    db.close();
   });
 
-  it('perfil: dump + replace fazem round-trip; falha faz rollback', () => {
-    const db = makeDb();
-    insertXpEvent(db, ev(), 8_000);
-    setMeta(db, 'prestige', '1');
-    const events = listXpEvents(db);
-    const meta = dumpMeta(db);
-    expect(meta).toEqual({ prestige: '1' });
+  it('round-trips profile atomically and rolls back invalid input', () => {
+    const runtimeManager = manager();
+    const first = runtimeManager.open(
+      testProjectScope({ checkoutId: 'profile-source' }),
+    ).db;
+    insertXpEvent(first, ev(), 8_000);
+    setMeta(first, 'prestige', '1');
+    const events = listXpEvents(first);
+    const meta = dumpMeta(first);
 
-    const db2 = makeDb();
-    replaceProfile(db2, events, meta);
-    expect(listXpEvents(db2)).toEqual(events);
-    expect(dumpMeta(db2)).toEqual(meta);
+    const second = runtimeManager.open(
+      testProjectScope({ checkoutId: 'profile-target' }),
+    ).db;
+    replaceProfile(second, events, meta);
+    expect(listXpEvents(second)).toEqual(events);
+    expect(dumpMeta(second)).toEqual({ prestige: '1' });
 
-    // evento inválido (points objeto) → lança e NADA muda (transação)
     const broken = [{ ...events[0], id: 2, entityKey: 'x', points: {} }];
     expect(() =>
-      replaceProfile(db2, broken as unknown as typeof events, meta),
+      replaceProfile(second, broken as unknown as typeof events, meta),
     ).toThrow();
-    expect(listXpEvents(db2)).toEqual(events);
-    db.close();
-    db2.close();
+    expect(listXpEvents(second)).toEqual(events);
   });
 
-  it('meta: get/set roundtrip com overwrite', () => {
-    const db = makeDb();
-    expect(getMeta(db, 'streak')).toBeNull();
-    setMeta(db, 'streak', JSON.stringify({ streakDays: 3 }));
-    expect(JSON.parse(getMeta(db, 'streak')!)).toEqual({ streakDays: 3 });
-    setMeta(db, 'streak', 'x');
-    expect(getMeta(db, 'streak')).toBe('x');
-    db.close();
+  it('keeps identical entity keys physically isolated across projects/checkouts', () => {
+    const runtimeManager = manager();
+    const scopeA = testProjectScope({
+      projectId: 'project-a',
+      checkoutId: 'main',
+      rootRealPath: '/workspace/a',
+    });
+    const scopeB = testProjectScope({
+      projectId: 'project-b',
+      checkoutId: 'main',
+      rootRealPath: '/workspace/b',
+    });
+    const scopeAFeature = testProjectScope({
+      projectId: 'project-a',
+      checkoutId: 'feature',
+      rootRealPath: '/workspace/a-feature',
+    });
+    const runtimeA = runtimeManager.open(scopeA);
+    const runtimeB = runtimeManager.open(scopeB);
+    const runtimeAFeature = runtimeManager.open(scopeAFeature);
+
+    insertXpEvent(runtimeA.db, ev(), 8_000);
+    insertXpEvent(runtimeB.db, ev(), 3_000);
+
+    expect(listXpEvents(runtimeA.db)[0].points).toBe(8_000);
+    expect(listXpEvents(runtimeB.db)[0].points).toBe(3_000);
+    expect(listXpEvents(runtimeAFeature.db)).toEqual([]);
+    expect(runtimeA.databasePath).not.toBe(runtimeB.databasePath);
+    expect(runtimeA.databasePath).not.toBe(runtimeAFeature.databasePath);
+  });
+
+  it('stores metadata in the selected project runtime only', () => {
+    const runtimeManager = manager();
+    const first = runtimeManager.open(
+      testProjectScope({ checkoutId: 'meta-first' }),
+    ).db;
+    const second = runtimeManager.open(
+      testProjectScope({ checkoutId: 'meta-second' }),
+    ).db;
+
+    expect(getMeta(first, 'streak')).toBeNull();
+    setMeta(first, 'streak', JSON.stringify({ streakDays: 3 }));
+    expect(JSON.parse(getMeta(first, 'streak')!)).toEqual({ streakDays: 3 });
+    expect(getMeta(second, 'streak')).toBeNull();
   });
 });

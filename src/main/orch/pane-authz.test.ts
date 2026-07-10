@@ -5,10 +5,17 @@ import {
   type CallerCtx,
   type PaneAuthzInfo,
 } from './pane-authz';
+import { testProjectScope } from './__tests__/scope-fixture';
 
-const worker: CallerCtx = { role: 'worker', missionId: 'm1', sessionId: 'wself' };
-const orchestrator: CallerCtx = { role: 'orchestrator', missionId: 'm1', sessionId: 'oself' };
-const user: CallerCtx = { role: 'user', sessionId: 'uself' };
+const scope = testProjectScope({ projectId: 'project-a', checkoutId: 'checkout-a' });
+const worker: CallerCtx = { role: 'worker', missionId: 'm1', sessionId: 'wself', scope };
+const orchestrator: CallerCtx = {
+  role: 'orchestrator',
+  missionId: 'm1',
+  sessionId: 'oself',
+  scope,
+};
+const user: CallerCtx = { role: 'user', sessionId: 'uself', scope };
 
 function pane(over: Partial<PaneAuthzInfo>): PaneAuthzInfo {
   return {
@@ -17,6 +24,7 @@ function pane(over: Partial<PaneAuthzInfo>): PaneAuthzInfo {
     kind: 'cli-agent',
     missionId: 'm1',
     role: 'worker',
+    scope,
     ...over,
   };
 }
@@ -86,6 +94,22 @@ describe('authorizePaneAccess', () => {
     const anything = pane({ sessionId: 'z', missionId: 'm9', kind: 'shell' });
     expect(authorizePaneAccess(user, anything, 'write').allow).toBe(true);
   });
+
+  it('blocks another checkout before own-session and user-role shortcuts', () => {
+    const foreignScope = testProjectScope({
+      projectId: 'project-a',
+      checkoutId: 'checkout-b',
+    });
+    const sameSession = pane({ sessionId: 'wself', scope: foreignScope });
+    const userTarget = pane({ sessionId: 'z', scope: foreignScope });
+
+    expect(authorizePaneAccess(worker, sameSession, 'read').allow).toBe(false);
+    expect(authorizePaneAccess(user, userTarget, 'write').allow).toBe(false);
+  });
+
+  it('fails closed for a pane without trusted project metadata', () => {
+    expect(authorizePaneAccess(user, pane({ scope: undefined }), 'read').allow).toBe(false);
+  });
 });
 
 describe('canListPane', () => {
@@ -93,5 +117,24 @@ describe('canListPane', () => {
     expect(canListPane(worker, pane({ sessionId: 'a', missionId: 'm1' }))).toBe(true);
     expect(canListPane(worker, pane({ sessionId: 'b', missionId: 'm2' }))).toBe(false);
     expect(canListPane(worker, pane({ sessionId: 'c', kind: 'shell', missionId: undefined }))).toBe(false);
+  });
+});
+
+describe('authorizePaneAccess — user-opened browser pane', () => {
+  const userOpenedBrowser = pane({
+    sessionId: null,
+    kind: 'browser',
+    missionId: undefined,
+    role: undefined,
+  });
+
+  it('allows the user only inside the same trusted project checkout', () => {
+    expect(authorizePaneAccess(user, userOpenedBrowser, 'read').allow).toBe(true);
+    expect(authorizePaneAccess(user, userOpenedBrowser, 'write').allow).toBe(true);
+  });
+
+  it('keeps mission agents out of a user-owned browser surface', () => {
+    expect(authorizePaneAccess(orchestrator, userOpenedBrowser, 'read').allow).toBe(false);
+    expect(authorizePaneAccess(worker, userOpenedBrowser, 'read').allow).toBe(false);
   });
 });

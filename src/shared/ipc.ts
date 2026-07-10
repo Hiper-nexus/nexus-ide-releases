@@ -67,6 +67,8 @@ const paneModelSchema = z.object({
   adapterId: z.string().min(1).max(64).optional(),
   model: z.string().min(1).max(128).optional(),
   accountId: z.string().min(1).max(128).optional(),
+  role: z.enum(['orchestrator', 'worker']).optional(),
+  agentName: z.string().min(1).max(256).optional(),
   effort: z.string().min(1).max(32).optional(),
   titlePinned: z.boolean().optional(),
   orchRequestId: z.string().min(1).max(128).optional(),

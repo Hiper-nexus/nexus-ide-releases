@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { create } from 'zustand';
 import type { CostSnapshot } from '../../shared/cost-types';
+import { getActiveWorkspacePath } from './active-workspace';
+import { useWorkspaceStore } from './workspace-store';
 
 /**
  * Renderer mirror of the main-process cost tracker (same pattern as
@@ -34,8 +36,9 @@ export const EMPTY_COST_SNAPSHOT: CostSnapshot = {
 
 interface CostStore {
   snapshot: CostSnapshot;
-  hydrate(): Promise<void>;
+  hydrate(workspacePath: string): Promise<void>;
   receive(snapshot: CostSnapshot): void;
+  reset(): void;
   setCap(
     paneId: string,
     capUsd: number | null,
@@ -45,17 +48,22 @@ interface CostStore {
 export const useCostStore = create<CostStore>((set) => ({
   snapshot: EMPTY_COST_SNAPSHOT,
 
-  hydrate: async () => {
+  hydrate: async (workspacePath) => {
+    if (getActiveWorkspacePath() !== workspacePath) return;
     const api = costApi();
     if (!api) return;
     try {
-      set({ snapshot: await api.snapshot() });
+      const snapshot = await api.snapshot();
+      if (getActiveWorkspacePath() === workspacePath) set({ snapshot });
     } catch (err) {
-      console.warn('[cost] hydrate failed:', err);
+      if (getActiveWorkspacePath() === workspacePath) {
+        console.warn('[cost] hydrate failed:', err);
+      }
     }
   },
 
   receive: (snapshot) => set({ snapshot }),
+  reset: () => set({ snapshot: EMPTY_COST_SNAPSHOT }),
 
   setCap: async (paneId, capUsd) => {
     const api = costApi();
@@ -64,15 +72,22 @@ export const useCostStore = create<CostStore>((set) => ({
   },
 }));
 
-/** Mount once (e.g. in App) — hydrates and subscribes to change broadcasts. */
+/** Mount once — rehydrates per authorized workspace and keeps one listener. */
 export function useCostController(): void {
   const hydrate = useCostStore((s) => s.hydrate);
+  const reset = useCostStore((s) => s.reset);
+  const workspaceHydrated = useWorkspaceStore((s) => s.hydrated);
+  const workspacePath = useWorkspaceStore((s) => s.current?.path ?? null);
   useEffect(() => {
-    void hydrate();
+    reset();
+    if (workspaceHydrated && workspacePath) void hydrate(workspacePath);
+  }, [hydrate, reset, workspaceHydrated, workspacePath]);
+
+  useEffect(() => {
     const api = costApi();
     if (!api) return undefined;
-    return api.onChanged((snapshot) =>
-      useCostStore.getState().receive(snapshot),
-    );
-  }, [hydrate]);
+    return api.onChanged((snapshot) => {
+      if (getActiveWorkspacePath()) useCostStore.getState().receive(snapshot);
+    });
+  }, []);
 }

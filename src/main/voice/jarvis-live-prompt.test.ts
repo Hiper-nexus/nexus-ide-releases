@@ -6,6 +6,9 @@ describe('buildLiveSystemInstruction', () => {
     const s = buildLiveSystemInstruction({ assistantName: 'Jarvis' });
     expect(s).toContain('You are Jarvis');
     expect(s).toContain('call nexus_action immediately');
+    expect(s).toContain('new_agentic_mission');
+    expect(s).toContain('never substitute voice settings');
+    expect(s).toContain('read_current_view');
     expect(s).toContain('Speak only in Brazilian Portuguese');
     expect(s).not.toContain('never call yourself Jarvis');
   });

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createCronJob,
   matchesCron,
   nextCronAfter,
+  parseCronJobs,
   parseCronExpr,
   shouldFire,
   type CronJob,
@@ -75,6 +77,8 @@ describe('shouldFire', () => {
     brief: 'roda os testes',
     status: 'active',
     workspacePath: '/ws',
+    projectId: 'project-a',
+    checkoutId: 'checkout-a',
     createdAt: 1,
     updatedAt: 1,
     nextFireAt: new Date('2026-07-06T00:00:00').getTime(),
@@ -101,5 +105,66 @@ describe('shouldFire', () => {
   it('job pausado nunca dispara', () => {
     const now = new Date('2026-07-06T00:00:10').getTime();
     expect(shouldFire(job({ status: 'paused' }), now, 5 * 60_000).fire).toBe(false);
+  });
+});
+
+describe('createCronJob', () => {
+  it('persists the project and checkout identity supplied by the caller', () => {
+    const created = createCronJob(
+      {
+        name: 'nightly',
+        schedule: '0 0 * * *',
+        brief: 'run tests',
+        workspacePath: '/workspace/a',
+        projectId: 'project-a',
+        checkoutId: 'checkout-a',
+        agentName: 'qa',
+      },
+      new Date('2026-07-05T12:00:00').getTime(),
+      () => 'cron-1',
+    );
+
+    expect(created).toMatchObject({
+      workspacePath: '/workspace/a',
+      projectId: 'project-a',
+      checkoutId: 'checkout-a',
+      executionMode: 'shared',
+    });
+  });
+});
+
+describe('parseCronJobs', () => {
+  it('accepts a legacy missing execution mode without making it local', () => {
+    const parsed = parseCronJobs([
+      {
+        id: 'legacy',
+        name: 'legacy',
+        schedule: '0 0 * * *',
+        brief: 'review',
+        status: 'active',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+
+    expect(parsed[0].executionMode).toBeUndefined();
+  });
+
+  it('rejects malformed storage instead of silently returning no jobs', () => {
+    expect(() => parseCronJobs({ jobs: [] })).toThrow();
+    expect(() =>
+      parseCronJobs([
+        {
+          id: 'bad',
+          name: 'bad',
+          schedule: '0 0 * * *',
+          brief: 'review',
+          status: 'active',
+          executionMode: 'device-ish',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ]),
+    ).toThrow();
   });
 });

@@ -37,6 +37,7 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
   fireRoleTranscript(line: { role: 'user' | 'assistant'; text: string; final: boolean }): void;
   fireAudioOut(samples?: Int16Array): void;
   fireResponseDone(): void;
+  setSynchronousToolResponseDone(): void;
   fireError(err: Error): void;
 } {
   let ready = false;
@@ -50,6 +51,7 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
   const audioOutCallbacks: Parameters<TurnManagedRealtimeProvider['onAudioOut']>[0][] = [];
   const responseDoneCallbacks: Array<() => void> = [];
   const errorCallbacks: Array<(err: Error) => void> = [];
+  let respondDoneDuringToolResult = false;
   return {
     get closeCalls() {
       return closeCalls;
@@ -82,7 +84,11 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
     forceEndUserTurn: vi.fn(),
     sendContext: vi.fn(),
     sendText: vi.fn(),
-    sendToolResult: vi.fn(),
+    sendToolResult: vi.fn(() => {
+      if (respondDoneDuringToolResult) {
+        for (const cb of responseDoneCallbacks) cb();
+      }
+    }),
     onToolCall: vi.fn((cb) => {
       toolCallCallbacks.push(cb);
     }),
@@ -121,6 +127,9 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
     },
     fireResponseDone() {
       for (const cb of responseDoneCallbacks) cb();
+    },
+    setSynchronousToolResponseDone() {
+      respondDoneDuringToolResult = true;
     },
     fireError(err) {
       for (const cb of errorCallbacks) cb(err);
@@ -938,9 +947,34 @@ describe('LiveTransportController', () => {
     );
 
     await controller.onStart();
+    // A tool can finish after the user has already begun a newer turn. Its
+    // completion must not be re-labelled as that newer turn or reopen its mic.
+    controller.beginTurn('tool-origin-turn');
+    provider.fireToolCall({ callId: 'call_late' });
+    controller.beginTurn('newer-turn');
+    controller.toolResult({
+      sessionId: session.getState().sessionId ?? 'session',
+      at: 1_000,
+      source: 'realtime',
+      callId: 'call_late',
+      name: 'nexus_action',
+      tool: 'open_terminal',
+      ok: true,
+      summary: 'terminal abriu depois do novo turno',
+    });
+    provider.fireResponseDone();
+    expect(
+      events.filter((event) => event.channel === VOICE_CHANNELS.liveToolTurnComplete),
+    ).toHaveLength(0);
+
+    controller.beginTurn('tool-turn-1');
     provider.fireToolCall();
 
-    const toolCall = events.find((event) => event.channel === VOICE_CHANNELS.liveToolCall);
+    const toolCall = events.find(
+      (event) =>
+        event.channel === VOICE_CHANNELS.liveToolCall &&
+        (event.payload as { callId?: string }).callId === 'call_1',
+    );
     expect(toolCall?.payload).toMatchObject({
       source: 'realtime',
       callId: 'call_1',
@@ -949,6 +983,9 @@ describe('LiveTransportController', () => {
       args: { action: 'open_terminal' },
     });
 
+    // Gemini can synchronously finish a response while sendToolResult runs.
+    // The controller must have armed the renderer completion before that call.
+    provider.setSynchronousToolResponseDone();
     controller.toolResult({
       sessionId: session.getState().sessionId ?? 'session',
       at: 1001,
@@ -969,6 +1006,15 @@ describe('LiveTransportController', () => {
         summary: 'terminal aberto',
       }),
     );
+    const completions = events.filter(
+      (event) => event.channel === VOICE_CHANNELS.liveToolTurnComplete,
+    );
+    expect(completions).toHaveLength(1);
+    expect(completions[0]?.payload).toMatchObject({
+      sessionId: session.getState().sessionId,
+      turnId: 'tool-turn-1',
+      callId: 'call_1',
+    });
 
     vi.doUnmock('./voice-config-store');
     vi.doUnmock('./voice-secrets');

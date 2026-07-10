@@ -1,56 +1,113 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { initHandoffStore, submitHandoff } from '../orch/handoff-store';
-import { initJarvisNarrator, shutdownJarvisNarrator } from './jarvis-narrator';
+import type { Handoff } from '../../shared/orch-types';
+import type { ProjectExecutionScope } from '../../shared/types';
+import {
+  initJarvisNarrator,
+  shutdownJarvisNarrator,
+  type NarratorHandoffSource,
+} from './jarvis-narrator';
 
-// O narrador lê a config de voz (default routing 'jarvis') e o handoff-store.
 vi.mock('./voice-config-store', () => ({
   getVoiceConfig: () => ({ routing: 'jarvis' }),
 }));
 
+const scope: ProjectExecutionScope = Object.freeze({
+  version: 1,
+  installationId: 'install-a',
+  projectId: 'project-a',
+  checkoutId: 'checkout-a',
+  rootRealPath: '/workspace/a',
+  identitySource: 'manifest',
+});
+
+class FakeSource implements NarratorHandoffSource {
+  handoffs: Handoff[] = [];
+  listener: ((scope: ProjectExecutionScope) => void) | null = null;
+
+  onChange(listener: (scope: ProjectExecutionScope) => void): () => void {
+    this.listener = listener;
+    return () => {
+      this.listener = null;
+    };
+  }
+
+  list(): readonly Handoff[] {
+    return this.handoffs;
+  }
+
+  submit(input: Pick<Handoff, 'status' | 'summary' | 'fromAgent'>): void {
+    this.handoffs.push({
+      id: `handoff-${this.handoffs.length + 1}`,
+      ...input,
+      claimTrust: 'untrusted',
+      artifacts: [],
+      evidenceIds: [],
+      evidenceTrust: 'unverified',
+      delivered: false,
+      createdAt: Date.now(),
+    });
+    this.listener?.(scope);
+  }
+}
+
 afterEach(() => {
   shutdownJarvisNarrator();
-  initHandoffStore(null); // limpa o store em memória
   vi.useRealTimers();
 });
 
-describe('jarvis-narrator — baseline não é falado', () => {
-  it('NÃO narra histórico que hidrata após o init (o bug do boot)', () => {
+describe('jarvis-narrator scoped baseline', () => {
+  it('does not narrate history that appears after initialization', () => {
     vi.useFakeTimers();
-    vi.setSystemTime(5000);
-    initHandoffStore(null);
+    vi.setSystemTime(5_000);
+    const source = new FakeSource();
     const spoken: string[] = [];
-    // Narrador liga com a store vazia (ordem real do bootstrap). startedAt=5000.
-    initJarvisNarrator((_ch, payload) => spoken.push((payload as { text: string }).text));
+    initJarvisNarrator(
+      (_scope, _channel, payload) =>
+        spoken.push((payload as { text: string }).text),
+      source,
+    );
 
-    // Histórico hidrata DEPOIS, com createdAt no PASSADO (relógio recuado).
-    vi.setSystemTime(1000);
-    submitHandoff({ status: 'success', summary: 'Old worker result from history one', fromAgent: 'w1' });
-    submitHandoff({ status: 'success', summary: 'Old worker result from history two', fromAgent: 'w2' });
-    vi.setSystemTime(5000);
-    vi.advanceTimersByTime(2000);
+    vi.setSystemTime(1_000);
+    source.submit({
+      status: 'success',
+      summary: 'Old worker result from history one',
+      fromAgent: 'w1',
+    });
+    source.submit({
+      status: 'success',
+      summary: 'Old worker result from history two',
+      fromAgent: 'w2',
+    });
+    vi.setSystemTime(5_000);
+    vi.advanceTimersByTime(2_000);
 
-    expect(spoken).toEqual([]); // história nunca é falada
+    expect(spoken).toEqual([]);
   });
 
-  it('narra handoffs criados DEPOIS de o narrador ligar', () => {
+  it('narrates only fresh handoffs and preserves their project scope', () => {
     vi.useFakeTimers();
-    vi.setSystemTime(5000);
-    initHandoffStore(null);
-    const spoken: string[] = [];
-    initJarvisNarrator((_ch, payload) => spoken.push((payload as { text: string }).text));
+    vi.setSystemTime(5_000);
+    const source = new FakeSource();
+    const spoken: Array<{ projectId: string; text: string }> = [];
+    initJarvisNarrator(
+      (eventScope, _channel, payload) =>
+        spoken.push({
+          projectId: eventScope.projectId,
+          text: (payload as { text: string }).text,
+        }),
+      source,
+    );
 
-    // Histórico no passado → silêncio.
-    vi.setSystemTime(1000);
-    submitHandoff({ status: 'success', summary: 'History item that must stay silent', fromAgent: 'w1' });
-    vi.setSystemTime(5000);
-    vi.advanceTimersByTime(2000);
-    expect(spoken).toEqual([]);
+    vi.setSystemTime(12_000);
+    source.submit({
+      status: 'success',
+      summary: 'Fresh delivery the user should hear about',
+      fromAgent: 'builder',
+    });
+    vi.advanceTimersByTime(2_000);
 
-    // Entrega nova, já FORA da graça de boot (init em 5000 + 6000 = 11000).
-    vi.setSystemTime(12000);
-    submitHandoff({ status: 'success', summary: 'Fresh delivery the user should hear about', fromAgent: 'builder' });
-    vi.advanceTimersByTime(2000);
-    expect(spoken).toHaveLength(1);
-    expect(spoken[0]).toContain('builder');
+    expect(spoken).toEqual([
+      expect.objectContaining({ projectId: 'project-a', text: expect.stringContaining('builder') }),
+    ]);
   });
 });

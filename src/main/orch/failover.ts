@@ -1,7 +1,17 @@
 import type { WebContents } from 'electron';
 import { ACCOUNT_CHANNELS, type FailoverEvent } from '../../shared/account-types';
+import type { ProjectExecutionScope } from '../../shared/types';
 import { tapSessionData, tapSessionExit } from '../pty/pty-manager';
-import { stripAnsi, findPane } from './pane-registry';
+import {
+  getRendererWorkspaceScope,
+  onRendererWorkspaceScopeChange,
+} from '../persistence/renderer-workspace-scope';
+import {
+  stripAnsi,
+  findPaneBySessionOwnedBy,
+  getOwnedPaneAuthzInfoBySession,
+  type OwnedPaneAuthzInfo,
+} from './pane-registry';
 import { detectLimit } from './limit-detector';
 import {
   getAccount,
@@ -9,6 +19,7 @@ import {
   pickAvailable,
   setCooldown,
 } from '../persistence/account-store';
+import { broadcastToProject, sameProjectScope } from './project-scoped-broadcast';
 
 /**
  * Automatic account failover. Watches each pane's output for a limit signature
@@ -23,34 +34,161 @@ const WINDOW_CHARS = 4000;
 const REARM_MS = 30_000;
 
 interface SessionWatch {
+  readonly authority: FailoverAuthority;
   buffer: string;
   firedAt: number;
 }
 
+interface FailoverAuthority {
+  readonly owner: OwnedPaneAuthzInfo['owner'];
+  readonly paneId: string;
+  readonly sessionId: string;
+  readonly missionId?: string;
+  readonly scope: ProjectExecutionScope;
+}
+
 const watches = new Map<string, SessionWatch>();
 const listeners = new Set<WebContents>();
+const destroyHandlers = new Map<WebContents, () => void>();
+const ownerKeys = new WeakMap<WebContents, number>();
+let nextOwnerKey = 1;
+let untapData: (() => void) | null = null;
+let untapExit: (() => void) | null = null;
+let unsubscribeScopeChanges: (() => void) | null = null;
 
-export function registerFailoverListener(wc: WebContents): void {
-  listeners.add(wc);
-}
-export function unregisterFailoverListener(wc: WebContents): void {
-  listeners.delete(wc);
+function ownerKey(owner: WebContents): number {
+  const existing = ownerKeys.get(owner);
+  if (existing) return existing;
+  const key = nextOwnerKey++;
+  ownerKeys.set(owner, key);
+  return key;
 }
 
-function emitFailover(event: FailoverEvent): void {
-  for (const wc of listeners) {
-    if (!wc.isDestroyed()) wc.send(ACCOUNT_CHANNELS.failover, event);
+function watchKey(authority: FailoverAuthority): string {
+  return JSON.stringify([
+    ownerKey(authority.owner),
+    authority.scope.installationId,
+    authority.scope.projectId,
+    authority.scope.checkoutId,
+    authority.scope.rootRealPath,
+    authority.missionId ?? null,
+    authority.paneId,
+    authority.sessionId,
+  ]);
+}
+
+function resolveAuthority(sessionId: string): FailoverAuthority | null {
+  const pane = getOwnedPaneAuthzInfoBySession(sessionId);
+  const rendererScope = pane ? getRendererWorkspaceScope(pane.owner) : null;
+  if (
+    !pane ||
+    pane.sessionId !== sessionId ||
+    pane.kind !== 'cli-agent' ||
+    !pane.scope ||
+    !listeners.has(pane.owner) ||
+    !rendererScope ||
+    !sameProjectScope(rendererScope, pane.scope)
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    owner: pane.owner,
+    paneId: pane.paneId,
+    sessionId,
+    missionId: pane.missionId,
+    scope: Object.freeze({ ...pane.scope }),
+  });
+}
+
+function isCurrentAuthority(authority: FailoverAuthority): boolean {
+  const current = resolveAuthority(authority.sessionId);
+  return Boolean(
+    current &&
+      current.owner === authority.owner &&
+      current.paneId === authority.paneId &&
+      current.missionId === authority.missionId &&
+      sameProjectScope(current.scope, authority.scope),
+  );
+}
+
+function cleanupOwner(
+  owner: WebContents,
+  scope?: ProjectExecutionScope,
+): void {
+  for (const [key, watch] of [...watches]) {
+    if (
+      watch.authority.owner === owner &&
+      (!scope || sameProjectScope(watch.authority.scope, scope))
+    ) {
+      watches.delete(key);
+    }
   }
 }
 
-function handleChunk(sessionId: string, data: string, now: number): void {
-  const pane = findPane(sessionId);
-  if (!pane || pane.kind !== 'cli-agent' || !pane.adapterId) return;
+function ensureScopeChangeListener(): void {
+  if (unsubscribeScopeChanges) return;
+  unsubscribeScopeChanges = onRendererWorkspaceScopeChange(
+    (changedOwner, previous) => {
+      if (!previous) return;
+      for (const owner of listeners) {
+        if (owner.id === changedOwner.id) cleanupOwner(owner, previous);
+      }
+    },
+  );
+}
 
-  let watch = watches.get(sessionId);
+export function registerFailoverListener(wc: WebContents): void {
+  listeners.add(wc);
+  ensureScopeChangeListener();
+  if (destroyHandlers.has(wc)) return;
+  const onDestroyed = () => unregisterFailoverListener(wc);
+  destroyHandlers.set(wc, onDestroyed);
+  wc.once('destroyed', onDestroyed);
+}
+export function unregisterFailoverListener(wc: WebContents): void {
+  listeners.delete(wc);
+  const onDestroyed = destroyHandlers.get(wc);
+  if (onDestroyed) wc.removeListener('destroyed', onDestroyed);
+  destroyHandlers.delete(wc);
+  cleanupOwner(wc);
+  if (listeners.size === 0) {
+    unsubscribeScopeChanges?.();
+    unsubscribeScopeChanges = null;
+  }
+}
+
+function emitFailover(
+  authority: FailoverAuthority,
+  event: FailoverEvent,
+): void {
+  if (!isCurrentAuthority(authority)) return;
+  broadcastToProject(
+    [authority.owner],
+    authority.scope,
+    ACCOUNT_CHANNELS.failover,
+    event,
+  );
+}
+
+function handleChunk(sessionId: string, data: string, now: number): void {
+  const authority = resolveAuthority(sessionId);
+  if (!authority) return;
+  const pane = findPaneBySessionOwnedBy(authority.owner, sessionId);
+  if (
+    !pane ||
+    pane.paneId !== authority.paneId ||
+    pane.sessionId !== sessionId ||
+    pane.kind !== 'cli-agent' ||
+    !pane.adapterId
+  ) {
+    return;
+  }
+
+  const key = watchKey(authority);
+  let watch = watches.get(key);
   if (!watch) {
-    watch = { buffer: '', firedAt: 0 };
-    watches.set(sessionId, watch);
+    watch = { authority, buffer: '', firedAt: 0 };
+    watches.set(key, watch);
   }
   // Debounce: don't re-fire within REARM_MS of a switch.
   if (now - watch.firedAt < REARM_MS) return;
@@ -72,7 +210,7 @@ function handleChunk(sessionId: string, data: string, now: number): void {
   const next = pickAvailable(adapterId, current?.id ?? null, now);
 
   if (!next) {
-    emitFailover({
+    emitFailover(authority, {
       paneId: pane.paneId,
       fromAccountLabel: fromLabel,
       toAccountLabel: '',
@@ -82,7 +220,7 @@ function handleChunk(sessionId: string, data: string, now: number): void {
     return;
   }
 
-  emitFailover({
+  emitFailover(authority, {
     paneId: pane.paneId,
     fromAccountLabel: fromLabel,
     toAccountLabel: next.label,
@@ -93,12 +231,32 @@ function handleChunk(sessionId: string, data: string, now: number): void {
 }
 
 export function initFailover(): void {
-  tapSessionData((sessionId, data) => {
+  if (untapData) return;
+  untapData = tapSessionData((sessionId, data) => {
     try {
       handleChunk(sessionId, data, Date.now());
     } catch (err) {
       console.warn('[failover] tap error:', err);
     }
   });
-  tapSessionExit((sessionId) => watches.delete(sessionId));
+  untapExit = tapSessionExit((sessionId) => {
+    for (const [key, watch] of [...watches]) {
+      if (watch.authority.sessionId === sessionId) watches.delete(key);
+    }
+  });
+}
+
+export function shutdownFailover(): void {
+  untapData?.();
+  untapExit?.();
+  untapData = null;
+  untapExit = null;
+  watches.clear();
+  for (const [wc, onDestroyed] of destroyHandlers) {
+    wc.removeListener('destroyed', onDestroyed);
+  }
+  destroyHandlers.clear();
+  listeners.clear();
+  unsubscribeScopeChanges?.();
+  unsubscribeScopeChanges = null;
 }

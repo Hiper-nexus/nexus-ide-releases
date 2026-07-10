@@ -1,79 +1,122 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { app } from 'electron';
-import type { WorkspaceLayout } from '../../shared/types';
+import { z } from 'zod';
 import { workspaceLayoutSchema } from '../../shared/ipc';
-import { writeJsonAtomic } from '../util/atomic-write';
-import { getDb } from './db';
+import type { ProjectExecutionScope } from '../../shared/types';
+import type { WorkspaceLayout } from '../../shared/types';
+import {
+  ScopedStoreBinding,
+  ScopedStoreCorruptionError,
+  type ScopedEntity,
+  type ScopedStoreChangeListener,
+  type ScopedStoreOptions,
+} from '../orch/scoped-store';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 
-/**
- * Persists pane layouts PER WORKSPACE (each workspace folder owns its pane
- * arrangement; switching workspaces swaps layouts instead of dragging panes
- * across projects). A JSON map in userData
- * is the source of truth; a best-effort mirror is written into SQLite so the
- * schema stays warm for later phases.
- */
+const LAYOUT_SINGLETON_ID = 1;
+const MAX_LAYOUT_BYTES = 4 * 1_024 * 1_024;
 
-const WORKSPACE_ID = 1;
+const layoutRowSchema = z
+  .object({
+    layout_json: z.string(),
+    updated_at: z.number().int().nonnegative(),
+  })
+  .strict();
 
-interface LayoutFileShape {
-  byWorkspace: Record<string, unknown>;
+export type ScopedWorkspaceLayout = ScopedEntity<{
+  layout: WorkspaceLayout;
+  updatedAt: number;
+}>;
+
+type LayoutRow = z.infer<typeof layoutRowSchema>;
+
+function encodeLayout(rawLayout: WorkspaceLayout): string {
+  const layout = workspaceLayoutSchema.parse(rawLayout);
+  const serialized = JSON.stringify(layout);
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_LAYOUT_BYTES) {
+    throw new TypeError('workspace layout must be smaller than 4 MiB');
+  }
+  return serialized;
 }
 
-function layoutFile(): string {
-  return path.join(app.getPath('userData'), 'nexus-layout.json');
-}
-
-function readAll(): LayoutFileShape {
+function parsePersistedLayout(raw: string): WorkspaceLayout {
   try {
-    const raw = JSON.parse(fs.readFileSync(layoutFile(), 'utf8'));
-    if (raw && typeof raw.byWorkspace === 'object' && raw.byWorkspace) {
-      return raw as LayoutFileShape;
+    if (Buffer.byteLength(raw, 'utf8') > MAX_LAYOUT_BYTES) {
+      throw new Error('serialized layout exceeds 4 MiB');
     }
-  } catch {
-    // Missing or legacy single-layout file — start a fresh map.
+    return workspaceLayoutSchema.parse(JSON.parse(raw) as unknown);
+  } catch (error) {
+    throw new ScopedStoreCorruptionError('workspace layout', { cause: error });
   }
-  return { byWorkspace: {} };
 }
 
-export function saveLayout(
-  workspacePath: string,
-  layout: WorkspaceLayout,
-): { ok: boolean } {
-  const all = readAll();
-  all.byWorkspace[workspacePath] = layout;
-  const json = JSON.stringify(all);
+export class ScopedLayoutStore {
+  readonly #binding: ScopedStoreBinding;
 
-  try {
-    // Atômico (tmp + rename): crash no meio do write não corrompe o layout.
-    writeJsonAtomic(layoutFile(), all);
-  } catch (err) {
-    console.error('[nexus] failed to persist layout JSON:', err);
-    return { ok: false };
+  constructor(
+    runtimeManager: ProjectRuntimeManager,
+    scope: ProjectExecutionScope,
+    options: ScopedStoreOptions = {},
+  ) {
+    this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
   }
 
-  // Best-effort SQLite mirror; never blocks the primary path.
-  try {
-    const db = getDb();
-    db
-      ?.prepare(
-        `INSERT INTO workspace (id, layout_json, updated_at)
-         VALUES (?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET layout_json = excluded.layout_json,
-                                       updated_at  = excluded.updated_at`,
+  get scope(): ProjectExecutionScope {
+    return this.#binding.scope;
+  }
+
+  onChange(listener: ScopedStoreChangeListener): () => void {
+    return this.#binding.onChange(listener);
+  }
+
+  load(): ScopedWorkspaceLayout | null {
+    const rawRow = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT layout_json, updated_at
+         FROM workspace_layout
+         WHERE singleton = ?`,
       )
-      .run(WORKSPACE_ID, json, Date.now());
-  } catch (err) {
-    console.warn('[nexus] SQLite layout mirror failed:', err);
+      .get(LAYOUT_SINGLETON_ID);
+    if (rawRow === undefined) return null;
+
+    let row: LayoutRow;
+    try {
+      row = layoutRowSchema.parse(rawRow);
+    } catch (error) {
+      throw new ScopedStoreCorruptionError('workspace layout', { cause: error });
+    }
+    return {
+      layout: parsePersistedLayout(row.layout_json),
+      updatedAt: row.updated_at,
+      ...this.#binding.coordinates,
+    };
   }
 
-  return { ok: true };
+  save(rawLayout: WorkspaceLayout): ScopedWorkspaceLayout {
+    const layoutJson = encodeLayout(rawLayout);
+    const updatedAt = this.#binding.now();
+    this.#binding
+      .writeDatabase()
+      .prepare(
+        `INSERT INTO workspace_layout (singleton, layout_json, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(singleton) DO UPDATE SET
+           layout_json = excluded.layout_json,
+           updated_at = excluded.updated_at`,
+      )
+      .run(LAYOUT_SINGLETON_ID, layoutJson, updatedAt);
+    this.#binding.emitChange();
+    return {
+      layout: parsePersistedLayout(layoutJson),
+      updatedAt,
+      ...this.#binding.coordinates,
+    };
+  }
 }
 
-export function loadLayout(workspacePath: string): WorkspaceLayout | null {
-  const all = readAll();
-  const candidate = all.byWorkspace[workspacePath];
-  if (!candidate) return null;
-  const parsed = workspaceLayoutSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : null;
+export function createScopedLayoutStore(
+  runtimeManager: ProjectRuntimeManager,
+  scope: ProjectExecutionScope,
+  options: ScopedStoreOptions = {},
+): ScopedLayoutStore {
+  return new ScopedLayoutStore(runtimeManager, scope, options);
 }

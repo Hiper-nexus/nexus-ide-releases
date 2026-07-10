@@ -41,6 +41,10 @@ const NOTES_MAX_CHARS = 600;
 
 export type MacUpdateArchitecture = 'arm64' | 'x64';
 
+export function isMacUpdatePlatform(platform: string): platform is 'darwin' {
+  return platform === 'darwin';
+}
+
 export function macUpdateArchitecture(arch: string): MacUpdateArchitecture | null {
   return arch === 'arm64' || arch === 'x64' ? arch : null;
 }
@@ -55,7 +59,9 @@ export function parseGhRelease(
   raw: string,
   currentVersion: string,
   runtimeArch: string = process.arch,
+  runtimePlatform: string = process.platform,
 ): ParsedRelease | null {
+  if (!isMacUpdatePlatform(runtimePlatform)) return null;
   const arch = macUpdateArchitecture(runtimeArch);
   if (!arch) return null;
   let json: GhReleaseJson;

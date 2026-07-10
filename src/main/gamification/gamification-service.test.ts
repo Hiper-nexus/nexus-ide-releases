@@ -1,363 +1,558 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Db } from '../persistence/db';
-import { initHandoffStore, submitHandoff } from '../orch/handoff-store';
-import {
-  createMission,
-  initMissionStore,
-  setMissionStatus,
-} from '../orch/mission-store';
-import { createTask, initTaskStore, updateTask } from '../orch/task-store';
-import {
-  initMissionPaneStore,
-  recordMissionPane,
-} from '../orch/mission-pane-store';
-import { initSquadStore, saveSquad } from '../orch/squad-store';
-import { initUsageStore, recordUsage } from '../usage/usage-store';
-import { initMediaUsageStore } from '../usage/media-usage-store';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GAMIFICATION_CHANNELS } from '../../shared/gamification-types';
+import type { ProjectExecutionScope } from '../../shared/types';
+import { testProjectScope } from '../orch/__tests__/scope-fixture';
+import { ProjectDomainStoreRegistry } from '../orch/project-domain-store-registry';
+import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import {
+  INITIAL_PROJECT_MIGRATIONS,
+  createProjectMigration,
+} from '../runtime/project-runtime-schema';
 import { getMeta, listXpEvents } from './gamification-store';
 import {
-  buildSnapshot,
-  doPrestige,
   hasGreenEvidence,
-  initGamificationService,
-  recordMediaGeneratedForGamification,
-  recordJarvisActionForGamification,
-  shutdownGamificationService,
+  ProjectGamificationService,
 } from './gamification-service';
+import { createWorkflowState, type EvidenceBinding } from '../context/prevc-engine';
+import type { TrustedEvidence } from '../context/sensor-broker';
 
-// better-sqlite3 é módulo nativo; rebuildado p/ Electron não carrega no node
-// do vitest — os testes de SQL viram skip, não falha (padrão do repo).
-let sqlite: (new (file: string) => Db) | null = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  sqlite = require('better-sqlite3') as new (file: string) => Db;
-  new sqlite(':memory:').close();
-} catch {
-  sqlite = null;
+const GREEN_ARTIFACT = {
+  kind: 'verification',
+  command: 'npm test',
+  exitCode: 0,
+};
+const CONTEXT_REVISION = 'd'.repeat(64);
+const BASE_SHA = 'a'.repeat(40);
+const HEAD_SHA = 'b'.repeat(40);
+const DIFF_HASH = 'e'.repeat(64);
+
+let baseDir = '';
+const managers: ProjectRuntimeManager[] = [];
+const registries: ProjectDomainStoreRegistry[] = [];
+const services: ProjectGamificationService[] = [];
+
+function createManager(
+  options: Partial<ConstructorParameters<typeof ProjectRuntimeManager>[0]> = {},
+): ProjectRuntimeManager {
+  const runtimeManager = new ProjectRuntimeManager({
+    baseDir,
+    appVersion: '0.12.0-test',
+    ...options,
+  });
+  managers.push(runtimeManager);
+  return runtimeManager;
 }
 
-const GREEN_ARTIFACT = { kind: 'verification', command: 'npm test', exitCode: 0 };
+function createRegistry(
+  runtimeManager: ProjectRuntimeManager,
+): ProjectDomainStoreRegistry {
+  const registry = new ProjectDomainStoreRegistry(runtimeManager);
+  registries.push(registry);
+  return registry;
+}
 
-describe('hasGreenEvidence (puro)', () => {
-  it('extrai comando com exit 0; senão null', () => {
+function createService(
+  runtimeManager: ProjectRuntimeManager,
+  registry: ProjectDomainStoreRegistry,
+  options: {
+    sober?: boolean;
+    agentCategory?: (agentName: string) => string | null;
+  } = {},
+) {
+  const broadcast = vi.fn();
+  const service = new ProjectGamificationService({
+    runtimeManager,
+    domainStores: registry,
+    broadcast,
+    soberMode: () => options.sober ?? false,
+    agentCategory: options.agentCategory,
+  });
+  services.push(service);
+  service.start();
+  return { service, broadcast };
+}
+
+function boot(options: { sober?: boolean } = {}) {
+  const runtimeManager = createManager();
+  const registry = createRegistry(runtimeManager);
+  const created = createService(runtimeManager, registry, options);
+  return { runtimeManager, registry, ...created };
+}
+
+function scope(
+  projectId = 'project-a',
+  checkoutId = 'checkout-main',
+): ProjectExecutionScope {
+  return testProjectScope({
+    projectId,
+    checkoutId,
+    rootRealPath: `/workspace/${projectId}/${checkoutId}`,
+  });
+}
+
+function narrations(broadcast: ReturnType<typeof vi.fn>): string[] {
+  return broadcast.mock.calls
+    .filter(([, channel]) => channel === 'voice:narrate')
+    .map(([, , payload]) => (payload as { text: string }).text);
+}
+
+function xpEvents(
+  runtimeManager: ProjectRuntimeManager,
+  executionScope: ProjectExecutionScope,
+) {
+  return listXpEvents(runtimeManager.open(executionScope).db);
+}
+
+function recordCheapUsage(
+  runtimeManager: ProjectRuntimeManager,
+  executionScope: ProjectExecutionScope,
+  missionId: string,
+): void {
+  runtimeManager
+    .open(executionScope)
+    .db.prepare(
+      `INSERT INTO usage_events
+         (id, mission_id, pane_id, provider, model, event_type, input_units,
+          output_units, cost_micros, metadata_json, occurred_at)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, '{}', ?)`,
+    )
+    .run(
+      `usage-${missionId}`,
+      missionId,
+      'anthropic',
+      'claude-sonnet',
+      'tokens',
+      10_000,
+      10_000,
+      10_000,
+      Date.now(),
+    );
+}
+
+function seedTrustedEvidence(
+  runtimeManager: ProjectRuntimeManager,
+  executionScope: ProjectExecutionScope,
+  missionId: string,
+  evidenceId: string,
+): void {
+  const contractHash = createHash('sha256').update(missionId).digest('hex');
+  const binding: EvidenceBinding = {
+    projectId: executionScope.projectId,
+    checkoutId: executionScope.checkoutId,
+    missionId,
+    contractHash,
+    contextHash: CONTEXT_REVISION,
+    baseSha: BASE_SHA,
+    headSha: HEAD_SHA,
+    diffHash: DIFF_HASH,
+  };
+  const workflow = createWorkflowState('low', binding);
+  const evidence: TrustedEvidence = {
+    id: evidenceId,
+    producer: 'nexus',
+    ...binding,
+    sensorId: 'unit',
+    sensorConfigHash: 'f'.repeat(64),
+    command: ['npm', 'test'],
+    exitCode: 0,
+    stdoutHash: '1'.repeat(64),
+    stderrHash: '2'.repeat(64),
+    timedOut: false,
+    truncated: false,
+    startedAt: '2026-07-10T00:00:00.000Z',
+    finishedAt: '2026-07-10T00:00:01.000Z',
+  };
+  const db = runtimeManager.open(executionScope).db;
+  db.prepare(
+    `INSERT INTO mission_contracts
+       (mission_id, revision, contract_hash, context_revision, contract_json,
+        author_id, author_session_id, author_provider, frozen_at)
+     VALUES (?, 1, ?, ?, '{}', 'author', 'session', 'codex', 1)`,
+  ).run(missionId, contractHash, CONTEXT_REVISION);
+  db.prepare(
+    `INSERT INTO workflow_states
+       (mission_id, revision, stage, workflow_json, updated_at)
+     VALUES (?, ?, ?, ?, 1)`,
+  ).run(missionId, workflow.revision, workflow.stage, JSON.stringify(workflow));
+  db.prepare(
+    `INSERT INTO sensor_evidence
+       (id, mission_id, sensor_id, head_sha, diff_hash, passed,
+        evidence_json, created_at)
+     VALUES (?, ?, ?, ?, ?, 1, ?, 1)`,
+  ).run(
+    evidenceId,
+    missionId,
+    evidence.sensorId,
+    HEAD_SHA,
+    DIFF_HASH,
+    JSON.stringify(evidence),
+  );
+}
+
+beforeEach(() => {
+  baseDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'nexus-gamification-service-'),
+  );
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  for (const service of services.splice(0)) service.dispose();
+  for (const registry of registries.splice(0)) registry.dispose();
+  for (const runtimeManager of managers.splice(0)) runtimeManager.closeAll();
+  fs.rmSync(baseDir, { recursive: true, force: true });
+});
+
+describe('hasGreenEvidence', () => {
+  it('accepts only successful verification artifacts', () => {
     expect(hasGreenEvidence([GREEN_ARTIFACT])).toBe('npm test (exit 0)');
-    expect(hasGreenEvidence([{ kind: 'verification', command: 'x', exitCode: 1 }])).toBeNull();
-    expect(hasGreenEvidence([{ kind: 'file', path: 'a.ts' }, 'texto', null])).toBeNull();
-    expect(hasGreenEvidence([])).toBeNull();
+    expect(
+      hasGreenEvidence([
+        { kind: 'verification', command: 'npm test', exitCode: 1 },
+      ]),
+    ).toBeNull();
+    expect(hasGreenEvidence([{ kind: 'file', path: 'a.ts' }, null])).toBeNull();
   });
 });
 
-// Subconjunto do schema real (persistence/db.ts) usado pelos stores orch.
-const ORCH_TABLES = `
-CREATE TABLE IF NOT EXISTS squads (
-  id                        TEXT PRIMARY KEY,
-  name                      TEXT NOT NULL,
-  created_at                TEXT NOT NULL,
-  builtin                   INTEGER NOT NULL DEFAULT 0,
-  orchestrator_instructions TEXT NOT NULL DEFAULT '',
-  native_instructions       TEXT NOT NULL DEFAULT '',
-  roster_json               TEXT NOT NULL DEFAULT '[]'
-);
-CREATE TABLE IF NOT EXISTS missions (
-  id              TEXT PRIMARY KEY,
-  title           TEXT NOT NULL,
-  description     TEXT NOT NULL DEFAULT '',
-  status          TEXT NOT NULL,
-  squad_id        TEXT,
-  milestones_json TEXT NOT NULL DEFAULT '[]',
-  orch_session_id TEXT,
-  created_at      INTEGER NOT NULL,
-  updated_at      INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS mission_panes (
-  id         TEXT PRIMARY KEY,
-  mission_id TEXT NOT NULL,
-  adapter_id TEXT NOT NULL,
-  model      TEXT,
-  account_id TEXT,
-  effort     TEXT,
-  cwd        TEXT,
-  title      TEXT NOT NULL,
-  agent_name TEXT,
-  role       TEXT NOT NULL DEFAULT 'worker',
-  pane_id    TEXT,
-  created_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS handoffs (
-  id             TEXT PRIMARY KEY,
-  mission_id     TEXT,
-  session_id     TEXT,
-  from_agent     TEXT,
-  status         TEXT NOT NULL,
-  summary        TEXT NOT NULL,
-  artifacts_json TEXT NOT NULL DEFAULT '[]',
-  delivered      INTEGER NOT NULL DEFAULT 0,
-  created_at     INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS tasks (
-  id         TEXT PRIMARY KEY,
-  mission_id TEXT,
-  title      TEXT NOT NULL,
-  detail     TEXT NOT NULL DEFAULT '',
-  status     TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-`;
+describe('ProjectGamificationService on scoped runtimes', () => {
+  it('awards only Nexus-trusted handoffs and ignores self-reported success', () => {
+    const { runtimeManager, registry } = boot();
+    const executionScope = scope();
+    const suite = registry.forScope(executionScope);
 
-describe.skipIf(!sqlite)('gamification-service (SQLite real)', () => {
-  afterEach(() => {
-    shutdownGamificationService();
-  });
-
-  function makeDb(): Db {
-    const db = new (sqlite as new (file: string) => Db)(':memory:');
-    db.exec(ORCH_TABLES);
-    initUsageStore(db);
-    initMediaUsageStore(db);
-    return db;
-  }
-
-  /** Hidrata os stores singleton do orch a partir do db do teste. */
-  function bootStores(db: Db): void {
-    initSquadStore(db);
-    initMissionStore(db);
-    initMissionPaneStore(db);
-    initHandoffStore(db);
-    initTaskStore(db);
-  }
-
-  function bootService(db: Db, over: { sober?: boolean } = {}) {
-    const broadcast = vi.fn();
-    initGamificationService({
-      db,
-      broadcast,
-      now: () => Date.now(),
-      soberMode: () => over.sober ?? false,
-    });
-    return { broadcast };
-  }
-
-  function narrations(broadcast: ReturnType<typeof vi.fn>): string[] {
-    return broadcast.mock.calls
-      .filter(([channel]) => channel === 'voice:narrate')
-      .map(([, payload]) => (payload as { text: string }).text);
-  }
-
-  it('handoff success SEM evidência vira handoff_success (peso simples)', () => {
-    const db = makeDb();
-    bootStores(db);
-    bootService(db);
-    const h = submitHandoff({ status: 'success', summary: 'entrega simples de teste' });
-    const events = listXpEvents(db);
-    expect(events).toHaveLength(1);
-    expect(events[0].kind).toBe('handoff_success');
-    expect(events[0].entityKey).toBe(`handoff:${h.id}`);
-    expect(events[0].points).toBe(3_000);
-    db.close();
-  });
-
-  it('handoff success COM evidência vira handoff_green (com evidência gravada)', () => {
-    const db = makeDb();
-    bootStores(db);
-    bootService(db);
-    submitHandoff({
+    const mission = suite.missions.create({ title: 'Entrega confiável' });
+    seedTrustedEvidence(runtimeManager, executionScope, mission.id, 'evidence-green');
+    const untrusted = suite.handoffs.submit({
       status: 'success',
-      summary: 'entrega verificada de teste',
-      artifacts: [GREEN_ARTIFACT],
+      summary: 'entrega simples de teste',
     });
-    const events = listXpEvents(db);
+    const trusted = suite.handoffs.submit({
+      status: 'success',
+      summary: 'entrega verde de teste',
+      missionId: mission.id,
+      evidenceIds: ['evidence-green'],
+    });
+    suite.handoffs.submit({
+      status: 'failed',
+      summary: 'tentativa que falhou',
+    });
+
+    const events = xpEvents(runtimeManager, executionScope);
     expect(events).toHaveLength(1);
-    expect(events[0].kind).toBe('handoff_green');
-    expect(events[0].points).toBe(8_000);
-    expect(events[0].evidence).toBe('npm test (exit 0)');
-    // failed/blocked não pontuam
-    submitHandoff({ status: 'failed', summary: 'tentativa que falhou mesmo' });
-    expect(listXpEvents(db)).toHaveLength(1);
-    db.close();
+    expect(events.find((event) => event.entityKey === `handoff:${untrusted.id}`))
+      .toBeUndefined();
+    expect(events.find((event) => event.kind === 'handoff_green')).toEqual(
+      expect.objectContaining({
+        entityKey: `handoff:${trusted.id}`,
+        points: 8_000,
+        evidence: 'evidence-green',
+      }),
+    );
   });
 
-  it('missão done com handoff verde + custo na banda = mission_green com bônus', () => {
-    const db = makeDb();
-    bootStores(db);
-    bootService(db);
-    const m = createMission({ title: 'Missão eficiente' });
-    recordMissionPane({ missionId: m.id, adapterId: 'claude', effort: 'medium' });
-    // custo real barato (bem abaixo da banda medium de US$0.75)
-    recordUsage(db, {
-      sessionId: 's1',
-      messageId: 'msg-1',
-      model: 'claude-sonnet-5',
-      inputTokens: 10_000,
-      outputTokens: 10_000,
-      cacheReadTokens: 0,
-      cacheWrite5mTokens: 0,
-      cacheWrite1hTokens: 0,
-      timestamp: 1,
-      missionId: m.id,
+  it('awards the existing mission green efficiency score from local usage', () => {
+    const { runtimeManager, registry, service } = boot();
+    const executionScope = scope();
+    const suite = registry.forScope(executionScope);
+    const mission = suite.missions.create({ title: 'Missão eficiente' });
+    suite.missionPanes.record({
+      missionId: mission.id,
+      adapterId: 'claude',
+      effort: 'medium',
     });
-    submitHandoff({
+    recordCheapUsage(runtimeManager, executionScope, mission.id);
+    seedTrustedEvidence(
+      runtimeManager,
+      executionScope,
+      mission.id,
+      'evidence-efficient',
+    );
+    suite.handoffs.submit({
       status: 'success',
       summary: 'implementação verificada da missão',
-      artifacts: [GREEN_ARTIFACT],
-      missionId: m.id,
+      missionId: mission.id,
+      evidenceIds: ['evidence-efficient'],
     });
-    setMissionStatus(m.id, 'done');
-    const mission = listXpEvents(db).find((e) => e.entityKey === `mission:${m.id}`);
-    expect(mission?.kind).toBe('mission_green');
-    // 25000 × effort medium (1) × diminishing(0) × (1 + bônus 0.5) = 37500
-    expect(mission?.points).toBe(37_500);
-    expect(buildSnapshot().counters.efficient_mission).toBe(1);
-    db.close();
+    suite.missions.update(mission.id, { status: 'done' });
+
+    const event = xpEvents(runtimeManager, executionScope).find(
+      (candidate) => candidate.entityKey === `mission:${mission.id}`,
+    );
+    expect(event).toEqual(
+      expect.objectContaining({ kind: 'mission_green', points: 37_500 }),
+    );
+    expect(service.snapshot(executionScope).counters.efficient_mission).toBe(1);
   });
 
-  it('idempotência: re-varredura não duplica eventos nem re-narra conquista', () => {
-    const db = makeDb();
-    bootStores(db);
-    const { broadcast } = bootService(db);
-    submitHandoff({
-      status: 'success',
-      summary: 'primeira entrega verificada',
-      artifacts: [GREEN_ARTIFACT],
-    });
-    const eventsAfterFirst = listXpEvents(db).length;
-    const narratedAfterFirst = narrations(broadcast).length;
-    // nova mudança de store re-varre tudo; nada novo a pontuar
-    submitHandoff({ status: 'partial', summary: 'progresso parcial reportado' });
-    expect(listXpEvents(db)).toHaveLength(eventsAfterFirst);
-    expect(narrations(broadcast)).toHaveLength(narratedAfterFirst);
-    db.close();
-  });
+  it('is idempotent and narrates level-up only outside sober mode', () => {
+    const { runtimeManager, registry, service, broadcast } = boot();
+    const executionScope = scope();
+    const suite = registry.forScope(executionScope);
 
-  it('level-up narra "Subiu para INICIADO."; modo sóbrio suprime narração', () => {
-    const db = makeDb();
-    bootStores(db);
-    const { broadcast } = bootService(db);
-    for (let i = 0; i < 4; i += 1) {
-      const m = createMission({ title: `Missão ${i}` });
-      submitHandoff({
+    for (let index = 0; index < 4; index += 1) {
+      const mission = suite.missions.create({ title: `Missão ${index}` });
+      const evidenceId = `evidence-level-${index}`;
+      seedTrustedEvidence(runtimeManager, executionScope, mission.id, evidenceId);
+      suite.handoffs.submit({
         status: 'success',
-        summary: `entrega verificada da missão ${i}`,
-        artifacts: [GREEN_ARTIFACT],
-        missionId: m.id,
+        summary: `entrega verificada ${index}`,
+        missionId: mission.id,
+        evidenceIds: [evidenceId],
       });
-      setMissionStatus(m.id, 'done');
+      suite.missions.update(mission.id, { status: 'done' });
     }
-    // 4×25000 (missões) + 4×8000 (handoffs) = 132000 ≥ 100000 (INICIADO)
-    expect(buildSnapshot().tier).toBe('INICIADO');
+    const beforeDuplicateScan = service.snapshot(executionScope);
+    suite.handoffs.submit({
+      status: 'partial',
+      summary: 'mudança que força nova varredura',
+    });
+
+    expect(service.snapshot(executionScope).powerLevel).toBe(
+      beforeDuplicateScan.powerLevel,
+    );
+    expect(service.snapshot(executionScope).tier).toBe('INICIADO');
     expect(narrations(broadcast)).toContain('Subiu para INICIADO.');
-    shutdownGamificationService();
 
-    // Mesmo jogo em modo sóbrio: XP acumula, voz fica muda.
-    const db2 = makeDb();
-    bootStores(db2);
-    const { broadcast: b2 } = bootService(db2, { sober: true });
-    const m = createMission({ title: 'Missão silenciosa' });
-    submitHandoff({
+    const quiet = boot({ sober: true });
+    const quietScope = scope('project-quiet', 'main');
+    const quietSuite = quiet.registry.forScope(quietScope);
+    const quietMission = quietSuite.missions.create({ title: 'Missão silenciosa' });
+    seedTrustedEvidence(
+      quiet.runtimeManager,
+      quietScope,
+      quietMission.id,
+      'evidence-quiet',
+    );
+    quietSuite.handoffs.submit({
       status: 'success',
-      summary: 'entrega verificada em silêncio',
-      artifacts: [GREEN_ARTIFACT],
-      missionId: m.id,
+      summary: 'entrega silenciosa',
+      missionId: quietMission.id,
+      evidenceIds: ['evidence-quiet'],
     });
-    setMissionStatus(m.id, 'done');
-    expect(listXpEvents(db2).length).toBeGreaterThan(0);
-    expect(narrations(b2)).toHaveLength(0);
-    db.close();
-    db2.close();
+    expect(quiet.service.snapshot(quietScope).powerLevel).toBe(8_000);
+    expect(narrations(quiet.broadcast)).toEqual([]);
   });
 
-  it('retro: replay marca replayDone, usa peso simples e NUNCA narra', () => {
-    const db = makeDb();
-    bootStores(db);
-    // histórico pré-existente ANTES do service nascer
-    const m = createMission({ title: 'Missão antiga' });
-    setMissionStatus(m.id, 'done');
-    submitHandoff({
+  it('replays existing history once with simple retro weights and no voice', () => {
+    const runtimeManager = createManager();
+    const registry = createRegistry(runtimeManager);
+    const executionScope = scope();
+    const suite = registry.forScope(executionScope);
+    const mission = suite.missions.create({ title: 'Missão antiga' });
+    suite.missions.update(mission.id, { status: 'done' });
+    seedTrustedEvidence(
+      runtimeManager,
+      executionScope,
+      mission.id,
+      'evidence-retro',
+    );
+    suite.handoffs.submit({
       status: 'success',
-      summary: 'entrega antiga com evidência',
-      artifacts: [GREEN_ARTIFACT],
-      missionId: m.id,
+      summary: 'entrega histórica com evidência',
+      missionId: mission.id,
+      evidenceIds: ['evidence-retro'],
     });
-    const t = createTask({ title: 'Task antiga' });
-    updateTask(t.id, { status: 'done' });
+    const task = suite.tasks.create({ title: 'Task antiga' });
+    suite.tasks.update(task.id, { status: 'done' });
 
-    const { broadcast } = bootService(db);
-    expect(getMeta(db, 'replayDone')).toBe('1');
+    const { service, broadcast } = createService(runtimeManager, registry);
+    const db = runtimeManager.open(executionScope).db;
     const events = listXpEvents(db);
-    const byKey = new Map(events.map((e) => [e.entityKey, e]));
-    // verde histórico NÃO existe: peso simples, mesmo com artifact compatível
-    expect(byKey.get(`mission:${m.id}`)?.kind).toBe('mission_done');
-    expect(byKey.get(`mission:${m.id}`)?.points).toBe(10_000);
-    expect(byKey.get(`mission:${m.id}`)?.retro).toBe(true);
-    expect(events.find((e) => e.kind === 'handoff_success')?.points).toBe(3_000);
-    expect(byKey.get(`task_done:${t.id}`)?.points).toBe(5_000);
-    expect(narrations(broadcast)).toHaveLength(0);
-    db.close();
+    const byKey = new Map(events.map((event) => [event.entityKey, event]));
+
+    expect(getMeta(db, 'replayDone')).toBe('1');
+    expect(byKey.get(`mission:${mission.id}`)).toEqual(
+      expect.objectContaining({ kind: 'mission_done', points: 10_000, retro: true }),
+    );
+    expect(events.find((event) => event.kind === 'handoff_success')?.points)
+      .toBe(3_000);
+    expect(byKey.get(`task_done:${task.id}`)?.points).toBe(5_000);
+    expect(narrations(broadcast)).toEqual([]);
+
+    service.runRetroReplayOnce(executionScope);
+    expect(listXpEvents(db)).toHaveLength(events.length);
   });
 
-  it('snapshot completo: streak, conquistas, skins, counters por categoria', () => {
-    // Só timers falsos (Date real): deixa o broadcast coalescido de 1s disparar.
+  it('builds snapshot, achievements and coalesced scope-bearing changes', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const db = makeDb();
-    bootStores(db);
-    saveSquad({
-      id: 'squad-teste',
-      name: 'Squad Teste',
-      createdAt: '2026-07-06',
-      agents: [
-        { id: 'ag-rev', agentName: 'revisora', category: 'reviewer', cli: 'claude' },
-      ],
+    const runtimeManager = createManager();
+    const registry = createRegistry(runtimeManager);
+    const { service, broadcast } = createService(runtimeManager, registry, {
+      agentCategory: (agentName) =>
+        agentName === 'revisora' ? 'reviewer' : null,
     });
-    const { broadcast } = bootService(db);
-    submitHandoff({
+    const executionScope = scope();
+    const suite = registry.forScope(executionScope);
+    const mission = suite.missions.create({ title: 'Revisão confiável' });
+    seedTrustedEvidence(
+      runtimeManager,
+      executionScope,
+      mission.id,
+      'evidence-reviewer',
+    );
+    suite.handoffs.submit({
       status: 'success',
-      summary: 'revisão verificada e entregue',
-      artifacts: [GREEN_ARTIFACT],
+      summary: 'revisão verde',
       fromAgent: 'revisora',
+      missionId: mission.id,
+      evidenceIds: ['evidence-reviewer'],
     });
-    const t = createTask({ title: 'Feature' });
-    updateTask(t.id, { status: 'done' });
-    recordMediaGeneratedForGamification('image', null);
+    const task = suite.tasks.create({ title: 'Feature' });
+    suite.tasks.update(task.id, { status: 'done' });
+    service.recordMediaGenerated(executionScope, 'image', null);
+    service.recordJarvisAction(executionScope, 'open_terminal', true);
 
-    const snap = buildSnapshot();
-    // 8000 (handoff_green) + 5000 (task_done) + 1000 (media) = 14000
-    expect(snap.powerLevel).toBe(14_000);
-    expect(snap.tier).toBe('RECRUTA');
-    expect(snap.tierFloor).toBe('RECRUTA');
-    expect(snap.nextTierAt).toBe(100_000);
-    expect(snap.streakDays).toBe(1);
-    expect(snap.shieldsLeft).toBe(2);
-    expect(snap.counters.deliveries_reviewer).toBe(1);
-    expect(snap.counters.media_image).toBe(1);
-    expect(snap.achievements).toContain('primeira-imagem');
-    expect(snap.prestige).toBe(0);
-    expect(snap.prestigeReady).toBe(false);
-    expect(snap.ruleVersion).toBe(1);
-    expect(narrations(broadcast)).toContain('Conquista desbloqueada: Pintor Pixel.');
-    // prestígio bloqueado antes de LENDA+limiar: no-op
-    expect(doPrestige().prestige).toBe(0);
-    // broadcast de snapshot usa o canal changed (coalescido em 1s)
+    const snapshot = service.snapshot(executionScope);
+    expect(snapshot).toEqual(
+      expect.objectContaining({
+        powerLevel: 15_500,
+        tier: 'RECRUTA',
+        tierFloor: 'RECRUTA',
+        nextTierAt: 100_000,
+        streakDays: 1,
+        shieldsLeft: 2,
+        prestige: 0,
+        prestigeReady: false,
+        ruleVersion: 1,
+        projectId: executionScope.projectId,
+        checkoutId: executionScope.checkoutId,
+        rootRealPath: executionScope.rootRealPath,
+      }),
+    );
+    expect(snapshot.counters.deliveries_reviewer).toBe(1);
+    expect(snapshot.counters.media_image).toBe(1);
+    expect(snapshot.achievements).toEqual(
+      expect.arrayContaining(['primeira-imagem', 'primeiro-comando']),
+    );
+    expect(service.prestige(executionScope).prestige).toBe(0);
+
     vi.advanceTimersByTime(1_100);
-    const channels = broadcast.mock.calls.map(([c]) => c);
-    expect(channels).toContain(GAMIFICATION_CHANNELS.changed);
-    vi.useRealTimers();
-    db.close();
+    expect(broadcast).toHaveBeenCalledWith(
+      executionScope,
+      GAMIFICATION_CHANNELS.changed,
+      expect.objectContaining({ projectId: executionScope.projectId }),
+    );
   });
 
-  it('ação da Jarvis concluída gera jarvis_action e conquista Às Ordens', () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-07-07T12:00:00Z'));
-    const db = makeDb();
-    bootService(db);
-    const before = buildSnapshot().powerLevel;
-    recordJarvisActionForGamification('open_terminal', true);
-    recordJarvisActionForGamification('open_terminal', true);
-    const snap = buildSnapshot();
-    expect(snap.powerLevel).toBe(before + 3_000);
-    expect(snap.counters.jarvis_action).toBe(2);
-    expect(snap.achievements).toContain('primeiro-comando');
-    vi.useRealTimers();
-    db.close();
+  it('physically isolates projects and checkouts with no process fallback', () => {
+    const { runtimeManager, registry, service, broadcast } = boot();
+    const scopeA = scope('project-a', 'main');
+    const scopeB = scope('project-b', 'main');
+    const scopeAFeature = scope('project-a', 'feature');
+
+    const suiteA = registry.forScope(scopeA);
+    const missionA = suiteA.missions.create({ title: 'Somente projeto A' });
+    seedTrustedEvidence(
+      runtimeManager,
+      scopeA,
+      missionA.id,
+      'evidence-project-a',
+    );
+    suiteA.handoffs.submit({
+      status: 'success',
+      summary: 'somente projeto A',
+      missionId: missionA.id,
+      evidenceIds: ['evidence-project-a'],
+    });
+
+    expect(service.snapshot(scopeA).powerLevel).toBe(8_000);
+    expect(service.snapshot(scopeB).powerLevel).toBe(0);
+    expect(service.snapshot(scopeAFeature).powerLevel).toBe(0);
+    expect(xpEvents(runtimeManager, scopeB)).toEqual([]);
+    expect(xpEvents(runtimeManager, scopeAFeature)).toEqual([]);
+    expect(runtimeManager.open(scopeA).databasePath).not.toBe(
+      runtimeManager.open(scopeB).databasePath,
+    );
+    expect(runtimeManager.open(scopeA).databasePath).not.toBe(
+      runtimeManager.open(scopeAFeature).databasePath,
+    );
+    expect(
+      broadcast.mock.calls
+        .filter(([, channel]) => channel === 'voice:narrate')
+        .every(([emittedScope]) => emittedScope.projectId === 'project-a'),
+    ).toBe(true);
+  });
+
+  it('rejects cross-scope profile imports', () => {
+    const { registry, service } = boot();
+    const scopeA = scope('project-a', 'main');
+    const scopeB = scope('project-b', 'main');
+    registry.forScope(scopeA).handoffs.submit({
+      status: 'success',
+      summary: 'perfil do A',
+      artifacts: [GREEN_ARTIFACT],
+    });
+
+    const exported = service.exportProfile(scopeA);
+    expect(service.importProfile(scopeB, exported)).toEqual({
+      ok: false,
+      error: 'Perfil pertence a outro projeto/checkout ou é inválido.',
+    });
+    expect(service.snapshot(scopeB).powerLevel).toBe(0);
+  });
+
+  it('rolls back XP when derived metadata cannot be persisted', () => {
+    const { runtimeManager, service } = boot();
+    const executionScope = scope('project-atomic', 'main');
+    const db = runtimeManager.open(executionScope).db;
+    service.snapshot(executionScope);
+    db.exec(`
+      CREATE TRIGGER reject_achievements
+      BEFORE INSERT ON gamification_meta
+      WHEN NEW.key = 'achievements'
+      BEGIN
+        SELECT RAISE(ABORT, 'derived metadata rejected');
+      END;
+    `);
+
+    expect(() =>
+      service.recordJarvisAction(executionScope, 'open_terminal', true),
+    ).toThrow(/derived metadata rejected/i);
+    expect(listXpEvents(db)).toEqual([]);
+    expect(getMeta(db, 'achievements')).toBeNull();
+  });
+
+  it('serves reads but fails every mutation in safe-read-only mode', () => {
+    const executionScope = scope('project-safe', 'main');
+    const writerManager = createManager();
+    const writerRegistry = createRegistry(writerManager);
+    const writer = createService(writerManager, writerRegistry).service;
+    writer.recordJarvisAction(executionScope, 'open_terminal', true);
+    const exported = writer.exportProfile(executionScope);
+    expect(writer.snapshot(executionScope).powerLevel).toBe(1_500);
+    writer.dispose();
+    writerRegistry.dispose();
+    writerManager.closeAll();
+
+    const changedFirst = createProjectMigration({
+      ...INITIAL_PROJECT_MIGRATIONS[0],
+      sql: `${INITIAL_PROJECT_MIGRATIONS[0].sql}\n-- checksum changed`,
+    });
+    const readerManager = createManager({
+      migrations: [changedFirst, ...INITIAL_PROJECT_MIGRATIONS.slice(1)],
+    });
+    const readerRegistry = createRegistry(readerManager);
+    const reader = createService(readerManager, readerRegistry).service;
+
+    expect(readerManager.open(executionScope).mode).toBe('safe-read-only');
+    expect(reader.snapshot(executionScope).powerLevel).toBe(1_500);
+    expect(reader.exportProfile(executionScope).events).toHaveLength(1);
+    expect(() =>
+      reader.recordJarvisAction(executionScope, 'open_terminal', true),
+    ).toThrow(/safe read-only/i);
+    expect(() => reader.recordMediaGenerated(executionScope, 'image', null))
+      .toThrow(/safe read-only/i);
+    expect(() => reader.selectSkin(executionScope, null)).toThrow(
+      /safe read-only/i,
+    );
+    expect(() => reader.prestige(executionScope)).toThrow(/safe read-only/i);
+    expect(() => reader.importProfile(executionScope, exported)).toThrow(
+      /safe read-only/i,
+    );
   });
 });

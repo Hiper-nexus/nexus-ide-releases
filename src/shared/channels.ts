@@ -24,6 +24,33 @@ export const BROWSER_CHANNELS = {
   reload: 'browser:reload',
   stop: 'browser:stop',
   state: 'browser:state',
+  /** invoke: renderer → main. Toggle the in-page design-mode picker. */
+  designMode: 'browser:designMode',
+  /** event: main → renderer. Validated design event (selection/mode) of an
+   * owned pane — the page→main leg rides browser:design-event no preload. */
+  designEvent: 'browser:designEvent',
+  /** invoke: renderer → main. Push the current selection context into an
+   * agent CLI pane's PTY ("enviar seleção pro agente"). */
+  designSend: 'browser:designSend',
+  /** invoke: renderer → main. Optimistic style preview in the page (F2). */
+  designPreview: 'browser:designPreview',
+  /** invoke: renderer → main. Clear one/all style previews of a pane (F2). */
+  designPreviewClear: 'browser:designPreviewClear',
+} as const;
+
+export const DEV_SERVER_CHANNELS = {
+  /** event: main → renderer. A PTY pane announced a local dev-server URL. */
+  detected: 'devserver:detected',
+} as const;
+
+export const DESIGN_WRITEBACK_CHANNELS = {
+  /** invoke: renderer → main. Status do write-back p/ o workspace ativo. */
+  status: 'design:status',
+  start: 'design:start',
+  stop: 'design:stop',
+  action: 'design:action',
+  undo: 'design:undo',
+  redo: 'design:redo',
 } as const;
 
 export const PERF_CHANNELS = {

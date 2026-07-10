@@ -3,6 +3,59 @@
  * Fase 5 Jarvis Vision: screen capture + AX tree + OCR.
  */
 
+const VISIBLE_SECRET_REDACTED = '[REDACTED]';
+const PRIVATE_KEY_RE =
+  /-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----[\s\S]*?-----END(?: [A-Z0-9]+)* PRIVATE KEY-----/gi;
+const UNTERMINATED_PRIVATE_KEY_RE =
+  /-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----[\s\S]*$/gi;
+const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/-]{8,}=*/gi;
+const PROVIDER_KEY_RE = /\b(?:sk|rk|pk)-[A-Za-z0-9_-]{12,}\b/g;
+const GEMINI_KEY_RE = /\bAIza[0-9A-Za-z_-]{20,}\b/g;
+const GITHUB_KEY_RE = /\bgh[pousr]_[A-Za-z0-9_]{16,}\b/g;
+const NPM_KEY_RE = /\bnpm_[A-Za-z0-9_]{16,}\b/g;
+const AWS_ACCESS_KEY_RE = /\bAKIA[0-9A-Z]{12,}\b/g;
+/** JSON JWTs start with base64url `{"`; anchoring avoids redacting long hostnames. */
+const JWT_RE = /\beyJ[A-Za-z0-9_-]{7,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
+const ENV_ASSIGNMENT_RE =
+  /(^|[\r\n])(\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*)([^\r\n]*)/g;
+const SECRET_ENV_NAME_RE =
+  /(^|_)(token|secret|password|pass|key|credential|auth|bearer|cookie)($|_)/i;
+const URL_CREDENTIAL_RE =
+  /\b([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^@\s/]+)@/gi;
+const SECRET_ASSIGNMENT_RE =
+  /(\b(?:api[_-]?key|access[_-]?key|private[_-]?key|password|passwd|secret|token|access[_-]?token|refresh[_-]?token|authorization|cookie|credential|auth)\b\s*[:=]\s*)(["'`]?)([^\s,"'`;]+)/gi;
+
+/**
+ * Pure, reusable redaction for visible text that may leave the machine via
+ * vision prompts, OCR summaries, AX digests or MCP-shaped tool output.
+ * Never mutates the input string; only values are redacted, labels preserved.
+ */
+export function redactVisibleSecrets(value: string): string {
+  return value
+    .replace(PRIVATE_KEY_RE, '[REDACTED_PRIVATE_KEY]')
+    .replace(UNTERMINATED_PRIVATE_KEY_RE, '[REDACTED_PRIVATE_KEY]')
+    .replace(
+      ENV_ASSIGNMENT_RE,
+      (match, lineStart: string, prefix: string, name: string) =>
+        SECRET_ENV_NAME_RE.test(name)
+          ? `${lineStart}${prefix}${VISIBLE_SECRET_REDACTED}`
+          : match,
+    )
+    .replace(URL_CREDENTIAL_RE, `$1${VISIBLE_SECRET_REDACTED}@`)
+    .replace(BEARER_RE, `Bearer ${VISIBLE_SECRET_REDACTED}`)
+    .replace(PROVIDER_KEY_RE, VISIBLE_SECRET_REDACTED)
+    .replace(GEMINI_KEY_RE, VISIBLE_SECRET_REDACTED)
+    .replace(GITHUB_KEY_RE, VISIBLE_SECRET_REDACTED)
+    .replace(NPM_KEY_RE, VISIBLE_SECRET_REDACTED)
+    .replace(AWS_ACCESS_KEY_RE, VISIBLE_SECRET_REDACTED)
+    .replace(JWT_RE, '[REDACTED_JWT]')
+    .replace(
+      SECRET_ASSIGNMENT_RE,
+      (_match, prefix: string, quote: string) =>
+        `${prefix}${quote}${VISIBLE_SECRET_REDACTED}`,
+    );
+}
+
 export const VISION_CHANNELS = {
   /** invoke: renderer → main. Captura screenshot da janela Nexus. */
   capture: 'vision:capture',

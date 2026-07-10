@@ -7,6 +7,9 @@ import { buildTerminalTools } from './tools-terminal';
 import { buildGitTools } from './tools-git';
 import { buildEditorTools } from './tools-editor';
 import { buildVisionTools } from './tools-vision';
+import { buildContextTools } from './tools-context';
+import { buildSyncTools } from './tools-sync';
+import { buildDesignTools } from './tools-design';
 
 /**
  * The MCP toolset — the orchestration tools in the
@@ -16,17 +19,20 @@ import { buildVisionTools } from './tools-vision';
  *
  * Groups: panes (10), routing, handoffs, agents, missions, squad/catalog/task,
  * todos, preview/browser, perf, media generation (image/video/audio),
- * files (5), terminal (2), git (10), editor (4).
+ * files (5), terminal (2), git (10), editor (4), design (1).
  */
 export function buildToolset(): McpToolDef[] {
   return [
     ...buildPaneTools(),
     ...buildDomainTools(),
+    ...buildContextTools(),
+    ...buildSyncTools(),
     ...buildMediaTools(),
     ...buildFileTools(),
     ...buildTerminalTools(),
     ...buildGitTools(),
     ...buildEditorTools(),
     ...buildVisionTools(),
+    ...buildDesignTools(),
   ];
 }

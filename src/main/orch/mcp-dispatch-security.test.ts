@@ -3,17 +3,23 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  clearAuditLog,
+  clearAuditLogForTests,
+  configureAuditLogRuntime,
+  disposeAuditLogRuntime,
   readAuditLog,
-  setAuditLogPathForTests,
 } from '../jarvis/audit-log';
 import { clearAll as clearAllPermissions } from '../jarvis/permissions';
 import { mintToken, resetGateForTests } from './gate';
 import { dispatchToolCall } from './mcp-dispatch';
+import type { McpDispatchOptions } from './mcp-dispatch';
 import type { McpRegistry, McpToolDef } from './mcp-protocol';
+import { testProjectScope } from './__tests__/scope-fixture';
+import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 
 const testDir = path.join(os.tmpdir(), 'nexus-mcp-dispatch-security');
-const testAuditLog = path.join(testDir, 'jarvis-actions.log');
+const auditScope = testProjectScope({ rootRealPath: testDir });
+const auditContext = { scope: auditScope } as const;
+let auditManager: ProjectRuntimeManager;
 
 function registryWith(tool: McpToolDef): McpRegistry {
   return {
@@ -25,23 +31,66 @@ function registryWith(tool: McpToolDef): McpRegistry {
 
 function userContext() {
   resetGateForTests();
-  return mintToken({ label: 'security-test', role: 'user' });
+  return mintToken({
+    label: 'security-test',
+    role: 'user',
+    scope: auditScope,
+  });
+}
+
+const TEST_MISSION_ID = 'mission-security-test';
+const TEST_CONTEXT_REVISION = 'context-revision-security-test';
+
+function missionContext(contextRevision?: string) {
+  resetGateForTests();
+  return mintToken({
+    label: 'security-test',
+    role: 'orchestrator',
+    missionId: TEST_MISSION_ID,
+    contextRevision,
+    scope: auditScope,
+  });
+}
+
+function workflowOptions(
+  options: Pick<McpDispatchOptions, 'confirm'> = {},
+): McpDispatchOptions {
+  return {
+    ...options,
+    resolveWorkflowAuthority: (_scope, missionId) => {
+      if (missionId !== TEST_MISSION_ID) throw new Error('wrong test mission');
+      return {
+        contextRevision: TEST_CONTEXT_REVISION,
+        assertExecutionEffectAllowed: () => undefined,
+      };
+    },
+  };
 }
 
 describe('MCP dispatch effect safety', () => {
   beforeAll(() => {
     fs.mkdirSync(testDir, { recursive: true });
-    setAuditLogPathForTests(testAuditLog);
+    auditManager = new ProjectRuntimeManager({
+      baseDir: path.join(testDir, 'audit-runtime'),
+      appVersion: 'security-test',
+    });
+    configureAuditLogRuntime(auditManager);
   });
 
   beforeEach(() => {
-    setAuditLogPathForTests(testAuditLog);
-    clearAuditLog();
+    configureAuditLogRuntime(auditManager);
+    clearAuditLogForTests(auditContext);
+    auditManager.open(auditScope).db.prepare(
+      `INSERT OR IGNORE INTO missions
+         (id, title, description, status, milestones_json, created_at, updated_at)
+       VALUES (?, ?, '', 'running', '[]', ?, ?)`,
+    ).run(TEST_MISSION_ID, 'Security test mission', Date.now(), Date.now());
     clearAllPermissions();
   });
 
   afterAll(() => {
-    setAuditLogPathForTests(null);
+    disposeAuditLogRuntime();
+    auditManager.closeAll();
     fs.rmSync(testDir, { recursive: true, force: true });
   });
 
@@ -54,7 +103,7 @@ describe('MCP dispatch effect safety', () => {
       inputSchema: { type: 'object', properties: {} },
       handler,
     });
-    const context = userContext();
+    const context = missionContext();
     const args = { command: 'npm test' };
 
     const first = await dispatchToolCall(
@@ -63,7 +112,7 @@ describe('MCP dispatch effect safety', () => {
       'nexus_terminal_run',
       args,
       context,
-      { confirm },
+      workflowOptions({ confirm }),
     );
     const second = await dispatchToolCall(
       'http-mcp',
@@ -71,13 +120,210 @@ describe('MCP dispatch effect safety', () => {
       'nexus_terminal_run',
       args,
       context,
-      { confirm },
+      workflowOptions({ confirm }),
     );
 
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
     expect(handler).toHaveBeenCalledTimes(2);
     expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it('blocks an unbound user effect before confirmation or handler execution', async () => {
+    const handler = vi.fn(async () => ({ exitCode: 0 }));
+    const confirm = vi.fn(async () => true);
+    const result = await dispatchToolCall(
+      'ipc-renderer',
+      registryWith({
+        name: 'nexus_terminal_run',
+        description: 'terminal',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_terminal_run',
+      { command: 'npm test' },
+      userContext(),
+      { confirm },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining('missionId and contextRevision'),
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('allows a confirmed renderer UI action without mission authority', async () => {
+    const handler = vi.fn(async () => ({ ok: true }));
+    const confirm = vi.fn(async () => true);
+    const result = await dispatchToolCall(
+      'ipc-renderer',
+      registryWith({
+        name: 'nexus_ui_action',
+        description: 'bounded main-authorized Nexus UI action',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_ui_action',
+      { action: 'click', ref: 'u1e1' },
+      userContext(),
+      { confirm },
+    );
+
+    expect(result).toMatchObject({ ok: true, userAuthorized: true });
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('rejects UI action authority outside the renderer user boundary', async () => {
+    const handler = vi.fn(async () => ({ ok: true }));
+    const confirm = vi.fn(async () => true);
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_ui_action',
+        description: 'bounded main-authorized Nexus UI action',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_ui_action',
+      { action: 'click', ref: 'u1e1' },
+      userContext(),
+      { confirm },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining('renderer user authority'),
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('ignores stale registry confirmation metadata for read-only policy', async () => {
+    const handler = vi.fn(async () => ({ text: 'safe' }));
+    const confirm = vi.fn(async () => true);
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_pane_read',
+        description: 'read',
+        requiresConfirm: true,
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_pane_read',
+      {},
+      userContext(),
+      { confirm },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('lets handoff submission use its own authority without mission or prompt', async () => {
+    const handler = vi.fn(async () => ({ stopGateSatisfied: false }));
+    const confirm = vi.fn(async () => true);
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_handoff_submit',
+        description: 'handler-owned handoff authority',
+        requiresConfirm: true,
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_handoff_submit',
+      { status: 'partial', summary: 'A bounded test handoff summary.' },
+      userContext(),
+      { confirm },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('binds PREVC effects to the frozen context without a human prompt', async () => {
+    const handler = vi.fn(async (_args, ctx) => ({
+      contextRevision: ctx.contextRevision,
+    }));
+    const confirm = vi.fn(async () => true);
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_sensor_run',
+        description: 'PREVC sensor authority',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_sensor_run',
+      { missionId: TEST_MISSION_ID, sensorId: 'unit' },
+      missionContext(),
+      workflowOptions({ confirm }),
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      result: { contextRevision: TEST_CONTEXT_REVISION },
+      userAuthorized: false,
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('marks a failed PREVC handler as possibly committed without conflating it with confirmation', async () => {
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_sensor_run',
+        description: 'PREVC sensor authority',
+        inputSchema: { type: 'object', properties: {} },
+        handler: async () => {
+          throw new Error('sensor receipt transport failed');
+        },
+      }),
+      'nexus_sensor_run',
+      { missionId: TEST_MISSION_ID, sensorId: 'unit' },
+      missionContext(),
+      workflowOptions(),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'sensor receipt transport failed',
+      userAuthorized: false,
+      effectMayHaveCommitted: true,
+    });
+  });
+
+  it('blocks a stale token whose revision differs from the frozen contract', async () => {
+    const handler = vi.fn(async () => ({ exitCode: 0 }));
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_terminal_run',
+        description: 'terminal',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_terminal_run',
+      { command: 'npm test' },
+      missionContext('stale-context-revision'),
+      workflowOptions({ confirm: async () => true }),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining('does not match the frozen mission'),
+    });
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it('keeps read-only calls prompt-free across repeated invocations', async () => {
@@ -102,14 +348,82 @@ describe('MCP dispatch effect safety', () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 
+  it('does not start a handler when scoped audit persistence is unavailable', async () => {
+    const handler = vi.fn(async () => ({ text: 'must not run' }));
+    disposeAuditLogRuntime();
+
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_pane_read',
+        description: 'read',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_pane_read',
+      {},
+      userContext(),
+    );
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('audit_unavailable'),
+    });
+    configureAuditLogRuntime(auditManager);
+  });
+
+  it('routes audit events from the immutable dispatch context, not global UI state', async () => {
+    const scopeB = testProjectScope({
+      rootRealPath: testDir,
+      checkoutId: 'checkout-security-b',
+    });
+    clearAuditLogForTests({ scope: scopeB });
+    const registry = registryWith({
+      name: 'nexus_pane_read',
+      description: 'read',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => ({ text: 'ok' }),
+    });
+    const contextA = userContext();
+    resetGateForTests();
+    const contextB = mintToken({
+      label: 'security-test-b',
+      role: 'user',
+      scope: scopeB,
+    });
+
+    await dispatchToolCall(
+      'http-mcp',
+      registry,
+      'nexus_pane_read',
+      {},
+      contextA,
+    );
+    await dispatchToolCall(
+      'http-mcp',
+      registry,
+      'nexus_pane_read',
+      {},
+      contextB,
+    );
+
+    expect(readAuditLog(auditContext).map((entry) => entry.checkout_id)).toEqual([
+      auditScope.checkoutId,
+    ]);
+    expect(readAuditLog({ scope: scopeB }).map((entry) => entry.checkout_id)).toEqual([
+      scopeB.checkoutId,
+    ]);
+  });
+
   it('persists a correlated intent before starting an effectful handler', async () => {
-    let entriesSeenByHandler = readAuditLog();
+    let entriesSeenByHandler = readAuditLog(auditContext);
     const registry = registryWith({
       name: 'nexus_file_write',
       description: 'write',
       inputSchema: { type: 'object', properties: {} },
       handler: async () => {
-        entriesSeenByHandler = readAuditLog();
+        entriesSeenByHandler = readAuditLog(auditContext);
         return { bytes: 1 };
       },
     });
@@ -119,8 +433,8 @@ describe('MCP dispatch effect safety', () => {
       registry,
       'nexus_file_write',
       { path: 'src/a.ts', content: 'x' },
-      userContext(),
-      { confirm: async () => true },
+      missionContext(),
+      workflowOptions({ confirm: async () => true }),
     );
 
     expect(result.ok).toBe(true);
@@ -129,16 +443,24 @@ describe('MCP dispatch effect safety', () => {
       tool: 'nexus_file_write',
       result: 'intent',
       user_authorized: true,
+      project_id: 'project-test',
+      checkout_id: 'checkout-test',
+      context_revision: TEST_CONTEXT_REVISION,
     });
-    const entries = readAuditLog();
+    const entries = readAuditLog(auditContext);
     expect(entries.map((entry) => entry.result)).toEqual(['intent', 'ok']);
     expect(entries[0].invocation_id).toBeTruthy();
     expect(entries[1].invocation_id).toBe(entries[0].invocation_id);
   });
 
   it('reports effectMayHaveCommitted when outcome auditing fails after the handler ran', async () => {
-    const auditBlocker = path.join(testDir, 'not-a-directory');
-    fs.writeFileSync(auditBlocker, 'block child paths', 'utf8');
+    const unavailableAuditManager = new ProjectRuntimeManager({
+      baseDir: path.join(testDir, 'unavailable-audit-runtime'),
+      appVersion: 'security-test',
+      databaseFactory: (() => {
+        throw new Error('audit database unavailable');
+      }) as never,
+    });
     let effectApplied = false;
     const registry = registryWith({
       name: 'nexus_file_write',
@@ -146,7 +468,7 @@ describe('MCP dispatch effect safety', () => {
       inputSchema: { type: 'object', properties: {} },
       handler: async () => {
         effectApplied = true;
-        setAuditLogPathForTests(path.join(auditBlocker, 'audit.log'));
+        configureAuditLogRuntime(unavailableAuditManager);
         return { bytes: 1 };
       },
     });
@@ -156,10 +478,11 @@ describe('MCP dispatch effect safety', () => {
       registry,
       'nexus_file_write',
       { path: 'src/a.ts', content: 'x' },
-      userContext(),
-      { confirm: async () => true },
+      missionContext(),
+      workflowOptions({ confirm: async () => true }),
     );
-    setAuditLogPathForTests(testAuditLog);
+    configureAuditLogRuntime(auditManager);
+    unavailableAuditManager.closeAll();
 
     expect(effectApplied).toBe(true);
     expect(result).toMatchObject({
@@ -168,7 +491,7 @@ describe('MCP dispatch effect safety', () => {
       effectMayHaveCommitted: true,
       error: expect.stringContaining('audit_unavailable'),
     });
-    expect(readAuditLog().map((entry) => entry.result)).toEqual(['intent']);
+    expect(readAuditLog(auditContext).map((entry) => entry.result)).toEqual(['intent']);
   });
 
   it('reports effectMayHaveCommitted when an effectful handler throws after starting', async () => {
@@ -186,8 +509,8 @@ describe('MCP dispatch effect safety', () => {
       registry,
       'nexus_terminal_run',
       { command: 'deploy' },
-      userContext(),
-      { confirm: async () => true },
+      missionContext(),
+      workflowOptions({ confirm: async () => true }),
     );
 
     expect(result).toMatchObject({
@@ -195,7 +518,7 @@ describe('MCP dispatch effect safety', () => {
       effectMayHaveCommitted: true,
       error: 'connection dropped after write',
     });
-    const entries = readAuditLog();
+    const entries = readAuditLog(auditContext);
     expect(entries.map((entry) => entry.result)).toEqual(['intent', 'error']);
     expect(entries[1].invocation_id).toBe(entries[0].invocation_id);
   });

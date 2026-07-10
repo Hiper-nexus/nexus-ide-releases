@@ -1,19 +1,14 @@
-import { describe, expect, it, beforeAll, afterAll, vi } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { buildTerminalTools } from '../tools-terminal';
-
-const workspace = vi.hoisted(() => ({ current: '' }));
-vi.mock('../../persistence/workspace-store', () => ({
-  activeWorkspaceOrNull: () => workspace.current,
-}));
+import { testProjectScope } from './scope-fixture';
 
 const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-terminal');
 
 describe('tools-terminal', () => {
   beforeAll(() => {
-    workspace.current = testDir;
     fs.mkdirSync(testDir, { recursive: true });
   });
 
@@ -89,6 +84,62 @@ describe('tools-terminal', () => {
     ).rejects.toThrow(/escapes workspace/);
   });
 
+  it.runIf(process.platform === 'darwin')(
+    'denies absolute reads and writes outside the project',
+    async () => {
+      const outsideDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'nexus-terminal-outside-'),
+      );
+      const outsideFile = path.join(outsideDir, 'secret.txt');
+      fs.writeFileSync(outsideFile, 'outside-secret', { mode: 0o600 });
+      try {
+        const tools = buildTerminalTools();
+        const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
+        const result = await run.handler(
+          {
+            command:
+              `cat ${JSON.stringify(outsideFile)}; ` +
+              `printf hacked > ${JSON.stringify(outsideFile)}`,
+            timeoutMs: 5000,
+          },
+          fakeCtx(),
+        ) as { exitCode: number; stdout: string; stderr: string };
+
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stdout).not.toContain('outside-secret');
+        expect(fs.readFileSync(outsideFile, 'utf8')).toBe('outside-secret');
+      } finally {
+        fs.rmSync(outsideDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'darwin')(
+    'terminates the whole process group on timeout',
+    async () => {
+      const pidFile = path.join(testDir, 'child.pid');
+      fs.rmSync(pidFile, { force: true });
+      const tools = buildTerminalTools();
+      const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
+
+      const result = await run.handler(
+        {
+          command: `sleep 30 & child=$!; printf "$child" > ${JSON.stringify(pidFile)}; wait`,
+          // Seatbelt and shell startup can exceed 100 ms when the full suite
+          // saturates the machine. Keep the timeout short enough to exercise
+          // termination while allowing the child to publish its PID first.
+          timeoutMs: 1_000,
+        },
+        fakeCtx(),
+      ) as { killed: boolean };
+
+      expect(result.killed).toBe(true);
+      const childPid = Number(fs.readFileSync(pidFile, 'utf8'));
+      expect(Number.isSafeInteger(childPid)).toBe(true);
+      expect(() => process.kill(childPid, 0)).toThrow();
+    },
+  );
+
   it('nexus_terminal_kill returns ok when no process', async () => {
     const tools = buildTerminalTools();
     const kill = tools.find((t) => t.name === 'nexus_terminal_kill')!;
@@ -106,5 +157,6 @@ function fakeCtx() {
     allowedSkills: null as string[] | null,
     stopAttempts: 0,
     handoffSubmitted: false,
+    scope: testProjectScope({ rootRealPath: fs.realpathSync(testDir) }),
   };
 }

@@ -14,6 +14,9 @@ export type AuditResult = 'intent' | 'ok' | 'error' | 'denied';
 export interface AuditLogEntry {
   timestamp: string;
   session: string;
+  project_id: string;
+  checkout_id: string;
+  mission_id?: string;
   source: AuditSource;
   tool: string;
   args: Record<string, unknown>;

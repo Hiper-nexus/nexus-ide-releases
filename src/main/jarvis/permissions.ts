@@ -14,6 +14,8 @@ import { createHash } from 'node:crypto';
 interface PermissionEntry {
   sessionId: string;
   workspaceId: string;
+  projectId: string;
+  checkoutId: string;
   toolName: string;
   argsHash: string;
   grantedAt: number;
@@ -24,6 +26,8 @@ const cache = new Map<string, PermissionEntry>();
 export interface PermissionScope {
   sessionId: string;
   workspaceId: string;
+  projectId: string;
+  checkoutId: string;
   toolName: string;
   args: Record<string, unknown>;
 }
@@ -59,6 +63,8 @@ function hashWorkspaceId(workspaceId: string): string {
 export function permissionKey(scope: PermissionScope): string {
   return [
     scope.sessionId,
+    scope.projectId,
+    scope.checkoutId,
     hashWorkspaceId(scope.workspaceId),
     scope.toolName,
     hashArgs(scope.args),
@@ -93,6 +99,8 @@ export function grantPermission(scope: PermissionScope): void {
   cache.set(permissionKey(scope), {
     sessionId: scope.sessionId,
     workspaceId: scope.workspaceId,
+    projectId: scope.projectId,
+    checkoutId: scope.checkoutId,
     toolName: scope.toolName,
     argsHash,
     grantedAt: Date.now(),

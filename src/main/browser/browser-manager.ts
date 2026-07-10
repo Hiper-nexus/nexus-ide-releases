@@ -6,10 +6,13 @@ import {
   session as electronSession,
 } from 'electron';
 import type { IpcMainInvokeEvent, Session, WebContents } from 'electron';
-import fs from 'node:fs';
-import os from 'node:os';
+import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { BROWSER_CHANNELS } from '../../shared/channels';
+import {
+  BROWSER_DESIGN_CHANNELS,
+  type BrowserDesignRect,
+} from '../../shared/browser-design';
 import type {
   BrowserAutomationCommand,
   BrowserElementDescriptor,
@@ -21,7 +24,10 @@ import type {
   BrowserPaneState,
   BrowserScreenshotResult,
 } from '../../shared/types';
-import { isRunningPreviewUrl } from '../orch/preview-server';
+import {
+  isRunningPreviewUrl,
+  isRunningPreviewUrlForScope,
+} from '../orch/preview-server';
 import {
   assessBrowserUrl,
   browserAddressesMatchPrivatePins,
@@ -39,6 +45,16 @@ import {
   browserPageReadResultSchema,
   browserWaitResultSchema,
 } from './browser-automation-schema';
+import type { ProjectExecutionScope } from '../../shared/types';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import {
+  getRendererWorkspaceScope,
+  onRendererWorkspaceScopeChange,
+  requireLiveRendererWorkspaceScope,
+  requireRendererWorkspaceScope,
+} from '../persistence/renderer-workspace-scope';
+import { sameProjectScope } from '../orch/project-scoped-broadcast';
+import { createScopedBrowserArtifactStore } from './browser-artifact-store';
 import {
   registerBrowserAutomationResponseHandler,
   rejectPendingBrowserAutomation,
@@ -48,10 +64,38 @@ import {
   installPinnedBrowserProxy,
   type PinnedBrowserProxy,
 } from './browser-network-proxy';
+import {
+  browserDesignModeResultSchema,
+  browserStylePreviewClearResultSchema,
+  browserStylePreviewResultSchema,
+} from './browser-design-schema';
+import {
+  abortDesignModeTransition,
+  clearDesignSession,
+  getDesignGeneration,
+  getLastSelection,
+  getSelections,
+  ingestDesignEvent,
+  isDesignModeActive,
+  onDesignEvent,
+  prepareDesignModeTransition,
+} from './design-session';
+import { clampScreenshotClip } from './screenshot-clip';
+import { sendDesignSelectionToAgent } from '../orch/design-send';
+import { searchWorkspaceForSelection } from '../orch/design-code-search';
+import {
+  getDevServerForPane,
+  getPaneAuthzInfoOwnedBy,
+  getPaneAuthzInfoOwnedByPane,
+} from '../orch/pane-registry';
+import { injectPastedPrompt } from '../orch/tool-util';
+import { resolveCwdForScope } from '../orch/workspace-path';
+import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { z } from 'zod';
 
 interface BrowserEntry {
   paneId: string;
+  scope: ProjectExecutionScope;
   owner: WebContents;
   view: WebContentsView;
   url: string;
@@ -65,9 +109,11 @@ interface BrowserEntry {
 
 const browsers = new Map<string, BrowserEntry>();
 const browserCreations = new Map<string, Promise<BrowserEntry>>();
-const SCREENSHOT_DIR = path.join(os.homedir(), '.nexus', 'browser-shots');
+const ELEMENT_SHOT_PADDING = 8;
 const DNS_TIMEOUT_MS = 3_000;
 const securedSessions = new WeakSet<Session>();
+let browserRuntimeManager: ProjectRuntimeManager | null = null;
+let unsubscribeBrowserScopeChanges: (() => void) | null = null;
 
 const paneIdSchema = z.string().min(1).max(128);
 const createSchema = z.object({
@@ -89,6 +135,140 @@ const loadSchema = z.object({
   url: z.string().min(1).max(4096),
 });
 const paneSchema = z.object({ paneId: paneIdSchema });
+const designModeSchema = z.object({
+  paneId: paneIdSchema,
+  active: z.boolean(),
+});
+const designSendSchema = z
+  .object({
+    paneId: paneIdSchema,
+    targetPaneId: paneIdSchema,
+    instruction: z.string().max(2_000).optional(),
+    dir: z.string().max(4_096).optional(),
+    intent: z.enum(['context', 'clone']).optional(),
+    styleDiff: z
+      .record(
+        z.string().min(1).max(64),
+        z
+          .object({ from: z.string().max(512), to: z.string().max(512) })
+          .strict(),
+      )
+      .refine((diff) => Object.keys(diff).length <= 64)
+      .optional(),
+  })
+  .strict();
+const designPreviewSchema = z
+  .object({
+    paneId: paneIdSchema,
+    selector: z.string().min(1).max(1_024),
+    styles: z
+      .record(z.string().min(1).max(64), z.string().min(1).max(512))
+      .refine((styles) => {
+        const count = Object.keys(styles).length;
+        return count >= 1 && count <= 64;
+      }),
+  })
+  .strict();
+const designPreviewClearSchema = z
+  .object({
+    paneId: paneIdSchema,
+    selector: z.string().min(1).max(1_024).optional(),
+  })
+  .strict();
+
+function browserKey(scope: ProjectExecutionScope, paneId: string): string {
+  return `${scope.projectId}\0${scope.checkoutId}\0${paneId}`;
+}
+
+/** Opaque key shared with the design-session store; never crosses IPC. */
+export function browserDesignSessionKey(
+  scope: ProjectExecutionScope,
+  paneId: string,
+): string {
+  return browserKey(scope, paneId);
+}
+
+function loopbackOrigin(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.replace(/^\[|\]$/g, '');
+    if (
+      url.protocol !== 'http:' &&
+      url.protocol !== 'https:'
+    ) return null;
+    if (host !== 'localhost' && host !== '127.0.0.1' && host !== '::1') {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Direct source write-back is only allowed from a main-owned local preview.
+ * Public/third-party pages always stay on the selection→agent path.
+ */
+export function assertTrustedLocalDesignPreview(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+  browserPaneId: string,
+  missionPaneId: string,
+): void {
+  const key = browserKey(scope, browserPaneId);
+  const entry = browsers.get(key);
+  if (!entry || entry.owner !== owner || !sameProjectScope(entry.scope, scope)) {
+    throw new Error('design write-back requires an owned browser pane in this project');
+  }
+  if (!isDesignModeActive(key)) {
+    throw new Error('design write-back requires active design mode');
+  }
+  const currentUrl = entry.view.webContents.getURL() || entry.url;
+  if (isRunningPreviewUrlForScope(currentUrl, scope)) return;
+
+  const missionPane = getPaneAuthzInfoOwnedByPane(owner, missionPaneId);
+  const detected = missionPane?.sessionId
+    ? getDevServerForPane(missionPane.sessionId)
+    : null;
+  const currentOrigin = loopbackOrigin(currentUrl);
+  const announcedOrigins = new Set(
+    (detected?.urls ?? [])
+      .map(loopbackOrigin)
+      .filter((origin): origin is string => origin !== null),
+  );
+  if (!currentOrigin || !announcedOrigins.has(currentOrigin)) {
+    throw new Error(
+      'direct write-back is available only for a local preview announced by this mission pane',
+    );
+  }
+}
+
+function browserPartition(scope: ProjectExecutionScope, paneId: string): string {
+  const digest = createHash('sha256')
+    .update(scope.projectId)
+    .update('\0')
+    .update(scope.checkoutId)
+    .update('\0')
+    .update(paneId)
+    .digest('hex');
+  return `persist:nexus-browser-${digest}`;
+}
+
+function requireBrowserRuntimeManager(): ProjectRuntimeManager {
+  if (!browserRuntimeManager) {
+    throw new Error('project-scoped browser runtime is not configured');
+  }
+  return browserRuntimeManager;
+}
+
+function assertEntryScope(
+  entry: BrowserEntry,
+  scope: ProjectExecutionScope,
+): void {
+  if (!sameProjectScope(entry.scope, scope)) {
+    throw new Error('browser pane belongs to another project checkout');
+  }
+}
 
 class BrowserNavigationBlockedError extends Error {
   constructor(
@@ -205,7 +385,7 @@ function configureSessionSecurity(entry: BrowserEntry): void {
           if (details.resourceType === 'mainFrame') {
             entry.loading = false;
             entry.error = `navigation blocked (${blockKind}): ${safeTargetLabel(details.url)}`;
-            emitState(entry.paneId);
+            emitState(entry);
           }
           callback({ cancel: true });
         })
@@ -292,9 +472,6 @@ function stateOf(paneId: string, entry: BrowserEntry): BrowserPaneState {
   };
 }
 
-const safeFilePart = (value: string): string =>
-  value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80) || 'browser';
-
 function redactBrowserLabel(value: string): string {
   return value
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi, 'Bearer [REDACTED]')
@@ -312,10 +489,8 @@ function redactBrowserLabel(value: string): string {
 
 const canSend = (wc: WebContents): boolean => !wc.isDestroyed() && !wc.isCrashed();
 
-function emitState(paneId: string): BrowserPaneState | null {
-  const entry = browsers.get(paneId);
-  if (!entry) return null;
-  const state = stateOf(paneId, entry);
+function emitState(entry: BrowserEntry): BrowserPaneState {
+  const state = stateOf(entry.paneId, entry);
   if (canSend(entry.owner)) {
     entry.owner.send(BROWSER_CHANNELS.state, state);
   }
@@ -328,11 +503,19 @@ function assertOwner(entry: BrowserEntry, owner: WebContents): void {
   }
 }
 
-async function createEntry(owner: WebContents, paneId: string): Promise<BrowserEntry> {
+async function createEntry(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+  paneId: string,
+): Promise<BrowserEntry> {
+  const ownerScopeAtStart = getRendererWorkspaceScope(owner);
+  if (ownerScopeAtStart && !sameProjectScope(ownerScopeAtStart, scope)) {
+    throw new Error('browser owner project scope changed');
+  }
   const win = BrowserWindow.fromWebContents(owner);
   if (!win || win.isDestroyed()) throw new Error('browser owner window is gone');
 
-  const partition = `persist:nexus-browser-${paneId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+  const partition = browserPartition(scope, paneId);
   const browserSession = electronSession.fromPartition(partition);
   const allowedPrivateTargets = new Map<string, Set<string>>();
   const resolveHostname = createChromiumResolver(browserSession);
@@ -347,6 +530,13 @@ async function createEntry(owner: WebContents, paneId: string): Promise<BrowserE
   if (win.isDestroyed()) {
     await networkProxy.close();
     throw new Error('browser owner window is gone');
+  }
+  if (ownerScopeAtStart) {
+    const currentScope = getRendererWorkspaceScope(owner);
+    if (!currentScope || !sameProjectScope(currentScope, scope)) {
+      await networkProxy.close();
+      throw new Error('browser owner project scope changed during creation');
+    }
   }
   let view: WebContentsView;
   try {
@@ -371,6 +561,7 @@ async function createEntry(owner: WebContents, paneId: string): Promise<BrowserE
   }
   const entry: BrowserEntry = {
     paneId,
+    scope: Object.freeze({ ...scope }),
     owner,
     view,
     url: 'about:blank',
@@ -380,7 +571,8 @@ async function createEntry(owner: WebContents, paneId: string): Promise<BrowserE
     resolveHostname,
     networkProxy,
   };
-  browsers.set(paneId, entry);
+  const key = browserKey(scope, paneId);
+  browsers.set(key, entry);
   win.contentView.addChildView(view);
   configureSessionSecurity(entry);
 
@@ -390,7 +582,7 @@ async function createEntry(owner: WebContents, paneId: string): Promise<BrowserE
   wc.setWindowOpenHandler(({ url }) => {
     void loadBrowserForEntry(paneId, entry, url).catch((err) => {
       entry.error = err instanceof Error ? err.message : String(err);
-      emitState(paneId);
+      emitState(entry);
     });
     return { action: 'deny' };
   });
@@ -403,31 +595,32 @@ async function createEntry(owner: WebContents, paneId: string): Promise<BrowserE
   wc.on('did-start-loading', () => {
     entry.loading = true;
     entry.error = undefined;
-    emitState(paneId);
+    emitState(entry);
   });
   wc.on('did-stop-loading', () => {
     entry.loading = false;
-    emitState(paneId);
+    emitState(entry);
   });
   wc.on('page-title-updated', (_event, title) => {
     entry.title = title;
-    emitState(paneId);
+    emitState(entry);
   });
   wc.on('did-navigate', (_event, url) => {
     entry.url = url;
     entry.error = undefined;
-    emitState(paneId);
+    clearDesignSession(key);
+    emitState(entry);
   });
   wc.on('did-navigate-in-page', (_event, url) => {
     entry.url = url;
-    emitState(paneId);
+    emitState(entry);
   });
   wc.on('did-fail-load', (_event, code, desc, url, isMainFrame) => {
     if (!isMainFrame) return;
     entry.loading = false;
     entry.url = url || entry.url;
     entry.error = `${code} ${desc}`;
-    emitState(paneId);
+    emitState(entry);
   });
   wc.on('render-process-gone', (_event, details) => {
     rejectPendingBrowserAutomation(
@@ -436,41 +629,44 @@ async function createEntry(owner: WebContents, paneId: string): Promise<BrowserE
     );
     entry.loading = false;
     entry.error = `browser renderer exited: ${details.reason}`;
-    emitState(paneId);
+    emitState(entry);
   });
   wc.once('destroyed', () => {
     rejectPendingBrowserAutomation(wc.id, 'browser pane was destroyed');
   });
   owner.once('destroyed', () => {
-    if (browsers.get(paneId) === entry) destroyBrowser(paneId);
+    if (browsers.get(key) === entry) destroyBrowser(paneId, scope);
   });
   return entry;
 }
 
 export async function ensureBrowser(
   owner: WebContents,
+  scope: ProjectExecutionScope,
   paneId: string,
   url?: string,
 ): Promise<BrowserPaneState> {
-  let entry = browsers.get(paneId);
+  const key = browserKey(scope, paneId);
+  let entry = browsers.get(key);
   if (!entry) {
-    let creation = browserCreations.get(paneId);
+    let creation = browserCreations.get(key);
     if (!creation) {
-      creation = createEntry(owner, paneId).finally(() => {
-        browserCreations.delete(paneId);
+      creation = createEntry(owner, scope, paneId).finally(() => {
+        browserCreations.delete(key);
       });
-      browserCreations.set(paneId, creation);
+      browserCreations.set(key, creation);
     }
     entry = await creation;
     assertOwner(entry, owner);
   } else {
     assertOwner(entry, owner);
+    assertEntryScope(entry, scope);
   }
   if (url && url.trim() && url.trim() !== (entry.view.webContents.getURL() || entry.url)) {
     void loadBrowserForEntry(paneId, entry, url).catch((err) => {
       entry.error = err instanceof Error ? err.message : String(err);
       entry.loading = false;
-      emitState(paneId);
+      emitState(entry);
     });
   }
   return stateOf(paneId, entry);
@@ -500,9 +696,17 @@ async function loadBrowserForEntry(
 export async function loadBrowser(
   paneId: string,
   rawUrl: string,
-  options: { privateAccessConfirmed?: boolean } = {},
+  options: {
+    scope: ProjectExecutionScope;
+    privateAccessConfirmed?: boolean;
+  },
 ): Promise<BrowserPaneState> {
-  const state = await loadBrowserForEntry(paneId, withEntry(paneId), rawUrl, options);
+  const state = await loadBrowserForEntry(
+    paneId,
+    withEntry(paneId, options.scope),
+    rawUrl,
+    options,
+  );
   return {
     ...state,
     url: redactBrowserUrl(state.url),
@@ -544,30 +748,52 @@ async function loadBrowserWithUserConfirmation(
 
 export async function captureBrowserScreenshot(
   paneId: string,
+  scope: ProjectExecutionScope,
+  missionId?: string,
+  options: { clip?: BrowserDesignRect } = {},
 ): Promise<BrowserScreenshotResult> {
-  const entry = withEntry(paneId);
+  const entry = withEntry(paneId, scope);
+  const artifactStore = createScopedBrowserArtifactStore(
+    requireBrowserRuntimeManager(),
+    scope,
+  );
+  artifactStore.assertWritable();
   const wc = entry.view.webContents;
   if (wc.isDestroyed() || wc.isCrashed()) {
     throw new Error(`browser pane is not capturable: ${paneId}`);
   }
 
   const capturedAt = Date.now();
-  const image = await wc.capturePage();
+  const clip = options.clip
+    ? clampScreenshotClip(options.clip, entry.view.getBounds(), {
+        padding: ELEMENT_SHOT_PADDING,
+      })
+    : null;
+  const image = await (clip ? wc.capturePage(clip) : wc.capturePage());
   const size = image.getSize();
   if (size.width <= 0 || size.height <= 0) {
     throw new Error('browser screenshot is empty; the pane may not be visible yet');
   }
 
-  await fs.promises.mkdir(SCREENSHOT_DIR, { recursive: true, mode: 0o700 });
-  const filePath = path.join(
-    SCREENSHOT_DIR,
-    `${capturedAt}-${safeFilePart(paneId)}.png`,
-  );
-  await fs.promises.writeFile(filePath, image.toPNG(), { mode: 0o600 });
+  const artifact = artifactStore.recordScreenshot({
+    paneId,
+    missionId,
+    png: image.toPNG(),
+    width: size.width,
+    height: size.height,
+    url: redactBrowserUrl(wc.getURL() || entry.url),
+    title: redactBrowserLabel(wc.getTitle() || entry.title),
+    capturedAt,
+  });
 
   return {
+    artifactId: artifact.id,
+    projectId: artifact.projectId,
+    checkoutId: artifact.checkoutId,
     paneId,
-    path: filePath,
+    path: artifact.path,
+    storageKey: artifact.storageKey,
+    sha256: artifact.sha256,
     width: size.width,
     height: size.height,
     url: redactBrowserUrl(wc.getURL() || entry.url),
@@ -578,11 +804,12 @@ export async function captureBrowserScreenshot(
 
 function runBrowserAutomationForPane(
   paneId: string,
+  scope: ProjectExecutionScope,
   command: BrowserAutomationCommand,
   args: Record<string, unknown>,
   timeoutMs?: number,
 ): Promise<unknown> {
-  const entry = withEntry(paneId);
+  const entry = withEntry(paneId, scope);
   return runBrowserAutomation(
     paneId,
     entry.view.webContents,
@@ -594,10 +821,11 @@ function runBrowserAutomationForPane(
 
 export async function readBrowserPage(
   paneId: string,
+  scope: ProjectExecutionScope,
   options: { maxChars?: number; maxElements?: number } = {},
 ): Promise<BrowserPageReadResult & { paneId: string }> {
   const result = browserPageReadResultSchema.parse(
-    await runBrowserAutomationForPane(paneId, 'read', {
+    await runBrowserAutomationForPane(paneId, scope, 'read', {
       ...(options.maxChars ? { maxChars: Math.min(options.maxChars, 20_000) } : {}),
       ...(options.maxElements
         ? { maxElements: Math.min(options.maxElements, 200) }
@@ -609,37 +837,41 @@ export async function readBrowserPage(
 
 export async function inspectBrowserElement(
   paneId: string,
+  scope: ProjectExecutionScope,
   ref: string,
 ): Promise<BrowserElementDescriptor & { paneId: string }> {
   const result = browserElementDescriptorSchema.parse(
-    await runBrowserAutomationForPane(paneId, 'inspect', { ref }),
+    await runBrowserAutomationForPane(paneId, scope, 'inspect', { ref }),
   );
   return { paneId, ...result };
 }
 
 export async function clickBrowserElement(
   paneId: string,
+  scope: ProjectExecutionScope,
   ref: string,
 ): Promise<{ paneId: string; clicked: true; element: BrowserElementDescriptor }> {
   const result = browserClickResultSchema.parse(
-    await runBrowserAutomationForPane(paneId, 'click', { ref }),
+    await runBrowserAutomationForPane(paneId, scope, 'click', { ref }),
   );
   return { paneId, ...result };
 }
 
 export async function fillBrowserElement(
   paneId: string,
+  scope: ProjectExecutionScope,
   ref: string,
   text: string,
 ): Promise<{ paneId: string; filled: true; ref: string; length: number }> {
   const result = browserFillResultSchema.parse(
-    await runBrowserAutomationForPane(paneId, 'fill', { ref, text }),
+    await runBrowserAutomationForPane(paneId, scope, 'fill', { ref, text }),
   );
   return { paneId, ...result };
 }
 
 export async function waitForBrowser(
   paneId: string,
+  scope: ProjectExecutionScope,
   options: {
     condition: BrowserWaitCondition;
     value?: string;
@@ -656,6 +888,7 @@ export async function waitForBrowser(
   const result = browserWaitResultSchema.parse(
     await runBrowserAutomationForPane(
       paneId,
+      scope,
       'wait',
       {
         condition: options.condition,
@@ -669,14 +902,88 @@ export async function waitForBrowser(
   return { paneId, ...result };
 }
 
-function withEntry(paneId: string): BrowserEntry {
-  const entry = browsers.get(paneId);
+export async function setBrowserDesignMode(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  active: boolean,
+): Promise<{ paneId: string; active: boolean }> {
+  const sessionKey = browserKey(scope, paneId);
+  const generation = active
+    ? randomUUID()
+    : (getDesignGeneration(sessionKey) ?? randomUUID());
+  prepareDesignModeTransition(sessionKey, generation, active);
+  try {
+    const result = browserDesignModeResultSchema.parse(
+      await runBrowserAutomationForPane(
+        paneId,
+        scope,
+        active ? 'design_enable' : 'design_disable',
+        { generation },
+      ),
+    );
+    if (result.active !== active) {
+      throw new Error('browser design mode transition was not applied');
+    }
+    if (active && !isDesignModeActive(sessionKey)) {
+      throw new Error('browser design mode generation was not confirmed');
+    }
+    if (!active) clearDesignSession(sessionKey);
+    return { paneId, ...result };
+  } catch (error) {
+    abortDesignModeTransition(sessionKey, generation);
+    throw error;
+  }
+}
+
+export async function setBrowserStylePreview(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  selector: string,
+  styles: Record<string, string>,
+): Promise<{ paneId: string; applied: true; selector: string; properties: number }> {
+  const result = browserStylePreviewResultSchema.parse(
+    await runBrowserAutomationForPane(
+      paneId,
+      scope,
+      'design_set_style_preview',
+      { selector, styles },
+    ),
+  );
+  return { paneId, ...result };
+}
+
+export async function clearBrowserStylePreview(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  selector?: string,
+): Promise<{ paneId: string; cleared: number }> {
+  const result = browserStylePreviewClearResultSchema.parse(
+    await runBrowserAutomationForPane(
+      paneId,
+      scope,
+      'design_clear_style_preview',
+      selector ? { selector } : {},
+    ),
+  );
+  return { paneId, ...result };
+}
+
+function withEntry(
+  paneId: string,
+  scope: ProjectExecutionScope,
+): BrowserEntry {
+  const entry = browsers.get(browserKey(scope, paneId));
   if (!entry) throw new Error(`unknown browser pane: ${paneId}`);
+  assertEntryScope(entry, scope);
   return entry;
 }
 
-function withOwnedEntry(owner: WebContents, paneId: string): BrowserEntry {
-  const entry = withEntry(paneId);
+function withOwnedEntry(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+  paneId: string,
+): BrowserEntry {
+  const entry = withEntry(paneId, scope);
   assertOwner(entry, owner);
   return entry;
 }
@@ -694,10 +1001,16 @@ function setBrowserBounds(entry: BrowserEntry, bounds: BrowserPaneBounds): void 
   });
 }
 
-export function destroyBrowser(paneId: string): void {
-  const entry = browsers.get(paneId);
+export function destroyBrowser(
+  paneId: string,
+  scope: ProjectExecutionScope,
+): void {
+  const key = browserKey(scope, paneId);
+  const entry = browsers.get(key);
   if (!entry) return;
-  browsers.delete(paneId);
+  assertEntryScope(entry, scope);
+  browsers.delete(key);
+  clearDesignSession(key);
   const win = BrowserWindow.fromWebContents(entry.owner);
   try {
     win?.contentView.removeChildView(entry.view);
@@ -713,8 +1026,8 @@ export function destroyBrowser(paneId: string): void {
 }
 
 export function destroyBrowsersFor(wc: WebContents): void {
-  for (const [paneId, entry] of [...browsers]) {
-    if (entry.owner === wc) destroyBrowser(paneId);
+  for (const entry of [...browsers.values()]) {
+    if (entry.owner === wc) destroyBrowser(entry.paneId, entry.scope);
   }
 }
 
@@ -722,21 +1035,204 @@ export function getBrowserViewCount(): number {
   return browsers.size;
 }
 
-export function registerBrowserIpc(): void {
+function browserEntryForWebContents(
+  sender: WebContents,
+): { key: string; entry: BrowserEntry } | null {
+  const matches = [...browsers.entries()].filter(
+    ([, entry]) => entry.view.webContents.id === sender.id,
+  );
+  if (matches.length !== 1) return null;
+  const [key, entry] = matches[0];
+  return { key, entry };
+}
+
+function requireDesignTarget(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+  paneRef: string,
+): {
+  paneId: string;
+  sessionId: string;
+  missionId: string;
+  contextRevision: string;
+} {
+  const info = getPaneAuthzInfoOwnedBy(owner, paneRef);
+  if (
+    !info?.sessionId ||
+    !info.missionId ||
+    !info.scope ||
+    !sameProjectScope(scope, info.scope)
+  ) {
+    throw new Error(
+      'design context can be sent only to a live mission agent in the same project checkout',
+    );
+  }
+  const workflowService = getContextWorkflowService(scope);
+  const stored = workflowService.getMissionWorkflow(info.missionId).contract;
+  const contextRevision = stored?.contract.contextRevision;
+  if (!contextRevision || info.contextRevision !== contextRevision) {
+    throw new Error(
+      'design target is not bound to the current frozen context revision',
+    );
+  }
+  workflowService.assertMutationAllowed(
+    info.missionId,
+    'nexus_design_context_send',
+    { paneId: info.paneId },
+  );
+  return {
+    paneId: info.paneId,
+    sessionId: info.sessionId,
+    missionId: info.missionId,
+    contextRevision,
+  };
+}
+
+export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void {
+  browserRuntimeManager = runtimeManager;
+  unsubscribeBrowserScopeChanges?.();
+  unsubscribeBrowserScopeChanges = onRendererWorkspaceScopeChange(
+    (owner, _previous, next) => {
+      for (const entry of [...browsers.values()]) {
+        if (entry.owner.id !== owner.id) continue;
+        if (!next || !sameProjectScope(entry.scope, next)) {
+          destroyBrowser(entry.paneId, entry.scope);
+        }
+      }
+    },
+  );
   registerBrowserAutomationResponseHandler();
+
+  ipcMain.on(BROWSER_DESIGN_CHANNELS.event, (event, raw) => {
+    const resolved = browserEntryForWebContents(event.sender);
+    if (!resolved) return;
+    ingestDesignEvent(resolved.key, raw, {
+      owner: resolved.entry.owner,
+      scope: resolved.entry.scope,
+    });
+  });
+
+  onDesignEvent((key, designEvent) => {
+    const entry = browsers.get(key);
+    if (!entry || !canSend(entry.owner)) return;
+    entry.owner.send(BROWSER_CHANNELS.designEvent, {
+      paneId: entry.paneId,
+      event: designEvent,
+    });
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.designMode, async (event, raw) => {
+    const parsed = designModeSchema.safeParse(raw);
+    if (!parsed.success) throw new Error('invalid design mode payload');
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    return setBrowserDesignMode(
+      parsed.data.paneId,
+      scope,
+      parsed.data.active,
+    );
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.designSend, async (event, raw) => {
+    const parsed = designSendSchema.safeParse(raw);
+    if (!parsed.success) throw new Error('invalid design send payload');
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    const source = withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    const sourceKey = browserKey(scope, parsed.data.paneId);
+    const target = requireDesignTarget(
+      event.sender,
+      scope,
+      parsed.data.targetPaneId,
+    );
+
+    return sendDesignSelectionToAgent(
+      {
+        paneId: sourceKey,
+        targetPaneRef: target.paneId,
+        instruction: parsed.data.instruction,
+        dir: parsed.data.dir,
+        styleDiff: parsed.data.styleDiff,
+        intent: parsed.data.intent,
+      },
+      {
+        getSelection: getLastSelection,
+        getSelections,
+        findPane: () => ({
+          paneId: target.paneId,
+          sessionId: target.sessionId,
+        }),
+        workspaceRoot: (dir) => resolveCwdForScope(scope, dir),
+        search: searchWorkspaceForSelection,
+        capture: async (_key, clip) =>
+          captureBrowserScreenshot(
+            source.paneId,
+            scope,
+            target.missionId,
+            { clip },
+          ),
+        inject: async (sessionId, prompt) => {
+          requireLiveRendererWorkspaceScope(event.sender, scope);
+          const liveTarget = requireDesignTarget(
+            event.sender,
+            scope,
+            target.paneId,
+          );
+          if (
+            liveTarget.sessionId !== sessionId ||
+            liveTarget.missionId !== target.missionId ||
+            liveTarget.contextRevision !== target.contextRevision
+          ) {
+            throw new Error('design target authority changed');
+          }
+          await injectPastedPrompt(sessionId, prompt);
+        },
+      },
+    );
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.designPreview, async (event, raw) => {
+    const parsed = designPreviewSchema.safeParse(raw);
+    if (!parsed.success) throw new Error('invalid design preview payload');
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    return setBrowserStylePreview(
+      parsed.data.paneId,
+      scope,
+      parsed.data.selector,
+      parsed.data.styles,
+    );
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.designPreviewClear, async (event, raw) => {
+    const parsed = designPreviewClearSchema.safeParse(raw);
+    if (!parsed.success) throw new Error('invalid design preview clear payload');
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    return clearBrowserStylePreview(
+      parsed.data.paneId,
+      scope,
+      parsed.data.selector,
+    );
+  });
 
   ipcMain.handle(BROWSER_CHANNELS.create, async (event: IpcMainInvokeEvent, raw) => {
     const parsed = createSchema.safeParse(raw);
     if (!parsed.success) throw new Error('invalid browser create payload');
-    return ensureBrowser(event.sender, parsed.data.paneId, parsed.data.url);
+    return ensureBrowser(
+      event.sender,
+      requireRendererWorkspaceScope(event.sender),
+      parsed.data.paneId,
+      parsed.data.url,
+    );
   });
 
   ipcMain.on(BROWSER_CHANNELS.bounds, (event, raw) => {
     const parsed = boundsSchema.safeParse(raw);
     if (!parsed.success) return;
     try {
+      const scope = requireRendererWorkspaceScope(event.sender);
       setBrowserBounds(
-        withOwnedEntry(event.sender, parsed.data.paneId),
+        withOwnedEntry(event.sender, scope, parsed.data.paneId),
         parsed.data.bounds,
       );
     } catch {
@@ -748,8 +1244,9 @@ export function registerBrowserIpc(): void {
     const parsed = paneSchema.safeParse(raw);
     if (!parsed.success) return;
     try {
-      withOwnedEntry(event.sender, parsed.data.paneId);
-      destroyBrowser(parsed.data.paneId);
+      const scope = requireRendererWorkspaceScope(event.sender);
+      withOwnedEntry(event.sender, scope, parsed.data.paneId);
+      destroyBrowser(parsed.data.paneId, scope);
     } catch {
       // Ignore stale or cross-window destroy requests.
     }
@@ -758,9 +1255,10 @@ export function registerBrowserIpc(): void {
   ipcMain.handle(BROWSER_CHANNELS.load, async (event, raw) => {
     const parsed = loadSchema.safeParse(raw);
     if (!parsed.success) throw new Error('invalid browser load payload');
+    const scope = requireRendererWorkspaceScope(event.sender);
     return loadBrowserWithUserConfirmation(
       parsed.data.paneId,
-      withOwnedEntry(event.sender, parsed.data.paneId),
+      withOwnedEntry(event.sender, scope, parsed.data.paneId),
       parsed.data.url,
     );
   });
@@ -768,7 +1266,11 @@ export function registerBrowserIpc(): void {
   ipcMain.handle(BROWSER_CHANNELS.back, async (event, raw) => {
     const parsed = paneSchema.safeParse(raw);
     if (!parsed.success) throw new Error('invalid browser back payload');
-    const entry = withOwnedEntry(event.sender, parsed.data.paneId);
+    const entry = withOwnedEntry(
+      event.sender,
+      requireRendererWorkspaceScope(event.sender),
+      parsed.data.paneId,
+    );
     if (entry.view.webContents.canGoBack()) entry.view.webContents.goBack();
     return stateOf(parsed.data.paneId, entry);
   });
@@ -776,7 +1278,11 @@ export function registerBrowserIpc(): void {
   ipcMain.handle(BROWSER_CHANNELS.forward, async (event, raw) => {
     const parsed = paneSchema.safeParse(raw);
     if (!parsed.success) throw new Error('invalid browser forward payload');
-    const entry = withOwnedEntry(event.sender, parsed.data.paneId);
+    const entry = withOwnedEntry(
+      event.sender,
+      requireRendererWorkspaceScope(event.sender),
+      parsed.data.paneId,
+    );
     if (entry.view.webContents.canGoForward()) entry.view.webContents.goForward();
     return stateOf(parsed.data.paneId, entry);
   });
@@ -784,7 +1290,11 @@ export function registerBrowserIpc(): void {
   ipcMain.handle(BROWSER_CHANNELS.reload, async (event, raw) => {
     const parsed = paneSchema.safeParse(raw);
     if (!parsed.success) throw new Error('invalid browser reload payload');
-    const entry = withOwnedEntry(event.sender, parsed.data.paneId);
+    const entry = withOwnedEntry(
+      event.sender,
+      requireRendererWorkspaceScope(event.sender),
+      parsed.data.paneId,
+    );
     entry.view.webContents.reload();
     return stateOf(parsed.data.paneId, entry);
   });
@@ -792,7 +1302,11 @@ export function registerBrowserIpc(): void {
   ipcMain.handle(BROWSER_CHANNELS.stop, async (event, raw) => {
     const parsed = paneSchema.safeParse(raw);
     if (!parsed.success) throw new Error('invalid browser stop payload');
-    const entry = withOwnedEntry(event.sender, parsed.data.paneId);
+    const entry = withOwnedEntry(
+      event.sender,
+      requireRendererWorkspaceScope(event.sender),
+      parsed.data.paneId,
+    );
     entry.view.webContents.stop();
     return stateOf(parsed.data.paneId, entry);
   });

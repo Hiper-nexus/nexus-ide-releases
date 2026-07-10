@@ -11,22 +11,31 @@ import {
 import type { AgentGateContext } from './gate';
 import { orchWriteSession } from '../pty/pty-manager';
 import { getAdapter } from '../adapters/adapter-registry';
-import { recordMissionPane } from './mission-pane-store';
+import { getProjectDomainStores } from './project-domain-store-registry';
 import { LEGACY_MARKER } from './legacy-handoff';
 import { PONYTAIL_RULES } from './ponytail';
 import { ENGINEERING_CHARTER } from './engineering-charter';
 import { DESIGN_CHARTER } from './design-charter';
 import { getOrchSettings } from '../persistence/settings-store';
-import { resolveCwdForScope, resolveWorkspaceCwd } from './workspace-path';
+import { resolveCwdForScope } from './workspace-path';
 import { canUseNexusMcp } from './cli-mcp-inject';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
 const PROMPT_SETTLE_MS = 150;
 const AGENT_BOOT_TIMEOUT_MS = 20_000;
+const UNSAFE_TERMINAL_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u;
 
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Reject bytes that can escape bracketed paste or submit/cancel PTY input. */
+export function assertSafePtyPrompt(prompt: string): string {
+  if (UNSAFE_TERMINAL_CONTROL.test(prompt)) {
+    throw new Error('unsafe terminal control in prompt');
+  }
+  return prompt;
 }
 
 export function str(
@@ -96,15 +105,25 @@ export async function injectPrompt(
   sessionId: string,
   prompt: string,
 ): Promise<void> {
-  if (!orchWriteSession(sessionId, prompt)) {
+  const safePrompt = assertSafePtyPrompt(prompt);
+  if (!orchWriteSession(sessionId, safePrompt)) {
     throw new Error('session is gone');
   }
   await delay(PROMPT_SETTLE_MS);
   orchWriteSession(sessionId, '\r');
 }
 
-interface SpawnScopeLike {
-  rootRealPath: string;
+/** Type a multi-line prompt as one bracketed-paste transaction. */
+export async function injectPastedPrompt(
+  sessionId: string,
+  prompt: string,
+): Promise<void> {
+  const safePrompt = assertSafePtyPrompt(prompt);
+  if (!orchWriteSession(sessionId, `\x1b[200~${safePrompt}\x1b[201~`)) {
+    throw new Error('session is gone');
+  }
+  await delay(PROMPT_SETTLE_MS);
+  orchWriteSession(sessionId, '\r');
 }
 
 export interface SpawnToolOptions {
@@ -115,13 +134,15 @@ export interface SpawnToolOptions {
   cwd?: string;
   title?: string;
   missionId?: string;
+  contextRevision?: string;
   agentName?: string;
   allowedTools?: string[] | null;
   allowedSkills?: string[] | null;
   role?: 'orchestrator' | 'worker';
   prompt?: string;
-  scope?: SpawnScopeLike;
-  executionScope?: SpawnScopeLike;
+  scope: AgentGateContext['scope'];
+  executionScope?: AgentGateContext['executionScope'];
+  readOnly?: boolean;
 }
 
 /**
@@ -162,13 +183,10 @@ export async function spawnPaneAndMaybePrompt(
   // Agent CLIs can read and execute native tools. Pin every orchestrated spawn
   // to the active workspace before the renderer/PTY boundary; never inherit
   // pty-manager's user-shell fallback to HOME.
-  const executionScope = options.executionScope ?? options.scope;
   const safeOptions: SpawnToolOptions = {
     ...options,
-    ...(executionScope ? { executionScope } : {}),
-    cwd: executionScope
-      ? resolveCwdForScope(executionScope, options.cwd)
-      : resolveWorkspaceCwd(options.cwd),
+    executionScope: options.executionScope ?? options.scope,
+    cwd: resolveCwdForScope(options.executionScope ?? options.scope, options.cwd),
   };
   const result = await requestPaneSpawn(safeOptions);
   if (!result.ok || !result.paneId || !result.sessionId) {
@@ -176,15 +194,18 @@ export async function spawnPaneAndMaybePrompt(
   }
   // Remember the mission's composition so it can be reopened from history.
   if (options.missionId) {
-    recordMissionPane({
+    getProjectDomainStores(options.scope).missionPanes.record({
       missionId: options.missionId,
       adapterId: options.adapterId,
       model: options.model,
       effort: options.effort,
       cwd: safeOptions.cwd,
+      executionScope: safeOptions.executionScope,
       title: options.title,
       agentName: options.agentName,
       role: options.role ?? 'worker',
+      allowedTools: options.allowedTools,
+      allowedSkills: options.allowedSkills,
       // Chave do resume direcionado: o reopen reusa este paneId para o CLI
       // voltar à MESMA conversa (não à mais recente do cwd).
       paneId: result.paneId,

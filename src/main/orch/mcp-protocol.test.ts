@@ -4,9 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { mintToken, resetGateForTests } from './gate';
 import {
-  clearAuditLog,
+  clearAuditLogForTests,
+  configureAuditLogRuntime,
+  disposeAuditLogRuntime,
   readAuditLog,
-  setAuditLogPathForTests,
 } from '../jarvis/audit-log';
 import {
   handleMcpMessage,
@@ -16,7 +17,15 @@ import {
   type McpRegistry,
   type McpToolDef,
 } from './mcp-protocol';
+import { testProjectScope } from './__tests__/scope-fixture';
 import { clearAll as clearAllPermissions } from '../jarvis/permissions';
+import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import type { McpDispatchOptions } from './mcp-dispatch';
+
+const auditScope = testProjectScope();
+const auditContext = { scope: auditScope } as const;
+const TEST_MISSION_ID = 'mission-mcp-protocol-test';
+const TEST_CONTEXT_REVISION = 'context-revision-mcp-protocol-test';
 
 function makeRegistry(): McpRegistry {
   const echo: McpToolDef = {
@@ -42,7 +51,30 @@ function req(method: string, params?: Record<string, unknown>, id: number | unde
 
 function userCtx() {
   resetGateForTests();
-  return mintToken({ label: 'test', role: 'user' });
+  return mintToken({ label: 'test', role: 'user', scope: auditScope });
+}
+
+function missionCtx() {
+  resetGateForTests();
+  return mintToken({
+    label: 'test',
+    role: 'orchestrator',
+    missionId: TEST_MISSION_ID,
+    contextRevision: TEST_CONTEXT_REVISION,
+    scope: auditScope,
+  });
+}
+
+function workflowOptions(
+  confirm?: McpDispatchOptions['confirm'],
+): McpDispatchOptions {
+  return {
+    confirm,
+    resolveWorkflowAuthority: () => ({
+      contextRevision: TEST_CONTEXT_REVISION,
+      assertExecutionEffectAllowed: () => undefined,
+    }),
+  };
 }
 
 describe('resolveTool', () => {
@@ -56,20 +88,30 @@ describe('resolveTool', () => {
 
 describe('handleMcpMessage', () => {
   const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-mcp-protocol');
-  const testAuditLog = path.join(testDir, 'jarvis-actions.log');
+  let auditManager: ProjectRuntimeManager;
 
   beforeAll(() => {
     fs.mkdirSync(testDir, { recursive: true });
-    setAuditLogPathForTests(testAuditLog);
+    auditManager = new ProjectRuntimeManager({
+      baseDir: path.join(testDir, 'audit-runtime'),
+      appVersion: 'mcp-protocol-test',
+    });
+    configureAuditLogRuntime(auditManager);
   });
 
   beforeEach(() => {
-    clearAuditLog();
+    clearAuditLogForTests(auditContext);
+    auditManager.open(auditScope).db.prepare(
+      `INSERT OR IGNORE INTO missions
+         (id, title, description, status, milestones_json, created_at, updated_at)
+       VALUES (?, ?, '', 'running', '[]', ?, ?)`,
+    ).run(TEST_MISSION_ID, 'MCP protocol mission', Date.now(), Date.now());
     clearAllPermissions();
   });
 
   afterAll(() => {
-    setAuditLogPathForTests(null);
+    disposeAuditLogRuntime();
+    auditManager.closeAll();
     fs.rmSync(testDir, { recursive: true, force: true });
   });
 
@@ -110,6 +152,7 @@ describe('handleMcpMessage', () => {
     const ctx = mintToken({
       label: 'restricted',
       role: 'worker',
+      scope: testProjectScope(),
       allowedTools: ['pane_read'],
     });
     const res = await handleMcpMessage(makeRegistry(), ctx, req('tools/list'));
@@ -129,7 +172,7 @@ describe('handleMcpMessage', () => {
     };
     expect(result.isError).toBeUndefined();
     expect(JSON.parse(result.content[0].text)).toEqual({ echoed: { x: 1 } });
-    expect(readAuditLog()[0]).toMatchObject({
+    expect(readAuditLog(auditContext)[0]).toMatchObject({
       source: 'http-mcp',
       tool: 'nexus_pane_read',
       result: 'ok',
@@ -153,11 +196,12 @@ describe('handleMcpMessage', () => {
 
     const res = await handleMcpMessage(
       registry,
-      userCtx(),
+      missionCtx(),
       req('tools/call', {
         name: 'nexus_terminal_run',
         arguments: { command: 'echo no-ui' },
       }),
+      workflowOptions(),
     );
 
     const result = res?.result as {
@@ -166,7 +210,7 @@ describe('handleMcpMessage', () => {
     };
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('confirmation_ui_unavailable');
-    expect(readAuditLog()[0]).toMatchObject({
+    expect(readAuditLog(auditContext)[0]).toMatchObject({
       source: 'http-mcp',
       tool: 'nexus_terminal_run',
       result: 'denied',
@@ -194,12 +238,12 @@ describe('handleMcpMessage', () => {
 
     const res = await handleMcpMessage(
       registry,
-      userCtx(),
+      missionCtx(),
       req('tools/call', {
         name: 'nexus_terminal_run',
         arguments: { command: 'npm test' },
       }),
-      { confirm },
+      workflowOptions(confirm),
     );
 
     const result = res?.result as {
@@ -215,7 +259,7 @@ describe('handleMcpMessage', () => {
       reason: 'run command: npm test',
       agentLabel: 'test',
     }));
-    const auditEntries = readAuditLog();
+    const auditEntries = readAuditLog(auditContext);
     expect(auditEntries.map((entry) => entry.result)).toEqual(['intent', 'ok']);
     expect(auditEntries.at(-1)).toMatchObject({
       source: 'http-mcp',
@@ -241,12 +285,12 @@ describe('handleMcpMessage', () => {
 
     const res = await handleMcpMessage(
       registry,
-      userCtx(),
+      missionCtx(),
       req('tools/call', {
         name: 'nexus_terminal_run',
         arguments: { command: 'deploy' },
       }),
-      { confirm: async () => true },
+      workflowOptions(async () => true),
     );
     const envelope = res?.result as {
       isError?: boolean;
@@ -282,12 +326,12 @@ describe('handleMcpMessage', () => {
 
     const res = await handleMcpMessage(
       registry,
-      userCtx(),
+      missionCtx(),
       req('tools/call', {
         name: 'nexus_file_write',
         arguments: { path: 'src/a.ts', content: 'secret' },
       }),
-      { confirm: async () => false },
+      workflowOptions(async () => false),
     );
 
     const result = res?.result as {
@@ -297,7 +341,7 @@ describe('handleMcpMessage', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('user_denied');
     expect(executed).toBe(false);
-    expect(readAuditLog()[0]).toMatchObject({
+    expect(readAuditLog(auditContext)[0]).toMatchObject({
       source: 'http-mcp',
       tool: 'nexus_file_write',
       result: 'denied',
@@ -310,6 +354,7 @@ describe('handleMcpMessage', () => {
     const ctx = mintToken({
       label: 'restricted',
       role: 'worker',
+      scope: testProjectScope(),
       allowedTools: ['pane_read'],
     });
     const res = await handleMcpMessage(

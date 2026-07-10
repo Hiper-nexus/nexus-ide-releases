@@ -23,6 +23,8 @@ import { FilesPanel } from './components/FilesPanel';
 import { OpsBoard } from './components/OpsBoard';
 import { useVoiceController } from './voice/voice-controller';
 import { useOrchBridge } from './orch/orch-bridge';
+import { initDevServerStore } from './state/dev-server-store';
+import { initDesignSelectionStore } from './state/design-selection-store';
 import { useOrchStore } from './state/orch-store';
 import { useSettingsController, useSettingsStore } from './state/settings-store';
 import { useWorkspaceController, useWorkspaceStore } from './state/workspace-store';
@@ -186,6 +188,11 @@ export function App() {
     });
   }, []);
 
+  // Dev servers announced by PTYs and browser design selections are global
+  // renderer subscriptions with explicit teardown on window unmount.
+  useEffect(() => initDevServerStore(), []);
+  useEffect(() => initDesignSelectionStore(), []);
+
   if (!workspaceHydrated) {
     return <div className="boot">Starting NexusIDE…</div>;
   }
@@ -196,6 +203,8 @@ export function App() {
     return (
       <div className="app">
         <LaunchScreen />
+        {!suppressBrowserPanes && <VoiceHud />}
+        <VoiceSettings />
         <SettingsDrawer />
         <MissionWizard />
         <OperatorProfile />

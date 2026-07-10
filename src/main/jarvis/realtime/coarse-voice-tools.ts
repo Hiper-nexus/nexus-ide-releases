@@ -79,10 +79,15 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
   {
     name: 'ler',
     description:
-      'Lê o output recente de um pane (o que o agente/Claude respondeu ali). Use quando o usuário perguntar "o que o pane respondeu / qual o resultado / o que apareceu". Sem paneId → lê o pane ativo.',
+      'Lê conteúdo visível no Nexus. Para output recente de um pane (o que o agente/Claude respondeu ali), use scope "pane" e paneId opcional; sem paneId lê o pane ativo. Para "leia esta tela/página", "o que tem aqui" ou conteúdo visível fora de um pane, use scope "view" — ele coleta a visão atual por accessibility tree + OCR local. Nunca invente texto que a leitura não retornar.',
     parameters: {
       type: 'OBJECT',
       properties: {
+        scope: {
+          type: 'STRING',
+          description:
+            '"pane" (default) lê o output de um pane; "view" lê a tela/página visível atual por accessibility + OCR local.',
+        },
         paneId: {
           type: 'STRING',
           description: 'Id/nome do pane, ou "ativo" para o pane atual.',
@@ -94,19 +99,19 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
   {
     name: 'navegar',
     description:
-      "Navega a UI do Nexus: abre/foca workspace, squad, pane, terminal, browser ou tela (grid/board/settings/canvas/voz). Também dirige o wizard: 'mission-new' abre Nova Missão; 'workspace-new' abre o assistente de NOVO workspace (pasta + setup — NÃO confundir com abrir um projeto existente); 'design-squad' monta um squad do projeto e abre a revisão; 'wizard-fire' confirma/inicia o squad na revisão (como o botão Iniciar Squad). Use SEMPRE que o usuário pedir para abrir/mostrar/ir/focar/criar missão/novo workspace/confirmar. NÃO delegue navegação.",
+      'Navega a UI do Nexus: abre/foca workspace, squad, pane, terminal, browser ou tela (grid/board/settings/canvas/voz). Também dirige o wizard: "mission-new" abre Nova Missão; "mission-agentic" abre Nova Missão diretamente no Modo Agêntico (query recebe o objetivo se o usuário já o disse); "workspace-new" abre o assistente de NOVO workspace (pasta + setup — NÃO confundir com abrir um projeto existente); "design-squad" monta um squad do projeto e abre a revisão; "wizard-fire" confirma/inicia o squad na revisão (como o botão Iniciar Squad). Para iniciar/criar missão no modo agêntico, use mission-agentic — NUNCA use voz/settings nem design-squad. Use SEMPRE que o usuário pedir para abrir/mostrar/ir/focar/criar missão/novo workspace/confirmar. NÃO delegue navegação.',
     parameters: {
       type: 'OBJECT',
       properties: {
         target: {
           type: 'STRING',
           description:
-            "O que navegar: 'workspace', 'workspace-new', 'squad', 'pane', 'terminal', 'browser', 'screen', 'mission-new', 'design-squad' ou 'wizard-fire'.",
+            "O que navegar: 'workspace', 'workspace-new', 'squad', 'pane', 'terminal', 'browser', 'screen', 'mission-new', 'mission-agentic', 'design-squad' ou 'wizard-fire'.",
         },
         query: {
           type: 'STRING',
           description:
-            'Nome/id do alvo; em screen use grid, board, settings, canvas ou voz; em browser use a URL; em workspace use o nome do projeto; vazio em workspace-new/mission-new/design-squad/wizard-fire.',
+            'Nome/id do alvo; em screen use grid, board, settings, canvas ou voz; em browser use a URL; em workspace use o nome do projeto; em mission-agentic use o objetivo falado, se houver; vazio em workspace-new/mission-new/design-squad/wizard-fire.',
         },
       },
       required: ['target'],
@@ -183,6 +188,7 @@ export interface CoarseToolArgs {
   briefing?: string;
   pergunta?: string;
   paneId?: string;
+  scope?: string;
   target?: string;
   query?: string;
   texto?: string;
@@ -269,6 +275,15 @@ function navegarToAction(target: string, query: string): NexusRealtimeActionArgs
     case 'mission':
     case 'nova-missao':
       return { action: 'new_mission' };
+    case 'mission-agentic':
+    case 'agentic-mission':
+    case 'missao-agentica':
+    case 'missao-agentico':
+    case 'nova-missao-agentica':
+      return {
+        action: 'new_agentic_mission',
+        ...(query ? { intent: query } : {}),
+      };
     case 'workspace-new':
     case 'new-workspace':
     case 'new_workspace':
@@ -292,6 +307,18 @@ function navegarToAction(target: string, query: string): NexusRealtimeActionArgs
       // Allow a bare screen name used directly as the target ("navegar grid").
       return screenToAction(t);
   }
+}
+
+function isCurrentViewScope(value: string): boolean {
+  return [
+    'view',
+    'current-view',
+    'screen',
+    'tela',
+    'visao',
+    'pagina',
+    'page',
+  ].includes(navToken(value));
 }
 
 /**
@@ -326,6 +353,10 @@ export function resolveCoarseVoiceTool(
       return { kind: 'direct', intent: 'consult', query };
     }
     case 'ler': {
+      if (isCurrentViewScope(str(args.scope, 64))) {
+        const action: NexusRealtimeActionArgs = { action: 'read_current_view' };
+        return { kind: 'action', action, summary: summarizeNexusRealtimeAction(action) };
+      }
       const paneId = str(args.paneId, 128) || undefined;
       const action: NexusRealtimeActionArgs = {
         action: 'read_pane',

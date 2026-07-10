@@ -40,6 +40,8 @@ describe('isDiscardableTranscript', () => {
   it('descarta artefatos duros mesmo em conversa', () => {
     for (const junk of [
       '.',
+      '[risos]',
+      '[música]',
       'amara.org',
       'obrigado por assistir',
       'se inscreve no canal',
@@ -89,6 +91,7 @@ describe('stripWakeAckEcho', () => {
     expect(stripWakeAckEcho('Estou ouvindo.', 'patrão')).toBe('');
     expect(stripWakeAckEcho('E Javes Pois não, Patrão', 'Patrão')).toBe('');
     expect(stripWakeAckEcho('Pues no patrón.', 'Patrão')).toBe('');
+    expect(stripWakeAckEcho('Jackson?', 'Patrão')).toBe('');
   });
 
   it('não mexe em fala real sem prefixo de wake', () => {

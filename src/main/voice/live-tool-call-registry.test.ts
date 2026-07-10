@@ -71,4 +71,37 @@ describe('LiveToolCallRegistry', () => {
       expect.objectContaining({ ok: true, summary: 'working tree clean' }),
     );
   });
+
+  it('arms the result lifecycle before a synchronous provider completion can fire', () => {
+    const session = new JarvisLiveSession(() => {}, () => 1_000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const order: string[] = [];
+    const provider = {
+      isReady: true,
+      sendNamedToolResult: vi.fn(() => order.push('sent')),
+      sendToolResult: vi.fn(),
+    } as unknown as TurnManagedRealtimeProvider;
+    const coordinator = new LiveToolCallCoordinator({
+      fsm: session,
+      getProvider: () => provider,
+      onResultContext: vi.fn(),
+      onResultSending: () => order.push('armed'),
+    });
+
+    expect(coordinator.claim(call)).toBe(true);
+    expect(
+      coordinator.complete({
+        sessionId: session.getState().sessionId!,
+        at: 1_001,
+        source: 'realtime',
+        callId: call.callId,
+        name: call.name,
+        tool: 'open_terminal',
+        ok: true,
+        summary: 'terminal aberto',
+      }),
+    ).toBe(true);
+    expect(order).toEqual(['armed', 'sent']);
+  });
 });

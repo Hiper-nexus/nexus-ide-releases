@@ -15,46 +15,46 @@ export interface AppRelease {
 export const CURRENT_RELEASE: AppRelease = {
   version: '0.12.0',
   date: '2026-07-10',
-  codename: 'Jarvis Realtime Proof',
+  codename: 'Verified Context',
   summary:
-    'O diagnóstico Realtime da Jarvis agora só confirma sucesso quando o WebAudio do Nexus inicia a reprodução do chunk recebido, com roteamento de áudio explícito e fallback observável.',
+    'O Nexus agora entende e verifica o contexto de cada projeto antes de executar efeitos: runtime e dados ficam isolados por checkout, e conclusão exige evidência compatível com a revisão e o diff atuais.',
   highlights: [
     {
-      title: 'Prova real de áudio Realtime',
+      title: 'Contexto verificável antes do código',
       detail:
-        'Cada chunk PCM recebe um identificador do processo principal e o renderer só confirma o diagnóstico depois de agendá-lo no WebAudio.',
+        'Conhecimento do domínio, contratos, contextRevision, sensores, PREVC e Review Council formam um gate nativo antes de efeitos e conclusão.',
     },
     {
-      title: 'Diagnóstico isolado',
+      title: 'Runtime seguro por projeto',
       detail:
-        'O teste reconecta a sessão Live antes de enviar a frase de prova, impedindo que áudio de uma resposta anterior dê falso positivo.',
+        'SQLite, stores, identidade, worktrees, cron e sync são escopados por projeto e checkout, com modo somente leitura quando a persistência degrada.',
     },
     {
-      title: 'Saída de áudio honesta',
+      title: 'Nexus Doctor e release verificável',
       detail:
-        'Quando uma saída física escolhida não pode ser aplicada, o app mostra a falha em vez de tocar silenciosamente na saída padrão.',
+        'Readiness estruturado, smoke do app empacotado, SBOM, checksums e validação de assinatura/notarização tornam os bloqueios reproduzíveis.',
     },
   ],
   fixes: [
     {
-      title: 'Fim do falso “Realtime confirmado”',
+      title: 'Sem conclusão por caminhos paralelos',
       detail:
-        'Receber PCM do provider não basta mais para deixar o diagnóstico verde: erro, cancelamento ou ausência de reprodução falham de forma explícita.',
+        'Missões, handoffs e efeitos passam pelos mesmos gates de workflow, contexto, evidência e identidade do diff.',
     },
     {
-      title: 'Eventos antigos isolados',
+      title: 'Jarvis isolada por janela e projeto',
       detail:
-        'Confirmações atrasadas, duplicadas ou de outra entrega não podem concluir um teste novo de voz.',
+        'Ownership Live, wake/PTT, transcript, memória e callbacks tardios não atravessam outro renderer, projeto ou checkout.',
     },
     {
-      title: 'Latência por turno',
+      title: 'Visão e ferramentas com menos vazamento',
       detail:
-        'O log de métricas separa turnos de uma mesma sessão Live e descarta a amostra interrompida antes do barge-in.',
+        'AX, OCR e resultados MCP recebem limites e redação única de segredos; Git e filesystem falham fechados diante de drift e configuração perigosa.',
     },
     {
-      title: 'Release multi-arquitetura preparado',
+      title: 'Atualização restrita à plataforma correta',
       detail:
-        'O updater escolhe o ZIP compatível com Apple Silicon ou Intel, sem instalar payload de arquitetura errada.',
+        'O updater escolhe o ZIP do Mac compatível e fica indisponível em Linux/Windows até existir um mecanismo próprio para essas plataformas.',
     },
   ],
 };

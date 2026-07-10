@@ -39,8 +39,14 @@ interface McpResult {
   ok: boolean;
   tool: string;
   result?: unknown;
+  error?: string;
+  denied?: boolean;
   requiredConfirmation?: boolean;
+  effectMayHaveCommitted?: boolean;
 }
+
+const MISSING_EFFECT_AUTHORITY_ERROR =
+  'mission effect blocked: projectId, checkoutId, missionId and contextRevision are required';
 
 export interface FunctionalSmokeApi {
   workspace: {
@@ -161,7 +167,10 @@ export async function runFunctionalSmokeProbes(
       if (!validate(value)) return false;
       probes.push(name);
       return true;
-    } catch {
+    } catch (error) {
+      console.error(
+        `[smoke] probe ${name} failed: ${smokeErrorMessage(error)}`,
+      );
       return false;
     }
   };
@@ -291,7 +300,10 @@ export async function runFunctionalSmokeProbes(
         isRecord(value) &&
         value.ok === false &&
         value.tool === 'nexus_file_write' &&
-        value.requiredConfirmation === true,
+        value.effectMayHaveCommitted !== true &&
+        (value.requiredConfirmation === true ||
+          (value.denied === true &&
+            value.error === MISSING_EFFECT_AUTHORITY_ERROR)),
     ],
   ];
   for (const [name, tool, args, validate] of mcpProbes) {
@@ -301,4 +313,9 @@ export async function runFunctionalSmokeProbes(
   }
 
   return { ok: true, probes, toolCount, adapterCount };
+}
+
+function smokeErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/[\r\n]+/gu, ' ').slice(0, 512);
 }
