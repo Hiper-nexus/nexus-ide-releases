@@ -1,6 +1,9 @@
 import type { AgentGateContext } from './gate';
 import { canonicalToolName, isToolAllowed } from './gate';
-import { dispatchToolCall } from './mcp-dispatch';
+import {
+  dispatchToolCall,
+  type McpDispatchOptions,
+} from './mcp-dispatch';
 
 /**
  * Minimal MCP (Model Context Protocol) server core: JSON-RPC 2.0 message
@@ -87,8 +90,8 @@ function toolText(payload: unknown): {
   return { content: [{ type: 'text', text }] };
 }
 
-function toolError(message: string): ReturnType<typeof toolText> {
-  return { ...toolText(message), isError: true };
+function toolError(payload: unknown): ReturnType<typeof toolText> {
+  return { ...toolText(payload), isError: true };
 }
 
 export function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {
@@ -109,6 +112,7 @@ export async function handleMcpMessage(
   registry: McpRegistry,
   ctx: AgentGateContext,
   message: JsonRpcRequest,
+  dispatchOptions: McpDispatchOptions = {},
 ): Promise<JsonRpcResponse | null> {
   const id = message.id ?? null;
   const isNotification = message.id === undefined;
@@ -152,14 +156,32 @@ export async function handleMcpMessage(
       }
       const args =
         (message.params?.arguments as Record<string, unknown>) ?? {};
-      const result = await dispatchToolCall('http-mcp', registry, name, args, ctx);
+      const result = await dispatchToolCall(
+        'http-mcp',
+        registry,
+        name,
+        args,
+        ctx,
+        dispatchOptions,
+      );
       if (result.ok) {
         console.log(`[orch] tool ${result.tool} ok (${ctx.label})`);
         return ok(id, toolText(result.result));
       }
       const detail = result.error ?? result.confirmationReason ?? 'tool denied';
       console.warn(`[orch] tool ${result.tool} FALHOU (${ctx.label}): ${detail}`);
-      return ok(id, toolError(`${result.tool} failed: ${detail}`));
+      return ok(
+        id,
+        toolError(
+          result.effectMayHaveCommitted
+            ? {
+                tool: result.tool,
+                error: detail,
+                effectMayHaveCommitted: true,
+              }
+            : `${result.tool} failed: ${detail}`,
+        ),
+      );
     }
 
     default:

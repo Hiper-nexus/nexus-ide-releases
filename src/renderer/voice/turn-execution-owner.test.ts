@@ -84,4 +84,34 @@ describe('TurnExecutionOwner', () => {
       expect(spoke).toHaveLength(1);
     }
   });
+
+  it('lets a realtime tool upgrade a prior realtime audio claim in the same turn', () => {
+    const owner = new TurnExecutionOwner();
+    const token = owner.beginTurn();
+
+    expect(owner.claim('realtime-audio', token)).toBe(true);
+    expect(owner.claimRealtimeTool(token)).toBe(true);
+    expect(owner.owner).toBe('realtime-tool');
+    expect(owner.claim('classic-brain', token)).toBe(false);
+  });
+
+  it('allows sequential realtime tool calls from the same provider turn', () => {
+    const owner = new TurnExecutionOwner();
+    const token = owner.beginTurn();
+
+    expect(owner.claim('realtime-audio', token)).toBe(true);
+    expect(owner.claimRealtimeTool(token)).toBe(true);
+    expect(owner.claimRealtimeTool(token)).toBe(true);
+    expect(owner.owner).toBe('realtime-tool');
+    expect(owner.claim('classic-brain', token)).toBe(false);
+  });
+
+  it('does not let a realtime tool override Classic once Classic owns the turn', () => {
+    const owner = new TurnExecutionOwner();
+    const token = owner.beginTurn();
+
+    expect(owner.claim('classic-brain', token)).toBe(true);
+    expect(owner.claimRealtimeTool(token)).toBe(false);
+    expect(owner.owner).toBe('classic-brain');
+  });
 });

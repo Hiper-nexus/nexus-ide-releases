@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_VOICE_CONFIG } from '../../shared/voice-config';
+import { VOICE_CHANNELS } from '../../shared/voice-channels';
 import { JarvisLiveSession } from './jarvis-live';
 import type {
   RealtimeToolCallEvent,
@@ -32,15 +33,23 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
   closeCalls: number;
   fireDisconnected(err: Error): void;
   fireToolCall(call?: Partial<RealtimeToolCallEvent>): void;
+  fireToolCallCancelled(callId: string): void;
   fireRoleTranscript(line: { role: 'user' | 'assistant'; text: string; final: boolean }): void;
+  fireAudioOut(samples?: Int16Array): void;
+  fireResponseDone(): void;
+  fireError(err: Error): void;
 } {
   let ready = false;
   let closeCalls = 0;
   const disconnectedCallbacks: Array<(err: Error) => void> = [];
   const toolCallCallbacks: Parameters<TurnManagedRealtimeProvider['onToolCall']>[0][] = [];
+  const toolCallCancelledCallbacks: Array<(callId: string) => void> = [];
   const roleTranscriptCallbacks: Parameters<
     TurnManagedRealtimeProvider['onRoleTranscript']
   >[0][] = [];
+  const audioOutCallbacks: Parameters<TurnManagedRealtimeProvider['onAudioOut']>[0][] = [];
+  const responseDoneCallbacks: Array<() => void> = [];
+  const errorCallbacks: Array<(err: Error) => void> = [];
   return {
     get closeCalls() {
       return closeCalls;
@@ -52,27 +61,38 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
       await connect();
       ready = true;
     }),
+    beginUserTurn: vi.fn(),
     sendAudioChunk: vi.fn(),
     onTranscript: vi.fn(),
     onRoleTranscript: vi.fn((cb) => {
       roleTranscriptCallbacks.push(cb);
     }),
-    onAudioOut: vi.fn(),
-    onError: vi.fn(),
+    onAudioOut: vi.fn((cb) => {
+      audioOutCallbacks.push(cb);
+    }),
+    onError: vi.fn((cb) => {
+      errorCallbacks.push(cb);
+    }),
     interrupt: vi.fn(),
     close: vi.fn(() => {
       closeCalls += 1;
       ready = false;
     }),
     endUserTurn: vi.fn(),
+    forceEndUserTurn: vi.fn(),
     sendContext: vi.fn(),
     sendText: vi.fn(),
     sendToolResult: vi.fn(),
     onToolCall: vi.fn((cb) => {
       toolCallCallbacks.push(cb);
     }),
+    onToolCallCancelled: vi.fn((cb) => {
+      toolCallCancelledCallbacks.push(cb);
+    }),
     onInterrupted: vi.fn(),
-    onResponseDone: vi.fn(),
+    onResponseDone: vi.fn((cb) => {
+      responseDoneCallbacks.push(cb);
+    }),
     onDisconnected: vi.fn((cb) => {
       disconnectedCallbacks.push(cb);
     }),
@@ -90,8 +110,20 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
         });
       }
     },
+    fireToolCallCancelled(callId) {
+      for (const cb of toolCallCancelledCallbacks) cb(callId);
+    },
     fireRoleTranscript(line) {
       for (const cb of roleTranscriptCallbacks) cb(line);
+    },
+    fireAudioOut(samples = new Int16Array([1])) {
+      for (const cb of audioOutCallbacks) cb(samples);
+    },
+    fireResponseDone() {
+      for (const cb of responseDoneCallbacks) cb();
+    },
+    fireError(err) {
+      for (const cb of errorCallbacks) cb(err);
     },
   };
 }
@@ -200,6 +232,190 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
+  it('reports realtime smoke success only after renderer playback is acknowledged', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    let wall = 1_000;
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => [{ id: 'gemini', provider }],
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => wall);
+    session.setEnabled(true);
+    const emitted: Array<{ channel: string; payload: unknown }> = [];
+    const controller = new LiveTransportController(
+      (channel, payload) => emitted.push({ channel, payload }),
+      session,
+      () => wall,
+    );
+
+    const resultPromise = controller.smokeTest('responda que está online', 101);
+    await vi.waitFor(() => expect(provider.sendText).toHaveBeenCalledOnce());
+    wall = 1_240;
+    provider.fireAudioOut();
+    const audio = emitted.find((event) => event.channel === VOICE_CHANNELS.liveAudioOut);
+    expect(audio?.payload).toMatchObject({ pcm16: expect.any(String), id: expect.any(String) });
+
+    let settled = false;
+    void resultPromise.then(() => {
+      settled = true;
+    });
+    // response.done may race the renderer IPC receipt; delivered PCM keeps the
+    // probe open until the matching owner reports playback started.
+    provider.fireResponseDone();
+    controller.reportAudioPlayback(
+      {
+        id: (audio!.payload as { id: string }).id,
+        outcome: 'started',
+      },
+      202,
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    controller.reportAudioPlayback(
+      {
+        id: (audio!.payload as { id: string }).id,
+        outcome: 'started',
+      },
+      101,
+    );
+
+    await expect(resultPromise).resolves.toMatchObject({
+      ok: true,
+      evidence: 'audio',
+      latencyMs: 240,
+    });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('rejects realtime smoke when the renderer cannot start provider playback', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => [{ id: 'gemini', provider }],
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1_000);
+    session.setEnabled(true);
+    const emitted: Array<{ channel: string; payload: unknown }> = [];
+    const controller = new LiveTransportController(
+      (channel, payload) => emitted.push({ channel, payload }),
+      session,
+    );
+
+    const resultPromise = controller.smokeTest('responda que está online');
+    await vi.waitFor(() => expect(provider.sendText).toHaveBeenCalledOnce());
+    provider.fireAudioOut();
+    const audio = emitted.find((event) => event.channel === VOICE_CHANNELS.liveAudioOut);
+    controller.reportAudioPlayback({
+      id: (audio!.payload as { id: string }).id,
+      outcome: 'failed',
+      error: 'sink rejected',
+    });
+
+    await expect(resultPromise).resolves.toMatchObject({
+      ok: false,
+      reason: 'audio_playback_failed',
+    });
+    expect(session.getState()).toMatchObject({ status: 'error', realtimeReady: false });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('rejects a realtime smoke response that completes without audio', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => [{ id: 'gemini', provider }],
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1_000);
+    session.setEnabled(true);
+    const controller = new LiveTransportController(() => {}, session);
+
+    const resultPromise = controller.smokeTest('responda que está online');
+    await vi.waitFor(() => expect(provider.sendText).toHaveBeenCalledOnce());
+    provider.fireResponseDone();
+
+    await expect(resultPromise).resolves.toMatchObject({
+      ok: false,
+      reason: 'no_audio_response',
+    });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
   it('reuses an in-flight realtime connection instead of opening another socket', async () => {
     vi.resetModules();
     const pending = deferred();
@@ -297,7 +513,7 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
-  it('buffers mic frames while the realtime provider is connecting', async () => {
+  it('flushes manual/PTT mic frames buffered while the realtime provider connects', async () => {
     vi.resetModules();
     const pending = deferred();
     const provider = fakeProvider(() => pending.promise);
@@ -332,6 +548,7 @@ describe('LiveTransportController', () => {
     session.start({ reason: 'manual' });
     const controller = new LiveTransportController(() => {}, session);
 
+    controller.beginTurn('turn-1');
     const started = controller.onStart();
     controller.micIn(pcmBase64([1, 2, 3]));
     controller.micIn(pcmBase64([4, 5, 6]));
@@ -346,14 +563,221 @@ describe('LiveTransportController', () => {
     pending.resolve();
     await started;
 
-    // Wake latency fix: discard ambient/pre-roll buffered during connect —
-    // flushing it opened a competing audio user-turn ahead of [wake] (~20s RTT).
-    expect(provider.sendAudioChunk).not.toHaveBeenCalled();
+    expect(provider.sendAudioChunk).toHaveBeenCalledTimes(2);
+    expect(provider.beginUserTurn).toHaveBeenLastCalledWith('turn-1');
+    const finalTurnBindOrder = vi.mocked(provider.beginUserTurn!).mock.invocationCallOrder.at(-1)!;
+    const firstAudioOrder = vi.mocked(provider.sendAudioChunk).mock.invocationCallOrder[0];
+    expect(finalTurnBindOrder).toBeLessThan(firstAudioOrder);
+    expect(provider.sendAudioChunk).toHaveBeenNthCalledWith(
+      1,
+      new Int16Array([1, 2, 3]),
+    );
+    expect(provider.sendAudioChunk).toHaveBeenNthCalledWith(
+      2,
+      new Int16Array([4, 5, 6]),
+    );
     expect(session.getState()).toMatchObject({
       status: 'listening',
       realtimeReady: true,
       pendingMic: false,
     });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('preserva o fim do turno durante a conexão e o envia depois dos frames', async () => {
+    vi.resetModules();
+    const pending = deferred();
+    const provider = fakeProvider(() => pending.promise);
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    const started = controller.onStart();
+    controller.micIn(pcmBase64([1, 2, 3]));
+    controller.micIn(pcmBase64([4, 5, 6]));
+    controller.endTurn();
+    controller.endTurn();
+    expect(provider.endUserTurn).not.toHaveBeenCalled();
+
+    pending.resolve();
+    await started;
+
+    expect(provider.sendAudioChunk).toHaveBeenCalledTimes(2);
+    expect(provider.endUserTurn).toHaveBeenCalledOnce();
+    const lastAudioOrder = vi.mocked(provider.sendAudioChunk).mock.invocationCallOrder.at(-1)!;
+    const endOrder = vi.mocked(provider.endUserTurn).mock.invocationCallOrder[0];
+    expect(lastAudioOrder).toBeLessThan(endOrder);
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('omits a cold wake greeting when user audio arrived during connect', async () => {
+    vi.resetModules();
+    const pending = deferred();
+    const provider = fakeProvider(() => pending.promise);
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'wake' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    const started = controller.onStart({ greeting: '[wake] diga Olá.' });
+    controller.micIn(pcmBase64([1, 2, 3]));
+    pending.resolve();
+    await started;
+
+    expect(provider.sendText).not.toHaveBeenCalled();
+    expect(provider.sendAudioChunk).toHaveBeenCalledOnce();
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('sends a warm wake greeting before accepting the next audio turn', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'wake' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    await controller.onStart();
+    await controller.onStart({ greeting: '[wake] diga Olá.' });
+    controller.micIn(pcmBase64([4, 5, 6]));
+
+    expect(provider.sendText).toHaveBeenCalledWith('[wake] diga Olá.');
+    expect(vi.mocked(provider.sendText).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(provider.sendAudioChunk).mock.invocationCallOrder[0],
+    );
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('resends a zero-frame turn as filtered text exactly once per turn id', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'openai', provider }];
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'openai-realtime',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['openai'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1_000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+    await controller.onStart();
+
+    expect(controller.rescueText('turn-7', 'abra o terminal')).toBe(true);
+    expect(controller.rescueText('turn-7', 'abra o terminal')).toBe(true);
+
+    expect(provider.sendText).toHaveBeenCalledOnce();
+    expect(provider.sendText).toHaveBeenCalledWith('abra o terminal');
+    expect(provider.sendAudioChunk).not.toHaveBeenCalled();
+    expect(provider.forceEndUserTurn).not.toHaveBeenCalled();
 
     vi.doUnmock('./voice-config-store');
     vi.doUnmock('./voice-secrets');
@@ -552,6 +976,127 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
+  it('dedupes callId across reconnect and cancels renderer execution by IPC', async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const firstProvider = fakeProvider(async () => {});
+    const secondProvider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [
+      { id: 'gemini', provider: firstProvider },
+    ];
+    const events: Array<{ channel: string; payload: unknown }> = [];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    try {
+      const { VOICE_CHANNELS } = await import('../../shared/voice-channels');
+      const { LiveTransportController } = await import('./live-transport-controller');
+      const emit = (channel: string, payload: unknown) =>
+        events.push({ channel, payload });
+      const session = new JarvisLiveSession(emit, () => 1_000);
+      session.setEnabled(true);
+      session.start({ reason: 'manual' });
+      const controller = new LiveTransportController(emit, session);
+
+      await controller.onStart();
+      firstProvider.fireToolCall({ callId: 'call-completed' });
+      controller.toolResult({
+        sessionId: session.getState().sessionId ?? 'session',
+        at: 1_000,
+        source: 'realtime',
+        callId: 'call-completed',
+        name: 'nexus_action',
+        tool: 'open_terminal',
+        ok: true,
+        summary: 'terminal aberto uma vez',
+        output: { ok: true },
+      });
+      firstProvider.fireToolCall({ callId: 'call-reconnect' });
+      expect(
+        events.filter((event) => event.channel === VOICE_CHANNELS.liveToolCall),
+      ).toHaveLength(2);
+
+      candidates.splice(0, candidates.length, {
+        id: 'gemini',
+        provider: secondProvider,
+      });
+      firstProvider.fireDisconnected(new Error('socket caiu'));
+      await vi.advanceTimersByTimeAsync(750);
+      expect(secondProvider.isReady).toBe(true);
+
+      secondProvider.fireToolCall({ callId: 'call-completed' });
+      secondProvider.fireToolCall({ callId: 'call-reconnect' });
+      expect(
+        events.filter((event) => event.channel === VOICE_CHANNELS.liveToolCall),
+      ).toHaveLength(2);
+      expect(secondProvider.sendToolResult).toHaveBeenCalledWith(
+        'call-completed',
+        expect.objectContaining({ ok: true, summary: 'terminal aberto uma vez' }),
+      );
+
+      secondProvider.fireToolCallCancelled('call-reconnect');
+      expect(
+        events.filter(
+          (event) => event.channel === VOICE_CHANNELS.liveToolCancelled,
+        ).at(-1)?.payload,
+      ).toMatchObject({
+        callId: 'call-reconnect',
+        reason: 'provider_cancelled',
+      });
+
+      // If session resumption repeats a cancelled id, answer with the cached
+      // terminal state instead of either re-executing or leaving it pending.
+      secondProvider.fireToolCall({ callId: 'call-reconnect' });
+      expect(secondProvider.sendToolResult).toHaveBeenLastCalledWith(
+        'call-reconnect',
+        expect.objectContaining({
+          ok: false,
+          output: { error: 'provider_cancelled' },
+        }),
+      );
+
+      controller.toolResult({
+        sessionId: session.getState().sessionId ?? 'session',
+        at: 1_001,
+        source: 'realtime',
+        callId: 'call-reconnect',
+        name: 'nexus_action',
+        tool: 'open_terminal',
+        ok: true,
+        summary: 'terminal abriu tarde',
+        output: { ok: true, effectCommitted: true },
+      });
+      expect(secondProvider.sendToolResult).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+      vi.doUnmock('./voice-config-store');
+      vi.doUnmock('./voice-secrets');
+      vi.doUnmock('./jarvis-memory');
+      vi.doUnmock('../jarvis/realtime/factory');
+    }
+  });
+
   it('marks realtime action latency as soon as the provider requests a tool', async () => {
     vi.resetModules();
     const markAction = vi.fn();
@@ -564,6 +1109,7 @@ describe('LiveTransportController', () => {
         markAudioIn: vi.fn(),
         markAudioOut: vi.fn(),
         markResponseDone: vi.fn(),
+        discard: vi.fn(),
       },
     }));
     vi.doMock('./voice-config-store', () => ({
@@ -656,7 +1202,9 @@ describe('LiveTransportController', () => {
 
       expect(provider.sendToolResult).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(10_000);
+      // Human confirmation gets a real reading/decision window; expiration is
+      // explicit and aborts the renderer by callId.
+      await vi.advanceTimersByTimeAsync(120_000);
 
       expect(provider.sendToolResult).toHaveBeenCalledWith(
         'call_timeout',
@@ -670,6 +1218,23 @@ describe('LiveTransportController', () => {
       expect(events.some((event) => event.channel === VOICE_CHANNELS.liveToolResult)).toBe(
         true,
       );
+      expect(
+        events.find((event) => event.channel === VOICE_CHANNELS.liveToolCancelled)
+          ?.payload,
+      ).toMatchObject({ callId: 'call_timeout', reason: 'timeout' });
+
+      controller.toolResult({
+        sessionId: session.getState().sessionId ?? 'session',
+        at: 121_001,
+        source: 'realtime',
+        callId: 'call_timeout',
+        name: 'nexus_action',
+        tool: 'open_terminal',
+        ok: true,
+        summary: 'executor terminou depois do timeout',
+        output: { effectCommitted: true },
+      });
+      expect(provider.sendToolResult).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
       vi.doUnmock('./voice-config-store');
@@ -747,7 +1312,7 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
-  it('bridges realtime MCP tool calls through the audited Jarvis executor path', async () => {
+  it('bridges exact Gemini MCP declarations through the audited Jarvis executor path', async () => {
     vi.resetModules();
     const provider = fakeProvider(async () => {});
     const candidates: RealtimeProviderCandidate[] = [{ id: 'openai', provider }];
@@ -792,13 +1357,9 @@ describe('LiveTransportController', () => {
     await controller.onStart();
     provider.fireToolCall({
       callId: 'call_mcp',
-      argumentsJson:
-        '{"action":"mcp_tool","tool":"nexus_git_status","args":{"short":true}}',
-      arguments: {
-        action: 'mcp_tool',
-        tool: 'nexus_git_status',
-        args: { short: true },
-      },
+      name: 'nexus_git_status',
+      argumentsJson: '{"short":true}',
+      arguments: { short: true },
     });
 
     const toolCall = events.find((event) => event.channel === VOICE_CHANNELS.liveToolCall);
@@ -880,6 +1441,206 @@ describe('LiveTransportController', () => {
     vi.doUnmock('./voice-secrets');
     vi.doUnmock('./jarvis-memory');
     vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('backs off and stops reconnecting when ready sockets keep flapping', async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const providers = Array.from({ length: 4 }, () => fakeProvider(async () => {}));
+    let providerIndex = 0;
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'openai-realtime',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => [
+        {
+          id: 'openai',
+          provider: providers[Math.min(providerIndex++, providers.length - 1)],
+        },
+      ],
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['openai'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    await controller.onStart();
+    providers[0].fireDisconnected(new Error('flap 1'));
+    await vi.advanceTimersByTimeAsync(750);
+    expect(providers[1].connect).toHaveBeenCalledOnce();
+
+    providers[1].fireDisconnected(new Error('flap 2'));
+    await vi.advanceTimersByTimeAsync(1_499);
+    expect(providers[2].connect).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(providers[2].connect).toHaveBeenCalledOnce();
+
+    providers[2].fireDisconnected(new Error('flap 3'));
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(providers[3].connect).toHaveBeenCalledOnce();
+
+    providers[3].fireDisconnected(new Error('flap 4'));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(providers[3].connect).toHaveBeenCalledOnce();
+    expect(session.getState()).toMatchObject({
+      status: 'error',
+      realtimeReady: false,
+    });
+
+    vi.useRealTimers();
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('opens the reconnect circuit when sockets emit one event then flap before stability', async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const providers = Array.from({ length: 5 }, () => fakeProvider(async () => {}));
+    let providerIndex = 0;
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => [
+        {
+          id: 'gemini',
+          provider: providers[Math.min(providerIndex++, providers.length - 1)],
+        },
+      ],
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    try {
+      const { LiveTransportController } = await import('./live-transport-controller');
+      const session = new JarvisLiveSession(() => {}, () => 1_000);
+      session.setEnabled(true);
+      session.start({ reason: 'manual' });
+      const controller = new LiveTransportController(() => {}, session);
+
+      await controller.onStart();
+      for (let index = 0; index < 4; index += 1) {
+        providers[index].fireAudioOut();
+        providers[index].fireDisconnected(new Error(`eventual flap ${index + 1}`));
+        await vi.advanceTimersByTimeAsync(10_000);
+      }
+
+      expect(providers[4].connect).not.toHaveBeenCalled();
+      expect(session.getState()).toMatchObject({
+        status: 'error',
+        realtimeReady: false,
+      });
+    } finally {
+      vi.useRealTimers();
+      vi.doUnmock('./voice-config-store');
+      vi.doUnmock('./voice-secrets');
+      vi.doUnmock('./jarvis-memory');
+      vi.doUnmock('../jarvis/realtime/factory');
+    }
+  });
+
+  it('does not treat a 30-second progress-timeout loop as a stable connection', async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const providers = Array.from({ length: 5 }, () => fakeProvider(async () => {}));
+    let providerIndex = 0;
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => [
+        {
+          id: 'gemini',
+          provider: providers[Math.min(providerIndex++, providers.length - 1)],
+        },
+      ],
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    try {
+      const { LiveTransportController } = await import('./live-transport-controller');
+      const session = new JarvisLiveSession(() => {}, () => 1_000);
+      session.setEnabled(true);
+      session.start({ reason: 'manual' });
+      const controller = new LiveTransportController(() => {}, session);
+
+      await controller.onStart();
+      for (let index = 0; index < 4; index += 1) {
+        // Mirrors Gemini's in-flight progress watchdog. A socket that only
+        // survives until this deadline has delivered no useful response.
+        await vi.advanceTimersByTimeAsync(30_000);
+        providers[index].fireDisconnected(new Error('sem progresso por 30s'));
+        if (index < 3) {
+          await vi.advanceTimersByTimeAsync(750 * 2 ** index);
+          expect(providers[index + 1].connect).toHaveBeenCalledOnce();
+        }
+      }
+
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(providers[4].connect).not.toHaveBeenCalled();
+      expect(session.getState()).toMatchObject({
+        status: 'error',
+        realtimeReady: false,
+      });
+    } finally {
+      vi.useRealTimers();
+      vi.doUnmock('./voice-config-store');
+      vi.doUnmock('./voice-secrets');
+      vi.doUnmock('./jarvis-memory');
+      vi.doUnmock('../jarvis/realtime/factory');
+    }
   });
 
   it('roteia a coarse tool "delegar" pelo mesmo executor auditado (send_to_pane)', async () => {

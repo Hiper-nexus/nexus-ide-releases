@@ -41,7 +41,12 @@ export function CloseWorkspaceDialog() {
   }
 
   return (
-    <div className="confirm" role="alertdialog" aria-label="Fechar workspace">
+    <div
+      className="confirm"
+      role="alertdialog"
+      aria-modal="true"
+      aria-label="Fechar workspace"
+    >
       <div className="confirm__overlay" onClick={cancel} />
       <div className="confirm__panel">
         <h3 className="confirm__title">Fechar “{workspace.name}”?</h3>

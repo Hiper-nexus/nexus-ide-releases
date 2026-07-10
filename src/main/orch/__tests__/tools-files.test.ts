@@ -55,6 +55,18 @@ describe('tools-files', () => {
     expect(result).toHaveProperty('content', '# Hello');
   });
 
+  it('fails closed on an unbounded huge read and streams an explicit range', async () => {
+    const hugePath = path.join(wsDir, 'huge.log');
+    fs.writeFileSync(hugePath, `${'x'.repeat(9 * 1024 * 1024)}\ntail\n`);
+    const read = buildFileTools().find((tool) => tool.name === 'nexus_file_read')!;
+    await expect(read.handler({ path: 'huge.log' }, fakeCtx())).rejects.toThrow(
+      /use offset \+ limit/,
+    );
+    await expect(
+      read.handler({ path: 'huge.log', offset: 2, limit: 1 }, fakeCtx()),
+    ).resolves.toMatchObject({ content: 'tail', offset: 2, limit: 1 });
+  });
+
   it('nexus_file_write creates a new file', async () => {
     const tools = buildFileTools();
     const write = tools.find((t) => t.name === 'nexus_file_write')!;

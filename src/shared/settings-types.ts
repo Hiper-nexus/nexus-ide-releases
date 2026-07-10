@@ -72,9 +72,32 @@ export const orchSettingsSchema = z.object({
   /** Modo sóbrio: oculta HUD/celebrações/narração da gamificação (o XP
    *  continua acumulando em silêncio). */
   soberMode: z.boolean().default(false),
+  /** CLI provider used by the next squad orchestrator. */
+  defaultAdapterId: z.string().max(64).default('claude'),
+  /** Empty means the selected provider's configured default model. */
+  defaultModel: z.string().max(128).default(''),
+  /** Empty means the selected provider's currently active/default account. */
+  defaultAccountId: z.string().max(128).default(''),
 });
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});
+
+/**
+ * App-wide voice audio routing. `default` follows the current operating-system
+ * device; an opaque MediaDeviceInfo.deviceId pins one explicit device.
+ */
+export const audioSettingsSchema = z.object({
+  inputDeviceId: z.string().max(512).default('default'),
+  outputDeviceId: z.string().max(512).default('default'),
+});
+export type AudioSettings = z.infer<typeof audioSettingsSchema>;
+export const DEFAULT_AUDIO_SETTINGS: AudioSettings = audioSettingsSchema.parse({});
+
+export const audioSettingsPatchSchema = z.object({
+  inputDeviceId: z.string().max(512).optional(),
+  outputDeviceId: z.string().max(512).optional(),
+});
+export type AudioSettingsPatch = z.infer<typeof audioSettingsPatchSchema>;
 
 /**
  * Privacy settings for Jarvis Vision. Defaults are fail-closed: raw screenshots
@@ -109,6 +132,10 @@ export const SETTINGS_CHANNELS = {
   changed: 'settings:changed',
   orchGet: 'settings:orch:get',
   orchSet: 'settings:orch:set',
+  audioGet: 'settings:audio:get',
+  audioSet: 'settings:audio:set',
+  audioChanged: 'settings:audio:changed',
+  shellsList: 'settings:shells:list',
   uiGet: 'settings:ui:get',
   uiSet: 'settings:ui:set',
   uiChanged: 'settings:ui:changed',

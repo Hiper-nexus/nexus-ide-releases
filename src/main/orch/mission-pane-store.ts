@@ -15,6 +15,7 @@ interface MissionPaneRow {
   mission_id: string;
   adapter_id: string;
   model: string | null;
+  account_id: string | null;
   effort: string | null;
   cwd: string | null;
   title: string | null;
@@ -42,6 +43,7 @@ export function initMissionPaneStore(database: Db | null): void {
         missionId: row.mission_id,
         adapterId: row.adapter_id,
         model: row.model ?? undefined,
+        accountId: row.account_id ?? undefined,
         effort: row.effort ?? undefined,
         cwd: row.cwd ?? undefined,
         title: row.title ?? row.adapter_id,
@@ -62,14 +64,15 @@ function persist(spec: MissionPaneSpec): void {
   try {
     db.prepare(
       `INSERT OR REPLACE INTO mission_panes
-         (id, mission_id, adapter_id, model, effort, cwd, title, agent_name,
-          role, pane_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, mission_id, adapter_id, model, account_id, effort, cwd, title,
+          agent_name, role, pane_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       spec.id,
       spec.missionId,
       spec.adapterId,
       spec.model ?? null,
+      spec.accountId ?? null,
       spec.effort ?? null,
       spec.cwd ?? null,
       spec.title,
@@ -87,6 +90,7 @@ export interface RecordMissionPaneInput {
   missionId: string;
   adapterId: string;
   model?: string;
+  accountId?: string;
   effort?: string;
   cwd?: string;
   title?: string;
@@ -109,6 +113,7 @@ export function recordMissionPane(input: RecordMissionPaneInput): void {
     (spec) =>
       spec.adapterId === input.adapterId &&
       spec.model === input.model &&
+      spec.accountId === input.accountId &&
       spec.cwd === input.cwd &&
       spec.title === title &&
       spec.role === role,
@@ -126,6 +131,7 @@ export function recordMissionPane(input: RecordMissionPaneInput): void {
     missionId: input.missionId,
     adapterId: input.adapterId,
     model: input.model,
+    accountId: input.accountId,
     effort: input.effort,
     cwd: input.cwd,
     title,

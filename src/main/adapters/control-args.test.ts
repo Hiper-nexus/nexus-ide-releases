@@ -23,7 +23,12 @@ function adapter(control: CliPtyAdapter['control']): CliPtyAdapter {
     models: { flag: '--model', list: ['m'], default: 'm' },
     promptInjection: { method: 'arg', trailingNewline: true, bracketedPaste: false },
     stateParsing: { idle: { type: 'timeout', ms: 800 }, shellIntegration: false, exitCodes: {} },
-    quirks: { altScreen: false, requiresNoAutoUpdate: false, mcpAutoload: false },
+    quirks: {
+      altScreen: false,
+      requiresNoAutoUpdate: false,
+      mcpAutoload: false,
+      nexusMcp: 'none',
+    },
     control,
   } as CliPtyAdapter;
 }
@@ -33,6 +38,7 @@ const CLAUDE_LIKE = adapter({
     arg: '--permission-mode',
     modes: { bypass: 'bypassPermissions', auto: 'acceptEdits', plan: 'plan', default: 'default' },
     yolo: ['--dangerously-skip-permissions'],
+    safe: ['--permission-mode', 'manual'],
     default: '',
   },
   effort: { arg: '--effort', levels: ['low', 'medium', 'high', 'xhigh'] },
@@ -56,23 +62,29 @@ describe('buildControlArgs', () => {
   it('adds effort and verbose flags when chosen', () => {
     expect(
       buildControlArgs(CLAUDE_LIKE, { effort: 'high', verbose: true }),
-    ).toEqual(['--effort', 'high', '--verbose']);
+    ).toEqual(['--permission-mode', 'manual', '--effort', 'high', '--verbose']);
   });
 
-  it('emits nothing for CLI-default (empty) choices', () => {
-    expect(buildControlArgs(CLAUDE_LIKE, {})).toEqual([]);
-    expect(buildControlArgs(CLAUDE_LIKE, { permissionMode: '', effort: '' })).toEqual([]);
+  it('applies the explicit safe baseline for empty choices', () => {
+    expect(buildControlArgs(CLAUDE_LIKE, {})).toEqual(['--permission-mode', 'manual']);
+    expect(buildControlArgs(CLAUDE_LIKE, { permissionMode: '', effort: '' })).toEqual([
+      '--permission-mode',
+      'manual',
+    ]);
   });
 
   it('ignores an effort level the adapter does not support', () => {
-    expect(buildControlArgs(CLAUDE_LIKE, { effort: 'ultra' })).toEqual([]);
+    expect(buildControlArgs(CLAUDE_LIKE, { effort: 'ultra' })).toEqual([
+      '--permission-mode',
+      'manual',
+    ]);
   });
 
-  it('falls back to the adapter default permission mode', () => {
+  it('never auto-enables a permissive adapter default', () => {
     const withDefault = adapter({
       permission: { arg: '--permission-mode', modes: { auto: 'acceptEdits' }, yolo: [], default: 'auto' },
     });
-    expect(buildControlArgs(withDefault, {})).toEqual(['--permission-mode', 'acceptEdits']);
+    expect(buildControlArgs(withDefault, {})).toEqual([]);
   });
 
   it('lists the available modes including yolo', () => {
@@ -82,8 +94,8 @@ describe('buildControlArgs', () => {
     expect(supportsVerbose(CLAUDE_LIKE)).toBe(true);
   });
 
-  it('defaults providers to yolo first, then bypass when yolo is unavailable', () => {
-    expect(defaultPermissionMode(CLAUDE_LIKE)).toBe('yolo');
+  it('defaults every provider to the safe baseline', () => {
+    expect(defaultPermissionMode(CLAUDE_LIKE)).toBe('');
     expect(
       defaultPermissionMode(
         adapter({
@@ -95,7 +107,7 @@ describe('buildControlArgs', () => {
           },
         }),
       ),
-    ).toBe('bypass');
+    ).toBe('');
   });
 
   it('offers no modes for an adapter without a permission block', () => {

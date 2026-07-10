@@ -11,7 +11,7 @@ import { z } from 'zod';
  */
 
 const installSchema = z.object({
-  method: z.enum(['brew', 'npm', 'pip', 'cargo', 'manual']),
+  method: z.enum(['brew', 'npm', 'pip', 'uv', 'cargo', 'manual']),
   command: z.string().min(1),
 });
 
@@ -76,12 +76,26 @@ const stateParsingSchema = z.object({
   exitCodes: z.record(z.string(), z.string()).default({}),
 });
 
-const quirksSchema = z.object({
-  altScreen: z.boolean().default(false),
-  requiresNoAutoUpdate: z.boolean().default(false),
-  approvalFlag: z.string().optional(),
-  mcpAutoload: z.boolean().default(false),
-});
+const quirksSchema = z
+  .object({
+    altScreen: z.boolean().default(false),
+    requiresNoAutoUpdate: z.boolean().default(false),
+    approvalFlag: z.string().optional(),
+    mcpAutoload: z.boolean().default(false),
+    /** Per-session Nexus MCP integration. `none` keeps the CLI worker-only. */
+    nexusMcp: z
+      .enum(['none', 'autoload', 'codex', 'agy', 'opencode', 'kimi', 'grok'])
+      .default('none'),
+  })
+  .superRefine((quirks, ctx) => {
+    if (quirks.nexusMcp === 'autoload' && !quirks.mcpAutoload) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['nexusMcp'],
+        message: '`autoload` requires mcpAutoload:true',
+      });
+    }
+  });
 
 /**
  * Declarative control flags — how THIS CLI expresses permission mode, reasoning
@@ -99,7 +113,9 @@ const controlSchema = z
         modes: z.record(z.string(), z.string()).default({}),
         /** Standalone full-auto args (e.g. ["--dangerously-skip-permissions"]). */
         yolo: z.array(z.string()).default([]),
-        /** Default mode key applied when the user hasn't chosen (''=CLI default). */
+        /** Explicit safe baseline overriding a dangerous user-level CLI config. */
+        safe: z.array(z.string()).optional(),
+        /** Legacy adapter default. Nexus does not auto-enable non-empty modes. */
         default: z.string().default(''),
       })
       .optional(),
@@ -170,6 +186,27 @@ export type CliPtyAdapter = z.infer<typeof cliPtyAdapterSchema>;
 export type ApiProviderAdapter = z.infer<typeof apiProviderAdapterSchema>;
 export type Adapter = z.infer<typeof adapterSchema>;
 
+type NexusMcpQuirks = {
+  mcpAutoload?: boolean;
+  nexusMcp?: unknown;
+};
+
+/**
+ * Single capability rule shared by main-process injection and renderer
+ * metadata. Legacy custom adapters with only mcpAutoload:true remain capable;
+ * an inconsistent nexusMcp:autoload declaration fails closed.
+ */
+export function hasNexusMcpCapability(quirks: NexusMcpQuirks): boolean {
+  if (quirks.mcpAutoload === true) return true;
+  return (
+    quirks.nexusMcp === 'codex' ||
+    quirks.nexusMcp === 'agy' ||
+    quirks.nexusMcp === 'opencode' ||
+    quirks.nexusMcp === 'kimi' ||
+    quirks.nexusMcp === 'grok'
+  );
+}
+
 export type ModelAvailability =
   | 'free'
   | 'cheap'
@@ -216,4 +253,6 @@ export interface AdapterInfo {
   installCommand: string;
   loginHint?: string;
   idleTimeoutMs: number;
+  /** True only when this CLI receives the per-session Nexus MCP toolset. */
+  orchestratorCapable: boolean;
 }

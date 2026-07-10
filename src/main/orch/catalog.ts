@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -6,11 +7,10 @@ import path from 'node:path';
  * aitmpl catalog (davila7/claude-code-templates) — the catalog install
  * mechanism:
  *
- *  - agents: GET raw.githubusercontent.com/.../cli-tool/components/agents/
- *    <slug>.md → written to ~/.claude/agents/<name>.md
- *  - skills: BFS over the GitHub Contents API starting at
- *    cli-tool/components/skills/<slug> → directory tree written to
- *    ~/.claude/skills/<name>
+ *  - resolve the upstream default branch to an immutable commit SHA
+ *  - agents: GET raw.githubusercontent.com/.../<sha>/.../<slug>.md
+ *  - skills: BFS over the GitHub Contents API with ?ref=<sha>
+ *  - downloads are bounded and staged privately, then published atomically
  *  - both skip silently when the target already exists
  *
  * Browsing/search uses a single git-tree fetch cached on disk (the "skills
@@ -18,13 +18,25 @@ import path from 'node:path';
  */
 
 const REPO = 'davila7/claude-code-templates';
-const RAW_BASE = `https://raw.githubusercontent.com/${REPO}/main`;
 const API_BASE = `https://api.github.com/repos/${REPO}`;
+const RAW_BASE = `https://raw.githubusercontent.com/${REPO}`;
 const USER_AGENT = 'nexus-ide';
 const FETCH_TIMEOUT_MS = 20_000;
-const CACHE_FILE = path.join(os.homedir(), '.nexus', 'catalog-cache.json');
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_SKILL_FILES = 200;
+const MAX_SKILL_ENTRIES = 500;
+const MAX_SKILL_DEPTH = 20;
+const MAX_FILE_BYTES = 4 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 32 * 1024 * 1024;
+const MAX_COMMIT_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_CONTENTS_RESPONSE_BYTES = 4 * 1024 * 1024;
+const MAX_TREE_RESPONSE_BYTES = 32 * 1024 * 1024;
+const MAX_TREE_ENTRIES = 100_000;
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/;
+
+function cacheFile(): string {
+  return path.join(os.homedir(), '.nexus', 'catalog-cache.json');
+}
 
 export type CatalogKind = 'agent' | 'skill';
 
@@ -40,19 +52,157 @@ export interface CatalogIndex {
   fetchedAt: number;
   agents: CatalogEntry[];
   skills: CatalogEntry[];
+  /** Immutable source used to build this snapshot. */
+  provenance?: CatalogProvenance;
 }
 
-async function fetchWithTimeout(url: string): Promise<Response> {
+export interface CatalogProvenance {
+  repository: string;
+  commitSha: string;
+  /** SHA-256 of the index response or installed payload set. */
+  sha256?: string;
+  fileCount?: number;
+  totalBytes?: number;
+}
+
+type CatalogHost = 'api.github.com' | 'raw.githubusercontent.com';
+
+function validatedCatalogUrl(raw: string, host: CatalogHost): URL {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error('unexpected catalog URL');
+  }
+  if (
+    url.protocol !== 'https:' ||
+    url.hostname !== host ||
+    (url.port !== '' && url.port !== '443') ||
+    url.username !== '' ||
+    url.password !== '' ||
+    url.hash !== ''
+  ) {
+    throw new Error('unexpected catalog URL');
+  }
+  return url;
+}
+
+function sameUrl(actual: string, expected: string): boolean {
+  try {
+    return new URL(actual).href === new URL(expected).href;
+  } catch {
+    return false;
+  }
+}
+
+async function fetchWithTimeout(
+  rawUrl: string,
+  host: CatalogHost,
+): Promise<Response> {
+  const url = validatedCatalogUrl(rawUrl, host).href;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       signal: controller.signal,
       headers: { 'User-Agent': USER_AGENT },
+      redirect: 'error',
     });
+    if (response.redirected || !response.url || !sameUrl(response.url, url)) {
+      throw new Error('unexpected catalog response URL');
+    }
+    return response;
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function readResponseLimited(
+  response: Response,
+  maxBytes: number,
+): Promise<Buffer> {
+  const declaredLength = response.headers.get('content-length');
+  if (declaredLength !== null) {
+    if (!/^\d+$/.test(declaredLength)) {
+      throw new Error('invalid catalog content length');
+    }
+    if (Number(declaredLength) > maxBytes) {
+      throw new Error('catalog response too large (byte limit exceeded)');
+    }
+  }
+
+  if (!response.body) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > maxBytes) {
+      throw new Error('catalog response too large (byte limit exceeded)');
+    }
+    return buffer;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        throw new Error('catalog response too large (byte limit exceeded)');
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, totalBytes);
+}
+
+async function fetchJson<T>(
+  url: string,
+  maxBytes: number,
+): Promise<{ value: T; raw: Buffer }> {
+  const response = await fetchWithTimeout(url, 'api.github.com');
+  if (!response.ok) {
+    throw new Error(`fetch failed: ${response.status} ${response.statusText}`);
+  }
+  const raw = await readResponseLimited(response, maxBytes);
+  try {
+    return { value: JSON.parse(raw.toString('utf8')) as T, raw };
+  } catch {
+    throw new Error('unexpected catalog JSON response');
+  }
+}
+
+async function resolveCommitSha(): Promise<string> {
+  const url = `${API_BASE}/commits/main`;
+  const { value } = await fetchJson<{ sha?: unknown }>(
+    url,
+    MAX_COMMIT_RESPONSE_BYTES,
+  );
+  if (typeof value?.sha !== 'string' || !COMMIT_SHA_PATTERN.test(value.sha)) {
+    throw new Error('catalog returned an invalid commit SHA');
+  }
+  return value.sha;
+}
+
+function encodedRepoPath(repoPath: string): string {
+  return repoPath.split('/').map(encodeURIComponent).join('/');
+}
+
+function contentsUrl(repoPath: string, commitSha: string): string {
+  const url = new URL(`${API_BASE}/contents/${encodedRepoPath(repoPath)}`);
+  url.searchParams.set('ref', commitSha);
+  return url.href;
+}
+
+function rawFileUrl(repoPath: string, commitSha: string): string {
+  return `${RAW_BASE}/${commitSha}/${encodedRepoPath(repoPath)}`;
+}
+
+function sha256(value: Buffer): string {
+  return createHash('sha256').update(value).digest('hex');
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +225,9 @@ function parseTreePaths(paths: string[]): Omit<CatalogIndex, 'fetchedAt'> {
       });
       continue;
     }
-    const skillMatch = /^cli-tool\/components\/skills\/(.+)\/SKILL\.md$/.exec(p);
+    const skillMatch = /^cli-tool\/components\/skills\/(.+)\/SKILL\.md$/.exec(
+      p,
+    );
     if (skillMatch) {
       const slug = skillMatch[1];
       const parts = slug.split('/');
@@ -92,8 +244,15 @@ function parseTreePaths(paths: string[]): Omit<CatalogIndex, 'fetchedAt'> {
 
 function readCache(): CatalogIndex | null {
   try {
-    const raw = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-    if (Array.isArray(raw?.agents) && Array.isArray(raw?.skills)) {
+    const raw = JSON.parse(fs.readFileSync(cacheFile(), 'utf8'));
+    if (
+      typeof raw?.fetchedAt === 'number' &&
+      Array.isArray(raw?.agents) &&
+      Array.isArray(raw?.skills) &&
+      raw?.provenance?.repository === REPO &&
+      typeof raw?.provenance?.commitSha === 'string' &&
+      COMMIT_SHA_PATTERN.test(raw.provenance.commitSha)
+    ) {
       return raw as CatalogIndex;
     }
   } catch {
@@ -103,11 +262,29 @@ function readCache(): CatalogIndex | null {
 }
 
 function writeCache(index: CatalogIndex): void {
+  const target = cacheFile();
+  const parent = path.dirname(target);
+  const temp = path.join(
+    parent,
+    `.${path.basename(target)}.${process.pid}.${randomUUID()}.tmp`,
+  );
+  let descriptor: number | null = null;
   try {
-    fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(index));
+    fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+    descriptor = fs.openSync(temp, 'wx', 0o600);
+    fs.writeFileSync(descriptor, JSON.stringify(index), 'utf8');
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = null;
+    fs.renameSync(temp, target);
   } catch (err) {
     console.warn('[catalog] failed to write cache:', err);
+    if (descriptor !== null) fs.closeSync(descriptor);
+    try {
+      fs.rmSync(temp, { force: true });
+    } catch {
+      // Best effort cleanup; the cache itself is never partially replaced.
+    }
   }
 }
 
@@ -122,15 +299,32 @@ export async function getCatalogIndex(refresh = false): Promise<{
     return { ok: true, index: cached };
   }
   try {
-    const res = await fetchWithTimeout(
-      `${API_BASE}/git/trees/main?recursive=1`,
-    );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = (await res.json()) as { tree?: Array<{ path?: string }> };
+    const commitSha = await resolveCommitSha();
+    const treeUrl = `${API_BASE}/git/trees/${commitSha}?recursive=1`;
+    const { value: body, raw } = await fetchJson<{
+      truncated?: unknown;
+      tree?: Array<{ path?: string }>;
+    }>(treeUrl, MAX_TREE_RESPONSE_BYTES);
+    if (body.truncated !== false) {
+      throw new Error('catalog tree response is incomplete');
+    }
+    if (!Array.isArray(body.tree) || body.tree.length > MAX_TREE_ENTRIES) {
+      throw new Error('catalog tree entry limit exceeded');
+    }
     const paths = (body.tree ?? [])
       .map((t) => t.path)
       .filter((p): p is string => typeof p === 'string');
-    const index: CatalogIndex = { fetchedAt: Date.now(), ...parseTreePaths(paths) };
+    const index: CatalogIndex = {
+      fetchedAt: Date.now(),
+      ...parseTreePaths(paths),
+      provenance: {
+        repository: REPO,
+        commitSha,
+        sha256: sha256(raw),
+        fileCount: paths.length,
+        totalBytes: raw.byteLength,
+      },
+    };
     writeCache(index);
     return { ok: true, index };
   } catch (err) {
@@ -147,13 +341,25 @@ export async function getCatalogIndex(refresh = false): Promise<{
 
 /** Slugs come from the catalog: path segments only, no traversal. */
 function isSafeSlug(slug: string): boolean {
-  return /^[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)*$/.test(slug) && !slug.includes('..');
+  const segments = slug.split('/');
+  return (
+    slug.length <= 512 &&
+    segments.length <= MAX_SKILL_DEPTH &&
+    segments.every(
+      (segment) =>
+        /^[a-zA-Z0-9._-]+$/.test(segment) &&
+        segment !== '.' &&
+        segment !== '..' &&
+        !segment.includes('..'),
+    )
+  );
 }
 
 export interface InstallResult {
   ok: boolean;
   skipped?: boolean;
   installed?: { name: string; path: string };
+  provenance?: CatalogProvenance;
   error?: string;
 }
 
@@ -164,24 +370,91 @@ async function installAgent(slug: string): Promise<InstallResult> {
   const targetPath = path.join(home, '.claude', 'agents', destName);
   if (fs.existsSync(targetPath)) return { ok: true, skipped: true };
 
-  const resp = await fetchWithTimeout(
-    `${RAW_BASE}/cli-tool/components/agents/${slug}.md`,
-  );
-  if (!resp.ok) {
-    return { ok: false, error: `fetch failed: ${resp.status} ${resp.statusText}` };
+  const commitSha = await resolveCommitSha();
+  const repoPath = `cli-tool/components/agents/${slug}.md`;
+  const url = rawFileUrl(repoPath, commitSha);
+  const response = await fetchWithTimeout(url, 'raw.githubusercontent.com');
+  if (!response.ok) {
+    return {
+      ok: false,
+      error: `fetch failed: ${response.status} ${response.statusText}`,
+    };
   }
-  await fs.promises.mkdir(path.join(home, '.claude', 'agents'), {
+  const payload = await readResponseLimited(response, MAX_FILE_BYTES);
+  const parent = path.dirname(targetPath);
+  await fs.promises.mkdir(parent, {
     recursive: true,
+    mode: 0o700,
   });
-  await fs.promises.writeFile(targetPath, await resp.text(), 'utf8');
-  return { ok: true, installed: { name: destName, path: targetPath } };
+  const stagingDir = await fs.promises.mkdtemp(
+    path.join(parent, `.${destName}.staging-`),
+  );
+  try {
+    const stagedFile = path.join(stagingDir, 'payload');
+    await fs.promises.writeFile(stagedFile, payload, {
+      flag: 'wx',
+      mode: 0o600,
+    });
+    try {
+      // A hard link publishes the complete same-filesystem payload atomically
+      // and, unlike rename(), never overwrites a target created concurrently.
+      await fs.promises.link(stagedFile, targetPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+        return { ok: true, skipped: true };
+      }
+      throw err;
+    }
+    return {
+      ok: true,
+      installed: { name: destName, path: targetPath },
+      provenance: {
+        repository: REPO,
+        commitSha,
+        sha256: sha256(payload),
+        fileCount: 1,
+        totalBytes: payload.byteLength,
+      },
+    };
+  } finally {
+    await fs.promises.rm(stagingDir, { recursive: true, force: true });
+  }
 }
 
 interface ContentsEntry {
-  type: string;
-  name: string;
-  path: string;
-  download_url: string | null;
+  type?: unknown;
+  name?: unknown;
+  path?: unknown;
+  download_url?: unknown;
+}
+
+function isSafeEntryName(name: unknown): name is string {
+  return (
+    typeof name === 'string' &&
+    name.length > 0 &&
+    name !== '.' &&
+    name !== '..' &&
+    !name.includes('/') &&
+    !name.includes('\\') &&
+    !/[\u0000-\u001f\u007f]/.test(name)
+  );
+}
+
+function aggregateSkillDigest(
+  files: Array<{ repoPath: string; digest: string; bytes: number }>,
+): string {
+  const hash = createHash('sha256');
+  for (const file of [...files].sort((a, b) =>
+    a.repoPath.localeCompare(b.repoPath),
+  )) {
+    hash.update(file.repoPath);
+    hash.update('\0');
+    hash.update(String(file.bytes));
+    hash.update('\0');
+    hash.update(file.digest);
+    hash.update('\n');
+  }
+  return hash.digest('hex');
 }
 
 async function installSkill(slug: string): Promise<InstallResult> {
@@ -190,49 +463,136 @@ async function installSkill(slug: string): Promise<InstallResult> {
   const targetDir = path.join(home, '.claude', 'skills', slugBase);
   if (fs.existsSync(targetDir)) return { ok: true, skipped: true };
 
+  const commitSha = await resolveCommitSha();
+  const parent = path.dirname(targetDir);
+  await fs.promises.mkdir(parent, { recursive: true, mode: 0o700 });
+  const stagingDir = await fs.promises.mkdtemp(
+    path.join(parent, `.${slugBase}.staging-`),
+  );
+  const rootRepoPath = `cli-tool/components/skills/${slug}`;
   const queue = [
     {
-      apiUrl: `${API_BASE}/contents/cli-tool/components/skills/${slug}`,
-      localDir: targetDir,
+      repoPath: rootRepoPath,
+      localDir: stagingDir,
+      depth: 0,
     },
   ];
-  let written = 0;
-  while (queue.length > 0) {
-    const { apiUrl, localDir } = queue.shift()!;
-    const res = await fetchWithTimeout(apiUrl);
-    if (!res.ok) {
-      return { ok: false, error: `fetch failed: ${res.status} ${res.statusText}` };
-    }
-    const entries = (await res.json()) as ContentsEntry[];
-    if (!Array.isArray(entries)) {
-      return { ok: false, error: 'unexpected contents response' };
-    }
-    await fs.promises.mkdir(localDir, { recursive: true });
-    for (const entry of entries) {
-      // Names come from the GitHub API but are written locally — keep them
-      // strictly inside the target dir.
-      if (!entry.name || entry.name.includes('/') || entry.name.includes('..')) {
-        continue;
+  const seenEntries = new Set<string>();
+  const files: Array<{ repoPath: string; digest: string; bytes: number }> = [];
+  let entryCount = 0;
+  let totalBytes = 0;
+
+  try {
+    while (queue.length > 0) {
+      const { repoPath, localDir, depth } = queue.shift()!;
+      if (depth > MAX_SKILL_DEPTH) {
+        throw new Error('skill too deep (depth cap exceeded)');
       }
-      if (entry.type === 'dir') {
-        queue.push({
-          apiUrl: `${API_BASE}/contents/${entry.path}`,
-          localDir: path.join(localDir, entry.name),
+      const apiUrl = contentsUrl(repoPath, commitSha);
+      const { value: entries } = await fetchJson<ContentsEntry[]>(
+        apiUrl,
+        MAX_CONTENTS_RESPONSE_BYTES,
+      );
+      if (!Array.isArray(entries)) {
+        throw new Error('unexpected contents response');
+      }
+      await fs.promises.mkdir(localDir, { recursive: true, mode: 0o700 });
+      for (const entry of entries) {
+        entryCount += 1;
+        if (entryCount > MAX_SKILL_ENTRIES) {
+          throw new Error('skill too large (entry cap exceeded)');
+        }
+        if (
+          !entry ||
+          !isSafeEntryName(entry.name) ||
+          typeof entry.path !== 'string' ||
+          entry.path !== `${repoPath}/${entry.name}` ||
+          !entry.path.startsWith(`${rootRepoPath}/`) ||
+          seenEntries.has(entry.path)
+        ) {
+          throw new Error('unexpected catalog entry path');
+        }
+        const entryName = entry.name;
+        const entryPath = entry.path;
+        seenEntries.add(entryPath);
+
+        if (entry.type === 'dir') {
+          queue.push({
+            repoPath: entryPath,
+            localDir: path.join(localDir, entryName),
+            depth: depth + 1,
+          });
+          continue;
+        }
+        if (entry.type !== 'file' || typeof entry.download_url !== 'string') {
+          throw new Error('unexpected catalog entry type');
+        }
+        if (files.length + 1 > MAX_SKILL_FILES) {
+          throw new Error('skill too large (file cap exceeded)');
+        }
+
+        const expectedUrl = rawFileUrl(entryPath, commitSha);
+        validatedCatalogUrl(entry.download_url, 'raw.githubusercontent.com');
+        if (!sameUrl(entry.download_url, expectedUrl)) {
+          throw new Error('unexpected catalog download URL');
+        }
+        const remainingBytes = MAX_TOTAL_BYTES - totalBytes;
+        if (remainingBytes <= 0) {
+          throw new Error('skill too large (total byte limit exceeded)');
+        }
+        const fileResponse = await fetchWithTimeout(
+          expectedUrl,
+          'raw.githubusercontent.com',
+        );
+        if (!fileResponse.ok) {
+          throw new Error(`fetch failed: ${fileResponse.status}`);
+        }
+        const buffer = await readResponseLimited(
+          fileResponse,
+          Math.min(MAX_FILE_BYTES, remainingBytes),
+        );
+        totalBytes += buffer.byteLength;
+        if (totalBytes > MAX_TOTAL_BYTES) {
+          throw new Error('skill too large (total byte limit exceeded)');
+        }
+        files.push({
+          repoPath: entryPath,
+          digest: sha256(buffer),
+          bytes: buffer.byteLength,
         });
-      } else if (entry.type === 'file' && entry.download_url) {
-        if (++written > MAX_SKILL_FILES) {
-          return { ok: false, error: 'skill too large (file cap exceeded)' };
-        }
-        const fileRes = await fetchWithTimeout(entry.download_url);
-        if (!fileRes.ok) {
-          return { ok: false, error: `fetch failed: ${fileRes.status}` };
-        }
-        const buffer = Buffer.from(await fileRes.arrayBuffer());
-        await fs.promises.writeFile(path.join(localDir, entry.name), buffer);
+        await fs.promises.writeFile(path.join(localDir, entryName), buffer, {
+          flag: 'wx',
+          mode: 0o600,
+        });
       }
     }
+
+    if (fs.existsSync(targetDir)) return { ok: true, skipped: true };
+    try {
+      await fs.promises.rename(stagingDir, targetDir);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EEXIST' || code === 'ENOTEMPTY') {
+        return { ok: true, skipped: true };
+      }
+      throw err;
+    }
+    return {
+      ok: true,
+      installed: { name: slugBase, path: targetDir },
+      provenance: {
+        repository: REPO,
+        commitSha,
+        sha256: aggregateSkillDigest(files),
+        fileCount: files.length,
+        totalBytes,
+      },
+    };
+  } finally {
+    // If rename succeeded this path no longer exists. On every failure, all
+    // downloaded files remain invisible in staging and are removed here.
+    await fs.promises.rm(stagingDir, { recursive: true, force: true });
   }
-  return { ok: true, installed: { name: slugBase, path: targetDir } };
 }
 
 /**

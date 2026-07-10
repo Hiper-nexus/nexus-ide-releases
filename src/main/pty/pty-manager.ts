@@ -400,6 +400,12 @@ function normalizeAgentModel(adapter: CliPtyAdapter, model: string): string {
   if (adapter.id === 'kimi' && model === 'kimi-for-coding') {
     return 'kimi-code/kimi-for-coding';
   }
+  // OpenCode 1.17 requires provider/model. A stale unqualified preference is
+  // not a valid fallback: omit --model and let OpenCode use its own configured
+  // default instead of failing the pane at startup.
+  if (adapter.id === 'opencode' && model && !model.includes('/')) {
+    return '';
+  }
   return model;
 }
 
@@ -433,8 +439,16 @@ export function spawnAgentSession(
   const templateHasModel = adapter.spawn.interactive.some((a) =>
     a.includes('{{MODEL}}'),
   );
-  if (explicitModel && !templateHasModel && adapter.models.flag) {
-    args.push(adapter.models.flag, explicitModel);
+  const usesKimiTransientModel =
+    adapter.id === 'kimi' && Boolean(overrides.keyEnv?.KIMI_MODEL_NAME);
+  if (
+    explicitModel &&
+    model &&
+    !templateHasModel &&
+    adapter.models.flag &&
+    !usesKimiTransientModel
+  ) {
+    args.push(adapter.models.flag, model);
   }
   // Failover re-spawn: retoma a conversa anterior. Com session id CAPTURADO
   // para este pane, o resume é direcionado (`--resume <id>` — cada pane volta
@@ -593,6 +607,20 @@ export function killSessionsFor(wc: WebContents): void {
   for (const [id, session] of sessions) {
     if (session.wc === wc) destroySession(id, session);
   }
+}
+
+export function liveSessionSummary(wc?: WebContents): {
+  total: number;
+  busy: number;
+} {
+  let total = 0;
+  let busy = 0;
+  for (const session of sessions.values()) {
+    if (wc && session.wc !== wc) continue;
+    total += 1;
+    if (session.state === 'busy' || session.state === 'spawning') busy += 1;
+  }
+  return { total, busy };
 }
 
 export function killAllSessions(): void {

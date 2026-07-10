@@ -22,6 +22,15 @@ describe('isDiscardableTranscript', () => {
     }
   });
 
+  it('descarta o boilerplate longo e combinado observado nos logs', () => {
+    expect(
+      isDiscardableTranscript(
+        'Obrigado por assistir, se inscreva no canal e ative o sininho para receber notificações de novos vídeos.',
+        { inConversation: true },
+      ),
+    ).toBe(true);
+  });
+
   it('mantém respostas curtas legítimas em conversa ativa', () => {
     for (const reply of ['valeu', 'tchau', 'oi', 'obrigado']) {
       expect(isDiscardableTranscript(reply, { inConversation: true })).toBe(false);

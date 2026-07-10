@@ -77,6 +77,13 @@ const NEVER_CONFIRM_TOOLS = new Set([
   'nexus_mission_get',
   'nexus_media_providers',
   'nexus_perf_snapshot',
+  'nexus_browser_screenshot',
+  'nexus_browser_read',
+  'nexus_browser_inspect',
+  'nexus_browser_wait',
+  // This is a bounded, redacted accessibility snapshot. UI interaction stays
+  // behind the separately confirmed nexus_ui_action tool.
+  'nexus_ui_read',
 ]);
 
 /**
@@ -177,5 +184,83 @@ export function confirmationReason(
   if (toolName === 'nexus_editor_replace_selection' || toolName === 'editor_replace_selection') {
     return `replace in ${String(args.path ?? 'unknown file')}`;
   }
+  if (toolName === 'nexus_browser_open' || toolName === 'browser_open') {
+    return `open browser target ${safeBrowserTarget(args.url)}`;
+  }
+  if (toolName === 'nexus_browser_navigate' || toolName === 'browser_navigate') {
+    return `navigate browser pane ${String(args.paneId ?? 'unknown')} to ${safeBrowserTarget(args.url)}`;
+  }
+  if (toolName === 'nexus_browser_click' || toolName === 'browser_click') {
+    return `click element ${String(args.ref ?? 'unknown')} in browser pane ${String(args.paneId ?? 'unknown')}`;
+  }
+  if (toolName === 'nexus_browser_fill' || toolName === 'browser_fill') {
+    return `fill element ${String(args.ref ?? 'unknown')} in browser pane ${String(args.paneId ?? 'unknown')}`;
+  }
+  if (toolName === 'nexus_preview_start' || toolName === 'preview_start') {
+    return `serve preview directory ${safeMediaArg(args.dir, 'unknown')}`;
+  }
+  if (toolName === 'nexus_image_generate' || toolName === 'image_generate') {
+    return mediaConfirmation('image', args);
+  }
+  if (toolName === 'nexus_video_generate' || toolName === 'video_generate') {
+    return mediaConfirmation('video', args);
+  }
+  if (toolName === 'nexus_audio_generate' || toolName === 'audio_generate') {
+    return mediaConfirmation('audio', args);
+  }
   return `tool: ${toolName}`;
+}
+
+function safeMediaArg(value: unknown, fallback: string): string {
+  if (typeof value !== 'string' || !value.trim()) return fallback;
+  return value
+    .trim()
+    .replace(/[\r\n\t\0-\x1f\u202a-\u202e\u2066-\u2069]+/g, ' ')
+    .slice(0, 160);
+}
+
+function textLength(value: unknown): number {
+  return typeof value === 'string' ? value.length : 0;
+}
+
+function mediaConfirmation(
+  kind: 'image' | 'video' | 'audio',
+  args: Record<string, unknown>,
+): string {
+  const defaultOutput =
+    kind === 'image'
+      ? 'workspace/generated-<timestamp>.png'
+      : kind === 'video'
+        ? 'workspace/generated-<timestamp>.mp4'
+        : 'workspace/generated-<timestamp>.mp3';
+  const output = safeMediaArg(args.outPath, defaultOutput);
+  if (kind === 'audio') {
+    const provider = safeMediaArg(args.provider, 'elevenlabs');
+    return `generate audio via ${provider}; input: text (${textLength(args.text)} chars); output: ${output}`;
+  }
+
+  const provider = safeMediaArg(
+    args.provider,
+    kind === 'video'
+      ? 'replicate-video'
+      : 'automatic (google-image or openai-image)',
+  );
+  const prompt = `prompt (${textLength(args.prompt)} chars)`;
+  const image = safeMediaArg(args.imagePath, 'none');
+  if (kind === 'image') {
+    return `generate image via ${provider}; inputs: ${prompt}, image: ${image}; output: ${output}`;
+  }
+  const endImage = safeMediaArg(args.endImagePath, 'none');
+  return `generate video via ${provider}; inputs: ${prompt}, start: ${image}, end: ${endImage}; output: ${output}`;
+}
+
+function safeBrowserTarget(raw: unknown): string {
+  if (typeof raw !== 'string') return 'unknown';
+  try {
+    const input = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const url = new URL(input);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return 'invalid URL';
+  }
 }

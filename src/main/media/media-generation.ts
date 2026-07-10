@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import type { MediaGenerationResult } from '../../shared/media-types';
 import {
@@ -7,6 +6,17 @@ import {
   resolveOutPath,
   type MediaProviderDef,
 } from './media-providers';
+import {
+  downloadProviderAsset,
+  fetchPinnedProviderAsset,
+  type PinnedMediaFetch,
+} from './media-download';
+import {
+  readMediaInput,
+  writeMediaOutput,
+  type MediaInputFile,
+} from './media-path-policy';
+import type { BrowserAddressResolver } from '../browser/url-policy';
 
 /**
  * Media generation engine — image (Gemini/OpenAI), video (Replicate) and
@@ -19,6 +29,8 @@ import {
 
 export interface MediaDeps {
   fetchFn: typeof fetch;
+  resolveHostname: BrowserAddressResolver;
+  fetchPinned?: PinnedMediaFetch;
   getKey(def: MediaProviderDef): string | undefined;
   sleep(ms: number): Promise<void>;
   now(): number;
@@ -86,15 +98,13 @@ async function httpError(res: Response, provider: string): Promise<Error> {
   return new Error(`${provider} HTTP ${res.status}: ${detail}`);
 }
 
-function writeOut(outPath: string, data: Buffer): void {
-  fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  fs.writeFileSync(outPath, data);
-}
-
-function fileToInlineData(imagePath: string): { mimeType: string; data: string } {
-  const ext = path.extname(imagePath).toLowerCase().replace('.', '');
+function fileToInlineData(image: MediaInputFile): {
+  mimeType: string;
+  data: string;
+} {
+  const ext = path.extname(image.path).toLowerCase().replace('.', '');
   const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext || 'png'}`;
-  return { mimeType: mime, data: fs.readFileSync(imagePath).toString('base64') };
+  return { mimeType: mime, data: image.data.toString('base64') };
 }
 
 function result(
@@ -124,9 +134,10 @@ async function googleImage(
   model: string,
   key: string,
   deps: MediaDeps,
+  image?: MediaInputFile,
 ): Promise<Buffer> {
   const parts: unknown[] = [{ text: req.prompt }];
-  if (req.imagePath) parts.push({ inlineData: fileToInlineData(req.imagePath) });
+  if (image) parts.push({ inlineData: fileToInlineData(image) });
   const res = await deps.fetchFn(`${GEMINI_BASE}/models/${model}:generateContent`, {
     method: 'POST',
     headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
@@ -158,16 +169,17 @@ async function openaiImage(
   model: string,
   key: string,
   deps: MediaDeps,
+  image?: MediaInputFile,
 ): Promise<Buffer> {
   let res: Response;
-  if (req.imagePath) {
+  if (image) {
     const form = new FormData();
     form.set('model', model);
     form.set('prompt', req.prompt);
     form.set(
       'image',
-      new Blob([new Uint8Array(fs.readFileSync(req.imagePath))]),
-      path.basename(req.imagePath),
+      new Blob([new Uint8Array(image.data)]),
+      path.basename(image.path),
     );
     res = await deps.fetchFn(`${OPENAI_BASE}/images/edits`, {
       method: 'POST',
@@ -191,9 +203,11 @@ async function openaiImage(
   const first = json.data?.[0];
   if (first?.b64_json) return Buffer.from(first.b64_json, 'base64');
   if (first?.url) {
-    const bin = await deps.fetchFn(first.url);
-    if (!bin.ok) throw await httpError(bin, def.id);
-    return Buffer.from(await bin.arrayBuffer());
+    return downloadProviderAsset(first.url, 'openai-image', {
+      fetchFn: deps.fetchFn,
+      resolveHostname: deps.resolveHostname,
+      fetchPinned: deps.fetchPinned,
+    });
   }
   throw new Error(`${def.id}: resposta sem imagem`);
 }
@@ -208,18 +222,26 @@ export async function generateImage(
   );
   const model = resolveMediaModel(def, req.model);
   const key = requireKey(def, deps);
+  const outPath = resolveOutPath(req.outPath, req.baseDir, 'png', deps.now);
+  const image = req.imagePath
+    ? readMediaInput(req.imagePath, req.baseDir)
+    : undefined;
   const data =
     def.id === 'google-image'
-      ? await googleImage(req, def, model, key, deps)
-      : await openaiImage(req, def, model, key, deps);
-  const outPath = resolveOutPath(req.outPath, req.baseDir, 'png', deps.now);
-  writeOut(outPath, data);
+      ? await googleImage(req, def, model, key, deps, image)
+      : await openaiImage(req, def, model, key, deps, image);
+  writeMediaOutput(outPath, req.baseDir, data);
   return result(def, model, outPath, startedAt, deps);
 }
 
 // ── Video ────────────────────────────────────────────────────────────────────
 
-function replicateInput(req: VideoRequest, model: string): Record<string, unknown> {
+function replicateInput(
+  req: VideoRequest,
+  model: string,
+  image?: MediaInputFile,
+  endImage?: MediaInputFile,
+): Record<string, unknown> {
   const input: Record<string, unknown> = { prompt: req.prompt };
   if (model.includes('seedance')) {
     input.resolution = req.resolution ?? '720p';
@@ -227,11 +249,11 @@ function replicateInput(req: VideoRequest, model: string): Record<string, unknow
     input.aspect_ratio = req.aspectRatio ?? '16:9';
     input.generate_audio = true;
   }
-  if (req.imagePath) {
-    input.image = `data:image/png;base64,${fs.readFileSync(req.imagePath).toString('base64')}`;
+  if (image) {
+    input.image = `data:image/png;base64,${image.data.toString('base64')}`;
   }
-  if (req.endImagePath && model.includes('kling')) {
-    input.end_image = `data:image/png;base64,${fs.readFileSync(req.endImagePath).toString('base64')}`;
+  if (endImage && model.includes('kling')) {
+    input.end_image = `data:image/png;base64,${endImage.data.toString('base64')}`;
   }
   return input;
 }
@@ -246,6 +268,13 @@ export async function generateVideo(
   );
   const model = resolveMediaModel(def, req.model);
   const key = requireKey(def, deps);
+  const outPath = resolveOutPath(req.outPath, req.baseDir, 'mp4', deps.now);
+  const image = req.imagePath
+    ? readMediaInput(req.imagePath, req.baseDir)
+    : undefined;
+  const endImage = req.endImagePath
+    ? readMediaInput(req.endImagePath, req.baseDir)
+    : undefined;
 
   const create = await deps.fetchFn(
     `${REPLICATE_BASE}/models/${model}/predictions`,
@@ -255,7 +284,9 @@ export async function generateVideo(
         authorization: `Bearer ${key}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ input: replicateInput(req, model) }),
+      body: JSON.stringify({
+        input: replicateInput(req, model, image, endImage),
+      }),
     },
   );
   if (!create.ok) throw await httpError(create, def.id);
@@ -292,11 +323,12 @@ export async function generateVideo(
     ? prediction.output[0]
     : prediction.output;
   if (!url) throw new Error(`${def.id}: prediction sem output`);
-  const bin = await deps.fetchFn(url);
-  if (!bin.ok) throw await httpError(bin, def.id);
-
-  const outPath = resolveOutPath(req.outPath, req.baseDir, 'mp4', deps.now);
-  writeOut(outPath, Buffer.from(await bin.arrayBuffer()));
+  const data = await downloadProviderAsset(url, 'replicate-video', {
+    fetchFn: deps.fetchFn,
+    resolveHostname: deps.resolveHostname,
+    fetchPinned: deps.fetchPinned,
+  });
+  writeMediaOutput(outPath, req.baseDir, data);
   return result(def, model, outPath, startedAt, deps, {
     seconds: req.durationSeconds ?? 5,
   });
@@ -315,6 +347,7 @@ export async function generateAudio(
   const model = resolveMediaModel(def, req.model);
   const key = requireKey(def, deps);
   const voiceId = req.voiceId ?? DEFAULT_ELEVENLABS_VOICE;
+  const outPath = resolveOutPath(req.outPath, req.baseDir, 'mp3', deps.now);
 
   const res = await deps.fetchFn(
     `${ELEVENLABS_BASE}/text-to-speech/${encodeURIComponent(voiceId)}`,
@@ -326,8 +359,7 @@ export async function generateAudio(
   );
   if (!res.ok) throw await httpError(res, def.id);
 
-  const outPath = resolveOutPath(req.outPath, req.baseDir, 'mp3', deps.now);
-  writeOut(outPath, Buffer.from(await res.arrayBuffer()));
+  writeMediaOutput(outPath, req.baseDir, Buffer.from(await res.arrayBuffer()));
   return result(def, model, outPath, startedAt, deps, {
     chars: req.text.length,
   });
@@ -339,8 +371,11 @@ function defaultMediaDeps(): MediaDeps {
   // Lazy require keeps this module importable from unit tests (no electron).
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { resolveMediaKey } = require('./media-keys') as typeof import('./media-keys');
+  const { resolveBrowserHostname } = require('../browser/url-policy') as typeof import('../browser/url-policy');
   return {
     fetchFn: fetch,
+    resolveHostname: resolveBrowserHostname,
+    fetchPinned: fetchPinnedProviderAsset,
     getKey: (def) => resolveMediaKey(def),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: Date.now,

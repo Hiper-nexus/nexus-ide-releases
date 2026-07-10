@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.12.0 — Prova Realtime e roteamento de áudio
+
+Data: 2026-07-10
+
+Release de confiabilidade do Jarvis Realtime: o diagnóstico deixa de chamar
+“funcionando” quando só o provider respondeu e passa a exigir prova de que o
+renderer agendou a reprodução; a saída de áudio selecionada deixa de cair em
+silêncio no padrão do sistema.
+
+### Melhorias
+
+- Handshake correlacionado main → preload → renderer → main: cada PCM possui
+  delivery id e só o ACK `started` da entrega correta confirma o diagnóstico.
+- Diagnóstico Live reconecta antes da frase de prova, isolando a resposta atual
+  de qualquer áudio atrasado de uma conversa anterior.
+- A seleção de saída de áudio passa a ser explícita para Classic e Realtime;
+  saída física indisponível gera erro legível, enquanto “Padrão do sistema”
+  continua seguindo o macOS.
+- Updater escolhe o ZIP Squirrel compatível com a arquitetura em execução
+  (`darwin-arm64` ou `darwin-x64`).
+- Métricas de latência carregam o token de turno e descartam a amostra
+  interrompida, sem misturar barge-in com a resposta seguinte.
+
+### Correções
+
+- PCM recebido, playback cancelado e erro de WebAudio não conseguem mais gerar
+  falso positivo “Realtime confirmado”.
+- ACKs velhos, duplicados ou sem delivery id válido são descartados.
+
 ## 0.11.0 — Voz destravada e delegação segura (Fase 0 do refactor Jarvis)
 
 Data: 2026-07-09

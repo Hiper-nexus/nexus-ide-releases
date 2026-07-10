@@ -52,6 +52,11 @@ export const WINDOW_CHANNELS = {
    * distinguish "page loaded" from "app actually rendered" — in dev AND in
    * the packaged app, where a boot crash used to leave a black window. */
   mounted: 'renderer:mounted',
+  /** send: main → preload. Runs the isolated packaged functional probes only
+   * after React has mounted during --smoke-test. Never emitted in normal use. */
+  functionalSmokeRun: 'smoke:functional:run',
+  /** send: preload → main. Closed-schema probe evidence; no subsystem output. */
+  functionalSmokeResult: 'smoke:functional:result',
   /** event: main → renderer. Deep link/document open (nexus://open ou
    * abrir-com): { path, isDir }. O renderer abre o workspace (ou o do pai). */
   deepOpenPath: 'app:deepOpenPath',

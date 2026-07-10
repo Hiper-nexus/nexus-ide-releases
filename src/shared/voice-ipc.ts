@@ -254,6 +254,7 @@ export type JarvisAction =
   | { type: 'focus_next_pane' }
   | { type: 'focus_previous_pane' }
   | { type: 'focus_pane'; paneName: string }
+  | { type: 'read_pane'; paneId?: string }
   // NEW-B: paneId targets the ASKING pane for routed pending-question answers.
   // Absent for model-emitted delegation (falls back to orchestrator/focused pane).
   | { type: 'send_to_pane'; text: string; paneId?: string }
@@ -338,16 +339,71 @@ export interface JarvisLiveState {
 
 export interface JarvisLiveStartRequest {
   reason?: 'manual' | 'wake' | 'click' | 'ptt' | 'reply';
-  /** Hard-stop any warm/grace socket and open a fresh connection (wake inject). */
-  forceFresh?: boolean;
+  /** Optional bounded provider greeting; main serializes it before any mic flush. */
+  greeting?: string;
 }
 
 export interface JarvisLiveSmokeTestRequest {
   text: string;
 }
 
+/** One PCM delivery emitted by main and scheduled by the renderer WebAudio queue. */
+export interface JarvisLiveAudioOutEvent {
+  /** Main-generated correlation id; acknowledgements for unknown ids are ignored. */
+  id: string;
+  /** PCM16 little-endian, base64 encoded. */
+  pcm16: string;
+}
+
+export type JarvisLiveAudioPlaybackOutcome = 'started' | 'failed' | 'cancelled';
+
+/** Renderer evidence for the exact PCM delivery it received from main. */
+export interface JarvisLiveAudioPlaybackEvent {
+  id: string;
+  outcome: JarvisLiveAudioPlaybackOutcome;
+  /** Bounded diagnostic only; it never becomes user-facing provider output. */
+  error?: string;
+}
+
+export type JarvisLiveSmokeFailureReason =
+  | 'busy'
+  | 'invalid_request'
+  | 'realtime_unavailable'
+  | 'provider_error'
+  | 'response_timeout'
+  | 'no_audio_response'
+  | 'audio_playback_failed'
+  | 'session_closed';
+
+export type JarvisLiveSmokeTestResult =
+  | {
+      ok: true;
+      evidence: 'audio';
+      latencyMs: number;
+      state: JarvisLiveState;
+    }
+  | {
+      ok: false;
+      evidence: 'none';
+      latencyMs: null;
+      reason: JarvisLiveSmokeFailureReason;
+      state: JarvisLiveState;
+    };
+
 export interface JarvisLiveSayRequest {
   text: string;
+}
+
+export interface JarvisLiveRescueRequest {
+  /** Renderer turn identity; retries with the same id are idempotent. */
+  turnId: string;
+  /** Locally transcribed and wake-filtered user utterance. */
+  text: string;
+}
+
+export interface JarvisLiveRescueResult {
+  accepted: boolean;
+  turnId: string;
 }
 
 export interface JarvisLiveStatusPatch {
@@ -359,6 +415,8 @@ export interface JarvisLiveStatusPatch {
 
 export interface JarvisLiveTranscriptEvent {
   sessionId: string;
+  /** Renderer turn identity; prevents late provider finals entering a new wait. */
+  turnId?: string;
   role: 'user' | 'assistant';
   text: string;
   final: boolean;
@@ -390,6 +448,22 @@ export interface JarvisLiveToolResultEvent extends JarvisLiveToolEvent {
   output?: unknown;
 }
 
+export type JarvisLiveToolCancellationReason =
+  | 'provider_cancelled'
+  | 'timeout'
+  | 'session_closed';
+
+/** Main-owned cancellation of one Live function call. */
+export interface JarvisLiveToolCancellationEvent {
+  sessionId: string;
+  callId: string;
+  name?: string;
+  tool?: JarvisAction['type'];
+  reason: JarvisLiveToolCancellationReason;
+  summary: string;
+  at: number;
+}
+
 export interface JarvisLiveInterruptEvent {
   sessionId: string | null;
   reason: string;
@@ -399,7 +473,7 @@ export interface JarvisLiveInterruptEvent {
 export const jarvisLiveStartRequestSchema = z
   .object({
     reason: z.enum(['manual', 'wake', 'click', 'ptt', 'reply']).optional(),
-    forceFresh: z.boolean().optional(),
+    greeting: z.string().trim().min(1).max(400).optional(),
   })
   .default({});
 
@@ -407,8 +481,21 @@ export const jarvisLiveSmokeTestRequestSchema = z.object({
   text: z.string().min(1).max(1000),
 });
 
+export const jarvisLiveAudioPlaybackEventSchema = z
+  .object({
+    id: z.string().uuid(),
+    outcome: z.enum(['started', 'failed', 'cancelled']),
+    error: z.string().trim().min(1).max(280).optional(),
+  })
+  .strict();
+
 export const jarvisLiveSayRequestSchema = z.object({
   text: z.string().min(1).max(1000),
+});
+
+export const jarvisLiveRescueRequestSchema = z.object({
+  turnId: z.string().min(1).max(128),
+  text: z.string().min(1).max(20_000),
 });
 
 export const jarvisLiveStatusPatchSchema = z.object({
@@ -426,6 +513,7 @@ export const jarvisLiveStatusPatchSchema = z.object({
 });
 
 export const jarvisLiveTranscriptInputSchema = z.object({
+  turnId: z.string().min(1).max(128).optional(),
   role: z.enum(['user', 'assistant']),
   text: z.string().max(20_000),
   final: z.boolean().default(true),

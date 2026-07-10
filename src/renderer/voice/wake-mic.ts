@@ -14,6 +14,7 @@ import { shouldEndpointUtterance } from './wake-endpoint';
 import { frameIsSilent, type MicPermissionState } from './wake-health';
 import { SoftAgc } from './agc';
 import { rmsToLevel } from './voice-level';
+import { preferredInputConstraints } from './audio-device-preferences';
 
 /**
  * Mic sempre-ligado do wake word: stream 16 kHz mono de baixo custo que
@@ -44,6 +45,7 @@ const STRONG_SPEECH_RMS = 0.055;
 const STRONG_SPEECH_PEAK = 0.12;
 const MIN_SPEECH_MS = 320;
 const MAX_PREROLL_MS = 3_000;
+const REALTIME_PREROLL_MS = 750;
 /** Ganho inicial do AGC próprio (ver agc.ts) — o valor 12x foi o melhor
  * fixo medido ao vivo em 2026-07-07; o AGC parte dele e adapta. */
 const WAKE_INITIAL_GAIN = 24;
@@ -95,6 +97,9 @@ export class WakeMic {
   private heardRealAudio = false;
   /** Rolling buffer dos frames recentes para não perder comando emendado ao wake. */
   private preRoll: Array<{ at: number; frame: Float32Array }> = [];
+  private deviceRestartGeneration = 0;
+  private deviceRestartActive = false;
+  private deviceRestartQueue: Promise<void> = Promise.resolve();
 
   /** Stream morreu e a reconstrução esgotou as tentativas. */
   onDied: ((reason: string) => void) | null = null;
@@ -110,6 +115,8 @@ export class WakeMic {
   private uttFired = false;
   private uttHeardSpeech = false;
   private uttSpeechMs = 0;
+  /** Speech observed after capture starts; excludes wake pre-roll seed. */
+  private uttLiveSpeechMs = 0;
   private uttMaxRms = 0;
   private uttMaxPeak = 0;
   private uttRawMaxRms = 0;
@@ -201,12 +208,20 @@ export class WakeMic {
     this.uttFired = false;
     this.uttHeardSpeech = false;
     this.uttSpeechMs = 0;
+    this.uttLiveSpeechMs = 0;
     this.uttMaxRms = 0;
     this.uttMaxPeak = 0;
     this.uttRawMaxRms = 0;
     this.uttStartedAt = Date.now();
     this.uttLastSpeechAt = this.uttStartedAt;
     this.markSeededSpeech(seeded);
+    // The local WAV retains the full wake seed for fallback STT. Live gets only
+    // the trailing window: enough to preserve a command glued to the wake word,
+    // without bursting seconds of wake/silence into automatic VAD.
+    const sampleRate = this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE;
+    for (const frame of tailFrames(seeded, sampleRate, REALTIME_PREROLL_MS)) {
+      this.uttFrameTap?.(frame, sampleRate);
+    }
     // Deadline DURO por timer: o auto-stop normal roda dentro do onFrame — se
     // o mic morrer no meio da fala, nenhum frame chega e o turno ficaria
     // aberto para sempre. O timer fecha mesmo com o stream mudo.
@@ -269,7 +284,10 @@ export class WakeMic {
     const rawBackedSpeech = rawRms >= RAW_SPEECH_RMS && rms >= SPEECH_RMS && peak >= SPEECH_PEAK;
     const strongSpeech = rms >= STRONG_SPEECH_RMS && peak >= STRONG_SPEECH_PEAK;
     if (rawBackedSpeech || strongSpeech) {
-      this.uttSpeechMs += (frame.length / (this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE)) * 1000;
+      const frameMs =
+        (frame.length / (this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE)) * 1000;
+      this.uttSpeechMs += frameMs;
+      this.uttLiveSpeechMs += frameMs;
       this.uttHeardSpeech = this.uttSpeechMs >= MIN_SPEECH_MS;
       this.uttLastSpeechAt = now;
     }
@@ -278,7 +296,7 @@ export class WakeMic {
     if (
       shouldEndpointUtterance({
         heardSpeech: this.uttHeardSpeech,
-        speechMs: this.uttSpeechMs,
+        speechMs: this.uttLiveSpeechMs,
         silentMs: now - this.uttLastSpeechAt,
         totalMs: now - this.uttStartedAt,
         silenceMs: opts.silenceMs,
@@ -353,25 +371,7 @@ export class WakeMic {
       noiseSuppression: false,
       autoGainControl: false,
     };
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const inputs = devices.filter(
-        (device) => device.kind === 'audioinput' && device.deviceId,
-      );
-      // Prefer the non-"default" USB device entry — "default" routing can
-      // deliver zeros in CoreAudio after a TCC reset even when granted.
-      const preferred =
-        inputs.find((device) => /fifine/i.test(device.label) && device.deviceId !== 'default') ??
-        inputs.find((device) => /fifine/i.test(device.label)) ??
-        inputs.find((device) => device.deviceId === 'default') ??
-        inputs[0];
-      if (preferred?.deviceId) {
-        return { ...base, deviceId: { ideal: preferred.deviceId } };
-      }
-    } catch {
-      // segue com constraints mínimas
-    }
-    return base;
+    return preferredInputConstraints(base);
   }
 
   private async openGraph(): Promise<void> {
@@ -454,7 +454,11 @@ export class WakeMic {
       this.source.connect(node);
       node.connect(this.ctx.destination);
       this.worklet = node;
-    } catch {
+      this.log('info', 'mic.processor', 'audio-worklet ativo');
+    } catch (err) {
+      this.log('warn', 'mic.processorFallback', 'AudioWorklet falhou; usando ScriptProcessor', {
+        error: err instanceof Error ? err.message : String(err),
+      });
       const node = this.ctx.createScriptProcessor(4096, 2, 1);
       node.onaudioprocess = (e) => {
         const buffer = e.inputBuffer;
@@ -574,4 +578,42 @@ export class WakeMic {
     console.log('[wake] mic do wake word desligado');
     this.log('info', 'mic.stopped', 'wake mic desligado');
   }
+
+  /** Reabre o stream quente quando o usuário troca a entrada nas Configurações. */
+  restartForDeviceChange(): Promise<void> {
+    const shouldRestart = this.running || this.restarting || this.deviceRestartActive;
+    if (!shouldRestart) return Promise.resolve();
+    const generation = ++this.deviceRestartGeneration;
+    this.deviceRestartActive = true;
+    const task = this.deviceRestartQueue
+      .catch(() => {})
+      .then(async () => {
+        // Coalesce preference bursts that arrive before teardown starts.
+        if (generation !== this.deviceRestartGeneration) return;
+        this.stop();
+        await this.start();
+      });
+    this.deviceRestartQueue = task.catch(() => {});
+    return task.finally(() => {
+      if (generation === this.deviceRestartGeneration) {
+        this.deviceRestartActive = false;
+      }
+    });
+  }
+}
+
+function tailFrames(
+  frames: readonly Float32Array[],
+  sampleRate: number,
+  durationMs: number,
+): Float32Array[] {
+  let remaining = Math.max(0, Math.ceil((sampleRate * durationMs) / 1000));
+  const tail: Float32Array[] = [];
+  for (let index = frames.length - 1; index >= 0 && remaining > 0; index -= 1) {
+    const frame = frames[index];
+    const take = Math.min(frame.length, remaining);
+    tail.unshift(Float32Array.from(frame.subarray(frame.length - take)));
+    remaining -= take;
+  }
+  return tail;
 }

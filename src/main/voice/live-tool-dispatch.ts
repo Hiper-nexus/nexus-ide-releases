@@ -4,6 +4,7 @@
  * paths so the controller stays under the 800-line cap.
  */
 import { logVoice } from './voice-log';
+import { buildToolset } from '../orch/tools';
 import { isFarewellIntent } from '../jarvis/realtime/farewell-intent';
 import {
   COARSE_VOICE_TOOL_NAMES,
@@ -22,9 +23,12 @@ import type { RealtimeToolCallEvent, TurnManagedRealtimeProvider } from '../jarv
 import type { JarvisLiveSession } from './jarvis-live';
 import type { JarvisLiveToolEvent, JarvisLiveToolResultEvent } from '../../shared/voice-ipc';
 
+const NEXUS_MCP_TOOL_NAMES = new Set(buildToolset().map((tool) => tool.name));
+
 export interface ToolDispatchHost {
   readonly provider: TurnManagedRealtimeProvider | null;
   readonly fsm: JarvisLiveSession;
+  readonly currentTurnId?: string;
   readonly lastUserTranscript: string;
   latestContext: string;
   recentToolResults: string[];
@@ -108,7 +112,11 @@ export function dispatchNexusAction(
   });
   if (!event) return;
   if (action) {
-    jarvisLatencyTracker.markAction(event.sessionId);
+    if (host.currentTurnId) {
+      jarvisLatencyTracker.markAction(event.sessionId, host.currentTurnId);
+    } else {
+      jarvisLatencyTracker.markAction(event.sessionId);
+    }
     host.armToolResultTimeout(event);
     return;
   }
@@ -254,6 +262,14 @@ export function handleRealtimeToolCall(host: ToolDispatchHost, call: RealtimeToo
   }
   if ((COARSE_VOICE_TOOL_NAMES as readonly string[]).includes(call.name)) {
     handleCoarseVoiceToolCall(host, call);
+    return;
+  }
+  if (NEXUS_MCP_TOOL_NAMES.has(call.name)) {
+    dispatchNexusAction(host, call, {
+      action: 'mcp_tool',
+      tool: call.name,
+      args: call.arguments,
+    });
     return;
   }
   rejectToolCall(host, call, `tool realtime não suportada: ${call.name}`, { error: 'unsupported_tool' });

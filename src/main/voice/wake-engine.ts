@@ -7,6 +7,7 @@ import {
   EMBEDDING_ONNX_B64,
   HEY_JARVIS_ONNX_B64,
 } from './wake-models';
+import { PcmRingBuffer } from './pcm-ring-buffer';
 
 /**
  * Modelo custom do usuário (ex.: "Ei Jarvis" treinado em PT-BR): se
@@ -84,7 +85,7 @@ export class WakeEngine {
   private emb: ort.InferenceSession | null = null;
   private wake: ort.InferenceSession | null = null;
 
-  private pcmQueue: number[] = [];
+  private readonly pcmQueue = new PcmRingBuffer(PCM_QUEUE_MAX);
   private rawTail: Float32Array = new Float32Array(0); // últimos CTX samples
   private melFrames: Float32Array[] = []; // cada frame: [32]
   private features: Float32Array[] = []; // cada: [96]
@@ -205,7 +206,7 @@ export class WakeEngine {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.ready = false;
-    this.pcmQueue = [];
+    this.pcmQueue.clear();
     this.rawTail = new Float32Array(0);
     this.melFrames = [];
     this.features = [];
@@ -223,7 +224,7 @@ export class WakeEngine {
   }
 
   reset(): void {
-    this.pcmQueue = [];
+    this.pcmQueue.clear();
     this.rawTail = new Float32Array(0);
     // Re-semeia só o mel (barato); features mantêm histórico — o debounce já
     // impede retrigger imediato.
@@ -236,13 +237,10 @@ export class WakeEngine {
   /** Alimenta PCM mono 16 kHz normalizado [-1,1]; dispara onDetected. */
   feed(frame: Float32Array): void {
     if (this.disposed) return;
-    for (let i = 0; i < frame.length; i += 1) this.pcmQueue.push(frame[i]);
-    // Cap: se o mic envia mais rápido que o drain() consome, descarta os
-    // samples mais ANTIGOS em vez de crescer sem limite (warn throttled).
-    const excess = this.pcmQueue.length - PCM_QUEUE_MAX;
-    if (excess > 0) {
-      this.pcmQueue.splice(0, excess);
-      this.droppedSinceWarn += Math.ceil(excess / CHUNK);
+    // Fixed-capacity typed ring: no number[] boxing/splice on the 80 ms hot path.
+    const dropped = this.pcmQueue.push(frame);
+    if (dropped > 0) {
+      this.droppedSinceWarn += Math.ceil(dropped / CHUNK);
       if (this.droppedSinceWarn >= DROP_WARN_EVERY) {
         console.warn(
           `[wake] fila de PCM cheia — ${this.droppedSinceWarn} chunks antigos descartados`,
@@ -260,7 +258,8 @@ export class WakeEngine {
     this.busy = true;
     try {
       while (!this.disposed && this.pcmQueue.length >= CHUNK) {
-        const chunk = this.pcmQueue.splice(0, CHUNK);
+        const chunk = this.pcmQueue.shift(CHUNK);
+        if (!chunk) break;
         await this.processChunk(chunk);
       }
     } catch (err) {
@@ -271,10 +270,13 @@ export class WakeEngine {
     }
   }
 
-  private async processChunk(samples: number[]): Promise<void> {
+  private async processChunk(samples: Float32Array): Promise<void> {
     if (!this.mel || !this.emb || !this.wake) return;
     // Escala int16 (o mel espera amplitude de int16, não [-1,1]).
-    const chunk = Float32Array.from(samples, (v) => v * 32768);
+    const chunk = new Float32Array(samples.length);
+    for (let index = 0; index < samples.length; index += 1) {
+      chunk[index] = samples[index] * 32768;
+    }
 
     // Mel COM CONTEXTO: últimos 480 samples do chunk anterior + os 1280 novos.
     const withCtx = new Float32Array(this.rawTail.length + chunk.length);

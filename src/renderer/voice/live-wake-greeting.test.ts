@@ -4,6 +4,7 @@ import {
   liveWakeGreetingText,
   liveWakeInjectPrompt,
   shouldSendLiveWakeGreeting,
+  wakeCaptureMinListenMs,
 } from './live-wake-greeting';
 
 describe('Live wake greeting / provider answer gate', () => {
@@ -24,15 +25,39 @@ describe('Live wake greeting / provider answer gate', () => {
     expect(shouldSendLiveWakeGreeting('wake', true)).toBe(true);
   });
 
-  it('builds Overclock-style [wake] inject prompt', () => {
+  it('builds a short, barge-in-safe [wake] inject prompt', () => {
     expect(liveWakeInjectPrompt('Cleofas')).toContain('[wake]');
     expect(liveWakeInjectPrompt('Cleofas')).toContain('Olá, Cleofas.');
-    expect(liveWakeInjectPrompt(null)).toContain('diga exatamente "Olá."');
+    expect(liveWakeInjectPrompt(null)).toContain('"Olá."');
+    expect(liveWakeInjectPrompt(null)).toContain('já estiver falando');
   });
 
   it('treats held or already-played Live audio as the provider answer', () => {
     expect(hasRealtimeProviderAudioAnswer({ heldChunks: 1, playedChunks: 0 })).toBe(true);
     expect(hasRealtimeProviderAudioAnswer({ heldChunks: 0, playedChunks: 1 })).toBe(true);
     expect(hasRealtimeProviderAudioAnswer({ heldChunks: 0, playedChunks: 0 })).toBe(false);
+  });
+});
+
+describe('wakeCaptureMinListenMs', () => {
+  it('uses a short floor without adding a multi-second greeting hold', () => {
+    expect(
+      wakeCaptureMinListenMs(1_500, {
+        liveGreetingInFlight: true,
+      }),
+    ).toBe(1_500);
+    expect(
+      wakeCaptureMinListenMs(1_125, {
+        liveGreetingInFlight: true,
+      }),
+    ).toBe(1_500);
+  });
+
+  it('keeps the normal endpoint floor when no live greeting is in flight', () => {
+    expect(
+      wakeCaptureMinListenMs(1_125, {
+        liveGreetingInFlight: false,
+      }),
+    ).toBe(1_125);
   });
 });

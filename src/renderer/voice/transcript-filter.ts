@@ -11,6 +11,8 @@
  * os artefatos que nunca são fala real (créditos, pontuação pura).
  */
 
+import { isMediaBoilerplateTranscript } from '../../shared/voice-noise';
+
 /** Alucinações clássicas do Whisper em áudio sem fala. */
 const COLD_GHOSTS = new Set([
   'you', 'thank you', 'thanks', 'thank you.', 'thanks for watching',
@@ -199,6 +201,7 @@ export function isDiscardableTranscript(
 ): boolean {
   const clean = normalize(text);
   if (clean.length === 0) return true;
+  if (isMediaBoilerplateTranscript(clean)) return true;
   if (JARVIS_SELF_ECHO.has(clean)) return true;
   return opts.inConversation ? HARD_GHOSTS.has(clean) : COLD_GHOSTS.has(clean);
 }

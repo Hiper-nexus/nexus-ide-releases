@@ -45,6 +45,15 @@ describe('workerCliPool', () => {
       ]),
     ).toEqual(['codex', 'agy']);
   });
+
+  it('reserves the configured orchestrator provider instead of hardcoding Claude', () => {
+    expect(
+      workerCliPool(
+        [adapter('claude'), adapter('codex'), adapter('agy')],
+        'codex',
+      ),
+    ).toEqual(['agy', 'claude']);
+  });
 });
 
 describe('balanceSquadRosterCli', () => {
@@ -69,6 +78,23 @@ describe('balanceSquadRosterCli', () => {
     ]);
     expect(balanced[0].model).toBeUndefined();
     expect(balanced.slice(1).every((item) => item.model == null)).toBe(true);
+  });
+
+  it('moves the orchestrator to the configured MCP provider and preserves its matching model', () => {
+    const balanced = balanceSquadRosterCli(
+      [
+        agent('orch', 'orchestrator', 'codex', 'gpt-5.4'),
+        agent('worker', 'executor', 'claude'),
+      ],
+      [adapter('claude'), adapter('codex'), adapter('agy')],
+      'codex',
+    );
+
+    expect(balanced[0]).toMatchObject({
+      cli: 'codex',
+      model: 'gpt-5.4',
+    });
+    expect(balanced[1].cli).not.toBe('codex');
   });
 
   it('preserves a worker model when the selected CLI does not change', () => {

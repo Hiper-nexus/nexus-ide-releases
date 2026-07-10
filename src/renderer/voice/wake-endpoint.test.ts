@@ -72,4 +72,26 @@ describe('shouldEndpointUtterance', () => {
       }),
     ).toBe(true);
   });
+
+  it('does not let seeded wake speech close a live-greeting capture before the command', () => {
+    const greetingTurn = {
+      heardSpeech: true,
+      speechMs: 0,
+      silentMs: 900,
+      silenceMs: 700,
+      minListenMs: 4_300,
+      maxMs: 15_000,
+    };
+    expect(shouldEndpointUtterance({ ...greetingTurn, totalMs: 1_000 })).toBe(false);
+    expect(shouldEndpointUtterance({ ...greetingTurn, totalMs: 4_000 })).toBe(false);
+    expect(
+      shouldEndpointUtterance({
+        ...greetingTurn,
+        speechMs: VAD_MIN_SPEECH_MS + 200,
+        totalMs: 4_900,
+        silentMs: 750,
+      }),
+    ).toBe(true);
+    expect(shouldEndpointUtterance({ ...greetingTurn, totalMs: 4_400 })).toBe(true);
+  });
 });

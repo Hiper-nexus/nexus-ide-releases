@@ -4,6 +4,10 @@ import type {
   OperatorBranch,
 } from '../../shared/gamification-types';
 import { OPERATOR_GRID, paletteFor } from './operator-sprite-data';
+import {
+  shouldAnimateOperatorMood,
+  type OperatorMood,
+} from './operator-motion';
 
 /**
  * Mascote pixel programático: desenha OPERATOR_GRID num canvas em escala
@@ -12,7 +16,7 @@ import { OPERATOR_GRID, paletteFor } from './operator-sprite-data';
  * celebrando pulsa o acento, dormindo apaga o visor.
  */
 
-export type OperatorMood = 'idle' | 'celebrating' | 'evolving' | 'sleeping';
+export type { OperatorMood } from './operator-motion';
 
 interface OperatorSpriteProps {
   size: number;
@@ -52,7 +56,22 @@ export function OperatorSprite({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [frame, setFrame] = useState(0);
   const reducedMotion = usePrefersReducedMotion();
-  const animated = mood !== 'sleeping' && !reducedMotion;
+  const [documentVisible, setDocumentVisible] = useState(() =>
+    typeof document === 'undefined' || document.visibilityState !== 'hidden',
+  );
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    const onVisibilityChange = () =>
+      setDocumentVisible(document.visibilityState !== 'hidden');
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () =>
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, []);
+  const animated = shouldAnimateOperatorMood(
+    mood,
+    reducedMotion,
+    documentVisible,
+  );
 
   useEffect(() => {
     if (!animated) {

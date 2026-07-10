@@ -21,11 +21,34 @@ import { invokeMcpWithConfirm, mapActionToTool } from '../services/mcp-bridge';
 import { reopenMission } from '../orch/mission-reopen';
 import { delegationConfirmPrompt, setPendingDelegation } from './delegation-confirm';
 import { isOrchestratorPane, resolveSendToPaneTarget } from './send-to-pane-target';
+import { requestPaneClose } from '../terminal/pane-close-guard';
+import { sanitizeMcpResultOutput } from './mcp-result-output';
 
 export interface JarvisExecutionResult {
   sayText: string;
   expectReply?: boolean;
-  toolResult: { tool: JarvisAction['type']; ok: boolean; summary: string } | null;
+  toolResult: {
+    tool: JarvisAction['type'];
+    ok: boolean;
+    summary: string;
+    output?: unknown;
+  } | null;
+}
+
+export interface JarvisExecutionControl {
+  signal?: AbortSignal;
+  onEffectMayHaveCommitted?: () => void;
+}
+
+function checkpoint(control: JarvisExecutionControl): void {
+  if (!control.signal?.aborted) return;
+  const error = new Error('Jarvis action cancelled');
+  error.name = 'AbortError';
+  throw error;
+}
+
+function markEffect(control: JarvisExecutionControl): void {
+  control.onEffectMayHaveCommitted?.();
 }
 
 function findOrchestratorPane(
@@ -123,11 +146,15 @@ function findPaneByVoiceName(
 
 async function navigateBrowserPane(
   nav: 'back' | 'forward' | 'reload',
+  control: JarvisExecutionControl,
 ): Promise<{ ok: boolean; summary: string }> {
   const pane = focusedOrFirstBrowserPane();
   if (!pane) return { ok: false, summary: 'nenhum browser aberto' };
   try {
+    checkpoint(control);
     await window.nexus.browser[nav](pane.id);
+    markEffect(control);
+    checkpoint(control);
     return { ok: true, summary: `browser ${nav} em ${pane.title}` };
   } catch (err) {
     return {
@@ -140,7 +167,9 @@ async function navigateBrowserPane(
 async function executeViaMcp(
   action: JarvisAction,
   sayText: string,
+  control: JarvisExecutionControl,
 ): Promise<JarvisExecutionResult | null> {
+  checkpoint(control);
   const ctx = paneContext();
   const mapping = mapActionToTool(action, ctx);
   if (!mapping) return null;
@@ -154,7 +183,11 @@ async function executeViaMcp(
       .catch(() => {});
   }
 
-  const result = await invokeMcpWithConfirm(mapping.tool, mapping.args);
+  const result = await invokeMcpWithConfirm(mapping.tool, mapping.args, {
+    signal: control.signal,
+    onEffectMayHaveCommitted: control.onEffectMayHaveCommitted,
+  });
+  checkpoint(control);
   console.log(
     `[voice] mcp ${mapping.tool} → ${result.ok ? 'OK' : result.error ?? 'FALHOU'}`,
   );
@@ -168,6 +201,9 @@ async function executeViaMcp(
       tool: action.type === 'mcp_tool' ? 'mcp_tool' : action.type,
       ok: result.ok,
       summary: mcpSummary(result),
+      ...(result.result !== undefined
+        ? { output: sanitizeMcpResultOutput(result.result) }
+        : {}),
     },
   };
 }
@@ -179,7 +215,9 @@ async function executeViaMcp(
 export async function executeJarvisAction(
   reply: JarvisReply,
   context: JarvisContext,
+  control: JarvisExecutionControl = {},
 ): Promise<JarvisExecutionResult> {
+  checkpoint(control);
   let sayText = reply.say;
   let expectReply = reply.expectReply;
   const action = reply.action;
@@ -191,7 +229,7 @@ export async function executeJarvisAction(
       'run_command',
     ]);
     if (mcpFirst.has(action.type)) {
-      const mcp = await executeViaMcp(action, sayText);
+      const mcp = await executeViaMcp(action, sayText, control);
       if (mcp) return { ...mcp, expectReply };
     }
   }
@@ -199,7 +237,75 @@ export async function executeJarvisAction(
   let toolResult: JarvisExecutionResult['toolResult'] =
     action.type === 'none' ? null : { tool: action.type, ok: true, summary: 'executado' };
 
-  if (action.type === 'open_squad') {
+  if (action.type === 'read_pane') {
+    const layout = useLayoutStore.getState();
+    const panes = listPanes(layout.root);
+    const requested = action.paneId?.trim() ?? '';
+    const useFocused = !requested || /^(ativo|active|focused|focado)$/i.test(requested);
+    const target = useFocused
+      ? panes.find((pane) => pane.id === layout.focusedPaneId) ?? null
+      : panes.find((pane) => pane.id === requested) ?? findPaneByVoiceName(panes, requested);
+    if (!target) {
+      return {
+        sayText: 'Não encontrei esse pane para ler.',
+        expectReply,
+        toolResult: { tool: 'read_pane', ok: false, summary: 'pane não encontrado' },
+      };
+    }
+    if (target.kind === 'browser') {
+      const read = await executeViaMcp(
+        {
+          type: 'mcp_tool',
+          tool: 'nexus_browser_read',
+          args: { paneId: target.id, maxChars: 20_000, maxElements: 200 },
+        },
+        sayText,
+        { signal: control.signal },
+      );
+      if (read) {
+        return {
+          ...read,
+          expectReply,
+          toolResult: read.toolResult
+            ? { ...read.toolResult, tool: 'read_pane' }
+            : null,
+        };
+      }
+      return {
+        sayText: 'Não consegui iniciar a leitura da página do navegador.',
+        expectReply,
+        toolResult: {
+          tool: 'read_pane',
+          ok: false,
+          summary: 'leitura do navegador indisponível',
+          output: { paneId: target.id, kind: target.kind },
+        },
+      };
+    }
+    const read = await executeViaMcp(
+      {
+        type: 'mcp_tool',
+        tool: 'nexus_pane_read',
+        args: { paneId: target.id, lines: 200 },
+      },
+      sayText,
+      { signal: control.signal },
+    );
+    if (!read) {
+      return {
+        sayText: 'Não consegui iniciar a leitura do pane.',
+        expectReply,
+        toolResult: { tool: 'read_pane', ok: false, summary: 'leitura indisponível' },
+      };
+    }
+    return {
+      ...read,
+      expectReply,
+      toolResult: read.toolResult
+        ? { ...read.toolResult, tool: 'read_pane' }
+        : null,
+    };
+  } else if (action.type === 'open_squad') {
     const wanted = action.squadName.toLowerCase();
     const squads = useOrchStore.getState().squads;
     const match =
@@ -219,7 +325,10 @@ export async function executeJarvisAction(
       toolResult = { tool: action.type, ok: false, summary: 'sem workspace aberto' };
     } else if (match) {
       const adapters = await window.nexus.adapters.list();
-      const res = launchSquadMission(match, adapters);
+      checkpoint(control);
+      const res = await launchSquadMission(match, adapters);
+      if (res.ok) markEffect(control);
+      checkpoint(control);
       console.log(`[voice] launch squad "${match.name}" → ${res.ok ? 'NO AR' : `falhou: ${res.error}`}`);
       if (!res.ok) sayText = res.error ?? 'Não consegui subir o squad.';
       toolResult = {
@@ -271,6 +380,8 @@ export async function executeJarvisAction(
       // (Overclock: open review → ask "Disparo?" before wizard-fire).
       try {
         const res = await window.nexus.orch.designSquad(ws.path);
+        if (res.ok) markEffect(control);
+        checkpoint(control);
         if (res.ok && res.squad) {
           useMissionWizardStore.getState().openForSquad(res.squad.id);
           sayText = `Squad ${res.squad.name} pronto na revisão. Quer que eu inicie de verdade?`;
@@ -327,7 +438,9 @@ export async function executeJarvisAction(
       const paneId =
         loneShell && homeVisible ? panes[0].id : layout.addShellPane();
       revealPaneForUser(paneId);
+      markEffect(control);
       const sessionId = await waitForSession(paneId, 5_000);
+      checkpoint(control);
       const visibility = assessTerminalVisibility(
         paneId,
         readUiVisibilityState(),
@@ -350,8 +463,12 @@ export async function executeJarvisAction(
     const target = layout.focusedPaneId;
     if (target) {
       const title = listPanes(layout.root).find((p) => p.id === target)?.title ?? 'pane';
-      layout.close(target);
-      toolResult = { tool: action.type, ok: true, summary: `${title} fechado` };
+      const closed = requestPaneClose(target);
+      toolResult = {
+        tool: action.type,
+        ok: closed,
+        summary: closed ? `${title} fechado` : `fechamento de ${title} cancelado`,
+      };
     } else {
       sayText = 'Nenhum pane focado para eu fechar.';
       toolResult = { tool: action.type, ok: false, summary: 'sem pane focado' };
@@ -385,8 +502,11 @@ export async function executeJarvisAction(
     useGamificationStore.getState().closeProfile();
     const paneId = useLayoutStore.getState().addBrowserPane(action.url);
     useHomeStore.getState().hide();
+    markEffect(control);
     try {
       await waitForBrowserPaneCreated(paneId, 3_000);
+      markEffect(control);
+      checkpoint(control);
       sayText = action.url ? 'Site aberto.' : 'Browser aberto.';
       toolResult = {
         tool: action.type,
@@ -402,15 +522,15 @@ export async function executeJarvisAction(
       };
     }
   } else if (action.type === 'browser_back') {
-    const result = await navigateBrowserPane('back');
+    const result = await navigateBrowserPane('back', control);
     sayText = result.ok ? 'Voltei no browser.' : 'Nenhum browser aberto para voltar.';
     toolResult = { tool: action.type, ok: result.ok, summary: result.summary };
   } else if (action.type === 'browser_forward') {
-    const result = await navigateBrowserPane('forward');
+    const result = await navigateBrowserPane('forward', control);
     sayText = result.ok ? 'Avancei no browser.' : 'Nenhum browser aberto para avançar.';
     toolResult = { tool: action.type, ok: result.ok, summary: result.summary };
   } else if (action.type === 'browser_reload') {
-    const result = await navigateBrowserPane('reload');
+    const result = await navigateBrowserPane('reload', control);
     sayText = result.ok ? 'Página recarregada.' : 'Nenhum browser aberto para recarregar.';
     toolResult = { tool: action.type, ok: result.ok, summary: result.summary };
   } else if (action.type === 'focus_next_pane') {
@@ -512,8 +632,12 @@ export async function executeJarvisAction(
     const focused = fp ? panesNow.find((p) => p.id === fp) : undefined;
     const shellPane = focused?.kind === 'shell' ? focused : panesNow.find((p) => p.kind === 'shell');
     const targetPaneId = shellPane?.id ?? useLayoutStore.getState().addShellPane();
-    if (!shellPane) useHomeStore.getState().hide();
+    if (!shellPane) {
+      useHomeStore.getState().hide();
+      markEffect(control);
+    }
     const sessionId = await waitForSession(targetPaneId, 5_000);
+    checkpoint(control);
     if (!sessionId) {
       sayText = 'Não consegui iniciar um terminal para rodar o comando.';
       toolResult = { tool: action.type, ok: false, summary: 'terminal sem sessão' };
@@ -525,8 +649,11 @@ export async function executeJarvisAction(
         })
         .catch(() => {});
       const approved = await window.nexus.voice.confirmCommand(action.command);
+      checkpoint(control);
       if (approved) {
+        checkpoint(control);
         const ok = writeToPane(targetPaneId, `${action.command}\n`);
+        if (ok) markEffect(control);
         if (!ok) sayText = 'Não consegui escrever no terminal.';
         toolResult = {
           tool: action.type,
@@ -539,7 +666,7 @@ export async function executeJarvisAction(
       }
     }
   } else if (action.type === 'mcp_tool') {
-    const mcp = await executeViaMcp(action, sayText);
+    const mcp = await executeViaMcp(action, sayText, control);
     if (mcp) return { ...mcp, expectReply };
   } else if (action.type === 'restore_mission_panes') {
     const orch = useOrchStore.getState();
@@ -553,6 +680,8 @@ export async function executeJarvisAction(
         ? missions.find((m) => m.title?.toLowerCase().includes(alvo)) ?? missions[0]
         : missions[0];
       const result = await reopenMission(target);
+      if (result.ok) markEffect(control);
+      checkpoint(control);
       if (result.ok) {
         sayText = `Missão restaurada com ${result.panes ?? 0} panes.`;
         toolResult = { tool: action.type, ok: true, summary: `missão restaurada (${result.panes} panes)` };
@@ -569,21 +698,47 @@ export async function executeJarvisAction(
     const { root } = useLayoutStore.getState();
     const target = resolveSendToPaneTarget(action.paneId, listPanes(root));
     if (target.kind === 'asking-pane') {
-      const ok = writeToPane(target.paneId, `${action.pergunta}\n`);
-      sayText = ok ? 'Pergunta enviada ao pane.' : 'Não consegui escrever no pane.';
-      toolResult = {
-        tool: action.type,
-        ok,
-        summary: ok ? 'pergunta enviada' : 'falha ao escrever',
-      };
+      const result = await executeViaMcp(
+        {
+          type: 'mcp_tool',
+          tool: 'nexus_pane_write',
+          args: { paneId: target.paneId, text: action.pergunta, submit: true },
+        },
+        sayText,
+        control,
+      );
+      if (result) {
+        return {
+          ...result,
+          expectReply,
+          toolResult: result.toolResult
+            ? { ...result.toolResult, tool: 'ask_pane' }
+            : null,
+        };
+      }
     } else if (target.kind === 'delegation') {
-      const ok = writeToPane(target.orchestratorPaneId, `${action.pergunta}\n`);
-      sayText = ok ? 'Pergunta enviada ao pane.' : 'Não consegui escrever no pane.';
-      toolResult = {
-        tool: action.type,
-        ok,
-        summary: ok ? 'pergunta enviada' : 'falha ao escrever',
-      };
+      const result = await executeViaMcp(
+        {
+          type: 'mcp_tool',
+          tool: 'nexus_pane_write',
+          args: {
+            paneId: target.orchestratorPaneId,
+            text: action.pergunta,
+            submit: true,
+          },
+        },
+        sayText,
+        control,
+      );
+      if (result) {
+        return {
+          ...result,
+          expectReply,
+          toolResult: result.toolResult
+            ? { ...result.toolResult, tool: 'ask_pane' }
+            : null,
+        };
+      }
     } else if (target.kind === 'asking-pane-gone') {
       sayText = 'Esse pane já fechou — não tenho pra quem perguntar.';
       toolResult = { tool: action.type, ok: false, summary: 'pane da pergunta fechado' };

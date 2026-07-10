@@ -7,11 +7,16 @@ import {
   type NodeProps,
   type Node,
 } from '@xyflow/react';
-import { attachHost, focusHost } from '../terminal/terminal-host';
+import { attachHost, blurHost, focusHost } from '../terminal/terminal-host';
 import { PaneToolbar } from './PaneToolbar';
 import { BrowserPane } from './BrowserPane';
 import { useLayoutStore } from '../state/layout-store';
+import { useSessionStateStore } from '../state/session-state-store';
 import type { PaneModel } from '../../shared/types';
+import {
+  MIN_CANVAS_PANE_HEIGHT,
+  MIN_CANVAS_PANE_WIDTH,
+} from './canvas-pane-layout';
 
 /**
  * When the user zooms the canvas out below this threshold the live xterm is
@@ -20,6 +25,14 @@ import type { PaneModel } from '../../shared/types';
  * shown and interactable.
  */
 const SNAPSHOT_THRESHOLD = 0.45;
+
+const SESSION_LABELS = {
+  spawning: 'iniciando',
+  busy: 'trabalhando',
+  idle: 'pronto',
+  exited: 'encerrado',
+  hibernated: 'dormindo',
+} as const;
 
 export type CanvasPaneNodeData = {
   pane: PaneModel;
@@ -44,7 +57,14 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
   const { zoom } = useViewport();
   const isFocused = useLayoutStore((s) => s.focusedPaneId === id);
   const focus = useLayoutStore((s) => s.focus);
+  const paneState = useSessionStateStore((s) => s.paneStates.get(id));
   const isSnapshot = zoom < SNAPSHOT_THRESHOLD;
+  const stateLabel =
+    pane.kind === 'browser'
+      ? 'browser aberto'
+      : paneState
+        ? SESSION_LABELS[paneState]
+        : 'conectando';
 
   // Attach (or re-attach after snapshot) the terminal into this slot.
   useEffect(() => {
@@ -66,17 +86,25 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
 
   useEffect(() => {
     if (pane.kind !== 'browser' && isFocused && !isSnapshot) focusHost(id);
+    else if (pane.kind !== 'browser') blurHost(id);
   }, [isFocused, id, isSnapshot, pane.kind]);
 
   return (
     <div
       className={`canvas-pane ${isFocused ? 'canvas-pane--focused' : ''}`}
+      data-session-state={paneState ?? 'unknown'}
       onMouseDown={() => focus(id)}
+      onFocus={(event) => {
+        if (event.target === event.currentTarget) focus(id);
+      }}
+      tabIndex={0}
+      role="group"
+      aria-label={`${pane.title}, ${stateLabel}`}
       style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}
     >
       <NodeResizer
-        minWidth={280}
-        minHeight={200}
+        minWidth={MIN_CANVAS_PANE_WIDTH}
+        minHeight={MIN_CANVAS_PANE_HEIGHT}
         isVisible={isFocused}
         lineStyle={{ borderColor: 'var(--accent)' }}
         handleStyle={{ borderColor: 'var(--accent)', background: 'var(--bg)' }}
@@ -99,6 +127,12 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
         <BrowserPane pane={pane} isCanvas />
       ) : isSnapshot ? (
         <div className="canvas-pane__snapshot">
+          <span
+            className={`canvas-pane__snapshot-state canvas-pane__snapshot-state--${paneState ?? 'unknown'}`}
+          >
+            <i aria-hidden="true" />
+            {stateLabel}
+          </span>
           <span className="canvas-pane__snapshot-label">{pane.title}</span>
           <span className="canvas-pane__snapshot-meta">
             {pane.adapterId ?? pane.kind}

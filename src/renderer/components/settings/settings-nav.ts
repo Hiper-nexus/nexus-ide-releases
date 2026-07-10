@@ -45,7 +45,7 @@ export interface NavGroup {
 /** Oito entradas do dia a dia — visíveis sem abrir Avançado. */
 export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
   {
-    label: 'CONTA',
+    label: 'Conta',
     items: [
       {
         id: 'account',
@@ -58,7 +58,7 @@ export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'INTERFACE',
+    label: 'Interface',
     items: [
       {
         id: 'appearance',
@@ -86,7 +86,7 @@ export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'OPERAÇÃO',
+    label: 'Operação',
     items: [
       {
         id: 'voice',
@@ -126,7 +126,7 @@ export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
 /** Catálogo e ops raras — progressive disclosure na nav. */
 export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
   {
-    label: 'SISTEMA',
+    label: 'Sistema e segurança',
     items: [
       { id: 'system', icon: 'i', title: 'Sistema', subtitle: 'versão · changelog' },
       {
@@ -145,18 +145,23 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
         aliases: ['audit', 'confirmations'],
       },
       {
-        id: 'media',
-        icon: 'IMG',
-        title: 'Mídia',
-        subtitle: 'chaves de geração',
-        aliases: ['media', 'image', 'video'],
-      },
-      {
         id: 'remote',
         icon: 'SSH',
         title: 'Remote',
         subtitle: 'bridge · ssh',
         aliases: ['ssh', 'remote'],
+      },
+    ],
+  },
+  {
+    label: 'Integrações',
+    items: [
+      {
+        id: 'media',
+        icon: 'IMG',
+        title: 'Mídia',
+        subtitle: 'chaves de geração',
+        aliases: ['media', 'image', 'video'],
       },
       {
         id: 'marketplace',
@@ -168,7 +173,7 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'CATÁLOGO',
+    label: 'Arsenal',
     items: [
       {
         id: 'agents',
@@ -212,6 +217,11 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
         subtitle: 'geração · whitelist',
         aliases: ['generation', 'models'],
       },
+    ],
+  },
+  {
+    label: 'Automação',
+    items: [
       {
         id: 'recipes',
         icon: 'RCP',
@@ -256,6 +266,27 @@ const ADVANCED_SECTION_IDS = new Set(
 
 export function isAdvancedSettingsSection(id: SettingsSection): boolean {
   return ADVANCED_SECTION_IDS.has(id);
+}
+
+export function isSettingsGroupExpanded(
+  group: NavGroup,
+  activeSection: SettingsSection,
+  manuallyExpanded: ReadonlySet<string>,
+): boolean {
+  return (
+    manuallyExpanded.has(group.label) ||
+    group.items.some((item) => item.id === activeSection)
+  );
+}
+
+export function toggleSettingsGroup(
+  expanded: ReadonlySet<string>,
+  label: string,
+): Set<string> {
+  const next = new Set(expanded);
+  if (next.has(label)) next.delete(label);
+  else next.add(label);
+  return next;
 }
 
 /** Normaliza para busca: minúsculas e sem diacríticos. */

@@ -1,5 +1,31 @@
-import { describe, expect, it } from 'vitest';
-import { resolveAuthStrategy } from './subscription-auth';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  detectSubscriptionAuth,
+  resolveAuthStrategy,
+} from './subscription-auth';
+
+const tempDirs: string[] = [];
+
+function tempHome(): string {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-provider-auth-'));
+  tempDirs.push(home);
+  return home;
+}
+
+function touch(home: string, ...segments: string[]): void {
+  const file = path.join(home, ...segments);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '{}');
+}
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 /**
  * Subscription-first directive: signed-in subscription/OAuth ALWAYS wins;
@@ -84,5 +110,35 @@ describe('resolveAuthStrategy', () => {
         subscriptionAuthed: false,
       }).strategy,
     ).toBe('login-needed');
+  });
+});
+
+describe('detectSubscriptionAuth', () => {
+  it('does not invent a subscription session for API-key-only Aider', () => {
+    const home = tempHome();
+    fs.mkdirSync(path.join(home, '.aider'), { recursive: true });
+    expect(detectSubscriptionAuth('aider', home)).toBe(false);
+  });
+
+  it('detects OpenCode only when its official auth artifact exists', () => {
+    const home = tempHome();
+    fs.mkdirSync(path.join(home, '.local', 'share', 'opencode'), {
+      recursive: true,
+    });
+    expect(detectSubscriptionAuth('opencode', home)).toBe(false);
+    touch(home, '.local', 'share', 'opencode', 'auth.json');
+    expect(detectSubscriptionAuth('opencode', home)).toBe(true);
+  });
+
+  it('does not treat a merely installed Grok directory as authenticated', () => {
+    const home = tempHome();
+    fs.mkdirSync(path.join(home, '.grok'), { recursive: true });
+    expect(detectSubscriptionAuth('grok', home)).toBe(false);
+    touch(home, '.grok', 'auth.json');
+    expect(detectSubscriptionAuth('grok', home)).toBe(true);
+  });
+
+  it('fails closed for a custom adapter without an auth detector', () => {
+    expect(detectSubscriptionAuth('unknown-provider', tempHome())).toBe(false);
   });
 });

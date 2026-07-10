@@ -18,7 +18,7 @@ import {
   turnExecution,
   wakeMic,
 } from './voice-session-state';
-import { logVoiceEvent } from './voice-live-ipc';
+import { logVoiceEvent, quiesceLiveForClassic } from './voice-live-ipc';
 import { speakAndPlayPipelined } from './voice-speak-pipeline';
 import { delay, noteAutoReplyOpened } from './jarvis-reply-loop';
 import { buildReplyAutoStop, REPLY_MIN_LISTEN_MS } from './voice-echo-guard';
@@ -56,7 +56,7 @@ export async function reaskPendingDelegation(
   // Mesma higiene do speak de confirmação em runJarvisTurn: Classic fala, Live cala.
   setSuppressRealtimeAudioOut(true);
   livePlayer?.stop();
-  void window.nexus.voice.liveInterrupt('classic-tts').catch(() => {});
+  await quiesceLiveForClassic('classic-delegation-reask');
   store.setStatus('speaking');
   const spoken = await speakAndPlayPipelined(PENDING_REASK_PROMPT, isTurnCurrent);
   if (!spoken.ok) {

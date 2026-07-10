@@ -205,7 +205,8 @@ const PERMISSION_LABEL: Record<string, string> = {
  * Auto-operation controls per CLI: permission mode (turn on bypass/yolo so the
  * agent runs without asking), reasoning effort and verbose. Only the options
  * the adapter actually declares are shown, so no CLI gets a flag it can't
- * parse. "CLI default" = leave it to the CLI (no flag).
+ * parse. "Seguro Nexus" applies the adapter's explicit sandbox/approval
+ * baseline and overrides a dangerous user-level CLI default.
  */
 function ControlFlags({
   provider,
@@ -222,7 +223,7 @@ function ControlFlags({
     <div className="prov__control">
       {hasPerm && (
         <div className="prov__ctl-row">
-          <span className="prov__ctl-label" title="Como o agente pede permissão. YOLO/Bypass = roda sozinho sem perguntar.">
+          <span className="prov__ctl-label" title="Como o agente pede permissão. Seguro Nexus força sandbox/aprovação; Auto/YOLO/Bypass exigem confirmação nativa.">
             Permissão
           </span>
           <div className="prov__ctl-btns">
@@ -230,12 +231,12 @@ function ControlFlags({
               className={`prov__ctl-btn ${provider.permissionMode === '' ? 'prov__ctl-btn--on' : ''}`}
               onClick={() => patch({ permissionMode: '' })}
             >
-              CLI default
+              Seguro Nexus
             </button>
             {provider.permissionModes.map((m) => (
               <button
                 key={m}
-                className={`prov__ctl-btn ${provider.permissionMode === m ? 'prov__ctl-btn--on' : ''} ${m === 'yolo' || m === 'bypass' ? 'prov__ctl-btn--danger' : ''}`}
+                className={`prov__ctl-btn ${provider.permissionMode === m ? 'prov__ctl-btn--on' : ''} ${m === 'yolo' || m === 'bypass' || m === 'auto' ? 'prov__ctl-btn--danger' : ''}`}
                 onClick={() => patch({ permissionMode: m })}
               >
                 {PERMISSION_LABEL[m] ?? m}
@@ -291,6 +292,7 @@ function ControlFlags({
 
 function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
   const setConfig = useProviderStore((s) => s.setConfig);
+  const [expanded, setExpanded] = useState(false);
   const [binDraft, setBinDraft] = useState(provider.binPath);
   const [argsDraft, setArgsDraft] = useState(provider.extraArgs.join(' '));
   const riskWarning = providerRiskWarning(provider);
@@ -301,9 +303,20 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
   return (
     <li className={`prov ${provider.enabled ? '' : 'prov--off'}`}>
       <div className="prov__head">
-        <span className="prov__title">
-          {provider.icon} {provider.label}
-        </span>
+        <button
+          type="button"
+          className="prov__disclosure"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <span className="prov__chevron" aria-hidden="true">
+            {expanded ? '−' : '+'}
+          </span>
+          <span className="prov__title">
+            {provider.icon} {provider.label}
+          </span>
+          <span className="prov__summary">{provider.defaultModel}</span>
+        </button>
         <span
           className={`settings-chip ${provider.installed ? 'settings-chip--ok' : 'settings-chip--warn'}`}
         >
@@ -335,6 +348,7 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
         </label>
       </div>
 
+      {expanded && <div className="prov__body">
       <div className="prov__grid">
         <label className="prov__field">
           Binário (vazio = <code>{provider.detectedBin}</code>)
@@ -415,6 +429,7 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
         <p className="prov__hint">{provider.loginHint}</p>
       )}
       {riskWarning && <p className="prov__warn">{riskWarning}</p>}
+      </div>}
     </li>
   );
 }

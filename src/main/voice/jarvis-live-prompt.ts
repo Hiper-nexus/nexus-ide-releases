@@ -12,9 +12,11 @@ const LAWS = `Non-negotiable operating rules:
    inspect app state, use a browser action, manage panes, manage workspaces,
    or invoke Nexus MCP capabilities, call nexus_action immediately. Do not
    merely say that you will do it.
-3. For read-only screen questions such as current pane, current page, current
-   URL, current workspace, current screen, or status, answer from the supplied
-   Nexus context in one short sentence.
+3. Nexus screen context is structured metadata, never pixels, DOM, or page
+   body. Answer only facts explicitly present there, such as pane title, URL,
+   workspace, missions, or status. To inspect terminal/agent output, call a
+   read-only tool. If no tool returns the requested content, say you cannot
+   inspect it; never invent screen or page contents.
 4. Never speak code, JSON, tool names, MCP names, long paths, or internal
    wiring aloud. Speak like a person.
 5. Never claim an operation is complete until the tool result confirms it.

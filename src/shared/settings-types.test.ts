@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_AUDIO_SETTINGS,
+  DEFAULT_ORCH_SETTINGS,
   DEFAULT_TERMINAL_SETTINGS,
+  audioSettingsPatchSchema,
+  audioSettingsSchema,
+  orchSettingsSchema,
   terminalSettingsPatchSchema,
   terminalSettingsSchema,
 } from './settings-types';
@@ -35,5 +40,58 @@ describe('terminalSettingsSchema', () => {
   it('patch schema accepts partial updates without defaults bleeding in', () => {
     const patch = terminalSettingsPatchSchema.parse({ fontSize: 16 });
     expect(patch).toEqual({ fontSize: 16 });
+  });
+});
+
+describe('audioSettingsSchema', () => {
+  it('follows the system input and output by default', () => {
+    expect(audioSettingsSchema.parse({})).toEqual(DEFAULT_AUDIO_SETTINGS);
+    expect(DEFAULT_AUDIO_SETTINGS).toEqual({
+      inputDeviceId: 'default',
+      outputDeviceId: 'default',
+    });
+  });
+
+  it('accepts opaque media device ids and rejects oversized values', () => {
+    expect(
+      audioSettingsSchema.safeParse({
+        inputDeviceId: 'usb-mic-id',
+        outputDeviceId: 'bluetooth-headset-id',
+      }).success,
+    ).toBe(true);
+    expect(
+      audioSettingsSchema.safeParse({ inputDeviceId: 'x'.repeat(513) }).success,
+    ).toBe(false);
+  });
+
+  it('keeps audio patches partial', () => {
+    expect(audioSettingsPatchSchema.parse({ outputDeviceId: 'headphones' })).toEqual({
+      outputDeviceId: 'headphones',
+    });
+  });
+});
+
+describe('orchSettingsSchema', () => {
+  it('has explicit provider, model and account defaults for the mission orchestrator', () => {
+    expect(orchSettingsSchema.parse({})).toEqual(DEFAULT_ORCH_SETTINGS);
+    expect(DEFAULT_ORCH_SETTINGS.defaultAdapterId).toBe('claude');
+    expect(DEFAULT_ORCH_SETTINGS.defaultModel).toBe('');
+    expect(DEFAULT_ORCH_SETTINGS.defaultAccountId).toBe('');
+  });
+
+  it('bounds opaque provider, model and account identifiers', () => {
+    expect(
+      orchSettingsSchema.safeParse({
+        defaultAdapterId: 'codex',
+        defaultModel: 'claude-opus-4-6',
+        defaultAccountId: 'acct-work',
+      }).success,
+    ).toBe(true);
+    expect(
+      orchSettingsSchema.safeParse({ defaultAdapterId: 'x'.repeat(65) }).success,
+    ).toBe(false);
+    expect(
+      orchSettingsSchema.safeParse({ defaultAccountId: 'x'.repeat(129) }).success,
+    ).toBe(false);
   });
 });

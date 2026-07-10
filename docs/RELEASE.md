@@ -2,8 +2,9 @@
 
 O workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml)
 builda em **Node 22 LTS**, **assina** com Developer ID, **notariza** na Apple e
-**publica o Release** com o `.dmg` (instalador) e o `.zip` (payload do
-auto-update Squirrel.Mac) — tudo ao dar push numa tag `v*`.
+**publica o Release** com DMG + ZIP Squirrel para **Apple Silicon e Intel**.
+Os dois builds passam por verificação independente antes de o job final criar a
+release — tudo ao dar push numa tag `v*`.
 
 ## Cortar uma release (o dia a dia)
 
@@ -12,15 +13,21 @@ npm version patch      # 0.1.4 -> 0.1.5, cria commit + tag v0.1.5
 git push --follow-tags # dispara o CI
 ```
 
-Pronto. Em alguns minutos o Release aparece em **Releases** com o `.dmg`
-assinado e notarizado. Os usuários que já têm o app recebem a atualização
-sozinhos (auto-update). `npm version minor` / `major` para saltos maiores.
+Pronto. Em alguns minutos o Release aparece em **Releases** com os DMGs e ZIPs
+assinados e notarizados. `npm version minor` / `major` para saltos maiores.
+
+> Auto-update de consumidor ainda exige um feed HTTPS operacional em
+> `NEXUS_UPDATE_FEED`. Enquanto o repositório for privado e esse feed não
+> estiver provisionado, o fallback via `gh` só funciona em máquinas que já têm
+> GitHub CLI autenticado; ele não substitui um canal público de atualização.
 
 ## Setup único dos GitHub Secrets
 
 O CI precisa de 6 secrets no repositório
-(**Settings → Secrets and variables → Actions**). Já foram configurados; use
-esta seção só se precisar rotacionar.
+(**Settings → Secrets and variables → Actions**). Não trate os valores como
+válidos só porque existem: antes de cortar uma tag, rode uma release de teste ou
+valide `notarytool history`; uma credencial Apple expirada/inválida bloqueia a
+notarização e não deve ser contornada com assinatura ad-hoc.
 
 | Secret | O que é |
 | --- | --- |
@@ -47,10 +54,49 @@ esta seção só se precisar rotacionar.
 
 ## Build local (fallback, sem CI)
 
+O perfil de notarização local oficial do projeto é `nexus-notary`. Cadastre-o
+uma vez no Keychain (a senha de app não fica no shell nem no repositório):
+
 ```bash
 export PATH="/opt/homebrew/opt/node@22/bin:$PATH"   # Node 22 LTS
-export APPLE_ID="…"; export APPLE_APP_SPECIFIC_PASSWORD="…"; export APPLE_TEAM_ID="…"
-npm run make
+xcrun notarytool store-credentials nexus-notary \
+  --apple-id "seu@email.com" \
+  --team-id "35P5XL3JN6" \
+  --password "xxxx-xxxx-xxxx-xxxx"
+
+npm ci
+npm run typecheck
+npm test
+npm run premake # rebuild antes da chave privada entrar no keychain
+
+env -u APPLE_ID -u APPLE_APP_SPECIFIC_PASSWORD \
+  APPLE_TEAM_ID=35P5XL3JN6 \
+  APPLE_KEYCHAIN_PROFILE=nexus-notary \
+  npm run make:release
+
+# Opcional, para voltar o node_modules local ao ABI do Node depois do Forge.
+env -u APPLE_ID -u APPLE_APP_SPECIFIC_PASSWORD -u APPLE_TEAM_ID \
+  npm run rebuild:node
 ```
+
+O certificado esperado é exatamente
+`Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)`. Depois do
+`make`, rode o mesmo gate usado pelo CI; ele monta o DMG, extrai o ZIP do
+updater e valida os dois apps contidos:
+
+```bash
+node scripts/verify-macos-release.mjs \
+  --artifacts out/make \
+  --version "$(node -p "require('./package.json').version")" \
+  --bundle-id com.nexuside.app \
+  --team-id 35P5XL3JN6 \
+  --identity "Developer ID Application: Cleofas Pereira rocha"
+```
+
+Sem `APPLE_TEAM_ID`, o Forge produz deliberadamente uma assinatura **ad-hoc**
+(`identity: -`), sem hardened runtime e sem notarização. Esse pacote serve só
+para smoke local: Gatekeeper não o considera distribuível e ele nunca deve ser
+publicado. O `.zip` é obrigatório em toda release, pois é o payload consumido
+pelo auto-update Squirrel.Mac.
 
 Detalhes de assinatura/notarização em [`build/notarize.md`](../build/notarize.md).

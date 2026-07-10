@@ -4,12 +4,25 @@ import { useOrchStore } from '../../state/orch-store';
 import { useVoiceStore } from '../../voice/voice-store';
 import { CURRENT_RELEASE } from '../../../shared/release-notes';
 import { UpdateReadinessPanel } from './ObservabilitySections';
+import { AudioDeviceControls } from './AudioDeviceControls';
+import { OrchestratorDefaults } from './OrchestratorDefaults';
 
 /** MÓDULOS sections: Terminal, Voice, Providers, Squads, Marketplace. */
 
 export function TerminalSection() {
   const terminal = useSettingsStore((s) => s.terminal);
   const update = useSettingsStore((s) => s.update);
+  const [shells, setShells] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.nexus.settings.listShells().then((detected) => {
+      if (!cancelled) setShells(detected);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <section>
@@ -41,18 +54,39 @@ export function TerminalSection() {
       </label>
 
       <label className="settings-field">
-        Shell (caminho absoluto; vazio = $SHELL)
+        Shell padrão
+        <select
+          className="settings-input"
+          value={terminal.shell}
+          onChange={(e) => void update({ shell: e.target.value })}
+        >
+          <option value="">
+            Padrão do sistema{shells[0] ? ` — ${shells[0].split('/').pop()}` : ''}
+          </option>
+          {terminal.shell && !shells.includes(terminal.shell) && (
+            <option value={terminal.shell}>{terminal.shell} (não detectado)</option>
+          )}
+          {shells.map((shell) => (
+            <option key={shell} value={shell}>
+              {shell}
+            </option>
+          ))}
+        </select>
+        <span className="settings-field__note">
+          {shells.length} shell(s) detectado(s). Vale para novos panes; os já
+          abertos continuam no shell atual.
+        </span>
+      </label>
+
+      <details className="settings-advanced-field">
+        <summary>Usar outro caminho absoluto</summary>
         <input
           className="settings-input"
           value={terminal.shell}
-          placeholder="/bin/zsh"
+          placeholder="/caminho/para/seu/shell"
           onChange={(e) => void update({ shell: e.target.value })}
         />
-        <span className="settings-field__note">
-          Vale para novos panes de shell — os já abertos continuam no shell
-          atual.
-        </span>
-      </label>
+      </details>
     </section>
   );
 }
@@ -66,6 +100,7 @@ export function VoiceSection({ onNavigate }: { onNavigate: () => void }) {
         Voz e captura: push-to-talk, STT (Groq/whisper), tradução PT→EN e
         resposta falada (Jarvis). Config em ~/.nexus/plugins/voice.
       </p>
+      <AudioDeviceControls />
       <button
         className="settings-btn settings-btn--primary"
         onClick={() => {
@@ -151,6 +186,8 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
         {squads.length} squad(s) salvos — schema compatível com o
         squads.json, com export/import nativo.
       </p>
+
+      <OrchestratorDefaults />
 
       <label className="settings-field">
         <span>

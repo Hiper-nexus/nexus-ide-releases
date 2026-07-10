@@ -35,6 +35,31 @@ function isNoiseToken(word: string): boolean {
   );
 }
 
+const MEDIA_BOILERPLATE = [
+  /\bobrigad[oa] por assistir\b/,
+  /\bthanks for watching\b/,
+  /\blegendas pela comunidade amara(?:\.org)?\b/,
+  /\b(?:se inscrev[ae]|inscreva-se) no canal\b/,
+  /\bativ[ae] o sininho\b/,
+  /\breceber notificacoes? de novos videos?\b/,
+];
+
+/** Whisper/media-credit boilerplate, including the common combined sentence. */
+export function isMediaBoilerplateTranscript(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9. -]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return false;
+  const matches = MEDIA_BOILERPLATE.filter((pattern) => pattern.test(normalized));
+  if (matches.length >= 2) return true;
+  return MEDIA_BOILERPLATE.some((pattern) => pattern.test(normalized)) &&
+    normalized.split(' ').length <= 5;
+}
+
 export function isLikelyNoiseTranscript(text: string): boolean {
   const normalized = text
     .toLowerCase()
@@ -46,6 +71,7 @@ export function isLikelyNoiseTranscript(text: string): boolean {
   // Saudações curtas deliberadas são fala real, não ruído.
   if (normalized === 'oi' || normalized === 'e ai') return false;
   if (!normalized || normalized.length <= 2) return true;
+  if (isMediaBoilerplateTranscript(normalized)) return true;
   if (normalized === 'thank you' || normalized === 'obrigado por assistir') return true;
   if (
     normalized === 'se inscreve no canal' ||

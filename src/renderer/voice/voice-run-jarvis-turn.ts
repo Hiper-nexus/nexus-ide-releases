@@ -15,6 +15,7 @@ import {
   liveEndTurn,
   liveStatus,
   logVoiceEvent,
+  quiesceLiveForClassic,
   queueLiveContextRefresh,
 } from './voice-live-ipc';
 import {
@@ -116,7 +117,7 @@ export async function runJarvisTurn(
     }
     setSuppressRealtimeAudioOut(true);
     livePlayer?.stop();
-    void window.nexus.voice.liveInterrupt('classic-tts').catch(() => {});
+    await quiesceLiveForClassic('classic-delegation-tts');
     store.setStatus('speaking');
     const spoken = await speakAndPlayPipelined(say, isTurnCurrent);
     if (spoken.ok && !spoken.cancelled) {
@@ -221,24 +222,18 @@ export async function runJarvisTurn(
       return;
     }
     if (canAttemptRealtime(useVoiceStore.getState().info)) {
-      // ONE VOICE: action already ran — do not speak with Classic marin while
-      // Live/Charon is the configured persona (woman/man flip).
       logVoiceEvent(
         'warn',
-        'jarvis.liveSpeakMissed',
-        'Live não falou — ação ok, sem Classic TTS (uma voz)',
+        'jarvis.liveSpeakDegraded',
+        'Live não falou — Classic TTS assume',
         { text: sayText.slice(0, 80), action: reply.action.type },
       );
-      store.setSpoken(sayText);
-      store.setStatus('idle');
-      liveEndTurn();
-      return;
     }
   }
 
   setSuppressRealtimeAudioOut(true);
   livePlayer?.stop();
-  void window.nexus.voice.liveInterrupt('classic-tts').catch(() => {});
+  await quiesceLiveForClassic('classic-tts');
 
   store.setStatus('speaking');
   liveStatus('speaking');

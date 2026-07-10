@@ -5,6 +5,7 @@ import {
   markLocalAudioPlaying,
 } from './live-local-audio-gate';
 import type { SpeakResult } from '../../shared/voice-ipc';
+import { requirePreferredOutputDevice } from './audio-device-preferences';
 
 /** Silencia detecção de wake word durante reprodução de TTS. */
 export type WakeSuppressor = (ms: number) => void;
@@ -57,6 +58,8 @@ export async function playAudioBase64(base64: string, _format: string): Promise<
   const bytes = base64ToBytes(base64);
   const ctx = new AudioContext();
   try {
+    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+    await requirePreferredOutputDevice(ctx);
     const arrayBuffer = bytes.buffer.slice(0) as ArrayBuffer;
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
     if (gen !== playbackGen) return 0;

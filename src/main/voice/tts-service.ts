@@ -1,4 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { readFile, unlink } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type {
   VoiceConfig,
   VoicePersona,
@@ -10,6 +14,7 @@ import { echoSuppressor } from './echo-suppress';
 import { classifyKind, flattenChain, type ProviderProbes } from './provider-select';
 import { resolveVoiceApiKey } from './voice-secrets';
 import { logVoice } from './voice-log';
+import { getRuntimeOutputDeviceId } from './audio-output-runtime';
 
 /**
  * Text-to-speech — the Jarvis "talk back" step. Condenses the agent's output to
@@ -74,6 +79,9 @@ export interface TtsDeps {
   fetchImpl: typeof fetch;
   /** Speak text via macOS `say`; resolves when playback finishes. */
   speakViaSay: (text: string, voice?: string) => Promise<void>;
+  /** Render macOS `say` to AIFF so the renderer can route it to a sink. */
+  renderViaSay?: (text: string, voice?: string) => Promise<Buffer>;
+  getOutputDeviceId?: () => string;
   /** Run Piper over text, return wav bytes. */
   runPiper: (plugin: VoicePlugin, text: string) => Buffer | Promise<Buffer>;
   getEnv: (name: string) => string | undefined;
@@ -82,6 +90,8 @@ export interface TtsDeps {
 const defaultDeps: TtsDeps = {
   fetchImpl: (...args) => fetch(...args),
   speakViaSay,
+  renderViaSay,
+  getOutputDeviceId: getRuntimeOutputDeviceId,
   runPiper: runPiperLocal,
   getEnv: resolveVoiceApiKey,
 };
@@ -126,6 +136,43 @@ export function speakViaSay(text: string, voice?: string): Promise<void> {
       else reject(new Error(`say exited ${code}`));
     });
   });
+}
+
+/** Render keyless macOS speech without playing it in the main process. */
+export async function renderViaSay(text: string, voice?: string): Promise<Buffer> {
+  const outputFile = path.join(
+    os.tmpdir(),
+    `nexus-say-${randomUUID()}.aiff`,
+  );
+  try {
+    await new Promise<void>((resolve, reject) => {
+      stopSystemSpeech();
+      const args = [
+        ...(voice ? ['-v', voice] : []),
+        '-o',
+        outputFile,
+        text,
+      ];
+      const proc = spawn(SAY_BIN, args, { stdio: 'ignore' });
+      activeSay = proc;
+      const clear = () => {
+        if (activeSay === proc) activeSay = null;
+      };
+      proc.on('error', (error) => {
+        clear();
+        reject(error);
+      });
+      proc.on('close', (code, signal) => {
+        clear();
+        if (code === 0) resolve();
+        else if (signal) reject(new Error('say interrupted'));
+        else reject(new Error(`say exited ${code}`));
+      });
+    });
+    return await readFile(outputFile);
+  } finally {
+    await unlink(outputFile).catch(() => {});
+  }
 }
 
 function runPiperLocal(plugin: VoicePlugin, text: string): Promise<Buffer> {
@@ -238,6 +285,19 @@ async function speakLocalOrSystem(
 ): Promise<SpeakResult> {
   if (plugin.provider === 'macos-say') {
     try {
+      if (
+        deps.getOutputDeviceId?.() !== 'default' &&
+        deps.renderViaSay
+      ) {
+        const audio = await deps.renderViaSay(text, plugin.voice);
+        return {
+          ok: true,
+          provider: plugin.provider,
+          mode: 'audio',
+          format: 'aiff',
+          audioBase64: audio.toString('base64'),
+        };
+      }
       await deps.speakViaSay(text, plugin.voice);
       return { ok: true, provider: plugin.provider, mode: 'played' };
     } catch (err) {

@@ -28,29 +28,17 @@ import { createTask, listTasks, updateTask } from './task-store';
 import { installCatalogItem } from './catalog';
 import { saveCatalogOverlay, proposeRecipes } from './catalog-overlay';
 import { writeAgentSpec } from './agent-spec-writer';
-import { startPreview, stopPreview, listPreviews } from './preview-server';
-import { requestBrowserPane } from './pane-registry';
-import {
-  captureBrowserScreenshot,
-  loadBrowser,
-} from '../browser/browser-manager';
-import { collectPerfSnapshot } from '../perf/perf-ipc';
 import { addCronJob, deleteCronJob, listCronJobs } from './cron-runtime';
 import { onHandoffSubmitted } from './idle-delivery';
 import { paneSpawnTool } from './tools-panes';
-import {
-  getRemoteBridgeInfo,
-  rotateRemotePairing,
-  startRemoteBridge,
-  stopRemoteBridge,
-} from '../remote/remote-bridge';
+import { buildBrowserTools } from './tools-browser';
+import { runRemoteBridgeToolAction } from './remote-bridge-tool';
 import {
   createRemoteTmuxSession,
   detectRemoteClis,
   listRemoteTmuxSessions,
 } from '../remote/remote-spawn';
 import {
-  authorizePaneRef,
   num,
   requireStr,
   spawnPaneAndMaybePrompt,
@@ -463,19 +451,8 @@ const remoteBridgeTool: McpToolDef = {
       port: { type: 'number' },
     },
   },
-  handler: async (args) => {
-    switch (str(args, 'action') ?? 'status') {
-      case 'start':
-        return startRemoteBridge({ port: num(args, 'port') });
-      case 'stop':
-        return stopRemoteBridge();
-      case 'rotate_pairing':
-        return rotateRemotePairing();
-      case 'status':
-      default:
-        return getRemoteBridgeInfo();
-    }
-  },
+  handler: async (args) =>
+    runRemoteBridgeToolAction(str(args, 'action') ?? 'status', num(args, 'port')),
 };
 
 const remoteCliDetectTool: McpToolDef = {
@@ -688,118 +665,6 @@ const routeTaskTool: McpToolDef = {
   },
 };
 
-const previewStartTool: McpToolDef = {
-  name: 'nexus_preview_start',
-  description:
-    'Serve a static directory (a built web app) on a local preview URL ' +
-    '(127.0.0.1, random port). Returns { url }. Idempotent per directory. ' +
-    'Use after building so the user can click the result.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      dir: { type: 'string', description: 'Absolute path of the directory to serve' },
-    },
-    required: ['dir'],
-  },
-  handler: async (args) => {
-    const dir = requireStr(args, 'dir');
-    if (!dir.startsWith('/')) throw new Error('dir deve ser um caminho absoluto');
-    try {
-      return await startPreview(dir);
-    } catch (err) {
-      throw new Error(
-        `preview falhou para ${dir}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  },
-};
-
-const previewStopTool: McpToolDef = {
-  name: 'nexus_preview_stop',
-  description:
-    'Stop a running preview server. Pass the same dir used in ' +
-    'nexus_preview_start; omit dir to list what is running.',
-  inputSchema: {
-    type: 'object',
-    properties: { dir: { type: 'string' } },
-  },
-  handler: async (args) => {
-    const dir = str(args, 'dir');
-    if (!dir) return { running: listPreviews() };
-    return { stopped: stopPreview(dir) };
-  },
-};
-
-const browserOpenTool: McpToolDef = {
-  name: 'nexus_browser_open',
-  description:
-    'Open an embedded browser pane at a URL. Use with nexus_preview_start URLs ' +
-    'for in-app previews.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      url: { type: 'string' },
-      title: { type: 'string' },
-    },
-    required: ['url'],
-  },
-  handler: async (args, ctx) => {
-    if (ctx.role === 'worker') {
-      throw new Error('not authorized: workers cannot open browser panes');
-    }
-    const result = await requestBrowserPane({
-      url: requireStr(args, 'url'),
-      title: str(args, 'title'),
-      missionId: ctx.missionId,
-      agentName: ctx.agentName ?? ctx.label,
-      ...(ctx.role === 'orchestrator' ? { role: 'orchestrator' as const } : {}),
-    });
-    if (!result.ok || !result.paneId) {
-      throw new Error(result.error ?? 'browser open failed');
-    }
-    return { ok: true, paneId: result.paneId };
-  },
-};
-
-const browserNavigateTool: McpToolDef = {
-  name: 'nexus_browser_navigate',
-  description:
-    'Navigate an existing embedded browser pane to a new URL. The paneId must ' +
-    'come from nexus_browser_open or nexus_pane_list.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      paneId: { type: 'string' },
-      url: { type: 'string' },
-    },
-    required: ['paneId', 'url'],
-  },
-  handler: async (args, ctx) => {
-    const paneId = requireStr(args, 'paneId');
-    authorizePaneRef(ctx, paneId, 'write');
-    return loadBrowser(paneId, requireStr(args, 'url'));
-  },
-};
-
-const browserScreenshotTool: McpToolDef = {
-  name: 'nexus_browser_screenshot',
-  description:
-    'Capture an embedded browser pane as a PNG and return its local path plus ' +
-    'dimensions. The paneId must refer to a live browser pane.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      paneId: { type: 'string' },
-    },
-    required: ['paneId'],
-  },
-  handler: async (args, ctx) => {
-    const paneId = requireStr(args, 'paneId');
-    authorizePaneRef(ctx, paneId, 'read');
-    return captureBrowserScreenshot(paneId);
-  },
-};
-
 const cronTool: McpToolDef = {
   name: 'nexus_cron',
   description:
@@ -848,15 +713,6 @@ const cronTool: McpToolDef = {
   },
 };
 
-const perfSnapshotTool: McpToolDef = {
-  name: 'nexus_perf_snapshot',
-  description:
-    'Return a performance snapshot: process memory, Electron app metrics, live ' +
-    'PTY session count and browser view count.',
-  inputSchema: { type: 'object', properties: {} },
-  handler: async () => collectPerfSnapshot(),
-};
-
 export function buildDomainTools(): McpToolDef[] {
   return [
     routeTaskTool,
@@ -881,12 +737,7 @@ export function buildDomainTools(): McpToolDef[] {
     remoteCliDetectTool,
     remoteTmuxListTool,
     remoteSpawnTool,
-    previewStartTool,
-    previewStopTool,
-    browserOpenTool,
-    browserNavigateTool,
-    browserScreenshotTool,
+    ...buildBrowserTools(),
     cronTool,
-    perfSnapshotTool,
   ];
 }

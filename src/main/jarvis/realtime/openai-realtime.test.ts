@@ -56,7 +56,7 @@ describe('buildOpenAISessionUpdate', () => {
         audio: {
           input: {
             format: { type: 'audio/pcm', rate: 24_000 },
-            transcription: { model: 'gpt-realtime-whisper' },
+            transcription: { model: 'gpt-realtime-whisper', language: 'pt' },
             turn_detection: { type: 'semantic_vad' },
           },
           output: {
@@ -230,9 +230,11 @@ describe('OpenAIRealtimeProvider', () => {
     ws.fire('message', JSON.stringify({ type: 'session.updated' }));
     await connected;
 
+    provider.sendAudioChunk(new Int16Array([100, 200, 300]));
     provider.endUserTurn();
     expect(ws.sent.map((item) => JSON.parse(item).type)).toEqual([
       'session.update',
+      'input_audio_buffer.append',
       'input_audio_buffer.commit',
       'response.create',
     ]);
@@ -259,6 +261,32 @@ describe('OpenAIRealtimeProvider', () => {
     expect(ws.sent.map((item) => JSON.parse(item).type)).toEqual(['session.update']);
   });
 
+  it('force-commits paused semantic-VAD audio when the server has not ended speech', async () => {
+    const ws = fakeWs();
+    const provider = new OpenAIRealtimeProvider({
+      apiKey: 'sk-test',
+      instructions: 'You are Jarvis.',
+      wsFactory: () => ws,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    const connected = provider.connect();
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ type: 'session.updated' }));
+    await connected;
+
+    provider.sendAudioChunk(new Int16Array([1, 2, 3]));
+    provider.endUserTurn();
+    provider.endUserTurn();
+
+    expect(ws.sent.map((item) => JSON.parse(item).type)).toEqual([
+      'session.update',
+      'input_audio_buffer.append',
+      'input_audio_buffer.commit',
+      'response.create',
+    ]);
+  });
+
   it('notifies when the socket closes after setup', async () => {
     const ws = fakeWs();
     const disconnected: string[] = [];
@@ -279,6 +307,32 @@ describe('OpenAIRealtimeProvider', () => {
 
     expect(provider.isReady).toBe(false);
     expect(disconnected).toEqual(['OpenAI realtime socket closed']);
+  });
+
+  it('treats a post-setup socket error as one disconnect even if close follows', async () => {
+    const ws = fakeWs();
+    const errors: string[] = [];
+    const disconnected: string[] = [];
+    const provider = new OpenAIRealtimeProvider({
+      apiKey: 'sk-test',
+      instructions: 'You are Jarvis.',
+      wsFactory: () => ws,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    provider.onError((err) => errors.push(err.message));
+    provider.onDisconnected((err) => disconnected.push(err.message));
+    const connected = provider.connect();
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ type: 'session.updated' }));
+    await connected;
+
+    ws.fire('error', new Error('network stalled'));
+    ws.fire('close');
+
+    expect(provider.isReady).toBe(false);
+    expect(errors).toEqual(['network stalled']);
+    expect(disconnected).toEqual(['network stalled']);
   });
 
   it('sends text smoke-test input through the realtime conversation', async () => {
@@ -379,6 +433,73 @@ describe('OpenAIRealtimeProvider', () => {
     expect(ws.sent.map((item) => JSON.parse(item).type)).toContain('response.cancel');
   });
 
+  it('does not cancel user speech when no provider response is active', async () => {
+    const ws = fakeWs();
+    let interrupted = 0;
+    const provider = new OpenAIRealtimeProvider({
+      apiKey: 'sk-test',
+      instructions: 'You are Jarvis.',
+      wsFactory: () => ws,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    provider.onInterrupted(() => {
+      interrupted += 1;
+    });
+    const connected = provider.connect();
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ type: 'session.updated' }));
+    await connected;
+
+    ws.fire('message', JSON.stringify({ type: 'input_audio_buffer.speech_started' }));
+
+    expect(ws.sent.map((item) => JSON.parse(item).type)).not.toContain('response.cancel');
+    expect(interrupted).toBe(0);
+  });
+
+  it('clears the barge-in gate after response.done', async () => {
+    const ws = fakeWs();
+    const provider = new OpenAIRealtimeProvider({
+      apiKey: 'sk-test',
+      instructions: 'You are Jarvis.',
+      wsFactory: () => ws,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    const connected = provider.connect();
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ type: 'session.updated' }));
+    await connected;
+
+    ws.fire('message', JSON.stringify({ type: 'response.created' }));
+    ws.fire('message', JSON.stringify({ type: 'response.done' }));
+    ws.fire('message', JSON.stringify({ type: 'input_audio_buffer.speech_started' }));
+
+    expect(ws.sent.map((item) => JSON.parse(item).type)).not.toContain('response.cancel');
+  });
+
+  it('force-commits a locally ended turn even with semantic VAD', async () => {
+    const ws = fakeWs();
+    const provider = new OpenAIRealtimeProvider({
+      apiKey: 'sk-test',
+      instructions: 'You are Jarvis.',
+      wsFactory: () => ws,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    const connected = provider.connect();
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ type: 'session.updated' }));
+    await connected;
+
+    provider.forceEndUserTurn();
+    expect(ws.sent.map((item) => JSON.parse(item).type)).toEqual([
+      'session.update',
+      'input_audio_buffer.commit',
+      'response.create',
+    ]);
+  });
+
   it('emits native realtime tool-call callbacks', async () => {
     const ws = fakeWs();
     const calls: unknown[] = [];
@@ -425,5 +546,39 @@ describe('OpenAIRealtimeProvider', () => {
         arguments: { action: 'open_terminal' },
       },
     ]);
+  });
+
+  it('bounds native tool-call dedupe memory for long sessions', async () => {
+    const ws = fakeWs();
+    const calls: unknown[] = [];
+    const provider = new OpenAIRealtimeProvider({
+      apiKey: 'sk-test',
+      instructions: 'You are Jarvis.',
+      wsFactory: () => ws,
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: () => {},
+    });
+    provider.onToolCall((call) => calls.push(call));
+    const connected = provider.connect();
+    ws.fire('open');
+    ws.fire('message', JSON.stringify({ type: 'session.updated' }));
+    await connected;
+
+    const emitCall = (callId: string) => {
+      ws.fire(
+        'message',
+        JSON.stringify({
+          type: 'response.function_call_arguments.done',
+          call_id: callId,
+          name: 'nexus_action',
+          arguments: '{"action":"open_terminal"}',
+        }),
+      );
+    };
+    for (let index = 0; index < 257; index += 1) emitCall(`call_${index}`);
+    emitCall('call_256');
+    expect(calls).toHaveLength(257);
+    emitCall('call_0');
+    expect(calls).toHaveLength(258);
   });
 });

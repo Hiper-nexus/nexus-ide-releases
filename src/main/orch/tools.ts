@@ -6,6 +6,7 @@ import { buildFileTools } from './tools-files';
 import { buildTerminalTools } from './tools-terminal';
 import { buildGitTools } from './tools-git';
 import { buildEditorTools } from './tools-editor';
+import { buildVisionTools } from './tools-vision';
 
 /**
  * The MCP toolset — the orchestration tools in the
@@ -26,5 +27,6 @@ export function buildToolset(): McpToolDef[] {
     ...buildTerminalTools(),
     ...buildGitTools(),
     ...buildEditorTools(),
+    ...buildVisionTools(),
   ];
 }

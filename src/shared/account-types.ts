@@ -64,6 +64,8 @@ export interface FailoverEvent {
   reason: string;
   /** Whether a replacement account was found; false = no account left. */
   switched: boolean;
+  /** Replacement account pinned to the pane before its resume spawn. */
+  toAccountId?: string;
 }
 
 export const ACCOUNT_CHANNELS = {

@@ -1,3 +1,5 @@
+import { requirePreferredOutputDevice } from './audio-device-preferences';
+
 /**
  * Jarvis Live (realtime) — áudio no renderer. Toca o PCM 24 kHz que desce do
  * transporte Gemini Live e converte frames do mic (Float32) para PCM 16 kHz
@@ -90,46 +92,102 @@ export function scheduledTailMs(nextStartAt: number, currentTime: number): numbe
  */
 export class LiveAudioPlayer {
   private ctx: AudioContext | null = null;
+  private contextReady: Promise<AudioContext> | null = null;
+  private playbackQueue: Promise<unknown> = Promise.resolve();
+  private playbackEpoch = 0;
+  private pendingDurationMs = 0;
   private nextStartAt = 0;
   private active: AudioBufferSourceNode[] = [];
 
+  constructor(
+    private readonly contextFactory: () => AudioContext = () =>
+      new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE }),
+  ) {}
+
   private context(): AudioContext {
     if (!this.ctx) {
-      this.ctx = new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE });
+      this.ctx = this.contextFactory();
     }
     return this.ctx;
+  }
+
+  /** Resolve the output sink and resume WebAudio before the first sample. */
+  private readyContext(): Promise<AudioContext> {
+    if (!this.contextReady) {
+      const ctx = this.context();
+      const pending = Promise.all([
+        requirePreferredOutputDevice(ctx),
+        ctx.state === 'suspended' ? ctx.resume() : Promise.resolve(),
+      ])
+        .then(() => ctx)
+        .catch((error) => {
+          // Autoplay/gesture failures are transient. Never cache a rejected
+          // readiness promise or every later Live chunk remains permanently mute.
+          if (this.contextReady === pending) this.contextReady = null;
+          if (ctx.state === 'closed' && this.ctx === ctx) this.ctx = null;
+          throw error;
+        });
+      this.contextReady = pending;
+    }
+    return this.contextReady;
   }
 
   /** Enfileira um chunk PCM 24 kHz e devolve os ms de áudio AINDA agendado
    *  (chunk atual + tudo já na fila gapless), para o chamador suprimir o wake
    *  pela fila INTEIRA — não só por um chunk (DEFECT 2). 0 se vazio. */
-  play(b64: string): number {
+  play(b64: string): Promise<number> {
     const floats = int16BytesToFloat(base64ToBytes(b64));
-    if (floats.length === 0) return 0;
-    const ctx = this.context();
-    const buffer = ctx.createBuffer(1, floats.length, OUTPUT_SAMPLE_RATE);
-    buffer.getChannelData(0).set(floats);
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(ctx.destination);
-    const startAt = Math.max(ctx.currentTime, this.nextStartAt);
-    source.start(startAt);
-    this.nextStartAt = startAt + buffer.duration;
-    this.active.push(source);
-    source.onended = () => {
-      this.active = this.active.filter((s) => s !== source);
-    };
-    return scheduledTailMs(this.nextStartAt, ctx.currentTime);
+    if (floats.length === 0) return Promise.resolve(0);
+    const epoch = this.playbackEpoch;
+    const durationMs = Math.ceil((floats.length / OUTPUT_SAMPLE_RATE) * 1_000);
+    this.pendingDurationMs += durationMs;
+    const scheduled = this.playbackQueue.then(async () => {
+      const ctx = await this.readyContext();
+      if (epoch !== this.playbackEpoch) return 0;
+      const buffer = ctx.createBuffer(1, floats.length, OUTPUT_SAMPLE_RATE);
+      buffer.getChannelData(0).set(floats);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      const startAt = Math.max(ctx.currentTime, this.nextStartAt);
+      source.start(startAt);
+      this.nextStartAt = startAt + buffer.duration;
+      this.active.push(source);
+      source.onended = () => {
+        this.active = this.active.filter((item) => item !== source);
+      };
+      return scheduledTailMs(this.nextStartAt, ctx.currentTime);
+    });
+    this.playbackQueue = scheduled
+      .catch(() => undefined)
+      .finally(() => {
+        this.pendingDurationMs = Math.max(0, this.pendingDurationMs - durationMs);
+      });
+    return scheduled;
   }
 
   /** Ms ainda agendados na fila gapless (0 se vazia / sem contexto). */
   remainingMs(): number {
-    if (!this.ctx) return 0;
-    return scheduledTailMs(this.nextStartAt, this.ctx.currentTime);
+    const scheduled = this.ctx
+      ? scheduledTailMs(this.nextStartAt, this.ctx.currentTime)
+      : 0;
+    return scheduled + this.pendingDurationMs;
+  }
+
+  /** Aplica uma troca de saída também à sessão realtime já aberta. */
+  async setOutputDevice(deviceId: string): Promise<boolean> {
+    if (!this.ctx) return true;
+    const switched = this.playbackQueue.then(() =>
+      requirePreferredOutputDevice(this.context(), deviceId).then(() => true),
+    );
+    this.playbackQueue = switched.catch(() => undefined);
+    return switched;
   }
 
   /** barge-in: corta tudo que está soando e zera a timeline. */
   stop(): void {
+    this.playbackEpoch += 1;
+    this.pendingDurationMs = 0;
     for (const source of this.active) {
       try {
         source.stop();
@@ -145,5 +203,6 @@ export class LiveAudioPlayer {
     this.stop();
     void this.ctx?.close();
     this.ctx = null;
+    this.contextReady = null;
   }
 }

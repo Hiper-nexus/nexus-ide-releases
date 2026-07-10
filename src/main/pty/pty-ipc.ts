@@ -17,11 +17,7 @@ import {
 } from './pty-manager';
 import { createRealPtyHost } from './pty-host-client';
 import { getAdapter, isAdapterInstalled } from '../adapters/adapter-registry';
-import {
-  isProviderEnabled,
-  providerReadiness,
-  providerSpawnOverrides,
-} from '../persistence/provider-config-store';
+import { prepareProviderSpawn } from '../persistence/provider-config-store';
 
 /**
  * Registers the PTY IPC surface. Every handler validates its payload with zod
@@ -51,20 +47,15 @@ export function registerPtyIpc(): void {
       if (adapter.kind !== 'cli-pty') {
         return { ok: false, error: `adapter ${req.adapterId} is not a cli-pty adapter` };
       }
-      // A provider disabled in the settings hub must not spawn.
-      if (!isProviderEnabled(adapter.id)) {
-        return {
-          ok: false,
-          error: `${adapter.label} is disabled in Settings → Providers.`,
-        };
-      }
-      const readiness = providerReadiness(adapter.id);
-      if (!readiness.ready) {
-        return { ok: false, error: readiness.reason };
-      }
-      const overrides = providerSpawnOverrides(adapter.id, {
+      const preparation = prepareProviderSpawn(adapter.id, {
         effort: req.effort,
+        accountId: req.accountId,
+        model: req.model,
       });
+      if (!preparation.ok) {
+        return { ok: false, error: preparation.error };
+      }
+      const { overrides } = preparation;
       // node-pty does not throw for a missing binary on macOS: it spawns and exits
       // 1 with no output, so the pane would show a bare "process exited (code 1)".
       // Gate on install status here to surface the actionable install command.

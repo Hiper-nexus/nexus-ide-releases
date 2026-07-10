@@ -1,8 +1,6 @@
-import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { app } from 'electron';
-import { activeWorkspaceOrNull } from '../persistence/workspace-store';
+import { app, dialog } from 'electron';
 import type { McpRuntimeInfo } from '../../shared/orch-types';
 import {
   orchWriteSession,
@@ -17,7 +15,7 @@ import {
   getContext,
   getContextBySession,
   isSkillAllowed,
-  isToolAllowed,
+  isHookToolAllowed,
   mintToken,
   releaseSession,
   releaseSessionByToken,
@@ -28,6 +26,12 @@ import {
   isJsonRpcRequest,
   type McpRegistry,
 } from './mcp-protocol';
+import type {
+  McpConfirmationHandler,
+  McpConfirmationRequest,
+} from './mcp-dispatch';
+import { redactArgs } from '../jarvis/audit-log';
+import { clearSession as clearMcpPermissionSession } from '../jarvis/permissions';
 import { MAX_MCP_PAYLOAD_BYTES } from './mcp-args-validation';
 import { buildToolset } from './tools';
 import { getPendingSpawnMeta, stripAnsi } from './pane-registry';
@@ -47,10 +51,19 @@ import {
   writeMcpConfigFile,
 } from './hooks-gen';
 import {
+  cleanupAgyMcpConfig,
   codexMcpArgs,
+  prepareAgyMcpConfig,
+  purgeStaleAgyMcpConfigs,
   supportsMcpInjection,
-  writeGeminiMcpConfig,
 } from './cli-mcp-inject';
+import {
+  cleanupCliMcpSession,
+  prepareGrokMcpSession,
+  prepareKimiMcpSession,
+  prepareOpenCodeMcpSession,
+  purgeStaleCliMcpSessions,
+} from './cli-mcp-session-config';
 import { ensureSkillsForCli } from './skill-mirror';
 import { shouldUseEphemeralHome } from './spawn-home-policy';
 
@@ -65,12 +78,52 @@ import { shouldUseEphemeralHome } from './spawn-home-policy';
  */
 
 const MAX_BODY_BYTES = MAX_MCP_PAYLOAD_BYTES;
+const MAX_CONFIRMATION_ARGUMENTS_CHARS = 6_000;
 
 let server: http.Server | null = null;
 let port = 0;
 let registry: McpRegistry | null = null;
 const sessionTokens = new Map<string, string>(); // sessionId → token
 const cliPromptAutoResponder = new CliPromptAutoResponder();
+let httpConfirmationQueue: Promise<void> = Promise.resolve();
+
+function boundedConfirmationArgs(args: Record<string, unknown>): string {
+  const serialized = JSON.stringify(redactArgs(args), null, 2);
+  if (serialized.length <= MAX_CONFIRMATION_ARGUMENTS_CHARS) return serialized;
+  return `${serialized.slice(0, MAX_CONFIRMATION_ARGUMENTS_CHARS)}\n… [truncado]`;
+}
+
+async function showHttpMcpConfirmation(
+  request: McpConfirmationRequest,
+): Promise<boolean> {
+  const result = await dialog.showMessageBox({
+    type: 'warning',
+    title: 'Nexus IDE — autorização do agente',
+    buttons: ['Negar', 'Permitir'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    message: 'Permitir ação solicitada pelo agente?',
+    detail:
+      `Agente: ${request.agentLabel}\n` +
+      `Ferramenta: ${request.toolName}\n` +
+      `Workspace: ${request.workspaceId}\n` +
+      `Motivo: ${request.reason}\n\n` +
+      `Argumentos (segredos ocultos):\n${boundedConfirmationArgs(request.args)}`,
+  });
+  return result.response === 1;
+}
+
+const confirmHttpMcpTool: McpConfirmationHandler = (request) => {
+  const pending = httpConfirmationQueue.then(() =>
+    showHttpMcpConfirmation(request),
+  );
+  httpConfirmationQueue = pending.then(
+    () => undefined,
+    () => undefined,
+  );
+  return pending;
+};
 
 function mcpUrl(): string {
   return `http://127.0.0.1:${port}/mcp`;
@@ -153,7 +206,9 @@ async function handleMcpRequest(
   const responses = [];
   for (const message of messages) {
     if (!isJsonRpcRequest(message)) continue;
-    const response = await handleMcpMessage(registry!, ctx, message);
+    const response = await handleMcpMessage(registry!, ctx, message, {
+      confirm: confirmHttpMcpTool,
+    });
     if (response) responses.push(response);
   }
   const headers = { 'mcp-session-id': ctx.token.slice(0, 16) };
@@ -186,7 +241,10 @@ async function handleGateRequest(
     case 'pretool': {
       const toolName = body.toolName ?? '';
       if (!toolName) {
-        sendJson(res, 200, { allow: true });
+        sendJson(res, 200, {
+          allow: false,
+          reason: 'hook omitted tool identity',
+        });
         return;
       }
       if (toolName === 'Skill') {
@@ -202,7 +260,7 @@ async function handleGateRequest(
         });
         return;
       }
-      const allow = isToolAllowed(ctx.allowedTools, toolName);
+      const allow = isHookToolAllowed(ctx.allowedTools, toolName);
       sendJson(res, 200, {
         allow,
         reason: allow
@@ -221,19 +279,6 @@ async function handleGateRequest(
     }
     default:
       sendJson(res, 404, { error: 'unknown gate event' });
-  }
-}
-
-/**
- * cwd válido para escrever `.gemini/settings.json`: só um diretório real do
- * workspace (nunca o home por engano). null → pula a injeção de arquivo.
- */
-function resolveInjectCwd(cwd: string | undefined): string | null {
-  if (!cwd) return activeWorkspaceOrNull();
-  try {
-    return fs.statSync(cwd).isDirectory() ? cwd : activeWorkspaceOrNull();
-  } catch {
-    return activeWorkspaceOrNull();
   }
 }
 
@@ -275,6 +320,7 @@ function installSpawnHook(): void {
     };
     const extraArgs: string[] = [];
     let ephemeralHomeDir: string | null = null;
+    let skillsPrepared = false;
     // Delegação VISÍVEL (benchmark §4.5): Claude recebe o hard-deny de Task
     // pelo adapter base, então o bloqueio vale para panes diretos e
     // orquestrados sem duplicar flags aqui.
@@ -296,20 +342,53 @@ function installSpawnHook(): void {
       // que Codex/AGY chamem as tools nexus_* e submetam
       // handoff. Sem isto a orquestração era efetivamente Claude-cêntrica.
       if (!adapter.quirks.mcpAutoload) {
-        const flavor = supportsMcpInjection(adapter.id);
+        const flavor = supportsMcpInjection(adapter);
+        if (flavor) {
+          // Create the real skill namespace before a provider-home overlay is
+          // snapshotted so Kimi/Grok see it in this very session.
+          ensureSkillsForCli(adapter.id, {
+            allowedSkills: meta?.allowedSkills ?? null,
+          });
+          skillsPrepared = true;
+        }
         if (flavor === 'codex') {
           extraArgs.push(...codexMcpArgs(mcpUrl(), ctx.token));
-        } else if (flavor === 'gemini') {
-          const injectCwd = resolveInjectCwd(req.cwd);
-          if (injectCwd) writeGeminiMcpConfig(injectCwd, mcpUrl(), ctx.token);
+        } else if (flavor === 'agy') {
+          // AGY 1.1 resolves its config through HOME (and newer builds may
+          // honor GEMINI_CLI_HOME). Mirror skills first, then overlay both
+          // variables with a per-session private config tree.
+          const agyConfig = prepareAgyMcpConfig(mcpUrl(), ctx.token);
+          env.HOME = agyConfig.homeDir;
+          env.GEMINI_CLI_HOME = agyConfig.geminiHomeDir;
+        } else if (flavor === 'opencode') {
+          const prepared = prepareOpenCodeMcpSession(mcpUrl(), ctx.token);
+          Object.assign(env, prepared.env);
+          extraArgs.push(...prepared.extraArgs);
+        } else if (flavor === 'kimi') {
+          const prepared = prepareKimiMcpSession(mcpUrl(), ctx.token);
+          Object.assign(env, prepared.env);
+          extraArgs.push(...prepared.extraArgs);
+        } else if (flavor === 'grok') {
+          const prepared = prepareGrokMcpSession(mcpUrl(), ctx.token);
+          Object.assign(env, prepared.env);
+          extraArgs.push(...prepared.extraArgs);
         }
       }
-      ensureSkillsForCli(adapter.id, {
-        allowedSkills: meta?.allowedSkills ?? null,
-        ephemeralHomeDir,
-      });
+      if (!skillsPrepared) {
+        ensureSkillsForCli(adapter.id, {
+          allowedSkills: meta?.allowedSkills ?? null,
+          ephemeralHomeDir,
+        });
+      }
     } catch (err) {
-      console.warn('[orch] failed to prepare agent home/config:', err);
+      releaseSessionByToken(ctx.token);
+      cleanupAgyMcpConfig(ctx.token);
+      cleanupCliMcpSession(ctx.token);
+      cleanupSessionArtifacts(ctx.token);
+      throw new Error(
+        `failed to prepare the isolated ${adapter.id} agent runtime`,
+        { cause: err },
+      );
     }
 
     const decoration: AgentSpawnDecoration = {
@@ -324,6 +403,8 @@ function installSpawnHook(): void {
         // No session will ever exist for this token — drop it from the auth
         // registry and remove any token-bearing files we wrote.
         releaseSessionByToken(ctx.token);
+        cleanupAgyMcpConfig(ctx.token);
+        cleanupCliMcpSession(ctx.token);
         cleanupSessionArtifacts(ctx.token);
       },
     };
@@ -391,13 +472,32 @@ function installLegacyParser(): void {
     const token = sessionTokens.get(sessionId);
     if (token) {
       sessionTokens.delete(sessionId);
+      cleanupAgyMcpConfig(token);
+      cleanupCliMcpSession(token);
       cleanupSessionArtifacts(token);
     }
+    clearMcpPermissionSession(sessionId);
     releaseSession(sessionId);
   });
 }
 
 export function startMcpServer(): Promise<void> {
+  const staleAgy = purgeStaleAgyMcpConfigs();
+  const staleCli = purgeStaleCliMcpSessions();
+  const removedArtifacts = staleAgy.removed + staleCli.removed;
+  const failedArtifacts = staleAgy.failed + staleCli.failed;
+  if (removedArtifacts > 0) {
+    console.log(`[orch] removed ${removedArtifacts} stale MCP artifact(s)`);
+  }
+  if (failedArtifacts > 0 || staleAgy.truncated || staleCli.truncated) {
+    console.warn(
+      '[orch] stale MCP artifact purge was incomplete',
+      {
+        failed: failedArtifacts,
+        truncated: staleAgy.truncated || staleCli.truncated,
+      },
+    );
+  }
   registry = {
     tools: buildToolset(),
     serverName: 'nexus-ide',
@@ -446,6 +546,13 @@ export function startMcpServer(): Promise<void> {
 export function stopMcpServer(): void {
   setAgentSpawnHook(null);
   cliPromptAutoResponder.clear();
+  for (const token of sessionTokens.values()) {
+    cleanupAgyMcpConfig(token);
+    cleanupCliMcpSession(token);
+    cleanupSessionArtifacts(token);
+    releaseSessionByToken(token);
+  }
+  sessionTokens.clear();
   server?.close();
   server = null;
   port = 0;

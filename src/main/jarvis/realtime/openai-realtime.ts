@@ -40,6 +40,7 @@ export interface ParsedOpenAIRealtimeEvent {
   transcript?: RealtimeTranscriptEvent;
   speechStarted?: boolean;
   speechStopped?: boolean;
+  responseCreated?: boolean;
   responseDone?: boolean;
   sessionReady?: boolean;
   responseCancelled?: boolean;
@@ -49,10 +50,12 @@ export interface ParsedOpenAIRealtimeEvent {
 
 const DEFAULT_MODEL = 'gpt-realtime-2.1-mini';
 const DEFAULT_VOICE = 'marin';
+const DEFAULT_TRANSCRIPTION_LANGUAGE = 'pt';
 const DEFAULT_SOURCE_RATE = 16_000;
 const DEFAULT_TARGET_RATE = 24_000;
 const CONNECT_TIMEOUT_MS = 10_000;
 const PENDING_AUDIO_MAX_BYTES = 512 * 1024;
+const EMITTED_TOOL_CALL_IDS_MAX = 256;
 const MAX_CONTEXT_CHARS = 1_200;
 const WS_OPEN = 1;
 
@@ -85,6 +88,7 @@ export function buildOpenAISessionUpdate(opts: {
           },
           transcription: {
             model: 'gpt-realtime-whisper',
+            language: DEFAULT_TRANSCRIPTION_LANGUAGE,
           },
           turn_detection:
             turnDetection === 'manual' ? null : { type: 'semantic_vad' },
@@ -138,6 +142,10 @@ export function parseOpenAIRealtimeEvent(raw: string): ParsedOpenAIRealtimeEvent
 
   if (type === 'input_audio_buffer.speech_stopped') {
     return { type, speechStopped: true };
+  }
+
+  if (type === 'response.created') {
+    return { type, responseCreated: true };
   }
 
   if (type === 'response.done') {
@@ -265,11 +273,13 @@ function parseToolArguments(raw: string): Record<string, unknown> {
 }
 
 export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
+  readonly supportsPassiveContextUpdates = true;
   private ws: RealtimeWsLike | null = null;
   private ready = false;
   private pendingAudio: Int16Array[] = [];
   private pendingAudioBytes = 0;
   private emittedToolCallIds = new Set<string>();
+  private emittedToolCallOrder: string[] = [];
   private transcriptCallbacks: Array<(delta: string, final: boolean) => void> = [];
   private roleTranscriptCallbacks: Array<(event: RealtimeTranscriptEvent) => void> = [];
   private toolCallCallbacks: Array<(event: RealtimeToolCallEvent) => void> = [];
@@ -279,6 +289,10 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   private responseDoneCallbacks: Array<() => void> = [];
   private disconnectedCallbacks: Array<(err: Error) => void> = [];
   private latestContext = '';
+  private responseActive = false;
+  private hasUncommittedAudio = false;
+  private serverSpeechStopped = false;
+  private activeTurnId: string | undefined;
   private readonly screenCoalescer: ScreenCoalescer;
 
   private readonly apiKey: string;
@@ -320,6 +334,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     this.close();
     this.ready = false;
     this.emittedToolCallIds = new Set();
+    this.emittedToolCallOrder = [];
     const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(this.model)}`;
     const ws = this.wsFactory(url, {
       headers: {
@@ -330,12 +345,23 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
 
     return new Promise((resolve, reject) => {
       let settled = false;
+      let runtimeDisconnectEmitted = false;
       const settle = (err?: Error) => {
         if (settled) return;
         settled = true;
         this.clearTimeoutFn(timer);
         if (err) reject(err);
         else resolve();
+      };
+      const disconnectAfterSetup = (err: Error) => {
+        const wasReady = this.ready;
+        this.ready = false;
+        this.responseActive = false;
+        this.pendingAudio = [];
+        this.pendingAudioBytes = 0;
+        if (!wasReady || runtimeDisconnectEmitted) return;
+        runtimeDisconnectEmitted = true;
+        this.emitDisconnected(err);
       };
       const timer = this.setTimeoutFn(() => {
         settle(new Error('OpenAI realtime setup timeout'));
@@ -356,21 +382,21 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
         if (parsed.error) settle(parsed.error);
       });
       ws.on('close', () => {
-        const wasReady = this.ready;
-        this.ready = false;
-        this.pendingAudio = [];
-        this.pendingAudioBytes = 0;
         if (!settled) {
+          this.ready = false;
+          this.pendingAudio = [];
+          this.pendingAudioBytes = 0;
           settle(new Error('OpenAI realtime socket closed before setup'));
           return;
         }
-        if (wasReady) this.emitDisconnected(new Error('OpenAI realtime socket closed'));
+        disconnectAfterSetup(new Error('OpenAI realtime socket closed'));
       });
       ws.on('error', (payload) => {
         const err =
           payload instanceof Error ? payload : new Error(`OpenAI realtime socket error: ${String(payload)}`);
         this.emitError(err);
-        settle(err);
+        if (!settled) settle(err);
+        else disconnectAfterSetup(err);
       });
     });
   }
@@ -389,6 +415,13 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
       type: 'input_audio_buffer.append',
       audio: int16ArrayToBase64(prepared),
     });
+    this.hasUncommittedAudio = true;
+    this.serverSpeechStopped = false;
+  }
+
+  beginUserTurn(turnId: string): void {
+    const normalized = turnId.trim().slice(0, 128);
+    if (normalized) this.activeTurnId = normalized;
   }
 
   onTranscript(cb: (delta: string, final: boolean) => void): void {
@@ -428,13 +461,26 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   }
 
   endUserTurn(): void {
+    if (!this.isReady || !this.hasUncommittedAudio) return;
+    if (
+      this.turnDetection !== 'manual' &&
+      (this.serverSpeechStopped || this.responseActive)
+    ) {
+      this.hasUncommittedAudio = false;
+      return;
+    }
+    this.forceEndUserTurn();
+  }
+
+  forceEndUserTurn(): void {
     if (!this.isReady) return;
-    if (this.turnDetection !== 'manual') return;
     this.sendEvent({ type: 'input_audio_buffer.commit' });
     this.sendEvent({
       type: 'response.create',
       response: { output_modalities: ['audio'] },
     });
+    this.responseActive = true;
+    this.hasUncommittedAudio = false;
   }
 
   sendContext(text: string): void {
@@ -463,6 +509,7 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
       type: 'response.create',
       response: { output_modalities: ['audio'] },
     });
+    this.responseActive = true;
   }
 
   sendToolResult(callId: string, output: unknown): void {
@@ -482,13 +529,19 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
       type: 'response.create',
       response: { output_modalities: ['audio'] },
     });
+    this.responseActive = true;
   }
 
   close(): void {
     this.ready = false;
+    this.responseActive = false;
     this.pendingAudio = [];
     this.pendingAudioBytes = 0;
+    this.hasUncommittedAudio = false;
+    this.serverSpeechStopped = false;
+    this.activeTurnId = undefined;
     this.emittedToolCallIds.clear();
+    this.emittedToolCallOrder = [];
     this.screenCoalescer.clear();
     if (!this.ws) return;
     try {
@@ -533,9 +586,23 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
       return;
     }
     if (event.speechStarted) {
-      this.interrupt();
-      for (const cb of this.interruptedCallbacks) cb();
+      this.serverSpeechStopped = false;
+      if (this.responseActive) {
+        this.interrupt();
+        for (const cb of this.interruptedCallbacks) cb();
+      }
       return;
+    }
+    if (event.speechStopped) {
+      this.serverSpeechStopped = true;
+      this.hasUncommittedAudio = false;
+    }
+    if (event.responseCreated) {
+      this.responseActive = true;
+      this.hasUncommittedAudio = false;
+    }
+    if (event.responseDone || event.responseCancelled) {
+      this.responseActive = false;
     }
     if (event.responseDone) {
       for (const cb of this.responseDoneCallbacks) cb();
@@ -543,10 +610,16 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
     if (event.toolCall) {
       if (!this.emittedToolCallIds.has(event.toolCall.callId)) {
         this.emittedToolCallIds.add(event.toolCall.callId);
+        this.emittedToolCallOrder.push(event.toolCall.callId);
+        if (this.emittedToolCallOrder.length > EMITTED_TOOL_CALL_IDS_MAX) {
+          const expired = this.emittedToolCallOrder.shift();
+          if (expired) this.emittedToolCallIds.delete(expired);
+        }
         for (const cb of this.toolCallCallbacks) cb(event.toolCall);
       }
     }
     if (event.audio) {
+      this.responseActive = true;
       for (const cb of this.audioCallbacks) cb(event.audio);
     }
     if (event.transcript) {
@@ -555,8 +628,9 @@ export class OpenAIRealtimeProvider implements TurnManagedRealtimeProvider {
   }
 
   private emitRoleTranscript(event: RealtimeTranscriptEvent): void {
-    for (const cb of this.transcriptCallbacks) cb(event.text, event.final);
-    for (const cb of this.roleTranscriptCallbacks) cb(event);
+    const scoped = { ...event, turnId: this.activeTurnId };
+    for (const cb of this.transcriptCallbacks) cb(scoped.text, scoped.final);
+    for (const cb of this.roleTranscriptCallbacks) cb(scoped);
   }
 
   private emitError(err: Error): void {

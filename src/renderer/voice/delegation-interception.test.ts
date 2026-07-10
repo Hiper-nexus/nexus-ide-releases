@@ -45,6 +45,7 @@ vi.mock('./voice-live-ipc', () => ({
   liveEndTurn: (...a: unknown[]) => liveEndTurn(...(a as [])),
   liveStatus: vi.fn(),
   logVoiceEvent: (...a: unknown[]) => logVoiceEvent(...(a as [])),
+  quiesceLiveForClassic: vi.fn(async () => {}),
   queueLiveContextRefresh: vi.fn(),
 }));
 vi.mock('./voice-session-state', () => ({

@@ -5,13 +5,17 @@
 
 @import './base.css';
 @import './overlays.css';
+@import './canvas-cockpit.css';
 @import './canvas-voice.css';
 @import './orchestration.css';
 @import './settings.css';
+@import './settings-controls.css';
 @import './settings-appearance.css';
+@import './launch.css';
 @import './launch-wizard.css';
 @import './panels.css';
 @import './cost-operator.css';
+@import './home-deck.css';
 @import './home-billing.css';
 @import './rail-onboarding.css';
 @import './ops-board.css';

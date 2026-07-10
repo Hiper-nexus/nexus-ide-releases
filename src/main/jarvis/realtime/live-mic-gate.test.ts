@@ -8,10 +8,10 @@ describe('shouldWithholdLiveMicFrame', () => {
     ).toBe(true);
   });
 
-  it('keeps streaming during provider audio so realtime barge-in still works', () => {
+  it('withholds mic during provider audio until an AEC reference path exists', () => {
     expect(
       shouldWithholdLiveMicFrame({ status: 'speaking', providerSpeaking: true }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('does not withhold while listening/thinking/dormant', () => {

@@ -1,9 +1,9 @@
-import path from 'node:path';
 import type {
   MediaKind,
   MediaProviderId,
   MediaProviderInfo,
 } from '../../shared/media-types';
+import { resolveMediaOutputPath } from './media-path-policy';
 
 /**
  * Media provider registry — the table that turns a stored API key into a
@@ -130,9 +130,8 @@ export function resolveMediaModel(
 }
 
 /**
- * Resolve where the generated file lands. Absolute paths are used as-is;
- * relative paths resolve inside baseDir and must NOT escape it; omitted paths
- * get a timestamped name in baseDir.
+ * Resolve where the generated file lands. Every path, including absolute
+ * paths, must remain inside baseDir after realpath/symlink resolution.
  */
 export function resolveOutPath(
   outPath: string | undefined,
@@ -140,14 +139,8 @@ export function resolveOutPath(
   ext: string,
   now: () => number = Date.now,
 ): string {
-  if (outPath && path.isAbsolute(outPath)) return outPath;
-  const base = path.resolve(baseDir);
-  if (!outPath) return path.join(base, `generated-${now()}.${ext}`);
-  const resolved = path.resolve(base, outPath);
-  if (resolved !== base && !resolved.startsWith(base + path.sep)) {
-    throw new Error(`outPath relativo escapa o workspace: ${outPath}`);
-  }
-  return resolved;
+  const requested = outPath ?? `generated-${now()}.${ext}`;
+  return resolveMediaOutputPath(requested, baseDir);
 }
 
 export function listMediaProviders(

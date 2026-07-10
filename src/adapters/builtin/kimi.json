@@ -7,14 +7,14 @@
   "bin": "kimi",
   "detect": "kimi --version",
   "install": {
-    "method": "manual",
-    "command": "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash"
+    "method": "npm",
+    "command": "npm install -g @moonshot-ai/kimi-code"
   },
   "auth": {
-    "method": "subscription",
+    "method": "api_key",
     "credentialStore": "keychain",
-    "envVarFallback": "MOONSHOT_API_KEY",
-    "loginHint": "Run `kimi` and sign in, or set MOONSHOT_API_KEY."
+    "envVarFallback": "KIMI_MODEL_API_KEY",
+    "loginHint": "Run `kimi login` for Kimi Code OAuth, or save a Moonshot API key in Nexus."
   },
   "spawn": {
     "interactive": [
@@ -27,16 +27,31 @@
     ],
     "ptyRequired": true,
     "resumeArgs": [
-      "--resume"
+      "--continue"
+    ],
+    "resumeIdArgs": [
+      "--session"
     ],
     "extraArgs": []
   },
   "env": {
     "static": {},
     "passthrough": [
-      "MOONSHOT_API_KEY",
-      "ANTHROPIC_API_KEY",
-      "ANTHROPIC_BASE_URL"
+      "KIMI_MODEL_NAME",
+      "KIMI_MODEL_API_KEY",
+      "KIMI_MODEL_PROVIDER_TYPE",
+      "KIMI_MODEL_BASE_URL",
+      "KIMI_MODEL_MAX_CONTEXT_SIZE",
+      "KIMI_MODEL_CAPABILITIES",
+      "KIMI_MODEL_DISPLAY_NAME",
+      "KIMI_MODEL_MAX_OUTPUT_SIZE",
+      "KIMI_MODEL_REASONING_KEY",
+      "KIMI_MODEL_THINKING_EFFORT",
+      "KIMI_MODEL_ADAPTIVE_THINKING",
+      "KIMI_MODEL_MAX_COMPLETION_TOKENS",
+      "KIMI_MODEL_TEMPERATURE",
+      "KIMI_MODEL_TOP_P",
+      "KIMI_MODEL_THINKING_KEEP"
     ],
     "ephemeralHome": false
   },
@@ -72,7 +87,8 @@
   "quirks": {
     "altScreen": true,
     "requiresNoAutoUpdate": false,
-    "mcpAutoload": false
+    "mcpAutoload": false,
+    "nexusMcp": "kimi"
   },
   "control": {
     "permission": {

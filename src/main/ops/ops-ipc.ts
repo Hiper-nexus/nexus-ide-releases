@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { app, ipcMain } from 'electron';
 import {
   OPS_CHANNELS,
@@ -9,6 +10,7 @@ import {
 } from '../../shared/ops-ipc';
 import { CURRENT_RELEASE } from '../../shared/release-notes';
 import { getAuditLogPath, readAuditLog } from '../jarvis/audit-log';
+import { validateUpdateFeedUrl } from '../update-feed-policy';
 
 const PACKAGE_JSON = 'package.json';
 const FORGE_CONFIG = 'forge.config.ts';
@@ -34,7 +36,7 @@ function readPackageVersion(): string | null {
 }
 
 function updateSource(): ReleaseReadinessSnapshot['updateSource'] {
-  if (process.env.NEXUS_UPDATE_FEED?.trim()) return 'feed';
+  if (validateUpdateFeedUrl(process.env.NEXUS_UPDATE_FEED?.trim())) return 'feed';
   return 'gh';
 }
 
@@ -46,21 +48,42 @@ function checkVersionAlignment(
     packageVersion === appVersion && CURRENT_RELEASE.version === appVersion;
   return {
     id: 'version-alignment',
-    label: 'Versão 0.10.6 alinhada',
+    label: `Versão ${appVersion} alinhada`,
     status: aligned ? 'pass' : 'fail',
     detail: `app=${appVersion}; package=${packageVersion ?? 'indisponível'}; release-notes=${CURRENT_RELEASE.version}`,
   };
 }
 
+function packagedContentsPath(): string | null {
+  if (!app.isPackaged || process.platform !== 'darwin') return null;
+  return path.dirname(path.dirname(app.getPath('exe')));
+}
+
+function packagedInfoValue(key: string): string | null {
+  const contents = packagedContentsPath();
+  if (!contents) return null;
+  try {
+    return execFileSync(
+      '/usr/bin/plutil',
+      ['-extract', key, 'raw', '-o', '-', path.join(contents, 'Info.plist')],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim();
+  } catch {
+    return null;
+  }
+}
+
 function checkVisionEntitlementCopy(forgeConfig: string | null): ReleaseReadinessCheck {
-  const hasCopy =
-    forgeConfig?.includes('NSScreenCaptureUsageDescription') === true;
+  const packagedCopy = packagedInfoValue('NSScreenCaptureUsageDescription');
+  const hasCopy = app.isPackaged
+    ? Boolean(packagedCopy)
+    : forgeConfig?.includes('NSScreenCaptureUsageDescription') === true;
   return {
     id: 'screen-capture-copy',
     label: 'Permissão macOS de Screen Recording',
     status: hasCopy ? 'pass' : 'warn',
     detail: hasCopy
-      ? 'Info.plist declara por que Jarvis Vision usa captura de tela.'
+      ? `Info.plist declara o uso de captura${packagedCopy ? `: ${packagedCopy}` : '.'}`
       : 'Não foi possível confirmar NSScreenCaptureUsageDescription no forge config.',
   };
 }
@@ -83,7 +106,54 @@ function checkUpdateSource(source: ReleaseReadinessSnapshot['updateSource']): Re
   };
 }
 
+function verifyPackagedSignature(): boolean {
+  const contents = packagedContentsPath();
+  if (!contents) return false;
+  try {
+    execFileSync(
+      '/usr/bin/codesign',
+      ['--verify', '--deep', '--strict', path.dirname(contents)],
+      { stdio: 'ignore' },
+    );
+    const signature = spawnSync(
+      '/usr/bin/codesign',
+      ['-d', '--verbose=4', path.dirname(contents)],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    if (
+      signature.status !== 0 ||
+      !signature.stderr.includes('Authority=Developer ID Application:')
+    ) {
+      return false;
+    }
+    execFileSync(
+      '/usr/sbin/spctl',
+      ['--assess', '--type', 'execute', '--verbose=2', path.dirname(contents)],
+      { stdio: 'ignore' },
+    );
+    execFileSync(
+      '/usr/bin/xcrun',
+      ['stapler', 'validate', path.dirname(contents)],
+      { stdio: 'ignore' },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function checkPackageMakers(forgeConfig: string | null): ReleaseReadinessCheck {
+  if (app.isPackaged) {
+    const signed = verifyPackagedSignature();
+    return {
+      id: 'packaging-artifacts',
+      label: 'Developer ID, Gatekeeper e notarização',
+      status: signed ? 'pass' : 'fail',
+      detail: signed
+        ? 'Developer ID, Gatekeeper e ticket notarizado foram validados.'
+        : 'O bundle não comprovou Developer ID + Gatekeeper + staple.',
+    };
+  }
   const hasDmg = forgeConfig?.includes('MakerDMG') === true;
   const hasZip = forgeConfig?.includes('MakerZIP') === true;
   const hasSigning = forgeConfig?.includes('osxSign') === true;
@@ -98,7 +168,7 @@ function checkPackageMakers(forgeConfig: string | null): ReleaseReadinessCheck {
 
 export function buildReleaseReadinessSnapshot(): ReleaseReadinessSnapshot {
   const appVersion = app.getVersion();
-  const packageVersion = readPackageVersion();
+  const packageVersion = readPackageVersion() ?? (app.isPackaged ? appVersion : null);
   const forgeConfig = readProjectFile(FORGE_CONFIG);
   const source = updateSource();
   return {

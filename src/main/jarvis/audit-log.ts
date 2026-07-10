@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { isSmokeTest } from '../smoke-core';
 
 /**
  * Audit log for Jarvis agent actions.
@@ -48,8 +49,10 @@ export interface AuditEntry {
   tool: string;
   /** Redacted tool arguments */
   args: Record<string, unknown>;
-  /** Result status */
-  result: 'ok' | 'error' | 'denied';
+  /** Intent is appended before a high-impact effect; outcomes follow it. */
+  result: 'intent' | 'ok' | 'error' | 'denied';
+  /** Correlates a pre-effect intent with its eventual outcome. */
+  invocation_id?: string;
   /** Duration in milliseconds */
   duration_ms: number;
   /** Whether the user explicitly confirmed this action */
@@ -58,8 +61,30 @@ export interface AuditEntry {
   error?: string;
 }
 
+function smokeAuditLogPath(
+  argv: readonly string[],
+  env: NodeJS.ProcessEnv,
+): string | null {
+  const userData = env.NEXUS_USER_DATA_DIR;
+  if (!isSmokeTest(argv) || !userData) return null;
+  return path.join(path.resolve(userData), 'jarvis-actions.log');
+}
+
+/**
+ * The packaged smoke must not append synthetic tool calls to the operator's
+ * real audit history. Its user-data directory is created per run and removed
+ * by the smoke harness after process exit.
+ */
+export function resolveAuditLogPath(
+  override: string | null,
+  argv: readonly string[],
+  env: NodeJS.ProcessEnv,
+): string {
+  return override ?? smokeAuditLogPath(argv, env) ?? LOG_FILE;
+}
+
 function currentLogFile(): string {
-  return auditLogFileOverride ?? LOG_FILE;
+  return resolveAuditLogPath(auditLogFileOverride, process.argv, process.env);
 }
 
 function currentLogDir(): string {
@@ -116,6 +141,25 @@ export function redactArgs(args: Record<string, unknown>): Record<string, unknow
   return redactValue(args) as Record<string, unknown>;
 }
 
+export function redactAuditText(value: string): string {
+  return value
+    .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
+    .replace(/\b(?:sk-|gh[pousr]_|npm_)[A-Za-z0-9_-]{12,}\b/g, REDACTED)
+    .replace(
+      /([?&](?:token|secret|password|api[_-]?key|authorization|cookie|credential)=)[^&\s]+/gi,
+      '$1[REDACTED]',
+    )
+    .replace(
+      /(--?(?:token|secret|password|pass|api-key|authorization|cookie|credential)(?:=|\s+))[^\s]+/gi,
+      '$1[REDACTED]',
+    )
+    .replace(
+      /\b((?=[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API_KEY|CREDENTIAL|AUTH|BEARER))[A-Za-z_][A-Za-z0-9_]*)=([^\s]+)/g,
+      '$1=[REDACTED]',
+    )
+    .slice(0, MAX_STRING_LENGTH);
+}
+
 export function setAuditLogPathForTests(filePath: string | null): void {
   auditLogFileOverride = filePath;
 }
@@ -130,14 +174,19 @@ export function ensureAuditLogWritable(): void {
 }
 
 function boundedEntry(entry: AuditEntry): AuditEntry {
-  const line = JSON.stringify(entry);
-  if (Buffer.byteLength(line) <= MAX_AUDIT_LINE_BYTES) return entry;
-  return {
+  const sanitized: AuditEntry = {
     ...entry,
+    args: redactArgs(
+      entry.args && typeof entry.args === 'object' ? entry.args : {},
+    ),
+    ...(entry.error ? { error: redactAuditText(entry.error) } : {}),
+  };
+  const line = JSON.stringify(sanitized);
+  if (Buffer.byteLength(line) <= MAX_AUDIT_LINE_BYTES) return sanitized;
+  return {
+    ...sanitized,
     args: { redacted: '[REDACTED_LARGE_ARGS]' },
-    error: entry.error
-      ? String(entry.error).slice(0, MAX_STRING_LENGTH)
-      : entry.error,
+    error: sanitized.error,
   };
 }
 
@@ -162,6 +211,7 @@ export function auditSuccess(
   durationMs: number,
   userAuthorized: boolean,
   source: AuditSource = 'ipc-renderer',
+  invocationId?: string,
 ): void {
   writeAuditEntry({
     timestamp: new Date().toISOString(),
@@ -170,6 +220,7 @@ export function auditSuccess(
     tool,
     args: redactArgs(args),
     result: 'ok',
+    ...(invocationId ? { invocation_id: invocationId } : {}),
     duration_ms: durationMs,
     user_authorized: userAuthorized,
   });
@@ -186,6 +237,7 @@ export function auditError(
   error: string,
   userAuthorized: boolean,
   source: AuditSource = 'ipc-renderer',
+  invocationId?: string,
 ): void {
   writeAuditEntry({
     timestamp: new Date().toISOString(),
@@ -194,6 +246,7 @@ export function auditError(
     tool,
     args: redactArgs(args),
     result: 'error',
+    ...(invocationId ? { invocation_id: invocationId } : {}),
     duration_ms: durationMs,
     user_authorized: userAuthorized,
     error,
@@ -224,6 +277,32 @@ export function auditDenied(
   });
 }
 
+/**
+ * Persist the authorized intent before starting a high-impact handler. If
+ * this append fails, dispatch must fail closed and the effect must not start.
+ */
+export function auditIntent(
+  session: string,
+  tool: string,
+  args: Record<string, unknown>,
+  durationMs: number,
+  userAuthorized: boolean,
+  source: AuditSource,
+  invocationId: string,
+): void {
+  writeAuditEntry({
+    timestamp: new Date().toISOString(),
+    session,
+    source,
+    tool,
+    args: redactArgs(args),
+    result: 'intent',
+    invocation_id: invocationId,
+    duration_ms: durationMs,
+    user_authorized: userAuthorized,
+  });
+}
+
 function parseLegacyArgs(args: unknown): Record<string, unknown> {
   if (typeof args !== 'string') {
     return args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
@@ -246,10 +325,10 @@ function parseAuditEntry(line: string): AuditEntry | null {
       userConfirmed?: boolean;
     };
     if (typeof raw.timestamp === 'string') {
-      return {
+      return boundedEntry({
         ...(raw as AuditEntry),
         source: raw.source ?? 'ipc-renderer',
-      };
+      });
     }
     if (typeof raw.ts === 'string') {
       return {

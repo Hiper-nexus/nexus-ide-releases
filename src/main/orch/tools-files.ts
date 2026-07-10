@@ -11,7 +11,71 @@ import {
  * File-system MCP tools for Jarvis agent.
  * Operates within the workspace boundary — no absolute paths outside cwd
  * unless explicitly allowed by guardrails.
- */
+*/
+
+const MAX_FULL_FILE_BYTES = 8 * 1024 * 1024;
+const MAX_RANGE_LINES = 10_000;
+
+function assertReadableFile(absolutePath: string, relativePath: string): fs.Stats {
+  if (!fs.existsSync(absolutePath)) throw new Error(`file not found: ${relativePath}`);
+  const stat = fs.statSync(absolutePath);
+  if (stat.isDirectory()) throw new Error(`path is a directory: ${relativePath}`);
+  return stat;
+}
+
+function assertFullReadSize(stat: fs.Stats): void {
+  if (stat.size > MAX_FULL_FILE_BYTES) {
+    throw new Error(
+      `file exceeds ${MAX_FULL_FILE_BYTES} bytes; use offset + limit`,
+    );
+  }
+}
+
+async function readLineRange(
+  absolutePath: string,
+  encoding: BufferEncoding,
+  start: number,
+  limit: number,
+): Promise<string[]> {
+  const input = fs.createReadStream(absolutePath, { encoding });
+  const selected: string[] = [];
+  let lineNumber = 0;
+  let current = '';
+  let selectedChars = 0;
+  try {
+    lineNumber = 1;
+    for await (const rawChunk of input) {
+      const chunk = String(rawChunk);
+      let cursor = 0;
+      while (cursor <= chunk.length) {
+        const newline = chunk.indexOf('\n', cursor);
+        const end = newline === -1 ? chunk.length : newline;
+        if (lineNumber >= start && selected.length < limit) {
+          const part = chunk.slice(cursor, end);
+          selectedChars += part.length;
+          if (selectedChars > MAX_FULL_FILE_BYTES) {
+            throw new Error(`requested line range exceeds ${MAX_FULL_FILE_BYTES} characters`);
+          }
+          current += part;
+        }
+        if (newline === -1) break;
+        if (lineNumber >= start && selected.length < limit) {
+          selected.push(current.endsWith('\r') ? current.slice(0, -1) : current);
+          current = '';
+          if (selected.length >= limit) return selected;
+        }
+        lineNumber += 1;
+        cursor = newline + 1;
+      }
+    }
+    if (lineNumber >= start && selected.length < limit && current) {
+      selected.push(current.endsWith('\r') ? current.slice(0, -1) : current);
+    }
+  } finally {
+    input.destroy();
+  }
+  return selected;
+}
 
 const fileOpen: McpToolDef = {
   name: 'nexus_file_open',
@@ -37,13 +101,8 @@ const fileOpen: McpToolDef = {
     const relativePath = requireStr(args, 'path');
     const encoding = str(args, 'encoding') ?? 'utf-8';
     const absolutePath = resolveWorkspacePath(relativePath);
-    if (!fs.existsSync(absolutePath)) {
-      throw new Error(`file not found: ${relativePath}`);
-    }
-    const stat = fs.statSync(absolutePath);
-    if (stat.isDirectory()) {
-      throw new Error(`path is a directory: ${relativePath}`);
-    }
+    const stat = assertReadableFile(absolutePath, relativePath);
+    assertFullReadSize(stat);
     const content = fs.readFileSync(absolutePath, encoding as BufferEncoding);
     return {
       path: relativePath,
@@ -107,23 +166,30 @@ const fileRead: McpToolDef = {
     const relativePath = requireStr(args, 'path');
     const encoding = str(args, 'encoding') ?? 'utf-8';
     const absolutePath = resolveWorkspacePath(relativePath);
-    if (!fs.existsSync(absolutePath)) {
-      throw new Error(`file not found: ${relativePath}`);
-    }
-    const raw = fs.readFileSync(absolutePath, encoding as BufferEncoding);
+    const stat = assertReadableFile(absolutePath, relativePath);
     const offset = typeof args.offset === 'number' ? args.offset : undefined;
     const limit = typeof args.limit === 'number' ? args.limit : undefined;
     if (offset === undefined && limit === undefined) {
+      assertFullReadSize(stat);
+      const raw = fs.readFileSync(absolutePath, encoding as BufferEncoding);
       return { path: relativePath, content: raw };
     }
-    const lines = raw.split('\n');
-    const start = Math.max(1, offset ?? 1) - 1;
-    const end = limit !== undefined ? start + limit : lines.length;
-    const sliced = lines.slice(start, end).join('\n');
+    const start = Math.max(1, Math.trunc(offset ?? 1));
+    const boundedLimit = Math.max(
+      1,
+      Math.min(MAX_RANGE_LINES, Math.trunc(limit ?? MAX_RANGE_LINES)),
+    );
+    const selected = await readLineRange(
+      absolutePath,
+      encoding as BufferEncoding,
+      start,
+      boundedLimit,
+    );
+    const sliced = selected.join('\n');
     return {
       path: relativePath,
-      offset: start + 1,
-      limit: sliced.split('\n').length,
+      offset: start,
+      limit: selected.length,
       content: sliced,
     };
   },

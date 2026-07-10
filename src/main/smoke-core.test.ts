@@ -2,8 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createSmokeSettler,
+  gracefulSmokeExit,
   isSmokeTest,
+  shouldAccessSecureStorage,
+  shouldInitializeAutoUpdater,
+  shouldRequestMicrophoneAccess,
   shouldUseUserDataOverride,
+  SMOKE_ARGUMENT,
   SMOKE_FLAG,
   smokeExitCode,
 } from './smoke-core';
@@ -14,6 +19,10 @@ describe('isSmokeTest', () => {
     expect(isSmokeTest(['/path/electron', '--other', SMOKE_FLAG, 'x'])).toBe(true);
   });
 
+  it('detects the positional packaged-smoke sentinel', () => {
+    expect(isSmokeTest(['/path/NexusIDE', SMOKE_ARGUMENT])).toBe(true);
+  });
+
   it('returns false without the flag', () => {
     expect(isSmokeTest(['/path/electron'])).toBe(false);
     expect(isSmokeTest([])).toBe(false);
@@ -22,18 +31,33 @@ describe('isSmokeTest', () => {
   it('does not match partial or prefixed flags', () => {
     expect(isSmokeTest(['--smoke-test=1'])).toBe(false);
     expect(isSmokeTest(['--smoke'])).toBe(false);
+    expect(isSmokeTest(['nexus-smoke-test-extra'])).toBe(false);
   });
 });
 
 describe('smokeExitCode', () => {
-  it('maps renderer-loaded to success', () => {
-    expect(smokeExitCode('renderer-loaded')).toBe(0);
+  it('maps functional-ready to success', () => {
+    expect(smokeExitCode('functional-ready')).toBe(0);
   });
 
   it('maps every failure event to 1', () => {
+    expect(smokeExitCode('functional-failed')).toBe(1);
     expect(smokeExitCode('renderer-failed')).toBe(1);
     expect(smokeExitCode('uncaught-exception')).toBe(1);
     expect(smokeExitCode('timeout')).toBe(1);
+  });
+});
+
+describe('gracefulSmokeExit', () => {
+  it('sets the result before requesting normal Electron shutdown', () => {
+    const events: string[] = [];
+
+    gracefulSmokeExit(1, {
+      setExitCode: (code) => events.push(`code:${code}`),
+      quit: () => events.push('quit'),
+    });
+
+    expect(events).toEqual(['code:1', 'quit']);
   });
 });
 
@@ -59,12 +83,30 @@ describe('shouldUseUserDataOverride', () => {
   });
 });
 
+describe('smoke isolation', () => {
+  it('never reads the real OS secret store during a smoke test', () => {
+    expect(shouldAccessSecureStorage(['/path/NexusIDE', SMOKE_FLAG])).toBe(false);
+    expect(shouldAccessSecureStorage(['/path/NexusIDE'])).toBe(true);
+  });
+
+  it('does not open a macOS microphone permission prompt during a smoke test', () => {
+    expect(shouldRequestMicrophoneAccess('darwin', ['/path/NexusIDE', SMOKE_FLAG])).toBe(false);
+    expect(shouldRequestMicrophoneAccess('darwin', ['/path/NexusIDE'])).toBe(true);
+    expect(shouldRequestMicrophoneAccess('linux', ['/path/NexusIDE'])).toBe(false);
+  });
+
+  it('does not contact an update source during a smoke test', () => {
+    expect(shouldInitializeAutoUpdater(['/path/NexusIDE', SMOKE_ARGUMENT])).toBe(false);
+    expect(shouldInitializeAutoUpdater(['/path/NexusIDE'])).toBe(true);
+  });
+});
+
 describe('createSmokeSettler', () => {
-  it('exits 0 when the renderer loads', () => {
+  it('exits 0 only after the functional probes pass', () => {
     const exit = vi.fn();
     const settle = createSmokeSettler(exit, vi.fn());
 
-    settle('renderer-loaded');
+    settle('functional-ready');
 
     expect(exit).toHaveBeenCalledExactlyOnceWith(0);
   });
@@ -85,7 +127,7 @@ describe('createSmokeSettler', () => {
     const log = vi.fn();
     const settle = createSmokeSettler(exit, log);
 
-    settle('renderer-loaded');
+    settle('functional-ready');
     settle('timeout', 'late');
     settle('uncaught-exception', 'later still');
 
@@ -97,8 +139,8 @@ describe('createSmokeSettler', () => {
     const log = vi.fn();
     const settle = createSmokeSettler(vi.fn(), log);
 
-    settle('renderer-loaded');
+    settle('functional-ready');
 
-    expect(log).toHaveBeenCalledExactlyOnceWith('[smoke] renderer-loaded', false);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[smoke] functional-ready', false);
   });
 });

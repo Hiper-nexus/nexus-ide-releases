@@ -6,6 +6,11 @@ import { useOrchStore } from '../state/orch-store';
 import { listPanes, createPane } from '../lib/split-tree';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { getPaneSessionId, waitForSession } from '../terminal/terminal-host';
+import {
+  hasOrchestratorMcpRoute,
+  isOrchestratorCapableAdapter,
+  resolveOrchestratorRuntime,
+} from './orchestrator-runtime';
 
 /**
  * Launch logic behind the wizard when a
@@ -43,13 +48,12 @@ const PASTE_SETTLE_MS = 250;
  */
 export function launchLibrePanes(
   slots: string[],
-  adapters: AdapterInfo[],
+  _adapters: AdapterInfo[],
 ): void {
   const cwd = getActiveWorkspacePath() ?? undefined;
   const panes: PaneModel[] = slots.map((slot) => {
     if (slot === 'shell') return createPane('shell', cwd);
-    const adapter = adapters.find((a) => a.id === slot);
-    return createPane('cli-agent', cwd, slot, adapter?.models.default ?? '');
+    return createPane('cli-agent', cwd, slot);
   });
   useHomeStore.getState().hide();
   useLayoutStore.getState().setPanes(panes);
@@ -214,44 +218,62 @@ export interface SquadLaunchResult {
   error?: string;
 }
 
-/** Only Claude Code reliably drives the embedded nexus MCP orchestration. */
-const ORCHESTRATOR_CLI = 'claude';
+const FALLBACK_ORCHESTRATOR_ADAPTER_ID = 'claude';
 
-export function launchSquadMission(
+export async function launchSquadMission(
   squad: Squad,
   adapters: AdapterInfo[],
-): SquadLaunchResult {
+): Promise<SquadLaunchResult> {
   const orchestrator =
     squad.agents.find((a) => a.category === 'orchestrator') ?? squad.agents[0];
   if (!orchestrator) {
     return { ok: false, error: 'Este squad não tem agentes.' };
   }
 
-  // The orchestrator ALWAYS runs on Claude — it is the only CLI that reliably
-  // calls the nexus_pane_* MCP tools to spawn and coordinate workers. A codex /
-  // grok / agy orchestrator boots but never delegates (the "squad opens but
-  // nothing starts" bug). Workers keep their own CLI. If a legacy squad declared
-  // a different orchestrator CLI we override it here as a safety net; the wizard
-  // already locks the picker to Claude.
-  const claudeAdapter = adapters.find((a) => a.id === ORCHESTRATOR_CLI);
-  const cli = ORCHESTRATOR_CLI;
-  const model =
-    (orchestrator.cli === ORCHESTRATOR_CLI ? orchestrator.model : undefined) ??
-    claudeAdapter?.models.default ??
-    '';
-  if (!claudeAdapter?.installed) {
-    const lines = [
-      'CLI `claude` não encontrada — o orquestrador de squad requer o Claude Code CLI.',
-      'Para resolver, tente uma das opções:',
-      '  1. Instale o Claude Code: npm install -g @anthropic-ai/claude-code',
-      '  2. Abra o Nexus pelo terminal (não pelo Finder/Dock) para herdar o PATH de shell completo',
-      '  3. Adicione o diretório do binário `claude` em Configurações › Providers',
-    ];
-    if (!claudeAdapter) {
-      lines.push('(adapter "claude" não carregado — verifique ~/.nexus/plugins/adapters)');
-    }
-    return { ok: false, error: lines.join('\n') };
+  const [orchDefaults, accounts] = await Promise.all([
+    window.nexus.settings.orchGet(),
+    window.nexus.accounts.list(),
+  ]);
+  const configuredAdapterId =
+    orchDefaults.defaultAdapterId || FALLBACK_ORCHESTRATOR_ADAPTER_ID;
+  const selectedAdapter = adapters.find(
+    (adapter) => adapter.id === configuredAdapterId,
+  );
+  if (!selectedAdapter) {
+    return {
+      ok: false,
+      error:
+        `Provider do orquestrador \`${configuredAdapterId}\` não foi carregado. ` +
+        'Escolha outro em Configurações › Providers.',
+    };
   }
+  if (!hasOrchestratorMcpRoute(selectedAdapter)) {
+    return {
+      ok: false,
+      error:
+        `${selectedAdapter.label} ainda não declara uma rota Nexus MCP verificada ` +
+        'para coordenar squads. Escolha um provider compatível nas Configurações.',
+    };
+  }
+  if (!isOrchestratorCapableAdapter(selectedAdapter)) {
+    return {
+      ok: false,
+      error:
+        `CLI \`${selectedAdapter.id}\` não está instalada. ` +
+        'Instale-a ou escolha outro provider em Configurações › Providers.',
+    };
+  }
+
+  const cli = selectedAdapter.id;
+  const runtime = resolveOrchestratorRuntime({
+    adapterId: cli,
+    squadModel:
+      orchestrator.cli === cli ? orchestrator.model : undefined,
+    defaultModel: orchDefaults.defaultModel,
+    defaultAccountId: orchDefaults.defaultAccountId,
+    accounts,
+  });
+  const { model, accountId } = runtime;
 
   // Start the mission in a clean grid with just the orchestrator pane (a
   // squad opens its own workspace). Workers are added by
@@ -260,6 +282,7 @@ export function launchSquadMission(
   const cwd = getActiveWorkspacePath() ?? undefined;
   const orchPane: PaneModel = {
     ...createPane('cli-agent', cwd, cli, model),
+    accountId,
     title: `${squad.name} · orq`,
     orchRequestId: `squad-${squad.id}-${Date.now().toString(36)}`,
     role: 'orchestrator' as const,
@@ -295,6 +318,7 @@ export function launchSquadMission(
           paneId: orchPane.id,
           adapterId: cli,
           model,
+          accountId,
           cwd,
           title: orchPane.title,
           agentName: orchestrator.agentName,

@@ -1,8 +1,22 @@
-import { app, BrowserWindow, systemPreferences } from 'electron';
+import path from 'node:path';
+import { app, BrowserWindow, dialog, protocol, systemPreferences } from 'electron';
 import { resolveUserPath } from './path-resolver';
 import { createMainWindow } from './window';
+import {
+  installRendererProtocol,
+  registerRendererProtocolScheme,
+} from './renderer-protocol';
 import { registerAuthProbeIpc } from './adapters/auth-probe';
-import { isSmokeTest, shouldUseUserDataOverride } from './smoke-core';
+import {
+  isSmokeTest,
+  shouldInitializeAutoUpdater,
+  shouldRequestMicrophoneAccess,
+  shouldUseUserDataOverride,
+} from './smoke-core';
+
+// Must run before Electron emits `ready`. The handler itself is installed in
+// bootstrap (after ready), before the first BrowserWindow is created.
+registerRendererProtocolScheme(protocol);
 
 // Sandbox de userData para dev/smoke: redireciona SQLite, layout, sessões e o
 // single-instance lock para um diretório isolado. Em app empacotado só vale
@@ -59,7 +73,7 @@ import {
   unregisterOrchListener,
   closeOrchestration,
 } from './orch/orch-ipc';
-import { killAllSessions } from './pty/pty-manager';
+import { killAllSessions, liveSessionSummary } from './pty/pty-manager';
 import { shutdownPtyHost } from './pty/pty-host-client';
 import { initUsageTelemetry, shutdownUsageTelemetry } from './usage/usage-service';
 import { closeDb } from './persistence/db';
@@ -118,6 +132,11 @@ import { wireDeepLinks, consumeLaunchDeepLink } from './deep-link';
 import { initAutoUpdater } from './updater';
 import { stopRemoteBridge } from './remote/remote-bridge';
 import { initSmokeTest } from './smoke-test';
+import {
+  authorizeAppQuit,
+  closeNeedsConfirmation,
+  isAppQuitAuthorized,
+} from './close-authorization';
 
 // Windows installer housekeeping (no-op elsewhere).
 if (process.platform === 'win32') {
@@ -132,6 +151,10 @@ if (process.platform === 'win32') {
 }
 
 function bootstrap(): void {
+  installRendererProtocol(
+    protocol,
+    path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}`),
+  );
   // MUST run before the adapter registry probes for installed CLIs: a
   // Finder/dmg launch has a minimal PATH that hides claude/codex/kimi/grok.
   resolveUserPath();
@@ -186,7 +209,9 @@ function bootstrap(): void {
   // Deep link nexus:// vindo no lançamento a frio (após a janela existir) +
   // auto-updater (opt-in por ambiente; no-op sem servidor configurado).
   consumeLaunchDeepLink();
-  initAutoUpdater();
+  initAutoUpdater({
+    networkEnabled: shouldInitializeAutoUpdater(process.argv),
+  });
 }
 
 initSmokeTest();
@@ -200,7 +225,7 @@ if (!wireDeepLinks()) {
     // On macOS, Chromium's localhost exemption bypasses the TCC dialog, causing
     // CoreAudio to return all-zero PCM even with a getUserMedia grant. Explicitly
     // requesting mic access here forces a real TCC entry before the renderer opens.
-    if (process.platform === 'darwin') {
+    if (shouldRequestMicrophoneAccess(process.platform, process.argv)) {
       await systemPreferences.askForMediaAccess('microphone').catch(() => {});
     }
     bootstrap();
@@ -248,7 +273,12 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
+let quitPromptOpen = false;
+let shutdownComplete = false;
+
+function shutdown(): void {
+  if (shutdownComplete) return;
+  shutdownComplete = true;
   killAllSessions();
   shutdownPtyHost();
   stopRemoteBridge();
@@ -260,4 +290,48 @@ app.on('before-quit', () => {
   stopCronLoop();
   closeAuditLog();
   closeDb();
+}
+
+app.on('before-quit', (event) => {
+  const summary = liveSessionSummary();
+  if (
+    closeNeedsConfirmation({
+      sessionCount: summary.total,
+      authorized: isAppQuitAuthorized(),
+      smokeTest: isSmokeTest(process.argv),
+    })
+  ) {
+    event.preventDefault();
+    if (quitPromptOpen) return;
+    quitPromptOpen = true;
+    const options = {
+      type: 'warning' as const,
+      title: 'Sair do NexusIDE?',
+      message: `${summary.total} terminal${summary.total === 1 ? '' : 'is'} ainda em execução`,
+      detail:
+        summary.busy > 0
+          ? `${summary.busy} ainda estão trabalhando. Sair encerra esses processos e tarefas.`
+          : 'Sair encerra os processos de todos os panes.',
+      buttons: ['Cancelar', 'Sair e encerrar processos'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    };
+    const focused = BrowserWindow.getFocusedWindow();
+    const prompt = focused
+      ? dialog.showMessageBox(focused, options)
+      : dialog.showMessageBox(options);
+    void prompt
+      .then(({ response }) => {
+        quitPromptOpen = false;
+        if (response !== 1) return;
+        authorizeAppQuit();
+        app.quit();
+      })
+      .catch(() => {
+        quitPromptOpen = false;
+      });
+    return;
+  }
+  shutdown();
 });

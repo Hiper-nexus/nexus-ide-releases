@@ -41,6 +41,7 @@ describe('mcp-bridge action mapping', () => {
     expect(mapActionToTool({ type: 'focus_next_pane' })).toBeNull();
     expect(mapActionToTool({ type: 'focus_previous_pane' })).toBeNull();
     expect(mapActionToTool({ type: 'focus_pane', paneName: 'terminal' })).toBeNull();
+    expect(mapActionToTool({ type: 'read_pane' })).toBeNull();
     expect(mapActionToTool({ type: 'close_pane' })).toBeNull();
   });
 
@@ -144,5 +145,86 @@ describe('mcp-bridge action mapping', () => {
       error: 'user_denied',
     });
     expect(mcp.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not execute after a cancellation arrives while confirmation is open', async () => {
+    let resolveConfirm!: (value: { ok: boolean }) => void;
+    const confirmation = new Promise<{ ok: boolean }>((resolve) => {
+      resolveConfirm = resolve;
+    });
+    mcp.invoke.mockResolvedValueOnce({
+      ok: false,
+      tool: 'nexus_terminal_run',
+      denied: true,
+      requiredConfirmation: true,
+      error: 'confirmation_required',
+    });
+    mcp.confirm.mockReturnValueOnce(confirmation);
+    const abort = new AbortController();
+
+    const pending = invokeMcpWithConfirm(
+      'nexus_terminal_run',
+      { command: 'npm run typecheck' },
+      { signal: abort.signal },
+    );
+    await vi.waitFor(() => expect(mcp.confirm).toHaveBeenCalledOnce());
+    abort.abort();
+    resolveConfirm({ ok: true });
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(mcp.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks a possibly committed effect before reporting an in-flight abort', async () => {
+    let resolveInvoke!: (value: {
+      ok: true;
+      tool: string;
+      result: { exitCode: number };
+    }) => void;
+    const invocation = new Promise<{
+      ok: true;
+      tool: string;
+      result: { exitCode: number };
+    }>((resolve) => {
+      resolveInvoke = resolve;
+    });
+    mcp.invoke.mockReturnValueOnce(invocation);
+    const abort = new AbortController();
+    const onEffectMayHaveCommitted = vi.fn();
+
+    const pending = invokeMcpWithConfirm(
+      'nexus_terminal_run',
+      { command: 'date' },
+      { signal: abort.signal, onEffectMayHaveCommitted },
+    );
+    abort.abort();
+    resolveInvoke({
+      ok: true,
+      tool: 'nexus_terminal_run',
+      result: { exitCode: 0 },
+    });
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(onEffectMayHaveCommitted).toHaveBeenCalledOnce();
+  });
+
+  it('propagates a main-process possible-commit marker even when dispatch reports failure', async () => {
+    const onEffectMayHaveCommitted = vi.fn();
+    mcp.invoke.mockResolvedValueOnce({
+      ok: false,
+      tool: 'nexus_terminal_run',
+      error: 'audit_unavailable: disk full',
+      effectMayHaveCommitted: true,
+    });
+
+    const result = await invokeMcpWithConfirm(
+      'nexus_terminal_run',
+      { command: 'npm publish' },
+      { onEffectMayHaveCommitted },
+    );
+
+    expect(result.effectMayHaveCommitted).toBe(true);
+    expect(onEffectMayHaveCommitted).toHaveBeenCalledOnce();
+    expect(mcp.confirm).not.toHaveBeenCalled();
   });
 });

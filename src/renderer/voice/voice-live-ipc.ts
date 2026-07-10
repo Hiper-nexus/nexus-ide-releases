@@ -43,6 +43,20 @@ export async function clearJarvisMcpSession(): Promise<void> {
   }
 }
 
+function requestLiveEndUserAudio(): Promise<void> {
+  if (!isJarvisLiveEnabled()) return Promise.resolve();
+  return window.nexus.voice
+    .liveEndUserAudio()
+    .then((state) => useVoiceStore.getState().setLiveState(state))
+    .catch(() => {});
+}
+
+/** Flushes provider-side input as soon as capture pauses. */
+export function liveEndUserAudio(): void {
+  void requestLiveEndUserAudio();
+}
+
+/** Ends provider input and clears turn-scoped renderer MCP state. */
 export function liveEndTurn(): void {
   if (!isJarvisLiveEnabled()) return;
   void window.nexus.voice
@@ -52,6 +66,21 @@ export function liveEndTurn(): void {
     .finally(() => {
       void clearJarvisMcpSession();
     });
+}
+
+/** Closes Live and waits until late provider callbacks can no longer race Classic. */
+export async function quiesceLiveForClassic(reason: string): Promise<void> {
+  if (!isJarvisLiveEnabled()) return;
+  try {
+    const state = await window.nexus.voice.liveQuiesce(reason);
+    useVoiceStore.getState().setLiveState(state);
+  } catch (error) {
+    logVoiceEvent('error', 'live.quiesceFailed', 'falha encerrando Live antes do Classic', {
+      reason,
+      error: errMsg(error),
+    });
+    await window.nexus.voice.liveHardTeardown().catch(() => null);
+  }
 }
 
 export function liveContextText(): string {

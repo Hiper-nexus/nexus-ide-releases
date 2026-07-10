@@ -25,3 +25,14 @@ export function classicSuppressedByRealtimeOwner(opts: {
   void opts.captureReason;
   return true;
 }
+
+/**
+ * A muted explicit capture is a failed realtime turn and must degrade. An
+ * automatic reply capture may only contain room noise/echo, so idling avoids
+ * reopening the Classic self-talk loop.
+ */
+export function shouldFallbackClassicAfterRealtimeMute(
+  captureReason: JarvisCaptureReason,
+): boolean {
+  return captureReason !== 'reply';
+}

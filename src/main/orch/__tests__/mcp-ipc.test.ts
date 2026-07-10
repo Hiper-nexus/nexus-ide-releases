@@ -95,16 +95,35 @@ describe('mcp-ipc security flow', () => {
     expect(JSON.stringify(result.result)).toContain('audit-ok');
 
     const entries = readAuditLog();
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.result)).toEqual(['intent', 'ok']);
+    expect(entries[1]).toMatchObject({
       source: 'ipc-renderer',
       tool: 'nexus_terminal_run',
       result: 'ok',
       user_authorized: true,
       args: { command: 'echo audit-ok', cwd: testDir },
     });
-    expect(entries[0].timestamp).toBeTruthy();
-    expect(typeof entries[0].duration_ms).toBe('number');
+    expect(entries[0].invocation_id).toBe(entries[1].invocation_id);
+    expect(entries[1].timestamp).toBeTruthy();
+    expect(typeof entries[1].duration_ms).toBe('number');
+  });
+
+  it('consumes a native approval after exactly one matching invocation', async () => {
+    const args = { command: 'echo one-shot', cwd: testDir };
+    await expect(
+      confirmMcpTool({ tool: 'nexus_terminal_run', args }),
+    ).resolves.toEqual({ ok: true });
+
+    const first = await invokeMcpTool({ tool: 'nexus_terminal_run', args });
+    const second = await invokeMcpTool({ tool: 'nexus_terminal_run', args });
+
+    expect(first.ok).toBe(true);
+    expect(second).toMatchObject({
+      ok: false,
+      denied: true,
+      requiredConfirmation: true,
+    });
   });
 
   it('denies an action outside the user-authorized args scope', async () => {
@@ -126,6 +145,20 @@ describe('mcp-ipc security flow', () => {
       ok: false,
       denied: true,
       requiredConfirmation: true,
+    });
+  });
+
+  it('offers native confirmation for explicitly exposed high-impact Jarvis tools', async () => {
+    const result = await invokeMcpTool({
+      tool: 'nexus_remote_spawn',
+      args: { target: 'build-host', cli: 'codex' },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      denied: true,
+      requiredConfirmation: true,
+      tool: 'nexus_remote_spawn',
     });
   });
 });

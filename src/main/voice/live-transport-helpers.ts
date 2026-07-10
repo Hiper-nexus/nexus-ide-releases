@@ -2,12 +2,9 @@
  * Pure helpers for LiveTransportController (keeps the controller under 800 lines).
  */
 
-/** Socket with no server progress for this long → force fresh connect on wake. */
-export const GRACE_STALE_SERVER_MS = 8_000;
-/** Socket that NEVER received server progress (zombie) → stale after this shorter window. */
-export const GRACE_STALE_NO_PROGRESS_MS = 3_500;
-
 const LOCAL_TOOL_CALL_PREFIX = 'local:';
+export const MAX_LIVE_HISTORY_ENTRY_CHARS = 2_000;
+export const MAX_RESUME_CONTEXT_CHARS = 12_000;
 
 export function isLocalToolCallId(callId: string): boolean {
   return callId.startsWith(LOCAL_TOOL_CALL_PREFIX);
@@ -38,51 +35,48 @@ export function localToolCallId(kind: string, seq: number): string {
   return `${LOCAL_TOOL_CALL_PREFIX}${kind}:${seq}`;
 }
 
-/**
- * True when a Live socket is unsafe to reuse for a [wake] inject.
- * Anchor = last real server progress, else connect time. Never treat a brand-new
- * connect (connectedAt≈now, no progress yet) as stale.
- * When the socket NEVER received any server progress (lastServerMsgAt=0) use a
- * shorter threshold — the socket may have been "ready" (setupComplete) but the
- * Gemini server is ignoring our turns (zombie socket).
- */
 export function trimLiveHistory(
   history: Array<{ role: 'user' | 'assistant'; text: string }>,
   maxTurns: number,
 ): Array<{ role: 'user' | 'assistant'; text: string }> {
-  if (history.length <= maxTurns) return history;
-  return history.slice(-maxTurns);
+  if (maxTurns <= 0) return [];
+  const turns: Array<Array<{ role: 'user' | 'assistant'; text: string }>> = [];
+  for (const entry of history) {
+    const bounded = {
+      role: entry.role,
+      text: entry.text.trim().slice(0, MAX_LIVE_HISTORY_ENTRY_CHARS),
+    };
+    if (!bounded.text) continue;
+    if (bounded.role === 'user') {
+      turns.push([bounded]);
+      continue;
+    }
+    // A resume prompt must never begin with an orphan assistant message.
+    if (turns.length > 0) turns[turns.length - 1].push(bounded);
+  }
+  return turns.slice(-maxTurns).flat();
 }
 
 export function buildResumeContext(
   history: ReadonlyArray<{ role: 'user' | 'assistant'; text: string }>,
 ): string | null {
   if (history.length === 0) return null;
-  const lines = history
-    .map((h) => `${h.role === 'user' ? 'Usuário' : 'Jarvis'}: ${h.text}`)
-    .join('\n');
-  return `[reconexão] Histórico recente:\n${lines}`;
-}
-
-export function shouldLogWakeSyncReset(opts: {
-  forceFresh: boolean;
-  inGrace: boolean;
-  providerReady: boolean;
-  connecting: boolean;
-}): boolean {
-  return opts.forceFresh && Boolean(opts.providerReady || opts.inGrace || opts.connecting);
-}
-
-export function isGraceSocketStale(
-  lastServerMsgAt: number,
-  now: number,
-  thresholdMs: number = GRACE_STALE_SERVER_MS,
-  connectedAt: number = 0,
-): boolean {
-  const anchor = lastServerMsgAt > 0 ? lastServerMsgAt : connectedAt;
-  if (anchor <= 0) return true;
-  const effectiveThreshold = lastServerMsgAt > 0
-    ? thresholdMs
-    : Math.min(thresholdMs, GRACE_STALE_NO_PROGRESS_MS);
-  return now - anchor > effectiveThreshold;
+  const header = '[reconexão] Histórico recente:\n';
+  const lines: string[] = [];
+  let remaining = MAX_RESUME_CONTEXT_CHARS - header.length;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index];
+    const line = `${entry.role === 'user' ? 'Usuário' : 'Jarvis'}: ${entry.text
+      .trim()
+      .slice(0, MAX_LIVE_HISTORY_ENTRY_CHARS)}`;
+    const cost = line.length + (lines.length > 0 ? 1 : 0);
+    if (cost > remaining) break;
+    lines.unshift(line);
+    remaining -= cost;
+  }
+  if (lines.length === 0) return null;
+  // If truncation lands on an assistant, drop it instead of inventing an
+  // assistant-first conversation boundary.
+  while (lines[0]?.startsWith('Jarvis: ')) lines.shift();
+  return lines.length > 0 ? `${header}${lines.join('\n')}` : null;
 }

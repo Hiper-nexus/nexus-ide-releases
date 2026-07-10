@@ -33,21 +33,31 @@ interface GhReleaseJson {
 }
 
 export interface ParsedRelease extends UpdateAvailableInfo {
-  /** Nome exato do asset .zip darwin-arm64 (payload do Squirrel.Mac). */
+  /** Nome exato do asset .zip da arquitetura atual (payload do Squirrel.Mac). */
   zipAsset: string;
 }
 
 const NOTES_MAX_CHARS = 600;
 
+export type MacUpdateArchitecture = 'arm64' | 'x64';
+
+export function macUpdateArchitecture(arch: string): MacUpdateArchitecture | null {
+  return arch === 'arm64' || arch === 'x64' ? arch : null;
+}
+
 /**
  * `gh release view --json tagName,publishedAt,assets,body` → release mais
- * novo que a versão atual, com o zip do Squirrel. null = sem update (mesma
- * versão ou mais velho), JSON inválido ou release sem o zip darwin-arm64.
+ * novo que a versão atual, com o zip Squirrel da arquitetura atual. null = sem
+ * update (mesma versão ou mais velho), JSON inválido ou release sem payload
+ * compatível. Nunca baixa um ZIP ARM em um Mac Intel (ou o inverso).
  */
 export function parseGhRelease(
   raw: string,
   currentVersion: string,
+  runtimeArch: string = process.arch,
 ): ParsedRelease | null {
+  const arch = macUpdateArchitecture(runtimeArch);
+  if (!arch) return null;
   let json: GhReleaseJson;
   try {
     json = JSON.parse(raw) as GhReleaseJson;
@@ -61,7 +71,7 @@ export function parseGhRelease(
   const zip = json.assets?.find(
     (a) =>
       typeof a.name === 'string' &&
-      a.name.includes('darwin-arm64') &&
+      a.name.includes(`darwin-${arch}`) &&
       a.name.endsWith('.zip'),
   );
   if (!zip?.name) return null;

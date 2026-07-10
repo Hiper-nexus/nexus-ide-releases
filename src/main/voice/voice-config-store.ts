@@ -3,7 +3,9 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import {
+  DEFAULT_GEMINI_LIVE_MODEL,
   DEFAULT_VOICE_CONFIG,
+  LEGACY_GEMINI_LIVE_MODEL,
   flattenJarvisBrainProviders,
   keyCodeFromAccelerator,
   normalizeKeyCode,
@@ -183,6 +185,17 @@ export function loadVoiceConfig(): VoiceConfig {
       userConfig.tts = DEFAULT_VOICE_CONFIG.tts;
       migrated = true;
       console.log('[voice] TTS destravado do macos-say → chain natural (openai→piper→say)');
+    }
+    // O Gemini 3.1 Live mudou o contrato de texto/eventos e é o modelo atual
+    // de baixa latência. Migre apenas o identificador 2.5 oficial anterior;
+    // modelos customizados do usuário permanecem intocados.
+    if (userConfig.jarvisLive.liveModel === LEGACY_GEMINI_LIVE_MODEL) {
+      userConfig.jarvisLive = {
+        ...userConfig.jarvisLive,
+        liveModel: DEFAULT_GEMINI_LIVE_MODEL,
+      };
+      migrated = true;
+      console.log('[voice] Gemini Live migrado de 2.5 para 3.1 (baixa latência)');
     }
     // A JARVIS conversacional virou o modo padrão do produto.
     if (userConfig.routing === 'focused-pane') {

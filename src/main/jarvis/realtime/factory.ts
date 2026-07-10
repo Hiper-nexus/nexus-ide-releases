@@ -1,9 +1,11 @@
 import fs from 'node:fs';
-import path from 'node:path';
+import bundledSystemPrompt from '../prompts/system.en.md?raw';
 import { resolveVoiceApiKey } from '../../voice/voice-secrets';
+import { buildToolset } from '../../orch/tools';
 import type { VoiceConfig } from '../../../shared/voice-config';
 import { GeminiLiveProvider } from './gemini-live-provider';
 import { createNexusRealtimeTools } from './nexus-realtime-tools';
+import { createGeminiRealtimeTools } from './gemini-realtime-tools';
 import { OpenAIRealtimeProvider } from './openai-realtime';
 import type {
   RealtimeProviderId,
@@ -14,6 +16,8 @@ export interface RealtimeProviderFactoryOptions {
   config: VoiceConfig;
   instructions?: string;
   promptPath?: string;
+  geminiResumeHandle?: string;
+  onGeminiResumeHandle?(handle: string | undefined): void;
 }
 
 export interface RealtimeProviderCandidate {
@@ -21,7 +25,6 @@ export interface RealtimeProviderCandidate {
   provider: TurnManagedRealtimeProvider;
 }
 
-const SYSTEM_PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'system.en.md');
 const OPENAI_REALTIME_FALLBACK_VOICE = 'marin';
 const OPENAI_REALTIME_VOICES = new Set([
   'alloy',
@@ -49,9 +52,10 @@ Response rules:
 - Keep spoken responses concise (1-3 sentences max unless asked for detail).
 - When executing an action, briefly narrate what you're doing.
 - For open-ended conversation, answer directly with realtime audio and do not call a tool.
-- For read-only questions about the current screen, focused pane, browser page,
-  workspace, missions, or local time, answer directly from the provided Nexus
-  context and do not call a tool.
+- Nexus context is structured metadata, not pixels, DOM, or browser-page body.
+  Answer only facts explicitly present there (for example title, URL, workspace,
+  missions, or local time). For pane output call a read-only tool. If no tool
+  returns the requested content, say you cannot inspect it; never invent it.
 - When the user asks you to operate Nexus IDE, call a coarse voice tool (\`navegar\`, \`delegar\`, \`consultar\`, \`ler\`, \`comandar\`, \`restaurar\`, \`perguntar\`) or \`nexus_action\`.
 - Squad flow (Overclock parity): "iniciar/montar squad" → \`navegar\` target \`design-squad\` (opens review). After the tool result, ASK if they want to start. On "sim/inicia/confirma" → \`navegar\` target \`wizard-fire\`.
 - \`nexus_action\` can open UI areas, focus/switch panes, delegate work to panes, request terminal commands, and invoke Nexus MCP tools through \`mcp_tool\`.
@@ -62,6 +66,15 @@ Response rules:
 - Keep the conversation continuous: after acting, stay listening — do not require another wake word for the next turn.
 
 Available realtime tools: coarse voice tools (delegar/consultar/ler/navegar/encerrar/comandar/restaurar/perguntar) and \`nexus_action\` for audited Nexus IDE operations. Speak directly for normal conversation.`;
+
+const GEMINI_COARSE_TOOLS_ADDENDUM = `Gemini Live tools:
+- When the user asks you to operate Nexus IDE, use one of the declared coarse voice tools: \`navegar\`, \`delegar\`, \`consultar\`, \`ler\`, \`encerrar\`, \`comandar\`, \`restaurar\`, or \`perguntar\`.
+- \`nexus_action\` is also declared for audited Nexus operations. Its \`run_command\` and \`mcp_tool\` actions keep the native confirmation and MCP guardrails; never bypass them.
+- Squad flow: "iniciar/montar squad" → \`navegar\` target \`design-squad\`. After the tool result, ask if they want to start. On "sim/inicia/confirma" → \`navegar\` target \`wizard-fire\`.`;
+
+export function geminiInstructions(base: string): string {
+  return `${base.trim()}\n\n${GEMINI_COARSE_TOOLS_ADDENDUM}`;
+}
 
 export function resolveRealtimeProviderId(
   config: VoiceConfig,
@@ -86,12 +99,16 @@ export function resolveRealtimeProviderIds(
   return [];
 }
 
-export function loadJarvisSystemPrompt(promptPath = SYSTEM_PROMPT_PATH): string {
-  try {
-    return fs.readFileSync(promptPath, 'utf-8').trim();
-  } catch {
-    return FALLBACK_SYSTEM_PROMPT;
+export function loadJarvisSystemPrompt(promptPath?: string): string {
+  if (promptPath) {
+    try {
+      return fs.readFileSync(promptPath, 'utf-8').trim();
+    } catch {
+      return FALLBACK_SYSTEM_PROMPT;
+    }
   }
+  const bundled = bundledSystemPrompt.trim();
+  return bundled.length > 0 ? bundled : FALLBACK_SYSTEM_PROMPT;
 }
 
 export function createRealtimeProvider(
@@ -139,7 +156,13 @@ export function createRealtimeProviderCandidates(
           apiKey,
           model: live.liveModel,
           voiceName: live.voiceName,
-          instructions,
+          instructions: geminiInstructions(instructions),
+          // Gemini sees the exact Nexus MCP schemas. Execution still goes
+          // through nexus_action/mcp_tool so confirmation, cancellation,
+          // exactly-once delivery and result redaction keep a single owner.
+          tools: createGeminiRealtimeTools(buildToolset(), createNexusRealtimeTools()),
+          resumeHandle: options.geminiResumeHandle,
+          onResumptionHandle: options.onGeminiResumeHandle,
         }),
       });
     }

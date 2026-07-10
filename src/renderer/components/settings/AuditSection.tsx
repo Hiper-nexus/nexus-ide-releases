@@ -10,7 +10,11 @@ function AuditRow({
   compact?: boolean;
 }) {
   const tone =
-    entry.result === 'ok' ? 'ok' : entry.result === 'denied' ? 'warn' : 'danger';
+    entry.result === 'ok'
+      ? 'ok'
+      : entry.result === 'denied' || entry.result === 'intent'
+        ? 'warn'
+        : 'danger';
   return (
     <li className="settings-list__item audit-row">
       <div className="settings-list__head">
@@ -64,7 +68,9 @@ export function AuditSection() {
 
   const entries = snapshot?.entries ?? [];
   const confirmations = entries.filter(
-    (entry) => entry.user_authorized || entry.result === 'denied',
+    (entry) =>
+      entry.result !== 'intent' &&
+      (entry.user_authorized || entry.result === 'denied'),
   );
 
   return (

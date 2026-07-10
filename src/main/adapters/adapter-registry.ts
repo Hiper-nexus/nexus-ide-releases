@@ -3,7 +3,10 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import type { WebContents } from 'electron';
-import { adapterSchema } from '../../shared/adapter-types';
+import {
+  adapterSchema,
+  hasNexusMcpCapability,
+} from '../../shared/adapter-types';
 import type { Adapter, AdapterInfo } from '../../shared/adapter-types';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { ADAPTER_CHANNELS } from '../../shared/channels';
@@ -172,6 +175,9 @@ function toAdapterInfo(adapter: Adapter, installed: boolean): AdapterInfo {
     installCommand,
     loginHint,
     idleTimeoutMs: resolveIdleTimeoutMs(adapter),
+    orchestratorCapable:
+      adapter.kind === 'cli-pty' &&
+      hasNexusMcpCapability(adapter.quirks),
   };
 }
 

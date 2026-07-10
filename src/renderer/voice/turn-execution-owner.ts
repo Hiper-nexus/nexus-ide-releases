@@ -57,4 +57,22 @@ export class TurnExecutionOwner {
     this.claimed = path;
     return true;
   }
+
+  /**
+   * Native Live tools may arrive after the provider has already started saying
+   * "vou abrir...". That audio ownership must suppress Classic, but it must not
+   * block the actual tool execution from the same realtime provider.
+   */
+  claimRealtimeTool(token: number): boolean {
+    if (token !== this.token) return false;
+    if (
+      this.claimed === null ||
+      this.claimed === 'realtime-audio' ||
+      this.claimed === 'realtime-tool'
+    ) {
+      this.claimed = 'realtime-tool';
+      return true;
+    }
+    return false;
+  }
 }

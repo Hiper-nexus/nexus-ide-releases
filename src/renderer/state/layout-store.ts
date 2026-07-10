@@ -64,6 +64,8 @@ interface LayoutState {
   /** User rename — pins the title so shell escapes stop overriding it. */
   renameTitle(paneId: string, title: string): void;
   setBrowserUrl(paneId: string, url: string): void;
+  /** Pin the account used by this pane (used by account failover + resume). */
+  setAccountId(paneId: string, accountId: string | undefined): void;
   hydrate(layout: WorkspaceLayout | null): void;
   toggleView(): void;
   updateCanvasNodeLayout(paneId: string, patch: Partial<CanvasNodeLayout>): void;
@@ -396,6 +398,13 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const root = updatePane(get().root, paneId, { browserUrl: url });
     set({ root });
     persist({ ...get(), root });
+  },
+
+  setAccountId: (paneId, accountId) => {
+    const root = updatePane(get().root, paneId, { accountId });
+    const state = { ...get(), root };
+    set({ root });
+    persist(state);
   },
 
   hydrate: (layout) => {

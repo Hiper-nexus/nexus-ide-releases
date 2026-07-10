@@ -14,3 +14,17 @@ export function rmsToLevel(rms: number): number {
   // Raiz quadrada: dá presença à fala baixa sem estourar o topo.
   return Math.sqrt(clamped);
 }
+
+/**
+ * The wake mic stays hot even while the voice UI is idle. Publishing its level
+ * on every AudioWorklet frame made Zustand and the paint-heavy orb wake up
+ * continuously for information that is only visible during active listening.
+ */
+export function shouldPublishVoiceLevel(
+  status: string,
+  nextLevel: number,
+  currentLevel: number,
+): boolean {
+  if (status === 'listening') return true;
+  return nextLevel <= 0 && currentLevel > 0;
+}

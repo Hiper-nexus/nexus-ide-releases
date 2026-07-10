@@ -6,6 +6,7 @@ import { ipcMain } from 'electron';
 import { PROVIDER_CHANNELS } from '../../shared/provider-settings-types';
 import type { AdapterAuthStatus, AuthState } from '../../shared/provider-settings-types';
 import { listProviderSettings } from '../persistence/provider-config-store';
+import { hasSubscriptionAuth } from './subscription-auth';
 
 /**
  * Sonda de login das CLIs — SEM navegador. Cada CLI guarda a sessão OAuth
@@ -68,8 +69,30 @@ const OAUTH_PROBES: Record<
     ) {
       return { state: 'ok', detail: 'sessão AGY local' };
     }
-    return { state: 'missing', detail: 'sem sessão — rode `agy login`' };
+    return {
+      state: 'missing',
+      detail: 'sem sessão — rode `agy` e conclua o OAuth',
+    };
   },
+  grok: async () =>
+    hasSubscriptionAuth('grok')
+      ? { state: 'ok', detail: 'sessão Grok OAuth local' }
+      : { state: 'missing', detail: 'sem sessão — rode `grok login`' },
+  kimi: async () =>
+    hasSubscriptionAuth('kimi')
+      ? { state: 'ok', detail: 'sessão Kimi Code OAuth local' }
+      : { state: 'missing', detail: 'sem sessão — rode `kimi login`' },
+  opencode: async () =>
+    hasSubscriptionAuth('opencode')
+      ? { state: 'ok', detail: 'credencial OpenCode local' }
+      : {
+          state: 'missing',
+          detail: 'sem credencial — rode `opencode auth login`',
+        },
+  aider: async () => ({
+    state: 'missing',
+    detail: 'Aider usa API key — configure uma credencial de provider',
+  }),
 };
 
 export async function probeAdapterAuth(): Promise<AdapterAuthStatus[]> {

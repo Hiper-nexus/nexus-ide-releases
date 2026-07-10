@@ -44,10 +44,16 @@ export const VOICE_CHANNELS = {
   liveHardRebuild: 'voice:live.hardRebuild',
   /** invoke: renderer → main. Hard teardown: destroy socket, no reconnect. */
   liveHardTeardown: 'voice:live.hardTeardown',
+  /** invoke: renderer → main. Close Live before Classic takes audio ownership. */
+  liveQuiesce: 'voice:live.quiesce',
   /** invoke: renderer → main. End the current turn and keep the session dormant. */
   liveEndTurn: 'voice:live.endTurn',
+  /** invoke: renderer → main. Flush paused mic audio without changing session phase. */
+  liveEndUserAudio: 'voice:live.endUserAudio',
   /** invoke: renderer → main. Send a text smoke prompt through the live transport. */
   liveSmokeTest: 'voice:live.smokeTest',
+  /** send: renderer → main. Binds provider callbacks to one renderer turn. */
+  liveTurnBegin: 'voice:live.turn.begin',
   /** invoke: renderer → main. Speak a short app result through the live voice. */
   liveSay: 'voice:live.say',
   /** invoke: renderer → main. Registra texto falado para supressão de eco no STT. */
@@ -62,10 +68,14 @@ export const VOICE_CHANNELS = {
   liveInterrupt: 'voice:live.interrupt',
   /** send: renderer → main. Mic PCM 16 kHz base64 → transporte realtime. */
   liveMicIn: 'voice:live.mic.in',
+  /** invoke: renderer → main. Send one filtered zero-frame transcript idempotently. */
+  liveRescueIn: 'voice:live.rescue.in',
   /** send: renderer → main. Contexto de tela (texto) para a sessão live. */
   liveContextIn: 'voice:live.context.in',
   /** event: main → renderer. TTS PCM 24 kHz base64 do transporte realtime. */
   liveAudioOut: 'voice:live.audio.out',
+  /** send: renderer → main. Confirma que um chunk Live iniciou (ou falhou) no WebAudio. */
+  liveAudioPlayback: 'voice:live.audio.playback',
 
   /** event: main → renderer. Global push-to-talk key pressed. */
   pttStart: 'voice:ptt.start',
@@ -86,6 +96,8 @@ export const VOICE_CHANNELS = {
   jarvisTranscriptAppend: 'jarvis:transcript-append',
   /** event: main → renderer. Jarvis Live is about to execute a tool/action. */
   liveToolCall: 'voice:live.tool.call',
+  /** event: main → renderer. Cancel one in-flight Live tool by callId. */
+  liveToolCancelled: 'voice:live.tool.cancelled',
   /** event: main → renderer. Jarvis Live tool/action finished. */
   liveToolResult: 'voice:live.tool.result',
   /** event: main → renderer. Jarvis Live speech was interrupted. */

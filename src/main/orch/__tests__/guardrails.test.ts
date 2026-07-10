@@ -107,6 +107,10 @@ describe('requiresConfirmation', () => {
     expect(requiresConfirmation('nexus_git_branch_list', {})).toBe(false);
     expect(requiresConfirmation('nexus_editor_focus', { path: 'foo.ts' })).toBe(false);
     expect(requiresConfirmation('nexus_editor_goto_line', { path: 'foo.ts', line: 1 })).toBe(false);
+    expect(requiresConfirmation('nexus_browser_read', { paneId: 'browser-1' })).toBe(false);
+    expect(requiresConfirmation('nexus_browser_inspect', { paneId: 'browser-1', ref: 'e1' })).toBe(false);
+    expect(requiresConfirmation('nexus_browser_wait', { paneId: 'browser-1', condition: 'load' })).toBe(false);
+    expect(requiresConfirmation('nexus_ui_read', {})).toBe(false);
   });
 
   it('always confirms write tools', () => {
@@ -116,6 +120,8 @@ describe('requiresConfirmation', () => {
     expect(requiresConfirmation('nexus_git_commit', { message: 'fix' })).toBe(true);
     expect(requiresConfirmation('nexus_editor_insert', { path: 'foo.ts', text: 'x', line: 1 })).toBe(true);
     expect(requiresConfirmation('nexus_editor_replace_selection', { path: 'foo.ts', oldText: 'a', newText: 'b' })).toBe(true);
+    expect(requiresConfirmation('nexus_browser_click', { paneId: 'browser-1', ref: 'e1' })).toBe(true);
+    expect(requiresConfirmation('nexus_browser_fill', { paneId: 'browser-1', ref: 'e1', text: 'safe' })).toBe(true);
   });
 
   it('confirms git mutation tools', () => {
@@ -146,5 +152,74 @@ describe('confirmationReason', () => {
   it('returns destructive reason for destructive commands', () => {
     const reason = confirmationReason('nexus_terminal_run', { command: 'rm -rf /tmp' });
     expect(reason).toContain('destructive');
+  });
+
+  it('never includes browser fill text in the confirmation reason', () => {
+    const reason = confirmationReason('nexus_browser_fill', {
+      paneId: 'browser-1',
+      ref: 'e7',
+      text: 'sensitive-user-input',
+    });
+    expect(reason).toContain('browser-1');
+    expect(reason).not.toContain('sensitive-user-input');
+  });
+
+  it('shows a bounded preview directory in the confirmation', () => {
+    const reason = confirmationReason('nexus_preview_start', {
+      dir: 'dist\n\u202etest',
+    });
+    expect(reason).toContain('dist test');
+    expect(reason).not.toContain('\n');
+    expect(reason).not.toContain('\u202e');
+  });
+
+  it('describes image provider, file input and destination without leaking the prompt', () => {
+    const reason = confirmationReason('nexus_image_generate', {
+      provider: 'openai-image',
+      prompt: 'confidential campaign prompt',
+      imagePath: 'assets/source.png',
+      outPath: 'assets/result.png',
+    });
+    expect(reason).toContain('openai-image');
+    expect(reason).toContain('assets/source.png');
+    expect(reason).toContain('assets/result.png');
+    expect(reason).not.toContain('confidential campaign prompt');
+  });
+
+  it('discloses every possible image provider and output pattern under automatic routing', () => {
+    const reason = confirmationReason('nexus_image_generate', {
+      prompt: 'private prompt',
+    });
+    expect(reason).toContain('google-image');
+    expect(reason).toContain('openai-image');
+    expect(reason).toContain('workspace/generated-<timestamp>.png');
+    expect(reason).not.toContain('private prompt');
+  });
+
+  it('describes audio text length and destination without leaking the text', () => {
+    const reason = confirmationReason('nexus_audio_generate', {
+      provider: 'elevenlabs',
+      text: 'segredo falado',
+      outPath: 'assets/voice.mp3',
+    });
+    expect(reason).toContain('elevenlabs');
+    expect(reason).toContain('14 chars');
+    expect(reason).toContain('assets/voice.mp3');
+    expect(reason).not.toContain('segredo falado');
+  });
+
+  it('describes video provider, keyframes and destination without leaking the prompt', () => {
+    const reason = confirmationReason('nexus_video_generate', {
+      provider: 'replicate-video',
+      prompt: 'private storyboard',
+      imagePath: 'frames/start.png',
+      endImagePath: 'frames/end.png',
+      outPath: 'renders/final.mp4',
+    });
+    expect(reason).toContain('replicate-video');
+    expect(reason).toContain('frames/start.png');
+    expect(reason).toContain('frames/end.png');
+    expect(reason).toContain('renders/final.mp4');
+    expect(reason).not.toContain('private storyboard');
   });
 });

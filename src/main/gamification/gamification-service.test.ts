@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS mission_panes (
   mission_id TEXT NOT NULL,
   adapter_id TEXT NOT NULL,
   model      TEXT,
+  account_id TEXT,
   effort     TEXT,
   cwd        TEXT,
   title      TEXT NOT NULL,

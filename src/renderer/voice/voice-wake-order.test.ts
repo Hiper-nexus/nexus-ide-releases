@@ -79,29 +79,29 @@ describe('wake barge-in guards', () => {
     expect(gatesSource).toContain('export function shouldIgnoreLiveReWake');
   });
 
-  it('never falls back to Classic TTS after Live wake inject (one voice)', () => {
-    expect(source).toContain('jarvis.liveWakeGreetingSilent');
+  it('keeps the Live greeting non-blocking and never rebuilds on ordinary silence', () => {
+    expect(source).toContain('micHoldMs: 0');
+    expect(source).toContain('wake greeting interrompível');
+    expect(source).not.toContain('jarvis.liveWakeGreetingSilent');
+    expect(source).not.toContain('liveHardRebuild');
     expect(source).not.toContain('jarvis.liveWakeGreetingFallback');
     expect(source).not.toContain('Classic fala o Olá');
   });
 
-  it('pre-holds Live mic before liveStart so wake inject is not raced by ambient', () => {
-    const holdIdx = source.indexOf('willInjectWakeGreeting');
-    const liveStartIdx = source.indexOf('forceFresh: willInjectWakeGreeting');
-    expect(holdIdx).toBeGreaterThanOrEqual(0);
-    expect(liveStartIdx).toBeGreaterThan(holdIdx);
-    expect(source).toContain('clearLocalAudioGate()');
-    expect(source).toContain('LIVE_WAKE_GREETING_MIC_HOLD_MS = 4_500');
-    expect(source).toContain('jarvis.liveWakeGreetingAudio');
-    expect(source).toContain('setLocalAudioWithholdUntil');
-    expect(source).toContain('jarvis.liveWakeHardRebuildInject');
+  it('starts Live without forceFresh and serializes an optional greeting in main', () => {
+    expect(source).toContain('.liveStart({ reason, ...(greeting ? { greeting } : {}) })');
+    expect(source).toContain('micHoldMs: 0');
+    expect(source).not.toContain('forceFresh:');
+    expect(source).not.toContain('LIVE_WAKE_GREETING_MIC_HOLD_MS');
+    expect(source).not.toContain('setLocalAudioWithholdUntil');
   });
 
-  it('hard-resets Live before wake greeting inject (sync reset)', () => {
+  it('resets the turn without tearing down the healthy Live session', () => {
     expect(source).toContain('cancelLiveFollowUp()');
-    expect(source).toContain('jarvis.wakeSyncReset');
-    expect(source).toContain('liveHardTeardown');
-    expect(source).toContain('forceFresh: willInjectWakeGreeting');
+    expect(source).toContain("liveInterrupt('wake-barge-in')");
+    expect(source).toContain('jarvis.wakeTurnReset');
+    expect(source).not.toContain('liveHardTeardown');
+    expect(source).not.toContain('jarvis.wakeSyncReset');
   });
 
   it('does not warm Classic ack/filler audio when Realtime can own voice', () => {
@@ -110,5 +110,14 @@ describe('wake barge-in guards', () => {
 
     expect(warmIndex).toBeGreaterThanOrEqual(0);
     expect(guardIndex).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('queued narrations', () => {
+  it('queues report-backs and retries them when the voice returns to idle', () => {
+    expect(source).toContain('new NarrationQueue');
+    expect(source).toContain('narrationQueue.enqueue(text)');
+    expect(source).toContain("if (state.status === 'idle') narrationQueue.kick()");
+    expect(source).not.toContain('narração pulada (ocupado)');
   });
 });

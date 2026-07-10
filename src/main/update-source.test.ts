@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildSquirrelFeed, cmpSemver, parseGhRelease } from './update-source';
+import {
+  buildSquirrelFeed,
+  cmpSemver,
+  macUpdateArchitecture,
+  parseGhRelease,
+} from './update-source';
 
 const RELEASE = {
   tagName: 'v0.9.0',
@@ -8,6 +13,7 @@ const RELEASE = {
   assets: [
     { name: 'NexusIDE-0.9.0-arm64.dmg' },
     { name: 'NexusIDE-darwin-arm64-0.9.0.zip' },
+    { name: 'NexusIDE-darwin-x64-0.9.0.zip' },
   ],
 };
 
@@ -47,6 +53,29 @@ describe('parseGhRelease', () => {
     expect(parseGhRelease(JSON.stringify(noZip), '0.8.2')).toBeNull();
     expect(parseGhRelease('{{{lixo', '0.8.2')).toBeNull();
     expect(parseGhRelease(JSON.stringify({}), '0.8.2')).toBeNull();
+  });
+
+  it('selects only the updater ZIP matching the running Mac architecture', () => {
+    expect(parseGhRelease(JSON.stringify(RELEASE), '0.8.2', 'x64')).toMatchObject({
+      zipAsset: 'NexusIDE-darwin-x64-0.9.0.zip',
+    });
+    expect(
+      parseGhRelease(
+        JSON.stringify({
+          ...RELEASE,
+          assets: [{ name: 'NexusIDE-darwin-arm64-0.9.0.zip' }],
+        }),
+        '0.8.2',
+        'x64',
+      ),
+    ).toBeNull();
+  });
+
+  it('does not select a payload for an unsupported runtime architecture', () => {
+    expect(macUpdateArchitecture('arm64')).toBe('arm64');
+    expect(macUpdateArchitecture('x64')).toBe('x64');
+    expect(macUpdateArchitecture('ia32')).toBeNull();
+    expect(parseGhRelease(JSON.stringify(RELEASE), '0.8.2', 'ia32')).toBeNull();
   });
 
   it('trunca notas longas', () => {

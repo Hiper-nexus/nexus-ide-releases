@@ -51,6 +51,30 @@ describe('speak', () => {
     expect(spokenText).not.toContain('x=1'); // inline code stripped
   });
 
+  it('renders macOS say to bytes when an explicit app output is selected', async () => {
+    const speakViaSay = vi.fn(async () => undefined);
+    const renderViaSay = vi.fn(async () => Buffer.from('aiff-audio'));
+    const result = await speak(
+      { text: 'Saída selecionada.', speakMode: 'full' },
+      sayConfig(),
+      PROBES,
+      deps({
+        speakViaSay,
+        renderViaSay,
+        getOutputDeviceId: () => 'bluetooth-headset',
+      }),
+    );
+
+    expect(speakViaSay).not.toHaveBeenCalled();
+    expect(renderViaSay).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      ok: true,
+      provider: 'macos-say',
+      mode: 'audio',
+      format: 'aiff',
+    });
+  });
+
   it('returns silent (no TTS call) when speakMode is off', async () => {
     const speakViaSay = vi.fn(async () => undefined);
     const result = await speak(

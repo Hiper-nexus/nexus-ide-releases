@@ -7,6 +7,7 @@ import type {
   JarvisLiveState,
   JarvisLiveStatusPatch,
   JarvisLiveToolEvent,
+  JarvisLiveToolCancellationEvent,
   JarvisLiveToolResultEvent,
   JarvisLiveTranscriptEvent,
   JarvisReply,
@@ -75,6 +76,8 @@ function actionSummary(action: JarvisAction): string {
       return 'focar pane anterior';
     case 'focus_pane':
       return `focar pane ${action.paneName}`;
+    case 'read_pane':
+      return action.paneId ? `ler pane ${action.paneId}` : 'ler pane ativo';
     case 'send_to_pane':
       return 'enviar tarefa ao pane';
     case 'run_command':
@@ -255,6 +258,19 @@ export class JarvisLiveSession {
       at: this.now(),
     };
     this.emit(VOICE_CHANNELS.liveToolResult, event);
+    return event;
+  }
+
+  toolCancelled(
+    raw: Omit<JarvisLiveToolCancellationEvent, 'sessionId' | 'at'>,
+  ): JarvisLiveToolCancellationEvent | null {
+    if (!this.state.enabled || !this.state.sessionId) return null;
+    const event: JarvisLiveToolCancellationEvent = {
+      ...raw,
+      sessionId: this.state.sessionId,
+      at: this.now(),
+    };
+    this.emit(VOICE_CHANNELS.liveToolCancelled, event);
     return event;
   }
 

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { safeStorage } from 'electron';
+import { shouldAccessSecureStorage } from '../smoke-core';
 
 /**
  * Secret key vault. API keys are encrypted with Electron safeStorage (backed
@@ -20,6 +21,7 @@ const SECRETS_FILE = path.join(os.homedir(), '.nexus', 'secrets.enc');
 let cache: Map<string, string> | null = null;
 
 export function isSecureStorageAvailable(): boolean {
+  if (!shouldAccessSecureStorage(process.argv)) return false;
   try {
     return safeStorage.isEncryptionAvailable();
   } catch {

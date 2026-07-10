@@ -11,12 +11,16 @@ import {
   errMsg,
   logVoiceEvent,
   liveStatus,
+  quiesceLiveForClassic,
   queueLiveContextRefresh,
 } from './voice-live-ipc';
 import {
   REALTIME_PROVIDER_AUDIO_ENABLED,
   bumpRealtimeNativeToolInFlight,
   ensureLivePlayer,
+  lastRealtimeNativeToolAt,
+  realtimeAudioPlayedCounter,
+  realtimeNativeToolInFlight,
   setLastRealtimeNativeToolAt,
   setSuppressRealtimeAudioOut,
   turnExecution,
@@ -26,11 +30,19 @@ import {
   openLiveAudioGate,
   resetPendingRealtimeAudioOut,
 } from './voice-live-audio-out';
+import {
+  waitForLiveSpeakEvidence,
+  type LiveSpeakEvidenceSnapshot,
+} from './voice-live-speak-evidence';
 import { isRealtimeLive } from './voice-realtime-gates';
 import { stopAllPlayback } from './voice-playback';
 import { speakAndPlayPipelined } from './voice-speak-pipeline';
 import { realtimeToolEventToJarvisAction } from './realtime-action';
 import type { JarvisAction, JarvisLiveToolEvent } from '../../shared/voice-ipc';
+import {
+  beginRealtimeToolExecution,
+  type RealtimeToolExecution,
+} from './realtime-tool-execution';
 
 export async function executeJarvisActionForTurn(
   ...args: Parameters<typeof executeJarvisAction>
@@ -71,11 +83,37 @@ export async function speakViaLiveProvider(text: string): Promise<boolean> {
   wakeMic.suppressWakeDetection(
     Math.min(12_000, Math.max(3_500, trimmed.length * 70 + 2_000)),
   );
+  const baseline: LiveSpeakEvidenceSnapshot = {
+    audioPlayed: realtimeAudioPlayedCounter.total,
+    nativeToolInFlight: realtimeNativeToolInFlight,
+    lastNativeToolAt: lastRealtimeNativeToolAt,
+  };
   try {
     const state = await window.nexus.voice.liveSay({ text: trimmed });
     useVoiceStore.getState().setLiveState(state);
     if (!state.realtimeReady || state.status === 'error') {
       setSuppressRealtimeAudioOut(true);
+      return false;
+    }
+    const evidence = await waitForLiveSpeakEvidence({
+      baseline,
+      read: () => ({
+        audioPlayed: realtimeAudioPlayedCounter.total,
+        nativeToolInFlight: realtimeNativeToolInFlight,
+        lastNativeToolAt: lastRealtimeNativeToolAt,
+      }),
+    });
+    if (evidence === 'none') {
+      setSuppressRealtimeAudioOut(true);
+      resetPendingRealtimeAudioOut();
+      ensureLivePlayer().stop?.();
+      await quiesceLiveForClassic('live-say-no-evidence');
+      logVoiceEvent(
+        'warn',
+        'jarvis.liveSayNoEvidence',
+        'Live ficou mudo — Classic assume após quiescência',
+        { chars: trimmed.length },
+      );
       return false;
     }
     useVoiceStore.getState().setStatus('speaking');
@@ -90,11 +128,22 @@ export async function speakViaLiveProvider(text: string): Promise<boolean> {
 export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promise<void> {
   if (!event.callId || !event.name || event.source !== 'realtime') return;
   if (event.name !== 'nexus_action') return;
+  const claim = beginRealtimeToolExecution(event.sessionId, event.callId);
+  if (claim.status !== 'started') {
+    logVoiceEvent('warn', 'jarvis.realtimeActionDeduped', 'callId não executado novamente', {
+      callId: event.callId,
+      status: claim.status,
+      effectMayHaveCommitted: claim.effectMayHaveCommitted,
+    });
+    return;
+  }
+  const execution: RealtimeToolExecution = claim.execution;
   const action: JarvisAction | null = realtimeToolEventToJarvisAction(event);
   setLastRealtimeNativeToolAt(Date.now());
   bumpRealtimeNativeToolInFlight(1);
   const store = useVoiceStore.getState();
   try {
+    execution.checkpoint();
     if (!action) {
       window.nexus.voice.liveToolResult({
         source: 'realtime',
@@ -109,21 +158,28 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
       return;
     }
 
-    if (!turnExecution.claim('realtime-tool', turnExecution.currentToken)) {
-      console.log('[voice] tool-call realtime ignorado; turno já reivindicado pelo Classic');
-      logVoiceEvent('info', 'jarvis.realtimeActionSkipped', 'turno já reivindicado pelo Classic', {
+    if (!turnExecution.claimRealtimeTool(turnExecution.currentToken)) {
+      const owner = turnExecution.owner;
+      console.log(`[voice] tool-call realtime ignorado; turno já reivindicado por ${owner ?? 'desconhecido'}`);
+      logVoiceEvent('warn', 'jarvis.realtimeActionSkipped', 'ação não executada', {
         callId: event.callId,
         tool: action.type,
+        owner,
       });
       window.nexus.voice.liveToolResult({
         source: 'realtime',
         callId: event.callId,
         name: event.name,
         tool: action.type,
-        ok: true,
-        summary: 'já processado',
+        ok: false,
+        summary: 'ação não executada: o fluxo Classic já assumiu este turno',
         args: event.args,
-        output: { ok: true, summary: 'já processado pelo Classic', tool: action.type },
+        output: {
+          ok: false,
+          error: 'turn_owned_by_classic',
+          owner,
+          tool: action.type,
+        },
       });
       return;
     }
@@ -132,12 +188,17 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
     liveStatus('thinking');
     const context = buildJarvisContext();
     const reply = { say: '', action };
-    const exec = await executeJarvisActionForTurn(reply, context);
+    const exec = await executeJarvisActionForTurn(reply, context, {
+      signal: execution.signal,
+      onEffectMayHaveCommitted: () => execution.markEffectMayHaveCommitted(),
+    });
     const toolResult = exec.toolResult ?? {
       tool: action.type,
       ok: true,
       summary: exec.sayText.trim() || 'executado',
     };
+    if (toolResult.ok) execution.markEffectMayHaveCommitted();
+    execution.checkpoint();
     logVoiceEvent(
       toolResult.ok ? 'info' : 'warn',
       'jarvis.realtimeActionResult',
@@ -156,10 +217,12 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
         ok: toolResult.ok,
         summary: toolResult.summary,
         tool: toolResult.tool,
+        ...(toolResult.output !== undefined ? { result: toolResult.output } : {}),
         // Overclock: tool response carries what to narrate (confirmation ask, etc.).
         ...(exec.sayText.trim() ? { say: exec.sayText.trim() } : {}),
       },
     });
+    execution.finish();
     queueLiveContextRefresh();
 
     if (toolResult.ok) {
@@ -183,6 +246,42 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
       }
     }
   } catch (err) {
+    if (execution.signal.aborted) {
+      const cancellation = execution.signal.reason as
+        | { reason?: string; summary?: string }
+        | undefined;
+      const effectMayHaveCommitted = execution.effectMayHaveCommitted;
+      logVoiceEvent(
+        'warn',
+        'jarvis.realtimeActionCancelled',
+        effectMayHaveCommitted
+          ? 'cancelada; um efeito pode já ter sido aplicado'
+          : 'cancelada antes de aplicar efeito',
+        {
+          callId: event.callId,
+          tool: action?.type ?? 'none',
+          reason: cancellation?.reason ?? 'cancelled',
+          effectMayHaveCommitted,
+        },
+      );
+      if (effectMayHaveCommitted) {
+        window.nexus.voice.liveToolResult({
+          source: 'realtime',
+          callId: event.callId,
+          name: event.name,
+          tool: action?.type ?? 'none',
+          ok: false,
+          summary: 'cancelamento tardio: o efeito pode já ter sido aplicado',
+          args: event.args,
+          output: {
+            error: 'cancelled_after_possible_commit',
+            effectMayHaveCommitted: true,
+            reason: cancellation?.reason ?? 'cancelled',
+          },
+        });
+      }
+      return;
+    }
     const message = errMsg(err);
     logVoiceEvent('error', 'jarvis.realtimeActionError', message, {
       callId: event.callId,
@@ -200,6 +299,7 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
     });
     store.setError(message);
   } finally {
+    execution.finish();
     bumpRealtimeNativeToolInFlight(-1);
     // Do NOT force idle while Live is still speaking the tool narration —
     // that raced follow-up capture and re-muted audio mid-sentence.

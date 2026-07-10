@@ -69,9 +69,8 @@ export function MissionWizardReview({
         </button>
       </div>
       <p className="wizard__hint-sm">
-        Orquestrador fixo em Claude para MCP. Workers entram
-        balanceados entre CLIs/providers disponíveis e continuam
-        editáveis.
+        O orquestrador usa o provider padrão de Configurações. Workers entram
+        balanceados entre os demais CLIs disponíveis e continuam editáveis.
       </p>
       <p className="wizard__hint-sm">
         Use * só no orquestrador; workers precisam de tools explícitas
@@ -81,6 +80,9 @@ export function MissionWizardReview({
         {roster.map((a) => {
           const isOrchestrator = a.category === 'orchestrator';
           const cliAdapter = adapters.find((x) => x.id === a.cli);
+          const orchestratorProviderReady = Boolean(
+            cliAdapter?.installed && cliAdapter.orchestratorCapable,
+          );
           const models = cliAdapter?.models.list ?? [];
           return (
             <li
@@ -99,9 +101,14 @@ export function MissionWizardReview({
                   {isOrchestrator ? (
                     <span
                       className="wizard__mini-select wizard__mini-select--locked"
-                      title="O orquestrador é sempre Claude (suporte a MCP tools)."
+                      title={
+                        orchestratorProviderReady
+                          ? 'Provider padrão do orquestrador. Altere em Configurações › Squads.'
+                          : 'Provider indisponível para orquestração Nexus MCP. Altere em Configurações › Squads.'
+                      }
                     >
-                      ◆ Claude
+                      {cliAdapter?.icon ?? '◆'} {cliAdapter?.label ?? a.cli}
+                      {orchestratorProviderReady ? '' : ' ⚠'}
                     </span>
                   ) : (
                     <select

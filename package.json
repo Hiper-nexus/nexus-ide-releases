@@ -1,7 +1,7 @@
 {
   "name": "nexus-ide",
   "productName": "NexusIDE",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Terminal IDE multi-agente: grid de panes de terminal com PTYs reais, base para adapters de CLIs de IA e orquestração de squads.",
   "main": ".vite/build/main.js",
   "author": "NexusIDE",
@@ -12,12 +12,14 @@
   ],
   "scripts": {
     "prepackage": "node scripts/check-build-node.mjs && npm run rebuild:electron",
-    "postpackage": "npm run rebuild:node",
+    "postpackage": "npm run rebuild:node && npm run smoke:package",
     "start": "node scripts/dev-start.mjs",
     "package": "electron-forge package",
+    "smoke:package": "node scripts/smoke-packaged-app.mjs",
     "premake": "node scripts/check-build-node.mjs && npm run rebuild:electron",
     "postmake": "npm run rebuild:node",
     "make": "electron-forge make",
+    "make:release": "electron-forge make",
     "rebuild": "npm run rebuild:electron",
     "rebuild:electron": "electron-rebuild -f -w @lydell/node-pty -w better-sqlite3 -w onnxruntime-node",
     "rebuild:node": "npm rebuild better-sqlite3",
@@ -44,6 +46,7 @@
     "react-dom": "^18.3.1",
     "react-resizable-panels": "^4.12.0",
     "selfsigned": "^5.5.0",
+    "smol-toml": "^1.7.0",
     "tesseract.js": "^7.0.0",
     "ws": "^8.21.0",
     "zod": "^4.4.3",
@@ -61,8 +64,11 @@
     "@electron-forge/plugin-vite": "^7.11.2",
     "@electron-forge/shared-types": "^7.11.2",
     "@electron/fuses": "^1.8.0",
+    "@electron/osx-sign": "^1.3.3",
     "@electron/rebuild": "^4.1.0",
+    "@noble/hashes": "^1.8.0",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/jsdom": "^28.0.3",
     "@types/node": "^26.1.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -74,5 +80,24 @@
     "typescript": "^6.0.3",
     "vite": "^8.1.3",
     "vitest": "^3.2.6"
+  },
+  "overrides": {
+    "tar": "^7.5.19",
+    "tmp": "^0.2.7",
+    "@esbuild-kit/core-utils": {
+      "esbuild": "^0.25.12"
+    }
+  },
+  "allowScripts": {
+    "esbuild@0.18.20": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.1": true,
+    "better-sqlite3@12.11.1": true,
+    "electron-winstaller@5.4.4": true,
+    "fs-xattr@0.3.1": true,
+    "fsevents@2.3.3": true,
+    "macos-alias@0.2.12": true,
+    "onnxruntime-node@1.19.2": true,
+    "tesseract.js@7.0.0": true
   }
 }

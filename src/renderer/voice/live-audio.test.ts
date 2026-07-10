@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   base64ToBytes,
   bytesToBase64,
@@ -7,6 +7,7 @@ import {
   int16BytesToFloat,
   micFrameToBase64,
   scheduledTailMs,
+  LiveAudioPlayer,
 } from './live-audio';
 
 describe('scheduledTailMs — DEFECT 2: cobre a fila gapless inteira', () => {
@@ -71,5 +72,85 @@ describe('micFrameToBase64', () => {
     expect(b64.length).toBeGreaterThan(0);
     // 480 amostras / 3 = 160 amostras × 2 bytes = 320 bytes
     expect(base64ToBytes(b64).length).toBe(320);
+  });
+});
+
+describe('LiveAudioPlayer output readiness', () => {
+  it('does not start the first PCM block before sink selection completes', async () => {
+    let resolveSink!: () => void;
+    const sinkReady = new Promise<void>((resolve) => {
+      resolveSink = resolve;
+    });
+    const start = vi.fn();
+    const channel = new Float32Array(240);
+    const context = {
+      currentTime: 1,
+      destination: {},
+      state: 'running',
+      setSinkId: vi.fn(() => sinkReady),
+      resume: vi.fn(() => Promise.resolve()),
+      close: vi.fn(() => Promise.resolve()),
+      createBuffer: vi.fn(() => ({
+        duration: 0.01,
+        getChannelData: () => channel,
+      })),
+      createBufferSource: vi.fn(() => ({
+        buffer: null,
+        connect: vi.fn(),
+        start,
+        stop: vi.fn(),
+        onended: null,
+      })),
+    } as unknown as AudioContext;
+    const player = new LiveAudioPlayer(() => context);
+    const pcm = bytesToBase64(new Uint8Array(480));
+
+    const playing = player.play(pcm);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(start).not.toHaveBeenCalled();
+
+    resolveSink();
+    await expect(playing).resolves.toBeGreaterThanOrEqual(10);
+    expect(start).toHaveBeenCalledWith(1);
+  });
+
+  it('retries AudioContext readiness after a transient resume rejection', async () => {
+    let state: AudioContextState = 'suspended';
+    const start = vi.fn();
+    const channel = new Float32Array(240);
+    const resume = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('gesture required'))
+      .mockImplementationOnce(async () => {
+        state = 'running';
+      });
+    const context = {
+      currentTime: 1,
+      destination: {},
+      get state() {
+        return state;
+      },
+      resume,
+      close: vi.fn(() => Promise.resolve()),
+      createBuffer: vi.fn(() => ({
+        duration: 0.01,
+        getChannelData: () => channel,
+      })),
+      createBufferSource: vi.fn(() => ({
+        buffer: null,
+        connect: vi.fn(),
+        start,
+        stop: vi.fn(),
+        onended: null,
+      })),
+    } as unknown as AudioContext;
+    const player = new LiveAudioPlayer(() => context);
+    const pcm = bytesToBase64(new Uint8Array(480));
+
+    await expect(player.play(pcm)).rejects.toThrow('gesture required');
+    await expect(player.play(pcm)).resolves.toBeGreaterThanOrEqual(10);
+    expect(resume).toHaveBeenCalledTimes(2);
+    expect(start).toHaveBeenCalledOnce();
   });
 });

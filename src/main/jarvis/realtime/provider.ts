@@ -11,6 +11,7 @@ export interface RealtimeProvider {
 export type RealtimeTranscriptRole = 'user' | 'assistant';
 
 export interface RealtimeTranscriptEvent {
+  turnId?: string;
   role: RealtimeTranscriptRole;
   text: string;
   final: boolean;
@@ -36,11 +37,21 @@ export interface RoleAwareRealtimeProvider extends RealtimeProvider {
 
 export interface TurnManagedRealtimeProvider extends RoleAwareRealtimeProvider {
   readonly isReady: boolean;
+  /** True when sendContext is guaranteed not to start/interleave a user turn. */
+  readonly supportsPassiveContextUpdates?: boolean;
+  /** Binds subsequent transcript callbacks to one renderer conversation turn. */
+  beginUserTurn?(turnId: string): void;
   endUserTurn(): void;
+  /** Force commit + response for a locally-ended turn even with server VAD. */
+  forceEndUserTurn?(): void;
   sendContext(text: string): void;
   sendText(text: string): void;
   sendToolResult(callId: string, output: unknown): void;
+  /** Gemini function responses require the original declaration name. */
+  sendNamedToolResult?(callId: string, name: string, output: unknown): void;
   onToolCall(cb: (event: RealtimeToolCallEvent) => void): void;
+  /** Provider revoked a previously emitted function call (Gemini Live). */
+  onToolCallCancelled?(cb: (callId: string) => void): void;
   onInterrupted(cb: () => void): void;
   onResponseDone(cb: () => void): void;
   onDisconnected(cb: (err: Error) => void): void;

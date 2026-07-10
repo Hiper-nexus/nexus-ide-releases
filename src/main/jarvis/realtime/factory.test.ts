@@ -4,11 +4,13 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_VOICE_CONFIG } from '../../../shared/voice-config';
 import {
+  geminiInstructions,
   loadJarvisSystemPrompt,
   resolveOpenAiRealtimeVoice,
   resolveRealtimeProviderId,
   resolveRealtimeProviderIds,
 } from './factory';
+import { COARSE_VOICE_TOOLS } from './coarse-voice-tools';
 
 describe('resolveRealtimeProviderId', () => {
   it('prioritizes NEXUS_REALTIME_PROVIDER over panel transport', () => {
@@ -89,6 +91,31 @@ describe('loadJarvisSystemPrompt', () => {
     expect(prompt).toContain('mcp_tool');
     expect(prompt).toContain('Speak directly for normal conversation');
     expect(prompt).not.toContain('safe Nexus UI actions only');
+  });
+
+  it('uses the system prompt embedded in the main bundle when no override is supplied', () => {
+    const readSpy = vi.spyOn(fs, 'readFileSync');
+    try {
+      const prompt = loadJarvisSystemPrompt();
+      expect(readSpy).not.toHaveBeenCalled();
+      expect(prompt).toContain('voice assistant embedded in Nexus IDE');
+      expect(prompt).toContain('nexus_action');
+      expect(prompt).not.toContain('coarse voice tool');
+    } finally {
+      readSpy.mockRestore();
+    }
+  });
+});
+
+describe('geminiInstructions', () => {
+  it('keeps nexus_action, mcp_tool and run_command doctrine for Gemini Live', () => {
+    const prompt = geminiInstructions(loadJarvisSystemPrompt());
+    expect(prompt).toContain('nexus_action');
+    expect(prompt).toContain('mcp_tool');
+    expect(prompt).toContain('run_command');
+    for (const tool of COARSE_VOICE_TOOLS) {
+      expect(prompt).toContain(`\`${tool.name}\``);
+    }
   });
 });
 

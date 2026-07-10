@@ -19,6 +19,7 @@ describe('nexus realtime tools', () => {
         'run_command',
         'focus_pane',
         'focus_previous_pane',
+        'read_pane',
         'mcp_tool',
       ]),
     );
@@ -84,6 +85,9 @@ describe('nexus realtime tools', () => {
         action: 'focus_previous_pane',
       }),
     ).toEqual({ type: 'focus_previous_pane' });
+    expect(
+      realtimeArgsToJarvisAction({ action: 'read_pane', paneId: 'ativo' }),
+    ).toEqual({ type: 'read_pane', paneId: 'ativo' });
   });
 
   it('summarizes full app actions for live diagnostics', () => {

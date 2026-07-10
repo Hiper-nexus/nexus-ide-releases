@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { classicSuppressedByRealtimeOwner } from './realtime-ownership';
+import {
+  classicSuppressedByRealtimeOwner,
+  shouldFallbackClassicAfterRealtimeMute,
+} from './realtime-ownership';
 
 describe('classicSuppressedByRealtimeOwner — DEFECT 1: per-SESSION ownership', () => {
   it('suppresses Classic on a wake turn while realtime is live (owner)', () => {
@@ -38,17 +41,24 @@ describe('classicSuppressedByRealtimeOwner — DEFECT 1: per-SESSION ownership',
   });
 });
 
-describe('Live mute while owner — never Classic STT (regression)', () => {
-  it('finishAndProcess idles on Live mute for any captureReason when owner', () => {
+describe('Live mute degradation', () => {
+  it('falls back for explicit user captures but not ambient reply follow-ups', () => {
+    for (const captureReason of ['wake', 'click', 'manual', 'ptt'] as const) {
+      expect(shouldFallbackClassicAfterRealtimeMute(captureReason)).toBe(true);
+    }
+    expect(shouldFallbackClassicAfterRealtimeMute('reply')).toBe(false);
+  });
+
+  it('finishAndProcess keeps reply mute idle and degrades explicit captures', () => {
     const source = fs.readFileSync(
       path.join(__dirname, 'voice-finish-and-process.ts'),
       'utf-8',
     );
-    expect(source).toContain('jarvis.liveMuteIdle');
-    expect(source).toContain('Live mudo (sem áudio/transcript) — idle sem Classic');
-    // Must NOT set realtimeMuteDegrade while realtimeIsOwner (that raced Classic marin).
-    expect(source).toMatch(
-      /if \(realtimeIsOwner\) \{[\s\S]*?jarvis\.liveMuteIdle[\s\S]*?return;\s*\}/,
+    expect(source).toContain(
+      'const explicitCapture = shouldFallbackClassicAfterRealtimeMute',
     );
+    expect(source).toContain('shouldAttemptLiveMuteRescue');
+    expect(source).toContain('jarvis.replyMuteIdle');
+    expect(source).toContain('jarvis.realtimeMuteDegraded');
   });
 });

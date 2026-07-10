@@ -1,0 +1,472 @@
+/* Canvas (xyflow, sticky notes) + Voice (pill, orb, HUD).
+   Módulo extraído do antigo global.css monolítico — a ordem de import
+   em global.css preserva a cascata original. */
+
+/* ---- Canvas view toggle button ---- */
+.workspace-bar__btn--view {
+  border-color: var(--border-strong);
+  min-width: 76px;
+  text-align: center;
+}
+
+.workspace-bar__btn--view-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---- Canvas container ---- */
+.canvas-container {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-bar);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Allow text selection inside the terminal and interactive controls */
+.canvas-container .term-host,
+.canvas-container .term-host *,
+.canvas-container input,
+.canvas-container textarea,
+.canvas-container [contenteditable="true"],
+.canvas-container .browser-pane__surface,
+.canvas-container webview,
+.canvas-container iframe {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* xyflow wrapper fills the container */
+.canvas-container .react-flow {
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  background: color-mix(in srgb, var(--bg) 94%, var(--bg-bar));
+}
+
+/* xyflow pane (the viewport scroller) */
+.canvas-container .react-flow__pane {
+  cursor: default;
+}
+
+/* xyflow background dots */
+.canvas-container .react-flow__background {
+  background: transparent;
+}
+
+/* xyflow minimap */
+.canvas-container .react-flow__minimap {
+  border-radius: var(--radius);
+  overflow: hidden;
+  width: 148px;
+  height: 104px;
+  opacity: 0.54;
+  filter: saturate(0.7);
+  transition: opacity 160ms var(--ease-out-quart), filter 160ms var(--ease-out-quart);
+}
+
+.canvas-container .react-flow__minimap:hover {
+  opacity: 0.95;
+  filter: saturate(1);
+}
+
+/* xyflow controls */
+.canvas-container .react-flow__controls {
+  border-radius: var(--radius);
+  overflow: hidden;
+  opacity: 0.7;
+  transition: opacity 160ms var(--ease-out-quart);
+}
+
+.canvas-container .react-flow__controls:hover {
+  opacity: 1;
+}
+
+.canvas-container .react-flow__controls-button {
+  background: var(--bg-bar);
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  fill: var(--text-dim);
+}
+
+.canvas-container .react-flow__controls-button:hover {
+  background: var(--accent-soft);
+  fill: var(--accent);
+}
+
+/* One compact command surface answers what is active and what to do next. */
+.canvas-command {
+  min-height: 42px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 4px var(--space-2);
+  background: var(--bg-bar);
+  border-bottom: 1px solid var(--border);
+}
+
+.canvas-command__state {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.canvas-command__state strong {
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.canvas-command__state > span:not(.canvas-command__signal) {
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--border);
+}
+
+.canvas-command__state .canvas-command__attention {
+  color: var(--warn);
+}
+
+.canvas-command__signal {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.canvas-command__signal--live {
+  background: var(--live);
+}
+
+.canvas-command__actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding-left: var(--space-1);
+  border-left: 1px solid var(--border);
+}
+
+.canvas-command__actions button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 160ms var(--ease-out-quart),
+    border-color 160ms var(--ease-out-quart),
+    color 160ms var(--ease-out-quart);
+}
+
+.canvas-command__actions button:hover {
+  border-color: var(--border-strong);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.canvas-command__actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.canvas-command__actions .canvas-command__primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0b0e14;
+}
+
+.canvas-command__actions .canvas-command__primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: #0b0e14;
+}
+
+.canvas-command__actions kbd {
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  opacity: 0.75;
+}
+
+/* ---- Canvas pane node ---- */
+.canvas-pane {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color 160ms var(--ease-out-quart), background-color 160ms var(--ease-out-quart);
+  cursor: default;
+  width: 100%;
+  height: 100%;
+}
+
+.canvas-pane--focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+
+.canvas-pane:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.canvas-pane .canvas-pane__terminal {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  padding: 6px 8px 4px;
+}
+
+/* The terminal host element lives inside the canvas slot, same as grid. */
+.canvas-pane .term-host {
+  position: absolute;
+  inset: 6px 8px 4px;
+}
+
+/* ---- "Edges que conversam": pane connection handles ---- */
+.canvas-pane__handle {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 2px solid var(--accent);
+  opacity: 0;
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 5;
+}
+.canvas-pane:hover .canvas-pane__handle,
+.canvas-pane--focused .canvas-pane__handle,
+.react-flow__node:hover .canvas-pane__handle {
+  opacity: 0.9;
+}
+.canvas-pane__handle:hover {
+  opacity: 1;
+  transform: scale(1.25);
+}
+.canvas-pane__handle--out {
+  background: var(--accent);
+}
+.canvas-container .react-flow__edge-path {
+  stroke: var(--accent);
+}
+.canvas-container .react-flow__edge-text {
+  fill: var(--text-dim);
+}
+.canvas-container .react-flow__edge:hover .react-flow__edge-path {
+  stroke-width: 3;
+}
+
+/* ---- Sticky notes ---- */
+.note {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+  color: #1f2430;
+  font-size: 13px;
+}
+.note--yellow { background: #f7e07c; }
+.note--blue   { background: #9ecbf5; }
+.note--green  { background: #a8dfa5; }
+.note--pink   { background: #f5b3cd; }
+.note--purple { background: #cdb4f0; }
+.note--linked { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.note-drag-handle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  cursor: grab;
+  background: rgba(0, 0, 0, 0.08);
+  user-select: none;
+}
+.note-drag-handle:active { cursor: grabbing; }
+
+.note-colors { display: flex; gap: 4px; margin-right: auto; }
+.note-color-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  padding: 0;
+  cursor: pointer;
+}
+.note-color-swatch.is-active {
+  border-color: rgba(0, 0, 0, 0.7);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
+}
+.note-color-swatch--yellow { background: #f7e07c; }
+.note-color-swatch--blue   { background: #9ecbf5; }
+.note-color-swatch--green  { background: #a8dfa5; }
+.note-color-swatch--pink   { background: #f5b3cd; }
+.note-color-swatch--purple { background: #cdb4f0; }
+
+.note-link-badge { font-size: 11px; opacity: 0.7; }
+
+.note-remove {
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  color: rgba(0, 0, 0, 0.55);
+  padding: 0 2px;
+}
+.note-remove:hover { color: rgba(0, 0, 0, 0.9); }
+
+.note-text {
+  flex: 1;
+  width: 100%;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 8px;
+  font: inherit;
+  color: inherit;
+}
+.note-text::placeholder { color: rgba(0, 0, 0, 0.35); }
+
+/* Botão de nova nota (Panel top-left do xyflow) */
+.add-note-button {
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-bar);
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.add-note-button:hover { border-color: var(--accent); }
+
+/* ---- Canvas snapshot placeholder (zoom-out mode) ---- */
+.canvas-pane__snapshot {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  background: var(--bg);
+  opacity: 0.82;
+}
+
+.canvas-pane__snapshot-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+.canvas-pane__snapshot-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.canvas-pane__snapshot-state--busy,
+.canvas-pane__snapshot-state--idle {
+  color: var(--text);
+}
+
+.canvas-pane__snapshot-state--busy i {
+  background: var(--live);
+}
+
+.canvas-pane__snapshot-state--idle i {
+  background: var(--ok);
+}
+
+.canvas-pane__snapshot-state--exited i {
+  background: var(--danger);
+}
+
+.canvas-pane__snapshot-state--spawning i {
+  background: var(--warn);
+}
+
+.canvas-pane__snapshot-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 90%;
+}
+
+.canvas-pane__snapshot-meta {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+/* xyflow node wrapper — disable the default border/shadow; our .canvas-pane handles it */
+.canvas-container .react-flow__node {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.canvas-container .react-flow__node-canvasPane {
+  width: fit-content;
+  height: fit-content;
+}
+
+@media (max-width: 1120px) {
+  .canvas-command__state > span:not(.canvas-command__signal) {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .canvas-command__actions button {
+    width: 32px;
+    justify-content: center;
+    padding: 0;
+    font-size: 0;
+  }
+
+  .canvas-command__actions kbd {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-container .react-flow__minimap,
+  .canvas-container .react-flow__controls,
+  .canvas-command__actions button,
+  .canvas-pane,
+  .canvas-pane__handle {
+    transition: none;
+  }
+}

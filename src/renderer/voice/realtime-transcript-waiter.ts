@@ -36,17 +36,27 @@ const defaultDeps: RealtimeTranscriptWaiterDeps = {
 interface Pending {
   resolve: (outcome: RealtimeTranscriptWaitOutcome) => void;
   timer: ReturnType<typeof setTimeout>;
+  turnId?: string;
 }
 
 export class RealtimeTranscriptWaiter {
   private pending: Pending | null = null;
-  private queued: string | null = null;
+  private queued: { text: string; turnId?: string } | null = null;
+  private activeTurnId: string | null = null;
 
   constructor(private readonly deps: RealtimeTranscriptWaiterDeps = defaultDeps) {}
 
   /** Há um transcript já entregue esperando um wait (chegou antes do await). */
   hasQueued(): boolean {
     return this.queued !== null;
+  }
+
+  /** Opens a turn boundary and quarantines any final from the previous turn. */
+  beginTurn(turnId: string): void {
+    const normalized = turnId.trim();
+    if (!normalized || normalized === this.activeTurnId) return;
+    this.supersede();
+    this.activeTurnId = normalized;
   }
 
   /** Há um wait em curso aguardando resolução. */
@@ -60,12 +70,18 @@ export class RealtimeTranscriptWaiter {
    * Retorna true se foi entregue a um waiter (o chamador então NÃO precisa
    * agendar o fechamento manual do turno).
    */
-  deliver(text: string): boolean {
+  deliver(text: string, turnId?: string): boolean {
+    if (turnId && this.activeTurnId && turnId !== this.activeTurnId) {
+      return true;
+    }
     if (this.pending) {
+      if (turnId && this.pending.turnId && turnId !== this.pending.turnId) {
+        return true;
+      }
       this.settle({ text, superseded: false });
       return true;
     }
-    this.queued = text;
+    this.queued = { text, turnId };
     return false;
   }
 
@@ -89,11 +105,13 @@ export class RealtimeTranscriptWaiter {
    * (o novo wait é de um turno mais recente) — jamais vira mute. O timeout é o
    * ÚNICO caminho para `superseded:false, text:null` (silêncio genuíno = mute).
    */
-  wait(timeoutMs: number): Promise<RealtimeTranscriptWaitOutcome> {
+  wait(timeoutMs: number, turnId?: string): Promise<RealtimeTranscriptWaitOutcome> {
     if (this.queued !== null) {
-      const text = this.queued;
+      const queued = this.queued;
       this.queued = null;
-      return Promise.resolve({ text, superseded: false });
+      if (!turnId || !queued.turnId || queued.turnId === turnId) {
+        return Promise.resolve({ text: queued.text, superseded: false });
+      }
     }
     if (this.pending) this.settle({ text: null, superseded: true });
     return new Promise((resolve) => {
@@ -101,7 +119,7 @@ export class RealtimeTranscriptWaiter {
         if (this.pending?.resolve === resolve) this.pending = null;
         resolve({ text: null, superseded: false });
       }, timeoutMs);
-      this.pending = { resolve, timer };
+      this.pending = { resolve, timer, turnId };
     });
   }
 

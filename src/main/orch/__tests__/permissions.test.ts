@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import {
   hasPermission,
+  consumePermission,
   grantPermission,
   revokePermission,
   clearSession,
@@ -37,6 +38,18 @@ describe('permissions', () => {
     const args = { path: 'a.ts', content: 'x' };
     grantPermission(scope('sess1', 'nexus_file_write', args));
     expect(hasPermission(scope('sess1', 'nexus_file_write', args))).toBe(true);
+  });
+
+  it('consumes an exact permission once', () => {
+    const exact = scope('sess1', 'nexus_file_write', {
+      path: 'a.ts',
+      content: 'x',
+    });
+    grantPermission(exact);
+
+    expect(consumePermission(exact)).toBe(true);
+    expect(consumePermission(exact)).toBe(false);
+    expect(hasPermission(exact)).toBe(false);
   });
 
   it('different args are not cached', () => {

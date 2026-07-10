@@ -45,6 +45,19 @@ describe('ensureSkillsForCli', () => {
     ).toBe(true);
   });
 
+  it('discovers a skill installed only in the Gemini namespace', () => {
+    const home = tmpRoot();
+    writeSkill(path.join(home, '.gemini', 'config', 'skills'), 'gemini-only');
+
+    ensureSkillsForCli('codex', { home });
+
+    expect(
+      fs.existsSync(
+        path.join(home, '.codex', 'skills', 'gemini-only', 'SKILL.md'),
+      ),
+    ).toBe(true);
+  });
+
   it('honors an empty allowedSkills list as explicit no-skills policy', () => {
     const home = tmpRoot();
     const source = tmpRoot();
@@ -115,6 +128,26 @@ describe('ensureSkillsForCli', () => {
     expect(result.targetDirs).toContain(path.join(home, '.kimi-code', 'skills'));
     expect(
       fs.existsSync(path.join(home, '.kimi-code', 'skills', 'impeccable', 'SKILL.md')),
+    ).toBe(true);
+  });
+
+  it('mirrors OpenCode skills to its official user skill directory', () => {
+    const home = tmpRoot();
+    const source = tmpRoot();
+    writeSkill(source, 'impeccable');
+
+    const result = ensureSkillsForCli('opencode', {
+      home,
+      sourceDirs: [source],
+    });
+
+    expect(result.targetDirs).toContain(
+      path.join(home, '.config', 'opencode', 'skills'),
+    );
+    expect(
+      fs.existsSync(
+        path.join(home, '.config', 'opencode', 'skills', 'impeccable', 'SKILL.md'),
+      ),
     ).toBe(true);
   });
 });

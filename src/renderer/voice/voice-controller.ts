@@ -9,6 +9,7 @@ import {
   statusWatchdogAction,
 } from './status-watchdog';
 import { micFrameToBase64 } from './live-audio';
+import { shouldPublishVoiceLevel } from './voice-level';
 import {
   isWakeAckOnlyTranscript,
   stripWakeAckEcho,
@@ -18,8 +19,6 @@ import { type JarvisCaptureReason } from './jarvis-reply-loop';
 import {
   clearLocalAudioGate,
   isLocalAudioAudible,
-  markLocalAudioPlaying,
-  setLocalAudioWithholdUntil,
 } from './live-local-audio-gate';
 import { playAudioBase64, stopAllPlayback } from './voice-playback';
 import {
@@ -40,7 +39,6 @@ import {
   errMsg,
   liveStatus,
   liveContextText,
-  sendLiveContextSnapshot,
   queueLiveContextRefresh,
   logVoiceEvent,
 } from './voice-live-ipc';
@@ -78,20 +76,26 @@ import {
   turnExecution,
   realtimeAudioPlayedCounter,
   realtimeAudioSuppressedCounter,
-  liveWakeGreetingInjectedAt,
   setLiveWakeGreetingInjectedAt,
   REALTIME_ACTION_BRIDGE_ENABLED,
   REALTIME_PROVIDER_AUDIO_ENABLED,
 } from './voice-session-state';
 import { personaUserName } from './jarvis-screen-context';
 import { executeRealtimeToolCall } from './voice-realtime-tools';
+import { cancelRealtimeToolExecution } from './realtime-tool-execution';
 import { finishAndProcess, type FinishAndProcessDeps } from './voice-finish-and-process';
 import {
   liveWakeGreetingText,
   liveWakeInjectPrompt,
   shouldSendLiveWakeGreeting,
+  wakeCaptureMinListenMs,
 } from './live-wake-greeting';
 import { cancelLiveFollowUp } from './live-followup';
+import {
+  markLiveMicFrameOffered,
+  resetOfferedLiveMicFramesThisTurn,
+} from './live-mute-rescue';
+import { NarrationQueue } from './narration-queue';
 
 /**
  * Jarvis voice pipeline. Mounted once from App.
@@ -107,15 +111,6 @@ const CLICK_WAKE_MIN_LISTEN_MS = 1_125;
 const WAKE_MAX_MS = 15_000;
 const CLICK_WAKE_MAX_MS = 22_000;
 const PTT_HOLD_MAX_MS = 60_000;
-/** Hold mic off the Live socket until greeting audio starts (or this ceiling).
- * Kept just above LIVE_WAKE_GREETING_SILENT_MS so the silent-timeout handler
- * releases the mic before the ceiling — 12s was far too long (user couldn't
- * speak their command for 12 seconds if Gemini didn't respond). */
-const LIVE_WAKE_GREETING_MIC_HOLD_MS = 4_500;
-/** Wait for Live audio after inject; on mute prefer silence (never Classic marin). */
-const LIVE_WAKE_GREETING_SILENT_MS = 3_500;
-/** After Live greeting audio starts, keep mic held this long (anti-echo of Olá). */
-const LIVE_WAKE_GREETING_AUDIO_TAIL_MS = 1_800;
 export const TRANSCRIBE_DEADLINE_MS = 60_000;
 export const BRAIN_DEADLINE_MS = 35_000;
 const MIC_SILENT_THRESHOLD_MS = 12_000;
@@ -139,6 +134,14 @@ function commandFromRealtimeTranscript(text: string): string | null {
 
 function onRealtimeTranscriptForActionBridge(event: JarvisLiveTranscriptEvent): void {
   if (!realtimeTurnActive || event.role !== 'user' || !event.final) return;
+  const activeTurnId = String(turnExecution.currentToken);
+  if (event.turnId && event.turnId !== activeTurnId) {
+    logVoiceEvent('info', 'jarvis.staleRealtimeTranscript', 'final antigo ignorado', {
+      turnId: event.turnId,
+      activeTurnId,
+    });
+    return;
+  }
   const text = commandFromRealtimeTranscript(event.text);
   if (!text) {
     if (isAckGatedCapture()) {
@@ -146,7 +149,7 @@ function onRealtimeTranscriptForActionBridge(event: JarvisLiveTranscriptEvent): 
     }
     return;
   }
-  if (realtimeTranscriptWaiter.deliver(text)) return;
+  if (realtimeTranscriptWaiter.deliver(text, event.turnId)) return;
   window.setTimeout(() => finishRealtimeCapture?.(), 80);
 }
 
@@ -161,9 +164,14 @@ function wakeAutoStop(
   busy: React.MutableRefObject<boolean>,
   reason: 'wake' | 'click' = 'wake',
 ): AutoStopOptions {
+  const baseMinListenMs =
+    reason === 'click' ? CLICK_WAKE_MIN_LISTEN_MS : WAKE_MIN_LISTEN_MS;
+  const minListenMs = wakeCaptureMinListenMs(baseMinListenMs, {
+    liveGreetingInFlight: shouldSkipClassicWakeAck(),
+  });
   return {
     silenceMs: reason === 'click' ? CLICK_WAKE_SILENCE_MS : WAKE_SILENCE_MS,
-    minListenMs: reason === 'click' ? CLICK_WAKE_MIN_LISTEN_MS : WAKE_MIN_LISTEN_MS,
+    minListenMs,
     maxMs: reason === 'click' ? CLICK_WAKE_MAX_MS : WAKE_MAX_MS,
     onAutoStop: () => {
       if (isListening(capture)) void finishAndProcessFacade(capture, busy);
@@ -191,7 +199,6 @@ let voiceControllerCleanup: (() => void) | null = null;
 export function useVoiceController(): void {
   const capture = useRef<VoiceCapture | null>(null);
   const busy = useRef(false);
-  const narratingRef = useRef(false);
 
   useEffect(() => {
     // Drop any prior subscription (HMR leaves preload Sets with stale cbs →
@@ -200,8 +207,24 @@ export function useVoiceController(): void {
     voiceControllerCleanup = null;
 
     capture.current = new VoiceCapture();
-    capture.current.onLevel = (level) => useVoiceStore.getState().setLevel(level);
-    wakeMic.onLevel = (level) => useVoiceStore.getState().setLevel(level);
+    const publishVoiceLevel = (level: number) => {
+      const current = useVoiceStore.getState();
+      if (shouldPublishVoiceLevel(current.status, level, current.level)) {
+        current.setLevel(level);
+      }
+    };
+    capture.current.onLevel = publishVoiceLevel;
+    wakeMic.onLevel = publishVoiceLevel;
+    const streamLiveMicFrame = (frame: Float32Array, sampleRate: number) => {
+      if (shouldStreamToRealtime() && !isLocalAudioAudible(Date.now())) {
+        window.nexus.voice.liveMicIn(micFrameToBase64(frame, sampleRate));
+        // Renderer-side safety signal: zero means no IPC frame was even offered.
+        // A positive count is not proof the provider accepted it; that path
+        // degrades to Classic instead of risking a duplicate realtime replay.
+        markLiveMicFrameOffered();
+      }
+    };
+    capture.current.onFrame = streamLiveMicFrame;
     const store = useVoiceStore.getState();
 
     const handleWake = async (source: WakeSource) => {
@@ -224,8 +247,8 @@ export function useVoiceController(): void {
 
         const skipClassicAck = shouldSkipClassicWakeAck();
 
-        // SYNC RESET: tear down the ENTIRE previous Live session before anything.
-        // Kills zombie sockets, stops mic streaming, clears pending audio.
+        // Turn reset: cancel only the in-flight response/capture state. The
+        // healthy Gemini socket remains warm across wakes and follow-ups.
         cancelLiveFollowUp();
         setPendingLiveStartSettle(null);
         setRealtimeTurnActive(false);
@@ -235,12 +258,11 @@ export function useVoiceController(): void {
         clearLocalAudioGate();
         livePlayer?.stop();
         realtimeTranscriptWaiter.supersede();
-        if (skipClassicAck) {
-          await window.nexus.voice.liveHardTeardown().catch(() => {});
-          logVoiceEvent('info', 'jarvis.wakeSyncReset', 'hard teardown before fresh wake', { source });
-        } else {
-          void window.nexus.voice.liveInterrupt('wake-ack').catch(() => {});
-        }
+        await window.nexus.voice.liveInterrupt('wake-barge-in').catch(() => {});
+        logVoiceEvent('info', 'jarvis.wakeTurnReset', 'wake reutilizando sessão Live saudável', {
+          source,
+          realtime: skipClassicAck,
+        });
 
         let wakePreRoll =
           source === 'voice' ? wakeMic.snapshotPreRoll(WAKE_PREROLL_MS) : [];
@@ -263,6 +285,7 @@ export function useVoiceController(): void {
             'click',
             [],
             busy,
+            skipClassicAck,
           );
           return;
         }
@@ -272,6 +295,7 @@ export function useVoiceController(): void {
           'wake',
           wakePreRoll,
           busy,
+          skipClassicAck,
         );
         if (!skipClassicAck) {
           await playWakePrompt(ack).catch(() => playCachedWakeAck(personaUserName()));
@@ -439,6 +463,15 @@ export function useVoiceController(): void {
         void executeRealtimeToolCall(event);
       }
     });
+    const unsubLiveToolCancelled = window.nexus.voice.onLiveToolCancelled((event) => {
+      const result = cancelRealtimeToolExecution(event);
+      logVoiceEvent('warn', 'jarvis.realtimeActionCancelReceived', event.summary, {
+        callId: event.callId,
+        reason: event.reason,
+        known: result.known,
+        effectMayHaveCommitted: result.effectMayHaveCommitted,
+      });
+    });
     const unsubLiveToolResult = window.nexus.voice.onLiveToolResult((event) => {
       useVoiceStore.getState().setLiveTool(event);
     });
@@ -446,18 +479,39 @@ export function useVoiceController(): void {
       useVoiceStore.getState().setLiveInterrupted(event);
       livePlayer?.stop();
     });
-    const unsubLiveAudio = window.nexus.voice.onLiveAudioOut((b64) => {
+    const unsubLiveAudio = window.nexus.voice.onLiveAudioOut((event) => {
       if (suppressRealtimeAudioOut) {
-        queuePendingRealtimeAudioOut(b64);
+        queuePendingRealtimeAudioOut(event);
         return;
       }
-      playRealtimeAudioOut(b64);
+      playRealtimeAudioOut(event);
     });
-    // FIX E (mic frame tap): shouldStreamToRealtime now includes 'reply' reason.
-    wakeMic.setUtteranceFrameTap((frame, sampleRate) => {
-      if (shouldStreamToRealtime() && !isLocalAudioAudible(Date.now())) {
-        window.nexus.voice.liveMicIn(micFrameToBase64(frame, sampleRate));
-      }
+    // Both capture paths must feed Live. VoiceCapture is used when wake word is
+    // disabled; WakeMic owns the hot stream when wake word is enabled.
+    wakeMic.setUtteranceFrameTap(streamLiveMicFrame);
+
+    const narrationQueue = new NarrationQueue({
+      canPlay: () =>
+        useVoiceStore.getState().status === 'idle' && !isListening(capture.current),
+      play: async (text) => {
+        const storeNarrate = useVoiceStore.getState();
+        storeNarrate.setStatus('speaking');
+        stopAllPlayback();
+        try {
+          const spoken = await window.nexus.voice.speak({ text, speakMode: 'full' });
+          if (spoken.ok && spoken.mode === 'audio') {
+            await playAudioBase64(spoken.audioBase64, spoken.format);
+          }
+        } finally {
+          if (useVoiceStore.getState().status === 'speaking') {
+            useVoiceStore.getState().setStatus('idle');
+          }
+        }
+      },
+      onError: (error) => console.warn('[voice] narração falhou:', error),
+    });
+    const unsubNarrationState = useVoiceStore.subscribe((state) => {
+      if (state.status === 'idle') narrationQueue.kick();
     });
 
     const onStart = () => {
@@ -493,36 +547,15 @@ export function useVoiceController(): void {
     const unsubWake = window.nexus.voice.onWakeDetected(() => onWake('voice'));
     const unsubClickWake = onJarvisWakeRequest(() => onWake('click'));
     const unsubNarrate = window.nexus.voice.onNarrate(({ text }) => {
-      const status = useVoiceStore.getState().status;
-      if (status !== 'idle' || narratingRef.current) {
-        console.log('[voice] narração pulada (ocupado):', text.slice(0, 60));
-        return;
-      }
-      narratingRef.current = true;
-      const storeNarrate = useVoiceStore.getState();
-      storeNarrate.setStatus('speaking');
-      stopAllPlayback();
-      void (async () => {
-        try {
-          const spoken = await window.nexus.voice.speak({ text, speakMode: 'full' });
-          if (spoken.ok && spoken.mode === 'audio') {
-            await playAudioBase64(spoken.audioBase64, spoken.format);
-          }
-        } catch (err) {
-          console.warn('[voice] narração falhou:', err);
-        } finally {
-          narratingRef.current = false;
-          if (useVoiceStore.getState().status === 'speaking') {
-            useVoiceStore.getState().setStatus('idle');
-          }
-        }
-      })();
+      narrationQueue.enqueue(text);
     });
 
     const cleanup = () => {
       clearInterval(micHealthTimer);
       clearInterval(statusWatchdogTimer);
       unsubStatusWatchdog();
+      unsubNarrationState();
+      narrationQueue.dispose();
       unsubInfo();
       unsubStart();
       unsubStop();
@@ -534,10 +567,14 @@ export function useVoiceController(): void {
       unsubLiveTranscript();
       unsubTranscriptAppend();
       unsubLiveToolCall();
+      unsubLiveToolCancelled();
       unsubLiveToolResult();
       unsubLiveInterrupted();
       unsubLiveAudio();
       wakeMic.setUtteranceFrameTap(null);
+      wakeMic.onLevel = null;
+      if (capture.current) capture.current.onLevel = null;
+      if (capture.current) capture.current.onFrame = null;
       livePlayer?.dispose();
       setLivePlayer(null);
       wakeMic.stop();
@@ -556,6 +593,7 @@ async function beginListening(
   reason: JarvisCaptureReason = 'manual',
   preRollSeed?: Float32Array[],
   busy?: React.MutableRefObject<boolean>,
+  useLiveGreeting = false,
 ): Promise<void> {
   const store = useVoiceStore.getState();
   try {
@@ -564,8 +602,11 @@ async function beginListening(
     resetPendingRealtimeAudioOut();
     realtimeAudioPlayedCounter.reset();
     realtimeAudioSuppressedCounter.reset();
+    resetOfferedLiveMicFramesThisTurn();
     setRealtimeTurnActive(false);
-    turnExecution.beginTurn();
+    const turnId = String(turnExecution.beginTurn());
+    realtimeTranscriptWaiter.beginTurn(turnId);
+    window.nexus.voice.liveTurnBegin(turnId);
     setActiveCaptureReason(reason);
     // C3 (follow-up 4a): a pendência de missão NÃO é mais limpa aqui — "Hey
     // Jarvis, sim" agora CONFIRMA em vez de descartar mudo. As guardas contra
@@ -613,108 +654,43 @@ async function beginListening(
         queueLiveContextRefresh();
       } else {
         setRealtimeTurnActive(canAttemptRealtime(info));
-        // Pre-hold mic BEFORE liveStart settles: beginUtterance otherwise streams
-        // ambient/pre-roll into the socket and races the [wake] Olá inject
-        // (RESTART_REGRESSION_RECOVERY: micFrames 1..76 same ms as liveWakeGreeting).
-        const willInjectWakeGreeting = shouldSendLiveWakeGreeting(
-          reason,
-          shouldSkipClassicWakeAck(),
-        );
-        if (willInjectWakeGreeting) {
-          markLocalAudioPlaying(LIVE_WAKE_GREETING_MIC_HOLD_MS, Date.now());
-          wakeMic.suppressWakeDetection(LIVE_WAKE_GREETING_MIC_HOLD_MS);
-        }
+        // The wake greeting is deliberately non-blocking. Audio captured while
+        // connecting is preserved and Gemini server VAD can barge in immediately.
         const liveContext = liveContextText();
+        // Seed main before provider creation so Gemini 3.1 receives the first
+        // screen snapshot in setup. Later snapshots stay queryable through the
+        // read-only consultar/ler tools instead of becoming synthetic turns.
+        window.nexus.voice.liveContextIn(liveContext);
+        const greeting =
+          useLiveGreeting && shouldSendLiveWakeGreeting(reason, true)
+            ? liveWakeInjectPrompt(personaUserName())
+            : undefined;
+        if (greeting) {
+          const injectedAt = Date.now();
+          setLiveWakeGreetingInjectedAt(injectedAt);
+          logVoiceEvent(
+            'info',
+            'jarvis.liveWakeGreeting',
+            'Gemini Live wake greeting interrompível',
+            {
+              reason,
+              greeting: liveWakeGreetingText(personaUserName()),
+              mode: 'serialized-before-mic',
+              micHoldMs: 0,
+            },
+          );
+        }
         setPendingLiveStartSettle(
           window.nexus.voice
-            .liveStart({ reason, forceFresh: willInjectWakeGreeting })
+            .liveStart({ reason, ...(greeting ? { greeting } : {}) })
             .then((state) => {
               store.setLiveState(state);
               if (!state.realtimeReady) {
                 setRealtimeTurnActive(false);
-                if (willInjectWakeGreeting) clearLocalAudioGate();
-              }
-              if (state.realtimeReady) {
-                const willGreet = shouldSendLiveWakeGreeting(reason, shouldSkipClassicWakeAck());
-                if (!willGreet) {
-                  window.nexus.voice.liveContextIn(liveContext);
-                  window.setTimeout(sendLiveContextSnapshot, 120);
-                }
-                if (willGreet) {
-                  const greeting = liveWakeGreetingText(personaUserName());
-                  const prompt = liveWakeInjectPrompt(personaUserName());
-                  const injectedAt = Date.now();
-                  const playedBefore = realtimeAudioPlayedCounter.total;
-                  setLiveWakeGreetingInjectedAt(injectedAt);
-                  markLocalAudioPlaying(LIVE_WAKE_GREETING_MIC_HOLD_MS, injectedAt);
-                  wakeMic.suppressWakeDetection(LIVE_WAKE_GREETING_MIC_HOLD_MS);
-                  logVoiceEvent('info', 'jarvis.liveWakeGreeting', 'Gemini Live wake greeting (fresh socket)', {
-                    reason,
-                    greeting,
-                    mode: 'inject',
-                    micHoldMs: LIVE_WAKE_GREETING_MIC_HOLD_MS,
-                  });
-                  window.nexus.voice.liveContextIn(prompt);
-                  window.setTimeout(() => {
-                    window.nexus.voice.liveContextIn(liveContext);
-                    sendLiveContextSnapshot();
-                  }, 800);
-                  const releasePoll = window.setInterval(() => {
-                    if (liveWakeGreetingInjectedAt !== injectedAt) {
-                      window.clearInterval(releasePoll);
-                      return;
-                    }
-                    if (realtimeAudioPlayedCounter.total <= playedBefore) return;
-                    window.clearInterval(releasePoll);
-                    const reopenAt = Date.now() + LIVE_WAKE_GREETING_AUDIO_TAIL_MS;
-                    setLocalAudioWithholdUntil(reopenAt);
-                    wakeMic.suppressWakeDetection(LIVE_WAKE_GREETING_AUDIO_TAIL_MS);
-                    logVoiceEvent('info', 'jarvis.liveWakeGreetingAudio', 'Live greeting audio — mic hold → tail', {
-                      tailMs: LIVE_WAKE_GREETING_AUDIO_TAIL_MS,
-                      rttMs: Date.now() - injectedAt,
-                    });
-                  }, 50);
-                  window.setTimeout(() => window.clearInterval(releasePoll), LIVE_WAKE_GREETING_MIC_HOLD_MS + 500);
-                  // Single retry: if silent after timeout, ONE hard rebuild
-                  window.setTimeout(() => {
-                    if (liveWakeGreetingInjectedAt !== injectedAt) return;
-                    const played = realtimeAudioPlayedCounter.total;
-                    const remaining = livePlayer?.remainingMs() ?? 0;
-                    const pending = pendingRealtimeAudioOut.length;
-                    if (played > playedBefore || remaining > 80 || pending > 0) return;
-                    logVoiceEvent(
-                      'warn',
-                      'jarvis.liveWakeGreetingSilent',
-                      'Live mudo após inject — hard rebuild (single retry)',
-                      { waitedMs: LIVE_WAKE_GREETING_SILENT_MS, greeting },
-                    );
-                    void window.nexus.voice
-                      .liveHardRebuild()
-                      .then((rebuildState) => {
-                        store.setLiveState(rebuildState);
-                        if (!rebuildState.realtimeReady) {
-                          clearLocalAudioGate();
-                          return;
-                        }
-                        const hardAt = Date.now();
-                        setLiveWakeGreetingInjectedAt(hardAt);
-                        markLocalAudioPlaying(LIVE_WAKE_GREETING_MIC_HOLD_MS, hardAt);
-                        wakeMic.suppressWakeDetection(LIVE_WAKE_GREETING_MIC_HOLD_MS);
-                        logVoiceEvent('info', 'jarvis.liveWakeHardRebuildInject', 're-inject [wake] após hard rebuild', {
-                          greeting,
-                        });
-                        window.nexus.voice.liveContextIn(prompt);
-                      })
-                      .catch(() => clearLocalAudioGate());
-                  }, LIVE_WAKE_GREETING_SILENT_MS);
-                } else if (willInjectWakeGreeting) {
-                  clearLocalAudioGate();
-                }
               }
             })
             .catch((err) => {
               setRealtimeTurnActive(false);
-              if (willInjectWakeGreeting) clearLocalAudioGate();
               console.warn('[voice] liveStart falhou (classic segue):', errMsg(err));
             }),
         );

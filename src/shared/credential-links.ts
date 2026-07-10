@@ -28,10 +28,6 @@ const ENV_LINKS: Record<string, CredentialLink> = {
     label: 'Google AI Studio',
     url: 'https://aistudio.google.com/app/apikey',
   },
-  GROK_API_KEY: {
-    label: 'xAI Console',
-    url: 'https://console.x.ai/',
-  },
   GROQ_API_KEY: {
     label: 'GroqCloud',
     url: 'https://console.groq.com/keys',
@@ -65,7 +61,7 @@ const PROVIDER_LINKS: Record<string, CredentialLink> = {
     label: 'Z.AI Platform',
     url: 'https://z.ai/model-api',
   },
-  grok: ENV_LINKS.GROK_API_KEY,
+  grok: ENV_LINKS.XAI_API_KEY,
   kimi: ENV_LINKS.MOONSHOT_API_KEY,
   longcat: {
     label: 'LongCat Platform',

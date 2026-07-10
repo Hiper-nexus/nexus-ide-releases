@@ -36,7 +36,11 @@ describe('validateBinPath', () => {
 });
 
 describe('sensitiveChanges', () => {
-  const current = { binPath: '/usr/local/bin/claude', extraArgs: ['--foo'] };
+  const current = {
+    binPath: '/usr/local/bin/claude',
+    extraArgs: ['--foo'],
+    permissionMode: '',
+  };
 
   it('flags a new, different binPath', () => {
     const c = sensitiveChanges({ binPath: '/tmp/evil' }, current);
@@ -66,5 +70,19 @@ describe('sensitiveChanges', () => {
     expect(hasSensitiveChange(c)).toBe(true);
     expect(c.binPath).toBe('/tmp/x');
     expect(c.extraArgs).toEqual(['--y']);
+  });
+
+  it('requires confirmation when enabling full-auto but not when returning safe', () => {
+    expect(sensitiveChanges({ permissionMode: 'yolo' }, current)).toMatchObject({
+      permissionMode: 'yolo',
+    });
+    expect(
+      hasSensitiveChange(
+        sensitiveChanges(
+          { permissionMode: '' },
+          { ...current, permissionMode: 'yolo' },
+        ),
+      ),
+    ).toBe(false);
   });
 });

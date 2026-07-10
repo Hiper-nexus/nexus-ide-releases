@@ -1,15 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
-  GRACE_STALE_SERVER_MS,
-  GRACE_STALE_NO_PROGRESS_MS,
-  isGraceSocketStale,
   isIgnorableRealtimeError,
   isLocalToolCallId,
   isScreenContext,
   localToolCallId,
-  shouldLogWakeSyncReset,
   trimLiveHistory,
   buildResumeContext,
+  MAX_LIVE_HISTORY_ENTRY_CHARS,
+  MAX_RESUME_CONTEXT_CHARS,
 } from './live-transport-helpers';
 
 describe('live-transport-helpers', () => {
@@ -29,53 +27,33 @@ describe('live-transport-helpers', () => {
     expect(isIgnorableRealtimeError('OpenAI realtime socket closed')).toBe(false);
   });
 
-  it('does not mark a fresh connect as stale before the no-progress threshold', () => {
-    const connectedAt = 1_000;
-    expect(isGraceSocketStale(0, connectedAt, GRACE_STALE_SERVER_MS, connectedAt)).toBe(false);
-    expect(isGraceSocketStale(0, connectedAt + GRACE_STALE_NO_PROGRESS_MS, GRACE_STALE_SERVER_MS, connectedAt)).toBe(false);
-    expect(isGraceSocketStale(0, connectedAt + GRACE_STALE_NO_PROGRESS_MS + 1, GRACE_STALE_SERVER_MS, connectedAt)).toBe(true);
-  });
-
-  it('uses full threshold when server progress exists', () => {
-    expect(isGraceSocketStale(5_000, 5_000 + GRACE_STALE_SERVER_MS, GRACE_STALE_SERVER_MS, 1_000)).toBe(false);
-    expect(isGraceSocketStale(5_000, 5_000 + GRACE_STALE_SERVER_MS + 1, GRACE_STALE_SERVER_MS, 1_000)).toBe(true);
-  });
-
-  it('marks unknown sockets (no connect, no progress) as stale', () => {
-    expect(isGraceSocketStale(0, 10_000)).toBe(true);
-  });
-
-  it('logs wake sync reset only when tearing down live state', () => {
-    expect(shouldLogWakeSyncReset({
-      forceFresh: true,
-      inGrace: true,
-      providerReady: false,
-      connecting: false,
-    })).toBe(true);
-    expect(shouldLogWakeSyncReset({
-      forceFresh: false,
-      inGrace: true,
-      providerReady: true,
-      connecting: false,
-    })).toBe(false);
-    expect(shouldLogWakeSyncReset({
-      forceFresh: true,
-      inGrace: false,
-      providerReady: false,
-      connecting: false,
-    })).toBe(false);
-  });
-
-  it('trims live history and builds resume context', () => {
+  it('trims complete user turns and never starts resume history with assistant', () => {
     const history = [
+      { role: 'assistant' as const, text: 'orphan' },
       { role: 'user' as const, text: 'a' },
       { role: 'assistant' as const, text: 'b' },
       { role: 'user' as const, text: 'c' },
+      { role: 'assistant' as const, text: 'd' },
+      { role: 'user' as const, text: 'e' },
     ];
     expect(trimLiveHistory(history, 2)).toEqual([
-      { role: 'assistant', text: 'b' },
       { role: 'user', text: 'c' },
+      { role: 'assistant', text: 'd' },
+      { role: 'user', text: 'e' },
     ]);
-    expect(buildResumeContext(history)).toContain('Usuário: a');
+    expect(buildResumeContext(trimLiveHistory(history, 2))).not.toContain('orphan');
+  });
+
+  it('bounds individual history entries and the full resume prompt', () => {
+    const huge = 'x'.repeat(MAX_LIVE_HISTORY_ENTRY_CHARS * 10);
+    const history = Array.from({ length: 20 }, (_, index) => ({
+      role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+      text: huge,
+    }));
+    const trimmed = trimLiveHistory(history, 10);
+    expect(trimmed.every((entry) => entry.text.length <= MAX_LIVE_HISTORY_ENTRY_CHARS)).toBe(true);
+    expect(buildResumeContext(trimmed)?.length).toBeLessThanOrEqual(
+      MAX_RESUME_CONTEXT_CHARS,
+    );
   });
 });

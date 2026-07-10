@@ -6,16 +6,39 @@ import {
   auditSuccess,
   auditError,
   auditDenied,
+  auditIntent,
   readAuditLog,
   clearAuditLog,
   getAuditLogPath,
+  resolveAuditLogPath,
   closeAuditLog,
   setAuditLogPathForTests,
+  writeAuditEntry,
 } from '../../jarvis/audit-log';
 
 describe('audit-log', () => {
   const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-audit-log');
   const testAuditLog = path.join(testDir, 'jarvis-actions.log');
+
+  it('keeps packaged smoke audit entries inside its isolated user-data directory', () => {
+    expect(
+      resolveAuditLogPath(
+        null,
+        ['NexusIDE', '--smoke-test'],
+        { NEXUS_USER_DATA_DIR: '/tmp/nexus-packaged-smoke' },
+      ),
+    ).toBe('/tmp/nexus-packaged-smoke/jarvis-actions.log');
+  });
+
+  it('does not honor the smoke user-data override outside the smoke process', () => {
+    expect(
+      resolveAuditLogPath(
+        null,
+        ['NexusIDE'],
+        { NEXUS_USER_DATA_DIR: '/tmp/nexus-packaged-smoke' },
+      ),
+    ).not.toBe('/tmp/nexus-packaged-smoke/jarvis-actions.log');
+  });
 
   beforeEach(() => {
     fs.mkdirSync(testDir, { recursive: true });
@@ -50,6 +73,31 @@ describe('audit-log', () => {
 
     expect(entries[2].result).toBe('denied');
     expect(entries[2].error).toBe('destructive');
+  });
+
+  it('correlates pre-effect intent with its outcome', () => {
+    auditIntent(
+      'sess1',
+      'nexus_file_write',
+      { path: 'test.ts', content: 'x' },
+      5,
+      true,
+      'http-mcp',
+      'invocation-1',
+    );
+    auditSuccess(
+      'sess1',
+      'nexus_file_write',
+      { path: 'test.ts', content: 'x' },
+      10,
+      true,
+      'http-mcp',
+      'invocation-1',
+    );
+
+    const entries = readAuditLog();
+    expect(entries.map((entry) => entry.result)).toEqual(['intent', 'ok']);
+    expect(entries.every((entry) => entry.invocation_id === 'invocation-1')).toBe(true);
   });
 
   it('each entry has required fields', () => {
@@ -155,5 +203,24 @@ describe('audit-log', () => {
       text: '[REDACTED_TEXT]',
       nested: { envFile: '[REDACTED]' },
     });
+  });
+
+  it('redacts direct-entry args and secrets embedded in denial/error messages', () => {
+    writeAuditEntry({
+      timestamp: new Date().toISOString(),
+      session: 'sess1',
+      source: 'ipc-renderer',
+      tool: 'nexus_terminal_run',
+      args: { token: 'raw-token', command: 'echo safe' },
+      result: 'denied',
+      duration_ms: 1,
+      user_authorized: false,
+      error: 'provider failed: Bearer abc.def --api-key super-secret TOKEN=also-secret',
+    });
+    const [entry] = readAuditLog();
+    expect(entry.args).toMatchObject({ token: '[REDACTED]' });
+    expect(entry.error).not.toContain('abc.def');
+    expect(entry.error).not.toContain('super-secret');
+    expect(entry.error).not.toContain('also-secret');
   });
 });

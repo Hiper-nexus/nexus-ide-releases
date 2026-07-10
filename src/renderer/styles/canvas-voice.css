@@ -1,293 +1,3 @@
-/* Canvas (xyflow, sticky notes) + Voice (pill, orb, HUD).
-   Módulo extraído do antigo global.css monolítico — a ordem de import
-   em global.css preserva a cascata original. */
-
-/* ---- Canvas view toggle button ---- */
-.workspace-bar__btn--view {
-  border-color: var(--border-strong);
-  min-width: 76px;
-  text-align: center;
-}
-
-.workspace-bar__btn--view-active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-/* ---- Canvas container ---- */
-.canvas-container {
-  width: 100%;
-  height: 100%;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-/* Allow text selection inside the terminal and interactive controls */
-.canvas-container .term-host,
-.canvas-container .term-host *,
-.canvas-container input,
-.canvas-container textarea,
-.canvas-container [contenteditable="true"],
-.canvas-container .browser-pane__surface,
-.canvas-container webview,
-.canvas-container iframe {
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-/* xyflow wrapper fills the container */
-.canvas-container .react-flow {
-  width: 100%;
-  height: 100%;
-  background: var(--bg);
-}
-
-/* xyflow pane (the viewport scroller) */
-.canvas-container .react-flow__pane {
-  cursor: default;
-}
-
-/* xyflow background dots */
-.canvas-container .react-flow__background {
-  background: transparent;
-}
-
-/* xyflow minimap */
-.canvas-container .react-flow__minimap {
-  border-radius: var(--radius);
-  overflow: hidden;
-  width: 148px;
-  height: 104px;
-  opacity: 0.58;
-  filter: saturate(0.85);
-  transition: opacity 120ms ease, filter 120ms ease, transform 120ms ease;
-}
-
-.canvas-container .react-flow__minimap:hover {
-  opacity: 0.95;
-  filter: saturate(1);
-  transform: translateY(-1px);
-}
-
-/* xyflow controls */
-.canvas-container .react-flow__controls {
-  border-radius: var(--radius);
-  overflow: hidden;
-  opacity: 0.78;
-  transition: opacity 120ms ease;
-}
-
-.canvas-container .react-flow__controls:hover {
-  opacity: 1;
-}
-
-.canvas-container .react-flow__controls-button {
-  background: var(--bg-bar);
-  border-bottom: 1px solid var(--border);
-  color: var(--text);
-  fill: var(--text-dim);
-}
-
-.canvas-container .react-flow__controls-button:hover {
-  background: var(--accent-soft);
-  fill: var(--accent);
-}
-
-/* ---- Canvas pane node ---- */
-.canvas-pane {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
-  transition: border-color 120ms ease, box-shadow 120ms ease;
-  cursor: default;
-  width: 100%;
-  height: 100%;
-}
-
-.canvas-pane--focused {
-  border-color: var(--accent);
-  box-shadow:
-    0 0 0 1px var(--accent-soft),
-    0 8px 32px rgba(0, 0, 0, 0.5);
-}
-
-.canvas-pane .canvas-pane__terminal {
-  flex: 1 1 auto;
-  min-height: 0;
-  position: relative;
-  padding: 4px 6px 2px;
-}
-
-/* The terminal host element lives inside the canvas slot, same as grid. */
-.canvas-pane .term-host {
-  position: absolute;
-  inset: 4px 6px 2px;
-}
-
-/* ---- "Edges que conversam": pane connection handles ---- */
-.canvas-pane__handle {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: var(--bg);
-  border: 2px solid var(--accent);
-  opacity: 0;
-  transition: opacity 120ms ease, transform 120ms ease;
-  z-index: 5;
-}
-.canvas-pane:hover .canvas-pane__handle,
-.canvas-pane--focused .canvas-pane__handle,
-.react-flow__node:hover .canvas-pane__handle {
-  opacity: 0.9;
-}
-.canvas-pane__handle:hover {
-  opacity: 1;
-  transform: scale(1.25);
-}
-.canvas-pane__handle--out {
-  background: var(--accent);
-}
-.canvas-container .react-flow__edge-path {
-  stroke: var(--accent);
-}
-.canvas-container .react-flow__edge-text {
-  fill: var(--text-dim);
-}
-.canvas-container .react-flow__edge:hover .react-flow__edge-path {
-  stroke-width: 3;
-}
-
-/* ---- Sticky notes ---- */
-.note {
-  display: flex;
-  flex-direction: column;
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-1);
-  overflow: hidden;
-  color: #1f2430;
-  font-size: 13px;
-}
-.note--yellow { background: #f7e07c; }
-.note--blue   { background: #9ecbf5; }
-.note--green  { background: #a8dfa5; }
-.note--pink   { background: #f5b3cd; }
-.note--purple { background: #cdb4f0; }
-.note--linked { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-.note-drag-handle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
-  cursor: grab;
-  background: rgba(0, 0, 0, 0.08);
-  user-select: none;
-}
-.note-drag-handle:active { cursor: grabbing; }
-
-.note-colors { display: flex; gap: 4px; margin-right: auto; }
-.note-color-swatch {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.25);
-  padding: 0;
-  cursor: pointer;
-}
-.note-color-swatch.is-active {
-  border-color: rgba(0, 0, 0, 0.7);
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
-}
-.note-color-swatch--yellow { background: #f7e07c; }
-.note-color-swatch--blue   { background: #9ecbf5; }
-.note-color-swatch--green  { background: #a8dfa5; }
-.note-color-swatch--pink   { background: #f5b3cd; }
-.note-color-swatch--purple { background: #cdb4f0; }
-
-.note-link-badge { font-size: 11px; opacity: 0.7; }
-
-.note-remove {
-  border: none;
-  background: transparent;
-  font-size: 15px;
-  line-height: 1;
-  cursor: pointer;
-  color: rgba(0, 0, 0, 0.55);
-  padding: 0 2px;
-}
-.note-remove:hover { color: rgba(0, 0, 0, 0.9); }
-
-.note-text {
-  flex: 1;
-  width: 100%;
-  resize: none;
-  border: none;
-  outline: none;
-  background: transparent;
-  padding: 8px;
-  font: inherit;
-  color: inherit;
-}
-.note-text::placeholder { color: rgba(0, 0, 0, 0.35); }
-
-/* Botão de nova nota (Panel top-left do xyflow) */
-.add-note-button {
-  padding: 4px 10px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--bg-bar);
-  color: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.add-note-button:hover { border-color: var(--accent); }
-
-/* ---- Canvas snapshot placeholder (zoom-out mode) ---- */
-.canvas-pane__snapshot {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  background: var(--bg);
-  opacity: 0.6;
-}
-
-.canvas-pane__snapshot-label {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 90%;
-}
-
-.canvas-pane__snapshot-meta {
-  font-size: var(--text-2xs);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--text-dim);
-}
-
-/* xyflow node wrapper — disable the default border/shadow; our .canvas-pane handles it */
-.canvas-container .react-flow__node {
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  padding: 0;
-}
-
-.canvas-container .react-flow__node-canvasPane {
-  width: fit-content;
-  height: fit-content;
-}
-
 /* ---- Voice: WorkspaceBar mic pill ---- */
 .workspace-bar__btn--voice {
   display: inline-flex;
@@ -563,7 +273,15 @@
   box-shadow:
     0 0 34px rgba(110, 168, 254, 0.45),
     inset 0 0 28px rgba(110, 168, 254, 0.34);
+  animation: none;
+}
+
+.voice-hud--listening .voice-orb,
+.voice-hud--transcribing .voice-orb,
+.voice-hud--routing .voice-orb,
+.voice-hud--speaking .voice-orb {
   animation: voice-orb-breathe 2.2s ease-in-out infinite;
+  will-change: transform, opacity;
 }
 
 .voice-hud--listening .voice-orb {
@@ -600,21 +318,21 @@
   inset: 2%;
   border-top-color: rgba(247, 248, 248, 0.86);
   border-right-color: transparent;
-  animation: voice-orb-spin 6s linear infinite;
+  animation: none;
 }
 
 .voice-orb__ring--middle {
   inset: 15%;
   border-bottom-color: rgba(247, 248, 248, 0.72);
   border-left-color: transparent;
-  animation: voice-orb-spin 4.4s linear infinite reverse;
+  animation: none;
 }
 
 .voice-orb__ring--inner {
   inset: 30%;
   border-top-color: transparent;
   border-right-color: rgba(247, 248, 248, 0.7);
-  animation: voice-orb-spin 2.8s linear infinite;
+  animation: none;
 }
 
 .voice-orb__core {
@@ -622,7 +340,36 @@
   background:
     radial-gradient(circle, rgba(247, 248, 248, 0.98), rgba(110, 168, 254, 0.8) 48%, transparent 70%);
   box-shadow: 0 0 22px rgba(110, 168, 254, 0.72);
+  animation: none;
+}
+
+.voice-hud--listening .voice-orb__ring--outer,
+.voice-hud--transcribing .voice-orb__ring--outer,
+.voice-hud--routing .voice-orb__ring--outer,
+.voice-hud--speaking .voice-orb__ring--outer {
+  animation: voice-orb-spin 6s linear infinite;
+}
+
+.voice-hud--listening .voice-orb__ring--middle,
+.voice-hud--transcribing .voice-orb__ring--middle,
+.voice-hud--routing .voice-orb__ring--middle,
+.voice-hud--speaking .voice-orb__ring--middle {
+  animation: voice-orb-spin 4.4s linear infinite reverse;
+}
+
+.voice-hud--listening .voice-orb__ring--inner,
+.voice-hud--transcribing .voice-orb__ring--inner,
+.voice-hud--routing .voice-orb__ring--inner,
+.voice-hud--speaking .voice-orb__ring--inner {
+  animation: voice-orb-spin 2.8s linear infinite;
+}
+
+.voice-hud--listening .voice-orb__core,
+.voice-hud--transcribing .voice-orb__core,
+.voice-hud--routing .voice-orb__core,
+.voice-hud--speaking .voice-orb__core {
   animation: voice-core-pulse 1.45s ease-in-out infinite;
+  will-change: transform, opacity;
 }
 
 .voice-orb__scan {
@@ -668,6 +415,15 @@
   50% {
     transform: scale(1.08);
     opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-hud .voice-orb,
+  .voice-hud .voice-orb__ring,
+  .voice-hud .voice-orb__core,
+  .voice-hud .voice-orb__scan {
+    animation: none;
   }
 }
 

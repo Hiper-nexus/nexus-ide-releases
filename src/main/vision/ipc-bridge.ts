@@ -25,6 +25,7 @@ import {
   getVisionSettings,
   setVisionSettingsPatch,
 } from '../persistence/settings-store';
+import { readFocusedNexusAxTree } from './ax-tree-reader';
 
 interface VisionIpcDeps {
   capture: () => Promise<ScreenCaptureResultInternal>;
@@ -47,7 +48,7 @@ let activeImageConsentToken: string | null = null;
 function defaultDeps(overrides: Partial<VisionIpcDeps>): VisionIpcDeps {
   return {
     capture: captureNexusWindow,
-    readAxTree: readFocusedAxTree,
+    readAxTree: readFocusedNexusAxTree,
     ocr: ocrImage,
     getScreenPermissionStatus,
     getVisionSettings,
@@ -111,27 +112,6 @@ function broadcast(channel: string, payload?: unknown): void {
     const wc = win.webContents;
     if (wc.isDestroyed() || wc.isCrashed()) continue;
     wc.send(channel, payload);
-  }
-}
-
-async function readFocusedAxTree(): Promise<AxNode> {
-  const focused = BrowserWindow.getFocusedWindow();
-  if (!focused || focused.isDestroyed()) {
-    throw new Error('Nenhuma janela ativa para extrair AX tree.');
-  }
-
-  const wc = focused.webContents;
-  if (wc.isDestroyed() || wc.isCrashed()) {
-    throw new Error('WebContents não disponível.');
-  }
-
-  try {
-    const result = await wc.executeJavaScript(
-      'window.nexus?.vision?.getAxTree()',
-    );
-    return result as AxNode;
-  } catch {
-    throw new Error('Falha ao extrair AX tree do renderer.');
   }
 }
 

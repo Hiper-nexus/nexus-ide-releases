@@ -30,6 +30,7 @@ function snapshotPanes(): PaneRegistryEntry[] {
     kind: pane.kind,
     adapterId: pane.adapterId,
     model: pane.model,
+    accountId: pane.accountId,
     state: paneStates.get(pane.id),
   }));
 }

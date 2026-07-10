@@ -24,8 +24,13 @@ export function buildControlArgs(
   const control = adapter.control ?? {};
 
   const perm = control.permission;
-  const mode = choice.permissionMode ?? perm?.default ?? '';
-  if (perm && mode) {
+  const mode = choice.permissionMode ?? '';
+  if (perm && !mode) {
+    // An explicit safe baseline wins over user-level CLI configuration. This
+    // keeps a globally configured danger-full-access/bypass from leaking into
+    // Nexus panes when the Nexus setting says "Padrão seguro".
+    out.push(...(perm.safe ?? []));
+  } else if (perm && mode) {
     // "yolo" always maps to the standalone full-auto args when the adapter
     // declares them; otherwise fall back to the arg+value mode.
     if (mode === 'yolo' && perm.yolo.length > 0) {
@@ -58,11 +63,8 @@ export function availablePermissionModes(adapter: CliPtyAdapter): string[] {
   return modes;
 }
 
-/** Product default: run providers hands-free unless the user opts back out. */
-export function defaultPermissionMode(adapter: CliPtyAdapter): string {
-  const modes = availablePermissionModes(adapter);
-  if (modes.includes('yolo')) return 'yolo';
-  if (modes.includes('bypass')) return 'bypass';
+/** Product default: safe baseline; full-auto is an explicit confirmed opt-in. */
+export function defaultPermissionMode(_adapter: CliPtyAdapter): string {
   return '';
 }
 

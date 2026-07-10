@@ -63,6 +63,7 @@ const idleDirty = new Set<string>();
 const lastIdleDeliveryAt = new Map<string, number>();
 const lastIdleDeliveryText = new Map<string, string>();
 const deliveryCounts = new Map<string, number>();
+const lastDeliveryAt = new Map<string, number>();
 const guard = new InjectionGuard();
 const hub = new ChangeHub();
 let tapsInstalled = false;
@@ -77,6 +78,7 @@ function clearPipeState(pipeId: string): void {
   lastIdleDeliveryAt.delete(pipeId);
   lastIdleDeliveryText.delete(pipeId);
   deliveryCounts.delete(pipeId);
+  lastDeliveryAt.delete(pipeId);
 }
 
 /**
@@ -139,6 +141,7 @@ function flushQueue(pipeId: string): void {
   }
   if (delivered > 0) {
     deliveryCounts.set(pipeId, (deliveryCounts.get(pipeId) ?? 0) + delivered);
+    lastDeliveryAt.set(pipeId, Date.now());
     hub.emit();
   }
   if (queue.length > 0) scheduleFlush(pipeId);
@@ -232,6 +235,7 @@ function deliverIdle(pipe: Pipe, sourceSessionId: string): void {
     return;
   }
   deliveryCounts.set(pipe.id, (deliveryCounts.get(pipe.id) ?? 0) + 1);
+  lastDeliveryAt.set(pipe.id, now);
   hub.emit();
   // Enter arrives as a separate write so TUIs treat it as a submit keypress.
   setTimeout(() => {
@@ -336,6 +340,7 @@ export function listPipes(): Pipe[] {
   return [...pipes.values()].map((pipe) => ({
     ...pipe,
     deliveryCount: deliveryCounts.get(pipe.id) ?? 0,
+    lastDeliveredAt: lastDeliveryAt.get(pipe.id),
   }));
 }
 

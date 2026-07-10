@@ -1,0 +1,198 @@
+/* Settings controls that span multiple sections: accessibility, native scroll,
+   audio routing and provider-agnostic squad orchestration. */
+
+.settings-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Restore the operating-system scrollbar on this long-form control surface. */
+.settings__drawer,
+.settings__drawer * {
+  scrollbar-color: auto;
+  scrollbar-width: auto;
+}
+
+.settings__drawer::-webkit-scrollbar,
+.settings__drawer::-webkit-scrollbar-track,
+.settings__drawer::-webkit-scrollbar-thumb,
+.settings__drawer::-webkit-scrollbar-thumb:hover,
+.settings__drawer::-webkit-scrollbar-corner,
+.settings__drawer *::-webkit-scrollbar,
+.settings__drawer *::-webkit-scrollbar-track,
+.settings__drawer *::-webkit-scrollbar-thumb,
+.settings__drawer *::-webkit-scrollbar-thumb:hover,
+.settings__drawer *::-webkit-scrollbar-corner {
+  all: revert;
+}
+
+.settings-input {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: var(--text-md);
+  padding: 7px 9px;
+  font-family: var(--font-mono);
+}
+
+.settings-input:focus-visible,
+.settings-textarea:focus-visible,
+.settings-btn:focus-visible,
+.settings-range:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-color: var(--accent);
+}
+
+.settings-link {
+  color: var(--accent);
+  font: inherit;
+  text-decoration: none;
+}
+
+.settings-link:hover {
+  text-decoration: underline;
+}
+
+.settings-link:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.settings-input--narrow {
+  flex: 0 0 110px;
+}
+
+.settings-range {
+  accent-color: var(--accent);
+}
+
+.settings-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.settings-row .settings-input {
+  flex: 1;
+}
+
+.settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.settings-audio {
+  margin: 0 0 18px;
+  padding: 14px 0 2px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-audio__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.settings-audio__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.settings-audio__summary {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.settings-audio__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+}
+
+.settings-advanced-field {
+  margin: -6px 0 18px;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.settings-advanced-field summary {
+  width: fit-content;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.settings-advanced-field[open] summary {
+  color: var(--text);
+}
+
+.settings-orchestrator {
+  margin: 0 0 18px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-orchestrator__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.settings-orchestrator__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.settings-orchestrator__summary {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.settings-orchestrator__warning {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(229, 192, 123, 0.42);
+  border-radius: var(--radius-md);
+  background: rgba(229, 192, 123, 0.07);
+  color: var(--warn);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.settings-orchestrator__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+@media (max-width: 720px) {
+  .settings-audio__head,
+  .settings-orchestrator__head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

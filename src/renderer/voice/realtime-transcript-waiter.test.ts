@@ -93,4 +93,22 @@ describe('RealtimeTranscriptWaiter (BUG A)', () => {
     waiter.resetQueued();
     expect(waiter.hasQueued()).toBe(false);
   });
+
+  it('rejects a late final from the previous turn', async () => {
+    const { deps } = fakeDeps();
+    const waiter = new RealtimeTranscriptWaiter(deps);
+    waiter.beginTurn('turn-1');
+    const stale = waiter.wait(4_800, 'turn-1');
+    waiter.beginTurn('turn-2');
+    await expect(stale).resolves.toEqual({ text: null, superseded: true });
+
+    const current = waiter.wait(4_800, 'turn-2');
+    expect(waiter.deliver('turno antigo', 'turn-1')).toBe(true);
+    expect(waiter.hasPending()).toBe(true);
+    expect(waiter.deliver('turno atual', 'turn-2')).toBe(true);
+    await expect(current).resolves.toEqual({
+      text: 'turno atual',
+      superseded: false,
+    });
+  });
 });

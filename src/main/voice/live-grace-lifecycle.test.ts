@@ -119,7 +119,6 @@ describe('LiveTransportController P4 grace lifecycle', () => {
       const session = new JarvisLiveSession(() => {}, () => 1000);
       session.setEnabled(true);
       session.start({ reason: 'manual' });
-      // Fresh clock so lastServerMsgAt from connect is not stale vs Date.now().
       let now = 1_000;
       const controller = new LiveTransportController(() => {}, session, () => now);
 
@@ -129,7 +128,7 @@ describe('LiveTransportController P4 grace lifecycle', () => {
       controller.onStop();
       expect(controller.inGrace).toBe(true);
 
-      now = 2_000; // still within GRACE_STALE_SERVER_MS
+      now = 2_000;
       await controller.onStart();
       expect(provider.connect).toHaveBeenCalledTimes(1);
       expect(controller.inGrace).toBe(false);
@@ -140,7 +139,7 @@ describe('LiveTransportController P4 grace lifecycle', () => {
     });
   });
 
-  it('onStart during stale grace forces a fresh connect', async () => {
+  it('reuses a ready socket after a long quiet period instead of treating silence as stale', async () => {
     const provider = fakeProvider(async () => {});
     await withGeminiMocks(provider, async (LiveTransportController) => {
       const session = new JarvisLiveSession(() => {}, () => 1000);
@@ -154,9 +153,14 @@ describe('LiveTransportController P4 grace lifecycle', () => {
       controller.onStop();
       expect(controller.inGrace).toBe(true);
 
-      now = 1_000 + 8_001; // past GRACE_STALE_SERVER_MS
+      now = 61_000;
       await controller.onStart();
-      expect(provider.connect).toHaveBeenCalledTimes(2);
+      controller.contextIn('[wake] diga Olá.');
+
+      expect(provider.connect).toHaveBeenCalledTimes(1);
+      expect(provider.close).not.toHaveBeenCalled();
+      expect(provider.interrupt).not.toHaveBeenCalled();
+      expect(provider.sendText).toHaveBeenCalledWith('[wake] diga Olá.');
       expect(controller.inGrace).toBe(false);
     });
   });
@@ -186,8 +190,6 @@ describe('LiveTransportController P4 grace lifecycle', () => {
       const controller = new LiveTransportController(() => {}, session);
 
       await controller.onStart();
-      provider.fireRoleTranscript?.({ role: 'user', text: 'abre o terminal', final: true });
-      // fireRoleTranscript may not exist on this fake — record via public API
       controller.recordLiveHistory('user', 'abre o terminal');
       controller.recordLiveHistory('assistant', 'Abrindo o terminal, patrão.');
       expect(controller.liveHistory).toHaveLength(2);

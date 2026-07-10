@@ -86,7 +86,15 @@ export function proposeRecipes(workspacePath?: string): RecipeSuggestion[] {
       title: 'Web app shipping squad',
       stacks,
       agents: ['architect', 'frontend', 'reviewer'],
-      tools: ['nexus_preview_start', 'nexus_browser_open', 'nexus_browser_screenshot'],
+      tools: [
+        'nexus_preview_start',
+        'nexus_browser_open',
+        'nexus_browser_read',
+        'nexus_browser_click',
+        'nexus_browser_fill',
+        'nexus_browser_wait',
+        'nexus_browser_screenshot',
+      ],
       gaps: [],
     });
   }

@@ -11,6 +11,7 @@ import {
   type Connection,
   type NodeTypes,
   type Viewport,
+  type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useLayoutStore } from '../state/layout-store';
@@ -22,6 +23,7 @@ import {
   CanvasPaneNode,
   type CanvasPaneNodeData,
 } from './CanvasPaneNode';
+import { ensureReadableCanvasSize } from './canvas-pane-layout';
 import { StickyNoteNode } from './StickyNoteNode';
 import { AddNoteButton } from './AddNoteButton';
 import {
@@ -32,6 +34,14 @@ import {
 import { useNotesStore, useNotesController } from '../state/notes-store';
 import { usePipeStore, usePipeController } from '../state/pipe-store';
 import type { CanvasNodeLayout, PaneModel } from '../../shared/types';
+import {
+  PIPE_ACTIVITY_MOTION_MS,
+  isPipeRecentlyActive,
+} from './pipe-motion';
+import { useSessionStateStore } from '../state/session-state-store';
+import { useOrchStore } from '../state/orch-store';
+import { useMissionWizardStore } from '../state/mission-wizard-store';
+import { PixelIcon } from './PixelIcon';
 
 const NODE_TYPES: NodeTypes = {
   canvasPane: CanvasPaneNode,
@@ -47,18 +57,19 @@ function buildNode(
   layout: CanvasNodeLayout,
   focusedPaneId: string | null,
 ): Node<CanvasPaneNodeData> {
+  const readableSize = ensureReadableCanvasSize(layout.size);
   return {
     id: pane.id,
     type: 'canvasPane',
     position: layout.position,
-    width: layout.size.width,
-    height: layout.size.height,
+    width: readableSize.width,
+    height: readableSize.height,
     zIndex: pane.id === focusedPaneId ? 1000 : layout.z,
     dragHandle: '.toolbar, .canvas-pane__snapshot',
     data: { pane },
     // Prevent xyflow from auto-measuring (we control dimensions explicitly).
-    measured: { width: layout.size.width, height: layout.size.height },
-    style: { width: layout.size.width, height: layout.size.height },
+    measured: { width: readableSize.width, height: readableSize.height },
+    style: { width: readableSize.width, height: readableSize.height },
   };
 }
 
@@ -71,6 +82,92 @@ function buildNodes(
     const layout = layouts[pane.id] ?? defaultCanvasLayout(i);
     return buildNode(pane, layout, focusedPaneId);
   });
+}
+
+interface CanvasCommandBarProps {
+  paneCount: number;
+  busyCount: number;
+  startingCount: number;
+  unavailableCount: number;
+  activeMissionCount: number;
+  pipeCount: number;
+  onCenter(): void;
+  onAddTerminal(): void;
+  onStartMission(): void;
+}
+
+function shouldIgnoreCanvasShortcut(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest(
+      'input, textarea, select, button, [contenteditable="true"], .term-host, .browser-pane',
+    ) !== null
+  );
+}
+
+function CanvasCommandBar({
+  paneCount,
+  busyCount,
+  startingCount,
+  unavailableCount,
+  activeMissionCount,
+  pipeCount,
+  onCenter,
+  onAddTerminal,
+  onStartMission,
+}: CanvasCommandBarProps) {
+  const activity =
+    busyCount > 0
+      ? `${busyCount} trabalhando`
+      : unavailableCount > 0
+        ? `${unavailableCount} requer atenção`
+        : startingCount > 0
+          ? `${startingCount} iniciando`
+          : 'todos prontos';
+
+  return (
+    <div className="canvas-command" aria-label="Estado e ações do canvas">
+      <div className="canvas-command__state" aria-live="polite">
+        <span
+          className={`canvas-command__signal ${busyCount > 0 ? 'canvas-command__signal--live' : ''}`}
+          aria-hidden="true"
+        />
+        <strong>{activity}</strong>
+        <span>
+          {paneCount} pane{paneCount === 1 ? '' : 's'}
+        </span>
+        {activeMissionCount > 0 && (
+          <span>
+            {activeMissionCount} miss{activeMissionCount === 1 ? 'ão ativa' : 'ões ativas'}
+          </span>
+        )}
+        {unavailableCount > 0 && busyCount > 0 && (
+          <span className="canvas-command__attention">
+            {unavailableCount} requer atenção
+          </span>
+        )}
+        {pipeCount > 0 && (
+          <span>
+            {pipeCount} conex{pipeCount === 1 ? 'ão' : 'ões'}
+          </span>
+        )}
+      </div>
+      <div className="canvas-command__actions">
+        <button type="button" onClick={onCenter} title="Centralizar todos os panes (F)">
+          <PixelIcon name="canvas" size={10} />
+          Centralizar <kbd>F</kbd>
+        </button>
+        <button type="button" onClick={onAddTerminal}>
+          <PixelIcon name="terminal" size={10} />
+          Terminal
+        </button>
+        <button type="button" className="canvas-command__primary" onClick={onStartMission}>
+          <PixelIcon name="mission" size={10} />
+          Nova missão
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -92,6 +189,10 @@ export function CanvasView() {
   const canvasViewport = useLayoutStore((s) => s.canvasViewport);
   const updateCanvasNodeLayout = useLayoutStore((s) => s.updateCanvasNodeLayout);
   const setCanvasViewport = useLayoutStore((s) => s.setCanvasViewport);
+  const addShellPane = useLayoutStore((s) => s.addShellPane);
+  const paneStates = useSessionStateStore((s) => s.paneStates);
+  const paneMissions = useOrchStore((s) => s.paneMissions);
+  const openMissionWizard = useMissionWizardStore((s) => s.openForMission);
 
   // Sticky notes + pipes (each hydrates once and live-updates from main).
   useNotesController();
@@ -112,6 +213,70 @@ export function CanvasView() {
   const [nodes, setNodes] = useState<Node[]>(() =>
     buildNodes(panes, canvasNodeLayouts, focusedPaneId),
   );
+  const flowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null);
+  const [pipeMotionNow, setPipeMotionNow] = useState(() => Date.now());
+  const busyCount = panes.filter((pane) => paneStates.get(pane.id) === 'busy').length;
+  const startingCount = panes.filter((pane) => {
+    if (pane.kind === 'browser') return false;
+    const state = paneStates.get(pane.id);
+    return state === undefined || state === 'spawning';
+  }).length;
+  const unavailableCount = panes.filter((pane) => {
+    const state = paneStates.get(pane.id);
+    return state === 'exited' || state === 'hibernated';
+  }).length;
+  const activeMissionCount = new Set(Object.values(paneMissions)).size;
+
+  const centerPanes = useCallback(() => {
+    const reduceMotion = window.matchMedia?.(
+      '(prefers-reduced-motion: reduce)',
+    ).matches;
+    void flowRef.current?.fitView({
+      padding: 0.12,
+      duration: reduceMotion ? 0 : 180,
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.key.toLowerCase() !== 'f' ||
+        shouldIgnoreCanvasShortcut(event.target)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      centerPanes();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [centerPanes]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const settleExpiredMotion = () => {
+      const now = Date.now();
+      setPipeMotionNow(now);
+      const remaining = pipes
+        .map((pipe) =>
+          pipe.lastDeliveredAt === undefined
+            ? 0
+            : pipe.lastDeliveredAt + PIPE_ACTIVITY_MOTION_MS - now + 1,
+        )
+        .filter((delay) => delay > 0);
+      if (remaining.length > 0) {
+        timer = setTimeout(settleExpiredMotion, Math.min(...remaining));
+      }
+    };
+    settleExpiredMotion();
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [pipes]);
 
   // Sync when pane set changes (panes added or removed). Note nodes live in the
   // same array and must be preserved across a pane-set rebuild.
@@ -210,13 +375,13 @@ export function CanvasView() {
           id: p.id,
           source: p.sourcePaneId,
           target: p.targetPaneId,
-          animated: p.mode === 'stream' || count > 0,
+          animated: isPipeRecentlyActive(p.lastDeliveredAt, pipeMotionNow),
           label: (p.mode === 'stream' ? 'stream' : 'ao ficar idle') + badge,
           style: { stroke: 'var(--accent)', strokeWidth: 2 },
           labelStyle: { fill: 'var(--text-dim)', fontSize: 10 },
         };
       }),
-    [pipes],
+    [pipes, pipeMotionNow],
   );
 
   const onConnect = useCallback(
@@ -238,6 +403,17 @@ export function CanvasView() {
 
   return (
     <div className="canvas-container">
+      <CanvasCommandBar
+        paneCount={panes.length}
+        busyCount={busyCount}
+        startingCount={startingCount}
+        unavailableCount={unavailableCount}
+        activeMissionCount={activeMissionCount}
+        pipeCount={pipes.length}
+        onCenter={centerPanes}
+        onAddTerminal={addShellPane}
+        onStartMission={openMissionWizard}
+      />
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -258,8 +434,11 @@ export function CanvasView() {
         nodesConnectable
         elementsSelectable={false}
         deleteKeyCode={null}
+        onInit={(instance) => {
+          flowRef.current = instance;
+        }}
       >
-        <Background gap={20} size={1.4} color="var(--border-strong)" />
+        <Background gap={28} size={1} color="var(--border-strong)" />
         <AddNoteButton />
         <MiniMap
           nodeColor="rgba(110, 168, 254, 0.45)"

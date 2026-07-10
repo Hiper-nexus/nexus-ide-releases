@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { writeJsonFileAtomic } from '../persistence/atomic-json-file';
 
 /**
  * Harness Enrich — a passada de LLM que transforma o arsenal instalado
@@ -22,10 +23,15 @@ export interface EnrichableItem {
   kind: 'agent' | 'skill';
 }
 
-export const ENRICH_CHUNK_SIZE = 40;
+export const ENRICH_CHUNK_SIZE = 16;
+const ENRICH_RETRY_CHUNK_SIZE = 8;
 const BLURB_MAX = 160;
 const WHEN_MAX = 120;
 const TIERS: HarnessTier[] = ['scout', 'builder', 'reviewer'];
+const REVIEWER_NAME_RE =
+  /(?:review|audit|security|secure|vulnerab|quality|\bqa\b|test|lint|debug|compliance|critic|verify|validation)/i;
+const SCOUT_NAME_RE =
+  /(?:research|search|explor|discover|investigat|analysis|analyz|map|architect|planner|strategy|docs?|knowledge|context)/i;
 
 const ENRICH_SYSTEM = `Você classifica componentes de um arsenal de agentes de
 IA (agents e skills instalados) na topologia de 3 papéis:
@@ -108,6 +114,27 @@ export function mergeEnriched(
   return { version: 1, updatedAt: now, items: [...byKey.values()] };
 }
 
+function fallbackEnrichedItem(item: EnrichableItem): EnrichedItem {
+  const readableName = item.name.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const tier: HarnessTier = REVIEWER_NAME_RE.test(readableName)
+    ? 'reviewer'
+    : SCOUT_NAME_RE.test(readableName)
+      ? 'scout'
+      : 'builder';
+  const purpose =
+    tier === 'reviewer'
+      ? 'revisão, validação e controle de qualidade'
+      : tier === 'scout'
+        ? 'pesquisa, análise e descoberta de contexto'
+        : 'execução e construção especializada';
+  return {
+    ...item,
+    tier,
+    blurb: `${readableName}: ${purpose}.`.slice(0, BLURB_MAX),
+    whenToUse: `Quando a missão exigir ${purpose}.`.slice(0, WHEN_MAX),
+  };
+}
+
 export interface RunEnrichOptions {
   chunkSize?: number;
   prev?: EnrichedCatalog | null;
@@ -124,19 +151,56 @@ export async function runHarnessEnrich(
   opts: RunEnrichOptions = {},
 ): Promise<EnrichedCatalog> {
   const { chunkSize = ENRICH_CHUNK_SIZE, prev = null, now = Date.now } = opts;
+  const inventory = [
+    ...new Map(items.map((item) => [`${item.kind}:${item.name}`, item])).values(),
+  ];
   const fresh: EnrichedItem[] = [];
-  for (const chunk of chunkItems(items, chunkSize)) {
+  for (const chunk of chunkItems(inventory, chunkSize)) {
+    let parsed: EnrichedItem[] = [];
     try {
       const raw = await chat(buildEnrichMessages(chunk));
-      fresh.push(...parseEnrichResponse(raw, chunk));
+      parsed = parseEnrichResponse(raw, chunk);
+      fresh.push(...parsed);
     } catch (err) {
       console.warn(
-        '[harness] chunk de enriquecimento falhou (seguindo):',
+        '[harness] chunk de enriquecimento falhou (tentando lacunas):',
         err instanceof Error ? err.message : err,
       );
     }
+
+    // JSON truncado ou provider instável não pode deixar a maior parte do
+    // arsenal permanentemente sem anotação. Reenvia somente as lacunas, uma
+    // vez, em grupos menores e mergeia nomes exatos (sem loop infinito).
+    const covered = new Set(parsed.map((entry) => `${entry.kind}:${entry.name}`));
+    const missing = chunk.filter((entry) => !covered.has(`${entry.kind}:${entry.name}`));
+    for (const retryChunk of chunkItems(missing, ENRICH_RETRY_CHUNK_SIZE)) {
+      try {
+        const raw = await chat(buildEnrichMessages(retryChunk));
+        fresh.push(...parseEnrichResponse(raw, retryChunk));
+      } catch (err) {
+        console.warn(
+          '[harness] retry de enriquecimento falhou (seguindo):',
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
   }
-  return mergeEnriched(prev, fresh, now());
+  const covered = new Set(fresh.map((item) => `${item.kind}:${item.name}`));
+  for (const item of inventory) {
+    if (!covered.has(`${item.kind}:${item.name}`)) {
+      fresh.push(fallbackEnrichedItem(item));
+    }
+  }
+  const installed = new Set(
+    inventory.map((item) => `${item.kind}:${item.name}`),
+  );
+  const merged = mergeEnriched(prev, fresh, now());
+  return {
+    ...merged,
+    items: merged.items.filter((item) =>
+      installed.has(`${item.kind}:${item.name}`),
+    ),
+  };
 }
 
 /**
@@ -183,11 +247,7 @@ export function loadEnrichedCatalog(): EnrichedCatalog | null {
 }
 
 export function saveEnrichedCatalog(cat: EnrichedCatalog): void {
-  const file = enrichedFilePath();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(cat, null, 2));
-  fs.renameSync(tmp, file);
+  writeJsonFileAtomic(enrichedFilePath(), cat);
 }
 
 /**
@@ -204,7 +264,7 @@ export async function runHarnessEnrichWithBrain(): Promise<EnrichedCatalog> {
     .map((i) => ({ name: i.name, kind: i.kind as 'agent' | 'skill' }));
   const result = await runHarnessEnrich(
     items,
-    (messages) => chatViaBrainChain(messages, 3_000),
+    (messages) => chatViaBrainChain(messages, 4_000),
     { prev: loadEnrichedCatalog() },
   );
   saveEnrichedCatalog(result);

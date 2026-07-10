@@ -1,0 +1,93 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildMediaTools } from '../tools-media';
+
+const mocks = vi.hoisted(() => ({
+  workspaceRoot: vi.fn(() => '/authorized/workspace'),
+  generateImage: vi.fn(),
+  generateVideo: vi.fn(),
+  generateAudio: vi.fn(),
+  recordUsage: vi.fn(),
+}));
+
+vi.mock('../workspace-path', () => ({
+  activeWorkspaceRoot: mocks.workspaceRoot,
+}));
+vi.mock('../../media/media-generation', () => ({
+  generateImage: mocks.generateImage,
+  generateVideo: mocks.generateVideo,
+  generateAudio: mocks.generateAudio,
+}));
+vi.mock('../../media/media-providers', () => ({
+  listMediaProviders: () => [],
+}));
+vi.mock('../../media/media-keys', () => ({
+  hasMediaKey: () => false,
+  maskedMediaKey: () => null,
+}));
+vi.mock('../../usage/media-usage-store', () => ({
+  recordMediaUsage: mocks.recordUsage,
+}));
+
+const result = {
+  ok: true,
+  path: '/authorized/workspace/generated.png',
+  provider: 'google-image',
+  model: 'test-model',
+  kind: 'image',
+  estimatedCostUsd: 0,
+  durationMs: 1,
+};
+
+describe('media MCP tools', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.workspaceRoot.mockReturnValue('/authorized/workspace');
+    mocks.generateImage.mockResolvedValue(result);
+  });
+
+  it('forces confirmation for every generation tool', () => {
+    const tools = buildMediaTools();
+    for (const name of [
+      'nexus_image_generate',
+      'nexus_video_generate',
+      'nexus_audio_generate',
+    ]) {
+      expect(tools.find((tool) => tool.name === name)?.requiresConfirm).toBe(true);
+    }
+  });
+
+  it('binds generation to the canonical active workspace', async () => {
+    const image = buildMediaTools().find(
+      (tool) => tool.name === 'nexus_image_generate',
+    )!;
+    await image.handler({ prompt: 'safe prompt' }, fakeCtx());
+    expect(mocks.generateImage).toHaveBeenCalledWith(
+      expect.objectContaining({ baseDir: '/authorized/workspace' }),
+    );
+  });
+
+  it('fails closed when no authorized workspace is open', async () => {
+    mocks.workspaceRoot.mockImplementation(() => {
+      throw new Error('no workspace open');
+    });
+    const image = buildMediaTools().find(
+      (tool) => tool.name === 'nexus_image_generate',
+    )!;
+    await expect(
+      image.handler({ prompt: 'safe prompt' }, fakeCtx()),
+    ).rejects.toThrow(/no workspace open/);
+    expect(mocks.generateImage).not.toHaveBeenCalled();
+  });
+});
+
+function fakeCtx() {
+  return {
+    token: 'test',
+    label: 'test',
+    role: 'user' as const,
+    allowedTools: null,
+    allowedSkills: null,
+    stopAttempts: 0,
+    handoffSubmitted: false,
+  };
+}

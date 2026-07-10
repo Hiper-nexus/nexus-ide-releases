@@ -10,6 +10,19 @@ export interface McpPaneContext {
   orchestratorPaneId?: string | null;
 }
 
+export interface McpInvocationControl {
+  signal?: AbortSignal;
+  /** Invocation returned ok; a side effect may already be durable. */
+  onEffectMayHaveCommitted?: () => void;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = new Error('MCP invocation cancelled');
+  error.name = 'AbortError';
+  throw error;
+}
+
 /**
  * Map a JarvisAction to the corresponding MCP tool name and args.
  * Returns null for actions that must stay on the UI path (squads, panes, wizards).
@@ -42,6 +55,7 @@ export function mapActionToTool(
     case 'focus_next_pane':
     case 'focus_previous_pane':
     case 'focus_pane':
+    case 'read_pane':
     case 'close_pane':
       return null;
     case 'send_to_pane':
@@ -90,15 +104,29 @@ export async function mcpConfirm(
 export async function invokeMcpWithConfirm(
   tool: string,
   args: Record<string, unknown> = {},
+  control: McpInvocationControl = {},
 ): Promise<McpInvokeResult> {
+  throwIfAborted(control.signal);
   let result = await mcpInvoke(tool, args);
+  if (result.ok || result.effectMayHaveCommitted) {
+    control.onEffectMayHaveCommitted?.();
+  }
+  throwIfAborted(control.signal);
   if (result.ok) return result;
   if (result.denied && result.requiredConfirmation) {
+    throwIfAborted(control.signal);
     const confirm = await mcpConfirm(tool, args);
+    throwIfAborted(control.signal);
     if (!confirm.ok) {
       return { ok: false, tool, error: confirm.error ?? 'user_denied' };
     }
-    return mcpInvoke(tool, args);
+    throwIfAborted(control.signal);
+    result = await mcpInvoke(tool, args);
+    if (result.ok || result.effectMayHaveCommitted) {
+      control.onEffectMayHaveCommitted?.();
+    }
+    throwIfAborted(control.signal);
+    return result;
   }
   return result;
 }

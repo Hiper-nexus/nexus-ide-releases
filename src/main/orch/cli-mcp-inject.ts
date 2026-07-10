@@ -1,39 +1,76 @@
-import fs from 'node:fs';
-import path from 'node:path';
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  hasNexusMcpCapability,
+  type CliPtyAdapter,
+} from "../../shared/adapter-types";
+import {
+  purgeOwnedSessionRoot,
+  type ArtifactPurgeResult,
+} from "./ephemeral-artifact-purge";
 
 /**
  * Injeção REAL do servidor MCP embutido do Nexus nos CLIs não-Claude, para que
- * um worker Codex/AGY chame as tools `nexus_*` e submeta handoff
+ * workers Codex/AGY/OpenCode/Kimi/Grok chamem as tools `nexus_*` e submetam handoff
  * — não só receba env vars de consciência (gap da auditoria 2026-07-06 §4).
  *
- * - Codex: overrides `-c mcp_servers.nexus.*` no argv (streamable HTTP).
- * - AGY/Antigravity: `<cwd>/.gemini/settings.json` com `mcpServers.nexus`
- *   (merge atômico e idempotente; JSON inválido é preservado como backup).
+ * - Codex: overrides `-c mcp_servers.nexus_<random>.*` no argv (HTTP),
+ *   referenciando o bearer somente pela env efêmera do processo.
+ * - AGY/Antigravity: HOME-overlay privado por sessão com `mcp_config.json`
+ *   nos layouts atual e legado. O bearer nunca entra no workspace nem no
+ *   perfil compartilhado do usuário.
+ * - OpenCode: config inline oficial, com bearer resolvido da env da sessão.
+ * - Kimi/Grok: overlays privados dos respectivos homes de provider; os
+ *   configs referenciam `NEXUS_MCP_TOKEN` sem persistir o segredo.
  *
  * Claude e família (mcpAutoload) continuam pelo `--mcp-config` existente.
  */
 
-export type McpInjectionKind = 'codex' | 'gemini';
+export type McpInjectionKind = "codex" | "agy" | "opencode" | "kimi" | "grok";
+type NexusMcpAdapter = Pick<CliPtyAdapter, "quirks">;
+type NexusMcpAdapterLike = {
+  quirks: { mcpAutoload?: boolean; nexusMcp?: unknown };
+};
 
-/** Retorna o "sabor" de injeção do CLI, ou null quando não se aplica. */
-export function supportsMcpInjection(adapterId: string): McpInjectionKind | null {
-  switch (adapterId) {
-    case 'codex':
-      return 'codex';
-    case 'agy': // Antigravity usa o mesmo formato de settings do Gemini
-      return 'gemini';
-    default:
-      return null;
-  }
+/** Retorna o "sabor" de injeção não-autoload, ou null quando não se aplica. */
+export function supportsMcpInjection(
+  adapter: NexusMcpAdapter,
+): McpInjectionKind | null {
+  const integration = adapter.quirks.nexusMcp;
+  return integration === "codex" ||
+    integration === "agy" ||
+    integration === "opencode" ||
+    integration === "kimi" ||
+    integration === "grok"
+    ? integration
+    : null;
 }
 
-/** Overrides de config do Codex para um servidor MCP streamable-HTTP. */
-export function codexMcpArgs(url: string, token: string): string[] {
+/** Source of truth shared by spawn contracts and renderer metadata. */
+export function canUseNexusMcp(adapter: NexusMcpAdapterLike): boolean {
+  return hasNexusMcpCapability(adapter.quirks);
+}
+
+const CODEX_MCP_SERVER_RANDOM_BYTES = 6;
+const CODEX_MCP_TOKEN_ENV_VAR = "NEXUS_MCP_TOKEN";
+
+/**
+ * Overrides de config do Codex para um servidor MCP streamable-HTTP.
+ *
+ * O segundo argumento legado é intencionalmente ignorado para manter
+ * compatibilidade com callers durante o rollout. O segredo nunca entra no
+ * argv; o Codex lê o valor de `NEXUS_MCP_TOKEN` no ambiente do processo.
+ */
+export function codexMcpArgs(url: string, _legacyToken?: string): string[] {
+  const serverName =
+    `nexus_${randomBytes(CODEX_MCP_SERVER_RANDOM_BYTES).toString("hex")}`;
   return [
-    '-c',
-    `mcp_servers.nexus.url=${JSON.stringify(url)}`,
-    '-c',
-    `mcp_servers.nexus.http_headers.Authorization=${JSON.stringify(`Bearer ${token}`)}`,
+    "-c",
+    `mcp_servers.${serverName}.url=${JSON.stringify(url)}`,
+    "-c",
+    `mcp_servers.${serverName}.bearer_token_env_var=${JSON.stringify(CODEX_MCP_TOKEN_ENV_VAR)}`,
   ];
 }
 
@@ -47,7 +84,46 @@ export interface GeminiMcpFragment {
   };
 }
 
-export function geminiMcpFragment(url: string, token: string): GeminiMcpFragment {
+export interface AgyMcpFragment {
+  mcpServers: {
+    nexus: {
+      serverUrl: string;
+      headers: { Authorization: string };
+    };
+  };
+}
+
+export interface AgyMcpConfigOptions {
+  home?: string;
+  artifactRoot?: string;
+}
+
+export interface AgyMcpConfigResult {
+  homeDir: string;
+  geminiHomeDir: string;
+  configPaths: [string, string];
+}
+
+const activeAgyHomes = new Map<string, string>();
+
+export function purgeStaleAgyMcpConfigs(
+  options: AgyMcpConfigOptions = {},
+): ArtifactPurgeResult {
+  const home = path.resolve(options.home ?? os.homedir());
+  const artifactRoot = path.resolve(
+    options.artifactRoot ?? path.join(home, ".nexus", "ephemeral", "agy"),
+  );
+  return purgeOwnedSessionRoot(
+    artifactRoot,
+    activeAgyHomes.values(),
+    options.artifactRoot ? path.dirname(artifactRoot) : home,
+  );
+}
+
+export function geminiMcpFragment(
+  url: string,
+  token: string,
+): GeminiMcpFragment {
   return {
     mcpServers: {
       nexus: {
@@ -59,55 +135,220 @@ export function geminiMcpFragment(url: string, token: string): GeminiMcpFragment
   };
 }
 
+export function agyMcpFragment(url: string, token: string): AgyMcpFragment {
+  return {
+    mcpServers: {
+      nexus: {
+        serverUrl: url,
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    },
+  };
+}
+
 /** Merge puro: preserva o settings existente e injeta/atualiza mcpServers.nexus. */
 export function mergeGeminiSettings(
   existing: unknown,
   fragment: GeminiMcpFragment,
 ): Record<string, unknown> {
   const base =
-    existing && typeof existing === 'object'
+    existing && typeof existing === "object"
       ? { ...(existing as Record<string, unknown>) }
       : {};
   const prevServers =
-    base.mcpServers && typeof base.mcpServers === 'object'
+    base.mcpServers && typeof base.mcpServers === "object"
       ? (base.mcpServers as Record<string, unknown>)
       : {};
   base.mcpServers = { ...prevServers, nexus: fragment.mcpServers.nexus };
   return base;
 }
 
+function mergeAgyMcpConfig(
+  existing: unknown,
+  fragment: AgyMcpFragment,
+): Record<string, unknown> {
+  const base =
+    existing && typeof existing === "object"
+      ? { ...(existing as Record<string, unknown>) }
+      : {};
+  const previous =
+    base.mcpServers && typeof base.mcpServers === "object"
+      ? (base.mcpServers as Record<string, unknown>)
+      : {};
+  return {
+    ...base,
+    mcpServers: { ...previous, nexus: fragment.mcpServers.nexus },
+  };
+}
+
+function ensurePrivateDirectory(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
+}
+
+function readJson(file: string): unknown {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeJsonAtomic(file: string, value: unknown): void {
+  const tmp = path.join(
+    path.dirname(file),
+    `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`,
+  );
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(tmp, "wx", 0o600);
+    fs.writeFileSync(fd, JSON.stringify(value, null, 2), "utf8");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(tmp, file);
+    fs.chmodSync(file, 0o600);
+  } catch (error) {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Best effort; the original error remains authoritative.
+      }
+    }
+    fs.rmSync(tmp, { force: true });
+    throw error;
+  }
+}
+
+function linkDirectoryEntry(
+  entry: fs.Dirent,
+  sourcePath: string,
+  targetPath: string,
+): void {
+  if (process.platform !== "win32") {
+    fs.symlinkSync(sourcePath, targetPath);
+    return;
+  }
+  const isDirectory =
+    entry.isDirectory() || fs.statSync(sourcePath).isDirectory();
+  if (isDirectory) {
+    fs.symlinkSync(sourcePath, targetPath, "junction");
+    return;
+  }
+  try {
+    fs.linkSync(sourcePath, targetPath);
+  } catch {
+    fs.copyFileSync(sourcePath, targetPath);
+  }
+}
+
+function linkDirectoryEntries(
+  source: string,
+  target: string,
+  excluded: Set<string>,
+): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(source, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (excluded.has(entry.name)) continue;
+    const sourcePath = path.join(source, entry.name);
+    const targetPath = path.join(target, entry.name);
+    linkDirectoryEntry(entry, sourcePath, targetPath);
+  }
+}
+
+function buildAgyHomeOverlay(realHome: string, homeDir: string): void {
+  ensurePrivateDirectory(homeDir);
+  linkDirectoryEntries(realHome, homeDir, new Set([".gemini", ".nexus"]));
+
+  const realGemini = path.join(realHome, ".gemini");
+  const privateGemini = path.join(homeDir, ".gemini");
+  ensurePrivateDirectory(privateGemini);
+  linkDirectoryEntries(
+    realGemini,
+    privateGemini,
+    new Set(["config", "antigravity-cli"]),
+  );
+}
+
+function writeAgyConfigOverlay(
+  realHome: string,
+  homeDir: string,
+  relativeDir: string,
+  fragment: AgyMcpFragment,
+): string {
+  const sourceDir = path.join(realHome, ".gemini", relativeDir);
+  const targetDir = path.join(homeDir, ".gemini", relativeDir);
+  ensurePrivateDirectory(targetDir);
+  linkDirectoryEntries(sourceDir, targetDir, new Set(["mcp_config.json"]));
+
+  const sourceConfig = path.join(sourceDir, "mcp_config.json");
+  const targetConfig = path.join(targetDir, "mcp_config.json");
+  writeJsonAtomic(
+    targetConfig,
+    mergeAgyMcpConfig(readJson(sourceConfig), fragment),
+  );
+  return targetConfig;
+}
+
 /**
- * Edge: escreve `<cwd>/.gemini/settings.json` com o servidor nexus mesclado.
- * Atômico (tmp+rename); JSON ilegível é preservado como `.invalid-<ts>`.
- * Nunca lança — falha de injeção não impede o spawn.
+ * Prepara um HOME-overlay exclusivo para um processo AGY. O restante do HOME
+ * continua visível por symlink para preservar login, git, skills e histórico;
+ * somente os MCP configs são cópias privadas contendo o bearer desta sessão.
  */
-export function writeGeminiMcpConfig(
-  cwd: string,
+export function prepareAgyMcpConfig(
   url: string,
   token: string,
-  now: () => number = Date.now,
-): void {
+  options: AgyMcpConfigOptions = {},
+): AgyMcpConfigResult {
+  const realHome = path.resolve(options.home ?? os.homedir());
+  const artifactRoot = path.resolve(
+    options.artifactRoot ?? path.join(realHome, ".nexus", "ephemeral", "agy"),
+  );
+  const sessionKey = createHash("sha256")
+    .update(token)
+    .digest("hex")
+    .slice(0, 32);
+  const homeDir = path.join(artifactRoot, sessionKey);
+  cleanupAgyMcpConfig(token);
+  ensurePrivateDirectory(artifactRoot);
+  fs.rmSync(homeDir, { recursive: true, force: true });
+
   try {
-    const dir = path.join(cwd, '.gemini');
-    fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, 'settings.json');
-    let existing: unknown = {};
-    try {
-      const raw = fs.readFileSync(file, 'utf8');
-      try {
-        existing = JSON.parse(raw);
-      } catch {
-        fs.writeFileSync(`${file}.invalid-${now()}`, raw);
-        existing = {};
-      }
-    } catch {
-      existing = {};
-    }
-    const merged = mergeGeminiSettings(existing, geminiMcpFragment(url, token));
-    const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(merged, null, 2));
-    fs.renameSync(tmp, file);
-  } catch (err) {
-    console.warn('[orch] falha ao injetar MCP no AGY/Antigravity:', err);
+    buildAgyHomeOverlay(realHome, homeDir);
+    const fragment = agyMcpFragment(url, token);
+    const modern = writeAgyConfigOverlay(realHome, homeDir, "config", fragment);
+    const cli = writeAgyConfigOverlay(
+      realHome,
+      homeDir,
+      "antigravity-cli",
+      fragment,
+    );
+    activeAgyHomes.set(token, homeDir);
+    return {
+      homeDir,
+      geminiHomeDir: path.join(homeDir, ".gemini"),
+      configPaths: [modern, cli],
+    };
+  } catch (error) {
+    fs.rmSync(homeDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/** Remove somente os artefatos privados associados ao token informado. */
+export function cleanupAgyMcpConfig(token: string): void {
+  const homeDir = activeAgyHomes.get(token);
+  if (!homeDir) return;
+  activeAgyHomes.delete(token);
+  try {
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  } catch {
+    // Best effort on process/session teardown.
   }
 }

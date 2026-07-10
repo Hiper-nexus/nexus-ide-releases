@@ -47,6 +47,7 @@ import { useFailoverController } from './orch/failover-controller';
 import { Toasts } from './components/Toasts';
 import { useVoiceStore } from './voice/voice-store';
 import { UpdateNotifier } from './components/UpdateModal';
+import { requestPaneClose } from './terminal/pane-close-guard';
 
 /**
  * App root: hydrates the saved layout on boot and wires global keyboard
@@ -152,7 +153,7 @@ export function App() {
         useOrchStore.getState().toggleBoard();
         return;
       }
-      const { focusedPaneId, split, close, viewKind: vk } = useLayoutStore.getState();
+      const { focusedPaneId, split, viewKind: vk } = useLayoutStore.getState();
       if (!focusedPaneId) return;
 
       const key = e.key.toLowerCase();
@@ -161,7 +162,7 @@ export function App() {
         split(focusedPaneId, e.shiftKey ? 'column' : 'row');
       } else if (key === 'w') {
         e.preventDefault();
-        close(focusedPaneId);
+        requestPaneClose(focusedPaneId);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -220,7 +221,7 @@ export function App() {
         <OrchestrationPanel />
       </main>
       <OpsBoard />
-      <VoiceHud />
+      {!suppressBrowserPanes && <VoiceHud />}
       <VoiceSettings />
       <SettingsDrawer />
       <MissionWizard />

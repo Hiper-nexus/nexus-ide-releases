@@ -51,6 +51,52 @@ describe('voice-config-store', () => {
     const { store } = await loadStoreInTempHome();
     const config = store.loadVoiceConfig();
     expect(config.jarvisLive.transport).toBe('gemini-live');
+    expect(config.jarvisLive.liveModel).toBe('gemini-3.1-flash-live-preview');
+  });
+
+  it('migra somente o modelo Gemini Live 2.5 legado para o 3.1', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          transport: 'openai-realtime',
+          liveModel: 'gemini-2.5-flash-native-audio-preview-12-2025',
+        },
+      }),
+    );
+
+    const loaded = store.loadVoiceConfig();
+    const saved = JSON.parse(fs.readFileSync(file, 'utf-8')) as {
+      jarvisLive: { transport: string; liveModel: string };
+    };
+    expect(loaded.jarvisLive.liveModel).toBe('gemini-3.1-flash-live-preview');
+    expect(saved.jarvisLive.liveModel).toBe('gemini-3.1-flash-live-preview');
+    expect(saved.jarvisLive.transport).toBe('openai-realtime');
+  });
+
+  it('preserva um modelo Gemini Live customizado pelo usuário', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          liveModel: 'gemini-live-custom',
+        },
+      }),
+    );
+
+    expect(store.loadVoiceConfig().jarvisLive.liveModel).toBe('gemini-live-custom');
   });
 
   it('preserva o transporte escolhido pelo usuário (validador, sem coerção)', async () => {

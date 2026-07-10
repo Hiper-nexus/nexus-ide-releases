@@ -17,12 +17,18 @@ import type {
   JarvisRequest,
   JarvisReply,
   JarvisLiveInterruptEvent,
+  JarvisLiveAudioOutEvent,
+  JarvisLiveAudioPlaybackEvent,
+  JarvisLiveRescueRequest,
+  JarvisLiveRescueResult,
   JarvisLiveSayRequest,
   JarvisLiveStartRequest,
   JarvisLiveSmokeTestRequest,
+  JarvisLiveSmokeTestResult,
   JarvisLiveState,
   JarvisLiveStatusPatch,
   JarvisLiveToolEvent,
+  JarvisLiveToolCancellationEvent,
   JarvisLiveToolResultEvent,
   JarvisLiveTranscriptEvent,
   JarvisTranscriptAppendEvent,
@@ -44,6 +50,8 @@ import type {
   TodoStatus,
 } from './orch-types';
 import type {
+  AudioSettings,
+  AudioSettingsPatch,
   TerminalSettings,
   OrchSettings,
   TerminalSettingsPatch,
@@ -296,6 +304,8 @@ export interface PaneModel {
   adapterId?: string;
   /** The model selected for this agent pane (e.g. "claude-sonnet-4-5"). */
   model?: string;
+  /** Account pinned to this pane; absent means the provider's active/default. */
+  accountId?: string;
   /** Papel na missão (orquestração) — vira o badge de identidade do pane. */
   role?: 'orchestrator' | 'worker';
   /** Agente do squad operando este pane (ex.: "Frontend"). */
@@ -361,6 +371,8 @@ export interface SpawnRequest {
   adapterId?: string;
   /** Present when kind === 'cli-agent'. Falls back to adapter's default model. */
   model?: string;
+  /** Optional per-pane account; validated against adapter ownership in main. */
+  accountId?: string;
   /** Correlates an orchestration-requested spawn with its gate context. */
   orchRequestId?: string;
   /** Re-spawn continuing the previous conversation (adapter resumeArgs). */
@@ -424,7 +436,7 @@ export interface NexusApi {
   /** App-shell lifecycle signals to the main process. */
   app: {
     /** Tell main that React committed its first frame (mount watchdog). */
-    signalMounted(): void;
+    signalMounted(report?: { ok: boolean; error?: string }): void;
     /** Open an external http(s) URL in the OS browser. */
     openExternal(url: string): Promise<{ ok: boolean; error?: string }>;
     /** Inicia o login OAuth (nonce local + browser) no processo main. */
@@ -524,8 +536,11 @@ export interface NexusApi {
     liveStop(): Promise<JarvisLiveState>;
     liveHardRebuild(): Promise<JarvisLiveState>;
     liveHardTeardown(): Promise<JarvisLiveState>;
+    liveQuiesce(reason: string): Promise<JarvisLiveState>;
     liveEndTurn(): Promise<JarvisLiveState>;
-    liveSmokeTest(req: JarvisLiveSmokeTestRequest): Promise<JarvisLiveState>;
+    liveEndUserAudio(): Promise<JarvisLiveState>;
+    liveTurnBegin(turnId: string): void;
+    liveSmokeTest(req: JarvisLiveSmokeTestRequest): Promise<JarvisLiveSmokeTestResult>;
     liveSay(req: JarvisLiveSayRequest): Promise<JarvisLiveState>;
     liveStatus(patch: JarvisLiveStatusPatch): Promise<JarvisLiveState>;
     liveTranscript(event: Omit<JarvisLiveTranscriptEvent, 'sessionId' | 'at'>): void;
@@ -533,10 +548,14 @@ export interface NexusApi {
     liveInterrupt(reason: string): Promise<JarvisLiveInterruptEvent>;
     /** Mic PCM 16 kHz base64 → transporte realtime (no-op no Classic). */
     liveMicIn(b64: string): void;
+    /** Send one locally transcribed zero-frame turn back to Live, idempotently. */
+    liveRescueIn(req: JarvisLiveRescueRequest): Promise<JarvisLiveRescueResult>;
     /** Contexto de tela (texto) → sessão live realtime. */
     liveContextIn(text: string): void;
-    /** TTS PCM 24 kHz base64 do transporte realtime para tocar no renderer. */
-    onLiveAudioOut(cb: (b64: string) => void): Unsubscribe;
+    /** TTS PCM 24 kHz do transporte realtime para tocar no renderer. */
+    onLiveAudioOut(cb: (event: JarvisLiveAudioOutEvent) => void): Unsubscribe;
+    /** Evidência de que o WebAudio iniciou, falhou ou descartou um chunk Live. */
+    liveAudioPlayback(event: JarvisLiveAudioPlaybackEvent): void;
     onPttStart(cb: () => void): Unsubscribe;
     onPttToggle(cb: () => void): Unsubscribe;
     onPttStop(cb: () => void): Unsubscribe;
@@ -547,6 +566,7 @@ export interface NexusApi {
     onLiveTranscript(cb: (event: JarvisLiveTranscriptEvent) => void): Unsubscribe;
     onTranscriptAppend(cb: (event: JarvisTranscriptAppendEvent) => void): Unsubscribe;
     onLiveToolCall(cb: (event: JarvisLiveToolEvent) => void): Unsubscribe;
+    onLiveToolCancelled(cb: (event: JarvisLiveToolCancellationEvent) => void): Unsubscribe;
     onLiveToolResult(cb: (event: JarvisLiveToolResultEvent) => void): Unsubscribe;
     onLiveInterrupted(cb: (event: JarvisLiveInterruptEvent) => void): Unsubscribe;
   };
@@ -575,6 +595,7 @@ export interface NexusApi {
         paneId: string;
         adapterId: string;
         model?: string;
+        accountId?: string;
         cwd?: string;
         title?: string;
         agentName?: string;
@@ -640,6 +661,10 @@ export interface NexusApi {
     onChanged(cb: (settings: TerminalSettings) => void): Unsubscribe;
     orchGet(): Promise<OrchSettings>;
     orchSet(patch: Partial<OrchSettings>): Promise<OrchSettings>;
+    audioGet(): Promise<AudioSettings>;
+    audioSet(patch: AudioSettingsPatch): Promise<AudioSettings>;
+    onAudioChanged(cb: (audio: AudioSettings) => void): Unsubscribe;
+    listShells(): Promise<string[]>;
     uiGet(): Promise<UiSettings>;
     uiSet(patch: UiSettingsPatch): Promise<UiSettings>;
     onUiChanged(cb: (ui: UiSettings) => void): Unsubscribe;

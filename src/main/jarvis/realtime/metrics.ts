@@ -13,6 +13,8 @@ export interface JarvisMetricRecord {
   metric: JarvisRealtimeMetric;
   value: number;
   session_id: string;
+  /** Renderer turn token when the provider can correlate the event. */
+  turn_id?: string;
 }
 
 export interface JarvisMetricsLoggerOptions {
@@ -22,6 +24,7 @@ export interface JarvisMetricsLoggerOptions {
 
 interface TurnTiming {
   audioInAt: number;
+  hasAudioInput: boolean;
   firstTranscriptLogged: boolean;
   transcriptFinalAt: number | null;
   firstActionAt: number | null;
@@ -51,12 +54,18 @@ export class JarvisMetricsLogger {
     this.now = options.now ?? (() => new Date());
   }
 
-  log(metric: JarvisRealtimeMetric, value: number, sessionId: string): JarvisMetricRecord {
+  log(
+    metric: JarvisRealtimeMetric,
+    value: number,
+    sessionId: string,
+    turnId?: string,
+  ): JarvisMetricRecord {
     const record: JarvisMetricRecord = {
       ts: this.now().toISOString(),
       metric,
       value: Math.max(0, Math.round(value)),
       session_id: sessionId,
+      ...(turnId ? { turn_id: turnId } : {}),
     };
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
     fs.appendFileSync(this.filePath, `${JSON.stringify(record)}\n`, 'utf-8');
@@ -72,10 +81,12 @@ export class JarvisLatencyTracker {
     private readonly nowMs: () => number = Date.now,
   ) {}
 
-  markAudioIn(sessionId: string): void {
-    if (this.turns.has(sessionId)) return;
-    this.turns.set(sessionId, {
+  markAudioIn(sessionId: string, turnId?: string): void {
+    const key = this.turnKey(sessionId, turnId);
+    if (this.turns.has(key)) return;
+    this.turns.set(key, {
       audioInAt: this.nowMs(),
+      hasAudioInput: true,
       firstTranscriptLogged: false,
       transcriptFinalAt: null,
       firstActionAt: null,
@@ -85,13 +96,15 @@ export class JarvisLatencyTracker {
     });
   }
 
-  markTranscript(sessionId: string, final: boolean): void {
+  markTranscript(sessionId: string, final: boolean, turnId?: string): void {
     const now = this.nowMs();
-    const turn = this.turns.get(sessionId);
+    const key = this.turnKey(sessionId, turnId);
+    const turn = this.turns.get(key);
     if (!turn) {
       if (!final) return;
-      this.turns.set(sessionId, {
+      this.turns.set(key, {
         audioInAt: now,
+        hasAudioInput: false,
         firstTranscriptLogged: true,
         transcriptFinalAt: now,
         firstActionAt: null,
@@ -106,42 +119,60 @@ export class JarvisLatencyTracker {
         'audio_in_to_transcript_delta_ms',
         now - turn.audioInAt,
         sessionId,
+        turnId,
       );
       turn.firstTranscriptLogged = true;
     }
     if (final) {
       turn.transcriptFinalAt = now;
-      this.maybeLogTranscriptToAction(sessionId, turn);
-      this.maybeLogTranscriptToAudio(sessionId, turn);
+      this.maybeLogTranscriptToAction(sessionId, turn, turnId);
+      this.maybeLogTranscriptToAudio(sessionId, turn, turnId);
     }
   }
 
-  markAction(sessionId: string): void {
-    const turn = this.turns.get(sessionId);
+  markAction(sessionId: string, turnId?: string): void {
+    const turn = this.turns.get(this.turnKey(sessionId, turnId));
     if (!turn) return;
     if (turn.firstActionAt === null) {
       turn.firstActionAt = this.nowMs();
-      this.maybeLogTranscriptToAction(sessionId, turn);
+      this.maybeLogTranscriptToAction(sessionId, turn, turnId);
     }
   }
 
-  markAudioOut(sessionId: string): void {
-    const turn = this.turns.get(sessionId);
+  markAudioOut(sessionId: string, turnId?: string): void {
+    const turn = this.turns.get(this.turnKey(sessionId, turnId));
     if (!turn) return;
     if (turn.firstAudioOutAt === null) {
       turn.firstAudioOutAt = this.nowMs();
-      this.maybeLogTranscriptToAudio(sessionId, turn);
+      this.maybeLogTranscriptToAudio(sessionId, turn, turnId);
     }
   }
 
-  markResponseDone(sessionId: string): void {
-    const turn = this.turns.get(sessionId);
+  markResponseDone(sessionId: string, turnId?: string): void {
+    const key = this.turnKey(sessionId, turnId);
+    const turn = this.turns.get(key);
     if (!turn) return;
-    this.logger.log('roundtrip_ms', this.nowMs() - turn.audioInAt, sessionId);
-    this.turns.delete(sessionId);
+    if (turn.hasAudioInput) {
+      this.logger.log(
+        'roundtrip_ms',
+        this.nowMs() - turn.audioInAt,
+        sessionId,
+        turnId,
+      );
+    }
+    this.turns.delete(key);
   }
 
-  private maybeLogTranscriptToAudio(sessionId: string, turn: TurnTiming): void {
+  /** Drops an interrupted/obsolete turn without allowing it to leak into the next one. */
+  discard(sessionId: string, turnId?: string): void {
+    this.turns.delete(this.turnKey(sessionId, turnId));
+  }
+
+  private maybeLogTranscriptToAudio(
+    sessionId: string,
+    turn: TurnTiming,
+    turnId?: string,
+  ): void {
     if (turn.transcriptFinalAt === null || turn.firstAudioOutAt === null) return;
     if (turn.transcriptToAudioLogged) return;
     turn.transcriptToAudioLogged = true;
@@ -149,10 +180,15 @@ export class JarvisLatencyTracker {
       'transcript_final_to_audio_out_ms',
       turn.firstAudioOutAt - turn.transcriptFinalAt,
       sessionId,
+      turnId,
     );
   }
 
-  private maybeLogTranscriptToAction(sessionId: string, turn: TurnTiming): void {
+  private maybeLogTranscriptToAction(
+    sessionId: string,
+    turn: TurnTiming,
+    turnId?: string,
+  ): void {
     if (turn.transcriptFinalAt === null || turn.firstActionAt === null) return;
     if (turn.transcriptToActionLogged) return;
     turn.transcriptToActionLogged = true;
@@ -160,7 +196,12 @@ export class JarvisLatencyTracker {
       'transcript_final_to_action_ms',
       turn.firstActionAt - turn.transcriptFinalAt,
       sessionId,
+      turnId,
     );
+  }
+
+  private turnKey(sessionId: string, turnId?: string): string {
+    return `${sessionId}\u0000${turnId ?? ''}`;
   }
 }
 

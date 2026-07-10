@@ -1,8 +1,11 @@
 import path from 'node:path';
-import { BrowserWindow, ipcMain, session, shell } from 'electron';
+import { BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 import type { IpcMainEvent, WebContents } from 'electron';
 import { WINDOW_CHANNELS } from '../shared/channels';
-import { killSessionsFor } from './pty/pty-manager';
+import { killSessionsFor, liveSessionSummary } from './pty/pty-manager';
+import { closeNeedsConfirmation, isAppQuitAuthorized } from './close-authorization';
+import { isSmokeTest } from './smoke-core';
+import { RENDERER_PROTOCOL_ENTRY_URL } from './renderer-protocol';
 
 /**
  * Last-resort recovery screen: if React never mounts after repeated reloads (or
@@ -133,6 +136,7 @@ function registerCsp(devServerUrl: string | undefined): void {
 
 export function createMainWindow(): BrowserWindow {
   const devServerUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL;
+  const rendererUrl = devServerUrl ?? RENDERER_PROTOCOL_ENTRY_URL;
   registerExternalLinkIpc();
   registerCsp(devServerUrl);
 
@@ -161,6 +165,47 @@ export function createMainWindow(): BrowserWindow {
   // Capture the reference up front: inside the 'destroyed' handler the
   // `win.webContents` getter can already throw "Object has been destroyed".
   const wc = win.webContents;
+
+  let windowCloseAuthorized = false;
+  let windowClosePromptOpen = false;
+  win.on('close', (event) => {
+    const summary = liveSessionSummary(wc);
+    if (
+      !closeNeedsConfirmation({
+        sessionCount: summary.total,
+        authorized: windowCloseAuthorized || isAppQuitAuthorized(),
+        smokeTest: isSmokeTest(process.argv),
+      })
+    ) {
+      return;
+    }
+    event.preventDefault();
+    if (windowClosePromptOpen) return;
+    windowClosePromptOpen = true;
+    void dialog
+      .showMessageBox(win, {
+        type: 'warning',
+        title: 'Fechar o NexusIDE?',
+        message: `${summary.total} terminal${summary.total === 1 ? '' : 'is'} ainda em execução`,
+        detail:
+          summary.busy > 0
+            ? `${summary.busy} ainda estão trabalhando. Fechar a janela encerra esses processos e tarefas.`
+            : 'Fechar a janela encerra os processos desses panes.',
+        buttons: ['Cancelar', 'Fechar e encerrar processos'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      })
+      .then(({ response }) => {
+        windowClosePromptOpen = false;
+        if (response !== 1 || win.isDestroyed()) return;
+        windowCloseAuthorized = true;
+        win.close();
+      })
+      .catch(() => {
+        windowClosePromptOpen = false;
+      });
+  });
 
   // Boot watchdog state, shared by the load + mount phases below.
   let finished = false;
@@ -229,19 +274,9 @@ export function createMainWindow(): BrowserWindow {
   const load = () => {
     // Rejeições são esperadas durante o boot do Vite (ERR_ABORTED em reload
     // concorrente) — o watchdog cuida do retry; nunca deixar virar unhandled.
-    if (devServerUrl) {
-      win.loadURL(devServerUrl).catch((err) => {
-        console.warn('[window] load failed:', err);
-      });
-    } else {
-      win
-        .loadFile(
-          path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
-        )
-        .catch((err) => {
-          console.warn('[window] load failed:', err);
-        });
-    }
+    win.loadURL(rendererUrl).catch((err) => {
+      console.warn('[window] load failed:', err);
+    });
   };
   wc.on('did-fail-load', (_e, code, desc) => {
     if (win.isDestroyed()) return;

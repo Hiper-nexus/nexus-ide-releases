@@ -8,8 +8,9 @@ import { RealtimeTranscriptWaiter } from './realtime-transcript-waiter';
 import { TurnExecutionOwner } from './turn-execution-owner';
 import { ThrottledCounter } from '../../shared/live-flow-counter';
 import type { JarvisCaptureReason } from './jarvis-reply-loop';
-import type { JarvisTurn } from '../../shared/voice-ipc';
+import type { JarvisLiveAudioOutEvent, JarvisTurn } from '../../shared/voice-ipc';
 import { bindWakeSuppressor } from './voice-playback';
+import { subscribeAudioDevicePreferences } from './audio-device-preferences';
 
 export const PENDING_REALTIME_AUDIO_MAX_CHUNKS = 160;
 export const REALTIME_ACTION_BRIDGE_ENABLED = true;
@@ -24,12 +25,33 @@ export function ensureLivePlayer(): LiveAudioPlayer {
   return (livePlayer ??= new LiveAudioPlayer());
 }
 
+subscribeAudioDevicePreferences((next, previous) => {
+  if (next.inputDeviceId !== previous.inputDeviceId) {
+    void wakeMic.restartForDeviceChange().catch((error) => {
+      window.nexus.voice.logVoice({
+        level: 'error',
+        event: 'mic.deviceSwitchFailed',
+        msg: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+  if (next.outputDeviceId !== previous.outputDeviceId) {
+    void livePlayer?.setOutputDevice(next.outputDeviceId).catch((error) => {
+      window.nexus.voice.logVoice({
+        level: 'error',
+        event: 'audio.outputDeviceSwitchFailed',
+        msg: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+});
+
 export let realtimeTurnActive = false;
 export let suppressRealtimeAudioOut = false;
 export const realtimeTranscriptWaiter = new RealtimeTranscriptWaiter();
 export let pendingLiveStartSettle: Promise<void> | null = null;
 export let finishRealtimeCapture: (() => void) | null = null;
-export let pendingRealtimeAudioOut: string[] = [];
+export let pendingRealtimeAudioOut: JarvisLiveAudioOutEvent[] = [];
 export const realtimeAudioPlayedCounter = new ThrottledCounter(20, 2_000);
 export const realtimeAudioSuppressedCounter = new ThrottledCounter(20, 2_000);
 export let jarvisLastTurnAt = 0;
@@ -80,13 +102,13 @@ export function setLastRealtimeNativeToolAt(t: number): void {
 export function resetPendingRealtimeAudioOut(): void {
   pendingRealtimeAudioOut = [];
 }
-export function pushPendingRealtimeAudioOut(b64: string): void {
+export function pushPendingRealtimeAudioOut(event: JarvisLiveAudioOutEvent): void {
   if (pendingRealtimeAudioOut.length >= PENDING_REALTIME_AUDIO_MAX_CHUNKS) {
     pendingRealtimeAudioOut.shift();
   }
-  pendingRealtimeAudioOut.push(b64);
+  pendingRealtimeAudioOut.push(event);
 }
-export function takePendingRealtimeAudioOut(): string[] {
+export function takePendingRealtimeAudioOut(): JarvisLiveAudioOutEvent[] {
   const chunks = pendingRealtimeAudioOut;
   pendingRealtimeAudioOut = [];
   return chunks;

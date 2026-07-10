@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { isLikelyNoiseTranscript } from './voice-noise';
+import {
+  isLikelyNoiseTranscript,
+  isMediaBoilerplateTranscript,
+} from './voice-noise';
 
 describe('isLikelyNoiseTranscript', () => {
   it('drops the self-talk garbage captured off her own TTS tail', () => {
@@ -48,5 +51,20 @@ describe('isLikelyNoiseTranscript', () => {
     ]) {
       expect(isLikelyNoiseTranscript(t), t).toBe(false);
     }
+  });
+
+  it('drops the long combined YouTube boilerplate seen in production logs', () => {
+    const transcript =
+      'Obrigado por assistir, se inscreva no canal e ative o sininho para receber notificações de novos vídeos.';
+    expect(isMediaBoilerplateTranscript(transcript)).toBe(true);
+    expect(isLikelyNoiseTranscript(transcript)).toBe(true);
+  });
+
+  it('does not drop a real sentence that merely mentions one media phrase', () => {
+    expect(
+      isMediaBoilerplateTranscript(
+        'Troque no texto a frase obrigado por assistir pela nossa chamada principal',
+      ),
+    ).toBe(false);
   });
 });

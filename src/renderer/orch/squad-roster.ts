@@ -1,7 +1,7 @@
 import type { AdapterInfo } from '../../shared/types';
 import type { SquadAgent } from '../../shared/orch-types';
 
-const ORCHESTRATOR_CLI = 'claude';
+const LEGACY_ORCHESTRATOR_CLI = 'claude';
 
 const WORKER_CLI_ORDER = [
   'codex',
@@ -34,9 +34,13 @@ function sortWorkerCliIds(ids: string[]): string[] {
   });
 }
 
-export function workerCliPool(adapters: RosterAdapter[]): string[] {
+export function workerCliPool(
+  adapters: RosterAdapter[],
+  orchestratorAdapterId = LEGACY_ORCHESTRATOR_CLI,
+): string[] {
   const candidates = adapters.filter(
-    (adapter) => adapter.id !== ORCHESTRATOR_CLI && adapter.enabled !== false,
+    (adapter) =>
+      adapter.id !== orchestratorAdapterId && adapter.enabled !== false,
   );
   const installed = candidates.filter((adapter) => adapter.installed);
   const source = installed.length > 0 ? installed : candidates;
@@ -46,15 +50,16 @@ export function workerCliPool(adapters: RosterAdapter[]): string[] {
 export function balanceSquadRosterCli(
   agents: SquadAgent[],
   adapters: RosterAdapter[],
+  orchestratorAdapterId = LEGACY_ORCHESTRATOR_CLI,
 ): SquadAgent[] {
-  const pool = workerCliPool(adapters);
+  const pool = workerCliPool(adapters, orchestratorAdapterId);
   let workerIndex = 0;
 
   return agents.map((agent) => {
     if (agent.category === 'orchestrator') {
-      return agent.cli === ORCHESTRATOR_CLI
+      return agent.cli === orchestratorAdapterId
         ? { ...agent }
-        : { ...agent, cli: ORCHESTRATOR_CLI, model: undefined };
+        : { ...agent, cli: orchestratorAdapterId, model: undefined };
     }
 
     const nextCli = pool[workerIndex % pool.length] ?? agent.cli;

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { app } from 'electron';
+import { migrateSchema } from './schema-migrations';
 
 /**
  * SQLite persistence layer.
@@ -58,6 +59,7 @@ CREATE TABLE IF NOT EXISTS mission_panes (
   mission_id TEXT NOT NULL,
   adapter_id TEXT NOT NULL,
   model      TEXT,
+  account_id TEXT,
   cwd        TEXT,
   title      TEXT NOT NULL,
   agent_name TEXT,
@@ -123,25 +125,7 @@ export function getDb(): Db | null {
     const file = path.join(app.getPath('userData'), 'nexus.db');
     db = new Database(file);
     db.exec(SCHEMA);
-    // Additive migrations: ALTER fails when the column already exists — safe
-    // to ignore (CREATE TABLE IF NOT EXISTS never retrofits new columns).
-    try {
-      db.exec(
-        "ALTER TABLE squads ADD COLUMN native_instructions TEXT NOT NULL DEFAULT ''",
-      );
-    } catch {
-      // Column already present.
-    }
-    try {
-      db.exec('ALTER TABLE mission_panes ADD COLUMN effort TEXT');
-    } catch {
-      // Column already present.
-    }
-    try {
-      db.exec('ALTER TABLE mission_panes ADD COLUMN pane_id TEXT');
-    } catch {
-      // Column already present.
-    }
+    migrateSchema(db);
   } catch (err) {
     degraded = true;
     console.error(
@@ -149,6 +133,11 @@ export function getDb(): Db | null {
         'histórico NÃO serão persistidos nesta sessão (apenas estado em memória/JSON):',
       err,
     );
+    try {
+      db?.close();
+    } catch {
+      // The original open/migration error is the actionable failure.
+    }
     db = null;
   }
   return db;

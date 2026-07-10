@@ -47,6 +47,11 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
             description:
               'Required for focus_pane. Use a pane title, agent name, or kind such as terminal, browser, agent, or orchestrator.',
           },
+          paneId: {
+            type: 'string',
+            description:
+              'Optional pane id/name for read_pane. Omit or use "ativo" for the focused pane.',
+          },
           text: {
             type: 'string',
             description:

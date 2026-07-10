@@ -9,7 +9,7 @@ export const OPS_CHANNELS = {
 } as const;
 
 export type AuditSource = 'http-mcp' | 'ipc-renderer' | 'jarvis-voice';
-export type AuditResult = 'ok' | 'error' | 'denied';
+export type AuditResult = 'intent' | 'ok' | 'error' | 'denied';
 
 export interface AuditLogEntry {
   timestamp: string;
@@ -18,6 +18,7 @@ export interface AuditLogEntry {
   tool: string;
   args: Record<string, unknown>;
   result: AuditResult;
+  invocation_id?: string;
   duration_ms: number;
   user_authorized: boolean;
   error?: string;

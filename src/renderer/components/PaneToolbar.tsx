@@ -10,6 +10,7 @@ import {
 } from '../terminal/terminal-host';
 import { CostBadge } from './CostBadge';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
+import { requestPaneClose } from '../terminal/pane-close-guard';
 
 interface Props {
   pane: PaneModel;
@@ -51,7 +52,6 @@ function StateIndicator({ paneId }: { paneId: string }) {
  */
 export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const split = useLayoutStore((s) => s.split);
-  const close = useLayoutStore((s) => s.close);
   const renameTitle = useLayoutStore((s) => s.renameTitle);
   const paneState = useSessionStateStore((s) => s.paneStates.get(pane.id));
   const [editing, setEditing] = useState(false);
@@ -219,7 +219,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         aria-label="Fechar pane"
         onClick={(e) => {
           e.stopPropagation();
-          close(pane.id);
+          requestPaneClose(pane.id);
         }}
       >
         <PixelIcon name="close" size={8} />

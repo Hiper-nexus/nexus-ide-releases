@@ -38,16 +38,27 @@ describe('JarvisLiveSession', () => {
 
     live.toolResult({ tool: 'run_command', ok: false, summary: 'usuário recusou' });
     expect(events.filter((e) => e.channel === VOICE_CHANNELS.liveToolResult)).toHaveLength(1);
+
+    live.toolCancelled({
+      callId: 'call-1',
+      name: 'nexus_action',
+      tool: 'run_command',
+      reason: 'provider_cancelled',
+      summary: 'provider cancelou a chamada',
+    });
+    expect(events.filter((e) => e.channel === VOICE_CHANNELS.liveToolCancelled)).toHaveLength(1);
   });
 
   it('accepts mouse click as a live wake reason', () => {
     expect(jarvisLiveStartRequestSchema.parse({ reason: 'click' })).toEqual({
       reason: 'click',
     });
-    expect(jarvisLiveStartRequestSchema.parse({ reason: 'wake', forceFresh: true })).toEqual({
+    expect(jarvisLiveStartRequestSchema.parse({ reason: 'wake' })).toEqual({
       reason: 'wake',
-      forceFresh: true,
     });
+    expect(
+      jarvisLiveStartRequestSchema.parse({ reason: 'wake', greeting: '[wake] Olá.' }),
+    ).toEqual({ reason: 'wake', greeting: '[wake] Olá.' });
   });
 
   it('ends a turn without destroying the live session', () => {

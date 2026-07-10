@@ -20,8 +20,9 @@ export interface GeminiFunctionDeclaration {
   description: string;
   parameters: {
     type: 'OBJECT';
-    properties: Record<string, { type: string; description: string }>;
+    properties: Record<string, Record<string, unknown>>;
     required?: string[];
+    [key: string]: unknown;
   };
 }
 
@@ -296,7 +297,8 @@ function navegarToAction(target: string, query: string): NexusRealtimeActionArgs
 /**
  * Map a coarse voice tool call to nexus's action vocabulary or a direct-answer
  * intent. delegar → send_to_pane; navegar → the matching UI action;
- * consultar/ler → direct (answered from injected context); encerrar → end.
+ * consultar → direct (answered from injected context); ler → audited pane
+ * read action; encerrar → end.
  */
 export function resolveCoarseVoiceTool(
   name: string,
@@ -325,7 +327,11 @@ export function resolveCoarseVoiceTool(
     }
     case 'ler': {
       const paneId = str(args.paneId, 128) || undefined;
-      return { kind: 'direct', intent: 'read', query: paneId ?? 'ativo', paneId };
+      const action: NexusRealtimeActionArgs = {
+        action: 'read_pane',
+        ...(paneId ? { paneId } : {}),
+      };
+      return { kind: 'action', action, summary: summarizeNexusRealtimeAction(action) };
     }
     case 'encerrar':
       return { kind: 'end' };

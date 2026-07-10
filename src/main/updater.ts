@@ -10,6 +10,8 @@ import {
   parseGhRelease,
   type ParsedRelease,
 } from './update-source';
+import { validateUpdateFeedUrl } from './update-feed-policy';
+import { createSingleFlight } from './single-flight';
 
 /**
  * Auto-update com UI de verdade (fim do "às cegas"): o estado inteiro do
@@ -35,6 +37,11 @@ const GH_CHECK_TIMEOUT_MS = 15_000;
 const GH_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 
 type UpdateLogLevel = 'info' | 'warn';
+
+export interface AutoUpdaterInitOptions {
+  /** Keep the IPC contract but skip every external update operation. */
+  networkEnabled?: boolean;
+}
 
 function formatLogDetail(detail: unknown): string {
   if (detail === undefined) return '';
@@ -125,8 +132,9 @@ class UpdateManager {
   private squirrelWired = false;
   /** 'feed' = NEXUS_UPDATE_FEED direto; 'gh' = release privado via gh. */
   private mode: 'feed' | 'gh' | 'none' = 'none';
+  private readonly checkSingleFlight = createSingleFlight(() => this.performCheck());
 
-  constructor() {
+  constructor(private readonly networkEnabled = true) {
     // Override dev-only para exercitar a UI ("finge" que a versão atual é
     // antiga) — nunca ativo empacotado.
     const fakeCurrent = !app.isPackaged
@@ -141,7 +149,26 @@ class UpdateManager {
   }
 
   init(): void {
-    const feed = process.env.NEXUS_UPDATE_FEED?.trim();
+    this.registerIpcHandlers();
+    if (!this.networkEnabled) {
+      this.patch({
+        phase: 'unsupported',
+        source: 'none',
+        canInstall: false,
+        error: undefined,
+      });
+      writeUpdateLog('info', 'init:offline', {
+        packaged: app.isPackaged,
+        currentVersion: this.state.currentVersion,
+      });
+      return;
+    }
+
+    const rawFeed = process.env.NEXUS_UPDATE_FEED?.trim();
+    const feed = validateUpdateFeedUrl(rawFeed);
+    if (rawFeed && !feed) {
+      console.warn('[updater] NEXUS_UPDATE_FEED rejeitado: origem/HTTPS inválidos');
+    }
     if (feed && app.isPackaged) {
       this.mode = 'feed';
       this.patch({ source: 'feed' });
@@ -164,6 +191,18 @@ class UpdateManager {
       canInstall: this.state.canInstall,
     });
 
+    const scheduled = () => {
+      // Checagem de fundo: só quando não há nada em andamento/pronto.
+      if (['idle', 'uptodate', 'error', 'available'].includes(this.state.phase)) {
+        void this.check();
+      }
+    };
+    setTimeout(scheduled, BOOT_CHECK_DELAY_MS).unref?.();
+    this.timer = setInterval(scheduled, CHECK_INTERVAL_MS);
+    this.timer.unref?.();
+  }
+
+  private registerIpcHandlers(): void {
     ipcMain.handle(UPDATE_CHANNELS.getState, () => this.getState());
     ipcMain.handle(UPDATE_CHANNELS.check, async () => {
       await this.check();
@@ -176,16 +215,6 @@ class UpdateManager {
     ipcMain.handle(UPDATE_CHANNELS.restart, () => {
       if (this.state.phase === 'ready') autoUpdater.quitAndInstall();
     });
-
-    const scheduled = () => {
-      // Checagem de fundo: só quando não há nada em andamento/pronto.
-      if (['idle', 'uptodate', 'error', 'available'].includes(this.state.phase)) {
-        void this.check();
-      }
-    };
-    setTimeout(scheduled, BOOT_CHECK_DELAY_MS).unref?.();
-    this.timer = setInterval(scheduled, CHECK_INTERVAL_MS);
-    this.timer.unref?.();
   }
 
   getState(): UpdateState {
@@ -210,7 +239,12 @@ class UpdateManager {
     broadcast(UPDATE_CHANNELS.state, this.getState());
   }
 
-  private async check(): Promise<void> {
+  private check(): Promise<void> {
+    return this.checkSingleFlight();
+  }
+
+  private async performCheck(): Promise<void> {
+    if (!this.networkEnabled) return;
     if (this.state.phase === 'downloading' || this.state.phase === 'ready') return;
     writeUpdateLog('info', 'check:start', {
       mode: this.mode,
@@ -414,8 +448,8 @@ class UpdateManager {
 let manager: UpdateManager | null = null;
 
 /** Chamado no bootstrap do main (depois da janela existir). Idempotente. */
-export function initAutoUpdater(): void {
+export function initAutoUpdater(options: AutoUpdaterInitOptions = {}): void {
   if (manager) return;
-  manager = new UpdateManager();
+  manager = new UpdateManager(options.networkEnabled ?? true);
   manager.init();
 }

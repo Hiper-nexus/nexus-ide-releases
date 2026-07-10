@@ -64,8 +64,9 @@ export function shouldStreamToRealtime(): boolean {
 
 /** True when wake should stay silent — Live owns the voice (one voice). */
 export function shouldSkipClassicWakeAck(): boolean {
-  const info = useVoiceStore.getState().info;
-  return canAttemptRealtime(info);
+  // A key only means Live can be attempted. Skip local feedback only after the
+  // socket is actually ready; invalid keys/offline cold starts must not be mute.
+  return isRealtimeLive();
 }
 
 /**

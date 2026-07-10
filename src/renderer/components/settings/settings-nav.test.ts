@@ -4,7 +4,9 @@ import {
   SETTINGS_PRIMARY_GROUPS,
   SETTINGS_ADVANCED_GROUPS,
   filterSettingsGroups,
+  isSettingsGroupExpanded,
   isAdvancedSettingsSection,
+  toggleSettingsGroup,
 } from './settings-nav';
 
 describe('SETTINGS_GROUPS', () => {
@@ -86,9 +88,22 @@ describe('filterSettingsGroups', () => {
 });
 
 describe('SETTINGS_ADVANCED_GROUPS', () => {
-  test('holds catalog and system sections', () => {
+  test('holds catalog and system sections in small operational clusters', () => {
     const ids = SETTINGS_ADVANCED_GROUPS.flatMap((g) => g.items.map((i) => i.id));
     expect(ids).toContain('llms');
     expect(ids).toContain('system');
+    expect(SETTINGS_ADVANCED_GROUPS).toHaveLength(4);
+    expect(Math.max(...SETTINGS_ADVANCED_GROUPS.map((g) => g.items.length))).toBeLessThanOrEqual(6);
+  });
+
+  test('reveals only a selected or explicitly expanded group', () => {
+    const [system, integrations, arsenal] = SETTINGS_ADVANCED_GROUPS;
+    const expanded = toggleSettingsGroup(new Set<string>(), integrations.label);
+
+    expect(isSettingsGroupExpanded(system, 'account', expanded)).toBe(false);
+    expect(isSettingsGroupExpanded(integrations, 'account', expanded)).toBe(true);
+    expect(isSettingsGroupExpanded(arsenal, 'agents', new Set())).toBe(true);
+    expect(isSettingsGroupExpanded(system, 'agents', new Set())).toBe(false);
+    expect(toggleSettingsGroup(expanded, integrations.label).size).toBe(0);
   });
 });

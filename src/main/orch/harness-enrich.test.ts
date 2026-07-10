@@ -77,15 +77,19 @@ describe('mergeEnriched', () => {
 });
 
 describe('runHarnessEnrich', () => {
-  it('processa em chunks, tolera chunk que falha e mergeia tudo', async () => {
+  it('retries a failed chunk in smaller batches and merges exact items', async () => {
     const items = Array.from({ length: 3 }, (_, i) => item(`agent-${i}`));
-    let call = 0;
-    const chat = async (): Promise<string> => {
-      call += 1;
-      if (call === 2) throw new Error('provider caiu');
+    let failedOnce = false;
+    const chat = async (messages: Array<{ role: string; content: string }>): Promise<string> => {
+      const user = messages.find((message) => message.role === 'user')?.content ?? '';
+      const name = /- (agent-\d+) \(agent\)/.exec(user)?.[1] ?? '';
+      if (name === 'agent-1' && !failedOnce) {
+        failedOnce = true;
+        throw new Error('provider caiu');
+      }
       return JSON.stringify({
         items: [
-          { name: `agent-${call - 1}`, kind: 'agent', tier: 'scout', blurb: `ok ${call}` },
+          { name, kind: 'agent', tier: 'scout', blurb: `ok ${name}` },
         ],
       });
     };
@@ -94,9 +98,91 @@ describe('runHarnessEnrich', () => {
       prev: null,
       now: () => 42,
     });
-    // chunk 2 falhou → agent-1 ausente; os outros entraram
-    expect(result.items.map((i) => i.name).sort()).toEqual(['agent-0', 'agent-2']);
+    expect(result.items.map((i) => i.name).sort()).toEqual([
+      'agent-0',
+      'agent-1',
+      'agent-2',
+    ]);
     expect(result.updatedAt).toBe(42);
+  });
+
+  it('retries only names omitted by a partial model response', async () => {
+    const items = [item('a'), item('b'), item('c')];
+    const calls: string[] = [];
+    const result = await runHarnessEnrich(
+      items,
+      async (messages) => {
+        const user = messages.find((message) => message.role === 'user')?.content ?? '';
+        calls.push(user);
+        const names = [...user.matchAll(/- ([a-z]) \(agent\)/g)].map((match) => match[1]);
+        const selected = calls.length === 1 ? names.slice(0, 1) : names;
+        return JSON.stringify({
+          items: selected.map((name) => ({
+            name,
+            kind: 'agent',
+            tier: 'builder',
+            blurb: `descrição ${name}`,
+          })),
+        });
+      },
+      { chunkSize: 3, now: () => 7 },
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(result.items.map((entry) => entry.name).sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('keeps complete inventory coverage when every provider call fails', async () => {
+    const items = [
+      item('deep-research'),
+      item('security-reviewer'),
+      item('react-builder', 'skill'),
+    ];
+
+    const result = await runHarnessEnrich(items, async () => {
+      throw new Error('all providers unavailable');
+    });
+
+    expect(result.items.map((entry) => entry.name).sort()).toEqual(
+      items.map((entry) => entry.name).sort(),
+    );
+    expect(result.items.every((entry) => entry.blurb.length > 0)).toBe(true);
+    expect(result.items.find((entry) => entry.name === 'deep-research')?.tier).toBe(
+      'scout',
+    );
+    expect(
+      result.items.find((entry) => entry.name === 'security-reviewer')?.tier,
+    ).toBe('reviewer');
+  });
+
+  it('drops stale cached entries that are no longer installed', async () => {
+    const prev: EnrichedCatalog = {
+      version: 1,
+      updatedAt: 1,
+      items: [
+        { name: 'still-here', kind: 'agent', tier: 'builder', blurb: 'old' },
+        { name: 'removed', kind: 'skill', tier: 'scout', blurb: 'stale' },
+      ],
+    };
+
+    const result = await runHarnessEnrich(
+      [item('still-here')],
+      async () =>
+        JSON.stringify({
+          items: [
+            {
+              name: 'still-here',
+              kind: 'agent',
+              tier: 'builder',
+              blurb: 'fresh',
+            },
+          ],
+        }),
+      { prev },
+    );
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ name: 'still-here', blurb: 'fresh' });
   });
 });
 

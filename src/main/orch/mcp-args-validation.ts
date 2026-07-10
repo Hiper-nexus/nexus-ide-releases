@@ -14,6 +14,58 @@ const optionalPathText = pathText.optional();
 const positiveInt = z.number().int().positive();
 const timeoutMs = z.number().int().positive().max(300_000).optional();
 const envSchema = z.record(z.string().min(1).max(128), z.string().max(4096)).optional();
+const paneId = z.string().min(1).max(128);
+const browserRef = z.string().regex(/^e[1-9]\d{0,7}$/);
+const uiRef = z.string().regex(/^u[1-9]\d{0,15}e[1-9]\d{0,7}$/);
+const uiActionSchema = z
+  .object({
+    action: z.enum(['click', 'focus', 'fill', 'select']),
+    ref: uiRef,
+    text: z.string().max(8192).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const needsText = value.action === 'fill' || value.action === 'select';
+    if (needsText && typeof value.text !== 'string') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['text'],
+        message: `text is required when action=${value.action}`,
+      });
+    }
+    if (!needsText && value.text !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['text'],
+        message: `text is not allowed when action=${value.action}`,
+      });
+    }
+  });
+const browserWaitSchema = z
+  .object({
+    paneId,
+    condition: z.enum(['load', 'text', 'ref']),
+    value: z.string().min(1).max(256).optional(),
+    ref: browserRef.optional(),
+    timeoutMs: z.number().int().positive().max(15_000).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.condition === 'text' && !value.value) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['value'],
+        message: 'value is required when condition=text',
+      });
+    }
+    if (value.condition === 'ref' && !value.ref) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['ref'],
+        message: 'ref is required when condition=ref',
+      });
+    }
+  });
 
 const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
   [
@@ -135,6 +187,38 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
       column: positiveInt.optional(),
     }).strict(),
   ],
+  [
+    'browser_open',
+    z
+      .object({
+        url: z.string().min(1).max(4096),
+        title: z.string().min(1).max(512).optional(),
+      })
+      .strict(),
+  ],
+  [
+    'browser_navigate',
+    z.object({ paneId, url: z.string().min(1).max(4096) }).strict(),
+  ],
+  ['browser_screenshot', z.object({ paneId }).strict()],
+  [
+    'browser_read',
+    z
+      .object({
+        paneId,
+        maxChars: positiveInt.max(20_000).optional(),
+        maxElements: positiveInt.max(200).optional(),
+      })
+      .strict(),
+  ],
+  ['browser_inspect', z.object({ paneId, ref: browserRef }).strict()],
+  ['browser_click', z.object({ paneId, ref: browserRef }).strict()],
+  [
+    'browser_fill',
+    z.object({ paneId, ref: browserRef, text: z.string().max(8192) }).strict(),
+  ],
+  ['browser_wait', browserWaitSchema],
+  ['ui_action', uiActionSchema],
 ]);
 
 function assertArgsShape(value: unknown): asserts value is Record<string, unknown> {

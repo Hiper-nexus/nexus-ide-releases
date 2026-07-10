@@ -29,7 +29,7 @@ const ADAPTER: Adapter = {
   bin: 'grok',
   detect: 'grok --version',
   install: { method: 'npm', command: 'npm i -g grok' },
-  auth: { method: 'api_key', envVarFallback: 'GROK_API_KEY' },
+  auth: { method: 'api_key', envVarFallback: 'XAI_API_KEY' },
   spawn: {
     interactive: ['grok'],
     headless: ['grok', '-p', '{{PROMPT}}'],
@@ -37,7 +37,7 @@ const ADAPTER: Adapter = {
     resumeArgs: [],
     extraArgs: [],
   },
-  env: { static: {}, passthrough: ['GROK_API_KEY'], ephemeralHome: false },
+  env: { static: {}, passthrough: ['XAI_API_KEY'], ephemeralHome: false },
   models: { flag: '--model', list: ['grok-4-fast'], default: 'grok-4-fast' },
   promptInjection: { method: 'arg', trailingNewline: false, bracketedPaste: false },
   stateParsing: {
@@ -45,7 +45,12 @@ const ADAPTER: Adapter = {
     shellIntegration: false,
     exitCodes: {},
   },
-  quirks: { altScreen: true, requiresNoAutoUpdate: true, mcpAutoload: false },
+  quirks: {
+    altScreen: true,
+    requiresNoAutoUpdate: true,
+    mcpAutoload: false,
+    nexusMcp: 'none',
+  },
   control: {},
 };
 

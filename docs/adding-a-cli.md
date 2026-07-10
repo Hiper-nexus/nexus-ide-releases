@@ -12,37 +12,38 @@ Create `~/.nexus/plugins/adapters/kimi.json`:
 {
   "kind": "cli-pty",
   "id": "kimi",
-  "label": "Kimi (MoonShot)",
+  "label": "Kimi",
   "version": "1.0.0",
   "icon": "🌙",
   "bin": "kimi",
   "detect": "kimi --version",
   "install": {
     "method": "npm",
-    "command": "npm install -g @moonshot-ai/kimi-cli"
+    "command": "npm install -g @moonshot-ai/kimi-code"
   },
   "auth": {
     "method": "api_key",
-    "envVarFallback": "MOONSHOT_API_KEY",
-    "credentialStore": "env",
-    "loginHint": "Set MOONSHOT_API_KEY in your environment."
+    "envVarFallback": "KIMI_MODEL_API_KEY",
+    "credentialStore": "keychain",
+    "loginHint": "Run `kimi login` for OAuth, or save a Moonshot API key in Nexus."
   },
   "spawn": {
     "interactive": ["kimi"],
-    "headless": ["kimi", "--message", "{{PROMPT}}"],
+    "headless": ["kimi", "-p", "{{PROMPT}}"],
     "ptyRequired": true,
-    "resumeArgs": [],
+    "resumeArgs": ["--continue"],
+    "resumeIdArgs": ["--session"],
     "extraArgs": []
   },
   "env": {
     "static": {},
-    "passthrough": ["MOONSHOT_API_KEY"],
+    "passthrough": ["KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY"],
     "ephemeralHome": false
   },
   "models": {
     "flag": "--model",
-    "list": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
-    "default": "moonshot-v1-8k"
+    "list": ["kimi-code/kimi-for-coding", "kimi-k2.7", "kimi-k2.6"],
+    "default": "kimi-code/kimi-for-coding"
   },
   "promptInjection": {
     "method": "arg",
@@ -57,7 +58,8 @@ Create `~/.nexus/plugins/adapters/kimi.json`:
   "quirks": {
     "altScreen": true,
     "requiresNoAutoUpdate": false,
-    "mcpAutoload": false
+    "mcpAutoload": false,
+    "nexusMcp": "kimi"
   }
 }
 ```
@@ -85,7 +87,7 @@ in the top bar to see "🌙 Kimi" appear in the adapter picker.
 { "method": "npm", "command": "npm install -g my-cli" }
 ```
 
-Methods: `brew`, `npm`, `pip`, `cargo`, `manual`.
+Methods: `brew`, `npm`, `pip`, `uv`, `cargo`, `manual`.
 
 ### `auth`
 
@@ -159,7 +161,17 @@ Use `"regex"` for line-mode CLIs where a stable prompt appears at idle:
 | `altScreen` | `false` | CLI uses the alternate screen buffer (full-screen TUI). |
 | `requiresNoAutoUpdate` | `false` | Pass an `--no-auto-update` flag (e.g. grok). |
 | `approvalFlag` | — | Flag for disabling interactive approval prompts. |
-| `mcpAutoload` | `false` | CLI auto-connects to the NexusIDE MCP server. |
+| `mcpAutoload` | `false` | Legacy/autoload path: Nexus passes its MCP config directly to the CLI. |
+| `nexusMcp` | `none` | Per-session integration: `autoload`, `codex`, `agy`, `opencode`, `kimi`, `grok`, or `none`. `autoload` requires `mcpAutoload:true`. |
+
+Existing custom adapters that declare only `mcpAutoload:true` remain
+orchestrator-capable. New adapters should also declare the matching
+`nexusMcp` value; inconsistent `nexusMcp:"autoload"` configurations are
+rejected instead of being advertised without a working injection path.
+
+The builtin Aider adapter intentionally uses `nexusMcp:"none"`: current Aider
+does not expose an official MCP client integration. It remains usable as a
+terminal/worker CLI, but is not advertised as a Nexus MCP orchestrator.
 
 ## Overriding a builtin adapter
 

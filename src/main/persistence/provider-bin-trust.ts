@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDangerousPermissionMode } from './provider-config-format';
 
 /**
  * Trust checks for the renderer-supplied provider `binPath` / `extraArgs`
@@ -42,6 +43,8 @@ export interface SensitiveChange {
   binPath?: string;
   /** New, non-empty extraArgs differing from the stored ones. */
   extraArgs?: string[];
+  /** Explicit full-auto/bypass selection that weakens the safe baseline. */
+  permissionMode?: string;
 }
 
 /**
@@ -50,8 +53,8 @@ export interface SensitiveChange {
  * (→ '' / []) or re-saving the same value never prompts.
  */
 export function sensitiveChanges(
-  patch: { binPath?: string; extraArgs?: string[] },
-  current: { binPath: string; extraArgs: string[] },
+  patch: { binPath?: string; extraArgs?: string[]; permissionMode?: string },
+  current: { binPath: string; extraArgs: string[]; permissionMode?: string },
 ): SensitiveChange {
   const change: SensitiveChange = {};
   if (
@@ -68,9 +71,20 @@ export function sensitiveChanges(
   ) {
     change.extraArgs = patch.extraArgs;
   }
+  if (
+    patch.permissionMode !== undefined &&
+    patch.permissionMode !== current.permissionMode &&
+    isDangerousPermissionMode(patch.permissionMode)
+  ) {
+    change.permissionMode = patch.permissionMode;
+  }
   return change;
 }
 
 export function hasSensitiveChange(change: SensitiveChange): boolean {
-  return change.binPath !== undefined || change.extraArgs !== undefined;
+  return (
+    change.binPath !== undefined ||
+    change.extraArgs !== undefined ||
+    change.permissionMode !== undefined
+  );
 }

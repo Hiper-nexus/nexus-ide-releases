@@ -8,6 +8,8 @@ import {
   jarvisRequestSchema,
   jarvisLiveInterruptRequestSchema,
   jarvisLiveSayRequestSchema,
+  jarvisLiveRescueRequestSchema,
+  jarvisLiveAudioPlaybackEventSchema,
   jarvisLiveSmokeTestRequestSchema,
   jarvisLiveStartRequestSchema,
   jarvisLiveStatusPatchSchema,
@@ -60,6 +62,10 @@ import {
   isVoiceHotkeyArmed,
 } from './voice-hotkey';
 import { initJarvisNarrator, shutdownJarvisNarrator } from './jarvis-narrator';
+import {
+  isLiveTransportCredential,
+  liveRuntimeFingerprint,
+} from './live-runtime-config';
 
 /**
  * Wires the voice pipeline into IPC. Every renderer payload is zod-validated
@@ -82,7 +88,7 @@ function broadcast(channel: string, payload?: unknown): void {
 }
 
 const liveSession = new JarvisLiveSession(broadcast, Date.now, (sessionId, line) => {
-  jarvisLatencyTracker.markTranscript(sessionId, line.final);
+  jarvisLatencyTracker.markTranscript(sessionId, line.final, line.turnId);
   const record = transcriptStore.append(sessionId, {
     role: line.role,
     text: line.text,
@@ -160,10 +166,17 @@ export function registerVoiceIpc(): void {
   ipcMain.handle(VOICE_CHANNELS.setConfig, (_event, raw): VoiceRuntimeInfo => {
     const parsed = setConfigRequestSchema.safeParse(raw);
     if (!parsed.success) return fullInfo();
-    const before = getVoiceConfig().input.shortcut;
-    const beforeKey = getVoiceConfig().input.pushToTalkKey?.code;
+    const previousConfig = getVoiceConfig();
+    const before = previousConfig.input.shortcut;
+    const beforeKey = previousConfig.input.pushToTalkKey?.code;
+    const previousLiveFingerprint = liveRuntimeFingerprint(previousConfig);
     applyConfigPatch(parsed.data);
-    liveSession.setEnabled(getVoiceConfig().jarvisLive.enabled);
+    const nextConfig = getVoiceConfig();
+    if (liveRuntimeFingerprint(nextConfig) !== previousLiveFingerprint) {
+      logVoice('info', 'live.configChanged', 'recriando provider após mudança de configuração');
+      liveTransport.hardStop();
+    }
+    liveSession.setEnabled(nextConfig.jarvisLive.enabled);
     // Re-register the accelerator only if it actually changed.
     const nextInput = getVoiceConfig().input;
     if (
@@ -181,6 +194,12 @@ export function registerVoiceIpc(): void {
     const parsed = setVoiceKeyRequestSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid key request' };
     const result = storeVoiceApiKey(parsed.data.envVar, parsed.data.key);
+    if (isLiveTransportCredential(parsed.data.envVar)) {
+      logVoice('info', 'live.credentialChanged', 'recriando provider após mudança de credencial', {
+        envVar: parsed.data.envVar,
+      });
+      liveTransport.hardStop();
+    }
     const info = fullInfo();
     broadcast(VOICE_CHANNELS.infoChanged, info);
     return result;
@@ -427,7 +446,7 @@ export function registerVoiceIpc(): void {
     // Se a config pede transporte realtime, conecta o socket antes do mic;
     // senão isto é no-op e o Classic segue (fallback keyless).
     if (liveSession.getState().sessionId) {
-      await liveTransport.onStart({ forceFresh: req.forceFresh });
+      await liveTransport.onStart({ greeting: req.greeting });
       state = liveSession.getState();
     }
     return state;
@@ -450,14 +469,36 @@ export function registerVoiceIpc(): void {
     liveSession.stop();
     return liveSession.getState();
   });
+  ipcMain.handle(VOICE_CHANNELS.liveQuiesce, (_event, raw) => {
+    const parsed = jarvisLiveInterruptRequestSchema.safeParse(raw ?? {});
+    return liveTransport.quiesce(
+      parsed.success ? parsed.data.reason : 'classic-fallback',
+    );
+  });
   ipcMain.handle(VOICE_CHANNELS.liveEndTurn, () => {
     liveTransport.endTurn();
     return liveSession.endTurn();
   });
-  ipcMain.handle(VOICE_CHANNELS.liveSmokeTest, async (_event, raw) => {
+  ipcMain.handle(VOICE_CHANNELS.liveEndUserAudio, () => {
+    liveTransport.endTurn();
+    return liveSession.getState();
+  });
+  ipcMain.on(VOICE_CHANNELS.liveTurnBegin, (_event, raw: unknown) => {
+    if (typeof raw !== 'string' || raw.length === 0 || raw.length > 128) return;
+    liveTransport.beginTurn(raw);
+  });
+  ipcMain.handle(VOICE_CHANNELS.liveSmokeTest, async (event, raw) => {
     const parsed = jarvisLiveSmokeTestRequestSchema.safeParse(raw);
-    if (!parsed.success) return liveSession.getState();
-    return liveTransport.smokeTest(parsed.data.text);
+    if (!parsed.success) {
+      return {
+        ok: false,
+        evidence: 'none',
+        latencyMs: null,
+        reason: 'invalid_request',
+        state: liveSession.getState(),
+      } as const;
+    }
+    return liveTransport.smokeTest(parsed.data.text, event.sender.id);
   });
   ipcMain.handle(VOICE_CHANNELS.liveSay, async (_event, raw) => {
     const parsed = jarvisLiveSayRequestSchema.safeParse(raw);
@@ -471,8 +512,21 @@ export function registerVoiceIpc(): void {
       liveTransport.micIn(raw);
     }
   });
+  ipcMain.handle(VOICE_CHANNELS.liveRescueIn, (_event, raw: unknown) => {
+    const parsed = jarvisLiveRescueRequestSchema.safeParse(raw);
+    if (!parsed.success) return { accepted: false, turnId: '' };
+    return {
+      accepted: liveTransport.rescueText(parsed.data.turnId, parsed.data.text),
+      turnId: parsed.data.turnId,
+    };
+  });
   ipcMain.on(VOICE_CHANNELS.liveContextIn, (_event, raw: unknown) => {
     if (typeof raw === 'string' && raw.trim()) liveTransport.contextIn(raw);
+  });
+  ipcMain.on(VOICE_CHANNELS.liveAudioPlayback, (event, raw: unknown) => {
+    const parsed = jarvisLiveAudioPlaybackEventSchema.safeParse(raw);
+    if (!parsed.success) return;
+    liveTransport.reportAudioPlayback(parsed.data, event.sender.id);
   });
 
   ipcMain.handle(VOICE_CHANNELS.liveStatus, (_event, raw) => {
@@ -492,7 +546,6 @@ export function registerVoiceIpc(): void {
     if (!parsed.success) return;
     const event = liveSession.toolResult(parsed.data);
     if (event) {
-      jarvisLatencyTracker.markAction(event.sessionId);
       liveTransport.toolResult(event);
     }
   });

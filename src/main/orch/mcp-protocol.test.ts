@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,6 +16,7 @@ import {
   type McpRegistry,
   type McpToolDef,
 } from './mcp-protocol';
+import { clearAll as clearAllPermissions } from '../jarvis/permissions';
 
 function makeRegistry(): McpRegistry {
   const echo: McpToolDef = {
@@ -64,6 +65,7 @@ describe('handleMcpMessage', () => {
 
   beforeEach(() => {
     clearAuditLog();
+    clearAllPermissions();
   });
 
   afterAll(() => {
@@ -169,6 +171,137 @@ describe('handleMcpMessage', () => {
       tool: 'nexus_terminal_run',
       result: 'denied',
       error: expect.stringContaining('confirmation_ui_unavailable'),
+    });
+  });
+
+  it('executes a confirmation-required HTTP MCP tool after native approval', async () => {
+    let executed = false;
+    const destructive: McpToolDef = {
+      name: 'nexus_terminal_run',
+      description: 'terminal',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => {
+        executed = true;
+        return { exitCode: 0 };
+      },
+    };
+    const registry: McpRegistry = {
+      tools: [destructive],
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
+    const confirm = vi.fn().mockResolvedValue(true);
+
+    const res = await handleMcpMessage(
+      registry,
+      userCtx(),
+      req('tools/call', {
+        name: 'nexus_terminal_run',
+        arguments: { command: 'npm test' },
+      }),
+      { confirm },
+    );
+
+    const result = res?.result as {
+      isError?: boolean;
+      content: Array<{ text: string }>;
+    };
+    expect(result.isError).toBeUndefined();
+    expect(executed).toBe(true);
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'http-mcp',
+      toolName: 'nexus_terminal_run',
+      args: { command: 'npm test' },
+      reason: 'run command: npm test',
+      agentLabel: 'test',
+    }));
+    const auditEntries = readAuditLog();
+    expect(auditEntries.map((entry) => entry.result)).toEqual(['intent', 'ok']);
+    expect(auditEntries.at(-1)).toMatchObject({
+      source: 'http-mcp',
+      tool: 'nexus_terminal_run',
+      result: 'ok',
+      user_authorized: true,
+    });
+  });
+
+  it('exposes the possible-commit marker to HTTP MCP clients after a handler failure', async () => {
+    const registry: McpRegistry = {
+      tools: [{
+        name: 'nexus_terminal_run',
+        description: 'terminal',
+        inputSchema: { type: 'object', properties: {} },
+        handler: async () => {
+          throw new Error('transport lost after command start');
+        },
+      }],
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
+
+    const res = await handleMcpMessage(
+      registry,
+      userCtx(),
+      req('tools/call', {
+        name: 'nexus_terminal_run',
+        arguments: { command: 'deploy' },
+      }),
+      { confirm: async () => true },
+    );
+    const envelope = res?.result as {
+      isError?: boolean;
+      content: Array<{ text: string }>;
+    };
+    const payload = JSON.parse(envelope.content[0].text) as {
+      error: string;
+      effectMayHaveCommitted: boolean;
+    };
+
+    expect(envelope.isError).toBe(true);
+    expect(payload).toMatchObject({
+      error: 'transport lost after command start',
+      effectMayHaveCommitted: true,
+    });
+  });
+
+  it('keeps a confirmation-required HTTP MCP tool blocked when the user denies', async () => {
+    let executed = false;
+    const destructive: McpToolDef = {
+      name: 'nexus_file_write',
+      description: 'write',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => {
+        executed = true;
+      },
+    };
+    const registry: McpRegistry = {
+      tools: [destructive],
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
+
+    const res = await handleMcpMessage(
+      registry,
+      userCtx(),
+      req('tools/call', {
+        name: 'nexus_file_write',
+        arguments: { path: 'src/a.ts', content: 'secret' },
+      }),
+      { confirm: async () => false },
+    );
+
+    const result = res?.result as {
+      isError?: boolean;
+      content: Array<{ text: string }>;
+    };
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('user_denied');
+    expect(executed).toBe(false);
+    expect(readAuditLog()[0]).toMatchObject({
+      source: 'http-mcp',
+      tool: 'nexus_file_write',
+      result: 'denied',
+      error: expect.stringContaining('user_denied'),
     });
   });
 

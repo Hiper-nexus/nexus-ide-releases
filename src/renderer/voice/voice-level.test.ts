@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { rmsToLevel } from './voice-level';
+import { rmsToLevel, shouldPublishVoiceLevel } from './voice-level';
 
 describe('rmsToLevel', () => {
   test('silence maps to 0', () => {
@@ -37,5 +37,18 @@ describe('rmsToLevel', () => {
     // 25% into the [floor, ceil] range: sqrt(0.25) = 0.5 > 0.25 linear.
     const quarter = 0.006 + 0.25 * (0.25 - 0.006);
     expect(rmsToLevel(quarter)).toBeCloseTo(0.5, 1);
+  });
+});
+
+describe('shouldPublishVoiceLevel', () => {
+  test('does not churn UI state for the always-on wake mic while idle', () => {
+    expect(shouldPublishVoiceLevel('idle', 0.42, 0)).toBe(false);
+    expect(shouldPublishVoiceLevel('speaking', 0.75, 0)).toBe(false);
+  });
+
+  test('publishes live levels only while listening and settles a stale level to zero', () => {
+    expect(shouldPublishVoiceLevel('listening', 0.42, 0)).toBe(true);
+    expect(shouldPublishVoiceLevel('transcribing', 0, 0.42)).toBe(true);
+    expect(shouldPublishVoiceLevel('idle', 0, 0)).toBe(false);
   });
 });

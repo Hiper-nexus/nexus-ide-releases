@@ -213,7 +213,15 @@ Main hospeda MCP server (@modelcontextprotocol/sdk); cada CLI-agente conecta via
 | Squad/Catálogo/Task (3) | `nexus_squad_save`, `nexus_catalog_install`, `nexus_task` |
 | Todos (1) | `nexus_todo_manager` |
 | Roteamento (1) | `nexus_route_task` |
-| Preview/Browser/Perf (6) | `nexus_preview_start`, `nexus_preview_stop`, `nexus_browser_open`, `nexus_browser_navigate`, `nexus_browser_screenshot`, `nexus_perf_snapshot` |
+| Preview/Browser/Perf (11) | `nexus_preview_start`, `nexus_preview_stop`, `nexus_browser_open`, `nexus_browser_navigate`, `nexus_browser_screenshot`, `nexus_browser_read`, `nexus_browser_inspect`, `nexus_browser_click`, `nexus_browser_fill`, `nexus_browser_wait`, `nexus_perf_snapshot` |
+
+Browser panes usam um preload isolado e um protocolo fechado: `browser_read`
+retorna texto visível limitado e refs opacas (`e1`, `e2`), e as ações aceitam
+somente essas refs — nunca JavaScript ou seletores arbitrários. Senhas/valores
+de inputs/storage não entram no resultado. Toda navegação e redirect é
+revalidada contra IPs privados/link-local/metadata; apenas origins de preview
+emitidas pelo próprio Nexus são confiadas automaticamente, e outros destinos
+privados exigem confirmação exata por host+porta.
 
 Aliases curtos `pane_*`/`handoff_*` mantidos no registry (namespace duplo) para prompts/agentes que usam nomes não-prefixados. **Sempre permitidos independente de allowlist:** `ToolSearch`, `nexus_handoff_submit`, `nexus_handoff_list`.
 

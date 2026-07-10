@@ -2,6 +2,7 @@
  * Playback / queue of Live provider PCM chunks in the renderer.
  */
 import { useVoiceStore } from './voice-store';
+import type { JarvisLiveAudioOutEvent } from '../../shared/voice-ipc';
 import { realtimeChunkSuppressionMs } from './voice-suppression-window';
 import { logVoiceEvent } from './voice-live-ipc';
 import {
@@ -16,19 +17,53 @@ import {
   takePendingRealtimeAudioOut,
   wakeMic,
 } from './voice-session-state';
+import { resetLiveMuteRescues } from './live-mute-rescue';
 
 export { resetPendingRealtimeAudioOut };
 
-export function playRealtimeAudioOut(b64: string): void {
-  const tick = realtimeAudioPlayedCounter.tick(Date.now());
-  if (tick.fire) {
-    logVoiceEvent('info', 'live.audioPlayed', 'chunk realtime tocado', {
-      chunks: tick.count,
+function playbackErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.slice(0, 280) || 'falha desconhecida ao iniciar WebAudio';
+}
+
+function reportPlayback(
+  event: JarvisLiveAudioOutEvent,
+  outcome: 'started' | 'failed' | 'cancelled',
+  error?: string,
+): void {
+  window.nexus.voice.liveAudioPlayback({ id: event.id, outcome, error });
+}
+
+/**
+ * A Live delivery becomes evidence only after its exact WebAudio source was
+ * scheduled. Provider PCM alone never advances the realtime diagnostic.
+ */
+export function playRealtimeAudioOut(event: JarvisLiveAudioOutEvent): void {
+  void Promise.resolve()
+    .then(() => ensureLivePlayer().play(event.pcm16))
+    .then((chunkMs) => {
+      if (chunkMs <= 0) {
+        reportPlayback(event, 'cancelled');
+        return;
+      }
+      resetLiveMuteRescues();
+      const tick = realtimeAudioPlayedCounter.tick(Date.now());
+      if (tick.fire) {
+        logVoiceEvent('info', 'live.audioPlayed', 'chunk realtime iniciado', {
+          chunks: tick.count,
+        });
+      }
+      useVoiceStore.getState().setStatus('speaking');
+      wakeMic.suppressWakeDetection(realtimeChunkSuppressionMs(chunkMs));
+      reportPlayback(event, 'started');
+    })
+    .catch((error) => {
+      const message = playbackErrorMessage(error);
+      logVoiceEvent('error', 'live.audioPlaybackFailed', 'falha ao tocar áudio realtime', {
+        error: message,
+      });
+      reportPlayback(event, 'failed', message);
     });
-  }
-  useVoiceStore.getState().setStatus('speaking');
-  const chunkMs = ensureLivePlayer().play(b64);
-  wakeMic.suppressWakeDetection(realtimeChunkSuppressionMs(chunkMs));
 }
 
 export function flushPendingRealtimeAudioOut(): void {
@@ -46,13 +81,16 @@ export function openLiveAudioGate(): void {
   flushPendingRealtimeAudioOut();
 }
 
-export function queuePendingRealtimeAudioOut(b64: string): void {
-  if (!realtimeTurnActive) return;
+export function queuePendingRealtimeAudioOut(event: JarvisLiveAudioOutEvent): void {
+  if (!realtimeTurnActive) {
+    reportPlayback(event, 'cancelled');
+    return;
+  }
   const tick = realtimeAudioSuppressedCounter.tick(Date.now());
   if (tick.fire) {
     logVoiceEvent('warn', 'live.audioSuppressed', 'chunk realtime retido (suppress on)', {
       chunks: tick.count,
     });
   }
-  pushPendingRealtimeAudioOut(b64);
+  pushPendingRealtimeAudioOut(event);
 }

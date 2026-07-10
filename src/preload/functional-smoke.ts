@@ -1,0 +1,304 @@
+/**
+ * Packaged functional smoke probes.
+ *
+ * This module intentionally knows only a narrow, read-only slice of the
+ * preload bridge. It runs inside preload after React mounts and proves that
+ * the packaged renderer can cross real IPC handlers and the audited MCP
+ * dispatch path. Results contain probe identifiers only, never provider
+ * output, file content, tokens, or exception messages.
+ */
+
+import {
+  FUNCTIONAL_SMOKE_FILE_CONTENT,
+  FUNCTIONAL_SMOKE_MIN_ADAPTERS,
+  FUNCTIONAL_SMOKE_MIN_TOOLS,
+  type FunctionalSmokeProbe,
+  type FunctionalSmokeResult,
+} from '../shared/smoke-types';
+
+export {
+  FUNCTIONAL_SMOKE_FILE_CONTENT,
+  FUNCTIONAL_SMOKE_MIN_ADAPTERS,
+  FUNCTIONAL_SMOKE_MIN_TOOLS,
+} from '../shared/smoke-types';
+
+const MCP_POLL_ATTEMPTS = 80;
+const MCP_POLL_DELAY_MS = 100;
+// MCP bootstrap intentionally polls for up to eight seconds. Keep the generic
+// probe deadline above that window so a healthy slow packaged launch cannot be
+// rejected by the wrapper before the MCP-specific poll completes.
+const DEFAULT_PROBE_TIMEOUT_MS = 10_000;
+
+interface McpInfo {
+  running: boolean;
+  url: string | null;
+  toolCount: number;
+}
+
+interface McpResult {
+  ok: boolean;
+  tool: string;
+  result?: unknown;
+  requiredConfirmation?: boolean;
+}
+
+export interface FunctionalSmokeApi {
+  workspace: {
+    open(path: string): Promise<unknown>;
+  };
+  adapters: {
+    list(): Promise<unknown[]>;
+  };
+  settings: {
+    get(): Promise<unknown>;
+    orchGet(): Promise<unknown>;
+    audioGet(): Promise<unknown>;
+    uiGet(): Promise<unknown>;
+    listShells(): Promise<string[]>;
+  };
+  providers: {
+    list(): Promise<unknown[]>;
+  };
+  voice: {
+    getInfo(): Promise<unknown>;
+  };
+  orch: {
+    getMcpInfo(): Promise<McpInfo>;
+    listMissions(): Promise<unknown[]>;
+    listSquads(): Promise<unknown[]>;
+  };
+  mcp: {
+    invoke(tool: string, args?: Record<string, unknown>): Promise<McpResult>;
+  };
+  media: {
+    listProviders(): Promise<unknown[]>;
+  };
+  perf: {
+    snapshot(): Promise<unknown>;
+  };
+  update: {
+    getState(): Promise<unknown>;
+  };
+}
+
+interface FunctionalSmokeDeps {
+  delay?: (ms: number) => Promise<void>;
+  probeTimeoutMs?: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasLoopbackMcpUrl(value: string | null): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === 'http:' &&
+      (url.hostname === '127.0.0.1' || url.hostname === '::1' || url.hostname === '[::1]') &&
+      url.pathname === '/mcp' &&
+      url.username === '' &&
+      url.password === ''
+    );
+  } catch {
+    return false;
+  }
+}
+
+function mcpSucceeded(value: unknown, tool: string): value is McpResult {
+  return isRecord(value) && value.ok === true && value.tool === tool;
+}
+
+async function defaultDelay(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('probe_timeout')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function waitForMcp(
+  api: FunctionalSmokeApi,
+  delay: (ms: number) => Promise<void>,
+): Promise<McpInfo> {
+  for (let attempt = 0; attempt < MCP_POLL_ATTEMPTS; attempt += 1) {
+    const info = await api.orch.getMcpInfo();
+    if (info.running) return info;
+    await delay(MCP_POLL_DELAY_MS);
+  }
+  return api.orch.getMcpInfo();
+}
+
+export async function runFunctionalSmokeProbes(
+  api: FunctionalSmokeApi,
+  workspacePath: string,
+  deps: FunctionalSmokeDeps = {},
+): Promise<FunctionalSmokeResult> {
+  const probes: FunctionalSmokeProbe[] = [];
+  const delay = deps.delay ?? defaultDelay;
+  const timeoutMs = deps.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+  let adapterCount = 0;
+  let toolCount = 0;
+
+  const probe = async (
+    name: FunctionalSmokeProbe,
+    run: () => Promise<unknown>,
+    validate: (value: unknown) => boolean = (value) => value !== undefined,
+  ): Promise<boolean> => {
+    try {
+      const value = await withTimeout(run(), timeoutMs);
+      if (!validate(value)) return false;
+      probes.push(name);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (
+    !(await probe(
+      'workspace-open',
+      () => api.workspace.open(workspacePath),
+      (value) =>
+        isRecord(value) &&
+        isRecord(value.current) &&
+        value.current.path === workspacePath,
+    ))
+  ) {
+    return { ok: false, probes, failedProbe: 'workspace-open' };
+  }
+
+  if (
+    !(await probe(
+      'adapter-registry',
+      async () => {
+        const adapters = await api.adapters.list();
+        adapterCount = adapters.length;
+        return adapters;
+      },
+      (value) => Array.isArray(value) && value.length >= FUNCTIONAL_SMOKE_MIN_ADAPTERS,
+    ))
+  ) {
+    return { ok: false, probes, failedProbe: 'adapter-registry' };
+  }
+
+  if (
+    !(await probe(
+      'settings-ipc',
+      async () =>
+        Promise.all([
+          api.settings.get(),
+          api.settings.orchGet(),
+          api.settings.audioGet(),
+          api.settings.uiGet(),
+          api.settings.listShells(),
+        ]),
+      (value) =>
+        Array.isArray(value) &&
+        value.length === 5 &&
+        Array.isArray(value[4]) &&
+        value[4].length > 0,
+    ))
+  ) {
+    return { ok: false, probes, failedProbe: 'settings-ipc' };
+  }
+
+  const readOnlyProbes: Array<
+    [FunctionalSmokeProbe, () => Promise<unknown>, (value: unknown) => boolean]
+  > = [
+    ['provider-registry', () => api.providers.list(), Array.isArray],
+    ['voice-runtime', () => api.voice.getInfo(), isRecord],
+    [
+      'orchestration-state',
+      async () => Promise.all([api.orch.listMissions(), api.orch.listSquads()]),
+      (value) => Array.isArray(value) && value.every(Array.isArray),
+    ],
+    ['media-registry', () => api.media.listProviders(), Array.isArray],
+    ['perf-ipc', () => api.perf.snapshot(), isRecord],
+    ['updater-ipc', () => api.update.getState(), isRecord],
+  ];
+  for (const [name, run, validate] of readOnlyProbes) {
+    if (!(await probe(name, run, validate))) {
+      return { ok: false, probes, failedProbe: name };
+    }
+  }
+
+  if (
+    !(await probe(
+      'embedded-mcp',
+      async () => {
+        const info = await waitForMcp(api, delay);
+        toolCount = info.toolCount;
+        return info;
+      },
+      (value) =>
+        isRecord(value) &&
+        value.running === true &&
+        typeof value.url === 'string' &&
+        hasLoopbackMcpUrl(value.url) &&
+        typeof value.toolCount === 'number' &&
+        value.toolCount >= FUNCTIONAL_SMOKE_MIN_TOOLS,
+    ))
+  ) {
+    return { ok: false, probes, failedProbe: 'embedded-mcp' };
+  }
+
+  const mcpProbes: Array<
+    [FunctionalSmokeProbe, string, Record<string, unknown>, (value: unknown) => boolean]
+  > = [
+    ['mcp-perf', 'nexus_perf_snapshot', {}, (value) => mcpSucceeded(value, 'nexus_perf_snapshot')],
+    ['mcp-pane-list', 'nexus_pane_list', {}, (value) => mcpSucceeded(value, 'nexus_pane_list')],
+    [
+      'mcp-media-providers',
+      'nexus_media_providers',
+      {},
+      (value) => mcpSucceeded(value, 'nexus_media_providers'),
+    ],
+    [
+      'mcp-ui-read',
+      'nexus_ui_read',
+      {},
+      (value) =>
+        mcpSucceeded(value, 'nexus_ui_read') &&
+        isRecord(value.result) &&
+        value.result.surface === 'nexus-ui',
+    ],
+    [
+      'mcp-file-read',
+      'nexus_file_read',
+      { path: 'smoke.txt' },
+      (value) =>
+        mcpSucceeded(value, 'nexus_file_read') &&
+        isRecord(value.result) &&
+        value.result.content === FUNCTIONAL_SMOKE_FILE_CONTENT,
+    ],
+    [
+      'mcp-write-guard',
+      'nexus_file_write',
+      { path: 'must-not-exist.txt', content: 'blocked' },
+      (value) =>
+        isRecord(value) &&
+        value.ok === false &&
+        value.tool === 'nexus_file_write' &&
+        value.requiredConfirmation === true,
+    ],
+  ];
+  for (const [name, tool, args, validate] of mcpProbes) {
+    if (!(await probe(name, () => api.mcp.invoke(tool, args), validate))) {
+      return { ok: false, probes, failedProbe: name };
+    }
+  }
+
+  return { ok: true, probes, toolCount, adapterCount };
+}

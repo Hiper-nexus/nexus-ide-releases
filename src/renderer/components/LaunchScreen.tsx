@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import type { AdapterInfo } from '../../shared/types';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
+import { useOrchStore } from '../state/orch-store';
 import { NexusMark } from './NexusMark';
 import { PixelIcon } from './PixelIcon';
 
@@ -12,7 +14,7 @@ import { PixelIcon } from './PixelIcon';
  */
 
 function timeAgo(ts: number): string {
-  const mins = Math.floor((Date.now() - ts) / 60000);
+  const mins = Math.max(0, Math.floor((Date.now() - ts) / 60000));
   if (mins < 1) return 'agora';
   if (mins < 60) return `${mins}m atrás`;
   const hours = Math.floor(mins / 60);
@@ -26,18 +28,74 @@ export function LaunchScreen() {
   const remove = useWorkspaceStore((s) => s.remove);
   const openSettings = useSettingsStore((s) => s.toggleDrawer);
   const openWizard = useMissionWizardStore((s) => s.openForNewWorkspace);
+  const mcpInfo = useOrchStore((s) => s.mcpInfo);
   const [manual, setManual] = useState('');
   const [busy, setBusy] = useState(false);
+  const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
+  const [adaptersLoaded, setAdaptersLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const installed = useMemo(
+    () => adapters.filter((adapter) => adapter.installed),
+    [adapters],
+  );
+  const mostRecent = recents[0] ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.nexus.adapters
+      .list()
+      .then((next) => {
+        if (!cancelled) setAdapters(next);
+      })
+      .catch(() => {
+        if (!cancelled) setError('Não foi possível verificar as CLIs instaladas.');
+      })
+      .finally(() => {
+        if (!cancelled) setAdaptersLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.shiftKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === 'o'
+      ) {
+        event.preventDefault();
+        openWizard();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [openWizard]);
+
+  async function openPath(path: string) {
+    if (!path || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await open(path);
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : 'Não foi possível abrir este workspace.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function openManual() {
     const path = manual.trim();
     if (!path) return;
-    setBusy(true);
-    try {
-      await open(path);
-    } finally {
-      setBusy(false);
-    }
+    await openPath(path);
   }
 
   return (
@@ -56,57 +114,125 @@ export function LaunchScreen() {
           Configurações
         </button>
       </header>
-      <div className="launch__panel">
-        <header className="launch__head">
-          <NexusMark size={30} className="launch__logo" />
-          <div>
-            <h1 className="launch__title">NexusIDE</h1>
-            <p className="launch__tagline">
-              Múltiplos agentes de IA. Um workspace.
+      <main className="launch__panel" aria-busy={busy}>
+        <section className="launch__command" aria-labelledby="launch-title">
+          <header className="launch__head">
+            <NexusMark size={32} className="launch__logo" />
+            <div>
+              <h1 id="launch-title" className="launch__title">NexusIDE</h1>
+              <p className="launch__tagline">
+                Centro de operações multiagente
+              </p>
+            </div>
+          </header>
+
+          <div className="launch__readiness" aria-label="Estado do sistema">
+            <span className={installed.length > 0 ? 'is-live' : ''}>
+              <i aria-hidden="true" />
+              {adaptersLoaded
+                ? `${installed.length} CLI${installed.length === 1 ? '' : 's'} pronta${installed.length === 1 ? '' : 's'}`
+                : 'Verificando CLIs'}
+            </span>
+            <span className={mcpInfo?.running ? 'is-live' : ''}>
+              <i aria-hidden="true" />
+              {mcpInfo?.running
+                ? `MCP online · ${mcpInfo.toolCount} ferramentas`
+                : mcpInfo
+                  ? 'MCP indisponível'
+                  : 'MCP conectando'}
+            </span>
+          </div>
+
+          <div className="launch__next">
+            <p className="launch__next-label">Próxima ação</p>
+            <h2>
+              {mostRecent ? `Retomar ${mostRecent.name}` : 'Abrir seu primeiro workspace'}
+            </h2>
+            <p>
+              {mostRecent
+                ? 'Reabra o último contexto com seus panes e missões preservados.'
+                : 'Escolha a pasta que vai delimitar os terminais, agentes e ferramentas.'}
             </p>
           </div>
-        </header>
 
-        <div className="launch__actions">
-          <button
-            className="launch__primary"
-            onClick={openWizard}
-            disabled={busy}
+          <div className="launch__actions">
+            {mostRecent ? (
+              <button
+                className="launch__primary"
+                onClick={() => void openPath(mostRecent.path)}
+                disabled={busy}
+                autoFocus
+              >
+                <PixelIcon name="mission" size={14} />
+                {busy ? 'Abrindo…' : `Continuar ${mostRecent.name}`}
+              </button>
+            ) : (
+              <button
+                className="launch__primary"
+                onClick={openWizard}
+                disabled={busy}
+                autoFocus
+              >
+                <PixelIcon name="plus" size={14} />
+                Novo workspace
+              </button>
+            )}
+            {mostRecent && (
+              <button className="launch__secondary" onClick={openWizard} disabled={busy}>
+                <PixelIcon name="plus" size={12} />
+                Novo workspace <kbd>⌘O</kbd>
+              </button>
+            )}
+          </div>
+
+          <form
+            className="launch__manual"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void openManual();
+            }}
           >
-            <PixelIcon name="plus" size={14} />
-            Novo workspace
-          </button>
-          <div className="launch__manual">
-            <input
-              className="launch__input"
-              value={manual}
-              placeholder="/caminho/para/o/projeto"
-              onChange={(e) => setManual(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void openManual()}
-            />
-            <button
-              className="launch__secondary"
-              onClick={() => void openManual()}
-              disabled={busy || !manual.trim()}
-            >
-              Abrir →
-            </button>
-          </div>
-        </div>
+            <label htmlFor="launch-workspace-path">Abrir por caminho</label>
+            <div className="launch__manual-row">
+              <input
+                id="launch-workspace-path"
+                className="launch__input"
+                value={manual}
+                placeholder="/caminho/para/o/projeto"
+                spellCheck={false}
+                autoComplete="off"
+                onChange={(event) => setManual(event.target.value)}
+              />
+              <button
+                className="launch__secondary"
+                type="submit"
+                disabled={busy || !manual.trim()}
+              >
+                Abrir pasta
+              </button>
+            </div>
+          </form>
+          {error && <p className="launch__error" role="alert">{error}</p>}
+        </section>
 
-        <section className="launch__recents">
-          <h2 className="launch__section">Workspaces recentes</h2>
+        <section className="launch__recents" aria-labelledby="launch-recents">
+          <header className="launch__recents-head">
+            <h2 id="launch-recents" className="launch__section">Workspaces recentes</h2>
+            <span>{recents.length}</span>
+          </header>
           {recents.length === 0 ? (
-            <p className="launch__empty">
-              Nenhum workspace ainda. Escolha uma pasta para começar.
-            </p>
+            <div className="launch__empty">
+              <PixelIcon name="files" size={18} />
+              <p>Nenhum workspace recente.</p>
+              <span>Use “Novo workspace” para escolher uma pasta.</span>
+            </div>
           ) : (
             <ul className="launch__list">
               {recents.map((ws) => (
                 <li key={ws.path} className="launch__item">
                   <button
                     className="launch__item-open"
-                    onClick={() => void open(ws.path)}
+                    onClick={() => void openPath(ws.path)}
                     disabled={busy}
                   >
                     <span className="launch__item-name">{ws.name}</span>
@@ -117,25 +243,32 @@ export function LaunchScreen() {
                   </span>
                   <button
                     className="launch__item-remove"
-                    onClick={() => void remove(ws.path)}
+                    onClick={() => {
+                      setError(null);
+                      void remove(ws.path).catch((cause) => {
+                        setError(
+                          cause instanceof Error
+                            ? cause.message
+                            : 'Não foi possível remover este workspace dos recentes.',
+                        );
+                      });
+                    }}
+                    disabled={busy}
                     title="Remover dos recentes"
-                    aria-label="Remover dos recentes"
+                    aria-label={`Remover ${ws.name} dos recentes`}
                   >
-                    ✕
+                    <PixelIcon name="close" size={9} />
                   </button>
                 </li>
               ))}
             </ul>
           )}
+          <footer className="launch__footer">
+            <span>Selecione um workspace para restaurar o contexto.</span>
+            <kbd>⌘,</kbd> configurações
+          </footer>
         </section>
-
-        <footer className="launch__footer">
-          <span className="launch__hint">
-            Configure providers, keys, catálogo e temas em ⚙ Configurações (barra
-            superior).
-          </span>
-        </footer>
-      </div>
+      </main>
     </div>
   );
 }

@@ -141,23 +141,21 @@ describe('resolveCoarseVoiceTool', () => {
     expect(resolveCoarseVoiceTool('navegar', {}).kind).toBe('invalid');
   });
 
-  it('consultar/ler resolve to direct-answer intents', () => {
+  it('consultar answers context directly while ler executes a real pane read', () => {
     expect(resolveCoarseVoiceTool('consultar', { pergunta: 'quais panes?' })).toEqual({
       kind: 'direct',
       intent: 'consult',
       query: 'quais panes?',
     });
     expect(resolveCoarseVoiceTool('ler', { paneId: 'ativo' })).toEqual({
-      kind: 'direct',
-      intent: 'read',
-      query: 'ativo',
-      paneId: 'ativo',
+      kind: 'action',
+      action: { action: 'read_pane', paneId: 'ativo' },
+      summary: 'ler pane ativo',
     });
     expect(resolveCoarseVoiceTool('ler', {})).toEqual({
-      kind: 'direct',
-      intent: 'read',
-      query: 'ativo',
-      paneId: undefined,
+      kind: 'action',
+      action: { action: 'read_pane' },
+      summary: 'ler pane ativo',
     });
   });
 

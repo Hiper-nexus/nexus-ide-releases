@@ -3,9 +3,9 @@ import { createHash } from 'node:crypto';
 /**
  * Permission cache for Jarvis agent actions.
  *
- * In-memory, per-session. When the user approves a tool+args combination once,
- * it is cached for the remainder of the session. The cache is cleared when
- * the session ends.
+ * In-memory, per-session. Each approval is scoped to the exact workspace,
+ * tool, and arguments and can be consumed by one invocation only. The cache
+ * is cleared when the session ends.
  *
  * Key: `${sessionId}:${toolName}:${argsHash}`
  * Hash: SHA-256 of JSON.stringify(args) — consistent, deterministic.
@@ -74,9 +74,19 @@ export function hasPermission(scope: PermissionScope): boolean {
 }
 
 /**
- * Grant permission for a tool+args combination in a session and workspace.
- * Subsequent calls with the same session, workspace, tool, and args will
- * return true from `hasPermission()` without prompting the user again.
+ * Atomically consume one exact approval. Deleting before the effect starts
+ * prevents concurrent or repeated invocations from reusing the same consent.
+ */
+export function consumePermission(scope: PermissionScope): boolean {
+  const key = permissionKey(scope);
+  if (!cache.has(key)) return false;
+  cache.delete(key);
+  return true;
+}
+
+/**
+ * Grant one execution permit for a tool+args combination in a session and
+ * workspace. `consumePermission()` removes it before the handler starts.
  */
 export function grantPermission(scope: PermissionScope): void {
   const argsHash = hashArgs(scope.args);

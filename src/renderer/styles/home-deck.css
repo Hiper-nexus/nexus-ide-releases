@@ -1,0 +1,394 @@
+/* Home deck, voice keycap, Minha Conta, contas & failover.
+   Módulo extraído do antigo global.css monolítico — a ordem de import
+   em global.css preserva a cascata original. */
+
+/* ---- Workspace bar: action hierarchy ---- */
+/* The one primary action on the bar: solid accent, dark ink. */
+.workspace-bar__btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0b0e14;
+  font-weight: 600;
+}
+.workspace-bar__btn--primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.workspace-bar__sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 2px;
+}
+
+/* ---- Home deck (in-workspace empty state) ---- */
+.home-deck {
+  position: absolute;
+  inset: 8px; /* anchored to .app__body (position: relative), inside its padding */
+  z-index: 30; /* above panes, below the side columns + wizard/drawers */
+  display: grid;
+  place-items: center;
+  /* Scrim sólido (sem blur/glassmorphism): opacidade maior compensa a
+     ausência do backdrop-filter e mantém o contraste do painel acima. */
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  border-radius: var(--radius);
+}
+
+/* O Home é o empty-state da ÁREA DE PANES, não da app inteira: as colunas
+   laterais ficam ACIMA do overlay para continuarem clicáveis — o usuário pode
+   sempre abrir uma missão pelo rail ou um arquivo sem antes dispensar o Home. */
+.app__body > .mission-rail,
+.app__body > .files {
+  position: relative;
+  z-index: 31;
+}
+
+.home-deck__panel {
+  width: min(780px, calc(100% - 48px));
+  max-height: calc(100% - 48px);
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  padding: var(--space-6);
+  animation: home-deck-rise 180ms var(--ease-out-expo);
+}
+
+@keyframes home-deck-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-deck__panel {
+    animation: none;
+  }
+}
+
+.home-deck__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.home-deck__close {
+  margin-left: auto;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    border-color 120ms var(--ease-out-quart),
+    color 120ms var(--ease-out-quart),
+    background-color 120ms var(--ease-out-quart);
+}
+.home-deck__close:hover {
+  border-color: var(--border-strong);
+  background: var(--bg);
+  color: var(--text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-deck__close { transition: none; }
+}
+
+.home-deck__logo {
+  color: var(--accent);
+  font-size: 26px;
+  line-height: 1;
+}
+
+.home-deck__title {
+  margin: 0;
+  font-size: var(--text-3xl);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.home-deck__ws {
+  margin: 2px 0 0;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-deck__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-4) 0 var(--space-5);
+}
+
+.home-deck__stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.home-deck__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  flex: 0 0 auto;
+}
+
+/* "Live" — the single operational green: only for what is actually running. */
+.home-deck__stat--live {
+  color: var(--text);
+}
+.home-deck__stat--live .home-deck__dot {
+  background: var(--live);
+}
+
+.home-deck__next {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-5) 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.home-deck__next-copy {
+  max-width: 52ch;
+}
+
+.home-deck__next-label {
+  margin: 0 0 var(--space-2);
+  color: var(--accent);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.home-deck__next h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-2xl);
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.home-deck__next-copy > p:last-child {
+  margin: var(--space-2) 0 0;
+  color: var(--text-dim);
+  font-size: var(--text-md);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.home-deck__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.home-deck__cta,
+.home-deck__btn {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  border-radius: var(--radius-lg);
+  padding: 0 var(--space-4);
+  font-size: var(--text-md);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--ease-out-quart),
+    border-color 160ms var(--ease-out-quart),
+    color 160ms var(--ease-out-quart),
+    opacity 160ms var(--ease-out-quart);
+}
+
+.home-deck__cta {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #0b0e14;
+}
+.home-deck__cta:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.home-deck__cta:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.home-deck__btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}
+.home-deck__btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.home-deck__btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.home-deck__notice {
+  margin: var(--space-3) 0 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.home-deck__squads {
+  margin-top: var(--space-5);
+}
+
+.home-deck__section-title {
+  margin: 0 0 var(--space-2);
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.home-deck__squad-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.home-deck__squad {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 46px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 0;
+  padding: var(--space-2) var(--space-1);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.home-deck__squad:hover {
+  background: var(--accent-soft);
+}
+
+.home-deck__squad-name {
+  font-size: var(--text-md);
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.home-deck__squad-meta {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  flex: 1 1 auto;
+}
+
+.home-deck__squad-go {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-dim);
+  font-size: 15px;
+}
+.home-deck__squad:hover .home-deck__squad-go {
+  color: var(--accent);
+}
+
+.home-deck__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.home-deck__keys {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+.home-deck__keys kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+}
+
+.home-deck__dismiss {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--radius-md);
+  transition: color 120ms ease;
+}
+.home-deck__dismiss:hover {
+  color: var(--text);
+}
+
+@media (max-width: 760px) {
+  .home-deck__panel {
+    width: calc(100% - 24px);
+    max-height: calc(100% - 24px);
+    padding: var(--space-5);
+  }
+
+  .home-deck__next {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+
+  .home-deck__actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .home-deck__keys {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-deck__cta,
+  .home-deck__btn,
+  .home-deck__squad,
+  .home-deck__dismiss {
+    transition: none;
+  }
+}

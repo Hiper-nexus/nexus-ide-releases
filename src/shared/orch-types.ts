@@ -167,6 +167,7 @@ export interface MissionPaneSpec {
   missionId: string;
   adapterId: string;
   model?: string;
+  accountId?: string;
   /** Reasoning effort the pane ran with (task-router decision) — restored on reopen. */
   effort?: string;
   cwd?: string;
@@ -199,6 +200,7 @@ export interface PaneRegistryEntry {
   kind: 'shell' | 'cli-agent' | 'browser';
   adapterId?: string;
   model?: string;
+  accountId?: string;
   state?: PaneRuntimeState;
 }
 
@@ -256,6 +258,7 @@ export const paneRegistryEntrySchema = z.object({
   kind: z.enum(['shell', 'cli-agent', 'browser']),
   adapterId: z.string().max(64).optional(),
   model: z.string().max(128).optional(),
+  accountId: z.string().max(128).optional(),
   state: z
     .enum(['spawning', 'busy', 'idle', 'exited', 'hibernated', 'unknown'])
     .optional(),

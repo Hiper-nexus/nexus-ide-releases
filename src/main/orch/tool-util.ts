@@ -17,6 +17,8 @@ import { PONYTAIL_RULES } from './ponytail';
 import { ENGINEERING_CHARTER } from './engineering-charter';
 import { DESIGN_CHARTER } from './design-charter';
 import { getOrchSettings } from '../persistence/settings-store';
+import { resolveWorkspaceCwd } from './workspace-path';
+import { canUseNexusMcp } from './cli-mcp-inject';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
@@ -118,17 +120,17 @@ export interface SpawnToolOptions {
 
 /**
  * Append the handoff contract a WORKER must fulfil, matched to what its CLI
- * can actually do: MCP-wired adapters (quirks.mcpAutoload) get the
+ * can actually do: MCP-wired adapters get the
  * nexus_handoff_submit tool; every other CLI has NO route to the embedded MCP
  * server, so its only completion signal is printing the legacy marker block —
  * without this instruction those workers finish silently and the orchestrator
  * waits forever.
  */
-function withHandoffContract(
+export function withHandoffContract(
   prompt: string,
   adapter: { quirks: Record<string, unknown> },
 ): string {
-  const viaMcp = adapter.quirks.mcpAutoload === true;
+  const viaMcp = canUseNexusMcp(adapter);
   const contract = viaMcp
     ? 'Ao concluir sua tarefa, finalize chamando a tool nexus_handoff_submit ' +
       'com {status: "success"|"partial"|"failed", summary, artifacts}.'
@@ -151,7 +153,14 @@ export async function spawnPaneAndMaybePrompt(
 ): Promise<{ paneId: string; sessionId: string }> {
   const adapter = getAdapter(options.adapterId);
   if (!adapter) throw new Error(`unknown adapter: ${options.adapterId}`);
-  const result = await requestPaneSpawn(options);
+  // Agent CLIs can read and execute native tools. Pin every orchestrated spawn
+  // to the active workspace before the renderer/PTY boundary; never inherit
+  // pty-manager's user-shell fallback to HOME.
+  const safeOptions: SpawnToolOptions = {
+    ...options,
+    cwd: resolveWorkspaceCwd(options.cwd),
+  };
+  const result = await requestPaneSpawn(safeOptions);
   if (!result.ok || !result.paneId || !result.sessionId) {
     throw new Error(result.error ?? 'pane spawn failed');
   }
@@ -162,7 +171,7 @@ export async function spawnPaneAndMaybePrompt(
       adapterId: options.adapterId,
       model: options.model,
       effort: options.effort,
-      cwd: options.cwd,
+      cwd: safeOptions.cwd,
       title: options.title,
       agentName: options.agentName,
       role: options.role ?? 'worker',

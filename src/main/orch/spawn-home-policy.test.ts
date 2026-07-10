@@ -8,7 +8,12 @@ function adapter(
 ): Pick<CliPtyAdapter, 'env' | 'quirks'> {
   return {
     env: { static: {}, passthrough: [], ephemeralHome },
-    quirks: { altScreen: false, requiresNoAutoUpdate: false, mcpAutoload },
+    quirks: {
+      altScreen: false,
+      requiresNoAutoUpdate: false,
+      mcpAutoload,
+      nexusMcp: mcpAutoload ? 'autoload' : 'none',
+    },
   };
 }
 

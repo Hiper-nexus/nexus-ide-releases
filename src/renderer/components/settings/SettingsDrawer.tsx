@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AdapterInfo } from '../../../shared/types';
 import { useOrchStore } from '../../state/orch-store';
 import { useSettingsStore } from '../../state/settings-store';
@@ -8,7 +8,10 @@ import {
   SETTINGS_ADVANCED_GROUPS,
   filterSettingsGroups,
   isAdvancedSettingsSection,
+  isSettingsGroupExpanded,
+  toggleSettingsGroup,
   type NavItem,
+  type NavGroup,
   type SettingsSection,
 } from './settings-nav';
 import {
@@ -21,6 +24,7 @@ import {
 import { ProvidersPanel } from './ProvidersPanel';
 import { PixelIcon } from '../PixelIcon';
 import { AccountSection } from './AccountSection';
+import { trapDialogTabKey } from './settings-dialog-focus';
 import { AppearanceSection } from './AppearanceSection';
 import { MediaSection } from './MediaSection';
 import {
@@ -82,6 +86,56 @@ function NavRow({
   );
 }
 
+function AdvancedGroupNav({
+  group,
+  activeSection,
+  expanded,
+  badges,
+  onToggle,
+  onSelect,
+}: {
+  group: NavGroup;
+  activeSection: SettingsSection;
+  expanded: boolean;
+  badges: Partial<Record<SettingsSection, number>>;
+  onToggle: (label: string) => void;
+  onSelect: (id: SettingsSection) => void;
+}) {
+  const groupId = `settings-group-${group.label
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/\W+/g, '-')
+    .toLowerCase()}`;
+  return (
+    <div className="settings-nav__advanced-block">
+      <button
+        type="button"
+        className="settings-nav__group-toggle"
+        onClick={() => onToggle(group.label)}
+        aria-expanded={expanded}
+        aria-controls={groupId}
+      >
+        <span>{group.label}</span>
+        <span className="settings-nav__group-count">{group.items.length}</span>
+        <PixelIcon name="chevron-down" size={11} />
+      </button>
+      {expanded && (
+        <div id={groupId} className="settings-nav__group-items">
+          {group.items.map((item) => (
+            <NavRow
+              key={item.id}
+              item={item}
+              active={activeSection === item.id}
+              badge={badges[item.id]}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SettingsDrawer() {
   const open = useSettingsStore((s) => s.drawerOpen);
   const close = useSettingsStore((s) => s.closeDrawer);
@@ -90,6 +144,12 @@ export function SettingsDrawer() {
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [query, setQuery] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [expandedAdvancedGroups, setExpandedAdvancedGroups] = useState<
+    Set<string>
+  >(() => new Set());
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
   const searching = query.trim().length > 0;
   const groups = useMemo(
     () => filterSettingsGroups(SETTINGS_GROUPS, query),
@@ -110,11 +170,32 @@ export function SettingsDrawer() {
 
   useEffect(() => {
     if (!open) return undefined;
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusFrame = window.requestAnimationFrame(() => {
+      (searchRef.current ?? dialogRef.current)?.focus();
+    });
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+        return;
+      }
+      if (
+        event.key === 'Tab' &&
+        dialogRef.current &&
+        trapDialogTabKey(dialogRef.current, event.shiftKey)
+      ) {
+        event.preventDefault();
+      }
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      window.removeEventListener('keydown', onKey);
+      returnFocusRef.current?.focus();
+      returnFocusRef.current = null;
+    };
   }, [open, close]);
 
   useEffect(() => {
@@ -136,12 +217,27 @@ export function SettingsDrawer() {
     providers: adapters.length,
     squads: squadsCount,
   };
+  const toggleAdvancedGroup = (label: string) => {
+    setExpandedAdvancedGroups((expanded) =>
+      toggleSettingsGroup(expanded, label),
+    );
+  };
 
   return (
-    <div className="settings" role="dialog" aria-label="Configurações">
-      <div className="settings__overlay" onClick={close} />
+    <div
+      ref={dialogRef}
+      className="settings"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-dialog-title"
+      tabIndex={-1}
+    >
+      <div className="settings__overlay" onClick={close} aria-hidden="true" />
       <div className="settings__drawer">
-        <nav className="settings-nav" aria-label="Módulos">
+        <h2 id="settings-dialog-title" className="settings-visually-hidden">
+          Configurações do Nexus
+        </h2>
+        <nav className="settings-nav" aria-label="Configurações">
           <div className="settings-nav__body">
             <div className="settings-nav__brand" aria-label="Nexus Config">
               <span className="settings-nav__brand-mark" aria-hidden>
@@ -158,6 +254,7 @@ export function SettingsDrawer() {
                 ⌕
               </span>
               <input
+                ref={searchRef}
                 className="settings-nav__search-input"
                 type="search"
                 value={query}
@@ -207,31 +304,39 @@ export function SettingsDrawer() {
                   onClick={() => setAdvancedOpen((open) => !open)}
                   aria-expanded={advancedOpen}
                 >
-                  <span className="settings-nav__advanced-label">Avançado</span>
-                  <span className="settings-nav__advanced-hint">catálogo · sistema</span>
+                  <span className="settings-nav__advanced-label">
+                    Mais configurações
+                  </span>
+                  <span className="settings-nav__advanced-hint">
+                    sistema · arsenal · automação
+                  </span>
                   <PixelIcon name="chevron-down" size={12} />
                 </button>
-                {advancedOpen &&
-                  advancedGroups.map((group) => (
-                    <div key={group.label} className="settings-nav__advanced-block">
-                      <p className="settings-nav__section">{group.label}</p>
-                      {group.items.map((item) => (
-                        <NavRow
-                          key={item.id}
-                          item={item}
-                          active={section === item.id}
-                          badge={badges[item.id]}
-                          onSelect={setSection}
-                        />
-                      ))}
-                    </div>
-                  ))}
+                {advancedOpen && (
+                  <div className="settings-nav__advanced-groups">
+                    {advancedGroups.map((group) => (
+                      <AdvancedGroupNav
+                        key={group.label}
+                        group={group}
+                        activeSection={section}
+                        expanded={isSettingsGroupExpanded(
+                          group,
+                          section,
+                          expandedAdvancedGroups,
+                        )}
+                        badges={badges}
+                        onToggle={toggleAdvancedGroup}
+                        onSelect={setSection}
+                      />
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </div>
           <div className="settings-nav__footer">
             <button type="button" className="settings-nav__close" onClick={close}>
-              Fechar
+              Fechar configurações
             </button>
           </div>
         </nav>

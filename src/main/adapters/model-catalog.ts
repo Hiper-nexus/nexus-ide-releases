@@ -4,7 +4,6 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type {
   Adapter,
-  ModelAvailability,
   ModelCatalogEntryInfo,
   ModelCostTier,
   ModelInfoMap,
@@ -58,14 +57,6 @@ const COST_RANK: Record<ModelCostTier, number> = {
   unknown: 2,
   medium: 3,
   high: 4,
-};
-
-const AVAILABILITY_RANK: Record<ModelAvailability, number> = {
-  free: 0,
-  cheap: 1,
-  paid: 4,
-  'api-only': Number.POSITIVE_INFINITY,
-  deprecated: Number.POSITIVE_INFINITY,
 };
 
 export const BUILTIN_MODEL_CATALOG: ModelCatalog = {

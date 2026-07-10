@@ -1,116 +1,243 @@
 name: Release (macOS · signed + notarized)
 
-# Dispara ao dar push numa tag de versão, ex.:
-#   npm version patch   # bump + tag v0.1.5
-#   git push --follow-tags
-# O CI builda em Node 22 LTS (Node 26 quebra o @electron/packager), assina com
-# Developer ID, notariza na Apple e publica o Release com o .dmg + o .zip
-# (payload do auto-update Squirrel.Mac).
-
+# A semantic tag builds two independently signed/notarized macOS artifacts.
+# The release job itself never receives Apple signing credentials.
 on:
   push:
     tags:
-      - 'v*'
-  # Permite re-disparar manualmente pela aba Actions (ex.: após destravar o
-  # billing) sem precisar re-taggear. Rode a partir da tag desejada.
+      - 'v[0-9]*.[0-9]*.[0-9]*'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Tag semântica existente a publicar (ex.: v0.12.0)'
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
-  contents: write # necessário para criar o Release
+  contents: read
 
 jobs:
-  release:
-    runs-on: macos-14 # runner Apple Silicon (arm64)
+  build:
+    name: Build macOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+          - arch: x64
+            runner: macos-15-intel
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      EXPECTED_SIGNING_IDENTITY: 'Developer ID Application: Cleofas Pereira rocha'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: 'npm'
 
+      - name: Validar tag, versão e notas
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::tag inválida: $RELEASE_TAG"
+            exit 1
+          }
+          VERSION="$(node -p "require('./package.json').version")"
+          SERVER_VERSION="$(node -p "require('./server/package.json').version")"
+          test "$RELEASE_TAG" = "v$VERSION" || {
+            echo "::error::tag $RELEASE_TAG não corresponde a package.json v$VERSION"
+            exit 1
+          }
+          test "$SERVER_VERSION" = "$VERSION" || {
+            echo "::error::server $SERVER_VERSION diverge do app $VERSION"
+            exit 1
+          }
+          grep -F "version: '$VERSION'" src/shared/release-notes.ts >/dev/null || {
+            echo "::error::CURRENT_RELEASE não corresponde a $VERSION"
+            exit 1
+          }
+          grep -F "## $VERSION " CHANGELOG.md >/dev/null || {
+            echo "::error::CHANGELOG sem seção $VERSION"
+            exit 1
+          }
+
+      # No signing key is in the keychain while dependencies, tests and native
+      # rebuilds run. This keeps third-party install/build scripts outside the
+      # private-key trust boundary.
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Gate de qualidade e segurança
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run typecheck --workspace @nexus/server
+          npm test --workspace @nexus/server
+          npm audit --audit-level=moderate
+          npm run premake
+
+      - name: Gerar SBOM antes da assinatura
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          npm sbom --sbom-format cyclonedx >"$RUNNER_TEMP/NexusIDE-$VERSION.full.cyclonedx.json"
+
+      - name: Validar credencial de notarização
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          xcrun notarytool history \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --output-format json >/dev/null
+
+      # The certificate exists only for the direct Forge invocation below. Do
+      # not use `npm run make`: its pre/post lifecycle hooks would execute after
+      # the private key is imported.
       - name: Importar certificado Developer ID
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           CERT="$RUNNER_TEMP/devid.p12"
           KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
           echo "$MACOS_CERTIFICATE" | base64 --decode > "$CERT"
 
-          # Keychain temporária isolada só para este build.
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-
-          # Importa cert + chave privada e autoriza o codesign sem prompt.
           security import "$CERT" -k "$KEYCHAIN" -P "$MACOS_CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-
-          # Torna a keychain visível para o codesign.
           security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
           security default-keychain -s "$KEYCHAIN"
-          security find-identity -v -p codesigning
+          IDENTITIES="$(security find-identity -v -p codesigning "$KEYCHAIN")"
+          printf '%s\n' "$IDENTITIES"
+          EXPECTED_AUTHORITY="$EXPECTED_SIGNING_IDENTITY ($APPLE_TEAM_ID)"
+          MATCH_COUNT="$(grep -F -c "\"$EXPECTED_AUTHORITY\"" <<<"$IDENTITIES" || true)"
+          test "$MATCH_COUNT" = 1 || {
+            echo "::error::esperada exatamente uma identidade $EXPECTED_AUTHORITY; encontradas $MATCH_COUNT"
+            exit 1
+          }
 
-      - name: Instalar dependências
-        run: npm ci
-
-      - name: Build + assinatura + notarização
+      - name: Build + assinatura + notarização (${{ matrix.arch }})
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run make
+        run: ./node_modules/.bin/electron-forge make
 
-      # Roda o .app EMPACOTADO antes de publicar: se o main crashar no boot
-      # (ex.: interop de bundle que só quebra em produção), o release não sai.
-      # O timeout externo cobre o caso de crash em import-time, onde o Electron
-      # mostra o dialog de exceção e trava sem encerrar o processo.
-      - name: Smoke test do app empacotado
+      - name: Verificar DMG e ZIP como o usuário os recebe
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          APP="$(find out -maxdepth 2 -name 'NexusIDE.app' -not -path '*/make/*' | head -1)"
-          BIN="$APP/Contents/MacOS/NexusIDE"
-          test -x "$BIN" || { echo '::error::app empacotado não encontrado em out/'; exit 1; }
-          "$BIN" --smoke-test &
-          PID=$!
-          CODE=""
-          for _ in $(seq 1 45); do
-            if ! kill -0 "$PID" 2>/dev/null; then
-              wait "$PID" && CODE=0 || CODE=$?
-              break
-            fi
-            sleep 2
-          done
-          if [ -z "$CODE" ]; then
-            kill -9 "$PID" 2>/dev/null || true
-            echo '::error::smoke test: timeout — main process travou no boot (provável exceção em import-time)'
-            exit 1
-          fi
-          echo "smoke test exit code: $CODE"
-          exit "$CODE"
+          VERSION="$(node -p "require('./package.json').version")"
+          node scripts/verify-macos-release.mjs \
+            --artifacts out/make \
+            --version "$VERSION" \
+            --bundle-id com.nexuside.app \
+            --team-id "$APPLE_TEAM_ID" \
+            --identity "$EXPECTED_SIGNING_IDENTITY"
 
-      - name: Publicar Release com o .dmg + .zip
+      - name: Remover chave de assinatura do runner
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true
+          rm -f "$RUNNER_TEMP/devid.p12"
+
+      - name: Preparar assets de release (${{ matrix.arch }})
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          ARCH="${{ matrix.arch }}"
+          DMG_COUNT="$(find out/make -type f -name '*.dmg' | wc -l | tr -d ' ')"
+          ZIP_COUNT="$(find out/make -type f -name "*darwin-$ARCH*.zip" | wc -l | tr -d ' ')"
+          test "$DMG_COUNT" = 1 || { echo "::error::esperado 1 DMG, achei $DMG_COUNT"; exit 1; }
+          test "$ZIP_COUNT" = 1 || { echo "::error::esperado 1 ZIP $ARCH, achei $ZIP_COUNT"; exit 1; }
+          DMG="$(find out/make -type f -name '*.dmg' -print -quit)"
+          ZIP="$(find out/make -type f -name "*darwin-$ARCH*.zip" -print -quit)"
+          ASSET_DIR="release-assets"
+          mkdir -p "$ASSET_DIR"
+          cp "$DMG" "$ASSET_DIR/NexusIDE-$VERSION-darwin-$ARCH.dmg"
+          cp "$ZIP" "$ASSET_DIR/NexusIDE-darwin-$ARCH-$VERSION.zip"
+          cp "$RUNNER_TEMP/NexusIDE-$VERSION.full.cyclonedx.json" \
+            "$ASSET_DIR/NexusIDE-$VERSION-darwin-$ARCH.full.cyclonedx.json"
+          (
+            cd "$ASSET_DIR"
+            shasum -a 256 \
+              "NexusIDE-$VERSION-darwin-$ARCH.dmg" \
+              "NexusIDE-darwin-$ARCH-$VERSION.zip" \
+              "NexusIDE-$VERSION-darwin-$ARCH.full.cyclonedx.json" \
+              >"SHA256SUMS-darwin-$ARCH.txt"
+          )
+
+      - name: Guardar assets assinados (${{ matrix.arch }})
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-assets-${{ matrix.arch }}
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publicar release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+    steps:
+      - name: Baixar assets assinados
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-assets-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Publicar release imutável com os dois Macs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          DMG="$(find out/make -name '*.dmg' | head -1)"
-          ZIP="$(find out/make -name '*.zip' | head -1)"
-          echo "dmg: $DMG"
-          echo "zip: $ZIP"
-          test -n "$DMG" || { echo 'nenhum .dmg gerado'; exit 1; }
-          # Idempotente: cria o Release, ou (se a tag já tiver Release) só
-          # anexa/atualiza os artefatos — evita falha em re-execuções.
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" "$DMG" ${ZIP:+"$ZIP"} --clobber
-          else
-            gh release create "${GITHUB_REF_NAME}" \
-              --title "NexusIDE ${GITHUB_REF_NAME}" \
-              --generate-notes \
-              "$DMG" ${ZIP:+"$ZIP"}
+          VERSION="${RELEASE_TAG#v}"
+          ASSET_DIR="release-assets"
+          for ARCH in arm64 x64; do
+            test -f "$ASSET_DIR/NexusIDE-$VERSION-darwin-$ARCH.dmg"
+            test -f "$ASSET_DIR/NexusIDE-darwin-$ARCH-$VERSION.zip"
+            test -f "$ASSET_DIR/NexusIDE-$VERSION-darwin-$ARCH.full.cyclonedx.json"
+            test -f "$ASSET_DIR/SHA256SUMS-darwin-$ARCH.txt"
+          done
+          FILE_COUNT="$(find "$ASSET_DIR" -maxdepth 1 -type f | wc -l | tr -d ' ')"
+          test "$FILE_COUNT" = 8 || {
+            echo "::error::esperados 8 assets de release, achei $FILE_COUNT"
+            exit 1
+          }
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::release $RELEASE_TAG já existe; publique uma nova versão"
+            exit 1
           fi
+          gh release create "$RELEASE_TAG" \
+            --title "NexusIDE $RELEASE_TAG" \
+            --generate-notes \
+            "$ASSET_DIR"/*

@@ -7,13 +7,13 @@
   "bin": "agy",
   "detect": "agy --version",
   "install": {
-    "method": "npm",
-    "command": "npm install -g @antigravity/cli"
+    "method": "manual",
+    "command": "curl -fsSL https://antigravity.google/cli/install.sh | bash"
   },
   "auth": {
     "method": "oauth",
     "credentialStore": "keychain",
-    "loginHint": "Run `agy login` to authenticate via browser OAuth."
+    "loginHint": "Run `agy` and complete Google OAuth in the browser."
   },
   "spawn": {
     "interactive": [
@@ -25,7 +25,12 @@
       "{{PROMPT}}"
     ],
     "ptyRequired": true,
-    "resumeArgs": [],
+    "resumeArgs": [
+      "--continue"
+    ],
+    "resumeIdArgs": [
+      "--conversation"
+    ],
     "extraArgs": []
   },
   "env": {
@@ -68,7 +73,8 @@
   "quirks": {
     "altScreen": true,
     "requiresNoAutoUpdate": false,
-    "mcpAutoload": false
+    "mcpAutoload": false,
+    "nexusMcp": "agy"
   },
   "control": {
     "permission": {
@@ -76,6 +82,9 @@
       "modes": {},
       "yolo": [
         "--dangerously-skip-permissions"
+      ],
+      "safe": [
+        "--sandbox"
       ],
       "default": ""
     }

@@ -12,6 +12,7 @@ import {
 import { getSquad, findAgent } from './squad-store';
 import { spawnPaneAndMaybePrompt } from './tool-util';
 import { createMission } from './mission-store';
+import { resolveWorkspaceCwd } from './workspace-path';
 
 /**
  * Runtime do cron: tick de 60s no main. Jobs vencidos disparam o brief num
@@ -28,7 +29,10 @@ export interface CronRuntimeDeps {
 }
 
 /** Dispara um job: cria missão + spawna o alvo com o brief. */
-async function defaultFire(job: CronJob): Promise<void> {
+export async function fireCronJob(job: CronJob): Promise<void> {
+  // Revalida também jobs legados ou alterados no disco. Sem workspace aberto,
+  // ou se o caminho escapar do workspace ativo, falha antes de criar missão.
+  const workspacePath = resolveWorkspaceCwd(job.workspacePath);
   const mission = createMission({
     title: `⏰ ${job.name}`,
     description: job.brief,
@@ -42,7 +46,7 @@ async function defaultFire(job: CronJob): Promise<void> {
     await spawnPaneAndMaybePrompt({
       adapterId: orch.cli,
       model: orch.model,
-      cwd: job.workspacePath,
+      cwd: workspacePath,
       title: `${squad.name} (cron)`,
       missionId: mission.id,
       agentName: orch.agentName,
@@ -60,7 +64,7 @@ async function defaultFire(job: CronJob): Promise<void> {
     await spawnPaneAndMaybePrompt({
       adapterId: agent.cli,
       model: agent.model,
-      cwd: job.workspacePath,
+      cwd: workspacePath,
       title: `${agent.agentName} (cron)`,
       missionId: mission.id,
       agentName: agent.agentName,
@@ -77,7 +81,7 @@ async function defaultFire(job: CronJob): Promise<void> {
 export const defaultCronDeps: CronRuntimeDeps = {
   load: loadCronJobs,
   save: saveCronJobs,
-  fire: defaultFire,
+  fire: fireCronJob,
   now: Date.now,
 };
 
@@ -163,6 +167,9 @@ export function addCronJob(input: {
   squadId?: string;
 }): CronJob {
   const fields = parseCronExpr(input.schedule); // valida
+  // O job fica preso ao workspace ativo canônico. Nunca deixe o PTY cair para
+  // HOME quando o chamador omite ou fornece um caminho inválido.
+  const workspacePath = resolveWorkspaceCwd(input.workspacePath);
   const now = Date.now();
   const job: CronJob = {
     id: `cron-${randomUUID().slice(0, 8)}`,
@@ -170,7 +177,7 @@ export function addCronJob(input: {
     schedule: input.schedule,
     brief: input.brief,
     status: 'active',
-    workspacePath: input.workspacePath,
+    workspacePath,
     agentName: input.agentName,
     squadId: input.squadId,
     createdAt: now,

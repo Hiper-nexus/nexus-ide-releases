@@ -13,13 +13,18 @@ import { OPS_CHANNELS } from '../shared/ops-ipc';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { VISION_CHANNELS } from '../shared/vision-ipc';
 import type { ScreenCaptureMetadata } from '../shared/vision-ipc';
-import { getAxTree } from './ax-tree';
+import { getAxTree, performAxAction } from './ax-tree';
+import { runFunctionalSmokeProbes } from './functional-smoke';
 import { UPDATE_CHANNELS } from '../shared/update-ipc';
 import type { UpdateState } from '../shared/update-ipc';
 import { ORCH_CHANNELS } from '../shared/orch-channels';
 import { REMOTE_CHANNELS } from '../shared/remote-channels';
 import { SETTINGS_CHANNELS } from '../shared/settings-types';
-import type { TerminalSettings, UiSettings } from '../shared/settings-types';
+import type {
+  AudioSettings,
+  TerminalSettings,
+  UiSettings,
+} from '../shared/settings-types';
 import { WORKSPACE_CHANNELS } from '../shared/workspace-types';
 import type { WorkspaceState } from '../shared/workspace-types';
 import { PROVIDER_CHANNELS } from '../shared/provider-settings-types';
@@ -57,9 +62,12 @@ import type {
 } from '../shared/types';
 import type {
   JarvisLiveInterruptEvent,
+  JarvisLiveAudioOutEvent,
+  JarvisLiveAudioPlaybackEvent,
   JarvisLiveState,
   JarvisTranscriptAppendEvent,
   JarvisLiveToolEvent,
+  JarvisLiveToolCancellationEvent,
   JarvisLiveToolResultEvent,
   JarvisLiveTranscriptEvent,
   VoiceRuntimeInfo,
@@ -163,13 +171,16 @@ const liveStateListeners = new Set<(state: JarvisLiveState) => void>();
 const liveTranscriptListeners = new Set<(event: JarvisLiveTranscriptEvent) => void>();
 const transcriptAppendListeners = new Set<(event: JarvisTranscriptAppendEvent) => void>();
 const liveToolCallListeners = new Set<(event: JarvisLiveToolEvent) => void>();
+const liveToolCancelledListeners = new Set<
+  (event: JarvisLiveToolCancellationEvent) => void
+>();
 const liveToolResultListeners = new Set<(event: JarvisLiveToolResultEvent) => void>();
 const liveInterruptedListeners = new Set<(event: JarvisLiveInterruptEvent) => void>();
-const liveAudioOutListeners = new Set<(b64: string) => void>();
+const liveAudioOutListeners = new Set<(event: JarvisLiveAudioOutEvent) => void>();
 const updateStateListeners = new Set<(state: UpdateState) => void>();
 
-ipcRenderer.on(VOICE_CHANNELS.liveAudioOut, (_event, b64: string) =>
-  liveAudioOutListeners.forEach((cb) => cb(b64)),
+ipcRenderer.on(VOICE_CHANNELS.liveAudioOut, (_event, payload: JarvisLiveAudioOutEvent) =>
+  liveAudioOutListeners.forEach((cb) => cb(payload)),
 );
 ipcRenderer.on(UPDATE_CHANNELS.state, (_event, state: UpdateState) =>
   updateStateListeners.forEach((cb) => cb(state)),
@@ -194,6 +205,11 @@ ipcRenderer.on(
 );
 ipcRenderer.on(VOICE_CHANNELS.liveToolCall, (_event, event: JarvisLiveToolEvent) =>
   liveToolCallListeners.forEach((cb) => cb(event)),
+);
+ipcRenderer.on(
+  VOICE_CHANNELS.liveToolCancelled,
+  (_event, event: JarvisLiveToolCancellationEvent) =>
+    liveToolCancelledListeners.forEach((cb) => cb(event)),
 );
 ipcRenderer.on(
   VOICE_CHANNELS.liveToolResult,
@@ -245,6 +261,11 @@ ipcRenderer.on(ORCH_CHANNELS.squadsChanged, (_e, squads: Squad[]) =>
 const settingsChangedListeners = new Set<(settings: TerminalSettings) => void>();
 ipcRenderer.on(SETTINGS_CHANNELS.changed, (_e, settings: TerminalSettings) =>
   settingsChangedListeners.forEach((cb) => cb(settings)),
+);
+
+const audioSettingsChangedListeners = new Set<(audio: AudioSettings) => void>();
+ipcRenderer.on(SETTINGS_CHANNELS.audioChanged, (_e, audio: AudioSettings) =>
+  audioSettingsChangedListeners.forEach((cb) => cb(audio)),
 );
 
 const uiSettingsChangedListeners = new Set<(ui: UiSettings) => void>();
@@ -300,7 +321,7 @@ ipcRenderer.on(PIPE_CHANNELS.changed, (_e, pipes: Pipe[]) =>
 
 const api: NexusApi = {
   app: {
-    signalMounted: () => ipcRenderer.send(WINDOW_CHANNELS.mounted),
+    signalMounted: (report) => ipcRenderer.send(WINDOW_CHANNELS.mounted, report),
     openExternal: (url: string) =>
       ipcRenderer.invoke(WINDOW_CHANNELS.openExternal, url),
     authLogin: (provider: 'github' | 'google') =>
@@ -384,7 +405,12 @@ const api: NexusApi = {
     liveStop: () => ipcRenderer.invoke(VOICE_CHANNELS.liveStop),
     liveHardRebuild: () => ipcRenderer.invoke(VOICE_CHANNELS.liveHardRebuild),
     liveHardTeardown: () => ipcRenderer.invoke(VOICE_CHANNELS.liveHardTeardown),
+    liveQuiesce: (reason) =>
+      ipcRenderer.invoke(VOICE_CHANNELS.liveQuiesce, { reason }),
     liveEndTurn: () => ipcRenderer.invoke(VOICE_CHANNELS.liveEndTurn),
+    liveEndUserAudio: () => ipcRenderer.invoke(VOICE_CHANNELS.liveEndUserAudio),
+    liveTurnBegin: (turnId) =>
+      ipcRenderer.send(VOICE_CHANNELS.liveTurnBegin, turnId),
     liveSmokeTest: (req) => ipcRenderer.invoke(VOICE_CHANNELS.liveSmokeTest, req),
     liveSay: (req) => ipcRenderer.invoke(VOICE_CHANNELS.liveSay, req),
     liveStatus: (patch) => ipcRenderer.invoke(VOICE_CHANNELS.liveStatus, patch),
@@ -395,9 +421,13 @@ const api: NexusApi = {
     liveInterrupt: (reason) =>
       ipcRenderer.invoke(VOICE_CHANNELS.liveInterrupt, { reason }),
     liveMicIn: (b64: string) => ipcRenderer.send(VOICE_CHANNELS.liveMicIn, b64),
+    liveRescueIn: (req) =>
+      ipcRenderer.invoke(VOICE_CHANNELS.liveRescueIn, req),
     liveContextIn: (text: string) =>
       ipcRenderer.send(VOICE_CHANNELS.liveContextIn, text),
-    onLiveAudioOut: (cb: (b64: string) => void) =>
+    liveAudioPlayback: (event: JarvisLiveAudioPlaybackEvent) =>
+      ipcRenderer.send(VOICE_CHANNELS.liveAudioPlayback, event),
+    onLiveAudioOut: (cb: (event: JarvisLiveAudioOutEvent) => void) =>
       addListener(liveAudioOutListeners, cb),
     onPttToggle: (cb: () => void) => addListener(pttToggleListeners, cb),
     onWakeDetected: (cb: () => void) => addListener(wakeDetectedListeners, cb),
@@ -410,6 +440,7 @@ const api: NexusApi = {
     onLiveTranscript: (cb) => addListener(liveTranscriptListeners, cb),
     onTranscriptAppend: (cb) => addListener(transcriptAppendListeners, cb),
     onLiveToolCall: (cb) => addListener(liveToolCallListeners, cb),
+    onLiveToolCancelled: (cb) => addListener(liveToolCancelledListeners, cb),
     onLiveToolResult: (cb) => addListener(liveToolResultListeners, cb),
     onLiveInterrupted: (cb) => addListener(liveInterruptedListeners, cb),
   },
@@ -433,6 +464,7 @@ const api: NexusApi = {
         paneId: string;
         adapterId: string;
         model?: string;
+        accountId?: string;
         cwd?: string;
         title?: string;
         agentName?: string;
@@ -504,6 +536,10 @@ const api: NexusApi = {
     onChanged: (cb) => addListener(settingsChangedListeners, cb),
     orchGet: () => ipcRenderer.invoke(SETTINGS_CHANNELS.orchGet),
     orchSet: (patch) => ipcRenderer.invoke(SETTINGS_CHANNELS.orchSet, patch),
+    audioGet: () => ipcRenderer.invoke(SETTINGS_CHANNELS.audioGet),
+    audioSet: (patch) => ipcRenderer.invoke(SETTINGS_CHANNELS.audioSet, patch),
+    onAudioChanged: (cb) => addListener(audioSettingsChangedListeners, cb),
+    listShells: () => ipcRenderer.invoke(SETTINGS_CHANNELS.shellsList),
     uiGet: () => ipcRenderer.invoke(SETTINGS_CHANNELS.uiGet),
     uiSet: (patch) => ipcRenderer.invoke(SETTINGS_CHANNELS.uiSet, patch),
     onUiChanged: (cb) => addListener(uiSettingsChangedListeners, cb),
@@ -645,6 +681,7 @@ const api: NexusApi = {
       ipcRenderer.invoke(VISION_CHANNELS.setImageConsent, { allowCloudImage }),
     context: (options) => ipcRenderer.invoke(VISION_CHANNELS.context, options),
     getAxTree: () => getAxTree(),
+    performAxAction: (request) => performAxAction(request),
     ocr: (imageBase64: string) => ipcRenderer.invoke(VISION_CHANNELS.ocr, imageBase64),
     checkPermission: () => ipcRenderer.invoke(VISION_CHANNELS.permission),
     onCaptured: (cb: (result: ScreenCaptureMetadata) => void) => {
@@ -655,5 +692,38 @@ const api: NexusApi = {
   },
   platform: process.platform,
 };
+
+let functionalSmokeStarted = false;
+ipcRenderer.on(WINDOW_CHANNELS.functionalSmokeRun, (_event, payload: unknown) => {
+  if (functionalSmokeStarted) return;
+  functionalSmokeStarted = true;
+  const workspacePath =
+    typeof payload === 'object' &&
+    payload !== null &&
+    Object.keys(payload).length === 1 &&
+    typeof (payload as { workspacePath?: unknown }).workspacePath === 'string' &&
+    (payload as { workspacePath: string }).workspacePath.length <= 4096
+      ? (payload as { workspacePath: string }).workspacePath
+      : null;
+  if (!workspacePath) {
+    ipcRenderer.send(WINDOW_CHANNELS.functionalSmokeResult, {
+      ok: false,
+      probes: [],
+      failedProbe: 'workspace-open',
+    });
+    return;
+  }
+  void runFunctionalSmokeProbes(api, workspacePath)
+    .then((result) => {
+      ipcRenderer.send(WINDOW_CHANNELS.functionalSmokeResult, result);
+    })
+    .catch(() => {
+      ipcRenderer.send(WINDOW_CHANNELS.functionalSmokeResult, {
+        ok: false,
+        probes: [],
+        failedProbe: 'workspace-open',
+      });
+    });
+});
 
 contextBridge.exposeInMainWorld('nexus', api);

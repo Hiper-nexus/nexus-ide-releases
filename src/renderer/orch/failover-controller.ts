@@ -25,7 +25,15 @@ export function useFailoverController(): void {
       const pane = listPanes(useLayoutStore.getState().root).find(
         (p) => p.id === event.paneId,
       );
-      if (pane) respawnWithResume(pane);
+      if (pane) {
+        if (event.toAccountId) {
+          useLayoutStore.getState().setAccountId(pane.id, event.toAccountId);
+        }
+        const updated = listPanes(useLayoutStore.getState().root).find(
+          (candidate) => candidate.id === pane.id,
+        );
+        if (updated) respawnWithResume(updated);
+      }
       push(
         'success',
         `Trocado para "${event.toAccountLabel}"`,

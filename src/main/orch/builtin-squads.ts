@@ -35,7 +35,9 @@ const SPEAK_HUMAN =
  * NATIVAS da CLI do worker (Read/Write/Edit/Bash/Grep/Glob) não passam por este
  * gate, então `[]` NÃO incapacita o worker: ele continua codando normalmente e
  * só perde acesso cruzado a panes/missão, entregando via nexus_handoff_submit
- * (sempre permitido). Ver gate.ts isToolAllowed + mcp-protocol.ts.
+ * (sempre permitido). Tools nativas continuam sob o sandbox/modo de permissão
+ * seguro do próprio CLI; o hook distingue essas tools das chamadas MCP Nexus.
+ * Ver gate.ts isHookToolAllowed/isToolAllowed + mcp-protocol.ts.
  */
 export function withAllowlists(agents: SquadAgent[]): SquadAgent[] {
   return agents.map((agent) => ({

@@ -23,12 +23,20 @@
     "headless": [
       "codex",
       "--ask-for-approval",
-      "never",
-      "-q",
+      "on-request",
+      "exec",
+      "--sandbox",
+      "workspace-write",
       "{{PROMPT}}"
     ],
     "ptyRequired": true,
-    "resumeArgs": [],
+    "resumeArgs": [
+      "resume",
+      "--last"
+    ],
+    "resumeIdArgs": [
+      "resume"
+    ],
     "extraArgs": []
   },
   "env": {
@@ -75,7 +83,8 @@
     "altScreen": true,
     "requiresNoAutoUpdate": false,
     "approvalFlag": "--ask-for-approval",
-    "mcpAutoload": false
+    "mcpAutoload": false,
+    "nexusMcp": "codex"
   },
   "control": {
     "permission": {
@@ -87,6 +96,12 @@
       },
       "yolo": [
         "--dangerously-bypass-approvals-and-sandbox"
+      ],
+      "safe": [
+        "--sandbox",
+        "workspace-write",
+        "--ask-for-approval",
+        "on-request"
       ],
       "default": ""
     },

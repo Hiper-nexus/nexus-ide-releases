@@ -197,4 +197,136 @@ describe('cli-agent spawn argv hardening', () => {
     expect(spec.args).toContain('--user-flag');
     expect(spec.args.slice(-2)).toEqual(['--disallowedTools', 'Task']);
   });
+
+  it('lets Kimi transient-model env choose the API model without an overriding --model', () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const base = makeAdapter({
+      static: {},
+      passthrough: [],
+      ephemeralHome: false,
+    });
+    const adapter: CliPtyAdapter = {
+      ...base,
+      id: 'kimi',
+      bin: 'kimi',
+      spawn: { ...base.spawn, interactive: ['kimi'] },
+      models: {
+        flag: '--model',
+        list: ['kimi-code/kimi-for-coding'],
+        default: 'kimi-code/kimi-for-coding',
+      },
+    };
+
+    const { sessionId } = spawnAgentSession(
+      fakeWc(),
+      {
+        kind: 'cli-agent',
+        adapterId: 'kimi',
+        model: 'kimi-code/kimi-for-coding',
+        cols: 80,
+        rows: 24,
+      },
+      adapter,
+      {
+        keyEnv: {
+          KIMI_MODEL_API_KEY: 'sk-kimi-test',
+          KIMI_MODEL_NAME: 'kimi-for-coding',
+        },
+      },
+    );
+
+    const spec = h.specFor(sessionId);
+    expect(spec.args).not.toContain('--model');
+    expect(spec.env.KIMI_MODEL_API_KEY).toBe('sk-kimi-test');
+    expect(spec.env.KIMI_MODEL_NAME).toBe('kimi-for-coding');
+  });
+
+  it('normalizes the legacy Kimi OAuth model alias before adding --model', () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const base = makeAdapter({
+      static: {},
+      passthrough: [],
+      ephemeralHome: false,
+    });
+    const adapter: CliPtyAdapter = {
+      ...base,
+      id: 'kimi',
+      bin: 'kimi',
+      spawn: { ...base.spawn, interactive: ['kimi'] },
+      models: {
+        flag: '--model',
+        list: ['kimi-code/kimi-for-coding'],
+        default: 'kimi-code/kimi-for-coding',
+      },
+    };
+
+    const { sessionId } = spawnAgentSession(
+      fakeWc(),
+      {
+        kind: 'cli-agent',
+        adapterId: 'kimi',
+        model: 'kimi-for-coding',
+        cols: 80,
+        rows: 24,
+      },
+      adapter,
+    );
+
+    expect(h.specFor(sessionId).args).toEqual([
+      '--model',
+      'kimi-code/kimi-for-coding',
+    ]);
+  });
+
+  it('passes only provider-qualified OpenCode model ids', () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const base = makeAdapter({
+      static: {},
+      passthrough: [],
+      ephemeralHome: false,
+    });
+    const adapter: CliPtyAdapter = {
+      ...base,
+      id: 'opencode',
+      bin: 'opencode',
+      spawn: { ...base.spawn, interactive: ['opencode'] },
+      models: {
+        flag: '--model',
+        list: ['opencode/big-pickle'],
+        default: 'opencode/big-pickle',
+      },
+    };
+
+    const valid = spawnAgentSession(
+      fakeWc(),
+      {
+        kind: 'cli-agent',
+        adapterId: 'opencode',
+        model: 'opencode/big-pickle',
+        cols: 80,
+        rows: 24,
+      },
+      adapter,
+    );
+    const stale = spawnAgentSession(
+      fakeWc(),
+      {
+        kind: 'cli-agent',
+        adapterId: 'opencode',
+        model: 'claude-sonnet-5',
+        cols: 80,
+        rows: 24,
+      },
+      adapter,
+    );
+
+    expect(h.specFor(valid.sessionId).args).toEqual([
+      '--model',
+      'opencode/big-pickle',
+    ]);
+    expect(h.specFor(stale.sessionId).args).toEqual([]);
+  });
 });

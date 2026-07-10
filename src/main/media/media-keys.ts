@@ -5,6 +5,7 @@ import {
 } from '../persistence/secrets-store';
 import type { MediaProviderId } from '../../shared/media-types';
 import type { MediaProviderDef } from './media-providers';
+import { findMediaProvider } from './media-providers';
 
 /**
  * Media API keys — safeStorage/Keychain-backed edge (mirrors voice-secrets).
@@ -14,6 +15,7 @@ import type { MediaProviderDef } from './media-providers';
  */
 
 const MEDIA_SECRET_PREFIX = 'mediakey:';
+const VOICE_SECRET_PREFIX = 'voice-env:';
 
 export function mediaSecretKey(providerId: MediaProviderId): string {
   return `${MEDIA_SECRET_PREFIX}${providerId}`;
@@ -23,6 +25,11 @@ export function mediaSecretKey(providerId: MediaProviderId): string {
 export function resolveMediaKey(def: MediaProviderDef): string | undefined {
   const stored = getSecret(mediaSecretKey(def.id))?.trim();
   if (stored) return stored;
+  // Provider credentials are app-wide. A Gemini/OpenAI key already saved in
+  // Voice must immediately enable the matching media provider instead of
+  // forcing the user to duplicate the same secret under another UI section.
+  const sharedProviderKey = getSecret(`${VOICE_SECRET_PREFIX}${def.envVar}`)?.trim();
+  if (sharedProviderKey) return sharedProviderKey;
   const inherited = process.env[def.envVar]?.trim();
   return inherited || undefined;
 }
@@ -43,7 +50,10 @@ export function hasStoredMediaKey(providerId: MediaProviderId): boolean {
 }
 
 export function maskedMediaKey(providerId: MediaProviderId): string | null {
-  const key = getSecret(mediaSecretKey(providerId));
+  const def = findMediaProvider(providerId);
+  const key =
+    getSecret(mediaSecretKey(providerId)) ??
+    (def ? getSecret(`${VOICE_SECRET_PREFIX}${def.envVar}`) : null);
   if (!key) return null;
   if (key.length <= 8) return '••••';
   return `${key.slice(0, 3)}…${key.slice(-4)}`;

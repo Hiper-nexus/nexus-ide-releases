@@ -14,16 +14,24 @@ import {
   stripWakeAckEcho,
 } from './transcript-filter';
 import { isLikelyNoiseTranscript } from '../../shared/voice-noise';
-import { discardSpokenEchoIfNeeded, transcriptInConversation } from './voice-echo-guard';
+import {
+  discardSpokenEchoIfNeeded,
+  transcriptInConversation,
+} from './voice-echo-guard';
 import { resetAutoReplyLoopForCapture } from './jarvis-reply-loop';
-import { classicSuppressedByRealtimeOwner } from './realtime-ownership';
+import {
+  classicSuppressedByRealtimeOwner,
+  shouldFallbackClassicAfterRealtimeMute,
+} from './realtime-ownership';
 import { playAudioBase64 } from './voice-playback';
 import { getThinkFillerCache, THINK_FILLERS } from './voice-wake-ack';
 import {
   errMsg,
+  liveEndUserAudio,
   liveEndTurn,
   liveStatus,
   logVoiceEvent,
+  quiesceLiveForClassic,
 } from './voice-live-ipc';
 import {
   REALTIME_PROVIDER_AUDIO_ENABLED,
@@ -54,6 +62,14 @@ import {
   shouldStreamToRealtime,
 } from './voice-realtime-gates';
 import { realtimeTranscriptWaitMs } from './realtime-transcript-wait';
+import {
+  ZERO_FRAMES_TRANSCRIPT_WAIT_MS,
+  markLiveMuteRescueAttempt,
+  offeredLiveMicFramesThisTurn,
+  resetLiveMuteRescues,
+  shouldAttemptLiveMuteRescue,
+  waitForLiveRescueEvidence,
+} from './live-mute-rescue';
 import { shouldLetRealtimeProviderAnswer, shouldUseClassicActionBridge } from './realtime-bridge-policy';
 import { releaseAfterLiveProviderAnswer } from './live-followup';
 import { hasRealtimeProviderAudioAnswer } from './live-wake-greeting';
@@ -62,14 +78,18 @@ import { withTimeout } from './voice-speak-pipeline';
 import { runJarvisTurn, routePrompt, captureResponse, type RunJarvisTurnDeps } from './voice-run-jarvis-turn';
 import { MIN_WAKE_SUPPRESSION_MS } from './voice-suppression-window';
 import type { VoiceCapture, AutoStopOptions } from './voice-capture';
-import type { JarvisCaptureReason } from './jarvis-reply-loop';
-
-const TRANSCRIBE_DEADLINE_MS_LOCAL = 60_000;
-const SPEAK_DEADLINE_MS_LOCAL = 40_000;
-const LIVE_START_SETTLE_MS_LOCAL = 3_000;
-const JARVIS_MEMORY_MS_LOCAL = 300_000;
-const WAKE_STT_BUDGET_MS = 8_000;
-const MIN_SPEECH_SEC = 0.25;
+import type { TranscribeResult } from '../../shared/voice-ipc';
+import {
+  filteredLiveRescueTranscript,
+  hasRealtimeNativeToolSince,
+  isAckGatedCapture,
+  JARVIS_MEMORY_MS_LOCAL,
+  LIVE_START_SETTLE_MS_LOCAL,
+  MIN_SPEECH_SEC,
+  SPEAK_DEADLINE_MS_LOCAL,
+  TRANSCRIBE_DEADLINE_MS_LOCAL,
+  WAKE_STT_BUDGET_MS,
+} from './voice-finish-helpers';
 
 /** Injected callbacks to avoid circular imports with voice-controller. */
 export interface FinishAndProcessDeps extends RunJarvisTurnDeps {
@@ -78,14 +98,6 @@ export interface FinishAndProcessDeps extends RunJarvisTurnDeps {
     busy: React.MutableRefObject<boolean>,
     reason: 'wake' | 'click',
   ) => AutoStopOptions;
-}
-
-function isAckGatedCapture(reason: JarvisCaptureReason = activeCaptureReason): boolean {
-  return reason === 'wake' || reason === 'click';
-}
-
-function hasRealtimeNativeToolSince(since: number): boolean {
-  return realtimeNativeToolInFlight > 0 || lastRealtimeNativeToolAt >= since;
 }
 
 export async function finishAndProcess(
@@ -97,11 +109,34 @@ export async function finishAndProcess(
   busy.current = true;
   const turnToken = turnExecution.currentToken;
   let realtimeMuteDegrade = false;
+  let cachedStt: TranscribeResult | null = null;
+  let cachedSttLatencyMs = 0;
   try {
     const result = wakeMic.isUtteranceActive()
       ? wakeMic.finishUtterance()
       : await capture.stop();
     const routing = store.info?.routing ?? 'focused-pane';
+    const shouldTryRealtimeTranscript =
+      routing === 'jarvis' && shouldStreamToRealtime();
+    // A paused stream must emit audioStreamEnd promptly; otherwise Gemini can
+    // retain cached PCM while this pipeline waits for its transcript.
+    if (shouldTryRealtimeTranscript) liveEndUserAudio();
+    const transcribeCapture = async (): Promise<TranscribeResult> => {
+      const startedAt = Date.now();
+      const transcribed = await withTimeout(
+        window.nexus.voice.transcribe({
+          audioBase64: result.wavBase64,
+          mime: 'audio/wav',
+          sampleRate: result.sampleRate,
+          ...(routing === 'jarvis' ? { translate: false, language: 'pt' } : {}),
+          ...(isAckGatedCapture() ? { budgetMs: WAKE_STT_BUDGET_MS } : {}),
+        }),
+        TRANSCRIBE_DEADLINE_MS_LOCAL,
+        'transcrição',
+      );
+      cachedSttLatencyMs = Date.now() - startedAt;
+      return transcribed;
+    };
 
     if (pendingLiveStartSettle) {
       await withTimeout(
@@ -110,7 +145,6 @@ export async function finishAndProcess(
         'settle do socket realtime',
       ).catch(() => {});
     }
-    const shouldTryRealtimeTranscript = routing === 'jarvis' && shouldStreamToRealtime();
     const captureGate = {
       wavBase64: result.wavBase64,
       durationSec: result.durationSec,
@@ -155,10 +189,24 @@ export async function finishAndProcess(
         captureReason: activeCaptureReason,
         isRealtimeLive: isRealtimeLive(),
       });
-      const transcriptWaitMs = realtimeTranscriptWaitMs(activeCaptureReason, {
-        localSpeechUsable,
-        realtimeIsOwner,
-      });
+      const heldChunksBaseline = realtimeAudioSuppressedCounter.total;
+      const playedChunksBaseline = realtimeAudioPlayedCounter.total;
+      const offeredFrames = offeredLiveMicFramesThisTurn();
+      const transcriptWaitMs =
+        realtimeIsOwner && offeredFrames === 0
+          ? ZERO_FRAMES_TRANSCRIPT_WAIT_MS
+          : realtimeTranscriptWaitMs(activeCaptureReason, {
+              localSpeechUsable,
+              realtimeIsOwner,
+            });
+      if (realtimeIsOwner && offeredFrames === 0) {
+        logVoiceEvent(
+          'warn',
+          'jarvis.zeroOfferedFrames',
+          'nenhum frame do turno foi oferecido ao transporte realtime',
+          { reason: activeCaptureReason, localSpeechUsable },
+        );
+      }
       store.setStatus('transcribing');
       liveStatus('thinking');
       // CRITICAL: while Live owns the session, NEVER mute provider audio during
@@ -170,7 +218,10 @@ export async function finishAndProcess(
       } else {
         openLiveAudioGate();
       }
-      const wait = await realtimeTranscriptWaiter.wait(transcriptWaitMs);
+      const wait = await realtimeTranscriptWaiter.wait(
+        transcriptWaitMs,
+        String(turnToken),
+      );
       if (wait.superseded) {
         console.log('[voice] wait de transcript superseded por novo turno — sem mute');
         if (realtimeIsOwner) openLiveAudioGate();
@@ -180,6 +231,7 @@ export async function finishAndProcess(
       if (hasRealtimeNativeToolSince(tRealtime)) {
         // Tool already owns narration — keep Live audio open, don't mute.
         openLiveAudioGate();
+        resetLiveMuteRescues();
         store.setStatus('idle');
         console.log('[voice] realtime tool-call resolveu o turno; Classic pulado');
         // C3: a primeira fala consome a pendência mesmo quando o turno é
@@ -205,6 +257,7 @@ export async function finishAndProcess(
         return;
       }
       if (liveTranscript) {
+        resetLiveMuteRescues();
         const rawTranscript = liveTranscript.trim();
         // C3 Fase 1: com pendência viva, o "sim" seco de um re-wake é a
         // resposta do usuário — o stripper poupa o padrão ['sim'] neste turno.
@@ -341,7 +394,7 @@ export async function finishAndProcess(
         setSuppressRealtimeAudioOut(true);
         resetPendingRealtimeAudioOut();
         livePlayer?.stop();
-        void window.nexus.voice.liveInterrupt('classic-live-bridge').catch(() => {});
+        await quiesceLiveForClassic('classic-live-bridge');
         liveStatus('thinking');
         if (shouldUseClassicActionBridge(transcript)) {
           logVoiceEvent('info', 'jarvis.actionBridge', 'classic executor', {
@@ -373,8 +426,9 @@ export async function finishAndProcess(
         liveEndTurn();
         return;
       }
-      const heldAnswerChunks = realtimeAudioSuppressedCounter.total;
-      const playedAnswerChunks = realtimeAudioPlayedCounter.total;
+      const heldAnswerChunks =
+        realtimeAudioSuppressedCounter.total - heldChunksBaseline;
+      const playedAnswerChunks = realtimeAudioPlayedCounter.total - playedChunksBaseline;
       if (
         realtimeIsOwner &&
         hasRealtimeProviderAudioAnswer({
@@ -384,6 +438,7 @@ export async function finishAndProcess(
       ) {
         const claimed = turnExecution.claim('realtime-audio', turnToken);
         openLiveAudioGate();
+        resetLiveMuteRescues();
         if (claimed) {
           wakeMic.suppressWakeDetection(MIN_WAKE_SUPPRESSION_MS);
           logVoiceEvent(
@@ -407,17 +462,102 @@ export async function finishAndProcess(
         });
         return;
       }
-      // ONE VOICE / FIX D: while Live owns the session, mute ≠ Classic STT.
-      // Classic on wake/reply produced marin flip + garbage ("o ônibus") while
-      // the Live socket was still healthy. Keep socket alive for re-wake.
-      if (realtimeIsOwner) {
-        const event =
-          activeCaptureReason === 'reply' ? 'jarvis.replyMuteIdle' : 'jarvis.liveMuteIdle';
-        const message =
-          activeCaptureReason === 'reply'
-            ? 'follow-up sem resposta Live — voltando a idle (sem Classic)'
-            : 'Live mudo (sem áudio/transcript) — idle sem Classic';
-        logVoiceEvent('info', event, message, {
+      const explicitCapture = shouldFallbackClassicAfterRealtimeMute(
+        activeCaptureReason,
+      );
+      if (
+        shouldAttemptLiveMuteRescue({
+          realtimeIsOwner,
+          localSpeechUsable,
+          explicitCapture,
+          offeredFrames,
+        }) &&
+        peekPendingDelegation(Date.now()) === null
+      ) {
+        cachedStt = await transcribeCapture();
+        const rescueTranscript =
+          cachedStt.ok && cachedStt.discarded !== 'echo'
+            ? filteredLiveRescueTranscript(cachedStt.text)
+            : null;
+        if (rescueTranscript) {
+          const attempt = markLiveMuteRescueAttempt();
+          const rescueStartedAt = Date.now();
+          const rescueTurnId = `${turnToken}:${rescueStartedAt}`;
+          const rescuePlayedBaseline = realtimeAudioPlayedCounter.total;
+          const rescueHeldBaseline = realtimeAudioSuppressedCounter.total;
+          logVoiceEvent(
+            'warn',
+            'jarvis.liveMuteRescue',
+            'turno realtime sem frames — STT local reenviado como texto',
+            {
+              reason: activeCaptureReason,
+              attempt,
+              offeredFrames,
+              turnId: rescueTurnId,
+              durationSec: Number(result.durationSec.toFixed(2)),
+            },
+          );
+          store.setNote('Reprocessando sua fala…');
+          wakeMic.suppressWakeDetection(MIN_WAKE_SUPPRESSION_MS);
+          openLiveAudioGate();
+          const accepted = await window.nexus.voice.liveRescueIn({
+            turnId: rescueTurnId,
+            text: rescueTranscript,
+          });
+          if (accepted.accepted && accepted.turnId === rescueTurnId) {
+            const evidence = await waitForLiveRescueEvidence({
+              turnToken,
+              startedAt: rescueStartedAt,
+              playedBaseline: rescuePlayedBaseline,
+              heldBaseline: rescueHeldBaseline,
+              read: () => ({
+                turnToken: turnExecution.currentToken,
+                playedAudioChunks: realtimeAudioPlayedCounter.total,
+                heldAudioChunks: realtimeAudioSuppressedCounter.total,
+                toolInFlight: realtimeNativeToolInFlight,
+                lastToolAt: lastRealtimeNativeToolAt,
+              }),
+            });
+            if (evidence === 'superseded') return;
+            if (evidence === 'audio' || evidence === 'tool') {
+              if (evidence === 'audio') {
+                turnExecution.claim('realtime-audio', turnToken);
+              }
+              resetLiveMuteRescues();
+              store.setNote(null);
+              logVoiceEvent(
+                'info',
+                'jarvis.liveMuteRescueRecovered',
+                'resgate confirmado por evidência do provider',
+                { turnId: rescueTurnId, evidence },
+              );
+              releaseAfterLiveProviderAnswer({
+                busy,
+                capture,
+                beginListening: deps.beginListening,
+                wakeAutoStop: deps.wakeAutoStop,
+              });
+              return;
+            }
+          }
+          logVoiceEvent(
+            'warn',
+            'jarvis.liveMuteRescueTimeout',
+            'resgate sem evidência — teardown antes do Classic',
+            { turnId: rescueTurnId },
+          );
+          store.setNote(null);
+          await window.nexus.voice.liveHardTeardown().catch(() => null);
+        }
+      }
+      // Automatic reply capture can be ambient noise/echo; never turn that
+      // into a Classic self-talk loop. Explicit wake/click/PTT/manual capture,
+      // however, must degrade when Live produced neither audio nor transcript.
+      if (
+        realtimeIsOwner &&
+        !explicitCapture
+      ) {
+        logVoiceEvent('info', 'jarvis.replyMuteIdle', 'follow-up sem resposta Live — idle', {
           reason: activeCaptureReason,
           waitedMs: Date.now() - tRealtime,
         });
@@ -426,7 +566,8 @@ export async function finishAndProcess(
         store.setStatus('idle');
         return;
       }
-      // Live not owner → legitimate degradation to Classic STT.
+      // No realtime response for an explicit user capture: cancel any late
+      // provider response before the single Classic fallback takes ownership.
       realtimeMuteDegrade = true;
       logVoiceEvent(
         'warn',
@@ -439,7 +580,7 @@ export async function finishAndProcess(
       );
       setSuppressRealtimeAudioOut(true);
       resetPendingRealtimeAudioOut();
-      void window.nexus.voice.liveInterrupt('classic-action-bridge-timeout').catch(() => {});
+      await quiesceLiveForClassic('classic-action-bridge-timeout');
       setRealtimeTurnActive(false);
     }
 
@@ -479,17 +620,7 @@ export async function finishAndProcess(
     if (routing === 'jarvis' && isJarvisLiveEnabled()) {
       liveStatus('thinking');
     }
-    const stt = await withTimeout(
-      window.nexus.voice.transcribe({
-        audioBase64: result.wavBase64,
-        mime: 'audio/wav',
-        sampleRate: result.sampleRate,
-        ...(routing === 'jarvis' ? { translate: false, language: 'pt' } : {}),
-        ...(isAckGatedCapture() ? { budgetMs: WAKE_STT_BUDGET_MS } : {}),
-      }),
-      TRANSCRIBE_DEADLINE_MS_LOCAL,
-      'transcrição',
-    );
+    const stt = cachedStt ?? (await transcribeCapture());
     if (!stt.ok) {
       store.setError(stt.error);
       liveStatus('error', stt.error);
@@ -506,7 +637,7 @@ export async function finishAndProcess(
       liveEndTurn();
       return;
     }
-    const tStt = Date.now() - tTurn;
+    const tStt = cachedStt ? cachedSttLatencyMs : Date.now() - tTurn;
     // C3 Fase 1: mesmo contrato do caminho realtime — pendência viva poupa o
     // "sim" seco do stripper, e strip-pra-vazio re-pergunta em vez de morrer mudo.
     const stripOpts = {

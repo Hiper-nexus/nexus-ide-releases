@@ -82,6 +82,25 @@ export function isToolAllowed(
   return allowedTools.some((allowed) => canonicalToolName(allowed) === canonical);
 }
 
+/**
+ * Claude hooks also observe native Read/Edit/Bash calls. Nexus MCP allowlists
+ * must not be mistaken for a native-tool allowlist: native tools remain under
+ * the CLI's explicit safe permission/sandbox mode, while Nexus MCP calls keep
+ * the per-agent gate enforced here and again in the HTTP MCP server.
+ */
+export function isHookToolAllowed(
+  allowedTools: string[] | null,
+  hookToolName: string,
+): boolean {
+  const lower = hookToolName.trim().toLowerCase();
+  const mcpPrefix = 'mcp__nexus__';
+  if (lower.startsWith(mcpPrefix)) {
+    return isToolAllowed(allowedTools, lower.slice(mcpPrefix.length));
+  }
+  if (lower.startsWith('nexus_')) return isToolAllowed(allowedTools, lower);
+  return true;
+}
+
 export function isSkillAllowed(
   allowedSkills: string[] | null,
   skillName: string,

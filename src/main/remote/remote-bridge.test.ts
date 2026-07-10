@@ -22,6 +22,7 @@ type Bridge = typeof import('./remote-bridge');
 let bridge: Bridge;
 let home: string;
 let url: string;
+let previousTokenTtl: string | undefined;
 
 async function rpc(
   socket: WebSocket,
@@ -45,9 +46,36 @@ function connect(): Promise<WebSocket> {
   });
 }
 
+function waitForClose(socket: WebSocket): Promise<{ code: number; reason: string }> {
+  return new Promise((resolve) => {
+    socket.once('close', (code, reason) => {
+      resolve({ code, reason: reason.toString() });
+    });
+  });
+}
+
+async function issueToken(): Promise<string> {
+  const code = bridge.getRemoteBridgeInfo().pairingCode;
+  const socket = await connect();
+  const paired = await rpc(socket, { id: 'pair-token', type: 'pair', code });
+  socket.close();
+  const token = (paired.result as { token?: unknown }).token;
+  if (typeof token !== 'string') throw new Error('bridge did not issue a token');
+  return token;
+}
+
+async function authenticate(token: string): Promise<WebSocket> {
+  const socket = await connect();
+  const response = await rpc(socket, { id: 'auth-token', type: 'auth', token });
+  if (response.ok !== true) throw new Error('bridge did not authenticate the token');
+  return socket;
+}
+
 beforeAll(async () => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-'));
   process.env.HOME = home;
+  previousTokenTtl = process.env.NEXUS_REMOTE_TOKEN_TTL_MS;
+  process.env.NEXUS_REMOTE_TOKEN_TTL_MS = '500';
   vi.spyOn(os, 'homedir').mockReturnValue(home);
   bridge = await import('./remote-bridge');
   const info = await bridge.startRemoteBridge({ host: '127.0.0.1' });
@@ -56,6 +84,8 @@ beforeAll(async () => {
 
 afterAll(() => {
   bridge.stopRemoteBridge();
+  if (previousTokenTtl === undefined) delete process.env.NEXUS_REMOTE_TOKEN_TTL_MS;
+  else process.env.NEXUS_REMOTE_TOKEN_TTL_MS = previousTokenTtl;
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -108,6 +138,48 @@ describe('remote bridge', () => {
     const listed = await rpc(authSocket, { id: 'l', type: 'panes.list' });
     expect(listed.ok).toBe(true);
     authSocket.close();
+  });
+
+  it('closes already authenticated sockets when tokens are revoked', async () => {
+    const token = await issueToken();
+    const firstSocket = await authenticate(token);
+    const secondSocket = await authenticate(token);
+    const firstClosed = waitForClose(firstSocket);
+    const secondClosed = waitForClose(secondSocket);
+
+    bridge.revokeRemoteTokens();
+
+    await expect(Promise.all([firstClosed, secondClosed])).resolves.toEqual([
+      { code: 1008, reason: 'tokens revoked' },
+      { code: 1008, reason: 'tokens revoked' },
+    ]);
+    const retry = await connect();
+    await expect(rpc(retry, { id: 'revoked', type: 'auth', token })).resolves.toMatchObject({
+      ok: false,
+      error: 'invalid token',
+    });
+    retry.close();
+  });
+
+  it('closes an authenticated socket when its token expires', async () => {
+    const token = await issueToken();
+    const socket = await authenticate(token);
+
+    await expect(waitForClose(socket)).resolves.toEqual({
+      code: 1008,
+      reason: 'token expired',
+    });
+  });
+
+  it('does not expose the pairing secret through an authenticated status command', async () => {
+    const token = await issueToken();
+    const socket = await authenticate(token);
+    const response = await rpc(socket, { id: 'status', type: 'status' });
+
+    expect(response.ok).toBe(true);
+    expect(response.result).not.toHaveProperty('pairingCode');
+    expect(response.result).not.toHaveProperty('pairingExpiresAt');
+    socket.close();
   });
 
   it('rejects a bogus token', async () => {

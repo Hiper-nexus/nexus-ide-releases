@@ -69,6 +69,7 @@ export async function reopenMission(
       ...base,
       id: paneId,
       title: spec.title,
+      accountId: spec.accountId,
       effort: spec.effort,
       role: spec.role,
       agentName: spec.agentName,

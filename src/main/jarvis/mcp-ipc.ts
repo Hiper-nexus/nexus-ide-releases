@@ -54,7 +54,11 @@ function rendererToolContext() {
     token: 'renderer-ipc',
     label: 'Jarvis Renderer',
     role: 'user' as const,
-    allowedTools: null,
+    // The local user/Jarvis surface explicitly exposes the complete registry.
+    // This matters for the small high-impact subset that the server gate never
+    // grants through a null (implicit) allowlist. Guardrails still require an
+    // exact native confirmation and audit entry before those handlers run.
+    allowedTools: getRegistry().tools.map((tool) => tool.name),
     allowedSkills: null,
     stopAttempts: 0,
     handoffSubmitted: false,

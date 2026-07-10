@@ -133,7 +133,7 @@ function buildTerminal(): {
     fontFamily: fontFamilyOf(currentSettings),
     fontSize: currentSettings.fontSize,
     lineHeight: 1.2,
-    cursorBlink: true,
+    cursorBlink: false,
     allowProposedApi: true,
     theme: themeOf(currentSettings),
     scrollback: 10_000,
@@ -150,6 +150,7 @@ function buildTerminal(): {
 function startSpawn(pane: PaneModel, host: Host, resume = false): void {
   host.spawnStarted = true;
   host.hibernated = false;
+  useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
   void (async () => {
     try {
       const spawnKind = pane.kind === 'cli-agent' ? 'cli-agent' : 'shell';
@@ -171,6 +172,7 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
         paneId: pane.id,
         adapterId: pane.adapterId,
         model: pane.model,
+        accountId: pane.accountId,
         effort: pane.effort,
         orchRequestId: pane.orchRequestId,
       });
@@ -182,20 +184,16 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
         host.term.writeln(
           `\r\n\x1b[31m[nexus] failed to start: ${res.error}\x1b[0m`,
         );
-        if (pane.kind === 'cli-agent') {
-          useSessionStateStore.getState().clearPaneState(pane.id);
-        }
+        useSessionStateStore.getState().setPaneState(pane.id, 'exited');
         return;
       }
       setHostSession(host, pane.id, res.sessionId);
 
-      if (pane.kind === 'cli-agent') {
-        host.cleanups.push(
-          window.nexus.pty.onStateChange(res.sessionId, (state) => {
-            useSessionStateStore.getState().setPaneState(pane.id, state);
-          }),
-        );
-      }
+      host.cleanups.push(
+        window.nexus.pty.onStateChange(res.sessionId, (state) => {
+          useSessionStateStore.getState().setPaneState(pane.id, state);
+        }),
+      );
 
       host.cleanups.push(
         window.nexus.pty.onData(res.sessionId, (data) => host.term.write(data)),
@@ -205,9 +203,7 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
           host.term.writeln(
             `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
           );
-          if (pane.kind === 'cli-agent') {
-            useSessionStateStore.getState().setPaneState(pane.id, 'exited');
-          }
+          useSessionStateStore.getState().setPaneState(pane.id, 'exited');
         }),
       );
       const input = host.term.onData((data) => {
@@ -220,9 +216,7 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
       host.term.writeln(
         `\r\n\x1b[31m[nexus] failed to start: ${message}\x1b[0m`,
       );
-      if (pane.kind === 'cli-agent') {
-        useSessionStateStore.getState().clearPaneState(pane.id);
-      }
+      useSessionStateStore.getState().setPaneState(pane.id, 'exited');
     }
   })();
 }
@@ -507,7 +501,18 @@ export function markResumeOnSpawn(paneId: string): void {
 }
 
 export function focusHost(paneId: string): void {
+  for (const [id, host] of hosts) {
+    if (host.disposed) continue;
+    host.term.options.cursorBlink = id === paneId && !host.hibernated;
+  }
   hosts.get(paneId)?.term.focus();
+}
+
+/** Stop compositor work for a terminal that lost focus or left live view. */
+export function blurHost(paneId: string): void {
+  const host = hosts.get(paneId);
+  if (!host || host.disposed) return;
+  host.term.options.cursorBlink = false;
 }
 
 /**
@@ -562,6 +567,7 @@ export function hibernateHost(paneId: string): boolean {
   if (host.sessionId) window.nexus.pty.kill(host.sessionId);
   host.spawnStarted = false;
   host.hibernated = true;
+  host.term.options.cursorBlink = false;
   useSessionStateStore.getState().setPaneState(paneId, 'hibernated');
   setHostSession(host, paneId, null);
   try {
@@ -585,9 +591,7 @@ export function wakeHost(pane: PaneModel): boolean {
   } catch {
     // Terminal may not be open yet.
   }
-  if (pane.kind === 'cli-agent') {
-    useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
-  }
+  useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
   startSpawn(pane, host, pane.kind === 'cli-agent');
   return true;
 }

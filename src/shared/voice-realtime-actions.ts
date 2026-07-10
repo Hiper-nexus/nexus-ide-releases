@@ -23,6 +23,7 @@ export const SAFE_REALTIME_ACTIONS = [
   'focus_next_pane',
   'focus_previous_pane',
   'focus_pane',
+  'read_pane',
   'send_to_pane',
   'run_command',
   'mcp_tool',
@@ -94,6 +95,8 @@ export function summarizeNexusRealtimeAction(args: NexusRealtimeActionArgs): str
       return 'focar pane anterior';
     case 'focus_pane':
       return args.paneName ? `focar pane ${args.paneName}` : 'focar pane';
+    case 'read_pane':
+      return args.paneId ? `ler pane ${args.paneId}` : 'ler pane ativo';
     case 'send_to_pane':
       return 'enviar missão ao pane';
     case 'run_command':
@@ -138,6 +141,10 @@ export function realtimeArgsToJarvisAction(
   if (args.action === 'focus_pane') {
     const paneName = cleanText(args.paneName, 128);
     return paneName ? { type: 'focus_pane', paneName } : null;
+  }
+  if (args.action === 'read_pane') {
+    const paneId = cleanText(args.paneId, 128);
+    return paneId ? { type: 'read_pane', paneId } : { type: 'read_pane' };
   }
   if (args.action === 'send_to_pane') {
     const text = cleanText(args.text);

@@ -53,9 +53,9 @@ export function resolveAuthStrategy(input: {
 const CACHE_TTL_MS = 60_000;
 const cache = new Map<string, { value: boolean; at: number }>();
 
-function exists(...segments: string[]): boolean {
+function existsAt(home: string, ...segments: string[]): boolean {
   try {
-    fs.statSync(path.join(os.homedir(), ...segments));
+    fs.statSync(path.join(home, ...segments));
     return true;
   } catch {
     return false;
@@ -77,10 +77,10 @@ function claudeKeychainHas(): boolean {
   }
 }
 
-function claudeOauthAccount(): boolean {
+function claudeOauthAccount(home = os.homedir()): boolean {
   try {
     const raw = JSON.parse(
-      fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'),
+      fs.readFileSync(path.join(home, '.claude.json'), 'utf8'),
     );
     return Boolean(raw?.oauthAccount?.emailAddress);
   } catch {
@@ -88,20 +88,24 @@ function claudeOauthAccount(): boolean {
   }
 }
 
-function detect(adapterId: string): boolean {
+export function detectSubscriptionAuth(
+  adapterId: string,
+  home = os.homedir(),
+): boolean {
+  const exists = (...segments: string[]) => existsAt(home, ...segments);
   switch (adapterId) {
     case 'claude':
       return (
         claudeKeychainHas() ||
-        claudeOauthAccount() ||
+        claudeOauthAccount(home) ||
         exists('.claude', '.credentials.json')
       );
     case 'codex':
       // ChatGPT session file (the launcher's xconta model swaps this file).
       return exists('.codex', 'auth.json');
     case 'grok':
-      // grok-cli stores its own login blob.
-      return exists('.grok', 'auth.json') || exists('.grok');
+      // The install itself creates ~/.grok. Only auth.json proves login.
+      return exists('.grok', 'auth.json');
     case 'glm':
       // GLM has no CLI-managed OAuth session — it authenticates purely with a
       // z.ai token injected as ANTHROPIC_AUTH_TOKEN. Force api-key strategy so
@@ -125,11 +129,22 @@ function detect(adapterId: string): boolean {
         exists('.kimi', 'credentials', 'kimi-code.json') ||
         exists('.config', 'kimi', 'credentials.json')
       );
+    case 'opencode':
+      // Official OpenCode docs use the XDG path. Keep the native macOS data
+      // path as a compatibility probe for package-manager variants.
+      return (
+        exists('.local', 'share', 'opencode', 'auth.json') ||
+        exists('Library', 'Application Support', 'opencode', 'auth.json')
+      );
+    case 'aider':
+      // Aider has no native OAuth/subscription session; it consumes provider
+      // API keys. Treating its config directory as login would suppress every
+      // injected key and leave the freshly installed CLI unusable.
+      return false;
     default:
-      // Unknown detector: assume the subscription session exists — the
-      // directive is subscription-first, and an explicit upstream route is
-      // the escape hatch for forcing API usage.
-      return true;
+      // Unknown is not evidence of an authenticated session. Failing closed
+      // prevents a false positive from suppressing a valid API key.
+      return false;
   }
 }
 
@@ -137,7 +152,7 @@ function detect(adapterId: string): boolean {
 export function hasSubscriptionAuth(adapterId: string): boolean {
   const hit = cache.get(adapterId);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
-  const value = detect(adapterId);
+  const value = detectSubscriptionAuth(adapterId);
   cache.set(adapterId, { value, at: Date.now() });
   return value;
 }

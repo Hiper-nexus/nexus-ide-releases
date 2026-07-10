@@ -1,25 +1,32 @@
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs';
 import { ipcMain } from 'electron';
 import type { WebContents } from 'electron';
 import {
+  DEFAULT_AUDIO_SETTINGS,
   DEFAULT_ORCH_SETTINGS,
   DEFAULT_TERMINAL_SETTINGS,
   DEFAULT_UI_SETTINGS,
   DEFAULT_VISION_SETTINGS,
   SETTINGS_CHANNELS,
+  audioSettingsPatchSchema,
+  audioSettingsSchema,
   orchSettingsSchema,
   terminalSettingsPatchSchema,
   terminalSettingsSchema,
   uiSettingsPatchSchema,
   uiSettingsSchema,
   visionSettingsSchema,
+  type AudioSettings,
   type OrchSettings,
   type TerminalSettings,
   type UiSettings,
   type VisionSettings,
 } from '../../shared/settings-types';
+import { listAvailableShells } from './shell-catalog';
+import { setRuntimeOutputDeviceId } from '../voice/audio-output-runtime';
+import { writeJsonFileAtomic } from './atomic-json-file';
 
 /**
  * Terminal settings store: ~/.nexus/settings.json (same user-dir convention
@@ -31,9 +38,11 @@ const SETTINGS_FILE = path.join(os.homedir(), '.nexus', 'settings.json');
 
 let current: TerminalSettings = DEFAULT_TERMINAL_SETTINGS;
 let orchSettings: OrchSettings = DEFAULT_ORCH_SETTINGS;
+let audioSettings: AudioSettings = DEFAULT_AUDIO_SETTINGS;
 let visionSettings: VisionSettings = DEFAULT_VISION_SETTINGS;
 let uiSettings: UiSettings = DEFAULT_UI_SETTINGS;
 const listeners = new Set<WebContents>();
+const audioListeners = new Set<WebContents>();
 const uiListeners = new Set<WebContents>();
 
 function load(): void {
@@ -43,6 +52,11 @@ function load(): void {
     if (parsed.success) current = parsed.data;
     const orchParsed = orchSettingsSchema.safeParse(raw?.orch ?? {});
     if (orchParsed.success) orchSettings = orchParsed.data;
+    const audioParsed = audioSettingsSchema.safeParse(raw?.audio ?? {});
+    if (audioParsed.success) {
+      audioSettings = audioParsed.data;
+      setRuntimeOutputDeviceId(audioSettings.outputDeviceId);
+    }
     const visionParsed = visionSettingsSchema.safeParse(raw?.vision ?? {});
     if (visionParsed.success) visionSettings = visionParsed.data;
     const uiParsed = uiSettingsSchema.safeParse(raw?.ui ?? {});
@@ -52,19 +66,33 @@ function load(): void {
   }
 }
 
-function persist(): void {
+interface SettingsSnapshot {
+  terminal: TerminalSettings;
+  orch: OrchSettings;
+  audio: AudioSettings;
+  vision: VisionSettings;
+  ui: UiSettings;
+}
+
+function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
+  return {
+    terminal: current,
+    orch: orchSettings,
+    audio: audioSettings,
+    vision: visionSettings,
+    ui: uiSettings,
+    ...overrides,
+  };
+}
+
+function persist(next = snapshot()): void {
   try {
-    fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
-    fs.writeFileSync(
-      SETTINGS_FILE,
-      JSON.stringify(
-        { terminal: current, orch: orchSettings, vision: visionSettings, ui: uiSettings },
-        null,
-        2,
-      ),
-    );
-  } catch (err) {
-    console.warn('[settings] failed to persist settings:', err);
+    writeJsonFileAtomic(SETTINGS_FILE, next);
+  } catch (error) {
+    console.error('[settings] failed to persist settings atomically:', error);
+    throw new Error('Não foi possível salvar as configurações do Nexus.', {
+      cause: error,
+    });
   }
 }
 
@@ -80,12 +108,22 @@ function broadcastUi(): void {
   }
 }
 
+function broadcastAudio(): void {
+  for (const wc of audioListeners) {
+    if (!wc.isDestroyed()) wc.send(SETTINGS_CHANNELS.audioChanged, audioSettings);
+  }
+}
+
 export function getTerminalSettings(): TerminalSettings {
   return current;
 }
 
 export function getOrchSettings(): OrchSettings {
   return orchSettings;
+}
+
+export function getAudioSettings(): AudioSettings {
+  return audioSettings;
 }
 
 export function getVisionSettings(): VisionSettings {
@@ -104,19 +142,21 @@ export function setVisionSettingsPatch(
     ...patch,
   });
   if (parsed.success) {
+    persist(snapshot({ vision: parsed.data }));
     visionSettings = parsed.data;
-    persist();
   }
   return visionSettings;
 }
 
 export function registerSettingsListener(wc: WebContents): void {
   listeners.add(wc);
+  audioListeners.add(wc);
   uiListeners.add(wc);
 }
 
 export function unregisterSettingsListener(wc: WebContents): void {
   listeners.delete(wc);
+  audioListeners.delete(wc);
   uiListeners.delete(wc);
 }
 
@@ -128,8 +168,9 @@ export function registerSettingsIpc(): void {
   ipcMain.handle(SETTINGS_CHANNELS.set, (_event, raw) => {
     const parsed = terminalSettingsPatchSchema.safeParse(raw);
     if (!parsed.success) return current;
-    current = { ...current, ...parsed.data };
-    persist();
+    const next = { ...current, ...parsed.data };
+    persist(snapshot({ terminal: next }));
+    current = next;
     broadcast();
     return current;
   });
@@ -139,19 +180,35 @@ export function registerSettingsIpc(): void {
   ipcMain.handle(SETTINGS_CHANNELS.orchSet, (_event, raw) => {
     const parsed = orchSettingsSchema.safeParse({ ...orchSettings, ...(raw ?? {}) });
     if (parsed.success) {
+      persist(snapshot({ orch: parsed.data }));
       orchSettings = parsed.data;
-      persist();
     }
     return orchSettings;
   });
+
+  ipcMain.handle(SETTINGS_CHANNELS.audioGet, () => audioSettings);
+
+  ipcMain.handle(SETTINGS_CHANNELS.audioSet, (_event, raw) => {
+    const parsed = audioSettingsPatchSchema.safeParse(raw);
+    if (!parsed.success) return audioSettings;
+    const next = { ...audioSettings, ...parsed.data };
+    persist(snapshot({ audio: next }));
+    audioSettings = next;
+    setRuntimeOutputDeviceId(next.outputDeviceId);
+    broadcastAudio();
+    return audioSettings;
+  });
+
+  ipcMain.handle(SETTINGS_CHANNELS.shellsList, () => listAvailableShells());
 
   ipcMain.handle(SETTINGS_CHANNELS.uiGet, () => uiSettings);
 
   ipcMain.handle(SETTINGS_CHANNELS.uiSet, (_event, raw) => {
     const parsed = uiSettingsPatchSchema.safeParse(raw);
     if (!parsed.success) return uiSettings;
-    uiSettings = { ...uiSettings, ...parsed.data };
-    persist();
+    const next = { ...uiSettings, ...parsed.data };
+    persist(snapshot({ ui: next }));
+    uiSettings = next;
     broadcastUi();
     return uiSettings;
   });

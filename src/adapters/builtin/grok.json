@@ -7,14 +7,14 @@
   "bin": "grok",
   "detect": "grok --version",
   "install": {
-    "method": "npm",
-    "command": "npm install -g @vibe-kit/grok-cli"
+    "method": "manual",
+    "command": "curl -fsSL https://x.ai/cli/install.sh | bash"
   },
   "auth": {
     "method": "api_key",
     "credentialStore": "keychain",
-    "envVarFallback": "GROK_API_KEY",
-    "loginHint": "Set GROK_API_KEY (xAI) in the provider settings."
+    "envVarFallback": "XAI_API_KEY",
+    "loginHint": "Run `grok login` for grok.com OAuth, or set XAI_API_KEY in provider settings."
   },
   "spawn": {
     "interactive": [
@@ -22,12 +22,16 @@
     ],
     "headless": [
       "grok",
-      "--always-approve",
       "-p",
       "{{PROMPT}}"
     ],
     "ptyRequired": true,
-    "resumeArgs": [],
+    "resumeArgs": [
+      "--continue"
+    ],
+    "resumeIdArgs": [
+      "--resume"
+    ],
     "extraArgs": [
       "--trust-folder"
     ]
@@ -35,7 +39,6 @@
   "env": {
     "static": {},
     "passthrough": [
-      "GROK_API_KEY",
       "XAI_API_KEY"
     ],
     "ephemeralHome": false
@@ -73,7 +76,8 @@
     "altScreen": true,
     "requiresNoAutoUpdate": true,
     "approvalFlag": "--always-approve",
-    "mcpAutoload": false
+    "mcpAutoload": false,
+    "nexusMcp": "grok"
   },
   "control": {
     "permission": {
@@ -81,6 +85,12 @@
       "modes": {},
       "yolo": [
         "--always-approve"
+      ],
+      "safe": [
+        "--permission-mode",
+        "default",
+        "--sandbox",
+        "workspace"
       ],
       "default": ""
     }

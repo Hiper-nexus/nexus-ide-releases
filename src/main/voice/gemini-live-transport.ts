@@ -9,7 +9,7 @@
  * - contextWindowCompression slidingWindow (sempre no setup)
  * - pendingMic (primeira frase bufferizada até setupComplete, teto 160 KB)
  * - singleton (connect novo mata o socket anterior — nunca "duas vozes")
- * - setup timeout 10 s, reconexão exponencial (máx. 3)
+ * - setup timeout 10 s; reconnect pertence exclusivamente ao controller
  *
  * Deps injetáveis (wsFactory/now/timers) — testável sem rede.
  *
@@ -23,10 +23,22 @@
 import { ScreenCoalescer } from '../jarvis/realtime/screen-coalescer';
 import { TurnQueue } from '../jarvis/realtime/turn-queue';
 import { wrapNarration } from '../jarvis/realtime/live-narration';
+import type { GeminiFunctionDeclaration } from '../jarvis/realtime/coarse-voice-tools';
 import {
-  COARSE_VOICE_TOOLS,
-  type GeminiFunctionDeclaration,
-} from '../jarvis/realtime/coarse-voice-tools';
+  buildSetupMessage,
+  CONTEXT_UPDATE_ENVELOPE,
+  parseServerMessage,
+  usesGemini31Contract,
+  type LiveToolCall,
+} from './gemini-live-protocol';
+
+export {
+  buildSetupMessage,
+  parseServerMessage,
+  type LiveToolCall,
+  type ParsedServerMessage,
+  type SetupMessage,
+} from './gemini-live-protocol';
 
 export interface WsLike {
   readyState: number;
@@ -35,23 +47,25 @@ export interface WsLike {
   on(event: 'open' | 'message' | 'close' | 'error', cb: (payload?: unknown) => void): void;
 }
 
-/** A Gemini Live function call parsed off a `toolCall` server message. */
-export interface LiveToolCall {
-  id: string;
-  name: string;
-  args: Record<string, unknown>;
-}
-
 export interface LiveTransportEvents {
   /** PCM 24 kHz base64 para o renderer tocar. */
   onAudioOut(b64: string): void;
-  onTranscript(role: 'user' | 'assistant', text: string, final: boolean): void;
+  onTranscript(
+    role: 'user' | 'assistant',
+    text: string,
+    final: boolean,
+    turnId?: string,
+  ): void;
   onInterrupted(): void;
   onTurnComplete?(): void;
   onStateChange(state: LiveTransportState): void;
   onError(message: string): void;
   /** Chamada de função coarse (delegar/consultar/ler/navegar/encerrar). */
   onToolCall?(call: LiveToolCall): void;
+  /** Gemini revoked a function call that may still be running locally. */
+  onToolCallCancelled?(callId: string): void;
+  /** Updated opaque handle used to resume the same server-side Live session. */
+  onResumptionHandle?(handle: string): void;
 }
 
 export type LiveTransportState =
@@ -72,7 +86,8 @@ export interface LiveConnectOptions {
   model: string;
   voiceName: string;
   systemInstruction: string;
-  languageCode?: string;
+  tools?: GeminiFunctionDeclaration[];
+  resumeHandle?: string;
 }
 
 const LIVE_WS_BASE =
@@ -80,144 +95,40 @@ const LIVE_WS_BASE =
   'google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
 const SETUP_TIMEOUT_MS = 10_000;
-// F-059/2461: 30s sem NENHUMA mensagem do servidor numa sessão VIVA = socket
-// zumbi (local OPEN, servidor mudo — o caso F-138). Re-armado a cada mensagem;
-// dispara → fecha o socket → o handler de close reconecta com backoff.
+// F-059/2461: 30s sem progresso ENQUANTO há um turno aguardando resposta =
+// socket zumbi. Uma conexão Live saudável pode ficar ociosa indefinidamente,
+// portanto setupComplete/turnComplete nunca deixam este relógio armado.
 const SDK_PROGRESS_TIMEOUT_MS = 30_000;
 const PENDING_MIC_MAX_BYTES = 160 * 1024;
-const MAX_RECONNECT_ATTEMPTS = 3;
+export const TRANSCRIPTION_SETTLE_MS = 250;
+const HANDLED_TOOL_CALL_IDS_MAX = 256;
 const WS_OPEN = 1;
+
+function transportErrorMessage(err: unknown, secrets: readonly string[]): string {
+  let message = err instanceof Error ? err.message : String(err);
+  message = message.replace(
+    /([?&](?:key|api_key|apikey|token|access_token)=)[^&\s"'<>]+/gi,
+    '$1[REDACTED]',
+  );
+  for (const secret of secrets) {
+    if (!secret) continue;
+    message = message.split(secret).join('[REDACTED]');
+    const encoded = encodeURIComponent(secret);
+    if (encoded !== secret) message = message.split(encoded).join('[REDACTED]');
+  }
+  return message;
+}
 
 /**
  * F-133: SINGLETON cross-instância — no máximo 1 transporte Live vivo por
- * processo. Duas GeminiLiveTransport reconectando em paralelo = "duas vozes".
- * Toda conexão nova reivindica este slot e encerra a anterior; a órfã (não é a
- * corrente) se auto-encerra ao tentar reconectar.
+ * processo. Duas GeminiLiveTransport vivas em paralelo = "duas vozes". Toda
+ * conexão nova reivindica este slot e encerra a anterior.
  */
 let currentLiveTransport: GeminiLiveTransport | null = null;
 
 /** Test-only: limpa o slot singleton entre casos isolados. */
 export function __resetLiveTransportSingleton(): void {
   currentLiveTransport = null;
-}
-
-export interface SetupMessage {
-  setup: {
-    model: string;
-    generationConfig: Record<string, unknown>;
-    systemInstruction: { parts: Array<{ text: string }> };
-    tools: Array<{ functionDeclarations: GeminiFunctionDeclaration[] }>;
-    inputAudioTranscription: Record<string, never>;
-    outputAudioTranscription: Record<string, never>;
-    contextWindowCompression: { slidingWindow: Record<string, never> };
-    sessionResumption: Record<string, unknown>;
-  };
-}
-
-export function buildSetupMessage(opts: {
-  model: string;
-  voiceName: string;
-  systemInstruction: string;
-  languageCode?: string;
-  resumeHandle?: string;
-  tools?: GeminiFunctionDeclaration[];
-}): SetupMessage {
-  return {
-    setup: {
-      model: `models/${opts.model.replace(/^models\//, '')}`,
-      generationConfig: {
-        responseModalities: ['AUDIO'],
-        temperature: 0.3,
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: opts.voiceName } },
-          languageCode: opts.languageCode ?? 'pt-BR',
-        },
-      },
-      systemInstruction: { parts: [{ text: opts.systemInstruction }] },
-      // 4 coarse voice tools (delegar/consultar/ler/navegar) + encerrar declared
-      // inline (Overclock F-056) — NOT the full action catalog.
-      tools: [{ functionDeclarations: opts.tools ?? COARSE_VOICE_TOOLS }],
-      inputAudioTranscription: {},
-      outputAudioTranscription: {},
-      contextWindowCompression: { slidingWindow: {} },
-      sessionResumption: opts.resumeHandle ? { handle: opts.resumeHandle } : {},
-    },
-  };
-}
-
-export interface ParsedServerMessage {
-  setupComplete?: boolean;
-  audioB64?: string;
-  inputTranscription?: string;
-  outputTranscription?: string;
-  interrupted?: boolean;
-  turnComplete?: boolean;
-  resumptionHandle?: string;
-  goAway?: boolean;
-  toolCalls?: LiveToolCall[];
-  cancelledToolCallIds?: string[];
-}
-
-export function parseServerMessage(raw: string): ParsedServerMessage {
-  let msg: Record<string, unknown>;
-  try {
-    msg = JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-  const out: ParsedServerMessage = {};
-  if (msg.setupComplete !== undefined) out.setupComplete = true;
-  const content = msg.serverContent as
-    | {
-        modelTurn?: { parts?: Array<{ inlineData?: { data?: string } }> };
-        inputTranscription?: { text?: string };
-        outputTranscription?: { text?: string };
-        interrupted?: boolean;
-        turnComplete?: boolean;
-      }
-    | undefined;
-  if (content) {
-    const inline = content.modelTurn?.parts?.find((p) => p.inlineData?.data);
-    if (inline?.inlineData?.data) out.audioB64 = inline.inlineData.data;
-    if (typeof content.inputTranscription?.text === 'string') {
-      out.inputTranscription = content.inputTranscription.text;
-    }
-    if (typeof content.outputTranscription?.text === 'string') {
-      out.outputTranscription = content.outputTranscription.text;
-    }
-    if (content.interrupted) out.interrupted = true;
-    if (content.turnComplete) out.turnComplete = true;
-  }
-  const toolCall = msg.toolCall as
-    | { functionCalls?: Array<{ id?: string; name?: string; args?: unknown }> }
-    | undefined;
-  if (Array.isArray(toolCall?.functionCalls)) {
-    const calls: LiveToolCall[] = [];
-    for (const fc of toolCall.functionCalls) {
-      if (typeof fc?.name !== 'string') continue;
-      calls.push({
-        id: typeof fc.id === 'string' ? fc.id : '',
-        name: fc.name,
-        args:
-          fc.args && typeof fc.args === 'object' && !Array.isArray(fc.args)
-            ? (fc.args as Record<string, unknown>)
-            : {},
-      });
-    }
-    if (calls.length > 0) out.toolCalls = calls;
-  }
-  const cancel = msg.toolCallCancellation as { ids?: unknown } | undefined;
-  if (Array.isArray(cancel?.ids)) {
-    out.cancelledToolCallIds = cancel.ids.filter((id): id is string => typeof id === 'string');
-  }
-  const resumption = msg.sessionResumptionUpdate as
-    | { newHandle?: string; resumable?: boolean }
-    | undefined;
-  if (resumption?.resumable && typeof resumption.newHandle === 'string') {
-    out.resumptionHandle = resumption.newHandle;
-  }
-  if (msg.goAway !== undefined) out.goAway = true;
-  return out;
 }
 
 export class GeminiLiveTransport {
@@ -229,25 +140,26 @@ export class GeminiLiveTransport {
   private audioStreamOpen = false;
   private setupTimer: ReturnType<typeof setTimeout> | null = null;
   private progressTimer: ReturnType<typeof setTimeout> | null = null;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private reconnectAttempts = 0;
+  private awaitingServerProgress = false;
   private connectionGeneration = 0;
-  private lastOptions: LiveConnectOptions | null = null;
   private resumptionHandle: string | undefined;
-  private closedByUs = false;
+  /** Gemini 3.1 forbids clientContent after initial history seeding. */
+  private useRealtimeText = false;
+  /** Gemini 3.1 text updates share the realtime input stream and can trigger a
+   * model turn. Keep only the latest snapshot and prepend it to real activity. */
+  private pendingSilentContext: string | null = null;
   private readonly pendingToolCalls = new Set<string>();
+  private readonly handledToolCallIds = new Set<string>();
+  private readonly handledToolCallOrder: string[] = [];
   private readonly turnQueue: TurnQueue;
   private readonly screenCoalescer: ScreenCoalescer;
-  /**
-   * MUTE FIX: o Gemini Live manda inputTranscription EM PARTES, sempre com
-   * final=false — nunca um evento "usuário terminou". O renderer, porém, só
-   * libera o ÁUDIO da resposta ao ver um transcript de usuário FINAL (paridade
-   * com o `.completed` do OpenAI). Sem finalização, a resposta realtime fica
-   * eternamente suprimida → sessão MUDA. Acumulamos os pedaços e emitimos UM
-   * transcript final quando o modelo começa a responder (primeiro áudio/output)
-   * ou no turnComplete. Fecha o gate que segurava a voz.
-   */
+  /** Input/output transcription are independent streams with no order guarantee. */
   private userTranscriptBuffer = '';
+  private assistantTranscriptBuffer = '';
+  private transcriptFinalizeTimer: ReturnType<typeof setTimeout> | null = null;
+  private transcriptTurnComplete = false;
+  private activeTurnId: string | undefined;
+  private transcriptTurnId: string | undefined;
 
   constructor(
     private events: LiveTransportEvents,
@@ -270,6 +182,16 @@ export class GeminiLiveTransport {
     return this.setupDone && this.ws?.readyState === WS_OPEN;
   }
 
+  beginUserTurn(turnId: string): void {
+    const normalized = turnId.trim().slice(0, 128);
+    if (!normalized || normalized === this.activeTurnId) return;
+    if (this.userTranscriptBuffer || this.assistantTranscriptBuffer) {
+      this.finalizeTranscripts();
+    }
+    this.activeTurnId = normalized;
+    this.transcriptTurnId = normalized;
+  }
+
   connect(opts: LiveConnectOptions): void {
     // F-113: turnos que ainda não foram enviados sobrevivem à reconexão — o
     // in-flight (busy) do socket morto é perdido; os pendentes voltam pra fila
@@ -281,14 +203,13 @@ export class GeminiLiveTransport {
     this.screenCoalescer.clear();
     this.screenCoalescer.resetBaseline();
     // F-133: reivindica o slot singleton cross-instância — mata QUALQUER outro
-    // transporte Live vivo antes de conectar (evita "duas vozes"). Só a instância
-    // corrente reconecta; as outras se auto-encerram no reconnect.
+    // transporte Live vivo antes de conectar (evita "duas vozes").
     this.claimSingleton();
     // Singleton por instância: nunca duas sessões (= duas vozes) vivas.
-    this.teardown(true);
+    this.teardown();
+    this.resumptionHandle = opts.resumeHandle ?? this.resumptionHandle;
+    this.useRealtimeText = usesGemini31Contract(opts.model);
     const generation = ++this.connectionGeneration;
-    this.lastOptions = opts;
-    this.closedByUs = false;
     this.setupDone = false;
     this.events.onStateChange('connecting');
     const url = `${LIVE_WS_BASE}?key=${encodeURIComponent(opts.apiKey)}`;
@@ -297,8 +218,9 @@ export class GeminiLiveTransport {
       ws = this.deps.wsFactory(url);
     } catch (err) {
       this.events.onError(
-        `live: falha ao abrir socket — ${err instanceof Error ? err.message : String(err)}`,
+        `live: falha ao abrir socket — ${transportErrorMessage(err, [opts.apiKey])}`,
       );
+      this.releaseSingleton();
       this.events.onStateChange('error');
       return;
     }
@@ -308,7 +230,8 @@ export class GeminiLiveTransport {
       if (generation !== this.connectionGeneration) return;
       if (!this.setupDone) {
         this.events.onError('live: setup timeout (10s)');
-        this.teardown(true);
+        this.teardown();
+        this.releaseSingleton();
         this.events.onStateChange('error');
       }
     }, SETUP_TIMEOUT_MS);
@@ -321,8 +244,8 @@ export class GeminiLiveTransport {
             model: opts.model,
             voiceName: opts.voiceName,
             systemInstruction: opts.systemInstruction,
-            languageCode: opts.languageCode,
             resumeHandle: this.resumptionHandle,
+            tools: opts.tools,
           }),
         ),
       );
@@ -341,112 +264,130 @@ export class GeminiLiveTransport {
 
     ws.on('close', () => {
       if (generation !== this.connectionGeneration) return;
-      const wasReady = this.setupDone;
+      // Invalida callbacks atrasados e garante que `closed` seja terminal para
+      // esta geração. O LiveTransportController é a única autoridade de retry.
+      this.connectionGeneration += 1;
       this.setupDone = false;
+      this.clearSetupTimer();
       this.clearProgressWatchdog();
-      if (this.closedByUs) {
-        this.events.onStateChange('closed');
-        return;
-      }
-      // F-133: instância órfã (perdeu o slot singleton) nunca reconecta — encerra.
-      if (currentLiveTransport !== this) {
-        this.teardown(true);
-        this.events.onStateChange('closed');
-        return;
-      }
-      // Queda inesperada: reconecta com backoff até o teto.
-      if (wasReady && this.reconnectAttempts < MAX_RECONNECT_ATTEMPTS && this.lastOptions) {
-        this.reconnectAttempts += 1;
-        const delay = 500 * 2 ** this.reconnectAttempts;
-        this.clearReconnectTimer();
-        this.reconnectTimer = this.deps.setTimeoutFn(() => {
-          this.reconnectTimer = null;
-          if (generation !== this.connectionGeneration) return;
-          // F-133: re-checa identidade no disparo — o slot pode ter sido tomado
-          // por outra sessão durante o backoff.
-          if (currentLiveTransport !== this) return;
-          if (!this.closedByUs && this.lastOptions) this.connect(this.lastOptions);
-        }, delay);
-      } else {
-        this.events.onStateChange('closed');
-      }
+      if (this.ws === ws) this.ws = null;
+      this.releaseSingleton();
+      this.events.onStateChange('closed');
     });
 
     ws.on('error', (err) => {
+      if (generation !== this.connectionGeneration) return;
       this.events.onError(
-        `live: socket error — ${err instanceof Error ? err.message : String(err)}`,
+        `live: socket error — ${transportErrorMessage(err, [opts.apiKey])}`,
       );
+      // `error` não garante `close` em todas as implementações de WebSocket.
+      // Solicita encerramento; o evento `close` acima propaga a desconexão ao
+      // controller, que decide se/quando deve abrir uma nova sessão.
+      try {
+        ws.close();
+      } catch {
+        this.connectionGeneration += 1;
+        this.setupDone = false;
+        this.clearSetupTimer();
+        this.clearProgressWatchdog();
+        if (this.ws === ws) this.ws = null;
+        this.releaseSingleton();
+        this.events.onStateChange('closed');
+      }
     });
   }
 
   private handleServerMessage(raw: string): void {
     const msg = parseServerMessage(raw);
-    // F-138/2461: toda mensagem do servidor é PROGRESSO — re-arma o watchdog de
-    // sessão viva (30s de silêncio = socket zumbi → fecha → reconecta).
-    if (this.setupDone || msg.setupComplete) this.armProgressWatchdog();
+    // Só um turno em voo possui deadline. Silêncio entre turnos é o estado
+    // normal de uma sessão Live e não pode provocar um ciclo de reconexões.
+    if (this.awaitingServerProgress) this.armProgressWatchdog();
     if (msg.setupComplete) {
       this.setupDone = true;
-      if (this.setupTimer) this.deps.clearTimeoutFn(this.setupTimer);
+      this.clearSetupTimer();
       this.flushPendingMic();
       // F-113: drena os turnos que ficaram na fila até a sessão ficar viva
       // (greeting/reconexão bufferizados pré-setupComplete).
       this.turnQueue.drain();
       this.events.onStateChange('ready');
     }
-    // HIGH-3: o orçamento de reconexão só zera com PROGRESSO REAL (áudio,
-    // transcrição, tool-call, fim de turno) — NÃO no bare setupComplete. Um
-    // socket que só chega a setupComplete e nunca é alimentado (mic parado entre
-    // turnos no modelo turn-scoped do nexus) senão zerava o contador a cada
-    // relight → o watchdog de 30s reconectava para sempre. Agora exaure em
-    // MAX_RECONNECT_ATTEMPTS e emite 'closed' (o controller degrada p/ Classic).
-    const sawServerProgress =
-      msg.audioB64 !== undefined ||
-      msg.inputTranscription !== undefined ||
-      msg.outputTranscription !== undefined ||
-      msg.toolCalls !== undefined ||
-      msg.turnComplete === true ||
-      msg.interrupted === true;
-    if (sawServerProgress) this.reconnectAttempts = 0;
-    // MUTE FIX: o áudio ou a transcrição do MODELO marca o fim do turno do
-    // usuário. Se juntamos pedaços de inputTranscription, emitimos AGORA o
-    // transcript final do usuário (uma vez) para o renderer liberar a resposta.
-    if (msg.audioB64 || msg.outputTranscription) this.finalizeUserTranscript();
-    if (msg.audioB64) this.events.onAudioOut(msg.audioB64);
+    const audioB64s = msg.audioB64s ?? [];
+    for (const audioB64 of audioB64s) this.events.onAudioOut(audioB64);
     if (msg.inputTranscription) {
+      this.transcriptTurnId ??= this.activeTurnId;
       this.userTranscriptBuffer += msg.inputTranscription;
-      this.events.onTranscript('user', msg.inputTranscription, false);
+      this.events.onTranscript(
+        'user',
+        msg.inputTranscription,
+        false,
+        this.transcriptTurnId,
+      );
+      this.rescheduleTranscriptFinalization();
     }
     if (msg.outputTranscription) {
-      this.events.onTranscript('assistant', msg.outputTranscription, false);
+      this.transcriptTurnId ??= this.activeTurnId;
+      this.assistantTranscriptBuffer += msg.outputTranscription;
+      this.events.onTranscript(
+        'assistant',
+        msg.outputTranscription,
+        false,
+        this.transcriptTurnId,
+      );
+      this.rescheduleTranscriptFinalization();
     }
     // F-113: turno abortado (barge-in) ou concluído libera a fila e drena o próximo.
     if (msg.interrupted) {
       // Barge-in: o turno do usuário anterior nunca virou resposta — descarta o
       // buffer para não vazar num transcript final tardio no próximo turno.
-      this.userTranscriptBuffer = '';
+      this.discardTranscriptTurn();
+      this.finishAwaitingServerProgress();
       this.events.onInterrupted();
       this.turnQueue.release();
     }
     if (msg.turnComplete) {
-      // Rede de segurança: se o modelo terminou sem que áudio/output tivessem
-      // finalizado o transcript (ex.: resposta só-tool), finaliza aqui.
-      this.finalizeUserTranscript();
+      this.transcriptTurnComplete = true;
+      this.rescheduleTranscriptFinalization();
+      this.finishAwaitingServerProgress();
       this.events.onTurnComplete?.();
       this.turnQueue.release();
     }
     if (msg.toolCalls) {
+      // O servidor está deliberadamente parado à espera do resultado local da
+      // ferramenta (que pode incluir uma confirmação humana demorada).
+      this.finishAwaitingServerProgress();
       for (const call of msg.toolCalls) {
-        if (call.id) this.pendingToolCalls.add(call.id);
+        if (!call.id || this.handledToolCallIds.has(call.id)) continue;
+        this.handledToolCallIds.add(call.id);
+        this.handledToolCallOrder.push(call.id);
+        if (this.handledToolCallOrder.length > HANDLED_TOOL_CALL_IDS_MAX) {
+          const expired = this.handledToolCallOrder.shift();
+          if (expired) this.handledToolCallIds.delete(expired);
+        }
+        this.pendingToolCalls.add(call.id);
         this.events.onToolCall?.(call);
       }
     }
     if (msg.cancelledToolCallIds) {
-      for (const id of msg.cancelledToolCallIds) this.pendingToolCalls.delete(id);
+      for (const id of msg.cancelledToolCallIds) {
+        // Only propagate cancellations for calls this transport actually
+        // emitted. Unknown ids must not create cancellation tombstones in the
+        // application-level exactly-once registry.
+        if (!this.pendingToolCalls.delete(id)) continue;
+        this.events.onToolCallCancelled?.(id);
+      }
     }
-    if (msg.resumptionHandle) this.resumptionHandle = msg.resumptionHandle;
-    if (msg.goAway && this.lastOptions) {
-      // O servidor vai derrubar — reconectar preservando o handle de resume.
-      this.connect(this.lastOptions);
+    if (msg.resumptionHandle) {
+      this.resumptionHandle = msg.resumptionHandle;
+      this.events.onResumptionHandle?.(msg.resumptionHandle);
+    }
+    if (msg.goAway && this.ws) {
+      // Não abre um segundo socket aqui: encerra e deixa o controller coordenar
+      // backoff, limite de tentativas e eventual fallback de provider.
+      try {
+        this.ws.close();
+      } catch {
+        // O callback de erro/close do socket já cobre a propagação terminal.
+      }
     }
   }
 
@@ -454,8 +395,19 @@ export class GeminiLiveTransport {
    * Devolve o resultado de uma função coarse ao modelo (toolResponse). Ignora
    * calls já cancelados (o servidor mandou toolCallCancellation no meio-tempo).
    */
-  sendToolResult(callId: string, name: string, output: unknown): void {
-    if (callId && !this.pendingToolCalls.has(callId)) return;
+  sendToolResult(
+    callId: string,
+    name: string,
+    output: unknown,
+    options: { allowResumedCall?: boolean } = {},
+  ): void {
+    if (
+      callId &&
+      !options.allowResumedCall &&
+      !this.pendingToolCalls.has(callId)
+    ) {
+      return;
+    }
     if (callId) this.pendingToolCalls.delete(callId);
     if (!this.isReady || !this.ws) return;
     this.ws.send(
@@ -465,11 +417,16 @@ export class GeminiLiveTransport {
         },
       }),
     );
+    this.beginAwaitingServerProgress();
   }
 
   /** Mic PCM 16 kHz base64. Antes do setupComplete, bufferiza (teto 160 KB). */
   sendMicChunk(b64: string): void {
+    // A new audio turn is an unambiguous boundary if a previous transcription
+    // grace window is still open.
+    if (this.transcriptTurnComplete) this.finalizeTranscripts();
     if (this.isReady && this.ws) {
+      if (!this.audioStreamOpen) this.flushPendingSilentContext();
       this.ws.send(
         JSON.stringify({
           realtimeInput: {
@@ -493,18 +450,40 @@ export class GeminiLiveTransport {
     for (const b64 of buffered) this.sendMicChunk(b64);
   }
 
-  /**
-   * MUTE FIX: emite o transcript do usuário ACUMULADO como FINAL (uma vez) e
-   * limpa o buffer. Chamado quando o modelo começa a responder (áudio/output) ou
-   * no turnComplete — o equivalente Gemini ao `.completed` do OpenAI. Sem isto o
-   * renderer nunca via um transcript de usuário final e mantinha o áudio da
-   * resposta suprimido para sempre (sessão muda).
-   */
-  private finalizeUserTranscript(): void {
-    const text = this.userTranscriptBuffer.trim();
+  private rescheduleTranscriptFinalization(): void {
+    if (!this.transcriptTurnComplete) return;
+    this.clearTranscriptFinalizeTimer();
+    this.transcriptFinalizeTimer = this.deps.setTimeoutFn(() => {
+      this.transcriptFinalizeTimer = null;
+      this.finalizeTranscripts();
+    }, TRANSCRIPTION_SETTLE_MS);
+  }
+
+  private finalizeTranscripts(): void {
+    this.clearTranscriptFinalizeTimer();
+    const userText = this.userTranscriptBuffer.trim();
+    const assistantText = this.assistantTranscriptBuffer.trim();
+    const turnId = this.transcriptTurnId;
     this.userTranscriptBuffer = '';
-    if (!text) return;
-    this.events.onTranscript('user', text, true);
+    this.assistantTranscriptBuffer = '';
+    this.transcriptTurnComplete = false;
+    this.transcriptTurnId = undefined;
+    if (userText) this.events.onTranscript('user', userText, true, turnId);
+    if (assistantText) this.events.onTranscript('assistant', assistantText, true, turnId);
+  }
+
+  private discardTranscriptTurn(): void {
+    this.clearTranscriptFinalizeTimer();
+    this.userTranscriptBuffer = '';
+    this.assistantTranscriptBuffer = '';
+    this.transcriptTurnComplete = false;
+    this.transcriptTurnId = undefined;
+  }
+
+  private clearTranscriptFinalizeTimer(): void {
+    if (this.transcriptFinalizeTimer === null) return;
+    this.deps.clearTimeoutFn(this.transcriptFinalizeTimer);
+    this.transcriptFinalizeTimer = null;
   }
 
   /** Fecha o turno de fala do usuário (VAD manual / PTT soltou). */
@@ -515,6 +494,7 @@ export class GeminiLiveTransport {
     if (!this.audioStreamOpen) return;
     this.ws.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }));
     this.audioStreamOpen = false;
+    this.beginAwaitingServerProgress();
   }
 
   /**
@@ -524,7 +504,8 @@ export class GeminiLiveTransport {
    */
   interrupt(): void {
     this.endUserTurn();
-    this.userTranscriptBuffer = '';
+    this.finishAwaitingServerProgress();
+    this.discardTranscriptTurn();
     this.pendingMic = [];
     this.pendingMicBytes = 0;
     this.audioStreamOpen = false;
@@ -566,6 +547,14 @@ export class GeminiLiveTransport {
   }
 
   private sendSilentContext(text: string): void {
+    if (this.useRealtimeText) {
+      const trimmed = text.trim();
+      if (trimmed) {
+        this.pendingSilentContext =
+          `${CONTEXT_UPDATE_ENVELOPE}\n${trimmed.slice(0, 400)}`;
+      }
+      return;
+    }
     if (!this.isReady || !this.ws) return;
     this.ws.send(
       JSON.stringify({
@@ -609,6 +598,13 @@ export class GeminiLiveTransport {
   /** Callback de envio da TurnQueue — turno de usuário que dispara resposta do modelo. */
   private sendTurn(text: string): void {
     if (!this.isReady || !this.ws) return;
+    if (this.transcriptTurnComplete) this.finalizeTranscripts();
+    if (this.useRealtimeText) {
+      this.flushPendingSilentContext();
+      this.ws.send(JSON.stringify({ realtimeInput: { text } }));
+      this.beginAwaitingServerProgress();
+      return;
+    }
     this.ws.send(
       JSON.stringify({
         clientContent: {
@@ -617,14 +613,21 @@ export class GeminiLiveTransport {
         },
       }),
     );
+    this.beginAwaitingServerProgress();
+  }
+
+  private flushPendingSilentContext(): void {
+    const text = this.pendingSilentContext;
+    if (!text || !this.isReady || !this.ws) return;
+    this.pendingSilentContext = null;
+    this.ws.send(JSON.stringify({ realtimeInput: { text } }));
   }
 
   disconnect(): void {
     this.turnQueue.reset();
     this.screenCoalescer.clear();
-    this.teardown(true);
-    // F-133: libera o slot singleton se ESTA é a corrente (não derruba posse alheia).
-    if (currentLiveTransport === this) currentLiveTransport = null;
+    this.teardown();
+    this.releaseSingleton();
     this.events.onStateChange('closed');
   }
 
@@ -636,20 +639,39 @@ export class GeminiLiveTransport {
     currentLiveTransport = this;
   }
 
+  /** Libera o slot apenas se esta instância ainda for a proprietária. */
+  private releaseSingleton(): void {
+    if (currentLiveTransport === this) currentLiveTransport = null;
+  }
+
   /**
-   * F-138/2461: watchdog de progresso da sessão viva — re-armado a cada mensagem
-   * do servidor. 30s sem mensagem = socket zumbi: fecha o WS pra que o handler de
-   * close reconecte com backoff (não é terminal — a exaustão do reconnect é quem
-   * emite o 'closed' final).
+   * F-138/2461: watchdog de um turno em voo — re-armado a cada progresso do
+   * servidor. Ociosidade sem turno não tem deadline.
    */
+  private beginAwaitingServerProgress(): void {
+    this.awaitingServerProgress = true;
+    this.armProgressWatchdog();
+  }
+
+  private finishAwaitingServerProgress(): void {
+    this.awaitingServerProgress = false;
+    this.clearProgressWatchdog();
+  }
+
   private armProgressWatchdog(): void {
     this.clearProgressWatchdog();
+    if (!this.awaitingServerProgress) return;
     const generation = this.connectionGeneration;
     this.progressTimer = this.deps.setTimeoutFn(() => {
       this.progressTimer = null;
-      if (generation !== this.connectionGeneration || !this.setupDone) return;
+      if (
+        generation !== this.connectionGeneration ||
+        !this.setupDone ||
+        !this.awaitingServerProgress
+      ) return;
+      this.awaitingServerProgress = false;
       this.events.onError(
-        `live: sem progresso do servidor (${SDK_PROGRESS_TIMEOUT_MS / 1000}s) — reconectando`,
+        `live: sem progresso do servidor (${SDK_PROGRESS_TIMEOUT_MS / 1000}s) — encerrando sessão`,
       );
       if (this.ws) {
         try {
@@ -667,15 +689,17 @@ export class GeminiLiveTransport {
     this.progressTimer = null;
   }
 
-  private teardown(markClosed: boolean): void {
-    if (markClosed) {
-      this.closedByUs = true;
-      this.connectionGeneration += 1;
-    }
-    if (this.setupTimer) this.deps.clearTimeoutFn(this.setupTimer);
+  private clearSetupTimer(): void {
+    if (this.setupTimer === null) return;
+    this.deps.clearTimeoutFn(this.setupTimer);
     this.setupTimer = null;
+  }
+
+  private teardown(): void {
+    this.connectionGeneration += 1;
+    this.clearSetupTimer();
     this.clearProgressWatchdog();
-    this.clearReconnectTimer();
+    this.awaitingServerProgress = false;
     this.setupDone = false;
     if (this.ws) {
       try {
@@ -688,12 +712,10 @@ export class GeminiLiveTransport {
     this.pendingMic = [];
     this.pendingMicBytes = 0;
     this.audioStreamOpen = false;
+    this.pendingSilentContext = null;
     this.pendingToolCalls.clear();
-  }
-
-  private clearReconnectTimer(): void {
-    if (!this.reconnectTimer) return;
-    this.deps.clearTimeoutFn(this.reconnectTimer);
-    this.reconnectTimer = null;
+    this.handledToolCallIds.clear();
+    this.handledToolCallOrder.length = 0;
+    this.discardTranscriptTurn();
   }
 }

@@ -1,10 +1,9 @@
-import { VOICE_CHANNELS } from '../../shared/voice-channels';
+import { randomUUID } from 'node:crypto';
 import { getVoiceConfig } from './voice-config-store';
 import { resolveActiveJarvisBrain } from '../../shared/voice-config';
 import { resolveVoiceApiKey, voiceApiKeySource } from './voice-secrets';
 import { logVoice } from './voice-log';
-import { echoSuppressor } from './echo-suppress';
-import { isLikelyNoiseTranscript } from '../../shared/voice-noise';
+import { VOICE_CHANNELS } from '../../shared/voice-channels';
 import {
   buildRealtimeEngageDecision,
   type EngageCandidate,
@@ -12,6 +11,8 @@ import {
 import { shouldWithholdLiveMicFrame } from '../jarvis/realtime/live-mic-gate';
 import type { JarvisLiveSession } from './jarvis-live';
 import type {
+  JarvisLiveAudioPlaybackEvent,
+  JarvisLiveSmokeTestResult,
   JarvisLiveToolEvent,
   JarvisLiveToolResultEvent,
 } from '../../shared/voice-ipc';
@@ -23,6 +24,7 @@ import {
 import {
   base64ToInt16Array,
   int16ArrayToBase64,
+  type RealtimeToolCallEvent,
   type TurnManagedRealtimeProvider,
 } from '../jarvis/realtime/provider';
 import { jarvisLatencyTracker } from '../jarvis/realtime/metrics';
@@ -31,7 +33,6 @@ import {
 } from '../jarvis/realtime/nexus-realtime-tools';
 import {
   PendingQuestionRouter,
-  QUESTION_POLL_MS,
 } from '../jarvis/realtime/pending-question-router';
 import { ThrottledCounter } from '../../shared/live-flow-counter';
 import {
@@ -40,57 +41,81 @@ import {
   type ToolDispatchHost,
 } from './live-tool-dispatch';
 import {
-  GRACE_STALE_SERVER_MS,
-  isGraceSocketStale,
-  isIgnorableRealtimeError,
   isLocalToolCallId,
   isScreenContext,
   localToolCallId,
   buildResumeContext,
   trimLiveHistory,
-  shouldLogWakeSyncReset,
 } from './live-transport-helpers';
 import {
   buildSystemInstruction as buildLiveSystemInstruction,
   sendProviderContext as sendLiveProviderContext,
 } from './live-transport-context';
+import { LiveToolCallCoordinator } from './live-tool-call-registry';
+import {
+  connectFirstLiveProvider,
+  type LiveProviderRuntimeHost,
+} from './live-provider-runtime';
+import { LiveSmokeProbe } from './live-smoke-probe';
+import {
+  LiveQuestionPoller,
+  type PendingQuestionSource,
+} from './live-question-poller';
+
+export type {
+  NarratedQuestion,
+  PendingQuestionSource,
+} from './live-question-poller';
 
 export { isIgnorableRealtimeError, isLocalToolCallId } from './live-transport-helpers';
 
 type Emit = (channel: string, payload?: unknown) => void;
 
-export interface NarratedQuestion {
-  paneId: string;
-  questionHash: string;
-}
-
-export interface PendingQuestionSource {
-  poll(): NarratedQuestion[];
-}
-
 const RUNTIME_RECONNECT_BASE_MS = 750;
 const RUNTIME_RECONNECT_MAX_ATTEMPTS = 3;
+// Must be longer than provider-level progress watchdogs (Gemini: 30s).
+// Otherwise a socket that dies exactly on that watchdog is misclassified as
+// healthy and the reconnect counter resets forever.
+const RUNTIME_RECONNECT_STABLE_MS = 60_000;
 const PENDING_MIC_MAX_BYTES = 512 * 1024;
-const REALTIME_TOOL_RESULT_TIMEOUT_MS = 10_000;
 const LIVE_SAY_MAX_CHARS = 1_000;
+const ACCEPTED_RESCUE_TURN_IDS_MAX = 32;
+const PENDING_RENDERER_AUDIO_MAX = 256;
+const PENDING_RENDERER_AUDIO_TTL_MS = 30_000;
+
+interface RealtimeStartOptions {
+  greeting?: string;
+}
+
+interface PendingRendererAudioDelivery {
+  sentAt: number;
+  /** Only this renderer can prove the active smoke delivery. */
+  smokeOwnerWebContentsId?: number;
+}
 
 export class LiveTransportController {
   private _provider: TurnManagedRealtimeProvider | null = null;
   private connecting: Promise<void> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectStableTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private reconnectGeneration = 0;
   private _latestContext = '';
   private _recentToolResults: string[] = [];
   private pendingMic: Int16Array[] = [];
   private pendingMicBytes = 0;
-  private pendingToolResultTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** User released PTT while the provider was still connecting. */
+  private pendingEndUserTurn = false;
+  /** Controller-level identity survives provider/transport reconnects. */
+  private readonly toolCalls: LiveToolCallCoordinator;
   private readonly pendingQuestionRouter: PendingQuestionRouter;
-  private questionPollTimer: ReturnType<typeof setInterval> | null = null;
-  private registeredQuestions = new Set<string>();
+  private readonly questionPoller: LiveQuestionPoller;
+  private readonly smokeProbe: LiveSmokeProbe;
   private localCallSeq = 0;
   private _lastUserTranscript = '';
   private providerSpeaking = false;
+  private geminiResumeHandle: string | undefined;
+  private activeTurnId: string | undefined;
   /** P4: bounded recent final transcripts surviving transport stop. */
   private _liveHistory: Array<{ role: 'user' | 'assistant'; text: string }> = [];
   /** P4: grace/idle timers. */
@@ -100,19 +125,29 @@ export class LiveTransportController {
   private readonly now: () => number;
   private micFramesCounter = new ThrottledCounter(25, 2_000);
   private serverAudioCounter = new ThrottledCounter(25, 2_000);
-  /** Last time we saw real server progress (audio / transcript / turn end). */
-  private lastServerMsgAt = 0;
-  /** When current provider finished connect() (0 = none). */
-  private connectedAt = 0;
+  private acceptedRescueTurnIds: string[] = [];
+  /** Main-owned delivery ids prevent stale renderer events proving a newer delivery. */
+  private pendingRendererAudio = new Map<string, PendingRendererAudioDelivery>();
+  private activeSmokeOwnerWebContentsId: number | undefined;
 
   constructor(
     private emit: Emit,
     private _fsm: JarvisLiveSession,
     now: () => number = Date.now,
-    private questionSource?: PendingQuestionSource,
+    questionSource?: PendingQuestionSource,
   ) {
     this.now = now;
     this.pendingQuestionRouter = new PendingQuestionRouter({ now });
+    this.questionPoller = new LiveQuestionPoller(questionSource, (question) => {
+      this.noteNarratedQuestion(question.paneId, question.questionHash);
+    });
+    this.smokeProbe = new LiveSmokeProbe(this._fsm, now);
+    this.toolCalls = new LiveToolCallCoordinator({
+      fsm: this._fsm,
+      getProvider: () => this._provider,
+      onResultContext: (tool, status, summary) =>
+        this.recordToolResultContext(tool, status, summary),
+    });
   }
 
   // ── ToolDispatchHost interface ─────────────────────────────────────────────
@@ -131,6 +166,7 @@ export class LiveTransportController {
   }
 
   get inGrace(): boolean { return this._inGrace; }
+  get currentTurnId(): string | undefined { return this.activeTurnId; }
 
   private resetFlowCounters(): void {
     this.micFramesCounter.reset();
@@ -156,6 +192,17 @@ export class LiveTransportController {
       const envVar = providerId === 'openai' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY';
       return resolveVoiceApiKey(envVar) !== undefined;
     });
+  }
+
+  beginTurn(turnId: string): void {
+    const normalized = turnId.trim().slice(0, 128);
+    if (!normalized) return;
+    const sessionId = this._fsm.getState().sessionId;
+    if (sessionId && this.activeTurnId && this.activeTurnId !== normalized) {
+      jarvisLatencyTracker.discard(sessionId, this.activeTurnId);
+    }
+    this.activeTurnId = normalized;
+    this._provider?.beginUserTurn?.(normalized);
   }
 
   private logEngageDecision(): void {
@@ -188,67 +235,48 @@ export class LiveTransportController {
     );
   }
 
-  onStart(opts?: { forceFresh?: boolean }): Promise<void> {
+  onStart(options: RealtimeStartOptions = {}): Promise<void> {
     this.clearReconnectTimer();
+    if (
+      this._fsm.getState().status === 'error' &&
+      this.reconnectAttempt >= RUNTIME_RECONNECT_MAX_ATTEMPTS
+    ) {
+      // A new explicit wake after circuit-breaker exhaustion may try again.
+      this.reconnectAttempt = 0;
+    }
     this.logEngageDecision();
     this.resetFlowCounters();
-    if (opts?.forceFresh) {
-      if (shouldLogWakeSyncReset({
-        forceFresh: true,
-        inGrace: this._inGrace,
-        providerReady: this._provider?.isReady ?? false,
-        connecting: Boolean(this.connecting),
-      })) {
-        logVoice('info', 'live.wakeSyncReset', 'hard stop — fresh socket on wake', {
-          inGrace: this._inGrace,
-          wasReady: this._provider?.isReady ?? false,
-          wasConnecting: Boolean(this.connecting),
-        });
-      }
-      this.hardStop();
-      this.clearGraceTimer();
-      this._inGrace = false;
-      this.touchIdle();
-    } else if (this._inGrace && this._provider?.isReady) {
-      if (isGraceSocketStale(this.lastServerMsgAt, this.now(), GRACE_STALE_SERVER_MS, this.connectedAt)) {
-        logVoice('warn', 'live.graceStaleReconnect', 'grace socket stale — fresh connect on wake', {
-          silentForMs: this.lastServerMsgAt > 0 ? this.now() - this.lastServerMsgAt : null,
-          thresholdMs: GRACE_STALE_SERVER_MS,
-        });
-        this.hardStop();
-      } else {
-        this.promoteGrace();
-        this.clearPendingMic();
-        this._provider.interrupt();
-        this._fsm.patchStatus({ status: 'listening', realtimeReady: true });
-        return Promise.resolve();
-      }
-    }
-    this.clearGraceTimer();
-    this._inGrace = false;
-    this.touchIdle();
     if (!this.isRealtimeConfigured()) {
+      // A configuration change is an explicit lifecycle boundary. It is safe to
+      // close here; ordinary wake silence is not.
+      if (this._provider || this.connecting) this.hardStop();
       this.clearPendingMic();
       this._fsm.patchStatus({ status: 'dormant', realtimeReady: false });
       return Promise.resolve();
     }
-    // Ready but silent too long = zombie WS — reconnect before [wake].
-    if (this._provider?.isReady && isGraceSocketStale(this.lastServerMsgAt, this.now(), GRACE_STALE_SERVER_MS, this.connectedAt)) {
-      logVoice('warn', 'live.readyStaleReconnect', 'ready socket stale — fresh connect on wake', {
-        silentForMs: this.lastServerMsgAt > 0 ? this.now() - this.lastServerMsgAt : null,
-        thresholdMs: GRACE_STALE_SERVER_MS,
-      });
-      this.hardStop();
-    } else if (this._provider?.isReady) {
-      this.clearPendingMic();
-      this._provider.interrupt();
+
+    // A healthy Live socket is intentionally quiet between turns. `isReady`,
+    // disconnect and error callbacks—not elapsed silence—own recovery.
+    if (this._provider?.isReady) {
+      if (this._inGrace) this.promoteGrace();
+      else this.touchIdle();
+      this.sendGreetingIfSafe(this._provider, options.greeting);
+      this.flushPendingMic(this._provider);
       this._fsm.patchStatus({ status: 'listening', realtimeReady: true });
       return Promise.resolve();
     }
+
+    this.clearGraceTimer();
+    this._inGrace = false;
+    this.touchIdle();
     if (this.connecting) return this.connecting;
     const candidates = createRealtimeProviderCandidates({
       config: getVoiceConfig(),
       instructions: this.buildSystemInstruction(),
+      geminiResumeHandle: this.geminiResumeHandle,
+      onGeminiResumeHandle: (handle) => {
+        this.geminiResumeHandle = handle;
+      },
     });
     if (candidates.length === 0) {
       this.clearPendingMic();
@@ -256,7 +284,7 @@ export class LiveTransportController {
       return Promise.resolve();
     }
     this._fsm.patchStatus({ status: 'listening', realtimeReady: false });
-    const connecting = this.connectFirstAvailable(candidates)
+    const connecting = this.connectFirstAvailable(candidates, options.greeting)
       .finally(() => {
         if (this.connecting === connecting) this.connecting = null;
       });
@@ -264,14 +292,69 @@ export class LiveTransportController {
     return connecting;
   }
 
-  async smokeTest(text: string): Promise<ReturnType<JarvisLiveSession['getState']>> {
-    if (!this._fsm.getState().sessionId) this._fsm.start({ reason: 'manual' });
+  async smokeTest(
+    text: string,
+    ownerWebContentsId?: number,
+  ): Promise<JarvisLiveSmokeTestResult> {
+    if (this.smokeProbe.isActive) return this.smokeProbe.failure('busy');
+    // A diagnostic must not accept an audio chunk from an older answer. Rebuild
+    // the provider before it sends the probe prompt; normal conversations still
+    // retain their warm-socket grace behavior.
+    this.hardStop();
+    this._fsm.start({ reason: 'manual' });
     await this.onStart();
-    if (this._provider?.isReady) {
-      this._provider.sendText(text);
-      this._fsm.patchStatus({ status: 'thinking', realtimeReady: true });
+    const provider = this._provider;
+    if (!provider?.isReady) {
+      return this.smokeProbe.failure('realtime_unavailable');
     }
-    return this._fsm.getState();
+    this.activeSmokeOwnerWebContentsId = ownerWebContentsId;
+    try {
+      return await this.smokeProbe.run(provider, text);
+    } finally {
+      this.activeSmokeOwnerWebContentsId = undefined;
+    }
+  }
+
+  /**
+   * Receives renderer proof for one main-generated audio delivery. Unknown,
+   * expired and duplicate reports are ignored so an old render cannot satisfy a
+   * later diagnostic.
+   */
+  reportAudioPlayback(
+    event: JarvisLiveAudioPlaybackEvent,
+    senderWebContentsId?: number,
+  ): void {
+    this.prunePendingRendererAudio();
+    const delivery = this.pendingRendererAudio.get(event.id);
+    if (!delivery) return;
+    if (
+      delivery.smokeOwnerWebContentsId !== undefined &&
+      delivery.smokeOwnerWebContentsId !== senderWebContentsId
+    ) {
+      return;
+    }
+    this.pendingRendererAudio.delete(event.id);
+
+    if (event.outcome === 'started') {
+      this.smokeProbe.settlePlaybackStarted(event.id);
+      return;
+    }
+
+    const hadActiveSmoke = this.smokeProbe.isActive;
+    this.smokeProbe.settlePlaybackFailure(event.id);
+    if (event.outcome === 'cancelled') return;
+
+    this.providerSpeaking = false;
+    logVoice('error', 'live.audioPlaybackFailed', 'renderer não iniciou áudio realtime', {
+      deliveryAgeMs: Math.max(0, this.now() - delivery.sentAt),
+      hasDiagnostic: hadActiveSmoke,
+      hasErrorDetail: Boolean(event.error),
+    });
+    this._fsm.patchStatus({
+      status: 'error',
+      realtimeReady: false,
+      error: 'saída de áudio realtime falhou — usando Classic',
+    });
   }
 
   async say(text: string): Promise<ReturnType<JarvisLiveSession['getState']>> {
@@ -291,6 +374,34 @@ export class LiveTransportController {
       this._fsm.patchStatus({ status: 'thinking', realtimeReady: true });
     }
     return this._fsm.getState();
+  }
+
+  /**
+   * Recover a renderer-proven zero-frame turn as filtered TEXT. Sending raw WAV
+   * here used to replay wake pre-roll and could execute the same utterance
+   * twice. The turn id makes renderer retries idempotent.
+   */
+  rescueText(turnId: string, text: string): boolean {
+    const normalizedTurnId = turnId.trim();
+    const trimmed = text.trim();
+    if (!normalizedTurnId || !trimmed) return false;
+    if (this.acceptedRescueTurnIds.includes(normalizedTurnId)) return true;
+    const provider = this._provider;
+    if (!provider?.isReady) {
+      logVoice('warn', 'live.rescueSkipped', 'resgate sem provider pronto');
+      return false;
+    }
+    this.acceptedRescueTurnIds.push(normalizedTurnId);
+    if (this.acceptedRescueTurnIds.length > ACCEPTED_RESCUE_TURN_IDS_MAX) {
+      this.acceptedRescueTurnIds.shift();
+    }
+    logVoice('info', 'live.rescueText', 'reenviando transcrição local sem frames', {
+      turnId: normalizedTurnId,
+      chars: trimmed.length,
+    });
+    provider.sendText(trimmed);
+    this._fsm.patchStatus({ status: 'thinking', realtimeReady: true });
+    return true;
   }
 
   micIn(b64: string): void {
@@ -320,7 +431,7 @@ export class LiveTransportController {
 
   private sendMicSamples(provider: TurnManagedRealtimeProvider, samples: Int16Array): void {
     const sessionId = this._fsm.getState().sessionId;
-    if (sessionId) jarvisLatencyTracker.markAudioIn(sessionId);
+    if (sessionId) jarvisLatencyTracker.markAudioIn(sessionId, this.activeTurnId);
     const tick = this.micFramesCounter.tick(this.now());
     if (tick.fire) {
       logVoice('info', 'live.micFramesSent', 'frames de mic → socket', { frames: tick.count });
@@ -354,33 +465,36 @@ export class LiveTransportController {
   private clearPendingMic(): void {
     this.pendingMic = [];
     this.pendingMicBytes = 0;
+    this.pendingEndUserTurn = false;
     const state = this._fsm.getState();
     if (state.pendingMic && state.status !== 'off') {
       this._fsm.patchStatus({ status: state.status, pendingMic: false });
     }
   }
 
+  private flushPendingMic(provider: TurnManagedRealtimeProvider): void {
+    const chunks = this.pendingMic;
+    const shouldEndUserTurn = this.pendingEndUserTurn && chunks.length > 0;
+    this.pendingMic = [];
+    this.pendingMicBytes = 0;
+    this.pendingEndUserTurn = false;
+    const state = this._fsm.getState();
+    if (state.pendingMic && state.status !== 'off') {
+      this._fsm.patchStatus({ status: state.status, pendingMic: false });
+    }
+    for (const chunk of chunks) this.sendMicSamples(provider, chunk);
+    if (shouldEndUserTurn) provider.endUserTurn();
+  }
+
   contextIn(text: string): void {
     const trimmed = text.trim().slice(0, 1_200);
     if (!trimmed) return;
     if (trimmed.startsWith('[wake]') || trimmed.startsWith('[reconexão]')) {
-      if (
-        this._provider?.isReady &&
-        isGraceSocketStale(this.lastServerMsgAt, this.now(), GRACE_STALE_SERVER_MS, this.connectedAt)
-      ) {
-        logVoice('warn', 'live.wakeStaleDrop', 'drop stale socket before [wake] inject', {
-          silentForMs:
-            this.lastServerMsgAt > 0
-              ? this.now() - this.lastServerMsgAt
-              : this.connectedAt > 0
-                ? this.now() - this.connectedAt
-                : null,
-        });
-        this.hardStop();
-      }
       if (this._provider?.isReady) {
-        this.clearPendingMic();
-        this._provider.interrupt();
+        // The renderer already interrupts the previous response before opening
+        // this capture. Do not interrupt again here: on a cold connect, buffered
+        // user speech may have just flushed and a second interrupt would swallow
+        // the beginning of the command.
         this._provider.sendText(trimmed);
         logVoice('info', 'live.wakeInjectSent', 'turno [wake]/[reconexão] enviado', {
           chars: trimmed.length,
@@ -394,7 +508,12 @@ export class LiveTransportController {
     this._latestContext = trimmed;
     // P5: screen snapshots go through the provider's coalescer (debounce + dedup);
     // tool results are immediate via sendProviderContext.
-    if (this._provider?.isReady && this._provider.sendScreenUpdate && isScreenContext(trimmed)) {
+    if (
+      this._provider?.isReady &&
+      this._provider.supportsPassiveContextUpdates !== false &&
+      this._provider.sendScreenUpdate &&
+      isScreenContext(trimmed)
+    ) {
       this._provider.sendScreenUpdate(trimmed);
       return;
     }
@@ -402,27 +521,38 @@ export class LiveTransportController {
   }
 
   toolResult(event: JarvisLiveToolResultEvent): void {
-    if (event.callId) this.clearToolResultTimer(event.callId);
+    const sessionId = this._fsm.getState().sessionId;
+    if (sessionId) jarvisLatencyTracker.markAction(sessionId, this.activeTurnId);
+    if (event.callId && !isLocalToolCallId(event.callId)) {
+      this.toolCalls.complete(event);
+      return;
+    }
     const status = event.ok ? 'ok' : 'failed';
     const summary = event.summary.trim() || status;
-    if (event.callId && !isLocalToolCallId(event.callId) && this._provider?.isReady) {
-      this._provider.sendToolResult(event.callId, {
-        ok: event.ok,
-        tool: event.tool,
-        summary,
-        output: event.output ?? null,
-      });
-    }
+    this.recordToolResultContext(event.tool, status, summary);
+  }
+
+  private recordToolResultContext(
+    tool: JarvisLiveToolResultEvent['tool'],
+    status: 'ok' | 'failed',
+    summary: string,
+  ): void {
     this._recentToolResults = [
       ...this._recentToolResults,
-      `- ${event.tool}: ${status} (${summary})`,
+      `- ${tool}: ${status} (${summary})`,
     ].slice(-5);
     this.touchIdle();
     this.sendProviderContext();
   }
 
   endTurn(): void {
-    this._provider?.endUserTurn();
+    const provider = this._provider;
+    if (provider?.isReady) {
+      this.pendingEndUserTurn = false;
+      provider.endUserTurn();
+      return;
+    }
+    if (this.pendingMic.length > 0) this.pendingEndUserTurn = true;
   }
 
   interrupt(reason: string): ReturnType<JarvisLiveSession['interrupt']> {
@@ -430,6 +560,8 @@ export class LiveTransportController {
     if (status === 'speaking' || status === 'thinking') {
       this._provider?.interrupt();
     }
+    const sessionId = this._fsm.getState().sessionId;
+    if (sessionId) jarvisLatencyTracker.discard(sessionId, this.activeTurnId);
     this.providerSpeaking = false;
     return this._fsm.interrupt(reason);
   }
@@ -441,14 +573,17 @@ export class LiveTransportController {
    * Farewell / hard teardown uses hardStop().
    */
   onStop(): void {
+    this.smokeProbe.settleFailure('session_closed');
+    this.clearPendingRendererAudio();
     logVoice('info', 'live.flowSummary', 'resumo do fluxo de áudio da sessão', {
       micFramesSent: this.micFramesCounter.total,
       serverAudioChunks: this.serverAudioCounter.total,
       softStop: Boolean(this._provider?.isReady),
     });
     this.clearReconnectTimer();
-    this.clearToolResultTimers();
-    this.stopQuestionPoll();
+    this.clearReconnectStabilityTimer();
+    this.toolCalls.cancelPending('session_closed', 'sessão Live encerrada pelo usuário');
+    this.questionPoller.stop();
     this.clearIdleTimer();
     this.providerSpeaking = false;
     this.clearPendingMic();
@@ -464,20 +599,36 @@ export class LiveTransportController {
 
   /** Hard teardown — closes the socket immediately (farewell / process exit). */
   hardStop(): void {
+    this.smokeProbe.settleFailure('session_closed');
+    this.clearPendingRendererAudio();
     this.clearReconnectTimer();
-    this.clearToolResultTimers();
-    this.stopQuestionPoll();
+    this.clearReconnectStabilityTimer();
+    this.reconnectAttempt = 0;
+    this.toolCalls.cancelPending('session_closed', 'sessão Live encerrada');
+    this.questionPoller.stop();
     this.clearIdleTimer();
     this.clearGraceTimer();
     this._inGrace = false;
+    this.geminiResumeHandle = undefined;
     this._provider?.close();
     this._provider = null;
-    this.connectedAt = 0;
-    this.lastServerMsgAt = 0;
     this.connecting = null;
     this.providerSpeaking = false;
     this.clearPendingMic();
     this.patchRealtimeReady(false);
+  }
+
+  /**
+   * Transfer audio ownership to Classic. Closing the provider makes every late
+   * provider callback fail the identity checks installed by bindProvider().
+   */
+  quiesce(reason: string): ReturnType<JarvisLiveSession['stop']> {
+    logVoice('warn', 'live.quiescedForClassic', 'Live encerrado antes do fallback Classic', {
+      reason,
+    });
+    this.hardStop();
+    this._fsm.interrupt(reason);
+    return this._fsm.stop();
   }
 
   // ── P4: grace / resume / dormancy ──────────────────────────────────────────
@@ -502,14 +653,16 @@ export class LiveTransportController {
   }
 
   enterDormant(): void {
+    this.smokeProbe.settleFailure('session_closed');
+    this.clearPendingRendererAudio();
     this.clearIdleTimer();
     this.clearGraceTimer();
+    this.clearReconnectStabilityTimer();
+    this.toolCalls.cancelPending('session_closed', 'sessão Live entrou em dormência');
     this._inGrace = false;
     // Keep liveHistory across dormancy so a re-wake can inject [reconexão].
     this._provider?.close();
     this._provider = null;
-    this.connectedAt = 0;
-    this.lastServerMsgAt = 0;
     this.connecting = null;
     this._fsm.patchStatus({ status: 'dormant', realtimeReady: false });
   }
@@ -544,32 +697,6 @@ export class LiveTransportController {
     if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null; }
   }
 
-  // ── question poll ──────────────────────────────────────────────────────────
-
-  private startQuestionPoll(): void {
-    if (!this.questionSource || this.questionPollTimer) return;
-    const source = this.questionSource;
-    const tick = (): void => {
-      for (const q of source.poll()) {
-        const key = `${q.paneId}::${q.questionHash}`;
-        if (this.registeredQuestions.has(key)) continue;
-        this.registeredQuestions.add(key);
-        this.noteNarratedQuestion(q.paneId, q.questionHash);
-      }
-    };
-    tick();
-    this.questionPollTimer = setInterval(tick, QUESTION_POLL_MS);
-    this.questionPollTimer.unref?.();
-  }
-
-  private stopQuestionPoll(): void {
-    if (this.questionPollTimer) {
-      clearInterval(this.questionPollTimer);
-      this.questionPollTimer = null;
-    }
-    this.registeredQuestions.clear();
-  }
-
   private nextLocalCallId(kind: string): string {
     this.localCallSeq += 1;
     return localToolCallId(kind, this.localCallSeq);
@@ -577,128 +704,47 @@ export class LiveTransportController {
 
   // ── connection ─────────────────────────────────────────────────────────────
 
-  private async connectFirstAvailable(candidates: RealtimeProviderCandidate[]): Promise<void> {
-    this.clearToolResultTimers();
-    this._provider?.close();
-    this._provider = null;
-    for (const candidate of candidates) {
-      const provider = candidate.provider;
-      this._provider = provider;
-      this.bindProvider(provider);
-      try {
-        await provider.connect();
-        if (this._provider === provider) {
-          this.reconnectAttempt = 0;
-          this.connectedAt = this.now();
-          this.lastServerMsgAt = 0;
-          this.sendProviderContext();
-          if (this._liveHistory.length > 0) this.injectResumeContext();
-          // Do NOT flush ambient/pre-roll mic — that opens a competing audio
-          // user-turn ahead of the [wake] inject (~20s RTT).
-          this.clearPendingMic();
-          this.startQuestionPoll();
-          this._fsm.patchStatus({ status: 'listening', realtimeReady: true });
-        }
-        return;
-      } catch (err) {
-        console.warn(`[live] ${candidate.id}: ${err instanceof Error ? err.message : String(err)}`);
-        provider.close();
-        if (this._provider === provider) this._provider = null;
-      }
-    }
-    this._fsm.patchStatus({ status: 'error', realtimeReady: false, error: 'transporte realtime falhou — usando Classic' });
-    this.clearPendingMic();
+  private async connectFirstAvailable(
+    candidates: RealtimeProviderCandidate[],
+    greeting?: string,
+  ): Promise<void> {
+    return connectFirstLiveProvider(candidates, greeting, this.providerRuntimeHost());
   }
 
-  private bindProvider(provider: TurnManagedRealtimeProvider): void {
-    provider.onAudioOut((pcm16) => {
-      if (this._provider !== provider) return;
-      this.lastServerMsgAt = this.now();
-      const sessionId = this._fsm.getState().sessionId;
-      if (sessionId) jarvisLatencyTracker.markAudioOut(sessionId);
-      const audioTick = this.serverAudioCounter.tick(this.now());
-      if (audioTick.fire) {
-        logVoice('info', 'live.serverAudioChunk', 'áudio do servidor recebido', {
-          chunks: audioTick.count,
-          micFramesSent: this.micFramesCounter.total,
-        });
-      }
-      this.providerSpeaking = true;
-      this._fsm.patchStatus({ status: 'speaking', realtimeReady: true });
-      this.emit(VOICE_CHANNELS.liveAudioOut, int16ArrayToBase64(pcm16));
-    });
-    provider.onRoleTranscript((line) => {
-      if (this._provider !== provider) return;
-      if (!line.text.trim()) return;
-      this.lastServerMsgAt = this.now();
-
-      // P3: record ALL assistant transcripts (partial + final) into echo suppressor
-      if (line.role === 'assistant') {
-        echoSuppressor.record(line.text);
-      }
-
-      if (line.role === 'user' && line.final && echoSuppressor.isEcho(line.text)) {
-        logVoice('info', 'live.inputEchoDiscarded', 'eco do TTS/ack descartado (live)', {
-          text: line.text.slice(0, 120),
-        });
-        return;
-      }
-      if (line.role === 'user' && line.final && isLikelyNoiseTranscript(line.text)) {
-        logVoice('info', 'live.noiseDiscarded', 'transcript live ruído/ambiente descartado', {
-          text: line.text.slice(0, 120),
-        });
-        return;
-      }
-      const event = this._fsm.transcript(line);
-      if (!event) return;
-
-      // P4: record final transcripts into live history
-      if (line.final) {
-        this.recordLiveHistory(line.role, line.text.trim());
-        this.touchIdle();
-      }
-
-      if (line.role === 'user' && line.final) {
-        this._lastUserTranscript = line.text.trim();
-        this.routePendingAnswer(line.text.trim());
-      }
-    });
-    provider.onInterrupted(() => {
-      if (this._provider !== provider) return;
-      this.providerSpeaking = false;
-      this._fsm.interrupt('barge-in');
-    });
-    provider.onResponseDone(() => {
-      if (this._provider !== provider) return;
-      this.lastServerMsgAt = this.now();
-      this.providerSpeaking = false;
-      const sessionId = this._fsm.getState().sessionId;
-      if (sessionId) jarvisLatencyTracker.markResponseDone(sessionId);
-      this._fsm.patchStatus({ status: 'dormant', realtimeReady: true });
-    });
-    provider.onError((err) => {
-      if (this._provider !== provider) return;
-      if (isIgnorableRealtimeError(err.message)) {
-        console.log('[live] realtime cancel ignorado:', err.message);
-        return;
-      }
-      console.warn('[live]', err.message);
-      this._fsm.patchStatus({ status: 'error', realtimeReady: false, error: err.message });
-    });
-    provider.onDisconnected((err) => {
-      if (this._provider !== provider) return;
-      this.providerSpeaking = false;
-      console.warn('[live]', err.message);
-      this.clearToolResultTimers();
-      provider.close();
-      if (this._provider === provider) this._provider = null;
-      this._fsm.patchStatus({ status: 'listening', realtimeReady: false, error: err.message });
-      this.scheduleReconnect();
-    });
-    provider.onToolCall((call) => {
-      if (this._provider !== provider) return;
-      handleRealtimeToolCall(this as unknown as ToolDispatchHost, call);
-    });
+  private providerRuntimeHost(): LiveProviderRuntimeHost {
+    return {
+      fsm: this._fsm,
+      toolCalls: this.toolCalls,
+      now: this.now,
+      emitLiveAudio: (pcm16) => this.emitLiveAudio(pcm16),
+      micFramesCounter: this.micFramesCounter,
+      serverAudioCounter: this.serverAudioCounter,
+      getProvider: () => this._provider,
+      setProvider: (provider) => { this._provider = provider; },
+      getActiveTurnId: () => this.activeTurnId,
+      setProviderSpeaking: (speaking) => { this.providerSpeaking = speaking; },
+      setLastUserTranscript: (text) => { this._lastUserTranscript = text; },
+      settleSmokeResponseDone: () => this.smokeProbe.settleResponseDone(),
+      settleSmokeFailure: (reason) => this.smokeProbe.settleFailure(reason),
+      recordLiveHistory: (role, text) => this.recordLiveHistory(role, text),
+      touchIdle: () => this.touchIdle(),
+      routePendingAnswer: (text) => this.routePendingAnswer(text),
+      clearReconnectStabilityTimer: () => this.clearReconnectStabilityTimer(),
+      scheduleReconnect: () => this.scheduleReconnect(),
+      handleToolCall: (call: RealtimeToolCallEvent) => {
+        handleRealtimeToolCall(this as unknown as ToolDispatchHost, call);
+      },
+      armReconnectStability: (provider) => this.armReconnectStability(provider),
+      sendProviderContext: () => this.sendProviderContext(),
+      hasLiveHistory: () => this._liveHistory.length > 0,
+      injectResumeContext: () => this.injectResumeContext(),
+      sendGreetingIfSafe: (provider, greeting) => {
+        this.sendGreetingIfSafe(provider, greeting);
+      },
+      flushPendingMic: (provider) => this.flushPendingMic(provider),
+      startQuestionPoll: () => this.questionPoller.start(),
+      clearPendingMic: () => this.clearPendingMic(),
+    };
   }
 
   private routePendingAnswer(text: string): void {
@@ -720,43 +766,70 @@ export class LiveTransportController {
 
   armToolResultTimeout(event: JarvisLiveToolEvent): void {
     const callId = event.callId;
-    if (!callId) return;
-    this.clearToolResultTimer(callId);
-    const timer = setTimeout(() => {
-      this.pendingToolResultTimers.delete(callId);
-      const result = this._fsm.toolResult({
-        source: 'realtime',
-        callId,
-        name: event.name,
-        tool: event.tool,
-        args: event.args,
-        ok: false,
-        summary: `ação realtime sem resposta do executor: ${event.summary}`,
-        output: { error: 'tool_result_timeout' },
-      });
-      if (result) this.toolResult(result);
-    }, REALTIME_TOOL_RESULT_TIMEOUT_MS);
-    this.pendingToolResultTimers.set(callId, timer);
-  }
-
-  private clearToolResultTimer(callId: string): void {
-    const timer = this.pendingToolResultTimers.get(callId);
-    if (!timer) return;
-    clearTimeout(timer);
-    this.pendingToolResultTimers.delete(callId);
-  }
-
-  private clearToolResultTimers(): void {
-    for (const timer of this.pendingToolResultTimers.values()) clearTimeout(timer);
-    this.pendingToolResultTimers.clear();
+    if (!callId || isLocalToolCallId(callId)) return;
+    this.toolCalls.arm(event);
   }
 
   private sendProviderContext(): void {
     sendLiveProviderContext(this._provider, this._latestContext, this._recentToolResults);
   }
 
+  private emitLiveAudio(pcm16: Int16Array): void {
+    if (pcm16.byteLength === 0) return;
+    this.prunePendingRendererAudio();
+    const id = randomUUID();
+    this.pendingRendererAudio.set(id, {
+      sentAt: this.now(),
+      ...(this.smokeProbe.isActive && this.activeSmokeOwnerWebContentsId !== undefined
+        ? { smokeOwnerWebContentsId: this.activeSmokeOwnerWebContentsId }
+        : {}),
+    });
+    while (this.pendingRendererAudio.size > PENDING_RENDERER_AUDIO_MAX) {
+      const oldestId = this.pendingRendererAudio.keys().next().value;
+      if (!oldestId) break;
+      this.pendingRendererAudio.delete(oldestId);
+    }
+    this.smokeProbe.noteProviderAudio(id);
+    this.emit(VOICE_CHANNELS.liveAudioOut, {
+      id,
+      pcm16: int16ArrayToBase64(pcm16),
+    });
+  }
+
+  private clearPendingRendererAudio(): void {
+    this.pendingRendererAudio.clear();
+  }
+
+  private prunePendingRendererAudio(): void {
+    const expiresBefore = this.now() - PENDING_RENDERER_AUDIO_TTL_MS;
+    for (const [id, delivery] of this.pendingRendererAudio) {
+      if (delivery.sentAt >= expiresBefore) continue;
+      this.pendingRendererAudio.delete(id);
+    }
+  }
+
+  private sendGreetingIfSafe(
+    provider: TurnManagedRealtimeProvider,
+    greeting: string | undefined,
+  ): void {
+    const text = greeting?.trim();
+    if (!text || !provider.isReady) return;
+    if (this.pendingMic.length > 0) {
+      logVoice('info', 'live.wakeGreetingOmitted', 'greeting omitido — fala já pendente', {
+        pendingChunks: this.pendingMic.length,
+      });
+      return;
+    }
+    provider.sendText(text.slice(0, 400));
+    logVoice('info', 'live.wakeGreetingSent', 'greeting enviado antes do áudio', {});
+  }
+
   private buildSystemInstruction(): string {
-    return buildLiveSystemInstruction();
+    return buildLiveSystemInstruction({
+      latestContext: this._latestContext,
+      recentToolResults: this._recentToolResults,
+      recentHistory: this._liveHistory,
+    });
   }
 
   private patchRealtimeReady(realtimeReady: boolean): void {
@@ -772,7 +845,14 @@ export class LiveTransportController {
   private scheduleReconnect(): void {
     const state = this._fsm.getState();
     if (!state.enabled || !state.sessionId) return;
-    if (this.reconnectAttempt >= RUNTIME_RECONNECT_MAX_ATTEMPTS) return;
+    if (this.reconnectAttempt >= RUNTIME_RECONNECT_MAX_ATTEMPTS) {
+      this._fsm.patchStatus({
+        status: 'error',
+        realtimeReady: false,
+        error: 'realtime instável após 3 reconexões — usando Classic',
+      });
+      return;
+    }
     this.reconnectAttempt += 1;
     this.clearReconnectTimer();
     const generation = this.reconnectGeneration;
@@ -793,5 +873,22 @@ export class LiveTransportController {
     if (!this.reconnectTimer) return;
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+  }
+
+  private armReconnectStability(provider: TurnManagedRealtimeProvider): void {
+    this.clearReconnectStabilityTimer();
+    this.reconnectStableTimer = setTimeout(() => {
+      this.reconnectStableTimer = null;
+      if (this._provider === provider && provider.isReady) {
+        this.reconnectAttempt = 0;
+      }
+    }, RUNTIME_RECONNECT_STABLE_MS);
+    this.reconnectStableTimer.unref?.();
+  }
+
+  private clearReconnectStabilityTimer(): void {
+    if (!this.reconnectStableTimer) return;
+    clearTimeout(this.reconnectStableTimer);
+    this.reconnectStableTimer = null;
   }
 }

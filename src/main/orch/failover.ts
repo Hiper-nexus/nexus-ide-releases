@@ -4,8 +4,6 @@ import { tapSessionData, tapSessionExit } from '../pty/pty-manager';
 import { stripAnsi, findPane } from './pane-registry';
 import { detectLimit } from './limit-detector';
 import {
-  activateAccount,
-  ensureSubscriptionActive,
   getAccount,
   getActiveAccount,
   pickAvailable,
@@ -65,7 +63,8 @@ function handleChunk(sessionId: string, data: string, now: number): void {
   watch.buffer = ''; // consumed
 
   const adapterId = pane.adapterId;
-  const current = getActiveAccount(adapterId);
+  const pinned = pane.accountId ? getAccount(pane.accountId) : null;
+  const current = pinned?.adapterId === adapterId ? pinned : getActiveAccount(adapterId);
   const fromLabel = current?.label ?? adapterId;
 
   // Put the exhausted account on cooldown, then pick the next available one.
@@ -83,18 +82,13 @@ function handleChunk(sessionId: string, data: string, now: number): void {
     return;
   }
 
-  activateAccount(next.id);
-  // Subscription accounts must swap the Claude keychain credential BEFORE the
-  // renderer re-spawns the CLI (the new process reads it at startup).
-  const account = getAccount(next.id);
-  if (account) ensureSubscriptionActive(account);
-
   emitFailover({
     paneId: pane.paneId,
     fromAccountLabel: fromLabel,
     toAccountLabel: next.label,
     reason: hit.reason,
     switched: true,
+    toAccountId: next.id,
   });
 }
 

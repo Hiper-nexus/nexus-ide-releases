@@ -8,12 +8,14 @@ import type { JarvisLiveTransport } from '../../shared/voice-config';
 import { credentialLinkForEnv } from '../../shared/credential-links';
 import { openExternalFromAnchor } from '../lib/open-external';
 import { CloseButton } from './CloseButton';
-import type {
-  JarvisRequest,
-  ResolvedProvider,
-  SpeakResult,
-  VoiceApiKeyStatus,
-} from '../../shared/voice-ipc';
+import { playSpeakResult } from '../voice/voice-playback';
+import type { JarvisRequest } from '../../shared/voice-ipc';
+import {
+  keyPlaceholder,
+  keyStatusText,
+  liveSmokeFailureMessage,
+  providerOption,
+} from './voice-settings-helpers';
 
 type RealtimeTransport = Exclude<JarvisLiveTransport, 'classic'>;
 
@@ -22,56 +24,6 @@ type RealtimeTransport = Exclude<JarvisLiveTransport, 'classic'>;
  * push-to-talk shortcut. Includes a "Test voice" that speaks a line through the
  * active TTS chain (macOS `say` needs no key) so users can confirm audio works.
  */
-
-function providerOption(p: ResolvedProvider): string {
-  const tag = p.available ? '' : ' (unavailable)';
-  const model = p.model ? ` · ${p.model}` : '';
-  return `${p.provider}${model}${tag} — ${p.reason}`;
-}
-
-function keyStatusText(key: VoiceApiKeyStatus): string {
-  if (key.hasStoredKey) return `saved ${key.keyMasked ?? '••••'}`;
-  if (key.hasEnv) return 'available from environment';
-  if (!key.secureStorageAvailable) return 'Keychain unavailable';
-  return 'not set';
-}
-
-function keyPlaceholder(key: VoiceApiKeyStatus): string {
-  if (key.hasStoredKey) return `Stored ${key.keyMasked ?? 'key'}; paste to replace`;
-  if (key.hasEnv) return 'Already set in environment; paste to override';
-  return `Paste ${key.envVar}`;
-}
-
-function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-async function playAudioBase64(base64: string): Promise<void> {
-  const bytes = base64ToBytes(base64);
-  const ctx = new AudioContext();
-  try {
-    const arrayBuffer = bytes.buffer.slice(0) as ArrayBuffer;
-    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-    const source = ctx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(ctx.destination);
-    await new Promise<void>((resolve) => {
-      source.onended = () => resolve();
-      source.start();
-    });
-  } finally {
-    void ctx.close();
-  }
-}
-
-async function playSpeakResult(result: SpeakResult): Promise<void> {
-  if (result.ok && result.mode === 'audio') {
-    await playAudioBase64(result.audioBase64);
-  }
-}
 
 /**
  * Map a physical KeyboardEvent to a config key code. Strict on purpose:
@@ -358,16 +310,16 @@ export function VoiceSettings() {
         history: [],
       };
       if (jarvisLiveOn && liveRealtime) {
-        const state = await window.nexus.voice.liveSmokeTest({
+        const result = await window.nexus.voice.liveSmokeTest({
           text: req.transcript,
         });
-        setTestResult(
-          state.realtimeReady
-            ? 'Realtime ativo: smoke enviado.'
-            : realtimeTransport === 'gemini-live'
-              ? 'Realtime indisponível; verifique GEMINI_API_KEY.'
-              : 'Realtime indisponível; verifique OPENAI_API_KEY.',
-        );
+        if (result.ok) {
+          setTestResult(
+            `Realtime confirmado: reprodução de áudio iniciada em ${result.latencyMs} ms.`,
+          );
+        } else {
+          setError(liveSmokeFailureMessage(result.reason, realtimeTransport));
+        }
         return;
       }
       const reply = await window.nexus.voice.jarvis(req);
@@ -427,7 +379,12 @@ export function VoiceSettings() {
         : 'wake word off';
 
   return (
-    <div className="agent-picker" role="dialog" aria-label="Voice settings">
+    <div
+      className="agent-picker"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Voice settings"
+    >
       <div className="agent-picker__overlay" onClick={close} />
       <div className="agent-picker__panel agent-picker__panel--voice voice-settings">
         <header className="voice-settings__hero">
@@ -810,6 +767,11 @@ export function VoiceSettings() {
                 className="agent-picker__btn"
                 onClick={testJarvis}
                 disabled={testingJarvis}
+                title={
+                  jarvisLiveOn && liveRealtime
+                    ? 'O diagnóstico reinicia a sessão realtime para separar a resposta de teste de qualquer áudio anterior.'
+                    : undefined
+                }
               >
                 {testingJarvis ? 'Diagnosticando…' : 'Testar JARVIS'}
               </button>

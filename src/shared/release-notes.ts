@@ -13,43 +13,48 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.10.34',
-  date: '2026-07-08',
-  codename: 'Jarvis Live Responsiveness',
+  version: '0.12.0',
+  date: '2026-07-10',
+  codename: 'Jarvis Realtime Proof',
   summary:
-    'A Jarvis ficou mais responsiva no clique e no bridge realtime: quando já há áudio local válido, ela cai rápido para o executor Classic em vez de esperar vários segundos por transcript final.',
+    'O diagnóstico Realtime da Jarvis agora só confirma sucesso quando o WebAudio do Nexus inicia a reprodução do chunk recebido, com roteamento de áudio explícito e fallback observável.',
   highlights: [
     {
-      title: 'Clique mais operacional',
+      title: 'Prova real de áudio Realtime',
       detail:
-        'O wake por mouse continua falando o ACK antes de ouvir, mas deixa de segurar oito segundos depois que já detectou fala.',
+        'Cada chunk PCM recebe um identificador do processo principal e o renderer só confirma o diagnóstico depois de agendá-lo no WebAudio.',
     },
     {
-      title: 'Fallback realtime mais rápido',
+      title: 'Diagnóstico isolado',
       detail:
-        'Wake e clique ainda dão mais tempo ao realtime quando o mic está fraco; com fala local aproveitável, o fallback para STT Classic acontece em janela curta.',
+        'O teste reconecta a sessão Live antes de enviar a frase de prova, impedindo que áudio de uma resposta anterior dê falso positivo.',
     },
     {
-      title: 'Bridge MCP mais auditável',
+      title: 'Saída de áudio honesta',
       detail:
-        'A cobertura agora trava o fluxo invoke → confirmação nativa → retry para comandos e delegação de panes.',
+        'Quando uma saída física escolhida não pode ser aplicada, o app mostra a falha em vez de tocar silenciosamente na saída padrão.',
     },
   ],
   fixes: [
     {
-      title: 'Menos sensação de travamento',
+      title: 'Fim do falso “Realtime confirmado”',
       detail:
-        'Quando o provider realtime não devolve transcript final a tempo, a Jarvis não fica esperando a janela longa se o WAV local já pode seguir para STT.',
+        'Receber PCM do provider não basta mais para deixar o diagnóstico verde: erro, cancelamento ou ausência de reprodução falham de forma explícita.',
     },
     {
-      title: 'Ações de terminal protegidas',
+      title: 'Eventos antigos isolados',
       detail:
-        'O caminho MCP de run_command mantém confirmação nativa e retorna user_denied sem retry quando o usuário recusa.',
+        'Confirmações atrasadas, duplicadas ou de outra entrega não podem concluir um teste novo de voz.',
     },
     {
-      title: 'Release auditável',
+      title: 'Latência por turno',
       detail:
-        'Typecheck, suíte completa e varredura de nomes proibidos seguem como gates antes de publicar o build assinado.',
+        'O log de métricas separa turnos de uma mesma sessão Live e descarta a amostra interrompida antes do barge-in.',
+    },
+    {
+      title: 'Release multi-arquitetura preparado',
+      detail:
+        'O updater escolhe o ZIP compatível com Apple Silicon ou Intel, sem instalar payload de arquitetura errada.',
     },
   ],
 };

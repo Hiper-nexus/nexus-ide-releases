@@ -38,6 +38,13 @@ function defaultSourceDirs(home: string): string[] {
     path.join(home, '.agents', 'skills'),
     path.join(home, '.claude', 'skills'),
     path.join(home, '.codex', 'skills'),
+    path.join(home, '.gemini', 'config', 'skills'),
+    path.join(home, '.gemini', 'antigravity', 'skills'),
+    path.join(home, '.gemini', 'antigravity-cli', 'skills'),
+    path.join(home, '.gemini', 'antigravity-ide', 'skills'),
+    path.join(home, '.kimi-code', 'skills'),
+    path.join(home, '.grok', 'skills'),
+    path.join(home, '.config', 'opencode', 'skills'),
   ];
 }
 
@@ -101,6 +108,8 @@ function cliSkillDirs(adapterId: string, home: string): string[] {
       return [path.join(home, '.kimi-code', 'skills')];
     case 'grok':
       return [path.join(home, '.grok', 'skills')];
+    case 'opencode':
+      return [path.join(home, '.config', 'opencode', 'skills')];
     default:
       return [];
   }

@@ -7,8 +7,8 @@
   "bin": "aider",
   "detect": "aider --version",
   "install": {
-    "method": "pip",
-    "command": "pip install aider-chat"
+    "method": "uv",
+    "command": "uv tool install --force --python python3.12 --with pip aider-chat@latest"
   },
   "auth": {
     "method": "api_key",
@@ -62,7 +62,8 @@
   "quirks": {
     "altScreen": false,
     "requiresNoAutoUpdate": false,
-    "mcpAutoload": false
+    "mcpAutoload": false,
+    "nexusMcp": "none"
   },
   "control": {
     "permission": {

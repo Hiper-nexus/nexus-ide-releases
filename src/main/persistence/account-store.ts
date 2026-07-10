@@ -163,6 +163,101 @@ export function ensureSubscriptionActive(account: Account): boolean {
   return writeActiveClaudeCredential(blob);
 }
 
+export type AccountSpawnPreparation =
+  | {
+      ok: true;
+      account: Account;
+      apiKey: string | null;
+      authEnv: Record<string, string>;
+    }
+  | { ok: false; error: string };
+
+interface ClaudeOauthCredential {
+  accessToken?: unknown;
+  refreshToken?: unknown;
+  scopes?: unknown;
+}
+
+/**
+ * Convert a saved Claude subscription snapshot into process-scoped auth.
+ * `CLAUDE_CODE_OAUTH_TOKEN` has higher precedence than the global login
+ * Keychain item, so concurrent panes can use different accounts safely.
+ */
+function subscriptionAuthEnv(account: Account): Record<string, string> | null {
+  const blob = getSecret(CRED_PREFIX + account.id);
+  if (!blob) return null;
+  try {
+    const parsed = JSON.parse(blob) as { claudeAiOauth?: ClaudeOauthCredential };
+    const oauth = parsed.claudeAiOauth;
+    if (typeof oauth?.accessToken !== 'string' || oauth.accessToken.length === 0) {
+      return null;
+    }
+    const env: Record<string, string> = {
+      CLAUDE_CODE_OAUTH_TOKEN: oauth.accessToken,
+    };
+    if (typeof oauth.refreshToken === 'string' && oauth.refreshToken.length > 0) {
+      env.CLAUDE_CODE_OAUTH_REFRESH_TOKEN = oauth.refreshToken;
+    }
+    if (Array.isArray(oauth.scopes)) {
+      const scopes = oauth.scopes.filter(
+        (scope): scope is string => typeof scope === 'string' && scope.length > 0,
+      );
+      if (scopes.length > 0) env.CLAUDE_CODE_OAUTH_SCOPES = scopes.join(' ');
+    } else if (typeof oauth.scopes === 'string' && oauth.scopes.trim()) {
+      env.CLAUDE_CODE_OAUTH_SCOPES = oauth.scopes.trim();
+    }
+    return env;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve and activate the exact account pinned to a pane before its PTY is
+ * created. This deliberately does not fall back to the provider's active
+ * account: a pinned account is an isolation boundary, not a preference hint.
+ */
+export function prepareAccountForSpawn(
+  adapterId: string,
+  accountId: string,
+  now = Date.now(),
+): AccountSpawnPreparation {
+  const account = getAccount(accountId);
+  if (!account || account.adapterId !== adapterId) {
+    return {
+      ok: false,
+      error: 'selected account does not belong to this provider',
+    };
+  }
+
+  if (account.cooldownUntil && account.cooldownUntil > now) {
+    return {
+      ok: false,
+      error: `selected account "${account.label}" is cooling down`,
+    };
+  }
+
+  if (account.mode === 'api-key') {
+    const apiKey = accountKey(account);
+    if (!apiKey) {
+      return {
+        ok: false,
+        error: `selected account "${account.label}" has no stored API credential`,
+      };
+    }
+    return { ok: true, account, apiKey, authEnv: {} };
+  }
+
+  const authEnv = subscriptionAuthEnv(account);
+  if (!authEnv) {
+    return {
+      ok: false,
+      error: `selected subscription "${account.label}" has no usable OAuth credential`,
+    };
+  }
+  return { ok: true, account, apiKey: null, authEnv };
+}
+
 /**
  * Pick an available account for `adapterId`, excluding `excludeId` and any on
  * cooldown. Prefers the explicitly-active one; else the earliest created.

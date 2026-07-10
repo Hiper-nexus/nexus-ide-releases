@@ -28,8 +28,45 @@ export interface AxNode {
   role: string | null;
   aria: Record<string, string>;
   text: string | null;
+  /** Opaque capability valid only for the snapshot that produced this tree. */
+  ref?: string;
   children: AxNode[];
 }
+
+export type AxActionKind = 'click' | 'focus' | 'fill' | 'select';
+
+export interface AxActionRequest {
+  action: AxActionKind;
+  ref: string;
+  /** Required only by fill/select. Never included in the action result. */
+  text?: string;
+}
+
+export type AxActionError =
+  | 'invalid_request'
+  | 'invalid_ref'
+  | 'stale_ref'
+  | 'unknown_ref'
+  | 'detached_control'
+  | 'hidden_control'
+  | 'disabled_control'
+  | 'readonly_control'
+  | 'sensitive_control'
+  | 'unsupported_action'
+  | 'option_not_found';
+
+export type AxActionResult =
+  | {
+      ok: true;
+      action: AxActionKind;
+      ref: string;
+    }
+  | {
+      ok: false;
+      action: AxActionKind;
+      ref: string;
+      error: AxActionError;
+    };
 
 /** Resultado interno da captura de tela. Nunca deve ser enviado por broadcast. */
 export interface ScreenCaptureResultInternal {
@@ -170,6 +207,8 @@ export interface VisionApi {
   context(options?: VisionContextOptions): Promise<VisionContext>;
   /** Extrai a accessibility tree do DOM atual. */
   getAxTree(): AxNode;
+  /** Executa uma ação somente por ref opaca retornada pelo snapshot atual. */
+  performAxAction(request: AxActionRequest): AxActionResult;
   /** OCR de uma imagem PNG (base64). */
   ocr(imageBase64: string): Promise<OcrResult>;
   /** Checa status da permissão de Screen Recording. */

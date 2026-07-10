@@ -30,6 +30,7 @@ export const spawnRequestSchema = z.object({
   // the main process looks up the full adapter config (including auth) locally.
   adapterId: z.string().min(1).max(64).optional(),
   model: z.string().min(1).max(128).optional(),
+  accountId: z.string().min(1).max(128).optional(),
   // Correlates an orchestration-requested spawn (MCP pane_spawn) with its
   // pending skill-gate context. Opaque to the renderer.
   orchRequestId: z.string().min(1).max(128).optional(),
@@ -65,6 +66,7 @@ const paneModelSchema = z.object({
   browserUrl: z.string().max(4096).optional(),
   adapterId: z.string().min(1).max(64).optional(),
   model: z.string().min(1).max(128).optional(),
+  accountId: z.string().min(1).max(128).optional(),
   effort: z.string().min(1).max(32).optional(),
   titlePinned: z.boolean().optional(),
   orchRequestId: z.string().min(1).max(128).optional(),

@@ -42,7 +42,9 @@ describe('re-wake com pendência viva confirma em vez de morrer no stripper (C3 
     'utf-8',
   );
   // O caminho classic começa no STT local; tudo antes é o caminho realtime.
-  const classicStart = finishSource.indexOf('const stt = await withTimeout(');
+  const classicStart = finishSource.indexOf(
+    'const stt = cachedStt ?? (await transcribeCapture());',
+  );
   const realtimeHalf = finishSource.slice(0, classicStart);
   const classicHalf = finishSource.slice(classicStart);
 

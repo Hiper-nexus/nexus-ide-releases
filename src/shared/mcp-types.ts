@@ -11,6 +11,8 @@ export interface McpInvokeResult {
   denied?: boolean;
   requiredConfirmation?: boolean;
   confirmationReason?: string;
+  /** A failed call may have applied its effect; callers must not retry blindly. */
+  effectMayHaveCommitted?: boolean;
 }
 
 export interface McpConfirmRequest {

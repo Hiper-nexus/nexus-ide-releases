@@ -1,9 +1,4 @@
-import os from 'node:os';
-import path from 'node:path';
 import type { McpToolDef } from './mcp-protocol';
-import { getSessionCwd } from '../pty/pty-manager';
-import { activeWorkspaceOrNull } from '../persistence/workspace-store';
-import type { AgentGateContext } from './gate';
 import {
   generateAudio,
   generateImage,
@@ -13,6 +8,7 @@ import { listMediaProviders } from '../media/media-providers';
 import { hasMediaKey, maskedMediaKey } from '../media/media-keys';
 import { recordMediaUsage } from '../usage/media-usage-store';
 import { num, requireStr, str } from './tool-util';
+import { activeWorkspaceRoot } from './workspace-path';
 
 /**
  * Media generation MCP tools — image/video/audio providers become tools any
@@ -21,14 +17,11 @@ import { num, requireStr, str } from './tool-util';
  */
 
 /**
- * Output base dir: the caller session's spawn cwd (its workspace), else the
- * active workspace, else ~/.nexus/media.
+ * Media is intentionally workspace-bound. Without an active workspace the
+ * operation fails closed instead of reading/writing a global fallback path.
  */
-function baseDirFor(ctx: AgentGateContext): string {
-  const cwd = ctx.sessionId ? getSessionCwd(ctx.sessionId) : null;
-  return (
-    cwd ?? activeWorkspaceOrNull() ?? path.join(os.homedir(), '.nexus', 'media')
-  );
+function baseDirFor(): string {
+  return activeWorkspaceRoot();
 }
 
 const mediaProvidersTool: McpToolDef = {
@@ -49,8 +42,9 @@ const imageGenerateTool: McpToolDef = {
   description:
     'Generate an image from a prompt and save it in the workspace. Returns ' +
     '{path}. provider: google-image (default, cheapest) | openai-image. ' +
-    'outPath relative to the workspace (e.g. "assets/hero.png"). Pass ' +
-    'imagePath for image-to-image edits. If the key is missing, STOP and ' +
+    'All input/output paths must remain inside the open workspace; use a ' +
+    'relative outPath (e.g. "assets/hero.png"). Pass imagePath for ' +
+    'image-to-image edits. If the key is missing, STOP and ' +
     'report "configure o provider em Settings → Mídia" — never invent env vars.',
   inputSchema: {
     type: 'object',
@@ -63,6 +57,7 @@ const imageGenerateTool: McpToolDef = {
     },
     required: ['prompt'],
   },
+  requiresConfirm: true,
   handler: async (args, ctx) => {
     const result = await generateImage({
       prompt: requireStr(args, 'prompt'),
@@ -70,7 +65,7 @@ const imageGenerateTool: McpToolDef = {
       model: str(args, 'model'),
       outPath: str(args, 'outPath'),
       imagePath: str(args, 'imagePath'),
-      baseDir: baseDirFor(ctx),
+      baseDir: baseDirFor(),
     });
     recordMediaUsage(result, ctx);
     return result;
@@ -83,7 +78,8 @@ const videoGenerateTool: McpToolDef = {
     'Generate a video clip from a prompt via Replicate (Seedance default; ' +
     'Kling supports start+end keyframes via imagePath/endImagePath). Waits ' +
     'for completion (up to 6 min) and saves the mp4 in the workspace. ' +
-    'Returns {path}. If the key is missing, STOP and report "configure o ' +
+    'Every input/output path must remain inside the open workspace. Returns ' +
+    '{path}. If the key is missing, STOP and report "configure o ' +
     'provider em Settings → Mídia".',
   inputSchema: {
     type: 'object',
@@ -100,6 +96,7 @@ const videoGenerateTool: McpToolDef = {
     },
     required: ['prompt'],
   },
+  requiresConfirm: true,
   handler: async (args, ctx) => {
     const result = await generateVideo({
       prompt: requireStr(args, 'prompt'),
@@ -111,7 +108,7 @@ const videoGenerateTool: McpToolDef = {
       aspectRatio: str(args, 'aspectRatio'),
       imagePath: str(args, 'imagePath'),
       endImagePath: str(args, 'endImagePath'),
-      baseDir: baseDirFor(ctx),
+      baseDir: baseDirFor(),
     });
     recordMediaUsage(result, ctx);
     return result;
@@ -122,7 +119,7 @@ const audioGenerateTool: McpToolDef = {
   name: 'nexus_audio_generate',
   description:
     'Generate speech audio (TTS) from text via ElevenLabs and save the mp3 ' +
-    'in the workspace. Returns {path}. voiceId optional (default Rachel). ' +
+    'inside the open workspace. Returns {path}. voiceId optional (default Rachel). ' +
     'If the key is missing, STOP and report "configure o provider em ' +
     'Settings → Mídia".',
   inputSchema: {
@@ -136,6 +133,7 @@ const audioGenerateTool: McpToolDef = {
     },
     required: ['text'],
   },
+  requiresConfirm: true,
   handler: async (args, ctx) => {
     const result = await generateAudio({
       text: requireStr(args, 'text'),
@@ -143,7 +141,7 @@ const audioGenerateTool: McpToolDef = {
       model: str(args, 'model'),
       voiceId: str(args, 'voiceId'),
       outPath: str(args, 'outPath'),
-      baseDir: baseDirFor(ctx),
+      baseDir: baseDirFor(),
     });
     recordMediaUsage(result, ctx);
     return result;

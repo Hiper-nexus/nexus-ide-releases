@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
-import { attachHost, focusHost } from '../terminal/terminal-host';
+import { attachHost, blurHost, focusHost } from '../terminal/terminal-host';
 import { BrowserPane } from './BrowserPane';
 import { PaneToolbar } from './PaneToolbar';
 
@@ -36,6 +36,7 @@ function TerminalPaneLeaf({ pane }: Props) {
 
   useEffect(() => {
     if (isFocused) focusHost(pane.id);
+    else blurHost(pane.id);
   }, [isFocused, pane.id]);
 
   return (

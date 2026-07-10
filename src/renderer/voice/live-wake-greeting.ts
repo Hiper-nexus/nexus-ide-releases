@@ -23,8 +23,22 @@ export function hasRealtimeProviderAudioAnswer(opts: {
   return opts.heldChunks > 0 || opts.playedChunks > 0;
 }
 
-/** Overclock-style wake prompt injected as clientContent (turnComplete). */
+/**
+ * Short, barge-in-safe wake prompt injected as clientContent (turnComplete).
+ * If speech is already arriving, the provider yields instead of talking over it.
+ */
 export function liveWakeInjectPrompt(userName?: string | null): string {
   const who = userName?.trim();
-  return `[wake] O usuário te chamou. Responda AGORA em voz: diga exatamente "Olá${who ? `, ${who}` : ''}."`;
+  return `[wake] Diga apenas "Olá${who ? `, ${who}` : ''}." Se o usuário já estiver falando, pule o cumprimento e escute.`;
+}
+
+/** Minimum capture floor while the non-blocking Live greeting may start. */
+export const LIVE_GREETING_MIN_LISTEN_MS = 1_500;
+
+export function wakeCaptureMinListenMs(
+  baseMs: number,
+  opts: { liveGreetingInFlight: boolean },
+): number {
+  if (!opts.liveGreetingInFlight) return baseMs;
+  return Math.max(baseMs, LIVE_GREETING_MIN_LISTEN_MS);
 }

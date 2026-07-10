@@ -10,6 +10,10 @@ import {
   type SensitiveChange,
 } from './provider-bin-trust';
 import {
+  decodeProviderConfigFile,
+  encodeProviderConfigFile,
+} from './provider-config-format';
+import {
   PROVIDER_CHANNELS,
   addModelSchema,
   providerConfigPatchSchema,
@@ -39,7 +43,6 @@ import {
 } from '../adapters/custom-models';
 import {
   getKey,
-  hasKey,
   isSecureStorageAvailable,
   maskedKey,
   setKey,
@@ -59,10 +62,15 @@ import {
   resolveAuthStrategy,
 } from '../adapters/subscription-auth';
 import {
+  KIMI_TRANSIENT_MODEL_ENV_KEYS,
+  buildKimiApiKeyRuntimeEnv,
+} from '../adapters/kimi-runtime-env';
+import {
   accountKey,
   ensureSubscriptionActive,
   getActiveAccount,
   listAccounts,
+  prepareAccountForSpawn,
 } from './account-store';
 
 /**
@@ -99,11 +107,10 @@ function defaultConfigFor(adapterId: string): ProviderConfig {
 function load(): void {
   configs = new Map();
   try {
-    const raw = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) as Record<
-      string,
-      Partial<ProviderConfig>
-    >;
-    for (const [adapterId, cfg] of Object.entries(raw)) {
+    const decoded = decodeProviderConfigFile(
+      JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) as unknown,
+    );
+    for (const [adapterId, cfg] of Object.entries(decoded.providers)) {
       const defaults = defaultConfigFor(adapterId);
       configs.set(adapterId, {
         ...defaults,
@@ -117,6 +124,7 @@ function load(): void {
         verbose: cfg.verbose ?? defaults.verbose,
       });
     }
+    if (decoded.migrated) persist();
   } catch {
     // No config yet — every adapter defaults to enabled.
   }
@@ -127,7 +135,10 @@ function persist(): void {
     fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
     const out: Record<string, ProviderConfig> = {};
     for (const [id, cfg] of configs) out[id] = cfg;
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(out, null, 2));
+    fs.writeFileSync(
+      CONFIG_FILE,
+      JSON.stringify(encodeProviderConfigFile(out), null, 2),
+    );
   } catch (err) {
     console.warn('[provider-config] failed to persist:', err);
   }
@@ -187,6 +198,46 @@ function keyEnvVarsOf(adapterId: string): string[] {
   return [...vars];
 }
 
+/** Native subscription OAuth must not be silently routed to an inherited
+ * third-party base URL, nor lose precedence to an inherited API credential. */
+function subscriptionSuppressEnvVars(adapterId: string): string[] {
+  const adapter = getAdapter(adapterId);
+  const vars = new Set(keyEnvVarsOf(adapterId));
+  if (adapterId === 'kimi') {
+    for (const name of KIMI_TRANSIENT_MODEL_ENV_KEYS) vars.add(name);
+  }
+  if (adapter?.kind === 'cli-pty') {
+    for (const name of adapter.env.passthrough) {
+      if (/^(ANTHROPIC|CLAUDE).*_BASE_URL$/.test(name)) vars.add(name);
+    }
+  }
+  return [...vars];
+}
+
+function keyInjectionEnvVar(adapterId: string): string | null {
+  const adapter = getAdapter(adapterId);
+  if (!adapter) return null;
+  return primaryKeyEnvVar(adapter) ?? keyEnvVarsOf(adapterId)[0] ?? null;
+}
+
+function nativeKeyEnv(
+  adapterId: string,
+  key: string,
+  modelOverride?: string,
+): Record<string, string> {
+  if (adapterId === 'kimi') {
+    const adapter = getAdapter(adapterId);
+    const model =
+      modelOverride?.trim() ||
+      configFor(adapterId).defaultModel ||
+      adapter?.models.default ||
+      'kimi-for-coding';
+    return buildKimiApiKeyRuntimeEnv(key, model);
+  }
+  const envVar = keyInjectionEnvVar(adapterId);
+  return envVar ? { [envVar]: key } : {};
+}
+
 function authDecision(adapterId: string) {
   const adapter = getAdapter(adapterId);
   const authMethod =
@@ -243,7 +294,7 @@ export interface ProviderReadiness {
   reason: string;
 }
 
-export function providerReadiness(adapterId: string): ProviderReadiness {
+function providerInfrastructureReadiness(adapterId: string): ProviderReadiness {
   const adapter = getAdapter(adapterId);
   if (!adapter) return { ready: false, reason: `unknown provider: ${adapterId}` };
 
@@ -265,6 +316,16 @@ export function providerReadiness(adapterId: string): ProviderReadiness {
     }
   }
 
+  return { ready: true, reason: 'ready' };
+}
+
+export function providerReadiness(adapterId: string): ProviderReadiness {
+  const infrastructure = providerInfrastructureReadiness(adapterId);
+  if (!infrastructure.ready) return infrastructure;
+
+  const adapter = getAdapter(adapterId);
+  if (!adapter) return infrastructure;
+
   const decision = authDecision(adapterId);
   if (decision.strategy === 'login-needed') {
     return {
@@ -284,9 +345,15 @@ export function isProviderReady(adapterId: string): boolean {
   return providerReadiness(adapterId).ready;
 }
 
-export function providerSpawnOverrides(
+type PreparedAccount = Extract<
+  ReturnType<typeof prepareAccountForSpawn>,
+  { ok: true }
+>;
+
+function buildProviderSpawnOverrides(
   adapterId: string,
-  perSpawn: { effort?: string } = {},
+  perSpawn: { effort?: string; accountId?: string; model?: string },
+  preparedAccount: PreparedAccount | null,
 ): ProviderSpawnOverrides {
   const cfg = configFor(adapterId);
   const adapter = getAdapter(adapterId);
@@ -303,40 +370,73 @@ export function providerSpawnOverrides(
     extraArgs: [...controlArgsFor(adapterId, perSpawn.effort), ...cfg.extraArgs],
   };
 
-  // Multi-account: when accounts exist for this adapter, the ACTIVE account
-  // decides auth + routing (this is how a GLM account — adapter=claude,
-  // upstream=glm, z.ai key — runs through the Claude CLI).
-  if (listAccounts(adapterId).length > 0) {
-    const account = getActiveAccount(adapterId);
-    if (account) {
-      if (account.mode === 'subscription') {
-        // Restore its Claude keychain credential; inject NO key and strip
-        // inherited key vars (subscription-first).
-        ensureSubscriptionActive(account);
+  // A per-pane account is exact. Without one, preserve the existing active
+  // account behavior for legacy panes.
+  const account =
+    preparedAccount?.account ??
+    (!perSpawn.accountId && listAccounts(adapterId).length > 0
+      ? getActiveAccount(adapterId)
+      : null);
+  if (account) {
+    if (account.mode === 'subscription') {
+      // Pane-pinned accounts use process-scoped OAuth and never race through
+      // Claude's single global Keychain slot. Legacy unpinned panes retain the
+      // active-account path until their metadata has been migrated.
+      if (preparedAccount) {
         return {
           ...base,
-          keyEnv: {},
-          suppressEnv: keyEnvVarsOf(adapterId),
+          keyEnv: { ...preparedAccount.authEnv },
+          suppressEnv: subscriptionSuppressEnvVars(adapterId),
         };
       }
-      // api-key account: route to its upstream (GLM/Fugu/…) or inject native.
-      // Fall back to launcher providers.conf when the account has no vault key.
-      const accKey =
-        accountKey(account) ??
-        (account.upstream && account.upstream !== 'anthropic'
-          ? loadLauncherProviderKey(account.upstream)
-          : null) ??
-        loadLauncherProviderKey(adapterId);
-      if (account.upstream && account.upstream !== 'anthropic') {
-        return { ...base, keyEnv: buildProviderRoutingEnv(account.upstream, accKey), suppressEnv: [] };
+      if (!ensureSubscriptionActive(account)) {
+        throw new Error(
+          `selected subscription "${account.label}" could not be activated`,
+        );
       }
-      const keyEnv: Record<string, string> = {};
-      if (adapter && accKey) {
-        const envVar = primaryKeyEnvVar(adapter);
-        if (envVar) keyEnv[envVar] = accKey;
+      return {
+        ...base,
+        keyEnv: {},
+        suppressEnv: subscriptionSuppressEnvVars(adapterId),
+      };
+    }
+
+    // An exact account must use its own vault credential. Only an unpinned,
+    // legacy active account retains providers.conf fallback compatibility.
+    const accKey =
+      preparedAccount?.apiKey ??
+      accountKey(account) ??
+      (account.upstream && account.upstream !== 'anthropic'
+        ? loadLauncherProviderKey(account.upstream)
+        : null) ??
+      loadLauncherProviderKey(adapterId);
+    if (account.upstream && account.upstream !== 'anthropic') {
+      if (preparedAccount && !isRoutable(adapterId)) {
+        throw new Error(
+          `selected account "${account.label}" cannot route this provider`,
+        );
+      }
+      const keyEnv = buildProviderRoutingEnv(account.upstream, accKey);
+      if (preparedAccount && Object.keys(keyEnv).length === 0) {
+        throw new Error(
+          `selected account "${account.label}" has an invalid upstream route`,
+        );
       }
       return { ...base, keyEnv, suppressEnv: [] };
     }
+    const keyEnv = accKey
+      ? nativeKeyEnv(adapterId, accKey, perSpawn.model)
+      : {};
+    if (preparedAccount && (!accKey || Object.keys(keyEnv).length === 0)) {
+      throw new Error(
+        `selected account "${account.label}" cannot inject its API credential`,
+      );
+    }
+    return {
+      ...base,
+      keyEnv,
+      suppressEnv: [],
+    };
   }
 
   // Upstream routing (ai-launcher port): when a Claude-compatible CLI is
@@ -356,16 +456,65 @@ export function providerSpawnOverrides(
   // never receives an API key — and inherited key vars are stripped so they
   // cannot hijack billing. The key only flows when there is no subscription.
   const decision = authDecision(adapterId);
-  const keyEnv: Record<string, string> = {};
-  if (decision.injectKey && adapter && key) {
-    const envVar = primaryKeyEnvVar(adapter);
-    if (envVar) keyEnv[envVar] = key;
-  }
+  const keyEnv =
+    decision.injectKey && adapter && key
+      ? nativeKeyEnv(adapterId, key, perSpawn.model)
+      : {};
   return {
     ...base,
     keyEnv,
-    suppressEnv: decision.suppressKeyEnv ? keyEnvVarsOf(adapterId) : [],
+    suppressEnv: decision.suppressKeyEnv
+      ? subscriptionSuppressEnvVars(adapterId)
+      : [],
   };
+}
+
+export type ProviderSpawnPreparation =
+  | { ok: true; overrides: ProviderSpawnOverrides }
+  | { ok: false; error: string };
+
+/** Resolve all spawn-time auth synchronously, before node-pty is touched. */
+export function prepareProviderSpawn(
+  adapterId: string,
+  perSpawn: { effort?: string; accountId?: string; model?: string } = {},
+): ProviderSpawnPreparation {
+  const readiness = perSpawn.accountId
+    ? providerInfrastructureReadiness(adapterId)
+    : providerReadiness(adapterId);
+  if (!readiness.ready) return { ok: false, error: readiness.reason };
+
+  let preparedAccount: PreparedAccount | null = null;
+  if (perSpawn.accountId) {
+    const prepared = prepareAccountForSpawn(adapterId, perSpawn.accountId);
+    if (!prepared.ok) return prepared;
+    preparedAccount = prepared;
+  }
+
+  try {
+    return {
+      ok: true,
+      overrides: buildProviderSpawnOverrides(
+        adapterId,
+        perSpawn,
+        preparedAccount,
+      ),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'provider account is not activatable',
+    };
+  }
+}
+
+/** Backward-compatible strict accessor for non-IPC callers. */
+export function providerSpawnOverrides(
+  adapterId: string,
+  perSpawn: { effort?: string; accountId?: string; model?: string } = {},
+): ProviderSpawnOverrides {
+  const prepared = prepareProviderSpawn(adapterId, perSpawn);
+  if (!prepared.ok) throw new Error(prepared.error);
+  return prepared.overrides;
 }
 
 function toInfo(adapterId: string): ProviderSettingsInfo | null {
@@ -461,17 +610,21 @@ async function confirmExecConfig(
   if (change.extraArgs !== undefined) {
     lines.push(`Argumentos extras: ${change.extraArgs.join(' ')}`);
   }
+  if (change.permissionMode !== undefined) {
+    lines.push(`Permissões: ${change.permissionMode} (FULL AUTO)`);
+  }
   const opts = {
     type: 'warning' as const,
     buttons: ['Cancelar', 'Confiar e salvar'],
     defaultId: 0,
     cancelId: 0,
-    title: 'Confirmar execução de binário',
-    message: `Confiar nesta configuração de execução para ${label}?`,
+    title: 'Confirmar configuração de execução',
+    message: `Confiar nesta configuração de alto impacto para ${label}?`,
     detail:
       `${lines.join('\n')}\n\n` +
       'O NexusIDE passará a EXECUTAR exatamente isto ao abrir este provider. ' +
-      'Confirme apenas se você reconhece este caminho/estes argumentos.',
+      'FULL AUTO remove confirmações e pode reduzir ou desativar o sandbox. ' +
+      'Confirme apenas se você entende e aceita esse alcance.',
     noLink: true,
   };
   const win = BrowserWindow.getFocusedWindow();
@@ -528,6 +681,7 @@ export function registerProviderIpc(): void {
         // Declined → keep the previously-trusted values, apply the rest.
         delete patch.binPath;
         delete patch.extraArgs;
+        delete patch.permissionMode;
       }
     }
 

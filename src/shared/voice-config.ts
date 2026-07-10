@@ -92,6 +92,10 @@ export type VoiceSpeakMode = 'summary' | 'full' | 'off';
 export type JarvisBrainProviderId = 'gemini' | 'openai' | 'groq';
 export type JarvisLiveTransport = 'classic' | 'openai-realtime' | 'gemini-live';
 
+export const DEFAULT_GEMINI_LIVE_MODEL = 'gemini-3.1-flash-live-preview';
+export const LEGACY_GEMINI_LIVE_MODEL =
+  'gemini-2.5-flash-native-audio-preview-12-2025';
+
 const inputSchema = z.object({
   mode: z.enum(['push-to-talk']).default('push-to-talk'),
   /** Electron accelerator for keydown (globalShortcut). */
@@ -123,7 +127,7 @@ export const jarvisLiveConfigSchema = z
       .string()
       .min(1)
       .max(128)
-      .default('gemini-2.5-flash-native-audio-preview-12-2025'),
+      .default(DEFAULT_GEMINI_LIVE_MODEL),
     /** Voz pre-construida do Gemini Live. */
     voiceName: z.string().min(1).max(64).default('Charon'),
     /** Keep the live session warm after a turn so follow-ups reuse context. */
@@ -138,7 +142,7 @@ export const jarvisLiveConfigSchema = z
     transport: 'gemini-live',
     openaiModel: 'gpt-realtime-2.1-mini',
     openaiVoice: 'marin',
-    liveModel: 'gemini-2.5-flash-native-audio-preview-12-2025',
+    liveModel: DEFAULT_GEMINI_LIVE_MODEL,
     voiceName: 'Charon',
     graceReuseMs: 90_000,
     dormantAfterMs: 5 * 60_000,
@@ -318,7 +322,7 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
     transport: 'gemini-live',
     openaiModel: 'gpt-realtime-2.1-mini',
     openaiVoice: 'marin',
-    liveModel: 'gemini-2.5-flash-native-audio-preview-12-2025',
+    liveModel: DEFAULT_GEMINI_LIVE_MODEL,
     voiceName: 'Charon',
     graceReuseMs: 90_000,
     dormantAfterMs: 5 * 60_000,

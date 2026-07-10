@@ -23,6 +23,8 @@ export interface Pipe {
   mode: PipeMode;
   /** Number of messages successfully forwarded through this pipe (UI badge). */
   deliveryCount?: number;
+  /** Epoch ms of the latest successful delivery; drives a finite UI pulse. */
+  lastDeliveredAt?: number;
 }
 
 export const pipeSchema = z.object({
@@ -31,6 +33,7 @@ export const pipeSchema = z.object({
   targetPaneId: z.string().min(1).max(128),
   mode: pipeModeSchema,
   deliveryCount: z.number().int().min(0).optional(),
+  lastDeliveredAt: z.number().int().nonnegative().optional(),
 });
 
 export const addPipeSchema = z.object({

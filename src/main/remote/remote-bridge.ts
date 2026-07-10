@@ -42,10 +42,16 @@ interface TokenFile {
   tokens: TokenRecord[];
 }
 
+interface AuthenticatedClient {
+  tokenId: string;
+  expiresAt: number;
+  expiryTimer: ReturnType<typeof setTimeout>;
+}
+
 const ROOT = path.join(os.homedir(), '.nexus', 'remote-bridge');
 const TLS_FILE = path.join(ROOT, 'tls.json');
 const TOKENS_FILE = path.join(ROOT, 'tokens.json');
-const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const PAIRING_TTL_MS = 5 * 60 * 1000;
 const MAX_MESSAGE_BYTES = 64 * 1024;
 const MAX_CLIENTS = 16;
@@ -56,6 +62,17 @@ const MAX_PAIRING_FAILURES = 8;
 // Unambiguous alphabet (no 0/O/1/I/L) over 8 chars ≈ 32^8 ≈ 1.1e12 keyspace.
 const PAIRING_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
 const PAIRING_LEN = 8;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+function resolveTokenTtlMs(): number {
+  if (process.env.NODE_ENV !== 'test') return DEFAULT_TOKEN_TTL_MS;
+  const configured = Number(process.env.NEXUS_REMOTE_TOKEN_TTL_MS);
+  return Number.isSafeInteger(configured) && configured >= 100
+    ? configured
+    : DEFAULT_TOKEN_TTL_MS;
+}
+
+const TOKEN_TTL_MS = resolveTokenTtlMs();
 
 let server: https.Server | null = null;
 let wss: WebSocketServer | null = null;
@@ -66,7 +83,7 @@ let pairingFailures = 0;
 let pairing = makePairing();
 let tokenCache: TokenRecord[] | null = null;
 const clients = new Set<WebSocket>();
-let authed = new WeakSet<WebSocket>();
+const authenticatedClients = new Map<WebSocket, AuthenticatedClient>();
 const rate = new Map<string, { count: number; resetAt: number }>();
 
 function ensureRoot(): void {
@@ -120,28 +137,87 @@ function writeTokens(tokens: TokenRecord[]): void {
   tokenCache = tokens;
 }
 
-function issueToken(): { token: string; expiresAt: number } {
+function issueToken(): { token: string; expiresAt: number; record: TokenRecord } {
   const token = crypto.randomBytes(32).toString('base64url');
   const expiresAt = Date.now() + TOKEN_TTL_MS;
-  const tokens = readTokens();
-  tokens.push({
+  const record = {
     id: crypto.randomUUID(),
     hash: sha256Hex(token),
     createdAt: Date.now(),
     expiresAt,
-  });
-  writeTokens(tokens);
-  return { token, expiresAt };
+  };
+  writeTokens([...readTokens(), record]);
+  return { token, expiresAt, record };
 }
 
-function tokenValid(token: string): boolean {
-  if (!token) return false;
+function findValidToken(token: string): TokenRecord | undefined {
+  if (!token) return undefined;
   const hash = sha256Hex(token);
   const right = Buffer.from(hash, 'hex');
-  return readTokens().some((record) => {
+  return readTokens().find((record) => {
     const left = Buffer.from(record.hash, 'hex');
     return left.length === right.length && crypto.timingSafeEqual(left, right);
   });
+}
+
+function clearAuthenticatedClient(ws: WebSocket): void {
+  const current = authenticatedClients.get(ws);
+  if (current) clearTimeout(current.expiryTimer);
+  authenticatedClients.delete(ws);
+}
+
+function closeAuthenticatedClient(ws: WebSocket, reason: string): void {
+  clearAuthenticatedClient(ws);
+  if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) {
+    ws.close(1008, reason);
+  }
+}
+
+function scheduleExpiry(ws: WebSocket, tokenId: string, expiresAt: number): void {
+  const remaining = expiresAt - Date.now();
+  if (remaining <= 0) {
+    closeAuthenticatedClient(ws, 'token expired');
+    return;
+  }
+  const expiryTimer = setTimeout(() => {
+    const current = authenticatedClients.get(ws);
+    if (!current || current.tokenId !== tokenId) return;
+    scheduleExpiry(ws, tokenId, expiresAt);
+  }, Math.min(remaining, MAX_TIMER_DELAY_MS));
+  expiryTimer.unref?.();
+  authenticatedClients.set(ws, { tokenId, expiresAt, expiryTimer });
+}
+
+function authenticateClient(ws: WebSocket, token: TokenRecord): void {
+  clearAuthenticatedClient(ws);
+  scheduleExpiry(ws, token.id, token.expiresAt);
+}
+
+function isClientAuthenticated(ws: WebSocket): boolean {
+  const current = authenticatedClients.get(ws);
+  if (!current) return false;
+  if (current.expiresAt <= Date.now()) {
+    closeAuthenticatedClient(ws, 'token expired');
+    return false;
+  }
+  const tokenStillExists = readTokens().some((token) => token.id === current.tokenId);
+  if (!tokenStillExists) {
+    closeAuthenticatedClient(ws, 'tokens revoked');
+    return false;
+  }
+  return true;
+}
+
+function closeAllAuthenticatedClients(reason: string): void {
+  for (const ws of [...authenticatedClients.keys()]) {
+    closeAuthenticatedClient(ws, reason);
+  }
+}
+
+function clearAllAuthenticatedClients(): void {
+  for (const ws of [...authenticatedClients.keys()]) {
+    clearAuthenticatedClient(ws);
+  }
 }
 
 function localIps(): string[] {
@@ -319,7 +395,7 @@ async function handleAuthedMessage(msg: ReturnType<typeof command>) {
     case 'mission.list':
       return listMissions();
     case 'status':
-      return getRemoteBridgeInfo();
+      return redactRemoteBridgeSecrets(getRemoteBridgeInfo());
     default:
       throw new Error(`unknown command: ${msg.type}`);
   }
@@ -335,10 +411,11 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
   // Reap sockets that connect but never authenticate — they otherwise pin a
   // slot and file descriptors indefinitely.
   const unauthTimer = setTimeout(() => {
-    if (!authed.has(ws)) ws.close(1008, 'auth timeout');
+    if (!authenticatedClients.has(ws)) ws.close(1008, 'auth timeout');
   }, UNAUTH_TIMEOUT_MS);
   ws.on('close', () => {
     clearTimeout(unauthTimer);
+    clearAuthenticatedClient(ws);
     clients.delete(ws);
   });
   // A protocol error (e.g. an oversized frame rejected by maxPayload) emits
@@ -385,21 +462,26 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
           throw new Error('invalid pairing code');
         }
         const issued = issueToken();
-        authed.add(ws);
+        authenticateClient(ws, issued.record);
         clearTimeout(unauthTimer);
         pairing = makePairing();
-        send(ws, { id: msg.id, ok: true, result: issued });
+        send(ws, {
+          id: msg.id,
+          ok: true,
+          result: { token: issued.token, expiresAt: issued.expiresAt },
+        });
         return;
       }
       if (msg.type === 'auth') {
         const token = typeof msg.token === 'string' ? msg.token : '';
-        if (!tokenValid(token)) throw new Error('invalid token');
-        authed.add(ws);
+        const record = findValidToken(token);
+        if (!record) throw new Error('invalid token');
+        authenticateClient(ws, record);
         clearTimeout(unauthTimer);
         send(ws, { id: msg.id, ok: true, result: { ok: true } });
         return;
       }
-      if (!authed.has(ws)) throw new Error('auth required');
+      if (!isClientAuthenticated(ws)) throw new Error('auth required');
       const result = await handleAuthedMessage(msg);
       send(ws, { id: msg.id, ok: true, result });
     } catch (err) {
@@ -463,7 +545,7 @@ export async function startRemoteBridge(
 export function stopRemoteBridge(): RemoteBridgeInfo {
   for (const client of clients) client.close(1001, 'bridge stopped');
   clients.clear();
-  authed = new WeakSet<WebSocket>();
+  clearAllAuthenticatedClients();
   rate.clear();
   wss?.close();
   server?.close();
@@ -482,7 +564,24 @@ export function rotateRemotePairing(): RemoteBridgeInfo {
 
 export function revokeRemoteTokens(): RemoteBridgeInfo {
   writeTokens([]);
+  closeAllAuthenticatedClients('tokens revoked');
   return getRemoteBridgeInfo();
+}
+
+export type RemoteBridgeRedactedInfo = Omit<
+  RemoteBridgeInfo,
+  'pairingCode' | 'pairingExpiresAt'
+>;
+
+export function redactRemoteBridgeSecrets(
+  info: RemoteBridgeInfo,
+): RemoteBridgeRedactedInfo {
+  const {
+    pairingCode: _pairingCode,
+    pairingExpiresAt: _pairingExpiresAt,
+    ...safeInfo
+  } = info;
+  return safeInfo;
 }
 
 export function getRemoteBridgeInfo(): RemoteBridgeInfo {

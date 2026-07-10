@@ -111,4 +111,68 @@ describe('JarvisLatencyTracker', () => {
       ['transcript_final_to_action_ms', 75],
     ]);
   });
+
+  it('does not report a text-only turn as a voice roundtrip', () => {
+    const filePath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-metrics-')),
+      'jarvis-metrics.log',
+    );
+    let wall = 100;
+    const logger = new JarvisMetricsLogger({ filePath });
+    const tracker = new JarvisLatencyTracker(logger, () => wall);
+
+    tracker.markTranscript('text-only', true);
+    wall = 130;
+    tracker.markAudioOut('text-only');
+    wall = 150;
+    tracker.markResponseDone('text-only');
+
+    const metrics = fs.existsSync(filePath)
+      ? fs
+          .readFileSync(filePath, 'utf-8')
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+      : [];
+    expect(metrics.map((line) => line.metric)).toEqual([
+      'transcript_final_to_audio_out_ms',
+    ]);
+  });
+
+  it('keeps consecutive turns in one live session isolated after barge-in', () => {
+    const filePath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-metrics-')),
+      'jarvis-metrics.log',
+    );
+    let wall = 0;
+    const logger = new JarvisMetricsLogger({ filePath });
+    const tracker = new JarvisLatencyTracker(logger, () => wall);
+
+    tracker.markAudioIn('live-session', 'turn-interrupted');
+    wall = 10;
+    tracker.discard('live-session', 'turn-interrupted');
+
+    tracker.markAudioIn('live-session', 'turn-current');
+    wall = 30;
+    tracker.markTranscript('live-session', true, 'turn-current');
+    wall = 45;
+    tracker.markAudioOut('live-session', 'turn-current');
+    wall = 70;
+    tracker.markResponseDone('live-session', 'turn-current');
+    // A delayed completion from the discarded response cannot delete or append
+    // latency to the new turn.
+    tracker.markResponseDone('live-session', 'turn-interrupted');
+
+    const metrics = fs
+      .readFileSync(filePath, 'utf-8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(metrics.map((line) => [line.metric, line.value, line.turn_id])).toEqual([
+      ['audio_in_to_transcript_delta_ms', 20, 'turn-current'],
+      ['transcript_final_to_audio_out_ms', 15, 'turn-current'],
+      ['roundtrip_ms', 60, 'turn-current'],
+    ]);
+  });
 });

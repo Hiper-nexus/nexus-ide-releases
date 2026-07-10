@@ -46,6 +46,7 @@ function fakeDeps(
         headers: { 'content-type': 'application/json' },
       });
     }) as typeof fetch,
+    resolveHostname: async () => ['93.184.216.34'],
     getKey: () => 'test-key',
     sleep: async () => {},
     now: () => 1_000,
@@ -54,8 +55,10 @@ function fakeDeps(
 }
 
 describe('resolveOutPath', () => {
-  it('usa caminho absoluto como veio', () => {
-    expect(resolveOutPath('/tmp/x/y.png', dir, 'png')).toBe('/tmp/x/y.png');
+  it('aceita caminho absoluto apenas dentro do workspace', () => {
+    const inside = path.join(dir, 'x/y.png');
+    expect(resolveOutPath(inside, dir, 'png')).toBe(inside);
+    expect(() => resolveOutPath('/tmp/x/y.png', dir, 'png')).toThrow(/escapa/);
   });
 
   it('resolve relativo dentro do baseDir e rejeita escape', () => {
@@ -107,6 +110,29 @@ describe('resolveMediaProvider / resolveMediaModel', () => {
 });
 
 describe('generateImage', () => {
+  it('rejeita input/output fora do workspace antes de chamar o provider', async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-media-outside-'));
+    const outsideFile = path.join(outside, 'private.png');
+    fs.writeFileSync(outsideFile, 'private');
+    fs.symlinkSync(outsideFile, path.join(dir, 'escape.png'));
+    const { deps, calls } = fakeDeps([]);
+
+    await expect(
+      generateImage(
+        { prompt: 'x', baseDir: dir, imagePath: 'escape.png' },
+        deps,
+      ),
+    ).rejects.toThrow(/escapa o workspace/);
+    await expect(
+      generateImage(
+        { prompt: 'x', baseDir: dir, outPath: path.join(outside, 'out.png') },
+        deps,
+      ),
+    ).rejects.toThrow(/escapa o workspace/);
+    expect(calls).toHaveLength(0);
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+
   it('google-image: extrai inlineData e grava o arquivo', async () => {
     const { deps, calls } = fakeDeps([
       {
@@ -176,7 +202,13 @@ describe('generateVideo', () => {
     const { deps, calls } = fakeDeps([
       { json: { id: 'pred-1', status: 'starting' } },
       { json: { id: 'pred-1', status: 'processing' } },
-      { json: { id: 'pred-1', status: 'succeeded', output: 'https://cdn/x.mp4' } },
+      {
+        json: {
+          id: 'pred-1',
+          status: 'succeeded',
+          output: 'https://replicate.delivery/x.mp4',
+        },
+      },
       { body: Buffer.from('fake-mp4') },
     ]);
     const result = await generateVideo(

@@ -1,15 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { activeWorkspaceOrNull } from '../persistence/workspace-store';
 import { requiresConfirmation, confirmationReason } from '../jarvis/guardrails';
 import {
   auditDenied,
   auditError,
+  auditIntent,
   auditSuccess,
   ensureAuditLogWritable,
   type AuditSource,
 } from '../jarvis/audit-log';
-import { hasPermission, type PermissionScope } from '../jarvis/permissions';
+import {
+  consumePermission,
+  type PermissionScope,
+} from '../jarvis/permissions';
 import {
   canonicalToolName,
   isToolAllowed,
@@ -29,6 +34,26 @@ export interface ToolDispatchResult {
   requiredConfirmation?: boolean;
   confirmationReason?: string;
   userAuthorized?: boolean;
+  /** True when a failed dispatch started a high-impact handler. Never retry blindly. */
+  effectMayHaveCommitted?: boolean;
+}
+
+export interface McpConfirmationRequest {
+  source: McpDispatchSource;
+  sessionId: string;
+  workspaceId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  reason: string;
+  agentLabel: string;
+}
+
+export type McpConfirmationHandler = (
+  request: McpConfirmationRequest,
+) => Promise<boolean>;
+
+export interface McpDispatchOptions {
+  confirm?: McpConfirmationHandler;
 }
 
 const RENDERER_SESSION_ID = 'jarvis-renderer';
@@ -54,24 +79,30 @@ export function permissionScopeForTool(
   return { sessionId, workspaceId, toolName, args };
 }
 
-function auditUnavailableResult(tool: string, err: unknown): ToolDispatchResult {
+function auditUnavailableResult(
+  tool: string,
+  err: unknown,
+  effectMayHaveCommitted = false,
+): ToolDispatchResult {
   const detail = err instanceof Error ? err.message : String(err);
   return {
     ok: false,
     tool,
     error: `audit_unavailable: ${detail}`,
+    effectMayHaveCommitted,
   };
 }
 
 function writeAudit(
   write: () => void,
   tool: string,
+  effectMayHaveCommitted = false,
 ): ToolDispatchResult | null {
   try {
     write();
     return null;
   } catch (err) {
-    return auditUnavailableResult(tool, err);
+    return auditUnavailableResult(tool, err, effectMayHaveCommitted);
   }
 }
 
@@ -99,6 +130,7 @@ export async function dispatchToolCall(
   toolName: string,
   rawArgs: unknown,
   ctx: AgentGateContext,
+  options: McpDispatchOptions = {},
 ): Promise<ToolDispatchResult> {
   const startMs = Date.now();
   const sessionId = normalizeSessionId(source, ctx);
@@ -191,34 +223,120 @@ export async function dispatchToolCall(
     }
 
     const scope = permissionScopeForTool(sessionId, workspaceId, tool.name, args);
-    userAuthorized = hasPermission(scope);
+    userAuthorized = consumePermission(scope);
     if (!userAuthorized) {
       const reason = confirmationReason(tool.name, args);
-      const error =
-        source === 'http-mcp' ? 'confirmation_ui_unavailable' : undefined;
-      const auditReason = error ? `${error}: ${reason}` : reason;
-      const auditFailure = writeAudit(
-        () =>
-          auditDenied(
-            sessionId,
-            tool.name,
-            args,
-            Date.now() - startMs,
-            auditReason,
+      if (options.confirm) {
+        let approved = false;
+        try {
+          approved = await options.confirm({
             source,
-          ),
-        tool.name,
-      );
-      if (auditFailure) return auditFailure;
-      return {
-        ok: false,
-        tool: tool.name,
-        denied: true,
-        requiredConfirmation: true,
-        confirmationReason: reason,
-        error,
-      };
+            sessionId,
+            workspaceId,
+            toolName: tool.name,
+            args,
+            reason,
+            agentLabel: ctx.label,
+          });
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          const error = `confirmation_failed: ${detail}`;
+          const auditFailure = writeAudit(
+            () =>
+              auditDenied(
+                sessionId,
+                tool.name,
+                args,
+                Date.now() - startMs,
+                `${error}: ${reason}`,
+                source,
+              ),
+            tool.name,
+          );
+          if (auditFailure) return auditFailure;
+          return {
+            ok: false,
+            tool: tool.name,
+            denied: true,
+            requiredConfirmation: true,
+            confirmationReason: reason,
+            error,
+          };
+        }
+
+        if (approved) {
+          userAuthorized = true;
+        } else {
+          const error = 'user_denied';
+          const auditFailure = writeAudit(
+            () =>
+              auditDenied(
+                sessionId,
+                tool.name,
+                args,
+                Date.now() - startMs,
+                `${error}: ${reason}`,
+                source,
+              ),
+            tool.name,
+          );
+          if (auditFailure) return auditFailure;
+          return {
+            ok: false,
+            tool: tool.name,
+            denied: true,
+            requiredConfirmation: true,
+            confirmationReason: reason,
+            error,
+          };
+        }
+      }
+
+      if (!userAuthorized) {
+        const error =
+          source === 'http-mcp' ? 'confirmation_ui_unavailable' : undefined;
+        const auditReason = error ? `${error}: ${reason}` : reason;
+        const auditFailure = writeAudit(
+          () =>
+            auditDenied(
+              sessionId,
+              tool.name,
+              args,
+              Date.now() - startMs,
+              auditReason,
+              source,
+            ),
+          tool.name,
+        );
+        if (auditFailure) return auditFailure;
+        return {
+          ok: false,
+          tool: tool.name,
+          denied: true,
+          requiredConfirmation: true,
+          confirmationReason: reason,
+          error,
+        };
+      }
     }
+  }
+
+  const invocationId = confirmationRequired ? randomUUID() : undefined;
+  if (invocationId) {
+    const auditFailure = writeAudit(
+      () =>
+        auditIntent(
+          sessionId,
+          tool.name,
+          args,
+          Date.now() - startMs,
+          userAuthorized,
+          source,
+          invocationId,
+        ),
+      tool.name,
+    );
+    if (auditFailure) return auditFailure;
   }
 
   try {
@@ -232,8 +350,10 @@ export async function dispatchToolCall(
           Date.now() - startMs,
           userAuthorized,
           source,
+          invocationId,
         ),
       tool.name,
+      confirmationRequired,
     );
     if (auditFailure) return auditFailure;
     return {
@@ -254,8 +374,10 @@ export async function dispatchToolCall(
           errorMsg,
           userAuthorized,
           source,
+          invocationId,
         ),
       tool.name,
+      confirmationRequired,
     );
     if (auditFailure) return auditFailure;
     return {
@@ -263,6 +385,7 @@ export async function dispatchToolCall(
       tool: tool.name,
       error: errorMsg,
       userAuthorized,
+      effectMayHaveCommitted: confirmationRequired,
     };
   }
 }

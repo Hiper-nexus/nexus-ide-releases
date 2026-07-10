@@ -33,6 +33,9 @@
     "resumeArgs": [
       "--continue"
     ],
+    "resumeIdArgs": [
+      "--resume"
+    ],
     "extraArgs": []
   },
   "env": {
@@ -73,7 +76,8 @@
   "quirks": {
     "altScreen": true,
     "requiresNoAutoUpdate": false,
-    "mcpAutoload": true
+    "mcpAutoload": true,
+    "nexusMcp": "autoload"
   },
   "control": {
     "permission": {
@@ -86,6 +90,10 @@
       },
       "yolo": [
         "--dangerously-skip-permissions"
+      ],
+      "safe": [
+        "--permission-mode",
+        "manual"
       ],
       "default": ""
     },

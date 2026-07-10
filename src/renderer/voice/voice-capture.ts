@@ -1,5 +1,6 @@
 import pcmWorkletUrl from './pcm-processor.js?url';
 import { rmsToLevel } from './voice-level';
+import { preferredInputConstraints } from './audio-device-preferences';
 
 /**
  * Microphone capture for push-to-talk. Opens a 16 kHz mono getUserMedia stream,
@@ -66,6 +67,8 @@ export class VoiceCapture {
    * quem não liga só não recebe. Zerado no stop para o orb assentar.
    */
   onLevel: ((level: number) => void) | null = null;
+  /** Processed 16 kHz/AEC frame tap used by the realtime transport. */
+  onFrame: ((frame: Float32Array, sampleRate: number) => void) | null = null;
 
   isCapturing(): boolean {
     return this.capturing;
@@ -80,20 +83,24 @@ export class VoiceCapture {
     this.startedAt = Date.now();
     this.lastSpeechAt = this.startedAt;
     this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
+      audio: await preferredInputConstraints({
         channelCount: 1,
         sampleRate: TARGET_SAMPLE_RATE,
         echoCancellation: true,
         noiseSuppression: true,
-      },
+      }),
     });
     this.ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+    if (this.ctx.state === 'suspended') {
+      await this.ctx.resume().catch(() => {});
+    }
     this.inputSampleRate = this.ctx.sampleRate;
     this.source = this.ctx.createMediaStreamSource(this.stream);
 
     const onFrame = (frame: Float32Array) => {
       if (!this.capturing) return;
       this.chunks.push(frame);
+      this.onFrame?.(frame, this.inputSampleRate);
       if (this.onLevel) this.onLevel(rmsToLevel(frameRms(frame)));
       if (this.autoStop && !this.autoStopFired) this.trackSilence(frame);
     };

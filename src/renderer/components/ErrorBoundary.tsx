@@ -33,7 +33,11 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidMount(): void {
-    window.nexus.app.signalMounted();
+    window.nexus.app.signalMounted(
+      this.state.error
+        ? { ok: false, error: this.state.error.message || 'React boot failed' }
+        : { ok: true },
+    );
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {

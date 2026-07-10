@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AdapterInfo } from '../../shared/types';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
+import { DEFAULT_ORCH_SETTINGS } from '../../shared/settings-types';
 import { useOrchStore } from '../state/orch-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
@@ -79,12 +80,16 @@ export function MissionWizard() {
   const close = useMissionWizardStore((s) => s.close);
   const squads = useOrchStore((s) => s.squads);
   const providers = useProviderStore((s) => s.providers);
+  const currentWorkspace = useWorkspaceStore((s) => s.current);
   const recents = useWorkspaceStore((s) => s.recents);
   const openWorkspace = useWorkspaceStore((s) => s.open);
 
   const hasNewWsStep = variant === 'workspace';
 
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
+  const [orchestratorAdapterId, setOrchestratorAdapterId] = useState(
+    DEFAULT_ORCH_SETTINGS.defaultAdapterId,
+  );
   const [step, setStep] = useState<Step>('mode');
   const [mode, setMode] = useState<Mode | null>(null);
   const [wsPath, setWsPath] = useState('');
@@ -103,7 +108,39 @@ export function MissionWizard() {
 
   useEffect(() => {
     if (!open) return;
-    void window.nexus.adapters.list().then(setAdapters);
+    let cancelled = false;
+    void window.nexus.adapters
+      .list()
+      .then((list) => {
+        if (!cancelled) setAdapters(list);
+      })
+      .catch((cause) => {
+        if (!cancelled) {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : 'Falha ao carregar os providers.',
+          );
+        }
+      });
+    void window.nexus.settings
+      .orchGet()
+      .then((settings) => {
+        if (!cancelled) {
+          setOrchestratorAdapterId(
+            settings.defaultAdapterId || DEFAULT_ORCH_SETTINGS.defaultAdapterId,
+          );
+        }
+      })
+      .catch((cause) => {
+        if (!cancelled) {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : 'Falha ao carregar o provider do orquestrador.',
+          );
+        }
+      });
     // A preset squad (Home deck shortcut) skips MODO/SQUAD straight to review.
     if (presetSquadId) {
       setMode('squad');
@@ -114,11 +151,23 @@ export function MissionWizard() {
       setMode(null);
       setSquadId('');
     }
-    setWsPath('');
+    setWsPath(hasNewWsStep ? currentWorkspace?.path ?? recents[0]?.path ?? '' : '');
     setCount(2);
     setSlots([]);
     setError(null);
-  }, [open, hasNewWsStep, presetSquadId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [open, hasNewWsStep, presetSquadId, currentWorkspace?.path, recents]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, close]);
 
   const installed = useMemo(
     () => adapters.filter((a) => a.installed),
@@ -159,16 +208,22 @@ export function MissionWizard() {
     [roster],
   );
 
-  // Load the selected squad's roster into an editable copy. The orchestrator is
-  // FORCED onto Claude: only Claude Code reliably drives the embedded nexus MCP
-  // server (spawning + coordinating worker panes via nexus_pane_* tools). Codex,
-  // Grok, Gemini et al. boot fine as WORKERS, so they are auto-distributed across
-  // the roster and stay fully editable (any CLI/model/effort).
+  // Load the selected squad into an editable copy. The orchestrator follows the
+  // provider selected in Settings; workers stay distributed across the other
+  // enabled CLIs.
   useEffect(() => {
     const sq = squads.find((s) => s.id === squadId);
-    setRoster(sq ? balanceSquadRosterCli(sq.agents, rosterAdapters) : []);
+    setRoster(
+      sq
+        ? balanceSquadRosterCli(
+            sq.agents,
+            rosterAdapters,
+            orchestratorAdapterId,
+          )
+        : [],
+    );
     setRosterSaved(false);
-  }, [squadId, squads, rosterAdapters]);
+  }, [squadId, squads, rosterAdapters, orchestratorAdapterId]);
 
   // Preflight: when the REVISAR step opens, immediately highlight the first
   // agent that will block launch so the user sees the issue before clicking.
@@ -248,8 +303,17 @@ export function MissionWizard() {
   if (!open) return null;
 
   async function browse() {
-    const picked = await window.nexus.workspace.pickPath();
-    if (picked) setWsPath(picked);
+    try {
+      const picked = await window.nexus.workspace.pickPath();
+      if (!picked) return;
+      setWsPath(picked);
+      if (hasNewWsStep) setStep('mode');
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Não consegui abrir o seletor de pasta.';
+      setError(message);
+      useToastStore.getState().push('error', 'Falha ao procurar pasta', message);
+    }
   }
 
   function fillSlots(prev: string[], n: number): string[] {
@@ -355,10 +419,9 @@ export function MissionWizard() {
       const effectiveSquad: Squad = { ...selectedSquad, agents: roster };
       if (!validateWorkerToolScopes(effectiveSquad.agents)) return;
       if (!(await ensureWorkspaceOpen())) return;
-      // Launch with the EDITED roster (the user may have changed the
-      // orchestrator's CLI/model in the review step). Pass ALL adapters so the
-      // orchestrator pane always opens (install hint shows in-pane if needed).
-      const result = launchSquadMission(effectiveSquad, adapters);
+      // Launch with the reviewed roster. Pass all adapters so preflight can
+      // explain an unavailable configured provider instead of failing silently.
+      const result = await launchSquadMission(effectiveSquad, adapters);
       if (!result.ok) {
         setError(result.error ?? 'Falha ao iniciar o squad.');
         useToastStore
@@ -373,7 +436,12 @@ export function MissionWizard() {
   }
 
   return (
-    <div className="wizard" role="dialog" aria-label={hasNewWsStep ? 'Novo workspace' : 'Nova missão'}>
+    <div
+      className="wizard"
+      role="dialog"
+      aria-modal="true"
+      aria-label={hasNewWsStep ? 'Novo workspace' : 'Nova missão'}
+    >
       <div className="wizard__overlay" onClick={close} />
       <div className="wizard__panel">
         <header className="wizard__header">

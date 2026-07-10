@@ -5,9 +5,21 @@ node_modules/
 dist/
 out/
 build/*
-# ...but keep the macOS signing config (entitlements + notarization guide)
+# ...but keep the source-controlled macOS packaging/signing configuration.
+# Forge imports these files during a clean CI checkout, so none may remain
+# ignored just because generated build output also lives under build/.
 !build/entitlements.mac.plist
+!build/entitlements.mac.helper.plist
+!build/entitlements.mac.plugin.plist
+!build/entitlements.mac.none.plist
 !build/notarize.md
+!build/entitlements.mac.renderer.plist
+!build/mac-signing.ts
+!build/mac-signing.test.ts
+!build/macos-info-plist.ts
+!build/macos-info-plist.test.ts
+!build/prune-native-payload.ts
+!build/prune-native-payload.test.ts
 .next/
 .nuxt/
 
@@ -61,6 +73,13 @@ out/
 .kimi/
 .codex/
 .claude/
+.aider*
 
 # Dev Electron shell with its own stable TCC identity (com.nexuside.dev)
 .dev-electron/
+
+# Dev-only SQLite/settings/session state; keeps the installed app untouched.
+.dev-user-data/
+
+# Generated codebase graph and extraction cache (kept locally for audits).
+graphify-out/
