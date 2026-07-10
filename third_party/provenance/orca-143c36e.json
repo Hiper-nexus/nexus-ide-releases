@@ -45,10 +45,10 @@
       "license": "MIT",
       "copyright": "Copyright (c) 2026 Lovecast Inc.",
       "type": "copied",
-      "changeSummary": "Standalone module copy with attribution header. Pending import.",
+      "changeSummary": "Standalone shared module + tests with attribution header; no PTY/IPC/host wiring.",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
-      "status": "planned"
+      "status": "imported"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/shared/terminal-stream-protocol.test.ts",
@@ -59,10 +59,10 @@
       "license": "MIT",
       "copyright": "Copyright (c) 2026 Lovecast Inc.",
       "type": "copied",
-      "changeSummary": "Import path relative; attribution header added. Pending import.",
+      "changeSummary": "Standalone shared module + tests with attribution header; no PTY/IPC/host wiring.",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
-      "status": "planned"
+      "status": "imported"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/renderer/src/lib/pane-manager/pane-terminal-output-scheduler.ts",
