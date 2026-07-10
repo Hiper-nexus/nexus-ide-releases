@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "projectId": "31781d36-3f22-41b8-ad9d-8690c85d3343",
+  "name": "Nexus IDE",
+  "repository": {
+    "vcs": "git",
+    "originHashes": [
+      "origin-sha256-0dde8b1c56b8ab8563aa4b7d7ea183fd2b468eee2a7a4061fc4e580431a0db5b"
+    ],
+    "rootCommits": [
+      "d9523e7f9ea33004f2616d07904c2d858a03d1cd"
+    ],
+    "anchorCommits": [
+      "16516a02a4707388acc023eaf4ab06d7414c5adb"
+    ]
+  }
+}
