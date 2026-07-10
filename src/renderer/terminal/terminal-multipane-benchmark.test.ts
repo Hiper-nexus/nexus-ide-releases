@@ -236,6 +236,41 @@ describe('terminal multipane benchmark (4/8/10)', () => {
       const flood = runScheduled(paneCount, 3, { floodHidden: true });
 
       multipaneBenchmarkResults.push(direct, scheduled, flood);
+      // Machine-readable row for scratch reports (grep BENCH_JSON).
+      // eslint-disable-next-line no-console
+      console.log(
+        'BENCH_JSON',
+        JSON.stringify({
+          direct: {
+            paneCount: direct.paneCount,
+            orderOk: direct.orderOk,
+            ansiOk: direct.ansiOk,
+            fgInputLatencyMs: direct.fgInputLatencyMs,
+            memoryProxyBytes: direct.memoryProxyBytes,
+            durationMs: direct.durationMs,
+          },
+          scheduled: {
+            paneCount: scheduled.paneCount,
+            orderOk: scheduled.orderOk,
+            ansiOk: scheduled.ansiOk,
+            fgInputLatencyMs: scheduled.fgInputLatencyMs,
+            peakQueuedChars: scheduled.peakQueuedChars,
+            maxQueuedPerHidden: scheduled.maxQueuedPerHidden,
+            memoryProxyBytes: scheduled.memoryProxyBytes,
+            durationMs: scheduled.durationMs,
+          },
+          flood: {
+            paneCount: flood.paneCount,
+            orderOk: flood.orderOk,
+            ansiOk: flood.ansiOk,
+            fgInputLatencyMs: flood.fgInputLatencyMs,
+            peakQueuedChars: flood.peakQueuedChars,
+            maxQueuedPerHidden: flood.maxQueuedPerHidden,
+            memoryProxyBytes: flood.memoryProxyBytes,
+            durationMs: flood.durationMs,
+          },
+        }),
+      );
 
       expect(direct.orderOk, 'direct order').toBe(true);
       expect(direct.ansiOk, 'direct ansi').toBe(true);
