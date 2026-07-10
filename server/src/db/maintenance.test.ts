@@ -4,7 +4,11 @@ import { drizzle } from 'drizzle-orm/pglite';
 import * as schema from './schema';
 import { CREATE_TABLES_SQL } from './schema';
 import type { Db } from './client';
-import { PENDING_TEAM_TTL_MS, cleanupExpired } from './maintenance';
+import {
+  DELETED_CRON_SCHEDULE_TTL_MS,
+  PENDING_TEAM_TTL_MS,
+  cleanupExpired,
+} from './maintenance';
 
 async function makeTestDb(): Promise<Db> {
   const client = new PGlite();
@@ -98,4 +102,56 @@ describe('cleanupExpired', () => {
     expect(teams.map((team) => team.id)).toEqual([kept.id]);
     expect(await db.select().from(schema.teamMembers)).toHaveLength(0);
   });
+
+  it('remove soft-deleted cron schedules older than retention and keep recent/active', async () => {
+    const db = await makeTestDb();
+    const now = Date.now();
+    const [a] = await db
+      .insert(schema.accounts)
+      .values({ email: 'cron@y.com' })
+      .returning({ id: schema.accounts.id });
+    const oldDeleted = new Date(now - DELETED_CRON_SCHEDULE_TTL_MS - 1_000);
+    const recentDeleted = new Date(now - 60_000);
+    await db.insert(schema.cronSchedules).values([
+      {
+        accountId: a.id,
+        projectId: 'proj-1',
+        scheduleId: 'old-deleted',
+        version: 1,
+        definition: { status: 'deleted' },
+        definitionHash: 'hash-old',
+        status: 'deleted',
+        updatedAt: oldDeleted,
+      },
+      {
+        accountId: a.id,
+        projectId: 'proj-1',
+        scheduleId: 'recent-deleted',
+        version: 1,
+        definition: { status: 'deleted' },
+        definitionHash: 'hash-recent',
+        status: 'deleted',
+        updatedAt: recentDeleted,
+      },
+      {
+        accountId: a.id,
+        projectId: 'proj-1',
+        scheduleId: 'still-active',
+        version: 1,
+        definition: { status: 'active' },
+        definitionHash: 'hash-active',
+        status: 'active',
+        updatedAt: oldDeleted,
+      },
+    ]);
+
+    await cleanupExpired(db, () => now);
+
+    const rows = await db.select().from(schema.cronSchedules);
+    expect(rows.map((row) => row.scheduleId).sort()).toEqual([
+      'recent-deleted',
+      'still-active',
+    ]);
+  });
+
 });
