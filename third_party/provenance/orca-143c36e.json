@@ -73,10 +73,10 @@
       "license": "MIT",
       "copyright": "Copyright (c) 2026 Lovecast Inc.",
       "type": "adapted",
-      "changeSummary": "State machine + public API adapted for stable @xterm/xterm; no xterm-beta/private renderer internals. Pending import.",
+      "changeSummary": "State machine + public API adapted for stable @xterm/xterm write sinks; removed e2e-config, xterm-beta _core refresh, scroll-intent, foreground-render-settle. Backlog warning branded Nexus. Integrated at terminal-host onData.",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
-      "status": "planned"
+      "status": "imported"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/renderer/src/lib/pane-manager/pane-terminal-output-scheduler.test.ts",
@@ -87,10 +87,24 @@
       "license": "MIT",
       "copyright": "Copyright (c) 2026 Lovecast Inc.",
       "type": "adapted",
-      "changeSummary": "Tests adapted to Nexus scheduler API/sinks. Pending import.",
+      "changeSummary": "Tests rewritten for adapted scheduler API (stable write sinks, no xterm _core / scroll-intent / e2e-config).",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
-      "status": "planned"
+      "status": "imported"
+    },
+    {
+      "upstreamUrl": null,
+      "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
+      "originalSha256": null,
+      "originalPath": null,
+      "nexusPath": "src/renderer/terminal/terminal-multipane-benchmark.test.ts",
+      "license": "MIT",
+      "copyright": "NexusIDE (concepts from ORCA terminal pressure tests)",
+      "type": "adapted",
+      "changeSummary": "New multipane benchmark (4/8/10) proving order, ANSI integrity, bounded backlog, FG responsiveness vs direct-write baseline.",
+      "secondaryProvenance": [],
+      "importDate": "2026-07-10",
+      "status": "imported"
     }
   ]
 }

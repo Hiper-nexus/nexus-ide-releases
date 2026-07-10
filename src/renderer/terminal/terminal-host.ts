@@ -11,6 +11,10 @@ import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
+import {
+  discardTerminalOutput,
+  writeTerminalOutput,
+} from './terminal-output-scheduler';
 
 /**
  * Persistent terminal manager.
@@ -197,9 +201,19 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
         );
       }
 
+      // Shared output scheduler: focused pane is latency-sensitive (immediate
+      // write); hidden panes queue with a bounded backlog so concurrent agent
+      // floods cannot pin the renderer. See terminal-output-scheduler.ts.
       host.cleanups.push(
-        window.nexus.pty.onData(res.sessionId, (data) => host.term.write(data)),
+        window.nexus.pty.onData(res.sessionId, (data) => {
+          const focused = useLayoutStore.getState().focusedPaneId === pane.id;
+          writeTerminalOutput(host.term, data, {
+            foreground: focused,
+            latencySensitive: focused,
+          });
+        }),
       );
+      host.cleanups.push(() => discardTerminalOutput(host.term));
       host.cleanups.push(
         window.nexus.pty.onExit(res.sessionId, ({ exitCode }) => {
           host.term.writeln(
