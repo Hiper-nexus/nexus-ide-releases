@@ -32,11 +32,30 @@ import {
 const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
 // These are real Git integration tests: each case creates repositories and
 // worktrees, commits, checks out detached candidates, and runs validations.
-// Under the full Vitest worker pool that filesystem/process contention can
-// legitimately exceed the default 5s without indicating a merge-queue failure.
+// Measured isolated cost of the concurrent-serialization case is ~1.7–2.0s;
+// under full Vitest worker-pool + multi-file git contention the same case can
+// spend several extra seconds waiting on ProcessGitRunner (not a logic bug).
+// Default 5s is insufficient under that load; 15s is a measured budget that
+// still fails closed if the queue truly deadlocks.
 const GIT_INTEGRATION_TEST_TIMEOUT_MS = 15_000;
 
 vi.setConfig({ testTimeout: GIT_INTEGRATION_TEST_TIMEOUT_MS });
+
+/** Poll until predicate is true; replaces fixed sleeps that flake under load. */
+async function waitUntil(
+  predicate: () => boolean,
+  label: string,
+  timeoutMs = 5_000,
+  intervalMs = 5,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`waitUntil(${label}) timed out after ${timeoutMs}ms`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
 
 class MemoryWorktreeStateStore implements WorktreeStateStore {
   readonly #states = new Map<string, WorktreeStateSnapshot>();
@@ -282,7 +301,10 @@ describe('MergeQueue', () => {
       },
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    // Event-driven: wait for first candidate validation to actually start
+    // (fixed 25ms sleeps were too short under worker-pool git contention and
+    // also waste budget when the queue is already ready sooner).
+    await waitUntil(() => firstCandidateStarted, 'firstCandidateStarted');
     expect(firstCandidateStarted).toBe(true);
     expect(secondCandidateStarted).toBe(false);
     releaseFirst?.();
@@ -350,7 +372,7 @@ describe('MergeQueue', () => {
       },
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitUntil(() => started.size === 2, 'bothProjectsCandidateStarted');
     const projectsValidatedConcurrently = started.size === 2;
     releaseValidation?.();
     await Promise.all([first, second]);
@@ -358,7 +380,7 @@ describe('MergeQueue', () => {
     expect(projectsValidatedConcurrently).toBe(true);
     expect(fs.readFileSync(path.join(root, 'a.txt'), 'utf8')).toBe('A\n');
     expect(fs.readFileSync(path.join(secondRoot, 'b.txt'), 'utf8')).toBe('B\n');
-  }, 15_000);
+  }, GIT_INTEGRATION_TEST_TIMEOUT_MS);
 
   it('leaves the branch unchanged and blocks the queue when validation rejects', async () => {
     commitTask('mission-a', 'task-a', 'worker-a', 'a.txt', 'A\n');
