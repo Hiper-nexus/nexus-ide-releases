@@ -3,6 +3,11 @@ import { BrowserWindow, ipcMain, session, shell } from 'electron';
 import type { IpcMainEvent, WebContents } from 'electron';
 import { WINDOW_CHANNELS } from '../shared/channels';
 import { killSessionsFor } from './pty/pty-manager';
+import {
+  DEFAULT_RENDERER_RECOVERY_MAX_RECOVERIES,
+  DEFAULT_RENDERER_RECOVERY_WINDOW_MS,
+  RendererRecoveryCircuitBreaker,
+} from './reliability/renderer-recovery-circuit-breaker';
 
 /**
  * Last-resort recovery screen: if React never mounts after repeated reloads (or
@@ -166,9 +171,15 @@ export function createMainWindow(): BrowserWindow {
   let finished = false;
   let mounted = false;
   let mountReloads = 0;
-  let crashReloads = 0;
   const MAX_MOUNT_RELOADS = 5;
-  const MAX_CRASH_RELOADS = 3;
+  // Sliding-window circuit breaker (ORCA harvest): caps auto-reloads so a
+  // deterministic per-load crash cannot spin forever. Manual reload after the
+  // recovery screen resets the breaker so the user can try again.
+  const rendererRecoveryCircuitBreaker = new RendererRecoveryCircuitBreaker({
+    windowMs: DEFAULT_RENDERER_RECOVERY_WINDOW_MS,
+    maxRecoveries: DEFAULT_RENDERER_RECOVERY_MAX_RECOVERIES,
+  });
+  let recoveryScreenShown = false;
 
   // Renderer → main mount signal, fired from a post-commit effect and scoped to
   // THIS window's sender. This — not a console log — is how the mount watchdog
@@ -204,17 +215,21 @@ export function createMainWindow(): BrowserWindow {
   }
 
   // A renderer crash used to only log (dev), leaving a black window in
-  // production. Reload a crashed renderer — capped, in dev AND prod; after the
-  // cap, show the recovery screen instead of looping forever.
+  // production. Reload a crashed renderer — capped by a sliding-window circuit
+  // breaker (dev AND prod); after the breaker opens, show the recovery screen
+  // instead of looping forever.
   wc.on('render-process-gone', (_e, details) => {
     console.warn('[window] renderer morreu:', details.reason);
     if (win.isDestroyed()) return;
     if (details.reason === 'clean-exit' || details.reason === 'killed') return;
-    if (crashReloads >= MAX_CRASH_RELOADS) {
+    const recovery = rendererRecoveryCircuitBreaker.registerRecoveryAttempt(
+      Date.now(),
+    );
+    if (!recovery.allowed) {
+      recoveryScreenShown = true;
       showRecoveryScreen(wc);
       return;
     }
-    crashReloads += 1;
     win.reload();
   });
   win.on('unresponsive', () => {
@@ -286,6 +301,12 @@ export function createMainWindow(): BrowserWindow {
     finished = true;
     loadRetries = 0;
     clearInterval(watchdog);
+    // User clicked "Recarregar" on the recovery screen (or otherwise reloaded
+    // after the breaker opened). Clear history so a new recovery budget applies.
+    if (recoveryScreenShown) {
+      rendererRecoveryCircuitBreaker.reset();
+      recoveryScreenShown = false;
+    }
     console.log('[window] renderer carregado');
     if (mountPoll) clearInterval(mountPoll);
     let emptyChecks = 0;

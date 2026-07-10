@@ -17,10 +17,10 @@
       "license": "MIT",
       "copyright": "Copyright (c) 2026 Lovecast Inc.",
       "type": "copied",
-      "changeSummary": "Path/namespace only; attribution header added. Pending import.",
+      "changeSummary": "Path under src/main/reliability; attribution header added; no behavioral change. Wired into window.ts render-process-gone.",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
-      "status": "planned"
+      "status": "imported"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/crash-reporting/renderer-recovery-circuit-breaker.test.ts",
@@ -31,10 +31,10 @@
       "license": "MIT",
       "copyright": "Copyright (c) 2026 Lovecast Inc.",
       "type": "copied",
-      "changeSummary": "Import path relative; attribution header added. Pending import.",
+      "changeSummary": "Import path relative to reliability module; attribution header added.",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
-      "status": "planned"
+      "status": "imported"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/shared/terminal-stream-protocol.ts",
