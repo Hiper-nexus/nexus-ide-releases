@@ -17,7 +17,7 @@ import { PONYTAIL_RULES } from './ponytail';
 import { ENGINEERING_CHARTER } from './engineering-charter';
 import { DESIGN_CHARTER } from './design-charter';
 import { getOrchSettings } from '../persistence/settings-store';
-import { resolveWorkspaceCwd } from './workspace-path';
+import { resolveCwdForScope, resolveWorkspaceCwd } from './workspace-path';
 import { canUseNexusMcp } from './cli-mcp-inject';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
@@ -103,6 +103,10 @@ export async function injectPrompt(
   orchWriteSession(sessionId, '\r');
 }
 
+interface SpawnScopeLike {
+  rootRealPath: string;
+}
+
 export interface SpawnToolOptions {
   adapterId: string;
   model?: string;
@@ -116,6 +120,8 @@ export interface SpawnToolOptions {
   allowedSkills?: string[] | null;
   role?: 'orchestrator' | 'worker';
   prompt?: string;
+  scope?: SpawnScopeLike;
+  executionScope?: SpawnScopeLike;
 }
 
 /**
@@ -156,9 +162,13 @@ export async function spawnPaneAndMaybePrompt(
   // Agent CLIs can read and execute native tools. Pin every orchestrated spawn
   // to the active workspace before the renderer/PTY boundary; never inherit
   // pty-manager's user-shell fallback to HOME.
+  const executionScope = options.executionScope ?? options.scope;
   const safeOptions: SpawnToolOptions = {
     ...options,
-    cwd: resolveWorkspaceCwd(options.cwd),
+    ...(executionScope ? { executionScope } : {}),
+    cwd: executionScope
+      ? resolveCwdForScope(executionScope, options.cwd)
+      : resolveWorkspaceCwd(options.cwd),
   };
   const result = await requestPaneSpawn(safeOptions);
   if (!result.ok || !result.paneId || !result.sessionId) {

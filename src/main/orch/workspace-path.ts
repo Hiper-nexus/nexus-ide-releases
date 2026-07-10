@@ -42,8 +42,23 @@ export function resolveWorkspacePath(inputPath: string): string {
   return realTarget;
 }
 
-export function resolveWorkspaceCwd(cwdOverride?: string): string {
-  const root = activeWorkspaceRoot();
+export interface WorkspaceScopeLike {
+  rootRealPath: string;
+}
+
+export function resolveRootForScope(scope: WorkspaceScopeLike): string {
+  const expected = path.resolve(scope.rootRealPath);
+  const actual = realpathOrThrow(expected, 'scoped workspace');
+  if (actual !== expected) {
+    throw new Error('scoped workspace identity changed on disk');
+  }
+  if (!fs.statSync(actual).isDirectory()) {
+    throw new Error('scoped workspace is not a directory');
+  }
+  return actual;
+}
+
+function resolveCwdInsideRoot(root: string, cwdOverride?: string): string {
   const cwd = cwdOverride
     ? path.isAbsolute(cwdOverride)
       ? path.resolve(cwdOverride)
@@ -57,4 +72,15 @@ export function resolveWorkspaceCwd(cwdOverride?: string): string {
     throw new Error(`cwd is not a directory: ${cwdOverride ?? root}`);
   }
   return realCwd;
+}
+
+export function resolveCwdForScope(
+  scope: WorkspaceScopeLike,
+  cwdOverride?: string,
+): string {
+  return resolveCwdInsideRoot(resolveRootForScope(scope), cwdOverride);
+}
+
+export function resolveWorkspaceCwd(cwdOverride?: string): string {
+  return resolveCwdInsideRoot(activeWorkspaceRoot(), cwdOverride);
 }

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const stubs = vi.hoisted(() => ({
-  resolveWorkspaceCwd: vi.fn<(value?: string) => string>(),
+  resolveCwdForScope: vi.fn<(_scope: unknown, value?: string) => string>(),
   requestPaneSpawn: vi.fn(async () => ({
     ok: true,
     paneId: 'pane-1',
@@ -9,7 +9,7 @@ const stubs = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock('./workspace-path', () => ({ resolveWorkspaceCwd: stubs.resolveWorkspaceCwd }));
+vi.mock('./workspace-path', () => ({ resolveCwdForScope: stubs.resolveCwdForScope }));
 vi.mock('./pane-registry', () => ({
   getPaneAuthzInfo: vi.fn(),
   requestPaneSpawn: stubs.requestPaneSpawn,
@@ -31,28 +31,32 @@ vi.mock('../persistence/settings-store', () => ({
 
 import { spawnPaneAndMaybePrompt, withHandoffContract } from './tool-util';
 
+const scope = Object.freeze({ rootRealPath: '/workspace' });
+
 describe('agent pane workspace confinement', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    stubs.resolveWorkspaceCwd.mockReturnValue('/workspace');
+    stubs.resolveCwdForScope.mockReturnValue('/workspace');
   });
 
   it('pins every orchestration spawn to the canonical active workspace', async () => {
-    await spawnPaneAndMaybePrompt({ adapterId: 'codex' });
+    await spawnPaneAndMaybePrompt({ adapterId: 'codex', scope });
 
-    expect(stubs.resolveWorkspaceCwd).toHaveBeenCalledWith(undefined);
+    expect(stubs.resolveCwdForScope).toHaveBeenCalledWith(scope, undefined);
     expect(stubs.requestPaneSpawn).toHaveBeenCalledWith({
       adapterId: 'codex',
       cwd: '/workspace',
+      executionScope: scope,
+      scope,
     });
   });
 
   it('does not request a pane when no safe workspace can be resolved', async () => {
-    stubs.resolveWorkspaceCwd.mockImplementation(() => {
+    stubs.resolveCwdForScope.mockImplementation(() => {
       throw new Error('no workspace open');
     });
 
-    await expect(spawnPaneAndMaybePrompt({ adapterId: 'codex' })).rejects.toThrow(
+    await expect(spawnPaneAndMaybePrompt({ adapterId: 'codex', scope })).rejects.toThrow(
       /no workspace open/,
     );
     expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
