@@ -1,14 +1,19 @@
 import {
+  bigint,
   boolean,
+  check,
+  index,
   integer,
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
   uuid,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 /** Schema Drizzle do Auth. Tokens guardados SÓ como sha256 (nunca em claro). */
 
@@ -152,6 +157,108 @@ export const stripeEvents = pgTable('stripe_events', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+/** Portable cron definitions. Machine/check-out coordinates never enter it. */
+export const cronSchedules = pgTable(
+  'cron_schedules',
+  {
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    projectId: text('project_id').notNull(),
+    scheduleId: text('schedule_id').notNull(),
+    version: integer('version').notNull(),
+    definition: jsonb('definition').notNull(),
+    definitionHash: text('definition_hash').notNull(),
+    status: text('status').notNull(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      name: 'cron_schedules_pk',
+      columns: [table.accountId, table.projectId, table.scheduleId],
+    }),
+    index('cron_schedules_project_status_idx').on(
+      table.accountId,
+      table.projectId,
+      table.status,
+    ),
+    check('cron_schedules_version_check', sql`${table.version} > 0`),
+    check(
+      'cron_schedules_status_check',
+      sql`${table.status} IN ('active', 'paused', 'deleted')`,
+    ),
+  ],
+);
+
+/** Server-time lease authority. Only a token hash is persisted. */
+export const cronLeases = pgTable(
+  'cron_leases',
+  {
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    projectId: text('project_id').notNull(),
+    scheduleId: text('schedule_id').notNull(),
+    occurrenceAt: bigint('occurrence_at', { mode: 'number' }).notNull(),
+    tokenHash: text('token_hash'),
+    version: integer('version').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      name: 'cron_leases_pk',
+      columns: [
+        table.accountId,
+        table.projectId,
+        table.scheduleId,
+        table.occurrenceAt,
+      ],
+    }),
+    index('cron_leases_expiry_idx').on(table.expiresAt),
+    check('cron_leases_version_check', sql`${table.version} > 0`),
+  ],
+);
+
+/** Account-scoped portable sync state. No machine or credential material. */
+export const syncProjects = pgTable(
+  'sync_projects',
+  {
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    projectId: text('project_id').notNull(),
+    revision: integer('revision').notNull(),
+    entities: jsonb('entities').notNull(),
+    entityCount: integer('entity_count').notNull(),
+    stateBytes: integer('state_bytes').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      name: 'sync_projects_pk',
+      columns: [table.accountId, table.projectId],
+    }),
+    index('sync_projects_account_updated_idx').on(
+      table.accountId,
+      table.updatedAt,
+    ),
+    check('sync_projects_revision_check', sql`${table.revision} > 0`),
+    check(
+      'sync_projects_entity_count_check',
+      sql`${table.entityCount} >= 0 AND ${table.entityCount} <= 1000`,
+    ),
+    check(
+      'sync_projects_state_bytes_check',
+      sql`${table.stateBytes} >= 0 AND ${table.stateBytes} <= 196608`,
+    ),
+  ],
+);
+
 /** DDL literal para testes (pglite) — a produção usa migrations do drizzle-kit. */
 export const CREATE_TABLES_SQL = `
 CREATE TYPE plan AS ENUM ('free','pro','team');
@@ -226,4 +333,39 @@ CREATE TABLE stripe_events (
   event_id text PRIMARY KEY, type text NOT NULL,
   processed_at timestamp, payload jsonb NOT NULL,
   created_at timestamp NOT NULL DEFAULT now());
+CREATE TABLE cron_schedules (
+  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  project_id text NOT NULL,
+  schedule_id text NOT NULL,
+  version integer NOT NULL CHECK (version > 0),
+  definition jsonb NOT NULL,
+  definition_hash text NOT NULL,
+  status text NOT NULL CHECK (status IN ('active','paused','deleted')),
+  updated_at timestamp NOT NULL DEFAULT now(),
+  CONSTRAINT cron_schedules_pk PRIMARY KEY (account_id, project_id, schedule_id));
+CREATE INDEX cron_schedules_project_status_idx
+  ON cron_schedules(account_id, project_id, status);
+CREATE TABLE cron_leases (
+  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  project_id text NOT NULL,
+  schedule_id text NOT NULL,
+  occurrence_at bigint NOT NULL,
+  token_hash text,
+  version integer NOT NULL CHECK (version > 0),
+  expires_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT cron_leases_pk PRIMARY KEY
+    (account_id, project_id, schedule_id, occurrence_at));
+CREATE INDEX cron_leases_expiry_idx ON cron_leases(expires_at);
+CREATE TABLE sync_projects (
+  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  project_id text NOT NULL,
+  revision integer NOT NULL CHECK (revision > 0),
+  entities jsonb NOT NULL,
+  entity_count integer NOT NULL CHECK (entity_count >= 0 AND entity_count <= 1000),
+  state_bytes integer NOT NULL CHECK (state_bytes >= 0 AND state_bytes <= 196608),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT sync_projects_pk PRIMARY KEY (account_id, project_id));
+CREATE INDEX sync_projects_account_updated_idx
+  ON sync_projects(account_id, updated_at);
 `;

@@ -1,6 +1,14 @@
 import { lt, sql } from 'drizzle-orm';
 import type { Db } from './client';
-import { authCodes, oauthStates, refreshTokens, sessions, subscriptions, teams } from './schema';
+import {
+  authCodes,
+  cronLeases,
+  oauthStates,
+  refreshTokens,
+  sessions,
+  subscriptions,
+  teams,
+} from './schema';
 
 export const PENDING_TEAM_TTL_MS = 24 * 3600 * 1000;
 
@@ -18,6 +26,7 @@ export async function cleanupExpired(
   await db.delete(authCodes).where(lt(authCodes.expiresAt, at));
   await db.delete(sessions).where(lt(sessions.expiresAt, at));
   await db.delete(refreshTokens).where(lt(refreshTokens.expiresAt, at));
+  await db.delete(cronLeases).where(lt(cronLeases.expiresAt, at));
   const pendingTeamCutoff = new Date(now() - PENDING_TEAM_TTL_MS);
   await db.delete(teams).where(sql`
     ${teams.createdAt} < ${pendingTeamCutoff}

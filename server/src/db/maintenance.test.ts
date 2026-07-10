@@ -37,6 +37,26 @@ describe('cleanupExpired', () => {
       { accountId: a.id, tokenHash: 'r-morto', expiresAt: past },
       { accountId: a.id, tokenHash: 'r-vivo', expiresAt: future },
     ]);
+    await db.insert(schema.cronLeases).values([
+      {
+        accountId: a.id,
+        projectId: '31781d36-3f22-41b8-ad9d-8690c85d3343',
+        scheduleId: '2a21a665-d7fd-45d5-b81f-41f433c665ad',
+        occurrenceAt: 1,
+        tokenHash: 'lease-dead',
+        version: 1,
+        expiresAt: past,
+      },
+      {
+        accountId: a.id,
+        projectId: '31781d36-3f22-41b8-ad9d-8690c85d3343',
+        scheduleId: '2a21a665-d7fd-45d5-b81f-41f433c665ad',
+        occurrenceAt: 2,
+        tokenHash: 'lease-live',
+        version: 1,
+        expiresAt: future,
+      },
+    ]);
 
     await cleanupExpired(db);
 
@@ -44,6 +64,7 @@ describe('cleanupExpired', () => {
     expect(await db.select().from(schema.authCodes)).toHaveLength(1);
     expect(await db.select().from(schema.sessions)).toHaveLength(1);
     expect(await db.select().from(schema.refreshTokens)).toHaveLength(1);
+    expect(await db.select().from(schema.cronLeases)).toHaveLength(1);
   });
 
   it('remove times pendentes antigos sem assinatura e preserva times com subscription', async () => {

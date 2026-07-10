@@ -23,6 +23,11 @@ describe('parseEnv', () => {
     const env = parseEnv(FULL);
     expect(env.DATABASE_URL).toBe('postgres://x');
     expect(env.PORT).toBe(8080);
+    expect(env.DATABASE_CONNECTION_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(env.DATABASE_QUERY_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(env.DATABASE_STATEMENT_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(env.DATABASE_READINESS_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(env.SERVER_CLEANUP_TIMEOUT_MS).toBeGreaterThan(0);
   });
 
   it('lança quando falta um segredo obrigatório', () => {
@@ -43,5 +48,32 @@ describe('parseEnv', () => {
 
   it('rejeita PUBLIC_SITE_URL que não é URL', () => {
     expect(() => parseEnv({ ...FULL, PUBLIC_SITE_URL: 'nao-e-url' })).toThrow();
+  });
+
+  it('accepts bounded database timeout overrides and rejects unsafe values', () => {
+    const env = parseEnv({
+      ...FULL,
+      DATABASE_CONNECTION_TIMEOUT_MS: '1500',
+      DATABASE_QUERY_TIMEOUT_MS: '2500',
+      DATABASE_STATEMENT_TIMEOUT_MS: '2000',
+      DATABASE_READINESS_TIMEOUT_MS: '1200',
+      SERVER_CLEANUP_TIMEOUT_MS: '800',
+    });
+
+    expect(env).toMatchObject({
+      DATABASE_CONNECTION_TIMEOUT_MS: 1500,
+      DATABASE_QUERY_TIMEOUT_MS: 2500,
+      DATABASE_STATEMENT_TIMEOUT_MS: 2000,
+      DATABASE_READINESS_TIMEOUT_MS: 1200,
+      SERVER_CLEANUP_TIMEOUT_MS: 800,
+    });
+    expect(() => parseEnv({
+      ...FULL,
+      DATABASE_READINESS_TIMEOUT_MS: '0',
+    })).toThrow(/DATABASE_READINESS_TIMEOUT_MS/);
+    expect(() => parseEnv({
+      ...FULL,
+      DATABASE_QUERY_TIMEOUT_MS: '60001',
+    })).toThrow(/DATABASE_QUERY_TIMEOUT_MS/);
   });
 });

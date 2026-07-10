@@ -1,4 +1,21 @@
 import { z } from 'zod';
+import { DEFAULT_DATABASE_POOL_TIMEOUTS } from './db/client';
+import {
+  DEFAULT_DATABASE_READINESS_TIMEOUT_MS,
+  DEFAULT_SERVER_CLEANUP_TIMEOUT_MS,
+} from './health';
+
+const MIN_DATABASE_TIMEOUT_MS = 100;
+const MAX_DATABASE_TIMEOUT_MS = 60_000;
+
+function databaseTimeout(defaultValue: number) {
+  return z.coerce
+    .number()
+    .int()
+    .min(MIN_DATABASE_TIMEOUT_MS)
+    .max(MAX_DATABASE_TIMEOUT_MS)
+    .default(defaultValue);
+}
 
 /**
  * Env validado no boot — falta de qualquer segredo derruba o processo cedo,
@@ -6,6 +23,21 @@ import { z } from 'zod';
  */
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
+  DATABASE_CONNECTION_TIMEOUT_MS: databaseTimeout(
+    DEFAULT_DATABASE_POOL_TIMEOUTS.connectionTimeoutMs,
+  ),
+  DATABASE_QUERY_TIMEOUT_MS: databaseTimeout(
+    DEFAULT_DATABASE_POOL_TIMEOUTS.queryTimeoutMs,
+  ),
+  DATABASE_STATEMENT_TIMEOUT_MS: databaseTimeout(
+    DEFAULT_DATABASE_POOL_TIMEOUTS.statementTimeoutMs,
+  ),
+  DATABASE_READINESS_TIMEOUT_MS: databaseTimeout(
+    DEFAULT_DATABASE_READINESS_TIMEOUT_MS,
+  ),
+  SERVER_CLEANUP_TIMEOUT_MS: databaseTimeout(
+    DEFAULT_SERVER_CLEANUP_TIMEOUT_MS,
+  ),
   LICENSE_PRIVATE_KEY: z.string().includes('PRIVATE KEY'),
   LICENSE_PUBLIC_KEY: z.string().includes('PUBLIC KEY'),
   GITHUB_OAUTH_ID: z.string().min(1),
