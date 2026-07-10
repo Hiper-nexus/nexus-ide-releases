@@ -57,6 +57,28 @@ The vendored translator logic is consumed without local modification. The
 Apache License 2.0 text is included at
 `third_party/licenses/Apache-2.0.txt`.
 
+## ORCA (stablyai/orca) — terminal reliability modules
+
+Selected modules are adapted from
+[`stablyai/orca`](https://github.com/stablyai/orca) at commit
+`143c36e566483006fe54fa2716b019ec00599752`, licensed under the MIT License.
+
+Copyright (c) 2026 Lovecast Inc.
+
+The full MIT license text is included at `third_party/licenses/orca-MIT.txt`.
+Per-file provenance (upstream URL, original path, SHA-256 of the original
+file, Nexus destination path, and adaptation notes) is recorded in
+`third_party/provenance/orca-143c36e.json`.
+
+Adapted modules in this harvest:
+
+- Renderer recovery circuit breaker
+- Terminal stream protocol
+- Terminal output scheduler
+
+Every adapted source file carries an attribution header pointing at the pin
+and license. Existing copyright notices inside copied code are preserved.
+
 ## JavaScript and native dependencies
 
 The production dependency inventory and individual package licenses are

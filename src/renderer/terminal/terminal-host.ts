@@ -11,6 +11,11 @@ import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
+import {
+  discardTerminalOutput,
+  flushTerminalOutput,
+  writeTerminalOutput,
+} from './terminal-output-scheduler';
 
 /**
  * Persistent terminal manager.
@@ -195,9 +200,19 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
         }),
       );
 
+      // Shared output scheduler: focused pane is latency-sensitive (immediate
+      // write); hidden panes queue with a bounded backlog so concurrent agent
+      // floods cannot pin the renderer. See terminal-output-scheduler.ts.
       host.cleanups.push(
-        window.nexus.pty.onData(res.sessionId, (data) => host.term.write(data)),
+        window.nexus.pty.onData(res.sessionId, (data) => {
+          const focused = useLayoutStore.getState().focusedPaneId === pane.id;
+          writeTerminalOutput(host.term, data, {
+            foreground: focused,
+            latencySensitive: focused,
+          });
+        }),
       );
+      host.cleanups.push(() => discardTerminalOutput(host.term));
       host.cleanups.push(
         window.nexus.pty.onExit(res.sessionId, ({ exitCode }) => {
           host.term.writeln(
@@ -505,7 +520,12 @@ export function focusHost(paneId: string): void {
     if (host.disposed) continue;
     host.term.options.cursorBlink = id === paneId && !host.hibernated;
   }
-  hosts.get(paneId)?.term.focus();
+  const host = hosts.get(paneId);
+  if (!host || host.disposed) return;
+  // Promote any background backlog immediately so the focused pane is not
+  // stuck behind the cooperative drain of other hidden panes.
+  flushTerminalOutput(host.term);
+  host.term.focus();
 }
 
 /** Stop compositor work for a terminal that lost focus or left live view. */
@@ -528,6 +548,7 @@ export function blurHost(paneId: string): void {
 export function scrollPaneToBottom(paneId: string, sendJumpKey = false): void {
   const host = hosts.get(paneId);
   if (!host || host.disposed || !host.opened) return;
+  flushTerminalOutput(host.term);
   host.term.scrollToBottom();
   if (sendJumpKey && host.sessionId) {
     window.nexus.pty.write(host.sessionId, '\x1b[1;5F');
