@@ -1,13 +1,14 @@
 // Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
 // Copyright (c) 2026 Lovecast Inc. — MIT License
-// See third_party/licenses/orca-MIT.txt. Nexus changes: path under src/main/reliability; no behavioral change.
+// See third_party/licenses/orca-MIT.txt. Nexus changes: path under
+// src/main/reliability; Nexus statement-style punctuation; no behavioral change.
 
 export type RendererRecoveryCircuitBreakerOptions = {
   /** Rolling window in which auto-recoveries are counted. */
-  windowMs: number
+  windowMs: number;
   /** Max auto-recoveries allowed within the window before the breaker opens. */
-  maxRecoveries: number
-}
+  maxRecoveries: number;
+};
 
 // Why: a deterministic per-load renderer fault (bad GPU driver, corrupt chunk,
 // AV interference) crashes on every load. Orca auto-reloads recoverable
@@ -15,8 +16,8 @@ export type RendererRecoveryCircuitBreakerOptions = {
 // burning CPU and spamming breadcrumbs (Windows clusters F0BDRAZN55L /
 // F0BDPCL93UM). 3 reloads in 60s is well above any single transient crash but
 // far below a runaway loop.
-export const DEFAULT_RENDERER_RECOVERY_WINDOW_MS = 60_000
-export const DEFAULT_RENDERER_RECOVERY_MAX_RECOVERIES = 3
+export const DEFAULT_RENDERER_RECOVERY_WINDOW_MS = 60_000;
+export const DEFAULT_RENDERER_RECOVERY_MAX_RECOVERIES = 3;
 
 /**
  * Tracks recent auto-recovery attempts in a rolling time window and decides
@@ -29,19 +30,19 @@ export const DEFAULT_RENDERER_RECOVERY_MAX_RECOVERIES = 3
  * window naturally once the renderer survives longer than `windowMs`.
  */
 export class RendererRecoveryCircuitBreaker {
-  private readonly windowMs: number
-  private readonly maxRecoveries: number
-  private attempts: number[] = []
+  private readonly windowMs: number;
+  private readonly maxRecoveries: number;
+  private attempts: number[] = [];
 
   constructor(options: RendererRecoveryCircuitBreakerOptions) {
-    this.windowMs = options.windowMs
-    this.maxRecoveries = options.maxRecoveries
+    this.windowMs = options.windowMs;
+    this.maxRecoveries = options.maxRecoveries;
   }
 
   /** Number of recovery attempts still inside the rolling window at `now`. */
   recentRecoveryCount(now: number): number {
-    this.pruneExpired(now)
-    return this.attempts.length
+    this.pruneExpired(now);
+    return this.attempts.length;
   }
 
   /**
@@ -49,22 +50,24 @@ export class RendererRecoveryCircuitBreaker {
    * Returns `false` once `maxRecoveries` have already occurred within the
    * window — the caller must then stop auto-reloading.
    */
-  registerRecoveryAttempt(now: number): { allowed: boolean; recentRecoveryCount: number } {
-    this.pruneExpired(now)
+  registerRecoveryAttempt(
+    now: number,
+  ): { allowed: boolean; recentRecoveryCount: number } {
+    this.pruneExpired(now);
     if (this.attempts.length >= this.maxRecoveries) {
-      return { allowed: false, recentRecoveryCount: this.attempts.length }
+      return { allowed: false, recentRecoveryCount: this.attempts.length };
     }
-    this.attempts.push(now)
-    return { allowed: true, recentRecoveryCount: this.attempts.length }
+    this.attempts.push(now);
+    return { allowed: true, recentRecoveryCount: this.attempts.length };
   }
 
   /** Clears history, e.g. after a manual reload or relaunch resolves the loop. */
   reset(): void {
-    this.attempts = []
+    this.attempts = [];
   }
 
   private pruneExpired(now: number): void {
-    const cutoff = now - this.windowMs
-    this.attempts = this.attempts.filter((timestamp) => timestamp > cutoff)
+    const cutoff = now - this.windowMs;
+    this.attempts = this.attempts.filter((timestamp) => timestamp > cutoff);
   }
 }

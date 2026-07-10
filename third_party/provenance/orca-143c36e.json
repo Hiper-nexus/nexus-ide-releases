@@ -17,7 +17,7 @@
       "license": "MIT",
       "copyright": "Copyright (c) 2026 Lovecast Inc.",
       "type": "copied",
-      "changeSummary": "Path under src/main/reliability; attribution header added; no behavioral change. Wired into window.ts render-process-gone.",
+      "changeSummary": "Path under src/main/reliability; Nexus statement-style punctuation; wired into window.ts render-process-gone with recovery-screen reset.",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
       "status": "imported"
@@ -45,7 +45,7 @@
       "license": "MIT",
       "copyright": "Copyright (c) 2026 Lovecast Inc.",
       "type": "copied",
-      "changeSummary": "Standalone shared module + tests with attribution header; no PTY/IPC/host wiring.",
+      "changeSummary": "Standalone shared module; Nexus statement style; attribution header; no PTY/IPC wiring.",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
       "status": "imported"
@@ -73,7 +73,7 @@
       "license": "MIT",
       "copyright": "Copyright (c) 2026 Lovecast Inc.",
       "type": "adapted",
-      "changeSummary": "State machine + public API adapted for stable @xterm/xterm write sinks; removed e2e-config, xterm-beta _core refresh, scroll-intent, foreground-render-settle. Backlog warning branded Nexus. Integrated at terminal-host onData.",
+      "changeSummary": "State machine for stable xterm sinks; ANSI-safe chunk split; safer write callback settle; focus flush via host; no xterm-beta/_core/scroll-intent.",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
       "status": "imported"

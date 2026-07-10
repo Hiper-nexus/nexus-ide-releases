@@ -399,6 +399,60 @@ function compactConsumedChunks(entry: QueueEntry): void {
   }
 }
 
+/**
+ * True when `partial` (starting at ESC) is a complete escape sequence prefix
+ * that is safe to cut after. CSI needs ESC [ … final (0x40–0x7E); bare
+ * `ESC [` is incomplete (`[` is the CSI introducer, not a final byte).
+ */
+function isCompleteEscapePrefix(partial: string): boolean {
+  if (partial.length < 2 || partial[0] !== '\x1b') {
+    return false;
+  }
+  const intro = partial[1];
+  // CSI: ESC [ params intermediates final
+  if (intro === '[') {
+    if (partial.length < 3) return false;
+    const last = partial.charCodeAt(partial.length - 1);
+    return last >= 0x40 && last <= 0x7e;
+  }
+  // OSC: ESC ] … BEL or ST (ESC \)
+  if (intro === ']') {
+    return partial.endsWith('\x07') || partial.endsWith('\x1b\\');
+  }
+  // Two-byte Fe escapes (not CSI/OSC introducers).
+  if (partial.length === 2) {
+    const code = partial.charCodeAt(1);
+    return code >= 0x40 && code <= 0x5f;
+  }
+  const last = partial.charCodeAt(partial.length - 1);
+  return last >= 0x40 && last <= 0x7e;
+}
+
+/**
+ * Prefer not to cut mid CSI/OSC escape sequence. Returns an index in
+ * `(0, limit]` for a partial take; if the whole limit is an incomplete
+ * sequence, returns `limit` so a single giant incomplete ESC cannot stall
+ * the drain forever.
+ */
+export function safeOutputSplitIndex(data: string, limit: number): number {
+  if (limit <= 0) return 0;
+  if (data.length <= limit) return data.length;
+  const split = limit;
+  const esc = data.lastIndexOf('\x1b', split - 1);
+  if (esc === -1 || esc < split - 64) {
+    return split;
+  }
+  const partial = data.slice(esc, split);
+  if (isCompleteEscapePrefix(partial)) {
+    return split;
+  }
+  // Incomplete escape — cut before ESC when possible.
+  if (esc === 0) {
+    return split;
+  }
+  return esc;
+}
+
 function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
   let remaining = limit;
   let data = '';
@@ -420,13 +474,17 @@ function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
       continue;
     }
 
-    data += chunk.data.slice(0, remaining);
+    const take = safeOutputSplitIndex(chunk.data, remaining);
+    if (take <= 0) {
+      break;
+    }
+    data += chunk.data.slice(0, take);
     if (chunk.onParsed) parsedCallbacks.push(chunk.onParsed);
     entry.chunks[entry.chunkIndex] = {
       ...chunk,
-      data: chunk.data.slice(remaining),
+      data: chunk.data.slice(take),
     };
-    entry.queuedChars -= remaining;
+    entry.queuedChars -= take;
     remaining = 0;
   }
 
@@ -516,12 +574,22 @@ function writeSinkChunk(
   data: string,
   onParsed?: TerminalOutputParsedCallback,
 ): void {
-  if (!onParsed || terminal.write.length < 2) {
+  if (!onParsed) {
     terminal.write(data);
-    onParsed?.();
     return;
   }
-  terminal.write(data, onParsed);
+  let settled = false;
+  const done = (): void => {
+    if (settled) return;
+    settled = true;
+    onParsed();
+  };
+  // Prefer xterm's post-parse callback when the sink accepts a 2nd argument.
+  // Arity-1 sinks (or mocks that drop the callback) settle synchronously.
+  terminal.write(data, done);
+  if (terminal.write.length < 2) {
+    done();
+  }
 }
 
 function takeNextDrainableEntry(): QueueEntry | null {

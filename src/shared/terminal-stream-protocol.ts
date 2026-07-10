@@ -1,10 +1,11 @@
 // Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
 // Copyright (c) 2026 Lovecast Inc. — MIT License
-// See third_party/licenses/orca-MIT.txt. Nexus changes: standalone shared module with attribution header; no PTY/IPC wiring.
+// See third_party/licenses/orca-MIT.txt. Nexus changes: standalone shared
+// module with attribution header and Nexus statement style; no PTY/IPC wiring.
 
-const TERMINAL_STREAM_KIND = 0x74
-const TERMINAL_STREAM_VERSION = 1
-const HEADER_BYTES = 16
+const TERMINAL_STREAM_KIND = 0x74;
+const TERMINAL_STREAM_VERSION = 1;
+const HEADER_BYTES = 16;
 
 export enum TerminalStreamOpcode {
   Output = 1,
@@ -18,71 +19,78 @@ export enum TerminalStreamOpcode {
   Subscribe = 9,
   Unsubscribe = 10,
   SnapshotRequest = 11,
-  Metadata = 12
+  Metadata = 12,
 }
 
 export type TerminalStreamFrame = {
-  opcode: TerminalStreamOpcode
-  streamId: number
-  seq: number
-  payload: Uint8Array
+  opcode: TerminalStreamOpcode;
+  streamId: number;
+  seq: number;
+  payload: Uint8Array;
+};
+
+export function encodeTerminalStreamFrame(
+  frame: TerminalStreamFrame,
+): Uint8Array {
+  const out = new Uint8Array(HEADER_BYTES + frame.payload.length);
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  view.setUint8(0, TERMINAL_STREAM_KIND);
+  view.setUint8(1, TERMINAL_STREAM_VERSION);
+  view.setUint8(2, frame.opcode);
+  view.setUint8(3, 0);
+  view.setUint32(4, frame.streamId, true);
+  const seq = Math.max(0, Math.floor(frame.seq));
+  view.setUint32(8, Math.floor(seq / 0x100000000), true);
+  view.setUint32(12, seq >>> 0, true);
+  out.set(frame.payload, HEADER_BYTES);
+  return out;
 }
 
-export function encodeTerminalStreamFrame(frame: TerminalStreamFrame): Uint8Array {
-  const out = new Uint8Array(HEADER_BYTES + frame.payload.length)
-  const view = new DataView(out.buffer, out.byteOffset, out.byteLength)
-  view.setUint8(0, TERMINAL_STREAM_KIND)
-  view.setUint8(1, TERMINAL_STREAM_VERSION)
-  view.setUint8(2, frame.opcode)
-  view.setUint8(3, 0)
-  view.setUint32(4, frame.streamId, true)
-  const seq = Math.max(0, Math.floor(frame.seq))
-  view.setUint32(8, Math.floor(seq / 0x100000000), true)
-  view.setUint32(12, seq >>> 0, true)
-  out.set(frame.payload, HEADER_BYTES)
-  return out
-}
-
-export function decodeTerminalStreamFrame(bytes: Uint8Array): TerminalStreamFrame | null {
+export function decodeTerminalStreamFrame(
+  bytes: Uint8Array,
+): TerminalStreamFrame | null {
   if (bytes.length < HEADER_BYTES) {
-    return null
+    return null;
   }
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  if (view.getUint8(0) !== TERMINAL_STREAM_KIND || view.getUint8(1) !== TERMINAL_STREAM_VERSION) {
-    return null
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (
+    view.getUint8(0) !== TERMINAL_STREAM_KIND ||
+    view.getUint8(1) !== TERMINAL_STREAM_VERSION
+  ) {
+    return null;
   }
-  const opcode = view.getUint8(2)
+  const opcode = view.getUint8(2);
   if (!isTerminalStreamOpcode(opcode)) {
-    return null
+    return null;
   }
-  const high = view.getUint32(8, true)
-  const low = view.getUint32(12, true)
+  const high = view.getUint32(8, true);
+  const low = view.getUint32(12, true);
   return {
     opcode,
     streamId: view.getUint32(4, true),
     seq: high * 0x100000000 + low,
-    payload: bytes.slice(HEADER_BYTES)
-  }
+    payload: bytes.slice(HEADER_BYTES),
+  };
 }
 
 export function encodeTerminalStreamJson(value: unknown): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(value))
+  return new TextEncoder().encode(JSON.stringify(value));
 }
 
 export function decodeTerminalStreamJson<T>(payload: Uint8Array): T | null {
   try {
-    return JSON.parse(new TextDecoder().decode(payload)) as T
+    return JSON.parse(new TextDecoder().decode(payload)) as T;
   } catch {
-    return null
+    return null;
   }
 }
 
 export function encodeTerminalStreamText(value: string): Uint8Array {
-  return new TextEncoder().encode(value)
+  return new TextEncoder().encode(value);
 }
 
 export function decodeTerminalStreamText(payload: Uint8Array): string {
-  return new TextDecoder().decode(payload)
+  return new TextDecoder().decode(payload);
 }
 
 function isTerminalStreamOpcode(value: number): value is TerminalStreamOpcode {
@@ -99,5 +107,5 @@ function isTerminalStreamOpcode(value: number): value is TerminalStreamOpcode {
     value === TerminalStreamOpcode.Unsubscribe ||
     value === TerminalStreamOpcode.SnapshotRequest ||
     value === TerminalStreamOpcode.Metadata
-  )
+  );
 }

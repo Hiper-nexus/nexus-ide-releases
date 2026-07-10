@@ -13,6 +13,7 @@ import { getActiveWorkspacePath } from '../state/active-workspace';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
 import {
   discardTerminalOutput,
+  flushTerminalOutput,
   writeTerminalOutput,
 } from './terminal-output-scheduler';
 
@@ -521,7 +522,12 @@ export function markResumeOnSpawn(paneId: string): void {
 }
 
 export function focusHost(paneId: string): void {
-  hosts.get(paneId)?.term.focus();
+  const host = hosts.get(paneId);
+  if (!host || host.disposed) return;
+  // Promote any background backlog immediately so the focused pane is not
+  // stuck behind the cooperative drain of other hidden panes.
+  flushTerminalOutput(host.term);
+  host.term.focus();
 }
 
 /**
@@ -537,6 +543,7 @@ export function focusHost(paneId: string): void {
 export function scrollPaneToBottom(paneId: string, sendJumpKey = false): void {
   const host = hosts.get(paneId);
   if (!host || host.disposed || !host.opened) return;
+  flushTerminalOutput(host.term);
   host.term.scrollToBottom();
   if (sendJumpKey && host.sessionId) {
     window.nexus.pty.write(host.sessionId, '\x1b[1;5F');

@@ -12,6 +12,7 @@ import {
   getTerminalOutputSchedulerDebugSnapshot,
   removeTransientCursorShowSequences,
   resetTerminalOutputSchedulerForTests,
+  safeOutputSplitIndex,
   setTerminalOutputSchedulerDebug,
   writeTerminalOutput,
   type TerminalOutputSink,
@@ -210,5 +211,49 @@ describe('terminal output scheduler', () => {
     writeTerminalOutput(fg, 'key', { foreground: true, latencySensitive: true });
     expect(fg.written).toEqual(['key']);
     expect(bg.write).not.toHaveBeenCalled();
+  });
+
+  it('flushTerminalOutput drains background backlog (focus promotion path)', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+    writeTerminalOutput(terminal, 'hidden-a', { foreground: false });
+    writeTerminalOutput(terminal, 'hidden-b', { foreground: false });
+    expect(terminal.write).not.toHaveBeenCalled();
+    // focusHost / scrollPaneToBottom call flush before focus.
+    flushTerminalOutput(terminal);
+    expect(terminal.written.join('')).toBe('hidden-ahidden-b');
+    expect(getQueuedChars(terminal)).toBe(0);
+  });
+
+  it('safeOutputSplitIndex avoids cutting mid CSI sequence', () => {
+    const data = 'abc\x1b[31mRED\x1b[0m';
+    // Limit falls inside "\x1b[31m" (starts at index 3).
+    const idx = safeOutputSplitIndex(data, 5);
+    expect(idx).toBe(3); // cut before ESC
+    expect(data.slice(0, idx)).toBe('abc');
+    // Complete sequences can be cut after the final byte.
+    const complete = '\x1b[31m';
+    expect(safeOutputSplitIndex(complete + 'x', complete.length)).toBe(
+      complete.length,
+    );
+  });
+
+  it('chunking never splits a CSI mid-sequence in drained output', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+    // Many color spans; chunk size is 16 KiB — force multi-chunk drain.
+    const unit = '\x1b[31mX\x1b[0m';
+    const payload = unit.repeat(3000);
+    writeTerminalOutput(terminal, payload, { foreground: false });
+    for (let i = 0; i < 80; i++) {
+      vi.advanceTimersByTime(16);
+    }
+    const joined = terminal.written.join('');
+    expect(joined).toBe(payload);
+    // No write ended with a bare ESC or open CSI (would corrupt next chunk).
+    for (const piece of terminal.written) {
+      expect(piece.endsWith('\x1b')).toBe(false);
+      expect(/\x1b\[[0-9;]*$/.test(piece)).toBe(false);
+    }
   });
 });

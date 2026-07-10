@@ -330,6 +330,9 @@ export function createMainWindow(): BrowserWindow {
           if (emptyChecks < MOUNT_EMPTY_CHECKS) return;
           clearInterval(poll);
           if (mountReloads >= MAX_MOUNT_RELOADS) {
+            // Same recovery surface as crash-loop exhaustion; mark so the next
+            // did-finish-load (user "Recarregar") resets the crash breaker too.
+            recoveryScreenShown = true;
             showRecoveryScreen(wc);
             return;
           }
