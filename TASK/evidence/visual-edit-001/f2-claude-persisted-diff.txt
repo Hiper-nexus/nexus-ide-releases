@@ -1,0 +1,25 @@
+diff --git a/src/App.jsx b/src/App.jsx
+index d582aa0..64544ea 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -5,7 +5,7 @@ import { WeeklyActivityChart } from './components/WeeklyActivityChart.jsx';
+ export function App() {
+   return (
+     <main style={{ fontFamily: 'sans-serif', padding: 40, color: '#16a34a', backgroundImage: 'linear-gradient(135deg, #ecfdf5, #ffffff)' }}>
+-      <h1>Painel de Perfil</h1>
++      <h1 style={{ paddingBottom: 10 }}>Painel de Perfil</h1>
+       <section className="profile-card" style={{ maxWidth: 420, padding: 24, border: '1px solid #ddd', borderRadius: 8 }}>
+         <p>Edite seus dados e salve as alterações.</p>
+         <SaveButton label="Salvar alterações" />
+diff --git a/src/components/WeeklyActivityChart.jsx b/src/components/WeeklyActivityChart.jsx
+index d5b4430..051d9d3 100644
+--- a/src/components/WeeklyActivityChart.jsx
++++ b/src/components/WeeklyActivityChart.jsx
+@@ -66,6 +66,7 @@ export function WeeklyActivityChart() {
+         viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`}
+         role="img"
+         aria-label={`Acessos por dia: ${DAYS.map((d, i) => `${d} ${VALUES[i]}`).join(', ')}`}
++        style={{ paddingTop: 28, backgroundColor: '#0d9488' }}
+       >
+         <line
+           x1={startX - 14}

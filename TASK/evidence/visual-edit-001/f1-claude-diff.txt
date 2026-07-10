@@ -1,0 +1,26 @@
+diff --git a/src/App.jsx b/src/App.jsx
+index 3a31f49..9abd1d1 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -3,7 +3,7 @@ import { SaveButton } from './components/SaveButton.jsx';
+ 
+ export function App() {
+   return (
+-    <main style={{ fontFamily: 'sans-serif', padding: 40 }}>
++    <main style={{ fontFamily: 'sans-serif', padding: 40, color: '#16a34a', backgroundImage: 'linear-gradient(135deg, #ecfdf5, #ffffff)' }}>
+       <h1>Painel de Perfil</h1>
+       <section className="profile-card" style={{ maxWidth: 420, padding: 24, border: '1px solid #ddd', borderRadius: 8 }}>
+         <p>Edite seus dados e salve as alterações.</p>
+diff --git a/src/components/SaveButton.jsx b/src/components/SaveButton.jsx
+index 3689d9e..4ce2206 100644
+--- a/src/components/SaveButton.jsx
++++ b/src/components/SaveButton.jsx
+@@ -6,7 +6,7 @@ export function SaveButton({ label }) {
+       id="save-cta"
+       className="save-cta-button"
+       style={{
+-        background: '#2f6ae0',
++        background: '#16a34a',
+         color: '#fff',
+         border: 'none',
+         padding: '10px 18px',

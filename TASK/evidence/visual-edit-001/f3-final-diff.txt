@@ -1,0 +1,50 @@
+diff --git a/app/layout.jsx b/app/layout.jsx
+index 826865d..ced4837 100644
+--- a/app/layout.jsx
++++ b/app/layout.jsx
+@@ -4,8 +4,8 @@ export const metadata = { title: 'Next Demo — VISUAL-EDIT-001 F3' };
+ 
+ export default function RootLayout({ children }) {
+   return (
+-    <html data-nexus-id="82deea25f1" lang="pt-BR">
+-      <body data-nexus-id="9d4ab79344" className="bg-slate-50 text-slate-900">{children}</body>
++    <html lang="pt-BR">
++      <body className="bg-slate-50 text-slate-900">{children}</body>
+     </html>
+   );
+ }
+diff --git a/app/page.jsx b/app/page.jsx
+index 6d756bc..12d8dea 100644
+--- a/app/page.jsx
++++ b/app/page.jsx
+@@ -1,15 +1,21 @@
+ export default function Home() {
+   return (
+-    <main data-nexus-id="82649b4f35" className="mx-auto max-w-xl px-10 pb-10 pt-[100px]">
+-      <h1 data-nexus-id="8381e0c578" className="text-2xl font-bold">Cards do Painel</h1>
+-      <section data-nexus-id="b1ce9c542f" className="mt-6 grid gap-4">
+-        <article data-nexus-id="bfec94e683" className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
+-          <h2 data-nexus-id="992355af8b" className="font-semibold">Card Alfa</h2>
+-          <p data-nexus-id="66f272f8bb" className="text-sm text-slate-500">Primeiro card do painel.</p>
++    <main className="mx-auto max-w-xl px-10 pb-10 pt-[100px]">
++      <h1 className="text-2xl font-bold">Cards do Painel</h1>
++      <section className="mt-6 grid gap-4">
++        <article
++
++          className="rounded-lg border border-amber-200 p-4 shadow-sm bg-[#ecfdf5] pt-[32px] font-medium"
++          key="nx-bfec94e683">
++          <h2 className="font-semibold">Card Prime</h2>
++          <p className="text-sm text-slate-500">Primeiro card do painel.</p>
+         </article>
+-        <article data-nexus-id="eae14f2e48" className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+-          <h2 data-nexus-id="135ccb5b5e" className="font-semibold">Card Beta</h2>
+-          <p data-nexus-id="a2225f3fe3" className="text-sm text-slate-500">Segundo card do painel.</p>
++        <article
++
++          className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
++          key="nx-eae14f2e48">
++          <h2 className="font-semibold">Card Beta</h2>
++          <p className="text-sm text-slate-500">Segundo card do painel.</p>
+         </article>
+       </section>
+     </main>

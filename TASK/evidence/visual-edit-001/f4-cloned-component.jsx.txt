@@ -1,0 +1,25 @@
+const BASE_CLASS = 'max-w-[240px] px-6 py-8';
+
+/**
+ * @param {{ title?: string, description?: string, linkLabel?: string, linkHref?: string, className?: string }} props
+ */
+export default function ExampleDomain({
+  title = 'Example Domain',
+  description = 'This domain is for use in documentation examples without needing permission. Avoid use in operations.',
+  linkLabel = 'Learn more',
+  linkHref = '#',
+  className = '',
+}) {
+  return (
+    <section className={[BASE_CLASS, className].filter(Boolean).join(' ')}>
+      <h1 className="text-2xl font-bold leading-snug text-slate-900">{title}</h1>
+      <p className="mt-4 text-sm text-slate-600">{description}</p>
+      <a
+        href={linkHref}
+        className="mt-4 inline-block text-sm text-blue-600 underline underline-offset-2 hover:text-blue-700"
+      >
+        {linkLabel}
+      </a>
+    </section>
+  );
+}

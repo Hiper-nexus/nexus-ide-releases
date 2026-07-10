@@ -1,33 +1,74 @@
 # Changelog
 
-## 0.12.0 — Prova Realtime e roteamento de áudio
+## 0.12.0 — Contexto verificável e runtime seguro por projeto
 
 Data: 2026-07-10
 
-Release de confiabilidade do Jarvis Realtime: o diagnóstico deixa de chamar
-“funcionando” quando só o provider respondeu e passa a exigir prova de que o
-renderer agendou a reprodução; a saída de áudio selecionada deixa de cair em
-silêncio no padrão do sistema.
+Esta versão transforma o Nexus em um ambiente orientado a contexto verificável:
+agentes recebem o modelo do projeto antes de codar, efeitos ficam vinculados à
+revisão de contexto e a conclusão depende de evidência independente. O runtime
+e os dados passam a ser isolados por projeto/checkout, com diagnóstico de
+prontidão e fundação explícita para operação em múltiplos computadores.
 
 ### Melhorias
 
-- Handshake correlacionado main → preload → renderer → main: cada PCM possui
-  delivery id e só o ACK `started` da entrega correta confirma o diagnóstico.
-- Diagnóstico Live reconecta antes da frase de prova, isolando a resposta atual
-  de qualquer áudio atrasado de uma conversa anterior.
-- A seleção de saída de áudio passa a ser explícita para Classic e Realtime;
-  saída física indisponível gera erro legível, enquanto “Padrão do sistema”
-  continua seguindo o macOS.
-- Updater escolhe o ZIP Squirrel compatível com a arquitetura em execução
-  (`darwin-arm64` ou `darwin-x64`).
-- Métricas de latência carregam o token de turno e descartam a amostra
-  interrompida, sem misturar barge-in com a resposta seguinte.
+- Live Design no browser pane: seleção visual com contexto DOM/framework,
+  candidatos `arquivo:linha`, screenshot, envio ao agente de missão, preview
+  otimista de estilos, detecção de dev server, breakpoints e clonagem de
+  referências externas.
+- O motor de write-back visual determinístico inclui edição byte-cirúrgica,
+  CSS→Tailwind, undo/redo por hash, journal de recuperação, CAS e cleanup dos
+  IDs efêmeros. Na distribuição 0.12 ele permanece fail-closed desativado;
+  seleção, preview e envio ao agente continuam disponíveis. A ativação direta
+  fica reservada a desenvolvimento até concluir a validação de produção.
+- Harness de contexto nativo com ingestão do repositório, conhecimento do
+  domínio, contratos congelados, `contextRevision`, sensores, PREVC,
+  attestations e Review Council com autor diferente do revisor.
+- Efeitos de agentes vinculados a projeto, checkout, missão e revisão de
+  contexto; missões não podem virar `done` por um caminho paralelo sem workflow
+  completo, evidência e handoff consistente com o diff atual.
+- Runtime SQLite separado por projeto, stores escopados por construção e modo
+  seguro somente leitura quando a persistência não pode ser garantida.
+- Identidade portátil de projeto v2, registro local de checkout, worktrees
+  isolados e merge queue com recuperação de crash e validação antes da fusão.
+- Nexus Doctor com relatório estruturado de blockers, warnings e remediação
+  para Git, manifesto, SQLite, contexto, sensores, sandbox, providers,
+  filesystem e backend multi-PC.
+- Cron compartilhado com lease fail-closed e contratos de sync otimista/CAS;
+  rotas do control plane e guias de implantação ficam prontas para um backend
+  externo, sem transformar ausência de infraestrutura em sucesso silencioso.
+- Jarvis Live ganhou ownership por janela e escopo, PTT/wake isolados,
+  continuidade correlacionada por turno/tool e descarte de callbacks tardios.
+- Visão atual usa AX/OCR limitado e redação unificada de segredos antes de
+  prompts, narração e resultados MCP; controles sensíveis não viram alvos.
+- Release pipeline reproduzível para macOS arm64/x64 e Linux x64, com smoke do
+  pacote real, SBOM, checksums e verificação de nativos. Windows permanece como
+  preview assinado enquanto não houver sandbox de produção.
+- Artefatos macOS incluem app, DMG e ZIP verificados; app/DMG são assinados,
+  notarizados e stapled, e o ZIP é validado pela aplicação notarizada interna.
 
 ### Correções
 
-- PCM recebido, playback cancelado e erro de WebAudio não conseguem mais gerar
-  falso positivo “Realtime confirmado”.
-- ACKs velhos, duplicados ou sem delivery id válido são descartados.
+- Eventos sintéticos, replay e gerações antigas do picker não provocam
+  write-back; conteúdo de página é podado/redigido e chega ao agente como dado
+  não confiável, e bytes de controle de terminal são recusados.
+- Operações de Git e filesystem bloqueiam configurações locais perigosas,
+  traversal, troca por symlink e drift de descritor entre autorização e uso.
+- Stores legados de squads/contas deixam de confirmar escrita quando o banco
+  está degradado; falhas de persistência entram em modo seguro explícito.
+- O renderer não hidrata estado de projeto antes da autorização do workspace e
+  descarta respostas atrasadas depois de troca/fechamento de projeto.
+- Handoffs carregam IDs de evidência e identidade do diff; uma alteração de
+  `baseSha`, `headSha` ou `diffHash` invalida revisão antiga.
+- O diagnóstico Realtime só fica verde após o renderer iniciar o playback do
+  PCM correlacionado; ACKs velhos, duplicados ou cancelados são descartados.
+- A saída de áudio escolhida é aplicada de forma explícita em Classic e Live;
+  dispositivo indisponível gera erro visível, sem fallback silencioso.
+- O updater seleciona somente o ZIP Squirrel da arquitetura do Mac e fica
+  `unsupported` em Linux/Windows enquanto não existir updater próprio, evitando
+  instalar payload `darwin-x64` em outra plataforma.
+- Wake/PTT, eventos Live, transcript, memória, conversa, custos e uso deixam de
+  atravessar janelas, projetos ou checkouts por estado global.
 
 ## 0.11.0 — Voz destravada e delegação segura (Fase 0 do refactor Jarvis)
 

@@ -1101,7 +1101,10 @@ As subseções abaixo detalham cada lane do pipeline com suas assinaturas, const
 
 #### Wake engine + modelos (`wake-engine.ts` / `wake-models.ts`)
 
-**Dependência externa: modelos ONNX openWakeWord v0.5.1 (Apache-2.0), bundled como base64 em `wake-models.ts`.**
+**Dependência externa:** pipeline ONNX pinado do repositório
+`Soulcreek2/speechkit-wakeword-models` (Apache-2.0), bundled como base64 em
+`wake-models.ts`. O head `hey_jarvis` é o modelo SpeechKit permissivo; o modelo
+de frase openWakeWord v0.5.1, licenciado CC BY-NC-SA, não é distribuído.
 
 `wake-models.ts` exporta três constantes base64 — cada uma é um arquivo `.onnx` completo carregado em memória:
 
@@ -1109,14 +1112,14 @@ As subseções abaixo detalham cada lane do pipeline com suas assinaturas, const
 // wake-models.ts (grep "^export const")
 export const MELSPEC_ONNX_B64 =   // melspectrogram.onnx
 export const EMBEDDING_ONNX_B64 = // embedding_model.onnx
-export const HEY_JARVIS_ONNX_B64 = // hey_jarvis_v0.1.onnx
+export const HEY_JARVIS_ONNX_B64 = // SpeechKit hey_jarvis.onnx
 ```
 
 Pipeline de inferência — port fiel do `openwakeword/utils.py` oficial, rodando em `onnxruntime-node` no processo main. Três modelos em cascata:
 
 1. **melspectrogram.onnx** — entrada: `[1, CTX+CHUNK]` float32 em escala int16. CTX = 480 samples de contexto do chunk anterior (sem isso saem ~5 frames em vez de ~8, desalinhando os scores).
 2. **embedding_model.onnx** — janela de 76 mel frames → embedding de 96 dims.
-3. **hey_jarvis_v0.1.onnx** — últimos 16 embeddings → score float32.
+3. **SpeechKit hey_jarvis.onnx** — últimos 16 embeddings → score float32.
 
 Parâmetros fixos:
 
@@ -3369,7 +3372,7 @@ Ordem de porte recomendada. Cada bloco depende do anterior — construir fora de
 
 | Dependência | Para quê | Onde entra |
 |---|---|---|
-| Modelos ONNX openWakeWord v0.5.1 (`melspectrogram`, `embedding_model`, `hey_jarvis_v0.1`), Apache-2.0 | Wake word detection | Bundled base64 em `wake-models.ts` (§6.1) |
+| SpeechKit wake-word models (`melspectrogram`, `embedding_model`, `hey_jarvis`), commit e checksums pinados, Apache-2.0 | Wake word detection | Bundled base64 em `wake-models.ts`; atribuição em `THIRD_PARTY_NOTICES.md` (§6.1) |
 | `onnxruntime-node` | Rodar os ONNX no main | `wake-engine.ts` (§6.1) |
 | STT provider + key: `GROQ_API_KEY` e/ou `OPENAI_API_KEY` | Transcrição cloud | `stt-service.ts` (§6.3) |
 | whisper.cpp binário + modelo ggml (opcional) | STT local keyless | `~/.nexus/bin/`, `~/.nexus/models/whisper/` (§6.3) |

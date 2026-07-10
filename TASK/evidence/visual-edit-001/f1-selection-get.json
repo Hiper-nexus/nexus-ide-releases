@@ -1,0 +1,126 @@
+{
+  "ok": true,
+  "tool": "nexus_design_selection_get",
+  "result": {
+    "paneId": "pane-9ea1f74c",
+    "designModeActive": true,
+    "selection": {
+      "ref": "e1",
+      "tag": "button",
+      "id": "save-cta",
+      "classes": [
+        "save-cta-button"
+      ],
+      "selector": "#save-cta",
+      "rect": {
+        "x": 73,
+        "y": 202.875,
+        "width": 151.90625,
+        "height": 37
+      },
+      "text": "Salvar alterações",
+      "outerHtml": "<button id=\"save-cta\" class=\"save-cta-button\" style=\"background: rgb(47, 106, 224); color: rgb(255, 255, 255); border-width: medium; border-style: none; border-color: currentcolor; border-image: none; padding: 10px 18px; border-radius: 6px; font-size: 15px; cursor: pointer;\">Salvar alterações</button>",
+      "attributes": {
+        "id": "save-cta",
+        "class": "save-cta-button",
+        "style": "background: rgb(47, 106, 224); color: rgb(255, 255, 255); border-width: medium; border-style: none; border-color: currentcolor; border-image: none; padding: 10px 18px; border-radius: 6px; font-size: 15px; cursor: pointer;"
+      },
+      "computedStyles": {
+        "display": "inline-block",
+        "position": "static",
+        "top": "auto",
+        "right": "auto",
+        "bottom": "auto",
+        "left": "auto",
+        "z-index": "auto",
+        "width": "151.906px",
+        "height": "37px",
+        "margin-top": "0px",
+        "margin-right": "0px",
+        "margin-bottom": "0px",
+        "margin-left": "0px",
+        "padding-top": "10px",
+        "padding-right": "18px",
+        "padding-bottom": "10px",
+        "padding-left": "18px",
+        "flex-direction": "row",
+        "justify-content": "normal",
+        "align-items": "normal",
+        "gap": "normal",
+        "grid-template-columns": "none",
+        "grid-template-rows": "none",
+        "font-family": "Arial",
+        "font-size": "15px",
+        "font-weight": "400",
+        "line-height": "normal",
+        "letter-spacing": "normal",
+        "text-align": "center",
+        "color": "rgb(255, 255, 255)",
+        "background-color": "rgb(47, 106, 224)",
+        "background-image": "none",
+        "border-radius": "6px",
+        "border-top-width": "0px",
+        "border-top-style": "none",
+        "border-top-color": "rgb(255, 255, 255)",
+        "box-shadow": "none",
+        "opacity": "1",
+        "overflow": "visible",
+        "transform": "none"
+      },
+      "url": "http://localhost:5199/",
+      "frameworkHints": {
+        "framework": "react",
+        "componentName": "SaveButton",
+        "ownerChain": [
+          "SaveButton",
+          "App"
+        ],
+        "propKeys": [
+          "label"
+        ]
+      }
+    },
+    "candidates": [
+      {
+        "file": "src/components/SaveButton.jsx",
+        "line": 3,
+        "score": 142,
+        "matched": [
+          "component:SaveButton",
+          "id:save-cta",
+          "class:save-cta-button",
+          "filename:savebutton"
+        ]
+      },
+      {
+        "file": "src/App.jsx",
+        "line": 4,
+        "score": 130,
+        "matched": [
+          "usage:SaveButton",
+          "component:App",
+          "text:\"Salvar alterações\"",
+          "filename:app"
+        ]
+      },
+      {
+        "file": "src/main.jsx",
+        "line": 5,
+        "score": 15,
+        "matched": [
+          "usage:App"
+        ]
+      }
+    ],
+    "screenshot": {
+      "paneId": "pane-9ea1f74c",
+      "path": "/Users/cleofasrocha/.nexus/browser-shots/1783707221293-pane-9ea1f74c.png",
+      "width": 168,
+      "height": 54,
+      "url": "http://localhost:5199/",
+      "title": "React Demo — VISUAL-EDIT-001",
+      "capturedAt": 1783707221293
+    }
+  },
+  "userAuthorized": true
+}

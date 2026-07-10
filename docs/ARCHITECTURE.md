@@ -214,6 +214,7 @@ Main hospeda MCP server (@modelcontextprotocol/sdk); cada CLI-agente conecta via
 | Todos (1) | `nexus_todo_manager` |
 | Roteamento (1) | `nexus_route_task` |
 | Preview/Browser/Perf (11) | `nexus_preview_start`, `nexus_preview_stop`, `nexus_browser_open`, `nexus_browser_navigate`, `nexus_browser_screenshot`, `nexus_browser_read`, `nexus_browser_inspect`, `nexus_browser_click`, `nexus_browser_fill`, `nexus_browser_wait`, `nexus_perf_snapshot` |
+| Design (1) | `nexus_design_selection_get` — seleção visual redigida, hints de framework, candidatos de código e screenshot opcional |
 
 Browser panes usam um preload isolado e um protocolo fechado: `browser_read`
 retorna texto visível limitado e refs opacas (`e1`, `e2`), e as ações aceitam
@@ -222,6 +223,32 @@ de inputs/storage não entram no resultado. Toda navegação e redirect é
 revalidada contra IPs privados/link-local/metadata; apenas origins de preview
 emitidas pelo próprio Nexus são confiadas automaticamente, e outros destinos
 privados exigem confirmação exata por host+porta.
+
+### E.2.1 Live Design
+
+O picker roda no preload sandboxed do browser pane, em ShadowRoot fechado.
+Somente gestos nativos (`Event.isTrusted`) são aceitos; cada ativação recebe
+uma geração UUID emitida pelo main, eventos repetidos ou antigos são
+descartados e a sessão é limpa em navegação, troca de projeto ou fechamento.
+
+O contexto combina DOM/estilos limitados, hints best-effort de React/Vue/
+Svelte/Angular e busca heurística no workspace. Valores de form controls,
+subárvores sensíveis, tokens e credenciais são podados/redigidos. Conteúdo da
+página é serializado como dado não confiável antes de ser enviado ao agente.
+O pane alvo precisa pertencer ao mesmo projeto/checkout, estar vinculado a uma
+missão com contrato atual e estar no estágio PREVC `execution`.
+
+O motor de write-back direto é opt-in por projeto. `src/main/design/` instrumenta JSX
+com IDs efêmeros pertencentes à sessão, aplica range edits ou mudanças
+estruturais reparsadas, usa CAS SHA-256 e rename atômico, recusa symlinks e
+preserva edições externas. Undo/redo é byte-identical, reorder não cria keys
+persistentes e o shutdown aguarda o cleanup. Uma janela por projeto/checkout
+detém a autoridade, enquanto projetos diferentes podem operar em paralelo.
+Na distribuição empacotada 0.12, `main.ts` registra esse IPC com
+`allowSourceMutation: false`: status informa indisponibilidade, nenhuma
+instrumentação/reorder é registrada e todas as mutações diretas falham
+fechadas. O fluxo seleção → agente e o preview efêmero não dependem desse
+motor e permanecem ativos.
 
 Aliases curtos `pane_*`/`handoff_*` mantidos no registry (namespace duplo) para prompts/agentes que usam nomes não-prefixados. **Sempre permitidos independente de allowlist:** `ToolSearch`, `nexus_handoff_submit`, `nexus_handoff_list`.
 
@@ -306,7 +333,9 @@ Latência v1 cloud: ~2.5–5s ponta-a-ponta (aceitável p/ IDE).
 Além de ditar→injetar, o NexusIDE **fala de volta**: fonte = summary de `handoff_submit` ou última resposta idle (via pane_read); passo de condensação leve → 1–3 frases faláveis; código/texto longo NÃO é falado na íntegra. `voice.speakMode: 'summary'(default)|'full'|'off'`. TTS streaming: 1ª palavra ~500ms.
 
 ### F.4 Decisões v1 pinadas
-✅ Push-to-talk (não wake word) ✅ STT batch (Groq rápido) ✅ tradução no ASR (task=translate) ✅ TTS streaming. ❌ Realtime full-duplex → v2. Wake word (openWakeWord Apache-2.0 / Porcupine comercial) → v2.
+✅ Push-to-talk ✅ STT batch (Groq rápido) ✅ tradução no ASR (task=translate)
+✅ TTS streaming. Wake word offline usa o pipeline SpeechKit/openWakeWord com
+head SpeechKit Apache-2.0 e hashes pinados; nenhum modelo de frase NC é enviado.
 
 ---
 
