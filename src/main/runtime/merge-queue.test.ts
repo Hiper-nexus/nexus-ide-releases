@@ -41,20 +41,45 @@ const GIT_INTEGRATION_TEST_TIMEOUT_MS = 15_000;
 
 vi.setConfig({ testTimeout: GIT_INTEGRATION_TEST_TIMEOUT_MS });
 
-/** Poll until predicate is true; replaces fixed sleeps that flake under load. */
-async function waitUntil(
-  predicate: () => boolean,
-  label: string,
-  timeoutMs = 5_000,
-  intervalMs = 5,
-): Promise<void> {
-  const startedAt = Date.now();
-  while (!predicate()) {
-    if (Date.now() - startedAt > timeoutMs) {
-      throw new Error(`waitUntil(${label}) timed out after ${timeoutMs}ms`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
+/**
+ * One-shot async signal for coordination tests.
+ * Prefer notify/await over polling: under git contention a 5s poll budget
+ * could expire while the suite still has a 15s test timeout remaining.
+ * Timeout uses the same measured GIT_INTEGRATION_TEST_TIMEOUT_MS budget.
+ */
+function createSignal(label: string, timeoutMs = GIT_INTEGRATION_TEST_TIMEOUT_MS): {
+  readonly notified: () => boolean;
+  readonly notify: () => void;
+  readonly wait: () => Promise<void>;
+} {
+  let done = false;
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const wait = async (): Promise<void> => {
+    if (done) return;
+    await Promise.race([
+      promise,
+      new Promise<void>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`signal(${label}) timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]).finally(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    });
+  };
+  return {
+    notified: () => done,
+    notify: () => {
+      if (done) return;
+      done = true;
+      resolve();
+    },
+    wait,
+  };
 }
 
 class MemoryWorktreeStateStore implements WorktreeStateStore {
@@ -276,8 +301,8 @@ describe('MergeQueue', () => {
     const firstGate = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
-    let firstCandidateStarted = false;
     let secondCandidateStarted = false;
+    const firstCandidate = createSignal('firstCandidateStarted');
 
     const first = queue.enqueue({
       scope,
@@ -285,7 +310,7 @@ describe('MergeQueue', () => {
       taskId: 'task-a',
       async validate(context) {
         if (context.phase === 'candidate') {
-          firstCandidateStarted = true;
+          firstCandidate.notify();
           await firstGate;
         }
         return approved(context);
@@ -301,11 +326,10 @@ describe('MergeQueue', () => {
       },
     });
 
-    // Event-driven: wait for first candidate validation to actually start
-    // (fixed 25ms sleeps were too short under worker-pool git contention and
-    // also waste budget when the queue is already ready sooner).
-    await waitUntil(() => firstCandidateStarted, 'firstCandidateStarted');
-    expect(firstCandidateStarted).toBe(true);
+    // Signal when first candidate validation starts (no fixed sleep / poll).
+    // While the first holds the gate, the queue must not start the second.
+    await firstCandidate.wait();
+    expect(firstCandidate.notified()).toBe(true);
     expect(secondCandidateStarted).toBe(false);
     releaseFirst?.();
     await Promise.all([first, second]);
@@ -346,14 +370,15 @@ describe('MergeQueue', () => {
     const gate = new Promise<void>((resolve) => {
       releaseValidation = resolve;
     });
-    const started = new Set<string>();
+    const firstStarted = createSignal('crossProjectFirstCandidate');
+    const secondStarted = createSignal('crossProjectSecondCandidate');
     const first = queue.enqueue({
       scope,
       missionId: 'mission-a',
       taskId: 'task-a',
       async validate(context) {
         if (context.phase === 'candidate') {
-          started.add('first');
+          firstStarted.notify();
           await gate;
         }
         return approved(context);
@@ -365,15 +390,18 @@ describe('MergeQueue', () => {
       taskId: 'task-b',
       async validate(context) {
         if (context.phase === 'candidate') {
-          started.add('second');
+          secondStarted.notify();
           await gate;
         }
         return approved(context);
       },
     });
 
-    await waitUntil(() => started.size === 2, 'bothProjectsCandidateStarted');
-    const projectsValidatedConcurrently = started.size === 2;
+    // Independent project scopes must reach candidate validation concurrently
+    // (not serialized by a global lock). Await both signals, not a wall sleep.
+    await Promise.all([firstStarted.wait(), secondStarted.wait()]);
+    const projectsValidatedConcurrently =
+      firstStarted.notified() && secondStarted.notified();
     releaseValidation?.();
     await Promise.all([first, second]);
 

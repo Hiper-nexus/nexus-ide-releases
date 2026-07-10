@@ -132,9 +132,28 @@ describe('Nexus Doctor real runtime integration', () => {
         candidate === '/usr/bin/sandbox-exec' || fs.existsSync(candidate),
     });
 
-    expect(report.ready).toBe(true);
-    expect(report.blockers).toEqual([]);
-    expect(report.checks.every((check) => check.ok)).toBe(true);
+    // Surface blockers/checks on failure — intermittent load flakes are hard
+    // to diagnose when only `ready === false` is shown.
+    expect(
+      report.blockers,
+      `unexpected blockers: ${JSON.stringify(report.blockers, null, 2)}`,
+    ).toEqual([]);
+    expect(
+      report.ready,
+      `not ready; failed checks: ${JSON.stringify(
+        report.checks.filter((check) => !check.ok),
+        null,
+        2,
+      )}`,
+    ).toBe(true);
+    expect(
+      report.checks.every((check) => check.ok),
+      `checks with ok=false: ${JSON.stringify(
+        report.checks.filter((check) => !check.ok),
+        null,
+        2,
+      )}`,
+    ).toBe(true);
     expect(report.checks.map((check) => check.check)).toHaveLength(9);
   });
 });
