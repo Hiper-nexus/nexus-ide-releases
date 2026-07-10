@@ -19,7 +19,7 @@ CREATE TABLE "cron_schedules" (
 	"definition" jsonb NOT NULL,
 	"definition_hash" text NOT NULL,
 	"status" text NOT NULL,
-	"updated_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "cron_schedules_pk" PRIMARY KEY("account_id","project_id","schedule_id"),
 	CONSTRAINT "cron_schedules_version_check" CHECK ("cron_schedules"."version" > 0),
 	CONSTRAINT "cron_schedules_status_check" CHECK ("cron_schedules"."status" IN ('active', 'paused', 'deleted'))

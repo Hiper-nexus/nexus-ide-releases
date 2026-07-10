@@ -170,7 +170,9 @@ export const cronSchedules = pgTable(
     definition: jsonb('definition').notNull(),
     definitionHash: text('definition_hash').notNull(),
     status: text('status').notNull(),
-    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     primaryKey({
@@ -341,7 +343,7 @@ CREATE TABLE cron_schedules (
   definition jsonb NOT NULL,
   definition_hash text NOT NULL,
   status text NOT NULL CHECK (status IN ('active','paused','deleted')),
-  updated_at timestamp NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT cron_schedules_pk PRIMARY KEY (account_id, project_id, schedule_id));
 CREATE INDEX cron_schedules_project_status_idx
   ON cron_schedules(account_id, project_id, status);
