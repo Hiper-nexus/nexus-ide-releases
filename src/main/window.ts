@@ -11,6 +11,7 @@ import {
   DEFAULT_RENDERER_RECOVERY_WINDOW_MS,
   RendererRecoveryCircuitBreaker,
 } from './reliability/renderer-recovery-circuit-breaker';
+import { handleRenderProcessGone } from './agent-runtime/agent-runtime-bridge';
 
 /**
  * Last-resort recovery screen: if React never mounts after repeated reloads (or
@@ -265,17 +266,24 @@ export function createMainWindow(): BrowserWindow {
   // instead of looping forever.
   wc.on('render-process-gone', (_e, details) => {
     console.warn('[window] renderer morreu:', details.reason);
+    const decision = handleRenderProcessGone({
+      details: {
+        reason: details.reason,
+        exitCode: typeof details.exitCode === 'number' ? details.exitCode : undefined,
+      },
+      circuitBreaker: rendererRecoveryCircuitBreaker,
+      windowDestroyed: win.isDestroyed(),
+      msSinceLaunch: typeof process.uptime === 'function' ? process.uptime() * 1000 : 0,
+    });
     if (win.isDestroyed()) return;
-    if (details.reason === 'clean-exit' || details.reason === 'killed') return;
-    const recovery = rendererRecoveryCircuitBreaker.registerRecoveryAttempt(
-      Date.now(),
-    );
-    if (!recovery.allowed) {
+    if (decision.showRecoveryScreen) {
       recoveryScreenShown = true;
       showRecoveryScreen(wc);
       return;
     }
-    win.reload();
+    if (decision.reload) {
+      win.reload();
+    }
   });
   win.on('unresponsive', () => {
     console.warn('[window] renderer travado (unresponsive)');

@@ -73,6 +73,11 @@ export const ADAPTER_CHANNELS = {
   changed: 'adapter:changed',
 } as const;
 
+export const AGENT_HOOK_CHANNELS = {
+  /** invoke: provider hook status → pane activity (never evidence). */
+  ingestStatus: 'agent-hook:ingestStatus',
+} as const;
+
 export const WINDOW_CHANNELS = {
   /** send: renderer → main. React committed its first frame (fired from a
    * post-commit effect). The main-process mount watchdog waits for this to

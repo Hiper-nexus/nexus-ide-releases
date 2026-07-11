@@ -186,6 +186,11 @@ import { initAutoUpdater } from "./updater";
 import { stopRemoteBridge } from "./remote/remote-bridge";
 import { initSmokeTest } from "./smoke-test";
 import {
+  disposeAgentAwakeService,
+  getAgentAwakeService,
+} from './agent-runtime/agent-runtime-bridge';
+import { registerAgentHookIpc } from './agent-hooks/hook-ipc';
+import {
   authorizeAppQuit,
   closeNeedsConfirmation,
   isAppQuitAuthorized,
@@ -330,6 +335,10 @@ if (!wireDeepLinks()) {
   app.quit();
 } else {
   app.whenReady().then(async () => {
+    // Agent awake: prevent sleep while provider hooks report working.
+    getAgentAwakeService();
+    registerAgentHookIpc();
+
     // On macOS, Chromium's localhost exemption bypasses the TCC dialog, causing
     // CoreAudio to return all-zero PCM even with a getUserMedia grant. Explicitly
     // requesting mic access here forces a real TCC entry before the renderer opens.
@@ -419,6 +428,8 @@ function shutdown(): Promise<void> {
 }
 
 app.on("before-quit", (event) => {
+  disposeAgentAwakeService();
+
   const summary = liveSessionSummary();
   if (
     closeNeedsConfirmation({

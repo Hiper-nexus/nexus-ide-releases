@@ -960,6 +960,62 @@
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
       "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
+      "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
+      "originalSha256": "b595fced409588907f1419af3fb09199e91d583ef9c40bd17f2fbd265f857e37",
+      "originalPath": "(concept) src/main/agent-runtime/agent-runtime-bridge.ts",
+      "nexusPath": "src/main/agent-runtime/agent-runtime-bridge.ts",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "F3 production facade: process-gone, hook activity, awake singleton",
+      "secondaryProvenance": [],
+      "importDate": "2026-07-11",
+      "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
+      "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
+      "originalSha256": "67ef93a2c0589a3a85210b4ccd00934bf0de839aa0a55c632774342b2afe03ed",
+      "originalPath": "(concept) src/main/agent-runtime/agent-runtime-bridge.test.ts",
+      "nexusPath": "src/main/agent-runtime/agent-runtime-bridge.test.ts",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "Integration tests for agent-runtime production seam",
+      "secondaryProvenance": [],
+      "importDate": "2026-07-11",
+      "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
+      "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
+      "originalSha256": "28cffd6498d17ff16344ed1154214bd3ceca8dfafed8e10572f84caec2a16be7",
+      "originalPath": "(concept) src/main/agent-hooks/hook-ingest.ts",
+      "nexusPath": "src/main/agent-hooks/hook-ingest.ts",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "Production hook ingest via agent-hook-listener + publishAgentHookActivity",
+      "secondaryProvenance": [],
+      "importDate": "2026-07-11",
+      "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
+      "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
+      "originalSha256": "d0f9854af9371c3411aa26e0d501c1cc856bfc626e643c1757a2669f29d5458d",
+      "originalPath": "(concept) src/main/agent-hooks/hook-ipc.ts",
+      "nexusPath": "src/main/agent-hooks/hook-ipc.ts",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "IPC registration for agent-hook:ingestStatus",
+      "secondaryProvenance": [],
+      "importDate": "2026-07-11",
+      "status": "imported"
     }
   ]
 }

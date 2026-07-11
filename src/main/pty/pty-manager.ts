@@ -927,6 +927,26 @@ export function orchKillSession(sessionId: string): boolean {
 }
 
 /** Current lifecycle state of a session, or null if it is gone. */
+
+/**
+ * Publish a session activity state from non-PTY sources (e.g. agent hooks).
+ * Fires the same state taps / IPC path as idle/busy transitions so pane-registry
+ * and the renderer observe hook activity. Does NOT authorize evidence.
+ */
+export function publishSessionActivityState(
+  sessionId: string,
+  state: PaneSessionState,
+): boolean {
+  const session = sessions.get(sessionId);
+  if (!session) {
+    fireTaps(stateTaps, sessionId, state);
+    return false;
+  }
+  session.state = state;
+  emitStateChange(session.wc, sessionId, state);
+  return true;
+}
+
 export function getSessionState(sessionId: string): PaneSessionState | null {
   return sessions.get(sessionId)?.state ?? null;
 }
