@@ -93,3 +93,7 @@ graphify-out/
 
 # packaged release artifacts (generated)
 release-assets/
+
+# Local scrape / package scratch
+.firecrawl/
+*.tgz
