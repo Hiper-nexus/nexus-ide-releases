@@ -18,6 +18,10 @@ export default defineConfig({
         'better-sqlite3',
         'uiohook-napi',
         'onnxruntime-node',
+        // ssh2 + optional natives (cpu-features / sshcrypto). Loaded only via
+        // createSsh2Transport() require(); bundling them breaks Linux package.
+        'ssh2',
+        'cpu-features',
       ],
     },
   },

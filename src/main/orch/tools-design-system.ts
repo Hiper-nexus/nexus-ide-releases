@@ -30,6 +30,7 @@ import {
 
 const EVIDENCE_DIR = '.context/nexus/evidence/designmd-ai';
 const DEFAULT_TARGET_PATH = '.context/docs/design-system.md';
+const SORT_OPTIONS = new Set(['popular', 'recent', 'likes', 'downloads']);
 
 function missionIdentity(ctx: AgentGateContext) {
   if (!ctx.sessionId) throw new Error('design system action requires a bound agent session');
@@ -103,7 +104,8 @@ function parseDesignMdFrontmatter(content: string): {
   tags?: string[];
   license?: string;
 } {
-  const trimmed = content.trimStart();
+  const normalized = content.replace(/\r\n/g, '\n');
+  const trimmed = normalized.trimStart();
   if (!trimmed.startsWith('---\n')) return {};
   const end = trimmed.indexOf('\n---', 4);
   if (end === -1) return {};
@@ -184,7 +186,10 @@ const designSystemSearchTool: McpToolDef = {
   handler: async (args, _ctx) => {
     const query = str(args, 'query');
     const tags = strArray(args, 'tags');
-    const sort = str(args, 'sort') as 'popular' | 'recent' | 'likes' | 'downloads' | undefined;
+    const rawSort = str(args, 'sort');
+    const sort = rawSort && SORT_OPTIONS.has(rawSort)
+      ? (rawSort as 'popular' | 'recent' | 'likes' | 'downloads')
+      : undefined;
     const limit = num(args, 'limit');
     const client = createDesignMdApiClient();
     const results = await client.searchKits({
@@ -361,7 +366,8 @@ const designSystemPublishTool: McpToolDef = {
     const slug = str(args, 'slug') ?? frontmatter.slug ?? deriveSlug(ctx.scope, targetPath);
     const name = str(args, 'name') ?? frontmatter.name ?? deriveName(targetPath);
     const description = str(args, 'description') ?? frontmatter.description ?? '';
-    const tags = strArray(args, 'tags').length > 0 ? strArray(args, 'tags') : (frontmatter.tags ?? []);
+    const requestedTags = strArray(args, 'tags');
+    const tags = requestedTags.length > 0 ? requestedTags : (frontmatter.tags ?? []);
     const license = str(args, 'license') ?? frontmatter.license ?? 'mit';
 
     const published = await createDesignMdApiClient().publishKit({

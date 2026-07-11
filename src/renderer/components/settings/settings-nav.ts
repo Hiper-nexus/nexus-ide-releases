@@ -11,6 +11,7 @@ export type SettingsSection =
   | 'providers'
   | 'squads'
   | 'marketplace'
+  | 'design-systems'
   | 'remote'
   | 'agents'
   | 'skills'
@@ -169,6 +170,13 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
         title: 'Marketplace',
         subtitle: 'catálogo · 1 clique',
         aliases: ['marketplace', 'catalog'],
+      },
+      {
+        id: 'design-systems',
+        icon: 'DS',
+        title: 'Design Systems',
+        subtitle: 'designmd.ai · DESIGN.md',
+        aliases: ['design systems', 'designmd', 'design'],
       },
     ],
   },

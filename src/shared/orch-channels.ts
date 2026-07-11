@@ -37,6 +37,7 @@ export const ORCH_CHANNELS = {
   toolsList: 'orch:tools.list',
   pluginsList: 'orch:plugins.list',
   hooksList: 'orch:hooks.list',
+  designSystemsSearch: 'orch:designSystems.search',
 
   // Main → renderer
   paneSpawnRequest: 'orch:pane.spawnRequest',

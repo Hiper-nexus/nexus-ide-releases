@@ -17,6 +17,10 @@ export const DESIGNMD_API_KEY_SECRET = 'external:designmd-api-key';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_RESPONSE_BUDGET = 256 * 1024;
 const MAX_RESPONSE_BUDGET = 1024 * 1024;
+/** Search/tag/list responses can list many kits; give them the same 1 MiB
+ * ceiling used for full kit downloads so the UI's 50-result page does not
+ * trip the byte budget on long descriptions. */
+const LIST_RESPONSE_BUDGET = 1024 * 1024;
 
 const licenseSchema = z.enum([
   'mit',
@@ -242,18 +246,23 @@ export class DesignMdApiClient {
     if (options.limit !== undefined) params.set('limit', String(options.limit));
     const query = params.toString();
     const path = query ? `/kits?${query}` : '/kits';
-    const body = await apiRequest(path, {}, this.#deps);
+    const body = await apiRequest(path, {}, this.#deps, { maxBytes: LIST_RESPONSE_BUDGET });
     return parseKitList(body);
   }
 
   async listPopularKits(limit?: number): Promise<DesignMdKitSummary[]> {
     const params = limit !== undefined ? `?limit=${encodeURIComponent(String(limit))}` : '';
-    const body = await apiRequest(`/kits/popular${params}`, {}, this.#deps);
+    const body = await apiRequest(
+      `/kits/popular${params}`,
+      {},
+      this.#deps,
+      { maxBytes: LIST_RESPONSE_BUDGET },
+    );
     return parseKitList(body);
   }
 
   async listTags(): Promise<string[]> {
-    const body = await apiRequest('/tags', {}, this.#deps);
+    const body = await apiRequest('/tags', {}, this.#deps, { maxBytes: LIST_RESPONSE_BUDGET });
     return parseTagList(body);
   }
 

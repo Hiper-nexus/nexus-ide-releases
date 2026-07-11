@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
@@ -16,6 +17,9 @@ import type { SensorDefinition } from './sensor-broker';
 
 const POLICY_PATH = '.context/config/policy.json';
 const SENSORS_PATH = '.context/config/sensors.json';
+const DESIGN_SYSTEM_SENSOR_SOURCE_NAME = 'design-system-sensor.mjs';
+const DESIGN_SYSTEM_SENSOR_TARGET_DIR = '.context/nexus/sensors';
+const DESIGN_SYSTEM_SENSOR_TARGET = `${DESIGN_SYSTEM_SENSOR_TARGET_DIR}/${DESIGN_SYSTEM_SENSOR_SOURCE_NAME}`;
 const REQUIRED_BUSINESS_DOCS = [
   '.context/docs/project-overview.md',
   '.context/docs/business-model.md',
@@ -194,8 +198,40 @@ const DEFAULT_SENSORS = Object.freeze({
       timeoutMs: 15 * 60_000,
       network: false,
     }),
+    Object.freeze({
+      id: 'design-system',
+      command: Object.freeze(['node', DESIGN_SYSTEM_SENSOR_TARGET]),
+      timeoutMs: 60_000,
+      network: false,
+    }),
   ]),
 });
+
+function designSystemSensorSourceCandidates(): string[] {
+  const candidates: string[] = [];
+  if (typeof process.resourcesPath === 'string') {
+    candidates.push(path.join(process.resourcesPath, DESIGN_SYSTEM_SENSOR_SOURCE_NAME));
+  }
+  try {
+    const here = fileURLToPath(import.meta.url);
+    candidates.push(path.resolve(here, `../../../scripts/${DESIGN_SYSTEM_SENSOR_SOURCE_NAME}`));
+  } catch {
+    // import.meta.url may not be a file URL in some bundled environments.
+  }
+  return candidates;
+}
+
+function resolveDesignSystemSensorSourcePath(): string | undefined {
+  for (const candidate of designSystemSensorSourceCandidates()) {
+    try {
+      const real = fs.realpathSync(candidate);
+      if (fs.lstatSync(real).isFile()) return real;
+    } catch {
+      // Candidate unavailable; try the next one.
+    }
+  }
+  return undefined;
+}
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -292,9 +328,23 @@ export function ensureContextScaffold(
     '.context/nexus/regressions',
     '.context/nexus/attestations',
     '.context/nexus/evidence',
+    DESIGN_SYSTEM_SENSOR_TARGET_DIR,
   ]) {
     ensureWorkspaceDirectory(scope, relative);
   }
+
+  // Copy the bundled design-system sensor into the workspace so the command in
+  // sensors.json is portable and does not depend on the app install path.
+  const sensorSource = resolveDesignSystemSensorSourcePath();
+  if (sensorSource) {
+    const sensorTargetAbsolute = path.join(scope.rootRealPath, DESIGN_SYSTEM_SENSOR_TARGET);
+    try {
+      fs.copyFileSync(sensorSource, sensorTargetAbsolute);
+    } catch {
+      // Best-effort: the sensor command will fail clearly if the file is missing.
+    }
+  }
+
   for (const [relative, value] of [
     [POLICY_PATH, DEFAULT_POLICY],
     [SENSORS_PATH, DEFAULT_SENSORS],

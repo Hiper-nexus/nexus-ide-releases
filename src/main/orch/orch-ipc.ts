@@ -77,6 +77,7 @@ import {
   listInstalledCatalogItems,
   listPluginFiles,
 } from "./catalog";
+import { DesignMdApiClient } from "../design/designmd-api-client";
 import { z } from "zod";
 
 /**
@@ -521,6 +522,28 @@ export function registerOrchIpc(): void {
   ipcMain.handle(ORCH_CHANNELS.toolsList, () => getToolCatalog());
   ipcMain.handle(ORCH_CHANNELS.pluginsList, () => listPluginFiles());
   ipcMain.handle(ORCH_CHANNELS.hooksList, () => listHookHomes());
+
+  const designSystemsSearchSchema = z.object({
+    query: z.string().max(256).optional(),
+    tags: z.array(z.string().min(1).max(128)).max(32).optional(),
+    sort: z.enum(["popular", "recent", "likes", "downloads"]).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+  });
+  ipcMain.handle(ORCH_CHANNELS.designSystemsSearch, async (_event, raw) => {
+    const parsed = designSystemsSearchSchema.safeParse(raw ?? {});
+    if (!parsed.success) {
+      return { ok: false, error: "invalid design systems search request" };
+    }
+    try {
+      const kits = await new DesignMdApiClient().searchKits(parsed.data);
+      return { ok: true, kits };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  });
 
   ipcMain.handle(ORCH_CHANNELS.squadImport, async () => {
     const result = await dialog.showOpenDialog({

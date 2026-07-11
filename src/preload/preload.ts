@@ -572,6 +572,8 @@ const api: NexusApi = {
     listNativeTools: () => ipcRenderer.invoke(ORCH_CHANNELS.toolsList),
     listPluginFiles: () => ipcRenderer.invoke(ORCH_CHANNELS.pluginsList),
     listHookHomes: () => ipcRenderer.invoke(ORCH_CHANNELS.hooksList),
+    searchDesignSystems: (req) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.designSystemsSearch, req),
     onMissionsChanged: (cb) => addListener(missionsChangedListeners, cb),
     onHandoffsChanged: (cb) => addListener(handoffsChangedListeners, cb),
     onTodosChanged: (cb) => addListener(todosChangedListeners, cb),

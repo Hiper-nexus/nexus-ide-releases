@@ -227,6 +227,7 @@ const config: ForgeConfig = {
   packagerConfig: {
     appBundleId: APP_BUNDLE_ID,
     appCategoryType: 'public.app-category.developer-tools',
+    extraResource: ['scripts/design-system-sensor.mjs'],
     // App icon (Matrix-hacker mark): packager appends .icns on macOS. Read at
     // build time from the project root — not shipped inside the asar.
     icon: 'assets/icon',

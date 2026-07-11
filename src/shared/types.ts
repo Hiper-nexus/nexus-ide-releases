@@ -761,6 +761,25 @@ export interface NexusApi {
     listNativeTools(): Promise<NativeToolInfo[]>;
     listPluginFiles(): Promise<InstalledItemInfo[]>;
     listHookHomes(): Promise<InstalledItemInfo[]>;
+    searchDesignSystems(req?: {
+      query?: string;
+      tags?: string[];
+      sort?: 'popular' | 'recent' | 'likes' | 'downloads';
+      limit?: number;
+    }): Promise<
+      | { ok: true; kits: Array<{
+          slug: string;
+          name: string;
+          description: string;
+          author: string;
+          url: string;
+          tags: string[];
+          license: string;
+          downloadCount: number;
+          likeCount: number;
+        }> }
+      | { ok: false; error: string }
+    >;
     onMissionsChanged(cb: (missions: Mission[]) => void): Unsubscribe;
     onHandoffsChanged(cb: (handoffs: Handoff[]) => void): Unsubscribe;
     onTodosChanged(cb: (lists: TodoList[]) => void): Unsubscribe;

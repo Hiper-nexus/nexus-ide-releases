@@ -27,6 +27,9 @@ const DESIGN_SECTIONS = new Map<string, string>([
   ['animation', 'motion'],
 ]);
 
+/** Guard against a huge DESIGN.md turning the context corpus into a fact bomb. */
+const MAX_DESIGN_FACTS = 2048;
+
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 
 function sha256(value: string): string {
@@ -79,18 +82,25 @@ export function extractDesignSystemFacts(
     const line = lines[index];
     const heading = parseSectionHeading(line);
     if (heading) {
+      let matched = false;
       for (const [pattern, domain] of DESIGN_SECTIONS.entries()) {
         if (heading.includes(pattern)) {
           currentDomain = domain;
           currentSection = heading;
+          matched = true;
           break;
         }
+      }
+      if (!matched) {
+        currentDomain = null;
+        currentSection = null;
       }
       continue;
     }
 
     const item = parseListItem(line);
     if (!item || !currentDomain) continue;
+    if (facts.length >= MAX_DESIGN_FACTS) continue;
 
     const claimKey = sanitizeId(`${currentDomain}-${item.key}`);
     const id = `design-fact-${sha256(`${source.locator}\0${claimKey}\0${index}`).slice(0, 24)}`;

@@ -76,7 +76,7 @@ const DOCUMENT_ROOTS = [
   '.context/agents',
   '.context/skills',
 ] as const;
-const ROOT_DOCUMENTS = ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md'] as const;
+const ROOT_DOCUMENTS = ['AGENTS.md', 'CLAUDE.md', 'DESIGN.md', 'GEMINI.md'] as const;
 const STRUCTURED_ROOTS: ReadonlyArray<{
   root: string;
   category: ContextFactCategory;
@@ -292,7 +292,8 @@ export function ingestProjectContext(
         status: 'candidate',
       }),
     );
-    if (path.basename(relative, path.extname(relative)).toLowerCase() === 'design') {
+    const documentBaseName = path.basename(relative, path.extname(relative)).toLowerCase();
+    if (documentBaseName === 'design' || documentBaseName === 'design-system') {
       const designFacts = extractDesignSystemFacts(content, source, hash).map((fact) => ({
         ...fact,
         projectId: scope.projectId,

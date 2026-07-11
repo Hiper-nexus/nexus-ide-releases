@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.13.3 — Design systems shipping + Linux packaging
+
+Data: 2026-07-11
+
+### Melhorias
+
+- Design Systems end-to-end: settings UI (designmd.ai), MCP tools, DESIGN.md
+  reader, context ingestor adapter, sensor script empacotado.
+- `ssh2` como optionalDependency + external no Vite main (desbloqueia package
+  Linux; transporte continua injectável).
+- Spike documentado para sandbox Windows (Job Object + ACL) antes de Setup
+  em produção.
+
+### Correções
+
+- Build Linux não tenta mais bundlar `cpu-features`/`sshcrypto.node`.
+- design-send tolera roots sintéticos ao anexar DESIGN.md.
+
 ## 0.13.2 — Design systems + CI sandbox gate
 
 Data: 2026-07-11

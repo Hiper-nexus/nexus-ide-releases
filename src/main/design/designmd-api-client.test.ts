@@ -146,7 +146,7 @@ describe('DesignMdApiClient', () => {
     const big = 'x'.repeat(512);
     (d.fetchFn as ReturnType<typeof vi.fn>).mockResolvedValue(
       json({ data: [{ ...summaryFixture, description: big }] }, 200, {
-        'content-length': '300000',
+        'content-length': '1500000',
       }),
     );
 

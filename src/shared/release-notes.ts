@@ -13,33 +13,33 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.13.2',
+  version: '0.13.3',
   date: '2026-07-11',
-  codename: 'Design Systems',
+  codename: 'Design Systems Shipping',
   summary:
-    'Importação de design systems (DESIGN.md / designmd.ai) no pipeline de contexto, copiar contexto no Design Mode, e gate de CI estável em runners Linux sem userns.',
+    'Design systems completos (settings + MCP + DESIGN.md), packaging Linux com ssh2 externalizado, e caminho de release macOS via keychain notary local.',
   highlights: [
     {
-      title: 'Design systems no contexto verificável',
+      title: 'Design systems no produto',
       detail:
-        'Lê DESIGN.md do projeto, tools MCP search/get/import via designmd.ai e grava só drafts com review — sem escrever autoridade sem aprovação.',
+        'Catálogo designmd.ai nas definições, import como ContextDraft, DESIGN.md no prompt de design mode e facts no ingest de contexto.',
     },
     {
-      title: 'Design Mode: copiar sem injectar',
+      title: 'SSH e Linux packaging',
       detail:
-        'Dry-run devolve o prompt formatado para a clipboard; o DESIGN.md do workspace entra no contexto enviado ao agent quando existe.',
+        'ssh2 opcional e fora do bundle Vite; build Linux deixa de falhar em nativos cpu-features/sshcrypto.',
     },
     {
-      title: 'Mission Rail e multi-missão (0.13.1)',
+      title: 'Mission Rail e multi-missão',
       detail:
-        'Activity Rail, merge sem kill quando seguro, forge/Linear/SSH e mute Jarvis permanecem nesta linha de release.',
+        'Activity Rail, multi-missão segura e integrações forge/Linear permanecem nesta linha.',
     },
   ],
   fixes: [
     {
-      title: 'CI Linux com bwrap sem userns',
+      title: 'Package Linux desbloqueado',
       detail:
-        'Probe de sandbox real; testes de exec sandboxed saltam no GHA; evidence sintético válido no workflow de contexto.',
+        'Nativos do ssh2 não entram no grafo de bundling do processo main.',
     },
   ],
 };

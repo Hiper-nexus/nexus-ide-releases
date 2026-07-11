@@ -46,6 +46,7 @@ import {
   SkillsSection,
   ToolsSection,
 } from './CatalogSections';
+import { DesignSystemsSection } from './DesignSystemsSection';
 
 /**
  * Settings drawer — nav agrupada por intenção (CONTA · OPERAÇÃO · ARSENAL ·
@@ -354,6 +355,7 @@ export function SettingsDrawer() {
           {section === 'providers' && <ProvidersPanel />}
           {section === 'squads' && <SquadsSection onNavigate={close} />}
           {section === 'marketplace' && <MarketplaceSection />}
+          {section === 'design-systems' && <DesignSystemsSection />}
           {section === 'remote' && <RemoteSection />}
           {section === 'agents' && <AgentsSection />}
           {section === 'skills' && <SkillsSection />}
