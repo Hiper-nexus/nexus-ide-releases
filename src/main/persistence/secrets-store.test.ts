@@ -38,6 +38,7 @@ vi.mock('electron', () => ({
 import {
   deleteSecret,
   getSecret,
+  isSecureStorageBackendAllowed,
   resetSecretsCacheForTests,
   setSecret,
 } from './secrets-store';
@@ -167,14 +168,18 @@ describe('durable secret persistence', () => {
     expect(getSecret('provider')).toBe('previous');
   });
 
-  it('rejects the Linux basic_text backend instead of writing weak ciphertext', () => {
-    secretDeps.backend = 'basic_text';
+  it('rejects the Linux basic_text backend instead of trusting weak ciphertext', () => {
+    expect(isSecureStorageBackendAllowed('linux', () => 'basic_text')).toBe(false);
+    expect(isSecureStorageBackendAllowed('linux', () => 'kwallet6')).toBe(true);
+  });
 
-    const result = setSecret('provider', 'must-not-reach-disk');
+  it('does not query the Linux-only backend on macOS', () => {
+    const readBackend = vi.fn(() => {
+      throw new Error('getSelectedStorageBackend is Linux-only');
+    });
 
-    expect(result.ok).toBe(false);
-    expect(fs.existsSync(secretsFile)).toBe(false);
-    expect(getSecret('provider')).toBeNull();
+    expect(isSecureStorageBackendAllowed('darwin', readBackend)).toBe(true);
+    expect(readBackend).not.toHaveBeenCalled();
   });
 
   it('fails closed without replacing a vault locked by another process', async () => {

@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildLinuxBubblewrapPlan,
+  buildMacosSeatbeltPlan,
   buildScopedShellPlan,
   buildScopedExecPlan,
   createScopedSandboxHome,
@@ -45,14 +46,15 @@ describe('process sandbox', () => {
     const root = makeDir('nexus-sandbox-root');
     const runtime = makeDir('nexus-sandbox-runtime');
 
-    const plan = buildScopedShellPlan({
+    const plan = buildMacosSeatbeltPlan({
       platform: 'darwin',
-      command: 'pwd',
+      executable: '/bin/sh',
+      args: ['-c', 'pwd'],
       cwd: root,
       rootRealPath: root,
       sandboxDir: runtime,
       env: { PATH: '/usr/bin:/bin', HOME: os.homedir() },
-    });
+    }, '/usr/bin/sandbox-exec');
 
     expect(plan.file).toBe('/usr/bin/sandbox-exec');
     expect(plan.args.at(-3)).toBe('/bin/sh');

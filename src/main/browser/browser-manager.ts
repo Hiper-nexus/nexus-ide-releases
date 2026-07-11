@@ -489,6 +489,17 @@ function redactBrowserLabel(value: string): string {
 
 const canSend = (wc: WebContents): boolean => !wc.isDestroyed() && !wc.isCrashed();
 
+function liveOwnerWindow(owner: WebContents): BrowserWindow | null {
+  if (!canSend(owner)) return null;
+  try {
+    const window = BrowserWindow.fromWebContents(owner);
+    return window && !window.isDestroyed() ? window : null;
+  } catch {
+    // Electron may destroy WebContents between the liveness check and lookup.
+    return null;
+  }
+}
+
 function emitState(entry: BrowserEntry): BrowserPaneState {
   const state = stateOf(entry.paneId, entry);
   if (canSend(entry.owner)) {
@@ -512,8 +523,8 @@ async function createEntry(
   if (ownerScopeAtStart && !sameProjectScope(ownerScopeAtStart, scope)) {
     throw new Error('browser owner project scope changed');
   }
-  const win = BrowserWindow.fromWebContents(owner);
-  if (!win || win.isDestroyed()) throw new Error('browser owner window is gone');
+  const win = liveOwnerWindow(owner);
+  if (!win) throw new Error('browser owner window is gone');
 
   const partition = browserPartition(scope, paneId);
   const browserSession = electronSession.fromPartition(partition);
@@ -726,8 +737,8 @@ async function loadBrowserWithUserConfirmation(
     if (!(err instanceof BrowserNavigationBlockedError) || err.kind !== 'private-network') {
       throw err;
     }
-    const win = BrowserWindow.fromWebContents(entry.owner);
-    if (!win || win.isDestroyed()) throw new Error('browser owner window is gone');
+    const win = liveOwnerWindow(entry.owner);
+    if (!win) throw new Error('browser owner window is gone');
     const result = await dialog.showMessageBox(win, {
       type: 'warning',
       title: 'Permitir acesso à rede privada?',
@@ -1011,7 +1022,7 @@ export function destroyBrowser(
   assertEntryScope(entry, scope);
   browsers.delete(key);
   clearDesignSession(key);
-  const win = BrowserWindow.fromWebContents(entry.owner);
+  const win = liveOwnerWindow(entry.owner);
   try {
     win?.contentView.removeChildView(entry.view);
   } catch {

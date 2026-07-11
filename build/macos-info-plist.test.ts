@@ -1,6 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -45,39 +51,55 @@ function readPlist(plistPath: string): Record<string, unknown> {
 }
 
 describe('removeUnusedMacPrivacyDescriptions', () => {
-  it('removes only unused Electron template privacy declarations', () => {
-    const { buildPath, plistPath } = fixture();
+  it.runIf(process.platform === 'darwin')(
+    'removes only unused Electron template privacy declarations',
+    () => {
+      const { buildPath, plistPath } = fixture();
 
-    expect(removeUnusedMacPrivacyDescriptions(buildPath, 'darwin')).toEqual([
-      'NSCameraUsageDescription',
-      'NSBluetoothAlwaysUsageDescription',
-      'NSBluetoothPeripheralUsageDescription',
-      'NSAudioCaptureUsageDescription',
-    ]);
+      expect(removeUnusedMacPrivacyDescriptions(buildPath, 'darwin')).toEqual([
+        'NSCameraUsageDescription',
+        'NSBluetoothAlwaysUsageDescription',
+        'NSBluetoothPeripheralUsageDescription',
+        'NSAudioCaptureUsageDescription',
+      ]);
 
-    const info = readPlist(plistPath);
-    expect(info).not.toHaveProperty('NSCameraUsageDescription');
-    expect(info).not.toHaveProperty('NSBluetoothAlwaysUsageDescription');
-    expect(info).not.toHaveProperty('NSBluetoothPeripheralUsageDescription');
-    expect(info).not.toHaveProperty('NSAudioCaptureUsageDescription');
-    expect(info).toMatchObject({
-      NSMicrophoneUsageDescription: 'microphone',
-      NSScreenCaptureUsageDescription: 'screen',
-    });
-  });
+      const info = readPlist(plistPath);
+      expect(info).not.toHaveProperty('NSCameraUsageDescription');
+      expect(info).not.toHaveProperty('NSBluetoothAlwaysUsageDescription');
+      expect(info).not.toHaveProperty('NSBluetoothPeripheralUsageDescription');
+      expect(info).not.toHaveProperty('NSAudioCaptureUsageDescription');
+      expect(info).toMatchObject({
+        NSMicrophoneUsageDescription: 'microphone',
+        NSScreenCaptureUsageDescription: 'screen',
+      });
+    },
+  );
 
   it('does not mutate non-macOS builds', () => {
     const { buildPath, plistPath } = fixture();
+    const before = readFileSync(plistPath);
 
     expect(removeUnusedMacPrivacyDescriptions(buildPath, 'linux')).toEqual([]);
-    expect(readPlist(plistPath)).toHaveProperty('NSCameraUsageDescription');
+    expect(readFileSync(plistPath)).toEqual(before);
   });
 
-  it('accepts Electron templates that omit some or all unused keys', () => {
-    const { buildPath } = fixture();
+  it('does not invoke macOS tooling when the app bundle is absent', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'nexus-no-mac-app-'));
+    roots.push(root);
 
-    removeUnusedMacPrivacyDescriptions(buildPath, 'darwin');
-
-    expect(removeUnusedMacPrivacyDescriptions(buildPath, 'darwin')).toEqual([]);
+    expect(removeUnusedMacPrivacyDescriptions(root, 'darwin')).toEqual([]);
   });
+
+  it.runIf(process.platform === 'darwin')(
+    'accepts Electron templates that omit some or all unused keys',
+    () => {
+      const { buildPath } = fixture();
+
+      removeUnusedMacPrivacyDescriptions(buildPath, 'darwin');
+
+      expect(
+        removeUnusedMacPrivacyDescriptions(buildPath, 'darwin'),
+      ).toEqual([]);
+    },
+  );
 });

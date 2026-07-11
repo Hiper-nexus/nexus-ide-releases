@@ -350,6 +350,42 @@ export function buildLinuxBubblewrapPlan(
   return linuxPlan(normalizeExecPlan(input), bubblewrapExecutable);
 }
 
+function macosPlan(
+  input: NormalizedExecPlanInput,
+  seatbeltExecutable: string,
+): ScopedShellPlan {
+  if (!path.isAbsolute(seatbeltExecutable) || seatbeltExecutable.includes('\0')) {
+    throw new Error('invalid Seatbelt provider path');
+  }
+  return {
+    file: seatbeltExecutable,
+    args: [
+      '-p',
+      buildMacosProfile(
+        input.rootRealPath,
+        input.sandboxDir,
+        input.env.PATH,
+      ),
+      input.executable,
+      ...input.args,
+    ],
+    cwd: input.cwd,
+    env: { ...input.env },
+    detached: true,
+  };
+}
+
+/** Pure macOS plan builder used by cross-platform capability tests. */
+export function buildMacosSeatbeltPlan(
+  input: ScopedExecPlanInput,
+  seatbeltExecutable: string,
+): ScopedShellPlan {
+  if (input.platform !== 'darwin') {
+    throw new Error('Seatbelt requires the darwin platform');
+  }
+  return macosPlan(normalizeExecPlan(input), seatbeltExecutable);
+}
+
 function installedBubblewrap(): string | null {
   for (const candidate of ['/usr/bin/bwrap', '/bin/bwrap']) {
     try {
@@ -385,21 +421,5 @@ export function buildScopedExecPlan(
   if (!fs.existsSync('/usr/bin/sandbox-exec')) {
     throw new Error('secure process sandbox provider is unavailable on darwin');
   }
-
-  return {
-    file: '/usr/bin/sandbox-exec',
-    args: [
-      '-p',
-      buildMacosProfile(
-        normalized.rootRealPath,
-        normalized.sandboxDir,
-        normalized.env.PATH,
-      ),
-      input.executable,
-      ...input.args,
-    ],
-    cwd: normalized.cwd,
-    env: { ...normalized.env },
-    detached: true,
-  };
+  return macosPlan(normalized, '/usr/bin/sandbox-exec');
 }

@@ -201,7 +201,10 @@ describe('WorktreeManager', () => {
   });
 
   it('rejects a lexically non-canonical scope even when it resolves to the repository', () => {
-    const nonCanonical = path.join(root, 'src', '..');
+    const canonicalRoot = fs.realpathSync(root);
+    const nonCanonical = `${canonicalRoot}${path.sep}src${path.sep}..`;
+    expect(nonCanonical).not.toBe(canonicalRoot);
+    expect(fs.realpathSync(nonCanonical)).toBe(canonicalRoot);
 
     expect(() =>
       manager.create({

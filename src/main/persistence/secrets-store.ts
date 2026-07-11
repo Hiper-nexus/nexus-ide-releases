@@ -33,12 +33,21 @@ export interface SecretWriteResult {
   error?: string;
 }
 
+export function isSecureStorageBackendAllowed(
+  platform: NodeJS.Platform,
+  readBackend: () => string,
+): boolean {
+  return platform !== 'linux' || readBackend() !== 'basic_text';
+}
+
 export function isSecureStorageAvailable(): boolean {
   if (!shouldAccessSecureStorage(process.argv)) return false;
   try {
     return (
       safeStorage.isEncryptionAvailable() &&
-      safeStorage.getSelectedStorageBackend() !== 'basic_text'
+      isSecureStorageBackendAllowed(process.platform, () =>
+        safeStorage.getSelectedStorageBackend(),
+      )
     );
   } catch {
     return false;

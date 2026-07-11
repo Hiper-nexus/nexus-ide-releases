@@ -9,8 +9,8 @@ import {
 } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { MakerDMG, type MakerDMGConfig } from '@electron-forge/maker-dmg';
-import { MakerDeb } from '@electron-forge/maker-deb';
-import { MakerRpm } from '@electron-forge/maker-rpm';
+import { MakerDeb, type MakerDebConfig } from '@electron-forge/maker-deb';
+import { MakerRpm, type MakerRpmConfig } from '@electron-forge/maker-rpm';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
@@ -97,6 +97,14 @@ export function createMacDmgMakerConfig(
         }
       : {}),
   };
+}
+
+export function createLinuxDebMakerConfig(): MakerDebConfig {
+  return { options: { depends: ['bubblewrap'] } };
+}
+
+export function createLinuxRpmMakerConfig(): MakerRpmConfig {
+  return { options: { requires: ['bubblewrap'] } };
 }
 
 export async function notarizeMacDmgArtifacts(
@@ -329,8 +337,8 @@ const config: ForgeConfig = {
         : {},
     ),
     new MakerZIP({}, ['darwin']),
-    new MakerRpm({}),
-    new MakerDeb({}),
+    new MakerRpm(createLinuxRpmMakerConfig()),
+    new MakerDeb(createLinuxDebMakerConfig()),
   ],
   plugins: [
     new VitePlugin({

@@ -13,7 +13,7 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.12.0',
+  version: '0.12.1',
   date: '2026-07-10',
   codename: 'Verified Context',
   summary:
@@ -36,6 +36,16 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [
+    {
+      title: 'Gemini Live e vozes cloud restaurados no macOS',
+      detail:
+        'O app assinado volta a abrir o cofre criptografado do macOS sem executar uma consulta exclusiva do Linux; chaves existentes permanecem locais e Jarvis não degrada indevidamente para voz do sistema.',
+    },
+    {
+      title: 'Encerramento seguro do browser pane',
+      detail:
+        'O fechamento do Nexus agora tolera a destruição concorrente do renderer sem exibir a exceção “Object has been destroyed”, preservando o cleanup da view e do proxy de rede.',
+    },
     {
       title: 'Sem conclusão por caminhos paralelos',
       detail:

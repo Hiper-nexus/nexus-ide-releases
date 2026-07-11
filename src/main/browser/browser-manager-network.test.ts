@@ -85,11 +85,12 @@ const state = vi.hoisted(() => {
     paneInfo: vi.fn(),
     getMissionWorkflow: vi.fn(),
     assertMutationAllowed: vi.fn(),
+    fromWebContents: vi.fn(() => win),
   };
 });
 
 vi.mock('electron', () => ({
-  BrowserWindow: { fromWebContents: () => state.win },
+  BrowserWindow: { fromWebContents: state.fromWebContents },
   WebContentsView: class MockWebContentsView {
     webContents = state.guest;
     setVisible = vi.fn();
@@ -305,6 +306,18 @@ describe('browser manager pinned network boundary', () => {
     expect(getBrowserViewCount()).toBe(1);
     destroyBrowser('same-pane', scopeB);
     expect(getBrowserViewCount()).toBe(0);
+  });
+
+  it('closes a pane safely when Electron destroys its owner during shutdown', async () => {
+    installPinnedBrowserProxy.mockResolvedValue(state.proxy);
+    await ensureBrowser(state.owner as never, scope, 'shutdown-pane');
+    state.fromWebContents.mockImplementationOnce(() => {
+      throw new TypeError('Object has been destroyed');
+    });
+
+    expect(() => destroyBrowser('shutdown-pane', scope)).not.toThrow();
+    expect(state.guest.close).toHaveBeenCalled();
+    expect(state.proxy.close).toHaveBeenCalled();
   });
 
   it('rejects an in-flight BrowserView when its renderer changes project', async () => {
