@@ -36,7 +36,6 @@ import {
   hasStoredVoiceApiKey,
   hasVoiceCredential,
   isVoiceSecretStorageAvailable,
-  maskedVoiceApiKey,
   setVoiceApiKey,
 } from './voice-secrets';
 
@@ -347,6 +346,8 @@ function collectVoiceEnvVars(
       byEnv.set(envVar, providers);
     }
   }
+  // Call once — isSecureStorageAvailable may touch OS backends.
+  const secureStorageAvailable = isVoiceSecretStorageAvailable();
   return [...byEnv.entries()].map(([envVar, providers]) => {
     // hasStoredKey must NOT decrypt (Keychain). Mask is presence-only on the
     // status snapshot — never call maskedVoiceApiKey here (it decrypts every key).
@@ -357,7 +358,7 @@ function collectVoiceEnvVars(
       hasEnv: typeof process.env[envVar] === 'string' && process.env[envVar]!.trim().length > 0,
       hasStoredKey: hasStored,
       keyMasked: hasStored ? '••••' : null,
-      secureStorageAvailable: isVoiceSecretStorageAvailable(),
+      secureStorageAvailable,
     };
   });
 }
