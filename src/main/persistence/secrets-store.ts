@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { safeStorage } from 'electron';
-import { shouldAccessSecureStorage } from '../smoke-core';
+import { isCurrentProcessSmokeTest } from '../smoke-core';
 
 /**
  * Secret key vault. API keys are encrypted with Electron safeStorage (backed
@@ -41,7 +41,7 @@ export function isSecureStorageBackendAllowed(
 }
 
 export function isSecureStorageAvailable(): boolean {
-  if (!shouldAccessSecureStorage(process.argv)) return false;
+  if (isCurrentProcessSmokeTest()) return false;
   try {
     return (
       safeStorage.isEncryptionAvailable() &&

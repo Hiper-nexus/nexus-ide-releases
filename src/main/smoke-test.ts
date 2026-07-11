@@ -5,7 +5,7 @@ import { app, ipcMain } from 'electron';
 import {
   createSmokeSettler,
   gracefulSmokeExit,
-  isSmokeTest,
+  isCurrentProcessSmokeTest,
   SMOKE_TIMEOUT_MS,
 } from './smoke-core';
 import { WINDOW_CHANNELS } from '../shared/channels';
@@ -26,7 +26,7 @@ import { grantWorkspacePathFromTrustedMain } from './persistence/workspace-store
 // code runs (Electron shows its exception dialog and hangs). The workflow
 // step wraps the run in an outer timeout to catch that case.
 export function initSmokeTest(): void {
-  if (!isSmokeTest(process.argv)) {
+  if (!isCurrentProcessSmokeTest()) {
     return;
   }
 

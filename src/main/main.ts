@@ -14,10 +14,7 @@ import {
 } from "./renderer-protocol";
 import { registerAuthProbeIpc } from "./adapters/auth-probe";
 import {
-  isSmokeTest,
-  shouldInitializeManagedAgentHooks,
-  shouldInitializeAutoUpdater,
-  shouldRequestMicrophoneAccess,
+  isCurrentProcessSmokeTest,
   shouldUseUserDataOverride,
 } from "./smoke-core";
 import { shouldCreateWindowOnActivate } from "./app-lifecycle";
@@ -344,7 +341,7 @@ function bootstrap(): void {
   // Packaged smoke must prove the app can boot without touching the user's
   // real Keychain. License sync is useful in normal launches, but it can block
   // inside SecItemCopyMatching before the smoke window has a chance to load.
-  if (!isSmokeTest(process.argv)) {
+  if (!isCurrentProcessSmokeTest()) {
     syncLicenseOnBoot();
   }
   registerOnboardingIpc();
@@ -367,7 +364,7 @@ function bootstrap(): void {
   // auto-updater (opt-in por ambiente; no-op sem servidor configurado).
   consumeLaunchDeepLink();
   initAutoUpdater({
-    networkEnabled: shouldInitializeAutoUpdater(process.argv),
+    networkEnabled: !isCurrentProcessSmokeTest(),
   });
 }
 
@@ -387,7 +384,7 @@ if (!wireDeepLinks()) {
     // user's GLOBAL ~/.claude & ~/.codex config (affects those tools even outside
     // Nexus), so we NEVER install on launch without consent — register only, then
     // prompt once and install/remove per the persisted decision (option A).
-    if (shouldInitializeManagedAgentHooks(process.argv)) {
+    if (!isCurrentProcessSmokeTest()) {
       try {
         const userDataPath = app.getPath("userData");
         configureAgentRuntimeUserDataPath(userDataPath);
@@ -458,7 +455,7 @@ if (!wireDeepLinks()) {
     // On macOS, Chromium's localhost exemption bypasses the TCC dialog, causing
     // CoreAudio to return all-zero PCM even with a getUserMedia grant. Explicitly
     // requesting mic access here forces a real TCC entry before the renderer opens.
-    if (shouldRequestMicrophoneAccess(process.platform, process.argv)) {
+    if (process.platform === "darwin" && !isCurrentProcessSmokeTest()) {
       await systemPreferences.askForMediaAccess("microphone").catch(() => {});
     }
     bootstrap();
@@ -558,7 +555,7 @@ app.on("before-quit", (event) => {
     closeNeedsConfirmation({
       sessionCount: summary.total,
       authorized: isAppQuitAuthorized(),
-      smokeTest: isSmokeTest(process.argv),
+      smokeTest: isCurrentProcessSmokeTest(),
     })
   ) {
     event.preventDefault();

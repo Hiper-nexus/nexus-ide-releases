@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 import {
+  captureSmokeTestMode,
   createSmokeSettler,
   gracefulSmokeExit,
   isSmokeTest,
@@ -34,6 +35,16 @@ describe('isSmokeTest', () => {
     expect(isSmokeTest(['--smoke-test=1'])).toBe(false);
     expect(isSmokeTest(['--smoke'])).toBe(false);
     expect(isSmokeTest(['nexus-smoke-test-extra'])).toBe(false);
+  });
+
+  it('keeps launch-time smoke mode after Electron rewrites process argv', () => {
+    const argv = ['/path/NexusIDE', SMOKE_ARGUMENT];
+    const isCapturedSmokeTest = captureSmokeTestMode(argv);
+
+    argv.splice(1);
+
+    expect(isSmokeTest(argv)).toBe(false);
+    expect(isCapturedSmokeTest()).toBe(true);
   });
 });
 
@@ -110,7 +121,8 @@ describe('smoke isolation', () => {
 
   it('keeps the hook server and consent dialog behind the smoke guard in main', () => {
     const mainSource = readFileSync(new URL('./main.ts', import.meta.url), 'utf8');
-    const guardStart = mainSource.indexOf('if (shouldInitializeManagedAgentHooks(process.argv)) {');
+    const hookSection = mainSource.indexOf('// Gap A:');
+    const guardStart = mainSource.indexOf('if (!isCurrentProcessSmokeTest()) {', hookSection);
     const guardEnd = mainSource.indexOf('// Gap B:', guardStart);
     const guardedBlock = mainSource.slice(guardStart, guardEnd);
 

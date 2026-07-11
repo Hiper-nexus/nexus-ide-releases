@@ -4,7 +4,7 @@ import type { IpcMainEvent, WebContents } from 'electron';
 import { WINDOW_CHANNELS } from '../shared/channels';
 import { killSessionsFor, liveSessionSummary } from './pty/pty-manager';
 import { closeNeedsConfirmation, isAppQuitAuthorized } from './close-authorization';
-import { isSmokeTest } from './smoke-core';
+import { isCurrentProcessSmokeTest } from './smoke-core';
 import { RENDERER_PROTOCOL_ENTRY_URL } from './renderer-protocol';
 import {
   DEFAULT_RENDERER_RECOVERY_MAX_RECOVERIES,
@@ -180,7 +180,7 @@ export function createMainWindow(): BrowserWindow {
       !closeNeedsConfirmation({
         sessionCount: summary.total,
         authorized: windowCloseAuthorized || isAppQuitAuthorized(),
-        smokeTest: isSmokeTest(process.argv),
+        smokeTest: isCurrentProcessSmokeTest(),
       })
     ) {
       return;

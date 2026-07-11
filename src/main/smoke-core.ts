@@ -24,6 +24,20 @@ export function isSmokeTest(argv: readonly string[]): boolean {
   return argv.includes(SMOKE_FLAG) || argv.includes(SMOKE_ARGUMENT);
 }
 
+/**
+ * Electron may normalize process.argv after app readiness. Capture launch mode
+ * while the positional sentinel is still present so later boot gates cannot
+ * accidentally prompt, access the real vault, or contact the network.
+ */
+export function captureSmokeTestMode(
+  startupArgv: readonly string[],
+): () => boolean {
+  const captured = isSmokeTest(startupArgv);
+  return () => captured;
+}
+
+export const isCurrentProcessSmokeTest = captureSmokeTestMode(process.argv);
+
 export function shouldUseUserDataOverride(
   isPackaged: boolean,
   argv: readonly string[],
