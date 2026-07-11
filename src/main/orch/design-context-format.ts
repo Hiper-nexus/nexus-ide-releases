@@ -24,6 +24,13 @@ export interface DesignSelectionPromptInput {
   extraSelections?: BrowserDesignElementContext[];
   /** 'clone': third-party element to recreate in the project (F4). */
   intent?: 'context' | 'clone';
+  /**
+   * Workspace DESIGN.md content (Google Stitch convention; compatible with the
+   * VoltAgent/awesome-design-md collection). TRUSTED — it is user-authored in
+   * the project root, unlike the page-derived UNTRUSTED block. When present,
+   * the agent should align generated/edited UI with this design system.
+   */
+  designSystem?: string;
 }
 
 const MAX_EXTRA_SELECTIONS = 7;
@@ -34,7 +41,8 @@ const MAX_STYLE_ENTRIES = 12;
 const MAX_STYLE_VALUE_CHARS = 80;
 const MAX_CANDIDATE_FILE_CHARS = 160;
 const MAX_INSTRUCTION_CHARS = 2_000;
-const MAX_PROMPT_CHARS = 6_000;
+const MAX_DESIGN_SYSTEM_CHARS = 10_000;
+const MAX_PROMPT_CHARS = 16_000;
 const MAX_PAGE_URL_CHARS = 512;
 const MAX_UNTRUSTED_PAGE_DATA_CHARS = 3_600;
 
@@ -197,6 +205,15 @@ export function formatDesignSelectionPrompt(
   lines.push(boundedUntrustedJson(untrustedPageData(input)));
   lines.push('END_UNTRUSTED_PAGE_DATA');
 
+  if (input.designSystem?.trim()) {
+    // Workspace DESIGN.md is user-authored (project root) and therefore
+    // trusted — it is NOT part of the untrusted page block. Marked explicitly
+    // so the agent treats its tokens/rules as authoritative design guidance.
+    lines.push('BEGIN_DESIGN_SYSTEM (workspace DESIGN.md — trusted, user-authored)');
+    lines.push(safePageText(input.designSystem, MAX_DESIGN_SYSTEM_CHARS));
+    lines.push('END_DESIGN_SYSTEM');
+  }
+
   if (input.intent === 'clone') {
     lines.push(
       'Este elemento vem de uma página de terceiros — NÃO existe no código do ' +
@@ -204,6 +221,9 @@ export function formatDesignSelectionPrompt(
         'os padrões existentes (stack de estilos, nomes, estrutura de pastas), ' +
         'aproximando os estilos computados acima. Não baixe assets remotos; use ' +
         'placeholders locais.' +
+        (input.designSystem?.trim()
+          ? ' Alinhe a UI gerada ao design system em BEGIN_DESIGN_SYSTEM.'
+          : '') +
         (input.instruction?.trim()
           ? ` Instrução adicional do usuário: ${input.instruction.trim().slice(0, MAX_INSTRUCTION_CHARS)}`
           : ''),
@@ -232,6 +252,11 @@ export function formatDesignSelectionPrompt(
   } else {
     lines.push(
       'O usuário selecionou este elemento no preview. Localize o código correspondente e aguarde a instrução dele antes de editar.',
+    );
+  }
+  if (input.designSystem?.trim()) {
+    lines.push(
+      'Quando for gerar ou ajustar UI, alinhe cores, tipografia, espaçamento e componentes ao design system em BEGIN_DESIGN_SYSTEM.',
     );
   }
 

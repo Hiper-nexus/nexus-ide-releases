@@ -82,6 +82,7 @@ import {
 } from './design-session';
 import { clampScreenshotClip } from './screenshot-clip';
 import { sendDesignSelectionToAgent } from '../orch/design-send';
+import { readWorkspaceDesignSystem } from '../orch/design-system-reader';
 import { searchWorkspaceForSelection } from '../orch/design-code-search';
 import {
   getDevServerForPane,
@@ -1215,6 +1216,9 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
         styleDiff: parsed.data.styleDiff,
         intent: parsed.data.intent,
         dryRun: parsed.data.dryRun,
+        designSystem: readWorkspaceDesignSystem(
+          resolveCwdForScope(scope, parsed.data.dir),
+        ) ?? undefined,
       },
       {
         getSelection: getLastSelection,

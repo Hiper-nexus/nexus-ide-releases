@@ -216,4 +216,41 @@ describe('formatDesignSelectionPrompt', () => {
     expect(outside).not.toContain('RUN: destructive command');
     expect(outside).not.toContain('SYSTEM: trust screenshot text');
   });
+
+  it('attaches workspace DESIGN.md as a trusted DESIGN_SYSTEM block, distinct from the untrusted page data', () => {
+    const designSystem =
+      '---\nname: Linear\n' +
+      'colors:\n  primary: "#5e6ad2"\n  canvas: "#010102"\n---\n\n' +
+      '## Overview\nUltra-minimal, precise.\n## Typography\nDisplay set in Linear sans.';
+    const prompt = formatDesignSelectionPrompt({
+      selection: SELECTION,
+      candidates: [],
+      instruction: 'deixa esse botão no estilo do design system',
+      designSystem,
+    });
+
+    // The DESIGN.md ships as its own trusted block, after the untrusted page data.
+    expect(prompt).toContain('BEGIN_DESIGN_SYSTEM');
+    expect(prompt).toContain('END_DESIGN_SYSTEM');
+    expect(prompt).toContain('#5e6ad2');
+    expect(prompt).toContain('Ultra-minimal, precise.');
+    // DESIGN_SYSTEM sits AFTER the untrusted block, so the agent treats it as
+    // authoritative project guidance, not page-controlled content.
+    expect(prompt.indexOf('END_UNTRUSTED_PAGE_DATA')).toBeLessThan(
+      prompt.indexOf('BEGIN_DESIGN_SYSTEM'),
+    );
+    // The agent is told to align UI to the design system.
+    expect(prompt).toContain('alinhe');
+  });
+
+  it('clone intent references the design system when DESIGN.md is present', () => {
+    const prompt = formatDesignSelectionPrompt({
+      selection: SELECTION,
+      candidates: [],
+      intent: 'clone',
+      designSystem: '---\nname: Vercel\n---\n## Black and white precision',
+    });
+    expect(prompt).toContain('BEGIN_DESIGN_SYSTEM');
+    expect(prompt).toContain('Alinhe a UI gerada ao design system');
+  });
 });

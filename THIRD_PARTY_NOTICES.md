@@ -156,6 +156,22 @@ secret redaction. The fast path (`#id` for a simple-css-ident id) is preserved.
 License text: `third_party/licenses/orca-MIT.txt`. Provenance ledger:
 `third_party/provenance/orca-5e1009.json`.
 
+## DESIGN.md workspace convention (Google Stitch / VoltAgent awesome-design-md)
+
+Design mode reads a `DESIGN.md` file from the project root (the visual
+counterpart to `AGENTS.md`, introduced by Google Stitch) and attaches it to the
+agent prompt as trusted design-system context. This makes Nexus compatible with
+the curated collection at
+[`VoltAgent/awesome-design-md`](https://github.com/VoltAgent/awesome-design-md)
+(MIT License): a user can drop any site's `DESIGN.md` into their project root
+and design mode picks it up automatically.
+
+Nexus does **not** redistribute any `DESIGN.md` files from that collection — the
+integration is purely the reader convention (`src/main/orch/design-system-reader.ts`).
+As the upstream repository notes, the extracted tokens represent publicly visible
+CSS values and no site's visual identity is claimed; the decision to apply a
+specific brand's design language remains with the user, in their own project.
+
 ## ssh2
 
 Remote SSH transport (`src/main/integrations/ssh2-transport.ts`) depends on the

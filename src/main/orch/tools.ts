@@ -10,6 +10,7 @@ import { buildVisionTools } from './tools-vision';
 import { buildContextTools } from './tools-context';
 import { buildSyncTools } from './tools-sync';
 import { buildDesignTools } from './tools-design';
+import { buildDesignSystemTools } from './tools-design-system';
 
 /**
  * The MCP toolset — the orchestration tools in the
@@ -19,7 +20,8 @@ import { buildDesignTools } from './tools-design';
  *
  * Groups: panes (10), routing, handoffs, agents, missions, squad/catalog/task,
  * todos, preview/browser, perf, media generation (image/video/audio),
- * files (5), terminal (2), git (10), editor (4), design (1).
+ * files (5), terminal (2), git (10), editor (4), design (1),
+ * design systems (3).
  */
 export function buildToolset(): McpToolDef[] {
   return [
@@ -34,5 +36,6 @@ export function buildToolset(): McpToolDef[] {
     ...buildEditorTools(),
     ...buildVisionTools(),
     ...buildDesignTools(),
+    ...buildDesignSystemTools(),
   ];
 }

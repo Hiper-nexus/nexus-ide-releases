@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.13.2 — Design systems + CI sandbox gate
+
+Data: 2026-07-11
+
+### Melhorias
+
+- Design systems: leitura de `DESIGN.md` no projeto, cliente designmd.ai e
+  tools MCP de search/get/import como drafts de contexto (review obrigatório).
+- Design Mode: copiar contexto (dry-run) sem injectar no PTY; prompt enriquece
+  com DESIGN.md quando presente.
+- CI: probe de sandbox real (bwrap/Seatbelt) e skip de exec sandboxed quando o
+  runner bloqueia userns; evidence sintético válido no workflow de contexto.
+
+### Correções
+
+- Gate de qualidade Linux deixa de falhar por `bwrap uid map` / loopback em GHA.
+
 ## 0.13.1 — Mission Rail & safe multi-mission
 
 Data: 2026-07-11

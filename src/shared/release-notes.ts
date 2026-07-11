@@ -13,38 +13,33 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.13.1',
+  version: '0.13.2',
   date: '2026-07-11',
-  codename: 'Mission Rail',
+  codename: 'Design Systems',
   summary:
-    'Activity Rail de missões, multi-missão sem kill quando seguro, integrações forge/Linear/SSH e polimento Jarvis/Design Mode para operação diária em paralelo.',
+    'Importação de design systems (DESIGN.md / designmd.ai) no pipeline de contexto, copiar contexto no Design Mode, e gate de CI estável em runners Linux sem userns.',
   highlights: [
     {
-      title: 'Activity Rail e multi-missão segura',
+      title: 'Design systems no contexto verificável',
       detail:
-        'Missões pinned/em progresso/fila/done na trilha; retomar foca panes vivos; segunda missão faz merge sem matar agentes quando não há conflito de login Claude.',
+        'Lê DESIGN.md do projeto, tools MCP search/get/import via designmd.ai e grava só drafts com review — sem escrever autoridade sem aprovação.',
     },
     {
-      title: 'Integrações forge, Linear e SSH',
+      title: 'Design Mode: copiar sem injectar',
       detail:
-        'Create PR, issues no rail, Linear, anotar diffs, port-forward e transporte ssh2 com remote worktree — com avisos de terceiros opcionais no pacote.',
+        'Dry-run devolve o prompt formatado para a clipboard; o DESIGN.md do workspace entra no contexto enviado ao agent quando existe.',
     },
     {
-      title: 'Jarvis e Design Mode mais claros',
+      title: 'Mission Rail e multi-missão (0.13.1)',
       detail:
-        'Mute/gate de saída de voz, smoke live com ownership estável e outline verde no elemento selecionado no browser (hover azul separado).',
+        'Activity Rail, merge sem kill quando seguro, forge/Linear/SSH e mute Jarvis permanecem nesta linha de release.',
     },
   ],
   fixes: [
     {
-      title: 'Reabrir missão já aberta não destrói o grid',
+      title: 'CI Linux com bwrap sem userns',
       detail:
-        'Soft-focus nos panes vivos; confirmação e kill seletivo só quando um segundo orquestrador Claude partilharia o keychain.',
-    },
-    {
-      title: 'Lançar squad em paralelo sem wipe total',
-      detail:
-        'killLiveAgents em massa deixa de ser o default; só orquestradores em conflito exclusivo são encerrados.',
+        'Probe de sandbox real; testes de exec sandboxed saltam no GHA; evidence sintético válido no workflow de contexto.',
     },
   ],
 };

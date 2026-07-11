@@ -197,18 +197,31 @@ describe('native context workflow service', () => {
     } else {
       const head = git(scope.rootRealPath, 'rev-parse', 'HEAD');
       const diffHash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
-      const now = Date.now();
+      const nowIso = '2026-07-11T00:00:00.000Z';
       const db = manager.open(scope).db;
+      // Full TrustedEvidence shape — listPersistedEvidenceIds re-parses JSON.
       for (const sensorId of ['typecheck', 'unit'] as const) {
         const evidence = {
           id: `sensor-${sensorId}`,
+          producer: 'nexus' as const,
+          projectId: scope.projectId,
+          checkoutId: scope.checkoutId,
           missionId: 'mission-a',
           sensorId,
-          exitCode: 0,
-          timedOut: false,
+          baseSha: head,
           headSha: head,
           diffHash,
-          finishedAt: new Date(now).toISOString(),
+          contextHash: frozen.contract.contextRevision,
+          contractHash: frozen.contract.contractHash,
+          sensorConfigHash: 'a'.repeat(64),
+          command: ['/usr/bin/true'],
+          exitCode: 0,
+          stdoutHash: 'b'.repeat(64),
+          stderrHash: 'c'.repeat(64),
+          timedOut: false,
+          truncated: false,
+          startedAt: nowIso,
+          finishedAt: nowIso,
         };
         db.prepare(
           `INSERT INTO sensor_evidence
@@ -221,7 +234,7 @@ describe('native context workflow service', () => {
           head,
           diffHash,
           JSON.stringify(evidence),
-          now,
+          Date.parse(nowIso),
         );
       }
       expect(service.listPersistedEvidenceIds('mission-a')).toEqual(

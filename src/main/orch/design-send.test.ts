@@ -93,6 +93,33 @@ describe('sendDesignSelectionToAgent', () => {
     expect(result.prompt).toContain('SaveButton');
     expect(result.prompt).toContain('deixa esse botão verde');
     expect(result.promptChars).toBe(result.prompt!.length);
+    expect(result.designSystemAttached).toBeUndefined();
+  });
+
+  it('attaches a workspace DESIGN.md as trusted design-system context and flags it', async () => {
+    const deps = makeDeps();
+    const result = await sendDesignSelectionToAgent(
+      {
+        paneId: 'pane-browser',
+        targetPaneRef: 'pane-cli',
+        instruction: 'deixa on-brand',
+        designSystem:
+          '---\nname: Linear\ncolors:\n  primary: "#5e6ad2"\n---\n\n## Overview\nUltra-minimal.',
+      },
+      deps,
+    );
+
+    expect(result.designSystemAttached).toBe(true);
+    const [sessionId, prompt] = (deps.inject as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [string, string];
+    expect(sessionId).toBe('sess-1');
+    // DESIGN.md rides in its own trusted block, after the untrusted page data.
+    expect(prompt).toContain('BEGIN_DESIGN_SYSTEM');
+    expect(prompt).toContain('#5e6ad2');
+    expect(prompt).toContain('Ultra-minimal.');
+    expect(prompt.indexOf('END_UNTRUSTED_PAGE_DATA')).toBeLessThan(
+      prompt.indexOf('BEGIN_DESIGN_SYSTEM'),
+    );
   });
 
   it('forwards a style diff (F2 Apply) into the injected prompt', async () => {

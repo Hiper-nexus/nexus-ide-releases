@@ -39,6 +39,12 @@ export interface DesignSendInput {
    * Grab confirmation, adapted to this project's push flow). Default false.
    */
   dryRun?: boolean;
+  /**
+   * Workspace DESIGN.md content (Google Stitch convention) read by the main
+   * process from the project root. When present, attached to the prompt as
+   * trusted design-system context. Compatible with VoltAgent/awesome-design-md.
+   */
+  designSystem?: string;
 }
 
 export interface DesignSendDeps {
@@ -66,6 +72,8 @@ export interface DesignSendResult {
   screenshotPath?: string;
   /** Present only when dryRun=true: the formatted prompt, for clipboard copy. */
   prompt?: string;
+  /** True when a workspace DESIGN.md was attached as design-system context. */
+  designSystemAttached?: boolean;
 }
 
 function snapshotSelectionState(
@@ -147,6 +155,7 @@ export async function sendDesignSelectionToAgent(
     styleDiff: input.styleDiff,
     extraSelections,
     intent: input.intent,
+    designSystem: input.designSystem,
   });
   // dryRun: stop short of injecting — return the prompt for clipboard copy /
   // preview. The fingerprint check above already guarantees the selection did
@@ -161,5 +170,6 @@ export async function sendDesignSelectionToAgent(
     promptChars: prompt.length,
     ...(screenshotPath ? { screenshotPath } : {}),
     ...(input.dryRun ? { prompt } : {}),
+    ...(input.designSystem?.trim() ? { designSystemAttached: true } : {}),
   };
 }

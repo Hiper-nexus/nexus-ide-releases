@@ -65,11 +65,15 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
     setStatus('enviando…');
     try {
       const trimmed = instruction.trim();
-      await window.nexus.browser.sendDesignSelection(paneId, {
+      const result = await window.nexus.browser.sendDesignSelection(paneId, {
         targetPaneId: effectiveTarget,
         ...(trimmed ? { instruction: trimmed } : {}),
       });
-      setStatus('contexto enviado ✓');
+      setStatus(
+        result.designSystemAttached
+          ? 'contexto enviado ✓ (+ DESIGN.md)'
+          : 'contexto enviado ✓',
+      );
       setInstruction('');
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));

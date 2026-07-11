@@ -270,6 +270,8 @@ export interface BrowserDesignSendResult {
   screenshotPath?: string;
   /** Present only when dryRun=true: the formatted prompt, for clipboard copy. */
   prompt?: string;
+  /** True when a workspace DESIGN.md was attached as design-system context. */
+  designSystemAttached?: boolean;
 }
 
 export interface PerfSnapshot {
