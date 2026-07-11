@@ -13,58 +13,38 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.13.0',
-  date: '2026-07-10',
-  codename: 'Always Awake',
+  version: '0.13.1',
+  date: '2026-07-11',
+  codename: 'Mission Rail',
   summary:
-    'O Nexus ganha runtime de agentes, forges e fundação remota, enquanto a Jarvis opera em Gemini Live com wake resiliente, voz natural e turnos protegidos contra eco, replay e ambiguidade.',
+    'Activity Rail de missões, multi-missão sem kill quando seguro, integrações forge/Linear/SSH e polimento Jarvis/Design Mode para operação diária em paralelo.',
   highlights: [
     {
-      title: 'Jarvis Live mais confiável',
+      title: 'Activity Rail e multi-missão segura',
       detail:
-        'Wake acústico e textual trabalham juntos, STT travado perde a geração em quatro segundos, a conversa permanece quente e a voz Gemini Live padrão passa a ser Gacrux.',
+        'Missões pinned/em progresso/fila/done na trilha; retomar foca panes vivos; segunda missão faz merge sem matar agentes quando não há conflito de login Claude.',
     },
     {
-      title: 'Runtime de agentes e diagnóstico',
+      title: 'Integrações forge, Linear e SSH',
       detail:
-        'Hooks consentidos de Claude/Codex, keep-awake multiagente, breadcrumbs e recuperação de crash ligam atividade real do PTY ao runtime sem transformar status em evidência.',
+        'Create PR, issues no rail, Linear, anotar diffs, port-forward e transporte ssh2 com remote worktree — com avisos de terceiros opcionais no pacote.',
     },
     {
-      title: 'Forges e trabalho remoto com limites explícitos',
+      title: 'Jarvis e Design Mode mais claros',
       detail:
-        'GitHub/GitLab, terminal remoto, SSH e política de cliente móvel entram com escopo local, replay protegido e pareamento sobre TLS; criptografia E2E continua declaradamente pendente.',
+        'Mute/gate de saída de voz, smoke live com ownership estável e outline verde no elemento selecionado no browser (hover azul separado).',
     },
   ],
   fixes: [
     {
-      title: 'Jarvis não conversa mais com a própria voz',
+      title: 'Reabrir missão já aberta não destrói o grid',
       detail:
-        'Frames de microfone ficam retidos durante áudio local ou Live, o wake verificado ainda pode interromper a fala e o próximo turno só abre depois do drain real.',
+        'Soft-focus nos panes vivos; confirmação e kill seletivo só quando um segundo orquestrador Claude partilharia o keychain.',
     },
     {
-      title: 'Comandos de voz menos ambíguos',
+      title: 'Lançar squad em paralelo sem wipe total',
       detail:
-        'A sessão Gemini recebe uma superfície curta de ferramentas de alto nível em vez de dezenas de schemas concorrentes; ações detalhadas continuam na fachada auditada.',
-    },
-    {
-      title: 'Hooks privados e realmente conectados',
-      detail:
-        'Configs e backups preservam permissões privadas, e cada PTY recebe endpoint e chave de sessão próprios para publicar atividade no processo principal.',
-    },
-    {
-      title: 'Remote sem replay nem injeção de shell',
-      detail:
-        'Frames repetidos deixam de executar comandos duas vezes e argumentos Git remotos são cotados individualmente sob uma allowlist de subcomandos.',
-    },
-    {
-      title: 'Keep-awake preserva todos os agentes',
-      detail:
-        'Concluir um pane não apaga o estado de outros agentes trabalhando, e cancelar o diálogo de saída não desmonta mais a proteção contra suspensão.',
-    },
-    {
-      title: 'Fechamento e runtime macOS endurecidos',
-      detail:
-        'O app não recria janela durante shutdown, tolera WebContents destruído e mantém o cofre do macOS disponível para Gemini/OpenAI sem aplicar uma regra exclusiva do Linux.',
+        'killLiveAgents em massa deixa de ser o default; só orquestradores em conflito exclusivo são encerrados.',
     },
   ],
 };

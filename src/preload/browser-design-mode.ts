@@ -822,19 +822,30 @@ export function createDesignMode(
       '.nx-highlight{position:fixed;top:0;left:0;display:none;',
       'border:1.5px solid #4f8cff;background:rgba(79,140,255,0.12);',
       'border-radius:2px;pointer-events:none;box-sizing:border-box;}',
+      // Selected indicator: distinct green outline that persists on the picked
+      // element while the blue hover keeps tracking the cursor.
+      '.nx-selected{position:fixed;top:0;left:0;display:none;',
+      'border:2px solid #16a34a;background:rgba(22,163,74,0.10);',
+      'border-radius:2px;pointer-events:none;box-sizing:border-box;',
+      'box-shadow:0 0 0 1px rgba(22,163,74,0.45),0 0 6px rgba(22,163,74,0.35);}',
       '.nx-label{position:fixed;top:0;left:0;display:none;',
       'font:11px/1.6 ui-monospace,monospace;color:#fff;background:#2f6ae0;',
-      'padding:0 6px;border-radius:3px;pointer-events:none;white-space:nowrap;}',
+      'padding:0 6px;border-radius:3px;pointer-events:none;white-space:nowrap;',
+      'max-width:340px;overflow:hidden;text-overflow:ellipsis;}',
       '.nx-stub{position:fixed;top:0;left:0;display:none;background:#2f6ae0;',
       'border-radius:1px;pointer-events:none;box-shadow:0 0 4px #2f6ae0;}',
     ].join('');
     highlight = doc.createElement('div');
     highlight.className = 'nx-highlight';
+    selectedHighlight = doc.createElement('div');
+    selectedHighlight.className = 'nx-selected';
     label = doc.createElement('div');
     label.className = 'nx-label';
     stub = doc.createElement('div');
     stub.className = 'nx-stub';
-    shadow.append(style, highlight, label, stub);
+    // Order matters: selectedHighlight renders above the hover highlight so the
+    // green "picked" state reads clearly even when the cursor is over it.
+    shadow.append(style, highlight, selectedHighlight, label, stub);
     doc.documentElement.appendChild(host);
   }
 
@@ -842,6 +853,7 @@ export function createDesignMode(
     host?.remove();
     host = null;
     highlight = null;
+    selectedHighlight = null;
     label = null;
     stub = null;
     hovered = null;
@@ -855,6 +867,7 @@ export function createDesignMode(
       selected = null;
       drag = null;
       if (stub) stub.style.display = 'none';
+      positionSelectedHighlight(null);
       generation = nextGeneration;
       deps.emit({
         eventId: makeEventId(),

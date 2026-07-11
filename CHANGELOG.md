@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.13.1 — Mission Rail & safe multi-mission
+
+Data: 2026-07-11
+
+### Melhorias
+
+- Activity Rail de missões (pinned / em progresso / fila / done), switcher de
+  contas e drag de ficheiros para o agent.
+- Multi-missão segura: soft-focus sem kill; merge de panes quando o orquestrador
+  entrante não partilha login Claude; kill seletivo só em conflito de keychain.
+- Integrações A–C: create PR GitHub, issues no rail, Linear, annotate diffs,
+  port-forward local e SSH production (`ssh2`) com remote worktree.
+- Jarvis: mute/gate de saída de voz, smoke live com ownership estável e
+  avisos legais de terceiros opcionais em Diagnósticos.
+- Design Mode: outline verde persistente no elemento selecionado (hover azul
+  separado).
+
+### Correções
+
+- Reabrir missão já aberta foca panes vivos em vez de destruir e respawnar.
+- Lançar squad em paralelo a outra missão deixa de matar todos os CLI por
+  omissão quando não há orquestrador Claude em conflito.
+
 ## 0.13.0 — Always Awake
 
 Data: 2026-07-10
