@@ -313,10 +313,16 @@ function linuxPlan(
   const maskedRoots = LINUX_MASKED_ROOTS.filter((candidate) =>
     candidate === '/home' || candidate === '/tmp' || fs.existsSync(candidate),
   );
+  // `--unshare-all` then `--share-net`: full isolation except the network
+  // namespace. Nested user namespaces on GitHub-hosted runners cannot create
+  // the loopback interface (`RTM_NEWADDR: Operation not permitted`), which
+  // made every sandboxed agent/terminal command fail in CI. Sharing the host
+  // net keeps the rest of the confinement (user/pid/mount/uts/ipc/cgroup).
   const args = [
     '--die-with-parent',
     '--new-session',
     '--unshare-all',
+    '--share-net',
     '--ro-bind', '/', '/',
     '--proc', '/proc',
     '--dev', '/dev',

@@ -43,12 +43,19 @@ vi.mock('../terminal/terminal-host', () => ({
 vi.mock('../browser/browser-host', () => ({ waitForBrowserPaneCreated: vi.fn() }));
 vi.mock('../orch/mission-launcher', () => ({ launchSquadMission: vi.fn() }));
 vi.mock('../lib/credential-errors', () => ({ isMissingModelKeyError: () => false }));
-vi.mock('./voice-playback', () => ({ playAudioBase64: vi.fn() }));
+vi.mock('./voice-playback', () => ({
+  playAudioBase64: vi.fn(),
+  stopAllPlayback: vi.fn(),
+  bindWakeSuppressor: vi.fn(),
+}));
 vi.mock('../services/mcp-bridge', async (importActual) => ({
   ...(await importActual<typeof import('../services/mcp-bridge')>()),
   invokeMcpWithConfirm,
 }));
-vi.mock('../orch/mission-reopen', () => ({ reopenMission: vi.fn() }));
+vi.mock('../orch/mission-reopen', () => ({
+  reopenMission: vi.fn(),
+  livePaneIdsForMission: vi.fn(() => []),
+}));
 vi.mock('./delegation-confirm', () => ({
   delegationConfirmPrompt: vi.fn(),
   setPendingDelegation: vi.fn(),

@@ -87,7 +87,7 @@ describe('process sandbox', () => {
     ).toThrow(/sandbox provider is unavailable/i);
   });
 
-  it('builds a networkless Linux Bubblewrap plan that masks user data', () => {
+  it('builds a Linux Bubblewrap plan that masks user data (shared net for CI hosts)', () => {
     const root = makeDir('nexus-linux-root');
     const runtime = makeDir('nexus-linux-runtime');
 
@@ -106,6 +106,7 @@ describe('process sandbox', () => {
       '--die-with-parent',
       '--new-session',
       '--unshare-all',
+      '--share-net',
       '--ro-bind', '/', '/',
       '--tmpfs', '/home',
       '--tmpfs', '/tmp',
@@ -113,7 +114,6 @@ describe('process sandbox', () => {
       '--bind', runtime, runtime,
       '--chdir', root,
     ]));
-    expect(plan.args).not.toContain('--share-net');
     expect(plan.args.slice(-2)).toEqual(['/usr/bin/node', '--version']);
     expect(plan.env.HOME).toBe(path.join(runtime, 'home'));
     expect(plan.env.TMPDIR).toBe(path.join(runtime, 'tmp'));

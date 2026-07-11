@@ -9,7 +9,7 @@ import { TurnExecutionOwner } from './turn-execution-owner';
 import { ThrottledCounter } from '../../shared/live-flow-counter';
 import type { JarvisCaptureReason } from './jarvis-reply-loop';
 import type { JarvisLiveAudioOutEvent, JarvisTurn } from '../../shared/voice-ipc';
-import { bindWakeSuppressor } from './voice-playback';
+import { bindWakeSuppressor } from './wake-suppressor-registry';
 import { subscribeAudioDevicePreferences } from './audio-device-preferences';
 
 export const PENDING_REALTIME_AUDIO_MAX_CHUNKS = 160;

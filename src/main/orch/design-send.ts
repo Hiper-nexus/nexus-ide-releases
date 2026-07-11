@@ -32,6 +32,13 @@ export interface DesignSendInput {
   styleDiff?: DesignStyleDiff;
   /** 'clone' (F4): third-party element to recreate in the project. */
   intent?: 'context' | 'clone';
+  /**
+   * When true, prepare the formatted prompt (L2 enrich + element screenshot +
+   * format) but do NOT inject it into the target PTY. The prompt is returned
+   * so the renderer can copy it to the clipboard (the "Copy" path of Orca's
+   * Grab confirmation, adapted to this project's push flow). Default false.
+   */
+  dryRun?: boolean;
 }
 
 export interface DesignSendDeps {
@@ -57,6 +64,8 @@ export interface DesignSendResult {
   targetSessionId: string;
   promptChars: number;
   screenshotPath?: string;
+  /** Present only when dryRun=true: the formatted prompt, for clipboard copy. */
+  prompt?: string;
 }
 
 function snapshotSelectionState(
@@ -139,12 +148,18 @@ export async function sendDesignSelectionToAgent(
     extraSelections,
     intent: input.intent,
   });
-  await deps.inject(target.sessionId, prompt);
+  // dryRun: stop short of injecting — return the prompt for clipboard copy /
+  // preview. The fingerprint check above already guarantees the selection did
+  // not change during enrichment, so the returned prompt is consistent.
+  if (!input.dryRun) {
+    await deps.inject(target.sessionId, prompt);
+  }
   return {
     ok: true,
     targetPaneId: target.paneId,
     targetSessionId: target.sessionId,
     promptChars: prompt.length,
     ...(screenshotPath ? { screenshotPath } : {}),
+    ...(input.dryRun ? { prompt } : {}),
   };
 }

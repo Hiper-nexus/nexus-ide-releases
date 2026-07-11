@@ -53,7 +53,11 @@ vi.mock('./voice-live-audio-out', () => ({
   resetPendingRealtimeAudioOut: vi.fn(),
 }));
 vi.mock('./voice-realtime-gates', () => ({ isRealtimeLive: () => true }));
-vi.mock('./voice-playback', () => ({ stopAllPlayback: vi.fn() }));
+vi.mock('./voice-playback', () => ({
+  stopAllPlayback: vi.fn(),
+  bindWakeSuppressor: vi.fn(),
+  playAudioBase64: vi.fn(),
+}));
 vi.mock('./voice-speak-pipeline', () => ({
   speakAndPlayPipelined: vi.fn(async () => ({ ok: true })),
 }));

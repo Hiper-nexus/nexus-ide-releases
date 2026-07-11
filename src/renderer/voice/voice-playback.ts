@@ -7,17 +7,17 @@ import {
 import type { SpeakResult } from '../../shared/voice-ipc';
 import { requirePreferredOutputDevice } from './audio-device-preferences';
 import { isResponseMuted } from './response-output-gate';
+import {
+  bindWakeSuppressor as registerWakeSuppressor,
+  suppressWakeDetection,
+  type WakeSuppressor,
+} from './wake-suppressor-registry';
 
-/** Silencia detecção de wake word durante reprodução de TTS. */
-export type WakeSuppressor = (ms: number) => void;
+export type { WakeSuppressor };
+export { registerWakeSuppressor as bindWakeSuppressor };
 
 let playbackGen = 0;
 let liveSources: AudioBufferSourceNode[] = [];
-let suppressWake: WakeSuppressor | null = null;
-
-export function bindWakeSuppressor(fn: WakeSuppressor): void {
-  suppressWake = fn;
-}
 
 function isJarvisLiveEnabled(): boolean {
   const info = useVoiceStore.getState().info;
@@ -77,7 +77,7 @@ export async function playAudioBase64(base64: string, _format: string): Promise<
     // Suppress wake for the ACTUAL playback duration + acoustic tail (clamped).
     // With APM/AEC off the speaker bleeds straight into the hot mic, so a fixed
     // short window let "Hey Jarvis" self-fire mid-reply — the self-talk seed.
-    suppressWake?.(playbackWakeSuppressionMs(durationMs));
+    suppressWakeDetection(playbackWakeSuppressionMs(durationMs));
     // FIX 1: withhold realtime mic frames from the socket for the SAME real
     // playback duration + tail. Every LOCAL audio (wake ack, think-filler,
     // classic/marin TTS) flows through here, so this single choke point stops

@@ -156,6 +156,7 @@ const designSendSchema = z
     instruction: z.string().max(2_000).optional(),
     dir: z.string().max(4_096).optional(),
     intent: z.enum(['context', 'clone']).optional(),
+    dryRun: z.boolean().optional(),
     styleDiff: z
       .record(
         z.string().min(1).max(64),
@@ -1213,6 +1214,7 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
         dir: parsed.data.dir,
         styleDiff: parsed.data.styleDiff,
         intent: parsed.data.intent,
+        dryRun: parsed.data.dryRun,
       },
       {
         getSelection: getLastSelection,

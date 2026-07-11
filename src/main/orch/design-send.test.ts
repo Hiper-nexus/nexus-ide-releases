@@ -71,6 +71,30 @@ describe('sendDesignSelectionToAgent', () => {
     expect(deps.capture).toHaveBeenCalledWith('pane-browser', SELECTION.rect);
   });
 
+  it('dryRun prepares the prompt + screenshot but does NOT inject, returning the prompt for copy', async () => {
+    const deps = makeDeps();
+    const result = await sendDesignSelectionToAgent(
+      {
+        paneId: 'pane-browser',
+        targetPaneRef: 'pane-cli',
+        instruction: 'deixa esse botão verde',
+        dryRun: true,
+      },
+      deps,
+    );
+
+    // Nothing reaches the target PTY in dry-run mode.
+    expect(deps.inject).not.toHaveBeenCalled();
+    // The screenshot is still captured (the copy may reference it) and the
+    // fully-formatted prompt is returned for clipboard copy.
+    expect(deps.capture).toHaveBeenCalledTimes(1);
+    expect(result.prompt).toBeDefined();
+    expect(result.prompt).toContain('#save');
+    expect(result.prompt).toContain('SaveButton');
+    expect(result.prompt).toContain('deixa esse botão verde');
+    expect(result.promptChars).toBe(result.prompt!.length);
+  });
+
   it('forwards a style diff (F2 Apply) into the injected prompt', async () => {
     const deps = makeDeps();
     await sendDesignSelectionToAgent(

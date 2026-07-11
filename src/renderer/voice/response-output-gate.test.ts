@@ -9,6 +9,8 @@ import {
 
 vi.mock('./voice-playback', () => ({
   stopAllPlayback: vi.fn(),
+  bindWakeSuppressor: vi.fn(),
+  playAudioBase64: vi.fn(),
 }));
 
 vi.mock('./live-followup', () => ({

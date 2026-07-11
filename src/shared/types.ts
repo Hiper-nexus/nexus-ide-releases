@@ -258,6 +258,8 @@ export interface BrowserDesignSendPayload {
   dir?: string;
   styleDiff?: Record<string, { from: string; to: string }>;
   intent?: 'context' | 'clone';
+  /** Prepare the prompt without injecting into the target PTY (for clipboard copy). */
+  dryRun?: boolean;
 }
 
 export interface BrowserDesignSendResult {
@@ -266,6 +268,8 @@ export interface BrowserDesignSendResult {
   targetSessionId: string;
   promptChars: number;
   screenshotPath?: string;
+  /** Present only when dryRun=true: the formatted prompt, for clipboard copy. */
+  prompt?: string;
 }
 
 export interface PerfSnapshot {

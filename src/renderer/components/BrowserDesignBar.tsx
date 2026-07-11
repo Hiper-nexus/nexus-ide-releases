@@ -76,6 +76,27 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
     }
   }
 
+  async function copyContext(): Promise<void> {
+    if (!selection || !effectiveTarget) return;
+    setStatus('preparando contexto…');
+    try {
+      const trimmed = instruction.trim();
+      const result = await window.nexus.browser.sendDesignSelection(paneId, {
+        targetPaneId: effectiveTarget,
+        dryRun: true,
+        ...(trimmed ? { instruction: trimmed } : {}),
+      });
+      if (!result.prompt) {
+        setStatus('nada para copiar');
+        return;
+      }
+      await navigator.clipboard.writeText(result.prompt);
+      setStatus(`contexto copiado (${result.promptChars} chars) ✓`);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   const selectionLabel = selection
     ? `${selection.tag}${selection.id ? `#${selection.id}` : ''}${
         selection.classes.length ? `.${selection.classes.slice(0, 2).join('.')}` : ''
@@ -207,6 +228,20 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
               ≡
             </button>
           )}
+          <button
+            type="button"
+            data-testid="design-copy"
+            className="browser-bar__btn design-bar__send"
+            disabled={!effectiveTarget}
+            title={
+              effectiveTarget
+                ? 'Copiar o contexto da seleção (sem enviar ao agente)'
+                : 'Abra um pane de agente CLI para preparar o contexto'
+            }
+            onClick={() => void copyContext()}
+          >
+            ⧉ copiar
+          </button>
           <button
             type="button"
             data-testid="design-send"

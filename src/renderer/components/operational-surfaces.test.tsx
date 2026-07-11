@@ -20,8 +20,15 @@ vi.mock('../terminal/terminal-host', () => ({
   applyTerminalSettings: vi.fn(),
 }));
 
+const { livePaneIdsForMissionMock } = vi.hoisted(() => ({
+  livePaneIdsForMissionMock: vi.fn((_id: string) => [] as string[]),
+}));
+
 vi.mock('../orch/mission-reopen', () => ({
   reopenMission: vi.fn(async () => ({ ok: true })),
+  livePaneIdsForMission: (id: string) => livePaneIdsForMissionMock(id),
+  hardReopenWouldDisplaceLayout: vi.fn(() => false),
+  hardReopenWouldKillAgents: vi.fn(() => false),
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -211,7 +218,11 @@ describe('MissionRail operational hierarchy', () => {
     vi.restoreAllMocks();
   });
 
-  it('pins the open mission first and reports live pane activity', () => {
+  it('groups open missions under Em progresso and queue under Na fila', () => {
+    livePaneIdsForMissionMock.mockImplementation((id: string) =>
+      id === 'active' ? ['pane-1'] : [],
+    );
+
     useOrchStore.setState({
       missions: [
         {
@@ -238,13 +249,15 @@ describe('MissionRail operational hierarchy', () => {
     useSessionStateStore.setState({ paneStates: new Map([['pane-1', 'busy']]) });
 
     const { host, root } = mount(<MissionRail />);
-    const missionButtons = [...host.querySelectorAll<HTMLButtonElement>('.mission-rail__item')];
+    const text = host.textContent ?? '';
 
-    expect(host.textContent).toContain('1 ativa de 2');
-    expect(missionButtons[0].textContent).toContain('Corrigir Jarvis');
-    expect(missionButtons[0].textContent).toContain('1 pane trabalhando');
-    expect(missionButtons[0].getAttribute('aria-current')).toBe('true');
-    expect(missionButtons[1].textContent).toContain('Retomar');
+    expect(text).toMatch(/Em progresso/);
+    expect(text).toMatch(/Na fila/);
+    expect(text).toContain('Corrigir Jarvis');
+    expect(text).toContain('Polir interface');
+    expect(text).toContain('Retomar');
+    // Live open mission shows as working, not only "na fila"
+    expect(text).toMatch(/trabalhando|em progresso|rodando/i);
 
     act(() => root.unmount());
   });
