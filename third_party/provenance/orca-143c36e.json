@@ -6,7 +6,7 @@
   "copyright": "Copyright (c) 2026 Lovecast Inc.",
   "licenseFile": "third_party/licenses/orca-MIT.txt",
   "importedAt": "2026-07-10",
-  "headerPolicy": "Every copied/adapted file carries: Adapted from stablyai/orca @ <commit>; Copyright (c) 2026 Lovecast Inc. — MIT License; See third_party/licenses/orca-MIT.txt. Nexus changes: <summary>. Existing copyright notices inside source are never stripped.",
+  "headerPolicy": "Every copied/adapted file carries: Adapted from stablyai/orca @ <commit>; Copyright (c) 2026 Lovecast Inc. \u2014 MIT License; See third_party/licenses/orca-MIT.txt. Nexus changes: <summary>. Existing copyright notices inside source are never stripped.",
   "files": [
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/crash-reporting/renderer-recovery-circuit-breaker.ts",
@@ -726,7 +726,7 @@
     {
       "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
       "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
-      "originalSha256": "7a0b44eda82fa418f0a83b4431b953bce9af6c3622eaacc455550fdef9c23a37",
+      "originalSha256": "8065e130cf6553644dcdcaf6c621eaa9b54f159bd42213ee7c1b7bb9547e4b2b",
       "originalPath": "(concept) src/main/remote/remote-capability.ts",
       "nexusPath": "src/main/remote/remote-capability.ts",
       "license": "MIT",
@@ -740,41 +740,13 @@
     {
       "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
       "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
-      "originalSha256": "cdc0053ec66e185b45b29a878657923649fa57cfc267df491be6fbecc70bd01f",
+      "originalSha256": "a2e0ba6df97c2768f6ac21dfa20840c4caba52af737e7dd96050257992db1467",
       "originalPath": "(concept) src/main/remote/remote-capability.test.ts",
       "nexusPath": "src/main/remote/remote-capability.test.ts",
       "license": "MIT",
       "copyright": "Copyright (c) 2026 Lovecast Inc.",
       "type": "adapted",
       "changeSummary": "Tests: scope binding + remoteCapabilityGrantsAgentForce false",
-      "secondaryProvenance": [],
-      "importDate": "2026-07-11",
-      "status": "imported"
-    },
-    {
-      "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
-      "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
-      "originalSha256": "8ae23282f626c20d91317df295cbe328abad878ae2096899e764f4e1cc3d08cb",
-      "originalPath": "(concept) src/main/remote/device-pairing.ts",
-      "nexusPath": "src/main/remote/device-pairing.ts",
-      "license": "MIT",
-      "copyright": "Copyright (c) 2026 Lovecast Inc.",
-      "type": "adapted",
-      "changeSummary": "Nexus E2EE pairing challenge/complete; ORCA relay pairing concepts @ pin Renamed from e2ee-pairing: this is device-pairing PROOF only, not end-to-end encryption (transport confidentiality is TLS).",
-      "secondaryProvenance": [],
-      "importDate": "2026-07-11",
-      "status": "imported"
-    },
-    {
-      "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
-      "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
-      "originalSha256": "665313b62d06000807fa5a6db352beba137ac9de759a22b87ce57a1551a11c32",
-      "originalPath": "(concept) src/main/remote/device-pairing.test.ts",
-      "nexusPath": "src/main/remote/device-pairing.test.ts",
-      "license": "MIT",
-      "copyright": "Copyright (c) 2026 Lovecast Inc.",
-      "type": "adapted",
-      "changeSummary": "Unit tests for pairing proof + expiry Renamed from e2ee-pairing: this is device-pairing PROOF only, not end-to-end encryption (transport confidentiality is TLS).",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
       "status": "imported"
@@ -838,7 +810,7 @@
     {
       "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
       "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
-      "originalSha256": "f91341b521d802ccde5b53cd8e39c3656e7933c03eb35e572e224082f70e72a2",
+      "originalSha256": "8a7a4490a786ddc0c9cc6cbdba8d700e281f684c04585b56746c29e72630a2b5",
       "originalPath": "(concept) src/main/remote/relay-framing.ts",
       "nexusPath": "src/main/remote/relay-framing.ts",
       "license": "MIT",
@@ -852,7 +824,7 @@
     {
       "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
       "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
-      "originalSha256": "f7b0842d6f3a3bd753a3135ffa2f60c8e67209c9c6c793a24979896c848f75ec",
+      "originalSha256": "0686742124d696d5dc9995c8eaaf91c34333873eb6fb9167b719cd172d0c1329",
       "originalPath": "(concept) src/main/remote/relay-framing.test.ts",
       "nexusPath": "src/main/remote/relay-framing.test.ts",
       "license": "MIT",
@@ -872,7 +844,7 @@
       "license": "MIT",
       "copyright": "Copyright (c) 2026 Lovecast Inc.",
       "type": "adapted",
-      "changeSummary": "Map AgentStatusState → PaneSessionState; authorizesEvidence always false (§12.4)",
+      "changeSummary": "Map AgentStatusState \u2192 PaneSessionState; authorizesEvidence always false (\u00a712.4)",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
       "status": "imported"
@@ -1013,6 +985,34 @@
       "copyright": "Copyright (c) 2026 Lovecast Inc.",
       "type": "adapted",
       "changeSummary": "IPC registration for agent-hook:ingestStatus",
+      "secondaryProvenance": [],
+      "importDate": "2026-07-11",
+      "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
+      "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
+      "originalSha256": "8ae23282f626c20d91317df295cbe328abad878ae2096899e764f4e1cc3d08cb",
+      "originalPath": "(concept) src/main/remote/e2ee-pairing.ts",
+      "nexusPath": "src/main/remote/e2ee-pairing.ts",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "Nexus E2EE pairing challenge/complete; ORCA relay pairing concepts @ pin",
+      "secondaryProvenance": [],
+      "importDate": "2026-07-11",
+      "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
+      "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
+      "originalSha256": "665313b62d06000807fa5a6db352beba137ac9de759a22b87ce57a1551a11c32",
+      "originalPath": "(concept) src/main/remote/e2ee-pairing.test.ts",
+      "nexusPath": "src/main/remote/e2ee-pairing.test.ts",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "Unit tests for pairing proof + expiry",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
       "status": "imported"
