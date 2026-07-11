@@ -574,6 +574,8 @@ const api: NexusApi = {
     listHookHomes: () => ipcRenderer.invoke(ORCH_CHANNELS.hooksList),
     searchDesignSystems: (req) =>
       ipcRenderer.invoke(ORCH_CHANNELS.designSystemsSearch, req),
+    importDesignSystem: (req) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.designSystemsImport, req),
     onMissionsChanged: (cb) => addListener(missionsChangedListeners, cb),
     onHandoffsChanged: (cb) => addListener(handoffsChangedListeners, cb),
     onTodosChanged: (cb) => addListener(todosChangedListeners, cb),

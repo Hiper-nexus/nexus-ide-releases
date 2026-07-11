@@ -12,11 +12,18 @@ type Kit = {
   likeCount: number;
 };
 
+type ImportState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; draftId: string; targetPath: string }
+  | { status: 'error'; message: string };
+
 export function DesignSystemsSection() {
   const [query, setQuery] = useState('');
   const [kits, setKits] = useState<Kit[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [imports, setImports] = useState<Record<string, ImportState>>({});
 
   async function load(search = '') {
     setLoading(true);
@@ -48,6 +55,28 @@ export function DesignSystemsSection() {
         k.tags.some((t) => t.toLowerCase().includes(q)),
     );
   }, [kits, query]);
+
+  async function importKit(slug: string, targetPath?: string) {
+    setImports((prev) => ({ ...prev, [slug]: { status: 'loading' } }));
+    const res = await window.nexus.orch.importDesignSystem({
+      identifier: slug,
+      ...(targetPath ? { targetPath } : {}),
+    });
+    setImports((prev) => ({
+      ...prev,
+      [slug]: res.ok
+        ? {
+            status: 'success',
+            draftId: res.draftId,
+            targetPath: res.targetPath,
+          }
+        : { status: 'error', message: res.error },
+    }));
+  }
+
+  function importStatus(slug: string): ImportState {
+    return imports[slug] ?? { status: 'idle' };
+  }
 
   return (
     <section>
@@ -86,23 +115,45 @@ export function DesignSystemsSection() {
       )}
 
       <ul className="settings-list">
-        {filtered.map((kit) => (
-          <li key={kit.slug} className="settings-list__item">
-            <div className="settings-list__head">
-              <span className="settings-list__title settings-list__title--mono">
-                {kit.name}
-              </span>
-              <span className="settings-chip">{kit.license}</span>
-              <span className="settings-chip settings-chip--ok">
-                {kit.likeCount} likes
-              </span>
-            </div>
-            <p className="settings-list__detail">{kit.description}</p>
-            <p className="settings-list__detail">
-              {kit.slug} · {kit.tags.join(' · ') || 'sem tags'}
-            </p>
-          </li>
-        ))}
+        {filtered.map((kit) => {
+          const state = importStatus(kit.slug);
+          return (
+            <li key={kit.slug} className="settings-list__item">
+              <div className="settings-list__head">
+                <span className="settings-list__title settings-list__title--mono">
+                  {kit.name}
+                </span>
+                <span className="settings-chip">{kit.license}</span>
+                <span className="settings-chip settings-chip--ok">
+                  {kit.likeCount} likes
+                </span>
+              </div>
+              <p className="settings-list__detail">{kit.description}</p>
+              <p className="settings-list__detail">
+                {kit.slug} · {kit.tags.join(' · ') || 'sem tags'}
+              </p>
+              <div className="settings-row">
+                <button
+                  className="settings-btn"
+                  onClick={() => void importKit(kit.slug)}
+                  disabled={state.status === 'loading'}
+                >
+                  {state.status === 'loading' ? 'Importando…' : 'Importar'}
+                </button>
+                {state.status === 'success' && (
+                  <span className="settings-chip settings-chip--ok">
+                    Draft {state.draftId.slice(0, 8)} em {state.targetPath}
+                  </span>
+                )}
+                {state.status === 'error' && (
+                  <span className="settings-chip settings-chip--danger">
+                    {state.message}
+                  </span>
+                )}
+              </div>
+            </li>
+          );
+        })}
       </ul>
       {!loading && filtered.length === 0 && !error && (
         <p className="settings-detail__hint">Nenhum kit encontrado.</p>

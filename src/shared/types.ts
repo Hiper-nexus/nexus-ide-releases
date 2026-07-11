@@ -163,6 +163,21 @@ export interface CatalogInstallResult {
   error?: string;
 }
 
+export interface DesignSystemImportRequest {
+  identifier: string;
+  targetPath?: string;
+}
+
+export type DesignSystemImportResult =
+  | {
+      ok: true;
+      draftId: string;
+      targetPath: string;
+      status: string;
+      evidencePath: string;
+    }
+  | { ok: false; error: string };
+
 export interface NativeToolInfo {
   name: string;
   description: string;
@@ -780,6 +795,9 @@ export interface NexusApi {
         }> }
       | { ok: false; error: string }
     >;
+    importDesignSystem(
+      req: DesignSystemImportRequest,
+    ): Promise<DesignSystemImportResult>;
     onMissionsChanged(cb: (missions: Mission[]) => void): Unsubscribe;
     onHandoffsChanged(cb: (handoffs: Handoff[]) => void): Unsubscribe;
     onTodosChanged(cb: (lists: TodoList[]) => void): Unsubscribe;

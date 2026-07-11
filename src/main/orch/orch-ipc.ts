@@ -78,6 +78,8 @@ import {
   listPluginFiles,
 } from "./catalog";
 import { DesignMdApiClient } from "../design/designmd-api-client";
+import { buildDesignSystemTools } from "./tools-design-system";
+import type { AgentGateContext } from "./gate";
 import { z } from "zod";
 
 /**
@@ -537,6 +539,47 @@ export function registerOrchIpc(): void {
     try {
       const kits = await new DesignMdApiClient().searchKits(parsed.data);
       return { ok: true, kits };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  });
+
+  const designSystemsImportSchema = z.object({
+    identifier: z.string().min(1).max(512),
+    targetPath: z.string().min(1).max(512).optional(),
+  });
+  ipcMain.handle(ORCH_CHANNELS.designSystemsImport, async (event, raw) => {
+    const parsed = designSystemsImportSchema.safeParse(raw ?? {});
+    if (!parsed.success) {
+      return { ok: false, error: "invalid design systems import request" };
+    }
+    try {
+      const scope = requireLiveRendererWorkspaceScope(event.sender);
+      const importTool = buildDesignSystemTools().find(
+        (tool) => tool.name === "nexus_design_system_import",
+      );
+      if (!importTool) {
+        throw new Error("nexus_design_system_import tool is not registered");
+      }
+      const rendererId = String(event.sender.id);
+      const ctx: AgentGateContext = {
+        token: `renderer-import-${rendererId}`,
+        label: "user",
+        role: "user",
+        sessionId: `renderer-${rendererId}`,
+        agentName: "user",
+        providerId: "user",
+        scope,
+        allowedTools: null,
+        allowedSkills: null,
+        stopAttempts: 0,
+        handoffSubmitted: false,
+      };
+      const result = await importTool.handler(parsed.data, ctx);
+      return { ok: true, ...(result as Record<string, unknown>) };
     } catch (err) {
       return {
         ok: false,

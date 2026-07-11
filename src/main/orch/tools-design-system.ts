@@ -285,7 +285,7 @@ const designSystemImportTool: McpToolDef = {
 
     const kit = await createDesignMdApiClient().getKit(identifierValue);
 
-    if (kit.license === 'cc-by-sa') {
+    if (kit.license === 'cc-by-sa' || kit.license === 'proprietary') {
       throw new DesignMdLicenseError(
         kit.license,
         `license ${kit.license} requires project compatibility review; import blocked by default`,

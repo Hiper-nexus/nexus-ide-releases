@@ -245,6 +245,14 @@ describe('nexus_design_system_import', () => {
       identifier: 'acme/clean',
     }, context('codex', 'session-1'))).rejects.toThrow(/cc-by-sa/);
   });
+
+  it('blocks proprietary kits by default', async () => {
+    stubs.getKit.mockResolvedValue({ ...kitDetail(), license: 'proprietary' as const });
+
+    await expect(tool('nexus_design_system_import').handler({
+      identifier: 'acme/clean',
+    }, context('codex', 'session-1'))).rejects.toThrow(/proprietary/);
+  });
 });
 
 describe('nexus_design_system_publish', () => {

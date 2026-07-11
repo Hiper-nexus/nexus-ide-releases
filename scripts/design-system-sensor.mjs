@@ -56,6 +56,7 @@ const TOKEN_PATTERNS = [
   { kind: 'color', regex: /hsl\([^)]+\)/gi },
   { kind: 'font', regex: /font-family[:\s]+([^;\n]+)/gi },
   { kind: 'spacing', regex: /\b(\d+px|\d+rem|\d+em)\b/gi },
+  { kind: 'custom-property', regex: /--[a-z0-9_-]+/gi },
 ];
 
 function sha256(value) {
