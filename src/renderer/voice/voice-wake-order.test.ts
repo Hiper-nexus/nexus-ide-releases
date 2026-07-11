@@ -63,7 +63,9 @@ describe('voice wake order', () => {
     expect(passiveStart).toBeGreaterThanOrEqual(0);
     expect(passiveEnd).toBeGreaterThan(passiveStart);
     const passiveBlock = source.slice(passiveStart, passiveEnd);
-    expect(passiveBlock).toContain('passiveWakeChecking || wakeOpenInProgress');
+    expect(passiveBlock).toContain('passiveWakeDeadline.isChecking() || wakeOpenInProgress');
+    expect(passiveBlock).toContain('passiveWakeDeadline.run');
+    expect(passiveBlock).toContain("request.kind === 'timeout'");
     expect(passiveBlock).toContain('shouldIgnoreLiveReWake({ status: voiceStatus })');
     expect(passiveBlock).toContain('passiveWakeWord: info.persona.assistantName');
     expect(source).toContain('wakeMic.cancelPassiveWake()');

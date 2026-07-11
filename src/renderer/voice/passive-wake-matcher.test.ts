@@ -20,6 +20,21 @@ describe('matchPassiveWakeWord', () => {
     });
   });
 
+  it('accepts the aliases observed in production only as a direct address', () => {
+    expect(matchPassiveWakeWord('Ei Jasper, abra o terminal')).toEqual({
+      command: 'abra o terminal',
+    });
+    expect(matchPassiveWakeWord('Eijax me escuta')).toEqual({
+      command: 'me escuta',
+    });
+    expect(matchPassiveWakeWord('Rejaves continue a tarefa')).toEqual({
+      command: 'continue a tarefa',
+    });
+    expect(matchPassiveWakeWord('Jacques, mostre os logs')).toEqual({
+      command: 'mostre os logs',
+    });
+  });
+
   it('accepts a greeting joined to the name by fast STT', () => {
     expect(matchPassiveWakeWord('heyjarvis abra o terminal')).toEqual({
       command: 'abra o terminal',
@@ -35,6 +50,13 @@ describe('matchPassiveWakeWord', () => {
 
   it('does not treat an ambient near-match as an address', () => {
     expect(matchPassiveWakeWord('hoje o jarvix falou comigo')).toBeNull();
+  });
+
+  it('rejects production aliases when they are ambient speech, not an address', () => {
+    expect(matchPassiveWakeWord('o Jasper chegou hoje')).toBeNull();
+    expect(matchPassiveWakeWord('falaram Eijax no vídeo')).toBeNull();
+    expect(matchPassiveWakeWord('a voz disse Rejaves ontem')).toBeNull();
+    expect(matchPassiveWakeWord('eu conheço o Jacques do trabalho')).toBeNull();
   });
 
   it('supports an exact configured assistant name', () => {

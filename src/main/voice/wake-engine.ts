@@ -94,6 +94,18 @@ function fromB64(b64: string): Uint8Array {
   return new Uint8Array(Buffer.from(b64, 'base64'));
 }
 
+async function releaseSessions(
+  sessions: readonly (ort.InferenceSession | null)[],
+): Promise<void> {
+  for (const session of sessions) {
+    try {
+      await session?.release();
+    } catch {
+      // Session already released / native runtime shutting down.
+    }
+  }
+}
+
 /**
  * Sanidade barata do custom.onnx ANTES de entregá-lo ao runtime nativo — um
  * ONNX malformado pode ABORTAR o processo (SIGTRAP), não só lançar em JS.
@@ -178,23 +190,48 @@ export class WakeEngine {
   ) {}
 
   async init(): Promise<void> {
-    if (this.mel) return;
+    if (this.disposed || this.mel) return;
     const opts: ort.InferenceSession.SessionOptions = {
       executionProviders: ['cpu'],
       interOpNumThreads: 1,
       intraOpNumThreads: 1,
     };
-    this.mel = await ort.InferenceSession.create(fromB64(MELSPEC_ONNX_B64), opts);
-    this.emb = await ort.InferenceSession.create(fromB64(EMBEDDING_ONNX_B64), opts);
-    this.baseWake = await ort.InferenceSession.create(fromB64(HEY_JARVIS_ONNX_B64), opts);
-    this.customWake = await this.loadCustomWakeModel(opts);
-    this.officialWake = await this.loadOfficialWakeModel(opts);
-    await this.seedBuffers();
-    this.ready = true;
-    // Frames que chegaram DURANTE a init ficaram na fila — processa agora
-    // (antes disso os primeiros segundos de áudio eram perdidos em silêncio).
-    if (!this.disposed && this.pcmQueue.length >= CHUNK && !this.busy) {
-      void this.drain();
+    let mel: ort.InferenceSession | null = null;
+    let emb: ort.InferenceSession | null = null;
+    let baseWake: ort.InferenceSession | null = null;
+    let customWake: ort.InferenceSession | null = null;
+    let officialWake: ort.InferenceSession | null = null;
+    let installed = false;
+    try {
+      mel = await ort.InferenceSession.create(fromB64(MELSPEC_ONNX_B64), opts);
+      if (this.disposed) return;
+      emb = await ort.InferenceSession.create(fromB64(EMBEDDING_ONNX_B64), opts);
+      if (this.disposed) return;
+      baseWake = await ort.InferenceSession.create(fromB64(HEY_JARVIS_ONNX_B64), opts);
+      if (this.disposed) return;
+      customWake = await this.loadCustomWakeModel(opts);
+      if (this.disposed) return;
+      officialWake = await this.loadOfficialWakeModel(opts);
+      if (this.disposed) return;
+      const seeded = await this.seedBuffers(mel, emb);
+      if (this.disposed) return;
+
+      this.mel = mel;
+      this.emb = emb;
+      this.baseWake = baseWake;
+      this.customWake = customWake;
+      this.officialWake = officialWake;
+      this.melFrames = seeded.melFrames;
+      this.features = seeded.features;
+      this.ready = true;
+      installed = true;
+      // Frames que chegaram DURANTE a init ficaram na fila — processa agora
+      // (antes disso os primeiros segundos de áudio eram perdidos em silêncio).
+      if (this.pcmQueue.length >= CHUNK && !this.busy) void this.drain();
+    } finally {
+      if (!installed) {
+        await releaseSessions([mel, emb, baseWake, customWake, officialWake]);
+      }
     }
   }
 
@@ -258,37 +295,47 @@ export class WakeEngine {
   }
 
   /** Espelha o init oficial: mel = ones(76,32); features = ruído de 4 s. */
-  private async seedBuffers(): Promise<void> {
-    this.melFrames = [];
+  private async seedBuffers(
+    mel: ort.InferenceSession,
+    emb: ort.InferenceSession,
+  ): Promise<{ melFrames: Float32Array[]; features: Float32Array[] }> {
+    const melFrames: Float32Array[] = [];
     for (let i = 0; i < MEL_WINDOW; i += 1) {
-      this.melFrames.push(new Float32Array(32).fill(1));
+      melFrames.push(new Float32Array(32).fill(1));
     }
     // Embeddings de 4 s de ruído int16 aleatório (janela 76, passo 8).
     const noise = new Float32Array(16_000 * 4);
     for (let i = 0; i < noise.length; i += 1) {
       noise[i] = Math.floor(Math.random() * 2000 - 1000);
     }
-    const noiseMel = await this.runMel(noise);
-    this.features = [];
+    const noiseMel = await this.runMel(mel, noise);
+    const features: Float32Array[] = [];
     for (let start = 0; start + MEL_WINDOW <= noiseMel.length; start += 8) {
-      const embedding = await this.runEmb(noiseMel.slice(start, start + MEL_WINDOW));
-      this.features.push(embedding);
-      if (this.features.length >= EMB_WINDOW) break; // 16 bastam para semear
+      const embedding = await this.runEmb(
+        emb,
+        noiseMel.slice(start, start + MEL_WINDOW),
+      );
+      features.push(embedding);
+      if (features.length >= EMB_WINDOW) break; // 16 bastam para semear
     }
-    while (this.features.length < EMB_WINDOW) {
-      this.features.push(new Float32Array(96));
+    while (features.length < EMB_WINDOW) {
+      features.push(new Float32Array(96));
     }
+    return { melFrames, features };
   }
 
-  private async runMel(samplesInt16Range: Float32Array): Promise<Float32Array[]> {
-    const out = await this.mel!.run({
-      [this.mel!.inputNames[0]]: new ort.Tensor(
+  private async runMel(
+    mel: ort.InferenceSession,
+    samplesInt16Range: Float32Array,
+  ): Promise<Float32Array[]> {
+    const out = await mel.run({
+      [mel.inputNames[0]]: new ort.Tensor(
         'float32',
         samplesInt16Range,
         [1, samplesInt16Range.length],
       ),
     });
-    const data = out[this.mel!.outputNames[0]].data as Float32Array;
+    const data = out[mel.outputNames[0]].data as Float32Array;
     const frames: Float32Array[] = [];
     for (let f = 0; f < data.length / 32; f += 1) {
       const frame = new Float32Array(32);
@@ -298,14 +345,17 @@ export class WakeEngine {
     return frames;
   }
 
-  private async runEmb(window: Float32Array[]): Promise<Float32Array> {
+  private async runEmb(
+    emb: ort.InferenceSession,
+    window: Float32Array[],
+  ): Promise<Float32Array> {
     const flat = new Float32Array(MEL_WINDOW * 32);
     window.forEach((fr, i) => flat.set(fr, i * 32));
-    const out = await this.emb!.run({
-      [this.emb!.inputNames[0]]: new ort.Tensor('float32', flat, [1, MEL_WINDOW, 32, 1]),
+    const out = await emb.run({
+      [emb.inputNames[0]]: new ort.Tensor('float32', flat, [1, MEL_WINDOW, 32, 1]),
     });
     return Float32Array.from(
-      (out[this.emb!.outputNames[0]].data as Float32Array).slice(0, 96),
+      (out[emb.outputNames[0]].data as Float32Array).slice(0, 96),
     );
   }
 
@@ -337,13 +387,7 @@ export class WakeEngine {
     this.baseWake = null;
     this.customWake = null;
     this.officialWake = null;
-    for (const session of sessions) {
-      try {
-        await session?.release();
-      } catch {
-        // sessão já liberada / runtime encerrando
-      }
-    }
+    await releaseSessions(sessions);
   }
 
   reset(): void {
@@ -399,7 +443,12 @@ export class WakeEngine {
   }
 
   private async processChunk(samples: Float32Array): Promise<void> {
-    if (!this.mel || !this.emb || !this.baseWake) return;
+    const mel = this.mel;
+    const emb = this.emb;
+    const baseWake = this.baseWake;
+    const customWake = this.customWake;
+    const officialWake = this.officialWake;
+    if (!mel || !emb || !baseWake || this.disposed) return;
     let squaredSum = 0;
     for (let index = 0; index < samples.length; index += 1) {
       squaredSum += samples[index] * samples[index];
@@ -419,7 +468,8 @@ export class WakeEngine {
     withCtx.set(chunk, this.rawTail.length);
     this.rawTail = chunk.slice(chunk.length - CTX);
 
-    const newFrames = await this.runMel(withCtx);
+    const newFrames = await this.runMel(mel, withCtx);
+    if (this.disposed) return;
     for (const fr of newFrames) this.melFrames.push(fr);
     if (this.melFrames.length > MEL_MAX) {
       this.melFrames.splice(0, this.melFrames.length - MEL_MAX);
@@ -427,7 +477,11 @@ export class WakeEngine {
 
     // UM embedding por chunk, janela = últimos 76 mel frames (como o oficial).
     if (this.melFrames.length >= MEL_WINDOW) {
-      const embedding = await this.runEmb(this.melFrames.slice(-MEL_WINDOW));
+      const embedding = await this.runEmb(
+        emb,
+        this.melFrames.slice(-MEL_WINDOW),
+      );
+      if (this.disposed) return;
       this.features.push(embedding);
       if (this.features.length > FEAT_MAX) this.features.shift();
     }
@@ -435,13 +489,16 @@ export class WakeEngine {
     if (this.features.length < EMB_WINDOW) return;
     const feat = new Float32Array(EMB_WINDOW * 96);
     this.features.slice(-EMB_WINDOW).forEach((e, i) => feat.set(e, i * 96));
-    const embeddedScore = await this.runWakeHead(this.baseWake, feat);
-    const customScore = this.customWake
-      ? await this.runWakeHead(this.customWake, feat)
+    const embeddedScore = await this.runWakeHead(baseWake, feat);
+    if (this.disposed) return;
+    const customScore = customWake
+      ? await this.runWakeHead(customWake, feat)
       : undefined;
-    const officialScore = this.officialWake
-      ? await this.runWakeHead(this.officialWake, feat)
+    if (this.disposed) return;
+    const officialScore = officialWake
+      ? await this.runWakeHead(officialWake, feat)
       : undefined;
+    if (this.disposed) return;
     // Keep telemetry finite even if a candidate ONNX model emits NaN. The
     // detection gate below also validates scores, but Math.max(NaN, x) would
     // otherwise poison the diagnostic peak for the whole window.

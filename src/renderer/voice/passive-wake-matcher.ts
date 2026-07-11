@@ -13,12 +13,17 @@ const JARVIS_STT_ALIASES = new Set([
   'javis',
   'jarves',
   'jackson',
+  'jasper',
+  'eijax',
+  'rejaves',
+  'jacques',
 ]);
 const FUZZY_ADDRESS_TOKEN_COUNT = 2;
 // Some STT outputs collapse a quickly spoken "Hey Jarvis" into one token.
 // These are deliberately complete greetings rather than arbitrary prefixes,
 // so a word such as "superjarvis" cannot wake the assistant by suffix alone.
 const JOINED_GREETING_PREFIXES = ['hey', 'hei', 'ei', 'e', 'oi', 'ola'] as const;
+const GREETING_TOKENS = new Set<string>(JOINED_GREETING_PREFIXES);
 
 export interface PassiveWakeMatch {
   command: string;
@@ -66,6 +71,12 @@ function joinedGreetingAddress(token: string): string | null {
   return null;
 }
 
+function isAddressPosition(words: readonly string[], index: number): boolean {
+  if (index === 0) return true;
+  if (index !== 1) return false;
+  return GREETING_TOKENS.has(normalizeToken(words[0] ?? ''));
+}
+
 /**
  * Matches the configured assistant name exactly anywhere in the phrase. Near
  * matches are accepted only as an address in the first two tokens, which lets
@@ -92,12 +103,20 @@ export function matchPassiveWakeWord(
       return { command: remainingCommand(words, index + expected.length) };
     }
 
-    if (index >= FUZZY_ADDRESS_TOKEN_COUNT || expected.length !== 1) continue;
+    if (
+      index >= FUZZY_ADDRESS_TOKEN_COUNT ||
+      expected.length !== 1 ||
+      !isAddressPosition(words, index)
+    ) {
+      continue;
+    }
     const heard = normalizeToken(words[index] ?? '');
     const joinedAddress = joinedGreetingAddress(heard);
     const address = joinedAddress ?? heard;
     const exactAddress = address === expected[0];
-    const alias = defaultJarvis && JARVIS_STT_ALIASES.has(address);
+    const alias =
+      defaultJarvis &&
+      (JARVIS_STT_ALIASES.has(heard) || JARVIS_STT_ALIASES.has(address));
     const fuzzy = expected[0].length >= 4 && withinOneEdit(address, expected[0]);
     if (exactAddress || alias || fuzzy) {
       return { command: remainingCommand(words, index + 1) };

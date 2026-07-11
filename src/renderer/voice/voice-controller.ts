@@ -92,6 +92,7 @@ import {
 } from './live-mute-rescue';
 import { NarrationQueue } from './narration-queue';
 import { matchPassiveWakeWord } from './passive-wake-matcher';
+import { PassiveWakeDeadline } from './passive-wake-deadline';
 import { pttStartAction } from './ptt-barge-in';
 
 /**
@@ -118,6 +119,7 @@ const MIC_SILENT_THRESHOLD_MS = 12_000;
 const MIC_HEALTH_CHECK_MS = 5_000;
 /** Deadline curto: fallback textual só serve se continuar parecendo um wake. */
 const PASSIVE_WAKE_STT_BUDGET_MS = 3_500;
+const PASSIVE_WAKE_RENDERER_DEADLINE_MS = PASSIVE_WAKE_STT_BUDGET_MS + 500;
 
 type WakeSource = 'voice' | 'click';
 
@@ -341,9 +343,9 @@ export function useVoiceController(): void {
       void handleWake(source, preRollSeed);
     };
 
-    let passiveWakeChecking = false;
+    const passiveWakeDeadline = new PassiveWakeDeadline(PASSIVE_WAKE_RENDERER_DEADLINE_MS);
     const handlePassiveWake = async (utterance: PassiveWakeUtterance): Promise<void> => {
-      if (passiveWakeChecking || wakeOpenInProgress) return;
+      if (passiveWakeDeadline.isChecking() || wakeOpenInProgress) return;
       const info = useVoiceStore.getState().info;
       if (!info?.enabled || !info.wakeWordEnabled || info.routing !== 'jarvis') return;
       const voiceStatus = useVoiceStore.getState().status;
@@ -355,23 +357,32 @@ export function useVoiceController(): void {
       }
 
       const startedAt = Date.now();
-      passiveWakeChecking = true;
       logVoiceEvent('info', 'wake.passiveChecking', 'checando frase curta via STT', {
         durationSec: Number(utterance.durationSec.toFixed(2)),
         rawSpeechMs: Math.round(utterance.rawSpeechMs),
       });
       try {
-        const result = await window.nexus.voice.transcribe({
-          audioBase64: utterance.wavBase64,
-          mime: 'audio/wav',
-          sampleRate: utterance.sampleRate,
-          translate: false,
-          language: 'pt',
-          purpose: 'passive-wake',
-          passiveWakeWord: info.persona.assistantName,
-          budgetMs: PASSIVE_WAKE_STT_BUDGET_MS,
-        });
+        const request = await passiveWakeDeadline.run(() =>
+          window.nexus.voice.transcribe({
+            audioBase64: utterance.wavBase64,
+            mime: 'audio/wav',
+            sampleRate: utterance.sampleRate,
+            translate: false,
+            language: 'pt',
+            purpose: 'passive-wake',
+            passiveWakeWord: info.persona.assistantName,
+            budgetMs: PASSIVE_WAKE_STT_BUDGET_MS,
+          }),
+        );
         const latencyMs = Date.now() - startedAt;
+        if (request.kind === 'timeout') {
+          logVoiceEvent('warn', 'wake.passiveSttTimeout', 'STT passivo excedeu deadline local', {
+            latencyMs,
+          });
+          return;
+        }
+        if (request.kind !== 'completed') return;
+        const result = request.value;
         if (!result.ok) {
           logVoiceEvent('warn', 'wake.passiveSttFail', 'STT passivo não concluiu', {
             latencyMs,
@@ -417,8 +428,6 @@ export function useVoiceController(): void {
           latencyMs: Date.now() - startedAt,
           error: errMsg(error),
         });
-      } finally {
-        passiveWakeChecking = false;
       }
     };
 
@@ -697,6 +706,7 @@ export function useVoiceController(): void {
       wakeMic.setUtteranceFrameTap(null);
       wakeMic.onPassiveUtterance = null;
       wakeMic.cancelPassiveWake();
+      passiveWakeDeadline.invalidate();
       wakeMic.onLevel = null;
       if (capture.current) capture.current.onLevel = null;
       if (capture.current) capture.current.onFrame = null;
