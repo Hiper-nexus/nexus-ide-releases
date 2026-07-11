@@ -31,16 +31,57 @@ export function VoiceButton() {
     liveState.status !== 'off' &&
     liveState.status !== 'dormant';
   const active = (status !== 'idle' && status !== 'error') || liveActive;
+
+  /** Labels curtos e legíveis — evita LIVE:DORMANT técnico na barra. */
+  const liveStatusLabel = (s: string): string => {
+    switch (s) {
+      case 'listening':
+        return 'ouvindo';
+      case 'thinking':
+        return 'pensando';
+      case 'speaking':
+        return 'falando';
+      case 'interrupted':
+        return 'interrompida';
+      case 'dormant':
+        return 'pronta';
+      case 'error':
+        return 'erro';
+      case 'connecting':
+        return 'conectando';
+      default:
+        return s;
+    }
+  };
+  const classicStatusLabel = (s: string): string => {
+    switch (s) {
+      case 'listening':
+        return 'ouvindo';
+      case 'transcribing':
+        return 'transcrevendo';
+      case 'routing':
+        return 'processando';
+      case 'speaking':
+        return 'falando';
+      case 'error':
+        return 'erro';
+      default:
+        return s;
+    }
+  };
+
   const label =
     wakeBlocked
       ? 'wake preso'
       : responseMuted
         ? 'muda'
       : liveOn && liveState?.status && liveState.status !== 'off'
-      ? `live:${liveState.status}`
+      ? `Jarvis · ${liveStatusLabel(liveState.status)}`
       : active
-        ? status
-        : `${stt} → ${tts}`;
+        ? `Jarvis · ${classicStatusLabel(status)}`
+        : liveOn
+          ? 'Jarvis'
+          : `${stt} → ${tts}`;
 
   function handleClick(e: React.MouseEvent<HTMLButtonElement>): void {
     if (e.altKey || e.metaKey || e.ctrlKey) {

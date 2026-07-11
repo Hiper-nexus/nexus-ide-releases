@@ -187,7 +187,7 @@ describe('createRealtimeProvider', () => {
   });
 
   it('maps unsupported OpenAI TTS voices (nova) to the stable realtime voice', async () => {
-    expect(resolveOpenAiRealtimeVoice('nova')).toBe('marin');
+    expect(resolveOpenAiRealtimeVoice('nova')).toBe('ash');
     expect(resolveOpenAiRealtimeVoice('cedar')).toBe('cedar');
 
     vi.resetModules();

@@ -93,10 +93,55 @@ export type JarvisBrainProviderId = 'gemini' | 'openai' | 'groq';
 export type JarvisLiveTransport = 'classic' | 'openai-realtime' | 'gemini-live';
 
 export const DEFAULT_GEMINI_LIVE_MODEL = 'gemini-3.1-flash-live-preview';
-export const DEFAULT_GEMINI_LIVE_VOICE = 'Gacrux';
-export const LEGACY_GEMINI_LIVE_VOICE = 'Charon';
+/** Voz masculina Gemini Live (padrão produto). */
+export const DEFAULT_GEMINI_LIVE_VOICE = 'Charon';
+/** Default anterior (feminino) — migrado para Charon na carga. */
+export const LEGACY_GEMINI_LIVE_VOICE = 'Gacrux';
 export const LEGACY_GEMINI_LIVE_MODEL =
   'gemini-2.5-flash-native-audio-preview-12-2025';
+
+/** Vozes OpenAI Realtime suportadas (API atual). */
+export const OPENAI_REALTIME_VOICE_OPTIONS = [
+  { id: 'ash', label: 'Ash (masculina)', gender: 'male' },
+  { id: 'echo', label: 'Echo (masculina)', gender: 'male' },
+  { id: 'verse', label: 'Verse (masculina)', gender: 'male' },
+  { id: 'cedar', label: 'Cedar (masculina)', gender: 'male' },
+  { id: 'alloy', label: 'Alloy (neutra)', gender: 'neutral' },
+  { id: 'ballad', label: 'Ballad (suave)', gender: 'neutral' },
+  { id: 'coral', label: 'Coral (feminina)', gender: 'female' },
+  { id: 'sage', label: 'Sage (feminina)', gender: 'female' },
+  { id: 'shimmer', label: 'Shimmer (feminina)', gender: 'female' },
+  { id: 'marin', label: 'Marin (feminina)', gender: 'female' },
+] as const;
+
+/** Vozes OpenAI TTS clássico (speech API). */
+export const OPENAI_TTS_VOICE_OPTIONS = [
+  { id: 'onyx', label: 'Onyx (masculina grave)', gender: 'male' },
+  { id: 'ash', label: 'Ash (masculina)', gender: 'male' },
+  { id: 'echo', label: 'Echo (masculina)', gender: 'male' },
+  { id: 'alloy', label: 'Alloy (neutra)', gender: 'neutral' },
+  { id: 'fable', label: 'Fable (narrativa)', gender: 'neutral' },
+  { id: 'nova', label: 'Nova (feminina)', gender: 'female' },
+  { id: 'shimmer', label: 'Shimmer (feminina)', gender: 'female' },
+  { id: 'coral', label: 'Coral (feminina)', gender: 'female' },
+  { id: 'sage', label: 'Sage (feminina)', gender: 'female' },
+  { id: 'marin', label: 'Marin (feminina)', gender: 'female' },
+] as const;
+
+/** Vozes prebuilt Gemini Live. */
+export const GEMINI_LIVE_VOICE_OPTIONS = [
+  { id: 'Charon', label: 'Charon (masculina)', gender: 'male' },
+  { id: 'Fenrir', label: 'Fenrir (masculina grave)', gender: 'male' },
+  { id: 'Orus', label: 'Orus (masculina)', gender: 'male' },
+  { id: 'Puck', label: 'Puck (leve)', gender: 'neutral' },
+  { id: 'Aoede', label: 'Aoede (feminina)', gender: 'female' },
+  { id: 'Kore', label: 'Kore (feminina)', gender: 'female' },
+  { id: 'Leda', label: 'Leda (feminina)', gender: 'female' },
+  { id: 'Gacrux', label: 'Gacrux (feminina)', gender: 'female' },
+] as const;
+
+/** Default OpenAI (Realtime + alinhamento TTS). Ash cobre realtime e TTS. */
+export const DEFAULT_OPENAI_VOICE = 'ash';
 
 const inputSchema = z.object({
   mode: z.enum(['push-to-talk']).default('push-to-talk'),
@@ -122,15 +167,15 @@ export const jarvisLiveConfigSchema = z
       .default('gemini-live'),
     /** Modelo realtime OpenAI padrao. */
     openaiModel: z.string().min(1).max(128).default('gpt-realtime-2.1-mini'),
-    /** Voz OpenAI Realtime padrao. */
-    openaiVoice: z.string().min(1).max(64).default('marin'),
+    /** Voz OpenAI Realtime padrao (masculina). */
+    openaiVoice: z.string().min(1).max(64).default(DEFAULT_OPENAI_VOICE),
     /** Modelo realtime (audio nativo) usado pelo transporte gemini-live. */
     liveModel: z
       .string()
       .min(1)
       .max(128)
       .default(DEFAULT_GEMINI_LIVE_MODEL),
-    /** Voz pre-construida do Gemini Live. */
+    /** Voz pre-construida do Gemini Live (masculina). */
     voiceName: z.string().min(1).max(64).default(DEFAULT_GEMINI_LIVE_VOICE),
     /** Keep the live session warm after a turn so follow-ups reuse context. */
     graceReuseMs: z.number().int().positive().max(10 * 60_000).default(90_000),
@@ -143,7 +188,7 @@ export const jarvisLiveConfigSchema = z
     enabled: false,
     transport: 'gemini-live',
     openaiModel: 'gpt-realtime-2.1-mini',
-    openaiVoice: 'marin',
+    openaiVoice: DEFAULT_OPENAI_VOICE,
     liveModel: DEFAULT_GEMINI_LIVE_MODEL,
     voiceName: DEFAULT_GEMINI_LIVE_VOICE,
     graceReuseMs: 90_000,
@@ -323,7 +368,7 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
     enabled: false,
     transport: 'gemini-live',
     openaiModel: 'gpt-realtime-2.1-mini',
-    openaiVoice: 'marin',
+    openaiVoice: DEFAULT_OPENAI_VOICE,
     liveModel: DEFAULT_GEMINI_LIVE_MODEL,
     voiceName: DEFAULT_GEMINI_LIVE_VOICE,
     graceReuseMs: 90_000,
@@ -391,7 +436,7 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
     endpoint: 'https://api.openai.com/v1/audio/speech',
     auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
     model: 'gpt-4o-mini-tts',
-    voice: 'marin',
+    voice: DEFAULT_OPENAI_VOICE,
     speed: 1.0,
     streaming: true,
     format: 'mp3',
@@ -404,7 +449,7 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
         type: 'tts',
         provider: 'macos-say',
         localBin: '/usr/bin/say',
-        voice: 'Luciana',
+        voice: 'Felipe',
       },
     },
   },

@@ -227,7 +227,13 @@ const config: ForgeConfig = {
   packagerConfig: {
     appBundleId: APP_BUNDLE_ID,
     appCategoryType: 'public.app-category.developer-tools',
-    extraResource: ['scripts/design-system-sensor.mjs'],
+    // design-system-sensor: runtime helper
+    // resources/wake: head PT-BR ONNX (também embutido em base64 no main;
+    // o arquivo em extraResource permite inspeção/override sem rebuild).
+    extraResource: [
+      'scripts/design-system-sensor.mjs',
+      'resources/wake',
+    ],
     // App icon (Matrix-hacker mark): packager appends .icns on macOS. Read at
     // build time from the project root — not shipped inside the asar.
     icon: 'assets/icon',

@@ -100,11 +100,13 @@ describe('wake barge-in guards', () => {
     );
   });
 
-  it('ignores unverified acoustic re-wake while allowing STT-verified voice barge-in', () => {
+  it('allows full-duplex barge-in while speaking (voice → voice-barge)', () => {
     expect(source).toContain('shouldIgnoreLiveReWake');
-    expect(source).toContain("source === 'voice' && shouldIgnoreLiveReWake");
+    expect(source).toContain("source === 'voice' || source === 'voice-barge'");
     expect(source).toContain("type WakeSource = 'voice' | 'voice-barge' | 'click'");
+    expect(source).toContain("voiceStatus === 'speaking' && source === 'voice' ? 'voice-barge'");
     expect(gatesSource).toContain('export function shouldIgnoreLiveReWake');
+    expect(gatesSource).toContain("if (status === 'speaking') return false");
   });
 
   it('starts Live without injecting a competing spoken greeting', () => {
@@ -115,7 +117,7 @@ describe('wake barge-in guards', () => {
   });
 
   it('keeps a natural follow-up window before returning wake ownership', () => {
-    expect(source).toContain('const REPLY_MAX_LISTEN_MS = 15_000');
+    expect(source).toContain('const REPLY_MAX_LISTEN_MS = 22_000');
     expect(source).toContain("reason === 'reply' && autoStop");
     expect(source).toContain('Math.min(autoStop.maxMs, REPLY_MAX_LISTEN_MS)');
   });

@@ -2,56 +2,22 @@
  * Text matcher used only after a short VAD-gated passive STT sample. It makes
  * the wake path resilient to pronunciation and acoustic-model misses without
  * treating arbitrary ambient speech as a command.
+ *
+ * Política: só "Jarvis" basta — "Jarvis", "Ei Jarvis", "acorda Jarvis",
+ * "cheguei Jarvis", "olá Jarvis", "ouça Jarvis", etc.
  */
 
-// Observed across the local/Groq STT paths. "Jackson" is a recurring
-// Portuguese transcription of a spoken "Jarvis" on the Fifine microphone.
-const JARVIS_STT_ALIASES = new Set([
-  'jarbas',
-  'jarbis',
-  'javes',
-  'javis',
-  'jarves',
-  'jackson',
-  'jasper',
-  'eijax',
-  'rejaves',
-  'jacques',
-]);
-const FUZZY_ADDRESS_TOKEN_COUNT = 2;
-// Some STT outputs collapse a quickly spoken "Hey Jarvis" into one token.
-// These are deliberately complete greetings rather than arbitrary prefixes,
-// so a word such as "superjarvis" cannot wake the assistant by suffix alone.
-const JOINED_GREETING_PREFIXES = ['hey', 'hei', 'ei', 'e', 'oi', 'ola'] as const;
-const GREETING_TOKENS = new Set<string>(JOINED_GREETING_PREFIXES);
+import {
+  isJarvisAddressTokenIndex,
+  looksLikeJarvisName,
+  normalizeNameToken,
+  stripJoinedGreeting,
+} from '../../shared/jarvis-name-match';
+
+const FUZZY_ADDRESS_TOKEN_COUNT = 3;
 
 export interface PassiveWakeMatch {
   command: string;
-}
-
-function normalizeToken(value: string): string {
-  return value
-    .toLocaleLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '');
-}
-
-function withinOneEdit(left: string, right: string): boolean {
-  if (Math.abs(left.length - right.length) > 1) return false;
-  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
-  for (let row = 1; row <= left.length; row += 1) {
-    const current = [row];
-    for (let column = 1; column <= right.length; column += 1) {
-      current[column] = Math.min(
-        previous[column] + 1,
-        current[column - 1] + 1,
-        previous[column - 1] + (left[row - 1] === right[column - 1] ? 0 : 1),
-      );
-    }
-    previous = current;
-  }
-  return previous[right.length] <= 1;
 }
 
 function remainingCommand(words: readonly string[], consumedAt: number): string {
@@ -62,64 +28,52 @@ function remainingCommand(words: readonly string[], consumedAt: number): string 
     .trim();
 }
 
-function joinedGreetingAddress(token: string): string | null {
-  for (const greeting of JOINED_GREETING_PREFIXES) {
-    if (token.startsWith(greeting) && token.length > greeting.length) {
-      return token.slice(greeting.length);
-    }
-  }
-  return null;
-}
-
-function isAddressPosition(words: readonly string[], index: number): boolean {
-  if (index === 0) return true;
-  if (index !== 1) return false;
-  return GREETING_TOKENS.has(normalizeToken(words[0] ?? ''));
-}
-
 /**
- * Matches the configured assistant name only as a direct address. Exact and
- * near matches share the same first-token / greeting+name boundary so ambient
- * mentions cannot wake the assistant.
+ * Matches the configured assistant name as a direct address. Exact and near
+ * STT matches share the same vocative boundary so ambient mid-sentence mentions
+ * ("hoje o Jarvis falou") do not wake.
  */
 export function matchPassiveWakeWord(
   transcript: string,
   assistantName = 'Jarvis',
 ): PassiveWakeMatch | null {
   const words = transcript.trim().split(/\s+/).filter(Boolean);
-  const target = assistantName
+  if (words.length === 0) return null;
+
+  const targetParts = assistantName
     .trim()
     .split(/\s+/)
-    .map(normalizeToken)
+    .map(normalizeNameToken)
     .filter(Boolean);
-  const expected = target.length > 0 ? target : ['jarvis'];
+  const expected = targetParts.length > 0 ? targetParts : ['jarvis'];
   const defaultJarvis = expected.length === 1 && expected[0] === 'jarvis';
+  const target = expected[0] ?? 'jarvis';
 
   for (let index = 0; index <= words.length - expected.length; index += 1) {
+    if (!isJarvisAddressTokenIndex(words, index)) continue;
+
+    // Exact multi-token name
     const exact = expected.every(
-      (token, offset) => normalizeToken(words[index + offset] ?? '') === token,
+      (token, offset) => normalizeNameToken(words[index + offset] ?? '') === token,
     );
-    if (exact && isAddressPosition(words, index)) {
+    if (exact) {
       return { command: remainingCommand(words, index + expected.length) };
     }
 
-    if (
-      index >= FUZZY_ADDRESS_TOKEN_COUNT ||
-      expected.length !== 1 ||
-      !isAddressPosition(words, index)
-    ) {
-      continue;
-    }
-    const heard = normalizeToken(words[index] ?? '');
-    const joinedAddress = joinedGreetingAddress(heard);
-    const address = joinedAddress ?? heard;
-    const exactAddress = address === expected[0];
-    const alias =
-      defaultJarvis &&
-      (JARVIS_STT_ALIASES.has(heard) || JARVIS_STT_ALIASES.has(address));
-    const fuzzy = expected[0].length >= 4 && withinOneEdit(address, expected[0]);
-    if (exactAddress || alias || fuzzy) {
-      return { command: remainingCommand(words, index + 1) };
+    if (expected.length !== 1) continue;
+    if (index >= FUZZY_ADDRESS_TOKEN_COUNT) continue;
+
+    const heard = normalizeNameToken(words[index] ?? '');
+    const joined = stripJoinedGreeting(heard);
+    const candidates = joined ? [heard, joined] : [heard];
+
+    for (const address of candidates) {
+      const isMatch = defaultJarvis
+        ? looksLikeJarvisName(address, target)
+        : address === target || looksLikeJarvisName(address, target);
+      if (isMatch) {
+        return { command: remainingCommand(words, index + 1) };
+      }
     }
   }
 

@@ -2,16 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { shouldIgnoreLiveReWake } from './voice-realtime-gates';
 
 describe('shouldIgnoreLiveReWake', () => {
-  it('ignores re-wake while Live is speaking (stutter/obras root cause)', () => {
+  it('allows barge-in re-wake while Live is speaking (full-duplex)', () => {
     expect(
       shouldIgnoreLiveReWake({
         status: 'speaking',
-        remainingMs: 0,
+        remainingMs: 2_400,
         pendingChunks: 0,
         suppressAudioOut: false,
         realtimeTurnActive: true,
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('allows re-wake at idle even with turnActive when nothing is playing', () => {

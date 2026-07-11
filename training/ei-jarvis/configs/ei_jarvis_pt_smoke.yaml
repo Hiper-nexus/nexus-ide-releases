@@ -1,0 +1,58 @@
+# Smoke end-to-end do pipeline LiveKit para "Ei Jarvis" (rápido, não produção).
+# Uso: ./train_livekit.sh --config configs/ei_jarvis_pt_smoke.yaml
+#
+# Multilíngue → tts_backend: voxcpm (Piper é EN-US only).
+
+model_name: ei_jarvis_pt_smoke
+
+target_phrases:
+  - "ei jarvis"
+  - "hey jarvis"
+  - "jarvis"
+
+tts_backend: voxcpm
+
+voxcpm_tts:
+  voice_design_prompts:
+    - "A young adult Brazilian Portuguese man, clear mid-pitch voice, moderate pace"
+    - "A young adult Brazilian Portuguese woman, warm mid-pitch, steady pace"
+  cfg_values: [2.0]
+  inference_timesteps_list: [10]
+
+n_samples: 24
+n_samples_val: 8
+n_background_samples: 40
+n_background_samples_val: 8
+tts_batch_size: 4
+
+custom_negative_phrases:
+  - "ei jason"
+  - "hey java"
+  - "abrir o terminal"
+  - "bom dia"
+
+data_dir: ./data
+output_dir: ./output
+
+augmentation:
+  clip_duration: 2.0
+  batch_size: 8
+  rounds: 2
+  background_paths: [./data/backgrounds]
+  rir_paths: [./data/rirs]
+
+model:
+  # smoke: dnn tiny é mais barato; produção usa conv_attention em ei_jarvis_pt.yaml
+  model_type: dnn
+  model_size: tiny
+
+steps: 500
+learning_rate: 0.001
+max_negative_weight: 1000
+target_fp_per_hour: 1.0
+
+batch_n_per_class:
+  positive: 10
+  adversarial_negative: 10
+  ACAV100M_sample: 64
+  background_noise: 10

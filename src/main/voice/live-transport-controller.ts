@@ -436,7 +436,17 @@ export class LiveTransportController {
   micIn(b64: string): void {
     const state = this._fsm.getState();
     if (!state.enabled || !state.sessionId) return;
-    if (shouldWithholdLiveMicFrame({ status: state.status, providerSpeaking: this.providerSpeaking })) {
+    // Gemini Live: full-duplex + activityHandling START_OF_ACTIVITY_INTERRUPTS.
+    // Mic frames must keep flowing while she speaks so barge-in is real-time.
+    const fullDuplex =
+      state.enabled && getVoiceConfig().jarvisLive.transport === 'gemini-live';
+    if (
+      shouldWithholdLiveMicFrame({
+        status: state.status,
+        providerSpeaking: this.providerSpeaking,
+        fullDuplex,
+      })
+    ) {
       return;
     }
     let samples: Int16Array;

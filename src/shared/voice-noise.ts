@@ -1,22 +1,19 @@
 /**
  * Gate de transcrição-lixo, PURO e compartilhado (main + renderer). Whisper
- * alucina frases fixas em silêncio/ruído e — com AEC desligado — a cauda do
- * próprio TTS volta pelo alto-falante como interjeição garbled ("Ooooooooh!",
- * "o javis"). Este gate mata essas capturas ANTES do cérebro, encerrando a
- * cadeia de reply graciosamente em vez de a JARVIS responder a si mesma.
+ * alucina frases fixas em silêncio/ruído e — com AEC desligado — a caixa do
+ * próprio TTS volta pelo alto-falante como interjeição garbled ("Ooooooooh!").
  *
- * Conservador de propósito: só descarta capturas curtas (≤3 tokens) em que
- * TODO token é ruído/interjeição/eco de wake — uma resposta curta legítima
- * ("sim", "não", "abre") NUNCA é ruído.
+ * Política de produto: chamada à Jarvis (só o nome ou variação STT) NÃO é
+ * ruído — desperta / engaja Live. Eco real de TTS continua no echoSuppressor.
  */
+
+import { isJarvisWakeAddress, looksLikeJarvisName } from './jarvis-name-match';
 
 const NOISE_WORDS = new Set([
   'a', 'ah', 'ai', 'ok', 'okay', 'hum', 'hmm', 'hm', 'ha', 'uh', 'uhum', 'aham',
-  'e', 'eh', 'ei', 'hey', 'ta', 'you', 'o', 'oh',
+  'e', 'eh', 'ta', 'you', 'o', 'oh',
+  'ei', 'hey', 'hei', 'oi', 'ola',
 ]);
-
-/** Nome do assistente garbled pelo STT (eco do wake), nunca um comando real. */
-const JARVIS_GARBLE = /^(jarvis|jarvi|jarv|javis|javes|jave|jarves|jervis|jives)$/;
 
 /** Vogal única alongada: "ooo", "aaaa", "ooooooooh" (com h final opcional). */
 const ELONGATED_VOWEL = /^([aeiou])\1{2,}h*$/;
@@ -25,14 +22,23 @@ const ELONGATED_VOWEL = /^([aeiou])\1{2,}h*$/;
 const LAUGHTER = /^(k{2,}|(ha){2,}|(he){2,}|(rs)+|(hue)+)$/;
 
 function isNoiseToken(word: string): boolean {
+  // Nome Jarvis (mesmo garbled) NÃO é ruído genérico — é engajamento.
+  if (looksLikeJarvisName(word)) return false;
   return (
     NOISE_WORDS.has(word) ||
     /^h?u+m+$/.test(word) ||
     /^a+h*$/.test(word) ||
     ELONGATED_VOWEL.test(word) ||
-    LAUGHTER.test(word) ||
-    JARVIS_GARBLE.test(word)
+    LAUGHTER.test(word)
   );
+}
+
+/**
+ * Chamada à assistente (só Jarvis / Ei Jarvis / Hey Javes / …).
+ * Nunca descartar no Live nem no Classic como "ruído".
+ */
+export function isWakeAddressTranscript(text: string): boolean {
+  return isJarvisWakeAddress(text);
 }
 
 const MEDIA_BOILERPLATE = [
@@ -43,6 +49,18 @@ const MEDIA_BOILERPLATE = [
   /\bativ[ae] o sininho\b/,
   /\breceber notificacoes? de novos videos?\b/,
 ];
+
+function normalizeWords(text: string): string[] {
+  const normalized = text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.!?,;:]+/g, ' ')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return normalized ? normalized.split(' ') : [];
+}
 
 /** Whisper/media-credit boilerplate, including the common combined sentence. */
 export function isMediaBoilerplateTranscript(text: string): boolean {
@@ -61,15 +79,12 @@ export function isMediaBoilerplateTranscript(text: string): boolean {
 }
 
 export function isLikelyNoiseTranscript(text: string): boolean {
-  const normalized = text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[.!?,;:]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const words = normalizeWords(text);
+  const normalized = words.join(' ');
   // Saudações curtas deliberadas são fala real, não ruído.
   if (normalized === 'oi' || normalized === 'e ai') return false;
+  // "Jarvis", "Ei Jarvis", "Hey Javes", "javis" sozinho → engajamento.
+  if (isWakeAddressTranscript(text)) return false;
   if (!normalized || normalized.length <= 2) return true;
   if (isMediaBoilerplateTranscript(normalized)) return true;
   if (normalized === 'thank you' || normalized === 'obrigado por assistir') return true;
@@ -80,6 +95,10 @@ export function isLikelyNoiseTranscript(text: string): boolean {
   ) {
     return true;
   }
-  const words = normalized.split(' ');
+  // "o javis" (artigo + nome) era eco TTS; com política permissiva ainda
+  // engaja se o segundo token parece Jarvis.
+  if (words.length === 2 && words[0] === 'o' && looksLikeJarvisName(words[1]!)) {
+    return false;
+  }
   return words.length <= 3 && words.every(isNoiseToken);
 }

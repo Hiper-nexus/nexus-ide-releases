@@ -3,6 +3,7 @@ import {
   CLICK_REALTIME_TRANSCRIPT_WAIT_MS,
   LOCAL_SPEECH_REALTIME_TRANSCRIPT_WAIT_MS,
   REALTIME_TRANSCRIPT_WAIT_MS,
+  REPLY_REALTIME_TRANSCRIPT_WAIT_MS,
   realtimeTranscriptWaitMs,
   WAKE_REALTIME_TRANSCRIPT_WAIT_MS,
 } from './realtime-transcript-wait';
@@ -13,10 +14,10 @@ describe('realtimeTranscriptWaitMs', () => {
     expect(realtimeTranscriptWaitMs('ptt')).toBe(REALTIME_TRANSCRIPT_WAIT_MS);
   });
 
-  it('reply without owner stays snappy (Classic fallback available)', () => {
-    expect(realtimeTranscriptWaitMs('reply')).toBe(REALTIME_TRANSCRIPT_WAIT_MS);
+  it('reply waits longer so follow-up does not idle mid-sentence', () => {
+    expect(realtimeTranscriptWaitMs('reply')).toBe(REPLY_REALTIME_TRANSCRIPT_WAIT_MS);
     expect(realtimeTranscriptWaitMs('reply', { realtimeIsOwner: false })).toBe(
-      REALTIME_TRANSCRIPT_WAIT_MS,
+      REPLY_REALTIME_TRANSCRIPT_WAIT_MS,
     );
   });
 
@@ -58,12 +59,12 @@ describe('realtimeTranscriptWaitMs', () => {
     ).toBe(LOCAL_SPEECH_REALTIME_TRANSCRIPT_WAIT_MS);
   });
 
-  it('FIX D: reply + realtimeIsOwner gets full wake budget (no Classic to degrade to)', () => {
+  it('FIX D: reply + realtimeIsOwner gets extended follow-up budget', () => {
     expect(
       realtimeTranscriptWaitMs('reply', { realtimeIsOwner: true }),
-    ).toBe(WAKE_REALTIME_TRANSCRIPT_WAIT_MS);
+    ).toBe(REPLY_REALTIME_TRANSCRIPT_WAIT_MS);
     expect(
       realtimeTranscriptWaitMs('reply', { localSpeechUsable: true, realtimeIsOwner: true }),
-    ).toBe(WAKE_REALTIME_TRANSCRIPT_WAIT_MS);
+    ).toBe(REPLY_REALTIME_TRANSCRIPT_WAIT_MS);
   });
 });

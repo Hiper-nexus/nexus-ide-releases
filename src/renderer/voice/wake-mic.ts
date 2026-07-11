@@ -471,8 +471,10 @@ export class WakeMic {
 
   /** Abre stream + grafo de áudio (comum ao start e à reconstrução). */
   private async resolveAudioConstraints(): Promise<MediaTrackConstraints> {
+    // Full-duplex: Chromium AEC so mic frames can keep flowing to Gemini Live
+    // while she speaks (START_OF_ACTIVITY_INTERRUPTS). SoftAgc stays in-process.
     const base: MediaTrackConstraints = {
-      echoCancellation: false,
+      echoCancellation: true,
       noiseSuppression: false,
       autoGainControl: false,
     };

@@ -30,8 +30,10 @@ function adapterModelLabel(adapter: AdapterInfo, model: string): string {
 type BarDensity = 'full' | 'icons' | 'compact';
 
 function densityFromWidth(width: number): BarDensity {
-  if (width < 980) return 'compact';
-  if (width < 1280) return 'icons';
+  // Thresholds um pouco mais cedo: labels longos em PT não devem empurrar
+  // botões uns sobre os outros nem sobrepor o brand.
+  if (width < 1080) return 'compact';
+  if (width < 1380) return 'icons';
   return 'full';
 }
 
@@ -187,25 +189,25 @@ export function WorkspaceBar({
     },
     {
       id: 'browser',
-      label: 'Browser',
+      label: 'Navegador',
       icon: 'browser',
-      title: 'Abrir um browser embutido em um pane novo',
+      title: 'Abrir um navegador embutido em um painel novo',
       onClick: () => addBrowserPane(),
     },
     {
       id: 'view',
-      label: viewKind === 'canvas' ? 'Grid' : 'Canvas',
+      label: viewKind === 'canvas' ? 'Grade' : 'Canvas',
       icon: viewKind === 'canvas' ? 'grid' : 'canvas',
       title:
         viewKind === 'grid'
-          ? 'Mudar para canvas (arrastar livre)'
-          : 'Mudar para grid (panes divididos)',
+          ? 'Mudar para Canvas (arrastar painéis livremente)'
+          : 'Mudar para Grade (painéis divididos)',
       active: viewKind === 'canvas',
       onClick: toggleView,
     },
     {
       id: 'files',
-      label: 'Files',
+      label: 'Arquivos',
       icon: 'files',
       title: 'Arquivos do workspace (ver/editar)',
       active: filesOpen,
@@ -213,17 +215,17 @@ export function WorkspaceBar({
     },
     {
       id: 'board',
-      label: 'Board',
+      label: 'Painel',
       icon: 'board',
-      title: 'Ops Board — pipeline de missões (⌘B)',
+      title: 'Painel de operações — pipeline de missões (⌘B)',
       active: opsBoardOpen,
       onClick: toggleOpsBoard,
     },
     {
       id: 'orch',
-      label: 'Orch',
+      label: 'Equipe',
       icon: 'orch',
-      title: 'Missões, handoffs, todos e squads',
+      title: 'Missões, handoffs, tarefas e squads',
       active: orchPanelOpen,
       onClick: toggleOrchPanel,
     },
@@ -352,7 +354,7 @@ export function WorkspaceBar({
           <button
             className="workspace-bar__btn workspace-bar__btn--primary"
             onClick={openWizard}
-            title="Nova missão (livre ou squad)"
+            title="Nova missão (livre ou com equipe)"
             aria-label="Nova missão"
           >
             <PixelIcon name="mission" />
@@ -361,17 +363,17 @@ export function WorkspaceBar({
           <button
             className="workspace-bar__btn workspace-bar__btn--agent"
             onClick={openPicker}
-            title="Abrir um agente de IA em um pane novo"
+            title="Abrir um agente de IA em um painel novo"
             aria-label="Abrir agente"
           >
             <PixelIcon name="agent" />
-            {showLabels && <span className="workspace-bar__btn-label">Agent</span>}
+            {showLabels && <span className="workspace-bar__btn-label">Agente</span>}
           </button>
           {onOpenDiff && (
             <button
               className="workspace-bar__btn"
               onClick={onOpenDiff}
-              title="Diff + anotações para o agent"
+              title="Ver diferenças e anotar para o agente"
               aria-label="Diff e anotações"
             >
               <PixelIcon name="files" />
@@ -382,11 +384,11 @@ export function WorkspaceBar({
             <button
               className="workspace-bar__btn"
               onClick={onOpenIntegrations}
-              title="GitHub, Linear, port forward"
+              title="GitHub, Linear e port forward"
               aria-label="Integrações"
             >
               <PixelIcon name="config" />
-              {showLabels && <span className="workspace-bar__btn-label">Forge</span>}
+              {showLabels && <span className="workspace-bar__btn-label">Apps</span>}
             </button>
           )}
         </div>

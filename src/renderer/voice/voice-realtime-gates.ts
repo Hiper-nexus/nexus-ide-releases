@@ -81,14 +81,13 @@ export function shouldReserveWakeForRealtime(): boolean {
 }
 
 /**
- * True when a voice re-wake must be ignored because Live is mid-reply.
- * Without this, a second "Hey Jarvis" (or self-wake on her own voice) during
- * the gap between liveProviderAnswer and the first audible chunk sets
- * suppressRealtimeAudioOut, queues dozens of PCM chunks, then flushes them
- * in one burst → stutter + ambient follow-up ("obras").
+ * True when a voice re-wake must be ignored because Live is mid-reply in a
+ * fragile gap (routing / buffered audio not yet attached).
  *
- * Only `listening` (command / follow-up window) accepts a voice re-wake while
- * the Live turn is still active.
+ * Full-duplex product goal: while she is **speaking**, the user may barge in
+ * ("Hey/Ei Jarvis" or speech) — handleWake stops playback + liveInterrupt.
+ * We only block re-wake during pure routing or when suppressed chunks would
+ * flush as a stutter burst without a real barge intent.
  */
 export function shouldIgnoreLiveReWake(opts?: {
   status?: string;
@@ -104,7 +103,9 @@ export function shouldIgnoreLiveReWake(opts?: {
   const turnActive = opts?.realtimeTurnActive ?? realtimeTurnActive;
   if (!turnActive && !isRealtimeLive()) return false;
   if (status === 'listening') return false;
-  if (status === 'speaking' || status === 'routing') {
+  // Realtime barge-in: user may interrupt while she talks.
+  if (status === 'speaking') return false;
+  if (status === 'routing') {
     return true;
   }
   // Mute-stuck transcribing (no audio draining) must allow barge-in — otherwise

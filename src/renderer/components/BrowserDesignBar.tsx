@@ -108,17 +108,26 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
     : null;
 
   return (
-    <div className="design-bar nodrag">
+    <div className={`design-bar nodrag ${isActive ? 'design-bar--active' : ''}`}>
       <button
         type="button"
         data-testid="design-toggle"
         className={`browser-bar__btn design-bar__toggle ${isActive ? 'design-bar__toggle--on' : ''}`}
         aria-pressed={isActive}
-        title={isActive ? 'Sair do Design Mode (Esc)' : 'Design Mode: selecionar elemento'}
-        aria-label="Design Mode"
+        title={
+          isActive
+            ? 'Sair do modo Design (Esc)'
+            : 'Modo Design: clicar elementos da página e enviar ao agente'
+        }
+        aria-label="Modo Design"
         onClick={() => void toggle()}
       >
-        ◎
+        <span className="design-bar__toggle-icon" aria-hidden>
+          ◎
+        </span>
+        <span className="design-bar__toggle-label">
+          {isActive ? 'Design ON' : 'Design'}
+        </span>
       </button>
       {isActive && (
         <span className="design-bar__breakpoints">

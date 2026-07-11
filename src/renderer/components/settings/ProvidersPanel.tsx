@@ -349,81 +349,96 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
       </div>
 
       {expanded && <div className="prov__body">
-      <div className="prov__grid">
-        <label className="prov__field">
-          Binário (vazio = <code>{provider.detectedBin}</code>)
-          <input
-            className="settings-input"
-            value={binDraft}
-            placeholder={provider.detectedBin}
-            onChange={(e) => setBinDraft(e.target.value)}
-            onBlur={() => patch({ binPath: binDraft })}
-          />
-        </label>
+      <div className="prov__block">
+        <span className="prov__block-title">Modelo e execução</span>
+        <div className="prov__grid">
+          <label className="prov__field">
+            Binário (vazio = <code>{provider.detectedBin}</code>)
+            <input
+              className="settings-input"
+              value={binDraft}
+              placeholder={provider.detectedBin}
+              onChange={(e) => setBinDraft(e.target.value)}
+              onBlur={() => patch({ binPath: binDraft })}
+            />
+          </label>
 
-        <label className="prov__field">
-          Modelo padrão
-          <select
-            className="settings-input"
-            value={provider.defaultModel}
-            onChange={(e) => patch({ defaultModel: e.target.value })}
-          >
-            {provider.models.map((m) => (
-              <option key={m} value={m}>
-                {modelLabel(provider, m)}
-              </option>
-            ))}
-          </select>
-          {provider.modelInfo?.[provider.defaultModel]?.warning && (
-            <span className="prov__hint">
-              {provider.modelInfo[provider.defaultModel].warning}
-            </span>
-          )}
-        </label>
-
-        <div className="prov__field prov__field--wide">
-          <CustomModels provider={provider} />
-        </div>
-
-        <label className="prov__field prov__field--wide">
-          Args extras
-          <input
-            className="settings-input"
-            value={argsDraft}
-            placeholder="ex.: --verbose --foo bar"
-            onChange={(e) => setArgsDraft(e.target.value)}
-            onBlur={() =>
-              patch({
-                extraArgs: argsDraft.split(/\s+/).filter(Boolean),
-              })
-            }
-          />
-        </label>
-
-        {provider.routable && (
-          <label className="prov__field prov__field--wide">
-            Upstream (roteamento ai-launcher)
+          <label className="prov__field">
+            Modelo padrão
             <select
               className="settings-input"
-              value={provider.upstream}
-              onChange={(e) => patch({ upstream: e.target.value })}
+              value={provider.defaultModel}
+              onChange={(e) => patch({ defaultModel: e.target.value })}
             >
-              {provider.upstreams.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.label}
-                  {u.requiresToken ? ' (requer key)' : ''}
+              {provider.models.map((m) => (
+                <option key={m} value={m}>
+                  {modelLabel(provider, m)}
                 </option>
               ))}
             </select>
+            {provider.modelInfo?.[provider.defaultModel]?.warning && (
+              <span className="prov__hint">
+                {provider.modelInfo[provider.defaultModel].warning}
+              </span>
+            )}
           </label>
-        )}
+
+          <div className="prov__field prov__field--wide">
+            <CustomModels provider={provider} />
+          </div>
+
+          <label className="prov__field prov__field--wide">
+            Args extras
+            <input
+              className="settings-input"
+              value={argsDraft}
+              placeholder="ex.: --verbose --foo bar"
+              onChange={(e) => setArgsDraft(e.target.value)}
+              onBlur={() =>
+                patch({
+                  extraArgs: argsDraft.split(/\s+/).filter(Boolean),
+                })
+              }
+            />
+          </label>
+
+          {provider.routable && (
+            <label className="prov__field prov__field--wide">
+              Roteamento (upstream)
+              <select
+                className="settings-input"
+                value={provider.upstream}
+                onChange={(e) => patch({ upstream: e.target.value })}
+              >
+                {provider.upstreams.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.label}
+                    {u.requiresToken ? ' (requer key)' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
       </div>
 
-      <ControlFlags provider={provider} patch={patch} />
+      <div className="prov__block">
+        <span className="prov__block-title">Permissões do agente</span>
+        <ControlFlags provider={provider} patch={patch} />
+      </div>
 
-      <KeyField provider={provider} />
+      <div className="prov__block">
+        <span className="prov__block-title">API key do provider</span>
+        <p className="prov__block-hint">
+          Key do provedor (env). Contas de assinatura/failover ficam no bloco
+          seguinte — não misture os dois.
+        </p>
+        <KeyField provider={provider} />
+      </div>
 
-      <AccountsManager adapterId={provider.adapterId} />
+      <div className="prov__block prov__block--accounts">
+        <AccountsManager adapterId={provider.adapterId} />
+      </div>
 
       {provider.loginHint && (
         <p className="prov__hint">{provider.loginHint}</p>
@@ -438,11 +453,11 @@ export function ProvidersPanel() {
   const providers = useProviderStore((s) => s.providers);
   return (
     <section>
-      <h3 className="settings-detail__title">Providers / CLIs</h3>
+      <h3 className="settings-detail__title">Providers (CLIs de IA)</h3>
       <p className="settings-detail__hint">
-        Habilite/desabilite cada CLI, ajuste binário, modelo e args, roteie CLIs
-        Claude-compatíveis para outro upstream (GLM, Fugu, DeepSeek…) e guarde
-        as keys no Keychain do macOS. Nada de key em plaintext.
+        Cada cartão é um agente instalado (Claude, Codex, Kimi…). Expanda para
+        configurar em 4 blocos: modelo · permissões · API key · contas.
+        Keys ficam no Keychain do macOS — nunca em plaintext.
       </p>
       <ul className="prov__list">
         {providers.map((p) => (

@@ -511,12 +511,9 @@
 
 /* ---- Accounts manager (failover) ---- */
 .acct {
-  border-top: 1px solid var(--border);
-  margin-top: 10px;
-  padding-top: 10px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 .acct__head {
   display: flex;
@@ -524,8 +521,30 @@
   justify-content: space-between;
   gap: 10px;
 }
-.acct__title { font-size: 11px; font-weight: 600; color: var(--text); }
-.acct__hint { font-size: 10px; color: var(--text-dim); line-height: 1.45; }
+.acct__title { font-size: 12px; font-weight: 650; color: var(--text); }
+.acct__hint { font-size: 10px; color: var(--text-dim); line-height: 1.45; margin-top: 2px; }
+.acct__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-elevated, var(--bg)) 70%, transparent);
+}
+.acct__section-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.acct__empty {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
 .acct__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
 .acct__item {
   display: flex; align-items: center; gap: 8px;

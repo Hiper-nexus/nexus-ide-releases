@@ -2,15 +2,25 @@ import { describe, expect, it } from 'vitest';
 import {
   CHROMIUM_AEC_PROBE_INPUT_CONSTRAINTS,
   DEFAULT_DUPLEX_MODE,
+  FULL_DUPLEX_INPUT_CONSTRAINTS,
   HALF_DUPLEX_INPUT_CONSTRAINTS,
   duplexModePolicy,
   resolveDuplexStatus,
 } from './duplex-mode-policy';
 
 describe('duplex mode policy', () => {
-  it('defaults to the existing safe half-duplex contract', () => {
-    expect(DEFAULT_DUPLEX_MODE).toBe('half-duplex');
+  it('defaults to full-duplex with open mic gate', () => {
+    expect(DEFAULT_DUPLEX_MODE).toBe('full-duplex');
     expect(duplexModePolicy()).toEqual({
+      mode: 'full-duplex',
+      status: 'full-duplex',
+      inputConstraints: FULL_DUPLEX_INPUT_CONSTRAINTS,
+      keepHalfDuplexMicGate: false,
+    });
+  });
+
+  it('keeps half-duplex as the safe contract when requested', () => {
+    expect(duplexModePolicy('half-duplex')).toEqual({
       mode: 'half-duplex',
       status: 'half-duplex',
       inputConstraints: HALF_DUPLEX_INPUT_CONSTRAINTS,
@@ -45,7 +55,18 @@ describe('duplex mode policy', () => {
     );
   });
 
-  it('never treats the probe as permission for simultaneous microphone streaming', () => {
+  it('reports full-duplex AEC availability from track settings', () => {
+    expect(resolveDuplexStatus('full-duplex', { echoCancellation: true })).toBe(
+      'full-duplex',
+    );
+    expect(resolveDuplexStatus('full-duplex', { echoCancellation: false })).toBe(
+      'chromium-aec-unavailable',
+    );
+  });
+
+  it('opens the mic gate only in full-duplex mode', () => {
+    expect(duplexModePolicy('full-duplex').keepHalfDuplexMicGate).toBe(false);
     expect(duplexModePolicy('chromium-aec-probe').keepHalfDuplexMicGate).toBe(true);
+    expect(duplexModePolicy('half-duplex').keepHalfDuplexMicGate).toBe(true);
   });
 });

@@ -85,6 +85,10 @@ export const setConfigRequestSchema = z.object({
   jarvisLiveOpenaiModel: z.string().min(1).max(128).optional(),
   /** OpenAI Realtime voice override. */
   jarvisLiveOpenaiVoice: z.string().min(1).max(64).optional(),
+  /** Gemini Live prebuilt voice override (e.g. Charon, Fenrir). */
+  jarvisLiveGeminiVoice: z.string().min(1).max(64).optional(),
+  /** Classic OpenAI TTS voice (speech API). */
+  ttsVoice: z.string().min(1).max(64).optional(),
   /** Preferred chat-model provider for the Jarvis brain. */
   jarvisBrainProvider: z.enum(['gemini', 'openai', 'groq']).optional(),
   /** Persona da voz: nome do assistente / do usuário / instruções custom. */
@@ -166,10 +170,14 @@ export interface VoiceRuntimeInfo {
     transport: 'classic' | 'openai-realtime' | 'gemini-live';
     openaiModel: string;
     openaiVoice: string;
+    /** Gemini Live prebuilt voice (Charon, Fenrir, …). */
+    voiceName: string;
     graceReuseMs: number;
     dormantAfterMs: number;
     maxWindowTurns: number;
   };
+  /** Voice id on the head of the TTS chain (openai/piper/macos-say). */
+  ttsVoice?: string;
   persona: {
     assistantName: string;
     userName?: string;

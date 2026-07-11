@@ -49,7 +49,7 @@ export interface ParsedOpenAIRealtimeEvent {
 }
 
 const DEFAULT_MODEL = 'gpt-realtime-2.1-mini';
-const DEFAULT_VOICE = 'marin';
+const DEFAULT_VOICE = 'ash';
 const DEFAULT_TRANSCRIPTION_LANGUAGE = 'pt';
 const DEFAULT_SOURCE_RATE = 16_000;
 const DEFAULT_TARGET_RATE = 24_000;

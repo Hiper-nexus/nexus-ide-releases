@@ -45,6 +45,9 @@ describe('live follow-up continuity helpers', () => {
 
     expect(buildReplyAutoStop(base)).toEqual({
       ...base,
+      silenceMs: Math.max(base.silenceMs, 1_600),
+      minListenMs: Math.max(base.minListenMs ?? 0, 2_200),
+      maxMs: Math.max(base.maxMs ?? 0, 22_000),
       rawSpeechRms: REPLY_RAW_SPEECH_RMS,
     });
   });

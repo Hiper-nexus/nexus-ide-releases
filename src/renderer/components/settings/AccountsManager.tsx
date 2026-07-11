@@ -153,14 +153,16 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
         ? 'acct__status acct__status--missing'
         : 'acct__status';
 
+  const standby = accounts.filter((a) => !a.active);
+
   return (
     <div className="acct">
       <div className="acct__head">
         <div>
-          <span className="acct__title">Contas &amp; failover</span>
+          <span className="acct__title">Contas deste provider</span>
           <p className="acct__hint">
-            A conta ativa é restaurada antes de abrir a CLI; se ela bater limite,
-            o app troca para a próxima salva.
+            1) Conta ativa agora · 2) Outras salvas (failover) · 3) Adicionar.
+            Se a ativa bater limite, o app troca sozinho.
           </p>
         </div>
         {auth && (
@@ -177,57 +179,78 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
         )}
       </div>
 
-      {/* Quem está em uso AGORA — sempre visível, inclusive a conta implícita. */}
-      <div className="acct__inuse">
-        <span className="acct__inuse-pill">EM USO</span>
-        {active ? (
-          <>
-            <span className="acct__inuse-name">{active.label}</span>
-            <span className="acct__badge">{accountKindLabel(active)}</span>
-            {active.email && <span className="acct__email">{active.email}</span>}
-            <button
-              className="acct__use"
-              onClick={() => void useAccount(active.id)}
-              disabled={busy}
-              title="Reaplicar esta conta no ambiente da CLI"
-            >
-              sincronizar
-            </button>
-          </>
-        ) : (
-          <span className="acct__inuse-name acct__inuse-name--implicit">
-            sessão nativa do {adapterId}
-            <span className="acct__email"> · o login do seu terminal</span>
-          </span>
-        )}
+      <div className="acct__section">
+        <span className="acct__section-label">1 · Em uso agora</span>
+        <div className="acct__inuse">
+          <span className="acct__inuse-pill">ATIVA</span>
+          {active ? (
+            <>
+              <span className="acct__inuse-name">{active.label}</span>
+              <span className="acct__badge">{accountKindLabel(active)}</span>
+              {active.email && <span className="acct__email">{active.email}</span>}
+              <button
+                className="acct__use"
+                onClick={() => void useAccount(active.id)}
+                disabled={busy}
+                title="Reaplicar esta conta no ambiente da CLI"
+              >
+                sincronizar
+              </button>
+              <button
+                className="acct__mini"
+                onClick={() => {
+                  const name = prompt('Novo nome da conta:', active.label);
+                  if (name && name.trim()) void rename(active.id, name.trim());
+                }}
+                title="Renomear conta ativa"
+              >
+                ✎
+              </button>
+              <button
+                className="acct__mini acct__mini--danger"
+                onClick={() => void removeAccount(active.id)}
+                title="Remover conta ativa"
+                disabled={busy}
+              >
+                ✕
+              </button>
+            </>
+          ) : (
+            <span className="acct__inuse-name acct__inuse-name--implicit">
+              sessão nativa do {adapterId}
+              <span className="acct__email"> · login do terminal (sem conta salva)</span>
+            </span>
+          )}
+        </div>
       </div>
 
-      {accounts.length > 0 && (
-        <ul className="acct__list">
-          {accounts.map((a) => (
-            <li
-              key={a.id}
-              className={`acct__item ${a.active ? 'acct__item--active' : ''}`}
-            >
-              <div className="acct__meta">
-                <span className="acct__name">
-                  {a.label}
-                  {a.active && <span className="acct__inuse-pill acct__inuse-pill--sm">EM USO</span>}
-                </span>
-                <span className="acct__tags">
-                  <span className="acct__badge">{accountKindLabel(a)}</span>
-                  {a.email && <span className="acct__email">{a.email}</span>}
-                  {a.onCooldown && (
-                    <span className="acct__cooldown" title={a.lastError}>
-                      esgotada · volta em {cooldownLabel(a)}
-                    </span>
-                  )}
-                  {!a.hasCredential && (
-                    <span className="acct__warn">sem credencial</span>
-                  )}
-                </span>
-              </div>
-              {!a.active && (
+      <div className="acct__section">
+        <span className="acct__section-label">
+          2 · Outras contas{standby.length > 0 ? ` (${standby.length})` : ''}
+        </span>
+        {standby.length === 0 ? (
+          <p className="acct__empty">
+            Nenhuma conta reserva. Adicione outra para failover automático.
+          </p>
+        ) : (
+          <ul className="acct__list">
+            {standby.map((a) => (
+              <li key={a.id} className="acct__item">
+                <div className="acct__meta">
+                  <span className="acct__name">{a.label}</span>
+                  <span className="acct__tags">
+                    <span className="acct__badge">{accountKindLabel(a)}</span>
+                    {a.email && <span className="acct__email">{a.email}</span>}
+                    {a.onCooldown && (
+                      <span className="acct__cooldown" title={a.lastError}>
+                        esgotada · volta em {cooldownLabel(a)}
+                      </span>
+                    )}
+                    {!a.hasCredential && (
+                      <span className="acct__warn">sem credencial</span>
+                    )}
+                  </span>
+                </div>
                 <button
                   className="acct__use"
                   onClick={() => void useAccount(a.id)}
@@ -236,31 +259,32 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
                 >
                   usar
                 </button>
-              )}
-              <button
-                className="acct__mini"
-                onClick={() => {
-                  const name = prompt('Novo nome da conta:', a.label);
-                  if (name && name.trim()) void rename(a.id, name.trim());
-                }}
-                title="Renomear"
-              >
-                ✎
-              </button>
-              <button
-                className="acct__mini acct__mini--danger"
-                onClick={() => void removeAccount(a.id)}
-                title="Remover"
-                disabled={busy}
-              >
-                ✕
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+                <button
+                  className="acct__mini"
+                  onClick={() => {
+                    const name = prompt('Novo nome da conta:', a.label);
+                    if (name && name.trim()) void rename(a.id, name.trim());
+                  }}
+                  title="Renomear"
+                >
+                  ✎
+                </button>
+                <button
+                  className="acct__mini acct__mini--danger"
+                  onClick={() => void removeAccount(a.id)}
+                  title="Remover"
+                  disabled={busy}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
-      {/* Adição por revelação progressiva: escolha clara, depois o form. */}
+      <div className="acct__section">
+        <span className="acct__section-label">3 · Adicionar conta</span>
       {addMode === null && (
         <div className="acct__add-choices">
           {isClaude && (
@@ -269,7 +293,7 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
               onClick={() => setAddMode('subscription')}
               title="Salva a sessão Claude atualmente logada (Keychain)"
             >
-              ＋ Conta por assinatura
+              ＋ Por assinatura (Claude logado)
             </button>
           )}
           <button
@@ -277,7 +301,7 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
             onClick={() => setAddMode('api-key')}
             title="Conta com API key (nativa ou roteada: GLM, LongCat, OpenRouter…)"
           >
-            ＋ Conta por API key
+            ＋ Por API key
           </button>
         </div>
       )}
@@ -361,6 +385,7 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
       )}
 
       {notice && <p className="acct__notice">{notice}</p>}
+      </div>
     </div>
   );
 }

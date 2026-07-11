@@ -8,8 +8,13 @@ import {
   EMBEDDING_ONNX_B64,
   HEY_JARVIS_ONNX_B64,
 } from './wake-models';
+import {
+  EI_JARVIS_PTBR_ONNX_B64,
+  EI_JARVIS_PTBR_ONNX_SHA256,
+} from './wake-models-ptbr';
 import { PcmRingBuffer } from './pcm-ring-buffer';
 import {
+  CUSTOM_WAKE_MIN_RMS,
   CUSTOM_WAKE_SCORE_THRESHOLD,
   OFFICIAL_WAKE_SCORE_THRESHOLD,
   resolveWakeDetection,
@@ -18,9 +23,9 @@ import {
 } from './wake-score-gate';
 
 /**
- * Modelo candidato PT-BR do usuário (ex.: "Ei/Hey Jarvis"). Quando presente,
- * ele roda EM PARALELO ao head SpeechKit permissivo embutido; nunca remove a
- * cobertura do modelo base. Treino: training/wake-ptbr/ no repositório.
+ * Override opcional do usuário (re-treino local). Quando presente e válido,
+ * tem prioridade sobre o head PT-BR embutido no binário.
+ * Path: ~/.nexus/models/wake/custom.onnx
  */
 const CUSTOM_WAKE_MODEL = path.join(
   os.homedir(),
@@ -161,6 +166,37 @@ async function verifyWakeHead(wake: ort.InferenceSession): Promise<void> {
   }
 }
 
+/**
+ * Heads overfitted on synthetic PT often score ~1.0 even on zeros/noise.
+ * Reject them at load so they cannot storm-fire on ambient audio.
+ * A healthy openWakeWord head scores near 0 on silence embeddings.
+ */
+async function probeWakeHeadFalsePositive(
+  wake: ort.InferenceSession,
+): Promise<number> {
+  const silence = new Float32Array(EMB_WINDOW * 96); // zeros
+  const outSilence = await wake.run({
+    [wake.inputNames[0]]: new ort.Tensor('float32', silence, [1, EMB_WINDOW, 96]),
+  });
+  const scoreSilence = (outSilence[wake.outputNames[0]].data as Float32Array)[0] ?? 0;
+
+  const noise = new Float32Array(EMB_WINDOW * 96);
+  for (let i = 0; i < noise.length; i += 1) {
+    noise[i] = (Math.random() * 2 - 1) * 0.05;
+  }
+  const outNoise = await wake.run({
+    [wake.inputNames[0]]: new ort.Tensor('float32', noise, [1, EMB_WINDOW, 96]),
+  });
+  const scoreNoise = (outNoise[wake.outputNames[0]].data as Float32Array)[0] ?? 0;
+  return Math.max(
+    Number.isFinite(scoreSilence) ? scoreSilence : 1,
+    Number.isFinite(scoreNoise) ? scoreNoise : 1,
+  );
+}
+
+/** Above this on silence/noise the PT head is considered broken (overfit). */
+const CUSTOM_WAKE_FP_PROBE_MAX = 0.45;
+
 export class WakeEngine {
   private mel: ort.InferenceSession | null = null;
   private emb: ort.InferenceSession | null = null;
@@ -236,9 +272,11 @@ export class WakeEngine {
   }
 
   /**
-   * Carrega o candidato PT-BR apenas se ele passar nas validações baratas
-   * (tamanho plausível + cabeçalho de protobuf) E se o runtime aceitar.
-   * Falhas mantêm o modelo base ativo, sem substituir comportamento existente.
+   * Head PT-BR ("Ei Jarvis"):
+   * 1) override do usuário em ~/.nexus/models/wake/custom.onnx (re-treino)
+   * 2) head embutido no binário (wake-models-ptbr.ts) — default global em
+   *    todo PC/OS (macOS/Windows/Linux), no estilo do head EN embutido.
+   * Roda EM PARALELO ao embutido EN; nunca o substitui.
    */
   private async loadCustomWakeModel(
     opts: ort.InferenceSession.SessionOptions,
@@ -253,16 +291,53 @@ export class WakeEngine {
         }
         const wake = await ort.InferenceSession.create(bytes, opts);
         await verifyWakeHead(wake);
-        console.log(`[wake] modelo PT-BR adicional carregado: ${CUSTOM_WAKE_MODEL}`);
+        const fp = await probeWakeHeadFalsePositive(wake);
+        if (fp >= CUSTOM_WAKE_FP_PROBE_MAX) {
+          await wake.release().catch(() => {});
+          throw new Error(
+            `overfit FP no silêncio (probe=${fp.toFixed(2)} ≥ ${CUSTOM_WAKE_FP_PROBE_MAX})`,
+          );
+        }
+        console.log(
+          `[wake] modelo PT-BR (override local) carregado: ${CUSTOM_WAKE_MODEL} (fpProbe=${fp.toFixed(3)})`,
+        );
         return wake;
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);
-        console.warn(`[wake] modelo PT-BR rejeitado (${m}) — mantendo o embutido`);
+        console.warn(
+          `[wake] override PT-BR rejeitado (${m}) — tentando embutido`,
+        );
       }
     } else if (rejected !== 'ausente') {
-      console.warn(`[wake] modelo PT-BR ignorado (${rejected}) — mantendo o embutido`);
+      console.warn(
+        `[wake] override PT-BR ignorado (${rejected}) — tentando embutido`,
+      );
     }
-    return null;
+
+    // Default global: head PT-BR shipado no app (todos os installs).
+    try {
+      const bytes = fromB64(EI_JARVIS_PTBR_ONNX_B64);
+      if (bytes[0] !== 0x08) {
+        throw new Error('cabeçalho embutido PT-BR inválido');
+      }
+      const wake = await ort.InferenceSession.create(bytes, opts);
+      await verifyWakeHead(wake);
+      const fp = await probeWakeHeadFalsePositive(wake);
+      if (fp >= CUSTOM_WAKE_FP_PROBE_MAX) {
+        await wake.release().catch(() => {});
+        throw new Error(
+          `overfit FP no silêncio (probe=${fp.toFixed(2)} ≥ ${CUSTOM_WAKE_FP_PROBE_MAX}) — re-treine com LiveKit`,
+        );
+      }
+      console.log(
+        `[wake] modelo PT-BR embutido carregado (sha=${EI_JARVIS_PTBR_ONNX_SHA256.slice(0, 12)}…, fpProbe=${fp.toFixed(3)})`,
+      );
+      return wake;
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      console.warn(`[wake] modelo PT-BR embutido falhou (${m}) — só EN + STT passivo`);
+      return null;
+    }
   }
 
   /**
@@ -532,11 +607,19 @@ export class WakeEngine {
     const highest = scores.reduce((best, candidate) =>
       candidate.value > best.value ? candidate : best,
     );
-    const detection = resolveWakeDetection({
-      embedded: embeddedScore,
-      custom: customScore,
-      official: officialScore,
-    });
+    // PT preferido quando o head custom/embutido PT está carregado — EN não
+    // é caminho primário do produto em pt-BR ("Ei Jarvis").
+    const preferCustom = customWake !== null;
+    const detection = resolveWakeDetection(
+      {
+        embedded: embeddedScore,
+        // `0` (não undefined) sinaliza "PT carregado" mesmo com score baixo.
+        custom: customWake ? (customScore ?? 0) : undefined,
+        official: officialScore,
+      },
+      // Gate no RMS do chunk atual (não o pico da janela de telemetria).
+      { peakRms: rms, preferCustom },
+    );
     const now = Date.now();
     if (detection) {
       // Forced telemetry must name the head that crossed its own threshold,
@@ -554,7 +637,7 @@ export class WakeEngine {
     if (detection && now - this.lastFireAt > DEBOUNCE_MS) {
       this.lastFireAt = now;
       console.log(
-        `[wake] "Hey Jarvis" detectado (${detection.source}, score ${detection.score.toFixed(2)})`,
+        `[wake] "Hey Jarvis" detectado (${detection.source}, score ${detection.score.toFixed(2)}, rms ${rms.toFixed(3)})`,
       );
       this.onDetected();
     }

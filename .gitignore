@@ -70,6 +70,9 @@ out/
 /main.js
 /.nexus/wake-candidates/
 /training/wake-ptbr/artifacts/
+/training/ei-jarvis/work/
+/training/ei-jarvis/.venv/
+/training/ei-jarvis/livekit_run/
 /.venv-wake/
 
 # Estado local de ferramentas de terceiros (pode conter tokens de auth) —

@@ -3,6 +3,9 @@ import { useVoiceStore } from '../voice/voice-store';
 import {
   accelFromCode,
   normalizeKeyCode,
+  GEMINI_LIVE_VOICE_OPTIONS,
+  OPENAI_REALTIME_VOICE_OPTIONS,
+  OPENAI_TTS_VOICE_OPTIONS,
 } from '../../shared/voice-config';
 import type { JarvisLiveTransport } from '../../shared/voice-config';
 import { credentialLinkForEnv } from '../../shared/credential-links';
@@ -88,10 +91,13 @@ export function VoiceSettings() {
   const [jarvisLiveOn, setJarvisLiveOn] = useState(false);
   const [liveRealtime, setLiveRealtime] = useState(false);
   const [realtimeTransport, setRealtimeTransport] =
-    useState<RealtimeTransport>('openai-realtime');
+    useState<RealtimeTransport>('gemini-live');
   const [assistantName, setAssistantName] = useState('Jarvis');
   const [userName, setUserName] = useState('');
   const [customInstructions, setCustomInstructions] = useState('');
+  const [openaiVoice, setOpenaiVoice] = useState('ash');
+  const [geminiVoice, setGeminiVoice] = useState('Charon');
+  const [ttsVoice, setTtsVoice] = useState('ash');
   const [triggerAccel, setTriggerAccel] = useState('CommandOrControl+Shift+Space');
   const [captureHint, setCaptureHint] = useState<string | null>(null);
   const [capturingKey, setCapturingKey] = useState(false);
@@ -148,12 +154,19 @@ export function VoiceSettings() {
     setWakeWordOn(info.wakeWordEnabled);
     setJarvisLiveOn(info.jarvisLive.enabled);
     setLiveRealtime(info.jarvisLive.transport !== 'classic');
+    // Gemini Live é o transporte prioritário do produto; classic também
+    // pré-seleciona Gemini para o próximo enable de realtime.
     setRealtimeTransport(
-      info.jarvisLive.transport === 'gemini-live' ? 'gemini-live' : 'openai-realtime',
+      info.jarvisLive.transport === 'openai-realtime'
+        ? 'openai-realtime'
+        : 'gemini-live',
     );
     setAssistantName(info.persona.assistantName);
     setUserName(info.persona.userName ?? '');
     setCustomInstructions(info.persona.customInstructions ?? '');
+    setOpenaiVoice(info.jarvisLive.openaiVoice || 'ash');
+    setGeminiVoice(info.jarvisLive.voiceName || 'Charon');
+    setTtsVoice(info.ttsVoice || 'ash');
     setCaptureHint(null);
     setKeyInputs(
       Object.fromEntries(info.keys.map((key) => [key.envVar, ''])),
@@ -214,6 +227,9 @@ export function VoiceSettings() {
         personaAssistantName: assistantName.trim() || 'Jarvis',
         personaUserName: userName.trim(),
         personaCustomInstructions: customInstructions.trim(),
+        jarvisLiveOpenaiVoice: openaiVoice,
+        jarvisLiveGeminiVoice: geminiVoice,
+        ttsVoice,
       });
       setInfo(next);
       close();
@@ -242,18 +258,41 @@ export function VoiceSettings() {
 
   const toggleJarvisLive = (on: boolean) => {
     setJarvisLiveOn(on);
+    // Ligar Live com realtime preferido → Gemini (não OpenAI).
+    const transport: JarvisLiveTransport = !on
+      ? 'classic'
+      : liveRealtime
+        ? realtimeTransport === 'openai-realtime'
+          ? 'openai-realtime'
+          : 'gemini-live'
+        : 'classic';
+    if (on && liveRealtime && transport === 'gemini-live') {
+      setRealtimeTransport('gemini-live');
+    }
     void persistLive({
       jarvisLiveEnabled: on,
-      ...(on && liveRealtime ? { jarvisLiveTransport: realtimeTransport } : {}),
+      ...(on ? { jarvisLiveTransport: transport } : {}),
     });
   };
 
   const toggleRealtime = (on: boolean) => {
     setLiveRealtime(on);
-    if (on) setJarvisLiveOn(true);
+    if (on) {
+      setJarvisLiveOn(true);
+      // Prioridade do produto: Gemini Live. Só mantém OpenAI se o usuário
+      // já tiver escolhido explicitamente openai-realtime no seletor.
+      const transport: RealtimeTransport =
+        realtimeTransport === 'openai-realtime' ? 'openai-realtime' : 'gemini-live';
+      setRealtimeTransport(transport);
+      void persistLive({
+        jarvisLiveEnabled: true,
+        jarvisLiveTransport: transport,
+      });
+      return;
+    }
     void persistLive({
-      jarvisLiveEnabled: on ? true : jarvisLiveOn,
-      jarvisLiveTransport: on ? realtimeTransport : 'classic',
+      jarvisLiveEnabled: jarvisLiveOn,
+      jarvisLiveTransport: 'classic',
     });
   };
 
@@ -265,6 +304,20 @@ export function VoiceSettings() {
       jarvisLiveEnabled: true,
       jarvisLiveTransport: transport,
     });
+  };
+
+  /** Persist voice pickers immediately so the next Live session picks them up. */
+  const persistVoicePick = async (patch: {
+    jarvisLiveOpenaiVoice?: string;
+    jarvisLiveGeminiVoice?: string;
+    ttsVoice?: string;
+  }) => {
+    try {
+      const next = await window.nexus.voice.setConfig(patch);
+      setInfo(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const testVoice = async () => {
@@ -600,6 +653,75 @@ export function VoiceSettings() {
               </section>
             )}
 
+            <section className="voice-settings__section" aria-label="Voz da Jarvis">
+              <div className="voice-settings__section-head voice-settings__section-head--stacked">
+                <h4 className="voice-settings__section-title">Voz da Jarvis</h4>
+                <p>
+                  <strong>Gemini Live é o canal principal.</strong> Escolha a voz
+                  masculina aqui — é o que você ouve no dia a dia.
+                </p>
+              </div>
+              <label className="agent-picker__label voice-settings__voice-primary">
+                Voz Gemini Live (principal)
+                <select
+                  className="agent-picker__select"
+                  value={geminiVoice}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setGeminiVoice(v);
+                    void persistVoicePick({ jarvisLiveGeminiVoice: v });
+                  }}
+                >
+                  {GEMINI_LIVE_VOICE_OPTIONS.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <details className="voice-settings__fallback-voices">
+                <summary>Fallbacks (só se Gemini Live cair)</summary>
+                <div className="voice-settings__form-grid">
+                  <label className="agent-picker__label">
+                    OpenAI Realtime
+                    <select
+                      className="agent-picker__select"
+                      value={openaiVoice}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setOpenaiVoice(v);
+                        void persistVoicePick({ jarvisLiveOpenaiVoice: v });
+                      }}
+                    >
+                      {OPENAI_REALTIME_VOICE_OPTIONS.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="agent-picker__label">
+                    TTS clássico
+                    <select
+                      className="agent-picker__select"
+                      value={ttsVoice}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setTtsVoice(v);
+                        void persistVoicePick({ ttsVoice: v });
+                      }}
+                    >
+                      {OPENAI_TTS_VOICE_OPTIONS.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </details>
+            </section>
+
             <section className="voice-settings__section" aria-label="Operação Jarvis">
               <div className="voice-settings__section-head voice-settings__section-head--stacked">
                 <h4 className="voice-settings__section-title">Como Jarvis atende</h4>
@@ -723,7 +845,7 @@ export function VoiceSettings() {
 
                 {jarvisLiveOn && liveRealtime && (
                   <label className="agent-picker__label voice-settings__transport-field">
-                    Transporte realtime
+                    Transporte realtime (prioridade: Gemini)
                     <select
                       className="agent-picker__select"
                       value={realtimeTransport}
@@ -731,8 +853,8 @@ export function VoiceSettings() {
                         chooseRealtimeTransport(e.target.value as RealtimeTransport)
                       }
                     >
-                      <option value="openai-realtime">OpenAI Realtime</option>
-                      <option value="gemini-live">Gemini Live</option>
+                      <option value="gemini-live">Gemini Live (principal)</option>
+                      <option value="openai-realtime">OpenAI Realtime (fallback)</option>
                     </select>
                   </label>
                 )}

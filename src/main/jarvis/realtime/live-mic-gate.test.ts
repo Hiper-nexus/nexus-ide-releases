@@ -8,13 +8,30 @@ describe('shouldWithholdLiveMicFrame', () => {
     ).toBe(true);
   });
 
-  it('withholds mic during provider audio until an AEC reference path exists', () => {
+  it('withholds mic during provider audio in half-duplex', () => {
     expect(
       shouldWithholdLiveMicFrame({ status: 'speaking', providerSpeaking: true }),
     ).toBe(true);
     expect(
       shouldWithholdLiveMicFrame({ status: 'dormant', providerSpeaking: true }),
     ).toBe(true);
+  });
+
+  it('keeps mic open during speech in full-duplex (barge-in)', () => {
+    expect(
+      shouldWithholdLiveMicFrame({
+        status: 'speaking',
+        providerSpeaking: true,
+        fullDuplex: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldWithholdLiveMicFrame({
+        status: 'speaking',
+        providerSpeaking: false,
+        fullDuplex: true,
+      }),
+    ).toBe(false);
   });
 
   it('does not withhold while listening/thinking/dormant', () => {

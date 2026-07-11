@@ -47,9 +47,19 @@ const toolFollowUpGate = new LiveToolFollowUpGate<ToolFollowUpRequest>();
  * reply window before the person has begun the next command.
  */
 export const REPLY_RAW_SPEECH_RMS = 0.03;
+/** Continuidade: silêncio mais longo antes de fechar o turno de reply. */
+export const REPLY_FOLLOWUP_SILENCE_MS = 1_600;
+export const REPLY_FOLLOWUP_MIN_LISTEN_MS = 2_200;
+export const REPLY_FOLLOWUP_MAX_MS = 22_000;
 
 export function buildReplyAutoStop(autoStop: AutoStopOptions): AutoStopOptions {
-  return { ...autoStop, rawSpeechRms: REPLY_RAW_SPEECH_RMS };
+  return {
+    ...autoStop,
+    rawSpeechRms: REPLY_RAW_SPEECH_RMS,
+    silenceMs: Math.max(autoStop.silenceMs, REPLY_FOLLOWUP_SILENCE_MS),
+    minListenMs: Math.max(autoStop.minListenMs ?? 0, REPLY_FOLLOWUP_MIN_LISTEN_MS),
+    maxMs: Math.max(autoStop.maxMs ?? 0, REPLY_FOLLOWUP_MAX_MS),
+  };
 }
 
 export function cancelLiveFollowUp(): void {

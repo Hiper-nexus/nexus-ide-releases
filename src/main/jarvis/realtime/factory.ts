@@ -24,7 +24,7 @@ export interface RealtimeProviderCandidate {
   provider: TurnManagedRealtimeProvider;
 }
 
-const OPENAI_REALTIME_FALLBACK_VOICE = 'marin';
+const OPENAI_REALTIME_FALLBACK_VOICE = 'ash';
 const OPENAI_REALTIME_VOICES = new Set([
   'alloy',
   'ash',

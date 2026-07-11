@@ -114,7 +114,7 @@ const PTT_HOLD_MAX_MS = 60_000;
 // After a Live response, a person naturally needs a moment to formulate the
 // next request. Keep the warm Gemini turn open long enough to feel conversational
 // without leaving the mic in an indefinite ambient-capture state.
-const REPLY_MAX_LISTEN_MS = 15_000;
+const REPLY_MAX_LISTEN_MS = 22_000;
 export const TRANSCRIBE_DEADLINE_MS = 60_000;
 export const BRAIN_DEADLINE_MS = 35_000;
 const MIC_SILENT_THRESHOLD_MS = 12_000;
@@ -333,11 +333,14 @@ export function useVoiceController(): void {
         return;
       }
       const voiceStatus = useVoiceStore.getState().status;
-      // Voice re-wake during Live reply → suppress+burst flush (stutter) and
-      // reopens mic into ambient noise. Click-wake still barges in on purpose.
-      if (source === 'voice' && shouldIgnoreLiveReWake({ status: voiceStatus })) {
-        console.log('[voice] wake ignorado (Live falando / áudio pendente)');
-        logVoiceEvent('info', 'jarvis.wakeIgnoredLiveBusy', 'wake ignorado — Live em resposta', {
+      // Barge-in while she speaks is intentional full-duplex (voice → voice-barge).
+      // Only ignore in fragile gaps (routing / suppressed burst) via the gate.
+      if (
+        (source === 'voice' || source === 'voice-barge') &&
+        shouldIgnoreLiveReWake({ status: voiceStatus })
+      ) {
+        console.log('[voice] wake ignorado (Live em gap frágil)');
+        logVoiceEvent('info', 'jarvis.wakeIgnoredLiveBusy', 'wake ignorado — Live em gap frágil', {
           status: voiceStatus,
           remainingMs: livePlayer?.remainingMs() ?? 0,
           pendingChunks: pendingRealtimeAudioOut.length,
@@ -351,7 +354,9 @@ export function useVoiceController(): void {
         console.log('[voice] wake ignorado (pipeline ocupado)');
         return;
       }
-      void handleWake(source, preRollSeed);
+      const bargeSource: WakeSource =
+        voiceStatus === 'speaking' && source === 'voice' ? 'voice-barge' : source;
+      void handleWake(bargeSource, preRollSeed);
     };
 
     const handlePassiveWake = async (utterance: PassiveWakeUtterance): Promise<void> => {
@@ -423,10 +428,27 @@ export function useVoiceController(): void {
         }
         const match = matchPassiveWakeWord(result.text, latestInfo.persona.assistantName);
         if (!match) {
-          // Nunca persista a frase; o log prova a decisão sem gravar conversa ambiente.
+          // Nunca persista a frase; só um fingerprint seguro (tokens normalizados
+          // truncados) para diagnosticar miss sem gravar conversa ambiente.
+          const tokens = result.text
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 4)
+            .map((t) =>
+              t
+                .toLocaleLowerCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^a-z0-9]+/g, '')
+                .slice(0, 6),
+            );
           logVoiceEvent('info', 'wake.passiveMiss', 'STT não confirmou o nome da Jarvis', {
             latencyMs,
             provider: result.provider,
+            tokenCount: result.text.trim().split(/\s+/).filter(Boolean).length,
+            fingerprint: tokens.join('|'),
+            charLen: result.text.trim().length,
           });
           return;
         }

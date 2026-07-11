@@ -52,10 +52,11 @@ describe('voice-config-store', () => {
     const config = store.loadVoiceConfig();
     expect(config.jarvisLive.transport).toBe('gemini-live');
     expect(config.jarvisLive.liveModel).toBe('gemini-3.1-flash-live-preview');
-    expect(config.jarvisLive.voiceName).toBe('Gacrux');
+    expect(config.jarvisLive.voiceName).toBe('Charon');
+    expect(config.jarvisLive.openaiVoice).toBe('ash');
   });
 
-  it('migra a antiga voz padrão Charon para Gacrux sem trocar vozes customizadas', async () => {
+  it('migra a antiga voz padrão Gacrux para Charon sem trocar vozes customizadas', async () => {
     const { home, store } = await loadStoreInTempHome();
     const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
     const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
@@ -64,11 +65,11 @@ describe('voice-config-store', () => {
       file,
       JSON.stringify({
         ...DEFAULT_VOICE_CONFIG,
-        jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, voiceName: 'Charon' },
+        jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, voiceName: 'Gacrux' },
       }),
     );
 
-    expect(store.loadVoiceConfig().jarvisLive.voiceName).toBe('Gacrux');
+    expect(store.loadVoiceConfig().jarvisLive.voiceName).toBe('Charon');
 
     vi.resetModules();
     fs.writeFileSync(
@@ -207,7 +208,7 @@ describe('voice-config-store', () => {
       tts: { voice: string };
     };
 
-    expect(loaded.tts.voice).toBe('marin');
-    expect(saved.tts.voice).toBe('marin');
+    expect(loaded.tts.voice).toBe('ash');
+    expect(saved.tts.voice).toBe('ash');
   });
 });

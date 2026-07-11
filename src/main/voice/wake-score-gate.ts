@@ -9,11 +9,18 @@
 export const WAKE_SCORE_THRESHOLD = 0.42;
 
 /**
- * A synthetic PT-BR candidate joins the embedded model as a second detector,
- * never as a replacement. Keep its initial cut conservative until the offline
- * evaluation harness has a user-specific ROC curve.
+ * PT-BR head ("Ei Jarvis") — threshold conservador. O treino sintético local
+ * (2026-07) satura score≈1 em silêncio; por isso o gate também exige RMS
+ * mínimo e (no engine) pode desativar o head se o probe de ruído falhar.
  */
 export const CUSTOM_WAKE_SCORE_THRESHOLD = 0.65;
+
+/**
+ * Piso de energia acústica cru para aceitar o head PT. Logs reais: FPs com
+ * peakRms 0.007–0.04; fala "Ei Jarvis" tipicamente ≥0.15. 0.09 corta silêncio
+ * e eco fraco sem matar o wake falado perto do mic.
+ */
+export const CUSTOM_WAKE_MIN_RMS = 0.09;
 
 /**
  * Threshold published with the verified Apache-2.0 SpeechKit `hey_jarvis`
@@ -30,46 +37,85 @@ export interface WakeDetection {
   threshold: number;
 }
 
+export interface ResolveWakeDetectionOptions {
+  /** Peak RMS da janela atual (0..1). Obrigatório para aceitar o head PT. */
+  peakRms?: number;
+  /**
+   * Quando o head PT está carregado, o EN embutido não dispara sozinho
+   * (produto PT-BR: "Ei Jarvis", não "Hey Jarvis").
+   * `custom` no scores deve ser `number` (mesmo 0) para sinalizar "PT ativo".
+   */
+  preferCustom?: boolean;
+}
+
 export function shouldDetectWakeScore(score: number): boolean {
   return Number.isFinite(score) && score >= WAKE_SCORE_THRESHOLD;
 }
 
-export function resolveWakeDetection(scores: {
-  embedded: number;
-  custom?: number;
-  official?: number;
-}): WakeDetection | null {
-  const allCandidates: WakeDetection[] = [
-    {
+export function resolveWakeDetection(
+  scores: {
+    embedded: number;
+    custom?: number;
+    official?: number;
+  },
+  opts: ResolveWakeDetectionOptions = {},
+): WakeDetection | null {
+  // Sem peakRms explícito, não bloqueamos por energia (testes / paths legados).
+  const peakRms = opts.peakRms;
+  const customLoaded = scores.custom !== undefined;
+  const energyOk =
+    peakRms === undefined ||
+    (Number.isFinite(peakRms) && peakRms >= CUSTOM_WAKE_MIN_RMS);
+  const customOk =
+    customLoaded &&
+    Number.isFinite(scores.custom) &&
+    (scores.custom as number) >= CUSTOM_WAKE_SCORE_THRESHOLD &&
+    energyOk;
+
+  const candidates: WakeDetection[] = [];
+
+  if (customOk) {
+    candidates.push({
+      source: 'custom',
+      score: scores.custom as number,
+      threshold: CUSTOM_WAKE_SCORE_THRESHOLD,
+    });
+  }
+
+  // PT preferido + head carregado → EN não é caminho de wake.
+  const allowEmbedded = !(opts.preferCustom && customLoaded);
+  if (allowEmbedded) {
+    candidates.push({
       source: 'embedded',
       score: scores.embedded,
       threshold: WAKE_SCORE_THRESHOLD,
-    },
-    {
-      source: 'custom',
-      score: scores.custom ?? Number.NEGATIVE_INFINITY,
-      threshold: CUSTOM_WAKE_SCORE_THRESHOLD,
-    },
-    {
-      source: 'official',
-      score: scores.official ?? Number.NEGATIVE_INFINITY,
-      threshold: OFFICIAL_WAKE_SCORE_THRESHOLD,
-    },
-  ];
-  const candidates = allCandidates.filter((candidate) =>
-    Number.isFinite(candidate.score) && candidate.score >= candidate.threshold,
+    });
+  }
+
+  candidates.push({
+    source: 'official',
+    score: scores.official ?? Number.NEGATIVE_INFINITY,
+    threshold: OFFICIAL_WAKE_SCORE_THRESHOLD,
+  });
+
+  const accepted = candidates.filter(
+    (candidate) =>
+      Number.isFinite(candidate.score) && candidate.score >= candidate.threshold,
   );
 
-  return candidates.reduce<WakeDetection | null>(
+  return accepted.reduce<WakeDetection | null>(
     (best, candidate) => (!best || candidate.score > best.score ? candidate : best),
     null,
   );
 }
 
-export function shouldDetectWakeScores(scores: {
-  embedded: number;
-  custom?: number;
-  official?: number;
-}): boolean {
-  return resolveWakeDetection(scores) !== null;
+export function shouldDetectWakeScores(
+  scores: {
+    embedded: number;
+    custom?: number;
+    official?: number;
+  },
+  opts?: ResolveWakeDetectionOptions,
+): boolean {
+  return resolveWakeDetection(scores, opts) !== null;
 }

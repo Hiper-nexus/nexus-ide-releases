@@ -170,15 +170,25 @@ export function loadVoiceConfig(): VoiceConfig {
     if (
       userConfig.tts.provider === 'openai' &&
       userConfig.tts.model === 'gpt-4o-mini-tts' &&
-      userConfig.tts.voice === 'nova' &&
-      userConfig.jarvisLive.openaiVoice === DEFAULT_VOICE_CONFIG.jarvisLive.openaiVoice
+      (userConfig.tts.voice === 'nova' || userConfig.tts.voice === 'marin') &&
+      (userConfig.jarvisLive.openaiVoice === 'marin' ||
+        userConfig.jarvisLive.openaiVoice === DEFAULT_VOICE_CONFIG.jarvisLive.openaiVoice)
     ) {
       userConfig.tts = {
         ...userConfig.tts,
         voice: DEFAULT_VOICE_CONFIG.tts.voice,
       };
+      if (
+        userConfig.jarvisLive.openaiVoice === 'marin' ||
+        userConfig.jarvisLive.openaiVoice === 'nova'
+      ) {
+        userConfig.jarvisLive = {
+          ...userConfig.jarvisLive,
+          openaiVoice: DEFAULT_VOICE_CONFIG.jarvisLive.openaiVoice,
+        };
+      }
       migrated = true;
-      console.log('[voice] TTS alinhado com a voz realtime (marin)');
+      console.log('[voice] TTS/realtime alinhados para voz masculina (ash)');
     }
     // Saves antigos promoviam o fallback macos-say para o TOPO da chain — a
     // voz ficava robótica para sempre, mesmo com key OpenAI. Restaure a chain
@@ -199,13 +209,14 @@ export function loadVoiceConfig(): VoiceConfig {
       migrated = true;
       console.log('[voice] Gemini Live migrado de 2.5 para 3.1 (baixa latência)');
     }
+    // Gacrux era o default feminino anterior — migra para Charon (masculino).
     if (userConfig.jarvisLive.voiceName === LEGACY_GEMINI_LIVE_VOICE) {
       userConfig.jarvisLive = {
         ...userConfig.jarvisLive,
         voiceName: DEFAULT_GEMINI_LIVE_VOICE,
       };
       migrated = true;
-      console.log('[voice] voz Gemini Live migrada para Gacrux');
+      console.log('[voice] voz Gemini Live migrada para Charon (masculina)');
     }
     // A JARVIS conversacional virou o modo padrão do produto.
     if (userConfig.routing === 'focused-pane') {
@@ -273,6 +284,7 @@ export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
       ),
       openaiModel: patch.jarvisLiveOpenaiModel ?? current.jarvisLive.openaiModel,
       openaiVoice: patch.jarvisLiveOpenaiVoice ?? current.jarvisLive.openaiVoice,
+      voiceName: patch.jarvisLiveGeminiVoice ?? current.jarvisLive.voiceName,
     },
     persona: {
       assistantName:
@@ -293,7 +305,9 @@ export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
       pushToTalkKey: { code: pushToTalkKeyCode },
     },
     stt,
-    tts,
+    tts: patch.ttsVoice
+      ? { ...tts, voice: patch.ttsVoice }
+      : tts,
   };
 
   current = next;
@@ -422,6 +436,7 @@ export function buildRuntimeInfo(): VoiceRuntimeInfo {
       transport: current.jarvisLive.transport,
       openaiModel: current.jarvisLive.openaiModel,
       openaiVoice: current.jarvisLive.openaiVoice,
+      voiceName: current.jarvisLive.voiceName,
       graceReuseMs: current.jarvisLive.graceReuseMs,
       dormantAfterMs: current.jarvisLive.dormantAfterMs,
       maxWindowTurns: current.jarvisLive.maxWindowTurns,
@@ -437,5 +452,6 @@ export function buildRuntimeInfo(): VoiceRuntimeInfo {
     keys: voiceKeyStatuses(),
     stt: resolveChain(current.stt, probes),
     tts: resolveChain(current.tts, probes),
+    ttsVoice: current.tts.voice,
   };
 }

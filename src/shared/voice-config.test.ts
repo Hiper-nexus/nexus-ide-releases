@@ -20,9 +20,10 @@ describe('voiceConfigSchema', () => {
     expect(parsed.success).toBe(true);
   });
 
-  it('ships one OpenAI voice across realtime and classic TTS', () => {
-    expect(DEFAULT_VOICE_CONFIG.jarvisLive.openaiVoice).toBe('marin');
-    expect(DEFAULT_VOICE_CONFIG.tts.voice).toBe('marin');
+  it('ships one male OpenAI voice across realtime and classic TTS', () => {
+    expect(DEFAULT_VOICE_CONFIG.jarvisLive.openaiVoice).toBe('ash');
+    expect(DEFAULT_VOICE_CONFIG.tts.voice).toBe('ash');
+    expect(DEFAULT_VOICE_CONFIG.jarvisLive.voiceName).toBe('Charon');
   });
 
   it('applies defaults for omitted top-level fields', () => {
@@ -37,7 +38,8 @@ describe('voiceConfigSchema', () => {
     expect(parsed.jarvisLive.enabled).toBe(false);
     expect(parsed.jarvisLive.graceReuseMs).toBe(90_000);
     expect(parsed.jarvisLive.openaiModel).toBe('gpt-realtime-2.1-mini');
-    expect(parsed.jarvisLive.openaiVoice).toBe('marin');
+    expect(parsed.jarvisLive.openaiVoice).toBe('ash');
+    expect(parsed.jarvisLive.voiceName).toBe('Charon');
     expect(parsed.jarvisBrain.provider).toBe('gemini');
     expect(parsed.jarvisBrain.fallback?.provider).toBe('openai');
   });

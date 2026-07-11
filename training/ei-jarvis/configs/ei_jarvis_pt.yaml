@@ -1,0 +1,155 @@
+# =============================================================================
+# NexusIDE — wake word PT-BR "Ei Jarvis" (LiveKit WakeWord / VoxCPM)
+# =============================================================================
+#
+# Produção: treino sério com head conv_attention + TTS multilíngue VoxCPM.
+# Export ONNX → re-embute no app via train_livekit.sh (global mac/win/linux).
+#
+# Pré-reqs:
+#   pip install 'livekit-wakeword[train,eval,export,voxcpm]'
+#   # ou: uv tool install 'livekit-wakeword[train,eval,export,voxcpm]'
+#   brew install espeak-ng ffmpeg   # macOS
+#
+# Pipeline:
+#   ./train_livekit.sh                          # full run + re-embed
+#   ./train_livekit.sh --config configs/ei_jarvis_pt_smoke.yaml  # smoke
+#   ./train_livekit.sh --export-only path/to/model.onnx
+#
+# Schema: LiveKit WakeWordConfig (livekit-wakeword)
+# =============================================================================
+
+model_name: ei_jarvis_pt
+
+# Frase-alvo: basta "Jarvis" + vocativos comuns (não exige Hey).
+target_phrases:
+  - "jarvis"
+  - "ei jarvis"
+  - "hey jarvis"
+  - "oi jarvis"
+  - "olá jarvis"
+  - "acorda jarvis"
+  - "cheguei jarvis"
+  - "ouça jarvis"
+  - "escuta jarvis"
+
+# Multilíngue: Piper é EN-US only — VoxCPM obrigatório para PT
+tts_backend: voxcpm
+
+# Escala produção (subir ainda mais se GPU sobrar)
+n_samples: 25000
+n_samples_val: 5000
+n_background_samples: 2000
+n_background_samples_val: 500
+tts_batch_size: 50
+
+# Adversariais: sem "jarvis" isolado como único positivo falso — queremos
+# acordar com só "jarvis". Negativos = frases parecidas / ruído de conversa.
+custom_negative_phrases:
+  - "ei jason"
+  - "hey jason"
+  - "ei jarbas"
+  - "ei service"
+  - "hey service"
+  - "ei charles"
+  - "hey charles"
+  - "ei travas"
+  - "ei java"
+  - "hey java"
+  - "abrir o terminal"
+  - "bom dia"
+  - "como vai"
+  - "roda os testes"
+  - "nova missão"
+  - "salva o arquivo"
+  - "por favor"
+  - "obrigado"
+  - "não entendi"
+  - "ok pode seguir"
+
+# Piper-only (ignorado com voxcpm; schema parity)
+noise_scales: [0.98]
+noise_scale_ws: [0.98]
+length_scales: [0.75, 1.0, 1.25]
+slerp_weights: [0.2, 0.35, 0.5, 0.65, 0.8]
+
+voxcpm_tts:
+  model_id: openbmb/VoxCPM2
+  model_cache_relpath: voxcpm/VoxCPM2
+  local_model_path: null
+  load_denoiser: false
+  cfg_values: [1.5, 2.0, 2.5, 3.0]
+  inference_timesteps_list: [8, 10, 12]
+  # Diversidade de falantes (PT-BR / neutro / energia) — LiveKit recomenda 50–100
+  # para multilíngue; aqui um set denso focado em assistente de IDE.
+  voice_design_prompts:
+    - "A young adult Brazilian Portuguese man, clear mid-pitch voice, moderate pace, calm and professional"
+    - "A young adult Brazilian Portuguese woman, warm mid-pitch, steady pace, friendly and articulate"
+    - "A middle-aged Brazilian man, deep baritone, slow deliberate pace, confident"
+    - "A middle-aged Brazilian woman, slightly low pitch, measured pace, kind tone"
+    - "A young Brazilian man, light tenor, quick conversational pace, casual"
+    - "A young Brazilian woman, bright energetic tone, slightly faster pace"
+    - "A Brazilian Portuguese speaker with São Paulo accent, clear, medium pace"
+    - "A Brazilian Portuguese speaker with Rio accent, warm, conversational pace"
+    - "A Brazilian Portuguese speaker with Nordeste accent, friendly, moderate pace"
+    - "A Brazilian Portuguese speaker with Southern accent, calm, steady pace"
+    - "An older Brazilian man, gravelly tenor, moderate pace, matter-of-fact"
+    - "An older Brazilian woman, soft gentle voice, slower pace"
+    - "A quiet intimate Brazilian voice, close-mic feel, slow and clear"
+    - "A confident Brazilian presenter voice, strong projection, moderate speed"
+    - "A Brazilian news-anchor style voice, authoritative, even rhythm"
+    - "A Brazilian customer-service tone, slightly smiling, medium pace"
+    - "A tired but clear Brazilian voice, subdued energy, steady pace"
+    - "A cheerful animated Brazilian voice, wide pitch range, lively pace"
+    - "A serious formal Brazilian voice, minimal emotion, precise articulation"
+    - "A Brazilian man in his thirties, clear baritone, businesslike pace"
+    - "A Brazilian woman in her thirties, smooth alto, even pace"
+    - "A teenager-sounding Brazilian voice, casual, slightly fast, light pitch"
+    - "A mature Brazilian executive voice, controlled low dynamics, steady"
+    - "A husky Brazilian voice, low energy, medium-slow pace"
+    - "A crisp precise Brazilian voice, minimal regional accent, fast clear speech"
+    - "A European Portuguese man, clear Lisbon accent, moderate pace"
+    - "A European Portuguese woman, soft, careful enunciation, medium pace"
+    - "A bilingual Brazilian speaking Portuguese with slight English influence, clear"
+    - "A Brazilian speaking slowly and carefully for a smart speaker, high clarity"
+    - "A Brazilian speaking quickly, natural home noise energy, still intelligible"
+    - "A soft-spoken Brazilian, low volume, very clear syllables"
+    - "A loud Brazilian office voice, strong, medium-fast pace"
+    - "A Brazilian with slight nasal tone, energetic, faster than average"
+    - "A Brazilian with breathy soft voice, gentle, slower pace"
+    - "A Brazilian scholarly tone, thoughtful pauses, slower pace"
+    - "A Brazilian friendly casual tone, smile in the voice, medium pace"
+    - "A Brazilian monotone flat delivery, robotic clarity, even speed"
+    - "A Brazilian with higher pitch, enthusiastic and upbeat, medium-fast"
+    - "A Brazilian with lower pitch, relaxed and laid-back, slower pace"
+    - "A Brazilian adult, gender-neutral delivery, soft volume, careful enunciation"
+
+# Paths relativos ao cwd do script (training/ei-jarvis/livekit_run/)
+data_dir: ./data
+output_dir: ./output
+
+augmentation:
+  clip_duration: 2.0
+  batch_size: 16
+  rounds: 3
+  background_paths: [./data/backgrounds]
+  rir_paths: [./data/rirs]
+
+model:
+  # Head temporal — melhor FPPH que DNN flat do openWakeWord
+  model_type: conv_attention
+  # small = bom para desktop embutido; medium se GPU de treino sobrar
+  model_size: small
+
+steps: 50000
+learning_rate: 0.0001
+weight_decay: 0.01
+label_smoothing: 0.05
+max_negative_weight: 3000
+# Alinha com CUSTOM_WAKE_SCORE_THRESHOLD do Nexus (~0.65)
+target_fp_per_hour: 0.2
+
+batch_n_per_class:
+  positive: 50
+  adversarial_negative: 50
+  ACAV100M_sample: 1024
+  background_noise: 50

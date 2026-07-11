@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CUSTOM_WAKE_MIN_RMS,
   CUSTOM_WAKE_SCORE_THRESHOLD,
   OFFICIAL_WAKE_SCORE_THRESHOLD,
   resolveWakeDetection,
@@ -38,6 +39,40 @@ describe('wake score gate', () => {
         custom: CUSTOM_WAKE_SCORE_THRESHOLD - 0.01,
       }),
     ).toBe(false);
+  });
+
+  it('rejects PT head when acoustic energy is below the FP floor', () => {
+    expect(
+      resolveWakeDetection(
+        {
+          embedded: 0.1,
+          custom: 1,
+        },
+        { peakRms: CUSTOM_WAKE_MIN_RMS - 0.01, preferCustom: true },
+      ),
+    ).toBeNull();
+    expect(
+      resolveWakeDetection(
+        {
+          embedded: 0.1,
+          custom: 1,
+        },
+        { peakRms: CUSTOM_WAKE_MIN_RMS + 0.02, preferCustom: true },
+      ),
+    ).toEqual({
+      source: 'custom',
+      score: 1,
+      threshold: CUSTOM_WAKE_SCORE_THRESHOLD,
+    });
+  });
+
+  it('with preferCustom + PT loaded, does not fire on EN alone', () => {
+    expect(
+      resolveWakeDetection(
+        { embedded: 0.99, custom: 0.1 },
+        { preferCustom: true, peakRms: 0.5 },
+      ),
+    ).toBeNull();
   });
 
   it('allows the verified open-source Hey Jarvis head to improve recall without replacing base', () => {

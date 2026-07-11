@@ -638,3 +638,44 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Gemini Live is the primary voice path — give it visual weight. */
+.voice-settings__voice-primary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
+}
+
+.voice-settings__voice-primary .agent-picker__select {
+  font-weight: 600;
+}
+
+.voice-settings__fallback-voices {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.voice-settings__fallback-voices summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.voice-settings__fallback-voices[open] summary {
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.voice-settings__fallback-voices .voice-settings__form-grid {
+  margin-top: 4px;
+}
