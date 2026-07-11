@@ -9,6 +9,9 @@ const spawnDeps = vi.hoisted(() => ({
     injectKey: false,
     suppressKeyEnv: true,
   })),
+  listAccounts: vi.fn((): Array<Record<string, unknown>> => []),
+  getActiveAccount: vi.fn(),
+  ensureSubscriptionActive: vi.fn(() => true),
 }));
 
 const claudeAdapter = {
@@ -106,17 +109,11 @@ vi.mock('../adapters/subscription-auth', () => ({
 }));
 
 vi.mock('./account-store', () => ({
+  activeClaudeAuthEnv: () => ({ CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active' }),
   accountKey: () => 'sk-active-other-account',
-  ensureSubscriptionActive: () => true,
-  getActiveAccount: () => ({
-    id: 'acct-other',
-    adapterId: 'claude',
-    label: 'Other',
-    mode: 'api-key',
-    upstream: 'anthropic',
-    createdAt: 1,
-  }),
-  listAccounts: () => [],
+  ensureSubscriptionActive: spawnDeps.ensureSubscriptionActive,
+  getActiveAccount: spawnDeps.getActiveAccount,
+  listAccounts: spawnDeps.listAccounts,
   prepareAccountForSpawn: spawnDeps.prepareAccount,
 }));
 
@@ -132,6 +129,40 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
       injectKey: false,
       suppressKeyEnv: true,
     });
+    spawnDeps.listAccounts.mockReturnValue([]);
+    spawnDeps.getActiveAccount.mockReset();
+    spawnDeps.ensureSubscriptionActive.mockReturnValue(true);
+  });
+
+  it('keeps the native Claude session authoritative for unpinned panes', () => {
+    spawnDeps.listAccounts.mockReturnValueOnce([{
+      id: 'acct-stale',
+      adapterId: 'claude',
+      label: 'Stale Claude Max',
+      mode: 'subscription',
+      upstream: 'anthropic',
+      createdAt: 1,
+    }]);
+    spawnDeps.getActiveAccount.mockReturnValueOnce({
+      id: 'acct-stale',
+      adapterId: 'claude',
+      label: 'Stale Claude Max',
+      mode: 'subscription',
+      upstream: 'anthropic',
+      createdAt: 1,
+    });
+
+    const result = prepareProviderSpawn('claude');
+
+    expect(result).toMatchObject({
+      ok: true,
+      overrides: {
+        keyEnv: { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active' },
+        suppressEnv: ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
+      },
+    });
+    expect(spawnDeps.getActiveAccount).not.toHaveBeenCalled();
+    expect(spawnDeps.ensureSubscriptionActive).not.toHaveBeenCalled();
   });
 
   it('injects Kimi API credentials through the official transient-model env', () => {

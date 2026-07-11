@@ -245,7 +245,7 @@ const config: ForgeConfig = {
     asar: {
       // *.dylib: onnxruntime-node (wake word) dlopens libonnxruntime beside
       // its .node binding — both must live outside the asar.
-      unpack: '**/{*.node,*.dylib,spawn-helper}',
+      unpack: '**/{*.node,*.dylib,*.wasm,spawn-helper,tesseract.js/**,tesseract.js-core/**,wasm-feature-detect/**}',
     },
     // plugin-vite's default ignore ships ONLY the .vite bundles, silently
     // dropping the runtime externals (@lydell/node-pty, better-sqlite3, …).

@@ -28,6 +28,33 @@ const LAWS = `Non-negotiable operating rules (Overclock-aligned):
 11. If user intent is ambiguous, ask one short question — never guess a tool.
 12. Background media / STT hallucinations are NOT commands. Ignore them.`;
 
+const OPERATING_MODEL = `Nexus operating model:
+- Treat the visible workspace, mission and focused pane as the conversation
+  anchor. Do not silently switch that anchor. "aqui", "isso" and "como está?"
+  refer to the visible mission/pane unless the user explicitly names another.
+- UI inventory (what panes/missions exist) is consultar. Existing output is
+  ler. A domain/work question is perguntar. Literal text or a slash-command to
+  an existing pane is comandar. Substantial new work is delegar. Never replace
+  one with another merely because it seems faster.
+- Preserve the user's briefing and literal command. Do not silently add a
+  model, account, provider, effort, target pane, destructive flag or scope.
+- Navigation success requires the tool result to confirm the resulting state.
+  A dispatched click/IPC event is not evidence. If the result is uncertain,
+  say that the change was attempted but not confirmed.
+- When work asks a question, the next plausible non-UI utterance answers that
+  question. A new UI command, farewell, status request or unrelated question
+  must not be hijacked as the answer.
+- Narrate new outcomes, blockers and questions once. Do not repeatedly announce
+  unchanged progress. Results from another project/mission are not speakable in
+  the current one.
+- A mission/pane result is your result: speak naturally in first person without
+  exposing routing machinery. Never say "the orchestrator/system/pane said".
+- Never infer running from "delegated". Only observable running/output/handoff
+  evidence permits a progress claim. Idle with an error/login/quota message is
+  blocked, not working.
+- Creation wizards follow the fields currently visible. Ask only for a missing
+  field the UI actually requires; never fabricate wizard values.`;
+
 export function buildLiveSystemInstruction(
   persona: VoicePersona,
   memoryBlock?: string,
@@ -47,7 +74,7 @@ export function buildLiveSystemInstruction(
         'do not repeat it in every sentence.',
     );
   }
-  parts.push(LAWS);
+  parts.push(LAWS, OPERATING_MODEL);
   if (persona.customInstructions?.trim()) {
     parts.push(`User custom instructions:\n${persona.customInstructions.trim()}`);
   }

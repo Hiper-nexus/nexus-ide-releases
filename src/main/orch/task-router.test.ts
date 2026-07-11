@@ -218,4 +218,40 @@ describe('routeTask', () => {
     expect(decision!.alternatives.length).toBeGreaterThan(0);
     expect(decision!.alternatives.map((a) => a.adapterId)).toContain('codex');
   });
+
+  it('promotes a newly discovered model only from task-specific evaluation evidence', () => {
+    const decision = routeTask(
+      'crie uma landing page responsiva com design excepcional',
+      [{ id: 'future-cli', installed: true, models: ['future-model-1'] }],
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      {
+        adapters: {
+          'future-cli': {
+            models: [{
+              id: 'future-model-1',
+              availability: 'paid',
+              costTier: 'medium',
+              quality: {
+                overall: 88,
+                coding: 86,
+                frontend: 97,
+                reasoning: 90,
+                evaluatedAt: '2026-07-01T00:00:00.000Z',
+                source: 'nexus-eval/frontend-v1',
+              },
+            }],
+          },
+        },
+      },
+    );
+
+    expect(decision).toMatchObject({
+      adapterId: 'future-cli',
+      model: 'future-model-1',
+      effort: 'high',
+    });
+    expect(decision!.reason).toContain('avaliação Nexus por dimensão');
+  });
 });

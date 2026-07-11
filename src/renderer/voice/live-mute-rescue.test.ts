@@ -55,7 +55,7 @@ describe('live mute rescue', () => {
         offeredFrames: 0,
       }),
     ).toBe(false);
-    // Follow-up: rescue even when frames already went to Live (missed final).
+    // Automatic follow-up expiry never turns ambient audio into rescue text.
     expect(
       shouldAttemptLiveMuteRescue({
         realtimeIsOwner: true,
@@ -63,6 +63,17 @@ describe('live mute rescue', () => {
         explicitCapture: false,
         offeredFrames: 40,
         captureReason: 'reply',
+        followUpAuthorized: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAttemptLiveMuteRescue({
+        realtimeIsOwner: true,
+        localSpeechUsable: true,
+        explicitCapture: false,
+        offeredFrames: 0,
+        captureReason: 'reply',
+        followUpAuthorized: true,
       }),
     ).toBe(true);
   });

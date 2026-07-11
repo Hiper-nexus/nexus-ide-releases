@@ -45,6 +45,20 @@ describe('resolveSendToPaneTarget (C3 follow-ups 2 + 4b)', () => {
     });
   });
 
+  it('aceita nome falado normalizado somente quando o alvo é único', () => {
+    expect(resolveSendToPaneTarget('pane claude worker', panes)).toEqual({
+      kind: 'asking-pane',
+      paneId: 'p-agent',
+    });
+  });
+
+  it('não escolhe silenciosamente nomes ambíguos', () => {
+    const duplicated = [...panes, { id: 'p-agent-2', title: 'claude · worker', kind: 'cli-agent' }];
+    expect(resolveSendToPaneTarget('claude worker', duplicated)).toMatchObject({
+      kind: 'asking-pane-ambiguous',
+    });
+  });
+
   it('sem paneId → delegação pro orquestrador (gate de voz), ou no-agent-pane', () => {
     expect(resolveSendToPaneTarget(undefined, panes)).toEqual({
       kind: 'delegation',
@@ -52,6 +66,13 @@ describe('resolveSendToPaneTarget (C3 follow-ups 2 + 4b)', () => {
     });
     expect(resolveSendToPaneTarget(undefined, [shell, browser])).toEqual({
       kind: 'no-agent-pane',
+    });
+  });
+
+  it('usa o agente focado como delegação confirmável quando não há ORQ', () => {
+    expect(resolveSendToPaneTarget(undefined, [shell, agent], 'p-agent')).toEqual({
+      kind: 'delegation',
+      orchestratorPaneId: 'p-agent',
     });
   });
 });

@@ -277,6 +277,7 @@ async function runSensorProcess(
         CI: 'true',
         NO_COLOR: '1',
       },
+      readOnlyRoot: true,
     });
   } catch (error) {
     fs.rmSync(sandbox.dir, { recursive: true, force: true });

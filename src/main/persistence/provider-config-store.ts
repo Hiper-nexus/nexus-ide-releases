@@ -66,6 +66,7 @@ import {
   buildKimiApiKeyRuntimeEnv,
 } from '../adapters/kimi-runtime-env';
 import {
+  activeClaudeAuthEnv,
   accountKey,
   ensureSubscriptionActive,
   getActiveAccount,
@@ -370,11 +371,13 @@ function buildProviderSpawnOverrides(
     extraArgs: [...controlArgsFor(adapterId, perSpawn.effort), ...cfg.extraArgs],
   };
 
-  // A per-pane account is exact. Without one, preserve the existing active
-  // account behavior for legacy panes.
+  // A per-pane account is exact. Claude is deliberately excluded from the
+  // legacy implicit-active-account path: restoring an old OAuth snapshot can
+  // overwrite the CLI's current native session and trigger an endless login
+  // loop. Its vault is used only when the user explicitly pins that account.
   const account =
     preparedAccount?.account ??
-    (!perSpawn.accountId && listAccounts(adapterId).length > 0
+    (!perSpawn.accountId && adapterId !== 'claude' && listAccounts(adapterId).length > 0
       ? getActiveAccount(adapterId)
       : null);
   if (account) {
@@ -396,7 +399,7 @@ function buildProviderSpawnOverrides(
       }
       return {
         ...base,
-        keyEnv: {},
+        keyEnv: adapterId === 'claude' ? (activeClaudeAuthEnv() ?? {}) : {},
         suppressEnv: subscriptionSuppressEnvVars(adapterId),
       };
     }
@@ -459,7 +462,9 @@ function buildProviderSpawnOverrides(
   const keyEnv =
     decision.injectKey && adapter && key
       ? nativeKeyEnv(adapterId, key, perSpawn.model)
-      : {};
+      : decision.strategy === 'subscription' && adapterId === 'claude'
+        ? (activeClaudeAuthEnv() ?? {})
+        : {};
   return {
     ...base,
     keyEnv,

@@ -41,7 +41,7 @@ function proposal() {
 
 const context = {
   invariantRefs: new Set(['inv-session']),
-  availableSensorIds: new Set(['unit', 'typecheck']),
+  availableSensorIds: new Set(['unit', 'typecheck', 'design-system']),
   blockingConflictIds: [] as string[],
 };
 
@@ -106,5 +106,19 @@ describe('compileMissionContract', () => {
     expect(contract.risk).toBe('critical');
     expect(contract.route).toContain('review-secondary');
     expect(contract.route).toContain('validation-secondary');
+  });
+
+  it('automatically makes design-system consistency executable for UI missions', () => {
+    const input = proposal();
+    input.goal = 'Criar uma landing page responsiva com identidade própria';
+    input.impactedDomains = ['frontend'];
+
+    const contract = compileMissionContract(input, context);
+
+    expect(contract.requiredSensors).toContain('design-system');
+    expect(() => compileMissionContract(input, {
+      ...context,
+      availableSensorIds: new Set(['unit', 'typecheck']),
+    })).toThrow(/unknown sensor: design-system/);
   });
 });

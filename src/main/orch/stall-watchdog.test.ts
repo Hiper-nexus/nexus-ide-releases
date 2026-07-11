@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shouldFlagStall, STALL_MS } from './stall-watchdog';
+import { shouldFlagStall, shouldRecoverStall, STALL_MS, STALL_RECOVERY_MS } from './stall-watchdog';
 
 const NOW = 10_000_000;
 
@@ -36,5 +36,16 @@ describe('shouldFlagStall', () => {
 
   it('não re-alerta sessão já sinalizada (anti-spam)', () => {
     expect(shouldFlagStall(candidate({ alreadyFlagged: true }), NOW)).toBe(false);
+  });
+
+  it('só recupera worker já alertado após o segundo limite', () => {
+    expect(shouldRecoverStall(candidate({
+      alreadyFlagged: true,
+      lastDataAt: NOW - STALL_RECOVERY_MS - 1,
+    }), NOW)).toBe(true);
+    expect(shouldRecoverStall(candidate({
+      alreadyFlagged: false,
+      lastDataAt: NOW - STALL_RECOVERY_MS - 1,
+    }), NOW)).toBe(false);
   });
 });

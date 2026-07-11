@@ -14,7 +14,9 @@ export const STATUS_WATCHDOG_POLL_MS = 5_000;
 export const STATUS_STUCK_DEADLINES_MS: Partial<Record<VoiceUiStatus, number>> = {
   transcribing: 75_000, // > TRANSCRIBE_DEADLINE_MS_LOCAL (60s)
   routing: 50_000, // > BRAIN_DEADLINE_MS_LOCAL (35s)
-  speaking: 90_000, // > SPEAK_DEADLINE_MS_LOCAL (40s) + playback longo do Live
+  // Audio progress resets this clock continuously. Once the player is empty,
+  // waiting 90s for a missing Gemini responseDone made passive wake unusable.
+  speaking: 6_000,
 };
 
 export function statusWatchdogAction(

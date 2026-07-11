@@ -777,6 +777,7 @@ export function MissionWizard() {
               squad={selectedSquad}
               roster={roster}
               adapters={adapters}
+              providers={providers}
               highlightedAgentId={highlightedAgentId}
               error={error}
               spawning={spawning}

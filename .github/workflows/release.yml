@@ -279,12 +279,11 @@ jobs:
           retention-days: 1
 
   build_linux:
-    name: Linux x64 · preview (sandbox runtime pendente)
+    name: Linux x64 · runtime obrigatório (sandbox host documentado)
     needs: [validate, quality]
     # GitHub-hosted Ubuntu blocks the user namespace needed by Bubblewrap.
     # Keep the package/runtime smoke diagnostic, but never promote this job's
     # artifacts to a public production release without a real sandbox run.
-    continue-on-error: true
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.validate.outputs.version }}
@@ -369,14 +368,12 @@ jobs:
           retention-days: 1
 
   build_windows:
-    name: Windows x64 · preview assinado opcional (não publicável)
+    name: Windows x64 · runtime obrigatório (unsigned preview)
     needs: [validate, quality]
-    # Windows continua bloqueado pelo Nexus Doctor até existir sandbox nativo.
-    # A ausência/falha do preview não pode impedir artefatos Mac/Linux já
-    # aprovados; o job segue visível para diagnóstico e promoção futura.
-    continue-on-error: true
+    # Runtime/empacotamento precisam ser provados mesmo sem certificado. Este
+    # artefato continua explicitamente não publicável; Authenticode pertence a
+    # um gate de promoção separado e nunca pode esconder uma quebra Windows.
     runs-on: windows-latest
-    environment: windows-signing
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
@@ -390,7 +387,7 @@ jobs:
           node-version: '22.22.3'
           cache: 'npm'
 
-      - name: Instalar e reconstruir nativos Windows antes de carregar a chave
+      - name: Instalar e reconstruir nativos Windows
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -400,85 +397,11 @@ jobs:
           npm run premake
           if ($LASTEXITCODE -ne 0) { throw 'premake falhou' }
 
-      - name: Preparar certificado Authenticode efêmero
-        shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $missing = @()
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
-            $missing += 'WINDOWS_CERTIFICATE_BASE64'
-          }
-          if ([string]::IsNullOrEmpty($env:WINDOWS_CERTIFICATE_PASSWORD)) {
-            $missing += 'WINDOWS_CERTIFICATE_PASSWORD'
-          }
-          if ($missing.Count -gt 0) {
-            throw "Windows signing bloqueado; secrets ausentes no environment windows-signing: $($missing -join ', ')"
-          }
-
-          $certificatePath = Join-Path $env:RUNNER_TEMP 'NexusIDE-release.pfx'
-          try {
-            $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64)
-            [IO.File]::WriteAllBytes($certificatePath, $bytes)
-          } catch {
-            throw 'WINDOWS_CERTIFICATE_BASE64 não contém um PFX base64 válido.'
-          }
-          $grant = "$($env:USERNAME):F"
-          & icacls.exe $certificatePath /inheritance:r /grant:r $grant | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw 'não foi possível restringir ACL do PFX' }
-
-          $securePassword = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
-          try {
-            $pfx = Get-PfxData -FilePath $certificatePath -Password $securePassword
-            $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
-              $certificatePath,
-              $env:WINDOWS_CERTIFICATE_PASSWORD,
-              [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
-            )
-          } catch {
-            throw 'PFX ou WINDOWS_CERTIFICATE_PASSWORD inválido.'
-          }
-          $certificates = @($pfx.EndEntityCertificates)
-          if ($certificates.Count -ne 1) {
-            throw "PFX deve conter exatamente um certificado final; encontrou $($certificates.Count)"
-          }
-          if (-not $certificate.HasPrivateKey) { throw 'PFX não contém chave privada.' }
-          if ($certificate.Thumbprint -ne $certificates[0].Thumbprint) {
-            throw 'chave privada não corresponde ao certificado final do PFX.'
-          }
-          if ($certificate.NotBefore -gt (Get-Date) -or $certificate.NotAfter -le (Get-Date)) {
-            throw 'certificado Authenticode ainda não é válido ou já expirou.'
-          }
-          $codeSigningEku = @($certificate.Extensions | Where-Object {
-              $_.Oid.Value -eq '2.5.29.37'
-            } | ForEach-Object { $_.EnhancedKeyUsages } | Where-Object {
-              $_.Value -eq '1.3.6.1.5.5.7.3.3'
-            })
-          if ($codeSigningEku.Count -eq 0) {
-            throw 'certificado não possui EKU Code Signing.'
-          }
-          $thumbprint = $certificate.Thumbprint.ToUpperInvariant()
-          "WINDOWS_CERTIFICATE_FILE=$certificatePath" >>$env:GITHUB_ENV
-          "WINDOWS_SIGNING_THUMBPRINT=$thumbprint" >>$env:GITHUB_ENV
-          "Authenticode certificate ready: subject=$($certificate.Subject); thumbprint=$thumbprint; expires=$($certificate.NotAfter.ToUniversalTime().ToString('u'))"
-
       - name: Build Windows no runner Windows
         shell: pwsh
-        env:
-          NEXUS_WINDOWS_RELEASE_SIGNING: '1'
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
           & ./node_modules/.bin/electron-forge.cmd make
           if ($LASTEXITCODE -ne 0) { throw 'electron-forge make falhou' }
-
-      - name: Remover PFX do runner
-        if: always()
-        shell: pwsh
-        run: |
-          $certificatePath = Join-Path $env:RUNNER_TEMP 'NexusIDE-release.pfx'
-          Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
 
       - name: Smoke real do NUPKG no runner Windows
         shell: pwsh
@@ -505,25 +428,6 @@ jobs:
           if ($packages.Count -ne 1) { throw "esperado 1 full.nupkg, achei $($packages.Count)" }
           if ($releases.Count -ne 1) { throw "esperado 1 RELEASES, achei $($releases.Count)" }
           $extracted = Join-Path $env:RUNNER_TEMP 'NexusIDE-nupkg'
-          $signables = @($setups[0]) + @(Get-ChildItem $extracted -Recurse -File | Where-Object {
-              $_.Extension -in @('.exe', '.dll', '.node', '.msi')
-            })
-          if ($signables.Count -lt 2) {
-            throw "payload Windows não contém binários assináveis suficientes: $($signables.Count)"
-          }
-          foreach ($file in $signables) {
-            $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
-            if ($signature.Status -ne 'Valid') {
-              throw "assinatura Authenticode inválida em $($file.Name): $($signature.Status)"
-            }
-            if ($signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $env:WINDOWS_SIGNING_THUMBPRINT) {
-              throw "signer inesperado em $($file.Name): $($signature.SignerCertificate.Thumbprint)"
-            }
-            if ($null -eq $signature.TimeStamperCertificate) {
-              throw "assinatura sem timestamp em $($file.Name)"
-            }
-          }
-
           $assets = 'release-assets'
           New-Item -ItemType Directory -Force $assets | Out-Null
           Copy-Item $setups[0].FullName "$assets/NexusIDE-${env:VERSION}-win32-x64-setup.exe"
@@ -540,9 +444,7 @@ jobs:
             'runtime_target=nupkg-extracted'
             'setup_runtime_validation=not-run'
             'runner_os=Windows'
-            'signing=authenticode'
-            "signer_thumbprint=$env:WINDOWS_SIGNING_THUMBPRINT"
-            "signed_payload_files=$($signables.Count)"
+            'signing=unsigned-preview'
             'channel=ci-preview'
             'production_eligibility=blocked-windows-sandbox'
           ) | Set-Content "$assets/NexusIDE-${env:VERSION}-win32-x64.smoke.txt" -Encoding utf8
@@ -568,8 +470,8 @@ jobs:
           retention-days: 1
 
   publish:
-    name: Publicar macOS após os gates de produção
-    needs: [validate, build_macos]
+    name: Publicar macOS após gates runtime macOS/Linux/Windows
+    needs: [validate, build_macos, build_linux, build_windows]
     runs-on: ubuntu-latest
     environment: production-release
     permissions:

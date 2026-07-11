@@ -1,6 +1,6 @@
 import type { ProviderConfig } from '../../shared/provider-settings-types';
 
-export const PROVIDER_CONFIG_FORMAT_VERSION = 2;
+export const PROVIDER_CONFIG_FORMAT_VERSION = 3;
 
 const DANGEROUS_PERMISSION_MODES = new Set(['yolo', 'bypass', 'auto']);
 
@@ -21,7 +21,8 @@ export function decodeProviderConfigFile(value: unknown): DecodedProviderConfigF
   if (!isRecord(value)) return { providers: {}, migrated: false };
   const isCurrent =
     value.version === PROVIDER_CONFIG_FORMAT_VERSION && isRecord(value.providers);
-  const source = isCurrent ? value.providers as Record<string, unknown> : value;
+  const isVersioned = typeof value.version === 'number' && isRecord(value.providers);
+  const source = isVersioned ? value.providers as Record<string, unknown> : value;
   const providers: Record<string, Partial<ProviderConfig>> = {};
   for (const [adapterId, rawConfig] of Object.entries(source)) {
     // A malicious/corrupt providers.json key of __proto__/constructor/prototype
@@ -35,10 +36,12 @@ export function decodeProviderConfigFile(value: unknown): DecodedProviderConfigF
     }
     if (!isRecord(rawConfig)) continue;
     const config = { ...rawConfig } as Partial<ProviderConfig>;
-    // v1 was written while yolo/bypass was the implicit product default. It
-    // cannot prove user consent, so migrate only dangerous modes to safe.
-    if (!isCurrent && isDangerousPermissionMode(config.permissionMode)) {
-      config.permissionMode = '';
+    // v3 changes the product default to provider-native full-auto. An empty or
+    // absent value in older files represented the former implicit safe default,
+    // so drop it and let the adapter choose yolo/bypass/auto. Once written as
+    // v3, an explicit empty value continues to mean the user selected Safe.
+    if (!isCurrent && !config.permissionMode) {
+      delete config.permissionMode;
     }
     providers[adapterId] = config;
   }

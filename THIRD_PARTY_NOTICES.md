@@ -3,6 +3,18 @@
 NexusIDE includes third-party software and data. The corresponding licenses
 remain with their copyright holders.
 
+## WebRTC AEC3 WebAssembly
+
+Realtime echo cancellation uses `@ennuicastr/webrtcaec3.js@0.3.0`, a
+WebAssembly port maintained by Yahweasel/Ennuicastr of Google's WebRTC AEC3.
+The package glue uses the 0-clause BSD license and the compiled WebRTC implementation is
+BSD-3-Clause, with some WebRTC components under Apache-2.0. The complete
+upstream notices are retained verbatim in the packaged module
+`node_modules/@ennuicastr/webrtcaec3.js/dist/webrtcaec3-0.3.0.js`.
+
+NexusIDE uses the same WASM artifact on macOS, Windows and Linux. It does not
+copy or redistribute the proprietary AEC binary found in Overclock.
+
 ## SpeechKit wake-word models
 
 The offline wake pipeline contains three ONNX artifacts from
@@ -179,4 +191,3 @@ Remote SSH transport (`src/main/integrations/ssh2-transport.ts`) depends on the
 Copyright Brian White / mscdex and contributors), used for production SSH
 sessions, remote worktree create, and SFTP. Optional native helpers may be
 built by `cpu-features` on install.
-

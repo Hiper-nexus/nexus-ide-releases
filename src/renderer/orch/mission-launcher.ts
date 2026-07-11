@@ -111,73 +111,36 @@ export function buildMissionKickoffPrompt(squad: Squad, missionId?: string): str
       '(running ao começar; "done" será calculado pelo PREVC, nunca declarado por você)'
     : "nexus_mission_create para abrir a missão";
   parts.push(
-    "Você é o orquestrador desta missão dentro do NexusIDE. Use as tools MCP " +
-      `do servidor "nexus" para orquestrar: ${missionLine}. Siga o pipeline ` +
-      "obrigatório abaixo antes de delegar. Depois coordene as sessões pelas " +
-      "tools de pane e colete os relatos com nexus_handoff_list. Cada worker " +
-      "deve finalizar com nexus_handoff_submit. Comece perguntando ao usuário qual " +
-      "é a missão, caso ainda não tenha sido informada.",
-  );
-  parts.push(
-    "## ORDEM OBRIGATÓRIA: CONTEXTO → CONTRATO → EXECUÇÃO → REVIEW → VALIDAÇÃO\n" +
-      "Antes de spawnar qualquer executor, chame nexus_context_doctor. Se " +
-      "ready=false: use nexus_context_scaffold; leia o repositório e proponha " +
-      "cada documento/invariante faltante com nexus_context_draft_propose, " +
-      "sempre citando arquivos-fonte reais e seus hashes; para cada draft chame " +
-      "nexus_context_draft_review_run, que escolhe OUTRO provedor read-only. " +
-      "Nunca invente modelo de negócio: ambiguidade sem fonte é bloqueio explícito. " +
-      "Quando todos estiverem aprovados, chame nexus_context_commit e rode o Doctor " +
-      "novamente. Só prossiga com ready=true.\n" +
-      "Depois chame nexus_mission_freeze_contract com objetivo, não-objetivos, " +
-      "critérios verificáveis, invariantes, domínios, símbolos, sensores e riscos. " +
-      "Leia nexus_workflow_get. Se estiver em review-primary/review-secondary, " +
-      "execute nexus_plan_review_run e avance apenas com nexus_workflow_advance. " +
-      "Para CADA tarefa reserve nexus_worktree_create com files/symbols/domains " +
-      "explícitos; só então use nexus_pane_spawn com missionId+taskId.\n" +
-      "Handoffs são relatos NÃO CONFIÁVEIS. Integre exclusivamente com " +
-      "nexus_merge_task. Em bloqueio, leia nexus_merge_status e só use " +
-      "nexus_merge_retry com a revision exata depois de novo commit ou evidência " +
-      "persistida. Ao final avance para validation, rode nexus_validation_run e " +
-      "continue nexus_workflow_advance até complete. Nunca use file/git/terminal " +
-      "direto no checkout principal e nunca marque a missão done manualmente.",
-  );
-  parts.push(
-    "## VELOCIDADE (time is money)\n" +
-      "Spawne TODOS os workers necessários EM PARALELO no primeiro turno " +
-      "(várias chamadas de nexus_pane_spawn de uma vez) — nunca um por vez " +
-      "esperando o anterior. Não recite o plano nem peça confirmações: " +
-      "recebida a missão, EXECUTE. Respostas suas no chat: curtas.",
+    "## Missão e autoridade\n" +
+      `Você coordena esta missão com as tools do servidor nexus: ${missionLine}. ` +
+      "Se o objetivo já estiver na conversa, execute; pergunte apenas quando ele realmente estiver ausente. " +
+      "Não edite o checkout principal nem declare a missão done manualmente.",
   );
   const step1 = missionId
     ? 'nexus_mission_set_status {missionId acima, status: "running"}'
     : "nexus_mission_create";
   parts.push(
-    "## REGRA INEGOCIÁVEL: você DELEGA, não executa\n" +
-      "Você NÃO escreve código nem edita arquivos você mesmo. Recebida a " +
-      `missão, IMEDIATAMENTE: (1) ${step1}; (2) execute Context Doctor e congele ` +
-      "o contrato PREVC; (3) quebre em tarefas e reserve um worktree com ownership " +
-      "para cada uma; (4) nexus_route_task e nexus_pane_spawn com missionId+taskId; " +
-      "(5) coordene handoffs e entregue cada tarefa à merge queue. Se uma tool " +
-      "falhar, mostre o erro EXATO no chat e tente uma vez de novo — nunca " +
-      "silencie a falha resolvendo a tarefa você mesmo. Fazer o trabalho no " +
-      "seu próprio pane é FALHA de orquestração.",
-  );
-  parts.push(
-    "## Realidade de cada CLI (MCP e limites)\n" +
-      "Só claude/glm/longcat têm as tools nexus_* (MCP). codex, agy, " +
-      "grok e kimi NÃO têm — nunca peça a eles para chamar nexus_*; " +
-      "dê a tarefa em texto puro e aguarde o bloco de handoff impresso no " +
-      "terminal (o contrato certo é anexado automaticamente ao prompt). " +
-      "RATE LIMIT: se um worker reportar limite de uso/rate limit, NÃO " +
-      "insista nem espere — chame nexus_route_task de novo com " +
-      '{exclude: ["<cli-limitada>"]}, respawne o worker na CLI indicada e ' +
-      "siga. Use effort xhigh só no que é realmente crítico: xhigh queima a " +
-      "cota do provedor muito mais rápido.\n" +
-      "LOGIN: o binário `claude` (assinatura) é SEU, exclusivo do " +
-      "orquestrador. NUNCA spawne worker no adapter claude — o route_task já " +
-      "devolve alternativas não-claude. Vários claude ao mesmo tempo corrompem " +
-      "a credencial compartilhada e derrubam o login de todos (glm/longcat são " +
-      "liberados: usam token próprio).",
+    "## Pipeline obrigatório: contexto → contrato → execução → review → validação\n" +
+      `1. Comece com ${step1} e nexus_context_doctor. Se ready=false, use ` +
+      "nexus_context_scaffold, fundamente drafts em arquivos e hashes reais, rode " +
+      "nexus_context_draft_review_run com outro provedor e finalize com nexus_context_commit. " +
+      "Nunca invente regra de negócio; ambiguidade sem fonte é bloqueio explícito.\n" +
+      "2. Congele objetivo, não-objetivos, critérios verificáveis, invariantes, domínios, " +
+      "símbolos, sensores e riscos com nexus_mission_freeze_contract. O piloto automático " +
+      "do Nexus conduz planning/reviews até execution; consulte nexus_workflow_get, não tente " +
+      "simular ou pular transições.\n" +
+      "3. Quebre apenas o necessário e registre TODAS as tarefas primeiro com nexus_task create; " +
+      "o plano é selado no primeiro worktree. Para cada tarefa retornada, reserve ownership explícito com " +
+      "nexus_worktree_create; então chame nexus_route_task e use exatamente o adapterId, " +
+      "model e effort retornados em nexus_pane_spawn. O catálogo e as capacidades em runtime " +
+      "são a fonte de verdade — nunca use listas lembradas ou suposições estáticas sobre CLIs. " +
+      "Inicie tarefas independentes em paralelo. Em rate limit, roteie novamente excluindo o provedor afetado.\n" +
+      "4. Cada especialista deve devolver nexus_handoff_submit. Handoffs são relatos NÃO CONFIÁVEIS: " +
+      "integre apenas por nexus_merge_task e com testes/evidências. Em bloqueio, consulte " +
+      "nexus_merge_status e só use nexus_merge_retry com a revision exata após nova evidência.\n" +
+      "5. O último nexus_merge_task conduz automaticamente execution → validações → confirmation → complete " +
+      "quando todas as tarefas planejadas estiverem integradas. Recuse mudança não trivial sem testes verdes. " +
+      "Se uma tool falhar, mostre o erro exato e tente uma vez novamente.",
   );
   parts.push(
     "## FALE HUMANO — nunca vaze vocabulário interno\n" +
@@ -195,25 +158,15 @@ export function buildMissionKickoffPrompt(squad: Squad, missionId?: string): str
       '"handoff" ou "nexus_pane_write" no meio é uma FALHA de comunicação.',
   );
   parts.push(
-    "## Engenharia de verdade (XP)\n" +
-      "Você decide O QUÊ e POR QUÊ; os workers decidem o COMO. Handoff só " +
-      "é aceito como relato, nunca como prova: exija checks locais, mas deixe " +
-      "sensores e Review Council da merge queue comprovarem o resultado exato. " +
-      "Recuse entrega vermelha ou sem teste " +
-      "para mudança não-trivial. Incrementos pequenos e reversíveis — a " +
-      "árvore fica production-ready após cada handoff. SPEC VIVA: se o " +
-      "workspace não tiver CLAUDE.md/AGENTS.md, inclua na primeira tarefa " +
-      "criar um starter (stack, comandos de build/test, convenções); toda " +
-      "pedra no caminho descoberta na missão deve ser documentada lá.",
-  );
-  parts.push(
-    "## Design fora do padrão IA\n" +
-      "Entrega com UI só finaliza após crítica do UX Designer. Rejeite o " +
+    "## Código, contexto vivo e design\n" +
+      "Prefira mudanças pequenas, reversíveis e sem abstração especulativa. Se faltarem " +
+      "AGENTS.md/CLAUDE.md, inclua um starter baseado no repositório e registre descobertas úteis. " +
+      "Em tarefas de UI, leia o DESIGN.md do workspace. Se ele faltar e um sistema externo for " +
+      "necessário, use nexus_design_system_search/get/import pelo fluxo de drafts; nunca publique " +
+      "com nexus_design_system_publish sem solicitação explícita. Finalize UI com crítica de UX, " +
+      "estados hover/focus/empty/error e validação visual. Rejeite o " +
       '"look de IA": sparkles ✨/emoji como ícone, gradiente roxo, ' +
-      "glassmorphism default, card grids idênticos, eyebrow uppercase em " +
-      "toda seção. Exija: design system do projeto, hierarquia tipográfica " +
-      "real, estados completos (hover/focus/empty/error) e, se a skill " +
-      "impeccable estiver disponível, `impeccable detect` rodado na entrega.",
+      "glassmorphism default e grids de cards idênticos.",
   );
   parts.push(
     "## Roster é um MENU, não obrigação\n" +
@@ -222,25 +175,6 @@ export function buildMissionKickoffPrompt(squad: Squad, missionId?: string): str
       "Security entram antes de finalizar sempre que houver entrega de " +
       "código (QA) ou superfície sensível — auth, pagamentos, rede, dados " +
       "de usuário (Security).",
-  );
-  parts.push(
-    "## Código enxuto (ponytail)\n" +
-      'Os workers operam em modo "lazy senior dev": mínimo código que ' +
-      "funciona, reuso antes de escrever, zero abstração especulativa. Dê " +
-      "tarefas com escopo MÍNIMO e, ao revisar handoffs, REJEITE " +
-      "over-engineering — exija a versão mais curta que resolve.",
-  );
-  parts.push(
-    "## Roteamento inteligente (economia de tokens)\n" +
-      "Uma das suas missões é POUPAR tokens e acelerar o trabalho. Antes de " +
-      "CADA delegação, chame nexus_route_task {task} e use o adapterId/model/" +
-      "effort retornados no nexus_pane_spawn: tarefa fácil vai para modelo " +
-      "barato e rápido (grok, haiku, gpt-5.4-mini), tarefa média para sonnet/" +
-      "gpt-5.4, e só o que é realmente difícil/crítico (arquitetura, auth, " +
-      "pagamentos, migração) vai para opus/fable/gpt-5.5 com effort alto. " +
-      "Nunca gaste um modelo caro em tarefa trivial; nunca entregue tarefa " +
-      "crítica a um modelo fraco. Quebre missões grandes em tarefas pequenas " +
-      "e roteie cada uma individualmente.",
   );
   return parts.join("\n\n");
 }
@@ -251,7 +185,29 @@ export interface SquadLaunchResult {
   error?: string;
 }
 
+/**
+ * A freshly hydrated workspace contains one placeholder shell. Starting a
+ * squad replaces placeholder-only layouts instead of leaving an unexplained
+ * empty terminal beside the orchestrator. Existing agent/mixed layouts are
+ * preserved for multi-mission operation.
+ */
+export function panesAfterSquadLaunch(
+  existing: PaneModel[],
+  killedIds: ReadonlySet<string>,
+  orchestrator: PaneModel,
+): PaneModel[] {
+  if (
+    existing.length === 0 ||
+    existing.every((pane) => pane.kind === 'shell') ||
+    (killedIds.size > 0 && existing.every((pane) => killedIds.has(pane.id)))
+  ) {
+    return [orchestrator];
+  }
+  return [...existing.filter((pane) => !killedIds.has(pane.id)), orchestrator];
+}
+
 const FALLBACK_ORCHESTRATOR_ADAPTER_ID = "claude";
+const squadLaunchesInFlight = new Map<string, string>();
 
 export async function launchSquadMission(
   squad: Squad,
@@ -311,6 +267,14 @@ export async function launchSquadMission(
   // delegates. Multi-mission: when the new orch does not share exclusive
   // login (Claude keychain), keep other live panes — no blanket kill.
   const cwd = getActiveWorkspacePath() ?? undefined;
+  const launchKey = `${cwd ?? ""}\u0000${squad.id}`;
+  const existingLaunchPane = squadLaunchesInFlight.get(launchKey);
+  if (existingLaunchPane) {
+    // Voice/tool retries and a double click can reach this function before
+    // the first async mission registration finishes. Treat that retry as the
+    // same launch instead of creating an indistinguishable queued mission.
+    return { ok: true, paneId: existingLaunchPane };
+  }
   const orchPane: PaneModel = {
     ...createPane("cli-agent", cwd, cli, model),
     accountId,
@@ -319,7 +283,8 @@ export async function launchSquadMission(
     role: "orchestrator" as const,
     agentName: orchestrator.agentName,
   };
-  const { paneMissions } = useOrchStore.getState();
+  squadLaunchesInFlight.set(launchKey, orchPane.id);
+  const { paneMissions, missions } = useOrchStore.getState();
   const existing = listPanes(useLayoutStore.getState().root);
   const conflicts = conflictingOrchestratorPanes(cli);
   const killedIds = new Set(
@@ -328,57 +293,60 @@ export async function launchSquadMission(
   // Only mark missions blocked when we actually tore down their orch.
   const displaced = new Set<string>();
   for (const pane of conflicts) {
-    const mid = paneMissions[pane.id];
+    const sessionId = getPaneSessionId(pane.id);
+    const mid =
+      paneMissions[pane.id] ??
+      (sessionId
+        ? missions.find((mission) => mission.orchestratorSessionId === sessionId)?.id
+        : undefined);
     if (mid) displaced.add(mid);
   }
 
   useHomeStore.getState().hide();
-  if (existing.length === 0 || (killedIds.size > 0 && existing.every((p) => killedIds.has(p.id)))) {
-    useLayoutStore.getState().setPanes([orchPane]);
-  } else {
-    const kept = existing.filter((p) => !killedIds.has(p.id));
-    useLayoutStore.getState().setPanes([...kept, orchPane]);
-  }
+  useLayoutStore.getState().setPanes(
+    panesAfterSquadLaunch(existing, killedIds, orchPane),
+  );
 
   // Kickoff injection runs async — the wizard closes immediately, the
   // instructions land as soon as the CLI is booted and idle.
   void (async () => {
-    for (const missionId of displaced) {
-      await window.nexus.orch
-        .updateMission(missionId, { status: "blocked" })
-        .catch(() => {}); // missão já removida — nada a marcar
+    try {
+      for (const missionId of displaced) {
+        await window.nexus.orch
+          .updateMission(missionId, { status: "blocked" })
+          .catch(() => {}); // missão já removida — nada a marcar
+      }
+      // Mission creation is an authority transition. Wait until the main
+      // process owns the concrete PTY session and the pane mirror has received
+      // its sessionId; payload-only panes are intentionally rejected.
+      const sessionId = await waitForSession(orchPane.id);
+      if (!sessionId) return;
+      const mission = await window.nexus.orch
+        .createMission({
+          title: squad.name,
+          squadId: squad.id,
+          orchestratorPane: {
+            paneId: orchPane.id,
+            adapterId: cli,
+            model,
+            accountId,
+            cwd,
+            title: orchPane.title,
+            agentName: orchestrator.agentName,
+          },
+        })
+        .catch(() => null);
+      if (mission) {
+        useOrchStore.getState().bindPaneMission(orchPane.id, mission.id);
+      }
+      await waitFirstIdle(sessionId);
+      const prompt = buildMissionKickoffPrompt(squad, mission?.id);
+      // Bracketed paste keeps multi-line playbooks from submitting line-by-line.
+      window.nexus.pty.write(sessionId, `\x1b[200~${prompt}\x1b[201~`);
+      setTimeout(() => window.nexus.pty.write(sessionId, "\r"), PASTE_SETTLE_MS);
+    } finally {
+      squadLaunchesInFlight.delete(launchKey);
     }
-    // Mission creation is an authority transition. Wait until the main
-    // process owns the concrete PTY session and the pane mirror has received
-    // its sessionId; payload-only panes are intentionally rejected.
-    const sessionId = await waitForSession(orchPane.id);
-    if (!sessionId) return;
-    // O registro da missão nasce AQUI, no lançamento — não fica à mercê de o
-    // LLM chamar nexus_mission_create (sem isto a missão nova não aparecia
-    // em rail/board nenhum enquanto a antiga já tinha sido deslocada).
-    const mission = await window.nexus.orch
-      .createMission({
-        title: squad.name,
-        squadId: squad.id,
-        orchestratorPane: {
-          paneId: orchPane.id,
-          adapterId: cli,
-          model,
-          accountId,
-          cwd,
-          title: orchPane.title,
-          agentName: orchestrator.agentName,
-        },
-      })
-      .catch(() => null);
-    if (mission) {
-      useOrchStore.getState().bindPaneMission(orchPane.id, mission.id);
-    }
-    await waitFirstIdle(sessionId);
-    const prompt = buildMissionKickoffPrompt(squad, mission?.id);
-    // Bracketed paste keeps multi-line playbooks from submitting line-by-line.
-    window.nexus.pty.write(sessionId, `\x1b[200~${prompt}\x1b[201~`);
-    setTimeout(() => window.nexus.pty.write(sessionId, "\r"), PASTE_SETTLE_MS);
   })();
 
   return { ok: true, paneId: orchPane.id };

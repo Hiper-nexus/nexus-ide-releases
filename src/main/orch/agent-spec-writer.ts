@@ -19,7 +19,7 @@ const SAFE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}$/;
 // smuggle a list separator either.
 const SCALAR_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.\- ]{0,127}$/;
 const LIST_TOKEN_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.\-]{0,127}$/;
-const KNOWN_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+const EFFORT_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/;
 
 function assertName(name: string): string {
   if (!SAFE_NAME_RE.test(name) || name.includes('..')) {
@@ -84,7 +84,7 @@ export function writeAgentSpec(patch: AgentSpecPatch): { ok: boolean; path?: str
     if (patch.model !== undefined) data.model = assertScalar('model', patch.model);
     if (patch.effort !== undefined) {
       const effort = patch.effort.trim().toLowerCase();
-      if (!KNOWN_EFFORTS.has(effort)) throw new Error('invalid effort value');
+      if (!EFFORT_RE.test(effort)) throw new Error('invalid effort value');
       data.effort = effort;
     }
     if (patch.category !== undefined) {

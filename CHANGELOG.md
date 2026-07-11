@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.13.7 — Realtime Operator
+
+Data: 2026-07-11
+
+### Melhorias
+- Gemini Live pré-aquecido antes do wake, com follow-up contínuo, barge-in e
+  rescue local de transcript.
+- Jarvis executa ações explícitas de workspace e terminal no pane correto, com
+  confirmação nativa e sem voz duplicada.
+- Descoberta automática de modelos e efforts publicados pelas CLIs; Codex
+  `ultra` aparece nos squads sem lista fixa no Nexus.
+- Providers usam o modo automático nativo (`bypass`/`yolo`) por padrão; uma
+  escolha manual por modo seguro continua persistida.
+- Runtime de áudio com AEC3 e melhorias de pre-roll, cooldown e watchdog.
+
+### Correções
+- Sessão Claude Max preservada em workers com `HOME` isolado; elimina falso
+  pedido de login nos squads.
+- Transcript explícito atualizado antes de validar ações como novo workspace.
+- Recuperação de `send_to_pane` para comandos destinados ao terminal focado.
+- Status de fala e tool results não permanecem travados após o áudio terminar.
+- Novo squad substitui o shell placeholder do workspace, sem terminal vazio.
+
+### Build
+- Release `v0.13.7` multi-arquitetura pelo workflow assinado/notarizado.
+
 ## 0.13.6 — Realtime Continuity
 
 Data: 2026-07-11

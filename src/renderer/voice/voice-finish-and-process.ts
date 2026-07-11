@@ -79,13 +79,14 @@ import {
   releaseAfterLiveToolAnswer,
 } from './live-followup';
 import { hasRealtimeProviderAudioAnswer } from './live-wake-greeting';
+import { followUpAuthority } from './follow-up-authority';
+import { isHotSessionCommandCandidate } from '../../shared/hot-session-command';
 
 /**
- * Reaberturas de escuta após follow-up mudo. Enquanto a sessão Live está quente
- * NUNCA desligamos realtimeTurnActive — matar o stream com socket vivo é o
- * bug de "cade o realtime". Teto alto evita spin infinito em sala ruidosa.
+ * A warm socket is not authorization to keep listening. A silent follow-up
+ * returns to idle and requires wake again; the transport may remain connected.
  */
-const MAX_REPLY_MUTE_REOPENS = 12;
+const MAX_REPLY_MUTE_REOPENS = 0;
 let replyMuteReopenCount = 0;
 import { personaUserName } from './jarvis-screen-context';
 import { withTimeout } from './voice-speak-pipeline';
@@ -547,6 +548,8 @@ export async function finishAndProcess(
           explicitCapture,
           offeredFrames,
           captureReason: activeCaptureReason,
+          followUpAuthorized:
+            activeCaptureReason === 'reply' && followUpAuthority.isAuthorized(),
         }) &&
         peekPendingDelegation(Date.now()) === null
       ) {
@@ -555,7 +558,14 @@ export async function finishAndProcess(
           cachedStt.ok && cachedStt.discarded !== 'echo'
             ? filteredLiveRescueTranscript(cachedStt.text)
             : null;
-        if (rescueTranscript) {
+        const pendingDelegation = peekPendingDelegation(Date.now()) !== null;
+        const authorizedReplyTranscript =
+          activeCaptureReason !== 'reply' ||
+          pendingDelegation ||
+          (rescueTranscript !== null &&
+            isHotSessionCommandCandidate(rescueTranscript, { requireEnergy: false }));
+        if (rescueTranscript && authorizedReplyTranscript) {
+          if (activeCaptureReason === 'reply') followUpAuthority.clear();
           const attempt = markLiveMuteRescueAttempt();
           const rescueStartedAt = Date.now();
           const rescueTurnId = `${turnToken}:${rescueStartedAt}`;

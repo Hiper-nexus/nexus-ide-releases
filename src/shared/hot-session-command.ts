@@ -86,11 +86,8 @@ export function isHotSessionCommandCandidate(
   if (words.length === 1) {
     return COMMAND_CUE.test(words[0]!);
   }
-  // Multi-word: need at least one actionable cue OR a clear multi-token phrase
-  // that is not pure filler.
+  // Multi-word follow-ups still need an actionable cue. A permissive fallback
+  // previously accepted ordinary TV/conversation phrases.
   if (words.some((w) => COMMAND_CUE.test(w))) return true;
-  // "nova missao", "abre o log", etc. without stem match still ok if ≥2 words
-  // and none look like media boilerplate tokens alone.
-  if (words.length >= 2 && words.length <= 12) return true;
   return false;
 }

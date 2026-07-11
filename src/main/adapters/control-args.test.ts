@@ -6,6 +6,8 @@ import {
   supportsVerbose,
 } from './control-args';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
+import { adapterSchema } from '../../shared/adapter-types';
+import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 
 function adapter(control: CliPtyAdapter['control']): CliPtyAdapter {
   return {
@@ -94,8 +96,8 @@ describe('buildControlArgs', () => {
     expect(supportsVerbose(CLAUDE_LIKE)).toBe(true);
   });
 
-  it('defaults every provider to the safe baseline', () => {
-    expect(defaultPermissionMode(CLAUDE_LIKE)).toBe('');
+  it('defaults every capable provider to its strongest automatic mode', () => {
+    expect(defaultPermissionMode(CLAUDE_LIKE)).toBe('yolo');
     expect(
       defaultPermissionMode(
         adapter({
@@ -107,12 +109,24 @@ describe('buildControlArgs', () => {
           },
         }),
       ),
-    ).toBe('');
+    ).toBe('bypass');
   });
 
   it('offers no modes for an adapter without a permission block', () => {
     expect(availablePermissionModes(adapter({}))).toEqual([]);
     expect(defaultPermissionMode(adapter({}))).toBe('');
     expect(buildControlArgs(adapter({}), { permissionMode: 'yolo' })).toEqual([]);
+  });
+
+  it('defaults every built-in adapter backed by Claude CLI to total bypass', () => {
+    const claudeBacked = BUILTIN_ADAPTERS
+      .map((raw) => adapterSchema.parse(raw))
+      .filter((item): item is CliPtyAdapter => item.kind === 'cli-pty' && item.bin === 'claude');
+    expect(claudeBacked.map((item) => item.id)).toEqual(['claude', 'glm', 'longcat']);
+    for (const item of claudeBacked) {
+      expect(defaultPermissionMode(item)).toBe('yolo');
+      expect(buildControlArgs(item, { permissionMode: 'yolo' }))
+        .toContain('--dangerously-skip-permissions');
+    }
   });
 });

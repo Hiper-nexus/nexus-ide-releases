@@ -14,7 +14,6 @@ import {
 } from './wake-models-ptbr';
 import { PcmRingBuffer } from './pcm-ring-buffer';
 import {
-  CUSTOM_WAKE_MIN_RMS,
   CUSTOM_WAKE_SCORE_THRESHOLD,
   OFFICIAL_WAKE_SCORE_THRESHOLD,
   resolveWakeDetection,

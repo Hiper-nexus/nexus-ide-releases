@@ -45,6 +45,7 @@ describe('ocrImage', () => {
       'eng',
       1,
       expect.objectContaining({
+        workerPath: expect.stringMatching(/tesseract\.js[/\\]src[/\\]worker-script[/\\]node[/\\]index\.js$/),
         langPath: '/tmp/nexus-ocr-languages',
         cachePath: '/tmp/nexus-ocr-languages',
         cacheMethod: 'none',

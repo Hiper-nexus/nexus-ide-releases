@@ -185,8 +185,8 @@ const wakeDetectedListeners = new Set<() => void>();
 ipcRenderer.on(VOICE_CHANNELS.wakeDetected, () =>
   wakeDetectedListeners.forEach((cb) => cb()),
 );
-const narrateListeners = new Set<(event: { text: string }) => void>();
-ipcRenderer.on(VOICE_CHANNELS.narrate, (_e, event: { text: string }) =>
+const narrateListeners = new Set<(event: import('../shared/voice-ipc').VoiceNarrationEvent) => void>();
+ipcRenderer.on(VOICE_CHANNELS.narrate, (_e, event: import('../shared/voice-ipc').VoiceNarrationEvent) =>
   narrateListeners.forEach((cb) => cb(event)),
 );
 
@@ -463,6 +463,8 @@ const api: NexusApi = {
     confirmCommand: (command: string) =>
       ipcRenderer.invoke(VOICE_CHANNELS.confirmCommand, command),
     liveStart: (req) => ipcRenderer.invoke(VOICE_CHANNELS.liveStart, req ?? {}),
+    livePrewarm: (enabled) =>
+      ipcRenderer.invoke(VOICE_CHANNELS.livePrewarm, { enabled }),
     liveStop: () => ipcRenderer.invoke(VOICE_CHANNELS.liveStop),
     liveHardRebuild: () => ipcRenderer.invoke(VOICE_CHANNELS.liveHardRebuild),
     liveHardTeardown: () => ipcRenderer.invoke(VOICE_CHANNELS.liveHardTeardown),
@@ -495,7 +497,7 @@ const api: NexusApi = {
     onPttStart: (cb) => addListener(pttStartListeners, cb),
     onPttStop: (cb) => addListener(pttStopListeners, cb),
     onInfoChanged: (cb) => addListener(voiceInfoListeners, cb),
-    onNarrate: (cb: (event: { text: string }) => void) =>
+    onNarrate: (cb: (event: import('../shared/voice-ipc').VoiceNarrationEvent) => void) =>
       addListener(narrateListeners, cb),
     onLiveState: (cb) => addListener(liveStateListeners, cb),
     onLiveTranscript: (cb) => addListener(liveTranscriptListeners, cb),

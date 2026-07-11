@@ -96,7 +96,12 @@ function flush(broadcast: ScopedNarrationBroadcast): void {
         : `${sameProject.length} atualizações do squad. ${sameProject
             .map((item) => phraseFor(item.handoff))
             .join(' ')}`.slice(0, 400);
-    broadcast(first.scope, 'voice:narrate', { text });
+    broadcast(first.scope, 'voice:narrate', {
+      text,
+      eventId: sameProject.map((item) => item.handoff.id).join(','),
+      ...(first.handoff.missionId ? { missionId: first.handoff.missionId } : {}),
+      ...(first.handoff.sessionId ? { paneId: first.handoff.sessionId } : {}),
+    });
   }
 }
 

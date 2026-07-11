@@ -666,6 +666,8 @@ export interface NexusApi {
     /** macOS: tccutil reset Microphone <bundleId> + relaunch (grant TCC fantasma). */
     resetMicPermission(): Promise<{ ok: boolean; error?: string }>;
     liveStart(req?: JarvisLiveStartRequest): Promise<JarvisLiveState>;
+    /** Pre-connect Live silently while wake-word listening is armed. */
+    livePrewarm(enabled: boolean): Promise<JarvisLiveState>;
     liveStop(): Promise<JarvisLiveState>;
     liveHardRebuild(): Promise<JarvisLiveState>;
     liveHardTeardown(): Promise<JarvisLiveState>;
@@ -694,7 +696,7 @@ export interface NexusApi {
     onPttStop(cb: () => void): Unsubscribe;
     onInfoChanged(cb: (info: VoiceRuntimeInfo) => void): Unsubscribe;
     /** Narração proativa (handoff/travamento) — falar se não houver turno ativo. */
-    onNarrate(cb: (event: { text: string }) => void): Unsubscribe;
+    onNarrate(cb: (event: import('./voice-ipc').VoiceNarrationEvent) => void): Unsubscribe;
     onLiveState(cb: (state: JarvisLiveState) => void): Unsubscribe;
     onLiveTranscript(cb: (event: JarvisLiveTranscriptEvent) => void): Unsubscribe;
     onTranscriptAppend(cb: (event: JarvisTranscriptAppendEvent) => void): Unsubscribe;

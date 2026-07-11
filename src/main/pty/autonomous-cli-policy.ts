@@ -29,9 +29,10 @@ export interface NativeEffectAuthority {
 export function requiresReadOnlyNativeAuthority(
   authority: NativeEffectAuthority,
 ): boolean {
+  if (authority.readOnly === true) return true;
+  // A pane opened directly by the user follows the provider permission choice.
+  if (authority.source === 'direct-user') return false;
   return (
-    authority.readOnly === true ||
-    authority.source === 'direct-user' ||
     authority.source === 'legacy-squad' ||
     authority.role !== 'worker' ||
     !authority.contextRevision
@@ -78,9 +79,8 @@ function appendOnce(args: string[], sequence: readonly string[]): void {
 }
 
 /**
- * Autonomous mission panes cannot inherit a provider's user-level YOLO mode.
- * A provider must either declare a real sandbox or be Claude-compatible so
- * Nexus can deny every native effect and explicitly allow only its MCP server.
+ * Apply provider permission flags while preserving an explicit full-auto
+ * choice for writable panes. Explicit read-only authority always wins.
  */
 export function secureAutonomousCliArgs(
   adapter: CliPtyAdapter,
@@ -90,7 +90,9 @@ export function secureAutonomousCliArgs(
   const permission = adapter.control?.permission;
   const usesNexusOnlyTools = adapter.quirks.mcpAutoload;
   const safeArgs = permission?.safe ?? [];
-  if (!usesNexusOnlyTools && safeArgs.length === 0) {
+  const requestedYolo = (permission?.yolo ?? []).length > 0 &&
+    (permission?.yolo ?? []).every((arg) => currentArgs.includes(arg));
+  if (!usesNexusOnlyTools && safeArgs.length === 0 && (!requestedYolo || readOnly)) {
     throw new Error(
       `adapter ${adapter.id} does not declare enforceable autonomous confinement`,
     );
@@ -101,6 +103,13 @@ export function secureAutonomousCliArgs(
     args = removeSequence(args, sequence);
   }
   appendOnce(args, safeArgs);
+
+  // Preserve the user's full-auto choice for writable panes/workers. Explicit
+  // read-only authority remains stronger than a provider preference.
+  if (requestedYolo && !readOnly) {
+    args = removeSequence(args, safeArgs);
+    appendOnce(args, permission?.yolo ?? []);
+  }
 
   if (readOnly && !usesNexusOnlyTools) {
     const declaresReadOnly = safeArgs.some((arg) =>
@@ -124,11 +133,6 @@ export function secureAutonomousCliArgs(
   if (usesNexusOnlyTools) {
     args.push('--allowedTools', 'mcp__nexus');
     args.push('--disallowedTools', ...CLAUDE_NATIVE_TOOLS);
-  }
-  for (const dangerous of permission?.yolo ?? []) {
-    if (args.includes(dangerous)) {
-      throw new Error(`autonomous adapter retained forbidden argument: ${dangerous}`);
-    }
   }
   return args;
 }

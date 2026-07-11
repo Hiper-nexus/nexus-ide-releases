@@ -45,6 +45,15 @@ describe('isHotSessionCommandCandidate', () => {
     expect(isHotSessionCommandCandidate('hmm', { peakRms: 0.5 })).toBe(false);
     expect(isHotSessionCommandCandidate('ah', { peakRms: 0.5 })).toBe(false);
   });
+
+  it('rejects ordinary multi-word conversation without an action cue', () => {
+    expect(
+      isHotSessionCommandCandidate('essa ideia parece muito boa', { peakRms: 0.3 }),
+    ).toBe(false);
+    expect(
+      isHotSessionCommandCandidate('hoje o tempo esta quente', { peakRms: 0.3 }),
+    ).toBe(false);
+  });
 });
 
 describe('isAmbientMediaTranscript', () => {

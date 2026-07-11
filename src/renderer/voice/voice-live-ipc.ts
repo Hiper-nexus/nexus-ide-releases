@@ -5,6 +5,7 @@ import { useVoiceStore } from './voice-store';
 import { mcpClearSession } from '../services/mcp-bridge';
 import { currentScreenSnapshot } from './jarvis-screen-context';
 import { isJarvisLiveEnabled } from './voice-realtime-gates';
+import { useWorkspaceStore } from '../state/workspace-store';
 
 export function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -85,12 +86,16 @@ export async function quiesceLiveForClassic(reason: string): Promise<void> {
 
 export function liveContextText(): string {
   const screen = currentScreenSnapshot().context;
+  const workspaceCatalog = useWorkspaceStore.getState().recents
+    .slice(0, 8)
+    .map((workspace) => workspace.name)
+    .join(', ') || 'none';
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
   const now = new Date().toLocaleString('pt-BR', {
     dateStyle: 'short',
     timeStyle: 'short',
   });
-  return `${screen} Local time: ${now} (${timeZone}).`;
+  return `${screen} Recent workspace catalog: ${workspaceCatalog}. Opening an existing workspace must use open_workspace with a catalog name; creating one must use new_workspace only when the user explicitly asks for a new workspace. Local time: ${now} (${timeZone}).`;
 }
 
 export function sendLiveContextSnapshot(): void {

@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { Db } from './db';
 import type { Account, AccountInfo, AccountMode } from '../../shared/account-types';
 import {
@@ -220,6 +223,10 @@ interface ClaudeOauthCredential {
 function subscriptionAuthEnv(account: Account): Record<string, string> | null {
   const blob = getSecret(CRED_PREFIX + account.id);
   if (!blob) return null;
+  return claudeAuthEnvFromBlob(blob as string);
+}
+
+function claudeAuthEnvFromBlob(blob: string): Record<string, string> | null {
   try {
     const parsed = JSON.parse(blob) as { claudeAiOauth?: ClaudeOauthCredential };
     const oauth = parsed.claudeAiOauth;
@@ -244,6 +251,27 @@ function subscriptionAuthEnv(account: Account): Record<string, string> | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Process-scoped auth for the Claude session that is already active locally.
+ * Required when Nexus gives a gated worker an isolated HOME: current Claude
+ * builds do not consider the login active there even though macOS Keychain is
+ * user-scoped. The token stays in the child process environment only.
+ */
+export function activeClaudeAuthEnv(): Record<string, string> | null {
+  let blob = readActiveClaudeCredential();
+  if (!blob) {
+    try {
+      blob = fs.readFileSync(
+        path.join(os.homedir(), '.claude', '.credentials.json'),
+        'utf8',
+      );
+    } catch {
+      return null;
+    }
+  }
+  return claudeAuthEnvFromBlob(blob);
 }
 
 /**

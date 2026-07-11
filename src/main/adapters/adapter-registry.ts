@@ -12,6 +12,13 @@ import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { ADAPTER_CHANNELS } from '../../shared/channels';
 import { getCustomModels } from './custom-models';
 import {
+  applyDiscoveredEffortsToAdapter,
+  applyDiscoveredModelsToAdapter,
+  cliModelCacheDirectories,
+  discoverCliEfforts,
+  discoverCliModels,
+} from './cli-model-discovery';
+import {
   USER_MODEL_CATALOG_FILE,
   applyModelCatalogToAdapter,
   invalidateModelCatalogCache,
@@ -188,6 +195,8 @@ let installedCache = new Map<string, boolean>();
 const listeners = new Set<WebContents>();
 let watcher: fs.FSWatcher | null = null;
 let modelCatalogWatcher: fs.FSWatcher | null = null;
+const cliModelWatchers: fs.FSWatcher[] = [];
+let periodicRefresh: ReturnType<typeof setInterval> | null = null;
 let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Atomic saves (write-temp + rename) fire 2-4 fs.watch events per file change,
@@ -206,11 +215,19 @@ function refreshInstalledCache(): void {
 
 function reload(): void {
   const catalog = loadModelCatalog();
+  const discovered = discoverCliModels();
+  const discoveredEfforts = discoverCliEfforts();
   registry = mergeAdapters(loadBuiltins(), loadUserAdapters());
   registry = new Map(
     [...registry.entries()].map(([id, adapter]) => [
       id,
-      applyModelCatalogToAdapter(adapter, catalog),
+      applyModelCatalogToAdapter(
+        applyDiscoveredEffortsToAdapter(
+          applyDiscoveredModelsToAdapter(adapter, discovered),
+          discoveredEfforts,
+        ),
+        catalog,
+      ),
     ]),
   );
   refreshInstalledCache();
@@ -297,9 +314,32 @@ export function initAdapterRegistry(): void {
     console.warn('[model-catalog] hot-reload unavailable:', err);
   }
 
+  for (const directory of cliModelCacheDirectories()) {
+    if (!fs.existsSync(directory)) continue;
+    try {
+      const cacheWatcher = fs.watch(directory, { persistent: false }, () => {
+        scheduleReloadAndBroadcast();
+      });
+      cacheWatcher.on('error', (err) => {
+        console.warn(`[model-catalog] CLI cache watcher falhou (${directory}):`, err);
+      });
+      cliModelWatchers.push(cacheWatcher);
+    } catch (err) {
+      console.warn(`[model-catalog] CLI cache sem hot-reload (${directory}):`, err);
+    }
+  }
+
   void refreshRemoteModelCatalog().then((updated) => {
     if (updated) scheduleReloadAndBroadcast();
   });
+
+  // Remote metadata is eventually consistent; CLI cache watchers provide the
+  // immediate path. Polling covers providers that atomically replace caches in
+  // directories the platform watcher cannot observe.
+  periodicRefresh ??= setInterval(() => {
+    void refreshRemoteModelCatalog().finally(() => scheduleReloadAndBroadcast());
+  }, 5 * 60_000);
+  periodicRefresh.unref?.();
 }
 
 export function registerAdapterListener(wc: WebContents): void {

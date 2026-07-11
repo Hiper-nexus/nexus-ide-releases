@@ -29,20 +29,49 @@ export type SendToPaneTarget =
   | { kind: 'asking-pane'; paneId: string }
   | { kind: 'asking-pane-gone' }
   | { kind: 'asking-pane-not-agent'; title: string }
+  | { kind: 'asking-pane-ambiguous'; titles: string[] }
   | { kind: 'delegation'; orchestratorPaneId: string }
   | { kind: 'no-agent-pane' };
 
 export function resolveSendToPaneTarget(
   requestedPaneId: string | undefined,
   panes: SendToPanePaneLike[],
+  focusedPaneId?: string | null,
 ): SendToPaneTarget {
   if (requestedPaneId) {
-    const pane = panes.find((p) => p.id === requestedPaneId);
+    const exact = panes.find((p) => p.id === requestedPaneId);
+    const wanted = normalizePaneName(requestedPaneId);
+    const named = exact
+      ? []
+      : panes.filter((p) => normalizePaneName(p.title) === wanted);
+    const partial = exact || named.length
+      ? []
+      : panes.filter((p) => {
+          const title = normalizePaneName(p.title);
+          return title.includes(wanted) || wanted.includes(title);
+        });
+    const candidates = exact ? [exact] : (named.length ? named : partial);
+    if (candidates.length > 1) {
+      return { kind: 'asking-pane-ambiguous', titles: candidates.map((p) => p.title) };
+    }
+    const pane = candidates[0];
     if (!pane) return { kind: 'asking-pane-gone' };
     if (!isAgentTargetPane(pane)) return { kind: 'asking-pane-not-agent', title: pane.title };
     return { kind: 'asking-pane', paneId: pane.id };
   }
   const orchestrator = panes.find(isOrchestratorPane);
-  if (!orchestrator) return { kind: 'no-agent-pane' };
-  return { kind: 'delegation', orchestratorPaneId: orchestrator.id };
+  if (orchestrator) return { kind: 'delegation', orchestratorPaneId: orchestrator.id };
+  const focused = panes.find((pane) => pane.id === focusedPaneId && isAgentTargetPane(pane));
+  if (focused) return { kind: 'delegation', orchestratorPaneId: focused.id };
+  return { kind: 'no-agent-pane' };
+}
+
+function normalizePaneName(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\b(pane|painel|terminal|agente)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 }

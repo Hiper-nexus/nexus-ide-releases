@@ -63,8 +63,16 @@ export function availablePermissionModes(adapter: CliPtyAdapter): string[] {
   return modes;
 }
 
-/** Product default: safe baseline; full-auto is an explicit confirmed opt-in. */
-export function defaultPermissionMode(_adapter: CliPtyAdapter): string {
+/** Product default: strongest native automatic mode advertised by this CLI. */
+export function defaultPermissionMode(adapter: CliPtyAdapter): string {
+  const permission = adapter.control?.permission;
+  if (!permission) return '';
+  // The standalone yolo entry is each adapter's verified full-bypass flag.
+  // Claude 2.1.x maps it to --dangerously-skip-permissions, which activates
+  // the same bypassPermissions mode immediately (the --allow-* flag does not).
+  if (permission.yolo.length > 0) return 'yolo';
+  if (permission.modes.bypass) return 'bypass';
+  if (permission.modes.auto) return 'auto';
   return '';
 }
 

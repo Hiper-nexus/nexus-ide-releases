@@ -12,6 +12,7 @@ import {
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { onHandoffSubmitted } from './idle-delivery';
 import { sameProjectScope } from './project-scoped-broadcast';
+import { requestSessionRecovery } from './failover';
 
 /**
  * Watchdog de stall (benchmark §4.4): um worker que fica BUSY em silêncio por
@@ -29,12 +30,22 @@ import { sameProjectScope } from './project-scoped-broadcast';
 
 export const STALL_SCAN_MS = 30_000;
 export const STALL_MS = 10 * 60_000;
+export const STALL_RECOVERY_MS = 20 * 60_000;
 
 export interface StallCandidate {
   role?: 'orchestrator' | 'worker';
   state: string;
   lastDataAt: number;
   alreadyFlagged: boolean;
+}
+
+export function shouldRecoverStall(
+  c: StallCandidate,
+  now: number,
+  recoveryMs: number = STALL_RECOVERY_MS,
+): boolean {
+  return c.role === 'worker' && c.state === 'busy' && c.alreadyFlagged &&
+    now - c.lastDataAt >= recoveryMs;
 }
 
 /** Decisão pura (unit-testável): este worker deve ser sinalizado agora? */
@@ -61,6 +72,7 @@ interface WatchState {
   readonly authority: WatchAuthority;
   lastDataAt: number;
   isFlagged: boolean;
+  recoveryRequested: boolean;
 }
 
 const watches = new Map<string, WatchState>();
@@ -126,7 +138,7 @@ function scan(now: number = Date.now(), stallMs: number = STALL_MS): void {
     liveKeys.add(key);
     let watch = watches.get(key);
     if (!watch) {
-      watch = { authority, lastDataAt: now, isFlagged: false };
+      watch = { authority, lastDataAt: now, isFlagged: false, recoveryRequested: false };
       watches.set(key, watch);
     }
     const candidate: StallCandidate = {
@@ -137,6 +149,19 @@ function scan(now: number = Date.now(), stallMs: number = STALL_MS): void {
       lastDataAt: watch.lastDataAt,
       alreadyFlagged: watch.isFlagged,
     };
+    if (
+      !watch.recoveryRequested &&
+      shouldRecoverStall(candidate, now)
+    ) {
+      watch.recoveryRequested = requestSessionRecovery(
+        authority.sessionId,
+        `worker sem output há ${Math.round((now - candidate.lastDataAt) / 60_000)} min; recuperação automática segura`,
+      );
+      if (watch.recoveryRequested) {
+        console.warn(`[watchdog] recovery requested: ${pane.paneId}`);
+      }
+      continue;
+    }
     if (!shouldFlagStall(candidate, now, stallMs)) continue;
 
     watch.isFlagged = true;
@@ -170,6 +195,7 @@ export function initStallWatchdog(): void {
       authority,
       lastDataAt: Date.now(),
       isFlagged: false,
+      recoveryRequested: false,
     });
     // Voltou a falar: re-arma o alerta para um eventual novo travamento.
   });

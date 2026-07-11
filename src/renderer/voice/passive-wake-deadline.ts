@@ -15,15 +15,24 @@ export class PassiveWakeDeadline {
   private generation = 0;
   private checking = false;
   private cancelActive: (() => void) | null = null;
+  private cooldownUntil = 0;
 
-  constructor(private readonly deadlineMs: number) {}
+  constructor(
+    private readonly deadlineMs: number,
+    private readonly timeoutCooldownMs = 15_000,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   isChecking(): boolean {
-    return this.checking;
+    // A timeout means the provider path is unhealthy. Keep the always-on mic
+    // recording locally, but do not immediately turn the next VAD endpoint
+    // into another cloud request. Without this circuit breaker, a provider
+    // outage produces one orphaned IPC request every ~4 seconds.
+    return this.checking || this.now() < this.cooldownUntil;
   }
 
   async run<T>(operation: () => Promise<T>): Promise<PassiveWakeDeadlineResult<T>> {
-    if (this.checking) return { kind: 'busy' };
+    if (this.isChecking()) return { kind: 'busy' };
 
     const generation = ++this.generation;
     this.checking = true;
@@ -43,7 +52,11 @@ export class PassiveWakeDeadline {
       if (generation !== this.generation || result === DISCARDED) {
         return { kind: 'discarded' };
       }
-      if (result === TIMED_OUT) return { kind: 'timeout' };
+      if (result === TIMED_OUT) {
+        this.cooldownUntil = this.now() + this.timeoutCooldownMs;
+        return { kind: 'timeout' };
+      }
+      this.cooldownUntil = 0;
       return { kind: 'completed', value: result.value };
     } finally {
       if (timeout) clearTimeout(timeout);

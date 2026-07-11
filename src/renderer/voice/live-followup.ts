@@ -16,6 +16,7 @@ import {
 } from './voice-session-state';
 import { useVoiceStore } from './voice-store';
 import type { AutoStopOptions } from './voice-capture';
+import { followUpAuthority } from './follow-up-authority';
 
 /** Bumped on every wake sync reset — stale follow-up arms bail out. */
 let followUpGeneration = 0;
@@ -65,6 +66,7 @@ export function buildReplyAutoStop(autoStop: AutoStopOptions): AutoStopOptions {
 export function cancelLiveFollowUp(): void {
   followUpGeneration += 1;
   toolFollowUpGate.clear();
+  followUpAuthority.clear();
 }
 
 export function liveFollowUpGeneration(): number {
@@ -133,6 +135,11 @@ export async function reopenLiveFollowUpListening(opts: LiveFollowUpOptions): Pr
 
   logVoiceEvent('info', 'jarvis.liveFollowUpArm', 'reabrindo escuta Live (continuidade)', {
     remainingMs: livePlayer?.remainingMs() ?? 0,
+  });
+  const authorityDeadline = followUpAuthority.arm();
+  logVoiceEvent('info', 'jarvis.followUpAuthorityArmed', 'janela sem wake autorizada', {
+    durationMs: Math.round(followUpAuthority.remainingMs()),
+    deadlineMonotonicMs: Math.round(authorityDeadline),
   });
   wakeMic.suppressWakeDetection(600);
   // Reuse wake-like silence thresholds for follow-up (user answers her question).

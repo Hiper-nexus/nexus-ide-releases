@@ -112,6 +112,7 @@ function reviewerPrompt(
   contract: MissionContract,
   contextMarkdown: string,
 ): string {
+  const uiMission = contract.requiredSensors.includes('design-system');
   return [
     '# Nexus Independent Merge Review',
     '',
@@ -125,6 +126,15 @@ function reviewerPrompt(
     `Risk: ${contract.risk}`,
     `Acceptance criteria: ${JSON.stringify(contract.acceptanceCriteria)}`,
     `Business invariants: ${JSON.stringify(contract.businessInvariantRefs)}`,
+    ...(uiMission
+      ? [
+          '',
+          '## UI quality contract',
+          'Read DESIGN.md and inspect the rendered implementation, not only source. Verify responsive behavior, keyboard/focus flow, contrast, loading/empty/error/disabled states, reduced motion, typography and visual hierarchy.',
+          'Reject generic AI design patterns: decorative glassmorphism, gradient text, repetitive icon-card grids, excessive rounding, purple-gradient defaults and repeated uppercase eyebrows.',
+          'Use the impeccable guidance available to this reviewer and cite concrete visual or accessibility evidence.',
+        ]
+      : []),
     '',
     'Report every concrete finding with severity/category/file/line/criterionRefs/invariantRefs/evidence/recommendation.',
     'When finished, call nexus_merge_review_submit exactly once:',
@@ -188,7 +198,11 @@ export class CliAutomatedReviewer {
             'nexus_git_log',
             'nexus_merge_review_submit',
           ],
-          allowedSkills: ['find-bugs', 'security-best-practices'],
+          allowedSkills: [
+            'find-bugs',
+            'security-best-practices',
+            ...(input.contract.requiredSensors.includes('design-system') ? ['impeccable'] : []),
+          ],
           role: 'worker',
           readOnly: true,
           prompt: reviewerPrompt(

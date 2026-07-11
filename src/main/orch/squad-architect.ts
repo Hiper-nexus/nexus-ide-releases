@@ -32,7 +32,7 @@ Responda APENAS com JSON neste formato:
     projeto que os workers devem seguir>",
   "agents": [
     {"id": "<slug>", "agentName": "<nome>", "category": "executor|reviewer|scout|architect",
-     "cli": "claude", "effort": "low|medium|high"}
+     "cli": "<uma CLI instalada>", "model": "<modelo disponível>", "effort": "<effort disponível>"}
   ]
 }
 
@@ -54,7 +54,9 @@ Regras:
 - DISTRIBUA os workers entre as CLIs INSTALADAS listadas no perfil (custo e
   diversidade): executores em CLIs rápidas/baratas; reviewer/architect nas
   mais capazes. Nunca coloque todos na mesma CLI.
-- effort baixo para tarefas mecânicas, high para revisão/arquitetura.
+- Use somente CLI/modelo/effort declarados no perfil runtime; não invente nem
+  use catálogos memorizados. Prefira effort econômico em trabalho mecânico e o
+  maior effort realmente disponível em revisão/arquitetura crítica.
 - Instruções: cite a stack e os diretórios REAIS do perfil, e SEMPRE inclua
   os comandos reais de build/test/lint do projeto (extraia dos manifests,
   ex.: scripts do package.json, Makefile, rake, go test ./...) — são os
@@ -133,8 +135,8 @@ async function designSquad(opts: {
   const { workspacePath, intent } = opts;
   const installed = listAdapterInfos()
     .filter((a) => a.installed && a.id !== 'shell')
-    .map((a) => a.id)
-    .join(', ');
+    .map((a) => `${a.id} [models: ${a.models.list.join(', ') || a.models.default}]`)
+    .join('\n');
   const intentBlock = intent
     ? `OBJETIVO DO USUÁRIO (a missão deste squad — desenhe o time PARA isto):\n` +
       `"""${intent}"""\n\n` +
@@ -147,7 +149,7 @@ async function designSquad(opts: {
   const enriched = enrichedBlockForArchitect(loadEnrichedCatalog(), 4_000);
   const profile =
     intentBlock +
-    `CLIs instaladas nesta máquina: ${installed || 'claude'}\n\n` +
+    `CATÁLOGO RUNTIME DE CLIs/MODELOS (fonte de verdade):\n${installed || 'nenhuma'}\n\n` +
     (enriched ? `${enriched}\n\n` : '') +
     profileWorkspace(workspacePath);
   const raw = await chatViaBrainChain(

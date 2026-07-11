@@ -149,6 +149,8 @@ const CRITICAL_SIGNAL =
   /\b(payment|payments|billing|charge|refund|tenant[- ]?isolation|\brls\b|secret|credential|license|updater?|policy engine)\b/i;
 const HIGH_SIGNAL =
   /\b(auth|oauth|session|permission|authorization|migration|schema|database|concurr|race|\bipc\b|network|webhook|queue|delete|remov|security|encryption|sandbox)\b/i;
+const UI_SIGNAL =
+  /\b(landing|website|frontend|interface|\bui\b|\bux\b|design|responsive|accessibility|acessibilidade|page|página|pagina|dashboard|mobile|desktop)\b/i;
 
 function sortedUnique(values: readonly string[]): string[] {
   return [...new Set(values.map((value) => value.trim()))].sort((a, b) =>
@@ -279,9 +281,15 @@ export function compileMissionContract(
   for (const ref of invariantRefs) {
     if (!context.invariantRefs.has(ref)) issues.push(`unknown business invariant: ${ref}`);
   }
+  const uiCorpus = [
+    proposal.goal,
+    ...proposal.impactedDomains,
+    ...proposal.acceptanceCriteria.map((criterion) => criterion.statement),
+  ].join('\n');
   const requiredSensors = sortedUnique([
     ...proposal.requestedSensors,
     ...proposal.acceptanceCriteria.flatMap((criterion) => criterion.requiredSensorIds),
+    ...(UI_SIGNAL.test(uiCorpus) ? ['design-system'] : []),
   ]);
   for (const sensorId of requiredSensors) {
     if (!context.availableSensorIds.has(sensorId)) issues.push(`unknown sensor: ${sensorId}`);

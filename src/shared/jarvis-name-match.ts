@@ -105,9 +105,6 @@ export const WAKE_PREFIX_TOKENS = new Set([
   // "o jarvis" (só 2 tokens) é tratado em isJarvisWakeAddress.
 ]);
 
-/** @deprecated use WAKE_PREFIX_TOKENS — mantido para imports legados */
-const WAKE_GREETINGS = WAKE_PREFIX_TOKENS;
-
 export function normalizeNameToken(value: string): string {
   return value
     .toLocaleLowerCase()

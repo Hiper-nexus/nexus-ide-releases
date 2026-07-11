@@ -1,5 +1,6 @@
 import type { AdapterInfo } from '../../shared/types';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
+import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
 
 /**
  * Etapa REVISAR do Mission Wizard — roster editável (CLI/modelo/effort +
@@ -12,6 +13,7 @@ interface MissionWizardReviewProps {
   squad: Squad;
   roster: SquadAgent[];
   adapters: AdapterInfo[];
+  providers?: ProviderSettingsInfo[];
   highlightedAgentId: string | null;
   error: string | null;
   spawning: boolean;
@@ -44,6 +46,7 @@ export function MissionWizardReview({
   squad,
   roster,
   adapters,
+  providers = [],
   highlightedAgentId,
   error,
   spawning,
@@ -155,11 +158,16 @@ export function MissionWizardReview({
                       })
                     }
                   >
-                    <option value="low">low</option>
-                    <option value="medium">medium</option>
-                    <option value="high">high</option>
-                    <option value="xhigh">xhigh</option>
-                    <option value="max">max</option>
+                    {(() => {
+                      const advertised = providers.find((p) => p.adapterId === a.cli)?.efforts ?? [];
+                      const current = a.effort ?? 'medium';
+                      const efforts = advertised.length > 0
+                        ? [...new Set([...advertised, current])]
+                        : [...new Set(['low', 'medium', 'high', 'xhigh', 'max', current])];
+                      return efforts.map((effort) => (
+                        <option key={effort} value={effort}>{effort}</option>
+                      ));
+                    })()}
                   </select>
                 </div>
               </div>

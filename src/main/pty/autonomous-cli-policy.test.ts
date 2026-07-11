@@ -66,7 +66,7 @@ describe('secureAutonomousCliArgs', () => {
     expect(requiresReadOnlyNativeAuthority({
       source: 'direct-user',
       role: 'user',
-    })).toBe(true);
+    })).toBe(false);
   });
 
   it('forces Codex reviewer panes into read-only/no-approval mode', () => {
@@ -135,9 +135,8 @@ describe('secureAutonomousCliArgs', () => {
       'sonnet',
     ]);
 
-    expect(args).not.toContain('--dangerously-skip-permissions');
-    expect(args).toContain('--permission-mode');
-    expect(args).toContain('manual');
+    expect(args).toContain('--dangerously-skip-permissions');
+    expect(args).not.toContain('manual');
     expect(args).toContain('--allowedTools');
     expect(args).toContain('mcp__nexus');
     expect(args).toContain('--disallowedTools');
@@ -146,7 +145,7 @@ describe('secureAutonomousCliArgs', () => {
     }
   });
 
-  it('replaces Codex bypass with the declared workspace sandbox', () => {
+  it('preserves Codex bypass for writable panes', () => {
     const codex = adapter({
       id: 'codex',
       control: {
@@ -164,17 +163,20 @@ describe('secureAutonomousCliArgs', () => {
       '--dangerously-bypass-approvals-and-sandbox',
     ]);
 
-    expect(args).toEqual([
-      '--sandbox',
-      'workspace-write',
-      '--ask-for-approval',
-      'on-request',
-    ]);
+    expect(args).toEqual(['--dangerously-bypass-approvals-and-sandbox']);
   });
 
   it('rejects adapters with no enforceable autonomous confinement', () => {
     expect(() => secureAutonomousCliArgs(adapter({ id: 'kimi' }), [])).toThrow(
       /does not declare enforceable autonomous confinement/i,
     );
+  });
+
+  it('allows a yolo-only provider when full-auto was explicitly selected', () => {
+    const kimi = adapter({
+      id: 'kimi',
+      control: { permission: { modes: {}, yolo: ['--yolo'], default: '' } },
+    });
+    expect(secureAutonomousCliArgs(kimi, ['--yolo'])).toEqual(['--yolo']);
   });
 });

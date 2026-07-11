@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import type {
   IndependentProviderSnapshot,
   MultiPcBackendStatus,
@@ -20,6 +21,15 @@ function defaultExecutableProbe(candidate: string): boolean {
 export function inspectSandboxCapability(
   platform: NodeJS.Platform,
   executableProbe: (candidate: string) => boolean = defaultExecutableProbe,
+  env: NodeJS.ProcessEnv = process.env,
+  windowsRuntimeProbe: (runtime: string, image: string) => boolean = (runtime, image) => {
+    try {
+      execFileSync(runtime, ['image', 'inspect', image], { timeout: 10_000, stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  },
 ): NexusDoctorFinding[] {
   if (platform === 'darwin') {
     return doctorPathExists(executableProbe, '/usr/bin/sandbox-exec')
@@ -45,12 +55,16 @@ export function inspectSandboxCapability(
         )];
   }
   if (platform === 'win32') {
+    const runtime = env.NEXUS_SANDBOX_CONTAINER_RUNTIME?.trim();
+    const image = env.NEXUS_SANDBOX_CONTAINER_IMAGE?.trim();
+    const pinned = Boolean(image && /^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/i.test(image));
+    if (runtime && image && pinned && executableProbe(runtime) && windowsRuntimeProbe(runtime, image)) return [];
     return [doctorFinding(
       'sandbox',
       'blocker',
       'sandbox-unavailable-windows',
-      'Provedor de sandbox seguro não está disponível no Windows.',
-      'Execute agentes com isolamento em macOS/Linux, ou aguarde um provider Windows suportado; o runtime falha fechado.',
+      'Sandbox OCI segura não está configurada no Windows.',
+      'Configure NEXUS_SANDBOX_CONTAINER_RUNTIME com Docker/Podman e NEXUS_SANDBOX_CONTAINER_IMAGE com uma imagem fixada por @sha256:digest.',
     )];
   }
   return [doctorFinding(

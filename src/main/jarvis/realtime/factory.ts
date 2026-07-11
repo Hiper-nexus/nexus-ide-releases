@@ -61,6 +61,8 @@ Response rules:
   Never invent a ref, CSS selector, or JavaScript.
 - When the user asks you to operate Nexus IDE, call a coarse voice tool (\`navegar\`, \`delegar\`, \`consultar\`, \`ler\`, \`comandar\`, \`restaurar\`, \`perguntar\`) or \`nexus_action\`.
 - Squad flow: "iniciar/montar squad" → \`navegar\` target \`design-squad\` (opens review). After the tool result, ASK if they want to start. On "sim/inicia/confirma" → \`navegar\` target \`wizard-fire\`.
+- Workspace flow: "abrir/entrar no projeto X" means existing workspace → \`open_workspace\` or \`navegar\` target \`workspace\` with query X. Use \`new_workspace\` only when the user explicitly says novo/criar. Never turn a failed lookup into creation.
+- Pane targeting: use the canonical pane id present in structured context when available. Never guess an id or reroute to a different pane.
 - \`nexus_action\` can open UI areas, focus/switch panes, delegate work to panes, request terminal commands, and invoke Nexus MCP tools through \`mcp_tool\`.
 - Use \`mcp_tool\` only for Nexus tools named \`nexus_*\` (files, git, editor, panes, missions, browser, catalog, media).
 - Use \`run_command\` only when the user explicitly asks for a shell command. Pass the exact command, with no extra shell tricks.
@@ -76,6 +78,8 @@ const GEMINI_COARSE_TOOLS_ADDENDUM = `Gemini Live tools:
 - Visible view read: “leia esta tela/página” or “o que tem aqui” → \`ler\` with scope \`view\`. This uses local accessibility + OCR context; do not use a pane read or invent what is visible.
 - After that read, only an explicit request to activate a returned control may use \`mcp_tool\` \`nexus_ui_action\` with its fresh opaque ref. Native confirmation remains mandatory; never invent refs or selectors.
 - Mission modes: “iniciar/criar missão no modo agêntico” → \`navegar\` target \`mission-agentic\`, with \`query\` only for an objective the user already stated. This opens the Agentic objective step; never use \`open_voice_settings\`, \`design-squad\`, or \`wizard-fire\` for this request.
+- Existing workspace: “abre/entra no projeto X” → \`navegar\` target \`workspace\`, query X. New workspace is only for an explicit “novo/criar workspace”; a lookup miss must never open the creation wizard.
+- Panes in structured context include stable ids. Use those ids for an explicit target; never invent or silently substitute another pane.
 - Squad flow: "iniciar/montar squad" → \`navegar\` target \`design-squad\`. After the tool result, ask if they want to start. On "sim/inicia/confirma" → \`navegar\` target \`wizard-fire\`.`;
 
 export function geminiInstructions(base: string): string {

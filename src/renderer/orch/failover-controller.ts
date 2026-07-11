@@ -32,7 +32,19 @@ export function useFailoverController(): void {
         const updated = listPanes(useLayoutStore.getState().root).find(
           (candidate) => candidate.id === pane.id,
         );
-        if (updated) respawnWithResume(updated);
+        if (updated) {
+          const recovery = event.fromAccountLabel === event.toAccountLabel;
+          respawnWithResume(
+            updated,
+            recovery
+              ? `[nexus] ${event.reason}; retomando sessão…`
+              : '[nexus] limite atingido — trocando de conta e retomando…',
+          );
+        }
+      }
+      if (event.fromAccountLabel === event.toAccountLabel) {
+        push('success', 'Sessão recuperada automaticamente', event.reason);
+        return;
       }
       push(
         'success',

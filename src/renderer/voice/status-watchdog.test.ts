@@ -32,7 +32,7 @@ describe('statusWatchdogAction', () => {
   it('all deadlines exceed the stage deadlines they guard', () => {
     expect(STATUS_STUCK_DEADLINES_MS.transcribing!).toBeGreaterThan(60_000);
     expect(STATUS_STUCK_DEADLINES_MS.routing!).toBeGreaterThan(35_000);
-    expect(STATUS_STUCK_DEADLINES_MS.speaking!).toBeGreaterThan(40_000);
+    expect(STATUS_STUCK_DEADLINES_MS.speaking!).toBeLessThanOrEqual(6_000);
   });
 });
 

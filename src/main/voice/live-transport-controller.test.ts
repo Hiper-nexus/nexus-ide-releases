@@ -269,6 +269,13 @@ describe('LiveTransportController', () => {
     }));
 
     const { LiveTransportController } = await import('./live-transport-controller');
+    const aec = {
+      capture: vi.fn((samples: Int16Array, sink: (processed: Int16Array) => void) => {
+        sink(new Int16Array([...samples].map((sample) => sample + 10)));
+      }),
+      render24k: vi.fn(),
+      reset: vi.fn(),
+    };
     const session = new JarvisLiveSession(() => {}, () => wall);
     session.setEnabled(true);
     const emitted: Array<{ channel: string; payload: unknown }> = [];
@@ -276,12 +283,18 @@ describe('LiveTransportController', () => {
       (channel, payload) => emitted.push({ channel, payload }),
       session,
       () => wall,
+      undefined,
+      undefined,
+      aec,
     );
 
     const resultPromise = controller.smokeTest('responda que está online', 101);
     await vi.waitFor(() => expect(provider.sendText).toHaveBeenCalledOnce());
+    controller.micIn(pcmBase64([1, 2, 3]));
+    expect(aec.capture).toHaveBeenCalledOnce();
+    expect(provider.sendAudioChunk).toHaveBeenCalledWith(new Int16Array([11, 12, 13]));
     wall = 1_240;
-    provider.fireAudioOut();
+    provider.fireAudioOut(new Int16Array([7, 8]));
     const audio = emitted.find((event) => event.channel === VOICE_CHANNELS.liveAudioOut);
     expect(audio?.payload).toMatchObject({ pcm16: expect.any(String), id: expect.any(String) });
 
@@ -299,6 +312,7 @@ describe('LiveTransportController', () => {
       },
       202,
     );
+    expect(aec.render24k).not.toHaveBeenCalled();
     await Promise.resolve();
     expect(settled).toBe(false);
 
@@ -309,6 +323,7 @@ describe('LiveTransportController', () => {
       },
       101,
     );
+    expect(aec.render24k).toHaveBeenCalledWith(new Int16Array([7, 8]));
 
     await expect(resultPromise).resolves.toMatchObject({
       ok: true,
@@ -785,6 +800,7 @@ describe('LiveTransportController', () => {
 
     expect(provider.sendText).toHaveBeenCalledOnce();
     expect(provider.sendText).toHaveBeenCalledWith('abra o terminal');
+    expect(controller.lastUserTranscript).toBe('abra o terminal');
     expect(provider.sendAudioChunk).not.toHaveBeenCalled();
     expect(provider.forceEndUserTurn).not.toHaveBeenCalled();
 
@@ -963,9 +979,14 @@ describe('LiveTransportController', () => {
       summary: 'terminal abriu depois do novo turno',
     });
     provider.fireResponseDone();
-    expect(
-      events.filter((event) => event.channel === VOICE_CHANNELS.liveToolTurnComplete),
-    ).toHaveLength(0);
+    const recovered = events.filter(
+      (event) => event.channel === VOICE_CHANNELS.liveToolTurnComplete,
+    );
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]?.payload).toMatchObject({
+      turnId: 'newer-turn',
+      callId: 'call_late',
+    });
 
     controller.beginTurn('tool-turn-1');
     provider.fireToolCall();
@@ -1009,8 +1030,8 @@ describe('LiveTransportController', () => {
     const completions = events.filter(
       (event) => event.channel === VOICE_CHANNELS.liveToolTurnComplete,
     );
-    expect(completions).toHaveLength(1);
-    expect(completions[0]?.payload).toMatchObject({
+    expect(completions).toHaveLength(2);
+    expect(completions[1]?.payload).toMatchObject({
       sessionId: session.getState().sessionId,
       turnId: 'tool-turn-1',
       callId: 'call_1',

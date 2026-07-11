@@ -89,7 +89,9 @@ describe('WakeEngine lifecycle', () => {
     const engine = new WakeEngine(vi.fn());
     const initialization = engine.init();
 
-    await vi.waitFor(() => expect(ortDeps.sessions).toHaveLength(3));
+    // mel + embedding + EN head + bundled PT-BR head. Optional filesystem
+    // overrides remain absent in this harness.
+    await vi.waitFor(() => expect(ortDeps.sessions).toHaveLength(4));
     await vi.waitFor(() => expect(ortDeps.sessions[0]!.run).toHaveBeenCalledTimes(1));
 
     const disposal = engine.dispose();

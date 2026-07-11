@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { useVoiceStore } from './voice-store';
 import { markVictory } from '../state/onboarding-store';
+import { useLayoutStore } from '../state/layout-store';
+import { useOrchStore } from '../state/orch-store';
 import { VoiceCapture } from './voice-capture';
 import type { PassiveWakeUtterance } from './wake-mic';
 import { classifyMicHealth, type MicHealth } from './wake-health';
@@ -89,7 +91,6 @@ import { finishAndProcess, type FinishAndProcessDeps } from './voice-finish-and-
 import {
   cancelLiveFollowUp,
   notifyLiveToolTurnComplete,
-  reopenLiveFollowUpListening,
 } from './live-followup';
 import {
   markLiveMicFrameOffered,
@@ -105,6 +106,8 @@ import {
   isHotSessionCommandCandidate,
 } from '../../shared/hot-session-command';
 import { DEFAULT_DUPLEX_MODE, duplexModePolicy } from './duplex-mode-policy';
+import { WorkNarrationSupervisor } from './work-narration-supervisor';
+import { FOLLOW_UP_AUTHORITY_MS, followUpAuthority } from './follow-up-authority';
 
 /**
  * Jarvis voice pipeline. Mounted once from App.
@@ -123,7 +126,7 @@ const PTT_HOLD_MAX_MS = 60_000;
 // After a Live response, a person naturally needs a moment to formulate the
 // next request. Keep the warm Gemini turn open long enough to feel conversational
 // without leaving the mic in an indefinite ambient-capture state.
-const REPLY_MAX_LISTEN_MS = 22_000;
+const REPLY_MAX_LISTEN_MS = FOLLOW_UP_AUTHORITY_MS;
 export const TRANSCRIBE_DEADLINE_MS = 60_000;
 export const BRAIN_DEADLINE_MS = 35_000;
 const MIC_SILENT_THRESHOLD_MS = 12_000;
@@ -253,6 +256,14 @@ export function useVoiceController(): void {
     capture.current.onLevel = publishVoiceLevel;
     wakeMic.onLevel = publishVoiceLevel;
     const streamLiveMicFrame = (frame: Float32Array, sampleRate: number) => {
+      // Follow-up may stream directly only inside the short, locally armed
+      // authority window. Outside it, room speech/TV can never reach Gemini.
+      // The previous unconditional return contradicted beginListening(): the
+      // UI opened a reply mic but offered zero frames to the Live socket.
+      if (
+        activeCaptureReason === 'reply' &&
+        !followUpAuthority.isAuthorized()
+      ) return;
       // Full-duplex product default: keep offering frames while she speaks so
       // Gemini can barge-in. Half-duplex only if policy keeps the mic gate.
       const fullDuplex = !duplexModePolicy(DEFAULT_DUPLEX_MODE).keepHalfDuplexMicGate;
@@ -274,6 +285,7 @@ export function useVoiceController(): void {
     };
     capture.current.onFrame = streamLiveMicFrame;
     const store = useVoiceStore.getState();
+    const workNarrationSupervisor = new WorkNarrationSupervisor();
     const passiveWakeDeadline = new PassiveWakeDeadline(PASSIVE_WAKE_RENDERER_DEADLINE_MS);
 
     const handleWake = async (source: WakeSource, preRollSeed?: Float32Array[]) => {
@@ -446,8 +458,44 @@ export function useVoiceController(): void {
       if (!info?.enabled || !info.wakeWordEnabled || info.routing !== 'jarvis') return;
       const voiceStatus = useVoiceStore.getState().status;
       const hot = isLiveSessionHot();
-      // Barge verificado: ela falando + nome no STT. Hot session: comando sem nome.
-      const isVerifiedBargeCandidate = voiceStatus === 'speaking';
+      // Quiet playback leakage stays blocked, but a nearby human voice well
+      // above the echo floor may say “Jarvis” and barge in. Wake matching and
+      // transcript echo suppression still have to validate it.
+      const strongHumanBarge = utterance.rawMaxRms >= 0.3;
+      if (voiceStatus === 'speaking' && !strongHumanBarge) {
+        logVoiceEvent('info', 'wake.passiveSuppressedWhileSpeaking', 'STT passivo bloqueado durante TTS', {
+          durationSec: Number(utterance.durationSec.toFixed(2)),
+          rawSpeechMs: Math.round(utterance.rawSpeechMs),
+          peakRms: Number(utterance.rawMaxRms.toFixed(4)),
+        });
+        return;
+      }
+      if (voiceStatus === 'speaking' && strongHumanBarge) {
+        logVoiceEvent('info', 'wake.passiveBargeChecking', 'voz forte durante TTS — validando Jarvis', {
+          peakRms: Number(utterance.rawMaxRms.toFixed(4)),
+        });
+      }
+      // Overclock parity: during an explicitly armed Live follow-up, Gemini is
+      // the sole listener. Sending the same utterance to passive Groq creates
+      // duplicate ownership, extra latency and `passiveHotUnauthorized` races.
+      // Once the authority expires, passive STT resumes so saying Jarvis can
+      // wake/re-engage a still-hot session.
+      if (
+        hot &&
+        voiceStatus === 'listening' &&
+        followUpAuthority.isAuthorized()
+      ) {
+        logVoiceEvent(
+          'info',
+          'wake.passiveOwnedByLive',
+          'follow-up autorizado pertence ao Gemini Live; STT passivo pulado',
+          {
+            durationSec: Number(utterance.durationSec.toFixed(2)),
+            remainingAuthorityMs: Math.round(followUpAuthority.remainingMs()),
+          },
+        );
+        return;
+      }
 
       const startedAt = Date.now();
       logVoiceEvent('info', 'wake.passiveChecking', 'checando frase curta via STT', {
@@ -518,6 +566,21 @@ export function useVoiceController(): void {
             });
             return;
           }
+          if (!followUpAuthority.isAuthorized()) {
+            const fingerprint = text
+              .split(/\s+/)
+              .filter(Boolean)
+              .slice(0, 8)
+              .map((token) => token.toLocaleLowerCase().normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '').slice(0, 10))
+              .join('|');
+            logVoiceEvent('info', 'wake.passiveHotUnauthorized', 'socket quente sem autoridade de follow-up', {
+              latencyMs,
+              charLen: text.length,
+              fingerprint,
+            });
+            return;
+          }
           if (
             !isHotSessionCommandCandidate(text, {
               peakRms: utterance.rawMaxRms,
@@ -533,6 +596,7 @@ export function useVoiceController(): void {
             });
             return;
           }
+          followUpAuthority.clear();
           await injectHotSessionCommand(text, {
             latencyMs,
             provider: result.provider,
@@ -572,6 +636,11 @@ export function useVoiceController(): void {
           liveHot: stillHot,
         });
 
+        if (statusNow === 'speaking') {
+          stopAllPlayback();
+          await window.nexus.voice.liveInterrupt('voice-barge').catch(() => undefined);
+        }
+
         // Já quente + comando no mesmo utterance → injeta sem reset (não corta sessão)
         if (stillHot && match.command.trim()) {
           await injectHotSessionCommand(match.command.trim(), {
@@ -581,26 +650,17 @@ export function useVoiceController(): void {
           });
           return;
         }
-        // Já quente + só "Jarvis" → reabre mic sem teardown
+        // Já quente + só "Jarvis" still needs an audible wake acknowledgement.
+        // Reopening reply capture silently made a successful detection look dead.
         if (stillHot && !match.command.trim()) {
           pendingPassiveWakeCommand = null;
-          if (capture.current) {
-            void reopenLiveFollowUpListening({
-              busy,
-              capture: capture.current,
-              beginListening,
-              wakeAutoStop,
-            });
-          }
+          onWake('voice', utterance.preRoll);
           return;
         }
 
         // Frio: wake completo + comando embutido após Live subir
         pendingPassiveWakeCommand = match.command.trim() || null;
-        onWake(
-          isVerifiedBargeCandidate || statusNow === 'speaking' ? 'voice-barge' : 'voice',
-          utterance.preRoll,
-        );
+        onWake(statusNow === 'speaking' ? 'voice-barge' : 'voice', utterance.preRoll);
       } catch (error) {
         logVoiceEvent('warn', 'wake.passiveSttError', 'falha no STT passivo', {
           latencyMs: Date.now() - startedAt,
@@ -683,6 +743,7 @@ export function useVoiceController(): void {
       }
     }, STATUS_WATCHDOG_POLL_MS);
 
+    let livePrewarmRequested = false;
     const syncWakeWord = (info: VoiceRuntimeInfo) => {
       const shouldUsePassiveWake =
         info.enabled && info.wakeWordEnabled && info.routing === 'jarvis';
@@ -700,8 +761,25 @@ export function useVoiceController(): void {
         void wakeMic.start().catch((err) => {
           useVoiceStore.getState().setError(`Wake word indisponível: ${errMsg(err)}`);
         });
+        if (canAttemptRealtime(info) && !livePrewarmRequested) {
+          livePrewarmRequested = true;
+          window.nexus.voice.liveContextIn(liveContextText());
+          void window.nexus.voice.livePrewarm(true).then((state) => {
+            useVoiceStore.getState().setLiveState(state);
+          }).catch((err) => {
+            livePrewarmRequested = false;
+            console.warn('[voice] prewarm Live falhou:', errMsg(err));
+          });
+        } else if (!canAttemptRealtime(info) && livePrewarmRequested) {
+          livePrewarmRequested = false;
+          void window.nexus.voice.livePrewarm(false).catch(() => {});
+        }
       } else {
         wakeMic.stop();
+        if (livePrewarmRequested) {
+          livePrewarmRequested = false;
+          void window.nexus.voice.livePrewarm(false).catch(() => {});
+        }
       }
     };
 
@@ -856,8 +934,16 @@ export function useVoiceController(): void {
     const unsubToggle = window.nexus.voice.onPttToggle(onToggle);
     const unsubWake = window.nexus.voice.onWakeDetected(() => onWake('voice'));
     const unsubClickWake = onJarvisWakeRequest(() => onWake('click'));
-    const unsubNarrate = window.nexus.voice.onNarrate(({ text }) => {
-      narrationQueue.enqueue(text);
+    const unsubNarrate = window.nexus.voice.onNarrate((event) => {
+      const layout = useLayoutStore.getState();
+      const focusedMissionId = layout.focusedPaneId
+        ? useOrchStore.getState().paneMissions[layout.focusedPaneId]
+        : undefined;
+      if (!workNarrationSupervisor.accept(event, {
+        focusedPaneId: layout.focusedPaneId,
+        focusedMissionId,
+      })) return;
+      narrationQueue.enqueue(event.text);
     });
 
     const cleanup = () => {
@@ -866,6 +952,7 @@ export function useVoiceController(): void {
       unsubStatusWatchdog();
       unsubNarrationState();
       narrationQueue.dispose();
+      workNarrationSupervisor.reset();
       unsubInfo();
       unsubStart();
       unsubStop();

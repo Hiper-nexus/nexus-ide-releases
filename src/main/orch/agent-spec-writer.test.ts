@@ -56,9 +56,9 @@ describe('writeAgentSpec — validation', () => {
     expect(writeAgentSpec({ name: 'reviewer', tools: ['a, b'] }).ok).toBe(false);
   });
 
-  it('rejects an unknown effort value', () => {
-    expect(writeAgentSpec({ name: 'reviewer', effort: 'ultra' }).ok).toBe(false);
-    expect(writeAgentSpec({ name: 'reviewer', effort: 'high' }).ok).toBe(true);
+  it('accepts future CLI effort values and rejects unsafe syntax', () => {
+    expect(writeAgentSpec({ name: 'reviewer', effort: 'ultra' }).ok).toBe(true);
+    expect(writeAgentSpec({ name: 'reviewer', effort: 'high\nunsafe' }).ok).toBe(false);
   });
 });
 

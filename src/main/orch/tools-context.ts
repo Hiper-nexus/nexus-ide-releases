@@ -22,6 +22,10 @@ import { CliAutomatedReviewer } from '../context/cli-automated-reviewer';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { CliContextDraftReviewer } from '../context/cli-context-draft-reviewer';
 import { inspectConfiguredNexusReadiness } from '../runtime/nexus-doctor';
+import {
+  autopilotActionFor,
+  missionPlanIntegrated,
+} from '../context/prevc-autopilot-policy';
 
 const identifier = z.string().trim().min(1).max(160)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
@@ -83,6 +87,127 @@ function assertMission(ctx: AgentGateContext, requested: string): void {
   if (!ctx.missionId && ctx.role !== 'user') {
     throw new Error('not authorized: agent session is not bound to a mission');
   }
+}
+
+function nextWorkflowStage(route: readonly string[], stage: string): string {
+  const index = route.indexOf(stage);
+  if (index < 0) throw new Error('workflow stage is outside its frozen route');
+  return route[index + 1] ?? 'complete';
+}
+
+async function runCouncilReview(ctx: AgentGateContext, missionId: string) {
+  const service = getContextWorkflowService(ctx.scope);
+  const mission = service.getMissionWorkflow(missionId);
+  if (!mission.contract || !mission.workflow) throw new Error('mission has no frozen workflow');
+  const reviewer = new CliAutomatedReviewer();
+  return reviewer.run({
+    scope: ctx.scope,
+    checkoutPath: ctx.scope.rootRealPath,
+    contract: mission.contract.contract,
+    binding: mission.workflow.binding,
+    author: mission.contract.author,
+    contextMarkdown: service.compileMissionSnapshot(missionId).markdown,
+    persist: (report) => service.recordMergeReviewReport(report),
+  });
+}
+
+async function runFinalValidation(ctx: AgentGateContext, missionId: string) {
+  const service = getContextWorkflowService(ctx.scope);
+  const mission = service.getMissionWorkflow(missionId);
+  if (!mission.contract || !mission.workflow) throw new Error('mission has no frozen workflow');
+  const sensorEvidence = [];
+  for (const sensorId of mission.contract.contract.requiredSensors) {
+    const evidence = await service.runSensor(missionId, sensorId);
+    sensorEvidence.push(evidence);
+    if (evidence.exitCode !== 0 || evidence.timedOut) {
+      return { ready: false, reason: `sensor failed: ${sensorId}`, sensorEvidence, review: null };
+    }
+  }
+  const worktrees = requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId);
+  const panes = getProjectDomainStores(ctx.scope).missionPanes.list(missionId);
+  const authors: WorkflowIdentity[] = worktrees.map((worktree) => {
+    const pane = panes.find((candidate) =>
+      candidate.role === 'worker' &&
+      candidate.agentName === worktree.workerId &&
+      candidate.cwd === worktree.worktreePath);
+    if (!pane) throw new Error(`code author identity missing for task ${worktree.taskId}`);
+    return normalizeWorkflowIdentity({
+      id: worktree.workerId,
+      sessionId: pane.paneId ?? pane.id,
+      provider: pane.adapterId,
+    });
+  });
+  if (authors.length === 0) throw new Error('final validation has no integrated code author');
+  const reviewer = new CliAutomatedReviewer();
+  const review = await reviewer.run({
+    scope: ctx.scope,
+    checkoutPath: ctx.scope.rootRealPath,
+    contract: mission.contract.contract,
+    binding: mission.workflow.binding,
+    author: authors[0],
+    additionalAuthors: authors.slice(1),
+    contextMarkdown: service.compileMissionSnapshot(missionId).markdown,
+    persist: (report) => service.recordMergeReviewReport(report),
+  });
+  return { ready: review.ready, reason: review.gate.reason, sensorEvidence, review };
+}
+
+async function drivePrevcAutopilot(
+  ctx: AgentGateContext,
+  missionId: string,
+  allowExecutionExit: boolean,
+) {
+  const service = getContextWorkflowService(ctx.scope);
+  const transitions: string[] = [];
+  for (let guard = 0; guard < 8; guard += 1) {
+    const mission = service.getMissionWorkflow(missionId);
+    if (!mission.contract || !mission.workflow) throw new Error('mission has no frozen workflow');
+    const { stage, route } = mission.workflow;
+    const tasks = getProjectDomainStores(ctx.scope).tasks.list(missionId);
+    const worktrees = requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId);
+    const planIntegrated = missionPlanIntegrated(tasks.map((task) => task.id), worktrees);
+    const action = autopilotActionFor(stage, allowExecutionExit, planIntegrated);
+    if (action === 'complete') return { state: 'complete', transitions };
+    if (action === 'wait-execution') {
+      return { state: 'execution', transitions, reason: 'planned tasks are not all integrated' };
+    }
+    if (stage === 'execution') {
+      const next = nextWorkflowStage(route, stage);
+      service.advance(missionId, workflowStageSchema.parse(next));
+      transitions.push(`${stage}->${next}`);
+      continue;
+    }
+    if (stage === 'planning') {
+      const next = nextWorkflowStage(route, stage);
+      service.advance(missionId, workflowStageSchema.parse(next));
+      transitions.push(`${stage}->${next}`);
+      continue;
+    }
+    if (action === 'review') {
+      const review = await runCouncilReview(ctx, missionId);
+      if (!review.ready) return { state: stage, transitions, reason: review.gate.reason };
+      const next = nextWorkflowStage(route, stage);
+      service.advance(missionId, workflowStageSchema.parse(next));
+      transitions.push(`${stage}->${next}`);
+      continue;
+    }
+    if (action === 'validate') {
+      const validation = await runFinalValidation(ctx, missionId);
+      if (!validation.ready) return { state: stage, transitions, reason: validation.reason };
+      const next = nextWorkflowStage(route, stage);
+      service.advance(missionId, workflowStageSchema.parse(next));
+      transitions.push(`${stage}->${next}`);
+      continue;
+    }
+    if (stage === 'confirmation') {
+      const next = nextWorkflowStage(route, stage);
+      service.advance(missionId, workflowStageSchema.parse(next));
+      transitions.push(`${stage}->${next}`);
+      continue;
+    }
+    return { state: stage, transitions, reason: 'stage requires explicit operator action' };
+  }
+  throw new Error('PREVC autopilot transition guard exceeded');
 }
 
 const doctorTool: McpToolDef = {
@@ -282,7 +407,8 @@ const freezeTool: McpToolDef = {
       missionIdentity(ctx),
     );
     bindContextRevision(ctx, frozen.contract.contextRevision);
-    return frozen;
+    const autopilot = await drivePrevcAutopilot(ctx, input.missionId, false);
+    return { ...getContextWorkflowService(ctx.scope).getMissionWorkflow(input.missionId), autopilot };
   },
 };
 
@@ -404,7 +530,12 @@ const worktreeCreateTool: McpToolDef = {
       'nexus_worktree_create',
       {},
     );
-    return requireWorktreeRuntimeRegistry().create({
+    const tasks = getProjectDomainStores(ctx.scope).tasks;
+    const planned = tasks.list(input.missionId).find((task) => task.id === input.taskId);
+    if (!planned) {
+      throw new Error('worktree task is outside the sealed Nexus mission plan');
+    }
+    const created = requireWorktreeRuntimeRegistry().create({
       scope: ctx.scope,
       missionId: input.missionId,
       taskId: input.taskId,
@@ -412,6 +543,8 @@ const worktreeCreateTool: McpToolDef = {
       ownership: input.ownership,
       dependsOn: input.dependsOn,
     });
+    tasks.update(input.taskId, { status: 'running' });
+    return created;
   },
 };
 
@@ -487,12 +620,15 @@ const mergeTaskTool: McpToolDef = {
     const service = getContextWorkflowService(ctx.scope);
     service.assertMutationAllowed(input.missionId, 'nexus_merge_task', {});
     const validator = new MergeValidationCoordinator(service);
-    return requireWorktreeRuntimeRegistry().enqueue({
+    const result = await requireWorktreeRuntimeRegistry().enqueue({
       scope: ctx.scope,
       missionId: input.missionId,
       taskId: input.taskId,
       validate: (validationContext) => validator.validate(validationContext),
     });
+    getProjectDomainStores(ctx.scope).tasks.update(input.taskId, { status: 'done' });
+    const autopilot = await drivePrevcAutopilot(ctx, input.missionId, true);
+    return { ...result, autopilot };
   },
 };
 

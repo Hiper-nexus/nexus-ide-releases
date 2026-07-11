@@ -164,6 +164,19 @@ export interface VoiceRuntimeInfo {
    * janela NÃO processa "Hey Jarvis" para evitar duas instâncias respondendo.
    */
   wakeLockHolderPid?: number | null;
+  /** Secret-free echo-cancellation capability/health for diagnostics. */
+  aec?: {
+    backend:
+      | 'wasm-aec3'
+      | 'coreaudio-process-tap'
+      | 'wasapi-loopback'
+      | 'pipewire-monitor'
+      | 'pulseaudio-monitor'
+      | 'chromium-aec';
+    native: boolean;
+    degraded: boolean;
+    reason: string;
+  };
   jarvisLive: {
     enabled: boolean;
     /** 'classic' = FSM batch; 'openai-realtime'/'gemini-live' = audio realtime. */
@@ -188,6 +201,15 @@ export interface VoiceRuntimeInfo {
   keys: VoiceApiKeyStatus[];
   stt: ResolvedChain;
   tts: ResolvedChain;
+}
+
+/** Project-scoped proactive work update. Origin metadata lets the renderer
+ * fail closed when the user is looking at another mission/pane. */
+export interface VoiceNarrationEvent {
+  text: string;
+  eventId?: string;
+  missionId?: string;
+  paneId?: string;
 }
 
 /** One provider's outcome while walking the STT fallback chain. */

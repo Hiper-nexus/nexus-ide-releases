@@ -187,6 +187,48 @@ export interface RouteDecision {
   alternatives: RouteCandidate[];
 }
 
+type QualityDimension = 'coding' | 'reasoning' | 'frontend' | 'security';
+
+function qualityDimension(taskText: string, tier: TaskTier): QualityDimension {
+  if (/\b(frontend|landing|website|interface|ui|ux|css|design|responsive|acessibilidade)\b/i.test(taskText)) {
+    return 'frontend';
+  }
+  if (/\b(security|seguran|auth|oauth|permission|token|secret|payment|pagamento|billing)\b/i.test(taskText)) {
+    return 'security';
+  }
+  return tier === 'hard' || tier === 'critical' ? 'reasoning' : 'coding';
+}
+
+function evaluatedCandidates(
+  taskText: string,
+  tier: TaskTier,
+  available: ReadonlyMap<string, AdapterAvailability>,
+  catalog: ModelCatalog,
+): RouteCandidate[] {
+  const dimension = qualityDimension(taskText, tier);
+  const effort = tier === 'critical'
+    ? 'xhigh'
+    : tier === 'hard'
+      ? 'high'
+      : tier === 'medium'
+        ? 'medium'
+        : 'low';
+  return [...available.values()]
+    .flatMap((adapter) => (adapter.models ?? []).flatMap((model) => {
+      const info = modelCatalogInfo(catalog, adapter.id, model);
+      if (!info?.quality || isModelBlockedForAutoRouting(info)) return [];
+      const quality = info.quality[dimension] ?? info.quality.coding ?? info.quality.overall;
+      const costPenalty = tier === 'trivial' || tier === 'easy'
+        ? modelRoutingRank(info) * 12
+        : tier === 'medium'
+          ? modelRoutingRank(info) * 4
+          : 0;
+      return [{ candidate: { adapterId: adapter.id, model, effort }, score: quality - costPenalty }];
+    }))
+    .sort((left, right) => right.score - left.score)
+    .map((entry) => entry.candidate);
+}
+
 /**
  * Pick the first installed candidate of the task's tier (candidates are
  * ordered cheapest-first). When nothing of the tier is installed, walk the
@@ -213,6 +255,7 @@ export function routeTask(
 
   const classification = classifyTask(taskText);
   const tier = tierOverride ?? classification.tier;
+  const evaluated = evaluatedCandidates(taskText, tier, available, modelCatalog);
   const why =
     classification.signals.length > 0
       ? `sinais: ${classification.signals.slice(0, 5).join(', ')}`
@@ -229,7 +272,8 @@ export function routeTask(
   // origem para o motivo "melhor opção instalada"). A ordem declarada da
   // tabela continua sendo a fonte de capacidade; o catálogo só bloqueia riscos
   // e anota custo, sem promover modelos baratos acima de modelos fortes.
-  const ranked: Array<{ c: RouteCandidate; fromTier: TaskTier }> = [];
+  const ranked: Array<{ c: RouteCandidate; fromTier: TaskTier; evaluated?: boolean }> =
+    evaluated.map((c) => ({ c, fromTier: tier, evaluated: true }));
   const skippedRisk: string[] = [];
   for (const candidateTier of searchOrder) {
     const tierCandidates = table[candidateTier]
@@ -254,7 +298,11 @@ export function routeTask(
         return true;
       });
 
-    for (const c of tierCandidates) ranked.push({ c, fromTier: candidateTier });
+    for (const c of tierCandidates) {
+      if (!ranked.some((entry) => entry.c.adapterId === c.adapterId && entry.c.model === c.model)) {
+        ranked.push({ c, fromTier: candidateTier });
+      }
+    }
   }
   if (ranked.length > 0) {
     let chosen = ranked[0];
@@ -273,6 +321,9 @@ export function routeTask(
       modelCatalogInfo(modelCatalog, pick.adapterId, pick.model),
     );
     const costNote = costRank <= 1 ? '; preferiu rota free/cheap' : '';
+    const evaluationNote = chosen.evaluated
+      ? '; selecionado por avaliação Nexus por dimensão'
+      : '';
     const riskNote =
       skippedRisk.length > 0
         ? `; evitou ${[...new Set(skippedRisk)].slice(0, 3).join(', ')}`
@@ -282,7 +333,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort: pick.effort,
-      reason: `${tier}${borrowed}; ${why}${costNote}${riskNote}`,
+      reason: `${tier}${borrowed}; ${why}${costNote}${evaluationNote}${riskNote}`,
       alternatives: ranked.filter((r) => r.c !== pick).map((r) => r.c),
     };
   }

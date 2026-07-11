@@ -39,6 +39,8 @@ export interface ScopedExecPlanInput {
   rootRealPath: string;
   sandboxDir: string;
   env: NodeJS.ProcessEnv;
+  /** Sensors/review commands set this so validation can never mutate code. */
+  readOnlyRoot?: boolean;
 }
 
 interface NormalizedExecPlanInput {
@@ -48,6 +50,7 @@ interface NormalizedExecPlanInput {
   readonly rootRealPath: string;
   readonly sandboxDir: string;
   readonly env: NodeJS.ProcessEnv;
+  readonly readOnlyRoot: boolean;
 }
 
 const MACOS_DENIED_READ_ROOTS = [
@@ -176,6 +179,7 @@ function buildMacosProfile(
   rootRealPath: string,
   sandboxDir: string,
   envPath: string | undefined,
+  readOnlyRoot = false,
 ): string {
   const deniedReads = MACOS_DENIED_READ_ROOTS.map(
     (root) => `(subpath ${sbplString(root)})`,
@@ -191,7 +195,7 @@ function buildMacosProfile(
     ...collectToolchainReadRules(envPath),
   ].join(' ');
   const allowedWrites = [
-    `(subpath ${sbplString(rootRealPath)})`,
+    ...(readOnlyRoot ? [] : [`(subpath ${sbplString(rootRealPath)})`]),
     `(subpath ${sbplString(sandboxDir)})`,
     '(literal "/dev/null")',
     '(literal "/dev/tty")',
@@ -264,6 +268,7 @@ function normalizeExecPlan(input: ScopedExecPlanInput): NormalizedExecPlanInput 
       TMP: tmp,
       TEMP: tmp,
     }),
+    readOnlyRoot: input.readOnlyRoot === true,
   });
 }
 
@@ -281,6 +286,7 @@ function linuxBindArgs(
   source: string,
   maskedRoots: readonly string[],
   createdDirectories: Set<string>,
+  readOnly = false,
 ): string[] {
   const matchingRoot = [...maskedRoots]
     .filter((candidate) => isWithin(candidate, source))
@@ -299,7 +305,7 @@ function linuxBindArgs(
       args.push('--dir', directory);
     }
   }
-  args.push('--bind', source, source);
+  args.push(readOnly ? '--ro-bind' : '--bind', source, source);
   return args;
 }
 
@@ -329,7 +335,7 @@ function linuxPlan(
   ];
   for (const maskedRoot of maskedRoots) args.push('--tmpfs', maskedRoot);
   const createdDirectories = new Set<string>();
-  args.push(...linuxBindArgs(input.rootRealPath, maskedRoots, createdDirectories));
+  args.push(...linuxBindArgs(input.rootRealPath, maskedRoots, createdDirectories, input.readOnlyRoot));
   args.push(...linuxBindArgs(input.sandboxDir, maskedRoots, createdDirectories));
   args.push(
     '--chdir', input.cwd,
@@ -371,6 +377,7 @@ function macosPlan(
         input.rootRealPath,
         input.sandboxDir,
         input.env.PATH,
+        input.readOnlyRoot,
       ),
       input.executable,
       ...input.args,
@@ -379,6 +386,53 @@ function macosPlan(
     env: { ...input.env },
     detached: true,
   };
+}
+
+const OCI_IMAGE_PATTERN = /^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/i;
+
+function windowsOciPlan(
+  input: NormalizedExecPlanInput,
+  runtimeExecutable: string,
+  image: string,
+): ScopedShellPlan {
+  if (!path.isAbsolute(runtimeExecutable) || runtimeExecutable.includes('\0')) {
+    throw new Error('invalid Windows OCI sandbox runtime path');
+  }
+  if (!OCI_IMAGE_PATTERN.test(image)) {
+    throw new Error('Windows sandbox image must be pinned by sha256 digest');
+  }
+  if ([input.rootRealPath, input.sandboxDir].some((value) => /[,\r\n\0]/.test(value))) {
+    throw new Error('Windows OCI mount path contains unsupported delimiters');
+  }
+  const relativeCwd = path.relative(input.rootRealPath, input.cwd).replaceAll('\\', '/');
+  const executableName = path.basename(input.executable).replace(/\.(?:cmd|exe)$/i, '');
+  return {
+    file: runtimeExecutable,
+    args: [
+      'run', '--rm', '--network', 'none', '--read-only',
+      '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+      '--pids-limit', '512', '--memory', '4g',
+      '--mount', `type=bind,src=${input.rootRealPath},dst=/workspace${input.readOnlyRoot ? ',readonly' : ''}`,
+      '--mount', `type=bind,src=${input.sandboxDir},dst=/nexus-runtime`,
+      '--workdir', relativeCwd ? `/workspace/${relativeCwd}` : '/workspace',
+      '--env', 'HOME=/nexus-runtime/home', '--env', 'TMPDIR=/nexus-runtime/tmp',
+      '--env', 'CI=true', '--env', 'NO_COLOR=1',
+      image, executableName, ...input.args,
+    ],
+    cwd: input.cwd,
+    env: { PATH: input.env.PATH ?? '' },
+    detached: true,
+  };
+}
+
+/** Pure Windows OCI plan builder used by distribution and security tests. */
+export function buildWindowsOciPlan(
+  input: ScopedExecPlanInput,
+  runtimeExecutable: string,
+  image: string,
+): ScopedShellPlan {
+  if (input.platform !== 'win32') throw new Error('OCI Windows sandbox requires win32');
+  return windowsOciPlan(normalizeExecPlan(input), runtimeExecutable, image);
 }
 
 /** Pure macOS plan builder used by cross-platform capability tests. */
@@ -418,6 +472,16 @@ export function buildScopedExecPlan(
       throw new Error('secure process sandbox provider is unavailable on linux (install bubblewrap)');
     }
     return linuxPlan(normalized, provider);
+  }
+  if (input.platform === 'win32') {
+    const runtime = process.env.NEXUS_SANDBOX_CONTAINER_RUNTIME?.trim();
+    const image = process.env.NEXUS_SANDBOX_CONTAINER_IMAGE?.trim();
+    if (!runtime || !image) {
+      throw new Error('secure process sandbox provider is unavailable on win32; configure NEXUS_SANDBOX_CONTAINER_RUNTIME and a digest-pinned NEXUS_SANDBOX_CONTAINER_IMAGE');
+    }
+    const realRuntime = fs.realpathSync(runtime);
+    fs.accessSync(realRuntime, fs.constants.X_OK);
+    return windowsOciPlan(normalized, realRuntime, image);
   }
   if (input.platform !== 'darwin') {
     throw new Error(

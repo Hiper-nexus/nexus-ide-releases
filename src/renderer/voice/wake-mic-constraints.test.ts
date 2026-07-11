@@ -20,7 +20,7 @@ describe('WakeMic getUserMedia constraints', () => {
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
     expect(source.slice(start, end)).toContain(
-      'this.trackPassiveWake(frame, rawRms, passivePreRoll)',
+      'this.trackPassiveWake(frame, vadRms, passivePreRoll)',
     );
   });
 });

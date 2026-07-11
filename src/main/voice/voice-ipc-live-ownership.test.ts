@@ -428,6 +428,17 @@ async function expectOwnerRejection(
   channel: string,
   sender: TestRenderer,
 ): Promise<void> {
+  // liveInterrupt is intentionally a soft no-op during the cold-wake race.
+  // It still fails closed and must never reach the transport without an owner.
+  if (channel === VOICE_CHANNELS.liveInterrupt) {
+    await expect(
+      Promise.resolve().then(() =>
+        invoke(channel, sender, ownerRejectionPayload(channel)),
+      ),
+    ).resolves.toEqual({ ok: false, reason: 'no-owner' });
+    expect(liveTransportDeps.interrupt).not.toHaveBeenCalled();
+    return;
+  }
   await expect(
     Promise.resolve().then(() =>
       invoke(channel, sender, ownerRejectionPayload(channel)),
@@ -751,6 +762,20 @@ describe("Voice Live IPC ownership", () => {
     await expect(
       invoke(VOICE_CHANNELS.liveStart, ownerB, { reason: "manual" }),
     ).resolves.toMatchObject({ status: "listening" });
+  });
+
+  it("treats repeated Classic quiesce as idempotent after ownership was released", async () => {
+    const owner = new TestRenderer(403);
+    scopeDeps.scopes.set(owner.id, scopeA);
+
+    await invoke(VOICE_CHANNELS.liveStart, owner, { reason: "manual" });
+    await invoke(VOICE_CHANNELS.liveQuiesce, owner, { reason: "classic-action" });
+    liveTransportDeps.hardStop.mockClear();
+
+    expect(
+      invoke(VOICE_CHANNELS.liveQuiesce, owner, { reason: "classic-tts" }),
+    ).toMatchObject({ status: expect.any(String) });
+    expect(liveTransportDeps.hardStop).toHaveBeenCalledOnce();
   });
 
   it("releases ownership when the owner closes and on closeVoiceIpc", async () => {

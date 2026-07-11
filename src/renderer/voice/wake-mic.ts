@@ -49,8 +49,9 @@ const MIN_SPEECH_MS = 320;
 const MAX_PREROLL_MS = 3_000;
 const REALTIME_PREROLL_MS = 750;
 const LIVE_FRAME_PREROLL_MS = 750;
-/** Pequeno contexto antes da fala para o STT textual não comer o “Hey”. */
-const PASSIVE_WAKE_PREROLL_MS = 300;
+/** Preserve the complete first syllable even when speech starts at a forced
+ * VAD-window boundary. 300ms still lost “Jar-” in real continuous-room logs. */
+const PASSIVE_WAKE_PREROLL_MS = 700;
 /** Janela que será reaproveitada quando o STT confirmar o wake. */
 const PASSIVE_WAKE_HANDOFF_MS = 2_500;
 /**
@@ -140,12 +141,19 @@ export class WakeMic {
 
   private readonly passiveWake = new PassiveWakeCapture({
     rawSpeechRms: PASSIVE_WAKE_RAW_SPEECH_RMS,
-    speechHangoverRms: 0.006,
-    silenceMs: 900,
-    maxMs: 4_500,
-    // TV/música no fundo — force-emit só com energia de fala real perto do mic.
-    forceEmitMinPeakRms: 0.18,
-    cooldownMs: 1_500,
+    // Laptop room noise in the logs remained around 0.006–0.012 and kept the
+    // utterance alive until maxMs. Use the same floor as speech onset so normal
+    // speech endpoints promptly instead of requiring a shouted peak.
+    speechHangoverRms: PASSIVE_WAKE_RAW_SPEECH_RMS,
+    silenceMs: 650,
+    maxMs: 2_600,
+    // Text matching still proves the assistant name; this peak only blocks
+    // very low-energy noise from spending an STT request.
+    forceEmitMinPeakRms: 0.08,
+    // A 900ms blind gap after every 2.6s forced ambient window made the first
+    // “Jarvis” disappear roughly one attempt in four. Pre-roll bridges this
+    // short debounce; textual matching remains the actual wake authority.
+    cooldownMs: 120,
   });
 
   // Utterance capture (comando pós-wake/F6) sobre o MESMO stream quente.

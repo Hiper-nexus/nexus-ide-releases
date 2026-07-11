@@ -368,6 +368,24 @@ export function requiredNativeArtifactGlobs({ platform, arch }) {
   const prebuildDir = `node_modules/${ptyPackage}/prebuilds/${platform}-${arch}`;
   const artifacts = [
     {
+      id: 'webrtc-aec3-wasm',
+      anyOf: [
+        'node_modules/@ennuicastr/webrtcaec3.js/dist/webrtcaec3-0.3.0.wasm',
+      ],
+    },
+    {
+      id: 'tesseract-worker',
+      anyOf: ['node_modules/tesseract.js/src/worker-script/node/index.js'],
+    },
+    {
+      id: 'tesseract-core',
+      anyOf: ['node_modules/tesseract.js-core/index.js'],
+    },
+    {
+      id: 'tesseract-wasm-feature-detect',
+      anyOf: ['node_modules/wasm-feature-detect/dist/cjs/index.cjs'],
+    },
+    {
       id: 'better-sqlite3',
       // Prefer the rebuild output; also accept prebuild bin layout.
       anyOf: [

@@ -43,11 +43,14 @@ import {
   type JarvisMemoryAccess,
 } from "./jarvis-memory";
 import { WakeEngine } from "./wake-engine";
+import { getAecRuntimeStatus } from "./aec-runtime";
+import { startNativeAecRuntime, type NativeAecRuntime } from "./aec-native-runtime";
 import { logVoice } from "./voice-log";
 import { spawn } from "node:child_process";
 import { transcribe } from "./stt-service";
 import { speak, stopSystemSpeech } from "./tts-service";
 import { echoSuppressor } from "./echo-suppress";
+import { matchWakeWord } from "../../shared/overclock-voice-nlu";
 import {
   appBundlePathFromExecPath,
   readBundleId,
@@ -128,6 +131,7 @@ interface LiveTransportAffinity {
 
 let activeLiveOwnership: ActiveLiveOwnership | null = null;
 let voiceRuntimeManager: ProjectRuntimeManager | null = null;
+let nativeAecRuntime: NativeAecRuntime = { stop() {} };
 
 function requireVoiceRuntimeManager(): ProjectRuntimeManager {
   if (!voiceRuntimeManager) {
@@ -430,6 +434,7 @@ function createLiveTransport(
     scope
       ? createScopedJarvisMemory(requireVoiceRuntimeManager(), scope)
       : undefined,
+    nativeAecRuntime.processor,
   );
 }
 
@@ -571,10 +576,17 @@ function wireHotkey(): void {
 
 /** Runtime snapshot + whether the OS actually accepted the accelerator. */
 function fullInfo(): VoiceRuntimeInfo {
+  const aec = getAecRuntimeStatus(app.isPackaged ? process.resourcesPath : undefined);
   return {
     ...buildRuntimeInfo(),
     hotkeyArmed: isVoiceHotkeyArmed(),
     wakeLockHolderPid: wakeLockHolder(),
+    aec: {
+      backend: aec.backend,
+      native: aec.native,
+      degraded: aec.degraded,
+      reason: aec.reason,
+    },
   };
 }
 
@@ -587,6 +599,20 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     execPath: process.execPath,
     version: app.getVersion(),
   });
+  const aec = getAecRuntimeStatus(app.isPackaged ? process.resourcesPath : undefined);
+  logVoice(aec.degraded ? "warn" : "info", "voice.aecRuntime", aec.reason, {
+    backend: aec.backend,
+    native: aec.native,
+    degraded: aec.degraded,
+    platform: process.platform,
+    arch: process.arch,
+  });
+  nativeAecRuntime.stop();
+  nativeAecRuntime = startNativeAecRuntime(aec);
+  // The module-level controller is created before app registration. Rebuild it
+  // once so packaged native AEC is actually wired into the live audio path.
+  liveTransport.hardStop();
+  liveTransport = createLiveTransport();
   loadVoiceConfig();
   wireHotkey();
   const restartMarker =
@@ -693,7 +719,11 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
         // Terceira camada anti-eco (após o AEC do mic e antes do filtro de
         // fantasmas do renderer): transcrição que é o próprio TTS recente
         // vazando do alto-falante volta marcada para descarte silencioso.
-        if (res.ok && echoSuppressor.isEcho(res.text)) {
+        const containsRequestedWake =
+          res.ok &&
+          parsed.data.purpose === "passive-wake" &&
+          Boolean(matchWakeWord(res.text, parsed.data.passiveWakeWord || "Jarvis"));
+        if (res.ok && !containsRequestedWake && echoSuppressor.isEcho(res.text)) {
           logVoice("info", "stt.echoDiscarded", "eco do TTS descartado", {
             text: res.text.slice(0, 120),
           });
@@ -1016,6 +1046,29 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     }
   });
 
+  ipcMain.handle(VOICE_CHANNELS.livePrewarm, async (event, raw) => {
+    const enabled = raw?.enabled === true;
+    if (!enabled) {
+      if (activeLiveOwnership?.owner === event.sender) {
+        return stopLiveAndRelease(event.sender, true);
+      }
+      return liveSession.getState();
+    }
+    const scope = getRendererWorkspaceScope(event.sender);
+    if (!scope)
+      throw new Error("voice prewarm requires an authorized project scope");
+    const claimed = claimLiveOwnership(event.sender, scope);
+    try {
+      liveSession.start({ reason: "wake" });
+      await liveTransport.onStart({ prewarm: true });
+      requireLiveOwnership(event.sender);
+      return liveSession.getState();
+    } catch (err) {
+      if (claimed) releaseUnavailableLiveOwner(event.sender);
+      throw err;
+    }
+  });
+
   ipcMain.handle(VOICE_CHANNELS.liveStop, (event) => {
     requireLiveOwnership(event.sender);
     return stopLiveAndRelease(event.sender, false);
@@ -1039,6 +1092,14 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     return stopLiveAndRelease(event.sender, true);
   });
   ipcMain.handle(VOICE_CHANNELS.liveQuiesce, (event, raw) => {
+    // Classic has two independent ownership boundaries (action bridge and
+    // output/TTS). The first one may already have quiesced and released Live;
+    // the second call is therefore an idempotent success, not an operational
+    // error. Still fail closed when another renderer owns the session.
+    if (!activeLiveOwnership) {
+      liveTransport.hardStop();
+      return liveSession.getState();
+    }
     requireLiveOwnership(event.sender);
     const parsed = jarvisLiveInterruptRequestSchema.safeParse(raw ?? {});
     try {
@@ -1181,6 +1242,8 @@ export function closeVoiceIpc(): void {
       }
     }
   } finally {
+    nativeAecRuntime.stop();
+    nativeAecRuntime = { stop() {} };
     // Wake ownership + ONNX engine: release listeners once, dispose once.
     releaseWakeOwnership();
     wakeLockWarned = false;

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildLinuxBubblewrapPlan,
   buildMacosSeatbeltPlan,
+  buildWindowsOciPlan,
   buildScopedShellPlan,
   buildScopedExecPlan,
   createScopedSandboxHome,
@@ -117,6 +118,47 @@ describe('process sandbox', () => {
     expect(plan.args.slice(-2)).toEqual(['/usr/bin/node', '--version']);
     expect(plan.env.HOME).toBe(path.join(runtime, 'home'));
     expect(plan.env.TMPDIR).toBe(path.join(runtime, 'tmp'));
+  });
+
+  it('makes validation checkout read-only while preserving writable private runtime', () => {
+    const root = makeDir('nexus-readonly-root');
+    const runtime = makeDir('nexus-readonly-runtime');
+    const plan = buildLinuxBubblewrapPlan({
+      platform: 'linux', executable: '/usr/bin/node', args: ['--version'], cwd: root,
+      rootRealPath: root, sandboxDir: runtime, env: { PATH: '/usr/bin:/bin' },
+      readOnlyRoot: true,
+    }, '/usr/bin/bwrap');
+
+    const rootIndex = plan.args.findIndex((value, index) => value === root && plan.args[index + 1] === root);
+    expect(plan.args[rootIndex - 1]).toBe('--ro-bind');
+    const runtimeIndex = plan.args.findIndex((value, index) => value === runtime && plan.args[index + 1] === runtime);
+    expect(plan.args[runtimeIndex - 1]).toBe('--bind');
+  });
+
+  it('builds a digest-pinned, networkless Windows OCI sandbox plan', () => {
+    const root = makeDir('nexus-windows-root');
+    const runtime = makeDir('nexus-windows-runtime');
+    const image = `registry.example/nexus-sensors@sha256:${'a'.repeat(64)}`;
+    const plan = buildWindowsOciPlan({
+      platform: 'win32',
+      executable: path.join(root, 'node.exe'),
+      args: ['--version'],
+      cwd: root,
+      rootRealPath: root,
+      sandboxDir: runtime,
+      env: { PATH: root },
+      readOnlyRoot: true,
+    }, path.join(root, 'docker.exe'), image);
+
+    expect(plan.args).toEqual(expect.arrayContaining([
+      '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+      '--security-opt', 'no-new-privileges', image, 'node', '--version',
+    ]));
+    expect(plan.args).toContain(`type=bind,src=${root},dst=/workspace,readonly`);
+    expect(() => buildWindowsOciPlan({
+      platform: 'win32', executable: path.join(root, 'node.exe'), args: [], cwd: root,
+      rootRealPath: root, sandboxDir: runtime, env: { PATH: root },
+    }, path.join(root, 'docker.exe'), 'registry.example/nexus-sensors:latest')).toThrow(/pinned/);
   });
 
   it.runIf(process.platform === 'darwin')(

@@ -80,6 +80,7 @@ import {
 import {
   initFailover,
   registerFailoverListener,
+  requestSessionRecovery,
   shutdownFailover,
   unregisterFailoverListener,
 } from './failover';
@@ -149,6 +150,27 @@ afterEach(() => {
 });
 
 describe('account failover authority and lifecycle', () => {
+  it('requests a same-account resume without mutating account cooldown', () => {
+    const scope = testProjectScope();
+    const owner = renderer(77);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({ owner, paneId: 'pane-recover', sessionId: 'session-recover', missionId: 'mission-r', scope });
+
+    expect(requestSessionRecovery('session-recover', 'stall recovery')).toBe(true);
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        paneId: 'pane-recover',
+        switched: true,
+        fromAccountLabel: 'Account A',
+        toAccountLabel: 'Account A',
+        reason: 'stall recovery',
+      }),
+    );
+    expect(accountMocks.setCooldown).not.toHaveBeenCalled();
+  });
   it('emits only to the exact pane owner across projects with colliding pane ids', () => {
     const scopeA = testProjectScope();
     const scopeB = testProjectScope({

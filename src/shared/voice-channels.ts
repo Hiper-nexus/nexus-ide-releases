@@ -38,6 +38,8 @@ export const VOICE_CHANNELS = {
 
   /** invoke: renderer → main. Start/reuse the Jarvis Live session. */
   liveStart: 'voice:live.start',
+  /** invoke: renderer → main. Keep realtime connected while passive wake is armed. */
+  livePrewarm: 'voice:live.prewarm',
   /** invoke: renderer → main. Stop the Jarvis Live session. */
   liveStop: 'voice:live.stop',
   /** invoke: renderer → main. Hard-rebuild: destroy socket + fresh connect. */

@@ -8,15 +8,15 @@ import {
 import type { ProviderConfig } from '../../shared/provider-settings-types';
 
 describe('provider config format', () => {
-  it('migrates implicit legacy full-auto modes back to the safe baseline', () => {
+  it('migrates old implicit safe values to the new adapter automatic default', () => {
     const decoded = decodeProviderConfigFile({
-      codex: { permissionMode: 'yolo' },
-      claude: { permissionMode: 'bypass' },
+      codex: { permissionMode: '' },
+      claude: {},
       reviewer: { permissionMode: 'plan' },
     });
     expect(decoded.migrated).toBe(true);
-    expect(decoded.providers.codex.permissionMode).toBe('');
-    expect(decoded.providers.claude.permissionMode).toBe('');
+    expect(decoded.providers.codex.permissionMode).toBeUndefined();
+    expect(decoded.providers.claude.permissionMode).toBeUndefined();
     expect(decoded.providers.reviewer.permissionMode).toBe('plan');
   });
 

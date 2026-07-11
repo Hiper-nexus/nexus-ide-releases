@@ -283,7 +283,7 @@ describe("cli-agent spawn argv hardening", () => {
     }
   });
 
-  it("keeps direct panes read-only and grants native writes only to revision-bound workers", () => {
+  it("lets direct panes follow writable provider policy and keeps workers writable", () => {
     const h = fakeHost();
     setPtyHost(h.host);
     const base = makeAdapter({
@@ -321,9 +321,9 @@ describe("cli-agent spawn argv hardening", () => {
 
     expect(h.specFor(direct.sessionId).args).toEqual(expect.arrayContaining([
       "--sandbox",
-      "read-only",
+      "workspace-write",
       "--ask-for-approval",
-      "never",
+      "on-request",
     ]));
     expect(h.specFor(worker.sessionId).args).toEqual(expect.arrayContaining([
       "--sandbox",

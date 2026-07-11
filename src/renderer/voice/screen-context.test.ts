@@ -37,8 +37,8 @@ describe('buildScreenSnapshot', () => {
     });
 
     expect(snapshot.context).toContain('Workspace: nexus-ide');
-    expect(snapshot.context).toContain('[browser] Preview @ https://example.com/docs');
-    expect(snapshot.context).toContain('Focused: [browser] Preview @ https://example.com/docs');
+    expect(snapshot.context).toContain('[browser; id=browser-1] Preview @ https://example.com/docs');
+    expect(snapshot.context).toContain('Focused: [browser; id=browser-1] Preview @ https://example.com/docs');
     expect(snapshot.context).toContain('Active orchestrator: Orq');
     expect(snapshot.context).toContain('Ship voice parity');
     expect(snapshot.context.length).toBeLessThanOrEqual(900);

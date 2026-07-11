@@ -12,6 +12,22 @@ export function processSandboxRuntimeAvailable(): boolean {
   if (process.platform === 'darwin') {
     return fs.existsSync('/usr/bin/sandbox-exec');
   }
+  if (process.platform === 'win32') {
+    const runtime = process.env.NEXUS_SANDBOX_CONTAINER_RUNTIME?.trim();
+    const image = process.env.NEXUS_SANDBOX_CONTAINER_IMAGE?.trim();
+    if (!runtime || !image || !/^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/i.test(image)) {
+      return false;
+    }
+    try {
+      execFileSync(runtime, ['image', 'inspect', image], {
+        timeout: 10_000,
+        stdio: 'ignore',
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
   if (process.platform !== 'linux') return false;
 
   let bwrap: string | null = null;

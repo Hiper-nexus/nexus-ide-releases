@@ -5,6 +5,8 @@
  */
 import type { OcrResult } from '../../shared/vision-ipc';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import path from 'node:path';
 import { ensureOcrLanguageData } from './ocr-language-data';
 
 interface CacheEntry {
@@ -32,6 +34,15 @@ const PNG_SIGNATURE = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
 ]);
 const SUPPORTED_OCR_LANGUAGES = new Set(['eng', 'por', 'eng+por', 'por+eng']);
+const require = createRequire(__filename);
+
+export function resolveTesseractWorkerPath(): string {
+  const resolved = require.resolve('tesseract.js/src/worker-script/node/index.js');
+  const asarSegment = `app.asar${path.sep}`;
+  return resolved.includes(asarSegment)
+    ? resolved.replace(asarSegment, `app.asar.unpacked${path.sep}`)
+    : resolved;
+}
 
 function hashBuffer(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex').slice(0, 32);
@@ -126,6 +137,7 @@ export async function ocrImage(
 
   try {
     worker = await createWorker(lang, 1, {
+      workerPath: resolveTesseractWorkerPath(),
       langPath: languageDirectory,
       cachePath: languageDirectory,
       cacheMethod: 'none',

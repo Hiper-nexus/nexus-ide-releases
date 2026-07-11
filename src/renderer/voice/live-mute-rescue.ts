@@ -20,8 +20,10 @@ export function shouldAttemptLiveMuteRescue(opts: {
   localSpeechUsable: boolean;
   explicitCapture: boolean;
   offeredFrames: number;
-  /** When 'reply', rescue even if frames reached Live (provider often misses finals). */
+  /** Capture reason is retained for diagnostics and explicit-policy tests. */
   captureReason?: string;
+  /** A local monotonic follow-up window is still valid at endpoint time. */
+  followUpAuthorized?: boolean;
   consecutive?: number;
 }): boolean {
   const used = opts.consecutive ?? consecutiveRescues;
@@ -32,12 +34,9 @@ export function shouldAttemptLiveMuteRescue(opts: {
   if (opts.explicitCapture && hasInsufficientLiveMicFrames(opts.offeredFrames)) {
     return true;
   }
-  // Follow-up continuity: frames may have gone up but Gemini never returned a
-  // final user transcript (log: 9s mute while passive STT heard "nova missão").
-  // Local STT + liveRescueIn is Overclock-aligned rescue, not Classic dual-voice.
-  if (opts.captureReason === 'reply') {
-    return true;
-  }
+  // Reply audio is never streamed directly. It may be converted to text only
+  // when endpointing completed inside the explicit local authority window.
+  if (opts.captureReason === 'reply') return opts.followUpAuthorized === true;
   return false;
 }
 

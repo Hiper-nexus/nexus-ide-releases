@@ -224,6 +224,19 @@ describe('inspectSandboxCapability', () => {
     const linux = inspectSandboxCapability('linux', () => false);
     expect(linux[0]?.code).toBe('bubblewrap-unavailable');
   });
+
+  it('accepts Windows only with an executable OCI runtime and digest-pinned image', () => {
+    const runtime = 'C:\\Program Files\\Docker\\docker.exe';
+    expect(inspectSandboxCapability(
+      'win32',
+      (candidate) => candidate === runtime,
+      {
+        NEXUS_SANDBOX_CONTAINER_RUNTIME: runtime,
+        NEXUS_SANDBOX_CONTAINER_IMAGE: `registry.example/nexus-sensors@sha256:${'a'.repeat(64)}`,
+      },
+      () => true,
+    )).toEqual([]);
+  });
 });
 
 describe('inspectNexusReadiness', () => {

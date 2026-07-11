@@ -248,10 +248,11 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
     } else {
       // Live narrates the tool result — keep the audio gate open.
       openLiveAudioGate();
-      if (exec.sayText.trim() || toolResult.ok === false) {
-        store.setStatus('speaking');
-        liveStatus('speaking');
-      }
+      // Do not predict provider speech. Gemini can finish a failed tool turn
+      // without emitting audio/responseDone; marking `speaking` here left the
+      // renderer permanently transcribing and every later wake was discarded.
+      // The first real PCM chunk is the sole authority that enters speaking.
+      store.setStatus('idle');
     }
   } catch (err) {
     if (execution.signal.aborted) {
@@ -312,7 +313,7 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
     // Do NOT force idle while Live is still speaking the tool narration —
     // that raced follow-up capture and re-muted audio mid-sentence.
     const currentStatus = useVoiceStore.getState().status;
-    if (currentStatus === 'routing') {
+    if (currentStatus === 'routing' || currentStatus === 'transcribing') {
       useVoiceStore.getState().setStatus('idle');
     }
   }

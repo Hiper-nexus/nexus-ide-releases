@@ -11,6 +11,10 @@ describe('buildLiveSystemInstruction', () => {
     expect(s).toContain('read_current_view');
     expect(s).toContain('Brazilian Portuguese');
     expect(s).toContain('Background media');
+    expect(s).toContain('A dispatched click/IPC event is not evidence');
+    expect(s).toContain('domain/work question is perguntar');
+    expect(s).toContain('must not be hijacked as the answer');
+    expect(s).toContain('Only observable running/output/handoff');
     expect(s).not.toContain('never call yourself Jarvis');
   });
 

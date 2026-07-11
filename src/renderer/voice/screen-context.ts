@@ -47,7 +47,7 @@ function paneKindLabel(pane: PaneModel, orchestratorPaneId: string | null): stri
 function paneSummary(pane: PaneModel, orchestratorPaneId: string | null): string {
   const label = paneKindLabel(pane, orchestratorPaneId);
   const url = pane.kind === 'browser' && pane.browserUrl ? ` @ ${pane.browserUrl}` : '';
-  return `[${label}] ${pane.title}${url}`;
+  return `[${label}; id=${pane.id}] ${pane.title}${url}`;
 }
 
 function focusedSummary(

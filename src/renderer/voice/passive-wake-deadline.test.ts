@@ -20,7 +20,7 @@ describe('PassiveWakeDeadline', () => {
   it('releases the checking gate at the renderer deadline even when IPC never settles', async () => {
     vi.useFakeTimers();
     const request = deferred<string>();
-    const deadline = new PassiveWakeDeadline(3_500);
+    const deadline = new PassiveWakeDeadline(3_500, 0);
 
     const resultPromise = deadline.run(() => request.promise);
     expect(deadline.isChecking()).toBe(true);
@@ -34,7 +34,7 @@ describe('PassiveWakeDeadline', () => {
   it('allows a new check after timeout and discards the late result from the old generation', async () => {
     vi.useFakeTimers();
     const stale = deferred<string>();
-    const deadline = new PassiveWakeDeadline(100);
+    const deadline = new PassiveWakeDeadline(100, 0);
 
     const staleResult = deadline.run(() => stale.promise);
     await vi.advanceTimersByTimeAsync(100);
@@ -73,5 +73,29 @@ describe('PassiveWakeDeadline', () => {
     request.resolve('active');
 
     await expect(active).resolves.toEqual({ kind: 'completed', value: 'active' });
+  });
+
+  it('opens a circuit-breaker cooldown after timeout to prevent an STT request storm', async () => {
+    vi.useFakeTimers();
+    const first = deferred<string>();
+    const deadline = new PassiveWakeDeadline(100, 15_000);
+
+    const timedOut = deadline.run(() => first.promise);
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(timedOut).resolves.toEqual({ kind: 'timeout' });
+
+    expect(deadline.isChecking()).toBe(true);
+    await expect(deadline.run(async () => 'must-not-run')).resolves.toEqual({
+      kind: 'busy',
+    });
+
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(deadline.isChecking()).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deadline.isChecking()).toBe(false);
+    await expect(deadline.run(async () => 'recovered')).resolves.toEqual({
+      kind: 'completed',
+      value: 'recovered',
+    });
   });
 });

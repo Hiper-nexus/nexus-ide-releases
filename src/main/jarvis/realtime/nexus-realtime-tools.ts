@@ -19,7 +19,7 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
       type: 'function',
       name: NEXUS_REALTIME_ACTION_TOOL,
       description:
-        'Operate Nexus IDE through the same audited action executor used by Classic Jarvis. Use safe UI actions directly, use read_current_view when the user asks to read what is visibly on the current screen/page (local accessibility and OCR context), use send_to_pane for agent delegation, run_command only when the user explicitly asks to run a shell command, and mcp_tool for Nexus MCP tools. Sensitive tools still require native confirmation.',
+        'Operate Nexus IDE through the audited action executor. Opening an existing project always means open_workspace; new_workspace is only for an explicit request to create a new workspace. Use read_current_view for the visible screen. send_to_pane is ONLY for delegating an engineering task to an AI agent/orchestrator and NEVER writes to a terminal. When the user asks to type, send, execute, or run a shell/terminal command, use run_command with the exact command; it will request native confirmation. Use mcp_tool for Nexus MCP tools. Never claim success before the tool result.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -41,7 +41,7 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
           },
           workspaceName: {
             type: 'string',
-            description: 'Required for open_workspace. Use the spoken workspace name.',
+            description: 'Required only for open_workspace. Use the existing workspace name from the injected recent workspace catalog. Never use open_workspace to create a workspace.',
           },
           intent: {
             type: 'string',
@@ -56,17 +56,17 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
           paneId: {
             type: 'string',
             description:
-              'Optional pane id/name for read_pane. Omit or use "ativo" for the focused pane.',
+              'Canonical pane id from the injected pane catalog for read_pane/send_to_pane. A unique spoken pane title is also accepted. Omit for the focused/orchestrator delegation flow.',
           },
           text: {
             type: 'string',
             description:
-              'Required for send_to_pane. Write a concise engineering prompt in English.',
+              'Required for send_to_pane agent delegation only. Never put shell commands here.',
           },
           command: {
             type: 'string',
             description:
-              'Required for run_command. Exact shell command requested by the user.',
+              'Required for run_command. Exact shell/terminal command requested by the user, including requests phrased as type/send this command.',
           },
           tool: {
             type: 'string',

@@ -57,7 +57,8 @@ describe('voice wake order', () => {
     expect(source).toContain('matchPassiveWakeWord');
     expect(source).toContain("purpose: 'passive-wake'");
     expect(source).toContain('budgetMs: PASSIVE_WAKE_STT_BUDGET_MS');
-    expect(source).toContain("isVerifiedBargeCandidate ? 'voice-barge' : 'voice'");
+    expect(source).toContain("statusNow === 'speaking' ? 'voice-barge' : 'voice'");
+    expect(source).toContain('wake.passiveSuppressedWhileSpeaking');
     const passiveStart = source.indexOf('const handlePassiveWake');
     const passiveEnd = source.indexOf('wakeMic.onDied', passiveStart);
     expect(passiveStart).toBeGreaterThanOrEqual(0);
@@ -66,13 +67,16 @@ describe('voice wake order', () => {
     expect(passiveBlock).toContain('passiveWakeDeadline.isChecking() || wakeOpenInProgress');
     expect(passiveBlock).toContain('passiveWakeDeadline.run');
     expect(passiveBlock).toContain("request.kind === 'timeout'");
-    expect(passiveBlock).toContain('shouldIgnoreLiveReWake({ status: voiceStatus })');
+    expect(passiveBlock).toContain("statusNow === 'speaking' || statusNow === 'transcribing'");
+    expect(passiveBlock).toContain('isHotSessionCommandCandidate');
     expect(passiveBlock).toContain('passiveWakeWord: info.persona.assistantName');
     expect(passiveBlock).toContain("'voice-barge'");
     expect(source).toContain('wakeMic.cancelPassiveWake()');
     const wakeStart = source.indexOf('const handleWake = async');
     const wakeEnd = source.indexOf('const onWake =', wakeStart);
     expect(source.slice(wakeStart, wakeEnd)).toContain('passiveWakeDeadline.invalidate()');
+    expect(source).toContain("if (stillHot && !match.command.trim())");
+    expect(source).toContain("onWake('voice', utterance.preRoll)");
   });
 });
 
@@ -117,7 +121,7 @@ describe('wake barge-in guards', () => {
   });
 
   it('keeps a natural follow-up window before returning wake ownership', () => {
-    expect(source).toContain('const REPLY_MAX_LISTEN_MS = 22_000');
+    expect(source).toContain('const REPLY_MAX_LISTEN_MS = FOLLOW_UP_AUTHORITY_MS');
     expect(source).toContain("reason === 'reply' && autoStop");
     expect(source).toContain('Math.min(autoStop.maxMs, REPLY_MAX_LISTEN_MS)');
   });
@@ -142,7 +146,8 @@ describe('wake barge-in guards', () => {
 describe('queued narrations', () => {
   it('queues report-backs and retries them when the voice returns to idle', () => {
     expect(source).toContain('new NarrationQueue');
-    expect(source).toContain('narrationQueue.enqueue(text)');
+    expect(source).toContain('workNarrationSupervisor.accept(event');
+    expect(source).toContain('narrationQueue.enqueue(event.text)');
     expect(source).toContain("if (state.status === 'idle') narrationQueue.kick()");
     expect(source).not.toContain('narração pulada (ocupado)');
   });

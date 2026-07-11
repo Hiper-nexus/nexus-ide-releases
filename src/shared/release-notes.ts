@@ -13,40 +13,40 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.13.6',
+  version: '0.13.7',
   date: '2026-07-11',
-  codename: 'Realtime Continuity',
+  codename: 'Realtime Operator',
   summary:
-    'Jarvis realtime de verdade: wake por voz (VAD→STT), full-duplex, follow-up sem re-dizer o nome, gate anti-alucinação de TV/ambiente, e rescue de comandos na sessão Live quente.',
+    'Jarvis mais operacional: Gemini Live pré-aquecido, wake e follow-up resilientes, ações reais no workspace, autenticação preservada e CLIs sempre atualizadas.',
   highlights: [
     {
-      title: 'Wake por voz operacional',
+      title: 'Realtime pré-aquecido',
       detail:
-        'VAD passivo com hangover + force-emit de fala real; matcher Overclock (acorda Jarvis); threshold acústico PT-calibrado. Clique deixa de ser o único caminho.',
+        'Gemini Live permanece conectado antes do wake; barge-in, continuidade e rescue local reduzem turnos perdidos e repetição de comandos.',
     },
     {
-      title: 'Realtime full-duplex',
+      title: 'Ações operacionais',
       detail:
-        'Mic aberto enquanto ela fala (Gemini barge-in). Follow-up reabre escuta sem matar o stream. STT local resgata comando se o provider perder o final.',
+        'Jarvis abre workspaces, envia comandos ao pane correto e confirma operações sensíveis sem duplicar voz ou perder o transcript explícito.',
     },
     {
-      title: 'Anti-alucinação (hot session)',
+      title: 'CLIs dinâmicas e automáticas',
       detail:
-        'Comandos na sessão quente exigem energia de fala + cues de comando; TV/música/STT lixo não disparam tools. Prompt Live alinhado às leis Overclock.',
+        'Modelos e efforts são descobertos dos caches das CLIs, incluindo Codex ultra; providers iniciam no bypass total nativo salvo escolha manual.',
     },
   ],
   fixes: [
     {
-      title: 'liveInterrupt sem owner',
-      detail: 'Wake não quebra com "voice live session has no owner".',
+      title: 'Login Claude em squads',
+      detail: 'OAuth ativo acompanha workers com HOME isolado sem pedir login novamente.',
     },
     {
-      title: 'Tool follow-up em turno stale',
-      detail: 'Resultado de tool reabre continuidade na sessão quente.',
+      title: 'Efforts sem lista fixa',
+      detail: 'Squads aceitam capacidades futuras anunciadas por qualquer CLI.',
     },
     {
-      title: 'Boot Keychain',
-      detail: 'getInfo não decripta o vault inteiro; mic sobe sem travar SecItem.',
+      title: 'Wake e áudio',
+      detail: 'AEC3, pre-roll maior, cooldown curto, watchdog e captura durante fala reduzem silêncio e travamentos.',
     },
   ],
 };

@@ -372,6 +372,10 @@ describe('proofs: renderer, functional, marker, natives', () => {
 
     expect(darwin).toEqual(
       expect.arrayContaining([
+        'webrtc-aec3-wasm',
+        'tesseract-worker',
+        'tesseract-core',
+        'tesseract-wasm-feature-detect',
         'better-sqlite3',
         'node-pty',
         'node-pty-spawn-helper',
@@ -381,7 +385,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
     expect(linux).toContain('node-pty-spawn-helper');
     expect(win).not.toContain('node-pty-spawn-helper');
     expect(win).toEqual(
-      expect.arrayContaining(['better-sqlite3', 'node-pty', 'onnxruntime-node']),
+      expect.arrayContaining(['webrtc-aec3-wasm', 'tesseract-worker', 'tesseract-core', 'tesseract-wasm-feature-detect', 'better-sqlite3', 'node-pty', 'onnxruntime-node']),
     );
   });
 
@@ -393,6 +397,10 @@ describe('proofs: renderer, functional, marker, natives', () => {
     ]) {
       const unpacked = makeTemp(`unpacked-${platform}-`);
       const files = [
+        'node_modules/@ennuicastr/webrtcaec3.js/dist/webrtcaec3-0.3.0.wasm',
+        'node_modules/tesseract.js/src/worker-script/node/index.js',
+        'node_modules/tesseract.js-core/index.js',
+        'node_modules/wasm-feature-detect/dist/cjs/index.cjs',
         'node_modules/better-sqlite3/build/Release/better_sqlite3.node',
         `node_modules/@lydell/node-pty-${platform}-${arch}/prebuilds/${platform}-${arch}/pty.node`,
         `node_modules/onnxruntime-node/bin/napi-v3/${platform}/${arch}/onnxruntime_binding.node`,
@@ -408,6 +416,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
         arch,
       });
       expect(found['better-sqlite3']).toMatch(/better_sqlite3\.node$/);
+      expect(found['webrtc-aec3-wasm']).toMatch(/webrtcaec3-0\.3\.0\.wasm$/);
       expect(found['node-pty']).toMatch(/pty\.node$/);
       expect(found['onnxruntime-node']).toMatch(/onnxruntime_binding\.node$/);
       if (platform !== 'win32') {
@@ -419,6 +428,10 @@ describe('proofs: renderer, functional, marker, natives', () => {
   it('fails when a required native artifact is missing', async () => {
     const unpacked = makeTemp();
     writeTree(unpacked, [
+      'node_modules/@ennuicastr/webrtcaec3.js/dist/webrtcaec3-0.3.0.wasm',
+      'node_modules/tesseract.js/src/worker-script/node/index.js',
+      'node_modules/tesseract.js-core/index.js',
+      'node_modules/wasm-feature-detect/dist/cjs/index.cjs',
       'node_modules/better-sqlite3/build/Release/better_sqlite3.node',
     ]);
     await expect(
@@ -455,6 +468,10 @@ describe('proofs: renderer, functional, marker, natives', () => {
   it('accepts better-sqlite3 prebuild bin layout via scan fallback', async () => {
     const unpacked = makeTemp();
     writeTree(unpacked, [
+      'node_modules/@ennuicastr/webrtcaec3.js/dist/webrtcaec3-0.3.0.wasm',
+      'node_modules/tesseract.js/src/worker-script/node/index.js',
+      'node_modules/tesseract.js-core/index.js',
+      'node_modules/wasm-feature-detect/dist/cjs/index.cjs',
       'node_modules/better-sqlite3/bin/darwin-arm64-148/better-sqlite3.node',
       'node_modules/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/pty.node',
       'node_modules/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/spawn-helper',
@@ -564,6 +581,10 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
     if (platform !== 'win32') fs.chmodSync(binary, 0o755);
 
     const files = [
+      'node_modules/@ennuicastr/webrtcaec3.js/dist/webrtcaec3-0.3.0.wasm',
+      'node_modules/tesseract.js/src/worker-script/node/index.js',
+      'node_modules/tesseract.js-core/index.js',
+      'node_modules/wasm-feature-detect/dist/cjs/index.cjs',
       'node_modules/better-sqlite3/build/Release/better_sqlite3.node',
       `node_modules/@lydell/node-pty-${platform}-${arch}/prebuilds/${platform}-${arch}/pty.node`,
       `node_modules/onnxruntime-node/bin/napi-v3/${platform}/${arch}/onnxruntime_binding.node`,

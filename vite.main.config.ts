@@ -18,6 +18,9 @@ export default defineConfig({
         'better-sqlite3',
         'uiohook-napi',
         'onnxruntime-node',
+        // Emscripten resolves its sibling .wasm from the module __dirname.
+        // Keep the package external so Rollup cannot detach JS from the asset.
+        '@ennuicastr/webrtcaec3.js',
         // ssh2 + optional natives (cpu-features / sshcrypto). Loaded only via
         // createSsh2Transport() require(); bundling them breaks Linux package.
         'ssh2',

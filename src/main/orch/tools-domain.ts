@@ -36,6 +36,7 @@ import {
   strArray,
 } from './tool-util';
 import { buildHandoffTools } from './tools-handoff';
+import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 
 /**
  * MCP tools for handoffs (2), agents (3), missions (5), squad/catalog/task
@@ -491,12 +492,20 @@ const taskTool: McpToolDef = {
   handler: async (args, ctx) => {
     const tasks = getProjectDomainStores(ctx.scope).tasks;
     switch (args.action) {
-      case 'create':
+      case 'create': {
+        const missionId = str(args, 'missionId') ?? ctx.missionId;
+        if (missionId) {
+          if (ctx.role === 'worker') throw new Error('only an orchestrator can define the mission plan');
+          if (requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId).length > 0) {
+            throw new Error('mission task plan is sealed after the first worktree allocation');
+          }
+        }
         return tasks.create({
           title: requireStr(args, 'title'),
           detail: str(args, 'detail'),
-          missionId: str(args, 'missionId') ?? ctx.missionId,
+          missionId,
         });
+      }
       case 'update': {
         const updated = tasks.update(requireStr(args, 'taskId'), {
           status: str(args, 'status') as
@@ -575,14 +584,13 @@ const TIERS: TaskTier[] = ['trivial', 'easy', 'medium', 'hard', 'critical'];
 const routeTaskTool: McpToolDef = {
   name: 'nexus_route_task',
   description:
-    'Decide the CHEAPEST capable agent for a task BEFORE spawning it — this ' +
-    'is how missions save tokens and finish faster. Classifies the task ' +
+    'Decide the best cost/capability route for a task before spawning it. ' +
+    'The decision is resolved against the current installed provider and model ' +
+    'catalog, never against model names remembered by the orchestrator. Classifies the task ' +
     '(trivial|easy|medium|hard|critical) and returns {tier, adapterId, ' +
     'model, effort, reason, alternatives}: pass adapterId/model/effort ' +
-    'straight into nexus_pane_spawn. Work is spread across ALL installed LLMs: ' +
-    'trivial/easy → fast cheap models (grok/kimi/agy-flash), medium → ' +
-    'GLM 5.2/kimi (cheap + strong), hard/critical → opus/fable/gpt-5.5. ' +
-    'Call it for EVERY delegation.',
+    'straight into nexus_pane_spawn. Call it for every delegation and trust the ' +
+    'returned runtime snapshot so removed, deprecated or unavailable models are never forced by a stale playbook.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -620,6 +628,7 @@ const routeTaskTool: McpToolDef = {
         a.enabled &&
         a.installed &&
         a.authStrategy !== 'login-needed',
+      models: a.models,
     }));
     // reserveClaude=true: workers nunca no binário claude OAuth — evita
     // corromper o keychain compartilhado com o orquestrador.

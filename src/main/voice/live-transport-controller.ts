@@ -62,6 +62,7 @@ import {
   LiveQuestionPoller,
   type PendingQuestionSource,
 } from './live-question-poller';
+import type { LiveAecProcessor } from './aec-live-processor';
 
 export type {
   NarratedQuestion,
@@ -86,10 +87,14 @@ const PENDING_RENDERER_AUDIO_TTL_MS = 30_000;
 
 interface RealtimeStartOptions {
   greeting?: string;
+  /** ClockVoice parity: connect without creating audible/user activity. */
+  prewarm?: boolean;
 }
 
 interface PendingRendererAudioDelivery {
   sentAt: number;
+  /** Far-end reference is released to AEC only after renderer playback starts. */
+  aecPcm16?: Int16Array;
   /** Only this renderer can prove the active smoke delivery. */
   smokeOwnerWebContentsId?: number;
 }
@@ -137,6 +142,8 @@ export class LiveTransportController {
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private _inGrace = false;
+  /** Passive wake owns a silent, permanently warm socket (ClockVoice model). */
+  private keepWarmForWake = false;
   private readonly now: () => number;
   private micFramesCounter = new ThrottledCounter(25, 2_000);
   private serverAudioCounter = new ThrottledCounter(25, 2_000);
@@ -155,6 +162,7 @@ export class LiveTransportController {
     now: () => number = Date.now,
     questionSource?: PendingQuestionSource,
     private readonly memory?: JarvisMemoryAccess,
+    private readonly aec?: LiveAecProcessor,
   ) {
     this.now = now;
     this.pendingQuestionRouter = new PendingQuestionRouter({ now });
@@ -261,6 +269,7 @@ export class LiveTransportController {
   }
 
   onStart(options: RealtimeStartOptions = {}): Promise<void> {
+    if (options.prewarm) this.keepWarmForWake = true;
     this.clearReconnectTimer();
     if (
       this._fsm.getState().status === 'error' &&
@@ -287,7 +296,10 @@ export class LiveTransportController {
       else this.touchIdle();
       this.sendGreetingIfSafe(this._provider, options.greeting);
       this.flushPendingMic(this._provider);
-      this._fsm.patchStatus({ status: 'listening', realtimeReady: true });
+      this._fsm.patchStatus({
+        status: options.prewarm ? 'dormant' : 'listening',
+        realtimeReady: true,
+      });
       return Promise.resolve();
     }
 
@@ -309,7 +321,17 @@ export class LiveTransportController {
       return Promise.resolve();
     }
     this._fsm.patchStatus({ status: 'listening', realtimeReady: false });
-    const connecting = this.connectFirstAvailable(candidates, options.greeting)
+    const connecting = this.connectFirstAvailable(
+      candidates,
+      options.prewarm ? undefined : options.greeting,
+    )
+      .then(() => {
+        if (options.prewarm && this._provider?.isReady) {
+          this.clearIdleTimer();
+          this._fsm.patchStatus({ status: 'dormant', realtimeReady: true });
+          logVoice('info', 'live.prewarmReady', 'Gemini Live pronto antes do wake', {});
+        }
+      })
       .finally(() => {
         if (this.connecting === connecting) this.connecting = null;
       });
@@ -361,6 +383,7 @@ export class LiveTransportController {
     this.pendingRendererAudio.delete(event.id);
 
     if (event.outcome === 'started') {
+      if (delivery.aecPcm16) this.aec?.render24k(delivery.aecPcm16);
       this.smokeProbe.settlePlaybackStarted(event.id);
       return;
     }
@@ -428,6 +451,11 @@ export class LiveTransportController {
       turnId: normalizedTurnId,
       chars: trimmed.length,
     });
+    // Renderer wake/STT already validated this as the user's utterance. Tool
+    // safety gates must see it before Gemini can emit an action; stale Live
+    // transcripts previously blocked explicit requests such as new workspace.
+    this._lastUserTranscript = trimmed;
+    this.recordLiveHistory('user', trimmed);
     provider.sendText(trimmed);
     this._fsm.patchStatus({ status: 'thinking', realtimeReady: true });
     return true;
@@ -465,7 +493,15 @@ export class LiveTransportController {
       this.bufferMicChunk(samples);
       return;
     }
-    this.sendMicSamples(this._provider, samples);
+    const provider = this._provider;
+    if (this.aec) {
+      this.aec.capture(samples, (processed) => {
+        if (this._provider !== provider || !provider.isReady) return;
+        this.sendMicSamples(provider, processed);
+      });
+    } else {
+      this.sendMicSamples(provider, samples);
+    }
   }
 
   private sendMicSamples(provider: TurnManagedRealtimeProvider, samples: Int16Array): void {
@@ -631,6 +667,12 @@ export class LiveTransportController {
     this.providerSpeaking = false;
     this.clearPendingMic();
     this.connecting = null;
+    if (this._provider?.isReady && this.keepWarmForWake) {
+      this.clearGraceTimer();
+      this._inGrace = false;
+      this._fsm.patchStatus({ status: 'dormant', realtimeReady: true });
+      return;
+    }
     if (this._provider?.isReady) {
       this.enterGrace();
       this.patchRealtimeReady(false);
@@ -642,6 +684,8 @@ export class LiveTransportController {
 
   /** Hard teardown — closes the socket immediately (farewell / process exit). */
   hardStop(): void {
+    this.keepWarmForWake = false;
+    this.aec?.reset();
     this.smokeProbe.settleFailure('session_closed');
     this.clearPendingRendererAudio();
     this.pendingToolFollowUp = null;
@@ -716,6 +760,7 @@ export class LiveTransportController {
 
   touchIdle(): void {
     this.clearIdleTimer();
+    if (this.keepWarmForWake) return;
     const config = getVoiceConfig();
     const dormantMs = config.jarvisLive.dormantAfterMs;
     this.idleTimer = setTimeout(() => {
@@ -907,6 +952,7 @@ export class LiveTransportController {
     const id = randomUUID();
     this.pendingRendererAudio.set(id, {
       sentAt: this.now(),
+      ...(this.aec ? { aecPcm16: pcm16.slice() } : {}),
       ...(this.smokeProbe.isActive && this.activeSmokeOwnerWebContentsId !== undefined
         ? { smokeOwnerWebContentsId: this.activeSmokeOwnerWebContentsId }
         : {}),

@@ -49,7 +49,9 @@ export const squadAgentSchema = z.preprocess(
     cli: z.string().min(1).max(64),
     providerId: z.string().max(128).optional(),
     model: z.string().max(128).optional(),
-    effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+    // CLI-owned capability: new levels (for example Codex `ultra`) must not
+    // require a Nexus release. Spawn validation still checks the adapter.
+    effort: z.string().min(1).max(32).regex(/^[A-Za-z0-9_-]+$/).optional(),
     /** null/absent = unrestricted. */
     allowedSkills: z.array(z.string().max(128)).nullable().optional(),
     allowedTools: z.array(z.string().max(128)).nullable().optional(),

@@ -448,13 +448,20 @@ def train_and_export(pos, neg, steps: int, batch: int) -> Path:
     for step in range(steps):
         n_pos_b = max(1, batch // 4)
         n_neg_b = batch
+        n_silence_b = max(8, batch // 2)
         pi = torch.randint(0, n_pos, (n_pos_b,), device=dev)
         ni = torch.randint(0, n_neg, (n_neg_b,), device=dev)
-        xb = torch.cat([pos_t[pi], neg_t[ni]])
+        # O loader faz um probe com embeddings zerados. Treinar essa região
+        # explicitamente evita que o bias do head fique próximo de 0.5 e
+        # transforme silêncio/baixo sinal em falso positivo.
+        silence = torch.empty(n_silence_b, 16, 96, device=dev).uniform_(-0.08, 0.08)
+        silence[: n_silence_b // 4].zero_()
+        xb = torch.cat([pos_t[pi], neg_t[ni], silence])
         yb = torch.cat(
             [
                 torch.ones(n_pos_b, 1, device=dev),
                 torch.zeros(n_neg_b, 1, device=dev),
+                torch.zeros(n_silence_b, 1, device=dev),
             ]
         )
         opt.zero_grad()
@@ -506,6 +513,10 @@ def validate_onnx(onnx_path: Path, pos, neg=None) -> None:
     if mean_pos <= zero_score + 0.05:
         raise SystemExit(
             f"modelo fraco: mean_pos ({mean_pos:.3f}) não separa de zero ({zero_score:.3f})"
+        )
+    if zero_score >= 0.45:
+        raise SystemExit(
+            f"modelo rejeitado: silêncio={zero_score:.3f} >= 0.45"
         )
     if mean_pos < 0.55:
         log(

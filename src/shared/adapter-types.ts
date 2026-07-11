@@ -216,12 +216,24 @@ export type ModelAvailability =
 
 export type ModelCostTier = 'free' | 'low' | 'medium' | 'high' | 'unknown';
 
+export interface ModelQualityEvaluation {
+  /** Normalized 0..100 scores produced by a reproducible Nexus evaluation set. */
+  overall: number;
+  coding?: number;
+  reasoning?: number;
+  frontend?: number;
+  security?: number;
+  evaluatedAt: string;
+  source: string;
+}
+
 export interface ModelCatalogEntryInfo {
   id: string;
   availability?: ModelAvailability;
   costTier?: ModelCostTier;
   source?: string;
   warning?: string;
+  quality?: ModelQualityEvaluation;
 }
 
 export type ModelInfoMap = Record<string, ModelCatalogEntryInfo>;

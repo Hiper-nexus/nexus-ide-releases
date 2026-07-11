@@ -38,8 +38,8 @@ tts_backend: voxcpm
 # Escala produção (subir ainda mais se GPU sobrar)
 n_samples: 25000
 n_samples_val: 5000
-n_background_samples: 2000
-n_background_samples_val: 500
+n_background_samples: 10000
+n_background_samples_val: 2500
 tts_batch_size: 50
 
 # Adversariais: sem "jarvis" isolado como único positivo falso — queremos
@@ -65,6 +65,36 @@ custom_negative_phrases:
   - "obrigado"
   - "não entendi"
   - "ok pode seguir"
+  - "já vi"
+  - "já viste"
+  - "jair"
+  - "jardim"
+  - "jarbas"
+  - "javis"
+  - "jarves"
+  - "jarros"
+  - "chaves"
+  - "serviço"
+  - "services"
+  - "javascript"
+  - "java"
+  - "abre o projeto"
+  - "encontre a pasta"
+  - "mande para o agente"
+  - "leia o painel"
+  - "continue trabalhando"
+  - "execute os testes"
+  - "qual é o status"
+  - "mostre os arquivos"
+  - "crie um terminal"
+  - "feche a janela"
+  - "vamos continuar"
+  - "isso está correto"
+  - "não precisa responder"
+  - "estou falando com outra pessoa"
+  - "obrigado por assistir"
+  - "ative as notificações"
+  - "legendas pela comunidade"
 
 # Piper-only (ignorado com voxcpm; schema parity)
 noise_scales: [0.98]
@@ -150,6 +180,6 @@ target_fp_per_hour: 0.2
 
 batch_n_per_class:
   positive: 50
-  adversarial_negative: 50
+  adversarial_negative: 100
   ACAV100M_sample: 1024
-  background_noise: 50
+  background_noise: 200

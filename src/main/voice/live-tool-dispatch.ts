@@ -25,6 +25,23 @@ import type { JarvisLiveToolEvent, JarvisLiveToolResultEvent } from '../../share
 
 const NEXUS_MCP_TOOL_NAMES = new Set(buildToolset().map((tool) => tool.name));
 
+function normalizedIntent(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/** Destructive-ish navigation must be grounded in explicit user language. */
+export function isExplicitNewWorkspaceIntent(text: string): boolean {
+  const normalized = normalizedIntent(text);
+  const creation = /\b(nov[oa]|cria(?:r|e)?|create|new|nuevo|crear|iniciar)\b/.test(normalized);
+  const target = /\b(workspace|projeto|project|ambiente|environment|espacio de trabajo)\b/.test(normalized);
+  return creation && target;
+}
+
 export interface ToolDispatchHost {
   readonly provider: TurnManagedRealtimeProvider | null;
   readonly fsm: JarvisLiveSession;
@@ -99,6 +116,21 @@ export function dispatchNexusAction(
       'send_to_pane com paneId sem pergunta pendente — rebaixado pro gate de delegação',
       { paneId: strippedPaneId },
     );
+  }
+  if (
+    args.action === 'new_workspace' &&
+    !isExplicitNewWorkspaceIntent(host.lastUserTranscript)
+  ) {
+    logVoice(
+      'warn',
+      'live.newWorkspaceRejected',
+      'new_workspace sem intenção explícita no transcript — ação bloqueada',
+      { lastUserTranscript: host.lastUserTranscript.slice(0, 120) },
+    );
+    rejectToolCall(host, call, 'não abri workspace: pedido explícito ausente', {
+      error: 'no_explicit_new_workspace_intent',
+    });
+    return;
   }
   const action = realtimeArgsToJarvisAction(args);
   const argsRecord = args as Record<string, unknown>;

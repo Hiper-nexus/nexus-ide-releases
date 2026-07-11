@@ -260,3 +260,27 @@ export function shutdownFailover(): void {
   unsubscribeScopeChanges?.();
   unsubscribeScopeChanges = null;
 }
+
+/**
+ * Ask the renderer to restart one exact, still-authorized pane with its native
+ * resume mechanism. Used by the stall watchdog only after a long second
+ * timeout; no account/keychain mutation occurs.
+ */
+export function requestSessionRecovery(sessionId: string, reason: string): boolean {
+  const authority = resolveAuthority(sessionId);
+  if (!authority) return false;
+  const pane = findPaneBySessionOwnedBy(authority.owner, sessionId);
+  if (!pane || pane.paneId !== authority.paneId || pane.kind !== 'cli-agent' || !pane.adapterId) {
+    return false;
+  }
+  const account = pane.accountId ? getAccount(pane.accountId) : getActiveAccount(pane.adapterId);
+  emitFailover(authority, {
+    paneId: pane.paneId,
+    fromAccountLabel: account?.label ?? pane.adapterId,
+    toAccountLabel: account?.label ?? pane.adapterId,
+    reason,
+    switched: true,
+    ...(account?.id ? { toAccountId: account.id } : {}),
+  });
+  return true;
+}

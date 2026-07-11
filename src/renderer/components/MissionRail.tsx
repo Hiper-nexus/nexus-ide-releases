@@ -143,7 +143,15 @@ export function MissionRail() {
   function missionMeta(mission: Mission, active: boolean): string {
     const hands = handoffCountByMission.get(mission.id) ?? 0;
     const handBit = hands > 0 ? ` · ${hands} entrega${hands === 1 ? '' : 's'}` : '';
-    if (!active) return `Retomar · ${statusLabel(mission.status)}${handBit}`;
+    if (!active) {
+      const started = new Intl.DateTimeFormat('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(mission.createdAt);
+      return `Retomar · ${statusLabel(mission.status)} · ${started}${handBit}`;
+    }
     const paneIds = Object.entries(paneMissions)
       .filter(([, missionId]) => missionId === mission.id)
       .map(([paneId]) => paneId);

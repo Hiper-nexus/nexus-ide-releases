@@ -132,6 +132,29 @@ function safeModels(models: unknown, source: string): ModelCatalogEntryInfo[] {
     if (!entry || typeof entry !== 'object') return [];
     const raw = entry as Partial<ModelCatalogEntryInfo>;
     if (typeof raw.id !== 'string' || raw.id.trim().length === 0) return [];
+    const qualityRaw = raw.quality;
+    const score = (value: unknown): number | undefined =>
+      typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100
+        ? value
+        : undefined;
+    const overall = score(qualityRaw?.overall);
+    const quality =
+      qualityRaw &&
+      overall !== undefined &&
+      typeof qualityRaw.evaluatedAt === 'string' &&
+      !Number.isNaN(Date.parse(qualityRaw.evaluatedAt)) &&
+      typeof qualityRaw.source === 'string' &&
+      /^nexus-eval\/[A-Za-z0-9._/-]{1,120}$/.test(qualityRaw.source.trim())
+        ? {
+            overall,
+            coding: score(qualityRaw.coding),
+            reasoning: score(qualityRaw.reasoning),
+            frontend: score(qualityRaw.frontend),
+            security: score(qualityRaw.security),
+            evaluatedAt: qualityRaw.evaluatedAt,
+            source: qualityRaw.source.trim(),
+          }
+        : undefined;
     return [
       {
         id: raw.id.trim(),
@@ -139,6 +162,7 @@ function safeModels(models: unknown, source: string): ModelCatalogEntryInfo[] {
         costTier: raw.costTier,
         source: raw.source ?? source,
         warning: raw.warning,
+        quality,
       },
     ];
   });
@@ -284,10 +308,12 @@ export async function refreshRemoteModelCatalog(
 
   let json = await loadCatalogFromUrl(url);
 
-  // Private GitHub raw → 404. Fall back to the same JSON shipped in the app.
+  // Private GitHub raw → 404. Seed only a missing catalog; never replace a
+  // newer local/CLI-discovered catalog with the older bundled snapshot.
   if (
     (!json || Object.keys(json.adapters ?? {}).length === 0) &&
-    url === DEFAULT_MODEL_CATALOG_URL
+    url === DEFAULT_MODEL_CATALOG_URL &&
+    !fs.existsSync(file)
   ) {
     json = PUBLISHED_MODEL_CATALOG;
   }

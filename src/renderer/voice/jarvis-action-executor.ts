@@ -16,8 +16,6 @@ import {
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { launchSquadMission } from '../orch/mission-launcher';
 import { isMissingModelKeyError } from '../lib/credential-errors';
-import { playAudioBase64 } from './voice-playback';
-import { isResponseMuted } from './response-output-gate';
 import { invokeMcpWithConfirm, mapActionToTool } from '../services/mcp-bridge';
 import { reopenMission } from '../orch/mission-reopen';
 import { delegationConfirmPrompt, setPendingDelegation } from './delegation-confirm';
@@ -25,6 +23,9 @@ import { isOrchestratorPane, resolveSendToPaneTarget } from './send-to-pane-targ
 import { requestPaneClose } from '../terminal/pane-close-guard';
 import { sanitizeMcpResultOutput } from './mcp-result-output';
 import { currentViewNarration, currentViewToolOutput } from './current-view-read';
+import { waitForActionEvidence } from './action-evidence';
+import { resolveWorkspaceByVoiceName } from './workspace-name-resolver';
+import { logVoiceEvent } from './voice-live-ipc';
 
 export interface JarvisExecutionResult {
   sayText: string;
@@ -51,6 +52,22 @@ function checkpoint(control: JarvisExecutionControl): void {
 
 function markEffect(control: JarvisExecutionControl): void {
   control.onEffectMayHaveCommitted?.();
+}
+
+async function confirmUiState<T>(
+  read: () => T,
+  accepts: (value: T) => boolean,
+  control: JarvisExecutionControl,
+): Promise<boolean> {
+  const evidence = await waitForActionEvidence({
+    read,
+    accepts,
+    timeoutMs: 750,
+    pollMs: 25,
+    signal: control.signal,
+  });
+  checkpoint(control);
+  return evidence.status === 'committed';
 }
 
 function findOrchestratorPane(
@@ -176,15 +193,6 @@ async function executeViaMcp(
   const mapping = mapActionToTool(action, ctx);
   if (!mapping) return null;
 
-  if (action.type === 'run_command' && !isResponseMuted()) {
-    void window.nexus.voice
-      .speak({ text: 'Confirma na tela se pedir permissão.', speakMode: 'full', echoRecord: false })
-      .then((r) => {
-        if (r.ok && r.mode === 'audio') void playAudioBase64(r.audioBase64, r.format).catch(() => {});
-      })
-      .catch(() => {});
-  }
-
   const result = await invokeMcpWithConfirm(mapping.tool, mapping.args, {
     signal: control.signal,
     onEffectMayHaveCommitted: control.onEffectMayHaveCommitted,
@@ -225,10 +233,11 @@ export async function executeJarvisAction(
   const action = reply.action;
 
   if (action.type !== 'none') {
-    // send_to_pane is intentionally NOT mcp-first: it must reach the voice-confirmation gate in the branch below (C3). run_command/mcp_tool keep their own native confirm on the MCP path.
+    // run_command must reach the focused shell branch below. The mission MCP
+    // route requires mission identifiers and incorrectly blocked ordinary
+    // workspace terminals before the native confirmation dialog appeared.
     const mcpFirst = new Set<JarvisAction['type']>([
       'mcp_tool',
-      'run_command',
     ]);
     if (mcpFirst.has(action.type)) {
       const mcp = await executeViaMcp(action, sayText, control);
@@ -382,18 +391,47 @@ export async function executeJarvisAction(
     } else {
       const ws = useWorkspaceStore.getState();
       const all = [...ws.recents];
-      const match =
-        all.find((r) => r.name.toLowerCase() === wanted) ??
-        all.find(
-          (r) =>
-            r.name.toLowerCase().includes(wanted) ||
-            wanted.includes(r.name.toLowerCase()),
-        );
-      if (match) {
-        void ws.open(match.path);
-        toolResult = { tool: action.type, ok: true, summary: `workspace ${match.name} aberto` };
+      const resolution = resolveWorkspaceByVoiceName(action.workspaceName, all);
+      if (resolution.kind === 'match') {
+        const match = resolution.workspace;
+        try {
+          await ws.open(match.path);
+          markEffect(control);
+          const evidence = await waitForActionEvidence({
+            read: () => useWorkspaceStore.getState().current?.path ?? null,
+            accepts: (activePath) => activePath === match.path,
+            timeoutMs: 3_000,
+            signal: control.signal,
+          });
+          checkpoint(control);
+          if (evidence.status === 'committed') {
+            sayText = `Projeto ${match.name} aberto.`;
+            toolResult = {
+              tool: action.type,
+              ok: true,
+              summary: `workspace ${match.name} aberto e confirmado`,
+              output: { activePath: match.path, evidenceMs: evidence.elapsedMs },
+            };
+          } else {
+            sayText = `Tentei abrir ${match.name}, mas ainda não confirmei a troca.`;
+            toolResult = {
+              tool: action.type,
+              ok: false,
+              summary: `workspace ${match.name} sem pós-condição confirmada`,
+            };
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          sayText = `Não consegui abrir ${match.name}.`;
+          toolResult = { tool: action.type, ok: false, summary: message };
+        }
+      } else if (resolution.kind === 'ambiguous') {
+        const names = resolution.candidates.slice(0, 4).map((item) => item.name).join(', ');
+        sayText = `Encontrei mais de um workspace compatível: ${names}. Qual deles você quer abrir?`;
+        expectReply = true;
+        toolResult = { tool: action.type, ok: false, summary: 'workspace ambíguo' };
       } else {
-        sayText = `Não achei o projeto "${action.workspaceName}" nos recentes. Quer que eu abra o assistente de novo workspace?`;
+        sayText = `Não achei o projeto "${action.workspaceName}" nos recentes. Diga outro nome ou peça para escolher uma pasta.`;
         expectReply = true;
         toolResult = { tool: action.type, ok: false, summary: 'workspace não encontrado' };
       }
@@ -519,28 +557,66 @@ export async function executeJarvisAction(
   } else if (action.type === 'open_board') {
     const orch = useOrchStore.getState();
     if (!orch.boardOpen) orch.toggleBoard();
-    toolResult = { tool: action.type, ok: true, summary: 'quadro aberto' };
+    const confirmed = await confirmUiState(
+      () => useOrchStore.getState().boardOpen,
+      Boolean,
+      control,
+    );
+    sayText = confirmed ? 'Quadro aberto.' : 'Tentei abrir o quadro, mas não confirmei a tela.';
+    toolResult = {
+      tool: action.type,
+      ok: confirmed,
+      summary: confirmed ? 'quadro aberto e confirmado' : 'quadro sem pós-condição',
+    };
   } else if (action.type === 'open_settings') {
     const settings = useSettingsStore.getState();
     if (!settings.drawerOpen) settings.toggleDrawer();
-    sayText = 'Configurações abertas.';
-    toolResult = { tool: action.type, ok: true, summary: 'configurações abertas' };
+    const confirmed = await confirmUiState(
+      () => useSettingsStore.getState().drawerOpen,
+      Boolean,
+      control,
+    );
+    sayText = confirmed ? 'Configurações abertas.' : 'Tentei abrir as configurações, mas não confirmei a tela.';
+    toolResult = {
+      tool: action.type,
+      ok: confirmed,
+      summary: confirmed ? 'configurações abertas e confirmadas' : 'configurações sem pós-condição',
+    };
   } else if (action.type === 'open_voice_settings') {
     useVoiceStore.getState().openSettings();
-    sayText = 'Configurações de voz abertas.';
-    toolResult = { tool: action.type, ok: true, summary: 'configurações de voz abertas' };
+    const confirmed = await confirmUiState(
+      () => useVoiceStore.getState().settingsOpen,
+      Boolean,
+      control,
+    );
+    sayText = confirmed ? 'Configurações de voz abertas.' : 'Tentei abrir os ajustes de voz, mas não confirmei a tela.';
+    toolResult = {
+      tool: action.type,
+      ok: confirmed,
+      summary: confirmed ? 'configurações de voz abertas e confirmadas' : 'voz sem pós-condição',
+    };
   } else if (action.type === 'open_canvas') {
     const layout = useLayoutStore.getState();
     if (layout.viewKind !== 'canvas') layout.toggleView();
     useHomeStore.getState().hide();
-    sayText = 'Canvas aberto.';
-    toolResult = { tool: action.type, ok: true, summary: 'modo canvas aberto' };
+    const confirmed = await confirmUiState(
+      () => useLayoutStore.getState().viewKind,
+      (kind) => kind === 'canvas',
+      control,
+    );
+    sayText = confirmed ? 'Canvas aberto.' : 'Tentei abrir o canvas, mas não confirmei a tela.';
+    toolResult = { tool: action.type, ok: confirmed, summary: confirmed ? 'modo canvas confirmado' : 'canvas sem pós-condição' };
   } else if (action.type === 'open_grid') {
     const layout = useLayoutStore.getState();
     if (layout.viewKind !== 'grid') layout.toggleView();
     useHomeStore.getState().hide();
-    sayText = 'Grade aberta.';
-    toolResult = { tool: action.type, ok: true, summary: 'modo grade aberto' };
+    const confirmed = await confirmUiState(
+      () => useLayoutStore.getState().viewKind,
+      (kind) => kind === 'grid',
+      control,
+    );
+    sayText = confirmed ? 'Grade aberta.' : 'Tentei abrir a grade, mas não confirmei a tela.';
+    toolResult = { tool: action.type, ok: confirmed, summary: confirmed ? 'modo grade confirmado' : 'grade sem pós-condição' };
   } else if (action.type === 'open_browser') {
     useGamificationStore.getState().closeProfile();
     const paneId = useLayoutStore.getState().addBrowserPane(action.url);
@@ -586,8 +662,13 @@ export async function executeJarvisAction(
       const index = panes.findIndex((pane) => pane.id === layout.focusedPaneId);
       const next = panes[(index + 1 + panes.length) % panes.length];
       layout.focus(next.id);
-      sayText = 'Próximo pane focado.';
-      toolResult = { tool: action.type, ok: true, summary: `${next.title} focado` };
+      const confirmed = await confirmUiState(
+        () => useLayoutStore.getState().focusedPaneId,
+        (id) => id === next.id,
+        control,
+      );
+      sayText = confirmed ? 'Próximo pane focado.' : 'Tentei trocar o foco, mas não confirmei.';
+      toolResult = { tool: action.type, ok: confirmed, summary: confirmed ? `${next.title} focado` : 'foco sem pós-condição' };
     }
   } else if (action.type === 'focus_previous_pane') {
     const layout = useLayoutStore.getState();
@@ -599,8 +680,13 @@ export async function executeJarvisAction(
       const index = panes.findIndex((pane) => pane.id === layout.focusedPaneId);
       const prev = index < 0 ? panes[0] : panes[(index - 1 + panes.length) % panes.length];
       layout.focus(prev.id);
-      sayText = 'Pane anterior focado.';
-      toolResult = { tool: action.type, ok: true, summary: `${prev.title} focado` };
+      const confirmed = await confirmUiState(
+        () => useLayoutStore.getState().focusedPaneId,
+        (id) => id === prev.id,
+        control,
+      );
+      sayText = confirmed ? 'Pane anterior focado.' : 'Tentei trocar o foco, mas não confirmei.';
+      toolResult = { tool: action.type, ok: confirmed, summary: confirmed ? `${prev.title} focado` : 'foco sem pós-condição' };
     }
   } else if (action.type === 'focus_pane') {
     const layout = useLayoutStore.getState();
@@ -611,24 +697,43 @@ export async function executeJarvisAction(
       toolResult = { tool: action.type, ok: false, summary: 'pane não encontrado' };
     } else {
       layout.focus(target.id);
-      sayText = `${target.title} focado.`;
-      toolResult = { tool: action.type, ok: true, summary: `${target.title} focado` };
+      const confirmed = await confirmUiState(
+        () => useLayoutStore.getState().focusedPaneId,
+        (id) => id === target.id,
+        control,
+      );
+      sayText = confirmed ? `${target.title} focado.` : 'Tentei focar esse pane, mas não confirmei.';
+      toolResult = { tool: action.type, ok: confirmed, summary: confirmed ? `${target.title} focado` : 'foco sem pós-condição' };
     }
   } else if (action.type === 'send_to_pane') {
-    const { root } = useLayoutStore.getState();
+    const { root, focusedPaneId } = useLayoutStore.getState();
     // NEW-B + C3 (follow-ups 2/4b): resposta roteada de pergunta pendente
     // (paneId presente) escreve de volta SÓ em pane de agente/orquestrador
     // vivo; pane sumido/inválido AVISA e re-pergunta — nunca vira "Confirmo?"
     // da resposta nem escrita em shell. Delegação (sem paneId) segue no gate
     // de confirmação por voz; o fallback silencioso pro pane focado fica morto.
-    const target = resolveSendToPaneTarget(action.paneId, listPanes(root));
+    const target = resolveSendToPaneTarget(action.paneId, listPanes(root), focusedPaneId);
     if (target.kind === 'asking-pane') {
-      const ok = writeToPane(target.paneId, `${action.text}\n`);
+      const commandId = crypto.randomUUID();
+      logVoiceEvent('info', 'pane.deliveryResolved', 'destino de pane resolvido', {
+        commandId,
+        paneId: target.paneId,
+        chars: action.text.length,
+      });
+      const sessionId = await waitForSession(target.paneId, 750);
+      checkpoint(control);
+      const ok = Boolean(sessionId) && writeToPane(target.paneId, `${action.text}\n`);
+      logVoiceEvent(ok ? 'info' : 'warn', ok ? 'pane.deliverySubmitted' : 'pane.deliveryFailed', ok ? 'texto submetido ao PTY' : 'sessão do pane indisponível', {
+        commandId,
+        paneId: target.paneId,
+        sessionReady: Boolean(sessionId),
+      });
       if (!ok) sayText = 'Não consegui escrever no pane.';
       toolResult = {
         tool: action.type,
         ok,
-        summary: ok ? 'resposta enviada ao pane' : 'falha ao escrever no pane',
+        summary: ok ? `resposta submetida ao pane (${commandId})` : 'falha ao escrever no pane',
+        output: { commandId, paneId: target.paneId, sessionReady: Boolean(sessionId) },
       };
     } else if (target.kind === 'asking-pane-gone') {
       sayText =
@@ -646,14 +751,54 @@ export async function executeJarvisAction(
         ok: false,
         summary: `alvo não é pane de agente: ${target.title}`,
       };
-    } else if (target.kind === 'no-agent-pane') {
-      sayText =
-        'Não achei um pane de agente pra receber a missão — abre o orquestrador primeiro.';
+    } else if (target.kind === 'asking-pane-ambiguous') {
+      sayText = `Encontrei mais de um pane compatível: ${target.titles.join(', ')}. Qual deles?`;
+      expectReply = true;
       toolResult = {
         tool: action.type,
         ok: false,
-        summary: 'sem pane de agente válido (fallback silencioso bloqueado)',
+        summary: 'nome de pane ambíguo — envio bloqueado',
       };
+    } else if (target.kind === 'no-agent-pane') {
+      // Gemini occasionally emits send_to_pane immediately after open_terminal
+      // for “digite/mande este comando”. Recover deterministically only when a
+      // shell is focused, and retain the same native human confirmation as
+      // run_command. Nothing is written silently.
+      const focused = focusedPaneId
+        ? listPanes(root).find((pane) => pane.id === focusedPaneId)
+        : undefined;
+      if (focused?.kind === 'shell') {
+        const sessionId = await waitForSession(focused.id, 5_000);
+        checkpoint(control);
+        const approved = Boolean(sessionId) &&
+          await window.nexus.voice.confirmCommand(action.text);
+        checkpoint(control);
+        const ok = approved && writeToPane(focused.id, `${action.text}\n`);
+        if (ok) markEffect(control);
+        sayText = ok
+          ? 'Comando enviado ao terminal.'
+          : approved
+            ? 'Não consegui escrever no terminal.'
+            : 'Cancelei, não escrevi no terminal.';
+        toolResult = {
+          tool: 'run_command',
+          ok,
+          summary: ok
+            ? 'send_to_pane recuperado como comando confirmado no terminal focado'
+            : approved
+              ? 'falha ao escrever no terminal focado'
+              : 'comando recusado ou terminal sem sessão',
+          output: { recoveredFrom: 'send_to_pane', paneId: focused.id },
+        };
+      } else {
+        sayText =
+          'Não achei um pane de agente pra receber a missão — abre o orquestrador primeiro.';
+        toolResult = {
+          tool: action.type,
+          ok: false,
+          summary: 'sem pane de agente válido (fallback silencioso bloqueado)',
+        };
+      }
     } else {
       // C3: delegação NÃO dispara direto — arma a pendência e pergunta.
       setPendingDelegation({
@@ -685,21 +830,17 @@ export async function executeJarvisAction(
       sayText = 'Não consegui iniciar um terminal para rodar o comando.';
       toolResult = { tool: action.type, ok: false, summary: 'terminal sem sessão' };
     } else {
-      if (!isResponseMuted()) {
-        void window.nexus.voice
-          .speak({ text: 'Confirma na tela para eu executar.', speakMode: 'full', echoRecord: false })
-          .then((r) => {
-            if (r.ok && r.mode === 'audio') {
-              void playAudioBase64(r.audioBase64, r.format).catch(() => {});
-            }
-          })
-          .catch(() => {});
-      }
-      const approved = await window.nexus.voice.confirmCommand(action.command);
+      // Gemini occasionally converts the Portuguese literal command “ai” to
+      // the English pronoun “I”. For this exact one-token ambiguity preserve
+      // the user's intended lowercase CLI command. Other commands stay exact.
+      const terminalCommand = action.command.trim() === 'I' ? 'ai' : action.command;
+      // Native dialog is sufficient feedback. A parallel local TTS here raced
+      // Gemini Live narration and produced two overlapping Jarvis voices.
+      const approved = await window.nexus.voice.confirmCommand(terminalCommand);
       checkpoint(control);
       if (approved) {
         checkpoint(control);
-        const ok = writeToPane(targetPaneId, `${action.command}\n`);
+        const ok = writeToPane(targetPaneId, `${terminalCommand}\n`);
         if (ok) markEffect(control);
         if (!ok) sayText = 'Não consegui escrever no terminal.';
         toolResult = {

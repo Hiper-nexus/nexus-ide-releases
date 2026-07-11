@@ -73,6 +73,7 @@ out/
 /training/ei-jarvis/work/
 /training/ei-jarvis/.venv/
 /training/ei-jarvis/livekit_run/
+/training/ei-jarvis/recordings/
 /.venv-wake/
 
 # Estado local de ferramentas de terceiros (pode conter tokens de auth) —
@@ -100,4 +101,5 @@ release-assets/
 
 # Local scrape / package scratch
 .firecrawl/
+/.cache/
 *.tgz
