@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { shouldCreateWindowOnActivate } from './app-lifecycle';
 
@@ -31,5 +33,16 @@ describe('macOS activate lifecycle', () => {
         windowCount: 1,
       }),
     ).toBe(false);
+  });
+
+  it('does not dispose keep-awake before the user confirms quit', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
+    const beforeQuit = source.indexOf('app.on("before-quit"');
+    const confirmation = source.indexOf('closeNeedsConfirmation', beforeQuit);
+    expect(beforeQuit).toBeGreaterThanOrEqual(0);
+    expect(confirmation).toBeGreaterThan(beforeQuit);
+    expect(source.slice(beforeQuit, confirmation)).not.toContain(
+      'disposeAgentAwakeService()',
+    );
   });
 });

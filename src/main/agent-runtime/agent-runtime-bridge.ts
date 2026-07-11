@@ -10,7 +10,10 @@ import { app } from 'electron';
 import os from 'node:os';
 import type { AgentStatusState } from '../../shared/agent-status-types';
 import type { PaneSessionState } from '../../shared/types';
-import { AgentAwakeService } from '../agent-awake-service';
+import {
+  AgentAwakeService,
+  type AgentAwakeStatus,
+} from '../agent-awake-service';
 import {
   mapAgentHookStatusToPaneSession,
   type AgentHookActivityMapping,
@@ -84,6 +87,7 @@ let gpuFallbackTracker = newGpuFallbackTracker();
 
 let crashReportStore: CrashReportStore | null = null;
 let awakeService: AgentAwakeService | null = null;
+let awakeStatusesBySession = new Map<string, AgentAwakeStatus>();
 let diagnosticsAppBound = false;
 /** userData path for GPU marker + crash-report-pending (injected in tests). */
 let bridgeUserDataPath: string | null = null;
@@ -142,6 +146,7 @@ export function __resetAgentRuntimeBridgeForTests(options?: {
 }): void {
   crashReportStore = options?.crashReportStore ?? null;
   awakeService = options?.awakeService ?? null;
+  awakeStatusesBySession = new Map();
   diagnosticsAppBound = false;
   bridgeUserDataPath = options?.userDataPath ?? null;
   gpuFallbackAlreadyActive = options?.gpuFallbackAlreadyActive ?? false;
@@ -467,13 +472,18 @@ export function publishAgentHookActivity(
   // Keep machine awake while provider reports working.
   const service = getAgentAwakeService();
   service.setEnabled(true);
-  service.setStatuses([
-    {
+  const nextStatuses = new Map(awakeStatusesBySession);
+  if (status === 'working') {
+    nextStatuses.set(ctx.sessionId, {
       state: status,
       receivedAt: Date.now(),
       observedInCurrentRuntime: true,
-    },
-  ]);
+    });
+  } else {
+    nextStatuses.delete(ctx.sessionId);
+  }
+  awakeStatusesBySession = nextStatuses;
+  service.setStatuses([...nextStatuses.values()]);
   recordCrashBreadcrumb('agent-hook-activity', {
     sessionId: ctx.sessionId,
     status,
@@ -500,4 +510,5 @@ export function getAgentAwakeService(): AgentAwakeService {
 export function disposeAgentAwakeService(): void {
   awakeService?.dispose();
   awakeService = null;
+  awakeStatusesBySession = new Map();
 }

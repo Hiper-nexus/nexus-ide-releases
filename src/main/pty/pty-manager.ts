@@ -66,6 +66,17 @@ const sessions = new Map<string, Session>();
 let counter = 0;
 
 let ptyHost: PtyHost | null = null;
+let agentHookEndpointPath: string | null = null;
+
+export function configureAgentHookEndpointPath(endpointPath: string | null): void {
+  if (
+    endpointPath !== null &&
+    (!path.isAbsolute(endpointPath) || endpointPath.includes("\0"))
+  ) {
+    throw new Error("invalid agent hook endpoint path");
+  }
+  agentHookEndpointPath = endpointPath;
+}
 
 /** Wire the utilityProcess-backed host (called once at IPC bootstrap). */
 export function setPtyHost(host: PtyHost): void {
@@ -602,7 +613,12 @@ export function spawnAgentSession(
   if (overrides.extraArgs && overrides.extraArgs.length > 0) {
     args.push(...overrides.extraArgs);
   }
+  const sessionId = makeSessionId();
   const env = agentEnv(adapter);
+  if (agentHookEndpointPath) {
+    env.NEXUS_AGENT_HOOK_ENDPOINT = agentHookEndpointPath;
+    env.NEXUS_PANE_KEY = sessionId;
+  }
   // Subscription-first: strip inherited key/token vars before any injection.
   for (const name of overrides.suppressEnv ?? []) {
     delete env[name];
@@ -641,7 +657,6 @@ export function spawnAgentSession(
       ? adapter.stateParsing.idle.ms
       : 800;
 
-  const sessionId = makeSessionId();
   const spec: PtySpawnSpec = {
     sessionId,
     file: bin,

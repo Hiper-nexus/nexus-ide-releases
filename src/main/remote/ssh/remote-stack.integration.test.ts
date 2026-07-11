@@ -56,8 +56,8 @@ describe('remote stack mock e2e (D2–D5)', () => {
       allowWrite: false,
     });
     expect(await git.status()).toContain('##');
-    await expect(git.write('commit -m x')).rejects.toBeInstanceOf(RemoteGitDeniedError);
-    await expect(git.write('push --force')).rejects.toBeInstanceOf(RemoteGitDeniedError);
+    await expect(git.write(['commit', '-m', 'x'])).rejects.toBeInstanceOf(RemoteGitDeniedError);
+    await expect(git.write(['push', '--force'])).rejects.toBeInstanceOf(RemoteGitDeniedError);
 
     const frames: Uint8Array[] = [];
     const pty = await openRemotePty(session, { streamId: 7, cols: 80, rows: 24 });

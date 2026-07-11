@@ -123,7 +123,11 @@ import {
   configureWorktreeRuntimeRegistry,
   disposeWorktreeRuntimeRegistry,
 } from "./runtime/worktree-runtime-registry";
-import { killAllSessions, liveSessionSummary } from "./pty/pty-manager";
+import {
+  configureAgentHookEndpointPath,
+  killAllSessions,
+  liveSessionSummary,
+} from "./pty/pty-manager";
 import { shutdownPtyHost } from "./pty/pty-host-client";
 import {
   initUsageTelemetry,
@@ -386,7 +390,8 @@ if (!wireDeepLinks()) {
       const userDataPath = app.getPath("userData");
       configureAgentRuntimeUserDataPath(userDataPath);
       bootstrapManagedAgentHooks({ enabled: false });
-      await startAgentHookHttpServer({ userDataPath });
+      const hookServer = await startAgentHookHttpServer({ userDataPath });
+      configureAgentHookEndpointPath(hookServer.endpointFilePath);
       void resolveManagedHookConsent({
         userDataPath,
         prompt: async () => {
@@ -521,6 +526,7 @@ function shutdown(): Promise<void> {
     shutdownPtyHost();
     await closeAllDesignWritebacks();
     stopRemoteBridge();
+    configureAgentHookEndpointPath(null);
     await stopAgentHookHttpServer().catch(() => {});
     disposeAgentAwakeService();
     closeOrchestration();
@@ -544,8 +550,6 @@ function shutdown(): Promise<void> {
 }
 
 app.on("before-quit", (event) => {
-  disposeAgentAwakeService();
-
   const summary = liveSessionSummary();
   if (
     closeNeedsConfirmation({

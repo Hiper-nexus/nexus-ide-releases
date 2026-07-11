@@ -4,6 +4,7 @@ import type { WebContents } from "electron";
 import {
   agentEnv,
   bindOwnedAgentSessionMission,
+  configureAgentHookEndpointPath,
   consumeMissionOrchestratorGrant,
   getOwnedAgentSessionInfo,
   getSessionState,
@@ -259,6 +260,29 @@ describe("PTY session ownership (renderer capability boundary)", () => {
 });
 
 describe("cli-agent spawn argv hardening", () => {
+  it("injects the managed hook endpoint and the main-owned PTY session key", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    configureAgentHookEndpointPath("/tmp/nexus-hooks/endpoint.env");
+    const owner = fakeWc();
+    try {
+      const { sessionId } = spawnAgentSession(
+        owner,
+        { kind: "cli-agent", cols: 80, rows: 24 },
+        makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+        {},
+        trustedSpawn(),
+      );
+      expect(h.specFor(sessionId).env.NEXUS_AGENT_HOOK_ENDPOINT).toBe(
+        "/tmp/nexus-hooks/endpoint.env",
+      );
+      expect(h.specFor(sessionId).env.NEXUS_PANE_KEY).toBe(sessionId);
+      killSession(owner, sessionId);
+    } finally {
+      configureAgentHookEndpointPath(null);
+    }
+  });
+
   it("keeps direct panes read-only and grants native writes only to revision-bound workers", () => {
     const h = fakeHost();
     setPtyHost(h.host);

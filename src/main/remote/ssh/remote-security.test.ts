@@ -73,4 +73,27 @@ describe('remote security negatives (D8)', () => {
     const git = createRemoteGit(session, '/root', { allowFetch: false, allowWrite: false });
     await expect(git.fetch()).rejects.toBeInstanceOf(RemoteGitDeniedError);
   });
+
+  it('quotes every write argument instead of interpolating a shell command', async () => {
+    const cap = createRemoteHostCapability({
+      kind: 'ssh',
+      hostId: 'h-safe-git',
+      displayName: 'h',
+      scope,
+      paired: true,
+    });
+    const transport = createMockSshTransport();
+    const session = await createSshSessionManager().connect(
+      cap,
+      { host: 'h', username: 'u', auth: { kind: 'password', password: 'x' } },
+      transport,
+    );
+    const git = createRemoteGit(session, '/root', { allowFetch: false, allowWrite: true });
+
+    await git.write(['commit', '-m', 'x; touch /tmp/nexus-injected']);
+
+    expect(transport.history.at(-1)).toBe(
+      "exec:git -C '/root' 'commit' '-m' 'x; touch /tmp/nexus-injected'",
+    );
+  });
 });

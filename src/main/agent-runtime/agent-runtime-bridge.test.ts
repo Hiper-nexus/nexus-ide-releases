@@ -145,6 +145,24 @@ describe('agent-runtime-bridge production seam', () => {
     ]);
   });
 
+  it('keeps other working sessions awake when one agent finishes', () => {
+    const setStatuses = vi.fn();
+    const awake = {
+      setEnabled: vi.fn(),
+      setStatuses,
+      dispose: vi.fn(),
+    };
+    __resetAgentRuntimeBridgeForTests({ awakeService: awake as never });
+
+    publishAgentHookActivity('working', { sessionId: 'agent-a' });
+    publishAgentHookActivity('working', { sessionId: 'agent-b' });
+    publishAgentHookActivity('done', { sessionId: 'agent-b' });
+
+    expect(setStatuses).toHaveBeenLastCalledWith([
+      expect.objectContaining({ state: 'working' }),
+    ]);
+  });
+
   it('handleChildProcessGone classifies GPU recoverable without recording crash', () => {
     const dir = mkdtempSync(join(tmpdir(), 'nexus-child-gone-'));
     __resetAgentRuntimeBridgeForTests({ userDataPath: dir });
