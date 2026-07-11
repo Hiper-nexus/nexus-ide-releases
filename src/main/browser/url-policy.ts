@@ -1,5 +1,6 @@
 import dns from 'node:dns';
 import net from 'node:net';
+import { redactVisibleSecrets } from '../../shared/vision-ipc';
 
 export type BrowserAddressClass =
   | 'public'
@@ -443,6 +444,10 @@ export function redactBrowserUrl(raw: string): string {
     ) {
       url.hash = url.hash ? '#[REDACTED]' : '';
     }
+    // The path can still carry a secret (magic-link / reset / share token);
+    // redact just the pathname before it reaches the model or persisted
+    // screenshot metadata (query values are already emptied above).
+    url.pathname = redactVisibleSecrets(url.pathname);
     return url.toString();
   } catch {
     return '[invalid URL]';

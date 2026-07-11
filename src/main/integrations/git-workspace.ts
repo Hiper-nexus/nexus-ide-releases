@@ -1,25 +1,34 @@
 /**
  * Pure helpers: git status / diff / branch / remote for the active workspace.
+ *
+ * The workspace path is trusted, but the repository CONTENTS are not: a cloned
+ * repo can carry executable local config (`core.fsmonitor`, a `.gitattributes`
+ * diff/textconv driver, hooks) that git would run merely on `status`/`diff`.
+ * Every call therefore goes through the hardened ProcessGitRunner — which
+ * disables hooks/fsmonitor and scrubs the GIT_, LD_ and DYLD_ env families —
+ * and the untrusted status/diff reads additionally refuse a repo whose local
+ * config is executable.
  */
-import { spawnSync } from 'node:child_process';
 import { parseHostedRemote } from '../git/hosted-remote-url';
+import { ProcessGitRunner, assertSafeLocalGitConfig } from '../runtime/git-command';
+
+const runner = new ProcessGitRunner();
 
 function git(
   cwd: string,
   args: string[],
 ): { ok: boolean; stdout: string; stderr: string; code: number } {
-  const r = spawnSync('git', args, {
-    cwd,
-    encoding: 'utf8',
-    maxBuffer: 8 * 1024 * 1024,
-    timeout: 30_000,
-  });
-  return {
-    ok: r.status === 0,
-    stdout: (r.stdout ?? '').toString(),
-    stderr: (r.stderr ?? '').toString(),
-    code: r.status ?? 1,
-  };
+  try {
+    const r = runner.run(cwd, args, { allowFailure: true });
+    return { ok: r.status === 0, stdout: r.stdout, stderr: r.stderr, code: r.status };
+  } catch (err) {
+    return {
+      ok: false,
+      stdout: '',
+      stderr: err instanceof Error ? err.message : String(err),
+      code: 1,
+    };
+  }
 }
 
 export function gitCurrentBranch(cwd: string): string | null {
@@ -36,7 +45,15 @@ export function gitRemoteOrigin(cwd: string): string | null {
 }
 
 export function gitDiff(cwd: string, staged = false): { ok: true; diff: string } | { ok: false; error: string } {
-  const args = staged ? ['diff', '--cached'] : ['diff', 'HEAD'];
+  try {
+    assertSafeLocalGitConfig(runner, cwd);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'unsafe repository' };
+  }
+  // --no-ext-diff blocks a repo-supplied external diff driver from running.
+  const args = staged
+    ? ['diff', '--no-ext-diff', '--cached']
+    : ['diff', '--no-ext-diff', 'HEAD'];
   const r = git(cwd, args);
   // git diff exits 1 when there are differences — still success for our UI.
   if (r.code !== 0 && r.code !== 1) {
@@ -46,6 +63,11 @@ export function gitDiff(cwd: string, staged = false): { ok: true; diff: string }
 }
 
 export function gitStatusShort(cwd: string): string {
+  try {
+    assertSafeLocalGitConfig(runner, cwd);
+  } catch (err) {
+    return err instanceof Error ? err.message : 'unsafe repository';
+  }
   const r = git(cwd, ['status', '--short']);
   return r.ok ? r.stdout : r.stderr;
 }

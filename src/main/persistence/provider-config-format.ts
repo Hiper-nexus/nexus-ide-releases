@@ -24,6 +24,15 @@ export function decodeProviderConfigFile(value: unknown): DecodedProviderConfigF
   const source = isCurrent ? value.providers as Record<string, unknown> : value;
   const providers: Record<string, Partial<ProviderConfig>> = {};
   for (const [adapterId, rawConfig] of Object.entries(source)) {
+    // A malicious/corrupt providers.json key of __proto__/constructor/prototype
+    // would otherwise reach the prototype of the result object.
+    if (
+      adapterId === '__proto__' ||
+      adapterId === 'constructor' ||
+      adapterId === 'prototype'
+    ) {
+      continue;
+    }
     if (!isRecord(rawConfig)) continue;
     const config = { ...rawConfig } as Partial<ProviderConfig>;
     // v1 was written while yolo/bypass was the implicit product default. It

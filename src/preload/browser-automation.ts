@@ -124,6 +124,10 @@ export function redactPageUrl(raw: string): string {
     ) {
       url.hash = url.hash ? '#[REDACTED]' : '';
     }
+    // Query values and hash are handled above; the PATH can still carry a
+    // secret (magic-link / reset / share token), so redact just the pathname
+    // (leaving the already-encoded query values intact).
+    url.pathname = redactVisibleSecrets(url.pathname);
     return url.toString();
   } catch {
     return '[invalid URL]';

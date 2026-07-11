@@ -9,12 +9,19 @@ import { BROWSER_DESIGN_CHANNELS } from '../shared/browser-design';
 import { createBrowserAutomation } from './browser-automation';
 
 const REQUEST_ID = /^[a-f0-9-]{16,64}$/i;
+// Must stay in sync with the BrowserAutomationCommand union (shared/
+// browser-automation.ts). Each command's own input guards live in
+// browser-automation.ts (e.g. press key/modifier allowlists, ref validation);
+// this set only decides which commands the closed channel will dispatch.
 const COMMANDS = new Set<BrowserAutomationCommand>([
   'read',
   'inspect',
   'click',
   'fill',
   'wait',
+  'scroll',
+  'press',
+  'hover',
   'design_enable',
   'design_disable',
   'design_set_style_preview',
