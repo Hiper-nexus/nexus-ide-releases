@@ -34,6 +34,11 @@ export class TerminalStreamSession {
     return this.#lastRxSeq;
   }
 
+  /** Last sequence number assigned to an outbound encode* call (0 if none). */
+  get lastEncodedSeq(): number {
+    return this.#nextSeq - 1;
+  }
+
   encodeOutput(payload: Uint8Array): Uint8Array {
     const frame: TerminalStreamFrame = {
       opcode: TerminalStreamOpcode.Output,

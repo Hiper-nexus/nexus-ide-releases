@@ -932,6 +932,34 @@
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
       "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
+      "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
+      "originalSha256": "844c8edd209f5c9d4d745db107cd22beb89e879199d9ec5a5d64c944ebaa176a",
+      "originalPath": "(concept) src/main/remote/remote-terminal-streams.ts",
+      "nexusPath": "src/main/remote/remote-terminal-streams.ts",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "Production registry binding TerminalStreamSession to remote-bridge pane I/O",
+      "secondaryProvenance": [],
+      "importDate": "2026-07-11",
+      "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
+      "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
+      "originalSha256": "1d9668ea6e20a96161642e4240aa73584f3cd5adc80b2895537eae0e41f7af65",
+      "originalPath": "(concept) src/main/remote/remote-terminal-streams.test.ts",
+      "nexusPath": "src/main/remote/remote-terminal-streams.test.ts",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "Unit tests for production stream helpers using real protocol frames",
+      "secondaryProvenance": [],
+      "importDate": "2026-07-11",
+      "status": "imported"
     }
   ]
 }

@@ -25,6 +25,13 @@ import {
   orchResizeSession,
   orchWriteSession,
 } from '../pty/pty-manager';
+import {
+  clearRemoteTerminalStreams,
+  encodeRemoteTerminalOutput,
+  openRemoteTerminalStream,
+  receiveRemoteTerminalFrame,
+} from './remote-terminal-streams';
+import { TerminalStreamOpcode } from '../../shared/terminal-stream-protocol';
 
 interface TlsRecord {
   key: string;
@@ -421,19 +428,52 @@ async function handleAuthedMessage(
   switch (msg.type) {
     case 'panes.list':
       return listVisiblePaneSnapshots(remoteCaller(scope));
-    case 'pane.read':
-      return {
-        output: readSessionOutput(
-          sessionIdOf(msg.paneId, scope, 'read'),
-          Number(msg.lines) || 120,
-        ),
-      };
+    case 'pane.read': {
+      const sessionId = sessionIdOf(msg.paneId, scope, 'read');
+      const output = readSessionOutput(sessionId, Number(msg.lines) || 120);
+      // Production path: frame terminal output with ORCA terminal-stream-protocol
+      // so remote/mobile clients can reconnect with resumeFromSeq.
+      const stream = encodeRemoteTerminalOutput(sessionId, output);
+      return { output, stream };
+    }
     case 'pane.input': {
       const data = typeof msg.data === 'string' ? msg.data : '';
       if (!data || data.length > 8192) throw new Error('invalid input');
       const text = msg.submit === false ? data : `${data}\n`;
+      const sessionId = sessionIdOf(msg.paneId, scope, 'write');
+      const ok = orchWriteSession(sessionId, text);
+      // Keep stream session alive for resume; optional echo frame for clients
+      // that consume binary terminal-stream-protocol over JSON transport.
+      const stream = encodeRemoteTerminalOutput(sessionId, '');
+      return { ok, stream };
+    }
+    case 'pane.stream.open': {
+      const sessionId = sessionIdOf(msg.paneId, scope, 'read');
+      return openRemoteTerminalStream(sessionId);
+    }
+    case 'pane.stream.frame': {
+      const sessionId = sessionIdOf(msg.paneId, scope, 'write');
+      const frameBase64 =
+        typeof msg.frameBase64 === 'string' ? msg.frameBase64 : '';
+      if (!frameBase64 || frameBase64.length > 96_000) {
+        throw new Error('invalid stream frame');
+      }
+      const received = receiveRemoteTerminalFrame(sessionId, frameBase64);
+      if (
+        received.frame.opcode === TerminalStreamOpcode.Input &&
+        received.text
+      ) {
+        if (received.text.length > 8192) throw new Error('invalid input');
+        return {
+          ok: orchWriteSession(sessionId, received.text),
+          resumeFromSeq: received.resumeFromSeq,
+          opcode: received.frame.opcode,
+        };
+      }
       return {
-        ok: orchWriteSession(sessionIdOf(msg.paneId, scope, 'write'), text),
+        ok: true,
+        resumeFromSeq: received.resumeFromSeq,
+        opcode: received.frame.opcode,
       };
     }
     case 'pane.resize': {
@@ -623,6 +663,7 @@ export async function startRemoteBridge(
 }
 
 export function stopRemoteBridge(scope?: ProjectExecutionScope): RemoteBridgeInfo {
+  clearRemoteTerminalStreams();
   if (scope && activeBridgeScope) assertBridgeScope(scope);
   for (const client of clients) client.close(1001, 'bridge stopped');
   clients.clear();

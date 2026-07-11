@@ -10,13 +10,22 @@ vi.mock('../orch/project-domain-store-registry', () => ({
   getProjectDomainStores: () => ({ missions: { list: () => [] } }),
 }));
 vi.mock('../orch/pane-registry', () => ({
-  getPaneAuthzInfo: () => null,
+  getPaneAuthzInfo: (paneId: string) =>
+    paneId === 'pane-stream'
+      ? {
+          paneId: 'pane-stream',
+          sessionId: 'session-stream-1',
+          projectId: 'project-a',
+          checkoutId: 'checkout-a',
+        }
+      : null,
   listVisiblePaneSnapshots: () => [],
-  readSessionOutput: () => '',
+  readSessionOutput: (sessionId: string) =>
+    sessionId === 'session-stream-1' ? 'stream-output-line\n' : '',
   requestPaneClose: () => true,
 }));
 vi.mock('../orch/pane-authz', () => ({
-  authorizePaneAccess: () => ({ allow: false }),
+  authorizePaneAccess: () => ({ allow: true }),
 }));
 vi.mock('../pty/pty-manager', () => ({
   orchWriteSession: () => true,
@@ -215,4 +224,47 @@ describe('remote bridge', () => {
     await closed;
     expect(socket.readyState).not.toBe(WebSocket.OPEN);
   });
+
+  it('pane.read returns terminal-stream-protocol frame on production path', async () => {
+    const token = await issueToken();
+    const socket = await authenticate(token);
+    const opened = await rpc(socket, {
+      id: 'so',
+      type: 'pane.stream.open',
+      paneId: 'pane-stream',
+    });
+    expect(opened.ok).toBe(true);
+    expect(opened.result).toMatchObject({
+      streamId: expect.any(Number),
+      subscribeFrameBase64: expect.any(String),
+    });
+
+    const read = await rpc(socket, {
+      id: 'sr',
+      type: 'pane.read',
+      paneId: 'pane-stream',
+      lines: 50,
+    });
+    expect(read.ok).toBe(true);
+    const result = read.result as {
+      output?: string;
+      stream?: { frameBase64?: string; seq?: number; streamId?: number };
+    };
+    expect(result.output).toBe('stream-output-line\n');
+    expect(result.stream?.frameBase64).toBeTruthy();
+    expect(result.stream?.seq).toBeGreaterThan(0);
+    expect(result.stream?.streamId).toBeGreaterThan(0);
+
+    // Decode frame via real protocol (proves production encode path)
+    const { decodeTerminalStreamFrame, TerminalStreamOpcode } = await import(
+      '../../shared/terminal-stream-protocol'
+    );
+    const frame = decodeTerminalStreamFrame(
+      new Uint8Array(Buffer.from(result.stream!.frameBase64!, 'base64')),
+    );
+    expect(frame?.opcode).toBe(TerminalStreamOpcode.Output);
+    expect(new TextDecoder().decode(frame!.payload)).toBe('stream-output-line\n');
+    socket.close();
+  });
+
 });

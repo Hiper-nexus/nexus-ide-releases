@@ -126,6 +126,7 @@ Modules adapted from ORCA remote/relay/SSH/WSL concepts at the same pin
 `143c36e566483006fe54fa2716b019ec00599752` (MIT, Copyright (c) 2026 Lovecast Inc.):
 
 - `src/main/remote/terminal-stream-session.ts` (production session over terminal-stream-protocol)
+- `src/main/remote/remote-terminal-streams.ts` (remote-bridge production path: pane.read/stream framing)
 - `src/main/remote/relay-framing.ts`
 - `src/main/remote/ssh-path.ts`
 - `src/main/remote/wsl-detect.ts`
