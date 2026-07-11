@@ -19,6 +19,7 @@ import {
   shouldRequestMicrophoneAccess,
   shouldUseUserDataOverride,
 } from "./smoke-core";
+import { shouldCreateWindowOnActivate } from "./app-lifecycle";
 
 // Must run before Electron emits `ready`. The handler itself is installed in
 // bootstrap (after ready), before the first BrowserWindow is created.
@@ -456,8 +457,18 @@ if (!wireDeepLinks()) {
   });
 }
 
+let quitPromptOpen = false;
+let shutdownComplete = false;
+let shutdownPromise: Promise<void> | null = null;
+
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
+  if (
+    shouldCreateWindowOnActivate({
+      isShutdownInProgress: shutdownPromise !== null,
+      isShutdownComplete: shutdownComplete,
+      windowCount: BrowserWindow.getAllWindows().length,
+    })
+  ) {
     createMainWindow();
   }
 });
@@ -501,10 +512,6 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
-
-let quitPromptOpen = false;
-let shutdownComplete = false;
-let shutdownPromise: Promise<void> | null = null;
 
 function shutdown(): Promise<void> {
   if (shutdownComplete) return Promise.resolve();
