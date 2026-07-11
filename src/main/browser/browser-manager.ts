@@ -42,7 +42,10 @@ import {
   browserClickResultSchema,
   browserElementDescriptorSchema,
   browserFillResultSchema,
+  browserHoverResultSchema,
   browserPageReadResultSchema,
+  browserPressResultSchema,
+  browserScrollResultSchema,
   browserWaitResultSchema,
 } from './browser-automation-schema';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -946,6 +949,69 @@ export async function waitForBrowser(
       },
       timeoutMs + 2_000,
     ),
+  );
+  return { paneId, ...result };
+}
+
+export async function scrollBrowserPane(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  options: {
+    ref?: string;
+    dx?: number;
+    dy?: number;
+    x?: number;
+    y?: number;
+    behavior?: 'auto' | 'smooth';
+  },
+): Promise<{
+  paneId: string;
+  scrolled: true;
+  scrollX: number;
+  scrollY: number;
+  target: 'page' | 'element';
+}> {
+  const result = browserScrollResultSchema.parse(
+    await runBrowserAutomationForPane(paneId, scope, 'scroll', {
+      ...(options.ref ? { ref: options.ref } : {}),
+      ...(options.dx !== undefined ? { dx: options.dx } : {}),
+      ...(options.dy !== undefined ? { dy: options.dy } : {}),
+      ...(options.x !== undefined ? { x: options.x } : {}),
+      ...(options.y !== undefined ? { y: options.y } : {}),
+      ...(options.behavior ? { behavior: options.behavior } : {}),
+    }),
+  );
+  return { paneId, ...result };
+}
+
+export async function pressBrowserKey(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  options: {
+    key: string;
+    ref?: string;
+    modifiers?: readonly string[];
+  },
+): Promise<{ paneId: string; pressed: true; key: string; ref?: string }> {
+  const result = browserPressResultSchema.parse(
+    await runBrowserAutomationForPane(paneId, scope, 'press', {
+      key: options.key,
+      ...(options.ref ? { ref: options.ref } : {}),
+      ...(options.modifiers && options.modifiers.length > 0
+        ? { modifiers: options.modifiers }
+        : {}),
+    }),
+  );
+  return { paneId, ...result };
+}
+
+export async function hoverBrowserElement(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  ref: string,
+): Promise<{ paneId: string; hovered: true; element: BrowserElementDescriptor }> {
+  const result = browserHoverResultSchema.parse(
+    await runBrowserAutomationForPane(paneId, scope, 'hover', { ref }),
   );
   return { paneId, ...result };
 }

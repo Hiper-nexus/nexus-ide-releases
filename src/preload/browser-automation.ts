@@ -29,6 +29,36 @@ const MAX_DOM_NODES = 50_000;
 const MAX_LIVE_REFS = 2_000;
 const MAX_FILL_CHARS = 8_192;
 const MAX_WAIT_MS = 15_000;
+const MAX_SCROLL_OFFSET = 100_000;
+
+/** Named keyboard keys accepted by `press` (KeyboardEvent.key values). */
+const ALLOWED_PRESS_KEYS = new Set([
+  'Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'Insert',
+  'Home', 'End', 'PageUp', 'PageDown',
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  ' ', 'Space', 'ContextMenu', 'CapsLock', 'NumLock', 'ScrollLock',
+  ...Array.from({ length: 12 }, (_, index) => `F${index + 1}`),
+]);
+
+const ALLOWED_PRESS_MODIFIERS = new Set(['Shift', 'Control', 'Alt', 'Meta']);
+
+function isAllowedPressKey(key: string): boolean {
+  if (ALLOWED_PRESS_KEYS.has(key)) return true;
+  // Single printable ASCII character (letters, digits, punctuation) — covers
+  // text input without allowing control/escape sequences.
+  return key.length === 1 && /[\x20-\x7e]/.test(key);
+}
+
+function finiteClampInt(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(max, Math.max(min, Math.round(value)))
+    : fallback;
+}
 const POLL_MS = 50;
 const ELEMENT_REF_PATTERN = /^e[1-9]\d{0,7}$/;
 const DESIGN_GENERATION_PATTERN =
@@ -571,6 +601,147 @@ export function createBrowserAutomation(
     };
   }
 
+  function scroll(args: Record<string, unknown>): {
+    scrolled: true;
+    scrollX: number;
+    scrollY: number;
+    target: 'page' | 'element';
+  } {
+    const behavior = args.behavior === 'smooth' ? 'smooth' : 'auto';
+    if (args.ref !== undefined && args.ref !== null) {
+      // Bring the element into view (centered) without scrolling the page by hand.
+      const element = resolveRef(args.ref);
+      if (!isElementVisible(win, element)) {
+        throw new Error('browser element is not visible');
+      }
+      const scroller = element as HTMLElement & {
+        scrollIntoView?: (options?: ScrollIntoViewOptions) => void;
+      };
+      // scrollIntoView is a no-op in environments without layout (jsdom); guard
+      // so the command degrades gracefully instead of throwing.
+      if (typeof scroller.scrollIntoView === 'function') {
+        scroller.scrollIntoView({ block: 'center', inline: 'center', behavior });
+      }
+      return {
+        scrolled: true,
+        scrollX: Math.round(win.scrollX),
+        scrollY: Math.round(win.scrollY),
+        target: 'element',
+      };
+    }
+    const dx = finiteClampInt(args.dx, -MAX_SCROLL_OFFSET, MAX_SCROLL_OFFSET, 0);
+    const dy = finiteClampInt(args.dy, -MAX_SCROLL_OFFSET, MAX_SCROLL_OFFSET, 0);
+    const x =
+      args.x === undefined
+        ? undefined
+        : finiteClampInt(args.x, 0, MAX_SCROLL_OFFSET, win.scrollX);
+    const y =
+      args.y === undefined
+        ? undefined
+        : finiteClampInt(args.y, 0, MAX_SCROLL_OFFSET, win.scrollY);
+    if (x !== undefined || y !== undefined) {
+      win.scrollTo(x ?? win.scrollX, y ?? win.scrollY);
+    } else {
+      win.scrollBy(dx, dy);
+    }
+    return {
+      scrolled: true,
+      scrollX: Math.round(win.scrollX),
+      scrollY: Math.round(win.scrollY),
+      target: 'page',
+    };
+  }
+
+  function press(args: Record<string, unknown>): {
+    pressed: true;
+    key: string;
+    ref?: string;
+  } {
+    const key = typeof args.key === 'string' ? args.key : '';
+    if (!key || key.length > 32 || !isAllowedPressKey(key)) {
+      throw new Error('browser press key is invalid or not allowed');
+    }
+    const modifiers = Array.isArray(args.modifiers)
+      ? (args.modifiers.filter((m): m is string => typeof m === 'string'))
+      : [];
+    for (const modifier of modifiers) {
+      if (!ALLOWED_PRESS_MODIFIERS.has(modifier)) {
+        throw new Error('invalid browser press modifier');
+      }
+    }
+    let target: Element;
+    if (args.ref !== undefined && args.ref !== null) {
+      target = resolveRef(args.ref);
+      if (!isElementVisible(win, target)) {
+        throw new Error('browser element is not visible');
+      }
+    } else {
+      target =
+        win.document.activeElement instanceof win.Element
+          ? win.document.activeElement
+          : win.document.body;
+    }
+    (target as HTMLElement).focus?.({ preventScroll: true });
+    // Synthesized KeyboardEvents carry isTrusted=false; this is the best a
+    // non-CDP preload can do. React/Vue bind on keydown so this covers the
+    // common case; sites that gate on isTrusted will not react.
+    const opts = {
+      key,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      shiftKey: modifiers.includes('Shift'),
+      ctrlKey: modifiers.includes('Control'),
+      altKey: modifiers.includes('Alt'),
+      metaKey: modifiers.includes('Meta'),
+    };
+    target.dispatchEvent(new win.KeyboardEvent('keydown', opts));
+    target.dispatchEvent(new win.KeyboardEvent('keyup', opts));
+    const result: { pressed: true; key: string; ref?: string } = {
+      pressed: true,
+      key,
+    };
+    if (args.ref !== undefined && args.ref !== null) {
+      result.ref = refFor(target);
+    }
+    return result;
+  }
+
+  function hover(args: Record<string, unknown>): {
+    hovered: true;
+    element: BrowserElementDescriptor;
+  } {
+    const element = resolveRef(args.ref);
+    if (!isElementVisible(win, element)) {
+      throw new Error('browser element is not visible');
+    }
+    const rect = element.getBoundingClientRect();
+    const cx = rect.x + rect.width / 2;
+    const cy = rect.y + rect.height / 2;
+    const base = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: cx,
+      clientY: cy,
+    };
+    const mousePointer = { ...base, pointerType: 'mouse' as const };
+    // Full pointer + mouse over/enter sequence so :hover state, tooltip
+    // triggers, and JS hover handlers all fire as a browser would.
+    element.dispatchEvent(new win.PointerEvent('pointermove', mousePointer));
+    element.dispatchEvent(new win.MouseEvent('mousemove', base));
+    element.dispatchEvent(new win.PointerEvent('pointerover', mousePointer));
+    element.dispatchEvent(new win.MouseEvent('mouseover', base));
+    element.dispatchEvent(
+      new win.PointerEvent('pointerenter', { ...mousePointer, bubbles: false }),
+    );
+    element.dispatchEvent(
+      new win.MouseEvent('mouseenter', { ...base, bubbles: false }),
+    );
+    (element as HTMLElement).focus?.({ preventScroll: true });
+    return { hovered: true, element: describe(element) };
+  }
+
   return {
     async run(command, args) {
       if (command === 'read') return read(args);
@@ -578,6 +749,9 @@ export function createBrowserAutomation(
       if (command === 'click') return click(args);
       if (command === 'fill') return fill(args);
       if (command === 'wait') return wait(args);
+      if (command === 'scroll') return scroll(args);
+      if (command === 'press') return press(args);
+      if (command === 'hover') return hover(args);
       if (command === 'design_enable') {
         return ensureDesignMode().enable(designGeneration(args));
       }

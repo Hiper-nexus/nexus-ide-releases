@@ -3,15 +3,18 @@ import {
   captureBrowserScreenshot,
   clickBrowserElement,
   fillBrowserElement,
+  hoverBrowserElement,
   inspectBrowserElement,
   loadBrowser,
+  pressBrowserKey,
   readBrowserPage,
+  scrollBrowserPane,
   waitForBrowser,
 } from '../browser/browser-manager';
 import { collectPerfSnapshot } from '../perf/perf-ipc';
 import { listPreviews, startPreview, stopPreview } from './preview-server';
 import { requestBrowserPane } from './pane-registry';
-import { authorizePaneRef, num, requireStr, str } from './tool-util';
+import { authorizePaneRef, num, requireStr, str, strArray } from './tool-util';
 import { resolveCwdForScope } from './workspace-path';
 import { executionScopeFor } from './gate';
 
@@ -254,6 +257,88 @@ const perfSnapshotTool: McpToolDef = {
   handler: async () => collectPerfSnapshot(),
 };
 
+const browserScrollTool: McpToolDef = {
+  name: 'nexus_browser_scroll',
+  description:
+    'Scroll a browser pane. With `ref`, scrolls that element into view (centered). ' +
+    'Without `ref`, scrolls the page: use `dx`/`dy` for relative offsets or ' +
+    '`x`/`y` for absolute positions. `behavior` can be "auto" (default) or "smooth".',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paneId: { type: 'string' },
+      ref: { type: 'string' },
+      dx: { type: 'number' },
+      dy: { type: 'number' },
+      x: { type: 'number' },
+      y: { type: 'number' },
+      behavior: { type: 'string', enum: ['auto', 'smooth'] },
+    },
+    required: ['paneId'],
+  },
+  handler: async (args, ctx) => {
+    const paneId = requireStr(args, 'paneId');
+    authorizePaneRef(ctx, paneId, 'write');
+    return scrollBrowserPane(paneId, ctx.scope, {
+      ref: str(args, 'ref'),
+      dx: num(args, 'dx'),
+      dy: num(args, 'dy'),
+      x: num(args, 'x'),
+      y: num(args, 'y'),
+      behavior: str(args, 'behavior') === 'smooth' ? 'smooth' : undefined,
+    });
+  },
+};
+
+const browserPressTool: McpToolDef = {
+  name: 'nexus_browser_press',
+  description:
+    'Press a keyboard key on the focused element, or on a `ref` when given ' +
+    '(the element is focused first). Accepts named keys (Enter, Tab, Escape, ' +
+    'ArrowUp/Down/Left/Right, Backspace, Delete, F1-F12, ...) or a single ' +
+    'printable character. Modifiers: Shift, Control, Alt, Meta.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paneId: { type: 'string' },
+      ref: { type: 'string' },
+      key: { type: 'string' },
+      modifiers: {
+        type: 'array',
+        items: { type: 'string', enum: ['Shift', 'Control', 'Alt', 'Meta'] },
+      },
+    },
+    required: ['paneId', 'key'],
+  },
+  handler: async (args, ctx) => {
+    const paneId = requireStr(args, 'paneId');
+    authorizePaneRef(ctx, paneId, 'write');
+    return pressBrowserKey(paneId, ctx.scope, {
+      key: requireStr(args, 'key'),
+      ref: str(args, 'ref'),
+      modifiers: strArray(args, 'modifiers'),
+    });
+  },
+};
+
+const browserHoverTool: McpToolDef = {
+  name: 'nexus_browser_hover',
+  description:
+    'Hover a visible element by opaque ref (dispatches the pointer + mouse ' +
+    'over/enter sequence and focuses it). Useful for triggering tooltips, ' +
+    'dropdown menus, and :hover-driven UI.',
+  inputSchema: {
+    type: 'object',
+    properties: { paneId: { type: 'string' }, ref: { type: 'string' } },
+    required: ['paneId', 'ref'],
+  },
+  handler: async (args, ctx) => {
+    const paneId = requireStr(args, 'paneId');
+    authorizePaneRef(ctx, paneId, 'write');
+    return hoverBrowserElement(paneId, ctx.scope, requireStr(args, 'ref'));
+  },
+};
+
 export function buildBrowserTools(): McpToolDef[] {
   return [
     previewStartTool,
@@ -266,6 +351,9 @@ export function buildBrowserTools(): McpToolDef[] {
     browserClickTool,
     browserFillTool,
     browserWaitTool,
+    browserScrollTool,
+    browserPressTool,
+    browserHoverTool,
     perfSnapshotTool,
   ];
 }

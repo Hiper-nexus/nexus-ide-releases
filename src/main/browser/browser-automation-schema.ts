@@ -65,3 +65,24 @@ export const browserWaitResultSchema = z
     elapsedMs: z.number().int().min(0).max(60_000),
   })
   .strict();
+
+export const browserScrollResultSchema = z
+  .object({
+    scrolled: z.literal(true),
+    scrollX: z.number().finite().min(-100_000).max(100_000),
+    scrollY: z.number().finite().min(-100_000).max(100_000),
+    target: z.enum(['page', 'element']),
+  })
+  .strict();
+
+export const browserPressResultSchema = z
+  .object({
+    pressed: z.literal(true),
+    key: z.string().min(1).max(32),
+    ref: z.string().regex(/^e[1-9]\d{0,7}$/).optional(),
+  })
+  .strict();
+
+export const browserHoverResultSchema = z
+  .object({ hovered: z.literal(true), element: browserElementDescriptorSchema })
+  .strict();

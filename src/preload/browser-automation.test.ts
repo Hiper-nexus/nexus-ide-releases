@@ -146,4 +146,90 @@ describe('isolated browser automation', () => {
     expect(read.bodyText.length).toBeLessThanOrEqual(100);
     expect(read.truncated).toBe(true);
   });
+
+  it('scrolls the page by a relative offset and reports the page target', async () => {
+    const { automation } = fixture();
+    const result = (await automation.run('scroll', { dx: 0, dy: 200 })) as {
+      scrolled: true;
+      target: 'page' | 'element';
+      scrollX: number;
+      scrollY: number;
+    };
+    expect(result.scrolled).toBe(true);
+    expect(result.target).toBe('page');
+    expect(Number.isFinite(result.scrollX)).toBe(true);
+    expect(Number.isFinite(result.scrollY)).toBe(true);
+  });
+
+  it('scrolls an element into view when a ref is given', async () => {
+    const { automation } = fixture();
+    const read = (await automation.run('read', {})) as {
+      elements: Array<{ ref: string; name: string }>;
+    };
+    const button = read.elements.find((element) => element.name === 'Salvar');
+    expect(button).toBeTruthy();
+    const result = (await automation.run('scroll', { ref: button!.ref })) as {
+      scrolled: true;
+      target: 'page' | 'element';
+    };
+    expect(result.scrolled).toBe(true);
+    expect(result.target).toBe('element');
+  });
+
+  it('press dispatches keydown with the given key on the focused element', async () => {
+    const { dom, automation } = fixture();
+    const button = dom.window.document.querySelector('#save') as HTMLButtonElement;
+    const seen: string[] = [];
+    button.addEventListener('keydown', (event) => {
+      seen.push((event as KeyboardEvent).key);
+    });
+    button.focus();
+    const result = (await automation.run('press', { key: 'Enter' })) as {
+      pressed: true;
+      key: string;
+    };
+    expect(result.pressed).toBe(true);
+    expect(result.key).toBe('Enter');
+    expect(seen).toContain('Enter');
+  });
+
+  it('press accepts a single char and modifiers, and rejects disallowed keys/modifiers', async () => {
+    const { dom, automation } = fixture();
+    const input = dom.window.document.querySelector('#query') as HTMLInputElement;
+    input.focus();
+    const ok = (await automation.run('press', { key: 'a', modifiers: ['Shift'] })) as {
+      pressed: true;
+      key: string;
+    };
+    expect(ok.pressed).toBe(true);
+    expect(ok.key).toBe('a');
+
+    await expect(automation.run('press', { key: 'Control+Alt+Del' })).rejects.toThrow(
+      /invalid|not allowed/i,
+    );
+    await expect(
+      automation.run('press', { key: 'Enter', modifiers: ['Hyper'] }),
+    ).rejects.toThrow(/modifier/i);
+  });
+
+  it('hover dispatches the mouse over sequence on a previously read ref', async () => {
+    const { dom, automation } = fixture();
+    const read = (await automation.run('read', {})) as {
+      elements: Array<{ ref: string; name: string }>;
+    };
+    const button = read.elements.find((element) => element.name === 'Salvar');
+    expect(button).toBeTruthy();
+    const el = dom.window.document.querySelector('#save')!;
+    let hovered = false;
+    el.addEventListener('mouseover', () => {
+      hovered = true;
+    });
+    const result = (await automation.run('hover', { ref: button!.ref })) as {
+      hovered: true;
+      element: { tag: string };
+    };
+    expect(result.hovered).toBe(true);
+    expect(result.element.tag).toBe('button');
+    expect(hovered).toBe(true);
+  });
 });
