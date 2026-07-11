@@ -86,13 +86,16 @@ const state = vi.hoisted(() => {
     getMissionWorkflow: vi.fn(),
     assertMutationAllowed: vi.fn(),
     fromWebContents: vi.fn(() => win),
+    webContentsAvailable: true,
   };
 });
 
 vi.mock('electron', () => ({
   BrowserWindow: { fromWebContents: state.fromWebContents },
   WebContentsView: class MockWebContentsView {
-    webContents = state.guest;
+    get webContents() {
+      return state.webContentsAvailable ? state.guest : undefined;
+    }
     setVisible = vi.fn();
     setBounds = vi.fn();
 
@@ -160,6 +163,7 @@ describe('browser manager pinned network boundary', () => {
     vi.clearAllMocks();
     state.order.length = 0;
     state.handlers.clear();
+    state.webContentsAvailable = true;
     state.paneInfo.mockReturnValue(null);
     state.getMissionWorkflow.mockReturnValue({ contract: null, workflow: null });
   });
@@ -317,6 +321,28 @@ describe('browser manager pinned network boundary', () => {
 
     expect(() => destroyBrowser('shutdown-pane', scope)).not.toThrow();
     expect(state.guest.close).toHaveBeenCalled();
+    expect(state.proxy.close).toHaveBeenCalled();
+  });
+
+  it('uses cached pane state when WebContents disappears during an async event', async () => {
+    installPinnedBrowserProxy.mockResolvedValue(state.proxy);
+    await ensureBrowser(state.owner as never, scope, 'shutdown-state-pane');
+    const didStopLoading = state.guest.on.mock.calls.find(
+      ([event]) => event === 'did-stop-loading',
+    )?.[1] as (() => void) | undefined;
+    expect(didStopLoading).toBeTypeOf('function');
+    state.webContentsAvailable = false;
+
+    expect(() => didStopLoading!()).not.toThrow();
+    expect(state.owner.send).toHaveBeenCalledWith(
+      BROWSER_CHANNELS.state,
+      expect.objectContaining({
+        paneId: 'shutdown-state-pane',
+        url: 'about:blank',
+        loading: false,
+      }),
+    );
+    destroyBrowser('shutdown-state-pane', scope);
     expect(state.proxy.close).toHaveBeenCalled();
   });
 

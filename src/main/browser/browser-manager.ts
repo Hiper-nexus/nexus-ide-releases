@@ -460,16 +460,32 @@ function isSyntacticallySafeNavigation(rawUrl: string): boolean {
 }
 
 function stateOf(paneId: string, entry: BrowserEntry): BrowserPaneState {
-  const wc = entry.view.webContents;
-  return {
+  const fallback: BrowserPaneState = {
     paneId,
-    url: wc.getURL() || entry.url,
-    title: wc.getTitle() || entry.title,
-    canGoBack: wc.canGoBack(),
-    canGoForward: wc.canGoForward(),
-    loading: entry.loading || wc.isLoading(),
+    url: entry.url,
+    title: entry.title,
+    canGoBack: false,
+    canGoForward: false,
+    loading: false,
     error: entry.error,
   };
+  try {
+    const wc = entry.view.webContents;
+    if (!wc || wc.isDestroyed() || wc.isCrashed()) return fallback;
+    return {
+      paneId,
+      url: wc.getURL() || entry.url,
+      title: wc.getTitle() || entry.title,
+      canGoBack: wc.canGoBack(),
+      canGoForward: wc.canGoForward(),
+      loading: entry.loading || wc.isLoading(),
+      error: entry.error,
+    };
+  } catch {
+    // WebContentsView.webContents can disappear between an async event and
+    // teardown. Cached state is sufficient while the pane is closing.
+    return fallback;
+  }
 }
 
 function redactBrowserLabel(value: string): string {
@@ -502,8 +518,12 @@ function liveOwnerWindow(owner: WebContents): BrowserWindow | null {
 
 function emitState(entry: BrowserEntry): BrowserPaneState {
   const state = stateOf(entry.paneId, entry);
-  if (canSend(entry.owner)) {
-    entry.owner.send(BROWSER_CHANNELS.state, state);
+  try {
+    if (canSend(entry.owner)) {
+      entry.owner.send(BROWSER_CHANNELS.state, state);
+    }
+  } catch {
+    // The owner may be destroyed after the liveness check during shutdown.
   }
   return state;
 }
