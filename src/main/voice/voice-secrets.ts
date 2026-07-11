@@ -31,7 +31,8 @@ export function hasVoiceCredential(envVar: string): boolean {
 export type VoiceApiKeySource = 'stored' | 'env' | 'missing';
 
 export function voiceApiKeySource(envVar: string): VoiceApiKeySource {
-  if (getVoiceApiKey(envVar)?.trim()) return 'stored';
+  // hasSecret only — never decrypt for presence checks (boot hang / Keychain).
+  if (hasStoredVoiceApiKey(envVar)) return 'stored';
   if (process.env[envVar]?.trim()) return 'env';
   return 'missing';
 }

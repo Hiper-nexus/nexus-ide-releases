@@ -54,28 +54,22 @@ export function isSecureStorageAvailable(): boolean {
   }
 }
 
-function loadFromDisk(): Map<string, string> {
-  const out = new Map<string, string>();
-  if (!isSecureStorageAvailable()) return out;
-  let raw: Record<string, string>;
+/**
+ * Decrypt one blob. Keychain (SecItemCopyMatching) can block for a long time
+ * when the agent launches without an unlocked session — never decrypt the whole
+ * vault at once on boot/getInfo.
+ */
+function decryptBlob(blob: string): string | null {
   try {
-    raw = JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf8'));
+    const plain = safeStorage.decryptString(Buffer.from(blob, 'base64'));
+    return plain || null;
   } catch {
-    return out;
+    return null;
   }
-  for (const [adapterId, blob] of Object.entries(raw)) {
-    try {
-      const plain = safeStorage.decryptString(Buffer.from(blob, 'base64'));
-      if (plain) out.set(adapterId, plain);
-    } catch {
-      // Undecryptable (e.g. keychain reset) — skip; user can re-enter.
-    }
-  }
-  return out;
 }
 
 function ensureCache(): Map<string, string> {
-  if (!cache) cache = loadFromDisk();
+  if (!cache) cache = new Map();
   return cache;
 }
 
@@ -272,11 +266,34 @@ function persistDelta(key: string, plainValue: string | null): SecretWriteResult
 // `acctcred:<id>` (Claude subscription credential blobs). Same encrypted file.
 
 export function getSecret(key: string): string | null {
-  return ensureCache().get(key) ?? null;
+  const store = ensureCache();
+  if (store.has(key)) return store.get(key) ?? null;
+  if (!isSecureStorageAvailable()) return null;
+  let raw: Record<string, string>;
+  try {
+    raw = readRawFromDisk();
+  } catch {
+    return null;
+  }
+  const blob = raw[key];
+  if (typeof blob !== 'string') return null;
+  const plain = decryptBlob(blob);
+  if (plain) store.set(key, plain);
+  return plain;
 }
 
+/**
+ * Presence only — reads the encrypted vault index without Keychain decrypt.
+ * Boot/getInfo must use this so SecItemCopyMatching never blocks the UI/mic.
+ */
 export function hasSecret(key: string): boolean {
-  return ensureCache().has(key);
+  if (ensureCache().has(key)) return true;
+  try {
+    const raw = readRawFromDisk();
+    return Object.prototype.hasOwnProperty.call(raw, key);
+  } catch {
+    return false;
+  }
 }
 
 export function setSecret(key: string, value: string): SecretWriteResult {
@@ -300,11 +317,11 @@ export function deleteSecret(key: string): SecretWriteResult {
 }
 
 export function hasKey(adapterId: string): boolean {
-  return ensureCache().has(adapterId);
+  return hasSecret(adapterId);
 }
 
 export function getKey(adapterId: string): string | null {
-  return ensureCache().get(adapterId) ?? null;
+  return getSecret(adapterId);
 }
 
 /** Masked preview for the UI — never returns the raw key. */

@@ -347,14 +347,19 @@ function collectVoiceEnvVars(
       byEnv.set(envVar, providers);
     }
   }
-  return [...byEnv.entries()].map(([envVar, providers]) => ({
-    envVar,
-    providers: [...providers],
-    hasEnv: typeof process.env[envVar] === 'string' && process.env[envVar]!.trim().length > 0,
-    hasStoredKey: hasStoredVoiceApiKey(envVar),
-    keyMasked: maskedVoiceApiKey(envVar),
-    secureStorageAvailable: isVoiceSecretStorageAvailable(),
-  }));
+  return [...byEnv.entries()].map(([envVar, providers]) => {
+    // hasStoredKey must NOT decrypt (Keychain). Mask is presence-only on the
+    // status snapshot — never call maskedVoiceApiKey here (it decrypts every key).
+    const hasStored = hasStoredVoiceApiKey(envVar);
+    return {
+      envVar,
+      providers: [...providers],
+      hasEnv: typeof process.env[envVar] === 'string' && process.env[envVar]!.trim().length > 0,
+      hasStoredKey: hasStored,
+      keyMasked: hasStored ? '••••' : null,
+      secureStorageAvailable: isVoiceSecretStorageAvailable(),
+    };
+  });
 }
 
 /**
