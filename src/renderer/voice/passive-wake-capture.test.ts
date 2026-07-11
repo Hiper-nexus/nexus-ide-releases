@@ -50,35 +50,66 @@ describe('PassiveWakeCapture', () => {
       silenceMs: 250,
       maxMs: 500,
       cooldownMs: 500,
+      forceEmitMinPeakRms: 0.04,
     });
 
     expect(capture.offer({ frame: FRAME, rawRms: 0.02, now: 0, sampleRate: SAMPLE_RATE, preRoll: [] })).toBeNull();
     expect(capture.offer({ frame: SILENCE, rawRms: 0.001, now: 500, sampleRate: SAMPLE_RATE, preRoll: [] })).toBeNull();
     expect(capture.isActive()).toBe(false);
 
-    // The cooldown also prevents the same noise source from opening a second
-    // cloud STT request right after the discarded sample.
     expect(capture.offer({ frame: FRAME, rawRms: 0.02, now: 600, sampleRate: SAMPLE_RATE, preRoll: [] })).toBeNull();
     expect(capture.isActive()).toBe(false);
   });
 
-  it('drops continuous ambient energy that only reaches the hard limit', () => {
+  it('force-emits loud continuous speech at max (Jarvis without silence gap)', () => {
     const capture = new PassiveWakeCapture({
       rawSpeechRms: 0.008,
       minSpeechMs: 200,
       silenceMs: 300,
       maxMs: 500,
       cooldownMs: 500,
+      forceEmitMinPeakRms: 0.04,
     });
 
-    expect(capture.offer({ frame: FRAME, rawRms: 0.02, now: 0, sampleRate: SAMPLE_RATE, preRoll: [] })).toBeNull();
-    expect(capture.offer({ frame: FRAME, rawRms: 0.02, now: 100, sampleRate: SAMPLE_RATE, preRoll: [] })).toBeNull();
-    expect(capture.offer({ frame: FRAME, rawRms: 0.02, now: 200, sampleRate: SAMPLE_RATE, preRoll: [] })).toBeNull();
-    expect(capture.offer({ frame: FRAME, rawRms: 0.02, now: 300, sampleRate: SAMPLE_RATE, preRoll: [] })).toBeNull();
-    expect(capture.offer({ frame: FRAME, rawRms: 0.02, now: 400, sampleRate: SAMPLE_RATE, preRoll: [] })).toBeNull();
-    expect(capture.offer({ frame: FRAME, rawRms: 0.02, now: 500, sampleRate: SAMPLE_RATE, preRoll: [] })).toBeNull();
+    expect(capture.offer({ frame: FRAME, rawRms: 0.08, now: 0, sampleRate: SAMPLE_RATE, preRoll: [] })).toBeNull();
+    expect(capture.offer({ frame: FRAME, rawRms: 0.08, now: 100, sampleRate: SAMPLE_RATE, preRoll: [] })).toBeNull();
+    expect(capture.offer({ frame: FRAME, rawRms: 0.08, now: 200, sampleRate: SAMPLE_RATE, preRoll: [] })).toBeNull();
+    expect(capture.offer({ frame: FRAME, rawRms: 0.08, now: 300, sampleRate: SAMPLE_RATE, preRoll: [] })).toBeNull();
+    // durationMs = now - started + frameMs → 400 + 100 = 500 = maxMs
+    const done = capture.offer({
+      frame: FRAME,
+      rawRms: 0.08,
+      now: 400,
+      sampleRate: SAMPLE_RATE,
+      preRoll: [],
+    });
 
+    expect(done).not.toBeNull();
+    expect(done?.forcedByMax).toBe(true);
+    expect(done!.speechMs).toBeGreaterThanOrEqual(200);
     expect(capture.isActive()).toBe(false);
-    expect(capture.offer({ frame: FRAME, rawRms: 0.02, now: 600, sampleRate: SAMPLE_RATE, preRoll: [] })).toBeNull();
+  });
+
+  it('still drops quiet ambient that only reaches max without peak speech', () => {
+    const capture = new PassiveWakeCapture({
+      rawSpeechRms: 0.008,
+      minSpeechMs: 200,
+      silenceMs: 300,
+      maxMs: 500,
+      cooldownMs: 500,
+      forceEmitMinPeakRms: 0.05,
+    });
+
+    // Continuous low energy just above hangover — never peaks.
+    for (let t = 0; t <= 500; t += 100) {
+      capture.offer({
+        frame: FRAME,
+        rawRms: 0.015,
+        now: t,
+        sampleRate: SAMPLE_RATE,
+        preRoll: [],
+      });
+    }
+    expect(capture.isActive()).toBe(false);
   });
 });

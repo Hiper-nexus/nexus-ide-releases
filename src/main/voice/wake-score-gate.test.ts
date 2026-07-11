@@ -14,12 +14,13 @@ describe('wake score gate', () => {
   it('accepts compact wake scores and PT-accent mid scores', () => {
     expect(shouldDetectWakeScore(0.4556)).toBe(true);
     expect(shouldDetectWakeScore(0.08)).toBe(true);
+    expect(shouldDetectWakeScore(0.015)).toBe(true);
     expect(shouldDetectWakeScore(WAKE_SCORE_THRESHOLD)).toBe(true);
   });
 
   it('rejects ambient-floor scores below the PT-calibrated cut', () => {
+    expect(shouldDetectWakeScore(0.005)).toBe(false);
     expect(shouldDetectWakeScore(0.01)).toBe(false);
-    expect(shouldDetectWakeScore(0.03)).toBe(false);
   });
 
   it('rejects invalid scores', () => {
@@ -31,13 +32,13 @@ describe('wake score gate', () => {
     expect(shouldDetectWakeScores({ embedded: 0.43, custom: 0.01 })).toBe(true);
     expect(
       shouldDetectWakeScores({
-        embedded: 0.02,
+        embedded: 0.005,
         custom: CUSTOM_WAKE_SCORE_THRESHOLD + 0.01,
       }),
     ).toBe(true);
     expect(
       shouldDetectWakeScores({
-        embedded: 0.02,
+        embedded: 0.005,
         custom: CUSTOM_WAKE_SCORE_THRESHOLD - 0.01,
       }),
     ).toBe(false);
@@ -99,13 +100,13 @@ describe('wake score gate', () => {
   it('allows the verified open-source Hey Jarvis head to improve recall without replacing base', () => {
     expect(
       shouldDetectWakeScores({
-        embedded: 0.02,
+        embedded: 0.005,
         official: OFFICIAL_WAKE_SCORE_THRESHOLD + 0.01,
       }),
     ).toBe(true);
     expect(
       shouldDetectWakeScores({
-        embedded: 0.02,
+        embedded: 0.005,
         official: OFFICIAL_WAKE_SCORE_THRESHOLD - 0.01,
       }),
     ).toBe(false);

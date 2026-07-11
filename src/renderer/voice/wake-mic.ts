@@ -54,10 +54,11 @@ const PASSIVE_WAKE_PREROLL_MS = 300;
 /** Janela que será reaproveitada quando o STT confirmar o wake. */
 const PASSIVE_WAKE_HANDOFF_MS = 2_500;
 /**
- * Piso de fala pro VAD passivo. Usa max(raw, post-AGC): o AGC já eleva fala
- * longe do mic; raw sozinho (~0.006) perdia "Jarvis" falado normal.
+ * Piso de fala pro VAD passivo (pós-AGC). 0.004 + hangover=mesmo valor fazia
+ * ambient SoftAgc segurar o clip aberto até maxMs e DESCARTAR (zero STT).
+ * 0.012 onset + hangover 0.006 no PassiveWakeCapture fecha "Jarvis" real.
  */
-const PASSIVE_WAKE_RAW_SPEECH_RMS = 0.004;
+const PASSIVE_WAKE_RAW_SPEECH_RMS = 0.012;
 const PASSIVE_WAKE_POST_AGC_SPEECH_RMS = 0.012;
 /** Ganho inicial do AGC próprio (ver agc.ts) — o valor 12x foi o melhor
  * fixo medido ao vivo em 2026-07-07; o AGC parte dele e adapta. */
@@ -139,6 +140,10 @@ export class WakeMic {
 
   private readonly passiveWake = new PassiveWakeCapture({
     rawSpeechRms: PASSIVE_WAKE_RAW_SPEECH_RMS,
+    speechHangoverRms: 0.006,
+    silenceMs: 900,
+    maxMs: 4_500,
+    forceEmitMinPeakRms: 0.04,
   });
 
   // Utterance capture (comando pós-wake/F6) sobre o MESMO stream quente.
@@ -414,6 +419,7 @@ export class WakeMic {
       durationSec: Number(durationSec.toFixed(2)),
       speechMs: Math.round(sample.speechMs),
       rawMaxRms: Number(sample.maxRawRms.toFixed(5)),
+      forcedByMax: Boolean(sample.forcedByMax),
     });
     listener(utterance);
   }

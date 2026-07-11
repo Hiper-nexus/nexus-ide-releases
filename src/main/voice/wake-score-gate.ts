@@ -6,16 +6,14 @@
  * margin above that ceiling so a compact wake is accepted without reopening
  * the false-positive window that the old 0.48 cut avoided.
  */
-// 0.42 calibrado EN Fifine. Logs reais PT-BR MacBook Air (2026-07-11):
-//   fala "Jarvis": peakScore 0.05–0.08, peakRms 0.3–0.8
-//   ruído/ambiente: peakScore ≤ 0.01, peakRms ~0.05–0.15
-// 0.22 ainda era alto demais — o EN head quase nunca dispara em PT.
-// 0.045 + piso de RMS (abaixo) deixa o acústico como voto secundário;
-// o path principal continua VAD→STT→matchWakeWord (Overclock).
-export const WAKE_SCORE_THRESHOLD = 0.045;
+// Logs PT-BR MacBook (2026-07-11, sessão real):
+//   fala alta peakScore 0.015–0.08, peakRms 0.3–0.8
+//   ambient peakScore ≤ 0.005, peakRms ~0.05–0.12
+// 0.045 ainda perdeu 0.0155@rms0.72. Path principal = VAD→STT; acústico é voto.
+export const WAKE_SCORE_THRESHOLD = 0.012;
 
 /** Energia mínima para aceitar o head EN embutido (corta FPs de silêncio). */
-export const EMBEDDED_WAKE_MIN_RMS = 0.12;
+export const EMBEDDED_WAKE_MIN_RMS = 0.18;
 
 /**
  * PT-BR head ("Ei Jarvis") — threshold conservador. O treino sintético local

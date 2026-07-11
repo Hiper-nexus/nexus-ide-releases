@@ -32,6 +32,10 @@ const WAKE_ALIASES = new Set([
   'eijax',
   'rejaves',
   'aja',
+  'jar',
+  'jars',
+  'yarvis',
+  'garvis',
 ]);
 
 /**
@@ -79,7 +83,24 @@ export function matchWakeWord(
   if (isDefault && words.length === 2) {
     const a = normalizeWord(words[0]!);
     const b = normalizeWord(words[1]!);
-    const fillers = new Set(['e', 'ei', 'hey', 'hei', 'oi', 'ola', 'ok', 'ai', 'ae']);
+    const fillers = new Set([
+      'e',
+      'ei',
+      'hey',
+      'hei',
+      'oi',
+      'ola',
+      'ok',
+      'ai',
+      'ae',
+      'acorda',
+      'acordar',
+      'acordou',
+      'ativa',
+      'ativar',
+      'chama',
+      'chamar',
+    ]);
     if (
       fillers.has(a) &&
       b.length >= 2 &&
@@ -94,7 +115,17 @@ export function matchWakeWord(
     const one = normalizeWord(words[0]!);
     if (WAKE_ALIASES.has(one) || one === 'jarvis') return { rest: '' };
     // "heyjarvis" / "eijarbas" colados
-    for (const g of ['hey', 'hei', 'ei', 'e', 'oi', 'ola', 'ok'] as const) {
+    for (const g of [
+      'hey',
+      'hei',
+      'ei',
+      'e',
+      'oi',
+      'ola',
+      'ok',
+      'acorda',
+      'acordar',
+    ] as const) {
       if (one.startsWith(g) && one.length > g.length + 2) {
         const tail = one.slice(g.length);
         if (tokenHit(tail, 'jarvis', true, isDefault)) {
@@ -107,10 +138,20 @@ export function matchWakeWord(
   for (let i = 0; i < words.length; i += 1) {
     const fuzzy = i < 2;
     let consumed = 0;
-    // Token colado "eijarbas" / "heyjarvis" em qualquer posição do início
+    // Token colado "eijarbas" / "heyjarvis" / "acordajarvis" no início
     if (isDefault && fuzzy) {
       const rawTok = normalizeWord(words[i]!);
-      for (const g of ['hey', 'hei', 'ei', 'e', 'oi', 'ola', 'ok'] as const) {
+      for (const g of [
+        'hey',
+        'hei',
+        'ei',
+        'e',
+        'oi',
+        'ola',
+        'ok',
+        'acorda',
+        'acordar',
+      ] as const) {
         if (rawTok.startsWith(g) && rawTok.length > g.length + 2) {
           const tail = rawTok.slice(g.length);
           if (tokenHit(tail, 'jarvis', true, isDefault)) {

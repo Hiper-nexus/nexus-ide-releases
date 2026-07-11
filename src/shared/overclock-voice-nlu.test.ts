@@ -38,11 +38,13 @@ describe('matchWakeWord — distance 1 (fuzzy)', () => {
 });
 
 describe('matchWakeWord — filler + any position', () => {
-  it('matches ei/ok/hey/oi jarvis', () => {
+  it('matches ei/ok/hey/oi/acorda jarvis', () => {
     expect(matchWakeWord('ei jarvis faz o build')?.rest).toBe('faz o build');
     expect(matchWakeWord('ok jarvis mostra as missões')).not.toBeNull();
     expect(matchWakeWord('hey jarvis lista os panes')).not.toBeNull();
     expect(matchWakeWord('oi jarvis cria o squad')).not.toBeNull();
+    expect(matchWakeWord('acorda jarvis')?.rest).toBe('');
+    expect(matchWakeWord('acordar jarvis agora')?.rest).toBe('agora');
   });
   it('matches trailing/mid "obrigado jarvis"', () => {
     expect(matchWakeWord('obrigado jarvis')?.rest).toBe('');
