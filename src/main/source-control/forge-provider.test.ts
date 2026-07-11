@@ -30,6 +30,12 @@ describe('forge authorization', () => {
       assertForgeWriteAuthorized({ ...auth, grantedBy: '' }, 'create-review'),
     ).toBe(false);
   });
+
+  it('rejects an expired grant and honors a still-valid expiry', () => {
+    const expiring = { ...auth, grantedAt: 1_000, expiresAt: 2_000 };
+    expect(assertForgeWriteAuthorized(expiring, 'create-review', 1_500)).toBe(true);
+    expect(assertForgeWriteAuthorized(expiring, 'create-review', 2_001)).toBe(false);
+  });
 });
 
 describe('GitHub forge provider', () => {

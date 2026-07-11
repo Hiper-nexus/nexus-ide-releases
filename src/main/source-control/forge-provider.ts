@@ -18,6 +18,11 @@ export type ForgeAuthorization = {
   readonly grantedAt: number;
   readonly scope: readonly ForgeWriteKind[];
   readonly reason: string;
+  /**
+   * Optional expiry (epoch ms). When set, the grant is rejected once `now`
+   * passes it, so a stale authorization cannot mutate a forge indefinitely.
+   */
+  readonly expiresAt?: number;
 };
 
 export type ForgeAuditEntry = {
@@ -62,16 +67,37 @@ export type ForgeProvider = {
 const auditLog: ForgeAuditEntry[] = [];
 const MAX_AUDIT = 200;
 
+/**
+ * Durable sink for the external-write audit trail. The in-memory ring below is
+ * only a recent-view cache and is lost on restart; when the forge subsystem is
+ * wired, the caller MUST register a persistent sink so external mutations stay
+ * auditable across sessions. Left null by default (unit/latent path).
+ */
+let auditSink: ((entry: ForgeAuditEntry) => void) | null = null;
+
+export function setForgeAuditSink(sink: ((entry: ForgeAuditEntry) => void) | null): void {
+  auditSink = sink;
+}
+
 export function recordForgeAudit(entry: Omit<ForgeAuditEntry, 'at'> & { at?: number }): void {
-  auditLog.unshift({
+  const full: ForgeAuditEntry = {
     at: entry.at ?? Date.now(),
     provider: entry.provider,
     kind: entry.kind,
     authorized: entry.authorized,
     actor: entry.actor,
     detail: entry.detail,
-  });
+  };
+  auditLog.unshift(full);
   if (auditLog.length > MAX_AUDIT) auditLog.length = MAX_AUDIT;
+  if (auditSink) {
+    try {
+      auditSink(full);
+    } catch {
+      // A failing durable sink must not break the mutation path; the in-memory
+      // ring still holds the entry for the recent-view.
+    }
+  }
 }
 
 export function getForgeAuditLog(): readonly ForgeAuditEntry[] {
@@ -85,8 +111,12 @@ export function clearForgeAuditLog(): void {
 export function assertForgeWriteAuthorized(
   auth: ForgeAuthorization,
   kind: ForgeWriteKind,
+  now: number = Date.now(),
 ): boolean {
   if (!auth.grantedBy || !auth.reason) return false;
   if (!Number.isFinite(auth.grantedAt) || auth.grantedAt <= 0) return false;
+  if (auth.expiresAt !== undefined && (!Number.isFinite(auth.expiresAt) || now > auth.expiresAt)) {
+    return false;
+  }
   return auth.scope.includes(kind);
 }

@@ -130,7 +130,7 @@ Modules adapted from ORCA remote/relay/SSH/WSL concepts at the same pin
 - `src/main/remote/relay-framing.ts`
 - `src/main/remote/ssh-path.ts`
 - `src/main/remote/wsl-detect.ts`
-- `src/main/remote/e2ee-pairing.ts`
+- `src/main/remote/device-pairing.ts` (device-pairing proof only; NOT end-to-end encryption — transport confidentiality is TLS)
 - `src/main/remote/remote-capability.ts` (Nexus scope binding; local ProjectExecutionScope authority)
 
 License text: `third_party/licenses/orca-MIT.txt`. Provenance ledger:

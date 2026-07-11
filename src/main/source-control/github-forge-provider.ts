@@ -45,7 +45,7 @@ export function createGitHubForgeProvider(options: GitHubForgeOptions): ForgePro
         });
         return { ok: false, reason: 'unauthorized' };
       }
-      const url = `${apiBase}/repos/${repo.owner}/${repo.name}/pulls`;
+      const url = `${apiBase}/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/pulls`;
       const response = await options.http.postJson(
         url,
         {

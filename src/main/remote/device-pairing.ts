@@ -1,7 +1,14 @@
-// Nexus E2EE pairing for remote/mobile transport.
+// Device pairing proof for remote/mobile transport.
 // Protocol shape adapted from stablyai/orca relay pairing concepts @ 143c36e
 // Copyright (c) 2026 Lovecast Inc. — MIT License (ORCA concepts); Nexus implementation.
 // See third_party/licenses/orca-MIT.txt.
+//
+// SCOPE (read before wiring): this module ONLY proves device identity via a
+// challenge/response over a shared secret. It is NOT end-to-end encryption:
+// there is no key agreement and no message confidentiality here. Transport
+// confidentiality is provided separately by the TLS layer of remote-bridge.
+// Real end-to-end key agreement (e.g. X25519 + AEAD) is required before any
+// mobile/remote wire that claims E2EE.
 
 import { createHash, randomBytes } from 'node:crypto';
 
@@ -31,8 +38,9 @@ export function createPairingChallenge(now = Date.now()): PairingChallenge {
 }
 
 /**
- * Completes pairing when the device returns HMAC-like proof of challenge.
- * Proof = sha256(challenge + deviceSecret) hex — transport encrypts separately.
+ * Completes pairing when the device returns proof of the challenge.
+ * proof = sha256(challenge + deviceSecret) hex. This proves the device holds
+ * the shared secret; it does NOT establish an encrypted channel (see file doc).
  */
 export function completePairing(input: {
   challenge: PairingChallenge;

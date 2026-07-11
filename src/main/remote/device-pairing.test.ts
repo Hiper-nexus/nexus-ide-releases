@@ -3,9 +3,9 @@ import {
   completePairing,
   createPairingChallenge,
   makePairingProof,
-} from './e2ee-pairing';
+} from './device-pairing';
 
-describe('e2ee-pairing', () => {
+describe('device-pairing', () => {
   it('pairs with valid proof and rejects bad/expired', () => {
     const challenge = createPairingChallenge(1_000);
     const secret = 'device-secret';

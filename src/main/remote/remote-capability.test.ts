@@ -24,7 +24,7 @@ describe('remote-capability', () => {
       scope,
     });
     expect(cap.scopeKey).toBe(scopeKeyFromExecutionScope(scope));
-    expect(cap.e2eeRequired).toBe(true);
+    expect(cap.encryptedTransportRequired).toBe(true);
     expect(remoteCapabilityGrantsAgentForce(cap)).toBe(false);
   });
 });

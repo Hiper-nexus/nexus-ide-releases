@@ -17,7 +17,12 @@ export type RemoteHostCapability = {
   readonly displayName: string;
   /** Local scope that authorizes using this host. */
   readonly scopeKey: string;
-  readonly e2eeRequired: boolean;
+  /**
+   * Requires a confidential (TLS) transport before use. NOT a claim of
+   * end-to-end encryption — device identity is proved separately by
+   * device-pairing.ts, which is not an encrypted channel.
+   */
+  readonly encryptedTransportRequired: boolean;
   readonly paired: boolean;
 };
 
@@ -30,7 +35,7 @@ export function createRemoteHostCapability(input: {
   hostId: string;
   displayName: string;
   scope: ProjectExecutionScope;
-  e2eeRequired?: boolean;
+  encryptedTransportRequired?: boolean;
   paired?: boolean;
 }): RemoteHostCapability {
   return Object.freeze({
@@ -38,7 +43,7 @@ export function createRemoteHostCapability(input: {
     hostId: input.hostId,
     displayName: input.displayName,
     scopeKey: scopeKeyFromExecutionScope(input.scope),
-    e2eeRequired: input.e2eeRequired ?? true,
+    encryptedTransportRequired: input.encryptedTransportRequired ?? true,
     paired: input.paired ?? false,
   });
 }
