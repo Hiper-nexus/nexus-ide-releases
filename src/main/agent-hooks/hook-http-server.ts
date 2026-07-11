@@ -5,7 +5,15 @@
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+
+/** Constant-time token comparison (avoids leaking the token via timing). */
+function tokenMatches(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 import { mkdirSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ingestAgentHookFormBody, ingestAgentHookStatus } from './hook-ingest';
@@ -139,7 +147,7 @@ async function handleRequest(
   const headerToken =
     req.headers['x-nexus-agent-hook-token'] ??
     req.headers['x-orca-agent-hook-token'];
-  if (typeof headerToken !== 'string' || headerToken !== expectedToken) {
+  if (typeof headerToken !== 'string' || !tokenMatches(headerToken, expectedToken)) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: false, reason: 'unauthorized' }));
     return;
