@@ -1151,7 +1151,12 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
   });
 
   ipcMain.handle(VOICE_CHANNELS.liveInterrupt, (event, raw) => {
-    requireLiveOwnership(event.sender);
+    // Soft no-op before Live owns the session (wake race logs: "no owner").
+    try {
+      requireLiveOwnership(event.sender);
+    } catch {
+      return { ok: false, reason: "no-owner" as const };
+    }
     const parsed = jarvisLiveInterruptRequestSchema.safeParse(raw ?? {});
     return liveTransport.interrupt(
       parsed.success ? parsed.data.reason : "interrupted",

@@ -810,6 +810,23 @@ export class LiveTransportController {
       origin.turnId !== turnId
     ) {
       this.toolTurnOrigins.delete(this.toolTurnKey(event.sessionId, event.callId));
+      // Session still hot but turn id drifted (wake/reopen race). Keep follow-up
+      // arm so the user can continue without re-saying Jarvis (Overclock).
+      if (sessionId && sessionId === event.sessionId && event.callId) {
+        this.pendingToolFollowUp = {
+          sessionId,
+          turnId: turnId || event.sessionId,
+          callId: event.callId,
+          sentAt: this.now(),
+        };
+        logVoice(
+          'info',
+          'live.toolFollowUpStaleTurnRecovered',
+          'tool de turno antigo — rearm follow-up na sessão quente',
+          { callId: event.callId },
+        );
+        return;
+      }
       logVoice('info', 'live.toolFollowUpStaleTurnDiscarded', 'resultado de tool de turno antigo não reabre mic', {
         callId: event.callId,
       });

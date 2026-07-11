@@ -100,7 +100,10 @@ import { matchPassiveWakeWord } from './passive-wake-matcher';
 import { PassiveWakeDeadline } from './passive-wake-deadline';
 import { pttStartAction } from './ptt-barge-in';
 import { shouldOfferLiveMicFrame } from './live-mic-offer-gate';
-import { isLikelyNoiseTranscript } from '../../shared/voice-noise';
+import {
+  HOT_COMMAND_MIN_PEAK_RMS,
+  isHotSessionCommandCandidate,
+} from '../../shared/hot-session-command';
 import { DEFAULT_DUPLEX_MODE, duplexModePolicy } from './duplex-mode-policy';
 
 /**
@@ -504,23 +507,29 @@ export function useVoiceController(): void {
         const stillHot = isLiveSessionHot();
         const statusNow = useVoiceStore.getState().status;
 
-        // ── Sessão Live QUENTE: qualquer fala útil é comando (Overclock) ──
-        // Log real: "nova missao" → passiveMiss → ela muda. Nunca mais.
-        // Também cobre follow-up mudo do Gemini (mic frames vão, sem transcript).
+        // ── Sessão Live QUENTE: follow-up SEM re-dizer o nome (Overclock) ──
+        // NÃO injetar TV/ambiente (logs: "camelo vindo", "aplaus" → alucinação).
         if (!match && stillHot) {
-          if (isLikelyNoiseTranscript(text) || text.length < 2) {
-            logVoiceEvent('info', 'wake.passiveHotNoise', 'hot session ignorou ruído', {
-              latencyMs,
-              provider: result.provider,
-              charLen: text.length,
-            });
-            return;
-          }
-          // Enquanto ela fala, sem nome: ignora (eco / ambiente). Com nome: barge via match.
-          if (statusNow === 'speaking') {
+          if (statusNow === 'speaking' || statusNow === 'transcribing') {
             logVoiceEvent('info', 'wake.passiveHotWhileSpeaking', 'hot sem nome durante fala — ignore', {
               latencyMs,
               charLen: text.length,
+              status: statusNow,
+            });
+            return;
+          }
+          if (
+            !isHotSessionCommandCandidate(text, {
+              peakRms: utterance.rawMaxRms,
+              requireEnergy: true,
+            })
+          ) {
+            logVoiceEvent('info', 'wake.passiveHotRejected', 'hot session rejeitou ambiente/lixo STT', {
+              latencyMs,
+              provider: result.provider,
+              charLen: text.length,
+              peakRms: Number(utterance.rawMaxRms.toFixed(4)),
+              minPeak: HOT_COMMAND_MIN_PEAK_RMS,
             });
             return;
           }

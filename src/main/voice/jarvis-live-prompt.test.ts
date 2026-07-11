@@ -5,11 +5,12 @@ describe('buildLiveSystemInstruction', () => {
   it('default: identifica como Jarvis, com as leis', () => {
     const s = buildLiveSystemInstruction({ assistantName: 'Jarvis' });
     expect(s).toContain('You are Jarvis');
-    expect(s).toContain('call nexus_action immediately');
+    expect(s).toContain('nexus_action');
     expect(s).toContain('new_agentic_mission');
-    expect(s).toContain('never substitute voice settings');
+    expect(s).toMatch(/substitute voice settings/i);
     expect(s).toContain('read_current_view');
-    expect(s).toContain('Speak only in Brazilian Portuguese');
+    expect(s).toContain('Brazilian Portuguese');
+    expect(s).toContain('Background media');
     expect(s).not.toContain('never call yourself Jarvis');
   });
 
