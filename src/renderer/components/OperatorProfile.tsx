@@ -19,6 +19,7 @@ const XP_BREAKDOWN_COPY: Array<[string, string]> = [
   ['handoff_green', 'handoffs verificados'],
   ['handoff_success', 'handoffs entregues'],
   ['task_done', 'tasks concluídas'],
+  ['agent_turn', 'turnos de agente entregues'],
   ['media_generated', 'mídias geradas'],
   ['jarvis_action', 'ações da Jarvis no IDE'],
 ];
@@ -185,9 +186,10 @@ export function OperatorProfile() {
 
         {emptyProfile && (
           <div className="operator-profile__empty" role="status">
-            Ainda não há entregas pontuadas. O XP entra quando uma missão ou
-            task é concluída, um handoff é entregue com sucesso, ou uma mídia é
-            gerada dentro do fluxo.
+            Ainda não há entregas pontuadas. O XP entra a cada turno de agente
+            entregue, quando uma missão ou task é concluída, um handoff é
+            entregue com sucesso, ou uma mídia é gerada — comece rodando um
+            agente em um pane.
           </div>
         )}
 

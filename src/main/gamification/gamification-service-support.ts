@@ -17,6 +17,9 @@ export const DELIVERY_KINDS: ReadonlySet<XpEventKind> = new Set([
   'handoff_green',
   'handoff_success',
   'task_done',
+  // Turno de agente conta como entrega para o streak — assim quem trabalha só
+  // com agentes (sem missões) mantém a sequência de dias úteis.
+  'agent_turn',
 ]);
 
 export const EMPTY_STREAK: StreakState = Object.freeze({

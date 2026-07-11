@@ -21,6 +21,9 @@ export const BASE_POINTS: Record<XpEventKind, number> = {
   task_done: 5_000,
   media_generated: 1_000,
   jarvis_action: 1_500,
+  // Trabalho cotidiano do agente: pequeno por turno, limitado pelo retorno
+  // decrescente diário. É o que faz o XP fluir sem missões/voz.
+  agent_turn: 300,
 };
 
 /**

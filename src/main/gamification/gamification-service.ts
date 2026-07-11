@@ -221,6 +221,39 @@ export class ProjectGamificationService {
     return this.#buildSnapshot(scope, db);
   }
 
+  /**
+   * Um turno de agente que entregou saída real (chamado pela telemetria de uso
+   * quando um turno de Claude/Codex é registrado). XP pequeno e plano por
+   * entrega — nunca proporcional a tokens — e conta para o streak, de modo que
+   * o uso cotidiano com agentes, sem missões nem voz, faz o XP fluir.
+   */
+  recordAgentTurn(
+    scope: ProjectExecutionScope,
+    provider: string,
+  ): ScopedGamificationSnapshot {
+    const source = z.string().min(1).max(64).parse(provider);
+    this.#activateScope(scope);
+    const db = this.#database(scope, true);
+    const change = db.transaction(() => {
+      const before = this.#buildSnapshot(scope, db);
+      const input: XpEventInput = {
+        kind: 'agent_turn',
+        entityKey: `agent_turn:${source}:${randomUUID()}`,
+        createdAt: this.#now(),
+      };
+      const scan: ScanResult = { insertedAny: false, deliveries: [] };
+      if (this.#insertEvent(db, input, false)) {
+        scan.insertedAny = true;
+        // agent_turn ∈ DELIVERY_KINDS → #finalize avança o streak.
+        scan.deliveries.push(input);
+      }
+      const after = this.#finalize(scope, db, scan, false);
+      return after ? { before, after, retro: false } : null;
+    })();
+    if (change) this.#celebrateAndBroadcast(scope, change);
+    return this.#buildSnapshot(scope, db);
+  }
+
   prestige(scope: ProjectExecutionScope): ScopedGamificationSnapshot {
     this.#activateScope(scope);
     const db = this.#database(scope, true);

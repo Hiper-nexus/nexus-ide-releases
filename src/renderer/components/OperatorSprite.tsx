@@ -5,6 +5,7 @@ import type {
 } from '../../shared/gamification-types';
 import { OPERATOR_GRID, paletteFor } from './operator-sprite-data';
 import {
+  operatorFrameMs,
   shouldAnimateOperatorMood,
   type OperatorMood,
 } from './operator-motion';
@@ -27,7 +28,6 @@ interface OperatorSpriteProps {
 }
 
 const GRID_SIZE = 16;
-const FRAME_MS = 220;
 
 function usePrefersReducedMotion(): boolean {
   const [reduced, setReduced] = useState(() =>
@@ -78,9 +78,12 @@ export function OperatorSprite({
       setFrame(0);
       return;
     }
-    const id = setInterval(() => setFrame((f) => (f + 1) % 4), FRAME_MS);
+    const id = setInterval(
+      () => setFrame((f) => (f + 1) % 4),
+      operatorFrameMs(mood),
+    );
     return () => clearInterval(id);
-  }, [animated]);
+  }, [animated, mood]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

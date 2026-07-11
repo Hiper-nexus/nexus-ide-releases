@@ -20,7 +20,10 @@ export type XpEventKind =
   | 'handoff_success'
   | 'task_done'
   | 'media_generated'
-  | 'jarvis_action';
+  | 'jarvis_action'
+  /** Um turno de agente (Claude/Codex) que entregou saída real. Valor por
+   *  entrega comprovada em transcript — NÃO por tokens gastos. */
+  | 'agent_turn';
 
 /** Entrada pura do engine (a borda resolve effort/custo/evidência antes). */
 export interface XpEventInput {

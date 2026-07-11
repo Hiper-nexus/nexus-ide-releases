@@ -7,6 +7,7 @@ import {
   type PaneUsage,
   type UsageSnapshot,
 } from '../../shared/usage-types';
+import { requireGamificationService } from '../gamification/gamification-service';
 import { getContextBySession } from '../orch/gate';
 import { getPaneAuthzInfo } from '../orch/pane-registry';
 import {
@@ -254,6 +255,7 @@ export class UsageTelemetryService {
       paneId: attribution?.paneId ?? null,
       missionId: attribution?.missionId ?? null,
     });
+    this.#awardAgentTurn(state, 'claude', event);
     this.#scheduleBroadcast(state);
   }
 
@@ -265,7 +267,27 @@ export class UsageTelemetryService {
       paneId: attribution?.paneId ?? null,
       missionId: attribution?.missionId ?? null,
     });
+    this.#awardAgentTurn(state, 'codex', event);
     this.#scheduleBroadcast(state);
+  }
+
+  /**
+   * Concede XP de gamificação por um turno de agente que entregou saída real.
+   * Gate em outputTokens > 0 (turno vazio/erro não pontua) e à prova de falhas:
+   * se o serviço não estiver configurado (boot/testes) ou a gravação falhar, a
+   * telemetria de uso NÃO pode quebrar.
+   */
+  #awardAgentTurn(
+    state: ScopeTelemetryState,
+    provider: 'claude' | 'codex',
+    event: UsageEvent,
+  ): void {
+    if (!(event.outputTokens > 0)) return;
+    try {
+      requireGamificationService().recordAgentTurn(state.scope, provider);
+    } catch {
+      // Serviço ausente ou falha de gravação — nunca propaga para a telemetria.
+    }
   }
 
   #attributionForEvent(
