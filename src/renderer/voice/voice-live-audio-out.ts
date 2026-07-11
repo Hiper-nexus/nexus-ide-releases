@@ -5,6 +5,7 @@ import { useVoiceStore } from './voice-store';
 import type { JarvisLiveAudioOutEvent } from '../../shared/voice-ipc';
 import { realtimeChunkSuppressionMs } from './voice-suppression-window';
 import { logVoiceEvent } from './voice-live-ipc';
+import { isResponseMuted } from './response-output-gate';
 import {
   ensureLivePlayer,
   pushPendingRealtimeAudioOut,
@@ -39,6 +40,12 @@ function reportPlayback(
  * scheduled. Provider PCM alone never advances the realtime diagnostic.
  */
 export function playRealtimeAudioOut(event: JarvisLiveAudioOutEvent): void {
+  // User mute: suppress speaker audio but ACK as started so smoke diagnostics
+  // (and provider delivery accounting) do not treat intentional mute as failure.
+  if (isResponseMuted()) {
+    reportPlayback(event, 'started');
+    return;
+  }
   void Promise.resolve()
     .then(() => ensureLivePlayer().play(event.pcm16))
     .then((chunkMs) => {
@@ -82,6 +89,10 @@ export function openLiveAudioGate(): void {
 }
 
 export function queuePendingRealtimeAudioOut(event: JarvisLiveAudioOutEvent): void {
+  if (isResponseMuted()) {
+    reportPlayback(event, 'started');
+    return;
+  }
   if (!realtimeTurnActive) {
     reportPlayback(event, 'cancelled');
     return;

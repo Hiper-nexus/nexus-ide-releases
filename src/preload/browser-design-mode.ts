@@ -1,4 +1,5 @@
 import type {
+  BrowserDesignAncestor,
   BrowserDesignElementContext,
   BrowserDesignEvent,
   BrowserDesignFrameworkHints,
@@ -41,6 +42,12 @@ const SELECTOR_MAX_DEPTH = 8;
 const MAX_CONTEXT_NODES = 512;
 const MAX_CONTEXT_DEPTH = 20;
 const MAX_SOURCE_TEXT_SCAN_CHARS = 8_192;
+// Neighborhood (structural context) budgets — ancestors + sibling labels.
+const MAX_ANCESTORS = 6;
+const MAX_ANCESTOR_CLASSES = 3;
+const MAX_SIBLING_LABELS = 5;
+const MAX_SIBLING_TEXT_CHARS = 40;
+const MAX_SIBLING_LABEL_CHARS = 120;
 const SENSITIVE_ATTRIBUTE_NAME =
   /(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|authorization|credential|cookie|session)/i;
 const OMIT_ATTRIBUTE_NAME = /^(?:value|srcdoc|formaction)$/i;
@@ -156,24 +163,101 @@ function nthOfType(element: Element): number {
   return index;
 }
 
+// ---------------------------------------------------------------------------
+// Unique-selector construction — incremental strategy ported from Orca's Grab
+// Mode (https://github.com/stablyai/orca, src/main/browser/grab-guest-script.ts).
+// Orca is MIT-licensed; attribution is preserved per its terms. Adapted here to
+// TypeScript and to this project's secret redaction. The algorithm climbs the
+// ancestor chain and only adds `:nth-of-type` when the partial selector is not
+// yet unique, preferring stable class names (e.g. Tailwind utility classes) over
+// generated/hashed ones — producing shorter, more robust selectors than a blind
+// `tag:nth-of-type(n)` path on every element.
+// ---------------------------------------------------------------------------
+
+const UNSTABLE_CLASS_PATTERN = /^css-[a-z0-9]+$/i;
+
+function looksHashy(value: string): boolean {
+  // Heuristic for framework-generated class hashes (css-modules, styled
+  // components, emotion): long, alphanumeric-with-dashes, mixed case, has a
+  // digit. These change between builds and would make selectors fragile.
+  return /^[A-Za-z0-9_-]{12,}$/.test(value) && /\d/.test(value) && /[A-Z]/.test(value);
+}
+
+function stableClasses(element: Element, maxCount: number): string[] {
+  const result: string[] = [];
+  for (const cls of Array.from(element.classList)) {
+    if (result.length >= maxCount) break;
+    if (cls.length > MAX_CLASS_CHARS) continue;
+    if (UNSTABLE_CLASS_PATTERN.test(cls) || looksHashy(cls)) continue;
+    // Require an escapable CSS identifier so the emitted selector is always valid.
+    if (!simpleCssIdent(cls)) continue;
+    result.push(cls);
+  }
+  return result;
+}
+
+function isUniqueSelector(doc: Document | null, selector: string): boolean {
+  if (!doc) return false;
+  try {
+    return doc.querySelectorAll(selector).length === 1;
+  } catch {
+    // Invalid selector (unescaped id/class, exotic chars) — treat as non-unique
+    // so the climb continues and a safer suffix is added.
+    return false;
+  }
+}
+
+function selectorPartFor(element: Element, allowIds: boolean): string {
+  const tag = element.tagName.toLowerCase();
+  if (allowIds && element.id && simpleCssIdent(element.id)) {
+    return `${tag}#${element.id}`;
+  }
+  const classes = stableClasses(element, 2);
+  if (classes.length > 0) {
+    return `${tag}${classes.map((cls) => `.${cls}`).join('')}`;
+  }
+  return tag;
+}
+
+function nthOfTypeSuffix(element: Element): string {
+  const index = nthOfType(element);
+  return index > 1 ? `:nth-of-type(${index})` : '';
+}
+
 function buildSelector(element: Element, allowIds = true): string {
-  if (allowIds && element.id && simpleCssIdent(element.id)) return `#${element.id}`;
-  const segments: string[] = [];
+  // A simple-css-ident id is globally unique in the document: resolve straight
+  // to `#id` (fast path, kept for parity with prior behavior and tests).
+  if (allowIds && element.id && simpleCssIdent(element.id)) {
+    return `#${element.id}`;
+  }
+  const doc = element.ownerDocument;
+  const parts: string[] = [];
   let current: Element | null = element;
   for (let depth = 0; current && depth < SELECTOR_MAX_DEPTH; depth += 1) {
-    if (allowIds && current.id && simpleCssIdent(current.id)) {
-      segments.unshift(`#${current.id}`);
-      break;
-    }
     const tag = current.tagName.toLowerCase();
-    if (tag === 'html' || tag === 'body') {
-      segments.unshift(tag);
+    // An ancestor with a stable id short-circuits the climb.
+    if (allowIds && current.id && simpleCssIdent(current.id)) {
+      parts.unshift(`#${current.id}`);
       break;
     }
-    segments.unshift(`${tag}:nth-of-type(${nthOfType(current)})`);
-    current = current.parentElement;
+    let part = selectorPartFor(current, allowIds);
+    const parent: Element | null = current.parentElement;
+    // Only disambiguate with nth-of-type when the selector-so-far is not unique.
+    const candidate = [...parts, part].reverse().join(' > ');
+    if (parent && !isUniqueSelector(doc, candidate)) {
+      part += nthOfTypeSuffix(current);
+    }
+    parts.unshift(part);
+    if (isUniqueSelector(doc, parts.join(' > '))) {
+      break;
+    }
+    if (tag === 'body' || tag === 'html') break;
+    current = parent;
   }
-  return segments.join(' > ').slice(0, MAX_SELECTOR_CHARS);
+  return (parts.join(' > ') || element.tagName.toLowerCase()).slice(
+    0,
+    MAX_SELECTOR_CHARS,
+  );
 }
 
 function omitsContent(element: Element): boolean {
@@ -361,6 +445,77 @@ function collectComputedStyles(
   return styles;
 }
 
+function summarizeAncestor(element: Element): BrowserDesignAncestor {
+  const summary: BrowserDesignAncestor = {
+    tag: element.tagName.toLowerCase().slice(0, 32),
+    classes: stableClasses(element, MAX_ANCESTOR_CLASSES),
+  };
+  const role = element.getAttribute('role');
+  if (role) summary.role = redactBrowserText(role).slice(0, 64);
+  if (element.id && simpleCssIdent(element.id)) {
+    summary.id = redactBrowserText(element.id).slice(0, MAX_ID_CHARS);
+  }
+  return summary;
+}
+
+function collectAncestors(
+  win: BrowserDomWindow,
+  element: Element,
+): BrowserDesignAncestor[] {
+  const root = win.document.body;
+  const result: BrowserDesignAncestor[] = [];
+  let current: Element | null = element.parentElement;
+  let depth = 0;
+  // Stop at <body>/<html>: they add noise without structural value, and keep
+  // the payload focused on the element's meaningful hierarchy.
+  while (
+    current &&
+    current !== root &&
+    current !== win.document.documentElement &&
+    depth < MAX_ANCESTORS
+  ) {
+    result.push(summarizeAncestor(current));
+    current = current.parentElement;
+    depth += 1;
+  }
+  return result;
+}
+
+function shortSiblingText(element: Element): string {
+  if (isSensitiveTree(element) || omitsContent(element)) return '';
+  const raw = element.textContent ?? '';
+  return redactBrowserText(normalizedText(raw)).slice(0, MAX_SIBLING_TEXT_CHARS);
+}
+
+function collectSiblingLabels(
+  win: BrowserDomWindow,
+  element: Element,
+): string[] {
+  const parent = element.parentElement;
+  if (!parent) return [];
+  const labels: string[] = [];
+  for (const sibling of Array.from(parent.children)) {
+    if (labels.length >= MAX_SIBLING_LABELS) break;
+    if (sibling === element) continue;
+    // Skip display:none siblings to reduce noise. We check computed `display`
+    // rather than getBoundingClientRect because the latter needs layout
+    // (unavailable in jsdom and unreliable mid-paint), while computed display
+    // is resolved from style alone.
+    try {
+      if (win.getComputedStyle(sibling).display === 'none') continue;
+    } catch {
+      // Exotic host (detached, cross-doc): keep the sibling rather than drop it.
+    }
+    const tag = sibling.tagName.toLowerCase().slice(0, 16);
+    const stable = stableClasses(sibling, 1)[0];
+    let label = stable ? `${tag}.${stable}` : tag;
+    const text = shortSiblingText(sibling);
+    if (text) label += ` "${text}"`;
+    labels.push(redactBrowserText(label).slice(0, MAX_SIBLING_LABEL_CHARS));
+  }
+  return labels;
+}
+
 export function createDesignMode(
   win: BrowserDomWindow,
   deps: DesignModeDeps,
@@ -368,6 +523,7 @@ export function createDesignMode(
   let active = false;
   let host: HTMLElement | null = null;
   let highlight: HTMLElement | null = null;
+  let selectedHighlight: HTMLElement | null = null;
   let label: HTMLElement | null = null;
   let stub: HTMLElement | null = null;
   let hovered: Element | null = null;
@@ -409,6 +565,8 @@ export function createDesignMode(
       attributes: filteredAttributes(element, isSensitive),
       computedStyles: collectComputedStyles(win, element),
       url: redactPageUrl(win.location.href),
+      ancestors: collectAncestors(win, element),
+      siblingLabels: collectSiblingLabels(win, element),
     };
     if (element.id && !isSensitive) {
       context.id = redactBrowserText(element.id).slice(0, MAX_ID_CHARS);
@@ -431,6 +589,28 @@ export function createDesignMode(
     return element;
   }
 
+  function labelText(element: Element): string {
+    if (isSensitiveTree(element) || omitsContent(element)) return '';
+    const raw = element.textContent ?? '';
+    return redactBrowserText(normalizedText(raw)).slice(0, 24);
+  }
+
+  function describeForLabel(element: Element, rect: DOMRect): string {
+    // Rich hover label (ported intent from Orca's Grab Mode): identity +
+    // accessibility role + a short text snippet + box dimensions, so the user
+    // can tell apart same-tag siblings without clicking first.
+    const parts: string[] = [element.tagName.toLowerCase()];
+    if (element.id && simpleCssIdent(element.id)) parts.push(`#${element.id}`);
+    const stable = stableClasses(element, 2);
+    if (stable.length) parts.push(stable.map((cls) => `.${cls}`).join(''));
+    const role = element.getAttribute('role');
+    if (role) parts.push(`role=${role}`);
+    const text = labelText(element);
+    if (text) parts.push(`“${text}”`);
+    parts.push(`${Math.round(rect.width)}×${Math.round(rect.height)}`);
+    return parts.join(' ');
+  }
+
   function positionHighlight(element: Element | null): void {
     if (!highlight || !label) return;
     if (!element) {
@@ -445,9 +625,20 @@ export function createDesignMode(
     highlight.style.height = `${rect.height}px`;
     label.style.display = 'block';
     label.style.transform = `translate(${rect.x}px, ${Math.max(0, rect.y - 22)}px)`;
-    const id = element.id ? `#${element.id}` : '';
-    const cls = element.classList.length ? `.${Array.from(element.classList).slice(0, 2).join('.')}` : '';
-    label.textContent = `${element.tagName.toLowerCase()}${id}${cls}`;
+    label.textContent = describeForLabel(element, rect);
+  }
+
+  function positionSelectedHighlight(element: Element | null): void {
+    if (!selectedHighlight) return;
+    if (!element) {
+      selectedHighlight.style.display = 'none';
+      return;
+    }
+    const rect = element.getBoundingClientRect();
+    selectedHighlight.style.display = 'block';
+    selectedHighlight.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
+    selectedHighlight.style.width = `${rect.width}px`;
+    selectedHighlight.style.height = `${rect.height}px`;
   }
 
   function onPointerMove(event: Event): void {
@@ -497,6 +688,10 @@ export function createDesignMode(
     event.preventDefault();
     event.stopImmediatePropagation();
     selected = element;
+    // Persist a distinct outline on the selected element so the user sees what
+    // they picked while the hover highlight keeps tracking the cursor (multi-shot
+    // picker — they may click another element next).
+    positionSelectedHighlight(selected);
     emitSelection(element, (event as MouseEvent).shiftKey === true);
   }
 
@@ -610,6 +805,7 @@ export function createDesignMode(
 
   function onViewportChange(): void {
     positionHighlight(hovered);
+    positionSelectedHighlight(selected);
   }
 
   function mountOverlay(): void {

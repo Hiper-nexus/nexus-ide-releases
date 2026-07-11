@@ -147,6 +147,24 @@ export function attachBrowserPane(
     syncPaneBounds(pane.id, slot);
   };
 
+  const rafIds: number[] = [];
+  /**
+   * WebContentsView bounds must be applied AFTER create resolves. Early
+   * setBounds IPC is stashed on main (pendingBounds) until create finishes.
+   */
+  const syncBoundsAfterLayout = () => {
+    if (disposed) return;
+    syncBounds();
+    const id1 = requestAnimationFrame(() => {
+      if (disposed) return;
+      syncBounds();
+      // Second frame: flex/grid often settles height after first paint.
+      const id2 = requestAnimationFrame(syncBounds);
+      rafIds.push(id2);
+    });
+    rafIds.push(id1);
+  };
+
   if (!host.created) {
     host.created = true;
     void window.nexus.browser
@@ -154,7 +172,10 @@ export function attachBrowserPane(
       .then((state) => {
         lastStates.set(pane.id, state);
         settleCreation(pane.id, { ok: true, state });
-        if (!disposed) onState(state);
+        if (!disposed) {
+          onState(state);
+          syncBoundsAfterLayout();
+        }
       })
       .catch((err) => {
         host.created = false;
@@ -172,6 +193,9 @@ export function attachBrowserPane(
           });
         }
       });
+  } else {
+    // Re-attach (HMR / remount): view already exists — push geometry now.
+    syncBoundsAfterLayout();
   }
 
   const unsub = window.nexus.browser.onState((state) => {
@@ -192,11 +216,13 @@ export function attachBrowserPane(
   ro.observe(slot);
   window.addEventListener('resize', syncBounds);
   slot.addEventListener('mousedown', focusPane);
+  // Optimistic early sync (no-op until create finishes); real fix is post-create.
   syncBounds();
   requestAnimationFrame(syncBounds);
 
   return () => {
     disposed = true;
+    for (const id of rafIds) cancelAnimationFrame(id);
     ro.disconnect();
     window.removeEventListener('resize', syncBounds);
     slot.removeEventListener('mousedown', focusPane);

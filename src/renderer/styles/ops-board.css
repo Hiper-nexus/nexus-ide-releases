@@ -12,11 +12,16 @@
   z-index: 34; /* acima do orch panel (31), abaixo de drawer/wizard (40+) */
   display: flex;
   flex-direction: column;
+  /* Default: clean dark ops (modern). Pixel grid only in modo pixel. */
+  background: linear-gradient(180deg, var(--bg-bar), var(--bg));
+  animation: ops-board-in 180ms var(--ease-out-expo);
+}
+
+[data-theme-pixel='on'] .ops-board {
   background:
     linear-gradient(var(--pixel-grid) 1px, transparent 1px) 0 0 / 22px 22px,
     linear-gradient(90deg, var(--pixel-grid) 1px, transparent 1px) 0 0 / 22px 22px,
     linear-gradient(180deg, var(--bg-bar), var(--bg));
-  animation: ops-board-in 180ms var(--ease-out-expo);
 }
 @keyframes ops-board-in {
   from {
@@ -64,24 +69,20 @@
   font-weight: 700;
   letter-spacing: -0.01em;
 }
-/* Labels do board em fonte bitmap (superfície já retrô). VT323 é condensada:
-   piso de 12px (--text-sm) no lugar dos 10px da mono. */
 .ops-board__sub {
-  font-family: var(--font-pixel);
-  font-size: var(--text-sm);
+  font-size: 12px;
   color: var(--text-dim);
 }
 .ops-board__spacer {
   flex: 1;
 }
 .ops-board__new {
-  font-family: var(--font-pixel);
-  font-size: var(--text-md);
-  font-weight: 400;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--bg);
   background: var(--accent);
   border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   padding: 6px 12px;
   cursor: pointer;
   transition: filter 150ms var(--ease-out-quart);
@@ -182,10 +183,9 @@
   background: var(--danger);
 }
 .ops-board__col-label {
-  font-family: var(--font-pixel);
-  font-size: var(--text-sm);
-  font-weight: 400;
-  letter-spacing: 0.14em;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-dim);
 }
@@ -193,12 +193,12 @@
   margin-left: auto;
   min-width: 18px;
   text-align: center;
-  font-family: var(--font-pixel);
-  font-size: var(--text-sm);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-dim);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   padding: 1px 6px;
 }
 
@@ -244,14 +244,13 @@
   margin-bottom: var(--space-2);
 }
 .ops-board__badge {
-  font-family: var(--font-pixel);
-  font-size: var(--text-sm);
-  font-weight: 400;
-  letter-spacing: 0.06em;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--accent);
   background: var(--accent-soft);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   padding: 2px 6px;
   max-width: 60%;
   overflow: hidden;
@@ -335,9 +334,8 @@
   gap: var(--space-2);
   padding: var(--space-5) var(--space-2);
   opacity: 0.5;
-  font-family: var(--font-pixel);
-  font-size: var(--text-sm);
-  letter-spacing: 0.1em;
+  font-size: 11px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-dim);
 }

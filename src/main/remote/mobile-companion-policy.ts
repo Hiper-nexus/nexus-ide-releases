@@ -13,6 +13,7 @@ export type MobileRpcKind =
   | 'pane.stream.subscribe'
   | 'pane.input'
   | 'mission.list'
+  | 'ops.snapshot'
   | 'mission.complete'
   | 'git.push'
   | 'git.reset'
@@ -34,6 +35,7 @@ const READ_ONLY: ReadonlySet<MobileRpcKind> = new Set([
   'pane.read',
   'pane.stream.subscribe',
   'mission.list',
+  'ops.snapshot',
 ]);
 
 export type MobileAuthorizeInput = {

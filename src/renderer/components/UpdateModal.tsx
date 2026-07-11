@@ -124,6 +124,8 @@ type UpdateStatusButtonProps = {
   state: UpdateState;
   onClick: () => void;
   alwaysVisible?: boolean;
+  /** Icon-only bar chip (hide version label on narrow toolbars). */
+  compact?: boolean;
   variant?: 'bar' | 'floating';
 };
 
@@ -131,6 +133,7 @@ export function UpdateStatusButton({
   state,
   onClick,
   alwaysVisible = false,
+  compact = false,
   variant = 'bar',
 }: UpdateStatusButtonProps) {
   if (!alwaysVisible && !isUpdateNoticeVisible(state)) return null;
@@ -143,8 +146,11 @@ export function UpdateStatusButton({
           `workspace-bar__btn--update-${state.phase}`,
           'update-status-btn',
           'update-status-btn--bar',
+          compact ? 'update-status-btn--compact' : '',
           `update-status-btn--${state.phase}`,
-        ].join(' ')
+        ]
+          .filter(Boolean)
+          .join(' ')
       : `update-status-btn update-status-btn--floating update-status-btn--${state.phase}`;
 
   return (
@@ -158,7 +164,9 @@ export function UpdateStatusButton({
       <span className="update-status-btn__glyph" aria-hidden="true">
         ⇪
       </span>
-      <span className="update-status-btn__label">{getUpdateButtonLabel(state)}</span>
+      {!compact && (
+        <span className="update-status-btn__label">{getUpdateButtonLabel(state)}</span>
+      )}
     </button>
   );
 }

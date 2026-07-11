@@ -63,6 +63,19 @@ export interface BrowserDesignFrameworkHints {
 }
 
 /**
+ * Compact ancestor summary (L0 structural context): helps the agent locate the
+ * element's place in the page hierarchy without serializing large HTML trees.
+ * Mirrors Orca's Grab Mode `ancestorPath`/`nearbyElements` intent, adapted to
+ * this project's redaction. Generated/hashed classes are filtered out.
+ */
+export interface BrowserDesignAncestor {
+  tag: string;
+  id?: string;
+  classes: string[];
+  role?: string;
+}
+
+/**
  * L0 element context: everything the picker can extract without framework
  * internals or source mapping. `ref` uses the SAME opaque scheme as the
  * automation commands (`e<N>`), so a selection can later be driven by
@@ -86,6 +99,10 @@ export interface BrowserDesignElementContext {
   computedStyles: Record<string, string>;
   /** Page URL with credentials/tokens redacted. */
   url: string;
+  /** Nearest ancestors (parent up to <body>), summarized — structural context. */
+  ancestors?: BrowserDesignAncestor[];
+  /** Short labels of sibling elements (`tag.cls "text"`) — horizontal context. */
+  siblingLabels?: string[];
   /** L1 framework internals (dev pages only); absent when unavailable. */
   frameworkHints?: BrowserDesignFrameworkHints;
   /** Shift+click (F4): add to / toggle within the current selection set. */

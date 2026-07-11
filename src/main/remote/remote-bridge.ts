@@ -501,7 +501,29 @@ async function handleAuthedMessage(
       return { ok: requestPaneClose(pane.paneId) };
     }
     case 'mission.list':
+      // Keep array shape for backward compatibility (older mobile clients).
       return getProjectDomainStores(scope).missions.list();
+    case 'ops.snapshot': {
+      // Phone home: compact mission DTOs + panes (full detail stays on desktop).
+      const missions = getProjectDomainStores(scope).missions.list().map((m) => ({
+        id: m.id,
+        title: m.title,
+        status: m.status,
+        updatedAt: m.updatedAt,
+      }));
+      const panes = listVisiblePaneSnapshots(remoteCaller(scope));
+      return {
+        missions,
+        panes,
+        summary: {
+          missions: missions.length,
+          panes: panes.length,
+          runningMissions: missions.filter((m) => m.status === 'running').length,
+          busyPanes: panes.filter((p) => p.state === 'busy').length,
+        },
+        generatedAt: Date.now(),
+      };
+    }
     case 'status':
       return redactRemoteBridgeSecrets(getRemoteBridgeInfo(scope));
     default:

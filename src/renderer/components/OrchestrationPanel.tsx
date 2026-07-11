@@ -7,7 +7,7 @@ import type {
   TodoList,
 } from '../../shared/orch-types';
 import { useOrchStore, type OrchPanelTab } from '../state/orch-store';
-import { reopenMission } from '../orch/mission-reopen';
+import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 
 /**
  * Orchestration drawer — the mission control surface (docs/ARCHITECTURE.md
@@ -231,20 +231,20 @@ export function OrchestrationPanel() {
   }
 
   function onReopenMission(mission: Mission) {
-    // Missão já aberta no grid: reabrir mataria e respawnaria ela mesma.
-    const openIds = new Set(
-      Object.values(useOrchStore.getState().paneMissions),
-    );
-    if (openIds.has(mission.id)) {
-      setNotice('Esta missão já está aberta no grid.');
-      return;
-    }
     void (async () => {
-      const result = await reopenMission(mission);
+      const result = await confirmAndReopenMission(mission);
+      if (!result.ok) {
+        setNotice(result.error ?? 'Falha ao reabrir a missão.');
+        return;
+      }
+      if (result.soft) {
+        setNotice('Missão já aberta — foco nos panes ao vivo (sem kill).');
+        return;
+      }
       setNotice(
-        result.ok
-          ? `Missão reaberta: ${result.panes} pane(s) restaurado(s), retomando as conversas.`
-          : result.error ?? 'Falha ao reabrir a missão.',
+        result.multi
+          ? `Missão em paralelo: ${result.panes} pane(s) adicionados (multi-missão).`
+          : `Missão reaberta: ${result.panes} pane(s) restaurado(s), retomando as conversas.`,
       );
     })();
   }

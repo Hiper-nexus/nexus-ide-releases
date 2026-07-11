@@ -136,3 +136,31 @@ Modules adapted from ORCA remote/relay/SSH/WSL concepts at the same pin
 License text: `third_party/licenses/orca-MIT.txt`. Provenance ledger:
 `third_party/provenance/orca-143c36e.json`.
 
+## stablyai/orca (Design Mode harvest)
+
+The incremental unique-selector algorithm in `src/preload/browser-design-mode.ts`
+is adapted from Orca's Grab Mode guest overlay
+(`src/main/browser/grab-guest-script.ts`), taken from
+[`stablyai/orca`](https://github.com/stablyai/orca) at commit
+`5e100914d3f557953c810da36448986a87efec14` (a newer pin than the F3/F4/F5
+harvests — Orca ships daily and the grab overlay is under active development).
+MIT License, Copyright (c) 2026 Lovecast Inc.
+
+Only the selector-construction strategy was ported (build shortest unique
+selector by climbing ancestors, preferring stable class names over generated
+hashes, adding `:nth-of-type` only when not yet unique). Orca ships this as a
+JS string injected via `executeJavaScript`; Nexus ports it to TypeScript module
+functions inside its existing preload overlay and adapts it to this project's
+secret redaction. The fast path (`#id` for a simple-css-ident id) is preserved.
+
+License text: `third_party/licenses/orca-MIT.txt`. Provenance ledger:
+`third_party/provenance/orca-5e1009.json`.
+
+## ssh2
+
+Remote SSH transport (`src/main/integrations/ssh2-transport.ts`) depends on the
+[`ssh2`](https://github.com/mscdex/ssh2) npm package (MIT License,
+Copyright Brian White / mscdex and contributors), used for production SSH
+sessions, remote worktree create, and SFTP. Optional native helpers may be
+built by `cpu-features` on install.
+

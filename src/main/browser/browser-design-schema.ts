@@ -49,6 +49,15 @@ export const browserDesignFrameworkHintsSchema = z
   })
   .strict();
 
+export const browserDesignAncestorSchema = z
+  .object({
+    tag: z.string().min(1).max(32),
+    id: z.string().max(256).optional(),
+    classes: z.array(z.string().max(128)).max(8),
+    role: z.string().max(64).optional(),
+  })
+  .strict();
+
 export const browserDesignElementContextSchema = z
   .object({
     ref: z.string().regex(ELEMENT_REF),
@@ -62,6 +71,8 @@ export const browserDesignElementContextSchema = z
     attributes: boundedRecord(24, 64, 256),
     computedStyles: boundedRecord(64, 64, 512),
     url: z.string().max(4_096),
+    ancestors: z.array(browserDesignAncestorSchema).max(8).optional(),
+    siblingLabels: z.array(z.string().max(160)).max(8).optional(),
     frameworkHints: browserDesignFrameworkHintsSchema.optional(),
     additive: z.boolean().optional(),
   })

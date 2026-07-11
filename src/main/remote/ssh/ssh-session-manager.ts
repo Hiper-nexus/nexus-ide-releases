@@ -81,6 +81,7 @@ export function createSshSessionManager(): SshSessionManager {
       if (options.auth.kind === 'agent' && options.auth.allowedFingerprints.length === 0) {
         throw new Error('ssh-session-manager: empty agent identity allowlist');
       }
+      // Production transport is injected (ssh2 via createSsh2Transport).
       await transport.connect(options);
       const sessionId = `ssh-${++seq}-${capability.hostId}`;
       const session: SshSession = {

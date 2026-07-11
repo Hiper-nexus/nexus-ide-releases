@@ -239,6 +239,21 @@
   .operator-hud__power {
     font-size: 10px;
   }
+  .cost-summary {
+    gap: 6px;
+    padding: 2px 6px;
+    font-size: 10px;
+  }
+}
+
+/* Compact bar density: mascote + nível only */
+.workspace-bar--compact .operator-hud__power,
+.workspace-bar--compact .operator-hud__bar {
+  display: none;
+}
+
+.workspace-bar--compact .cost-summary {
+  display: none;
 }
 
 @media (min-width: 1281px) {

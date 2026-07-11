@@ -117,6 +117,22 @@ function registerExternalLinkIpc(): void {
     const { beginLogin } = require('./auth-client') as typeof import('./auth-client');
     return beginLogin(provider);
   });
+  ipcMain.handle(WINDOW_CHANNELS.openLegalNotices, async () => {
+    // Packaged: files live at the app.asar root (forge shouldPackageFile).
+    // Dev: walk up from app path / cwd.
+    const { app } = await import('electron');
+    const { resolveThirdPartyNoticesPath } = await import('./legal-notices-path');
+    const found = resolveThirdPartyNoticesPath({
+      appPath: app.getAppPath(),
+      cwd: process.cwd(),
+    });
+    if (!found) {
+      return { ok: false, error: 'THIRD_PARTY_NOTICES.md não encontrado no pacote' };
+    }
+    const err = await shell.openPath(found);
+    if (err) return { ok: false, error: err };
+    return { ok: true, path: found };
+  });
 }
 
 let cspRegistered = false;

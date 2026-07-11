@@ -1,0 +1,26 @@
+{
+  "source": "stablyai/orca",
+  "upstreamCommit": "5e100914d3f557953c810da36448986a87efec14",
+  "upstreamRepository": "https://github.com/stablyai/orca",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 Lovecast Inc.",
+  "licenseFile": "third_party/licenses/orca-MIT.txt",
+  "importedAt": "2026-07-11",
+  "headerPolicy": "Every adapted file carries an inline attribution block pointing at the pin, copyright, and license file. Orca's source for the Grab Mode guest overlay is a self-contained JS string template; Nexus ports the algorithm to TypeScript module functions integrated into its existing preload overlay, so entries are type 'adapted' rather than 'copied'. Existing copyright notices inside copied code are preserved.",
+  "files": [
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/5e100914d3f557953c810da36448986a87efec14/src/main/browser/grab-guest-script.ts",
+      "upstreamCommit": "5e100914d3f557953c810da36448986a87efec14",
+      "originalSha256": "32a5d7111a9a4f5179f1b62d4ed095db2f1884e16fa5ee0113ac9b3eba280f30",
+      "originalPath": "src/main/browser/grab-guest-script.ts",
+      "nexusPath": "src/preload/browser-design-mode.ts",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "Incremental unique-selector strategy ported from Orca's Grab Mode guest overlay to TypeScript module functions (buildSelector, selectorPartFor, stableClasses, isUniqueSelector, nthOfTypeSuffix, looksHashy, UNSTABLE_CLASS_PATTERN). Orca emits a JS string injected via executeJavaScript; Nexus keeps its preload overlay architecture and adopts only the selector-construction logic, adapted to this project's secret redaction (redactBrowserText) and the isSensitive allowIds gate. A simple-css-ident id still resolves to '#id' (fast path, parity with prior behavior/tests). Produces shorter, more robust selectors by preferring stable class names over generated/hashed ones and only adding :nth-of-type when the partial selector is not yet unique.",
+      "secondaryProvenance": [],
+      "importDate": "2026-07-11",
+      "status": "imported"
+    }
+  ]
+}

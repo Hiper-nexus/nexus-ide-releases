@@ -16,6 +16,7 @@ export function VoiceButton() {
   const info = useVoiceStore((s) => s.info);
   const status = useVoiceStore((s) => s.status);
   const liveState = useVoiceStore((s) => s.liveState);
+  const responseMuted = useVoiceStore((s) => s.responseMuted);
   const openSettings = useVoiceStore((s) => s.openSettings);
 
   const stt = providerShort(info?.stt.active?.provider);
@@ -33,6 +34,8 @@ export function VoiceButton() {
   const label =
     wakeBlocked
       ? 'wake preso'
+      : responseMuted
+        ? 'muda'
       : liveOn && liveState?.status && liveState.status !== 'off'
       ? `live:${liveState.status}`
       : active
@@ -59,7 +62,7 @@ export function VoiceButton() {
       onContextMenu={handleContextMenu}
       title={
         info
-          ? `Clique para acordar a Jarvis · ⌥/⌘ clique para ajustes · Push-to-talk: ${info.shortcut} (${info.hotkeyMode}) · STT ${stt} · TTS ${tts}${liveOn ? ' · Jarvis Live' : ''}${wakeBlocked ? ` · wake preso pelo PID ${wakeBlockedPid}` : ''}`
+          ? `Clique para acordar a Jarvis · ⌥/⌘ clique para ajustes · Push-to-talk: ${info.shortcut} (${info.hotkeyMode}) · STT ${stt} · TTS ${tts}${liveOn ? ' · Jarvis Live' : ''}${responseMuted ? ' · respostas mudas' : ''}${wakeBlocked ? ` · wake preso pelo PID ${wakeBlockedPid}` : ''}`
           : 'Voice pipeline'
       }
     >

@@ -19,6 +19,31 @@ import type {
 } from '../../shared/voice-ipc';
 import type { MicHealth } from './wake-health';
 
+const RESPONSE_MUTED_KEY = 'nexus.voice.responseMuted';
+
+function loadResponseMutedFlag(
+  store: Pick<Storage, 'getItem' | 'setItem'> | null,
+): boolean {
+  if (!store) return false;
+  try {
+    return store.getItem(RESPONSE_MUTED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveResponseMutedFlag(
+  muted: boolean,
+  store: Pick<Storage, 'getItem' | 'setItem'> | null,
+): void {
+  if (!store) return;
+  try {
+    store.setItem(RESPONSE_MUTED_KEY, muted ? '1' : '0');
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * Renderer-side voice UI state: the current pipeline phase (for the HUD), the
  * secret-free runtime info from main, the last transcript/spoken line, and any
@@ -53,6 +78,11 @@ interface VoiceStore {
   liveInterrupted: JarvisLiveInterruptEvent | null;
   /** HUD da JARVIS: modo (expandida/mini/só-áudio), âncora e largura. */
   hud: HudPrefs;
+  /**
+   * When true: Jarvis still listens and runs commands, but response audio
+   * (Classic TTS + Live PCM) is suppressed.
+   */
+  responseMuted: boolean;
 
   setStatus: (status: VoiceUiStatus) => void;
   setInfo: (info: VoiceRuntimeInfo) => void;
@@ -70,6 +100,7 @@ interface VoiceStore {
   setHudMode: (mode: HudMode) => void;
   setHudAnchor: (anchor: { corner: HudCorner; dx: number; dy: number }) => void;
   setHudWidth: (width: number) => void;
+  setResponseMuted: (responseMuted: boolean) => void;
   openSettings: () => void;
   closeSettings: () => void;
 }
@@ -99,6 +130,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   liveTool: null,
   liveInterrupted: null,
   hud: hudStorage ? loadHudPrefs(hudStorage) : { ...DEFAULT_HUD_PREFS },
+  responseMuted: loadResponseMutedFlag(hudStorage),
 
   setStatus: (status) => set({ status, ...(status !== 'error' ? { error: null } : {}) }),
   setInfo: (info) => set({ info }),
@@ -127,6 +159,10 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
     set((state) => ({
       hud: persistHud({ ...state.hud, width: clampHudWidth(width) }),
     })),
+  setResponseMuted: (responseMuted) => {
+    saveResponseMutedFlag(responseMuted, hudStorage);
+    set({ responseMuted });
+  },
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
 }));

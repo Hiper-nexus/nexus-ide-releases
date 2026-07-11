@@ -24,6 +24,7 @@ import {
   shouldFallbackClassicAfterRealtimeMute,
 } from './realtime-ownership';
 import { playAudioBase64 } from './voice-playback';
+import { isResponseMuted } from './response-output-gate';
 import { getThinkFillerCache, THINK_FILLERS } from './voice-wake-ack';
 import {
   errMsg,
@@ -856,19 +857,21 @@ export async function finishAndProcess(
 
     const reply = await captureResponse(paneId, transcript);
     if (reply.trim()) {
-      store.setStatus('speaking');
-      const spoken = await withTimeout(
-        window.nexus.voice.speak({ text: reply }),
-        SPEAK_DEADLINE_MS_LOCAL,
-        'TTS',
-      );
-      if (spoken.ok) {
-        if (spoken.fallbackNote) store.setNote(spoken.fallbackNote);
-        if (spoken.mode === 'audio') await playAudioBase64(spoken.audioBase64, spoken.format);
-        store.setSpoken(reply);
-      } else {
-        store.setError(spoken.error);
-        return;
+      store.setSpoken(reply);
+      if (!isResponseMuted()) {
+        store.setStatus('speaking');
+        const spoken = await withTimeout(
+          window.nexus.voice.speak({ text: reply }),
+          SPEAK_DEADLINE_MS_LOCAL,
+          'TTS',
+        );
+        if (spoken.ok) {
+          if (spoken.fallbackNote) store.setNote(spoken.fallbackNote);
+          if (spoken.mode === 'audio') await playAudioBase64(spoken.audioBase64, spoken.format);
+        } else {
+          store.setError(spoken.error);
+          return;
+        }
       }
     }
     store.setStatus('idle');

@@ -186,13 +186,15 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 0 12px 0 84px; /* leave room for macOS traffic lights */
+  gap: 10px;
+  padding: 0 10px 0 84px; /* leave room for macOS traffic lights */
   background: var(--bg-bar);
   border-bottom: 1px solid var(--border);
   -webkit-app-region: drag;
   user-select: none;
-  overflow: hidden;
+  overflow: visible; /* menus drop below the bar */
+  position: relative;
+  z-index: 40;
 }
 
 .workspace-bar__brand {
@@ -201,11 +203,14 @@ body {
   gap: 8px;
   flex: 0 1 auto;
   min-width: 0;
+  max-width: min(220px, 28vw);
+  -webkit-app-region: no-drag;
 }
 
 .workspace-bar__logo {
   color: var(--accent);
   font-size: 14px;
+  flex: 0 0 auto;
 }
 
 .workspace-bar__name {
@@ -216,6 +221,42 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workspace-bar__ws {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.workspace-bar__name-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.workspace-bar__name-btn:hover,
+.workspace-bar__name-btn[aria-expanded='true'] {
+  background: var(--accent-soft);
+  border-color: var(--border-strong);
+}
+
+.workspace-bar__name-caret {
+  flex: 0 0 auto;
+  font-size: 9px;
+  color: var(--text-dim);
+  line-height: 1;
 }
 
 .workspace-bar__tag {
@@ -231,44 +272,88 @@ body {
 .workspace-bar__actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  -webkit-app-region: no-drag;
-}
-
-/* HUD + custo ficam fixos; só os botões rolam em telas estreitas. */
-.workspace-bar__actions-pinned {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-  min-width: 0;
-  max-width: min(620px, 52vw);
-}
-
-.workspace-bar__actions-scroll {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex: 1 1 auto;
   min-width: 0;
   justify-content: flex-end;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
+  overflow: visible;
+  -webkit-app-region: no-drag;
 }
 
-.workspace-bar__actions-scroll::-webkit-scrollbar {
-  display: none;
-}
-
-.workspace-bar__actions-pinned > *,
-.workspace-bar__actions-scroll > * {
+.workspace-bar__zone {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex: 0 0 auto;
+  min-width: 0;
+}
+
+.workspace-bar__zone--status {
+  flex: 0 1 auto;
+  max-width: min(280px, 26vw);
+  overflow: hidden;
+}
+
+.workspace-bar__zone--primary,
+.workspace-bar__zone--tools,
+.workspace-bar__zone--system {
+  flex: 0 0 auto;
+}
+
+.workspace-bar__more {
+  position: relative;
+}
+
+.workspace-bar__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 80;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated, var(--bg-bar));
+  box-shadow: var(--shadow-1, 0 8px 24px rgba(0, 0, 0, 0.35));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.workspace-bar__menu--end {
+  left: auto;
+  right: 0;
+}
+
+.workspace-bar__menu-item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.workspace-bar__menu-item:hover,
+.workspace-bar__menu-item--active {
+  background: var(--accent-soft);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.workspace-bar__menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
 }
 
 .workspace-bar__count {
@@ -278,6 +363,10 @@ body {
 }
 
 .workspace-bar__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   background: transparent;
   border: 1px solid var(--border-strong);
   color: var(--text);
@@ -289,22 +378,89 @@ body {
   transition: background 120ms ease, border-color 120ms ease;
 }
 
+.workspace-bar__btn-label {
+  line-height: 1;
+}
+
 .workspace-bar__btn:hover {
   background: var(--accent-soft);
   border-color: var(--accent);
 }
 
-@media (max-width: 960px) {
-  .workspace-bar__btn {
-    padding: 4px 7px;
-    font-size: 10px;
-  }
-  .workspace-bar__ws-btn {
-    display: none;
-  }
-  .workspace-bar__ws-btn--board {
-    display: none;
-  }
+.workspace-bar__btn--more {
+  min-width: 28px;
+  padding-left: 8px;
+  padding-right: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+/* Density: full (≥1280) labels; icons (980–1279) no labels; compact (<980) overflow */
+.workspace-bar--icons .workspace-bar__btn,
+.workspace-bar--compact .workspace-bar__btn {
+  padding: 4px 7px;
+  font-size: 10px;
+}
+
+.workspace-bar--compact .workspace-bar__zone--status {
+  max-width: 120px;
+}
+
+.workspace-bar--compact .workspace-bar__brand {
+  max-width: min(140px, 22vw);
+}
+
+.workspace-bar__todo {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 140px;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.workspace-bar__todo-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-bar__account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 120px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-bar__account-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 6px;
+  background: var(--ok);
+}
+
+.workspace-bar__account-dot--cool {
+  background: var(--warn);
+}
+
+/* Legacy ws-btn kept for LaunchScreen / other chrome */
+.workspace-bar__ws-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 
 /* ---- Grid + panels ---- */

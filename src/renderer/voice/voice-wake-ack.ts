@@ -1,4 +1,5 @@
 import { playAudioBase64 } from './voice-playback';
+import { isResponseMuted } from './response-output-gate';
 import type { VoiceRuntimeInfo } from '../../shared/voice-ipc';
 
 // INVARIANTE C3: o ack tocado no wake (wakeGreetingText = índice [0]) NUNCA
@@ -79,7 +80,7 @@ export function warmAckCache(userName: string): void {
 }
 
 export async function playWakePrompt(text: string): Promise<void> {
-  if (!text.trim()) return;
+  if (!text.trim() || isResponseMuted()) return;
   const cached = ackCache.get(text);
   if (!cached) {
     const result = await withTimeout(
@@ -99,6 +100,7 @@ export async function playWakePrompt(text: string): Promise<void> {
 }
 
 export async function playCachedWakeAck(userName: string): Promise<void> {
+  if (isResponseMuted()) return;
   const cached = ackCache.get(wakeGreetingText(userName));
   if (!cached) return;
   await playAudioBase64(cached.audioBase64, cached.format);

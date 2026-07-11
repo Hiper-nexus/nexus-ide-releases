@@ -124,6 +124,23 @@ function untrustedPageData(input: DesignSelectionPromptInput): unknown {
       },
       outerHtml: safeOuterHtml(selection.outerHtml),
       computedStyles: styles,
+      ...(selection.ancestors && selection.ancestors.length
+        ? {
+            ancestors: selection.ancestors.slice(0, 6).map((ancestor) => ({
+              tag: safePageText(ancestor.tag, 32),
+              ...(ancestor.id ? { id: safePageText(ancestor.id, 64) } : {}),
+              classes: ancestor.classes.slice(0, 3).map((c) => safePageText(c, 64)),
+              ...(ancestor.role ? { role: safePageText(ancestor.role, 32) } : {}),
+            })),
+          }
+        : {}),
+      ...(selection.siblingLabels && selection.siblingLabels.length
+        ? {
+            siblings: selection.siblingLabels
+              .slice(0, 5)
+              .map((label) => safePageText(label, 120)),
+          }
+        : {}),
       ...(hints
         ? {
             framework: {

@@ -17,6 +17,7 @@ import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { launchSquadMission } from '../orch/mission-launcher';
 import { isMissingModelKeyError } from '../lib/credential-errors';
 import { playAudioBase64 } from './voice-playback';
+import { isResponseMuted } from './response-output-gate';
 import { invokeMcpWithConfirm, mapActionToTool } from '../services/mcp-bridge';
 import { reopenMission } from '../orch/mission-reopen';
 import { delegationConfirmPrompt, setPendingDelegation } from './delegation-confirm';
@@ -175,7 +176,7 @@ async function executeViaMcp(
   const mapping = mapActionToTool(action, ctx);
   if (!mapping) return null;
 
-  if (action.type === 'run_command') {
+  if (action.type === 'run_command' && !isResponseMuted()) {
     void window.nexus.voice
       .speak({ text: 'Confirma na tela se pedir permissão.', speakMode: 'full', echoRecord: false })
       .then((r) => {
@@ -684,12 +685,16 @@ export async function executeJarvisAction(
       sayText = 'Não consegui iniciar um terminal para rodar o comando.';
       toolResult = { tool: action.type, ok: false, summary: 'terminal sem sessão' };
     } else {
-      void window.nexus.voice
-        .speak({ text: 'Confirma na tela para eu executar.', speakMode: 'full', echoRecord: false })
-        .then((r) => {
-          if (r.ok && r.mode === 'audio') void playAudioBase64(r.audioBase64, r.format).catch(() => {});
-        })
-        .catch(() => {});
+      if (!isResponseMuted()) {
+        void window.nexus.voice
+          .speak({ text: 'Confirma na tela para eu executar.', speakMode: 'full', echoRecord: false })
+          .then((r) => {
+            if (r.ok && r.mode === 'audio') {
+              void playAudioBase64(r.audioBase64, r.format).catch(() => {});
+            }
+          })
+          .catch(() => {});
+      }
       const approved = await window.nexus.voice.confirmCommand(action.command);
       checkpoint(control);
       if (approved) {

@@ -445,6 +445,11 @@ describe('picker selection (L0 context)', () => {
     expect(typeof ctx.rect.x).toBe('number');
     expect(typeof ctx.rect.width).toBe('number');
     expect(ctx.computedStyles).toHaveProperty('display');
+    // Neighborhood (structural context): ancestors + sibling labels.
+    expect(ctx.ancestors).toBeDefined();
+    expect(ctx.ancestors!.some((a) => a.tag === 'main')).toBe(true);
+    expect(ctx.siblingLabels).toBeDefined();
+    expect(ctx.siblingLabels!.length).toBeGreaterThan(0);
   });
 
   it('selection events validate against the main-process schema', async () => {
@@ -536,6 +541,80 @@ describe('picker selection (L0 context)', () => {
     expect(ctx.selector).toContain('div');
     expect(ctx.selector).toContain('nth-of-type(2)');
     expect(win.document.querySelector(ctx.selector)).toBe(second);
+  });
+
+  it('builds a short class-based selector for a unique element (no nth-of-type)', async () => {
+    // Incremental selector (ported from Orca): a single element identifiable by
+    // stable classes resolves to the shortest unique selector — no ancestor
+    // climb, no nth-of-type, resilient to structural changes around it.
+    const { win, automation, events } = fixture();
+    const unique = win.document.createElement('div');
+    unique.className = 'callout unique-banner';
+    unique.textContent = 'banner';
+    win.document.body.append(unique);
+    await automation.run('design_enable', DESIGN_ARGS);
+    hoverAndClick(win, unique);
+    const ctx = events.find((e) => e.type === 'selection')!.selection!;
+    expect(ctx.selector).toBe('div.callout.unique-banner');
+    expect(ctx.selector).not.toContain('nth-of-type');
+    expect(win.document.querySelector(ctx.selector)).toBe(unique);
+  });
+
+  it('captures ancestor hierarchy and sibling labels for nested elements', async () => {
+    const { win, automation, events } = fixture();
+    await automation.run('design_enable', DESIGN_ARGS);
+    const second = win.document.querySelectorAll('.card')[1]!;
+    hoverAndClick(win, second);
+    const ctx = events.find((e) => e.type === 'selection')!.selection!;
+    // The card lives in <section class="cards"> within <main>: both captured,
+    // stopping at <body> (excluded as noise). Nearest ancestor first.
+    expect(ctx.ancestors!.map((a) => a.tag)).toEqual(['section', 'main']);
+    expect(ctx.ancestors![0].classes).toContain('cards');
+    // The first card is the only visible, non-self sibling.
+    expect(ctx.siblingLabels).toEqual(['div.card "Primeiro"']);
+    // The whole event still validates against the main-process schema.
+    expect(browserDesignEventSchema.safeParse(
+      events.find((e) => e.type === 'selection'),
+    ).success).toBe(true);
+  });
+
+  it('ignores hashed/generated classes when building a selector', async () => {
+    // Build artifacts (emotion `css-*` prefix, hashy tokens) change between
+    // builds and must not leak into the selector. `badge` is stable and kept.
+    // Note: named BEM / css-modules classes without a digit are intentionally
+    // kept — they are stable across builds and indistinguishable from hand-written names.
+    const { win, automation, events } = fixture();
+    const tagged = win.document.createElement('span');
+    tagged.className = 'badge css-x7k2p9 UserProfileBadge9xK7p2';
+    tagged.textContent = 'x';
+    win.document.body.append(tagged);
+    await automation.run('design_enable', DESIGN_ARGS);
+    hoverAndClick(win, tagged);
+    const ctx = events.find((e) => e.type === 'selection')!.selection!;
+    expect(ctx.selector).toBe('span.badge');
+    expect(ctx.selector).not.toContain('css-x7k2p9');
+    expect(ctx.selector).not.toContain('UserProfileBadge9xK7p2');
+    expect(win.document.querySelector(ctx.selector)).toBe(tagged);
+  });
+
+  it('omits sensitive sibling text so secrets never leak into labels', async () => {
+    const { win, automation, events } = fixture();
+    const target = win.document.createElement('div');
+    target.id = 'target';
+    target.textContent = 'alvo';
+    const secretSibling = win.document.createElement('input');
+    secretSibling.type = 'password';
+    secretSibling.value = 'sibling-password-leak-99';
+    const container = win.document.createElement('section');
+    container.append(secretSibling, target);
+    win.document.body.append(container);
+    await automation.run('design_enable', DESIGN_ARGS);
+    hoverAndClick(win, target);
+    const ctx = events.find((e) => e.type === 'selection')!.selection!;
+    const serialized = JSON.stringify(ctx.siblingLabels);
+    // The password sibling is listed (as a bare `input`) but leaks no value/text.
+    expect(ctx.siblingLabels!.some((label) => label.startsWith('input'))).toBe(true);
+    expect(serialized).not.toContain('sibling-password-leak-99');
   });
 
   it('selection refs are shared with the automation commands', async () => {

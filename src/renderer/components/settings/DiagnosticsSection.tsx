@@ -72,6 +72,7 @@ export function DiagnosticsSection() {
   const usage = useUsageStore((s) => s.snapshot);
   const { micPermission, screenPermission, devices, refresh } =
     useDiagnosticsSnapshot();
+  const [legalNote, setLegalNote] = useState<string | null>(null);
 
   const wakeState = useMemo(() => {
     if (!info?.wakeWordEnabled) return { value: 'desligado', tone: 'warn' };
@@ -175,7 +176,28 @@ export function DiagnosticsSection() {
         </div>
       </div>
 
-      <div className="settings-row">
+      <div className="settings-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <button
+          className="settings-btn"
+          type="button"
+          title="Abre THIRD_PARTY_NOTICES.md (MIT Orca, fontes, Onlook…) no visualizador do SO"
+          onClick={() => {
+            void window.nexus.app.openLegalNotices().then((r) => {
+              setLegalNote(
+                r.ok
+                  ? 'Notices abertas no app do sistema'
+                  : r.error ?? 'Não foi possível abrir as notices',
+              );
+            });
+          }}
+        >
+          Licenças de terceiros
+        </button>
+        {legalNote && (
+          <span className="settings-detail__hint" style={{ margin: 0 }}>
+            {legalNote}
+          </span>
+        )}
         <button className="settings-btn" type="button" onClick={() => void refresh()}>
           Rechecar diagnóstico
         </button>

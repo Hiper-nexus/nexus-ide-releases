@@ -3,6 +3,7 @@
  */
 import { splitForPipelinedSpeech } from './speech-segments';
 import { playSpeakResult } from './voice-playback';
+import { isResponseMuted } from './response-output-gate';
 import { useVoiceStore } from './voice-store';
 import type { SpeakResult } from '../../shared/voice-ipc';
 
@@ -42,6 +43,8 @@ export async function speakAndPlayPipelined(
   | { ok: true; playedMs: number; cancelled?: boolean }
   | { ok: false; error: string }
 > {
+  // Mute = no TTS audio; tools/commands still ran before this call.
+  if (isResponseMuted()) return { ok: true, playedMs: 0, cancelled: true };
   const { first, rest } = splitForPipelinedSpeech(text);
   if (!first) return { ok: true, playedMs: 0 };
   const firstSpoken = await speakSegment(first, 'TTS');

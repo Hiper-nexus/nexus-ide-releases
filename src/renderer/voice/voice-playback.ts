@@ -6,6 +6,7 @@ import {
 } from './live-local-audio-gate';
 import type { SpeakResult } from '../../shared/voice-ipc';
 import { requirePreferredOutputDevice } from './audio-device-preferences';
+import { isResponseMuted } from './response-output-gate';
 
 /** Silencia detecção de wake word durante reprodução de TTS. */
 export type WakeSuppressor = (ms: number) => void;
@@ -54,6 +55,7 @@ function base64ToBytes(base64: string): Uint8Array {
  *  newer playback superseded it). The returned duration lets callers tie the
  *  post-TTS wake-suppression window to the REAL length of what was spoken. */
 export async function playAudioBase64(base64: string, _format: string): Promise<number> {
+  if (isResponseMuted()) return 0;
   const gen = playbackGen;
   const bytes = base64ToBytes(base64);
   const ctx = new AudioContext();

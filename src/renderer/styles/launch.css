@@ -427,31 +427,4 @@
   }
 }
 
-/* ---- Workspace switcher in bar ---- */
-.workspace-bar__ws {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  color: var(--text);
-  -webkit-app-region: no-drag;
-  padding: 2px 4px;
-  border-radius: var(--radius-md);
-}
-
-.workspace-bar__ws:hover {
-  background: var(--accent-soft);
-}
-
-.workspace-bar__actions-scroll {
-  flex-wrap: nowrap;
-  justify-content: flex-end;
-}
-
-@media (max-width: 1100px) {
-  .workspace-bar__brand .workspace-bar__ws-btn--board {
-    display: none;
-  }
-}
+/* Workspace switcher menu lives in base.css (.workspace-bar__ws + menu) */

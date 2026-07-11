@@ -16,10 +16,18 @@
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  max-width: 160px;
+  max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workspace-bar--icons .workspace-bar__voice-label {
+  max-width: 88px;
+}
+
+.workspace-bar--compact .workspace-bar__voice-label {
+  max-width: 64px;
 }
 
 .vision-indicator {
@@ -178,10 +186,10 @@
   border-radius: 0;
   color: var(--text-dim);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1;
-  width: 18px;
-  height: 16px;
+  width: 20px;
+  height: 18px;
   padding: 0;
   cursor: pointer;
 }
@@ -190,6 +198,17 @@
   color: var(--text);
   border-color: rgba(110, 168, 254, 0.6);
   background: rgba(110, 168, 254, 0.12);
+}
+
+.voice-hud__ctl--active {
+  color: #f0c674;
+  border-color: rgba(240, 198, 116, 0.7);
+  background: rgba(240, 198, 116, 0.14);
+}
+
+.voice-hud--mini .voice-hud__ctls {
+  margin-left: 4px;
+  flex-shrink: 0;
 }
 
 /* Alça de resize na borda lateral do painel expandido. */

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSettingsStore } from '../state/settings-store';
@@ -12,10 +12,11 @@ import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
 import { VisionIndicator } from './VisionIndicator';
 import { NexusMark } from './NexusMark';
-import { PixelIcon } from './PixelIcon';
+import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { UpdateModal, UpdateStatusButton, useUpdateState } from './UpdateModal';
 import type { AdapterInfo } from '../../shared/types';
 import { setBrowserPaneSuppression } from '../browser/browser-host';
+import { useAccountStore } from '../state/account-store';
 
 function adapterModelLabel(adapter: AdapterInfo, model: string): string {
   const info = adapter.models.info?.[model];
@@ -26,8 +27,44 @@ function adapterModelLabel(adapter: AdapterInfo, model: string): string {
   return tags.length > 0 ? `${model} (${tags.join(', ')})` : model;
 }
 
-/** Slim top chrome: brand, pane count, split shortcuts, view toggle, and the agent launcher. */
-export function WorkspaceBar() {
+type BarDensity = 'full' | 'icons' | 'compact';
+
+function densityFromWidth(width: number): BarDensity {
+  if (width < 980) return 'compact';
+  if (width < 1280) return 'icons';
+  return 'full';
+}
+
+function useBarDensity(): BarDensity {
+  const [density, setDensity] = useState<BarDensity>(() =>
+    typeof window === 'undefined' ? 'full' : densityFromWidth(window.innerWidth),
+  );
+  useEffect(() => {
+    const onResize = () => setDensity(densityFromWidth(window.innerWidth));
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return density;
+}
+
+interface ToolDef {
+  id: string;
+  label: string;
+  icon: PixelIconName;
+  title: string;
+  active?: boolean;
+  onClick: () => void;
+}
+
+/** Slim top chrome: brand, status, primary actions, overflow tools, system zone. */
+export function WorkspaceBar({
+  onOpenDiff,
+  onOpenIntegrations,
+}: {
+  onOpenDiff?: () => void;
+  onOpenIntegrations?: () => void;
+} = {}) {
   const root = useLayoutStore((s) => s.root);
   const viewKind = useLayoutStore((s) => s.viewKind);
   const spawnAgent = useLayoutStore((s) => s.spawnAgent);
@@ -55,12 +92,21 @@ export function WorkspaceBar() {
     return null;
   });
 
+  const density = useBarDensity();
+  const showLabels = density === 'full';
+  const compact = density === 'compact';
+  const activeAccount = useAccountStore((s) => s.accounts.find((a) => a.active) ?? null);
+
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const updateState = useUpdateState();
   const [updateOpen, setUpdateOpen] = useState(false);
   const [selectedAdapter, setSelectedAdapter] = useState<AdapterInfo | null>(null);
   const [selectedModel, setSelectedModel] = useState('');
+  const [wsMenuOpen, setWsMenuOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const wsMenuRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,6 +126,31 @@ export function WorkspaceBar() {
     setBrowserPaneSuppression('agent-picker', pickerOpen);
     return () => setBrowserPaneSuppression('agent-picker', false);
   }, [pickerOpen]);
+
+  useEffect(() => {
+    if (!wsMenuOpen && !moreOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (wsMenuOpen && wsMenuRef.current && !wsMenuRef.current.contains(t)) {
+        setWsMenuOpen(false);
+      }
+      if (moreOpen && moreRef.current && !moreRef.current.contains(t)) {
+        setMoreOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setWsMenuOpen(false);
+        setMoreOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [wsMenuOpen, moreOpen]);
 
   const installedAdapters = adapters.filter((a) => a.installed);
 
@@ -106,131 +177,289 @@ export function WorkspaceBar() {
     setSelectedModel(a?.models.default ?? '');
   }
 
+  const secondaryTools: ToolDef[] = [
+    {
+      id: 'terminal',
+      label: 'Terminal',
+      icon: 'terminal',
+      title: `Abrir um terminal shell novo (${paneCount} pane${paneCount === 1 ? '' : 's'} aberto${paneCount === 1 ? '' : 's'} · ⌘D divide o pane focado)`,
+      onClick: addShellPane,
+    },
+    {
+      id: 'browser',
+      label: 'Browser',
+      icon: 'browser',
+      title: 'Abrir um browser embutido em um pane novo',
+      onClick: () => addBrowserPane(),
+    },
+    {
+      id: 'view',
+      label: viewKind === 'canvas' ? 'Grid' : 'Canvas',
+      icon: viewKind === 'canvas' ? 'grid' : 'canvas',
+      title:
+        viewKind === 'grid'
+          ? 'Mudar para canvas (arrastar livre)'
+          : 'Mudar para grid (panes divididos)',
+      active: viewKind === 'canvas',
+      onClick: toggleView,
+    },
+    {
+      id: 'files',
+      label: 'Files',
+      icon: 'files',
+      title: 'Arquivos do workspace (ver/editar)',
+      active: filesOpen,
+      onClick: toggleFiles,
+    },
+    {
+      id: 'board',
+      label: 'Board',
+      icon: 'board',
+      title: 'Ops Board — pipeline de missões (⌘B)',
+      active: opsBoardOpen,
+      onClick: toggleOpsBoard,
+    },
+    {
+      id: 'orch',
+      label: 'Orch',
+      icon: 'orch',
+      title: 'Missões, handoffs, todos e squads',
+      active: orchPanelOpen,
+      onClick: toggleOrchPanel,
+    },
+  ];
+
+  // Compact: only Terminal + Browser stay inline; rest go to ⋯
+  // Icons/full: all secondary stay inline (labels hide via CSS density)
+  const inlineTools = compact
+    ? secondaryTools.filter((t) => t.id === 'terminal' || t.id === 'browser')
+    : secondaryTools;
+  const overflowTools = compact
+    ? secondaryTools.filter((t) => t.id !== 'terminal' && t.id !== 'browser')
+    : [];
+
+  function renderToolBtn(tool: ToolDef, opts?: { menu?: boolean }) {
+    if (opts?.menu) {
+      return (
+        <button
+          key={tool.id}
+          type="button"
+          className={`workspace-bar__menu-item ${tool.active ? 'workspace-bar__menu-item--active' : ''}`}
+          title={tool.title}
+          onClick={() => {
+            tool.onClick();
+            setMoreOpen(false);
+          }}
+        >
+          <PixelIcon name={tool.icon} size={12} />
+          <span>{tool.label}</span>
+        </button>
+      );
+    }
+    return (
+      <button
+        key={tool.id}
+        type="button"
+        className={`workspace-bar__btn ${tool.active ? 'workspace-bar__btn--view-active' : ''} ${tool.id === 'view' ? 'workspace-bar__btn--view' : ''}`}
+        onClick={tool.onClick}
+        title={tool.title}
+        aria-label={tool.title}
+      >
+        <PixelIcon name={tool.icon} />
+        {showLabels && <span className="workspace-bar__btn-label">{tool.label}</span>}
+      </button>
+    );
+  }
+
   return (
-    <header className="workspace-bar">
+    <header
+      className={`workspace-bar workspace-bar--${density}`}
+      data-density={density}
+    >
+      {/* Brand: logo + name + workspace menu (novo/fechar) — no Board duplicate */}
       <div className="workspace-bar__brand">
         <NexusMark size={15} className="workspace-bar__logo" />
         {workspace ? (
-          <>
-            <span className="workspace-bar__name" title={workspace.path}>
-              {workspace.name}
-            </span>
+          <div className="workspace-bar__ws" ref={wsMenuRef}>
             <button
-              className="workspace-bar__ws-btn"
-              onClick={openNewWorkspace}
-              title="Abrir/criar outro workspace"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+              type="button"
+              className="workspace-bar__name-btn"
+              title={workspace.path}
+              aria-haspopup="menu"
+              aria-expanded={wsMenuOpen}
+              onClick={() => {
+                setWsMenuOpen((o) => !o);
+                setMoreOpen(false);
+              }}
             >
-              <PixelIcon name="plus" size={10} /> novo
+              <span className="workspace-bar__name">{workspace.name}</span>
+              <span className="workspace-bar__name-caret" aria-hidden="true">
+                ▾
+              </span>
             </button>
-            <button
-              className="workspace-bar__ws-btn workspace-bar__ws-btn--close"
-              onClick={askCloseWorkspace}
-              title="Fechar este workspace"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}
-            >
-              <PixelIcon name="close" size={10} /> fechar
-            </button>
-            <button
-              className={`workspace-bar__ws-btn workspace-bar__ws-btn--board ${opsBoardOpen ? 'workspace-bar__ws-btn--active' : ''}`}
-              onClick={toggleOpsBoard}
-              title="Ops Board — pipeline de missões (⌘B)"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}
-            >
-              <PixelIcon name="board" size={10} /> board
-            </button>
-          </>
+            {wsMenuOpen && (
+              <div className="workspace-bar__menu" role="menu">
+                <button
+                  type="button"
+                  className="workspace-bar__menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    openNewWorkspace();
+                    setWsMenuOpen(false);
+                  }}
+                >
+                  <PixelIcon name="plus" size={12} />
+                  <span>Novo workspace</span>
+                </button>
+                <button
+                  type="button"
+                  className="workspace-bar__menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    askCloseWorkspace();
+                    setWsMenuOpen(false);
+                  }}
+                >
+                  <PixelIcon name="close" size={12} />
+                  <span>Fechar workspace</span>
+                </button>
+              </div>
+            )}
+          </div>
         ) : (
           <span className="workspace-bar__name">NexusIDE</span>
         )}
       </div>
+
       <div className="workspace-bar__actions">
-        <div className="workspace-bar__actions-pinned">
+        {/* Status: HUD + cost (capped width) */}
+        <div className="workspace-bar__zone workspace-bar__zone--status">
           <OperatorHud />
-          <CostSummary />
-          {activeTodo && (
+          {!compact && <CostSummary />}
+          {activeTodo && !compact && (
             <span
               className="workspace-bar__todo"
               title="Current orchestration task"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
             >
-              <PixelIcon name="mission" size={10} /> {activeTodo}
+              <PixelIcon name="mission" size={10} />
+              <span className="workspace-bar__todo-text">{activeTodo}</span>
             </span>
           )}
         </div>
-        <div className="workspace-bar__actions-scroll">
+
+        {/* Primary: always visible */}
+        <div className="workspace-bar__zone workspace-bar__zone--primary">
           <button
             className="workspace-bar__btn workspace-bar__btn--primary"
             onClick={openWizard}
             title="Nova missão (livre ou squad)"
+            aria-label="Nova missão"
           >
             <PixelIcon name="mission" />
-            Missão
+            {showLabels && <span className="workspace-bar__btn-label">Missão</span>}
           </button>
           <button
             className="workspace-bar__btn workspace-bar__btn--agent"
             onClick={openPicker}
             title="Abrir um agente de IA em um pane novo"
+            aria-label="Abrir agente"
           >
             <PixelIcon name="agent" />
-            Agent
+            {showLabels && <span className="workspace-bar__btn-label">Agent</span>}
           </button>
-          <button
-            className="workspace-bar__btn"
-            onClick={addShellPane}
-            title={`Abrir um terminal shell novo (${paneCount} pane${paneCount === 1 ? '' : 's'} aberto${paneCount === 1 ? '' : 's'} · ⌘D divide o pane focado)`}
-          >
-            <PixelIcon name="terminal" />
-            Terminal
-          </button>
-          <button
-            className="workspace-bar__btn"
-            onClick={() => addBrowserPane()}
-            title="Abrir um browser embutido em um pane novo"
-          >
-            <PixelIcon name="browser" />
-            Browser
-          </button>
-          <span className="workspace-bar__sep" aria-hidden="true" />
-          <button
-            className={`workspace-bar__btn workspace-bar__btn--view ${viewKind === 'canvas' ? 'workspace-bar__btn--view-active' : ''}`}
-            onClick={toggleView}
-            title={viewKind === 'grid' ? 'Mudar para canvas (arrastar livre)' : 'Mudar para grid (panes divididos)'}
-          >
-            <PixelIcon name={viewKind === 'canvas' ? 'grid' : 'canvas'} />
-            {viewKind === 'canvas' ? 'Grid' : 'Canvas'}
-          </button>
-          <button
-            className={`workspace-bar__btn ${filesOpen ? 'workspace-bar__btn--view-active' : ''}`}
-            onClick={toggleFiles}
-            title="Arquivos do workspace (ver/editar)"
-          >
-            <PixelIcon name="files" />
-            Files
-          </button>
-          <button
-            className={`workspace-bar__btn ${opsBoardOpen ? 'workspace-bar__btn--view-active' : ''}`}
-            onClick={toggleOpsBoard}
-            title="Ops Board — pipeline de missões (⌘B)"
-          >
-            <PixelIcon name="board" />
-            Board
-          </button>
-          <button
-            className={`workspace-bar__btn ${orchPanelOpen ? 'workspace-bar__btn--view-active' : ''}`}
-            onClick={toggleOrchPanel}
-            title="Missões, handoffs, todos e squads"
-          >
-            <PixelIcon name="orch" />
-            Orch
-          </button>
-          <span className="workspace-bar__sep" aria-hidden="true" />
+          {onOpenDiff && (
+            <button
+              className="workspace-bar__btn"
+              onClick={onOpenDiff}
+              title="Diff + anotações para o agent"
+              aria-label="Diff e anotações"
+            >
+              <PixelIcon name="files" />
+              {showLabels && <span className="workspace-bar__btn-label">Diff</span>}
+            </button>
+          )}
+          {onOpenIntegrations && (
+            <button
+              className="workspace-bar__btn"
+              onClick={onOpenIntegrations}
+              title="GitHub, Linear, port forward"
+              aria-label="Integrações"
+            >
+              <PixelIcon name="config" />
+              {showLabels && <span className="workspace-bar__btn-label">Forge</span>}
+            </button>
+          )}
+        </div>
+
+        <span className="workspace-bar__sep" aria-hidden="true" />
+
+        {/* Secondary tools + overflow */}
+        <div className="workspace-bar__zone workspace-bar__zone--tools">
+          {inlineTools.map((tool) => renderToolBtn(tool))}
+          {overflowTools.length > 0 && (
+            <div className="workspace-bar__more" ref={moreRef}>
+              <button
+                type="button"
+                className={`workspace-bar__btn workspace-bar__btn--more ${moreOpen ? 'workspace-bar__btn--view-active' : ''}`}
+                title="Mais ferramentas"
+                aria-label="Mais ferramentas"
+                aria-haspopup="menu"
+                aria-expanded={moreOpen}
+                onClick={() => {
+                  setMoreOpen((o) => !o);
+                  setWsMenuOpen(false);
+                }}
+              >
+                ⋯
+              </button>
+              {moreOpen && (
+                <div className="workspace-bar__menu workspace-bar__menu--end" role="menu">
+                  {overflowTools.map((tool) => renderToolBtn(tool, { menu: true }))}
+                  {compact && (
+                    <>
+                      <div className="workspace-bar__menu-sep" />
+                      <button
+                        type="button"
+                        className="workspace-bar__menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          setUpdateOpen(true);
+                          setMoreOpen(false);
+                        }}
+                      >
+                        <span aria-hidden="true">⇪</span>
+                        <span>Atualizações</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <span className="workspace-bar__sep" aria-hidden="true" />
+
+        {/* System: always visible — voice, vision, update, config */}
+        <div className="workspace-bar__zone workspace-bar__zone--system">
           <VoiceButton />
           <VisionIndicator />
-          {updateState && (
+          {activeAccount && !compact && (
+            <span
+              className="workspace-bar__account-chip"
+              title={`${activeAccount.label} · ${activeAccount.adapterId}${activeAccount.onCooldown ? ' · cooldown' : ''}`}
+            >
+              <span
+                className={`workspace-bar__account-dot ${activeAccount.onCooldown ? 'workspace-bar__account-dot--cool' : ''}`}
+              />
+              {showLabels ? activeAccount.label : activeAccount.adapterId}
+            </span>
+          )}
+          {updateState && !compact && (
             <UpdateStatusButton
               state={updateState}
               alwaysVisible
+              compact={density !== 'full'}
               onClick={() => setUpdateOpen(true)}
             />
           )}
@@ -241,9 +470,10 @@ export function WorkspaceBar() {
               toggleSettings();
             }}
             title="Conta, plano, módulos e catálogo (⌘,)"
+            aria-label="Configurações"
           >
             <PixelIcon name="config" />
-            Config
+            {showLabels && <span className="workspace-bar__btn-label">Config</span>}
           </button>
         </div>
       </div>
@@ -263,7 +493,8 @@ export function WorkspaceBar() {
                 Nenhuma CLI encontrada. Instale uma para começar.
                 {adapters.length > 0 && (
                   <span>
-                    {' '}Tente: <code>{adapters[0].installCommand}</code>
+                    {' '}
+                    Tente: <code>{adapters[0].installCommand}</code>
                   </span>
                 )}
               </p>

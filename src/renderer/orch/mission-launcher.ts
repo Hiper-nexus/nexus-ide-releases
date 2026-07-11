@@ -11,6 +11,10 @@ import {
   isOrchestratorCapableAdapter,
   resolveOrchestratorRuntime,
 } from "./orchestrator-runtime";
+import {
+  conflictingOrchestratorPanes,
+  killConflictingOrchestrators,
+} from "./mission-auth-conflict";
 
 /**
  * Launch logic behind the wizard when a
@@ -23,11 +27,10 @@ import {
  */
 
 /**
- * Mata as sessões dos agentes CLI vivos no grid antes de subir outra missão.
- * Sem isso, abrir uma 2ª missão deixava DOIS orquestradores Claude vivos ao
- * mesmo tempo — eles reescrevem o mesmo item de keychain e zeram o login de
- * todos. A missão anterior continua salva (mission-pane-store) e volta pela
- * trilha com --continue.
+ * Mata TODAS as sessões CLI do grid. Prefer `killConflictingOrchestrators`
+ * quando o adapter entrante não partilha login (multi-missão segura).
+ * Claude dual-orch reescreve o mesmo keychain — aí o kill seletivo/full
+ * ainda é obrigatório.
  */
 export function killLiveAgents(): void {
   const { root } = useLayoutStore.getState();
@@ -38,6 +41,13 @@ export function killLiveAgents(): void {
     }
   }
 }
+
+export {
+  conflictingOrchestratorPanes,
+  hardReopenWouldKillAgents,
+  killConflictingOrchestrators,
+  sharedAuthFamily,
+} from "./mission-auth-conflict";
 const BOOT_IDLE_TIMEOUT_MS = 15_000;
 const PASTE_SETTLE_MS = 250;
 
@@ -297,10 +307,9 @@ export async function launchSquadMission(
   });
   const { model, accountId } = runtime;
 
-  // Start the mission in a clean grid with just the orchestrator pane (a
-  // squad opens its own workspace). Workers are added by
-  // the orchestrator via the MCP tools as it delegates. Always replaces the
-  // grid so something starts — no silent no-op.
+  // Squad opens with orchestrator pane. Workers are added via MCP as it
+  // delegates. Multi-mission: when the new orch does not share exclusive
+  // login (Claude keychain), keep other live panes — no blanket kill.
   const cwd = getActiveWorkspacePath() ?? undefined;
   const orchPane: PaneModel = {
     ...createPane("cli-agent", cwd, cli, model),
@@ -310,16 +319,26 @@ export async function launchSquadMission(
     role: "orchestrator" as const,
     agentName: orchestrator.agentName,
   };
-  // Missões que estavam abertas neste grid serão deslocadas: marca como
-  // "travada" ANTES de matar os panes — elas continuam visíveis no rail/board
-  // com "retomar", em vez de sumirem penduradas em "rodando".
-  const displaced = new Set(
-    Object.values(useOrchStore.getState().paneMissions),
+  const { paneMissions } = useOrchStore.getState();
+  const existing = listPanes(useLayoutStore.getState().root);
+  const conflicts = conflictingOrchestratorPanes(cli);
+  const killedIds = new Set(
+    conflicts.length > 0 ? killConflictingOrchestrators(cli) : [],
   );
-  // Preserva a missão anterior (fica na trilha) e garante 1 orquestrador só.
-  killLiveAgents();
+  // Only mark missions blocked when we actually tore down their orch.
+  const displaced = new Set<string>();
+  for (const pane of conflicts) {
+    const mid = paneMissions[pane.id];
+    if (mid) displaced.add(mid);
+  }
+
   useHomeStore.getState().hide();
-  useLayoutStore.getState().setPanes([orchPane]);
+  if (existing.length === 0 || (killedIds.size > 0 && existing.every((p) => killedIds.has(p.id)))) {
+    useLayoutStore.getState().setPanes([orchPane]);
+  } else {
+    const kept = existing.filter((p) => !killedIds.has(p.id));
+    useLayoutStore.getState().setPanes([...kept, orchPane]);
+  }
 
   // Kickoff injection runs async — the wizard closes immediately, the
   // instructions land as soon as the CLI is booted and idle.

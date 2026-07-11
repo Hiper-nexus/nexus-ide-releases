@@ -3,7 +3,7 @@ import type { Mission, MissionStatus } from '../../shared/orch-types';
 import { useOrchStore } from '../state/orch-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useGamificationStore } from '../state/gamification-store';
-import { reopenMission } from '../orch/mission-reopen';
+import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { OperatorSprite } from './OperatorSprite';
 import { NexusMark } from './NexusMark';
 import { PixelIcon } from './PixelIcon';
@@ -72,10 +72,11 @@ export function OpsBoard() {
   function retomar(m: Mission) {
     setBusy(m.id);
     setNote(null);
-    void reopenMission(m).then((r) => {
-      setBusy(null);
-      if (!r.ok) setNote(r.error ?? 'Falha ao retomar.');
-    });
+    void confirmAndReopenMission(m)
+      .then((r) => {
+        if (!r.ok) setNote(r.error ?? 'Falha ao retomar.');
+      })
+      .finally(() => setBusy(null));
   }
 
   function remover(m: Mission, active: boolean) {

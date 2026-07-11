@@ -98,6 +98,12 @@ export const WINDOW_CHANNELS = {
    * local (binding do deep link) e abre o browser — o renderer nunca monta
    * a URL de auth. */
   authLogin: 'auth:login',
+  /**
+   * invoke: renderer → main. Open packaged THIRD_PARTY_NOTICES.md (or LICENSE)
+   * in the OS default app so closed-source builds still surface MIT/third-party
+   * attribution without making the GitHub repo public.
+   */
+  openLegalNotices: 'app:openLegalNotices',
 } as const;
 
 export const TEAM_CHANNELS = {

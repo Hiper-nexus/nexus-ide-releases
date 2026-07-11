@@ -79,8 +79,12 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
     <div class="err" id="pairErr"></div>
   </section>
 
-  <section id="panes" class="card hidden">
-    <label>Panes</label>
+  <section id="home" class="card hidden">
+    <label>Ops · resumo</label>
+    <div id="opsSummary" style="color:var(--dim);font-size:12px;margin-bottom:10px"></div>
+    <label>Missões</label>
+    <div id="missionList"></div>
+    <label style="margin-top:12px">Panes</label>
     <div id="paneList"></div>
     <button class="ghost" id="refreshBtn">Atualizar</button>
   </section>
@@ -138,24 +142,51 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
         token = r.token || (r.result && r.result.token);
         if (!token) throw new Error('sem token');
         $('pair').classList.add('hidden');
-        $('panes').classList.remove('hidden');
+        $('home').classList.remove('hidden');
         return refresh();
       })
       .catch(function (err) { $('pairErr').textContent = err.message; });
   };
 
+  function renderMissions(list) {
+    var el = $('missionList'); el.textContent = '';
+    if (!list || !list.length) {
+      var empty = document.createElement('div');
+      empty.style.color = 'var(--dim)'; empty.textContent = 'nenhuma missão';
+      el.appendChild(empty); return;
+    }
+    list.slice(0, 40).forEach(function (m) {
+      var d = document.createElement('div'); d.className = 'pane';
+      var st = document.createElement('span');
+      var status = typeof m.status === 'string' ? m.status : '';
+      st.className = 'st ' + (status === 'running' ? 'busy' : status === 'done' ? 'idle' : '');
+      var nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = (m.title || m.id || 'missão') + (status ? ' · ' + status : '');
+      d.appendChild(st); d.appendChild(nm);
+      el.appendChild(d);
+    });
+  }
+
   function refresh() {
-    return send('panes.list').then(function (r) {
-      var list = r.result || r.panes || [];
+    return send('ops.snapshot').then(function (r) {
+      var result = r.result || r;
+      var missions = result.missions || [];
+      var panes = result.panes || [];
+      var sum = result.summary || {};
+      $('opsSummary').textContent =
+        (sum.runningMissions || 0) + ' missões a correr · ' +
+        (sum.busyPanes || 0) + ' panes busy · ' +
+        (sum.missions || missions.length) + ' missões · ' +
+        (sum.panes || panes.length) + ' panes';
+      renderMissions(missions);
       var el = $('paneList'); el.textContent = '';
-      if (!list.length) {
+      if (!panes.length) {
         var empty = document.createElement('div');
         empty.style.color = 'var(--dim)'; empty.textContent = 'nenhum pane';
         el.appendChild(empty); return;
       }
-      list.forEach(function (p) {
-        // DOM seguro: título do pane vai por textContent (nunca innerHTML) —
-        // um título com '<' não vira markup no celular.
+      panes.forEach(function (p) {
         var d = document.createElement('div'); d.className = 'pane';
         var st = document.createElement('span');
         st.className = 'st ' + (typeof p.state === 'string' ? p.state.replace(/[^a-z]/gi, '') : '');
@@ -166,13 +197,41 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
         d.onclick = function () { openPane(p); };
         el.appendChild(d);
       });
+    }).catch(function (err) {
+      var msg = err && err.message ? String(err.message) : String(err || '');
+      var unknown =
+        /unknown command/i.test(msg) || /ops\.snapshot/i.test(msg);
+      if (!unknown) {
+        $('opsSummary').textContent = 'erro: ' + msg;
+        return;
+      }
+      // Fallback only when the bridge is older than ops.snapshot.
+      return send('panes.list').then(function (r) {
+        var list = r.result || r.panes || [];
+        var el = $('paneList'); el.textContent = '';
+        list.forEach(function (p) {
+          var d = document.createElement('div'); d.className = 'pane';
+          var st = document.createElement('span');
+          st.className = 'st ' + (typeof p.state === 'string' ? p.state.replace(/[^a-z]/gi, '') : '');
+          var nm = document.createElement('span');
+          nm.className = 'nm'; nm.textContent = p.title || p.paneId;
+          var go = document.createElement('span'); go.className = 'go'; go.textContent = '›';
+          d.appendChild(st); d.appendChild(nm); d.appendChild(go);
+          d.onclick = function () { openPane(p); };
+          el.appendChild(d);
+        });
+        return send('mission.list').then(function (mr) {
+          var res = mr.result || mr;
+          renderMissions(Array.isArray(res) ? res : (res.missions || []));
+        }).catch(function () {});
+      });
     });
   }
   $('refreshBtn').onclick = function () { refresh(); };
 
   function openPane(p) {
     curPane = p;
-    $('panes').classList.add('hidden');
+    $('home').classList.add('hidden');
     $('detail').classList.remove('hidden');
     $('detailName').textContent = p.title || p.paneId;
     $('detailErr').textContent = '';
@@ -201,7 +260,7 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
   $('backBtn').onclick = function () {
     if (poll) clearInterval(poll); curPane = null;
     $('detail').classList.add('hidden');
-    $('panes').classList.remove('hidden');
+    $('home').classList.remove('hidden');
     refresh();
   };
 })();

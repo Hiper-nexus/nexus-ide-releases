@@ -516,6 +516,11 @@ export interface NexusApi {
     openExternal(url: string): Promise<{ ok: boolean; error?: string }>;
     /** Inicia o login OAuth (nonce local + browser) no processo main. */
     authLogin(provider: 'github' | 'google'): Promise<{ ok: boolean; error?: string }>;
+    /**
+     * Abre THIRD_PARTY_NOTICES.md no app do SO (Markdown viewer).
+     * Cumpre atribuição MIT de terceiros sem tornar o código público.
+     */
+    openLegalNotices(): Promise<{ ok: boolean; path?: string; error?: string }>;
     /** Deep link / document open (nexus://open ou abrir-com). */
     onDeepOpenPath(
       cb: (payload: { path: string; isDir: boolean }) => void,
@@ -806,6 +811,64 @@ export interface NexusApi {
     saveDropped(name: string, base64: string): Promise<{ ok: boolean; path?: string; error?: string }>;
     /** Resolve a dragged File to its absolute filesystem path (webUtils). */
     pathForFile(file: File): string;
+  };
+  /** GitHub / Linear / diff / SSH port-forward integrations (Sprint A–C). */
+  integrations: {
+    hasGithubToken(): Promise<boolean>;
+    hasLinearKey(): Promise<boolean>;
+    setGithubToken(token: string): Promise<{ ok: boolean; error?: string }>;
+    setLinearKey(token: string): Promise<{ ok: boolean; error?: string }>;
+    gitDiff(): Promise<
+      | { ok: true; diff: string; branch: string | null; remote: string | null }
+      | { ok: false; error: string }
+    >;
+    gitStatus(): Promise<
+      | { ok: true; status: string; branch: string | null; remote: string | null }
+      | { ok: false; error: string }
+    >;
+    createPr(req: {
+      title: string;
+      body?: string;
+      sourceBranch?: string;
+      targetBranch?: string;
+      draft?: boolean;
+    }): Promise<{ ok: true; url: string; number: number } | { ok: false; error: string }>;
+    listPrs(): Promise<
+      | { ok: true; prs: Array<{ number: number; title: string; url: string; state: string; sourceBranch: string; targetBranch: string }> }
+      | { ok: false; error: string }
+    >;
+    listGithubIssues(opts?: {
+      limit?: number;
+      state?: 'open' | 'closed' | 'all';
+    }): Promise<
+      | { ok: true; issues: Array<{ id: string; provider: 'github' | 'linear'; number?: number; title: string; url: string; state: string; labels: string[] }> }
+      | { ok: false; error: string }
+    >;
+    listLinearIssues(opts?: {
+      limit?: number;
+    }): Promise<
+      | { ok: true; issues: Array<{ id: string; provider: 'github' | 'linear'; number?: number; title: string; url: string; state: string; labels: string[] }> }
+      | { ok: false; error: string }
+    >;
+    startPortForward(req: {
+      localPort: number;
+      remoteHost?: string;
+      remotePort: number;
+      label?: string;
+    }): Promise<
+      | { ok: true; info: { id: string; localPort: number; remoteHost: string; remotePort: number; label?: string; localUrl: string } }
+      | { ok: false; error: string }
+    >;
+    listPortForwards(): Promise<
+      Array<{ id: string; localPort: number; remoteHost: string; remotePort: number; label?: string; localUrl: string }>
+    >;
+    closePortForward(id: string): Promise<{ ok: boolean }>;
+    remoteWorktreeCreate(req: {
+      host: string;
+      username: string;
+      remotePath: string;
+      branch?: string;
+    }): Promise<{ ok: true; path: string } | { ok: false; error: string }>;
   };
   accounts: {
     list(): Promise<AccountInfo[]>;

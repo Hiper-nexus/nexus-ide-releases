@@ -398,12 +398,40 @@ function classicRequest(transcript = "lembre deste projeto") {
   };
 }
 
+/** Payload so handlers reach ownership checks (smoke validates body first). */
+function ownerRejectionPayload(channel: string): unknown {
+  if (channel === VOICE_CHANNELS.liveSmokeTest) {
+    return { text: "probe ownership" };
+  }
+  if (channel === VOICE_CHANNELS.liveSay) {
+    return { text: "say ownership" };
+  }
+  if (channel === VOICE_CHANNELS.liveStatus) {
+    return { status: "listening" };
+  }
+  if (channel === VOICE_CHANNELS.liveRescueIn) {
+    return { text: "rescue" };
+  }
+  if (channel === VOICE_CHANNELS.liveInterrupt) {
+    return "test";
+  }
+  if (channel === VOICE_CHANNELS.liveQuiesce) {
+    return "test";
+  }
+  if (channel === VOICE_CHANNELS.jarvis) {
+    return classicRequest();
+  }
+  return undefined;
+}
+
 async function expectOwnerRejection(
   channel: string,
   sender: TestRenderer,
 ): Promise<void> {
   await expect(
-    Promise.resolve().then(() => invoke(channel, sender)),
+    Promise.resolve().then(() =>
+      invoke(channel, sender, ownerRejectionPayload(channel)),
+    ),
   ).rejects.toThrow(/owned by another window/i);
 }
 
@@ -572,6 +600,36 @@ describe("Voice Live IPC ownership", () => {
     });
     expect(transcriptDeps.createScopedTranscriptStore).not.toHaveBeenCalled();
     expect(transcriptDeps.append).not.toHaveBeenCalled();
+  });
+
+  it("claims live ownership from smokeTest without a prior liveStart", async () => {
+    const owner = new TestRenderer(99);
+    const otherProject = new TestRenderer(199);
+    scopeDeps.scopes.set(owner.id, scopeA);
+    scopeDeps.scopes.set(otherProject.id, scopeB);
+    electronDeps.windows.push(
+      { webContents: owner },
+      { webContents: otherProject },
+    );
+
+    await expect(
+      invoke(VOICE_CHANNELS.liveSmokeTest, owner, {
+        text: "responda que está online",
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(liveTransportDeps.smokeTest).toHaveBeenCalledWith(
+      "responda que está online",
+      owner.id,
+    );
+
+    // Ownership is now held — another project cannot steal via smokeTest.
+    await expect(
+      Promise.resolve().then(() =>
+        invoke(VOICE_CHANNELS.liveSmokeTest, otherProject, {
+          text: "não deveria roubar",
+        }),
+      ),
+    ).rejects.toThrow(/owned by another window/i);
   });
 
   it("pins every live invoke/event and outbound event to one owner and scope", async () => {

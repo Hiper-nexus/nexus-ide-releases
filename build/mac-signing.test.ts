@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -179,7 +179,13 @@ describe('packaged legal notices', () => {
     expect(shouldPackageFile('/third_party/licenses')).toBe(true);
     expect(shouldPackageFile('/third_party/licenses/Apache-2.0.txt')).toBe(true);
     expect(shouldPackageFile('/third_party/licenses/OFL-1.1.txt')).toBe(true);
+    // Orca MIT attribution must ship in closed-source packages.
+    expect(shouldPackageFile('/third_party/licenses/orca-MIT.txt')).toBe(true);
     expect(shouldPackageFile('/src/main/main.ts')).toBe(false);
+    // Provenance ledger is for engineers; not required in the app bundle.
+    expect(shouldPackageFile('/third_party/provenance/orca-143c36e.json')).toBe(
+      false,
+    );
   });
 
   it('attributes the vendored Onlook translator in the packaged notice', () => {
@@ -191,5 +197,17 @@ describe('packaged legal notices', () => {
     expect(notice).toContain('onlook-dev/onlook');
     expect(notice).toContain('Apache License 2.0');
     expect(notice).toContain('hymhub/css-to-tailwind');
+  });
+
+  it('attributes Orca MIT harvest in the packaged notice', () => {
+    const notice = readFileSync(
+      path.resolve('THIRD_PARTY_NOTICES.md'),
+      'utf8',
+    );
+    expect(notice).toContain('stablyai/orca');
+    expect(notice).toContain('third_party/licenses/orca-MIT.txt');
+    expect(
+      existsSync(path.resolve('third_party/licenses/orca-MIT.txt')),
+    ).toBe(true);
   });
 });

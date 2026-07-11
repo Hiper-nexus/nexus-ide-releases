@@ -32,6 +32,7 @@ import type { WorkspaceState } from '../shared/workspace-types';
 import { PROVIDER_CHANNELS } from '../shared/provider-settings-types';
 import type { ProviderSettingsInfo } from '../shared/provider-settings-types';
 import { FILES_CHANNELS } from '../shared/files-types';
+import { INTEGRATIONS_CHANNELS } from '../shared/integrations-types';
 import { ACCOUNT_CHANNELS } from '../shared/account-types';
 import type { AccountInfo, FailoverEvent } from '../shared/account-types';
 import { COST_CHANNELS } from '../shared/cost-types';
@@ -357,6 +358,7 @@ const api: NexusApi = {
       ipcRenderer.invoke(WINDOW_CHANNELS.openExternal, url),
     authLogin: (provider: 'github' | 'google') =>
       ipcRenderer.invoke(WINDOW_CHANNELS.authLogin, provider),
+    openLegalNotices: () => ipcRenderer.invoke(WINDOW_CHANNELS.openLegalNotices),
     onDeepOpenPath: (cb: (payload: { path: string; isDir: boolean }) => void) =>
       addListener(deepOpenListeners, cb),
   },
@@ -645,6 +647,29 @@ const api: NexusApi = {
         return '';
       }
     },
+  },
+  integrations: {
+    hasGithubToken: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.hasGithubToken),
+    hasLinearKey: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.hasLinearKey),
+    setGithubToken: (token: string) =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.setGithubToken, { token }),
+    setLinearKey: (token: string) =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.linearSetKey, { token }),
+    gitDiff: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitDiff),
+    gitStatus: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitStatus),
+    createPr: (req) => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeCreatePr, req),
+    listPrs: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeListPrs),
+    listGithubIssues: (opts) =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.githubListIssues, opts ?? {}),
+    listLinearIssues: (opts) =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.linearListIssues, opts ?? {}),
+    startPortForward: (req) =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.sshPortForward, req),
+    listPortForwards: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.sshPortForwardList),
+    closePortForward: (id: string) =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.sshPortForwardClose, id),
+    remoteWorktreeCreate: (req) =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.remoteWorktreeCreate, req),
   },
   accounts: {
     list: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.list),

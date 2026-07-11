@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useVoiceStore, type VoiceUiStatus } from '../voice/voice-store';
 import { anchorFromDrag, hudPositionStyle } from '../voice/hud-prefs';
 import { requestJarvisWake } from '../voice/manual-wake';
+import {
+  powerOffJarvis,
+  setResponseMuted,
+  stopJarvisSpeech,
+} from '../voice/response-output-gate';
 
 /**
  * HUD flutuante da JARVIS: fase do pipeline ao vivo (ouvindo → transcrevendo →
@@ -60,6 +65,7 @@ export function VoiceHud() {
   const liveState = useVoiceStore((s) => s.liveState);
   const liveTool = useVoiceStore((s) => s.liveTool);
   const hud = useVoiceStore((s) => s.hud);
+  const responseMuted = useVoiceStore((s) => s.responseMuted);
   const setHudMode = useVoiceStore((s) => s.setHudMode);
   const setHudAnchor = useVoiceStore((s) => s.setHudAnchor);
   const setHudWidth = useVoiceStore((s) => s.setHudWidth);
@@ -244,21 +250,57 @@ export function VoiceHud() {
             ? 'wake preso'
             : isError
               ? 'erro'
-              : canClickWake
-                ? 'pronta'
-                : status === 'idle'
-                ? liveLabel
-                : PHASE_LABEL[status]}
+              : responseMuted
+                ? 'muda'
+                : canClickWake
+                  ? 'pronta'
+                  : status === 'idle'
+                  ? liveLabel
+                  : PHASE_LABEL[status]}
         </span>
-        <button
-          className="voice-hud__ctl"
-          title="Ocultar (só áudio)"
-          aria-label="Ocultar HUD da JARVIS (modo só áudio)"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => setHudMode('hidden')}
-        >
-          ✕
-        </button>
+        <span className="voice-hud__ctls" onPointerDown={(e) => e.stopPropagation()}>
+          <button
+            className={`voice-hud__ctl ${responseMuted ? 'voice-hud__ctl--active' : ''}`}
+            title={
+              responseMuted
+                ? 'Ativar áudio das respostas'
+                : 'Silenciar respostas (comandos seguem ativos)'
+            }
+            aria-label={
+              responseMuted
+                ? 'Ativar áudio das respostas da JARVIS'
+                : 'Silenciar respostas da JARVIS'
+            }
+            aria-pressed={responseMuted}
+            onClick={() => setResponseMuted(!responseMuted)}
+          >
+            {responseMuted ? '🔇' : '🔊'}
+          </button>
+          <button
+            className="voice-hud__ctl"
+            title="Parar fala atual"
+            aria-label="Parar fala atual da JARVIS"
+            onClick={() => stopJarvisSpeech()}
+          >
+            ■
+          </button>
+          <button
+            className="voice-hud__ctl"
+            title="Desligar sessão Jarvis"
+            aria-label="Desligar sessão da JARVIS"
+            onClick={() => void powerOffJarvis()}
+          >
+            ⏻
+          </button>
+          <button
+            className="voice-hud__ctl"
+            title="Ocultar (só áudio)"
+            aria-label="Ocultar HUD da JARVIS (modo só áudio)"
+            onClick={() => setHudMode('hidden')}
+          >
+            ✕
+          </button>
+        </span>
       </div>
     );
   }
@@ -284,8 +326,45 @@ export function VoiceHud() {
         </span>
         <span className="voice-hud__eyebrow">
           {info?.jarvisLive.enabled ? 'JARVIS LIVE' : 'JARVIS'}
+          {responseMuted ? ' · MUDA' : ''}
         </span>
         <span className="voice-hud__ctls">
+          <button
+            className={`voice-hud__ctl ${responseMuted ? 'voice-hud__ctl--active' : ''}`}
+            title={
+              responseMuted
+                ? 'Ativar áudio das respostas'
+                : 'Silenciar respostas (comandos seguem ativos)'
+            }
+            aria-label={
+              responseMuted
+                ? 'Ativar áudio das respostas da JARVIS'
+                : 'Silenciar respostas da JARVIS'
+            }
+            aria-pressed={responseMuted}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => setResponseMuted(!responseMuted)}
+          >
+            {responseMuted ? '🔇' : '🔊'}
+          </button>
+          <button
+            className="voice-hud__ctl"
+            title="Parar fala atual"
+            aria-label="Parar fala atual da JARVIS"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => stopJarvisSpeech()}
+          >
+            ■
+          </button>
+          <button
+            className="voice-hud__ctl"
+            title="Desligar sessão Jarvis"
+            aria-label="Desligar sessão da JARVIS"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => void powerOffJarvis()}
+          >
+            ⏻
+          </button>
           <button
             className="voice-hud__ctl"
             title="Minimizar (pill)"

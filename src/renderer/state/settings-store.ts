@@ -60,6 +60,7 @@ interface SettingsState {
   receiveUi(ui: UiSettings): void;
   receiveAudio(audio: AudioSettings): void;
   toggleDrawer(): void;
+  openDrawer(): void;
   closeDrawer(): void;
 }
 
@@ -125,6 +126,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   },
 
   toggleDrawer: () => set((s) => ({ drawerOpen: !s.drawerOpen })),
+  openDrawer: () => set({ drawerOpen: true }),
   closeDrawer: () => set({ drawerOpen: false }),
 }));
 

@@ -12,6 +12,9 @@ describe('mobile-companion-policy', () => {
     expect(
       authorizeMobileRpc({ kind: 'mission.list', deviceActive: true }),
     ).toEqual({ allowed: true, requiresConfirmation: false });
+    expect(
+      authorizeMobileRpc({ kind: 'ops.snapshot', deviceActive: true }),
+    ).toEqual({ allowed: true, requiresConfirmation: false });
   });
 
   it('fails closed when device revoked', () => {

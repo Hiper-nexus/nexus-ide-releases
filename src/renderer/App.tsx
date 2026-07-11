@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   useLayoutStore,
   switchWorkspaceLayout,
@@ -21,6 +21,8 @@ import {
 } from './components/CloseWorkspaceDialog';
 import { FilesPanel } from './components/FilesPanel';
 import { OpsBoard } from './components/OpsBoard';
+import { DiffAnnotatePanel } from './components/DiffAnnotatePanel';
+import { IntegrationsPanel } from './components/IntegrationsPanel';
 import { useVoiceController } from './voice/voice-controller';
 import { useOrchBridge } from './orch/orch-bridge';
 import { initDevServerStore } from './state/dev-server-store';
@@ -65,6 +67,8 @@ export function App() {
   const closeWorkspaceOpen = useCloseWorkspaceStore((s) => s.open);
   const voiceSettingsOpen = useVoiceStore((s) => s.settingsOpen);
   const opsBoardOpen = useOrchStore((s) => s.boardOpen);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [integrationsOpen, setIntegrationsOpen] = useState(false);
   const onboardingVisible = useOnboardingStore(
     (s) => s.loaded && !s.state.completed && !s.state.skipped,
   );
@@ -75,6 +79,8 @@ export function App() {
     closeWorkspaceOpen ||
     voiceSettingsOpen ||
     opsBoardOpen ||
+    diffOpen ||
+    integrationsOpen ||
     onboardingVisible ||
     operatorProfileOpen;
 
@@ -221,7 +227,10 @@ export function App() {
 
   return (
     <div className="app">
-      <WorkspaceBar />
+      <WorkspaceBar
+        onOpenDiff={() => setDiffOpen(true)}
+        onOpenIntegrations={() => setIntegrationsOpen(true)}
+      />
       <main className="app__body">
         <MissionRail />
         <FilesPanel />
@@ -230,6 +239,11 @@ export function App() {
         <OrchestrationPanel />
       </main>
       <OpsBoard />
+      <DiffAnnotatePanel open={diffOpen} onClose={() => setDiffOpen(false)} />
+      <IntegrationsPanel
+        open={integrationsOpen}
+        onClose={() => setIntegrationsOpen(false)}
+      />
       {!suppressBrowserPanes && <VoiceHud />}
       <VoiceSettings />
       <SettingsDrawer />

@@ -22,8 +22,9 @@ export function AppearanceSection() {
     <section className="settings-appearance">
       <h3 className="settings-detail__title">Aparência</h3>
       <p className="settings-detail__hint">
-        Identidade visual do cockpit: modo pixel liga cantos retos, fonte VT323 e
-        menos antialias. A paleta aplica-se a barras, drawers e painéis.
+        Por defeito a UI é dark moderna (sans + cantos suaves). O modo pixel é
+        opt-in: cantos retos, VT323 e grid. A paleta aplica-se a barras, drawers
+        e painéis.
       </p>
 
       <div className="settings-appearance__preview" aria-hidden>
@@ -36,7 +37,7 @@ export function AppearanceSection() {
         />
         <span className="settings-appearance__preview-copy">
           <strong>Operador</strong>
-          <span>HUD e ícones já falam pixel; o modo estende ao shell.</span>
+          <span>Mascote e ícones opcionais; o shell moderno é o default.</span>
         </span>
       </div>
 

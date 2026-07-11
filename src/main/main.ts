@@ -176,6 +176,7 @@ import {
   unregisterPipeListener,
 } from "./orch/pane-pipe-ipc";
 import { registerRemoteIpc } from "./remote/remote-ipc";
+import { registerIntegrationsIpc } from "./integrations/integrations-ipc";
 import { registerMediaIpc } from "./media/media-ipc";
 import {
   broadcastGamificationToProject,
@@ -347,6 +348,7 @@ function bootstrap(): void {
   registerOnboardingIpc();
   registerPipeIpc(); // also calls initPanePipes()
   registerRemoteIpc();
+  registerIntegrationsIpc();
   // Orchestration boots async (MCP server binds a localhost port); the window
   // opens immediately and orchestration attaches when ready.
   // Gamificação SÓ depois: o retro replay precisa dos stores orch hidratados

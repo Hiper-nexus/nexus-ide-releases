@@ -109,6 +109,16 @@ interface BrowserEntry {
 
 const browsers = new Map<string, BrowserEntry>();
 const browserCreations = new Map<string, Promise<BrowserEntry>>();
+/**
+ * Geometry can arrive from the renderer before create finishes (slot mounts
+ * immediately, WebContentsView is async). Stash the latest bounds and apply
+ * them as soon as the entry exists — otherwise the view stays 0×0 / hidden
+ * until a later resize.
+ */
+const pendingBoundsByKey = new Map<
+  string,
+  { bounds: BrowserPaneBounds; owner: WebContents }
+>();
 const ELEMENT_SHOT_PADDING = 8;
 const DNS_TIMEOUT_MS = 3_000;
 const securedSessions = new WeakSet<Session>();
@@ -668,6 +678,9 @@ async function createEntry(
   owner.once('destroyed', () => {
     if (browsers.get(key) === entry) destroyBrowser(paneId, scope);
   });
+  // Hide until the first real geometry arrives — avoids a 0×0 flash.
+  view.setVisible(false);
+  applyPendingBounds(entry);
   return entry;
 }
 
@@ -689,9 +702,11 @@ export async function ensureBrowser(
     }
     entry = await creation;
     assertOwner(entry, owner);
+    applyPendingBounds(entry);
   } else {
     assertOwner(entry, owner);
     assertEntryScope(entry, scope);
+    applyPendingBounds(entry);
   }
   if (url && url.trim() && url.trim() !== (entry.view.webContents.getURL() || entry.url)) {
     void loadBrowserForEntry(paneId, entry, url).catch((err) => {
@@ -1032,15 +1047,29 @@ function setBrowserBounds(entry: BrowserEntry, bounds: BrowserPaneBounds): void 
   });
 }
 
+function applyPendingBounds(entry: BrowserEntry): void {
+  const key = browserKey(entry.scope, entry.paneId);
+  const pending = pendingBoundsByKey.get(key);
+  if (!pending) return;
+  // Keep stashed bounds for the real owner if a stranger overwrote the slot.
+  if (pending.owner !== entry.owner) return;
+  pendingBoundsByKey.delete(key);
+  setBrowserBounds(entry, pending.bounds);
+}
+
 export function destroyBrowser(
   paneId: string,
   scope: ProjectExecutionScope,
 ): void {
   const key = browserKey(scope, paneId);
   const entry = browsers.get(key);
-  if (!entry) return;
+  if (!entry) {
+    pendingBoundsByKey.delete(key);
+    return;
+  }
   assertEntryScope(entry, scope);
   browsers.delete(key);
+  pendingBoundsByKey.delete(key);
   clearDesignSession(key);
   const win = liveOwnerWindow(entry.owner);
   try {
@@ -1262,10 +1291,23 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
     if (!parsed.success) return;
     try {
       const scope = requireRendererWorkspaceScope(event.sender);
-      setBrowserBounds(
-        withOwnedEntry(event.sender, scope, parsed.data.paneId),
-        parsed.data.bounds,
-      );
+      const key = browserKey(scope, parsed.data.paneId);
+      const entry = browsers.get(key);
+      if (!entry) {
+        // Only stash while create is in flight for this key (avoids unbounded map).
+        if (!browserCreations.has(key)) return;
+        const existingPending = pendingBoundsByKey.get(key);
+        if (existingPending && existingPending.owner !== event.sender) return;
+        pendingBoundsByKey.set(key, {
+          bounds: parsed.data.bounds,
+          owner: event.sender,
+        });
+        return;
+      }
+      assertOwner(entry, event.sender);
+      assertEntryScope(entry, scope);
+      pendingBoundsByKey.delete(key);
+      setBrowserBounds(entry, parsed.data.bounds);
     } catch {
       // Ignore stale or cross-window geometry updates.
     }

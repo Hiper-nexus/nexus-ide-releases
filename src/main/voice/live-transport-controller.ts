@@ -365,9 +365,13 @@ export class LiveTransportController {
       return;
     }
 
+    // Cancelled = intentional drop (turn ended, superseded chunk). Not a
+    // playback hardware failure — leave the smoke probe waiting for a real
+    // started/failed ack, or its timeout.
+    if (event.outcome === 'cancelled') return;
+
     const hadActiveSmoke = this.smokeProbe.isActive;
     this.smokeProbe.settlePlaybackFailure(event.id);
-    if (event.outcome === 'cancelled') return;
 
     this.providerSpeaking = false;
     logVoice('error', 'live.audioPlaybackFailed', 'renderer não iniciou áudio realtime', {

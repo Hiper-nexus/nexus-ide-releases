@@ -281,7 +281,8 @@ export function VoiceSettings() {
         return;
       }
       await playSpeakResult(spoken);
-      setTestResult(`TTS ok via ${spoken.provider}.`);
+      const fallback = spoken.fallbackNote ? ` ${spoken.fallbackNote}` : '';
+      setTestResult(`TTS ok via ${spoken.provider}.${fallback}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -310,15 +311,27 @@ export function VoiceSettings() {
         history: [],
       };
       if (jarvisLiveOn && liveRealtime) {
-        const result = await window.nexus.voice.liveSmokeTest({
-          text: req.transcript,
-        });
-        if (result.ok) {
-          setTestResult(
-            `Realtime confirmado: reprodução de áudio iniciada em ${result.latencyMs} ms.`,
-          );
-        } else {
-          setError(liveSmokeFailureMessage(result.reason, realtimeTransport));
+        // Diagnostic-only: claim live, run probe, then hard-teardown so Settings
+        // does not leave a sticky live owner that blocks other windows.
+        const hadLiveSession = Boolean(
+          liveState?.sessionId && liveState.status !== 'off',
+        );
+        try {
+          await window.nexus.voice.liveStart({ reason: 'manual' });
+          const result = await window.nexus.voice.liveSmokeTest({
+            text: req.transcript,
+          });
+          if (result.ok) {
+            setTestResult(
+              `Realtime confirmado: reprodução de áudio iniciada em ${result.latencyMs} ms.`,
+            );
+          } else {
+            setError(liveSmokeFailureMessage(result.reason, realtimeTransport));
+          }
+        } finally {
+          if (!hadLiveSession) {
+            await window.nexus.voice.liveHardTeardown().catch(() => null);
+          }
         }
         return;
       }
@@ -333,7 +346,8 @@ export function VoiceSettings() {
           return;
         }
         await playSpeakResult(spoken);
-        setTestResult(`JARVIS ok: "${reply.say}"`);
+        const fallback = spoken.fallbackNote ? ` ${spoken.fallbackNote}` : '';
+        setTestResult(`JARVIS ok: "${reply.say}"${fallback}`);
         return;
       }
       setTestResult('JARVIS respondeu sem fala audível.');

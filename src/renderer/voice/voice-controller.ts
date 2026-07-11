@@ -22,6 +22,7 @@ import {
   isLocalAudioAudible,
 } from './live-local-audio-gate';
 import { playAudioBase64, stopAllPlayback } from './voice-playback';
+import { isResponseMuted } from './response-output-gate';
 import {
   invalidateAckCacheIfPersonaChanged,
   playCachedWakeAck,
@@ -615,6 +616,7 @@ export function useVoiceController(): void {
       canPlay: () =>
         useVoiceStore.getState().status === 'idle' && !isListening(capture.current),
       play: async (text) => {
+        if (isResponseMuted()) return;
         const storeNarrate = useVoiceStore.getState();
         storeNarrate.setStatus('speaking');
         stopAllPlayback();

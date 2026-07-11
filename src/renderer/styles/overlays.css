@@ -486,6 +486,16 @@
   min-width: 72px;
 }
 
+.update-status-btn--compact {
+  min-width: 0;
+  padding-left: 7px;
+  padding-right: 7px;
+}
+
+.update-status-btn--compact .update-status-btn__label {
+  display: none;
+}
+
 .update-status-btn--floating {
   appearance: none;
   pointer-events: auto;

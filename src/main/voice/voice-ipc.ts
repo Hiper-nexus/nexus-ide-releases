@@ -1066,7 +1066,9 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     liveTransport.beginTurn(raw);
   });
   ipcMain.handle(VOICE_CHANNELS.liveSmokeTest, async (event, raw) => {
-    requireLiveOwnership(event.sender);
+    // Diagnostic from Settings must work without a prior liveStart. Claim
+    // ownership here (same window/scope rules as liveStart); still refuse
+    // when another live window already owns the session.
     const parsed = jarvisLiveSmokeTestRequestSchema.safeParse(raw);
     if (!parsed.success) {
       return {
@@ -1077,7 +1079,18 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
         state: liveSession.getState(),
       } as const;
     }
-    return liveTransport.smokeTest(parsed.data.text, event.sender.id);
+    const scope = getRendererWorkspaceScope(event.sender);
+    if (!scope) {
+      throw new Error("voice session requires an authorized project scope");
+    }
+    let claimed = false;
+    try {
+      claimed = claimLiveOwnership(event.sender, scope);
+      return await liveTransport.smokeTest(parsed.data.text, event.sender.id);
+    } catch (err) {
+      if (claimed) releaseUnavailableLiveOwner(event.sender);
+      throw err;
+    }
   });
   ipcMain.handle(VOICE_CHANNELS.liveSay, async (event, raw) => {
     requireLiveOwnership(event.sender);
