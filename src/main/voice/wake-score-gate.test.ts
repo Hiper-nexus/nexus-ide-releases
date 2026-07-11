@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CUSTOM_WAKE_MIN_RMS,
   CUSTOM_WAKE_SCORE_THRESHOLD,
+  EMBEDDED_WAKE_MIN_RMS,
   OFFICIAL_WAKE_SCORE_THRESHOLD,
   resolveWakeDetection,
   shouldDetectWakeScore,
@@ -12,13 +13,13 @@ import {
 describe('wake score gate', () => {
   it('accepts compact wake scores and PT-accent mid scores', () => {
     expect(shouldDetectWakeScore(0.4556)).toBe(true);
-    expect(shouldDetectWakeScore(0.25)).toBe(true);
-    expect(shouldDetectWakeScore(0.22)).toBe(true);
+    expect(shouldDetectWakeScore(0.08)).toBe(true);
+    expect(shouldDetectWakeScore(WAKE_SCORE_THRESHOLD)).toBe(true);
   });
 
-  it('rejects very low ambient scores', () => {
-    expect(shouldDetectWakeScore(0.05)).toBe(false);
-    expect(shouldDetectWakeScore(0.15)).toBe(false);
+  it('rejects ambient-floor scores below the PT-calibrated cut', () => {
+    expect(shouldDetectWakeScore(0.01)).toBe(false);
+    expect(shouldDetectWakeScore(0.03)).toBe(false);
   });
 
   it('rejects invalid scores', () => {
@@ -30,13 +31,13 @@ describe('wake score gate', () => {
     expect(shouldDetectWakeScores({ embedded: 0.43, custom: 0.01 })).toBe(true);
     expect(
       shouldDetectWakeScores({
-        embedded: 0.2,
+        embedded: 0.02,
         custom: CUSTOM_WAKE_SCORE_THRESHOLD + 0.01,
       }),
     ).toBe(true);
     expect(
       shouldDetectWakeScores({
-        embedded: 0.2,
+        embedded: 0.02,
         custom: CUSTOM_WAKE_SCORE_THRESHOLD - 0.01,
       }),
     ).toBe(false);
@@ -67,6 +68,25 @@ describe('wake score gate', () => {
     });
   });
 
+  it('rejects embedded wake when RMS is below the speech floor', () => {
+    expect(
+      resolveWakeDetection(
+        { embedded: 0.2 },
+        { peakRms: EMBEDDED_WAKE_MIN_RMS - 0.01 },
+      ),
+    ).toBeNull();
+    expect(
+      resolveWakeDetection(
+        { embedded: 0.2 },
+        { peakRms: EMBEDDED_WAKE_MIN_RMS + 0.01 },
+      ),
+    ).toEqual({
+      source: 'embedded',
+      score: 0.2,
+      threshold: WAKE_SCORE_THRESHOLD,
+    });
+  });
+
   it('with preferCustom + PT loaded, does not fire on EN alone', () => {
     expect(
       resolveWakeDetection(
@@ -79,13 +99,13 @@ describe('wake score gate', () => {
   it('allows the verified open-source Hey Jarvis head to improve recall without replacing base', () => {
     expect(
       shouldDetectWakeScores({
-        embedded: 0.2,
+        embedded: 0.02,
         official: OFFICIAL_WAKE_SCORE_THRESHOLD + 0.01,
       }),
     ).toBe(true);
     expect(
       shouldDetectWakeScores({
-        embedded: 0.2,
+        embedded: 0.02,
         official: OFFICIAL_WAKE_SCORE_THRESHOLD - 0.01,
       }),
     ).toBe(false);

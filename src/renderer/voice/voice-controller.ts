@@ -86,7 +86,11 @@ import { personaUserName } from './jarvis-screen-context';
 import { executeRealtimeToolCall } from './voice-realtime-tools';
 import { cancelRealtimeToolExecution } from './realtime-tool-execution';
 import { finishAndProcess, type FinishAndProcessDeps } from './voice-finish-and-process';
-import { cancelLiveFollowUp, notifyLiveToolTurnComplete } from './live-followup';
+import {
+  cancelLiveFollowUp,
+  notifyLiveToolTurnComplete,
+  reopenLiveFollowUpListening,
+} from './live-followup';
 import {
   markLiveMicFrameOffered,
   resetOfferedLiveMicFramesThisTurn,
@@ -96,6 +100,7 @@ import { matchPassiveWakeWord } from './passive-wake-matcher';
 import { PassiveWakeDeadline } from './passive-wake-deadline';
 import { pttStartAction } from './ptt-barge-in';
 import { shouldOfferLiveMicFrame } from './live-mic-offer-gate';
+import { isLikelyNoiseTranscript } from '../../shared/voice-noise';
 
 /**
  * Jarvis voice pipeline. Mounted once from App.
@@ -382,34 +387,66 @@ export function useVoiceController(): void {
       void handleWake(bargeSource, preRollSeed);
     };
 
+    const isLiveSessionHot = (): boolean => {
+      if (!isRealtimeLive()) return false;
+      const live = useVoiceStore.getState().liveState;
+      if (!live?.sessionId) return false;
+      if (live.status === 'off' || live.status === 'error') return false;
+      return true;
+    };
+
+    const injectHotSessionCommand = async (
+      text: string,
+      meta: { latencyMs: number; provider?: string; via: string },
+    ): Promise<void> => {
+      const cmd = text.trim();
+      if (!cmd) return;
+      const turnId =
+        typeof crypto !== 'undefined' && 'randomUUID' in crypto
+          ? crypto.randomUUID()
+          : `hot-${Date.now()}`;
+      logVoiceEvent(
+        'info',
+        'jarvis.hotSessionCommand',
+        'comando na sessão Live quente (sem re-wake)',
+        {
+          latencyMs: meta.latencyMs,
+          provider: meta.provider,
+          via: meta.via,
+          chars: cmd.length,
+        },
+      );
+      useVoiceStore.getState().setStatus('transcribing');
+      liveStatus('thinking');
+      try {
+        const accepted = await window.nexus.voice.liveRescueIn({ turnId, text: cmd });
+        if (!accepted.accepted) {
+          logVoiceEvent('warn', 'jarvis.hotSessionCommandRejected', 'Live recusou comando hot', {
+            turnId,
+          });
+        }
+      } catch (err) {
+        logVoiceEvent('warn', 'jarvis.hotSessionCommandFail', 'falha ao injetar comando hot', {
+          error: errMsg(err),
+        });
+      }
+    };
+
     const handlePassiveWake = async (utterance: PassiveWakeUtterance): Promise<void> => {
       if (passiveWakeDeadline.isChecking() || wakeOpenInProgress) return;
       const info = useVoiceStore.getState().info;
       if (!info?.enabled || !info.wakeWordEnabled || info.routing !== 'jarvis') return;
       const voiceStatus = useVoiceStore.getState().status;
-      // Live já está escutando comando (follow-up): NÃO re-acordar nem roubar o mic.
-      // Exigir "Jarvis" de novo quebrava a sequência (logs: "inicia a missao" → miss).
-      if (voiceStatus === 'listening' || voiceStatus === 'transcribing') {
-        logVoiceEvent('info', 'wake.passiveSkippedLiveListening', 'passivo ignorado — Live já escuta', {
-          status: voiceStatus,
-        });
-        return;
-      }
+      const hot = isLiveSessionHot();
+      // Barge verificado: ela falando + nome no STT. Hot session: comando sem nome.
       const isVerifiedBargeCandidate = voiceStatus === 'speaking';
-      if (
-        shouldIgnoreLiveReWake({ status: voiceStatus }) &&
-        !isVerifiedBargeCandidate
-      ) {
-        logVoiceEvent('info', 'wake.passiveSkippedLiveBusy', 'checagem passiva pulada durante áudio Live', {
-          status: voiceStatus,
-        });
-        return;
-      }
 
       const startedAt = Date.now();
       logVoiceEvent('info', 'wake.passiveChecking', 'checando frase curta via STT', {
         durationSec: Number(utterance.durationSec.toFixed(2)),
         rawSpeechMs: Math.round(utterance.rawSpeechMs),
+        liveHot: hot,
+        status: voiceStatus,
       });
       try {
         const request = await passiveWakeDeadline.run(() =>
@@ -457,12 +494,41 @@ export function useVoiceController(): void {
         ) {
           return;
         }
-        const match = matchPassiveWakeWord(result.text, latestInfo.persona.assistantName);
+        const text = result.text.trim();
+        const match = matchPassiveWakeWord(text, latestInfo.persona.assistantName);
+        const stillHot = isLiveSessionHot();
+        const statusNow = useVoiceStore.getState().status;
+
+        // ── Sessão Live QUENTE: qualquer fala útil é comando (Overclock) ──
+        // Log real: "nova missao" → passiveMiss → ela muda. Nunca mais.
+        // Também cobre follow-up mudo do Gemini (mic frames vão, sem transcript).
+        if (!match && stillHot) {
+          if (isLikelyNoiseTranscript(text) || text.length < 2) {
+            logVoiceEvent('info', 'wake.passiveHotNoise', 'hot session ignorou ruído', {
+              latencyMs,
+              provider: result.provider,
+              charLen: text.length,
+            });
+            return;
+          }
+          // Enquanto ela fala, sem nome: ignora (eco / ambiente). Com nome: barge via match.
+          if (statusNow === 'speaking') {
+            logVoiceEvent('info', 'wake.passiveHotWhileSpeaking', 'hot sem nome durante fala — ignore', {
+              latencyMs,
+              charLen: text.length,
+            });
+            return;
+          }
+          await injectHotSessionCommand(text, {
+            latencyMs,
+            provider: result.provider,
+            via: 'no-wake-hot',
+          });
+          return;
+        }
+
         if (!match) {
-          // Nunca persista a frase; só um fingerprint seguro (tokens normalizados
-          // truncados) para diagnosticar miss sem gravar conversa ambiente.
-          const tokens = result.text
-            .trim()
+          const tokens = text
             .split(/\s+/)
             .filter(Boolean)
             .slice(0, 4)
@@ -477,9 +543,9 @@ export function useVoiceController(): void {
           logVoiceEvent('info', 'wake.passiveMiss', 'STT não confirmou o nome da Jarvis', {
             latencyMs,
             provider: result.provider,
-            tokenCount: result.text.trim().split(/\s+/).filter(Boolean).length,
+            tokenCount: text.split(/\s+/).filter(Boolean).length,
             fingerprint: tokens.join('|'),
-            charLen: result.text.trim().length,
+            charLen: text.length,
           });
           return;
         }
@@ -488,13 +554,37 @@ export function useVoiceController(): void {
           latencyMs,
           provider: result.provider,
           commandWords: match.command ? match.command.split(/\s+/).length : 0,
-          // Overclock: rest-of-phrase vira comando do mesmo utterance
           hasCommand: Boolean(match.command.trim()),
+          liveHot: stillHot,
         });
-        // Comando embutido ("Jarvis abre missão") — injeta no Live após engajar
+
+        // Já quente + comando no mesmo utterance → injeta sem reset (não corta sessão)
+        if (stillHot && match.command.trim()) {
+          await injectHotSessionCommand(match.command.trim(), {
+            latencyMs,
+            provider: result.provider,
+            via: 'wake-rest-hot',
+          });
+          return;
+        }
+        // Já quente + só "Jarvis" → reabre mic sem teardown
+        if (stillHot && !match.command.trim()) {
+          pendingPassiveWakeCommand = null;
+          if (capture.current) {
+            void reopenLiveFollowUpListening({
+              busy,
+              capture: capture.current,
+              beginListening,
+              wakeAutoStop,
+            });
+          }
+          return;
+        }
+
+        // Frio: wake completo + comando embutido após Live subir
         pendingPassiveWakeCommand = match.command.trim() || null;
         onWake(
-          isVerifiedBargeCandidate ? 'voice-barge' : 'voice',
+          isVerifiedBargeCandidate || statusNow === 'speaking' ? 'voice-barge' : 'voice',
           utterance.preRoll,
         );
       } catch (error) {

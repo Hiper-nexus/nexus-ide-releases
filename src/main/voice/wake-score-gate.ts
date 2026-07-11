@@ -6,10 +6,16 @@
  * margin above that ceiling so a compact wake is accepted without reopening
  * the false-positive window that the old 0.48 cut avoided.
  */
-// 0.42 calibrado EN Fifine; PT-BR "Jarvis" no MacBook fica ~0.05–0.15.
-// Baixamos para 0.22: ainda acima de ruído típico (logs ~0.01), captura mais
-// "Jarvis" falado sem o head PT (overfit rejeitado).
-export const WAKE_SCORE_THRESHOLD = 0.22;
+// 0.42 calibrado EN Fifine. Logs reais PT-BR MacBook Air (2026-07-11):
+//   fala "Jarvis": peakScore 0.05–0.08, peakRms 0.3–0.8
+//   ruído/ambiente: peakScore ≤ 0.01, peakRms ~0.05–0.15
+// 0.22 ainda era alto demais — o EN head quase nunca dispara em PT.
+// 0.045 + piso de RMS (abaixo) deixa o acústico como voto secundário;
+// o path principal continua VAD→STT→matchWakeWord (Overclock).
+export const WAKE_SCORE_THRESHOLD = 0.045;
+
+/** Energia mínima para aceitar o head EN embutido (corta FPs de silêncio). */
+export const EMBEDDED_WAKE_MIN_RMS = 0.12;
 
 /**
  * PT-BR head ("Ei Jarvis") — threshold conservador. O treino sintético local
@@ -87,7 +93,10 @@ export function resolveWakeDetection(
 
   // PT preferido + head carregado → EN não é caminho de wake.
   const allowEmbedded = !(opts.preferCustom && customLoaded);
-  if (allowEmbedded) {
+  const embeddedEnergyOk =
+    peakRms === undefined ||
+    (Number.isFinite(peakRms) && peakRms >= EMBEDDED_WAKE_MIN_RMS);
+  if (allowEmbedded && embeddedEnergyOk) {
     candidates.push({
       source: 'embedded',
       score: scores.embedded,
