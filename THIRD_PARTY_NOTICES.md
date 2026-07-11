@@ -106,3 +106,32 @@ of **hosted-git-info@9.0.3** behavior (ISC) for GitHub/GitLab/Bitbucket remote
 parsing. Nexus does not vendor the npm package; dual provenance is recorded in
 `third_party/provenance/orca-143c36e.json`.
 
+## stablyai/orca (Source Control harvest — F4)
+
+Modules adapted from [stablyai/orca](https://github.com/stablyai/orca) at commit
+`143c36e566483006fe54fa2716b019ec00599752` (MIT, Copyright (c) 2026 Lovecast Inc.):
+
+- `src/main/git/hosted-remote-url.ts` (+ dual provenance hosted-git-info@9.0.3 ISC behavior)
+- `src/main/source-control/forge-provider.ts` (lean interface + authz/audit)
+- `src/main/source-control/github-forge-provider.ts`
+- `src/main/source-control/gitlab-forge-provider.ts`
+- `src/main/source-control/forge-flags.ts` (Bitbucket/Azure/Gitea default off)
+
+License text: `third_party/licenses/orca-MIT.txt`. Provenance ledger:
+`third_party/provenance/orca-143c36e.json`.
+
+## stablyai/orca (Remote harvest — F5)
+
+Modules adapted from ORCA remote/relay/SSH/WSL concepts at the same pin
+`143c36e566483006fe54fa2716b019ec00599752` (MIT, Copyright (c) 2026 Lovecast Inc.):
+
+- `src/main/remote/terminal-stream-session.ts` (production session over terminal-stream-protocol)
+- `src/main/remote/relay-framing.ts`
+- `src/main/remote/ssh-path.ts`
+- `src/main/remote/wsl-detect.ts`
+- `src/main/remote/e2ee-pairing.ts`
+- `src/main/remote/remote-capability.ts` (Nexus scope binding; local ProjectExecutionScope authority)
+
+License text: `third_party/licenses/orca-MIT.txt`. Provenance ledger:
+`third_party/provenance/orca-143c36e.json`.
+
