@@ -294,9 +294,14 @@ describe('browser manager pinned network boundary', () => {
   });
 
   it('allows the same pane id in isolated project partitions', async () => {
+    // Ensure no leftover owner↔scope bind from design-send tests above.
+    clearRendererWorkspaceScope(state.owner);
     installPinnedBrowserProxy.mockResolvedValue(state.proxy);
     state.fromPartition.mockClear();
     await ensureBrowser(state.owner as never, scope, 'same-pane');
+    // Creating the same pane id for a *different* project must not require the
+    // owner to stay bound to the first scope (owner can host multi-project).
+    clearRendererWorkspaceScope(state.owner);
     await ensureBrowser(state.owner as never, scopeB, 'same-pane');
 
     expect(getBrowserViewCount()).toBe(2);

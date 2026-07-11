@@ -9,6 +9,7 @@ import {
   inspectContextAttestations,
   normalizeContextAuthorityTarget,
 } from './context-attestation';
+import { extractDesignSystemFacts } from './designmd-ingestor-adapter';
 import type {
   ContextCandidate,
   ContextClaimValue,
@@ -291,6 +292,13 @@ export function ingestProjectContext(
         status: 'candidate',
       }),
     );
+    if (path.basename(relative, path.extname(relative)).toLowerCase() === 'design') {
+      const designFacts = extractDesignSystemFacts(content, source, hash).map((fact) => ({
+        ...fact,
+        projectId: scope.projectId,
+      }));
+      facts.push(...designFacts.map(freezeFact));
+    }
   }
 
   const structuredExtensions = new Set(

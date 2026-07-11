@@ -144,6 +144,9 @@ async function apiRequest(
 ): Promise<unknown> {
   const headers = new Headers(init.headers);
   headers.set('accept', 'application/json');
+  if (init.body !== undefined && !headers.has('content-type')) {
+    headers.set('content-type', 'application/json');
+  }
   if (auth) {
     const key = deps.getApiKey();
     if (!key) {
@@ -267,6 +270,44 @@ export class DesignMdApiClient {
     const body = await apiRequest(
       `/kits/${encodeURIComponent(slug)}`,
       {},
+      this.#deps,
+      { auth: true, maxBytes: 1024 * 1024 },
+    );
+    return parseKitDetail(body);
+  }
+
+  async publishKit(input: {
+    slug: string;
+    name: string;
+    description?: string;
+    tags?: readonly string[];
+    license?: string;
+    content: string;
+  }): Promise<DesignMdKitDetail> {
+    const slug = input.slug.trim();
+    if (!slug || slug.length > 512 || slug.includes('..') || slug.includes('//')) {
+      throw new DesignMdApiError('invalid kit slug');
+    }
+    const name = input.name.trim();
+    if (!name || name.length > 512) {
+      throw new DesignMdApiError('invalid kit name');
+    }
+    if (!input.content || input.content.length > 1024 * 1024) {
+      throw new DesignMdApiError('invalid kit content');
+    }
+    const body = await apiRequest(
+      '/kits',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          slug,
+          name,
+          description: input.description ?? '',
+          tags: input.tags ?? [],
+          license: input.license ?? 'mit',
+          content: input.content,
+        }),
+      },
       this.#deps,
       { auth: true, maxBytes: 1024 * 1024 },
     );

@@ -9,19 +9,50 @@ import {
   disposeContextWorkflowRegistry,
 } from '../context/context-workflow-registry';
 import { ensureContextScaffold } from '../context/context-doctor';
+import { getContextKnowledgeService } from '../context/context-workflow-registry';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import type { AgentGateContext } from './gate';
-import type { DesignMdApiClient } from '../design/designmd-api-client';
-import { buildDesignSystemTools, designMdTestSeams } from './tools-design-system';
+import { buildDesignSystemTools } from './tools-design-system';
 
-const stubs = {
+const stubs = vi.hoisted(() => ({
   searchKits: vi.fn(),
   getKit: vi.fn(),
+  publishKit: vi.fn(),
   listPopularKits: vi.fn(),
   listTags: vi.fn(),
-};
+}));
 
-const originalCreateClient = designMdTestSeams.createClient;
+vi.mock('../design/designmd-api-client', () => ({
+  DesignMdApiClient: vi.fn().mockImplementation(() => ({
+    searchKits: stubs.searchKits,
+    getKit: stubs.getKit,
+    publishKit: stubs.publishKit,
+    listPopularKits: stubs.listPopularKits,
+    listTags: stubs.listTags,
+  })),
+  DesignMdApiError: class DesignMdApiError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'DesignMdApiError';
+    }
+  },
+  DesignMdAuthError: class DesignMdAuthError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'DesignMdAuthError';
+    }
+  },
+  DesignMdLicenseError: class DesignMdLicenseError extends Error {
+    readonly license: string;
+    constructor(license: string, message: string) {
+      super(message);
+      this.name = 'DesignMdLicenseError';
+      this.license = license;
+    }
+  },
+  DESIGNMD_BASE_URL: 'https://designmd.ai/api/v1',
+  DESIGNMD_API_KEY_SECRET: 'external:designmd-api-key',
+}));
 
 let baseDir = '';
 let root = '';
@@ -93,19 +124,12 @@ beforeEach(() => {
   ensureContextScaffold(scope);
   stubs.searchKits.mockReset();
   stubs.getKit.mockReset();
+  stubs.publishKit.mockReset();
   stubs.listPopularKits.mockReset();
   stubs.listTags.mockReset();
-  designMdTestSeams.createClient = () =>
-    ({
-      searchKits: stubs.searchKits,
-      getKit: stubs.getKit,
-      listPopularKits: stubs.listPopularKits,
-      listTags: stubs.listTags,
-    }) as unknown as DesignMdApiClient;
 });
 
 afterEach(() => {
-  designMdTestSeams.createClient = originalCreateClient;
   disposeContextWorkflowRegistry();
   manager.closeAll();
   fs.rmSync(root, { recursive: true, force: true });
@@ -181,11 +205,17 @@ describe('nexus_design_system_import', () => {
 
     // The DESIGN.md target must NOT be written yet — only the draft exists.
     expect(fs.existsSync(path.join(root, result.targetPath))).toBe(false);
-    expect(result.draftId).toMatch(/\S/);
-    // Evidence hash matches what would be cited as a connector source.
-    expect(
+
+    const read = getContextKnowledgeService(scope).get(result.draftId);
+    expect(read).not.toBeNull();
+    expect(read!.content).toContain('Use a 4pt grid.');
+    expect(read!.content).toContain('imported from designmd.ai');
+    expect(read!.sources).toHaveLength(1);
+    expect(read!.sources[0].type).toBe('connector');
+    expect(read!.sources[0].locator).toBe(result.evidencePath);
+    expect(read!.sources[0].sourceHash).toBe(
       createHash('sha256').update(fs.readFileSync(evidenceAbsolute, 'utf8')).digest('hex'),
-    ).toMatch(/^[a-f0-9]{64}$/);
+    );
   });
 
   it('respects a custom targetPath and hashes an existing file', async () => {
@@ -209,11 +239,62 @@ describe('nexus_design_system_import', () => {
   });
 
   it('blocks cc-by-sa kits by default', async () => {
-    const copyleft = { ...kitDetail(), license: 'cc-by-sa' as const };
-    stubs.getKit.mockResolvedValue(copyleft);
+    stubs.getKit.mockResolvedValue({ ...kitDetail(), license: 'cc-by-sa' as const });
 
     await expect(tool('nexus_design_system_import').handler({
       identifier: 'acme/clean',
     }, context('codex', 'session-1'))).rejects.toThrow(/cc-by-sa/);
+  });
+});
+
+describe('nexus_design_system_publish', () => {
+  it('publishes the canonical DESIGN.md with overrides', async () => {
+    stubs.publishKit.mockResolvedValue({ ...kitDetail(), url: 'https://designmd.ai/published/clean' });
+    fs.mkdirSync(path.join(root, '.context', 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.context', 'docs', 'design-system.md'), '# DESIGN.md\n\nUse a 4pt grid.');
+
+    const result = (await tool('nexus_design_system_publish').handler({
+      slug: 'myteam/published',
+      name: 'Published Kit',
+      tags: ['published'],
+      license: 'cc0',
+    }, context('codex', 'session-1'))) as { slug: string; url: string; license: string };
+
+    expect(result.slug).toBe('acme/clean');
+    expect(result.url).toBe('https://designmd.ai/published/clean');
+    expect(result.license).toBe('mit');
+    expect(stubs.publishKit).toHaveBeenCalledWith({
+      slug: 'myteam/published',
+      name: 'Published Kit',
+      description: '',
+      tags: ['published'],
+      license: 'cc0',
+      content: '# DESIGN.md\n\nUse a 4pt grid.',
+    });
+  });
+
+  it('rejects publish by workers', async () => {
+    await expect(tool('nexus_design_system_publish').handler({
+      slug: 'myteam/published',
+      name: 'Published Kit',
+    }, context('codex', 'worker-session', 'worker'))).rejects.toThrow(/workers cannot publish/);
+  });
+
+  it('reads frontmatter defaults from the DESIGN.md', async () => {
+    stubs.publishKit.mockResolvedValue(kitDetail());
+    fs.mkdirSync(path.join(root, '.context', 'docs'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, '.context', 'docs', 'design-system.md'),
+      '---\nname: Frontmatter Kit\nslug: front/kit\nlicense: cc-by\ntags: ["ui", "saas"]\n---\n# DESIGN.md\n',
+    );
+
+    await tool('nexus_design_system_publish').handler({}, context('codex', 'session-1'));
+
+    expect(stubs.publishKit).toHaveBeenCalledWith(expect.objectContaining({
+      slug: 'front/kit',
+      name: 'Frontmatter Kit',
+      license: 'cc-by',
+      tags: ['ui', 'saas'],
+    }));
   });
 });

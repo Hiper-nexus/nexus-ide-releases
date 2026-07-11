@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import type { McpToolDef } from './mcp-protocol';
 import type { AgentGateContext } from './gate';
+import type { ProjectExecutionScope } from '../../shared/types';
 import { getContextKnowledgeService } from '../context/context-workflow-registry';
 import type { ContextAttestationSource } from '../context/context-attestation';
 import {
@@ -81,6 +83,46 @@ function evidencePath(identifierValue: string): string {
   return `${EVIDENCE_DIR}/${sanitizeIdentifier(identifierValue)}.json`;
 }
 
+function deriveSlug(scope: ProjectExecutionScope, targetPath: string): string {
+  const base = path.posix.basename(targetPath, path.posix.extname(targetPath));
+  const sanitized = scope.projectId.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
+  return `${sanitized || 'project'}/${base || 'design-system'}`;
+}
+
+function deriveName(targetPath: string): string {
+  const base = path.posix.basename(targetPath, path.posix.extname(targetPath));
+  return base
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function parseDesignMdFrontmatter(content: string): {
+  name?: string;
+  slug?: string;
+  description?: string;
+  tags?: string[];
+  license?: string;
+} {
+  const trimmed = content.trimStart();
+  if (!trimmed.startsWith('---\n')) return {};
+  const end = trimmed.indexOf('\n---', 4);
+  if (end === -1) return {};
+  const frontmatter = trimmed.slice(4, end);
+  const result: ReturnType<typeof parseDesignMdFrontmatter> = {};
+  for (const line of frontmatter.split('\n')) {
+    const match = line.match(/^(name|slug|description|license):\s*(.*)$/);
+    if (match) {
+      const key = match[1] as 'name' | 'slug' | 'description' | 'license';
+      result[key] = match[2].trim();
+    }
+    const tagsMatch = line.match(/^tags:\s*\[(.*)\]$/);
+    if (tagsMatch) {
+      result.tags = tagsMatch[1].split(',').map((tag) => tag.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+    }
+  }
+  return result;
+}
+
 function prefixedDesignMdContent(
   kit: { name: string; author: string; url: string; license: string; slug: string },
   content: string,
@@ -117,12 +159,8 @@ async function writeEvidence(
   };
 }
 
-export const designMdTestSeams = {
-  createClient: (): DesignMdApiClient => new DesignMdApiClient(),
-};
-
 function createDesignMdApiClient(): DesignMdApiClient {
-  return designMdTestSeams.createClient();
+  return new DesignMdApiClient();
 }
 
 const designSystemSearchTool: McpToolDef = {
@@ -286,11 +324,70 @@ const designSystemImportTool: McpToolDef = {
   },
 };
 
+const designSystemPublishTool: McpToolDef = {
+  name: 'nexus_design_system_publish',
+  description:
+    'Publish the canonical DESIGN.md from the workspace to designmd.ai. ' +
+    'Requires the `external:designmd-api-key` secret. Only orchestrators and ' +
+    'the user can publish.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      targetPath: {
+        type: 'string',
+        description: 'Workspace-relative path to the DESIGN.md (default: .context/docs/design-system.md)',
+      },
+      slug: {
+        type: 'string',
+        description: 'Kit slug (`author/slug`); defaults to `<project>/design-system`',
+      },
+      name: { type: 'string', description: 'Kit name; defaults to the target file name' },
+      description: { type: 'string' },
+      tags: { type: 'array', items: { type: 'string' } },
+      license: {
+        type: 'string',
+        enum: ['mit', 'cc0', 'cc-by', 'cc-by-sa'],
+        description: 'License; defaults to mit',
+      },
+    },
+  },
+  handler: async (args, ctx) => {
+    if (ctx.role === 'worker') {
+      throw new Error('workers cannot publish design systems');
+    }
+    const targetPath = str(args, 'targetPath') ?? DEFAULT_TARGET_PATH;
+    const file = readWorkspaceTextFile(ctx.scope, targetPath);
+    const frontmatter = parseDesignMdFrontmatter(file.content);
+    const slug = str(args, 'slug') ?? frontmatter.slug ?? deriveSlug(ctx.scope, targetPath);
+    const name = str(args, 'name') ?? frontmatter.name ?? deriveName(targetPath);
+    const description = str(args, 'description') ?? frontmatter.description ?? '';
+    const tags = strArray(args, 'tags').length > 0 ? strArray(args, 'tags') : (frontmatter.tags ?? []);
+    const license = str(args, 'license') ?? frontmatter.license ?? 'mit';
+
+    const published = await createDesignMdApiClient().publishKit({
+      slug,
+      name,
+      description,
+      tags,
+      license,
+      content: file.content,
+    });
+
+    return {
+      slug: published.slug,
+      name: published.name,
+      url: published.url,
+      license: published.license,
+    };
+  },
+};
+
 export function buildDesignSystemTools(): McpToolDef[] {
   return [
     designSystemSearchTool,
     designSystemGetTool,
     designSystemImportTool,
+    designSystemPublishTool,
   ];
 }
 

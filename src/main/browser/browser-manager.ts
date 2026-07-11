@@ -1216,9 +1216,19 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
         styleDiff: parsed.data.styleDiff,
         intent: parsed.data.intent,
         dryRun: parsed.data.dryRun,
-        designSystem: readWorkspaceDesignSystem(
-          resolveCwdForScope(scope, parsed.data.dir),
-        ) ?? undefined,
+        // Never fail design-send because DESIGN.md is unreadable/missing —
+        // resolveCwdForScope can throw ENOENT on synthetic test roots.
+        designSystem: (() => {
+          try {
+            return (
+              readWorkspaceDesignSystem(
+                resolveCwdForScope(scope, parsed.data.dir),
+              ) ?? undefined
+            );
+          } catch {
+            return undefined;
+          }
+        })(),
       },
       {
         getSelection: getLastSelection,

@@ -161,4 +161,28 @@ describe('DesignMdApiClient', () => {
     await expect(new DesignMdApiClient(d).getKit('')).rejects.toThrow(DesignMdApiError);
     await expect(new DesignMdApiClient(d).getKit('a/../b')).rejects.toThrow(DesignMdApiError);
   });
+
+  it('publishKit posts a new kit with the API key', async () => {
+    const d = deps();
+    (d.fetchFn as ReturnType<typeof vi.fn>).mockResolvedValue(json(detailFixture));
+
+    const result = await new DesignMdApiClient(d).publishKit({
+      slug: 'acme/clean',
+      name: 'Clean UI Kit',
+      content: '# DESIGN.md\n\nUse a 4pt grid.',
+      license: 'mit',
+      tags: ['minimal'],
+    });
+
+    expect(result.slug).toBe('acme/clean');
+    const call = (d.fetchFn as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toBe('https://designmd.test/api/v1/kits');
+    expect((call[1] as RequestInit).method).toBe('POST');
+    const headers = call[1].headers as Headers;
+    expect(headers.get('authorization')).toBe('Bearer key-123');
+    expect(headers.get('content-type')).toBe('application/json');
+    const body = JSON.parse((call[1] as RequestInit).body as string);
+    expect(body.slug).toBe('acme/clean');
+    expect(body.content).toBe('# DESIGN.md\n\nUse a 4pt grid.');
+  });
 });
