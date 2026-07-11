@@ -55,6 +55,16 @@ describe('live mute rescue', () => {
         offeredFrames: 0,
       }),
     ).toBe(false);
+    // Follow-up: rescue even when frames already went to Live (missed final).
+    expect(
+      shouldAttemptLiveMuteRescue({
+        realtimeIsOwner: true,
+        localSpeechUsable: true,
+        explicitCapture: false,
+        offeredFrames: 40,
+        captureReason: 'reply',
+      }),
+    ).toBe(true);
   });
 
   it('waits for real provider evidence and rejects a superseded turn', async () => {

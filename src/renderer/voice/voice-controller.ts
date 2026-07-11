@@ -101,6 +101,7 @@ import { PassiveWakeDeadline } from './passive-wake-deadline';
 import { pttStartAction } from './ptt-barge-in';
 import { shouldOfferLiveMicFrame } from './live-mic-offer-gate';
 import { isLikelyNoiseTranscript } from '../../shared/voice-noise';
+import { DEFAULT_DUPLEX_MODE, duplexModePolicy } from './duplex-mode-policy';
 
 /**
  * Jarvis voice pipeline. Mounted once from App.
@@ -249,12 +250,16 @@ export function useVoiceController(): void {
     capture.current.onLevel = publishVoiceLevel;
     wakeMic.onLevel = publishVoiceLevel;
     const streamLiveMicFrame = (frame: Float32Array, sampleRate: number) => {
+      // Full-duplex product default: keep offering frames while she speaks so
+      // Gemini can barge-in. Half-duplex only if policy keeps the mic gate.
+      const fullDuplex = !duplexModePolicy(DEFAULT_DUPLEX_MODE).keepHalfDuplexMicGate;
       if (
         shouldOfferLiveMicFrame({
           realtimeActive: shouldStreamToRealtime(),
           localAudioAudible: isLocalAudioAudible(Date.now()),
           providerPlaybackRemainingMs: livePlayer?.remainingMs() ?? 0,
           status: useVoiceStore.getState().status,
+          fullDuplex,
         })
       ) {
         window.nexus.voice.liveMicIn(micFrameToBase64(frame, sampleRate));

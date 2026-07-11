@@ -4,8 +4,12 @@ export const REALTIME_TRANSCRIPT_WAIT_MS = 1_800;
 export const LOCAL_SPEECH_REALTIME_TRANSCRIPT_WAIT_MS = 1_200;
 export const WAKE_REALTIME_TRANSCRIPT_WAIT_MS = 4_800;
 export const CLICK_REALTIME_TRANSCRIPT_WAIT_MS = 6_500;
-/** Follow-up reply: wait longer before replyMuteIdle (user mid-sentence). */
-export const REPLY_REALTIME_TRANSCRIPT_WAIT_MS = 9_000;
+/**
+ * Follow-up reply wait for a Live final user transcript.
+ * 9s virava “ela mudou” no UX. Com full-duplex + rescue STT local, 3.5s basta
+ * no caminho feliz; o mute path reabre escuta sem matar o stream.
+ */
+export const REPLY_REALTIME_TRANSCRIPT_WAIT_MS = 3_500;
 
 export interface RealtimeTranscriptWaitOptions {
   localSpeechUsable?: boolean;

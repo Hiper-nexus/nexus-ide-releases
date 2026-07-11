@@ -80,8 +80,12 @@ import {
 } from './live-followup';
 import { hasRealtimeProviderAudioAnswer } from './live-wake-greeting';
 
-/** Quantas vezes reabrir o mic após follow-up mudo antes de idle de verdade. */
-const MAX_REPLY_MUTE_REOPENS = 2;
+/**
+ * Reaberturas de escuta após follow-up mudo. Enquanto a sessão Live está quente
+ * NUNCA desligamos realtimeTurnActive — matar o stream com socket vivo é o
+ * bug de "cade o realtime". Teto alto evita spin infinito em sala ruidosa.
+ */
+const MAX_REPLY_MUTE_REOPENS = 12;
 let replyMuteReopenCount = 0;
 import { personaUserName } from './jarvis-screen-context';
 import { withTimeout } from './voice-speak-pipeline';
@@ -542,6 +546,7 @@ export async function finishAndProcess(
           localSpeechUsable,
           explicitCapture,
           offeredFrames,
+          captureReason: activeCaptureReason,
         }) &&
         peekPendingDelegation(Date.now()) === null
       ) {
@@ -559,7 +564,9 @@ export async function finishAndProcess(
           logVoiceEvent(
             'warn',
             'jarvis.liveMuteRescue',
-            'turno realtime sem frames — STT local reenviado como texto',
+            activeCaptureReason === 'reply'
+              ? 'follow-up mudo — STT local reenviado ao Live (continuidade)'
+              : 'turno realtime sem frames — STT local reenviado como texto',
             {
               reason: activeCaptureReason,
               attempt,
@@ -594,6 +601,7 @@ export async function finishAndProcess(
               const claimedRealtimeAudio =
                 evidence === 'audio' && turnExecution.claim('realtime-audio', turnToken);
               resetLiveMuteRescues();
+              replyMuteReopenCount = 0;
               store.setNote(null);
               logVoiceEvent(
                 'info',
@@ -609,7 +617,7 @@ export async function finishAndProcess(
                   capture,
                   beginListening: deps.beginListening,
                   wakeAutoStop: deps.wakeAutoStop,
-                  armFollowUp: claimedRealtimeAudio,
+                  armFollowUp: claimedRealtimeAudio || activeCaptureReason === 'reply',
                   followUpSkipReason: 'turn-owned-before-audio',
                   canReopen: canReopenLiveFollowUp,
                 });
@@ -620,11 +628,16 @@ export async function finishAndProcess(
           logVoiceEvent(
             'warn',
             'jarvis.liveMuteRescueTimeout',
-            'resgate sem evidência — teardown antes do Classic',
-            { turnId: rescueTurnId },
+            activeCaptureReason === 'reply'
+              ? 'resgate follow-up sem evidência — reabre escuta (sem teardown)'
+              : 'resgate sem evidência — teardown antes do Classic',
+            { turnId: rescueTurnId, reason: activeCaptureReason },
           );
           store.setNote(null);
-          await window.nexus.voice.liveHardTeardown().catch(() => null);
+          // Follow-up: never hard-kill a healthy Live socket — reopen listen.
+          if (activeCaptureReason !== 'reply') {
+            await window.nexus.voice.liveHardTeardown().catch(() => null);
+          }
         }
       }
       // Automatic reply capture can be ambient noise/echo; never turn that
@@ -634,21 +647,24 @@ export async function finishAndProcess(
         realtimeIsOwner &&
         !explicitCapture
       ) {
-        // Não matar a sessão no primeiro silêncio do follow-up — reabre escuta
-        // (até 2×) para o usuário continuar sem chamar Jarvis de novo.
+        // Continuidade: reabre escuta enquanto Live está quente. Nunca desligar
+        // realtimeTurnActive com socket vivo — isso era "cade o realtime".
+        const sessionStillHot = isRealtimeLive();
         const canRetryListen =
           activeCaptureReason === 'reply' &&
+          sessionStillHot &&
           (++replyMuteReopenCount <= MAX_REPLY_MUTE_REOPENS);
         logVoiceEvent(
           'info',
           canRetryListen ? 'jarvis.replyMuteReopen' : 'jarvis.replyMuteIdle',
           canRetryListen
             ? 'follow-up mudo — reabre escuta em vez de idle'
-            : 'follow-up sem resposta Live — idle',
+            : 'follow-up sem resposta Live — idle (sessão ainda quente se Live up)',
           {
             reason: activeCaptureReason,
             waitedMs: Date.now() - tRealtime,
             reopenCount: replyMuteReopenCount,
+            sessionStillHot,
           },
         );
         openLiveAudioGate();
@@ -665,7 +681,11 @@ export async function finishAndProcess(
           });
         } else {
           replyMuteReopenCount = 0;
-          setRealtimeTurnActive(false);
+          // Only kill streaming when Live is already dead. Hot session keeps
+          // realtimeTurnActive so the next passive/hot inject still streams.
+          if (!sessionStillHot) {
+            setRealtimeTurnActive(false);
+          }
         }
         return;
       }

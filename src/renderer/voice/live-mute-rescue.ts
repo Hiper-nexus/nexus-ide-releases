@@ -20,16 +20,25 @@ export function shouldAttemptLiveMuteRescue(opts: {
   localSpeechUsable: boolean;
   explicitCapture: boolean;
   offeredFrames: number;
+  /** When 'reply', rescue even if frames reached Live (provider often misses finals). */
+  captureReason?: string;
   consecutive?: number;
 }): boolean {
   const used = opts.consecutive ?? consecutiveRescues;
-  return (
-    opts.realtimeIsOwner &&
-    opts.localSpeechUsable &&
-    opts.explicitCapture &&
-    hasInsufficientLiveMicFrames(opts.offeredFrames) &&
-    used < MAX_CONSECUTIVE_RESCUES
-  );
+  if (!opts.realtimeIsOwner || !opts.localSpeechUsable || used >= MAX_CONSECUTIVE_RESCUES) {
+    return false;
+  }
+  // Explicit wake/click/PTT with almost no mic frames → STT text into Live.
+  if (opts.explicitCapture && hasInsufficientLiveMicFrames(opts.offeredFrames)) {
+    return true;
+  }
+  // Follow-up continuity: frames may have gone up but Gemini never returned a
+  // final user transcript (log: 9s mute while passive STT heard "nova missão").
+  // Local STT + liveRescueIn is Overclock-aligned rescue, not Classic dual-voice.
+  if (opts.captureReason === 'reply') {
+    return true;
+  }
+  return false;
 }
 
 export type LiveRescueEvidence = 'audio' | 'tool' | 'superseded' | 'timeout';

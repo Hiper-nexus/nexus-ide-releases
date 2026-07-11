@@ -42,15 +42,15 @@ interface ToolFollowUpRequest extends LiveFollowUpOptions {
 const toolFollowUpGate = new LiveToolFollowUpGate<ToolFollowUpRequest>();
 
 /**
- * The Fifine room floor was ~0.024 raw RMS in the failed follow-up. Requiring
- * a modestly stronger pre-AGC onset prevents ambient noise from ending the
- * reply window before the person has begun the next command.
+ * Follow-up speech floor. 0.03 matava “nova missão” quieta (logs: speech ok no
+ * STT passivo mas Live endpoint nunca abria). SoftAgc + AEC cuidam do ambient;
+ * alinhar ao piso de wake (~0.004–0.01) para continuidade real.
  */
-export const REPLY_RAW_SPEECH_RMS = 0.03;
-/** Continuidade: silêncio mais longo antes de fechar o turno de reply. */
-export const REPLY_FOLLOWUP_SILENCE_MS = 1_600;
-export const REPLY_FOLLOWUP_MIN_LISTEN_MS = 2_200;
-export const REPLY_FOLLOWUP_MAX_MS = 22_000;
+export const REPLY_RAW_SPEECH_RMS = 0.008;
+/** Continuidade: silêncio um pouco mais curto — Overclock fecha e reabre fluído. */
+export const REPLY_FOLLOWUP_SILENCE_MS = 1_200;
+export const REPLY_FOLLOWUP_MIN_LISTEN_MS = 1_400;
+export const REPLY_FOLLOWUP_MAX_MS = 28_000;
 
 export function buildReplyAutoStop(autoStop: AutoStopOptions): AutoStopOptions {
   return {
