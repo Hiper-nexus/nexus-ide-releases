@@ -320,6 +320,10 @@ function bootstrap(): void {
   registerLayoutIpc(projectRuntimeManager);
   registerAdapterIpc();
   registerVoiceIpc(projectRuntimeManager);
+  // Open the UI before account/secrets/billing. Agent launches (and macOS when
+  // Keychain needs unlock) used to hang forever in SecItemCopyMatching with
+  // 0 windows — the user only saw a dock icon. Voice needs the renderer up.
+  createMainWindow();
   registerVisionIpc();
   registerOrchIpc();
   registerSettingsIpc();
@@ -341,7 +345,7 @@ function bootstrap(): void {
   registerTeamIpc();
   // Packaged smoke must prove the app can boot without touching the user's
   // real Keychain. License sync is useful in normal launches, but it can block
-  // inside SecItemCopyMatching before the smoke window has a chance to load.
+  // inside SecItemCopyMatching — window already open above.
   if (!isCurrentProcessSmokeTest()) {
     syncLicenseOnBoot();
   }
@@ -350,7 +354,7 @@ function bootstrap(): void {
   registerRemoteIpc();
   registerIntegrationsIpc();
   // Orchestration boots async (MCP server binds a localhost port); the window
-  // opens immediately and orchestration attaches when ready.
+  // is already open and orchestration attaches when ready.
   // Gamificação SÓ depois: o retro replay precisa dos stores orch hidratados
   // (senão a estreia gravaria replayDone com zero eventos).
   void initOrchestration()
@@ -361,7 +365,6 @@ function bootstrap(): void {
     });
   // Cron: squads/agentes agendados (tick 60s, skip-if-stale).
   startCronLoop();
-  createMainWindow();
   // Deep link nexus:// vindo no lançamento a frio (após a janela existir) +
   // auto-updater (opt-in por ambiente; no-op sem servidor configurado).
   consumeLaunchDeepLink();
@@ -455,10 +458,12 @@ if (!wireDeepLinks()) {
     }
 
     // On macOS, Chromium's localhost exemption bypasses the TCC dialog, causing
-    // CoreAudio to return all-zero PCM even with a getUserMedia grant. Explicitly
-    // requesting mic access here forces a real TCC entry before the renderer opens.
+    // CoreAudio to return all-zero PCM even with a getUserMedia grant. Request
+    // mic access for a real TCC entry — but NEVER block window open on the
+    // dialog (agent/background launches hung forever waiting for a hidden
+    // prompt; bootstrap() must run so the user sees the app).
     if (process.platform === "darwin" && !isCurrentProcessSmokeTest()) {
-      await systemPreferences.askForMediaAccess("microphone").catch(() => {});
+      void systemPreferences.askForMediaAccess("microphone").catch(() => {});
     }
     bootstrap();
   });
