@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 import {
   createSmokeSettler,
   gracefulSmokeExit,
   isSmokeTest,
   shouldAccessSecureStorage,
+  shouldInitializeManagedAgentHooks,
   shouldInitializeAutoUpdater,
   shouldRequestMicrophoneAccess,
   shouldUseUserDataOverride,
@@ -98,6 +100,24 @@ describe('smoke isolation', () => {
   it('does not contact an update source during a smoke test', () => {
     expect(shouldInitializeAutoUpdater(['/path/NexusIDE', SMOKE_ARGUMENT])).toBe(false);
     expect(shouldInitializeAutoUpdater(['/path/NexusIDE'])).toBe(true);
+  });
+
+  it('does not block packaged smoke on managed-hook consent', () => {
+    expect(shouldInitializeManagedAgentHooks(['/path/NexusIDE', SMOKE_ARGUMENT])).toBe(false);
+    expect(shouldInitializeManagedAgentHooks(['/path/NexusIDE', SMOKE_FLAG])).toBe(false);
+    expect(shouldInitializeManagedAgentHooks(['/path/NexusIDE'])).toBe(true);
+  });
+
+  it('keeps the hook server and consent dialog behind the smoke guard in main', () => {
+    const mainSource = readFileSync(new URL('./main.ts', import.meta.url), 'utf8');
+    const guardStart = mainSource.indexOf('if (shouldInitializeManagedAgentHooks(process.argv)) {');
+    const guardEnd = mainSource.indexOf('// Gap B:', guardStart);
+    const guardedBlock = mainSource.slice(guardStart, guardEnd);
+
+    expect(guardStart).toBeGreaterThan(-1);
+    expect(guardEnd).toBeGreaterThan(guardStart);
+    expect(guardedBlock).toContain('await startAgentHookHttpServer');
+    expect(guardedBlock).toContain('resolveManagedHookConsent');
   });
 });
 

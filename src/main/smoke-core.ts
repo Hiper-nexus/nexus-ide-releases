@@ -43,6 +43,11 @@ export function shouldInitializeAutoUpdater(argv: readonly string[]): boolean {
   return !isSmokeTest(argv);
 }
 
+/** A packaged smoke must never wait on first-launch global hook consent. */
+export function shouldInitializeManagedAgentHooks(argv: readonly string[]): boolean {
+  return !isSmokeTest(argv);
+}
+
 /** The boot smoke validates startup, not TCC; permission UI would make CI hang. */
 export function shouldRequestMicrophoneAccess(
   platform: NodeJS.Platform,

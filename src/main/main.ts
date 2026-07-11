@@ -15,6 +15,7 @@ import {
 import { registerAuthProbeIpc } from "./adapters/auth-probe";
 import {
   isSmokeTest,
+  shouldInitializeManagedAgentHooks,
   shouldInitializeAutoUpdater,
   shouldRequestMicrophoneAccess,
   shouldUseUserDataOverride,
@@ -386,37 +387,39 @@ if (!wireDeepLinks()) {
     // user's GLOBAL ~/.claude & ~/.codex config (affects those tools even outside
     // Nexus), so we NEVER install on launch without consent — register only, then
     // prompt once and install/remove per the persisted decision (option A).
-    try {
-      const userDataPath = app.getPath("userData");
-      configureAgentRuntimeUserDataPath(userDataPath);
-      bootstrapManagedAgentHooks({ enabled: false });
-      const hookServer = await startAgentHookHttpServer({ userDataPath });
-      configureAgentHookEndpointPath(hookServer.endpointFilePath);
-      void resolveManagedHookConsent({
-        userDataPath,
-        prompt: async () => {
-          const { response } = await dialog.showMessageBox({
-            type: "question",
-            buttons: ["Ativar", "Agora não"],
-            defaultId: 0,
-            cancelId: 1,
-            title: "Hooks de status de agente",
-            message: "Ativar os hooks de status do NexusIDE?",
-            detail:
-              "Para saber quando os agentes estão trabalhando, o Nexus pode adicionar hooks ao seu Claude e Codex (edita ~/.claude/settings.json e ~/.codex/hooks.json). Isso também afeta essas ferramentas fora do Nexus. Você pode mudar depois nas configurações.",
-          });
-          return response === 0 ? "granted" : "denied";
-        },
-      })
-        .then((consent) => {
-          // Enforce the decision idempotently every launch: install if granted,
-          // otherwise remove any hooks a prior build may have auto-installed.
-          if (consent === "granted") installManagedAgentHooks();
-          else removeManagedAgentHooks();
+    if (shouldInitializeManagedAgentHooks(process.argv)) {
+      try {
+        const userDataPath = app.getPath("userData");
+        configureAgentRuntimeUserDataPath(userDataPath);
+        bootstrapManagedAgentHooks({ enabled: false });
+        const hookServer = await startAgentHookHttpServer({ userDataPath });
+        configureAgentHookEndpointPath(hookServer.endpointFilePath);
+        void resolveManagedHookConsent({
+          userDataPath,
+          prompt: async () => {
+            const { response } = await dialog.showMessageBox({
+              type: "question",
+              buttons: ["Ativar", "Agora não"],
+              defaultId: 0,
+              cancelId: 1,
+              title: "Hooks de status de agente",
+              message: "Ativar os hooks de status do NexusIDE?",
+              detail:
+                "Para saber quando os agentes estão trabalhando, o Nexus pode adicionar hooks ao seu Claude e Codex (edita ~/.claude/settings.json e ~/.codex/hooks.json). Isso também afeta essas ferramentas fora do Nexus. Você pode mudar depois nas configurações.",
+            });
+            return response === 0 ? "granted" : "denied";
+          },
         })
-        .catch((err) => console.warn("[main] hook consent failed:", err));
-    } catch (err) {
-      console.warn("[main] managed agent hooks bootstrap failed:", err);
+          .then((consent) => {
+            // Enforce the decision idempotently every launch: install if granted,
+            // otherwise remove any hooks a prior build may have auto-installed.
+            if (consent === "granted") installManagedAgentHooks();
+            else removeManagedAgentHooks();
+          })
+          .catch((err) => console.warn("[main] hook consent failed:", err));
+      } catch (err) {
+        console.warn("[main] managed agent hooks bootstrap failed:", err);
+      }
     }
 
     // Gap B: child-process-gone → bridge (classification + GPU fallback marker).
