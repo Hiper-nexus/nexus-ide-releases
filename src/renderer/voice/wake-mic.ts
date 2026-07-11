@@ -53,8 +53,12 @@ const LIVE_FRAME_PREROLL_MS = 750;
 const PASSIVE_WAKE_PREROLL_MS = 300;
 /** Janela que será reaproveitada quando o STT confirmar o wake. */
 const PASSIVE_WAKE_HANDOFF_MS = 2_500;
-/** Piso cru: independente do AGC para não disparar com ruído amplificado. */
-const PASSIVE_WAKE_RAW_SPEECH_RMS = 0.008;
+/**
+ * Piso de fala pro VAD passivo. Usa max(raw, post-AGC): o AGC já eleva fala
+ * longe do mic; raw sozinho (~0.006) perdia "Jarvis" falado normal.
+ */
+const PASSIVE_WAKE_RAW_SPEECH_RMS = 0.004;
+const PASSIVE_WAKE_POST_AGC_SPEECH_RMS = 0.012;
 /** Ganho inicial do AGC próprio (ver agc.ts) — o valor 12x foi o melhor
  * fixo medido ao vivo em 2026-07-07; o AGC parte dele e adapta. */
 const WAKE_INITIAL_GAIN = 24;
@@ -531,6 +535,11 @@ export class WakeMic {
         });
       }
       const rms = frameRms(frame);
+      // VAD passivo: fala após AGC (senão "Jarvis" longe nunca fecha o clip).
+      const speechRms = Math.max(rawRms, rms);
+      const isPassiveSpeech =
+        rawRms >= PASSIVE_WAKE_RAW_SPEECH_RMS ||
+        rms >= PASSIVE_WAKE_POST_AGC_SPEECH_RMS;
       const level = rmsToLevel(rms);
       this.onLevel?.(level);
       // Saúde do mic: acumula quanto tempo em silêncio (RMS abaixo do piso).
@@ -542,7 +551,7 @@ export class WakeMic {
       // Obtém o pre-roll ANTES do frame atual para não duplicar a primeira
       // sílaba quando o VAD iniciar a captura passiva logo abaixo.
       const passivePreRoll =
-        !this.passiveWake.isActive() && rawRms >= PASSIVE_WAKE_RAW_SPEECH_RMS
+        !this.passiveWake.isActive() && isPassiveSpeech
           ? this.seedPreRoll(PASSIVE_WAKE_PREROLL_MS)
           : [];
       this.rememberPreRoll(frame);
@@ -550,17 +559,19 @@ export class WakeMic {
       // senão a própria fala do comando poderia re-disparar o wake).
       if (this.uttActive) {
         this.cancelPassiveWake();
-        this.trackUtterance(frame, rawRms);
+        this.trackUtterance(frame, speechRms);
         return;
       }
+      // Passa speechRms ao VAD (não raw) — Overclock-style: capturar a frase inteira.
+      const vadRms = isPassiveSpeech ? Math.max(speechRms, PASSIVE_WAKE_RAW_SPEECH_RMS) : rawRms;
       if (Date.now() < this.wakeSuppressedUntil) {
         // Keep only the STT-verified direct-address path alive while the app is
         // speaking. Provider/local audio is still withheld from Live and from
         // the acoustic detector; echo comparison rejects the app's own words.
-        this.trackPassiveWake(frame, rawRms, passivePreRoll);
+        this.trackPassiveWake(frame, vadRms, passivePreRoll);
         return;
       }
-      this.trackPassiveWake(frame, rawRms, passivePreRoll);
+      this.trackPassiveWake(frame, vadRms, passivePreRoll);
       for (let i = 0; i < frame.length; i += 1) this.pending.push(frame[i]);
       while (this.pending.length >= CHUNK) {
         const chunk = Float32Array.from(this.pending.splice(0, CHUNK));

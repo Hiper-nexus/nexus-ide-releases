@@ -66,8 +66,11 @@ const PASSIVE_WAKE_FAST_PROVIDER = 'groq';
 function passiveWakeTranscriptionPrompt(wakeWord: string | undefined): string {
   const word = wakeWord?.trim().replace(/\s+/g, ' ').slice(0, 48) || 'Jarvis';
   return (
-    'Transcrição curta em português do Brasil. A palavra de ativação é "' +
-    `${word}". Preserve essa palavra literalmente quando ela for dita.`
+    'Português do Brasil. Frase curta de ativação de assistente. ' +
+    `A palavra-chave é "${word}" (também: Ei ${word}, Oi ${word}, Hey ${word}, ` +
+    `acorda ${word}, cheguei ${word}). ` +
+    `Se ouvir algo parecido com ${word}/jarbas/javis/jarves, escreva exatamente "${word}". ` +
+    'Não invente outras palavras. Transcreva só o que foi falado.'
   );
 }
 

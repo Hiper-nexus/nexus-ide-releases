@@ -10,14 +10,15 @@ import {
 } from './wake-score-gate';
 
 describe('wake score gate', () => {
-  it('accepts the observed compact wake scores that the old 0.48 cut missed', () => {
+  it('accepts compact wake scores and PT-accent mid scores', () => {
     expect(shouldDetectWakeScore(0.4556)).toBe(true);
-    expect(shouldDetectWakeScore(0.4464)).toBe(true);
+    expect(shouldDetectWakeScore(0.25)).toBe(true);
+    expect(shouldDetectWakeScore(0.22)).toBe(true);
   });
 
-  it('keeps the observed non-wake ceiling below the detection cut', () => {
-    expect(0.3933).toBeLessThan(WAKE_SCORE_THRESHOLD);
-    expect(shouldDetectWakeScore(0.3933)).toBe(false);
+  it('rejects very low ambient scores', () => {
+    expect(shouldDetectWakeScore(0.05)).toBe(false);
+    expect(shouldDetectWakeScore(0.15)).toBe(false);
   });
 
   it('rejects invalid scores', () => {

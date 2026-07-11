@@ -30,13 +30,14 @@ export interface PassiveWakeFrame {
 }
 
 const DEFAULT_OPTIONS: PassiveWakeCaptureOptions = {
-  rawSpeechRms: 0.008,
-  // "Ei … Jarvis" tem pausa entre as palavras — 700ms cortava em "e ja".
-  minSpeechMs: 200,
-  silenceMs: 1_100,
-  maxMs: 6_000,
+  // Caller passa RMS pós-AGC; 0.01 ≈ fala fraca após SoftAgc.
+  rawSpeechRms: 0.01,
+  // "Ei … Jarvis" com pausa — silêncio curto cortava em "e ja" (logs reais).
+  minSpeechMs: 180,
+  silenceMs: 1_350,
+  maxMs: 7_000,
   // Retry rápido quando o STT erra o nome.
-  cooldownMs: 800,
+  cooldownMs: 600,
 };
 
 export class PassiveWakeCapture {

@@ -6,7 +6,10 @@
  * margin above that ceiling so a compact wake is accepted without reopening
  * the false-positive window that the old 0.48 cut avoided.
  */
-export const WAKE_SCORE_THRESHOLD = 0.42;
+// 0.42 calibrado EN Fifine; PT-BR "Jarvis" no MacBook fica ~0.05–0.15.
+// Baixamos para 0.22: ainda acima de ruído típico (logs ~0.01), captura mais
+// "Jarvis" falado sem o head PT (overfit rejeitado).
+export const WAKE_SCORE_THRESHOLD = 0.22;
 
 /**
  * PT-BR head ("Ei Jarvis") — threshold conservador. O treino sintético local
