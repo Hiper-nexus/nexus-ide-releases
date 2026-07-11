@@ -14,12 +14,29 @@ export type SshAuthMethod =
   | { readonly kind: 'privateKey'; readonly privateKey: string; readonly passphrase?: string }
   | { readonly kind: 'agent'; readonly allowedFingerprints: readonly string[] };
 
+/** Trust-on-first-use prompt for a host key not yet in the known-hosts vault. */
+export type SshHostKeyPrompt = {
+  readonly host: string;
+  readonly port: number;
+  /** OpenSSH-style `SHA256:<base64>` fingerprint of the presented host key. */
+  readonly fingerprint: string;
+};
+
 export type SshConnectOptions = {
   readonly host: string;
   readonly port?: number;
   readonly username: string;
   readonly auth: SshAuthMethod;
   readonly keepaliveIntervalMs?: number;
+  /**
+   * Confirm an UNKNOWN host key (trust-on-first-use). Return true to pin it and
+   * continue. When omitted, an unknown key is pinned automatically (accept-new
+   * semantics). A CHANGED key is always rejected regardless of this hook — that
+   * is the man-in-the-middle protection and is not overridable.
+   */
+  readonly confirmUnknownHostKey?: (
+    prompt: SshHostKeyPrompt,
+  ) => boolean | Promise<boolean>;
 };
 
 export type SshTransport = {

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.4 — Manual Mac notarized build
+
+Data: 2026-07-11
+
+### Melhorias
+- Design systems import UI + CSS custom-property sensor (sessões recentes).
+- Browser automation: scroll, press, hover.
+- SSH: pin de host key (fail-closed em chave alterada).
+
+### Build
+- Release arm64 notarizada localmente (`nexus-notary`).
+
 ## 0.13.3 — Design systems shipping + Linux packaging
 
 Data: 2026-07-11

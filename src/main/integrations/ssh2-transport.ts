@@ -8,6 +8,7 @@
  * See third_party/licenses/orca-MIT.txt.
  */
 import type { SshConnectOptions, SshTransport } from '../remote/ssh/ssh-session-manager';
+import { hostKeyVerdict, pinHostKey } from '../remote/ssh/known-hosts';
 
 type Ssh2Client = {
   on(event: string, cb: (...args: unknown[]) => void): void;
@@ -65,11 +66,61 @@ export function createSsh2Transport(): SshTransport {
           connected = false;
           reject(err instanceof Error ? err : new Error(String(err)));
         });
+        const host = options.host;
+        const port = options.port ?? 22;
         const cfg: Record<string, unknown> = {
-          host: options.host,
-          port: options.port ?? 22,
+          host,
+          port,
           username: options.username,
           keepaliveInterval: options.keepaliveIntervalMs ?? 15_000,
+          // ssh2 auto-accepts ANY server host key when hostVerifier is absent
+          // (unlike the OpenSSH CLI it reads no known_hosts) — an on-path
+          // attacker could silently impersonate the host and capture the
+          // session/password. Pin the key on first use and reject a CHANGED key
+          // (fail closed). `verify` MUST be called exactly once; returning a
+          // value would make ssh2 call it a second time (client.js:284-286).
+          hostVerifier: (key: Buffer, verify: (ok: boolean) => void): void => {
+            let assessment: ReturnType<typeof hostKeyVerdict>;
+            try {
+              assessment = hostKeyVerdict(host, port, key);
+            } catch {
+              verify(false);
+              return;
+            }
+            if (assessment.verdict === 'match') {
+              verify(true);
+              return;
+            }
+            if (assessment.verdict === 'mismatch') {
+              // Changed since pinned: possible MITM. Never overridable here.
+              verify(false);
+              return;
+            }
+            // Unknown key → trust-on-first-use. An interactive caller confirms
+            // the fingerprint; without a hook we pin automatically (accept-new).
+            const confirm = options.confirmUnknownHostKey;
+            if (!confirm) {
+              try {
+                pinHostKey(host, port, key);
+                verify(true);
+              } catch {
+                verify(false);
+              }
+              return;
+            }
+            Promise.resolve(
+              confirm({ host, port, fingerprint: assessment.fingerprint }),
+            )
+              .then((accepted) => {
+                if (!accepted) {
+                  verify(false);
+                  return;
+                }
+                pinHostKey(host, port, key);
+                verify(true);
+              })
+              .catch(() => verify(false));
+          },
         };
         if (options.auth.kind === 'password') {
           cfg.password = options.auth.password;

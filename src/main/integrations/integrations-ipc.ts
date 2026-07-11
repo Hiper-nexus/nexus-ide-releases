@@ -1,7 +1,7 @@
 /**
  * Integrations IPC — forge PR, GitHub/Linear issues, git diff, port forward, remote worktree.
  */
-import { ipcMain } from 'electron';
+import { ipcMain, dialog, BrowserWindow } from 'electron';
 import {
   INTEGRATIONS_CHANNELS,
   createPrSchema,
@@ -190,6 +190,27 @@ export function registerIntegrationsIpc(): void {
           host: parsed.data.host,
           username: parsed.data.username,
           auth: { kind: 'agent', allowedFingerprints: ['*'] },
+          // Trust-on-first-use: show the SHA256 host-key fingerprint in a native
+          // (non-forgeable) dialog before pinning it. A changed key is rejected
+          // by the transport regardless — this hook only gates the first sight.
+          confirmUnknownHostKey: ({ host, port, fingerprint }) => {
+            const win = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+            const opts = {
+              type: 'warning' as const,
+              buttons: ['Cancelar', 'Confiar e conectar'],
+              defaultId: 0,
+              cancelId: 0,
+              title: 'Chave SSH desconhecida',
+              message: `Primeira conexão a ${host}:${port}. Confirme a impressão digital da chave do host:`,
+              detail: `${fingerprint}\n\nConfie apenas se ela corresponde à chave real do servidor (verifique fora de banda, ex.: ssh-keyscan).`,
+              noLink: true,
+            };
+            return (
+              (win
+                ? dialog.showMessageBoxSync(win, opts)
+                : dialog.showMessageBoxSync(opts)) === 1
+            );
+          },
         },
         transport,
       );

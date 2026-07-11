@@ -13,11 +13,11 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.13.3',
+  version: '0.13.4',
   date: '2026-07-11',
-  codename: 'Design Systems Shipping',
+  codename: 'Manual Notary Build',
   summary:
-    'Design systems completos (settings + MCP + DESIGN.md), packaging Linux com ssh2 externalizado, e caminho de release macOS via keychain notary local.',
+    'Build notarizado local (nexus-notary): design systems, browser automation, SSH host-key pin, packaging ssh2 opcional.',
   highlights: [
     {
       title: 'Design systems no produto',
