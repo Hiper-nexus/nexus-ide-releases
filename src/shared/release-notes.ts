@@ -13,58 +13,58 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.12.1',
+  version: '0.13.0',
   date: '2026-07-10',
-  codename: 'Verified Context',
+  codename: 'Always Awake',
   summary:
-    'O Nexus agora entende e verifica o contexto de cada projeto antes de executar efeitos: runtime e dados ficam isolados por checkout, e conclusão exige evidência compatível com a revisão e o diff atuais.',
+    'O Nexus ganha runtime de agentes, forges e fundação remota, enquanto a Jarvis opera em Gemini Live com wake resiliente, voz natural e turnos protegidos contra eco, replay e ambiguidade.',
   highlights: [
     {
-      title: 'Contexto verificável antes do código',
+      title: 'Jarvis Live mais confiável',
       detail:
-        'Conhecimento do domínio, contratos, contextRevision, sensores, PREVC e Review Council formam um gate nativo antes de efeitos e conclusão.',
+        'Wake acústico e textual trabalham juntos, STT travado perde a geração em quatro segundos, a conversa permanece quente e a voz Gemini Live padrão passa a ser Gacrux.',
     },
     {
-      title: 'Runtime seguro por projeto',
+      title: 'Runtime de agentes e diagnóstico',
       detail:
-        'SQLite, stores, identidade, worktrees, cron e sync são escopados por projeto e checkout, com modo somente leitura quando a persistência degrada.',
+        'Hooks consentidos de Claude/Codex, keep-awake multiagente, breadcrumbs e recuperação de crash ligam atividade real do PTY ao runtime sem transformar status em evidência.',
     },
     {
-      title: 'Nexus Doctor e release verificável',
+      title: 'Forges e trabalho remoto com limites explícitos',
       detail:
-        'Readiness estruturado, smoke do app empacotado, SBOM, checksums e validação de assinatura/notarização tornam os bloqueios reproduzíveis.',
+        'GitHub/GitLab, terminal remoto, SSH e política de cliente móvel entram com escopo local, replay protegido e pareamento sobre TLS; criptografia E2E continua declaradamente pendente.',
     },
   ],
   fixes: [
     {
-      title: 'Gemini Live e vozes cloud restaurados no macOS',
+      title: 'Jarvis não conversa mais com a própria voz',
       detail:
-        'O app assinado volta a abrir o cofre criptografado do macOS sem executar uma consulta exclusiva do Linux; chaves existentes permanecem locais e Jarvis não degrada indevidamente para voz do sistema.',
+        'Frames de microfone ficam retidos durante áudio local ou Live, o wake verificado ainda pode interromper a fala e o próximo turno só abre depois do drain real.',
     },
     {
-      title: 'Encerramento seguro do browser pane',
+      title: 'Comandos de voz menos ambíguos',
       detail:
-        'O fechamento do Nexus agora tolera a destruição concorrente do renderer sem exibir a exceção “Object has been destroyed”, preservando o cleanup da view e do proxy de rede.',
+        'A sessão Gemini recebe uma superfície curta de ferramentas de alto nível em vez de dezenas de schemas concorrentes; ações detalhadas continuam na fachada auditada.',
     },
     {
-      title: 'Sem conclusão por caminhos paralelos',
+      title: 'Hooks privados e realmente conectados',
       detail:
-        'Missões, handoffs e efeitos passam pelos mesmos gates de workflow, contexto, evidência e identidade do diff.',
+        'Configs e backups preservam permissões privadas, e cada PTY recebe endpoint e chave de sessão próprios para publicar atividade no processo principal.',
     },
     {
-      title: 'Jarvis isolada por janela e projeto',
+      title: 'Remote sem replay nem injeção de shell',
       detail:
-        'Ownership Live, wake/PTT, transcript, memória e callbacks tardios não atravessam outro renderer, projeto ou checkout.',
+        'Frames repetidos deixam de executar comandos duas vezes e argumentos Git remotos são cotados individualmente sob uma allowlist de subcomandos.',
     },
     {
-      title: 'Visão e ferramentas com menos vazamento',
+      title: 'Keep-awake preserva todos os agentes',
       detail:
-        'AX, OCR e resultados MCP recebem limites e redação única de segredos; Git e filesystem falham fechados diante de drift e configuração perigosa.',
+        'Concluir um pane não apaga o estado de outros agentes trabalhando, e cancelar o diálogo de saída não desmonta mais a proteção contra suspensão.',
     },
     {
-      title: 'Atualização restrita à plataforma correta',
+      title: 'Fechamento e runtime macOS endurecidos',
       detail:
-        'O updater escolhe o ZIP do Mac compatível e fica indisponível em Linux/Windows até existir um mecanismo próprio para essas plataformas.',
+        'O app não recria janela durante shutdown, tolera WebContents destruído e mantém o cofre do macOS disponível para Gemini/OpenAI sem aplicar uma regra exclusiva do Linux.',
     },
   ],
 };

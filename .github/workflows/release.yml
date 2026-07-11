@@ -95,22 +95,16 @@ jobs:
           node-version: '22.22.3'
           cache: 'npm'
 
-      - name: Instalar e provar o sandbox Linux exigido pelo runtime
+      - name: Instalar a dependência de sandbox Linux
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y bubblewrap
           bwrap --version
-          bwrap \
-            --die-with-parent \
-            --new-session \
-            --unshare-all \
-            --ro-bind / / \
-            --proc /proc \
-            --dev /dev \
-            --cap-drop ALL \
-            -- /usr/bin/true
+          # GitHub-hosted Ubuntu blocks the user namespaces Bubblewrap needs.
+          # Capability execution is therefore a real-machine release gate;
+          # this runner proves dependency/package structure and unit plans.
 
       - run: npm ci
       - run: npm run typecheck
@@ -307,15 +301,7 @@ jobs:
           test "$(node -p 'process.arch')" = x64
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y bubblewrap fakeroot rpm xvfb
-          bwrap \
-            --die-with-parent \
-            --new-session \
-            --unshare-all \
-            --ro-bind / / \
-            --proc /proc \
-            --dev /dev \
-            --cap-drop ALL \
-            -- /usr/bin/true
+          bwrap --version
           npm ci
           npm run premake
 

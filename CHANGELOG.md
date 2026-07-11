@@ -1,16 +1,50 @@
 # Changelog
 
-## 0.13.0 — Em desenvolvimento
+## 0.13.0 — Always Awake
 
-Data: a definir
+Data: 2026-07-10
 
+### Melhorias
+
+- Jarvis Live passa a configurar explicitamente VAD sensível, interrupção por
+  atividade e cobertura somente de fala no Gemini 3.1, preservando compressão
+  de contexto e retomada de sessão.
+- Wake acústico ganha fallback textual com aliases observados no microfone,
+  deadline local de quatro segundos e descarte de resultados tardios; wake
+  direto continua disponível durante a fala por verificação STT anti-eco.
+- A voz Gemini padrão muda de Charon para Gacrux, com migração apenas do antigo
+  default e preservação de escolhas personalizadas.
+- Runtime de agentes conecta hooks consentidos de Claude/Codex aos PTYs,
+  mantém o Mac/Linux acordado durante trabalho real e registra breadcrumbs de
+  crash sem transformar telemetria em evidência de conclusão.
 - Harvest ORCA de confiabilidade de terminal: circuit breaker de renderer,
   protocolo binário de stream, scheduler de output com backpressure e
   worktree removal safety com provenance Nexus (MIT, pin 143c36e).
-- Estabilização dos testes de merge queue (coordenação por sinal) e
-  diagnóstico rico no doctor.
-- Migrations do servidor endurecidas: timestamptz em cron_schedules e reaper
-  de soft-delete (30 dias).
+- GitHub/GitLab, terminal remoto, SSH e política de cliente móvel entram como
+  fundação escopada. O pareamento usa TLS + prova de posse; E2EE permanece
+  explicitamente pendente e não é anunciado como disponível.
+- Migrations do servidor endurecidas: `timestamptz` em `cron_schedules` e
+  reaper de soft-delete após 30 dias.
+
+### Correções
+
+- O microfone deixa de enviar áudio ao provider enquanto a própria Jarvis ou
+  um TTS local ainda toca; drift entre FSM e fila WebAudio também fica coberto.
+- A superfície do Gemini Live cai de mais de 60 ferramentas concorrentes para
+  ações de voz de alto nível + uma fachada auditada, reduzindo escolhas erradas
+  como abrir um squad quando o pedido era criar um.
+- Reload/configuração do wake não pode mais liberar sessões ONNX durante `run`,
+  eliminando o erro `Cannot read properties of null`.
+- Hooks preservam arquivos e backups em modo privado, recebem endpoint/chave de
+  sessão no ambiente do PTY e mantêm todos os agentes ativos no keep-awake.
+- Replay de frame remoto não reexecuta input; Git remoto cita cada argumento e
+  aceita somente subcomandos de escrita explicitamente permitidos.
+- Cancelar o diálogo de saída não desmonta o keep-awake; confirmar saída não
+  recria a janela e teardown de browser tolera `WebContents` destruído.
+- O runtime macOS volta a usar `safeStorage` corretamente e mantém as chaves
+  Gemini/OpenAI acessíveis no app assinado.
+- O gate Linux instala e empacota Bubblewrap no CI sem fingir que o runner
+  hospedado permite user namespaces; execução real continua gate de máquina.
 
 ## 0.12.0 — Contexto verificável e runtime seguro por projeto
 
