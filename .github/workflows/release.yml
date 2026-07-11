@@ -1,4 +1,4 @@
-name: Release (macOS · Linux) + Windows signed preview gate
+name: Release macOS + Linux/Windows preview gates
 
 on:
   push:
@@ -279,8 +279,12 @@ jobs:
           retention-days: 1
 
   build_linux:
-    name: Linux x64 · package/runtime
+    name: Linux x64 · preview (sandbox runtime pendente)
     needs: [validate, quality]
+    # GitHub-hosted Ubuntu blocks the user namespace needed by Bubblewrap.
+    # Keep the package/runtime smoke diagnostic, but never promote this job's
+    # artifacts to a public production release without a real sandbox run.
+    continue-on-error: true
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.validate.outputs.version }}
@@ -344,7 +348,7 @@ jobs:
           cp "${RPMS[0]}" "$ASSET_DIR/NexusIDE-$VERSION-linux-x64.rpm"
           npm sbom --sbom-format cyclonedx \
             >"$ASSET_DIR/NexusIDE-$VERSION-linux-x64.full.cyclonedx.json"
-          printf 'platform=linux\narch=x64\ncommit=%s\nruntime_validation=passed\nruntime_target=deb-extracted\nrpm_runtime_validation=not-run\nrunner_os=Linux\n' \
+          printf 'platform=linux\narch=x64\ncommit=%s\npackaged_app_runtime_validation=passed\nruntime_target=deb-extracted\nsandbox_runtime_validation=not-run-host-userns-policy\nrpm_runtime_validation=not-run\nrunner_os=Linux\nchannel=ci-preview\nproduction_eligibility=blocked-sandbox-runtime-not-proven\n' \
             "$(git rev-parse HEAD)" \
             >"$ASSET_DIR/NexusIDE-$VERSION-linux-x64.smoke.txt"
           (
@@ -359,7 +363,7 @@ jobs:
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-assets-linux-x64
+          name: preview-assets-linux-x64
           path: release-assets/
           if-no-files-found: error
           retention-days: 1
@@ -564,8 +568,8 @@ jobs:
           retention-days: 1
 
   publish:
-    name: Publicar macOS/Linux após os gates de produção
-    needs: [validate, build_macos, build_linux]
+    name: Publicar macOS após os gates de produção
+    needs: [validate, build_macos]
     runs-on: ubuntu-latest
     environment: production-release
     permissions:
@@ -591,7 +595,7 @@ jobs:
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: release-assets-*
+          pattern: release-assets-darwin-*
           merge-multiple: true
           path: release-assets
 
@@ -611,11 +615,6 @@ jobs:
             "NexusIDE-$VERSION-darwin-x64.full.cyclonedx.json"
             "NexusIDE-$VERSION-darwin-x64.smoke.txt"
             "NexusIDE-$VERSION-darwin-x64.sha256"
-            "NexusIDE-$VERSION-linux-x64.deb"
-            "NexusIDE-$VERSION-linux-x64.rpm"
-            "NexusIDE-$VERSION-linux-x64.full.cyclonedx.json"
-            "NexusIDE-$VERSION-linux-x64.smoke.txt"
-            "NexusIDE-$VERSION-linux-x64.sha256"
           )
           for asset in "${expected[@]}"; do
             test -f "$ASSET_DIR/$asset" || {
