@@ -4,6 +4,10 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 
+const ptyMocks = vi.hoisted(() => ({
+  orchWriteSession: vi.fn(() => true),
+}));
+
 // The bridge pulls orchestration/pty modules that transitively need electron;
 // stub them so this stays a pure network test.
 vi.mock('../orch/project-domain-store-registry', () => ({
@@ -28,7 +32,7 @@ vi.mock('../orch/pane-authz', () => ({
   authorizePaneAccess: () => ({ allow: true }),
 }));
 vi.mock('../pty/pty-manager', () => ({
-  orchWriteSession: () => true,
+  orchWriteSession: ptyMocks.orchWriteSession,
   orchResizeSession: () => true,
 }));
 
@@ -264,6 +268,51 @@ describe('remote bridge', () => {
     );
     expect(frame?.opcode).toBe(TerminalStreamOpcode.Output);
     expect(new TextDecoder().decode(frame!.payload)).toBe('stream-output-line\n');
+    socket.close();
+  });
+
+  it('writes a sequenced input frame only once when a client replays it', async () => {
+    ptyMocks.orchWriteSession.mockClear();
+    const token = await issueToken();
+    const socket = await authenticate(token);
+    const opened = await rpc(socket, {
+      id: 'replay-open',
+      type: 'pane.stream.open',
+      paneId: 'pane-stream',
+    });
+    const streamId = (opened.result as { streamId: number }).streamId;
+    const { encodeTerminalStreamFrame, TerminalStreamOpcode } = await import(
+      '../../shared/terminal-stream-protocol'
+    );
+    const frameBase64 = Buffer.from(
+      encodeTerminalStreamFrame({
+        opcode: TerminalStreamOpcode.Input,
+        streamId,
+        seq: 1,
+        payload: new TextEncoder().encode('deploy\n'),
+      }),
+    ).toString('base64');
+
+    const first = await rpc(socket, {
+      id: 'replay-first',
+      type: 'pane.stream.frame',
+      paneId: 'pane-stream',
+      frameBase64,
+    });
+    const duplicate = await rpc(socket, {
+      id: 'replay-duplicate',
+      type: 'pane.stream.frame',
+      paneId: 'pane-stream',
+      frameBase64,
+    });
+
+    expect(first.ok).toBe(true);
+    expect(duplicate).toMatchObject({ ok: false, error: 'invalid stream frame' });
+    expect(ptyMocks.orchWriteSession).toHaveBeenCalledTimes(1);
+    expect(ptyMocks.orchWriteSession).toHaveBeenCalledWith(
+      'session-stream-1',
+      'deploy\n',
+    );
     socket.close();
   });
 

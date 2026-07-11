@@ -22,4 +22,17 @@ describe('TerminalStreamSession', () => {
     const b = new TerminalStreamSession({ streamId: 2 });
     expect(b.receive(a.encodeOutput(new Uint8Array([1])))).toBeNull();
   });
+
+  it('rejects duplicate and older inbound sequence numbers', () => {
+    const sender = new TerminalStreamSession({ streamId: 3 });
+    const receiver = new TerminalStreamSession({ streamId: 3 });
+    const first = sender.encodeOutput(new TextEncoder().encode('first'));
+    const second = sender.encodeOutput(new TextEncoder().encode('second'));
+
+    expect(receiver.receive(first)?.seq).toBe(1);
+    expect(receiver.receive(second)?.seq).toBe(2);
+    expect(receiver.receive(second)).toBeNull();
+    expect(receiver.receive(first)).toBeNull();
+    expect(receiver.resumeFromSeq()).toBe(2);
+  });
 });

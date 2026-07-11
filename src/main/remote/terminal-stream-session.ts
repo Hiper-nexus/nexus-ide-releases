@@ -67,7 +67,8 @@ export class TerminalStreamSession {
       const frame = decodeTerminalStreamFrame(bytes);
       if (!frame) return null;
       if (frame.streamId !== this.streamId) return null;
-      if (frame.seq > this.#lastRxSeq) this.#lastRxSeq = frame.seq;
+      if (frame.seq <= this.#lastRxSeq) return null;
+      this.#lastRxSeq = frame.seq;
       return frame;
     } catch {
       return null;

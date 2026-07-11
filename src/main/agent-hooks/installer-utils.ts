@@ -5,11 +5,11 @@
 
 import {
   chmodSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -149,24 +149,20 @@ export function writeManagedScript(scriptPath: string, content: string): void {
   }
 }
 
-export function writeHooksJson(configPath: string, config: HooksConfig): void {
-  const dir = dirname(configPath);
-  mkdirSync(dir, { recursive: true });
-  const tmpPath = join(dir, `.${Date.now()}-${randomUUID()}.tmp`);
-  const serialized = `${JSON.stringify(config, null, 2)}\n`;
-  if (existsSync(configPath)) {
-    try {
-      if (readFileSync(configPath, 'utf-8') === serialized) return;
-    } catch {
-      // fall through
-    }
-  }
+function replacePrivateTextFile(
+  filePath: string,
+  content: string,
+  mode: number,
+): void {
+  const tmpPath = join(
+    dirname(filePath),
+    `.${Date.now()}-${randomUUID()}.tmp`,
+  );
   try {
-    writeFileSync(tmpPath, serialized, 'utf-8');
-    if (existsSync(configPath)) {
-      copyFileSync(configPath, `${configPath}.bak`);
-    }
-    renameSync(tmpPath, configPath);
+    writeFileSync(tmpPath, content, { encoding: 'utf-8', mode });
+    chmodSync(tmpPath, mode);
+    renameSync(tmpPath, filePath);
+    chmodSync(filePath, mode);
   } finally {
     if (existsSync(tmpPath)) {
       try {
@@ -176,4 +172,46 @@ export function writeHooksJson(configPath: string, config: HooksConfig): void {
       }
     }
   }
+}
+
+function restrictedOwnerMode(filePath: string, fallback = 0o600): number {
+  try {
+    const mode = statSync(filePath).mode & 0o600;
+    return mode === 0 ? fallback : mode;
+  } catch {
+    return fallback;
+  }
+}
+
+export function writeHooksJson(configPath: string, config: HooksConfig): void {
+  const dir = dirname(configPath);
+  mkdirSync(dir, { recursive: true });
+  const backupPath = `${configPath}.bak`;
+  const serialized = `${JSON.stringify(config, null, 2)}\n`;
+  let privateMode = 0o600;
+  if (existsSync(configPath)) {
+    privateMode = restrictedOwnerMode(configPath);
+    try {
+      if (readFileSync(configPath, 'utf-8') === serialized) {
+        chmodSync(configPath, privateMode);
+        if (existsSync(backupPath)) {
+          chmodSync(
+            backupPath,
+            restrictedOwnerMode(backupPath, privateMode),
+          );
+        }
+        return;
+      }
+    } catch {
+      // fall through
+    }
+  }
+  if (existsSync(configPath)) {
+    replacePrivateTextFile(
+      backupPath,
+      readFileSync(configPath, 'utf-8'),
+      privateMode,
+    );
+  }
+  replacePrivateTextFile(configPath, serialized, privateMode);
 }
