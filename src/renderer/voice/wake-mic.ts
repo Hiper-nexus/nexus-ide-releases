@@ -143,7 +143,10 @@ export class WakeMic {
     speechHangoverRms: 0.006,
     silenceMs: 900,
     maxMs: 4_500,
-    forceEmitMinPeakRms: 0.04,
+    // TV/música no fundo (logs: "aplaus", "musica de abertu") — peak 0.04 era
+    // baixo demais e forçava STT a cada 4.5s. Fala "Jarvis" perto do mic ≥0.12.
+    forceEmitMinPeakRms: 0.12,
+    cooldownMs: 1_200,
   });
 
   // Utterance capture (comando pós-wake/F6) sobre o MESMO stream quente.
