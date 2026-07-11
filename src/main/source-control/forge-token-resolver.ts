@@ -47,25 +47,39 @@ export function tokenCacheKey(account: ForgeTokenAccount): string {
 /**
  * Guard: reject any path that looks like a project-scoped secret store.
  * Callers that would load tokens from disk must pass paths through this.
+ *
+ * Allowed under `.nexus/`: only user-global non-secret config files
+ * (`settings.json`) and managed agent-hooks scripts. Everything else under
+ * `.nexus/` is treated as project or secret surface and refused.
  */
 export function assertNotProjectNexusSecretPath(filePath: string): void {
   const normalized = filePath.replace(/\\/g, '/');
-  // Project execution scopes use `<checkout>/.nexus/...` — forbid those.
-  if (/(?:^|\/)\.nexus\//.test(normalized) && !/(?:^|\/)\.nexus\/?$/.test(normalized)) {
-    // Allow only user-global `~/.nexus/` which does not sit under a checkout.
-    // Heuristic: if path contains `/projects/` or a git root marker pattern, reject.
+  if (!/(?:^|\/)\.nexus\//.test(normalized)) {
+    return;
   }
-  // Explicit ban on secrets under any `.nexus` that is not the home global config.
-  // Home global settings live at `~/.nexus/settings.json` (allowed). Tokens must
-  // still not live next to a checkout's `.nexus/project.json`.
+  // Explicit secret / project-authority paths under .nexus
   if (
     /\/\.nexus\/(project\.json|identity|checkouts|worktrees)\b/.test(normalized) ||
-    /\/\.nexus\/.*token/i.test(normalized)
+    /\/\.nexus\/.*token/i.test(normalized) ||
+    /\/\.nexus\/.*secret/i.test(normalized) ||
+    /\/\.nexus\/.*credential/i.test(normalized) ||
+    /\/\.nexus\/.*keychain/i.test(normalized)
   ) {
     throw new Error(
       'forge-token-resolver: refusing project-scoped .nexus secret path',
     );
   }
+  // Allowlist: global settings + managed hook scripts only
+  if (
+    /\/\.nexus\/settings\.json$/.test(normalized) ||
+    /\/\.nexus\/agent-hooks\//.test(normalized)
+  ) {
+    return;
+  }
+  // Fail closed for any other `.nexus/` path (likely checkout-local).
+  throw new Error(
+    'forge-token-resolver: refusing non-allowlisted .nexus path for secrets',
+  );
 }
 
 let injected: ForgeTokenResolver | null = null;

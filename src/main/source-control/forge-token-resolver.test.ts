@@ -35,9 +35,15 @@ describe('forge-token-resolver', () => {
   it('refuses project-scoped .nexus secret paths', () => {
     expect(() =>
       assertNotProjectNexusSecretPath('/repo/checkout/.nexus/tokens.json'),
-    ).toThrow(/project-scoped/);
+    ).toThrow(/project-scoped|refusing/);
+    expect(() =>
+      assertNotProjectNexusSecretPath('/repo/checkout/.nexus/project.json'),
+    ).toThrow(/refusing/);
     expect(() =>
       assertNotProjectNexusSecretPath('/Users/me/.nexus/settings.json'),
+    ).not.toThrow();
+    expect(() =>
+      assertNotProjectNexusSecretPath('/Users/me/.nexus/agent-hooks/claude-hook.sh'),
     ).not.toThrow();
   });
 });

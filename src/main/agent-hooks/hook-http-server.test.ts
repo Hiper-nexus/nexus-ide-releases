@@ -54,7 +54,7 @@ describe('hook-http-server', () => {
     userData = mkdtempSync(join(tmpdir(), 'nexus-hook-http-'));
     const handle = await startAgentHookHttpServer({
       userDataPath: userData,
-      token: 'test-token',
+      token: 'aabbccddeeff00112233445566778899',
     });
 
     const form = new URLSearchParams({
@@ -65,7 +65,7 @@ describe('hook-http-server', () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'X-Nexus-Agent-Hook-Token': 'test-token',
+        'X-Nexus-Agent-Hook-Token': 'aabbccddeeff00112233445566778899',
       },
       body: form.toString(),
     });
@@ -90,13 +90,13 @@ describe('hook-http-server', () => {
     userData = mkdtempSync(join(tmpdir(), 'nexus-hook-http-'));
     const handle = await startAgentHookHttpServer({
       userDataPath: userData,
-      token: 'secret',
+      token: '00112233445566778899aabbccddeeff',
     });
     const res = await fetch(`http://127.0.0.1:${handle.port}/hook/claude`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Nexus-Agent-Hook-Token': 'wrong',
+        'X-Nexus-Agent-Hook-Token': 'ffeeddccbbaa99887766554433221100',
       },
       body: JSON.stringify({ paneKey: 'x', state: 'working' }),
     });

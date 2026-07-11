@@ -20,7 +20,9 @@ let registered = false;
 export function registerDefaultManagedAgentHookInstallers(options?: {
   home?: string;
 }): void {
-  if (registered && !options?.home) return;
+  // Always re-register when an explicit home is provided (tests / sandbox).
+  // Production bootstrap without home is idempotent.
+  if (registered && options?.home === undefined) return;
   registerManagedAgentHookService('claude', createClaudeHookService({ home: options?.home }));
   registerManagedAgentHookService('codex', createCodexHookService({ home: options?.home }));
   registered = true;

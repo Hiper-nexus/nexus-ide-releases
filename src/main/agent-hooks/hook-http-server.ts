@@ -43,6 +43,13 @@ function writeEndpointFile(
   port: number,
   token: string,
 ): void {
+  // Token is hex-only from randomBytes; reject anything else before shell export.
+  if (!/^[0-9a-f]+$/i.test(token)) {
+    throw new Error('hook-http-server: token must be hex');
+  }
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error('hook-http-server: invalid port');
+  }
   mkdirSync(dirname(path), { recursive: true });
   // Sourced by managed shell scripts (NEXUS_AGENT_HOOK_ENDPOINT).
   const body = [
