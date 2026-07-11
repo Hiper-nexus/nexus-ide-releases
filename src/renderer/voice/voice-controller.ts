@@ -122,6 +122,29 @@ const MIC_HEALTH_CHECK_MS = 5_000;
 /** Deadline curto: fallback textual só serve se continuar parecendo um wake. */
 const PASSIVE_WAKE_STT_BUDGET_MS = 3_500;
 const PASSIVE_WAKE_RENDERER_DEADLINE_MS = PASSIVE_WAKE_STT_BUDGET_MS + 500;
+/** Comando falado no mesmo utterance do wake ("Jarvis abre X") — Overclock rest. */
+let pendingPassiveWakeCommand: string | null = null;
+
+async function flushPendingPassiveWakeCommand(): Promise<void> {
+  const cmd = pendingPassiveWakeCommand?.trim();
+  pendingPassiveWakeCommand = null;
+  if (!cmd) return;
+  const turnId =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `wake-cmd-${Date.now()}`;
+  try {
+    const accepted = await window.nexus.voice.liveRescueIn({ turnId, text: cmd });
+    logVoiceEvent('info', 'jarvis.passiveWakeCommand', 'comando do mesmo utterance injetado no Live', {
+      chars: cmd.length,
+      accepted: accepted.accepted,
+    });
+  } catch (err) {
+    logVoiceEvent('warn', 'jarvis.passiveWakeCommandFail', 'falha ao injetar comando do wake', {
+      error: errMsg(err),
+    });
+  }
+}
 
 type WakeSource = 'voice' | 'voice-barge' | 'click';
 
@@ -465,7 +488,11 @@ export function useVoiceController(): void {
           latencyMs,
           provider: result.provider,
           commandWords: match.command ? match.command.split(/\s+/).length : 0,
+          // Overclock: rest-of-phrase vira comando do mesmo utterance
+          hasCommand: Boolean(match.command.trim()),
         });
+        // Comando embutido ("Jarvis abre missão") — injeta no Live após engajar
+        pendingPassiveWakeCommand = match.command.trim() || null;
         onWake(
           isVerifiedBargeCandidate ? 'voice-barge' : 'voice',
           utterance.preRoll,
@@ -836,6 +863,7 @@ async function beginListening(
         // FIX E: session is already hot — re-arm mic streaming without liveStart.
         setRealtimeTurnActive(canAttemptRealtime(info));
         queueLiveContextRefresh();
+        void flushPendingPassiveWakeCommand();
       } else {
         setRealtimeTurnActive(canAttemptRealtime(info));
         // The first user utterance must be the only new Live turn. Injecting a
@@ -849,14 +877,18 @@ async function beginListening(
         setPendingLiveStartSettle(
           window.nexus.voice
             .liveStart({ reason })
-            .then((state) => {
+            .then(async (state) => {
               store.setLiveState(state);
               if (!state.realtimeReady) {
                 setRealtimeTurnActive(false);
+                return;
               }
+              // Overclock: se o STT já trouxe o comando junto do wake, envia já.
+              await flushPendingPassiveWakeCommand();
             })
             .catch((err) => {
               setRealtimeTurnActive(false);
+              pendingPassiveWakeCommand = null;
               console.warn('[voice] liveStart falhou (classic segue):', errMsg(err));
             }),
         );

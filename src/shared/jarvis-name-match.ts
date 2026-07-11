@@ -1,11 +1,9 @@
 /**
  * Matching permissivo do nome "Jarvis" para wake / engajamento.
- *
- * Política de produto: basta o nome **Jarvis** (ou STT perto). Não exige
- * "Hey Jarvis". Aceita "Jarvis", "Ei Jarvis", "acorda Jarvis", "cheguei Jarvis",
- * "olá Jarvis", "ouça Jarvis", etc. Ambient longo ("hoje o Jarvis falou…")
- * continua filtrado fora de posição de endereço.
+ * isJarvisWakeAddress → matchWakeWord do Overclock (port em overclock-voice-nlu).
  */
+
+import { matchWakeWord } from './overclock-voice-nlu';
 
 /** Aliases observados em STT PT-BR (Groq/Whisper) + sotaque. */
 export const JARVIS_STT_ALIASES = new Set([
@@ -198,93 +196,11 @@ export function stripJoinedGreeting(token: string): string | null {
 }
 
 /**
- * Transcript curto é chamada à Jarvis?
- * Só o nome, prefixo+nome ("acorda jarvis"), ou nome+comando ("jarvis abre").
- * Usado no gate de ruído do Live e no wake passivo.
+ * Transcript é chamada à Jarvis? Mesma regra do Overclock matchWakeWord.
  */
 export function isJarvisWakeAddress(
   text: string,
   assistantName = 'Jarvis',
 ): boolean {
-  const words = text
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map(normalizeNameToken)
-    .filter(Boolean);
-  // Frases de chamada costumam ser curtas; ambient longo cai no matcher passivo.
-  if (words.length === 0 || words.length > 8) return false;
-
-  const target = normalizeNameToken(assistantName) || 'jarvis';
-
-  // Só o nome (ou nome colado com cumprimento)
-  if (words.length === 1) {
-    const joined = stripJoinedGreeting(words[0]!);
-    if (joined && looksLikeJarvisName(joined, target)) return true;
-    return looksLikeJarvisName(words[0]!, target);
-  }
-
-  // Nome no primeiro token: "jarvis", "jarvis abre o terminal"
-  if (looksLikeJarvisName(words[0]!, target)) return true;
-
-  // "o jarvis" / "a jarvis" só em clip de 2 tokens (STT curto)
-  if (
-    words.length === 2 &&
-    (words[0] === 'o' || words[0] === 'a') &&
-    looksLikeJarvisName(words[1]!, target)
-  ) {
-    return true;
-  }
-
-  // prefixo + nome: "oi jarvis", "acorda jarvis", "cheguei jarvis", "ouça jarvis"
-  if (WAKE_PREFIX_TOKENS.has(words[0]!)) {
-    if (looksLikeJarvisName(words[1]!, target)) return true;
-    const joined = stripJoinedGreeting(words[1]!);
-    if (joined && looksLikeJarvisName(joined, target)) return true;
-  }
-
-  // "e ai jarvis" / "bom dia jarvis" (dois tokens curtos + nome)
-  if (
-    words.length >= 3 &&
-    looksLikeJarvisName(words[2]!, target) &&
-    isTwoTokenWakeLead(words[0]!, words[1]!)
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-/** "e ai", "bom dia", "por favor" antes do nome. */
-function isTwoTokenWakeLead(a: string, b: string): boolean {
-  if (a === 'e' && (b === 'ai' || b === 'ei' || b === 'ae' || b === 'aii')) {
-    return true;
-  }
-  if (a === 'bom' && (b === 'dia' || b === 'diaa')) return true;
-  if (a === 'boa' && (b === 'tarde' || b === 'noite')) return true;
-  if (a === 'por' && b === 'favor') return true;
-  // dois prefixos empilhados: "oi ouca jarvis" raro; "ei ouca jarvis"
-  if (WAKE_PREFIX_TOKENS.has(a) && WAKE_PREFIX_TOKENS.has(b)) return true;
-  return false;
-}
-
-/**
- * Posição válida do nome num clip STT de wake passivo.
- * Exportado para o matcher do renderer.
- */
-export function isJarvisAddressTokenIndex(
-  words: readonly string[],
-  index: number,
-): boolean {
-  if (index < 0 || index >= words.length) return false;
-  if (index === 0) return true;
-  const w0 = normalizeNameToken(words[0] ?? '');
-  if (index === 1) {
-    return WAKE_PREFIX_TOKENS.has(w0);
-  }
-  if (index === 2) {
-    const w1 = normalizeNameToken(words[1] ?? '');
-    return isTwoTokenWakeLead(w0, w1);
-  }
-  return false;
+  return matchWakeWord(text, assistantName) !== null;
 }

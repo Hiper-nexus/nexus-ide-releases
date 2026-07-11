@@ -67,12 +67,13 @@ describe('isJarvisWakeAddress', () => {
     expect(isJarvisWakeAddress('jarvis abre')).toBe(true);
   });
 
-  it('does not wake on ambient mention mid-sentence', () => {
-    // isJarvisWakeAddress is for short clips; long ambient is handled by
-    // matchPassiveWakeWord address-position rules.
+  it('wakes on exact Jarvis mid-sentence (Overclock F-057 parity)', () => {
+    // Overclock: exact "jarvis" em qualquer posição acorda.
     expect(isJarvisWakeAddress('hoje o jarvis falou comigo sobre o projeto')).toBe(
-      false,
+      true,
     );
+    // Alias fuzzy no meio da frase NÃO acorda
+    expect(isJarvisWakeAddress('hoje o jarbas me ligou cedo')).toBe(false);
   });
 });
 
