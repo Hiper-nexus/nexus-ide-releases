@@ -13,33 +13,33 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.13.4',
+  version: '0.13.5',
   date: '2026-07-11',
-  codename: 'Manual Notary Build',
+  codename: 'Operator XP Live',
   summary:
-    'Build notarizado local (nexus-notary): design systems, browser automation, SSH host-key pin, packaging ssh2 opcional.',
+    'XP de operador no trabalho diário (agent_turn), FX de tier-up, e hardening de segurança no git panel, URLs e writes atómicos. macOS notarizado; Windows aguarda certificado.',
   highlights: [
     {
-      title: 'Design systems no produto',
+      title: 'XP no trabalho real de agente',
       detail:
-        'Catálogo designmd.ai nas definições, import como ContextDraft, DESIGN.md no prompt de design mode e facts no ingest de contexto.',
+        'Cada turno Claude/Codex com output real ganha agent_turn (300 pts, com diminishing returns diário) e avança a streak — sem depender só de missão ou voz.',
     },
     {
-      title: 'SSH e Linux packaging',
+      title: 'Operator FX',
       detail:
-        'ssh2 opcional e fora do bundle Vite; build Linux deixa de falhar em nativos cpu-features/sshcrypto.',
+        'Toasts +XP, burst de TIER-UP/TRANSCENDÊNCIA e achievements; HUD com shimmer; reduz motion quando o sistema pede.',
     },
     {
-      title: 'Mission Rail e multi-missão',
+      title: 'Hardening de segurança',
       detail:
-        'Activity Rail, multi-missão segura e integrações forge/Linear permanecem nesta linha.',
+        'Git panel seguro (ProcessGitRunner + config local safe), redacção de tokens em URLs, atomic-write com O_EXCL|O_NOFOLLOW, provider-config sem prototype pollution.',
     },
   ],
   fixes: [
     {
-      title: 'Package Linux desbloqueado',
+      title: 'Preload browser alinhado',
       detail:
-        'Nativos do ssh2 não entram no grafo de bundling do processo main.',
+        'Allowlist do preload inclui scroll/press/hover para o motor empacotado bater com o main.',
     },
   ],
 };

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.13.5 — Operator XP + security hardening
+
+Data: 2026-07-11
+
+### Melhorias
+- Gamificação: XP `agent_turn` em cada turno Claude/Codex com output real;
+  streak avança no uso quotidiano (não só pipeline/missão/voz).
+- Operator FX: toasts "+XP", bursts de TIER-UP / TRANSCENDÊNCIA, achievements;
+  HUD com shimmer; respeita reduced-motion e sober mode.
+
+### Segurança
+- Git panel: ProcessGitRunner + `assertSafeLocalGitConfig` + `--no-ext-diff`
+  (mitiga config maliciosa de repo ao abrir status/diff).
+- Browser: redacção de segmentos secretos em URLs; preload allowlist alinhado
+  a scroll/press/hover.
+- atomic-write: `O_CREAT|O_EXCL|O_NOFOLLOW` + temp name imprevisível.
+- provider-config: ignora chaves `__proto__` / `constructor` / `prototype`.
+- Teste hermético de known-hosts (pin/match/mismatch).
+
+### Build
+- Release arm64 notarizada localmente (`nexus-notary`).
+- Windows: aguarda certificado Authenticode (eSigner/OV|IV); não incluído.
+
 ## 0.13.4 — Manual Mac notarized build
 
 Data: 2026-07-11
