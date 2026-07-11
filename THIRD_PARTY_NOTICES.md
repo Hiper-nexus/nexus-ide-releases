@@ -86,3 +86,23 @@ The production dependency inventory and individual package licenses are
 recorded in the CycloneDX SBOM shipped with every release. Package license
 files remain present in their packaged npm modules when required by the
 upstream package.
+
+## stablyai/orca (Agent Runtime harvest — F3)
+
+Additional modules adapted from [stablyai/orca](https://github.com/stablyai/orca) at commit
+`143c36e566483006fe54fa2716b019ec00599752` (MIT, Copyright (c) 2026 Lovecast Inc.):
+
+- crash reporting (process-gone classification/dedupe/diagnostics, GPU fallback, breadcrumb/report stores)
+- agent hook types/listener/status and agent-awake sleep prevention
+
+License text: `third_party/licenses/orca-MIT.txt`. Provenance ledger:
+`third_party/provenance/orca-143c36e.json`.
+
+## hosted-git-info@9.0.3 (via ORCA hosted-remote-url)
+
+`src/main/git/hosted-remote-url.ts` is adapted from stablyai/orca @
+`143c36e566483006fe54fa2716b019ec00599752`, which documents a scoped local fork
+of **hosted-git-info@9.0.3** behavior (ISC) for GitHub/GitLab/Bitbucket remote
+parsing. Nexus does not vendor the npm package; dual provenance is recorded in
+`third_party/provenance/orca-143c36e.json`.
+
