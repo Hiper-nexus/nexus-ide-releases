@@ -1,4 +1,3 @@
-import type { McpToolDef } from '../../orch/mcp-protocol';
 import type { RealtimeToolDefinition } from './provider';
 import {
   COARSE_VOICE_TOOLS,
@@ -32,14 +31,6 @@ export function toGeminiSchema(value: unknown): unknown {
   return output;
 }
 
-function fromMcpTool(tool: McpToolDef): GeminiFunctionDeclaration {
-  return {
-    name: tool.name,
-    description: tool.description,
-    parameters: toGeminiSchema(tool.inputSchema) as GeminiFunctionDeclaration['parameters'],
-  };
-}
-
 function fromRealtimeTool(tool: RealtimeToolDefinition): GeminiFunctionDeclaration {
   return {
     name: tool.name,
@@ -49,17 +40,16 @@ function fromRealtimeTool(tool: RealtimeToolDefinition): GeminiFunctionDeclarati
 }
 
 /**
- * Gemini receives exact schemas for every Nexus MCP capability plus the
- * umbrella UI action and the fast conversational coarse tools.
+ * Keep the Live tool surface intentionally small. The audited `nexus_action`
+ * umbrella still reaches Nexus MCP operations, while avoiding dozens of
+ * overlapping declarations that make short spoken commands ambiguous.
  */
 export function createGeminiRealtimeTools(
-  mcpTools: readonly McpToolDef[],
   realtimeTools: readonly RealtimeToolDefinition[],
 ): GeminiFunctionDeclaration[] {
   const declarations = [
     ...COARSE_VOICE_TOOLS,
     ...realtimeTools.map(fromRealtimeTool),
-    ...mcpTools.map(fromMcpTool),
   ];
   const unique = new Map<string, GeminiFunctionDeclaration>();
   for (const declaration of declarations) {

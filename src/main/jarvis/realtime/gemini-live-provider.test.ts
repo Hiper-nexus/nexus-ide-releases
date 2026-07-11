@@ -101,7 +101,7 @@ describe('GeminiLiveProvider lifecycle composition', () => {
       model: 'gemini-live',
       voiceName: 'Charon',
       instructions: 'Use nexus_action com guardrails.',
-      tools: createGeminiRealtimeTools([], createNexusRealtimeTools()),
+      tools: createGeminiRealtimeTools(createNexusRealtimeTools()),
       deps: {
         wsFactory: () => ws,
         now: () => 1_000,

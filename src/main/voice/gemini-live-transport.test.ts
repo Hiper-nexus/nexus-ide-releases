@@ -103,6 +103,17 @@ describe('buildSetupMessage', () => {
     expect(msg.setup.contextWindowCompression).toEqual({ slidingWindow: {} });
     expect(msg.setup.inputAudioTranscription).toEqual({});
     expect(msg.setup.outputAudioTranscription).toEqual({});
+    expect(msg.setup.realtimeInputConfig).toEqual({
+      automaticActivityDetection: {
+        disabled: false,
+        startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
+        endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH',
+        prefixPaddingMs: 20,
+        silenceDurationMs: 300,
+      },
+      activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
+      turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY',
+    });
   });
 
   it('configura o Gemini 3.1 Live com thinking mínimo para baixa latência', () => {

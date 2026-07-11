@@ -24,6 +24,17 @@ export interface SetupMessage {
     tools: Array<{ functionDeclarations: GeminiFunctionDeclaration[] }>;
     inputAudioTranscription: Record<string, never>;
     outputAudioTranscription: Record<string, never>;
+    realtimeInputConfig: {
+      automaticActivityDetection: {
+        disabled: false;
+        startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH';
+        endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH';
+        prefixPaddingMs: number;
+        silenceDurationMs: number;
+      };
+      activityHandling: 'START_OF_ACTIVITY_INTERRUPTS';
+      turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY';
+    };
     contextWindowCompression: { slidingWindow: Record<string, never> };
     sessionResumption: Record<string, unknown>;
   };
@@ -84,6 +95,17 @@ export function buildSetupMessage(opts: {
       tools: [{ functionDeclarations: opts.tools ?? COARSE_VOICE_TOOLS }],
       inputAudioTranscription: {},
       outputAudioTranscription: {},
+      realtimeInputConfig: {
+        automaticActivityDetection: {
+          disabled: false,
+          startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
+          endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH',
+          prefixPaddingMs: 20,
+          silenceDurationMs: 300,
+        },
+        activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
+        turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY',
+      },
       contextWindowCompression: { slidingWindow: {} },
       sessionResumption: opts.resumeHandle ? { handle: opts.resumeHandle } : {},
     },

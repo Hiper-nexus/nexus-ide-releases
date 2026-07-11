@@ -1,15 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { McpToolDef } from '../../orch/mcp-protocol';
 import { createNexusRealtimeTools } from './nexus-realtime-tools';
 import { createGeminiRealtimeTools, toGeminiSchema } from './gemini-realtime-tools';
 import { buildToolset } from '../../orch/tools';
-
-const tool = (name: string, inputSchema: Record<string, unknown>): McpToolDef => ({
-  name,
-  description: `${name} description`,
-  inputSchema,
-  handler: async () => ({}),
-});
 
 describe('Gemini realtime tool declarations', () => {
   it('converts nested JSON Schema types to the Gemini Live contract', () => {
@@ -34,44 +26,25 @@ describe('Gemini realtime tool declarations', () => {
     });
   });
 
-  it('declares coarse voice, audited UI action, and exact MCP tools once', () => {
-    const declarations = createGeminiRealtimeTools(
-      [
-        tool('nexus_file_read', {
-          type: 'object',
-          properties: { path: { type: 'string' } },
-          required: ['path'],
-        }),
-        tool('nexus_pane_read', { type: 'object', properties: {} }),
-      ],
-      createNexusRealtimeTools(),
-    );
+  it('declares only coarse voice tools and the audited umbrella action', () => {
+    const declarations = createGeminiRealtimeTools(createNexusRealtimeTools());
     const names = declarations.map((item) => item.name);
 
     expect(names).toContain('consultar');
     expect(names).toContain('nexus_action');
-    expect(names).toContain('nexus_file_read');
-    expect(names).toContain('nexus_pane_read');
+    expect(names).not.toContain('nexus_file_read');
+    expect(names).not.toContain('nexus_pane_read');
     expect(new Set(names).size).toBe(names.length);
-    expect(
-      declarations.find((item) => item.name === 'nexus_file_read')?.parameters,
-    ).toMatchObject({
-      type: 'OBJECT',
-      properties: { path: { type: 'STRING' } },
-      required: ['path'],
-    });
   });
 
-  it('converts the complete runtime Nexus MCP catalog without dropping tools', () => {
+  it('keeps the Live setup bounded instead of exposing the entire MCP catalog', () => {
     const catalog = buildToolset();
-    const declarations = createGeminiRealtimeTools(catalog, createNexusRealtimeTools());
+    const declarations = createGeminiRealtimeTools(createNexusRealtimeTools());
     const names = new Set(declarations.map((item) => item.name));
 
     expect(catalog.length).toBeGreaterThan(60);
-    expect(catalog.every((tool) => names.has(tool.name))).toBe(true);
-    expect(names).toContain('nexus_ui_read');
-    expect(names).toContain('nexus_browser_read');
-    expect(names).toContain('nexus_image_generate');
+    expect(catalog.every((tool) => !names.has(tool.name))).toBe(true);
+    expect(names.size).toBeLessThanOrEqual(12);
     expect(names.size).toBe(declarations.length);
   });
 });

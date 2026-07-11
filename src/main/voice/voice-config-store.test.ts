@@ -52,6 +52,34 @@ describe('voice-config-store', () => {
     const config = store.loadVoiceConfig();
     expect(config.jarvisLive.transport).toBe('gemini-live');
     expect(config.jarvisLive.liveModel).toBe('gemini-3.1-flash-live-preview');
+    expect(config.jarvisLive.voiceName).toBe('Gacrux');
+  });
+
+  it('migra a antiga voz padrão Charon para Gacrux sem trocar vozes customizadas', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, voiceName: 'Charon' },
+      }),
+    );
+
+    expect(store.loadVoiceConfig().jarvisLive.voiceName).toBe('Gacrux');
+
+    vi.resetModules();
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, voiceName: 'Sulafat' },
+      }),
+    );
+    const reloaded = await import('./voice-config-store');
+    expect(reloaded.loadVoiceConfig().jarvisLive.voiceName).toBe('Sulafat');
   });
 
   it('migra somente o modelo Gemini Live 2.5 legado para o 3.1', async () => {

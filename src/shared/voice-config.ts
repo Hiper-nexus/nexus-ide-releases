@@ -93,6 +93,8 @@ export type JarvisBrainProviderId = 'gemini' | 'openai' | 'groq';
 export type JarvisLiveTransport = 'classic' | 'openai-realtime' | 'gemini-live';
 
 export const DEFAULT_GEMINI_LIVE_MODEL = 'gemini-3.1-flash-live-preview';
+export const DEFAULT_GEMINI_LIVE_VOICE = 'Gacrux';
+export const LEGACY_GEMINI_LIVE_VOICE = 'Charon';
 export const LEGACY_GEMINI_LIVE_MODEL =
   'gemini-2.5-flash-native-audio-preview-12-2025';
 
@@ -129,7 +131,7 @@ export const jarvisLiveConfigSchema = z
       .max(128)
       .default(DEFAULT_GEMINI_LIVE_MODEL),
     /** Voz pre-construida do Gemini Live. */
-    voiceName: z.string().min(1).max(64).default('Charon'),
+    voiceName: z.string().min(1).max(64).default(DEFAULT_GEMINI_LIVE_VOICE),
     /** Keep the live session warm after a turn so follow-ups reuse context. */
     graceReuseMs: z.number().int().positive().max(10 * 60_000).default(90_000),
     /** Move from warm to dormant after no speech; wake/PTT reuses the session. */
@@ -143,7 +145,7 @@ export const jarvisLiveConfigSchema = z
     openaiModel: 'gpt-realtime-2.1-mini',
     openaiVoice: 'marin',
     liveModel: DEFAULT_GEMINI_LIVE_MODEL,
-    voiceName: 'Charon',
+    voiceName: DEFAULT_GEMINI_LIVE_VOICE,
     graceReuseMs: 90_000,
     dormantAfterMs: 5 * 60_000,
     maxWindowTurns: 12,
@@ -323,7 +325,7 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
     openaiModel: 'gpt-realtime-2.1-mini',
     openaiVoice: 'marin',
     liveModel: DEFAULT_GEMINI_LIVE_MODEL,
-    voiceName: 'Charon',
+    voiceName: DEFAULT_GEMINI_LIVE_VOICE,
     graceReuseMs: 90_000,
     dormantAfterMs: 5 * 60_000,
     maxWindowTurns: 12,

@@ -12,6 +12,9 @@ describe('shouldWithholdLiveMicFrame', () => {
     expect(
       shouldWithholdLiveMicFrame({ status: 'speaking', providerSpeaking: true }),
     ).toBe(true);
+    expect(
+      shouldWithholdLiveMicFrame({ status: 'dormant', providerSpeaking: true }),
+    ).toBe(true);
   });
 
   it('does not withhold while listening/thinking/dormant', () => {

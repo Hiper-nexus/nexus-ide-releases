@@ -94,6 +94,7 @@ import { NarrationQueue } from './narration-queue';
 import { matchPassiveWakeWord } from './passive-wake-matcher';
 import { PassiveWakeDeadline } from './passive-wake-deadline';
 import { pttStartAction } from './ptt-barge-in';
+import { shouldOfferLiveMicFrame } from './live-mic-offer-gate';
 
 /**
  * Jarvis voice pipeline. Mounted once from App.
@@ -121,7 +122,7 @@ const MIC_HEALTH_CHECK_MS = 5_000;
 const PASSIVE_WAKE_STT_BUDGET_MS = 3_500;
 const PASSIVE_WAKE_RENDERER_DEADLINE_MS = PASSIVE_WAKE_STT_BUDGET_MS + 500;
 
-type WakeSource = 'voice' | 'click';
+type WakeSource = 'voice' | 'voice-barge' | 'click';
 
 function isAckGatedCapture(reason: JarvisCaptureReason = activeCaptureReason): boolean {
   return reason === 'wake' || reason === 'click';
@@ -219,7 +220,14 @@ export function useVoiceController(): void {
     capture.current.onLevel = publishVoiceLevel;
     wakeMic.onLevel = publishVoiceLevel;
     const streamLiveMicFrame = (frame: Float32Array, sampleRate: number) => {
-      if (shouldStreamToRealtime() && !isLocalAudioAudible(Date.now())) {
+      if (
+        shouldOfferLiveMicFrame({
+          realtimeActive: shouldStreamToRealtime(),
+          localAudioAudible: isLocalAudioAudible(Date.now()),
+          providerPlaybackRemainingMs: livePlayer?.remainingMs() ?? 0,
+          status: useVoiceStore.getState().status,
+        })
+      ) {
         window.nexus.voice.liveMicIn(micFrameToBase64(frame, sampleRate));
         // Renderer-side safety signal: zero means no IPC frame was even offered.
         // A positive count is not proof the provider accepted it; that path
@@ -229,10 +237,12 @@ export function useVoiceController(): void {
     };
     capture.current.onFrame = streamLiveMicFrame;
     const store = useVoiceStore.getState();
+    const passiveWakeDeadline = new PassiveWakeDeadline(PASSIVE_WAKE_RENDERER_DEADLINE_MS);
 
     const handleWake = async (source: WakeSource, preRollSeed?: Float32Array[]) => {
       if (wakeOpenInProgress) return;
       setWakeOpenInProgress(true);
+      passiveWakeDeadline.invalidate();
       try {
         markVictory('voiceEnabled');
         stopAllPlayback();
@@ -270,7 +280,7 @@ export function useVoiceController(): void {
         });
 
         const wakePreRoll =
-          source === 'voice'
+          source !== 'click'
             ? preRollSeed?.map((frame) => Float32Array.from(frame)) ??
               wakeMic.snapshotPreRoll(WAKE_PREROLL_MS)
             : [];
@@ -343,13 +353,16 @@ export function useVoiceController(): void {
       void handleWake(source, preRollSeed);
     };
 
-    const passiveWakeDeadline = new PassiveWakeDeadline(PASSIVE_WAKE_RENDERER_DEADLINE_MS);
     const handlePassiveWake = async (utterance: PassiveWakeUtterance): Promise<void> => {
       if (passiveWakeDeadline.isChecking() || wakeOpenInProgress) return;
       const info = useVoiceStore.getState().info;
       if (!info?.enabled || !info.wakeWordEnabled || info.routing !== 'jarvis') return;
       const voiceStatus = useVoiceStore.getState().status;
-      if (shouldIgnoreLiveReWake({ status: voiceStatus })) {
+      const isVerifiedBargeCandidate = voiceStatus === 'speaking';
+      if (
+        shouldIgnoreLiveReWake({ status: voiceStatus }) &&
+        !isVerifiedBargeCandidate
+      ) {
         logVoiceEvent('info', 'wake.passiveSkippedLiveBusy', 'checagem passiva pulada durante áudio Live', {
           status: voiceStatus,
         });
@@ -422,7 +435,10 @@ export function useVoiceController(): void {
           provider: result.provider,
           commandWords: match.command ? match.command.split(/\s+/).length : 0,
         });
-        onWake('voice', utterance.preRoll);
+        onWake(
+          isVerifiedBargeCandidate ? 'voice-barge' : 'voice',
+          utterance.preRoll,
+        );
       } catch (error) {
         logVoiceEvent('warn', 'wake.passiveSttError', 'falha no STT passivo', {
           latencyMs: Date.now() - startedAt,

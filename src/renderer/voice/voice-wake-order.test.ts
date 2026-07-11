@@ -57,7 +57,7 @@ describe('voice wake order', () => {
     expect(source).toContain('matchPassiveWakeWord');
     expect(source).toContain("purpose: 'passive-wake'");
     expect(source).toContain('budgetMs: PASSIVE_WAKE_STT_BUDGET_MS');
-    expect(source).toContain("onWake('voice', utterance.preRoll)");
+    expect(source).toContain("isVerifiedBargeCandidate ? 'voice-barge' : 'voice'");
     const passiveStart = source.indexOf('const handlePassiveWake');
     const passiveEnd = source.indexOf('wakeMic.onDied', passiveStart);
     expect(passiveStart).toBeGreaterThanOrEqual(0);
@@ -68,7 +68,11 @@ describe('voice wake order', () => {
     expect(passiveBlock).toContain("request.kind === 'timeout'");
     expect(passiveBlock).toContain('shouldIgnoreLiveReWake({ status: voiceStatus })');
     expect(passiveBlock).toContain('passiveWakeWord: info.persona.assistantName');
+    expect(passiveBlock).toContain("'voice-barge'");
     expect(source).toContain('wakeMic.cancelPassiveWake()');
+    const wakeStart = source.indexOf('const handleWake = async');
+    const wakeEnd = source.indexOf('const onWake =', wakeStart);
+    expect(source.slice(wakeStart, wakeEnd)).toContain('passiveWakeDeadline.invalidate()');
   });
 });
 
@@ -96,9 +100,10 @@ describe('wake barge-in guards', () => {
     );
   });
 
-  it('ignores voice re-wake while Live is mid-reply (stutter guard)', () => {
+  it('ignores unverified acoustic re-wake while allowing STT-verified voice barge-in', () => {
     expect(source).toContain('shouldIgnoreLiveReWake');
     expect(source).toContain("source === 'voice' && shouldIgnoreLiveReWake");
+    expect(source).toContain("type WakeSource = 'voice' | 'voice-barge' | 'click'");
     expect(gatesSource).toContain('export function shouldIgnoreLiveReWake');
   });
 

@@ -78,9 +78,9 @@ function isAddressPosition(words: readonly string[], index: number): boolean {
 }
 
 /**
- * Matches the configured assistant name exactly anywhere in the phrase. Near
- * matches are accepted only as an address in the first two tokens, which lets
- * Whisper's "jarvix" / "jarbas" wake Jarvis while rejecting ambient mentions.
+ * Matches the configured assistant name only as a direct address. Exact and
+ * near matches share the same first-token / greeting+name boundary so ambient
+ * mentions cannot wake the assistant.
  */
 export function matchPassiveWakeWord(
   transcript: string,
@@ -99,7 +99,7 @@ export function matchPassiveWakeWord(
     const exact = expected.every(
       (token, offset) => normalizeToken(words[index + offset] ?? '') === token,
     );
-    if (exact) {
+    if (exact && isAddressPosition(words, index)) {
       return { command: remainingCommand(words, index + expected.length) };
     }
 

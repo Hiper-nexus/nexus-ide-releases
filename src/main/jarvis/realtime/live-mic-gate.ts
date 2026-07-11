@@ -1,6 +1,5 @@
 /**
- * Gate de entrada do mic no transporte realtime (paridade com a disciplina de
- * input do Overclock, GeminiLiveSession isEcho). Com AEC desligado o
+ * Gate de entrada do mic no transporte realtime. Com AEC desligado o
  * alto-falante volta cru pro mic; se esses frames forem streamados ao socket, a
  * JARVIS responde a si mesma. Até existir um stream com referência acústica
  * real (AEC), retém os frames durante QUALQUER fala. Isto troca barge-in por um
@@ -20,5 +19,5 @@ export function shouldWithholdLiveMicFrame(opts: {
   status: LiveFsmStatus;
   providerSpeaking: boolean;
 }): boolean {
-  return opts.status === 'speaking';
+  return opts.status === 'speaking' || opts.providerSpeaking;
 }

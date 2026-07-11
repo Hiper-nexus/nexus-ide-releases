@@ -50,6 +50,8 @@ describe('matchPassiveWakeWord', () => {
 
   it('does not treat an ambient near-match as an address', () => {
     expect(matchPassiveWakeWord('hoje o jarvix falou comigo')).toBeNull();
+    expect(matchPassiveWakeWord('hoje o Jarvis falou comigo')).toBeNull();
+    expect(matchPassiveWakeWord('eu estava explicando sobre o Jarvis')).toBeNull();
   });
 
   it('rejects production aliases when they are ambient speech, not an address', () => {

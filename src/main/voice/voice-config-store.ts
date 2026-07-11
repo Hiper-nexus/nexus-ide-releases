@@ -4,8 +4,10 @@ import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import {
   DEFAULT_GEMINI_LIVE_MODEL,
+  DEFAULT_GEMINI_LIVE_VOICE,
   DEFAULT_VOICE_CONFIG,
   LEGACY_GEMINI_LIVE_MODEL,
+  LEGACY_GEMINI_LIVE_VOICE,
   flattenJarvisBrainProviders,
   keyCodeFromAccelerator,
   normalizeKeyCode,
@@ -196,6 +198,14 @@ export function loadVoiceConfig(): VoiceConfig {
       };
       migrated = true;
       console.log('[voice] Gemini Live migrado de 2.5 para 3.1 (baixa latência)');
+    }
+    if (userConfig.jarvisLive.voiceName === LEGACY_GEMINI_LIVE_VOICE) {
+      userConfig.jarvisLive = {
+        ...userConfig.jarvisLive,
+        voiceName: DEFAULT_GEMINI_LIVE_VOICE,
+      };
+      migrated = true;
+      console.log('[voice] voz Gemini Live migrada para Gacrux');
     }
     // A JARVIS conversacional virou o modo padrão do produto.
     if (userConfig.routing === 'focused-pane') {

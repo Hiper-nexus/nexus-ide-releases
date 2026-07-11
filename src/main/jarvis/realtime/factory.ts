@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import bundledSystemPrompt from '../prompts/system.en.md?raw';
 import { resolveVoiceApiKey } from '../../voice/voice-secrets';
-import { buildToolset } from '../../orch/tools';
 import type { VoiceConfig } from '../../../shared/voice-config';
 import { GeminiLiveProvider } from './gemini-live-provider';
 import { createNexusRealtimeTools } from './nexus-realtime-tools';
@@ -61,7 +60,7 @@ Response rules:
   \`mcp_tool\` \`nexus_ui_action\` with that exact ref; it keeps native confirmation.
   Never invent a ref, CSS selector, or JavaScript.
 - When the user asks you to operate Nexus IDE, call a coarse voice tool (\`navegar\`, \`delegar\`, \`consultar\`, \`ler\`, \`comandar\`, \`restaurar\`, \`perguntar\`) or \`nexus_action\`.
-- Squad flow (Overclock parity): "iniciar/montar squad" → \`navegar\` target \`design-squad\` (opens review). After the tool result, ASK if they want to start. On "sim/inicia/confirma" → \`navegar\` target \`wizard-fire\`.
+- Squad flow: "iniciar/montar squad" → \`navegar\` target \`design-squad\` (opens review). After the tool result, ASK if they want to start. On "sim/inicia/confirma" → \`navegar\` target \`wizard-fire\`.
 - \`nexus_action\` can open UI areas, focus/switch panes, delegate work to panes, request terminal commands, and invoke Nexus MCP tools through \`mcp_tool\`.
 - Use \`mcp_tool\` only for Nexus tools named \`nexus_*\` (files, git, editor, panes, missions, browser, catalog, media).
 - Use \`run_command\` only when the user explicitly asks for a shell command. Pass the exact command, with no extra shell tricks.
@@ -164,10 +163,10 @@ export function createRealtimeProviderCandidates(
           model: live.liveModel,
           voiceName: live.voiceName,
           instructions: geminiInstructions(instructions),
-          // Gemini sees the exact Nexus MCP schemas. Execution still goes
-          // through nexus_action/mcp_tool so confirmation, cancellation,
-          // exactly-once delivery and result redaction keep a single owner.
-          tools: createGeminiRealtimeTools(buildToolset(), createNexusRealtimeTools()),
+          // A bounded spoken-action surface prevents overlapping MCP schemas
+          // from turning an imperative into a similarly named wrong action.
+          // Detailed operations remain available through audited nexus_action.
+          tools: createGeminiRealtimeTools(createNexusRealtimeTools()),
           resumeHandle: options.geminiResumeHandle,
           onResumptionHandle: options.onGeminiResumeHandle,
         }),

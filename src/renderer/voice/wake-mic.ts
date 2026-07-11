@@ -552,7 +552,10 @@ export class WakeMic {
         return;
       }
       if (Date.now() < this.wakeSuppressedUntil) {
-        this.cancelPassiveWake();
+        // Keep only the STT-verified direct-address path alive while the app is
+        // speaking. Provider/local audio is still withheld from Live and from
+        // the acoustic detector; echo comparison rejects the app's own words.
+        this.trackPassiveWake(frame, rawRms, passivePreRoll);
         return;
       }
       this.trackPassiveWake(frame, rawRms, passivePreRoll);
