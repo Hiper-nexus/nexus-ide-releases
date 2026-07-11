@@ -75,6 +75,7 @@ Adapted modules in this harvest:
 - Renderer recovery circuit breaker
 - Terminal stream protocol
 - Terminal output scheduler
+- Worktree removal safety (with orphan gitdir proof and path-compare helpers)
 
 Every adapted source file carries an attribution header pointing at the pin
 and license. Existing copyright notices inside copied code are preserved.
