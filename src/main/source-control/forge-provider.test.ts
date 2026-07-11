@@ -41,7 +41,8 @@ describe('forge authorization', () => {
 describe('GitHub forge provider', () => {
   it('refuses createReview without authorization and audits', async () => {
     const postJson = vi.fn();
-    const gh = createGitHubForgeProvider({ token: 't', http: { postJson } });
+    const getJson = vi.fn();
+    const gh = createGitHubForgeProvider({ token: 't', http: { postJson, getJson } });
     const result = await gh.createReview(
       { owner: 'o', name: 'r', host: 'github.com' },
       {
@@ -62,7 +63,8 @@ describe('GitHub forge provider', () => {
       status: 201,
       body: { html_url: 'https://github.com/o/r/pull/9', number: 9 },
     }));
-    const gh = createGitHubForgeProvider({ token: 't', http: { postJson } });
+    const getJson = vi.fn();
+    const gh = createGitHubForgeProvider({ token: 't', http: { postJson, getJson } });
     const result = await gh.createReview(
       { owner: 'o', name: 'r', host: 'github.com' },
       {
@@ -85,6 +87,49 @@ describe('GitHub forge provider', () => {
       actor: 'user:test',
     });
   });
+
+  it('gets PR for branch via mock HTTP', async () => {
+    const getJson = vi.fn(
+      async (_url: string, _headers: Record<string, string>) => ({
+        status: 200,
+        body: [
+          {
+            number: 12,
+            html_url: 'https://github.com/o/r/pull/12',
+            title: 'feat',
+            state: 'open',
+            head: { ref: 'feat' },
+            base: { ref: 'main' },
+          },
+        ],
+      }),
+    );
+    const postJson = vi.fn(
+      async (
+        _url: string,
+        _body: unknown,
+        _headers: Record<string, string>,
+      ) => ({ status: 500, body: {} }),
+    );
+    const gh = createGitHubForgeProvider({ token: 't', http: { postJson, getJson } });
+    const result = await gh.getReviewForBranch!(
+      { owner: 'o', name: 'r', host: 'github.com' },
+      'feat',
+    );
+    expect(result).toEqual({
+      ok: true,
+      review: {
+        number: 12,
+        url: 'https://github.com/o/r/pull/12',
+        title: 'feat',
+        state: 'open',
+        sourceBranch: 'feat',
+        targetBranch: 'main',
+      },
+    });
+    expect(getJson).toHaveBeenCalledOnce();
+    expect(getJson.mock.calls[0]![0]).toContain('head=');
+  });
 });
 
 describe('GitLab forge provider', () => {
@@ -93,7 +138,8 @@ describe('GitLab forge provider', () => {
       status: 201,
       body: { web_url: 'https://gitlab.com/o/r/-/merge_requests/3', iid: 3 },
     }));
-    const gl = createGitLabForgeProvider({ token: 't', http: { postJson } });
+    const getJson = vi.fn();
+    const gl = createGitLabForgeProvider({ token: 't', http: { postJson, getJson } });
     const result = await gl.createReview(
       { owner: 'o', name: 'r', host: 'gitlab.com' },
       {
@@ -109,6 +155,33 @@ describe('GitLab forge provider', () => {
       url: 'https://gitlab.com/o/r/-/merge_requests/3',
       number: 3,
     });
+  });
+
+  it('gets MR for branch via mock HTTP', async () => {
+    const getJson = vi.fn(async () => ({
+      status: 200,
+      body: [
+        {
+          iid: 7,
+          web_url: 'https://gitlab.com/o/r/-/merge_requests/7',
+          title: 'feat',
+          state: 'opened',
+          source_branch: 'feat',
+          target_branch: 'main',
+        },
+      ],
+    }));
+    const postJson = vi.fn();
+    const gl = createGitLabForgeProvider({ token: 't', http: { postJson, getJson } });
+    const result = await gl.getReviewForBranch!(
+      { owner: 'o', name: 'r', host: 'gitlab.com' },
+      'feat',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.review?.number).toBe(7);
+      expect(result.review?.sourceBranch).toBe('feat');
+    }
   });
 });
 

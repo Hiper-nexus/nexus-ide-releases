@@ -35,6 +35,27 @@ if (
   app.setPath("userData", userDataOverride);
 }
 
+// GPU fallback must run before whenReady so disableHardwareAcceleration takes effect.
+// Marker is written by handleChildProcessGone when Windows GPU crashes cluster after launch.
+try {
+  const userDataPath = app.getPath("userData");
+  const marker = readActiveGpuFallbackMarker(userDataPath, {
+    appVersion: app.getVersion(),
+    electronVersion: process.versions.electron ?? "unknown",
+    platform: process.platform,
+  });
+  if (marker) {
+    app.disableHardwareAcceleration();
+    app.commandLine.appendSwitch("disable-gpu");
+    setGpuFallbackActiveThisLaunch(true);
+    console.warn(
+      "[main] GPU software fallback active for this launch (marker from prior GPU crash burst)",
+    );
+  }
+} catch (err) {
+  console.warn("[main] GPU fallback marker read failed:", err);
+}
+
 // Remote debugging (Chrome DevTools Protocol) is a full local-RCE surface: any
 // process that connects to the port can run JS in the renderer, and the preload
 // exposes PTY/file APIs. It used to be ON for every dev run on a fixed 9223;
@@ -188,8 +209,20 @@ import { initSmokeTest } from "./smoke-test";
 import {
   disposeAgentAwakeService,
   getAgentAwakeService,
+  handleChildProcessGone,
+  setGpuFallbackActiveThisLaunch,
+  configureAgentRuntimeUserDataPath,
 } from './agent-runtime/agent-runtime-bridge';
 import { registerAgentHookIpc } from './agent-hooks/hook-ipc';
+import { bootstrapManagedAgentHooks } from './agent-hooks/register-default-installers';
+import {
+  startAgentHookHttpServer,
+  stopAgentHookHttpServer,
+} from './agent-hooks/hook-http-server';
+import {
+  readActiveGpuFallbackMarker,
+} from './crash-reporting/gpu-fallback-marker';
+import { readCrashReportPending } from './crash-reporting/crash-report-pending';
 import {
   authorizeAppQuit,
   closeNeedsConfirmation,
@@ -339,6 +372,48 @@ if (!wireDeepLinks()) {
     getAgentAwakeService();
     registerAgentHookIpc();
 
+    // Gap A: register Claude+Codex managed hook installers and install into user FS.
+    try {
+      configureAgentRuntimeUserDataPath(app.getPath("userData"));
+      bootstrapManagedAgentHooks({ enabled: true });
+      await startAgentHookHttpServer({ userDataPath: app.getPath("userData") });
+    } catch (err) {
+      console.warn("[main] managed agent hooks bootstrap failed:", err);
+    }
+
+    // Gap B: child-process-gone → bridge (classification + GPU fallback marker).
+    app.on("child-process-gone", (_event, details) => {
+      try {
+        handleChildProcessGone({
+          details: {
+            type: details.type,
+            reason: details.reason,
+            exitCode: details.exitCode ?? null,
+            name: details.name,
+            serviceName: details.serviceName,
+          },
+          msSinceLaunch:
+            typeof process.uptime === "function" ? process.uptime() * 1000 : 0,
+        });
+      } catch (err) {
+        console.warn("[main] child-process-gone handler failed:", err);
+      }
+    });
+
+    // Minimal crash-report-pending surface: log only — no telemetry without consent.
+    try {
+      const pending = readCrashReportPending(app.getPath("userData"));
+      if (pending) {
+        console.warn(
+          "[main] crash report pending (local only, no telemetry):",
+          pending.reason,
+          pending.source,
+        );
+      }
+    } catch {
+      // ignore
+    }
+
     // On macOS, Chromium's localhost exemption bypasses the TCC dialog, causing
     // CoreAudio to return all-zero PCM even with a getUserMedia grant. Explicitly
     // requesting mic access here forces a real TCC entry before the renderer opens.
@@ -407,6 +482,8 @@ function shutdown(): Promise<void> {
     shutdownPtyHost();
     await closeAllDesignWritebacks();
     stopRemoteBridge();
+    await stopAgentHookHttpServer().catch(() => {});
+    disposeAgentAwakeService();
     closeOrchestration();
     closeAdapterRegistry();
     closeVoiceIpc();

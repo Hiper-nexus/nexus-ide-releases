@@ -47,11 +47,16 @@ import {
   __resetAgentRuntimeBridgeForTests,
   disposeAgentAwakeService,
   getAgentAwakeService,
+  handleChildProcessGone,
   handleRenderProcessGone,
   publishAgentHookActivity,
 } from './agent-runtime-bridge';
 import { ingestAgentHookStatus } from '../agent-hooks/hook-ingest';
 import { __resetHookIngestForTests } from '../agent-hooks/hook-ingest';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { GPU_FALLBACK_MARKER_FILE } from '../crash-reporting/gpu-fallback-marker';
 
 beforeEach(() => {
   publishSessionActivityState.mockClear();
@@ -138,5 +143,56 @@ describe('agent-runtime-bridge production seam', () => {
         observedInCurrentRuntime: true,
       },
     ]);
+  });
+
+  it('handleChildProcessGone classifies GPU recoverable without recording crash', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nexus-child-gone-'));
+    __resetAgentRuntimeBridgeForTests({ userDataPath: dir });
+    const result = handleChildProcessGone({
+      details: {
+        type: 'gpu',
+        reason: 'crashed',
+        exitCode: 1,
+      },
+      msSinceLaunch: 1000,
+    });
+    // GPU child crashes are recoverable churn — not recorded as app crash.
+    expect(result.recorded).toBe(false);
+    expect(result.source).toBe('child');
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
+
+  it('handleChildProcessGone engages GPU fallback marker after threshold on win32', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nexus-child-gone-'));
+    __resetAgentRuntimeBridgeForTests({ userDataPath: dir });
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      let engaged = false;
+      for (let i = 0; i < 3; i++) {
+        const r = handleChildProcessGone({
+          details: { type: 'gpu', reason: 'crashed', exitCode: 1 },
+          msSinceLaunch: 500 + i,
+        });
+        if (r.gpuFallbackEngaged) engaged = true;
+      }
+      expect(engaged).toBe(true);
+      expect(existsSync(join(dir, GPU_FALLBACK_MARKER_FILE))).toBe(true);
+      const marker = JSON.parse(
+        readFileSync(join(dir, GPU_FALLBACK_MARKER_FILE), 'utf8'),
+      ) as { crashesInWindow: number };
+      expect(marker.crashesInWindow).toBeGreaterThanOrEqual(3);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
   });
 });

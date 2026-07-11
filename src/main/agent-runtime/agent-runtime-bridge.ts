@@ -27,6 +27,11 @@ import {
   isGpuFallbackCrashCandidate,
 } from '../crash-reporting/gpu-crash-fallback-decision';
 import {
+  writeGpuFallbackMarker,
+  type WindowsGpuFallbackEnvironment,
+} from '../crash-reporting/gpu-fallback-marker';
+import { writeCrashReportPending } from '../crash-reporting/crash-report-pending';
+import {
   shouldRecordProcessGoneCrash,
   shouldRecoverRendererAfterProcessGone,
   type ExpectedTeardownScope,
@@ -80,6 +85,26 @@ let gpuFallbackTracker = newGpuFallbackTracker();
 let crashReportStore: CrashReportStore | null = null;
 let awakeService: AgentAwakeService | null = null;
 let diagnosticsAppBound = false;
+/** userData path for GPU marker + crash-report-pending (injected in tests). */
+let bridgeUserDataPath: string | null = null;
+let gpuFallbackAlreadyActive = false;
+
+function resolveUserDataPath(): string {
+  if (bridgeUserDataPath) return bridgeUserDataPath;
+  try {
+    return app.getPath('userData');
+  } catch {
+    return `${process.env.TMPDIR ?? '/tmp'}/nexus-agent-runtime-test-${process.pid}`;
+  }
+}
+
+function appVersionSafe(): string {
+  try {
+    return app.getVersion();
+  } catch {
+    return 'test';
+  }
+}
 
 function ensureDiagnosticsApp(): void {
   if (diagnosticsAppBound) return;
@@ -112,13 +137,26 @@ function getCrashReportStore(): CrashReportStore {
 export function __resetAgentRuntimeBridgeForTests(options?: {
   crashReportStore?: CrashReportStore;
   awakeService?: AgentAwakeService;
+  userDataPath?: string;
+  gpuFallbackAlreadyActive?: boolean;
 }): void {
   crashReportStore = options?.crashReportStore ?? null;
   awakeService = options?.awakeService ?? null;
   diagnosticsAppBound = false;
+  bridgeUserDataPath = options?.userDataPath ?? null;
+  gpuFallbackAlreadyActive = options?.gpuFallbackAlreadyActive ?? false;
   // Reset per-run trackers so dedupe/GPU-window state does not leak across tests.
   processGoneDedupe = new ProcessGoneDedupe();
   gpuFallbackTracker = newGpuFallbackTracker();
+}
+
+/** Production: mark that this launch already applied software GPU fallback. */
+export function setGpuFallbackActiveThisLaunch(active: boolean): void {
+  gpuFallbackAlreadyActive = active;
+}
+
+export function configureAgentRuntimeUserDataPath(userDataPath: string | null): void {
+  bridgeUserDataPath = userDataPath;
 }
 
 /**
@@ -186,16 +224,20 @@ export function handleRenderProcessGone(
     recordCrashBreadcrumb('render-process-gone-deduped', { reason, exitCode });
   }
 
-  let gpuFallbackEngaged = false;
-  if (
-    isGpuFallbackCrashCandidate({
-      platform: process.platform,
-      processType: 'gpu',
-      reason,
-    })
-  ) {
-    const ms = input.msSinceLaunch ?? 0;
-    gpuFallbackEngaged = gpuFallbackTracker.recordGpuCrash(ms).shouldEngageFallback;
+  // Renderer path does not drive GPU child fallback; child-process-gone does.
+  const gpuFallbackEngaged = false;
+
+  if (recordAllowed) {
+    try {
+      writeCrashReportPending(resolveUserDataPath(), {
+        source: 'renderer',
+        processType: 'renderer',
+        reason,
+        exitCode,
+      });
+    } catch (err) {
+      console.warn('[agent-runtime] crash-report-pending write failed:', err);
+    }
   }
 
   if (input.windowDestroyed) {
@@ -255,6 +297,151 @@ export function handleRenderProcessGone(
     showRecoveryScreen: false,
     reload: true,
     gpuFallbackEngaged,
+  };
+}
+
+export type ChildProcessGoneDetails = {
+  type?: string;
+  reason: string;
+  exitCode?: number | null;
+  name?: string;
+  serviceName?: string;
+};
+
+export type HandleChildProcessGoneInput = {
+  details: ChildProcessGoneDetails;
+  now?: number;
+  expectedTeardown?: ExpectedTeardownScope;
+  /** ms since app launch — for GPU fallback window */
+  msSinceLaunch?: number;
+};
+
+export type HandleChildProcessGoneResult = {
+  recorded: boolean;
+  gpuFallbackEngaged: boolean;
+  source: 'child';
+};
+
+/**
+ * Production child-process-gone handler (GPU / utility). Classifies, dedupes,
+ * breadcrumbs; persists GPU fallback marker for next launch when threshold hit.
+ */
+export function handleChildProcessGone(
+  input: HandleChildProcessGoneInput,
+): HandleChildProcessGoneResult {
+  ensureDiagnosticsApp();
+  const now = input.now ?? Date.now();
+  const reason = input.details.reason ?? 'unknown';
+  const exitCode =
+    typeof input.details.exitCode === 'number' ? input.details.exitCode : null;
+  const processType = input.details.type ?? 'unknown';
+  const serviceName = input.details.serviceName;
+  const expectedTeardown: ExpectedTeardownScope =
+    input.expectedTeardown ?? 'none';
+  const source: ProcessGoneSource = 'child';
+
+  const shouldRecord = shouldRecordProcessGoneCrash({
+    source,
+    processType,
+    serviceName,
+    reason,
+    exitCode,
+    expectedTeardown,
+  });
+  const dedupeKey = `child:${processType}:${serviceName ?? ''}:${reason}:${exitCode ?? 'null'}`;
+  const recordAllowed = shouldRecord && processGoneDedupe.shouldRecord(dedupeKey, now);
+
+  if (recordAllowed) {
+    recordCrashBreadcrumb('child-process-gone', {
+      reason,
+      exitCode,
+      processType,
+      serviceName: serviceName ?? null,
+    });
+    const details = buildProcessGoneCrashDetails({
+      processType,
+      reason,
+      exitCode,
+      serviceName,
+    });
+    void getCrashReportStore()
+      .record({
+        source: 'child',
+        processType,
+        reason,
+        exitCode,
+        appVersion: appVersionSafe(),
+        platform: process.platform,
+        osRelease: os.release(),
+        arch: process.arch,
+        electronVersion: process.versions.electron ?? 'unknown',
+        chromeVersion: process.versions.chrome ?? 'unknown',
+        details,
+        breadcrumbs: getCrashBreadcrumbSnapshot(),
+      })
+      .catch((err) => {
+        console.warn('[agent-runtime] crash report record failed:', err);
+      });
+    try {
+      writeCrashReportPending(resolveUserDataPath(), {
+        source: 'child',
+        processType,
+        reason,
+        exitCode,
+      });
+    } catch (err) {
+      console.warn('[agent-runtime] crash-report-pending write failed:', err);
+    }
+  } else if (shouldRecord) {
+    recordCrashBreadcrumb('child-process-gone-deduped', {
+      reason,
+      exitCode,
+      processType,
+    });
+  }
+
+  let gpuFallbackEngaged = false;
+  if (
+    !gpuFallbackAlreadyActive &&
+    isGpuFallbackCrashCandidate({
+      platform: process.platform,
+      processType,
+      reason,
+    })
+  ) {
+    const ms = input.msSinceLaunch ?? 0;
+    const result = gpuFallbackTracker.recordGpuCrash(ms);
+    if (result.shouldEngageFallback) {
+      gpuFallbackEngaged = true;
+      try {
+        const env: WindowsGpuFallbackEnvironment = {
+          appVersion: appVersionSafe(),
+          electronVersion: process.versions.electron ?? 'unknown',
+          platform: 'win32',
+        };
+        writeGpuFallbackMarker(
+          resolveUserDataPath(),
+          {
+            engagedAt: now,
+            crashesInWindow: result.crashesInWindow,
+          },
+          env,
+        );
+        recordCrashBreadcrumb('gpu_fallback_engaged', {
+          reason,
+          exitCode,
+          crashesInWindow: result.crashesInWindow,
+        });
+      } catch (err) {
+        console.warn('[agent-runtime] gpu fallback marker write failed:', err);
+      }
+    }
+  }
+
+  return {
+    recorded: recordAllowed,
+    gpuFallbackEngaged,
+    source: 'child',
   };
 }
 

@@ -1,0 +1,179 @@
+// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Copyright (c) 2026 Lovecast Inc. — MIT License
+// See third_party/licenses/orca-MIT.txt. Nexus changes: lean subset for Claude+Codex
+// local installers only; shared path under ~/.nexus/agent-hooks; no win32 ACL helpers.
+
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+
+export type HookCommandConfig = {
+  type: 'command';
+  command: string;
+  timeout?: number;
+  [key: string]: unknown;
+};
+
+export type HookDefinition = {
+  matcher?: string;
+  command?: string;
+  hooks?: HookCommandConfig[];
+  [key: string]: unknown;
+};
+
+export type HooksConfig = {
+  hooks?: Record<string, HookDefinition[]>;
+  [key: string]: unknown;
+};
+
+export const MANAGED_HOOK_TIMEOUT_SECONDS = 10;
+
+export function buildManagedCommandHook(
+  command: string,
+  timeout = MANAGED_HOOK_TIMEOUT_SECONDS,
+): HookCommandConfig {
+  return { type: 'command', command, timeout };
+}
+
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function readHooksJson(configPath: string): HooksConfig | null {
+  if (!existsSync(configPath)) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+    return isPlainObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function createManagedCommandMatcher(
+  scriptFileName: string,
+): (command: string | undefined) => boolean {
+  const scriptStem = scriptFileName.replace(/\.(?:cmd|sh)$/, '');
+  const needles = [
+    `agent-hooks/${scriptFileName}`,
+    `agent-hooks/${scriptStem}.cmd`,
+    `agent-hooks/${scriptStem}.sh`,
+  ];
+  return (command) => {
+    if (!command) return false;
+    const normalized = command.replaceAll('\\', '/');
+    return needles.some((needle) => normalized.includes(needle));
+  };
+}
+
+/** Shared managed scripts live under user home, never project `.nexus/`. */
+export function getSharedManagedScriptPath(
+  scriptFileName: string,
+  home: string = homedir(),
+): string {
+  return join(home, '.nexus', 'agent-hooks', scriptFileName);
+}
+
+export function wrapPosixHookCommand(scriptPath: string): string {
+  const quoted = `'${scriptPath.replaceAll("'", "'\\''")}'`;
+  return `if [ -x ${quoted} ]; then /bin/sh ${quoted}; fi`;
+}
+
+export function removeManagedCommands(
+  definitions: HookDefinition[],
+  isManagedCommand: (command: string | undefined) => boolean,
+): HookDefinition[] {
+  return definitions.flatMap((definition) => {
+    const hasNested = Array.isArray(definition.hooks);
+    const hasManagedNested =
+      hasNested && definition.hooks!.some((hook) => isManagedCommand(hook.command));
+    const directManaged = isManagedCommand(definition.command);
+
+    if (!directManaged && !hasManagedNested) {
+      return [definition];
+    }
+
+    const next: HookDefinition = { ...definition };
+    if (directManaged) {
+      delete next.command;
+    }
+    if (hasManagedNested) {
+      const filtered = definition.hooks!.filter((hook) => !isManagedCommand(hook.command));
+      if (filtered.length > 0) next.hooks = filtered;
+      else delete next.hooks;
+    }
+    const stillHas =
+      typeof next.command === 'string' ||
+      (Array.isArray(next.hooks) && next.hooks.length > 0);
+    return stillHas ? [next] : [];
+  });
+}
+
+export function writeManagedScript(scriptPath: string, content: string): void {
+  const dir = dirname(scriptPath);
+  mkdirSync(dir, { recursive: true });
+  if (existsSync(scriptPath)) {
+    try {
+      if (readFileSync(scriptPath, 'utf-8') === content) {
+        if (process.platform !== 'win32') chmodSync(scriptPath, 0o755);
+        return;
+      }
+    } catch {
+      // fall through
+    }
+  }
+  const tmpPath = join(dir, `.${Date.now()}-${randomUUID()}.tmp`);
+  try {
+    writeFileSync(tmpPath, content, 'utf-8');
+    if (process.platform !== 'win32') chmodSync(tmpPath, 0o755);
+    renameSync(tmpPath, scriptPath);
+  } finally {
+    if (existsSync(tmpPath)) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // best effort
+      }
+    }
+  }
+}
+
+export function writeHooksJson(configPath: string, config: HooksConfig): void {
+  const dir = dirname(configPath);
+  mkdirSync(dir, { recursive: true });
+  const tmpPath = join(dir, `.${Date.now()}-${randomUUID()}.tmp`);
+  const serialized = `${JSON.stringify(config, null, 2)}\n`;
+  if (existsSync(configPath)) {
+    try {
+      if (readFileSync(configPath, 'utf-8') === serialized) return;
+    } catch {
+      // fall through
+    }
+  }
+  try {
+    writeFileSync(tmpPath, serialized, 'utf-8');
+    if (existsSync(configPath)) {
+      copyFileSync(configPath, `${configPath}.bak`);
+    }
+    renameSync(tmpPath, configPath);
+  } finally {
+    if (existsSync(tmpPath)) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // best effort
+      }
+    }
+  }
+}

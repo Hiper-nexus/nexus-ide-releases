@@ -52,6 +52,21 @@ export type ForgeCreateReviewResult =
   | { readonly ok: true; readonly url: string; readonly number: number }
   | { readonly ok: false; readonly reason: string };
 
+/** Read-side review summary (PR/MR) for a branch. */
+export type ForgeReviewInfo = {
+  readonly number: number;
+  readonly url: string;
+  readonly title: string;
+  readonly state: string;
+  readonly sourceBranch: string;
+  readonly targetBranch: string;
+};
+
+export type ForgeGetReviewForBranchResult =
+  | { readonly ok: true; readonly review: ForgeReviewInfo }
+  | { readonly ok: true; readonly review: null }
+  | { readonly ok: false; readonly reason: string };
+
 export type ForgeProvider = {
   readonly id: ForgeProviderId;
   readonly supportsReviewCreation: boolean;
@@ -62,6 +77,14 @@ export type ForgeProvider = {
     input: ForgeCreateReviewInput,
     auth: ForgeAuthorization,
   ): Promise<ForgeCreateReviewResult>;
+  /**
+   * Read PR/MR for branch. Optional on stubs; GH/GL implement with mockable HTTP.
+   * Reads do not require ForgeAuthorization (write scope); may be audited optionally.
+   */
+  getReviewForBranch?(
+    repo: ForgeRepositoryRef,
+    branch: string,
+  ): Promise<ForgeGetReviewForBranchResult>;
 };
 
 const auditLog: ForgeAuditEntry[] = [];

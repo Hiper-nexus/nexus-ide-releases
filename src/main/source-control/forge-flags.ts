@@ -32,5 +32,8 @@ export function createDisabledForgeStub(id: ForgeProviderId): ForgeProvider {
     async createReview() {
       return { ok: false, reason: `forge-disabled:${id}` };
     },
+    async getReviewForBranch() {
+      return { ok: false, reason: `forge-disabled:${id}` };
+    },
   };
 }

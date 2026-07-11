@@ -89,6 +89,7 @@ for (const s of [
   'recordCrashBreadcrumb',
   'CrashReportStore',
   'publishSessionActivityState',
+  'handleChildProcessGone',
 ]) {
   if (!bridgeSrc.includes(s)) fail(`agent-runtime-bridge.ts missing ${s}`);
 }
@@ -98,6 +99,28 @@ if (!ingestSrc.includes('publishAgentHookActivity')) {
 }
 if (!ingestSrc.includes('agent-hook-listener')) {
   fail('hook-ingest must import agent-hook-listener');
+}
+
+// Gap A: production bootstrap must register managed installers (registry not empty)
+const mainAfter = read('src/main/main.ts');
+if (!mainAfter.includes('bootstrapManagedAgentHooks')) {
+  fail('main.ts must call bootstrapManagedAgentHooks (Claude+Codex installers)');
+}
+if (!mainAfter.includes('child-process-gone')) {
+  fail('main.ts must register app.on(child-process-gone)');
+}
+if (!mainAfter.includes('handleChildProcessGone')) {
+  fail('main.ts must call handleChildProcessGone');
+}
+if (!mainAfter.includes('startAgentHookHttpServer')) {
+  fail('main.ts must start agent hook HTTP server');
+}
+const regSrc = read('src/main/agent-hooks/register-default-installers.ts');
+if (!regSrc.includes("registerManagedAgentHookService('claude'")) {
+  fail('register-default-installers must register claude');
+}
+if (!regSrc.includes("registerManagedAgentHookService('codex'")) {
+  fail('register-default-installers must register codex');
 }
 
 // Each required symbol must appear in at least one non-test file other than its define
