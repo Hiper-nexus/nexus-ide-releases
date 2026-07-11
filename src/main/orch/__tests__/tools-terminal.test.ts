@@ -4,8 +4,11 @@ import path from 'node:path';
 import os from 'node:os';
 import { buildTerminalTools } from '../tools-terminal';
 import { testProjectScope } from './scope-fixture';
+import { processSandboxRuntimeAvailable } from '../../runtime/process-sandbox-capability';
 
 const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-terminal');
+/** Real exec through Seatbelt/bwrap — skip when host userns is blocked (GHA Linux). */
+const itSandboxed = it.runIf(processSandboxRuntimeAvailable());
 
 describe('tools-terminal', () => {
   beforeAll(() => {
@@ -16,7 +19,7 @@ describe('tools-terminal', () => {
     fs.rmSync(testDir, { recursive: true, force: true });
   });
 
-  it('nexus_terminal_run executes a simple command', async () => {
+  itSandboxed('nexus_terminal_run executes a simple command', async () => {
     const tools = buildTerminalTools();
     const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
     const result = await run.handler(
@@ -28,7 +31,7 @@ describe('tools-terminal', () => {
     expect(result.stdout).toContain('hello world');
   });
 
-  it('nexus_terminal_run returns exit code for failed commands', async () => {
+  itSandboxed('nexus_terminal_run returns exit code for failed commands', async () => {
     const tools = buildTerminalTools();
     const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
     const result = await run.handler(
@@ -38,7 +41,7 @@ describe('tools-terminal', () => {
     expect(result).toHaveProperty('exitCode', 42);
   });
 
-  it('nexus_terminal_run captures stderr', async () => {
+  itSandboxed('nexus_terminal_run captures stderr', async () => {
     const tools = buildTerminalTools();
     const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
     const result = await run.handler(
@@ -48,7 +51,7 @@ describe('tools-terminal', () => {
     expect(result.stderr).toContain('error');
   });
 
-  it('drops environment variables outside the allowlist', async () => {
+  itSandboxed('drops environment variables outside the allowlist', async () => {
     const tools = buildTerminalTools();
     const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
     const result = await run.handler(
@@ -62,7 +65,7 @@ describe('tools-terminal', () => {
     expect(result.stdout.trim()).toBe('missing');
   });
 
-  it('caps stdout at 1 MB with a truncation marker', async () => {
+  itSandboxed('caps stdout at 1 MB with a truncation marker', async () => {
     const tools = buildTerminalTools();
     const run = tools.find((t) => t.name === 'nexus_terminal_run')!;
     const result = await run.handler(
