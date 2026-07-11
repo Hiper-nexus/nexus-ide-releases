@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.0 — Em desenvolvimento
+
+Data: a definir
+
+- Harvest ORCA de confiabilidade de terminal: circuit breaker de renderer,
+  protocolo binário de stream, scheduler de output com backpressure e
+  worktree removal safety com provenance Nexus (MIT, pin 143c36e).
+- Estabilização dos testes de merge queue (coordenação por sinal) e
+  diagnóstico rico no doctor.
+- Migrations do servidor endurecidas: timestamptz em cron_schedules e reaper
+  de soft-delete (30 dias).
+
 ## 0.12.0 — Contexto verificável e runtime seguro por projeto
 
 Data: 2026-07-10
