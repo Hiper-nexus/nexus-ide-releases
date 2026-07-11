@@ -110,6 +110,23 @@ describe('agent-runtime-bridge production seam', () => {
     );
   });
 
+  it('resets the process-gone dedupe between test runs (no cross-test leak)', () => {
+    const circuitBreaker = { registerRecoveryAttempt, reset: vi.fn() };
+    const crash = () =>
+      handleRenderProcessGone({
+        details: { reason: 'crashed', exitCode: 1 },
+        circuitBreaker: circuitBreaker as never,
+        now: 1_000,
+        windowDestroyed: false,
+      });
+    // First occurrence records; an identical one in the same window is deduped.
+    expect(crash().recorded).toBe(true);
+    expect(crash().recorded).toBe(false);
+    // Reset must clear the module-global dedupe so a fresh run records again.
+    __resetAgentRuntimeBridgeForTests();
+    expect(crash().recorded).toBe(true);
+  });
+
   it('getAgentAwakeService returns a live singleton', () => {
     const a = getAgentAwakeService();
     const b = getAgentAwakeService();

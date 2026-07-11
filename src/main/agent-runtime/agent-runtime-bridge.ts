@@ -64,11 +64,18 @@ export type HandleRenderProcessGoneResult = {
   gpuFallbackEngaged: boolean;
 };
 
-const processGoneDedupe = new ProcessGoneDedupe();
-const gpuFallbackTracker = new GpuCrashFallbackTracker({
-  windowMs: DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
-  threshold: DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD,
-});
+function newGpuFallbackTracker(): GpuCrashFallbackTracker {
+  return new GpuCrashFallbackTracker({
+    windowMs: DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
+    threshold: DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD,
+  });
+}
+
+// `let`, not `const`: these carry per-run mutable state (dedupe keys, GPU crash
+// window) and are reset between tests via __resetAgentRuntimeBridgeForTests,
+// otherwise state leaks across cases and produces order-dependent flakiness.
+let processGoneDedupe = new ProcessGoneDedupe();
+let gpuFallbackTracker = newGpuFallbackTracker();
 
 let crashReportStore: CrashReportStore | null = null;
 let awakeService: AgentAwakeService | null = null;
@@ -91,9 +98,10 @@ function getCrashReportStore(): CrashReportStore {
     try {
       crashReportStore = CrashReportStore.fromUserData(app.getPath('userData'));
     } catch {
-      // Fallback for unit tests without electron userData
+      // Fallback for unit tests without electron userData. Per-pid path so
+      // parallel vitest workers do not clobber a shared file.
       crashReportStore = new CrashReportStore(
-        `${process.env.TMPDIR ?? '/tmp'}/nexus-crash-reports-test.json`,
+        `${process.env.TMPDIR ?? '/tmp'}/nexus-crash-reports-test-${process.pid}.json`,
       );
     }
   }
@@ -108,6 +116,9 @@ export function __resetAgentRuntimeBridgeForTests(options?: {
   crashReportStore = options?.crashReportStore ?? null;
   awakeService = options?.awakeService ?? null;
   diagnosticsAppBound = false;
+  // Reset per-run trackers so dedupe/GPU-window state does not leak across tests.
+  processGoneDedupe = new ProcessGoneDedupe();
+  gpuFallbackTracker = newGpuFallbackTracker();
 }
 
 /**
