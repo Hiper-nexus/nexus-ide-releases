@@ -13,33 +13,40 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.13.5',
+  version: '0.13.6',
   date: '2026-07-11',
-  codename: 'Operator XP Live',
+  codename: 'Realtime Continuity',
   summary:
-    'XP de operador no trabalho diário (agent_turn), FX de tier-up, e hardening de segurança no git panel, URLs e writes atómicos. macOS notarizado; Windows aguarda certificado.',
+    'Jarvis realtime de verdade: wake por voz (VAD→STT), full-duplex, follow-up sem re-dizer o nome, gate anti-alucinação de TV/ambiente, e rescue de comandos na sessão Live quente.',
   highlights: [
     {
-      title: 'XP no trabalho real de agente',
+      title: 'Wake por voz operacional',
       detail:
-        'Cada turno Claude/Codex com output real ganha agent_turn (300 pts, com diminishing returns diário) e avança a streak — sem depender só de missão ou voz.',
+        'VAD passivo com hangover + force-emit de fala real; matcher Overclock (acorda Jarvis); threshold acústico PT-calibrado. Clique deixa de ser o único caminho.',
     },
     {
-      title: 'Operator FX',
+      title: 'Realtime full-duplex',
       detail:
-        'Toasts +XP, burst de TIER-UP/TRANSCENDÊNCIA e achievements; HUD com shimmer; reduz motion quando o sistema pede.',
+        'Mic aberto enquanto ela fala (Gemini barge-in). Follow-up reabre escuta sem matar o stream. STT local resgata comando se o provider perder o final.',
     },
     {
-      title: 'Hardening de segurança',
+      title: 'Anti-alucinação (hot session)',
       detail:
-        'Git panel seguro (ProcessGitRunner + config local safe), redacção de tokens em URLs, atomic-write com O_EXCL|O_NOFOLLOW, provider-config sem prototype pollution.',
+        'Comandos na sessão quente exigem energia de fala + cues de comando; TV/música/STT lixo não disparam tools. Prompt Live alinhado às leis Overclock.',
     },
   ],
   fixes: [
     {
-      title: 'Preload browser alinhado',
-      detail:
-        'Allowlist do preload inclui scroll/press/hover para o motor empacotado bater com o main.',
+      title: 'liveInterrupt sem owner',
+      detail: 'Wake não quebra com "voice live session has no owner".',
+    },
+    {
+      title: 'Tool follow-up em turno stale',
+      detail: 'Resultado de tool reabre continuidade na sessão quente.',
+    },
+    {
+      title: 'Boot Keychain',
+      detail: 'getInfo não decripta o vault inteiro; mic sobe sem travar SecItem.',
     },
   ],
 };

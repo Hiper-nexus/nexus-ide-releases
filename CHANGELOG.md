@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.13.6 — Realtime Continuity
+
+Data: 2026-07-11
+
+### Melhorias
+- Wake por voz: VAD passivo (hangover + force-emit de fala real), matcher
+  Overclock (`acorda Jarvis`), threshold EN PT-calibrado (0.012 + RMS).
+- Realtime full-duplex: mic offer enquanto ela fala; follow-up sem matar
+  `realtimeTurnActive`; rescue STT→`liveRescueIn` no path `reply`.
+- Hot session: gate anti-TV/ambiente (`isHotSessionCommandCandidate`) —
+  não injeta "camelo vindo" / aplausos / música como comando.
+- Prompt Live: leis anti-alucinação (só tools com intenção clara; ignore media).
+- Paridade Overclock: follow-up sem re-dizer o nome; hot inject só com energia.
+
+### Correções
+- `liveInterrupt` soft no-op quando ainda não há owner (wake race).
+- Tool follow-up em turno stale reabre continuidade na sessão quente.
+- Boot: presença de secrets sem decrypt em massa (Keychain).
+- force-emit peak alto o bastante para ignorar ambient contínuo.
+
+### Build
+- Release `v0.13.6` (tag dispara CI notarizado).
+
 ## 0.13.5 — Operator XP + security hardening
 
 Data: 2026-07-11
