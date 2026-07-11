@@ -79,6 +79,10 @@ import {
   releaseAfterLiveToolAnswer,
 } from './live-followup';
 import { hasRealtimeProviderAudioAnswer } from './live-wake-greeting';
+
+/** Quantas vezes reabrir o mic após follow-up mudo antes de idle de verdade. */
+const MAX_REPLY_MUTE_REOPENS = 2;
+let replyMuteReopenCount = 0;
 import { personaUserName } from './jarvis-screen-context';
 import { withTimeout } from './voice-speak-pipeline';
 import { runJarvisTurn, routePrompt, captureResponse, type RunJarvisTurnDeps } from './voice-run-jarvis-turn';
@@ -390,6 +394,7 @@ export async function finishAndProcess(
         store.setTranscript(transcript);
         store.setNote(null);
         resetAutoReplyLoopForCapture(activeCaptureReason);
+        if (activeCaptureReason !== 'reply') replyMuteReopenCount = 0;
         const realtimeMs = Date.now() - tRealtime;
         console.log(`[voice] realtime transcript (${realtimeMs}ms): "${transcript}"`);
         logVoiceEvent('info', 'jarvis.realtimeTranscript', transcript, {
@@ -629,13 +634,39 @@ export async function finishAndProcess(
         realtimeIsOwner &&
         !explicitCapture
       ) {
-        logVoiceEvent('info', 'jarvis.replyMuteIdle', 'follow-up sem resposta Live — idle', {
-          reason: activeCaptureReason,
-          waitedMs: Date.now() - tRealtime,
-        });
+        // Não matar a sessão no primeiro silêncio do follow-up — reabre escuta
+        // (até 2×) para o usuário continuar sem chamar Jarvis de novo.
+        const canRetryListen =
+          activeCaptureReason === 'reply' &&
+          (++replyMuteReopenCount <= MAX_REPLY_MUTE_REOPENS);
+        logVoiceEvent(
+          'info',
+          canRetryListen ? 'jarvis.replyMuteReopen' : 'jarvis.replyMuteIdle',
+          canRetryListen
+            ? 'follow-up mudo — reabre escuta em vez de idle'
+            : 'follow-up sem resposta Live — idle',
+          {
+            reason: activeCaptureReason,
+            waitedMs: Date.now() - tRealtime,
+            reopenCount: replyMuteReopenCount,
+          },
+        );
         openLiveAudioGate();
-        setRealtimeTurnActive(false);
         store.setStatus('idle');
+        busy.current = false;
+        if (canRetryListen) {
+          releaseAfterLiveProviderAnswer({
+            busy,
+            capture,
+            beginListening: deps.beginListening,
+            wakeAutoStop: deps.wakeAutoStop,
+            armFollowUp: true,
+            canReopen: () => true,
+          });
+        } else {
+          replyMuteReopenCount = 0;
+          setRealtimeTurnActive(false);
+        }
         return;
       }
       // No realtime response for an explicit user capture. Keep the socket warm

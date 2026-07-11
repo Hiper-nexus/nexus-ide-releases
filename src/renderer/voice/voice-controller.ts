@@ -364,6 +364,14 @@ export function useVoiceController(): void {
       const info = useVoiceStore.getState().info;
       if (!info?.enabled || !info.wakeWordEnabled || info.routing !== 'jarvis') return;
       const voiceStatus = useVoiceStore.getState().status;
+      // Live já está escutando comando (follow-up): NÃO re-acordar nem roubar o mic.
+      // Exigir "Jarvis" de novo quebrava a sequência (logs: "inicia a missao" → miss).
+      if (voiceStatus === 'listening' || voiceStatus === 'transcribing') {
+        logVoiceEvent('info', 'wake.passiveSkippedLiveListening', 'passivo ignorado — Live já escuta', {
+          status: voiceStatus,
+        });
+        return;
+      }
       const isVerifiedBargeCandidate = voiceStatus === 'speaking';
       if (
         shouldIgnoreLiveReWake({ status: voiceStatus }) &&

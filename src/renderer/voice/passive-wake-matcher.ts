@@ -1,24 +1,67 @@
 /**
- * Text matcher used only after a short VAD-gated passive STT sample. It makes
- * the wake path resilient to pronunciation and acoustic-model misses without
- * treating arbitrary ambient speech as a command.
- *
- * Política: só "Jarvis" basta — "Jarvis", "Ei Jarvis", "acorda Jarvis",
- * "cheguei Jarvis", "olá Jarvis", "ouça Jarvis", etc.
+ * Wake textual no estilo Overclock: STT → matchWakeWord.
+ * Não depende de modelo acústico PT. Aceita "Jarvis" (e STT quebrado) com
+ * fuzzy só no início da frase; exact match em qualquer posição.
  */
 
 import {
-  isJarvisAddressTokenIndex,
+  editDistance,
   looksLikeJarvisName,
   normalizeNameToken,
   stripJoinedGreeting,
 } from '../../shared/jarvis-name-match';
 
-const FUZZY_ADDRESS_TOKEN_COUNT = 3;
-
 export interface PassiveWakeMatch {
   command: string;
 }
+
+/** Aliases curtos que o Overclock + logs reais do Groq produzem. */
+const DEFAULT_ALIASES = new Set([
+  'jarbas',
+  'jarbis',
+  'javes',
+  'javis',
+  'jarves',
+  'jarvi',
+  'jarviz',
+  'jarvus',
+  'jarvix',
+  'charvis',
+  'harvis',
+  'jackson',
+  'jasper',
+  'jacques',
+  'eijax',
+  'rejaves',
+  // STT truncado (logs: "aja", "ja")
+  'aja',
+  'jar',
+  'jarr',
+]);
+
+const FILLER_PREFIX = new Set([
+  'ei',
+  'e',
+  'hey',
+  'hei',
+  'oi',
+  'ola',
+  'ok',
+  'ai',
+  'ae',
+  'oye',
+  'alo',
+  'eae',
+  'oie',
+  'fala',
+  'acorda',
+  'cheguei',
+  'ouca',
+  'ouso',
+  'escuta',
+  'ajuda',
+  'vem',
+]);
 
 function remainingCommand(words: readonly string[], consumedAt: number): string {
   return words
@@ -28,17 +71,47 @@ function remainingCommand(words: readonly string[], consumedAt: number): string 
     .trim();
 }
 
+function isNameToken(
+  token: string,
+  expected: string,
+  allowFuzzy: boolean,
+  isDefaultJarvis: boolean,
+): boolean {
+  if (!token) return false;
+  if (token === expected) return true;
+  const joined = stripJoinedGreeting(token);
+  if (joined && (joined === expected || looksLikeJarvisName(joined, expected))) {
+    return true;
+  }
+  if (!allowFuzzy) return false;
+  if (isDefaultJarvis && DEFAULT_ALIASES.has(token)) return true;
+  // Prefixo truncado: "ja", "jar", "jarv" após STT cortar cedo
+  if (
+    isDefaultJarvis &&
+    token.length >= 2 &&
+    token.length <= 5 &&
+    expected.startsWith(token) &&
+    token.startsWith('ja')
+  ) {
+    return true;
+  }
+  if (expected.length >= 4 && token.length >= 4) {
+    if (editDistance(token, expected, 1) <= 1) return true;
+  }
+  if (isDefaultJarvis && looksLikeJarvisName(token, expected)) return true;
+  return false;
+}
+
 /**
- * Matches the configured assistant name as a direct address. Exact and near
- * STT matches share the same vocative boundary so ambient mid-sentence mentions
- * ("hoje o Jarvis falou") do not wake.
+ * Overclock parity: "Jarvis" exact em qualquer posição; fuzzy/alias só nos
+ * 2 primeiros tokens (endereço deliberado).
  */
 export function matchPassiveWakeWord(
   transcript: string,
   assistantName = 'Jarvis',
 ): PassiveWakeMatch | null {
-  const words = transcript.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return null;
+  const raw = transcript.trim();
+  if (!raw) return null;
 
   const targetParts = assistantName
     .trim()
@@ -46,34 +119,71 @@ export function matchPassiveWakeWord(
     .map(normalizeNameToken)
     .filter(Boolean);
   const expected = targetParts.length > 0 ? targetParts : ['jarvis'];
-  const defaultJarvis = expected.length === 1 && expected[0] === 'jarvis';
+  const isDefault = expected.length === 1 && expected[0] === 'jarvis';
   const target = expected[0] ?? 'jarvis';
+  const joinedTarget = expected.join('');
 
-  for (let index = 0; index <= words.length - expected.length; index += 1) {
-    if (!isJarvisAddressTokenIndex(words, index)) continue;
+  const words = raw.split(/\s+/).filter(Boolean);
+  const norms = words.map((w) => normalizeNameToken(w));
 
-    // Exact multi-token name
-    const exact = expected.every(
-      (token, offset) => normalizeNameToken(words[index + offset] ?? '') === token,
-    );
-    if (exact) {
-      return { command: remainingCommand(words, index + expected.length) };
+  // STT ultra-curto: "e ja" / "ei ja" / "e jar" (fingerprint real nos logs)
+  if (words.length === 2 && isDefault) {
+    const a = norms[0] ?? '';
+    const b = norms[1] ?? '';
+    if (FILLER_PREFIX.has(a) && (b.startsWith('ja') || isNameToken(b, target, true, true))) {
+      return { command: '' };
+    }
+  }
+  // Um token colado "eijarvis" / "heyjarvis"
+  if (words.length === 1 && isDefault) {
+    const one = norms[0] ?? '';
+    const stripped = stripJoinedGreeting(one);
+    if (stripped && isNameToken(stripped, target, true, true)) {
+      return { command: '' };
+    }
+    if (isNameToken(one, target, true, true)) {
+      return { command: '' };
+    }
+  }
+
+  for (let i = 0; i < norms.length; i += 1) {
+    // Fuzzy só no início (Overclock: i < 2)
+    const fuzzy = i < 2;
+    let consumed = 0;
+
+    if (i + expected.length <= norms.length) {
+      let all = true;
+      for (let k = 0; k < expected.length; k += 1) {
+        if (!isNameToken(norms[i + k] ?? '', expected[k]!, fuzzy, isDefault)) {
+          all = false;
+          break;
+        }
+      }
+      if (all) consumed = expected.length;
     }
 
-    if (expected.length !== 1) continue;
-    if (index >= FUZZY_ADDRESS_TOKEN_COUNT) continue;
-
-    const heard = normalizeNameToken(words[index] ?? '');
-    const joined = stripJoinedGreeting(heard);
-    const candidates = joined ? [heard, joined] : [heard];
-
-    for (const address of candidates) {
-      const isMatch = defaultJarvis
-        ? looksLikeJarvisName(address, target)
-        : address === target || looksLikeJarvisName(address, target);
-      if (isMatch) {
-        return { command: remainingCommand(words, index + 1) };
+    // Nome multi-token concatenado ("sexta feira" vs "sexta-feira")
+    if (consumed === 0 && joinedTarget.length >= 4) {
+      let acc = '';
+      for (let k = 0; i + k < norms.length && acc.length <= joinedTarget.length + 1; k += 1) {
+        acc += norms[i + k] ?? '';
+        if (
+          acc.length >= joinedTarget.length - 1 &&
+          isNameToken(acc, joinedTarget, fuzzy, isDefault)
+        ) {
+          consumed = k + 1;
+          break;
+        }
       }
+    }
+
+    // Exact single-token mid-phrase (Overclock F-057)
+    if (consumed === 0 && norms[i] === target) {
+      consumed = 1;
+    }
+
+    if (consumed > 0) {
+      return { command: remainingCommand(words, i + consumed) };
     }
   }
 

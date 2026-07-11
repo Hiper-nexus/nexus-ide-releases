@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { matchPassiveWakeWord } from './passive-wake-matcher';
 
-describe('matchPassiveWakeWord', () => {
+describe('matchPassiveWakeWord (Overclock-style)', () => {
   it('recognizes a direct Portuguese wake and retains the command', () => {
     expect(matchPassiveWakeWord('Ei Jarvis, abra o terminal')).toEqual({
       command: 'abra o terminal',
@@ -50,21 +50,31 @@ describe('matchPassiveWakeWord', () => {
     });
   });
 
+  it('accepts truncated STT from real logs (e ja / aja)', () => {
+    expect(matchPassiveWakeWord('e ja')).toEqual({ command: '' });
+    expect(matchPassiveWakeWord('ei ja')).toEqual({ command: '' });
+    expect(matchPassiveWakeWord('e jar')).toEqual({ command: '' });
+    expect(matchPassiveWakeWord('aja')).toEqual({ command: '' });
+  });
+
   it('does not accept arbitrary words that merely end in the assistant name', () => {
     expect(matchPassiveWakeWord('superjarvis abra o terminal')).toBeNull();
   });
 
-  it('does not treat an ambient near-match as an address', () => {
-    expect(matchPassiveWakeWord('hoje o jarvix falou comigo')).toBeNull();
-    expect(matchPassiveWakeWord('hoje o Jarvis falou comigo')).toBeNull();
-    expect(matchPassiveWakeWord('eu estava explicando sobre o Jarvis')).toBeNull();
+  it('wakes on exact Jarvis mid/end phrase (Overclock F-057)', () => {
+    expect(matchPassiveWakeWord('obrigado jarvis')).toEqual({ command: '' });
+    expect(matchPassiveWakeWord('Obrigado. Jarvis.')).toEqual({ command: '' });
+    // exact mid-sentence is intentional Overclock behavior
+    expect(matchPassiveWakeWord('hoje o Jarvis falou comigo')).toEqual({
+      command: 'falou comigo',
+    });
   });
 
-  it('rejects production aliases when they are ambient speech, not an address', () => {
-    expect(matchPassiveWakeWord('o Jasper chegou hoje')).toBeNull();
-    expect(matchPassiveWakeWord('falaram Eijax no vídeo')).toBeNull();
+  it('rejects ambient fuzzy aliases only after the first two tokens', () => {
+    // Overclock: fuzzy/alias só i < 2 — no meio da frase, null
+    expect(matchPassiveWakeWord('hoje o jarbas me ligou cedo')).toBeNull();
+    expect(matchPassiveWakeWord('conversei com o garvis ontem')).toBeNull();
     expect(matchPassiveWakeWord('a voz disse Rejaves ontem')).toBeNull();
-    expect(matchPassiveWakeWord('eu conheço o Jacques do trabalho')).toBeNull();
   });
 
   it('supports an exact configured assistant name', () => {
@@ -73,7 +83,7 @@ describe('matchPassiveWakeWord', () => {
     });
   });
 
-  it('wakes on name alone and near-miss STT (product: any close Jarvis)', () => {
+  it('wakes on name alone and near-miss STT', () => {
     expect(matchPassiveWakeWord('Jarvis')).toEqual({ command: '' });
     expect(matchPassiveWakeWord('javis')).toEqual({ command: '' });
     expect(matchPassiveWakeWord('javes')).toEqual({ command: '' });
@@ -82,7 +92,7 @@ describe('matchPassiveWakeWord', () => {
     expect(matchPassiveWakeWord('Jarvis,')).toEqual({ command: '' });
   });
 
-  it('wakes on vocative variants without requiring Hey (product PT)', () => {
+  it('wakes on vocative variants without requiring Hey', () => {
     expect(matchPassiveWakeWord('acorda jarvis')).toEqual({ command: '' });
     expect(matchPassiveWakeWord('cheguei jarvis abre o terminal')).toEqual({
       command: 'abre o terminal',
