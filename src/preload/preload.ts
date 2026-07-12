@@ -382,6 +382,8 @@ const api: NexusApi = {
       return () =>
         ipcRenderer.removeListener(PET_CHANNELS.openSettings, listener);
     },
+    galleryImport: (slugOrUrl: string) =>
+      ipcRenderer.invoke(PET_CHANNELS.galleryImport, slugOrUrl),
   },
   app: {
     signalMounted: (report) => ipcRenderer.send(WINDOW_CHANNELS.mounted, report),

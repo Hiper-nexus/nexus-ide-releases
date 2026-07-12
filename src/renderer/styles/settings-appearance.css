@@ -317,3 +317,15 @@
     transition: none;
   }
 }
+
+.settings-pet-gallery {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.settings-pet-gallery__input {
+  flex: 1 1 220px;
+  min-width: 180px;
+}

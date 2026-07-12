@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.14.2 — Galeria de Pets
+
+Data: 2026-07-12
+
+### Desktop pet
+- Importar da galeria petdex (codex-pets.net / petdex.dev) por slug ou
+  URL, direto no Settings → Aparência: o main baixa o spritesheet com
+  Referer da galeria, tetos de tamanho/MIME e validação da malha 8×11;
+  a arte é por submissão e o import mostra o autor do lado da escolha.
+  Testado ao vivo contra a galeria (slug `navi`).
+
+### Build
+- Release `v0.14.2` assinada e notarizada localmente com o perfil
+  `nexus-notary`.
+
 ## 0.14.1 — Navi Segue o Cursor
 
 Data: 2026-07-12

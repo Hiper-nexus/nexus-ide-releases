@@ -96,6 +96,12 @@ async function main() {
       const voice = voices[index % voices.length];
       const text = texts[index % texts.length];
       const settings = SETTINGS[Math.floor(index / voices.length) % SETTINGS.length];
+      const filename = `${kind}-eleven-${String(index).padStart(4, '0')}.wav`;
+      const destination = path.join(output, kind, filename);
+      if (fs.existsSync(destination) && fs.statSync(destination).size > 44) {
+        generated += 1;
+        continue;
+      }
       const response = await checkedFetch(
         `${API_BASE}/text-to-speech/${encodeURIComponent(voice.voice_id)}?output_format=pcm_16000`,
         {
@@ -105,8 +111,7 @@ async function main() {
         },
       );
       const pcm = Buffer.from(await response.arrayBuffer());
-      const filename = `${kind}-eleven-${String(index).padStart(4, '0')}.wav`;
-      fs.writeFileSync(path.join(output, kind, filename), wavFromPcm16(pcm), { mode: 0o600 });
+      fs.writeFileSync(destination, wavFromPcm16(pcm), { mode: 0o600 });
       generated += 1;
       if (generated % 12 === 0) process.stdout.write(`generated ${generated}\n`);
     }

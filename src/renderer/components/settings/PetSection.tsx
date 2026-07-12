@@ -23,6 +23,12 @@ type PetSectionApi = {
   getPrefs(): Promise<PetPrefs>;
   setPrefs(patch: Partial<PetPrefs>): Promise<PetPrefs>;
   onPrefsChanged(cb: (prefs: PetPrefs) => void): () => void;
+  galleryImport?(slugOrUrl: string): Promise<{
+    ok: boolean;
+    name?: string;
+    dataUrl?: string;
+    error?: string;
+  }>;
 };
 
 const PRESET_LABEL: Record<PetPreset, string> = {
@@ -64,6 +70,8 @@ function imageIsCodexSheet(dataUrl: string): Promise<boolean> {
 export function PetSection() {
   const [prefs, setPrefs] = useState<PetPrefs | null>(null);
   const [importNote, setImportNote] = useState<string | null>(null);
+  const [gallerySlug, setGallerySlug] = useState('');
+  const [galleryBusy, setGalleryBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const sheetRef = useRef<HTMLInputElement | null>(null);
 
@@ -103,6 +111,42 @@ export function PetSection() {
       setImportNote(null);
     } catch {
       setImportNote('Não consegui ler essa imagem. Tente outra (png/jpg).');
+    }
+  };
+
+  const onGalleryImport = async () => {
+    const query = gallerySlug.trim();
+    if (!query || !petApi.galleryImport || galleryBusy) return;
+    setGalleryBusy(true);
+    setImportNote('Baixando da galeria…');
+    try {
+      const result = await petApi.galleryImport(query);
+      if (!result.ok || !result.dataUrl) {
+        setImportNote(result.error ?? 'Não consegui importar esse pet.');
+        return;
+      }
+      if (!(await imageIsCodexSheet(result.dataUrl))) {
+        setImportNote(
+          `O pet baixado não bate com a malha ${CODEX_SHEET_COLS}×${CODEX_SHEET_ROWS} do contrato v2.`,
+        );
+        return;
+      }
+      const applied = await petApi.setPrefs({
+        sheet: {
+          dataUrl: result.dataUrl,
+          cols: CODEX_SHEET_COLS,
+          rows: CODEX_SHEET_ROWS,
+        },
+        preset: 'sheet',
+      });
+      setImportNote(
+        applied.preset === 'sheet' && applied.sheet
+          ? `"${result.name ?? query}" importado da galeria.`
+          : 'O pet baixado é grande demais para importar.',
+      );
+      if (applied.preset === 'sheet' && applied.sheet) setGallerySlug('');
+    } finally {
+      setGalleryBusy(false);
     }
   };
 
@@ -265,8 +309,7 @@ export function PetSection() {
             </button>
             <span className="settings-field__note">
               Tudo local; nada é enviado. Spritesheets no contrato Codex v2
-              (8×11) funcionam direto — inclusive os de ~/.codex/pets e os
-              baixados da galeria codex-pets.net.
+              (8×11) funcionam direto — inclusive os de ~/.codex/pets.
             </span>
             <input
               ref={fileRef}
@@ -289,6 +332,34 @@ export function PetSection() {
               }}
             />
           </div>
+          {petApi.galleryImport && (
+            <div className="settings-pet-gallery">
+              <input
+                className="settings-input settings-pet-gallery__input"
+                type="text"
+                value={gallerySlug}
+                placeholder="Slug ou URL do pet (codex-pets.net)"
+                aria-label="Slug ou URL do pet na galeria petdex"
+                disabled={galleryBusy}
+                onChange={(e) => setGallerySlug(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void onGalleryImport();
+                }}
+              />
+              <button
+                type="button"
+                className="settings-pet-import__btn"
+                disabled={galleryBusy || !gallerySlug.trim()}
+                onClick={() => void onGalleryImport()}
+              >
+                {galleryBusy ? 'Baixando…' : 'Importar da galeria'}
+              </button>
+              <span className="settings-field__note">
+                Galeria da comunidade (codex-pets.net / petdex.dev). A arte é
+                de quem publicou — importe só o que você tem direito de usar.
+              </span>
+            </div>
+          )}
           {importNote && (
             <p className="settings-field__note" role="status">
               {importNote}

@@ -46,19 +46,42 @@ def stage_reviewed(dataset: Path, model_dir: Path) -> dict[str, int]:
     return counts
 
 
-def upload_artifacts(output_dir: Path, repo_id: str, token: str, config: Path) -> None:
+def config_model_name(config: Path) -> str:
+    for line in config.read_text().splitlines():
+        if line.startswith("model_name:"):
+            name = line.split(":", 1)[1].strip()
+            if name and all(char.isalnum() or char in "_-" for char in name):
+                return name
+    raise RuntimeError(f"missing or invalid model_name in {config}")
+
+
+def upload_artifacts(
+    output_dir: Path,
+    repo_id: str,
+    token: str,
+    config: Path,
+    split_counts: dict[str, int],
+) -> None:
     api = HfApi(token=token)
     api.create_repo(repo_id, repo_type="model", private=True, exist_ok=True)
     artifacts = output_dir / "publish"
     artifacts.mkdir(parents=True, exist_ok=True)
-    for pattern in ("*.onnx", "*_eval.json", "*_metrics.json", "*_det.png"):
+    for pattern in (
+        "*.onnx",
+        "*_eval.json",
+        "*_metrics.json",
+        "*_det.png",
+        "*_features_test.npy",
+        "*_features_train.npy",
+    ):
         for source in output_dir.glob(pattern):
             shutil.copy2(source, artifacts / source.name)
     shutil.copy2(config, artifacts / "training-config.yaml")
     manifest = {
         "torch": __import__("torch").__version__,
         "source_dataset": "cleofasrocha/nexus-ei-jarvis-ptbr-data",
-        "pipeline": "livekit-wakeword + real microphone + ElevenLabs + VoxCPM",
+        "pipeline": "livekit-wakeword + reviewed real microphone + ElevenLabs",
+        "reviewed_split_counts": split_counts,
     }
     (artifacts / "training-manifest.json").write_text(json.dumps(manifest, indent=2))
     if not list(artifacts.glob("*.onnx")):
@@ -76,6 +99,11 @@ def main() -> None:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--dataset", default="cleofasrocha/nexus-ei-jarvis-ptbr-data")
     parser.add_argument("--model-repo", default="cleofasrocha/nexus-ei-jarvis-ptbr")
+    parser.add_argument(
+        "--skip-generate",
+        action="store_true",
+        help="Train only from the reviewed corpus instead of generating TTS samples.",
+    )
     args = parser.parse_args()
     token = os.environ.get("HF_WRITE_TOKEN", "").strip()
     if not token:
@@ -94,16 +122,16 @@ def main() -> None:
     )
 
     run("livekit-wakeword", "setup", "--config", str(config))
-    run("livekit-wakeword", "generate", str(config))
+    if not args.skip_generate:
+        run("livekit-wakeword", "generate", str(config))
 
-    # The config model_name is intentionally fixed for reproducible paths.
-    model_dir = workspace / "output" / "ei_jarvis_pt_pilot"
-    stage_reviewed(dataset, model_dir)
+    model_dir = workspace / "output" / config_model_name(config)
+    split_counts = stage_reviewed(dataset, model_dir)
 
     for stage in ("augment", "train", "export", "eval"):
         run("livekit-wakeword", stage, str(config))
 
-    upload_artifacts(model_dir, args.model_repo, token, config)
+    upload_artifacts(model_dir, args.model_repo, token, config, split_counts)
     print("PRODUCTION_CANDIDATE_PUBLISHED", args.model_repo, flush=True)
 
 

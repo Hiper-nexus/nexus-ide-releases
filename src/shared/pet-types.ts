@@ -25,6 +25,8 @@ export const PET_CHANNELS = {
   focusMain: 'pet:focusMain',
   /** send: janela do pet → main. Foca a principal E pede o Settings. */
   requestSettings: 'pet:requestSettings',
+  /** invoke: janela principal → main. Importa um pet da galeria petdex. */
+  galleryImport: 'pet:galleryImport',
   /** event: main → janela principal. Pedido do pet para abrir Settings. */
   openSettings: 'pet:openSettings',
 } as const;
@@ -127,6 +129,14 @@ export interface PetPrefs {
    * compositors Linux sem ARGB; escolhível em qualquer plataforma.
    */
   solidBackground: boolean;
+}
+
+/** Resultado do import da galeria petdex (codex-pets.net). */
+export interface PetGalleryImportResult {
+  ok: boolean;
+  name?: string;
+  dataUrl?: string;
+  error?: string;
 }
 
 export type PetEventKind =

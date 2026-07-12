@@ -7,7 +7,7 @@ import { z } from 'zod';
 import type { AdapterInfo } from './adapter-types';
 import type { BrowserDesignEvent } from './browser-design';
 import type { OnboardingState, OnboardingPatch } from './onboarding-types';
-import type { PetPrefs } from './pet-types';
+import type { PetGalleryImportResult, PetPrefs } from './pet-types';
 import type { OrientationSnapshot } from './orientation-types';
 import type { UpdateState } from './update-ipc';
 import type {
@@ -549,6 +549,8 @@ export interface NexusApi {
     onPrefsChanged(cb: (prefs: PetPrefs) => void): Unsubscribe;
     /** O pet pediu para abrir as configurações (menu "Configurar…"). */
     onOpenSettings(cb: () => void): Unsubscribe;
+    /** Baixa um pet da galeria petdex por slug/URL (fetch no main). */
+    galleryImport(slugOrUrl: string): Promise<PetGalleryImportResult>;
   };
   /** App-shell lifecycle signals to the main process. */
   app: {

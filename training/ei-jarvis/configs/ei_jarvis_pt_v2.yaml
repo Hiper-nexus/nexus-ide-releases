@@ -1,0 +1,52 @@
+# Balanced production candidate. The reviewed real-microphone and diverse
+# ElevenLabs corpus is staged by hf_train_production.py before augmentation.
+model_name: ei_jarvis_pt_v2
+
+target_phrases:
+  - "jarvis"
+  - "ei jarvis"
+  - "hey jarvis"
+  - "oi jarvis"
+
+# setup still needs a supported backend, but v2 deliberately skips generated
+# samples: reviewed PT-BR voices have better pronunciation and provenance.
+tts_backend: piper_vits
+
+custom_negative_phrases:
+  - "ei jason"
+  - "ei jarbas"
+  - "ei java"
+  - "ei javis"
+  - "ei jardins"
+  - "ei travis"
+  - "jair"
+  - "jarros"
+  - "chaves"
+  - "javascript"
+
+data_dir: ./data
+output_dir: ./output
+
+augmentation:
+  clip_duration: 2.0
+  batch_size: 16
+  rounds: 6
+  background_paths: [./data/backgrounds]
+  rir_paths: [./data/rirs]
+
+model:
+  model_type: conv_attention
+  model_size: medium
+
+steps: 25000
+learning_rate: 0.0001
+weight_decay: 0.01
+label_smoothing: 0.03
+max_negative_weight: 800
+target_fp_per_hour: 0.5
+
+batch_n_per_class:
+  positive: 100
+  adversarial_negative: 50
+  ACAV100M_sample: 256
+  background_noise: 50

@@ -14,6 +14,7 @@ import { loadPetPrefs, savePetPrefs } from './pet-prefs';
 import { clampToWorkArea, snapToCorner } from './pet-geometry';
 import { AgentTransitionTracker, MissionTransitionTracker } from './pet-events';
 import { computeLookDir } from './pet-look';
+import { importGalleryPet } from './pet-gallery';
 
 /**
  * Desktop pet: uma janela transparente, sempre-no-topo e fora da taskbar que
@@ -294,6 +295,15 @@ function registerPetIpc(): void {
   ipcMain.handle(PET_CHANNELS.setPrefs, (event, raw: unknown) => {
     if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
     return applyPrefsPatch(raw);
+  });
+  ipcMain.handle(PET_CHANNELS.galleryImport, (event, raw: unknown) => {
+    if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
+    if (typeof raw !== 'string' || raw.length > 512) {
+      return { ok: false, error: 'Entrada inválida.' };
+    }
+    // O fetch vive no main de propósito: a CSP do renderer (connect-src
+    // 'self') não fala com a galeria — e não deve.
+    return importGalleryPet(raw);
   });
 
   ipcMain.on(PET_CHANNELS.setInteractive, (event, interactive: unknown) => {
