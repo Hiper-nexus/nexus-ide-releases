@@ -32,9 +32,11 @@ import { homedir } from 'node:os';
  * uma janela principal, e dorme sob demanda (sem balões).
  */
 
-/** Janela maior: sprite ~150px lê de longe (paridade com o pet do Codex). */
-/** Janela do companion: cabe sprite ~240px + balão + margem de arrasto. */
-export const PET_WINDOW_SIZE = { width: 420, height: 400 } as const;
+/**
+ * Janela do companion: cabe sheet em 2× (384×416) + balão + margem de arrasto.
+ * Paridade com o pet do Codex (célula 192×208 em escala inteira).
+ */
+export const PET_WINDOW_SIZE = { width: 480, height: 520 } as const;
 const DRAG_TICK_MS = 16;
 /** Teto de um arrasto: além disso o watchdog assenta a janela sozinho. */
 const DRAG_MAX_MS = 30_000;
@@ -377,6 +379,26 @@ function registerPetIpc(): void {
         error: `Falha no preview (${err instanceof Error ? err.message : 'erro'}).`,
       };
     }
+  });
+  ipcMain.handle(PET_CHANNELS.pickImage, async (event) => {
+    if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const { dialog, app: electronApp } = await import('electron');
+    const options = {
+      title: 'Imagem-base do pet (geração com IA)',
+      defaultPath: electronApp.getPath('pictures'),
+      properties: ['openFile' as const],
+      filters: [
+        { name: 'Imagem', extensions: ['png', 'webp', 'jpg', 'jpeg'] },
+      ],
+    };
+    const picked = owner
+      ? await dialog.showOpenDialog(owner, options)
+      : await dialog.showOpenDialog(options);
+    if (picked.canceled || picked.filePaths.length === 0) {
+      return { ok: false, canceled: true };
+    }
+    return { ok: true, path: picked.filePaths[0] };
   });
   ipcMain.handle(PET_CHANNELS.pickSheet, async (event) => {
     if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');

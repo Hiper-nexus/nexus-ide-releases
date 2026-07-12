@@ -2,17 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   detectSheetGrid,
   SHEET_ANIMS,
-  SHEET_NEUTRAL,
   sheetLookFrame,
   type PetSheet,
 } from '../../shared/pet-types';
 
 /**
  * Sprite de spritesheet Codex v2: anima recortando frames do sheet num
- * canvas. `anim` escolhe a linha do contrato (idle/wave/failed); dormindo
- * congela no frame neutro. `lookDir` (0..15) sobrepõe o idle com o frame
- * direcional das linhas de look — o pet segue o cursor. Reduced-motion:
- * frame estático (o look continua, é postura, não animação).
+ * canvas. Paridade visual com o pet do Codex:
+ * - malha derivada das dimensões reais (8×9 petdex ou 8×11 v2)
+ * - escala **inteira** da célula (192×208 → 1×/2×/3×) — nunca 240px
+ *   fracionário, que embraça pixel art e “corta” silhueta
+ * - nearest-neighbor (sem smoothing) + image-rendering: pixelated
  */
 
 export type SheetAnim =
@@ -27,14 +27,16 @@ export type SheetAnim =
 interface SheetPetSpriteProps {
   sheet: PetSheet;
   anim: SheetAnim;
-  /** Direção do olhar quantizada; só vale durante o idle. */
+  /** Direção do olhar quantizada; só vale durante o idle em sheets 8×11. */
   lookDir?: number | null;
-  /** Altura de exibição em px; a largura segue a proporção do frame. */
+  /**
+   * Altura-alvo em CSS px. A altura real usa o múltiplo inteiro da célula
+   * mais próximo (sem ultrapassar o alvo, mínimo 1×).
+   */
   size: number;
 }
 
 const FRAME_MS = 140;
-/** Corrida tem cadência mais viva que o idle. */
 const RUN_FRAME_MS = 80;
 
 function prefersReducedMotion(): boolean {
@@ -42,6 +44,37 @@ function prefersReducedMotion(): boolean {
     typeof window.matchMedia === 'function' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
   );
+}
+
+/**
+ * Escala de exibição (Codex: células 192×208).
+ * - target ≥ célula: múltiplo inteiro (1×/2×/3×) — nítido no desktop.
+ * - target < célula (preview): encolhe mantendo aspecto (thumbnails).
+ */
+export function integerSheetScale(
+  frameW: number,
+  frameH: number,
+  targetH: number,
+): { scale: number; displayW: number; displayH: number; integer: boolean } {
+  const safeW = Math.max(1, frameW);
+  const safeH = Math.max(1, frameH);
+  const target = Math.max(1, targetH);
+  if (target >= safeH) {
+    const scale = Math.max(1, Math.floor(target / safeH));
+    return {
+      scale,
+      displayW: safeW * scale,
+      displayH: safeH * scale,
+      integer: true,
+    };
+  }
+  const scale = target / safeH;
+  return {
+    scale,
+    displayW: Math.max(1, Math.round(safeW * scale)),
+    displayH: Math.max(1, Math.round(safeH * scale)),
+    integer: false,
+  };
 }
 
 export function SheetPetSprite({
@@ -63,17 +96,11 @@ export function SheetPetSprite({
     };
   }, [sheet.dataUrl]);
 
-  // Sempre deriva a malha das dimensões reais da imagem.
-  // Prefs antigas podem ter rows:11 gravado num sheet petdex 8×9 — e
-  // 1872%11≠0 mas 936%11≠0; mesmo quando “divide exacto” (ex. half-res
-  // errado), a razão da célula canónica 192:208 manda mais do que o
-  // metadata stale.
   const grid = useMemo(() => {
     if (!image) return { cols: sheet.cols, rows: sheet.rows };
     return detectSheetGrid(image.width, image.height);
   }, [image, sheet.cols, sheet.rows]);
 
-  // Look só sobrepõe o IDLE e exige as linhas 9–10 (Codex v2 completo).
   const looking = useMemo(
     () =>
       anim === 'idle' && lookDir !== null && grid.rows >= 11
@@ -84,11 +111,9 @@ export function SheetPetSprite({
 
   const spec = useMemo(() => {
     if (anim === 'sleep') {
-      // Col 6 do Codex full é o neutro; em packs petdex 8×9 costuma ser vazio.
       return { row: 0, frames: 1, col: 0 as number | null };
     }
     const base = SHEET_ANIMS[anim];
-    // Sheets com menos de 11 linhas (ex.: petdex 8×9) — clampa a row válida.
     if (base.row >= grid.rows) {
       return { row: Math.max(0, grid.rows - 1), frames: base.frames, col: null };
     }
@@ -106,12 +131,12 @@ export function SheetPetSprite({
     return () => window.clearInterval(timer);
   }, [spec, anim, looking !== null]);
 
-  // Integer cell size — fractional width/cols drifts and crops frames over rows.
   const frameW = image ? Math.floor(image.width / grid.cols) : 1;
   const frameH = image ? Math.floor(image.height / grid.rows) : 1;
-  const displayW = Math.max(
-    1,
-    Math.round((frameW / Math.max(frameH, 1)) * size),
+  const { displayW, displayH, integer } = integerSheetScale(
+    frameW,
+    frameH,
+    size,
   );
   const dpr =
     typeof window !== 'undefined' ? Math.max(1, window.devicePixelRatio || 1) : 1;
@@ -127,19 +152,14 @@ export function SheetPetSprite({
       : spec.col !== null && spec.col !== undefined
         ? Math.min(spec.col, maxCol)
         : Math.min(frame, maxCol);
-    const cssW = displayW;
-    const cssH = size;
-    canvas.width = Math.max(1, Math.round(cssW * dpr));
-    canvas.height = Math.max(1, Math.round(cssH * dpr));
+
+    // Buffer em device pixels; desenhamos em CSS px com transform dpr.
+    canvas.width = Math.max(1, Math.round(displayW * dpr));
+    canvas.height = Math.max(1, Math.round(displayH * dpr));
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, cssW, cssH);
-    // Sheets Codex/petdex são arte pintada em alta res (não pixel 16×16).
-    // Suavizar o scale evita o aspecto “bloco/corte” ao ampliar o frame.
-    const integerScale =
-      cssW % frameW === 0 &&
-      cssH % frameH === 0 &&
-      cssW / frameW === cssH / frameH;
-    ctx.imageSmoothingEnabled = !integerScale;
+    ctx.clearRect(0, 0, displayW, displayH);
+    // Escala inteira: nearest (paridade Codex). Thumb fractional: high quality.
+    ctx.imageSmoothingEnabled = !integer;
     if (ctx.imageSmoothingEnabled) {
       ctx.imageSmoothingQuality = 'high';
     }
@@ -151,8 +171,8 @@ export function SheetPetSprite({
       frameH,
       0,
       0,
-      cssW,
-      cssH,
+      displayW,
+      displayH,
     );
   }, [
     image,
@@ -163,7 +183,8 @@ export function SheetPetSprite({
     frameW,
     frameH,
     displayW,
-    size,
+    displayH,
+    integer,
     dpr,
     grid.cols,
     grid.rows,
@@ -172,7 +193,11 @@ export function SheetPetSprite({
   return (
     <canvas
       ref={canvasRef}
-      style={{ width: displayW, height: size, imageRendering: 'auto' }}
+      style={{
+        width: displayW,
+        height: displayH,
+        imageRendering: integer ? 'pixelated' : 'auto',
+      }}
       aria-hidden="true"
     />
   );

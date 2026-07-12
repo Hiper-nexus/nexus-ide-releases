@@ -88,9 +88,11 @@ body,
     drop-shadow(0 0 12px color-mix(in srgb, var(--pet-accent) 35%, transparent));
 }
 
-/* Pets de spritesheet: só a sombra de assentamento (a arte já tem volume). */
+/* Pets de spritesheet: sombra leve (a arte Codex já tem volume; sem blur na sprite). */
 .pet__hit--sheet canvas {
-  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.45));
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.4));
 }
 
 @keyframes pet-bob {

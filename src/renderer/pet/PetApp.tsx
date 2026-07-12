@@ -19,8 +19,11 @@ import {
 
 /** Sprite grandão (paridade Codex): legível a distância no desktop. */
 const SPRITE_SIZE = 200;
-/** Sheets Codex v2 — um pouco maior que o operador (arte com mais detalhe). */
-const SHEET_SIZE = 240;
+/**
+ * Alvo de altura CSS do sheet. SheetPetSprite escolhe o múltiplo inteiro da
+ * célula (192×208) ≤ este valor — tipicamente 2× = 416px, nítido como no Codex.
+ */
+const SHEET_SIZE = 416;
 const DRAG_THRESHOLD_PX = 4;
 const CELEBRATE_MS = 3_000;
 
