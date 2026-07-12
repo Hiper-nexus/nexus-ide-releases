@@ -335,13 +335,25 @@ function startSpawn(
         const continuationTimer = setTimeout(() => {
           if (host.disposed || host.sessionId !== resumedSessionId) return;
           const role = pane.role === 'orchestrator' ? 'orchestrator' : 'agent';
+          const continuation =
+            `Continue the current mission from exactly where you stopped as the ${role}. ` +
+            'Preserve existing context and execute the next pending step now.';
           window.nexus.pty.write(
             resumedSessionId,
-            `Continue the current mission from exactly where you stopped as the ${role}. Preserve existing context and execute the next pending step now.\n`,
+            continuation,
           );
-          host.term.writeln(
-            '\r\n\x1b[36m[nexus] continuidade enviada automaticamente ao agente.\x1b[0m',
-          );
+          // Agent TUIs receive Enter as CR from xterm. LF only paints a new
+          // line in Claude/Codex/Grok and leaves the prompt waiting, which is
+          // exactly what the Restart button used to do. Split paste and submit
+          // so bracketed/async input handlers finish ingesting the text first.
+          const submitTimer = setTimeout(() => {
+            if (host.disposed || host.sessionId !== resumedSessionId) return;
+            window.nexus.pty.write(resumedSessionId, '\r');
+            host.term.writeln(
+              '\r\n\x1b[36m[nexus] continuidade submetida automaticamente ao agente.\x1b[0m',
+            );
+          }, 80);
+          host.cleanups.push(() => clearTimeout(submitTimer));
         }, 1_800);
         host.cleanups.push(() => clearTimeout(continuationTimer));
       }

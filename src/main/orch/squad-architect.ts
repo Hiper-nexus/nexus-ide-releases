@@ -59,6 +59,19 @@ Regras:
 - Use somente CLI/modelo/effort declarados no perfil runtime; não invente nem
   use catálogos memorizados. Prefira effort econômico em trabalho mecânico e o
   maior effort realmente disponível em revisão/arquitetura crítica.
+- Quando a missão exigir GERAR ou EDITAR imagem, spritesheet, avatar ou desktop
+  pet, escolha um executor com geração visual nativa: priorize Codex com as
+  skills imagegen/hatch-pet e depois Grok com sua ferramenta de imagem. Claude
+  pode implementar/revisar código e contrato visual, mas NÃO deve ser escalado
+  como gerador de imagem sem uma ferramenta de mídia Nexus explicitamente
+  declarada no arsenal. Nunca atribua geração visual a uma CLI sem capacidade.
+- Desktop pet v2 NÃO é uma imagem única: é um pipeline 8x11 com 9 estados de
+  animação (idle, running-right, running-left, waving, jumping, failed,
+  waiting, running, review), 16 direções de olhar e até 13 trabalhos visuais.
+  O executor visual líder deve carregar a skill hatch-pet, criar uma base
+  canônica e aterrar TODAS as linhas nela. Outro gerador é apenas fallback de
+  linha completa, nunca fonte de células avulsas misturadas. Exija validação
+  determinística, contact sheet, motion preview e spriteVersionNumber 2.
 - Instruções: cite a stack e os diretórios REAIS do perfil, e SEMPRE inclua
   os comandos reais de build/test/lint do projeto (extraia dos manifests,
   ex.: scripts do package.json, Makefile, rake, go test ./...) — são os
@@ -156,8 +169,9 @@ function deterministicSquadFallback(
     agentName: string,
     category: 'executor' | 'reviewer' | 'scout' | 'architect',
     index: number,
+    preferredAdapterId?: string,
   ) => {
-    const adapter = pick(index);
+    const adapter = adapters.find((item) => item.id === preferredAdapterId) ?? pick(index);
     return {
       id,
       agentName,
@@ -170,8 +184,20 @@ function deterministicSquadFallback(
   const visual = /\b(ui|ux|visual|interface|desktop|pet|site|landing|web|mobile|react|electron)\b/i.test(
     objective,
   );
+  const imageGeneration = /\b(pet|imagem|image|sprite|spritesheet|avatar|ilustra|gerar\s+(?:uma\s+)?(?:foto|arte))\b/i.test(
+    objective,
+  );
+  const visualExecutor = imageGeneration
+    ? ['codex', 'grok'].find((id) => adapters.some((adapter) => adapter.id === id))
+    : undefined;
   const agents = [
-    worker('executor', 'Executor principal', 'executor', 0),
+    worker(
+      'executor',
+      imageGeneration ? 'Executor visual' : 'Executor principal',
+      'executor',
+      0,
+      visualExecutor,
+    ),
     worker('qa', 'QA de execução', 'reviewer', 1),
     worker('reviewer', 'Revisor sênior', 'reviewer', 2),
     ...(visual ? [worker('ux', 'UX e validação visual', 'reviewer', 3)] : []),
@@ -190,6 +216,9 @@ function deterministicSquadFallback(
         'Não declare conclusão sem evidência local dos testes e pós-condições da entrega.',
         visual
           ? 'A entrega visual exige QA da imagem/interface, estados completos e comparação com a referência anexada.'
+          : '',
+        imageGeneration
+          ? `A geração do asset visual deve ser liderada por ${visualExecutor ?? 'um executor com ferramenta de mídia comprovada'}. Para pet v2, carregue hatch-pet e trate como pipeline 8x11: base canônica, 9 linhas de animação, 16 direções, até 13 jobs visuais, QA incremental, contact sheet e motion preview. Codex é a primeira opção; Grok é fallback visual por linha inteira. Nunca misture células avulsas de geradores diferentes. Claude sem ferramenta de mídia pode implementar/revisar, mas não gerar o asset.`
           : '',
       ].filter(Boolean).join('\n\n'),
       agents: [
