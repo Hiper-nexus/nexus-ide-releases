@@ -5,7 +5,11 @@ import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { livePaneIdsForMission } from '../orch/mission-reopen';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
-import { groupMissionsForRail, statusLabel } from '../lib/mission-rail-groups';
+import {
+  groupMissionsForRail,
+  railStatusDisplay,
+  statusLabel,
+} from '../lib/mission-rail-groups';
 import {
   loadCollapsedSections,
   loadPinnedMissionIds,
@@ -168,9 +172,9 @@ export function MissionRail() {
       minute: '2-digit',
     }).format(mission.createdAt);
 
-    // Pending sem panes = fila de verdade.
+    // Status já vai na pill — meta fica operacional (tempo / panes).
     if (mission.status === 'pending' && !liveInGrid) {
-      return `Retomar · na fila · ${started}${handBit}`;
+      return `${started}${handBit}`;
     }
 
     if (liveInGrid) {
@@ -186,24 +190,26 @@ export function MissionRail() {
         (paneId) => paneStates.get(paneId) === 'spawning',
       ).length;
       if (busyCount > 0) {
-        return `${busyCount} pane${busyCount === 1 ? '' : 's'} trabalhando${handBit}`;
+        return `${busyCount} pane${busyCount === 1 ? '' : 's'} a trabalhar${handBit}`;
       }
       if (spawningCount > 0) {
-        return `${spawningCount} pane${spawningCount === 1 ? '' : 's'} iniciando${handBit}`;
+        return `${spawningCount} pane${spawningCount === 1 ? '' : 's'} a iniciar${handBit}`;
       }
       if (ids.length > 0) {
         return `${ids.length} pane${ids.length === 1 ? '' : 's'} no grid${handBit}`;
       }
     }
 
-    // running/blocked sem panes no grid (bind perdido ou status do agent).
     if (mission.status === 'running') {
-      return `Rodando · clique para focar${handBit}`;
+      return `Clique para focar${handBit}`;
     }
     if (mission.status === 'blocked') {
-      return `Travada · precisa de você${handBit}`;
+      return `Precisa de ti${handBit}`;
     }
-    return `Retomar · ${statusLabel(mission.status)} · ${started}${handBit}`;
+    if (mission.status === 'done' || mission.status === 'failed') {
+      return `${started}${handBit}`;
+    }
+    return `${statusLabel(mission.status)} · ${started}${handBit}`;
   }
 
   function selectMission(m: Mission) {
@@ -310,7 +316,7 @@ export function MissionRail() {
             aria-label="Workspaces"
           >
             <div className="activity-rail__section-head activity-rail__section-head--static">
-              <span className="activity-rail__section-label">Pasta aberta</span>
+              <span className="activity-rail__section-label">Pasta</span>
             </div>
             <ul className="activity-rail__ws-list">
               {workspace && (
@@ -386,21 +392,11 @@ export function MissionRail() {
           </section>
         )}
 
-        {missions.length > 0 && (
-          <div
-            className="activity-rail__missions-label"
-            role="presentation"
-          >
-            Missões
-          </div>
-        )}
-
         {missions.length === 0 ? (
           <div className="activity-rail__empty">
-            <p className="activity-rail__empty-title">Nenhuma missão ainda</p>
+            <p className="activity-rail__empty-title">Nenhuma missão</p>
             <p className="activity-rail__empty-copy">
-              Crie uma missão livre ou squad. Elas ficam aqui com status — como um
-              board lateral de trabalho.
+              Nova missão ou squad aparece aqui com status e retomar em um clique.
             </p>
             <button
               type="button"
@@ -411,56 +407,67 @@ export function MissionRail() {
             </button>
           </div>
         ) : (
-          sections.map((section) => {
-            if (section.missions.length === 0 && section.id !== 'active') return null;
-            const isCollapsed = collapsed.includes(section.id);
-            return (
-              <section key={section.id} className="activity-rail__section">
-                <button
-                  type="button"
-                  className="activity-rail__section-head"
-                  onClick={() => toggleSection(section.id)}
-                  aria-expanded={!isCollapsed}
+          <div className="activity-rail__missions">
+            {sections.map((section) => {
+              // Esconde seções vazias (sem “Nada aqui” / Em progresso 0).
+              if (section.missions.length === 0) return null;
+              const isCollapsed = collapsed.includes(section.id);
+              return (
+                <section
+                  key={section.id}
+                  className={`activity-rail__section activity-rail__section--${section.id}`}
                 >
-                  <span className="activity-rail__section-caret" aria-hidden="true">
-                    {isCollapsed ? '▸' : '▾'}
-                  </span>
-                  <span className="activity-rail__section-label">{section.label}</span>
-                  <span className="activity-rail__section-count">
-                    {section.missions.length}
-                  </span>
-                </button>
-                {!isCollapsed && (
-                  <ul className="mission-rail__list activity-rail__list">
-                    {section.missions.length === 0 ? (
-                      <li className="activity-rail__section-empty">Nada aqui</li>
-                    ) : (
-                      section.missions.map((m) => {
+                  <button
+                    type="button"
+                    className="activity-rail__section-head"
+                    onClick={() => toggleSection(section.id)}
+                    aria-expanded={!isCollapsed}
+                  >
+                    <span
+                      className="activity-rail__section-caret"
+                      aria-hidden="true"
+                    >
+                      {isCollapsed ? '▸' : '▾'}
+                    </span>
+                    <span className="activity-rail__section-label">
+                      {section.label}
+                    </span>
+                    <span className="activity-rail__section-count">
+                      {section.missions.length}
+                    </span>
+                  </button>
+                  {!isCollapsed && (
+                    <ul className="mission-rail__list activity-rail__list">
+                      {section.missions.map((m) => {
                         const liveInGrid = openMissionIds.has(m.id);
                         const inFlight =
                           liveInGrid ||
                           m.status === 'running' ||
                           m.status === 'blocked';
                         const pinned = pinnedIds.includes(m.id);
-                        // Só pulsa se está no grid OU status running/blocked.
+                        const statusUi = railStatusDisplay(m.status, liveInGrid);
                         const dotStatus =
                           m.status === 'blocked' || m.status === 'failed'
                             ? m.status
-                            : inFlight
+                            : liveInGrid || m.status === 'running'
                               ? 'running'
                               : m.status;
                         return (
                           <li key={m.id} className="mission-rail__row">
                             <button
-                              className={`mission-rail__item ${liveInGrid ? 'mission-rail__item--active' : 'mission-rail__item--idle'}`}
+                              className={`mission-rail__item ${
+                                liveInGrid
+                                  ? 'mission-rail__item--active'
+                                  : 'mission-rail__item--idle'
+                              } mission-rail__item--tone-${statusUi.tone}`}
                               disabled={busy !== null}
                               aria-current={liveInGrid ? 'true' : undefined}
                               title={
                                 liveInGrid
                                   ? 'Missão aberta no grid — clique para focar'
                                   : inFlight
-                                    ? 'Missão em andamento — clique para reabrir/focar panes'
-                                    : 'Retomar esta missão (restaura panes + resume CLI)'
+                                    ? 'Missão em andamento — clique para reabrir'
+                                    : 'Retomar esta missão'
                               }
                               onClick={() => selectMission(m)}
                             >
@@ -468,10 +475,19 @@ export function MissionRail() {
                                 className={`mission-rail__dot mission-rail__dot--${dotStatus}`}
                               />
                               <span className="mission-rail__item-body">
-                                <span className="mission-rail__item-title">
-                                  {pinned && <PixelIcon name="star" size={9} />}
-                                  {pinned ? ' ' : ''}
-                                  {m.title}
+                                <span className="mission-rail__item-top">
+                                  <span className="mission-rail__item-title">
+                                    {pinned && (
+                                      <PixelIcon name="star" size={9} />
+                                    )}
+                                    {pinned ? ' ' : ''}
+                                    {m.title}
+                                  </span>
+                                  <span
+                                    className={`mission-rail__status mission-rail__status--${statusUi.tone}`}
+                                  >
+                                    {statusUi.label}
+                                  </span>
                                 </span>
                                 <span className="mission-rail__item-meta">
                                   {busy === m.id
@@ -484,7 +500,9 @@ export function MissionRail() {
                               type="button"
                               className="mission-rail__pin"
                               title={pinned ? 'Desafixar' : 'Fixar no topo'}
-                              aria-label={pinned ? 'Desafixar missão' : 'Fixar missão'}
+                              aria-label={
+                                pinned ? 'Desafixar missão' : 'Fixar missão'
+                              }
                               onClick={(e) => {
                                 e.stopPropagation();
                                 togglePin(m.id);
@@ -506,13 +524,13 @@ export function MissionRail() {
                             </button>
                           </li>
                         );
-                      })
-                    )}
-                  </ul>
-                )}
-              </section>
-            );
-          })
+                      })}
+                    </ul>
+                  )}
+                </section>
+              );
+            })}
+          </div>
         )}
       </div>
 

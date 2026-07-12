@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { GAMIFICATION_COPY } from '../../shared/gamification-types';
 import { useGamificationStore } from '../state/gamification-store';
-import { OperatorSprite, type OperatorMood } from './OperatorSprite';
+import { ChosenPetPortrait } from './ChosenPetPortrait';
+import type { OperatorMood } from './OperatorSprite';
 import { fmt } from './operator-sprite-data';
 
 /**
@@ -83,12 +84,13 @@ export function OperatorHud() {
       title="Perfil de Operador"
       aria-label={`Perfil de Operador — nível ${level}, ${GAMIFICATION_COPY.tiers[snapshot.tier]}, poder ${snapshot.powerLevel}`}
     >
-      <OperatorSprite
+      <ChosenPetPortrait
         size={24}
-        tier={snapshot.tier}
-        branch={snapshot.branch}
-        skin={snapshot.selectedSkin}
         mood={mood}
+        fallbackTier={snapshot.tier}
+        fallbackBranch={snapshot.branch}
+        fallbackSkin={snapshot.selectedSkin}
+        className="operator-hud__pet"
       />
       <span className="operator-hud__level" aria-hidden="true">
         Lv {level}

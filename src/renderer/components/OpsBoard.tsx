@@ -5,7 +5,7 @@ import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { askConfirm } from '../state/confirm-store';
 import { useGamificationStore } from '../state/gamification-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
-import { OperatorSprite } from './OperatorSprite';
+import { ChosenPetPortrait } from './ChosenPetPortrait';
 import { NexusMark } from './NexusMark';
 import { PixelIcon } from './PixelIcon';
 import {
@@ -129,12 +129,12 @@ export function OpsBoard() {
 
       {missions.length === 0 ? (
         <div className="ops-board__empty">
-          <OperatorSprite
+          <ChosenPetPortrait
             size={48}
-            tier={snapshot.tier}
-            branch={snapshot.branch}
-            skin={snapshot.selectedSkin}
             mood="idle"
+            fallbackTier={snapshot.tier}
+            fallbackBranch={snapshot.branch}
+            fallbackSkin={snapshot.selectedSkin}
           />
           <p className="ops-board__empty-title">Nenhuma missão no pipeline</p>
           <p className="ops-board__empty-sub">
@@ -178,12 +178,12 @@ export function OpsBoard() {
                 <div className="ops-board__cards">
                   {col.missions.length === 0 ? (
                     <div className="ops-board__empty-col">
-                      <OperatorSprite
+                      <ChosenPetPortrait
                         size={34}
-                        tier={snapshot.tier}
-                        branch={snapshot.branch}
-                        skin={snapshot.selectedSkin}
                         mood="sleeping"
+                        fallbackTier={snapshot.tier}
+                        fallbackBranch={snapshot.branch}
+                        fallbackSkin={snapshot.selectedSkin}
                       />
                       <span>operador ocioso</span>
                     </div>

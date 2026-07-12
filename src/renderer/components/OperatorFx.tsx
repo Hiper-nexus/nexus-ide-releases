@@ -5,7 +5,7 @@ import {
   type GamificationTier,
 } from '../../shared/gamification-types';
 import { useGamificationStore } from '../state/gamification-store';
-import { OperatorSprite } from './OperatorSprite';
+import { ChosenPetPortrait } from './ChosenPetPortrait';
 import { fmt } from './operator-sprite-data';
 
 /**
@@ -202,12 +202,12 @@ export function OperatorFx() {
               </span>
             )}
             <span className="operator-fx__burst-sprite">
-              <OperatorSprite
+              <ChosenPetPortrait
                 size={96}
-                tier={burst.tier}
-                branch={snapshot.branch}
-                skin={snapshot.selectedSkin}
                 mood="evolving"
+                fallbackTier={burst.tier}
+                fallbackBranch={snapshot.branch}
+                fallbackSkin={snapshot.selectedSkin}
               />
             </span>
           </div>

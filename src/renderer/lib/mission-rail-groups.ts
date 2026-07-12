@@ -78,7 +78,7 @@ export function groupMissionsForRail(opts: {
     { id: 'active', label: 'Em progresso', missions: active },
     { id: 'queue', label: 'Na fila', missions: queue },
     { id: 'done', label: 'Concluídas', missions: done },
-  ];
+  ] as const satisfies RailSection[];
 }
 
 export function statusLabel(s: MissionStatus): string {
@@ -91,4 +91,33 @@ export function statusLabel(s: MissionStatus): string {
       failed: 'falhou',
     }[s] ?? s
   );
+}
+
+/** Pill curta no card da rail — legível em 1 olhar. */
+export type RailStatusTone =
+  | 'live'
+  | 'running'
+  | 'blocked'
+  | 'done'
+  | 'failed'
+  | 'pending';
+
+export function railStatusDisplay(
+  status: MissionStatus,
+  liveInGrid: boolean,
+): { label: string; tone: RailStatusTone } {
+  if (liveInGrid) return { label: 'Ao vivo', tone: 'live' };
+  switch (status) {
+    case 'running':
+      return { label: 'Em curso', tone: 'running' };
+    case 'blocked':
+      return { label: 'Travada', tone: 'blocked' };
+    case 'done':
+      return { label: 'Concluída', tone: 'done' };
+    case 'failed':
+      return { label: 'Falhou', tone: 'failed' };
+    case 'pending':
+    default:
+      return { label: 'Na fila', tone: 'pending' };
+  }
 }

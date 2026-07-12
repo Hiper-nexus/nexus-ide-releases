@@ -356,8 +356,23 @@
   border-bottom: 1px solid var(--border);
   background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent 70%);
 }
-.operator-profile__header > :first-child {
+.operator-profile__header > :first-child,
+.operator-profile__pet {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+.operator-profile__pet canvas {
+  display: block;
+}
+.operator-hud__pet {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
 }
 .operator-profile__identity {
   display: flex;

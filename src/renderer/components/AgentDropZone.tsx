@@ -32,7 +32,7 @@ export function AgentDropZone({ compact = false }: { compact?: boolean }) {
       title="Arraste ficheiros ou imagens para o agent focado"
     >
       <span className="agent-drop__label">
-        {compact ? '↓ agent' : 'Arrastar ficheiros → agent'}
+        {compact ? 'Soltar ficheiros no agent' : 'Arrastar ficheiros → agent'}
       </span>
       {note && <span className="agent-drop__note">{note}</span>}
     </div>

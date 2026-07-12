@@ -5,17 +5,29 @@
   flex-direction: column;
   gap: 2px;
   margin: 6px 10px 4px;
-  padding: 8px 10px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  padding: 7px 10px;
+  border: 1px dashed color-mix(in srgb, var(--border-strong) 55%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 40%, transparent);
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 10px;
   text-align: center;
-  transition: border-color 120ms ease, background 120ms ease;
+  opacity: 0.65;
+  transition:
+    border-color 140ms var(--ease-out-quart, ease),
+    background 140ms var(--ease-out-quart, ease),
+    opacity 140ms var(--ease-out-quart, ease);
 }
 
+.agent-drop--compact {
+  margin: 6px 10px 2px;
+  padding: 5px 8px;
+  opacity: 0.55;
+}
+
+.agent-drop:hover,
 .agent-drop--active {
+  opacity: 1;
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--text);

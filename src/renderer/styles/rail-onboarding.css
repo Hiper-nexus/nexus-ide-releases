@@ -51,8 +51,8 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 6px 0 8px;
+  gap: 10px;
+  padding: 8px 0 10px;
 }
 
 .activity-rail__section {
@@ -61,20 +61,118 @@
   min-width: 0;
 }
 
-/* ── Workspace ≠ missão: pasta de contexto, chip compacto (sem card “missão”) ─ */
+.activity-rail__missions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 8px;
+}
+
+/* ── Seções com cor de estado (ops: trilho + tinta, legível de relance) ─ */
+.activity-rail__section--active,
+.activity-rail__section--queue,
+.activity-rail__section--done,
+.activity-rail__section--pinned {
+  position: relative;
+  padding: 6px 0 6px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  overflow: hidden;
+}
+
+/* Trilho superior de 2px — mesmo idioma do Ops Board (sem side-stripe). */
+.activity-rail__section--active::before,
+.activity-rail__section--queue::before,
+.activity-rail__section--done::before,
+.activity-rail__section--pinned::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  pointer-events: none;
+}
+
+.activity-rail__section--active {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.activity-rail__section--active::before {
+  background: var(--state-running);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+.activity-rail__section--active .activity-rail__section-label {
+  color: var(--accent);
+}
+.activity-rail__section--active .activity-rail__section-count {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: var(--accent);
+}
+
+.activity-rail__section--queue {
+  border-color: color-mix(in srgb, var(--warn) 34%, var(--border));
+  background: color-mix(in srgb, var(--warn) 7%, transparent);
+}
+.activity-rail__section--queue::before {
+  background: var(--warn);
+}
+.activity-rail__section--queue .activity-rail__section-label {
+  color: color-mix(in srgb, var(--warn) 90%, var(--text));
+}
+.activity-rail__section--queue .activity-rail__section-count {
+  background: color-mix(in srgb, var(--warn) 20%, transparent);
+  color: var(--warn);
+}
+
+.activity-rail__section--done {
+  border-color: color-mix(in srgb, var(--ok) 26%, var(--border));
+  background: color-mix(in srgb, var(--ok) 5%, transparent);
+}
+.activity-rail__section--done::before {
+  background: var(--ok);
+  opacity: 0.85;
+}
+.activity-rail__section--done .activity-rail__section-label {
+  color: color-mix(in srgb, var(--ok) 85%, var(--text));
+}
+.activity-rail__section--done .activity-rail__section-count {
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  color: var(--ok);
+}
+
+.activity-rail__section--pinned {
+  border-color: color-mix(in srgb, var(--gold) 34%, var(--border));
+  background: color-mix(in srgb, var(--gold) 7%, transparent);
+}
+.activity-rail__section--pinned::before {
+  background: var(--gold);
+}
+.activity-rail__section--pinned .activity-rail__section-label {
+  color: color-mix(in srgb, var(--gold) 85%, var(--text));
+}
+.activity-rail__section--pinned .activity-rail__section-count {
+  background: color-mix(in srgb, var(--gold) 18%, transparent);
+  color: var(--gold);
+}
+
+/* ── Workspace ≠ missão: chip compacto ─ */
 .activity-rail__section--workspaces {
-  margin: 0 0 4px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  margin: 0 8px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--text-dim) 22%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
 }
 
 .activity-rail__ws-list {
   list-style: none;
   margin: 0;
-  padding: 0 10px 2px;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .activity-rail__ws-row {
@@ -87,11 +185,11 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 34px;
-  padding: 5px 28px 5px 8px;
-  border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  min-height: 36px;
+  padding: 6px 10px 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
   color: var(--text);
   font: inherit;
   text-align: left;
@@ -100,16 +198,14 @@
 }
 
 .activity-rail__ws-chip:hover {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  background: color-mix(in srgb, var(--bg-elevated) 80%, var(--bg));
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--bg-elevated) 70%, var(--bg));
 }
 
-/* Atual: chip, não o card cyan de missão aberta */
 .activity-rail__ws-chip--current {
   cursor: default;
-  border-color: color-mix(in srgb, var(--text-dim) 35%, var(--border));
-  background: color-mix(in srgb, var(--bg-elevated) 55%, var(--bg));
-  box-shadow: none;
+  border-color: color-mix(in srgb, var(--border-strong) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-elevated) 40%, var(--bg));
 }
 
 .activity-rail__ws-icon {
@@ -203,47 +299,48 @@
   opacity: 0.9;
 }
 
-/* Divisor “Missões” — deixa claro o que vem abaixo */
-.activity-rail__missions-label {
-  margin: 4px 12px 2px;
-  padding-top: 6px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--text-dim) 90%, var(--accent) 10%);
-}
-
 .activity-rail__section-head {
   appearance: none;
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 6px 12px;
+  padding: 8px 10px 6px;
   border: none;
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  text-transform: none;
   cursor: pointer;
   text-align: left;
 }
 
 .activity-rail__section-head--static {
   cursor: default;
+  padding-top: 2px;
+  padding-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--text-dim);
 }
 
 .activity-rail__section-head:hover {
   color: var(--text);
 }
 
+.activity-rail__section-head--static:hover {
+  color: var(--text-dim);
+}
+
 .activity-rail__section-caret {
   width: 10px;
-  opacity: 0.7;
+  opacity: 0.55;
+  font-size: 10px;
 }
 
 .activity-rail__section-label {
@@ -252,22 +349,22 @@
 }
 
 .activity-rail__section-count {
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  font-size: 10px;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
-  opacity: 0.75;
+  text-align: center;
+  opacity: 0.9;
 }
 
 .activity-rail__list {
   flex: 0 0 auto;
   overflow: visible;
-  padding-top: 0;
-  padding-bottom: 4px;
-}
-
-.activity-rail__section-empty {
-  list-style: none;
-  padding: 4px 14px 8px;
-  font-size: 11px;
-  color: var(--text-dim);
+  padding: 0 6px 4px;
+  gap: 5px;
 }
 
 .activity-rail__empty {
@@ -596,20 +693,50 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
-  min-height: 48px;
-  padding: var(--space-2) 48px var(--space-2) var(--space-2);
+  min-height: 44px;
+  padding: 8px 44px 8px 8px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
   text-align: left;
   cursor: pointer;
   color: var(--text);
+  transition:
+    background-color 140ms var(--ease-out-quart),
+    border-color 140ms var(--ease-out-quart);
 }
 .mission-rail__item--idle {
-  background: color-mix(in srgb, var(--bg) 35%, transparent);
-  border-color: color-mix(in srgb, var(--border) 60%, transparent);
+  background: color-mix(in srgb, var(--bg-elevated) 78%, var(--bg));
+  border-color: color-mix(in srgb, var(--border-strong) 70%, transparent);
 }
-.mission-rail__item:hover:not(:disabled) { background: var(--accent-soft); }
+/* Na fila: âmbar no card */
+.activity-rail__section--queue .mission-rail__item--idle {
+  border-color: color-mix(in srgb, var(--warn) 32%, var(--border));
+  background: color-mix(in srgb, var(--warn) 8%, var(--bg-elevated));
+}
+.activity-rail__section--queue .mission-rail__item--idle:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--warn) 50%, var(--border));
+  background: color-mix(in srgb, var(--warn) 14%, var(--bg-elevated));
+}
+/* Em progresso: ciano no card */
+.activity-rail__section--active .mission-rail__item--idle {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated));
+}
+/* Concluídas: verde suave + menos ênfase */
+.activity-rail__section--done .mission-rail__item--idle {
+  border-color: color-mix(in srgb, var(--ok) 22%, var(--border));
+  background: color-mix(in srgb, var(--ok) 6%, var(--bg-elevated));
+  opacity: 0.92;
+}
+.mission-rail__item:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mission-rail__item {
+    transition: none;
+  }
+}
 .mission-rail__remove {
   position: absolute;
   top: 7px;
@@ -646,19 +773,22 @@
 @media (prefers-reduced-motion: reduce) {
   .mission-rail__remove { transition: none; }
 }
-/* Missão ao vivo: borda + barra lateral (workspace NÃO usa isto) */
+/* Missão ao vivo no grid: accent forte (workspace NÃO usa isto) */
 .mission-rail__item--active {
-  background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated));
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  box-shadow:
-    inset 3px 0 0 var(--accent),
-    0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-elevated));
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .mission-rail__item--active .mission-rail__dot {
   background: var(--live);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--live) 55%, transparent);
 }
 .mission-rail__item--active .mission-rail__item-title {
   font-weight: 650;
+  color: var(--text);
+}
+.mission-rail__item--active .mission-rail__item-meta {
+  color: color-mix(in srgb, var(--accent) 70%, var(--text-dim));
 }
 .mission-rail__item:disabled { opacity: 0.6; cursor: default; }
 .mission-rail__dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: 0 0 8px; }
@@ -677,10 +807,88 @@
 @media (prefers-reduced-motion: reduce) {
   .mission-rail__dot--running { animation: none; }
 }
-.mission-rail__item-body { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
-.mission-rail__item-title { font-size: var(--text-md); font-weight: 550; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mission-rail__item-meta { font-size: var(--text-xs); line-height: 1.35; color: var(--text-dim); }
-.mission-rail__note { margin: 0; font-size: var(--text-xs); line-height: 1.4; color: var(--danger); padding: var(--space-2) var(--space-3); border-top: 1px solid var(--border); }
+.mission-rail__item-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.mission-rail__item-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+.mission-rail__item-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mission-rail__item-meta {
+  font-size: var(--text-xs);
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+/* Status pill — cor = estado (mesmo vocabulário do ops board) */
+.mission-rail__status {
+  flex: 0 0 auto;
+  max-width: 72px;
+  margin-top: 1px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mission-rail__status--live {
+  color: var(--live);
+  border-color: color-mix(in srgb, var(--live) 45%, transparent);
+  background: color-mix(in srgb, var(--live) 14%, transparent);
+}
+.mission-rail__status--running {
+  color: var(--state-running);
+  border-color: color-mix(in srgb, var(--state-running) 42%, transparent);
+  background: color-mix(in srgb, var(--state-running) 12%, transparent);
+}
+.mission-rail__status--blocked {
+  color: var(--state-blocked);
+  border-color: color-mix(in srgb, var(--state-blocked) 45%, transparent);
+  background: color-mix(in srgb, var(--state-blocked) 12%, transparent);
+}
+.mission-rail__status--done {
+  color: var(--state-done);
+  border-color: color-mix(in srgb, var(--state-done) 40%, transparent);
+  background: color-mix(in srgb, var(--state-done) 10%, transparent);
+}
+.mission-rail__status--failed {
+  color: var(--state-failed);
+  border-color: color-mix(in srgb, var(--state-failed) 45%, transparent);
+  background: color-mix(in srgb, var(--state-failed) 12%, transparent);
+}
+.mission-rail__status--pending {
+  color: var(--text-dim);
+  border-color: color-mix(in srgb, var(--border-strong) 80%, transparent);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+.mission-rail__note {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--danger);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+}
 
 @media (max-width: 1120px) {
   .mission-rail {

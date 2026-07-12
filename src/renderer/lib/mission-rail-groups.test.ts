@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
-import { groupMissionsForRail } from './mission-rail-groups';
+import {
+  groupMissionsForRail,
+  railStatusDisplay,
+} from './mission-rail-groups';
 
 function mission(
   partial: Partial<Mission> & Pick<Mission, 'id' | 'title' | 'status'>,
@@ -97,5 +100,22 @@ describe('groupMissionsForRail', () => {
     expect(sections.find((s) => s.id === 'active')?.missions.map((m) => m.id)).toEqual(
       ['a'],
     );
+  });
+});
+
+describe('railStatusDisplay', () => {
+  it('marks live grid as Ao vivo', () => {
+    expect(railStatusDisplay('pending', true)).toEqual({
+      label: 'Ao vivo',
+      tone: 'live',
+    });
+  });
+
+  it('maps mission status to pill labels', () => {
+    expect(railStatusDisplay('pending', false).label).toBe('Na fila');
+    expect(railStatusDisplay('running', false).label).toBe('Em curso');
+    expect(railStatusDisplay('blocked', false).label).toBe('Travada');
+    expect(railStatusDisplay('done', false).label).toBe('Concluída');
+    expect(railStatusDisplay('failed', false).label).toBe('Falhou');
   });
 });

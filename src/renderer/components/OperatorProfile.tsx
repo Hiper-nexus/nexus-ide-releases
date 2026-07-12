@@ -4,7 +4,7 @@ import {
   type GamificationSnapshot,
 } from '../../shared/gamification-types';
 import { useGamificationStore } from '../state/gamification-store';
-import { OperatorSprite } from './OperatorSprite';
+import { ChosenPetPortrait } from './ChosenPetPortrait';
 import { fmt } from './operator-sprite-data';
 
 /**
@@ -102,12 +102,13 @@ export function OperatorProfile() {
         onClick={(e) => e.stopPropagation()}
       >
         <header className="operator-profile__header">
-          <OperatorSprite
+          <ChosenPetPortrait
             size={96}
-            tier={snapshot.tier}
-            branch={snapshot.branch}
-            skin={snapshot.selectedSkin}
             mood="idle"
+            fallbackTier={snapshot.tier}
+            fallbackBranch={snapshot.branch}
+            fallbackSkin={snapshot.selectedSkin}
+            className="operator-profile__pet"
           />
           <div className="operator-profile__identity">
             <span className="operator-profile__branch">
