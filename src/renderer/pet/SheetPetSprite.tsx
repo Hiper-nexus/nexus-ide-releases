@@ -10,9 +10,9 @@ import {
  * Sprite de spritesheet Codex v2: anima recortando frames do sheet num
  * canvas. Paridade visual com o pet do Codex:
  * - malha derivada das dimensões reais (8×9 petdex ou 8×11 v2)
- * - escala **inteira** da célula (192×208 → 1×/2×/3×) — nunca 240px
- *   fracionário, que embraça pixel art e “corta” silhueta
- * - nearest-neighbor (sem smoothing) + image-rendering: pixelated
+ * - escala estável (1× inteiro, meio-termo fracionário com nearest, 2× se couber)
+ * - não reinicia o loop ao só inverter corrida L↔R (evita “piscar”)
+ * - ignora colunas vazias no fim da linha (packs petdex)
  */
 
 export type SheetAnim =
@@ -29,15 +29,13 @@ interface SheetPetSpriteProps {
   anim: SheetAnim;
   /** Direção do olhar quantizada; só vale durante o idle em sheets 8×11. */
   lookDir?: number | null;
-  /**
-   * Altura-alvo em CSS px. A altura real usa o múltiplo inteiro da célula
-   * mais próximo (sem ultrapassar o alvo, mínimo 1×).
-   */
+  /** Altura-alvo em CSS px. */
   size: number;
 }
 
 const FRAME_MS = 140;
-const RUN_FRAME_MS = 80;
+/** Corrida um pouco mais calma — packs petdex têm frames bem distintos. */
+const RUN_FRAME_MS = 100;
 
 function prefersReducedMotion(): boolean {
   return (
@@ -47,9 +45,10 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
- * Escala de exibição (Codex: células 192×208).
- * - target ≥ célula: múltiplo inteiro (1×/2×/3×) — nítido no desktop.
- * - target < célula (preview): encolhe mantendo aspecto (thumbnails).
+ * Escala de exibição (célula Codex 192×208).
+ * - ≥2×: múltiplo inteiro (nítido)
+ * - entre 1× e 2×: encaixa no alvo com nearest (tamanho confortável no desktop)
+ * - <1×: thumbnail
  */
 export function integerSheetScale(
   frameW: number,
@@ -59,14 +58,27 @@ export function integerSheetScale(
   const safeW = Math.max(1, frameW);
   const safeH = Math.max(1, frameH);
   const target = Math.max(1, targetH);
-  if (target >= safeH) {
-    const scale = Math.max(1, Math.floor(target / safeH));
+  if (target >= safeH * 2) {
+    const scale = Math.max(2, Math.floor(target / safeH));
     return {
       scale,
       displayW: safeW * scale,
       displayH: safeH * scale,
       integer: true,
     };
+  }
+  if (target > safeH) {
+    const scale = target / safeH;
+    return {
+      scale,
+      displayW: Math.max(1, Math.round(safeW * scale)),
+      displayH: Math.max(1, Math.round(safeH * scale)),
+      // Fractional mid-scale: still nearest for crisp pixels.
+      integer: true,
+    };
+  }
+  if (target === safeH) {
+    return { scale: 1, displayW: safeW, displayH: safeH, integer: true };
   }
   const scale = target / safeH;
   return {
@@ -75,6 +87,59 @@ export function integerSheetScale(
     displayH: Math.max(1, Math.round(safeH * scale)),
     integer: false,
   };
+}
+
+/** Família de animação: L/R run partilham o loop de frames. */
+function animFamily(anim: SheetAnim): string {
+  if (anim === 'run-left' || anim === 'run-right') return 'run';
+  return anim;
+}
+
+/**
+ * Conta quantas colunas do início da linha têm pixels opacos.
+ * Petdex deixa slots vazios no fim (idle col 6–7, wave 4–7, …).
+ */
+function countOpaqueColumns(
+  image: HTMLImageElement,
+  row: number,
+  cols: number,
+  frameW: number,
+  frameH: number,
+  maxFrames: number,
+): number {
+  const canvas = document.createElement('canvas');
+  canvas.width = frameW;
+  canvas.height = frameH;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx || frameW < 1 || frameH < 1) return Math.max(1, maxFrames);
+  let count = 0;
+  const limit = Math.min(cols, maxFrames);
+  for (let col = 0; col < limit; col += 1) {
+    ctx.clearRect(0, 0, frameW, frameH);
+    ctx.drawImage(
+      image,
+      col * frameW,
+      row * frameH,
+      frameW,
+      frameH,
+      0,
+      0,
+      frameW,
+      frameH,
+    );
+    const data = ctx.getImageData(0, 0, frameW, frameH).data;
+    let opaque = 0;
+    // Sample every 4th pixel for speed.
+    for (let i = 3; i < data.length; i += 16) {
+      if (data[i]! > 24) {
+        opaque += 1;
+        if (opaque > 8) break;
+      }
+    }
+    if (opaque <= 8) break;
+    count += 1;
+  }
+  return Math.max(1, count);
 }
 
 export function SheetPetSprite({
@@ -86,6 +151,7 @@ export function SheetPetSprite({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [frame, setFrame] = useState(0);
+  const familyRef = useRef<string>(animFamily(anim));
 
   useEffect(() => {
     const img = new Image();
@@ -109,30 +175,53 @@ export function SheetPetSprite({
     [anim, lookDir, grid.rows],
   );
 
+  const frameW = image ? Math.floor(image.width / grid.cols) : 1;
+  const frameH = image ? Math.floor(image.height / grid.rows) : 1;
+
   const spec = useMemo(() => {
     if (anim === 'sleep') {
       return { row: 0, frames: 1, col: 0 as number | null };
     }
     const base = SHEET_ANIMS[anim];
-    if (base.row >= grid.rows) {
-      return { row: Math.max(0, grid.rows - 1), frames: base.frames, col: null };
+    const row =
+      base.row >= grid.rows ? Math.max(0, grid.rows - 1) : base.row;
+    let frames = base.frames;
+    // Corta colunas vazias no fim (petdex). Só quando a imagem já carregou.
+    if (image && frameW > 1 && frameH > 1) {
+      frames = countOpaqueColumns(
+        image,
+        row,
+        grid.cols,
+        frameW,
+        frameH,
+        base.frames,
+      );
     }
-    return { ...base, col: null as number | null };
-  }, [anim, grid.rows]);
+    return { row, frames, col: null as number | null };
+  }, [anim, grid.rows, grid.cols, image, frameW, frameH]);
 
   useEffect(() => {
-    setFrame(0);
+    const family = animFamily(anim);
+    // Só reinicia o loop ao mudar de família (idle→run, run→wave…),
+    // NÃO ao inverter run-left ↔ run-right — isso causava o “piscar”.
+    if (familyRef.current !== family) {
+      familyRef.current = family;
+      setFrame(0);
+    }
     if (looking || spec.frames <= 1 || prefersReducedMotion()) return undefined;
-    const cadence = anim.startsWith('run-') ? RUN_FRAME_MS : FRAME_MS;
+    const cadence = family === 'run' ? RUN_FRAME_MS : FRAME_MS;
     const timer = window.setInterval(
       () => setFrame((f) => (f + 1) % spec.frames),
       cadence,
     );
     return () => window.clearInterval(timer);
-  }, [spec, anim, looking !== null]);
+  }, [spec.frames, anim, looking !== null]);
 
-  const frameW = image ? Math.floor(image.width / grid.cols) : 1;
-  const frameH = image ? Math.floor(image.height / grid.rows) : 1;
+  // Clamp se a linha passou a ter menos frames (sheet/anim).
+  useEffect(() => {
+    setFrame((f) => (spec.frames > 0 ? f % spec.frames : 0));
+  }, [spec.frames]);
+
   const { displayW, displayH, integer } = integerSheetScale(
     frameW,
     frameH,
@@ -146,19 +235,18 @@ export function SheetPetSprite({
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx || !image || frameW < 1 || frameH < 1) return;
     const row = looking ? looking.row : spec.row;
-    const maxCol = Math.max(0, grid.cols - 1);
+    const maxCol = Math.max(0, Math.min(grid.cols, spec.frames) - 1);
     const col = looking
       ? looking.col
       : spec.col !== null && spec.col !== undefined
         ? Math.min(spec.col, maxCol)
         : Math.min(frame, maxCol);
 
-    // Buffer em device pixels; desenhamos em CSS px com transform dpr.
     canvas.width = Math.max(1, Math.round(displayW * dpr));
     canvas.height = Math.max(1, Math.round(displayH * dpr));
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, displayW, displayH);
-    // Escala inteira: nearest (paridade Codex). Thumb fractional: high quality.
+    // Nearest no desktop (integer flag true também no meio-termo).
     ctx.imageSmoothingEnabled = !integer;
     if (ctx.imageSmoothingEnabled) {
       ctx.imageSmoothingQuality = 'high';

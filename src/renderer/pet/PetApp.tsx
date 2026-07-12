@@ -20,11 +20,15 @@ import {
 /** Sprite grandão (paridade Codex): legível a distância no desktop. */
 const SPRITE_SIZE = 200;
 /**
- * Alvo de altura CSS do sheet. SheetPetSprite escolhe o múltiplo inteiro da
- * célula (192×208) ≤ este valor — tipicamente 2× = 416px, nítido como no Codex.
+ * Altura-alvo do sheet (~1,25× da célula 208). 2× (416) era grande demais
+ * no desktop; 1× (208) fica pequeno — meio-termo legível e estável.
  */
-const SHEET_SIZE = 416;
+const SHEET_SIZE = 260;
 const DRAG_THRESHOLD_PX = 4;
+/** Histerese de direção da corrida — micro-dx no arrasto rápido não vira o pet. */
+const RUN_DIR_HYSTERESIS_PX = 14;
+/** Tempo mínimo numa direção antes de poder inverter (evita piscar L↔R). */
+const RUN_DIR_MIN_MS = 90;
 const CELEBRATE_MS = 3_000;
 
 /** Preset → props do OperatorSprite (skins já existentes da gamificação). */
@@ -118,6 +122,9 @@ export function PetApp() {
     }
     drag.current = { startX: e.clientX, startY: e.clientY, dragging: false };
     let lastScreenX = e.screenX;
+    let runDirLocked: 'left' | 'right' | null = null;
+    let runDirSince = 0;
+    let dxAccum = 0;
 
     const finish = (asDrag: boolean) => {
       const state = drag.current;
@@ -145,13 +152,31 @@ export function PetApp() {
         // no main, então as coordenadas de cliente ficam estáveis.
         window.nexusPet.dragBegin({ x: move.clientX, y: move.clientY });
       }
-      // Direção da corrida pelo movimento ABSOLUTO do cursor (screenX): as
-      // coordenadas de cliente ficam paradas enquanto a janela persegue o
-      // cursor. Histerese de 2px segura o flicker em micro-movimentos.
+      // Direção pelo screenX (cliente fica parado enquanto a janela segue).
+      // Acumula dx + histerese + tempo mínimo: sheets petdex têm frames de
+      // corrida bem distintos; inverter L↔R a cada 2px “pisca erro”.
       const dx = move.screenX - lastScreenX;
       lastScreenX = move.screenX;
-      if (dx > 2) setRunDir('right');
-      else if (dx < -2) setRunDir('left');
+      dxAccum += dx;
+      const now = performance.now();
+      const want: 'left' | 'right' | null =
+        dxAccum > RUN_DIR_HYSTERESIS_PX
+          ? 'right'
+          : dxAccum < -RUN_DIR_HYSTERESIS_PX
+            ? 'left'
+            : null;
+      if (want === null) return;
+      dxAccum = 0;
+      if (want === runDirLocked) return;
+      if (
+        runDirLocked !== null &&
+        now - runDirSince < RUN_DIR_MIN_MS
+      ) {
+        return;
+      }
+      runDirLocked = want;
+      runDirSince = now;
+      setRunDir(want);
     };
     const onUp = () => finish(false);
     const onCancel = () => finish(true);

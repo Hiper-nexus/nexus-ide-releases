@@ -33,10 +33,10 @@ import { homedir } from 'node:os';
  */
 
 /**
- * Janela do companion: cabe sheet em 2× (384×416) + balão + margem de arrasto.
- * Paridade com o pet do Codex (célula 192×208 em escala inteira).
+ * Janela do companion: sheet ~260px + balão + margem de arrasto.
+ * (2×/416 era grande demais no desktop.)
  */
-export const PET_WINDOW_SIZE = { width: 480, height: 520 } as const;
+export const PET_WINDOW_SIZE = { width: 380, height: 360 } as const;
 const DRAG_TICK_MS = 16;
 /** Teto de um arrasto: além disso o watchdog assenta a janela sozinho. */
 const DRAG_MAX_MS = 30_000;
