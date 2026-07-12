@@ -55,6 +55,7 @@ import {
 import { stripPromptEcho } from './response-echo';
 import type { VoiceCapture, AutoStopOptions } from './voice-capture';
 import { resolveDelegationReply } from './delegation-confirm';
+import { isClassicActionGrounded } from './classic-action-grounding';
 
 const BRAIN_DEADLINE_MS_LOCAL = 35_000;
 const JARVIS_MEMORY_MS_LOCAL = 300_000;
@@ -166,6 +167,15 @@ export async function runJarvisTurn(
     newHistory.length > maxTurns * 2 ? newHistory.slice(-(maxTurns * 2)) : newHistory,
   );
 
+  if (!isClassicActionGrounded(transcript, reply.action)) {
+    logVoiceEvent('warn', 'jarvis.classicActionUngrounded', 'ação Classic bloqueada sem intenção correspondente', {
+      action: reply.action.type,
+      transcriptChars: transcript.length,
+    });
+    reply.action = { type: 'none' };
+    reply.expectReply = false;
+    reply.say = 'Não executei nenhuma ação porque não identifiquei um pedido claro.';
+  }
   const exec = await executeJarvisActionForTurn(reply, context);
   let sayText = exec.sayText;
   if (exec.expectReply !== undefined) reply.expectReply = exec.expectReply;
