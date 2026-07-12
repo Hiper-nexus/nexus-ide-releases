@@ -70,10 +70,10 @@ describe('resolveAppArgument / default targets', () => {
     ).toBe(path.join(cwd, 'out/NexusIDE-darwin-arm64/NexusIDE.app'));
     expect(
       defaultPackagedTargetPath({ platform: 'linux', arch: 'x64', cwd }),
-    ).toBe(path.join(cwd, 'out/NexusIDE-linux-x64/NexusIDE'));
+    ).toBe(path.join(cwd, 'out/NexusIDE-linux-x64/nexus-ide'));
     expect(
       defaultPackagedTargetPath({ platform: 'win32', arch: 'x64', cwd }),
-    ).toBe(path.join(cwd, 'out/NexusIDE-win32-x64/NexusIDE.exe'));
+    ).toBe(path.join(cwd, 'out/NexusIDE-win32-x64/nexus-ide.exe'));
   });
 
   it('rejects unsupported platform/arch for defaults', () => {
@@ -93,7 +93,7 @@ describe('resolvePackagedTarget / packagedBinaryForApp', () => {
       arch: 'arm64',
     });
     expect(target.binary).toBe(
-      path.join('/tmp/release/NexusIDE.app', 'Contents', 'MacOS', 'NexusIDE'),
+      path.join('/tmp/release/NexusIDE.app', 'Contents', 'MacOS', 'nexus-ide'),
     );
     expect(target.unpackedRoot).toBe(
       path.join(
@@ -112,13 +112,13 @@ describe('resolvePackagedTarget / packagedBinaryForApp', () => {
     const root = makeTemp();
     const app = path.join(root, 'NexusIDE.app');
     fs.mkdirSync(path.join(app, 'Contents', 'MacOS'), { recursive: true });
-    fs.writeFileSync(path.join(app, 'Contents', 'MacOS', 'NexusIDE'), '');
+    fs.writeFileSync(path.join(app, 'Contents', 'MacOS', 'nexus-ide'), '');
     const target = resolvePackagedTarget(root, {
       platform: 'darwin',
       arch: 'arm64',
     });
     expect(target.appPath).toBe(app);
-    expect(target.binary).toBe(path.join(app, 'Contents', 'MacOS', 'NexusIDE'));
+    expect(target.binary).toBe(path.join(app, 'Contents', 'MacOS', 'nexus-ide'));
   });
 
   it('rejects non-app macOS targets without nested bundle', () => {
@@ -136,7 +136,7 @@ describe('resolvePackagedTarget / packagedBinaryForApp', () => {
       platform: 'linux',
       arch: 'x64',
     });
-    expect(dirTarget.binary).toBe(path.join(packageDir, 'NexusIDE'));
+    expect(dirTarget.binary).toBe(path.join(packageDir, 'nexus-ide'));
     expect(dirTarget.unpackedRoot).toBe(
       path.join(packageDir, 'resources', 'app.asar.unpacked'),
     );
@@ -144,12 +144,12 @@ describe('resolvePackagedTarget / packagedBinaryForApp', () => {
     const root = makeTemp();
     const realPackage = path.join(root, 'NexusIDE-linux-x64');
     fs.mkdirSync(path.join(realPackage, 'resources'), { recursive: true });
-    fs.writeFileSync(path.join(realPackage, 'NexusIDE'), '');
+    fs.writeFileSync(path.join(realPackage, 'nexus-ide'), '');
     const fileTarget = resolvePackagedTarget(
-      path.join(realPackage, 'NexusIDE'),
+      path.join(realPackage, 'nexus-ide'),
       { platform: 'linux', arch: 'x64' },
     );
-    expect(fileTarget.binary).toBe(path.join(realPackage, 'NexusIDE'));
+    expect(fileTarget.binary).toBe(path.join(realPackage, 'nexus-ide'));
     expect(fileTarget.packageDir).toBe(realPackage);
   });
 
@@ -159,12 +159,12 @@ describe('resolvePackagedTarget / packagedBinaryForApp', () => {
       platform: 'win32',
       arch: 'x64',
     });
-    expect(dirTarget.binary).toBe(path.join(packageDir, 'NexusIDE.exe'));
+    expect(dirTarget.binary).toBe(path.join(packageDir, 'nexus-ide.exe'));
     expect(dirTarget.unpackedRoot).toBe(
       path.join(packageDir, 'resources', 'app.asar.unpacked'),
     );
 
-    const exePath = path.join(packageDir, 'NexusIDE.exe');
+    const exePath = path.join(packageDir, 'nexus-ide.exe');
     const exeTarget = resolvePackagedTarget(exePath, {
       platform: 'win32',
       arch: 'x64',
@@ -565,16 +565,16 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
     let unpacked;
     if (platform === 'darwin') {
       const app = path.join(root, 'NexusIDE.app');
-      binary = path.join(app, 'Contents', 'MacOS', 'NexusIDE');
+      binary = path.join(app, 'Contents', 'MacOS', 'nexus-ide');
       unpacked = path.join(app, 'Contents', 'Resources', 'app.asar.unpacked');
       fs.mkdirSync(path.dirname(binary), { recursive: true });
       fs.writeFileSync(binary, '');
     } else if (platform === 'win32') {
-      binary = path.join(root, 'NexusIDE.exe');
+      binary = path.join(root, 'nexus-ide.exe');
       unpacked = path.join(root, 'resources', 'app.asar.unpacked');
       fs.writeFileSync(binary, '');
     } else {
-      binary = path.join(root, 'NexusIDE');
+      binary = path.join(root, 'nexus-ide');
       unpacked = path.join(root, 'resources', 'app.asar.unpacked');
       fs.writeFileSync(binary, '');
     }

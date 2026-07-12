@@ -15,6 +15,7 @@ const PACKAGED_LICENSE_PATHS = [
   'third_party/licenses/OFL-1.1.txt',
 ];
 const PRODUCT_NAME = 'NexusIDE';
+const EXECUTABLE_NAME = 'nexus-ide';
 const PACKAGED_SMOKE_ARGUMENT = 'nexus-smoke-test';
 /** Must match FUNCTIONAL_SMOKE_FILE_CONTENT in src/shared/smoke-types.ts. */
 const FUNCTIONAL_SMOKE_MARKER_CONTENT = 'nexus-functional-smoke\n';
@@ -38,6 +39,7 @@ const SENSITIVE_ENVIRONMENT_KEY =
 export {
   TIMEOUT_MS,
   PRODUCT_NAME,
+  EXECUTABLE_NAME,
   PACKAGED_SMOKE_ARGUMENT,
   FUNCTIONAL_SMOKE_MARKER_CONTENT,
   SUPPORTED_PLATFORMS,
@@ -57,8 +59,8 @@ export function resolveAppArgument(args) {
 /**
  * Default electron-forge package output for the host target.
  * darwin → out/NexusIDE-darwin-<arch>/NexusIDE.app
- * linux  → out/NexusIDE-linux-<arch>/NexusIDE
- * win32  → out/NexusIDE-win32-<arch>/NexusIDE.exe
+ * linux  → out/NexusIDE-linux-<arch>/nexus-ide
+ * win32  → out/NexusIDE-win32-<arch>/nexus-ide.exe
  */
 export function defaultPackagedTargetPath({
   platform = process.platform,
@@ -71,9 +73,9 @@ export function defaultPackagedTargetPath({
     return path.join(outDir, `${PRODUCT_NAME}.app`);
   }
   if (platform === 'win32') {
-    return path.join(outDir, `${PRODUCT_NAME}.exe`);
+    return path.join(outDir, `${EXECUTABLE_NAME}.exe`);
   }
-  return path.join(outDir, PRODUCT_NAME);
+  return path.join(outDir, EXECUTABLE_NAME);
 }
 
 function assertSupportedTarget(platform, arch) {
@@ -124,7 +126,7 @@ function resolveDarwinTarget(resolved) {
     platform: 'darwin',
     appPath,
     packageDir: path.dirname(appPath),
-    binary: path.join(appPath, 'Contents', 'MacOS', PRODUCT_NAME),
+    binary: path.join(appPath, 'Contents', 'MacOS', EXECUTABLE_NAME),
     resourcesDir: path.join(appPath, 'Contents', 'Resources'),
     unpackedRoot: path.join(
       appPath,
@@ -144,7 +146,7 @@ function resolveWindowsTarget(resolved) {
     packageDir = path.dirname(resolved);
   } else {
     packageDir = resolved;
-    binary = path.join(packageDir, `${PRODUCT_NAME}.exe`);
+    binary = path.join(packageDir, `${EXECUTABLE_NAME}.exe`);
   }
   return {
     platform: 'win32',
@@ -160,19 +162,19 @@ function resolveLinuxTarget(resolved) {
   let packageDir;
   let binary;
   const base = path.basename(resolved);
-  if (base === PRODUCT_NAME) {
+  if (base === EXECUTABLE_NAME) {
     // Executable path when it is a file or does not exist yet; directory only
     // when the path already exists as a folder (rare forge layout).
     if (existsSync(resolved) && isDirSync(resolved)) {
       packageDir = resolved;
-      binary = path.join(packageDir, PRODUCT_NAME);
+      binary = path.join(packageDir, EXECUTABLE_NAME);
     } else {
       binary = resolved;
       packageDir = path.dirname(resolved);
     }
   } else {
     packageDir = resolved;
-    binary = path.join(packageDir, PRODUCT_NAME);
+    binary = path.join(packageDir, EXECUTABLE_NAME);
   }
   return {
     platform: 'linux',

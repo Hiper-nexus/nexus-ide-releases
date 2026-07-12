@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.13.11 — Operator UX
+
+Data: 2026-07-11
+
+### Correções
+- Smoke runtime resolve o executável `nexus-ide` dentro de DMG, DEB e NUPKG,
+  preservando `NexusIDE` apenas como nome visível do produto.
+
+### Build
+- Release `v0.13.11` multi-arquitetura pelo workflow assinado/notarizado.
+
 ## 0.13.10 — Operator UX
 
 Data: 2026-07-11
