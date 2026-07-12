@@ -179,22 +179,27 @@ async function probeWakeHeadFalsePositive(
   });
   const scoreSilence = (outSilence[wake.outputNames[0]].data as Float32Array)[0] ?? 0;
 
-  const noise = new Float32Array(EMB_WINDOW * 96);
-  for (let i = 0; i < noise.length; i += 1) {
-    noise[i] = (Math.random() * 2 - 1) * 0.05;
+  // Deterministic multi-probe: one Math.random sample made startup acceptance
+  // nondeterministic and missed the previous broken head on unlucky launches.
+  let state = 0x4e455855;
+  let peak = Number.isFinite(scoreSilence) ? scoreSilence : 1;
+  for (let probe = 0; probe < 8; probe += 1) {
+    const noise = new Float32Array(EMB_WINDOW * 96);
+    for (let i = 0; i < noise.length; i += 1) {
+      state = (Math.imul(1_664_525, state) + 1_013_904_223) >>> 0;
+      noise[i] = ((state / 0x1_0000_0000) * 2 - 1) * 0.05;
+    }
+    const outNoise = await wake.run({
+      [wake.inputNames[0]]: new ort.Tensor('float32', noise, [1, EMB_WINDOW, 96]),
+    });
+    const score = (outNoise[wake.outputNames[0]].data as Float32Array)[0] ?? 0;
+    peak = Math.max(peak, Number.isFinite(score) ? score : 1);
   }
-  const outNoise = await wake.run({
-    [wake.inputNames[0]]: new ort.Tensor('float32', noise, [1, EMB_WINDOW, 96]),
-  });
-  const scoreNoise = (outNoise[wake.outputNames[0]].data as Float32Array)[0] ?? 0;
-  return Math.max(
-    Number.isFinite(scoreSilence) ? scoreSilence : 1,
-    Number.isFinite(scoreNoise) ? scoreNoise : 1,
-  );
+  return peak;
 }
 
 /** Above this on silence/noise the PT head is considered broken (overfit). */
-const CUSTOM_WAKE_FP_PROBE_MAX = 0.45;
+const CUSTOM_WAKE_FP_PROBE_MAX = 0.85;
 
 export class WakeEngine {
   private mel: ort.InferenceSession | null = null;

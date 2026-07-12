@@ -91,7 +91,7 @@ describe('wake score gate', () => {
   it('with preferCustom + PT loaded, does not fire on EN alone', () => {
     expect(
       resolveWakeDetection(
-        { embedded: 0.99, custom: 0.1 },
+        { embedded: 0.99, custom: CUSTOM_WAKE_SCORE_THRESHOLD - 0.01 },
         { preferCustom: true, peakRms: 0.5 },
       ),
     ).toBeNull();
