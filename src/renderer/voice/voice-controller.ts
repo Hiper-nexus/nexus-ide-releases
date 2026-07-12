@@ -650,26 +650,21 @@ export function useVoiceController(): void {
           return;
         }
 
-        passiveWakeAdmission.accept();
-
-        // Passive STT is an untrusted ambient sensor. Even an exact-prefix
-        // phrase can come from a video or another person, so it may wake Jarvis
-        // but never forwards the rest as a command. A fresh post-wake utterance
-        // is required and owned by the normal Live/confirmation pipeline.
+        // TV speech was repeatedly hallucinated as "Jarvis + frase" while the
+        // acoustic PT head stayed far below threshold. A passive transcript
+        // containing any command therefore has no wake authority by itself.
         if (match.command.trim()) {
           logVoiceEvent(
             'info',
-            'wake.passiveEmbeddedCommandWakeOnly',
-            'STT passivo confirmou o nome; comando embutido descartado por segurança',
+            'wake.passiveEmbeddedCommandRejected',
+            'STT passivo com frase não recebeu autoridade acústica para acordar',
             { latencyMs, provider: result.provider, commandWords: match.command.split(/\s+/).length },
           );
-          if (statusNow === 'speaking') {
-            stopAllPlayback();
-            await window.nexus.voice.liveInterrupt('voice-barge').catch(() => undefined);
-          }
-          onWake(statusNow === 'speaking' ? 'voice-barge' : 'voice');
+          passiveWakeAdmission.reject(Date.now());
           return;
         }
+
+        passiveWakeAdmission.accept();
 
         logVoiceEvent('info', 'wake.passiveDetected', 'wake textual confirmado', {
           latencyMs,
