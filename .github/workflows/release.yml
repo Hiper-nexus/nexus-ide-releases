@@ -333,9 +333,9 @@ jobs:
           EXTRACTED="$RUNNER_TEMP/nexus-deb"
           mkdir -p "$EXTRACTED"
           dpkg-deb --extract "${DEBS[0]}" "$EXTRACTED"
-          mapfile -t BINARIES < <(find "$EXTRACTED" -type f -name NexusIDE -perm -111)
+          mapfile -t BINARIES < <(find "$EXTRACTED" -type f -name nexus-ide -perm -111)
           test "${#BINARIES[@]}" = 1 || {
-            echo "::error::esperado 1 executável NexusIDE no DEB, achei ${#BINARIES[@]}"
+            echo "::error::esperado 1 executável nexus-ide no DEB, achei ${#BINARIES[@]}"
             exit 1
           }
           xvfb-run -a node scripts/smoke-packaged-app.mjs --app "${BINARIES[0]}"
@@ -423,8 +423,8 @@ jobs:
           $extracted = Join-Path $env:RUNNER_TEMP 'NexusIDE-nupkg'
           Copy-Item $packages[0].FullName $archive
           Expand-Archive -Path $archive -DestinationPath $extracted
-          $binaries = @(Get-ChildItem $extracted -Recurse -File -Filter 'NexusIDE.exe')
-          if ($binaries.Count -ne 1) { throw "esperado 1 NexusIDE.exe no NUPKG, achei $($binaries.Count)" }
+          $binaries = @(Get-ChildItem $extracted -Recurse -File -Filter 'nexus-ide.exe')
+          if ($binaries.Count -ne 1) { throw "esperado 1 nexus-ide.exe no NUPKG, achei $($binaries.Count)" }
           node scripts/smoke-packaged-app.mjs --app $binaries[0].FullName
           if ($LASTEXITCODE -ne 0) { throw 'smoke Windows falhou' }
 

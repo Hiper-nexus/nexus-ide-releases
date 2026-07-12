@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.13.10 — Operator UX
+
+Data: 2026-07-11
+
+### Correções
+- Smokes Linux e Windows e verificador de entitlements macOS alinhados ao nome
+  estável do executável empacotado.
+
+### Build
+- Release `v0.13.10` multi-arquitetura pelo workflow assinado/notarizado.
+
 ## 0.13.9 — Operator UX
 
 Data: 2026-07-11

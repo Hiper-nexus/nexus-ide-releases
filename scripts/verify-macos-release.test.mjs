@@ -53,7 +53,7 @@ describe('macOS release artifact contract', () => {
   it('maps Mach-O classes to the least-privilege entitlement allowlist', () => {
     const app = '/tmp/NexusIDE.app';
     expect(expectedEntitlementKeysForPath(
-      `${app}/Contents/MacOS/NexusIDE`,
+      `${app}/Contents/MacOS/nexus-ide`,
       app,
     )).toEqual([
       'com.apple.security.cs.allow-jit',

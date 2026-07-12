@@ -90,7 +90,7 @@ export function expectedEntitlementKeysForPath(filePath, appPath) {
   ) {
     return ['com.apple.security.cs.allow-jit'];
   }
-  if (normalized === `${normalizedApp}/Contents/MacOS/NexusIDE`) {
+  if (normalized === `${normalizedApp}/Contents/MacOS/nexus-ide`) {
     return [
       'com.apple.security.cs.allow-jit',
       'com.apple.security.device.audio-input',
