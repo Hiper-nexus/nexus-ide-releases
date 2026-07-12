@@ -810,6 +810,60 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
+  it('recovers explicit engineering work when Gemini finishes after only narrating', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+    const events: Array<{ channel: string; payload: unknown }> = [];
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, enabled: true, transport: 'gemini-live' },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key', voiceApiKeySource: () => 'env' }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(
+      (channel, payload) => events.push({ channel, payload }),
+      () => 1_000,
+    );
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(
+      (channel, payload) => events.push({ channel, payload }),
+      session,
+    );
+    await controller.onStart();
+
+    expect(controller.rescueText('fix-turn', 'analise os logs e corrija esse erro')).toBe(true);
+    provider.fireResponseDone();
+
+    const recovered = events.find((event) =>
+      event.channel === VOICE_CHANNELS.liveToolCall &&
+      (event.payload as { callId?: string }).callId?.includes('recover-delegation'),
+    );
+    expect(recovered?.payload).toMatchObject({
+      name: 'nexus_action',
+      tool: 'send_to_pane',
+      args: {
+        action: 'send_to_pane',
+        text: 'analise os logs e corrija esse erro',
+      },
+    });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
   it('replays screen context after the realtime provider becomes ready', async () => {
     vi.resetModules();
     const pending = deferred();

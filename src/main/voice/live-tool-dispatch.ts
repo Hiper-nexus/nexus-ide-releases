@@ -42,6 +42,22 @@ export function isExplicitNewWorkspaceIntent(text: string): boolean {
   return creation && target;
 }
 
+/**
+ * Work requested in imperative form must reach an agent pane. Gemini may first
+ * inspect a pane (or narrate "vou analisar") and then finish the turn without
+ * delegating. This narrow classifier lets the controller recover that missing
+ * effect deterministically; questions and conversational mentions stay with
+ * the model.
+ */
+export function isExplicitEngineeringWorkIntent(text: string): boolean {
+  const normalized = normalizedIntent(text);
+  if (!normalized || normalized.split(' ').length < 2) return false;
+  if (/^(como|porque|por que|qual|quais|quando|onde|sera|seria|what|why|how)\b/.test(normalized)) {
+    return false;
+  }
+  return /\b(corrij(?:a|am|ir)|consert(?:e|ar)|resolv(?:a|am|er)|investigu(?:e|em|ar)|analis(?:e|em|ar)|implement(?:e|em|ar)|refator(?:e|em|ar)|ajust(?:e|em|ar)|apliqu(?:e|em|ar)|crie|cri(?:ar|em)|fix|debug|repair|implement|refactor)\b/.test(normalized);
+}
+
 export interface ToolDispatchHost {
   readonly provider: TurnManagedRealtimeProvider | null;
   readonly fsm: JarvisLiveSession;
@@ -53,6 +69,8 @@ export interface ToolDispatchHost {
   armToolResultTimeout(event: JarvisLiveToolEvent): void;
   /** C3 defesa (follow-up 2): o pane tem pergunta pendente narrada no router? */
   hasPendingQuestion(paneId: string): boolean;
+  /** Records that this turn actually attempted the required delegation. */
+  markDelegationAttempt?(): void;
   /** Soft-stop (grace). Prefer hardStop for farewell. */
   onStop(): void;
   /** Hard teardown — closes the socket immediately (encerrar / farewell). */
@@ -132,6 +150,7 @@ export function dispatchNexusAction(
     });
     return;
   }
+  if (args.action === 'send_to_pane') host.markDelegationAttempt?.();
   const action = realtimeArgsToJarvisAction(args);
   const argsRecord = args as Record<string, unknown>;
   const event = host.fsm.realtimeToolCall({

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isExplicitEngineeringWorkIntent,
   isExplicitNewWorkspaceIntent,
   sanitizeNexusActionArgs,
 } from './live-tool-dispatch';
@@ -67,5 +68,25 @@ describe('isExplicitNewWorkspaceIntent', () => {
     '',
   ])('bloqueia fala sem criação explícita: %s', (text) => {
     expect(isExplicitNewWorkspaceIntent(text)).toBe(false);
+  });
+});
+
+describe('isExplicitEngineeringWorkIntent', () => {
+  it.each([
+    'corrija esse erro agora',
+    'analise os logs e resolva o bug',
+    'implemente a correção no login',
+    'refactor the realtime controller',
+  ])('exige delegação para trabalho explícito: %s', (text) => {
+    expect(isExplicitEngineeringWorkIntent(text)).toBe(true);
+  });
+
+  it.each([
+    'como corrigir esse erro?',
+    'por que o login falhou?',
+    'o que você acha disso?',
+    'Jarvis',
+  ])('não transforma pergunta/conversa em trabalho: %s', (text) => {
+    expect(isExplicitEngineeringWorkIntent(text)).toBe(false);
   });
 });

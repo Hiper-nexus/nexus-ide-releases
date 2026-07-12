@@ -38,6 +38,7 @@ import { ThrottledCounter } from '../../shared/live-flow-counter';
 import {
   dispatchNexusAction,
   handleRealtimeToolCall,
+  isExplicitEngineeringWorkIntent,
   type ToolDispatchHost,
 } from './live-tool-dispatch';
 import {
@@ -133,6 +134,8 @@ export class LiveTransportController {
   private readonly smokeProbe: LiveSmokeProbe;
   private localCallSeq = 0;
   private _lastUserTranscript = '';
+  /** Explicit work that Gemini has not yet handed to an agent pane. */
+  private pendingWorkDelegation: string | null = null;
   private providerSpeaking = false;
   private geminiResumeHandle: string | undefined;
   private activeTurnId: string | undefined;
@@ -189,6 +192,10 @@ export class LiveTransportController {
   set latestContext(v: string) { this._latestContext = v; }
   get recentToolResults(): string[] { return this._recentToolResults; }
   set recentToolResults(v: string[]) { this._recentToolResults = v; }
+
+  markDelegationAttempt(): void {
+    this.pendingWorkDelegation = null;
+  }
 
   /** P4: bounded live history (last N final user/assistant transcripts). */
   get liveHistory(): ReadonlyArray<{ role: 'user' | 'assistant'; text: string }> {
@@ -455,6 +462,7 @@ export class LiveTransportController {
     // safety gates must see it before Gemini can emit an action; stale Live
     // transcripts previously blocked explicit requests such as new workspace.
     this._lastUserTranscript = trimmed;
+    this.notePotentialWorkDelegation(trimmed);
     this.recordLiveHistory('user', trimmed);
     provider.sendText(trimmed);
     this._fsm.patchStatus({ status: 'thinking', realtimeReady: true });
@@ -815,10 +823,16 @@ export class LiveTransportController {
       setProvider: (provider) => { this._provider = provider; },
       getActiveTurnId: () => this.activeTurnId,
       setProviderSpeaking: (speaking) => { this.providerSpeaking = speaking; },
-      setLastUserTranscript: (text) => { this._lastUserTranscript = text; },
+      setLastUserTranscript: (text) => {
+        this._lastUserTranscript = text;
+        this.notePotentialWorkDelegation(text);
+      },
       settleSmokeResponseDone: () => this.smokeProbe.settleResponseDone(),
       settleSmokeFailure: (reason) => this.smokeProbe.settleFailure(reason),
-      onProviderResponseDone: () => this.emitToolTurnComplete(),
+      onProviderResponseDone: () => {
+        this.recoverMissingWorkDelegation();
+        this.emitToolTurnComplete();
+      },
       recordLiveHistory: (role, text) => this.recordLiveHistory(role, text),
       touchIdle: () => this.touchIdle(),
       routePendingAnswer: (text) => this.routePendingAnswer(text),
@@ -917,6 +931,40 @@ export class LiveTransportController {
       turnId: pending.turnId,
       waitedMs: Math.max(0, this.now() - pending.sentAt),
     });
+  }
+
+  private notePotentialWorkDelegation(text: string): void {
+    const trimmed = text.trim();
+    if (!isExplicitEngineeringWorkIntent(trimmed)) return;
+    this.pendingWorkDelegation = trimmed.slice(0, 4_000);
+  }
+
+  /**
+   * Last line of defence for action promises: a completed provider response is
+   * not allowed to consume an explicit engineering request after only talking,
+   * reading a pane, or calling an invalid MCP tool. The normal renderer safety
+   * gate still confirms the delegation before any pane receives text.
+   */
+  private recoverMissingWorkDelegation(): void {
+    const text = this.pendingWorkDelegation;
+    if (!text) return;
+    this.pendingWorkDelegation = null;
+    logVoice(
+      'warn',
+      'live.missingDelegationRecovered',
+      'pedido explícito de trabalho terminou sem delegação — enviando ao fluxo seguro',
+      { chars: text.length },
+    );
+    dispatchNexusAction(
+      this as unknown as ToolDispatchHost,
+      {
+        callId: this.nextLocalCallId('recover-delegation'),
+        name: NEXUS_REALTIME_ACTION_TOOL,
+        argumentsJson: '',
+        arguments: {},
+      },
+      { action: 'send_to_pane', text },
+    );
   }
 
   private routePendingAnswer(text: string): void {
