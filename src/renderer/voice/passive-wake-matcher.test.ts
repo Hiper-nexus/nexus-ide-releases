@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
   isTrustedPassiveEmbeddedCommand,
+  isTrustedPassiveWakeOnly,
   matchPassiveWakeWord,
 } from './passive-wake-matcher';
 
 describe('matchPassiveWakeWord (= Overclock matchWakeWord)', () => {
+  it('gives wake-only authority only to the exact configured name', () => {
+    expect(isTrustedPassiveWakeOnly('Jarvis')).toBe(true);
+    expect(isTrustedPassiveWakeOnly('Ei, Jarvis!')).toBe(true);
+    expect(isTrustedPassiveWakeOnly('jars')).toBe(false);
+    expect(isTrustedPassiveWakeOnly('jar')).toBe(false);
+    expect(isTrustedPassiveWakeOnly('obrigado Jarvis')).toBe(false);
+  });
   it('matches jarvis + command rest', () => {
     expect(matchPassiveWakeWord('Ei Jarvis, abra o terminal')).toEqual({
       command: 'abra o terminal',

@@ -99,6 +99,7 @@ import {
 import { NarrationQueue } from './narration-queue';
 import {
   isTrustedPassiveEmbeddedCommand,
+  isTrustedPassiveWakeOnly,
   matchPassiveWakeWord,
 } from './passive-wake-matcher';
 import { PassiveWakeDeadline } from './passive-wake-deadline';
@@ -633,6 +634,17 @@ export function useVoiceController(): void {
               provider: result.provider,
               commandWords: match.command.split(/\s+/).filter(Boolean).length,
             },
+          );
+          passiveWakeAdmission.reject(Date.now());
+          return;
+        }
+
+        if (!match.command.trim() && !isTrustedPassiveWakeOnly(text, latestInfo.persona.assistantName)) {
+          logVoiceEvent(
+            'info',
+            'wake.passiveFuzzyWakeRejected',
+            'alias/truncamento do STT não recebeu autoridade para acordar',
+            { latencyMs, provider: result.provider },
           );
           passiveWakeAdmission.reject(Date.now());
           return;

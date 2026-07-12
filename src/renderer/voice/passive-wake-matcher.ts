@@ -40,6 +40,23 @@ export function isTrustedPassiveEmbeddedCommand(
 }
 
 /**
+ * Wake-only vindo do STT passivo precisa ser exato. Aliases são úteis como
+ * indício acústico, mas não podem abrir uma sessão por conta própria: vídeos
+ * produziram "jars"/"jabs" e o matcher fuzzy os promoveu a Jarvis.
+ */
+export function isTrustedPassiveWakeOnly(
+  transcript: string,
+  assistantName = 'Jarvis',
+): boolean {
+  const transcriptWords = words(transcript);
+  const nameWords = words(assistantName);
+  if (transcriptWords.length === 0 || nameWords.length === 0) return false;
+  const offset = PASSIVE_PREFIX_FILLERS.has(transcriptWords[0] ?? '') ? 1 : 0;
+  if (transcriptWords.length !== offset + nameWords.length) return false;
+  return nameWords.every((word, index) => transcriptWords[offset + index] === word);
+}
+
+/**
  * Detecta chamada à assistente no transcript do STT passivo.
  * Delega 100% ao matchWakeWord do Overclock (+ truncamentos no mesmo módulo).
  */
