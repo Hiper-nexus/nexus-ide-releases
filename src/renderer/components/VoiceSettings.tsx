@@ -22,10 +22,28 @@ import {
 
 type RealtimeTransport = Exclude<JarvisLiveTransport, 'classic'>;
 
+type VoiceSettingsTab =
+  | 'canal'
+  | 'live'
+  | 'voz'
+  | 'atendimento'
+  | 'fallback'
+  | 'persona'
+  | 'credenciais';
+
+const VOICE_TABS: Array<{ id: VoiceSettingsTab; label: string; hint: string }> = [
+  { id: 'canal', label: 'Canal', hint: 'Estado e rota' },
+  { id: 'live', label: 'Live', hint: 'Wake e realtime' },
+  { id: 'voz', label: 'Voz', hint: 'Timbre e fallbacks' },
+  { id: 'atendimento', label: 'Atendimento', hint: 'Fala e atalho' },
+  { id: 'fallback', label: 'Fallback', hint: 'STT · TTS · cérebro' },
+  { id: 'persona', label: 'Persona', hint: 'Nome e estilo' },
+  { id: 'credenciais', label: 'Credenciais', hint: 'Chaves no cofre' },
+];
+
 /**
- * Minimal voice settings: pick STT/TTS provider, speak mode, routing, and the
- * push-to-talk shortcut. Includes a "Test voice" that speaks a line through the
- * active TTS chain (macOS `say` needs no key) so users can confirm audio works.
+ * Painel Jarvis: layout em abas (status → live → voz → operação → keys).
+ * Inclui smoke tests de TTS/Live e persistência de keys + config.
  */
 
 /**
@@ -107,6 +125,7 @@ export function VoiceSettings() {
   const [testResult, setTestResult] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<VoiceSettingsTab>('canal');
 
   // Combo capture: while armed, the next SAFE pressed combo (⌘⇧Space, ⌥F,
   // F6 alone…) becomes the trigger exactly as pressed. Esc cancels. Listens
@@ -460,19 +479,24 @@ export function VoiceSettings() {
         ? 'wake word on'
         : 'wake word off';
 
-  return (
+return (
     <div
       className="agent-picker"
       role="dialog"
       aria-modal="true"
-      aria-label="Voice settings"
+      aria-label="Configurações da Jarvis"
     >
       <div className="agent-picker__overlay" onClick={close} />
       <div className="agent-picker__panel agent-picker__panel--voice voice-settings">
         <header className="voice-settings__hero">
-          <span className="voice-settings__mark" aria-hidden>
-            J
-          </span>
+          <div
+            className={`voice-settings__orb voice-settings__orb--${liveConnectionTone}`}
+            aria-hidden
+          >
+            <span className="voice-settings__orb-core">J</span>
+            <span className="voice-settings__orb-ring" />
+            <span className="voice-settings__orb-ring voice-settings__orb-ring--delay" />
+          </div>
           <div className="voice-settings__hero-copy">
             <div className="voice-settings__title-row">
               <h3 className="voice-settings__title">Jarvis</h3>
@@ -485,7 +509,7 @@ export function VoiceSettings() {
               </span>
             </div>
             <p className="voice-settings__subtitle">
-              Controle de wake word, áudio Live e rotas de fallback.
+              Console de voz: Live, wake word, persona e fallbacks.
             </p>
           </div>
           <CloseButton
@@ -498,490 +522,545 @@ export function VoiceSettings() {
         {!info ? (
           <p className="agent-picker__empty">Carregando pipeline de voz…</p>
         ) : (
-          <>
-            <section className="voice-settings__signal" aria-label="Estado do Jarvis">
-              <div className="voice-settings__signal-summary">
-                <span>Canal de voz</span>
-                <strong>{liveConnectionLabel}</strong>
-                <p>{liveConnectionDetail}</p>
-              </div>
-              <div className="voice-settings__route" aria-label="Rota de atendimento">
-                <span>Wake word</span>
-                <i aria-hidden>→</i>
-                <strong>{realtimeConfigured ? liveTransportLabel : 'Pipeline clássico'}</strong>
-                <i aria-hidden>→</i>
-                <span>{realtimeConfigured ? 'áudio ao vivo' : 'resposta por TTS'}</span>
-              </div>
-              <div className="voice-settings__fallback-strip" aria-label="Fallbacks configurados">
-                <span>
-                  <b>STT fallback</b>
-                  {activeStt}
-                </span>
-                <span>
-                  <b>TTS fallback</b>
-                  {activeTts}
-                </span>
-                <span>
-                  <b>Cérebro fallback</b>
-                  {activeBrain}
-                </span>
-              </div>
-            </section>
-
-            {transcriptAppend.length > 0 && (
-              <section className="voice-settings__section" aria-label="Transcrição live">
-                <div className="voice-settings__section-head">
-                  <h4 className="voice-settings__section-title">Atividade recente</h4>
-                  <span>{Math.min(transcriptAppend.length, 6)} eventos</span>
-                </div>
-                <div className="voice-settings__transcript-list">
-                  {transcriptAppend.slice(-6).map((line, index) => (
-                    <p
-                      className="voice-settings__transcript-line"
-                      key={`${line.ts}-${index}`}
-                    >
-                      <span>{line.role === 'user' ? 'Você' : 'Jarvis'}</span>
-                      <strong>{line.text}</strong>
-                    </p>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            <section className="voice-settings__section" aria-label="Fallback clássico">
-              <div className="voice-settings__section-head voice-settings__section-head--stacked">
-                <h4 className="voice-settings__section-title">Fallback clássico</h4>
-                <p>Usado apenas quando o canal Live não estiver disponível.</p>
-              </div>
-              <div className="voice-settings__form-grid">
-                <label className="agent-picker__label">
-                  STT de fallback
-                  <select
-                    className="agent-picker__select"
-                    value={sttProvider}
-                    onChange={(e) => setSttProvider(e.target.value)}
-                  >
-                    {info.stt.chain.map((p) => (
-                      <option key={p.provider} value={p.provider}>
-                        {providerOption(p)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="agent-picker__label">
-                  TTS de fallback
-                  <select
-                    className="agent-picker__select"
-                    value={ttsProvider}
-                    onChange={(e) => setTtsProvider(e.target.value)}
-                  >
-                    {info.tts.chain.map((p) => (
-                      <option key={p.provider} value={p.provider}>
-                        {providerOption(p)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="agent-picker__label">
-                  Cérebro de fallback
-                  <select
-                    className="agent-picker__select"
-                    value={jarvisBrainProvider}
-                    onChange={(e) => setJarvisBrainProvider(e.target.value)}
-                  >
-                    {info.jarvisBrain.chain.map((p) => (
-                      <option key={p.provider} value={p.provider}>
-                        {providerOption(p)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </section>
-
-            {info.keys.length > 0 && (
-              <section className="voice-settings__section" aria-label="Voice API keys">
-                <div className="voice-settings__section-head voice-settings__section-head--stacked">
-                  <h4 className="voice-settings__section-title">Credenciais</h4>
-                  <p>As chaves ficam protegidas no cofre local deste Mac.</p>
-                </div>
-                {info.keys.map((key) => {
-                  const credentialLink = credentialLinkForEnv(key.envVar);
-                  return (
-                    <div className="voice-settings__key-row" key={key.envVar}>
-                      <label className="agent-picker__label voice-settings__key-label">
-                        {key.envVar}
-                        <input
-                          className="agent-picker__select"
-                          type="password"
-                          value={keyInputs[key.envVar] ?? ''}
-                          placeholder={keyPlaceholder(key)}
-                          onChange={(e) => patchKeyInput(key.envVar, e.target.value)}
-                          autoComplete="off"
-                          spellCheck={false}
-                        />
-                        <span className="voice-settings__key-meta">
-                          {key.providers.join(' / ')} · {keyStatusText(key)}
-                          {credentialLink && (
-                            <>
-                              {' · '}
-                              <a
-                                className="settings-link"
-                                href={credentialLink.url}
-                                onClick={(e) =>
-                                  openExternalFromAnchor(e, credentialLink.url)
-                                }
-                              >
-                                obter key em {credentialLink.label}
-                              </a>
-                            </>
-                          )}
-                        </span>
-                      </label>
-                      <button
-                        className="agent-picker__btn voice-settings__clear"
-                        onClick={() => void clearKey(key.envVar)}
-                        disabled={!key.hasStoredKey}
-                      >
-                        Clear
-                      </button>
-                    </div>
-                  );
-                })}
-              </section>
-            )}
-
-            <section className="voice-settings__section" aria-label="Voz da Jarvis">
-              <div className="voice-settings__section-head voice-settings__section-head--stacked">
-                <h4 className="voice-settings__section-title">Voz da Jarvis</h4>
-                <p>
-                  <strong>Gemini Live é o canal principal.</strong> Escolha a voz
-                  masculina aqui — é o que você ouve no dia a dia.
-                </p>
-              </div>
-              <label className="agent-picker__label voice-settings__voice-primary">
-                Voz Gemini Live (principal)
-                <select
-                  className="agent-picker__select"
-                  value={geminiVoice}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setGeminiVoice(v);
-                    void persistVoicePick({ jarvisLiveGeminiVoice: v });
-                  }}
-                >
-                  {GEMINI_LIVE_VOICE_OPTIONS.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <details className="voice-settings__fallback-voices">
-                <summary>Fallbacks (só se Gemini Live cair)</summary>
-                <div className="voice-settings__form-grid">
-                  <label className="agent-picker__label">
-                    OpenAI Realtime
-                    <select
-                      className="agent-picker__select"
-                      value={openaiVoice}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setOpenaiVoice(v);
-                        void persistVoicePick({ jarvisLiveOpenaiVoice: v });
-                      }}
-                    >
-                      {OPENAI_REALTIME_VOICE_OPTIONS.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="agent-picker__label">
-                    TTS clássico
-                    <select
-                      className="agent-picker__select"
-                      value={ttsVoice}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setTtsVoice(v);
-                        void persistVoicePick({ ttsVoice: v });
-                      }}
-                    >
-                      {OPENAI_TTS_VOICE_OPTIONS.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              </details>
-            </section>
-
-            <section className="voice-settings__section" aria-label="Operação Jarvis">
-              <div className="voice-settings__section-head voice-settings__section-head--stacked">
-                <h4 className="voice-settings__section-title">Como Jarvis atende</h4>
-                <p>As opções Live são aplicadas na hora. Os demais ajustes usam Salvar alterações.</p>
-              </div>
-              <div className="voice-settings__form-grid voice-settings__form-grid--compact">
-                <label className="agent-picker__label">
-                  Modo de fala
-                  <select
-                    className="agent-picker__select"
-                    value={speakMode}
-                    onChange={(e) => setSpeakMode(e.target.value)}
-                  >
-                    <option value="summary">resumo (1-3 frases)</option>
-                    <option value="full">completo</option>
-                    <option value="off">desligado (só ditado)</option>
-                  </select>
-                </label>
-
-                <label className="agent-picker__label">
-                  Roteamento
-                  <select
-                    className="agent-picker__select"
-                    value={routing}
-                    onChange={(e) => setRouting(e.target.value)}
-                  >
-                    <option value="jarvis">JARVIS (assistente conversacional)</option>
-                    <option value="focused-pane">pane focado</option>
-                    <option value="orchestrator">orquestrador</option>
-                    <option value="ask">perguntar</option>
-                  </select>
-                </label>
-              </div>
-
-              <div className="voice-settings__shortcut-row">
-                <label className="agent-picker__label">
-                  Atalho do Jarvis
+          <div className="voice-settings__shell">
+            <nav className="voice-settings__nav" aria-label="Seções da Jarvis">
+              {VOICE_TABS.map((tab) => {
+                if (tab.id === 'credenciais' && info.keys.length === 0) return null;
+                return (
                   <button
+                    key={tab.id}
                     type="button"
-                    className={`agent-picker__select voice-settings__keycap ${capturingKey ? 'voice-settings__keycap--capturing' : ''}`}
-                    onClick={() => {
-                      setCaptureHint(null);
-                      setCapturingKey((v) => !v);
-                    }}
-                    title="Clique e pressione o COMBO desejado (ex.: Cmd+Shift+Space, Alt+J) ou uma tecla F sozinha (ex.: F6). Esc cancela."
+                    className={`voice-settings__nav-item ${
+                      activeTab === tab.id ? 'voice-settings__nav-item--on' : ''
+                    }`}
+                    aria-current={activeTab === tab.id ? 'page' : undefined}
+                    onClick={() => setActiveTab(tab.id)}
                   >
-                    {capturingKey
-                      ? 'Pressione o atalho... (Esc cancela)'
-                      : triggerAccel}
+                    <strong>{tab.label}</strong>
+                    <span>{tab.hint}</span>
                   </button>
-                </label>
-                <span className="voice-settings__shortcut-preview">
-                  {info.hotkeyArmed === false ? (
-                    <span
-                      className="voice-settings__shortcut-warn"
-                      title="O atalho global não registrou no sistema: provável conflito com outro app. Escolha outro combo."
+                );
+              })}
+            </nav>
+
+            <div className="voice-settings__stage">
+              {activeTab === 'canal' && (
+                <section className="voice-settings__pane" aria-label="Canal de voz">
+                  <div className="voice-settings__signal">
+                    <div className="voice-settings__signal-summary">
+                      <span>Canal de voz</span>
+                      <strong>{liveConnectionLabel}</strong>
+                      <p>{liveConnectionDetail}</p>
+                    </div>
+                    <div className="voice-settings__route" aria-label="Rota de atendimento">
+                      <span>Wake</span>
+                      <i aria-hidden>→</i>
+                      <strong>
+                        {realtimeConfigured ? liveTransportLabel : 'Pipeline clássico'}
+                      </strong>
+                      <i aria-hidden>→</i>
+                      <span>
+                        {realtimeConfigured ? 'áudio ao vivo' : 'resposta por TTS'}
+                      </span>
+                    </div>
+                    <div
+                      className="voice-settings__fallback-strip"
+                      aria-label="Fallbacks configurados"
                     >
-                      nao registrado
-                    </span>
-                  ) : (
-                    'ativo'
+                      <span>
+                        <b>STT</b>
+                        {activeStt}
+                      </span>
+                      <span>
+                        <b>TTS</b>
+                        {activeTts}
+                      </span>
+                      <span>
+                        <b>Cérebro</b>
+                        {activeBrain}
+                      </span>
+                    </div>
+                  </div>
+
+                  {transcriptAppend.length > 0 && (
+                    <div className="voice-settings__card" aria-label="Transcrição live">
+                      <div className="voice-settings__card-head">
+                        <h4>Atividade recente</h4>
+                        <span>{Math.min(transcriptAppend.length, 6)} eventos</span>
+                      </div>
+                      <div className="voice-settings__transcript-list">
+                        {transcriptAppend.slice(-6).map((line, index) => (
+                          <p
+                            className="voice-settings__transcript-line"
+                            key={`${line.ts}-${index}`}
+                          >
+                            <span>{line.role === 'user' ? 'Você' : 'Jarvis'}</span>
+                            <strong>{line.text}</strong>
+                          </p>
+                        ))}
+                      </div>
+                    </div>
                   )}
-                </span>
-              </div>
-              {captureHint && (
-                <p className="agent-picker__hint voice-settings__capture-hint">
-                  {captureHint}
-                </p>
+                </section>
               )}
 
-              <div className="voice-settings__toggle-stack">
-                <label
-                  className={`voice-settings__toggle voice-settings__toggle--primary ${
-                    jarvisLiveOn ? 'voice-settings__toggle--selected' : ''
-                  }`}
-                >
-                  <span>
-                    <strong>Jarvis Live</strong>
-                    <span>Sessão contínua, contexto curto e resposta por voz sem reiniciar a conversa.</span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={jarvisLiveOn}
-                    onChange={(e) => toggleJarvisLive(e.target.checked)}
-                  />
-                </label>
-
-                <label className="voice-settings__toggle">
-                  <span>
-                    <strong>Wake word</strong>
-                    <span>Diga “Hey Jarvis”; a detecção acontece localmente no Mac.</span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={wakeWordOn}
-                    onChange={(e) => setWakeWordOn(e.target.checked)}
-                  />
-                </label>
-
-                {jarvisLiveOn && (
-                  <label
-                    className={`voice-settings__toggle ${
-                      liveRealtime ? 'voice-settings__toggle--selected' : ''
-                    }`}
-                  >
-                    <span>
-                      <strong>Áudio realtime</strong>
+              {activeTab === 'live' && (
+                <section className="voice-settings__pane" aria-label="Live e wake">
+                  <div className="voice-settings__card-head voice-settings__card-head--block">
+                    <h4>Sessão Live</h4>
+                    <p>Aplicado na hora. Demais ajustes usam Salvar.</p>
+                  </div>
+                  <div className="voice-settings__toggle-stack">
+                    <label
+                      className={`voice-settings__toggle voice-settings__toggle--primary ${
+                        jarvisLiveOn ? 'voice-settings__toggle--selected' : ''
+                      }`}
+                    >
                       <span>
-                        {liveTransportLabel}
-                        {realtimeActive ? ' · conectado' : ' · em espera'}
+                        <strong>Jarvis Live</strong>
+                        <span>
+                          Sessão contínua, contexto curto e voz sem reiniciar a conversa.
+                        </span>
                       </span>
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={liveRealtime}
-                      onChange={(e) => toggleRealtime(e.target.checked)}
-                      aria-label="Áudio realtime"
-                    />
-                  </label>
-                )}
+                      <input
+                        type="checkbox"
+                        checked={jarvisLiveOn}
+                        onChange={(e) => toggleJarvisLive(e.target.checked)}
+                      />
+                    </label>
 
-                {jarvisLiveOn && liveRealtime && (
-                  <label className="agent-picker__label voice-settings__transport-field">
-                    Transporte realtime (prioridade: Gemini)
+                    <label className="voice-settings__toggle">
+                      <span>
+                        <strong>Wake word</strong>
+                        <span>Diga “Hey Jarvis”; detecção local no Mac.</span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={wakeWordOn}
+                        onChange={(e) => setWakeWordOn(e.target.checked)}
+                      />
+                    </label>
+
+                    {jarvisLiveOn && (
+                      <label
+                        className={`voice-settings__toggle ${
+                          liveRealtime ? 'voice-settings__toggle--selected' : ''
+                        }`}
+                      >
+                        <span>
+                          <strong>Áudio realtime</strong>
+                          <span>
+                            {liveTransportLabel}
+                            {realtimeActive ? ' · conectado' : ' · em espera'}
+                          </span>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={liveRealtime}
+                          onChange={(e) => toggleRealtime(e.target.checked)}
+                          aria-label="Áudio realtime"
+                        />
+                      </label>
+                    )}
+
+                    {jarvisLiveOn && liveRealtime && (
+                      <label className="agent-picker__label voice-settings__transport-field">
+                        Transporte realtime
+                        <select
+                          className="agent-picker__select"
+                          value={realtimeTransport}
+                          onChange={(e) =>
+                            chooseRealtimeTransport(
+                              e.target.value as RealtimeTransport,
+                            )
+                          }
+                        >
+                          <option value="gemini-live">Gemini Live (principal)</option>
+                          <option value="openai-realtime">
+                            OpenAI Realtime (fallback)
+                          </option>
+                        </select>
+                      </label>
+                    )}
+                  </div>
+                  <p className="voice-settings__mode-hint">
+                    {jarvisLiveOn
+                      ? realtimeConfigured
+                        ? 'Live tem prioridade desde o wake. Em silêncio, volta a pronta sem trocar de voz.'
+                        : 'Live clássico reabre a escuta após cada resposta e entra em espera no silêncio.'
+                      : info.hotkeyMode === 'hold'
+                        ? `Segure ${info.shortcut} para falar e solte para enviar.`
+                        : `Pressione ${info.shortcut} para falar e de novo para enviar.`}{' '}
+                    Estado: {wakeMode}.
+                  </p>
+                </section>
+              )}
+
+              {activeTab === 'voz' && (
+                <section className="voice-settings__pane" aria-label="Voz da Jarvis">
+                  <div className="voice-settings__card-head voice-settings__card-head--block">
+                    <h4>Timbre</h4>
+                    <p>
+                      <strong>Gemini Live</strong> é o canal principal no dia a dia.
+                    </p>
+                  </div>
+                  <label className="agent-picker__label voice-settings__voice-primary">
+                    Voz Gemini Live
                     <select
                       className="agent-picker__select"
-                      value={realtimeTransport}
-                      onChange={(e) =>
-                        chooseRealtimeTransport(e.target.value as RealtimeTransport)
-                      }
+                      value={geminiVoice}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setGeminiVoice(v);
+                        void persistVoicePick({ jarvisLiveGeminiVoice: v });
+                      }}
                     >
-                      <option value="gemini-live">Gemini Live (principal)</option>
-                      <option value="openai-realtime">OpenAI Realtime (fallback)</option>
+                      {GEMINI_LIVE_VOICE_OPTIONS.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.label}
+                        </option>
+                      ))}
                     </select>
                   </label>
-                )}
+                  <details className="voice-settings__fallback-voices" open>
+                    <summary>Fallbacks se o Live cair</summary>
+                    <div className="voice-settings__form-grid">
+                      <label className="agent-picker__label">
+                        OpenAI Realtime
+                        <select
+                          className="agent-picker__select"
+                          value={openaiVoice}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setOpenaiVoice(v);
+                            void persistVoicePick({ jarvisLiveOpenaiVoice: v });
+                          }}
+                        >
+                          {OPENAI_REALTIME_VOICE_OPTIONS.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="agent-picker__label">
+                        TTS clássico
+                        <select
+                          className="agent-picker__select"
+                          value={ttsVoice}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setTtsVoice(v);
+                            void persistVoicePick({ ttsVoice: v });
+                          }}
+                        >
+                          {OPENAI_TTS_VOICE_OPTIONS.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  </details>
+                </section>
+              )}
 
-                <div className="voice-settings__toggle voice-settings__hud-row">
-                  <span>
-                    <strong>Exibição da JARVIS</strong>
-                    <span>
-                      O HUD é arrastável e ancora nos cantos; em "só áudio" a voz
-                      funciona sem visual nenhum.
-                    </span>
-                  </span>
-                  <span
-                    className="voice-settings__hud-modes"
-                    role="radiogroup"
-                    aria-label="Modo de exibição do HUD"
-                  >
-                    {(
-                      [
-                        ['expanded', 'EXPANDIDA'],
-                        ['mini', 'MINI'],
-                        ['hidden', 'SÓ ÁUDIO'],
-                      ] as const
-                    ).map(([mode, label]) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        role="radio"
-                        aria-checked={hudMode === mode}
-                        className={`voice-settings__hud-mode ${
-                          hudMode === mode ? 'voice-settings__hud-mode--on' : ''
-                        }`}
-                        onClick={() => setHudMode(mode)}
+              {activeTab === 'atendimento' && (
+                <section className="voice-settings__pane" aria-label="Atendimento">
+                  <div className="voice-settings__card-head voice-settings__card-head--block">
+                    <h4>Como atende</h4>
+                    <p>Fala, destino do áudio e atalho global.</p>
+                  </div>
+                  <div className="voice-settings__form-grid voice-settings__form-grid--compact">
+                    <label className="agent-picker__label">
+                      Modo de fala
+                      <select
+                        className="agent-picker__select"
+                        value={speakMode}
+                        onChange={(e) => setSpeakMode(e.target.value)}
                       >
-                        {label}
+                        <option value="summary">resumo (1-3 frases)</option>
+                        <option value="full">completo</option>
+                        <option value="off">desligado (só ditado)</option>
+                      </select>
+                    </label>
+                    <label className="agent-picker__label">
+                      Roteamento
+                      <select
+                        className="agent-picker__select"
+                        value={routing}
+                        onChange={(e) => setRouting(e.target.value)}
+                      >
+                        <option value="jarvis">JARVIS (conversa)</option>
+                        <option value="focused-pane">pane focado</option>
+                        <option value="orchestrator">orquestrador</option>
+                        <option value="ask">perguntar</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="voice-settings__shortcut-row">
+                    <label className="agent-picker__label">
+                      Atalho
+                      <button
+                        type="button"
+                        className={`agent-picker__select voice-settings__keycap ${
+                          capturingKey ? 'voice-settings__keycap--capturing' : ''
+                        }`}
+                        onClick={() => {
+                          setCaptureHint(null);
+                          setCapturingKey((v) => !v);
+                        }}
+                        title="Clique e pressione o combo (ex.: Cmd+Shift+Space). Esc cancela."
+                      >
+                        {capturingKey
+                          ? 'Pressione o atalho… (Esc cancela)'
+                          : triggerAccel}
                       </button>
-                    ))}
-                  </span>
-                </div>
-              </div>
+                    </label>
+                    <span className="voice-settings__shortcut-preview">
+                      {info.hotkeyArmed === false ? (
+                        <span
+                          className="voice-settings__shortcut-warn"
+                          title="Atalho global não registrou: provável conflito. Escolha outro combo."
+                        >
+                          não registrado
+                        </span>
+                      ) : (
+                        'ativo'
+                      )}
+                    </span>
+                  </div>
+                  {captureHint && (
+                    <p className="agent-picker__hint voice-settings__capture-hint">
+                      {captureHint}
+                    </p>
+                  )}
 
-              <p className="agent-picker__hint voice-settings__mode-hint">
-                {jarvisLiveOn
-                  ? realtimeConfigured
-                    ? 'O áudio Live recebe prioridade desde o wake. Ao ficar em silêncio, a JARVIS volta para pronta sem trocar de voz.'
-                    : 'No Live clássico, a JARVIS reabre a escuta depois de cada resposta e entra em espera quando você fica em silêncio.'
-                  : info.hotkeyMode === 'hold'
-                  ? `Segure ${info.shortcut} para falar e solte para enviar.`
-                  : `Pressione ${info.shortcut} para começar a falar e pressione de novo para enviar.`}{' '}
-                Estado atual: {wakeMode}.
-              </p>
-            </section>
+                  <div className="voice-settings__toggle voice-settings__hud-row">
+                    <span>
+                      <strong>Exibição da JARVIS</strong>
+                      <span>
+                        HUD arrastável nos cantos; em “só áudio” a voz roda sem visual.
+                      </span>
+                    </span>
+                    <span
+                      className="voice-settings__hud-modes"
+                      role="radiogroup"
+                      aria-label="Modo de exibição do HUD"
+                    >
+                      {(
+                        [
+                          ['expanded', 'EXPANDIDA'],
+                          ['mini', 'MINI'],
+                          ['hidden', 'SÓ ÁUDIO'],
+                        ] as const
+                      ).map(([mode, label]) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          role="radio"
+                          aria-checked={hudMode === mode}
+                          className={`voice-settings__hud-mode ${
+                            hudMode === mode ? 'voice-settings__hud-mode--on' : ''
+                          }`}
+                          onClick={() => setHudMode(mode)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </span>
+                  </div>
+                </section>
+              )}
 
-            <section className="voice-settings__section" aria-label="Persona Jarvis">
-              <div className="voice-settings__section-head">
-                <h4 className="voice-settings__section-title">Persona</h4>
-              </div>
-              <div className="voice-settings__persona">
-                <label className="agent-picker__label">
-                  <span>Seu nome</span>
-                  <input
-                    className="settings-input"
-                    value={userName}
-                    placeholder="como a JARVIS te chama"
-                    maxLength={48}
-                    onChange={(e) => setUserName(e.target.value)}
-                  />
-                </label>
-                <label className="agent-picker__label">
-                  <span>Nome do assistente</span>
-                  <input
-                    className="settings-input"
-                    value={assistantName}
-                    placeholder="Jarvis"
-                    maxLength={48}
-                    onChange={(e) => setAssistantName(e.target.value)}
-                  />
-                </label>
-                <label className="agent-picker__label voice-settings__persona-prompt">
-                  <span>Instruções personalizadas</span>
-                  <textarea
-                    className="settings-input"
-                    value={customInstructions}
-                    rows={2}
-                    placeholder='ex.: "sempre responda curto e direto"'
-                    maxLength={2000}
-                    onChange={(e) => setCustomInstructions(e.target.value)}
-                  />
-                </label>
-              </div>
-            </section>
+              {activeTab === 'fallback' && (
+                <section className="voice-settings__pane" aria-label="Fallback clássico">
+                  <div className="voice-settings__card-head voice-settings__card-head--block">
+                    <h4>Pipeline clássico</h4>
+                    <p>Só quando o canal Live não estiver disponível.</p>
+                  </div>
+                  <div className="voice-settings__form-grid">
+                    <label className="agent-picker__label">
+                      STT
+                      <select
+                        className="agent-picker__select"
+                        value={sttProvider}
+                        onChange={(e) => setSttProvider(e.target.value)}
+                      >
+                        {info.stt.chain.map((p) => (
+                          <option key={p.provider} value={p.provider}>
+                            {providerOption(p)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="agent-picker__label">
+                      TTS
+                      <select
+                        className="agent-picker__select"
+                        value={ttsProvider}
+                        onChange={(e) => setTtsProvider(e.target.value)}
+                      >
+                        {info.tts.chain.map((p) => (
+                          <option key={p.provider} value={p.provider}>
+                            {providerOption(p)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="agent-picker__label">
+                      Cérebro
+                      <select
+                        className="agent-picker__select"
+                        value={jarvisBrainProvider}
+                        onChange={(e) => setJarvisBrainProvider(e.target.value)}
+                      >
+                        {info.jarvisBrain.chain.map((p) => (
+                          <option key={p.provider} value={p.provider}>
+                            {providerOption(p)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </section>
+              )}
 
-            {error && <p className="agent-picker__error">{error}</p>}
-            {testResult && <p className="voice-settings__mode-hint">{testResult}</p>}
+              {activeTab === 'persona' && (
+                <section className="voice-settings__pane" aria-label="Persona Jarvis">
+                  <div className="voice-settings__card-head voice-settings__card-head--block">
+                    <h4>Persona</h4>
+                    <p>Como a Jarvis se apresenta e fala com você.</p>
+                  </div>
+                  <div className="voice-settings__persona">
+                    <label className="agent-picker__label">
+                      <span>Seu nome</span>
+                      <input
+                        className="settings-input"
+                        value={userName}
+                        placeholder="como a JARVIS te chama"
+                        maxLength={48}
+                        onChange={(e) => setUserName(e.target.value)}
+                      />
+                    </label>
+                    <label className="agent-picker__label">
+                      <span>Nome do assistente</span>
+                      <input
+                        className="settings-input"
+                        value={assistantName}
+                        placeholder="Jarvis"
+                        maxLength={48}
+                        onChange={(e) => setAssistantName(e.target.value)}
+                      />
+                    </label>
+                    <label className="agent-picker__label voice-settings__persona-prompt">
+                      <span>Instruções personalizadas</span>
+                      <textarea
+                        className="settings-input"
+                        value={customInstructions}
+                        rows={4}
+                        placeholder='ex.: "sempre responda curto e direto"'
+                        maxLength={2000}
+                        onChange={(e) => setCustomInstructions(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                </section>
+              )}
 
-            <div className="agent-picker__actions">
-              <button className="agent-picker__btn" onClick={testVoice} disabled={testing}>
-                {testing ? 'Testando TTS…' : 'Testar TTS fallback'}
-              </button>
-              <button
-                className="agent-picker__btn"
-                onClick={testJarvis}
-                disabled={testingJarvis}
-                title={
-                  jarvisLiveOn && liveRealtime
-                    ? 'O diagnóstico reinicia a sessão realtime para separar a resposta de teste de qualquer áudio anterior.'
-                    : undefined
-                }
-              >
-                {testingJarvis
-                  ? 'Testando Live…'
-                  : realtimeConfigured
-                    ? `Testar ${liveTransportLabel}`
-                    : 'Testar Jarvis'}
-              </button>
-              <button className="agent-picker__btn" onClick={close} disabled={saving}>
-                Cancelar
-              </button>
-              <button
-                className="agent-picker__btn agent-picker__btn--primary"
-                onClick={save}
-                disabled={saving}
-              >
-                {saving ? 'Salvando…' : 'Salvar alterações'}
-              </button>
+              {activeTab === 'credenciais' && info.keys.length > 0 && (
+                <section className="voice-settings__pane" aria-label="Credenciais">
+                  <div className="voice-settings__card-head voice-settings__card-head--block">
+                    <h4>Cofre local</h4>
+                    <p>Chaves protegidas neste Mac. Colar substitui a salva.</p>
+                  </div>
+                  {info.keys.map((key) => {
+                    const credentialLink = credentialLinkForEnv(key.envVar);
+                    return (
+                      <div className="voice-settings__key-row" key={key.envVar}>
+                        <label className="agent-picker__label voice-settings__key-label">
+                          {key.envVar}
+                          <input
+                            className="agent-picker__select"
+                            type="password"
+                            value={keyInputs[key.envVar] ?? ''}
+                            placeholder={keyPlaceholder(key)}
+                            onChange={(e) => patchKeyInput(key.envVar, e.target.value)}
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
+                          <span className="voice-settings__key-meta">
+                            {key.providers.join(' / ')} · {keyStatusText(key)}
+                            {credentialLink && (
+                              <>
+                                {' · '}
+                                <a
+                                  className="settings-link"
+                                  href={credentialLink.url}
+                                  onClick={(e) =>
+                                    openExternalFromAnchor(e, credentialLink.url)
+                                  }
+                                >
+                                  obter key em {credentialLink.label}
+                                </a>
+                              </>
+                            )}
+                          </span>
+                        </label>
+                        <button
+                          className="agent-picker__btn voice-settings__clear"
+                          onClick={() => void clearKey(key.envVar)}
+                          disabled={!key.hasStoredKey}
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    );
+                  })}
+                </section>
+              )}
+
+              {error && <p className="agent-picker__error">{error}</p>}
+              {testResult && <p className="voice-settings__mode-hint">{testResult}</p>}
             </div>
-          </>
+          </div>
+        )}
+
+        {info && (
+          <div className="agent-picker__actions voice-settings__actions">
+            <button className="agent-picker__btn" onClick={testVoice} disabled={testing}>
+              {testing ? 'Testando TTS…' : 'Testar TTS'}
+            </button>
+            <button
+              className="agent-picker__btn"
+              onClick={testJarvis}
+              disabled={testingJarvis}
+              title={
+                jarvisLiveOn && liveRealtime
+                  ? 'Reinicia a sessão realtime para isolar o teste.'
+                  : undefined
+              }
+            >
+              {testingJarvis
+                ? 'Testando Live…'
+                : realtimeConfigured
+                  ? `Testar ${liveTransportLabel}`
+                  : 'Testar Jarvis'}
+            </button>
+            <div className="voice-settings__actions-spacer" />
+            <button className="agent-picker__btn" onClick={close} disabled={saving}>
+              Cancelar
+            </button>
+            <button
+              className="agent-picker__btn agent-picker__btn--primary"
+              onClick={save}
+              disabled={saving}
+            >
+              {saving ? 'Salvando…' : 'Salvar alterações'}
+            </button>
+          </div>
         )}
       </div>
     </div>

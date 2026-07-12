@@ -500,7 +500,7 @@ export function MissionRail() {
                               disabled={busy !== null}
                               title="Remover esta missão da lista"
                               aria-label={`Remover missão ${m.title}`}
-                              onClick={() => removeMission(m, active)}
+                              onClick={() => removeMission(m, liveInGrid)}
                             >
                               <PixelIcon name="close" size={10} />
                             </button>

@@ -268,29 +268,7 @@
   height: 16px;
 }
 
-/* Persona da voz — nome do assistente / usuário / instruções. */
-.voice-settings__persona {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-.voice-settings__persona .settings-input {
-  width: 100%;
-}
-.voice-settings__persona-prompt {
-  grid-column: 1 / -1;
-}
-.voice-settings__persona textarea.settings-input {
-  resize: vertical;
-  min-height: 78px;
-  font-family: var(--font-mono);
-}
-
-@media (max-width: 760px) {
-  .voice-settings__persona {
-    grid-template-columns: 1fr;
-  }
-}
+/* Persona layout lives in voice-settings.css (avoid 2-col squeeze). */
 
 /* ---- Canvas (xyflow) dark theme: controles legíveis ---- */
 .react-flow__controls-button {
