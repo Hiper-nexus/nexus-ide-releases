@@ -37,6 +37,8 @@ export const PET_CHANNELS = {
   libraryPreview: 'pet:libraryPreview',
   /** invoke: janela principal → main. Dialog nativo já em ~/.codex/pets. */
   pickSheet: 'pet:pickSheet',
+  /** invoke: janela principal → main. Escolhe a imagem-base (só o PATH). */
+  pickImage: 'pet:pickImage',
   /** event: main → janela principal. Pedido do pet para abrir Settings. */
   openSettings: 'pet:openSettings',
 } as const;
@@ -245,6 +247,14 @@ export interface PetPickSheetResult {
   /** false + canceled=true quando o usuário fechou o dialog sem escolher. */
   canceled?: boolean;
   dataUrl?: string;
+  error?: string;
+}
+
+/** Resultado do picker de imagem-base para GERAÇÃO (path, sem bytes). */
+export interface PetPickImageResult {
+  ok: boolean;
+  canceled?: boolean;
+  path?: string;
   error?: string;
 }
 

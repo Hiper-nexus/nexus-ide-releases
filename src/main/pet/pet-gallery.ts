@@ -172,6 +172,88 @@ async function readCapped(
 }
 
 /**
+ * Instância self-host do codex-pet-share (galeria própria/oficial): URL
+ * https de QUALQUER host fora das bases petdex, no formato /pets/<id>.
+ * Contrato do worker: GET /api/pets/<id> (manifest JSON) e
+ * GET /api/pets/<id>/spritesheet (asset webp direto).
+ */
+export function extractPetShareRef(
+  input: string,
+): { origin: string; id: string } | null {
+  let url: URL;
+  try {
+    url = new URL(input.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:') return null;
+  const galleryHosts = new Set(GALLERY_BASES.map((base) => new URL(base).host));
+  if (galleryHosts.has(url.host)) return null;
+  const path = url.hash.startsWith('#/') ? url.hash.slice(1) : url.pathname;
+  const match = path.match(/^\/pets\/([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/?$/);
+  return match ? { origin: url.origin, id: match[1] } : null;
+}
+
+async function importPetShareInstance(
+  ref: { origin: string; id: string },
+  fetchImpl: typeof fetch,
+): Promise<GalleryImportResult> {
+  let name = ref.id;
+  try {
+    const res = await fetchImpl(`${ref.origin}/api/pets/${ref.id}`, {
+      redirect: 'follow',
+      headers: { accept: 'application/json' },
+    });
+    if (res.ok) {
+      const body = await readCapped(res, 64_000);
+      if (body) {
+        const manifest = JSON.parse(body.toString('utf8')) as Record<
+          string,
+          unknown
+        >;
+        const candidate = manifest.displayName ?? manifest.name;
+        if (typeof candidate === 'string' && candidate.trim()) {
+          name = candidate.trim();
+        }
+      }
+    }
+  } catch {
+    // manifest é best-effort: o asset direto decide o import
+  }
+  try {
+    const res = await fetchImpl(`${ref.origin}/api/pets/${ref.id}/spritesheet`, {
+      redirect: 'follow',
+      headers: { referer: `${ref.origin}/` },
+    });
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: `A instância respondeu ${res.status} para o spritesheet.`,
+      };
+    }
+    const contentType = res.headers.get('content-type') ?? 'image/webp';
+    if (!SHEET_MIME_RE.test(contentType)) {
+      return { ok: false, error: 'O asset da instância não é uma imagem suportada.' };
+    }
+    const sheet = await readCapped(res, SHEET_MAX_BYTES);
+    if (!sheet) {
+      return { ok: false, error: 'Spritesheet grande demais (limite ~2,5 MB).' };
+    }
+    const mime = SHEET_MIME_RE.exec(contentType)?.[1] ?? 'webp';
+    return {
+      ok: true,
+      name,
+      dataUrl: `data:image/${mime === 'jpeg' ? 'jpeg' : mime};base64,${sheet.toString('base64')}`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Sem conexão com a instância (${err instanceof Error ? err.message : 'erro de rede'}).`,
+    };
+  }
+}
+
+/**
  * Fluxo completo: slug → script de install → download do sheet → data URL.
  * `fetchImpl` é injetável para teste; o default é o fetch do Node no main.
  */
@@ -179,6 +261,11 @@ export async function importGalleryPet(
   input: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<GalleryImportResult> {
+  // Instância própria (codex-pet-share self-host) tem prioridade quando a
+  // URL não é das bases comunitárias.
+  const shareRef = extractPetShareRef(input);
+  if (shareRef) return importPetShareInstance(shareRef, fetchImpl);
+
   const slug = extractPetSlug(input);
   if (!slug) {
     return { ok: false, error: 'Informe o slug ou a URL do pet na galeria.' };

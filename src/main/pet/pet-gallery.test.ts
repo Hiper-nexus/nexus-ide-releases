@@ -187,3 +187,62 @@ describe('fetchGalleryCatalog', () => {
     expect(calls).toBe(1);
   });
 });
+
+describe('instância self-host (codex-pet-share)', () => {
+  it('extractPetShareRef aceita host próprio e rejeita bases petdex/http', async () => {
+    const { extractPetShareRef } = await import('./pet-gallery');
+    expect(
+      extractPetShareRef('https://pets.volarehost.com.br/pets/navi-oficial'),
+    ).toEqual({ origin: 'https://pets.volarehost.com.br', id: 'navi-oficial' });
+    expect(extractPetShareRef('https://petdex.dev/pets/navi')).toBeNull();
+    expect(extractPetShareRef('http://pets.example/pets/x')).toBeNull();
+    expect(extractPetShareRef('navi')).toBeNull();
+  });
+
+  it('importa manifest + asset direto da instância', async () => {
+    const { importGalleryPet } = await import('./pet-gallery');
+    const bytes = Buffer.from('sheet-oficial');
+    const mock = (async (url: RequestInfo | URL) => {
+      const href = String(url);
+      if (href === 'https://pets.acme.dev/api/pets/aurora') {
+        return new Response(JSON.stringify({ displayName: 'Aurora' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (href === 'https://pets.acme.dev/api/pets/aurora/spritesheet') {
+        return new Response(bytes, {
+          status: 200,
+          headers: { 'content-type': 'image/webp' },
+        });
+      }
+      return new Response('nope', { status: 404 });
+    }) as unknown as typeof fetch;
+    const result = await importGalleryPet(
+      'https://pets.acme.dev/pets/aurora',
+      mock,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.name).toBe('Aurora');
+    expect(result.dataUrl).toBe(
+      `data:image/webp;base64,${bytes.toString('base64')}`,
+    );
+  });
+
+  it('manifest fora do ar não impede o asset (nome cai no id)', async () => {
+    const { importGalleryPet } = await import('./pet-gallery');
+    const mock = (async (url: RequestInfo | URL) => {
+      const href = String(url);
+      if (href.endsWith('/spritesheet')) {
+        return new Response(Buffer.from('x'), {
+          status: 200,
+          headers: { 'content-type': 'image/png' },
+        });
+      }
+      return new Response('down', { status: 500 });
+    }) as unknown as typeof fetch;
+    const result = await importGalleryPet('https://p.acme.dev/pets/solo', mock);
+    expect(result.ok).toBe(true);
+    expect(result.name).toBe('solo');
+  });
+});

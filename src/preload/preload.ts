@@ -391,6 +391,7 @@ const api: NexusApi = {
     libraryPreview: (id: string) =>
       ipcRenderer.invoke(PET_CHANNELS.libraryPreview, id),
     pickSheet: () => ipcRenderer.invoke(PET_CHANNELS.pickSheet),
+    pickImage: () => ipcRenderer.invoke(PET_CHANNELS.pickImage),
   },
   app: {
     signalMounted: (report) => ipcRenderer.send(WINDOW_CHANNELS.mounted, report),
