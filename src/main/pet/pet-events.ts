@@ -59,6 +59,30 @@ export class MissionTransitionTracker {
   }
 }
 
+/**
+ * Atenção por AGENTE via hooks explícitos (working/blocked/waiting/done):
+ * entrar em waiting/blocked = "um agente precisa de você". Diferente do
+ * tracker de missões, a primeira observação já conta — hooks só disparam em
+ * eventos reais, nunca em replay.
+ */
+export class AgentAttentionTracker {
+  private last = new Map<string, string>();
+
+  ingest(sessionId: string, state: string, at: number): PetEvent | null {
+    const before = this.last.get(sessionId);
+    this.last.set(sessionId, state);
+    if (before === state) return null;
+    if (state === 'waiting' || state === 'blocked') {
+      return { kind: 'agent-waiting', title: sessionId, at };
+    }
+    return null;
+  }
+
+  forget(sessionId: string): void {
+    this.last.delete(sessionId);
+  }
+}
+
 export class AgentTransitionTracker {
   private last = new Map<string, string>();
 

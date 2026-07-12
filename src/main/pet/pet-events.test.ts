@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { AgentTransitionTracker, MissionTransitionTracker } from './pet-events';
+import {
+  AgentAttentionTracker,
+  AgentTransitionTracker,
+  MissionTransitionTracker,
+} from './pet-events';
 
 const at = 1_000;
 
@@ -142,5 +146,38 @@ describe('AgentTransitionTracker', () => {
     expect(t.ingest('s1', 'busy', at)).toBeNull();
     t.forget('s1');
     expect(t.ingest('s1', 'exited', at)).toBeNull();
+  });
+});
+
+describe('AgentAttentionTracker', () => {
+  it('entrar em waiting dispara, mesmo na primeira observação', () => {
+    const t = new AgentAttentionTracker();
+    expect(t.ingest('s1', 'waiting', at)).toEqual({
+      kind: 'agent-waiting',
+      title: 's1',
+      at,
+    });
+  });
+
+  it('working → blocked dispara; repetição do mesmo estado não', () => {
+    const t = new AgentAttentionTracker();
+    expect(t.ingest('s1', 'working', at)).toBeNull();
+    expect(t.ingest('s1', 'blocked', at)?.kind).toBe('agent-waiting');
+    expect(t.ingest('s1', 'blocked', at)).toBeNull();
+  });
+
+  it('waiting → working → waiting avisa de novo (novo pedido real)', () => {
+    const t = new AgentAttentionTracker();
+    t.ingest('s1', 'waiting', at);
+    expect(t.ingest('s1', 'working', at)).toBeNull();
+    expect(t.ingest('s1', 'waiting', at)?.kind).toBe('agent-waiting');
+  });
+
+  it('done/working nunca disparam e forget reseta', () => {
+    const t = new AgentAttentionTracker();
+    expect(t.ingest('s1', 'done', at)).toBeNull();
+    t.ingest('s1', 'waiting', at);
+    t.forget('s1');
+    expect(t.ingest('s1', 'waiting', at)?.kind).toBe('agent-waiting');
   });
 });

@@ -9,7 +9,10 @@ import json
 import os
 import shutil
 import subprocess
+import wave
 from pathlib import Path
+
+import numpy as np
 
 from huggingface_hub import HfApi, snapshot_download
 
@@ -23,6 +26,35 @@ def stable_validation(path: Path) -> bool:
     """Keep approximately 20% in validation, stable across reruns/machines."""
     digest = hashlib.sha256(path.name.encode()).digest()
     return digest[0] < 51
+
+
+def copy_reviewed(source: Path, destination: Path, *, trim_voice: bool) -> None:
+    """Copy PCM WAV, trimming silence around positive speech without resampling."""
+    if not trim_voice:
+        shutil.copy2(source, destination)
+        return
+    with wave.open(str(source), "rb") as reader:
+        channels = reader.getnchannels()
+        width = reader.getsampwidth()
+        rate = reader.getframerate()
+        frames = reader.readframes(reader.getnframes())
+    if channels != 1 or width != 2 or rate != 16000:
+        raise RuntimeError(f"expected mono PCM16 16kHz: {source}")
+    samples = np.frombuffer(frames, dtype="<i2")
+    peak = int(np.max(np.abs(samples.astype(np.int32)))) if len(samples) else 0
+    threshold = max(250, int(peak * 0.025))
+    active = np.flatnonzero(np.abs(samples.astype(np.int32)) >= threshold)
+    if len(active):
+        margin = int(rate * 0.12)
+        start = max(0, int(active[0]) - margin)
+        end = min(len(samples), int(active[-1]) + margin + 1)
+        if end - start >= int(rate * 0.25):
+            samples = samples[start:end]
+    with wave.open(str(destination), "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(rate)
+        writer.writeframes(samples.astype("<i2", copy=False).tobytes())
 
 
 def stage_reviewed(dataset: Path, model_dir: Path) -> dict[str, int]:
@@ -40,7 +72,11 @@ def stage_reviewed(dataset: Path, model_dir: Path) -> dict[str, int]:
             destination = model_dir / f"{kind}_{split}"
             destination.mkdir(parents=True, exist_ok=True)
             for index, source in enumerate(selected, start=500000):
-                shutil.copy2(source, destination / f"clip_{index:06d}.wav")
+                copy_reviewed(
+                    source,
+                    destination / f"clip_{index:06d}.wav",
+                    trim_voice=kind == "positive",
+                )
             counts[f"{kind}_{split}"] = len(selected)
     print("reviewed corpus staged:", json.dumps(counts, sort_keys=True), flush=True)
     return counts

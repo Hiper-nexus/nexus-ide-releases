@@ -53,9 +53,16 @@ npm run typecheck
 npm test
 npm run premake
 
+# TSA da Apple derruba rajadas de `codesign --timestamp` (muitos nativos
+# unpacked) e o build falha com "A timestamp was expected but was not
+# found" — sempre no mesmo arquivo. O wrapper de retry resolve:
+mkdir -p scripts/codesign-retry-bin
+ln -sf ../codesign-with-retry.sh scripts/codesign-retry-bin/codesign
+
 env -u APPLE_ID -u APPLE_APP_SPECIFIC_PASSWORD \
   APPLE_TEAM_ID=35P5XL3JN6 \
   APPLE_KEYCHAIN_PROFILE=nexus-notary \
+  PATH="$PWD/scripts/codesign-retry-bin:$PATH" \
   npm run make:release
 
 # Restaura o ABI do Node para continuar o desenvolvimento local.

@@ -23,6 +23,8 @@ import { CommandPalette } from './components/CommandPalette';
 import { useCommandPaletteStore } from './state/command-palette-store';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { useConfirmStore } from './state/confirm-store';
+import { KeyboardCheatsheet } from './components/KeyboardCheatsheet';
+import { useCheatsheetStore } from './state/cheatsheet-store';
 import { FilesPanel } from './components/FilesPanel';
 import { OpsBoard } from './components/OpsBoard';
 import { DiffAnnotatePanel } from './components/DiffAnnotatePanel';
@@ -94,6 +96,7 @@ export function App() {
   const operatorProfileOpen = useGamificationStore((s) => s.profileOpen);
   const paletteOpen = useCommandPaletteStore((s) => s.open);
   const confirmOpen = useConfirmStore((s) => s.pending !== null);
+  const cheatsheetOpen = useCheatsheetStore((s) => s.open);
   const suppressBrowserPanes =
     settingsDrawerOpen ||
     missionWizardOpen ||
@@ -105,7 +108,8 @@ export function App() {
     onboardingVisible ||
     operatorProfileOpen ||
     paletteOpen ||
-    confirmOpen;
+    confirmOpen ||
+    cheatsheetOpen;
 
   useVoiceController();
   useOrchBridge();
@@ -193,6 +197,12 @@ export function App() {
         if (!useWorkspaceStore.getState().current) return;
         e.preventDefault();
         useCommandPaletteStore.getState().toggle();
+        return;
+      }
+      // ⌘/ — cheatsheet de atalhos (ajuda no contexto, sem sair do fluxo).
+      if (e.key === '/' && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        useCheatsheetStore.getState().toggle();
         return;
       }
       // ⌘N — nova missão (a ação primária merece o atalho primário).
@@ -318,6 +328,7 @@ export function App() {
       <CloseWorkspaceDialog />
       <Onboarding />
       <CommandPalette />
+      <KeyboardCheatsheet />
       <ConfirmDialog />
       <Toasts />
     </div>

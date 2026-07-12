@@ -12,7 +12,12 @@ import { tapSessionState } from '../pty/pty-manager';
 import { tapMissionsBroadcast, tapMissionsSeed } from '../orch/orch-ipc';
 import { loadPetPrefs, savePetPrefs } from './pet-prefs';
 import { clampToWorkArea, snapToCorner } from './pet-geometry';
-import { AgentTransitionTracker, MissionTransitionTracker } from './pet-events';
+import {
+  AgentAttentionTracker,
+  AgentTransitionTracker,
+  MissionTransitionTracker,
+} from './pet-events';
+import { tapAgentHookStatus } from '../agent-hooks/hook-ingest';
 import { computeLookDir } from './pet-look';
 import { importGalleryPet } from './pet-gallery';
 
@@ -44,6 +49,7 @@ let lookLastCursor = { x: 0, y: 0 };
 let lookLastMoveAt = 0;
 
 const agentTracker = new AgentTransitionTracker();
+const attentionTracker = new AgentAttentionTracker();
 const missionTracker = new MissionTransitionTracker();
 
 function userDataDir(): string {
@@ -390,7 +396,16 @@ function wireOperationalEvents(): void {
   tapSessionState((sessionId, state) => {
     const event = agentTracker.ingest(sessionId, state, Date.now());
     if (event) sendPetEvent(event);
-    if (state === 'exited') agentTracker.forget(sessionId);
+    if (state === 'exited') {
+      agentTracker.forget(sessionId);
+      attentionTracker.forget(sessionId);
+    }
+  });
+  // Hooks explícitos do provider: waiting/blocked = "um agente precisa de
+  // você" — o aviso operacional nº 1 do pet.
+  tapAgentHookStatus((sessionId, state) => {
+    const event = attentionTracker.ingest(sessionId, state, Date.now());
+    if (event) sendPetEvent(event);
   });
   // Semeia o tracker na abertura de cada escopo: a primeira transição real
   // (ex.: missão que estava rodando no boot termina) NÃO é engolida como seed.

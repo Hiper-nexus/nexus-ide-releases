@@ -58,7 +58,7 @@ export function PetApp() {
       setReaction(
         event.kind === 'mission-failed' || event.kind === 'agent-exited'
           ? 'failed'
-          : event.kind === 'mission-blocked'
+          : event.kind === 'mission-blocked' || event.kind === 'agent-waiting'
             ? 'waiting'
             : 'wave',
       );

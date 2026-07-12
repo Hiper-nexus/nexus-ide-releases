@@ -103,3 +103,4 @@ release-assets/
 .firecrawl/
 /.cache/
 *.tgz
+scripts/codesign-retry-bin/

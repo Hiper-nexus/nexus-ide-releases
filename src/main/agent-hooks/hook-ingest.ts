@@ -21,6 +21,23 @@ import { saveProviderPaneSession } from '../persistence/provider-session-store';
 
 let listenerState: HookListenerState | null = null;
 
+/**
+ * Tap de status para serviços derivados do main (desktop pet): observa o
+ * estado EXPLÍCITO reportado pelos hooks (working/blocked/waiting/done) sem
+ * entrar no caminho de publicação. Mesmo idioma dos taps do pty-manager.
+ * §12.4 continua valendo: é atividade/aviso, nunca sensor ou evidência.
+ */
+export type AgentHookStatusTap = (
+  sessionId: string,
+  state: AgentStatusState,
+) => void;
+const hookStatusTaps = new Set<AgentHookStatusTap>();
+
+export function tapAgentHookStatus(cb: AgentHookStatusTap): () => void {
+  hookStatusTaps.add(cb);
+  return () => hookStatusTaps.delete(cb);
+}
+
 /** Ensure listener module is live (state reserved for full HTTP ingest later). */
 export function getAgentHookListenerState(): HookListenerState {
   if (!listenerState) listenerState = createHookListenerState();
@@ -62,6 +79,7 @@ export function ingestAgentHookStatus(
     sessionId,
     agentType: parsed.agentType,
   });
+  for (const tap of hookStatusTaps) tap(sessionId, parsed.state);
   const providerSession =
     parsed.providerSession ??
     (source && typeof payload === 'object' && payload !== null

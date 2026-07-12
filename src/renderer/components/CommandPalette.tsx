@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCommandPaletteStore } from '../state/command-palette-store';
+import { useCheatsheetStore } from '../state/cheatsheet-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
@@ -137,6 +138,14 @@ export function CommandPalette() {
       () => useSettingsStore.getState().openDrawer(),
       '⌘,',
       'settings preferencias',
+    );
+    tool(
+      'cheatsheet',
+      'Atalhos do teclado',
+      'key',
+      () => useCheatsheetStore.getState().toggle(),
+      '⌘/',
+      'ajuda help teclas shortcuts',
     );
 
     return out;

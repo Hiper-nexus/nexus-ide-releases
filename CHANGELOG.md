@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.14.3 — Pet Operacional Completo
+
+Data: 2026-07-12
+
+### Desktop pet
+- Aviso de intervenção por AGENTE: quando um hook reporta waiting/blocked
+  (pedido de permissão/input do Claude/Codex), o pet mostra balão âmbar
+  "Um agente precisa de você" com a pose waiting — fecha o ciclo
+  terminou/falhou/preciso-de-você por missão E por agente.
+
+### Teclado
+- Cheatsheet de atalhos (⌘/ e entrada "Atalhos do teclado" no ⌘K): todos
+  os aceleradores num overlay, sem sair do fluxo.
+
+### Build
+- Wrapper de retry do codesign versionado em
+  scripts/codesign-with-retry.sh + receita no build/notarize.md (o TSA da
+  Apple derruba rajadas de --timestamp com muitos nativos unpacked).
+- Release `v0.14.3` assinada e notarizada com o perfil `nexus-notary`.
+
 ## 0.14.2 — Galeria de Pets
 
 Data: 2026-07-12

@@ -179,11 +179,13 @@ body,
 }
 
 /* Intervenção humana: âmbar — atenção, não falha. */
-.pet__balloon--mission-blocked {
+.pet__balloon--mission-blocked,
+.pet__balloon--agent-waiting {
   border-color: var(--pet-warn);
 }
 
-.pet__balloon--mission-blocked::after {
+.pet__balloon--mission-blocked::after,
+.pet__balloon--agent-waiting::after {
   border-color: var(--pet-warn);
 }
 

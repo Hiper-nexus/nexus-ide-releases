@@ -147,6 +147,8 @@ export type PetEventKind =
   | 'mission-failed'
   /** Missão travou aguardando decisão/ação humana — o aviso mais importante. */
   | 'mission-blocked'
+  /** Um agente pediu permissão/input (hook waiting/blocked). */
+  | 'agent-waiting'
   | 'agent-exited'
   | 'agent-idle';
 
