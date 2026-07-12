@@ -171,6 +171,33 @@ describe("spawn authority resolution", () => {
     ).toBe(fs.realpathSync(trustedCwd));
   });
 
+  it("prefers persisted pane scope when resume still carries a legacy squad request id", () => {
+    const root = tempProject();
+    const scope = testProjectScope({ rootRealPath: root });
+    const authority = bindSpawnAuthority({
+      requestId: "squad-squad-a-oldrequest",
+      pending: null,
+      squads: [squad],
+      persistedPane: {
+        id: "mpane-resume",
+        missionId: "mission-a",
+        adapterId: "codex",
+        title: "Orquestrador",
+        role: "orchestrator",
+        paneId: "pane-resume",
+        cwd: root,
+        scope,
+        createdAt: 1,
+      },
+      trustedUserScope: null,
+      requestedCwd: tempProject(),
+    });
+
+    expect(authority.source).toBe("persisted-pane");
+    expect(authority.scope).toEqual(scope);
+    expect(authority.cwd).toBe(fs.realpathSync(root));
+  });
+
   it("binds task filesystem authority to an external worktree without changing mission coordinates", () => {
     const coordinationRoot = tempProject();
     const worktreeRoot = tempProject();

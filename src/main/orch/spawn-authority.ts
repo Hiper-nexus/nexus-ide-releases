@@ -76,8 +76,11 @@ export function resolveSpawnAuthority(
   persistedPane: MissionPaneSpec | null = null,
 ): SpawnAuthority | null {
   if (pending) return pending;
-  if (!requestId) {
-    if (!persistedPane) return null;
+  // Resume may still carry the pane's historical orchRequestId. The persisted
+  // main-owned pane record is stronger authority and, crucially, carries the
+  // original project scope. Treating the old id as a fresh legacy squad spawn
+  // discarded that scope and made safe resume fail closed.
+  if (persistedPane) {
     return {
       missionId: persistedPane.missionId,
       agentName: persistedPane.agentName,
@@ -100,6 +103,7 @@ export function resolveSpawnAuthority(
       executionScope: persistedPane.executionScope,
     };
   }
+  if (!requestId) return null;
   const legacy = legacySquadAuthority(requestId, squads);
   if (legacy) return legacy;
   throw new Error(
@@ -134,7 +138,7 @@ export function bindSpawnAuthority(
   );
   const source: SpawnAuthoritySource = input.pending
     ? "pending"
-    : !input.requestId && input.persistedPane
+    : input.persistedPane
       ? "persisted-pane"
       : input.requestId
         ? "legacy-squad"
@@ -153,7 +157,7 @@ export function bindSpawnAuthority(
   }
   const trustedCwd = input.pending
     ? input.pending.requestedCwd
-    : !input.requestId && input.persistedPane
+    : input.persistedPane
       ? input.persistedPane.cwd
       : input.requestedCwd;
   const cwd = resolveCwdForScope(scope, trustedCwd);
