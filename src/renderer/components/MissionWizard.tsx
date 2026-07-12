@@ -406,6 +406,9 @@ export function MissionWizard() {
         }
         return;
       }
+      if (res.warning) {
+        useToastStore.getState().push('warn', 'Doctor recuperou o arquiteto', res.warning);
+      }
       // O squad já foi salvo no main — garantir que a lista local o contém
       // antes de renderizar a revisão.
       await useOrchStore.getState().hydrate(workspacePath);

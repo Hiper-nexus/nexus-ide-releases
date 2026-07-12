@@ -8,6 +8,8 @@ import {
   loadEnrichedCatalog,
 } from './harness-enrich';
 import type { Squad } from '../../shared/orch-types';
+import { diagnoseWithDoctorGrok } from '../runtime/doctor-diagnostic-engine';
+import { getOrchSettings } from '../persistence/settings-store';
 
 /**
  * Squad Architect — lê o workspace (stack, estrutura, README) e GERA um squad
@@ -29,7 +31,7 @@ Responda APENAS com JSON neste formato:
   "name": "<nome curto do squad, ex.: 'API Django + React'>",
   "orchestratorInstructions": "<playbook markdown CURTO e específico do
     projeto: o que o squad faz, divisão de responsabilidades, convenções do
-    projeto que os workers devem seguir>",
+  projeto que os workers devem seguir>",
   "agents": [
     {"id": "<slug>", "agentName": "<nome>", "category": "executor|reviewer|scout|architect",
      "cli": "<uma CLI instalada>", "model": "<modelo disponível>", "effort": "<effort disponível>"}
@@ -61,6 +63,34 @@ Regras:
   os comandos reais de build/test/lint do projeto (extraia dos manifests,
   ex.: scripts do package.json, Makefile, rake, go test ./...) — são os
   gates que o orquestrador vai cobrar em cada handoff.`;
+
+const ARCHITECT_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    name: { type: 'string' },
+    orchestratorInstructions: { type: 'string' },
+    agents: {
+      type: 'array',
+      minItems: 3,
+      maxItems: 6,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string' },
+          agentName: { type: 'string' },
+          category: { type: 'string', enum: ['executor', 'reviewer', 'scout', 'architect'] },
+          cli: { type: 'string' },
+          model: { type: 'string' },
+          effort: { type: 'string' },
+        },
+        required: ['id', 'agentName', 'category', 'cli', 'model'],
+      },
+    },
+  },
+  required: ['name', 'orchestratorInstructions', 'agents'],
+} as const;
 
 function readSafe(file: string): string {
   try {
@@ -106,6 +136,85 @@ export interface ArchitectResult {
   ok: boolean;
   squad?: Squad;
   error?: string;
+  warning?: string;
+}
+
+function deterministicSquadFallback(
+  workspacePath: string,
+  intent: string | undefined,
+  reason: string,
+): ArchitectResult {
+  const adapters = listAdapterInfos().filter(
+    (adapter) => adapter.installed && adapter.id !== 'shell',
+  );
+  if (adapters.length === 0) {
+    return { ok: false, error: `${reason}; nenhuma CLI instalada para fallback` };
+  }
+  const pick = (index: number) => adapters[index % adapters.length];
+  const worker = (
+    id: string,
+    agentName: string,
+    category: 'executor' | 'reviewer' | 'scout' | 'architect',
+    index: number,
+  ) => {
+    const adapter = pick(index);
+    return {
+      id,
+      agentName,
+      category,
+      cli: adapter.id,
+      model: adapter.models.default || adapter.models.list[0],
+    };
+  };
+  const objective = intent?.trim() || `Manter e evoluir ${path.basename(workspacePath)}`;
+  const visual = /\b(ui|ux|visual|interface|desktop|pet|site|landing|web|mobile|react|electron)\b/i.test(
+    objective,
+  );
+  const agents = [
+    worker('executor', 'Executor principal', 'executor', 0),
+    worker('qa', 'QA de execução', 'reviewer', 1),
+    worker('reviewer', 'Revisor sênior', 'reviewer', 2),
+    ...(visual ? [worker('ux', 'UX e validação visual', 'reviewer', 3)] : []),
+  ];
+  const orchestrator = adapters.find((adapter) => adapter.orchestratorCapable) ?? adapters[0];
+  try {
+    const squad = saveSquad({
+      id: `agentic-fallback-${Date.now()}`,
+      name: visual ? 'Execução + QA Visual' : 'Execução + QA',
+      createdAt: String(Date.now()),
+      builtin: false,
+      orchestratorInstructions: [
+        `# Missão\n${objective}`,
+        'Inspecione os manifests e use os comandos reais de build, lint e teste do workspace.',
+        'Delegue execução e revisão em paralelo quando os escopos não se sobrepuserem.',
+        'Não declare conclusão sem evidência local dos testes e pós-condições da entrega.',
+        visual
+          ? 'A entrega visual exige QA da imagem/interface, estados completos e comparação com a referência anexada.'
+          : '',
+      ].filter(Boolean).join('\n\n'),
+      agents: [
+        {
+          id: 'orch',
+          agentName: 'Maestro',
+          category: 'orchestrator',
+          cli: orchestrator.id,
+          model: orchestrator.models.default || orchestrator.models.list[0],
+        },
+        ...agents,
+      ],
+    });
+    console.warn(`[orch doctor] ${reason}; squad determinístico criado: ${squad.name}`);
+    return {
+      ok: true,
+      squad,
+      warning: `${reason}. O Doctor montou um time determinístico com o catálogo local.`,
+    };
+  } catch (cause) {
+    return {
+      ok: false,
+      error: `${reason}; fallback inválido: ${cause instanceof Error ? cause.message : String(cause)}`,
+    };
+  }
 }
 
 /** Analisa o workspace e salva um squad sob medida. */
@@ -152,18 +261,42 @@ async function designSquad(opts: {
     `CATÁLOGO RUNTIME DE CLIs/MODELOS (fonte de verdade):\n${installed || 'nenhuma'}\n\n` +
     (enriched ? `${enriched}\n\n` : '') +
     profileWorkspace(workspacePath);
-  const raw = await chatViaBrainChain(
-    [
-      { role: 'system', content: ARCHITECT_PROMPT },
-      { role: 'user', content: `PERFIL DO PROJETO:\n\n${profile}` },
-    ],
-    2_000,
-  ).catch((err) => {
-    throw new Error(err instanceof Error ? err.message : String(err));
-  });
+  const doctor = getOrchSettings();
+  const viaAutoChain = () => chatViaBrainChain(
+      [
+        { role: 'system', content: ARCHITECT_PROMPT },
+        { role: 'user', content: `PERFIL DO PROJETO:\n\n${profile}` },
+      ],
+      2_000,
+    ).catch((err) => {
+      throw new Error(err instanceof Error ? err.message : String(err));
+    });
+  let raw: string;
+  if (doctor.doctorAdapterId === 'grok') {
+    try {
+      raw = await diagnoseWithDoctorGrok({
+        cwd: workspacePath,
+        system: ARCHITECT_PROMPT,
+        user: `PERFIL DO PROJETO:\n\n${profile}`,
+        jsonSchema: ARCHITECT_JSON_SCHEMA,
+        model: doctor.doctorModel || undefined,
+        effort: doctor.doctorEffort,
+      });
+    } catch (grokError) {
+      console.warn(
+        '[orch doctor] Grok indisponível; usando seleção automática:',
+        grokError instanceof Error ? grokError.message : String(grokError),
+      );
+      raw = await viaAutoChain();
+    }
+  } else {
+    raw = await viaAutoChain();
+  }
 
   const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return { ok: false, error: 'o modelo não devolveu JSON' };
+  if (!match) {
+    return deterministicSquadFallback(workspacePath, intent, 'o modelo não devolveu JSON');
+  }
   let parsed: {
     name?: string;
     orchestratorInstructions?: string;
@@ -173,10 +306,14 @@ async function designSquad(opts: {
     parsed = JSON.parse(match[0]);
   } catch {
     console.warn('[orch] arquiteto devolveu JSON inválido:', raw.slice(-200));
-    return { ok: false, error: 'JSON inválido do modelo (resposta truncada?)' };
+    return deterministicSquadFallback(
+      workspacePath,
+      intent,
+      'JSON inválido do modelo (resposta truncada?)',
+    );
   }
   if (!parsed.name || !Array.isArray(parsed.agents) || parsed.agents.length === 0) {
-    return { ok: false, error: 'squad gerado incompleto' };
+    return deterministicSquadFallback(workspacePath, intent, 'squad gerado incompleto');
   }
 
   const workspaceName = path.basename(workspacePath);

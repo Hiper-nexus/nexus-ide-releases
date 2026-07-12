@@ -87,6 +87,13 @@ export const orchSettingsSchema = z.object({
   defaultModel: z.string().max(128).default(''),
   /** Empty means the selected provider's currently active/default account. */
   defaultAccountId: z.string().max(128).default(''),
+  /** Diagnostic LLM used by the realtime Doctor. `auto` selects an available
+   * provider at runtime; recovery itself never depends on this model. */
+  doctorAdapterId: z.string().max(64).default('auto'),
+  /** Empty means the selected provider's configured/default model. */
+  doctorModel: z.string().max(128).default(''),
+  /** Highest supported effort is resolved per adapter when set to `max`. */
+  doctorEffort: z.enum(['auto', 'low', 'medium', 'high', 'xhigh', 'max']).default('auto'),
 });
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});

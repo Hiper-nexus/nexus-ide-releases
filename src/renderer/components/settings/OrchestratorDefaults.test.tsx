@@ -74,6 +74,9 @@ describe('OrchestratorDefaults', () => {
       defaultAdapterId: 'codex',
       defaultModel: 'gpt-5.4',
       defaultAccountId: 'codex-work',
+      doctorAdapterId: 'auto',
+      doctorModel: '',
+      doctorEffort: 'auto',
     };
     const orchSet = vi.fn(async (patch: Partial<OrchSettings>) => {
       saved = { ...saved, ...patch };
@@ -166,6 +169,9 @@ describe('OrchestratorDefaults', () => {
       defaultAdapterId: 'claude',
       defaultModel: '',
       defaultAccountId: '',
+      doctorAdapterId: 'auto',
+      doctorModel: '',
+      doctorEffort: 'auto',
     };
     Object.defineProperty(window, 'nexus', {
       configurable: true,

@@ -48,7 +48,8 @@
     "flag": "--model",
     "list": [
       "grok-build",
-      "grok-composer-2.5-fast",
+    "grok-composer-2.5-fast",
+    "grok-4.5",
       "grok-4.1",
       "grok-4",
       "grok-4-fast",
@@ -81,6 +82,10 @@
     "nexusMcp": "grok"
   },
   "control": {
+    "effort": {
+      "arg": "--reasoning-effort",
+      "levels": ["low", "medium", "high", "xhigh"]
+    },
     "permission": {
       "arg": "",
       "modes": {},

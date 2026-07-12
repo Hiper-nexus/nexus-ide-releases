@@ -799,7 +799,7 @@ export interface NexusApi {
     designSquad(
       workspacePath: string,
       intent?: string,
-    ): Promise<{ ok: boolean; squad?: Squad; error?: string }>;
+    ): Promise<{ ok: boolean; squad?: Squad; error?: string; warning?: string }>;
     saveSquad(squad: Squad): Promise<{ ok: boolean; error?: string }>;
     deleteSquad(id: string): Promise<{ ok: boolean }>;
     exportSquads(): Promise<{ ok: boolean; path?: string; error?: string }>;

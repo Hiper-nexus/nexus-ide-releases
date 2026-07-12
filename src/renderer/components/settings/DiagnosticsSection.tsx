@@ -14,6 +14,7 @@ import {
   readAudioDevices,
   readMicPermission,
 } from './ops-format';
+import { DoctorEngineSettings } from './DoctorEngineSettings';
 
 function useDiagnosticsSnapshot() {
   const [micPermission, setMicPermission] =
@@ -105,6 +106,8 @@ export function DiagnosticsSection() {
         Estado operacional de mic, permissões, wake engine, sessão realtime e
         custo. A tela não abre o microfone sozinha; ela lê sinais já expostos.
       </p>
+
+      <DoctorEngineSettings />
 
       <div className="ops-metric-grid">
         <MetricTile
