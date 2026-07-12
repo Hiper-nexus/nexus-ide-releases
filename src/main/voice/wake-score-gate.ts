@@ -20,9 +20,10 @@ export const EMBEDDED_WAKE_MIN_RMS = 0.18;
  * (2026-07) satura score≈1 em silêncio; por isso o gate também exige RMS
  * mínimo e (no engine) pode desativar o head se o probe de ruído falhar.
  */
-// v4 calibrado (2026-07-12): 92% nas 50 gravações reais, 91,9% no holdout
-// aumentado e 0 disparos em 16,7 h de negativos públicos no corte 0,10.
-export const CUSTOM_WAKE_SCORE_THRESHOLD = 0.1;
+// v4 recalibrado no mic real (2026-07-12): chamadas do usuário 0,052–0,069;
+// TV/ambiente observado ≤0,045. No corte 0,05: 100% das 50 gravações reais
+// e 0,12 falso/h em 16,7 h públicas. O piso RMS continua obrigatório.
+export const CUSTOM_WAKE_SCORE_THRESHOLD = 0.05;
 
 /**
  * Piso de energia acústica cru para aceitar o head PT. Logs reais: FPs com
