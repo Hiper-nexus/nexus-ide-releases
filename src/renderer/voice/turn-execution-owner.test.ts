@@ -114,4 +114,13 @@ describe('TurnExecutionOwner', () => {
     expect(owner.claimRealtimeTool(token)).toBe(false);
     expect(owner.owner).toBe('classic-brain');
   });
+
+  it('hands a pending delegation reply from realtime tool to Classic exactly once', () => {
+    const owner = new TurnExecutionOwner();
+    const token = owner.beginTurn();
+    expect(owner.claimRealtimeTool(token)).toBe(true);
+    expect(owner.claimClassicDelegationReply(token)).toBe(true);
+    expect(owner.owner).toBe('classic-brain');
+    expect(owner.claimClassicDelegationReply(token)).toBe(false);
+  });
 });

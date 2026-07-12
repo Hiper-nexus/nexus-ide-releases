@@ -70,6 +70,9 @@ describe('classifyConfirmationReply', () => {
       'demorou',
       'com certeza',
       'beleza, manda',
+      'dá sequência na missão',
+      'continue o squad',
+      'prossiga com a missão',
     ]) {
       expect(classifyConfirmationReply(t)).toBe('yes');
     }

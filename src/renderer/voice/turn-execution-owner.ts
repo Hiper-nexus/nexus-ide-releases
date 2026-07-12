@@ -75,4 +75,17 @@ export class TurnExecutionOwner {
     }
     return false;
   }
+
+  /**
+   * A realtime send_to_pane tool can ask for confirmation and retain ownership
+   * while the automatic reply capture records the user's answer. That answer
+   * belongs to the guarded Classic confirmation resolver, not to a second
+   * model action. Permit this one explicit, deterministic ownership hand-off.
+   */
+  claimClassicDelegationReply(token: number): boolean {
+    if (token !== this.token) return false;
+    if (this.claimed !== 'realtime-tool') return false;
+    this.claimed = 'classic-brain';
+    return true;
+  }
 }

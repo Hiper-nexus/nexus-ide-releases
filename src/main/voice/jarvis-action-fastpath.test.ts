@@ -14,6 +14,17 @@ const CTX: JarvisContext = {
 };
 
 describe('jarvisActionFastPath', () => {
+  it('envia sequência diretamente ao orquestrador ativo', () => {
+    const active = { ...CTX, orchestrator: 'NexusIDE Squad' };
+    for (const text of ['Dá sequência na missão.', 'Continue o squad.']) {
+      expect(jarvisActionFastPath(text, active)?.action).toEqual({
+        type: 'ask_pane',
+        pergunta: 'Continue a missão atual a partir do ponto em que parou.',
+      });
+    }
+    expect(jarvisActionFastPath('Dá sequência na missão.', CTX)).toBeNull();
+  });
+
   it('abrir terminal dispara open_terminal', () => {
     const reply = jarvisActionFastPath('Abrir terminal.', CTX);
     expect(reply?.action).toEqual({ type: 'open_terminal' });

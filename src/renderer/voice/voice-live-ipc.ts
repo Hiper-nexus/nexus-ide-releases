@@ -30,7 +30,17 @@ export function liveStatus(
   error?: string,
 ): void {
   if (!isJarvisLiveEnabled()) return;
-  void window.nexus.voice.liveStatus({ status, ...(error ? { error } : {}) });
+  // Ownership is intentionally released by liveQuiesce before Classic takes
+  // over. A late cosmetic status update must never become an unhandled IPC
+  // rejection and abort the command that triggered that hand-off.
+  void window.nexus.voice
+    .liveStatus({ status, ...(error ? { error } : {}) })
+    .catch((cause) => {
+      const message = errMsg(cause);
+      if (!/live session has no owner/i.test(message)) {
+        console.warn('[voice] falha atualizando status Live:', message);
+      }
+    });
 }
 
 export async function clearJarvisMcpSession(): Promise<void> {

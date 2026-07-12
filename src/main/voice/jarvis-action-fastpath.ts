@@ -81,6 +81,24 @@ export function jarvisActionFastPath(
   const t = norm(transcript);
   if (!t || t.length > 120) return null;
 
+  // An active squad/orchestrator changes the meaning of "continue a missão":
+  // it is an instruction for that pane, never a request to create another
+  // mission or redesign the squad. Route deterministically instead of leaving
+  // this high-frequency command to free-form model tool selection.
+  if (
+    ctx.orchestrator &&
+    /(?:\b(?:continua|continue|continuar|prossegue|prossiga|retoma|retome)\b.*\b(?:missao|squad|trabalho|tarefa)\b|\b(?:da|dar)\s+sequencia\b(?:.*\b(?:missao|squad|trabalho|tarefa)\b)?)/.test(t)
+  ) {
+    return {
+      say: say(ctx, 'Dando sequência no squad.'),
+      expectReply: false,
+      action: {
+        type: 'ask_pane',
+        pergunta: 'Continue a missão atual a partir do ponto em que parou.',
+      },
+    };
+  }
+
   if (
     /\b(abre|abra|abrir|novo|cria|crie|criar)\b.*\b(terminal|shell|console)\b/.test(t) ||
     /\b(terminal|shell)\b.*\b(novo|abrir|abre|abra)\b/.test(t)

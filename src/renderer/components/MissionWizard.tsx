@@ -166,6 +166,9 @@ export function MissionWizard() {
     setCount(2);
     setSlots([]);
     setError(null);
+    // A previous design request may have hung or completed after the modal was
+    // closed. Every fresh open must be interactive again.
+    setDesigning(false);
     return () => {
       cancelled = true;
     };
@@ -370,7 +373,15 @@ export function MissionWizard() {
         setError('Abra (ou informe) um workspace antes de montar o time.');
         return;
       }
-      const res = await window.nexus.orch.designSquad(workspacePath, intent.trim());
+      const res = await Promise.race([
+        window.nexus.orch.designSquad(workspacePath, intent.trim()),
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error('O arquiteto demorou demais. Tente novamente.')),
+            30_000,
+          );
+        }),
+      ]);
       if (!res.ok || !res.squad) {
         const message = res.error ?? 'Não consegui montar o time.';
         if (isMissingModelKeyError(message)) {
@@ -386,6 +397,12 @@ export function MissionWizard() {
       await useOrchStore.getState().hydrate(workspacePath);
       setSquadId(res.squad.id);
       setStep('squad-review');
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : 'Não consegui montar o time. Tente novamente.',
+      );
     } finally {
       setDesigning(false);
     }

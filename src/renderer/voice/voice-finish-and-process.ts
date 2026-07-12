@@ -463,6 +463,9 @@ export async function finishAndProcess(
           return;
         }
 
+        const delegationOwnershipTransferred =
+          isPendingDelegationReply &&
+          turnExecution.claimClassicDelegationReply(turnToken);
         setSuppressRealtimeAudioOut(true);
         resetPendingRealtimeAudioOut();
         livePlayer?.stop();
@@ -480,7 +483,10 @@ export async function finishAndProcess(
           });
         }
         setRealtimeTurnActive(false);
-        if (!turnExecution.claim('classic-brain', turnToken)) {
+        if (
+          !delegationOwnershipTransferred &&
+          !turnExecution.claim('classic-brain', turnToken)
+        ) {
           console.log('[voice] turno já reivindicado por tool-call realtime; Classic pulado');
           openLiveAudioGate();
           store.setStatus('idle');

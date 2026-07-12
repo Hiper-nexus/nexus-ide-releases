@@ -93,6 +93,12 @@ const AFFIRMATIVE_CORE = new Set([
   'demorou',
   'certeza',
   'isso',
+  'continua',
+  'continue',
+  'continuar',
+  'prossegue',
+  'prossiga',
+  'sequencia',
 ]);
 /** Apoio tolerado dentro de uma confirmação curta ("manda ver", "isso aí"). */
 // 'para'/'pare' está em NEGATIVE_RE, que tem precedência — mantê-lo aqui seria código morto e convite a enfraquecer a negativa.
@@ -109,6 +115,9 @@ const AFFIRMATIVE_FILLER = new Set([
   'a',
   'squad',
   'missao',
+  'da',
+  'dar',
+  'na',
 ]);
 const AFFIRMATIVE_MAX_WORDS = 6;
 
