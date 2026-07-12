@@ -30,11 +30,47 @@ describe('groupMissionsForRail', () => {
       pinnedIds: ['e'],
       query: '',
     });
-    const map = Object.fromEntries(sections.map((s) => [s.id, s.missions.map((m) => m.id)]));
+    const map = Object.fromEntries(
+      sections.map((s) => [s.id, s.missions.map((m) => m.id)]),
+    );
     expect(map.pinned).toEqual(['e']);
     expect(map.active).toEqual(['a']);
     expect(map.queue).toEqual(['b']);
     expect(map.done).toEqual(['c', 'd']);
+  });
+
+  it('puts status=running in Em progresso even without live panes', () => {
+    // Bug: terminal rodando mas bind pane↔missão ausente → caía em Na fila.
+    const sections = groupMissionsForRail({
+      missions,
+      openMissionIds: new Set(),
+      pinnedIds: [],
+      query: '',
+    });
+    const map = Object.fromEntries(
+      sections.map((s) => [s.id, s.missions.map((m) => m.id)]),
+    );
+    expect(map.active).toEqual(['a']);
+    // pending sem panes = fila (b e e)
+    expect(map.queue).toEqual(['b', 'e']);
+  });
+
+  it('puts blocked in Em progresso', () => {
+    const blocked = mission({
+      id: 'blk',
+      title: 'Precisa de ok',
+      status: 'blocked',
+      updatedAt: 40,
+    });
+    const sections = groupMissionsForRail({
+      missions: [...missions, blocked],
+      openMissionIds: new Set(),
+      pinnedIds: [],
+      query: '',
+    });
+    const active = sections.find((s) => s.id === 'active')!.missions.map((m) => m.id);
+    expect(active).toContain('blk');
+    expect(active).toContain('a');
   });
 
   it('filters by query across title and status', () => {
@@ -55,9 +91,11 @@ describe('groupMissionsForRail', () => {
       pinnedIds: ['e'],
       query: '',
     });
-    expect(sections.find((s) => s.id === 'pinned')?.missions.map((m) => m.id)).toEqual([
-      'e',
-    ]);
-    expect(sections.find((s) => s.id === 'active')?.missions).toEqual([]);
+    expect(
+      sections.find((s) => s.id === 'pinned')?.missions.map((m) => m.id),
+    ).toEqual(['e']);
+    expect(sections.find((s) => s.id === 'active')?.missions.map((m) => m.id)).toEqual(
+      ['a'],
+    );
   });
 });

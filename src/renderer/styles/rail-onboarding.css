@@ -61,6 +61,159 @@
   min-width: 0;
 }
 
+/* ── Workspace ≠ missão: pasta de contexto, chip compacto (sem card “missão”) ─ */
+.activity-rail__section--workspaces {
+  margin: 0 0 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+}
+
+.activity-rail__ws-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 10px 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.activity-rail__ws-row {
+  position: relative;
+  min-width: 0;
+}
+
+.activity-rail__ws-chip {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 5px 28px 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.activity-rail__ws-chip:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--bg-elevated) 80%, var(--bg));
+}
+
+/* Atual: chip, não o card cyan de missão aberta */
+.activity-rail__ws-chip--current {
+  cursor: default;
+  border-color: color-mix(in srgb, var(--text-dim) 35%, var(--border));
+  background: color-mix(in srgb, var(--bg-elevated) 55%, var(--bg));
+  box-shadow: none;
+}
+
+.activity-rail__ws-icon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.activity-rail__ws-chip--current .activity-rail__ws-icon {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.activity-rail__ws-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.activity-rail__ws-name {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-rail__ws-badge {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 80%, transparent);
+  background: color-mix(in srgb, var(--bg) 40%, transparent);
+}
+
+.activity-rail__ws-meta {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.activity-rail__ws-pin {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.activity-rail__ws-pin:hover {
+  opacity: 1;
+  color: var(--gold, #e0af68);
+  background: var(--accent-soft);
+}
+
+.activity-rail__ws-pin--absolute {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  opacity: 0;
+}
+
+.activity-rail__ws-row:hover .activity-rail__ws-pin--absolute,
+.activity-rail__ws-pin--absolute:focus-visible {
+  opacity: 0.9;
+}
+
+/* Divisor “Missões” — deixa claro o que vem abaixo */
+.activity-rail__missions-label {
+  margin: 4px 12px 2px;
+  padding-top: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--text-dim) 90%, var(--accent) 10%);
+}
+
 .activity-rail__section-head {
   appearance: none;
   display: flex;
@@ -452,6 +605,10 @@
   cursor: pointer;
   color: var(--text);
 }
+.mission-rail__item--idle {
+  background: color-mix(in srgb, var(--bg) 35%, transparent);
+  border-color: color-mix(in srgb, var(--border) 60%, transparent);
+}
 .mission-rail__item:hover:not(:disabled) { background: var(--accent-soft); }
 .mission-rail__remove {
   position: absolute;
@@ -489,12 +646,19 @@
 @media (prefers-reduced-motion: reduce) {
   .mission-rail__remove { transition: none; }
 }
+/* Missão ao vivo: borda + barra lateral (workspace NÃO usa isto) */
 .mission-rail__item--active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .mission-rail__item--active .mission-rail__dot {
   background: var(--live);
+}
+.mission-rail__item--active .mission-rail__item-title {
+  font-weight: 650;
 }
 .mission-rail__item:disabled { opacity: 0.6; cursor: default; }
 .mission-rail__dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: 0 0 8px; }

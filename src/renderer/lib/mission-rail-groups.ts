@@ -7,9 +7,21 @@ export interface RailSection {
   missions: Mission[];
 }
 
+/** Missão “em andamento” pelo status do orquestrador (não só pelo grid). */
+export function isInFlightStatus(status: MissionStatus): boolean {
+  return status === 'running' || status === 'blocked';
+}
+
 /**
- * Group missions into Orca-style sections:
- * pinned → active (live in grid) → queue (pending/running/blocked not live) → done/failed
+ * Group missions into rail sections:
+ * - pinned
+ * - active ("Em progresso"): panes ao vivo no grid **ou** status running/blocked
+ * - queue ("Na fila"): só pending (ainda não começou de verdade)
+ * - done: done/failed e sem panes ao vivo
+ *
+ * Antes, só panes ao vivo iam para "Em progresso". Se o bind pane↔missão
+ * falhasse (ou o layout mudasse), a missão com terminal rodando caía em
+ * "Na fila" ou parecia sumir — bug de UX.
  */
 export function groupMissionsForRail(opts: {
   missions: Mission[];
@@ -30,12 +42,15 @@ export function groupMissionsForRail(opts: {
   const pinnedSet = new Set(opts.pinnedIds);
   const byUpdated = (a: Mission, b: Mission) => b.updatedAt - a.updatedAt;
 
+  const isActive = (m: Mission): boolean =>
+    opts.openMissionIds.has(m.id) || isInFlightStatus(m.status);
+
   const pinned = filtered
     .filter((m) => pinnedSet.has(m.id))
     .sort(byUpdated);
 
   const active = filtered
-    .filter((m) => opts.openMissionIds.has(m.id) && !pinnedSet.has(m.id))
+    .filter((m) => isActive(m) && !pinnedSet.has(m.id))
     .sort(byUpdated);
 
   const terminal: MissionStatus[] = ['done', 'failed'];
@@ -48,12 +63,13 @@ export function groupMissionsForRail(opts: {
     )
     .sort(byUpdated);
 
+  // Na fila = ainda não começou (pending) e sem panes abertos.
   const queue = filtered
     .filter(
       (m) =>
         !pinnedSet.has(m.id) &&
         !opts.openMissionIds.has(m.id) &&
-        !terminal.includes(m.status),
+        m.status === 'pending',
     )
     .sort(byUpdated);
 

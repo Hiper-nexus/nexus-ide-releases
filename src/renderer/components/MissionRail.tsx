@@ -19,6 +19,7 @@ import {
   togglePinnedWorkspacePath,
 } from '../lib/workspace-rail-prefs';
 import { useWorkspaceStore } from '../state/workspace-store';
+import { useLayoutStore } from '../state/layout-store';
 import { PixelIcon } from './PixelIcon';
 import { AccountSwitcher } from './AccountSwitcher';
 import { OperatorHud } from './OperatorHud';
@@ -76,14 +77,18 @@ export function MissionRail() {
     };
   }, [workspace?.path]);
 
-  // Active = panes bound AND still present in the layout (same source as soft focus).
+  // Layout no dep: livePaneIds filtra panes mortos do tree — sem isso, o
+  // useMemo ficava stale e missão com terminal vivo sumia do “Em progresso”.
+  const layoutRoot = useLayoutStore((s) => s.root);
   const openMissionIds = useMemo(() => {
     const ids = new Set<string>();
     for (const mid of new Set(Object.values(paneMissions))) {
       if (livePaneIdsForMission(mid).length > 0) ids.add(mid);
     }
     return ids;
-  }, [paneMissions]);
+    // layoutRoot: reavaliar quando o grid muda (spawn/close/split).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paneMissions, layoutRoot]);
 
   const handoffCountByMission = useMemo(() => {
     const map = new Map<string, number>();
@@ -105,7 +110,12 @@ export function MissionRail() {
     [missions, openMissionIds, pinnedIds, query],
   );
 
-  const activeCount = missions.filter((m) => openMissionIds.has(m.id)).length;
+  const activeCount = missions.filter(
+    (m) =>
+      openMissionIds.has(m.id) ||
+      m.status === 'running' ||
+      m.status === 'blocked',
+  ).length;
 
   function toggleSection(id: RailSectionId) {
     setCollapsed((prev) => {
@@ -147,32 +157,53 @@ export function MissionRail() {
       });
   }
 
-  function missionMeta(mission: Mission, active: boolean): string {
+  function missionMeta(mission: Mission, liveInGrid: boolean): string {
     const hands = handoffCountByMission.get(mission.id) ?? 0;
-    const handBit = hands > 0 ? ` · ${hands} entrega${hands === 1 ? '' : 's'}` : '';
-    if (!active) {
-      const started = new Intl.DateTimeFormat('pt-BR', {
-        day: '2-digit',
-        month: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-      }).format(mission.createdAt);
-      return `Retomar · ${statusLabel(mission.status)} · ${started}${handBit}`;
+    const handBit =
+      hands > 0 ? ` · ${hands} entrega${hands === 1 ? '' : 's'}` : '';
+    const started = new Intl.DateTimeFormat('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(mission.createdAt);
+
+    // Pending sem panes = fila de verdade.
+    if (mission.status === 'pending' && !liveInGrid) {
+      return `Retomar · na fila · ${started}${handBit}`;
     }
-    const paneIds = Object.entries(paneMissions)
-      .filter(([, missionId]) => missionId === mission.id)
-      .map(([paneId]) => paneId);
-    const busyCount = paneIds.filter((paneId) => paneStates.get(paneId) === 'busy').length;
-    const spawningCount = paneIds.filter(
-      (paneId) => paneStates.get(paneId) === 'spawning',
-    ).length;
-    if (busyCount > 0) {
-      return `${busyCount} pane${busyCount === 1 ? '' : 's'} trabalhando${handBit}`;
+
+    if (liveInGrid) {
+      const paneIds = Object.entries(paneMissions)
+        .filter(([, missionId]) => missionId === mission.id)
+        .map(([paneId]) => paneId);
+      const live = livePaneIdsForMission(mission.id);
+      const ids = live.length > 0 ? live : paneIds;
+      const busyCount = ids.filter(
+        (paneId) => paneStates.get(paneId) === 'busy',
+      ).length;
+      const spawningCount = ids.filter(
+        (paneId) => paneStates.get(paneId) === 'spawning',
+      ).length;
+      if (busyCount > 0) {
+        return `${busyCount} pane${busyCount === 1 ? '' : 's'} trabalhando${handBit}`;
+      }
+      if (spawningCount > 0) {
+        return `${spawningCount} pane${spawningCount === 1 ? '' : 's'} iniciando${handBit}`;
+      }
+      if (ids.length > 0) {
+        return `${ids.length} pane${ids.length === 1 ? '' : 's'} no grid${handBit}`;
+      }
     }
-    if (spawningCount > 0) {
-      return `${spawningCount} pane${spawningCount === 1 ? '' : 's'} iniciando${handBit}`;
+
+    // running/blocked sem panes no grid (bind perdido ou status do agent).
+    if (mission.status === 'running') {
+      return `Rodando · clique para focar${handBit}`;
     }
-    return `${paneIds.length} pane${paneIds.length === 1 ? '' : 's'} pronto${paneIds.length === 1 ? '' : 's'}${handBit}`;
+    if (mission.status === 'blocked') {
+      return `Travada · precisa de você${handBit}`;
+    }
+    return `Retomar · ${statusLabel(mission.status)} · ${started}${handBit}`;
   }
 
   function selectMission(m: Mission) {
@@ -274,78 +305,94 @@ export function MissionRail() {
         )}
 
         {(workspace || pinnedWsEntries.length > 0) && (
-          <section className="activity-rail__section">
+          <section
+            className="activity-rail__section activity-rail__section--workspaces"
+            aria-label="Workspaces"
+          >
             <div className="activity-rail__section-head activity-rail__section-head--static">
-              <span className="activity-rail__section-label">Workspaces</span>
+              <span className="activity-rail__section-label">Pasta aberta</span>
             </div>
-            <ul className="mission-rail__list activity-rail__list">
+            <ul className="activity-rail__ws-list">
               {workspace && (
-                <li className="mission-rail__row">
-                  <button
-                    type="button"
-                    className="mission-rail__item mission-rail__item--active activity-rail__ws-item"
+                <li className="activity-rail__ws-row">
+                  <div
+                    className="activity-rail__ws-chip activity-rail__ws-chip--current"
                     title={workspace.path}
-                    onClick={() => undefined}
                   >
-                    <span className="mission-rail__dot mission-rail__dot--running" />
-                    <span className="mission-rail__item-body">
-                      <span className="mission-rail__item-title">{workspace.name}</span>
-                      <span className="mission-rail__item-meta">atual</span>
+                    <span className="activity-rail__ws-icon" aria-hidden="true">
+                      ⌂
                     </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="mission-rail__pin"
-                    title={
-                      pinnedWorkspaces.includes(workspace.path)
-                        ? 'Desafixar workspace'
-                        : 'Fixar workspace'
-                    }
-                    onClick={() =>
-                      setPinnedWorkspaces(togglePinnedWorkspacePath(workspace.path))
-                    }
-                  >
-                    <PixelIcon
-                      name={
+                    <span className="activity-rail__ws-body">
+                      <span className="activity-rail__ws-name">{workspace.name}</span>
+                      <span className="activity-rail__ws-badge">atual</span>
+                    </span>
+                    <button
+                      type="button"
+                      className="activity-rail__ws-pin"
+                      title={
                         pinnedWorkspaces.includes(workspace.path)
-                          ? 'star'
-                          : 'star-outline'
+                          ? 'Desafixar workspace'
+                          : 'Fixar workspace'
                       }
-                      size={11}
-                    />
-                  </button>
+                      onClick={() =>
+                        setPinnedWorkspaces(
+                          togglePinnedWorkspacePath(workspace.path),
+                        )
+                      }
+                    >
+                      <PixelIcon
+                        name={
+                          pinnedWorkspaces.includes(workspace.path)
+                            ? 'star'
+                            : 'star-outline'
+                        }
+                        size={10}
+                      />
+                    </button>
+                  </div>
                 </li>
               )}
               {pinnedWsEntries
                 .filter((w) => w.path !== workspace?.path)
                 .map((w) => (
-                  <li key={w.path} className="mission-rail__row">
+                  <li key={w.path} className="activity-rail__ws-row">
                     <button
                       type="button"
-                      className="mission-rail__item activity-rail__ws-item"
+                      className="activity-rail__ws-chip"
                       title={w.path}
                       onClick={() => void openWorkspace(w.path)}
                     >
-                      <span className="mission-rail__dot mission-rail__dot--pending" />
-                      <span className="mission-rail__item-body">
-                        <span className="mission-rail__item-title">{w.name}</span>
-                        <span className="mission-rail__item-meta">fixado · abrir</span>
+                      <span className="activity-rail__ws-icon" aria-hidden="true">
+                        ⌂
+                      </span>
+                      <span className="activity-rail__ws-body">
+                        <span className="activity-rail__ws-name">{w.name}</span>
+                        <span className="activity-rail__ws-meta">fixado · abrir</span>
                       </span>
                     </button>
                     <button
                       type="button"
-                      className="mission-rail__pin"
+                      className="activity-rail__ws-pin activity-rail__ws-pin--absolute"
                       title="Desafixar workspace"
                       onClick={() =>
                         setPinnedWorkspaces(togglePinnedWorkspacePath(w.path))
                       }
                     >
-                      <PixelIcon name="star" size={11} />
+                      <PixelIcon name="star" size={10} />
                     </button>
                   </li>
                 ))}
             </ul>
           </section>
+        )}
+
+        {missions.length > 0 && (
+          <div
+            className="activity-rail__missions-label"
+            role="presentation"
+          >
+            Missões
+          </div>
         )}
 
         {missions.length === 0 ? (
@@ -389,23 +436,36 @@ export function MissionRail() {
                       <li className="activity-rail__section-empty">Nada aqui</li>
                     ) : (
                       section.missions.map((m) => {
-                        const active = openMissionIds.has(m.id);
+                        const liveInGrid = openMissionIds.has(m.id);
+                        const inFlight =
+                          liveInGrid ||
+                          m.status === 'running' ||
+                          m.status === 'blocked';
                         const pinned = pinnedIds.includes(m.id);
+                        // Só pulsa se está no grid OU status running/blocked.
+                        const dotStatus =
+                          m.status === 'blocked' || m.status === 'failed'
+                            ? m.status
+                            : inFlight
+                              ? 'running'
+                              : m.status;
                         return (
                           <li key={m.id} className="mission-rail__row">
                             <button
-                              className={`mission-rail__item ${active ? 'mission-rail__item--active' : ''}`}
+                              className={`mission-rail__item ${liveInGrid ? 'mission-rail__item--active' : 'mission-rail__item--idle'}`}
                               disabled={busy !== null}
-                              aria-current={active ? 'true' : undefined}
+                              aria-current={liveInGrid ? 'true' : undefined}
                               title={
-                                active
-                                  ? 'Missão aberta — clique para focar'
-                                  : 'Retomar esta missão (restaura panes + resume CLI)'
+                                liveInGrid
+                                  ? 'Missão aberta no grid — clique para focar'
+                                  : inFlight
+                                    ? 'Missão em andamento — clique para reabrir/focar panes'
+                                    : 'Retomar esta missão (restaura panes + resume CLI)'
                               }
                               onClick={() => selectMission(m)}
                             >
                               <span
-                                className={`mission-rail__dot mission-rail__dot--${m.status}`}
+                                className={`mission-rail__dot mission-rail__dot--${dotStatus}`}
                               />
                               <span className="mission-rail__item-body">
                                 <span className="mission-rail__item-title">
@@ -416,7 +476,7 @@ export function MissionRail() {
                                 <span className="mission-rail__item-meta">
                                   {busy === m.id
                                     ? 'Retomando…'
-                                    : missionMeta(m, active)}
+                                    : missionMeta(m, liveInGrid)}
                                 </span>
                               </span>
                             </button>
