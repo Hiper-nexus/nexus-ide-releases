@@ -401,7 +401,13 @@ export function requiredNativeArtifactGlobs({ platform, arch }) {
     },
     {
       id: 'node-pty',
-      anyOf: [`${prebuildDir}/pty.node`],
+      anyOf:
+        platform === 'win32'
+          ? [
+              `${prebuildDir}/conpty.node`,
+              `${prebuildDir}/pty.node`,
+            ]
+          : [`${prebuildDir}/pty.node`],
     },
     {
       id: 'onnxruntime-node',

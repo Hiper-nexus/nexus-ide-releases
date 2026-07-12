@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.13.12 — Operator UX
+
+Data: 2026-07-11
+
+### Correções
+- Pacotes de plataforma do `node-pty` são extraídos integralmente do ASAR,
+  incluindo `spawn-helper` no Linux e bindings ConPTY no Windows.
+
+### Build
+- Release `v0.13.12` multi-arquitetura pelo workflow assinado/notarizado.
+
 ## 0.13.11 — Operator UX
 
 Data: 2026-07-11

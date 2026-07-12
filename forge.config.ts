@@ -250,6 +250,10 @@ const config: ForgeConfig = {
       // *.dylib: onnxruntime-node (wake word) dlopens libonnxruntime beside
       // its .node binding — both must live outside the asar.
       unpack: '**/{*.node,*.dylib,*.wasm,spawn-helper,tesseract.js/**,tesseract.js-core/**,wasm-feature-detect/**}',
+      // node-pty also ships an executable helper on POSIX and multiple conpty
+      // bindings on Windows. Unpack the complete platform package so runtime
+      // resolution never depends on per-file glob behavior.
+      unpackDir: '**/node_modules/@lydell/{node-pty,node-pty-*}',
     },
     // plugin-vite's default ignore ships ONLY the .vite bundles, silently
     // dropping the runtime externals (@lydell/node-pty, better-sqlite3, …).

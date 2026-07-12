@@ -13,7 +13,7 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.13.11',
+  version: '0.13.12',
   date: '2026-07-11',
   codename: 'Operator UX',
   summary:

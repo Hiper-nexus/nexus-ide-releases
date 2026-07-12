@@ -30,3 +30,11 @@ describe('Linux sandbox packaging', () => {
     });
   });
 });
+
+describe('native terminal packaging', () => {
+  it('unpacks complete node-pty packages, including helpers and conpty bindings', () => {
+    expect(forgeConfig.packagerConfig?.asar).toMatchObject({
+      unpackDir: '**/node_modules/@lydell/{node-pty,node-pty-*}',
+    });
+  });
+});
