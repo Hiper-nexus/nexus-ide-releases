@@ -135,7 +135,7 @@ export class LiveTransportController {
   private localCallSeq = 0;
   private _lastUserTranscript = '';
   /** Explicit work that Gemini has not yet handed to an agent pane. */
-  private pendingWorkDelegation: string | null = null;
+  private pendingWorkDelegation: { text: string; turnId: string } | null = null;
   private providerSpeaking = false;
   private geminiResumeHandle: string | undefined;
   private activeTurnId: string | undefined;
@@ -238,6 +238,7 @@ export class LiveTransportController {
     if (sessionId && this.activeTurnId && this.activeTurnId !== normalized) {
       jarvisLatencyTracker.discard(sessionId, this.activeTurnId);
     }
+    if (this.activeTurnId !== normalized) this.pendingWorkDelegation = null;
     this.activeTurnId = normalized;
     if (this.pendingToolFollowUp?.turnId !== normalized) {
       this.pendingToolFollowUp = null;
@@ -647,6 +648,7 @@ export class LiveTransportController {
     if (sessionId) jarvisLatencyTracker.discard(sessionId, this.activeTurnId);
     this.providerSpeaking = false;
     this.pendingToolFollowUp = null;
+    this.pendingWorkDelegation = null;
     this.toolTurnOrigins.clear();
     return this._fsm.interrupt(reason);
   }
@@ -661,6 +663,7 @@ export class LiveTransportController {
     this.smokeProbe.settleFailure('session_closed');
     this.clearPendingRendererAudio();
     this.pendingToolFollowUp = null;
+    this.pendingWorkDelegation = null;
     this.toolTurnOrigins.clear();
     logVoice('info', 'live.flowSummary', 'resumo do fluxo de áudio da sessão', {
       micFramesSent: this.micFramesCounter.total,
@@ -697,6 +700,7 @@ export class LiveTransportController {
     this.smokeProbe.settleFailure('session_closed');
     this.clearPendingRendererAudio();
     this.pendingToolFollowUp = null;
+    this.pendingWorkDelegation = null;
     this.toolTurnOrigins.clear();
     this.clearReconnectTimer();
     this.clearReconnectStabilityTimer();
@@ -753,6 +757,7 @@ export class LiveTransportController {
     this.smokeProbe.settleFailure('session_closed');
     this.clearPendingRendererAudio();
     this.pendingToolFollowUp = null;
+    this.pendingWorkDelegation = null;
     this.toolTurnOrigins.clear();
     this.clearIdleTimer();
     this.clearGraceTimer();
@@ -935,8 +940,12 @@ export class LiveTransportController {
 
   private notePotentialWorkDelegation(text: string): void {
     const trimmed = text.trim();
-    if (!isExplicitEngineeringWorkIntent(trimmed)) return;
-    this.pendingWorkDelegation = trimmed.slice(0, 4_000);
+    const turnId = this.activeTurnId;
+    if (!turnId || !isExplicitEngineeringWorkIntent(trimmed)) {
+      this.pendingWorkDelegation = null;
+      return;
+    }
+    this.pendingWorkDelegation = { text: trimmed.slice(0, 4_000), turnId };
   }
 
   /**
@@ -946,14 +955,17 @@ export class LiveTransportController {
    * gate still confirms the delegation before any pane receives text.
    */
   private recoverMissingWorkDelegation(): void {
-    const text = this.pendingWorkDelegation;
-    if (!text) return;
+    const pending = this.pendingWorkDelegation;
+    if (!pending || pending.turnId !== this.activeTurnId) {
+      this.pendingWorkDelegation = null;
+      return;
+    }
     this.pendingWorkDelegation = null;
     logVoice(
       'warn',
       'live.missingDelegationRecovered',
       'pedido explícito de trabalho terminou sem delegação — enviando ao fluxo seguro',
-      { chars: text.length },
+      { chars: pending.text.length, turnId: pending.turnId },
     );
     dispatchNexusAction(
       this as unknown as ToolDispatchHost,
@@ -963,7 +975,7 @@ export class LiveTransportController {
         argumentsJson: '',
         arguments: {},
       },
-      { action: 'send_to_pane', text },
+      { action: 'send_to_pane', text: pending.text },
     );
   }
 

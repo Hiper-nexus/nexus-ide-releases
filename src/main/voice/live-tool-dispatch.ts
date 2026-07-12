@@ -55,7 +55,14 @@ export function isExplicitEngineeringWorkIntent(text: string): boolean {
   if (/^(como|porque|por que|qual|quais|quando|onde|sera|seria|what|why|how)\b/.test(normalized)) {
     return false;
   }
-  return /\b(corrij(?:a|am|ir)|consert(?:e|ar)|resolv(?:a|am|er)|investigu(?:e|em|ar)|analis(?:e|em|ar)|implement(?:e|em|ar)|refator(?:e|em|ar)|ajust(?:e|em|ar)|apliqu(?:e|em|ar)|crie|cri(?:ar|em)|fix|debug|repair|implement|refactor)\b/.test(normalized);
+  const work = /\b(corrij(?:a|am|ir)|consert(?:e|ar)|resolv(?:a|am|er)|investigu(?:e|em|ar)|analis(?:e|em|ar)|implement(?:e|em|ar)|refator(?:e|em|ar)|ajust(?:e|em|ar)|apliqu(?:e|em|ar)|cri(?:e|ar|em)|fac(?:a|am)|fix|debug|repair|investigate|analy[sz]e|implement|refactor|apply|create)\b/;
+  const match = work.exec(normalized);
+  if (!match || match.index === undefined) return false;
+  const before = normalized.slice(0, match.index).trim().split(' ').filter(Boolean);
+  const nearby = before.slice(-3).join(' ');
+  if (/\b(nao|nunca|jamais|dont|do not|never)\b/.test(nearby)) return false;
+  if (/\b(disse|falou|comentou|escreveu|said|told|wrote|quoted)\b/.test(before.join(' '))) return false;
+  return true;
 }
 
 export interface ToolDispatchHost {
@@ -150,7 +157,6 @@ export function dispatchNexusAction(
     });
     return;
   }
-  if (args.action === 'send_to_pane') host.markDelegationAttempt?.();
   const action = realtimeArgsToJarvisAction(args);
   const argsRecord = args as Record<string, unknown>;
   const event = host.fsm.realtimeToolCall({
@@ -163,6 +169,7 @@ export function dispatchNexusAction(
   });
   if (!event) return;
   if (action) {
+    if (args.action === 'send_to_pane') host.markDelegationAttempt?.();
     if (host.currentTurnId) {
       jarvisLatencyTracker.markAction(event.sessionId, host.currentTurnId);
     } else {

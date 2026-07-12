@@ -137,30 +137,6 @@ const MIC_HEALTH_CHECK_MS = 5_000;
 /** Deadline curto: fallback textual só serve se continuar parecendo um wake. */
 const PASSIVE_WAKE_STT_BUDGET_MS = 3_500;
 const PASSIVE_WAKE_RENDERER_DEADLINE_MS = PASSIVE_WAKE_STT_BUDGET_MS + 500;
-/** Comando falado no mesmo utterance do wake ("Jarvis abre X") — Overclock rest. */
-let pendingPassiveWakeCommand: string | null = null;
-
-async function flushPendingPassiveWakeCommand(): Promise<void> {
-  const cmd = pendingPassiveWakeCommand?.trim();
-  pendingPassiveWakeCommand = null;
-  if (!cmd) return;
-  const turnId =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `wake-cmd-${Date.now()}`;
-  try {
-    const accepted = await window.nexus.voice.liveRescueIn({ turnId, text: cmd });
-    logVoiceEvent('info', 'jarvis.passiveWakeCommand', 'comando do mesmo utterance injetado no Live', {
-      chars: cmd.length,
-      accepted: accepted.accepted,
-    });
-  } catch (err) {
-    logVoiceEvent('warn', 'jarvis.passiveWakeCommandFail', 'falha ao injetar comando do wake', {
-      error: errMsg(err),
-    });
-  }
-}
-
 type WakeSource = 'voice' | 'voice-barge' | 'click';
 
 function isAckGatedCapture(reason: JarvisCaptureReason = activeCaptureReason): boolean {
@@ -631,10 +607,7 @@ export function useVoiceController(): void {
           return;
         }
 
-        if (
-          match.command.trim() &&
-          !isTrustedPassiveEmbeddedCommand(text, latestInfo.persona.assistantName)
-        ) {
+        if (match.command.trim() && !isTrustedPassiveEmbeddedCommand(text, latestInfo.persona.assistantName)) {
           logVoiceEvent(
             'warn',
             'wake.passiveEmbeddedCommandRejected',
@@ -645,6 +618,25 @@ export function useVoiceController(): void {
               commandWords: match.command.split(/\s+/).filter(Boolean).length,
             },
           );
+          return;
+        }
+
+        // Passive STT is an untrusted ambient sensor. Even an exact-prefix
+        // phrase can come from a video or another person, so it may wake Jarvis
+        // but never forwards the rest as a command. A fresh post-wake utterance
+        // is required and owned by the normal Live/confirmation pipeline.
+        if (match.command.trim()) {
+          logVoiceEvent(
+            'info',
+            'wake.passiveEmbeddedCommandWakeOnly',
+            'STT passivo confirmou o nome; comando embutido descartado por segurança',
+            { latencyMs, provider: result.provider, commandWords: match.command.split(/\s+/).length },
+          );
+          if (statusNow === 'speaking') {
+            stopAllPlayback();
+            await window.nexus.voice.liveInterrupt('voice-barge').catch(() => undefined);
+          }
+          onWake(statusNow === 'speaking' ? 'voice-barge' : 'voice');
           return;
         }
 
@@ -673,13 +665,11 @@ export function useVoiceController(): void {
         // Já quente + só "Jarvis" still needs an audible wake acknowledgement.
         // Reopening reply capture silently made a successful detection look dead.
         if (stillHot && !match.command.trim()) {
-          pendingPassiveWakeCommand = null;
           onWake('voice', utterance.preRoll);
           return;
         }
 
-        // Frio: wake completo + comando embutido após Live subir
-        pendingPassiveWakeCommand = match.command.trim() || null;
+        // Frio: wake-only. Passive STT never carries command authority.
         onWake(statusNow === 'speaking' ? 'voice-barge' : 'voice', utterance.preRoll);
       } catch (error) {
         logVoiceEvent('warn', 'wake.passiveSttError', 'falha no STT passivo', {
@@ -1074,7 +1064,6 @@ async function beginListening(
         // FIX E: session is already hot — re-arm mic streaming without liveStart.
         setRealtimeTurnActive(canAttemptRealtime(info));
         queueLiveContextRefresh();
-        void flushPendingPassiveWakeCommand();
       } else {
         setRealtimeTurnActive(canAttemptRealtime(info));
         // The first user utterance must be the only new Live turn. Injecting a
@@ -1094,12 +1083,9 @@ async function beginListening(
                 setRealtimeTurnActive(false);
                 return;
               }
-              // Overclock: se o STT já trouxe o comando junto do wake, envia já.
-              await flushPendingPassiveWakeCommand();
             })
             .catch((err) => {
               setRealtimeTurnActive(false);
-              pendingPassiveWakeCommand = null;
               console.warn('[voice] liveStart falhou (classic segue):', errMsg(err));
             }),
         );

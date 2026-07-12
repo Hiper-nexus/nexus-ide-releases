@@ -77,6 +77,8 @@ describe('isExplicitEngineeringWorkIntent', () => {
     'analise os logs e resolva o bug',
     'implemente a correção no login',
     'refactor the realtime controller',
+    'analyze the logs and apply the patch',
+    'faça a correção no realtime',
   ])('exige delegação para trabalho explícito: %s', (text) => {
     expect(isExplicitEngineeringWorkIntent(text)).toBe(true);
   });
@@ -86,6 +88,10 @@ describe('isExplicitEngineeringWorkIntent', () => {
     'por que o login falhou?',
     'o que você acha disso?',
     'Jarvis',
+    'não analise os logs',
+    'não implemente isso',
+    'ele disse corrige o login',
+    'she said apply the patch',
   ])('não transforma pergunta/conversa em trabalho: %s', (text) => {
     expect(isExplicitEngineeringWorkIntent(text)).toBe(false);
   });

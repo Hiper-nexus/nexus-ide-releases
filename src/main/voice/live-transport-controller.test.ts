@@ -842,6 +842,7 @@ describe('LiveTransportController', () => {
     );
     await controller.onStart();
 
+    controller.beginTurn('fix-turn');
     expect(controller.rescueText('fix-turn', 'analise os logs e corrija esse erro')).toBe(true);
     provider.fireResponseDone();
 
@@ -857,6 +858,55 @@ describe('LiveTransportController', () => {
         text: 'analise os logs e corrija esse erro',
       },
     });
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
+  it('does not recover work abandoned by a superseding unrelated turn', async () => {
+    vi.resetModules();
+    const provider = fakeProvider(async () => {});
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+    const events: Array<{ channel: string; payload: unknown }> = [];
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, enabled: true, transport: 'gemini-live' },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({ resolveVoiceApiKey: () => 'key', voiceApiKeySource: () => 'env' }));
+    vi.doMock('./jarvis-memory', () => ({ jarvisMemory: { factsBlock: () => '' } }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(
+      (channel, payload) => events.push({ channel, payload }),
+      () => 1_000,
+    );
+    session.setEnabled(true);
+    session.start({ reason: 'manual' });
+    const controller = new LiveTransportController(
+      (channel, payload) => events.push({ channel, payload }),
+      session,
+    );
+    await controller.onStart();
+    controller.beginTurn('work-turn');
+    expect(controller.rescueText('work-turn', 'analise os logs')).toBe(true);
+    controller.interrupt('barge-in');
+    controller.beginTurn('question-turn');
+    provider.fireRoleTranscript({ role: 'user', text: 'que horas são?', final: true });
+    provider.fireResponseDone();
+
+    expect(events.some((event) =>
+      event.channel === VOICE_CHANNELS.liveToolCall &&
+      (event.payload as { callId?: string }).callId?.includes('recover-delegation'),
+    )).toBe(false);
 
     vi.doUnmock('./voice-config-store');
     vi.doUnmock('./voice-secrets');
