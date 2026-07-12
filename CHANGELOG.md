@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.14.1 — Navi Segue o Cursor
+
+Data: 2026-07-12
+
+### Desktop pet
+- Look mechanics do contrato Codex v2: o pet olha para o cursor na tela
+  (16 direções em passos de 22,5°, linhas 9/10 do spritesheet), volta a
+  digitar quando o mouse para ou chega perto, e olha neutro dormindo ou
+  durante o arrasto. Verificação visual dos estados (look, balões,
+  sono) contra o bundle real.
+
+### Build
+- Release `v0.14.1` assinada e notarizada localmente com o perfil
+  `nexus-notary`.
+
 ## 0.14.0 — Mission Control Vivo
 
 Data: 2026-07-12

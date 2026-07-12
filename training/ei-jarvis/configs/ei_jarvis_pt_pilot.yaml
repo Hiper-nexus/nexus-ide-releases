@@ -1,0 +1,86 @@
+# Production-candidate pilot. The remote orchestrator adds the reviewed real
+# and ElevenLabs corpus after VoxCPM generation, before augmentation/features.
+model_name: ei_jarvis_pt_pilot
+
+target_phrases:
+  - "jarvis"
+  - "ei jarvis"
+  - "hey jarvis"
+  - "oi jarvis"
+
+tts_backend: voxcpm
+
+voxcpm_tts:
+  model_id: openbmb/VoxCPM2
+  model_cache_relpath: voxcpm/VoxCPM2
+  load_denoiser: false
+  cfg_values: [1.5, 2.0, 2.5]
+  inference_timesteps_list: [8, 10, 12]
+  voice_design_prompts:
+    - "A young adult Brazilian Portuguese man, clear mid-pitch voice, moderate pace"
+    - "A young adult Brazilian Portuguese woman, warm mid-pitch, steady pace"
+    - "A middle-aged Brazilian man, deep baritone, deliberate pace"
+    - "A middle-aged Brazilian woman, smooth alto, measured pace"
+    - "A Brazilian Portuguese speaker with Sao Paulo accent, conversational"
+    - "A Brazilian Portuguese speaker with Rio accent, warm and natural"
+    - "A Brazilian Portuguese speaker with Nordeste accent, friendly"
+    - "A Brazilian Portuguese speaker with Southern accent, calm"
+    - "An older Brazilian man, gravelly tenor, clear articulation"
+    - "An older Brazilian woman, soft gentle voice, slower pace"
+    - "A soft-spoken Brazilian adult, low volume, careful enunciation"
+    - "A loud Brazilian office voice, strong projection"
+    - "A Brazilian adult speaking quickly but clearly"
+    - "A Brazilian adult speaking slowly for a smart speaker"
+    - "A Brazilian adult with gender-neutral delivery, natural pace"
+    - "A Brazilian presenter voice, authoritative and even"
+
+n_samples: 320
+n_samples_val: 80
+n_background_samples: 400
+n_background_samples_val: 100
+tts_batch_size: 4
+
+custom_negative_phrases:
+  - "ei jason"
+  - "ei jarbas"
+  - "ei java"
+  - "ei javis"
+  - "ei jardins"
+  - "ei travis"
+  - "jair"
+  - "jarros"
+  - "chaves"
+  - "javascript"
+  - "abrir o terminal"
+  - "bom dia"
+  - "roda os testes"
+  - "nova missão"
+  - "continue trabalhando"
+  - "obrigado por assistir"
+
+data_dir: ./data
+output_dir: ./output
+
+augmentation:
+  clip_duration: 2.0
+  batch_size: 16
+  rounds: 4
+  background_paths: [./data/backgrounds]
+  rir_paths: [./data/rirs]
+
+model:
+  model_type: conv_attention
+  model_size: small
+
+steps: 15000
+learning_rate: 0.0001
+weight_decay: 0.01
+label_smoothing: 0.05
+max_negative_weight: 3000
+target_fp_per_hour: 0.1
+
+batch_n_per_class:
+  positive: 50
+  adversarial_negative: 100
+  ACAV100M_sample: 1024
+  background_noise: 100
