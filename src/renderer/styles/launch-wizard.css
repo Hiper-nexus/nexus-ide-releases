@@ -369,6 +369,10 @@
   white-space: nowrap;
 }
 
+.prov__acct-chip {
+  flex: 0 0 auto;
+}
+
 .prov__body {
   padding: 12px 14px 14px;
   border-top: 1px solid var(--border);
@@ -388,9 +392,10 @@
 }
 
 .prov__block--accounts {
-  padding: 0;
-  border: none;
-  background: transparent;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 4%, var(--bg));
 }
 
 .prov__block-title {

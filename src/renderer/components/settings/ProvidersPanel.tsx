@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { ProviderSettingsInfo } from '../../../shared/provider-settings-types';
 import { credentialLinkForKeySlot } from '../../../shared/credential-links';
+import { useAccountStore } from '../../state/account-store';
 import { useProviderStore } from '../../state/provider-store';
 import { openExternalFromAnchor } from '../../lib/open-external';
 import { AccountsManager } from './AccountsManager';
@@ -290,12 +291,33 @@ function ControlFlags({
   );
 }
 
+function providerAccountSummary(
+  provider: ProviderSettingsInfo,
+  accounts: readonly { adapterId: string; active: boolean; label: string }[],
+): string {
+  const mine = accounts.filter((a) => a.adapterId === provider.adapterId);
+  const active = mine.find((a) => a.active);
+  const model = provider.defaultModel;
+  if (active) return `${model} · ${active.label}`;
+  if (mine.length > 0) return `${model} · ${mine.length} contas`;
+  return model;
+}
+
 function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
   const setConfig = useProviderStore((s) => s.setConfig);
+  const accounts = useAccountStore((s) => s.accounts);
   const [expanded, setExpanded] = useState(false);
   const [binDraft, setBinDraft] = useState(provider.binPath);
   const [argsDraft, setArgsDraft] = useState(provider.extraArgs.join(' '));
   const riskWarning = providerRiskWarning(provider);
+  const accountSummary = useMemo(
+    () => providerAccountSummary(provider, accounts),
+    [provider, accounts],
+  );
+  const accountCount = useMemo(
+    () => accounts.filter((a) => a.adapterId === provider.adapterId).length,
+    [accounts, provider.adapterId],
+  );
 
   const patch = (p: Partial<Parameters<typeof setConfig>[0]>) =>
     void setConfig({ adapterId: provider.adapterId, ...p });
@@ -315,7 +337,9 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
           <span className="prov__title">
             {provider.icon} {provider.label}
           </span>
-          <span className="prov__summary">{provider.defaultModel}</span>
+          <span className="prov__summary" title={accountSummary}>
+            {accountSummary}
+          </span>
         </button>
         <span
           className={`settings-chip ${provider.installed ? 'settings-chip--ok' : 'settings-chip--warn'}`}
@@ -338,6 +362,14 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
               ? 'via API key'
               : 'login pendente'}
         </span>
+        {accountCount > 0 && (
+          <span
+            className="settings-chip prov__acct-chip"
+            title={`${accountCount} conta${accountCount === 1 ? '' : 's'} no vault`}
+          >
+            {accountCount} conta{accountCount === 1 ? '' : 's'}
+          </span>
+        )}
         <label className="prov__toggle" title="Habilitar/desabilitar">
           <input
             type="checkbox"
@@ -453,11 +485,11 @@ export function ProvidersPanel() {
   const providers = useProviderStore((s) => s.providers);
   return (
     <section>
-      <h3 className="settings-detail__title">Providers (CLIs de IA)</h3>
+      <h3 className="settings-detail__title">Providers e contas CLI</h3>
       <p className="settings-detail__hint">
-        Confira instalação e login sem abrir cada item. Expanda Claude, Codex,
-        Kimi ou outra CLI para ajustar modelo, permissões, credenciais e contas
-        reserva. Segredos ficam no armazenamento seguro do sistema.
+        Instalação, login e vault multi-conta por CLI. Expanda um provider para
+        modelo, permissões, API key e contas reserva (hot-swap + failover).
+        Segredos ficam no Keychain.
       </p>
       <ul className="prov__list">
         {providers.map((p) => (

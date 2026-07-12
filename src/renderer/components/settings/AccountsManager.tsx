@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountInfo } from '../../../shared/account-types';
 import { useAccountStore } from '../../state/account-store';
+import { askConfirm } from '../../state/confirm-store';
+import { PixelIcon } from '../PixelIcon';
 
 /**
- * Multi-account manager for one adapter — the failover roster. O topo SEMPRE
- * responde "qual conta está em uso AGORA" (inclusive a implícita: a sessão
- * nativa do CLI quando nenhuma conta foi adicionada). Adição por revelação
- * progressiva: dois botões claros → formulário compacto correspondente.
+ * Multi-account manager for one adapter — the failover roster.
+ * Always answers "which account runs on the next terminal", including the
+ * implicit native CLI session when nothing is vaulted yet.
  */
 
 const UPSTREAMS = [
@@ -34,6 +35,20 @@ function accountKindLabel(a: AccountInfo): string {
   return UPSTREAMS.find((u) => u.id === a.upstream)?.label ?? a.upstream;
 }
 
+function accountState(a: AccountInfo): 'active' | 'cooldown' | 'warn' | 'ready' {
+  if (a.active) return 'active';
+  if (a.onCooldown) return 'cooldown';
+  if (!a.hasCredential) return 'warn';
+  return 'ready';
+}
+
+function authStatusLabel(state: string | undefined): string {
+  if (state === 'ok') return 'Login verificado';
+  if (state === 'missing') return 'Login necessário';
+  if (state === 'checking') return 'Verificando…';
+  return 'Não verificado';
+}
+
 export function AccountsManager({ adapterId }: { adapterId: string }) {
   // Select the whole array (stable reference) and filter in a memo — a
   // selector that returns `.filter(...)` makes a NEW array every render, which
@@ -56,10 +71,20 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
   const [upstream, setUpstream] = useState('anthropic');
   const [key, setKey] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
+  const [noticeTone, setNoticeTone] = useState<'ok' | 'err' | 'info'>('info');
   const [auth, setAuth] = useState<{ state: string; detail: string } | null>({
     state: 'checking',
     detail: 'Verificando a sessão desta CLI…',
   });
+  const [busy, setBusy] = useState(false);
+  const [canSnapshot, setCanSnapshot] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
+
+  const isClaude = adapterId === 'claude';
+  const active = accounts.find((a) => a.active) ?? null;
+  const standby = accounts.filter((a) => !a.active);
 
   async function refreshAuth() {
     const list = await window.nexus.providers.authStatus();
@@ -78,11 +103,6 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
       alive = false;
     };
   }, [adapterId]);
-  const [busy, setBusy] = useState(false);
-
-  const isClaude = adapterId === 'claude';
-  const [canSnapshot, setCanSnapshot] = useState(false);
-  const active = accounts.find((a) => a.active) ?? null;
 
   useEffect(() => {
     let alive = true;
@@ -94,11 +114,44 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
     };
   }, [adapterId, supportsSnapshot]);
 
+  useEffect(() => {
+    if (renamingId) renameInputRef.current?.focus();
+  }, [renamingId]);
+
   function closeForm() {
     setAddMode(null);
     setLabel('');
     setKey('');
-    setNotice(null);
+  }
+
+  function showNotice(message: string, tone: 'ok' | 'err' | 'info' = 'info') {
+    setNotice(message);
+    setNoticeTone(tone);
+  }
+
+  function startRename(account: AccountInfo) {
+    setRenamingId(account.id);
+    setRenameDraft(account.label);
+  }
+
+  function cancelRename() {
+    setRenamingId(null);
+    setRenameDraft('');
+  }
+
+  async function commitRename() {
+    if (!renamingId) return;
+    const next = renameDraft.trim();
+    if (!next) {
+      cancelRename();
+      return;
+    }
+    setBusy(true);
+    await rename(renamingId, next);
+    await hydrate();
+    setBusy(false);
+    cancelRename();
+    showNotice('Nome atualizado.', 'ok');
   }
 
   async function addApiKey() {
@@ -116,9 +169,9 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
     setBusy(false);
     if (res.ok) {
       closeForm();
-      setNotice('Conta adicionada, ativada e pronta para o próximo terminal.');
+      showNotice('Conta adicionada e ativada para o próximo terminal.', 'ok');
     } else {
-      setNotice(res.error ?? 'Falhou.');
+      showNotice(res.error ?? 'Não foi possível adicionar a conta.', 'err');
     }
   }
 
@@ -131,11 +184,12 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
     setBusy(false);
     if (res.ok) {
       closeForm();
-      setNotice(
-        `Sessão ${adapterId} salva e ativada (hot-swap)${res.email ? ` · ${res.email}` : ''}. Reinicie panes abertos para aplicar.`,
+      showNotice(
+        `Sessão salva e ativada${res.email ? ` · ${res.email}` : ''}. Reinicie panes abertos para aplicar.`,
+        'ok',
       );
     } else {
-      setNotice(res.error ?? 'Falhou.');
+      showNotice(res.error ?? 'Não foi possível salvar a sessão logada.', 'err');
     }
   }
 
@@ -145,20 +199,32 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
     await hydrate();
     await refreshAuth();
     setBusy(false);
-    setNotice(
+    showNotice(
       res.ok
-        ? 'Conta ativada e sincronizada para o próximo terminal.'
-        : res.error ?? 'Não consegui ativar essa conta.',
+        ? 'Conta ativada. Próximo terminal usa esta sessão.'
+        : (res.error ?? 'Não consegui ativar essa conta.'),
+      res.ok ? 'ok' : 'err',
     );
   }
 
-  async function removeAccount(id: string) {
+  async function removeAccount(account: AccountInfo) {
+    const ok = await askConfirm({
+      title: `Remover “${account.label}”?`,
+      body: account.active
+        ? 'Esta é a conta ativa. O próximo terminal volta à sessão nativa da CLI até você ativar outra.'
+        : 'A conta sai do vault de failover. Credenciais salvas neste perfil deixam de ser usadas.',
+      confirmLabel: 'Remover conta',
+      cancelLabel: 'Manter',
+      danger: true,
+    });
+    if (!ok) return;
     setBusy(true);
-    await remove(id);
+    await remove(account.id);
     await hydrate();
     await refreshAuth();
     setBusy(false);
-    setNotice('Conta removida.');
+    if (renamingId === account.id) cancelRename();
+    showNotice('Conta removida.', 'info');
   }
 
   const authClass =
@@ -166,245 +232,343 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
       ? 'acct__status acct__status--ok'
       : auth?.state === 'missing'
         ? 'acct__status acct__status--missing'
-        : 'acct__status';
+        : auth?.state === 'checking'
+          ? 'acct__status acct__status--checking'
+          : 'acct__status';
 
-  const standby = accounts.filter((a) => !a.active);
+  function renderRow(account: AccountInfo, role: 'active' | 'standby') {
+    const state = accountState(account);
+    const isRenaming = renamingId === account.id;
+
+    return (
+      <li
+        key={account.id}
+        className={`acct__row ${role === 'active' ? 'acct__row--active' : ''}`}
+        data-state={state}
+      >
+        <span
+          className="acct__led"
+          data-state={state}
+          aria-hidden="true"
+        />
+        <div className="acct__body">
+          {isRenaming ? (
+            <div className="acct__rename">
+              <input
+                ref={renameInputRef}
+                className="settings-input acct__rename-input"
+                value={renameDraft}
+                aria-label="Novo nome da conta"
+                disabled={busy}
+                onChange={(e) => setRenameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void commitRename();
+                  if (e.key === 'Escape') cancelRename();
+                }}
+              />
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary acct__action"
+                disabled={busy || !renameDraft.trim()}
+                onClick={() => void commitRename()}
+              >
+                Salvar nome
+              </button>
+              <button
+                type="button"
+                className="settings-btn acct__action"
+                disabled={busy}
+                onClick={cancelRename}
+              >
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="acct__identity">
+                <span className="acct__name">{account.label}</span>
+                {role === 'active' && (
+                  <span className="acct__pill">Em uso</span>
+                )}
+                <span className="acct__badge">{accountKindLabel(account)}</span>
+              </div>
+              <div className="acct__meta-line">
+                {account.email && (
+                  <span className="acct__email">{account.email}</span>
+                )}
+                {account.onCooldown && (
+                  <span className="acct__cooldown" title={account.lastError}>
+                    esgotada · volta em {cooldownLabel(account)}
+                  </span>
+                )}
+                {!account.hasCredential && (
+                  <span className="acct__warn">sem credencial</span>
+                )}
+                {role === 'active' && !account.onCooldown && account.hasCredential && (
+                  <span className="acct__meta-quiet">próximo terminal</span>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+        {!isRenaming && (
+          <div className="acct__actions">
+            {role === 'active' ? (
+              <button
+                type="button"
+                className="settings-btn acct__action"
+                onClick={() => void useAccount(account.id)}
+                disabled={busy}
+                title="Reaplicar esta conta no ambiente da CLI"
+              >
+                Sincronizar
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary acct__action"
+                onClick={() => void useAccount(account.id)}
+                disabled={busy || account.onCooldown || !account.hasCredential}
+                title={
+                  account.onCooldown
+                    ? 'Em cooldown — indisponível até o limite passar'
+                    : !account.hasCredential
+                      ? 'Sem credencial salva'
+                      : 'Tornar esta a conta em uso'
+                }
+              >
+                Usar
+              </button>
+            )}
+            <button
+              type="button"
+              className="settings-btn acct__action"
+              onClick={() => startRename(account)}
+              disabled={busy}
+              title="Renomear conta"
+            >
+              Renomear
+            </button>
+            <button
+              type="button"
+              className="settings-btn settings-btn--danger acct__action"
+              onClick={() => void removeAccount(account)}
+              disabled={busy}
+              title="Remover conta do vault"
+            >
+              Remover
+            </button>
+          </div>
+        )}
+      </li>
+    );
+  }
 
   return (
     <div className="acct">
       <div className="acct__head">
-        <div>
-          <span className="acct__title">Contas deste provider</span>
+        <div className="acct__head-copy">
+          <h4 className="acct__title">Contas e login</h4>
           <p className="acct__hint">
-            Veja qual sessão será usada no próximo terminal e configure contas
-            reserva para troca automática quando houver limite.
+            Sessão do próximo terminal, contas reserva para failover e login
+            verificado desta CLI.
           </p>
         </div>
         {auth && (
-          <span
-            className={authClass}
-            title={auth.detail}
-          >
-            {auth.state === 'ok'
-              ? 'Login verificado'
-              : auth.state === 'missing'
-                ? 'Login necessário'
-                : auth.state === 'checking'
-                  ? 'Verificando login…'
-                  : 'Não foi possível verificar'}
+          <span className={authClass} title={auth.detail}>
+            {authStatusLabel(auth.state)}
           </span>
         )}
       </div>
-      {auth?.detail && <p className="acct__auth-detail">{auth.detail}</p>}
 
-      <div className="acct__section">
-        <span className="acct__section-label">Em uso no próximo terminal</span>
-        <div className="acct__inuse">
-          <span className="acct__inuse-pill">ATIVA</span>
-          {active ? (
-            <>
-              <span className="acct__inuse-name">{active.label}</span>
-              <span className="acct__badge">{accountKindLabel(active)}</span>
-              {active.email && <span className="acct__email">{active.email}</span>}
-              <button
-                className="acct__use"
-                onClick={() => void useAccount(active.id)}
-                disabled={busy}
-                title="Reaplicar esta conta no ambiente da CLI"
-              >
-                sincronizar
-              </button>
-              <button
-                className="acct__mini"
-                onClick={() => {
-                  const name = prompt('Novo nome da conta:', active.label);
-                  if (name && name.trim()) void rename(active.id, name.trim());
-                }}
-                title="Renomear conta ativa"
-              >
-                ✎
-              </button>
-              <button
-                className="acct__mini acct__mini--danger"
-                onClick={() => void removeAccount(active.id)}
-                title="Remover conta ativa"
-                disabled={busy}
-              >
-                ✕
-              </button>
-            </>
-          ) : (
-            <span className="acct__inuse-name acct__inuse-name--implicit">
-              sessão nativa do {adapterId}
-              <span className="acct__email"> · login do terminal (sem conta salva)</span>
+      {auth?.detail && auth.state !== 'ok' && (
+        <p className="acct__auth-detail" role="status">
+          {auth.detail}
+        </p>
+      )}
+
+      <div className="acct__roster">
+        {active ? (
+          <ul className="acct__list" aria-label="Conta em uso">
+            {renderRow(active, 'active')}
+          </ul>
+        ) : (
+          <div className="acct__implicit" data-state={auth?.state === 'ok' ? 'ok' : 'idle'}>
+            <span className="acct__led" data-state={auth?.state === 'ok' ? 'ready' : 'idle'} aria-hidden="true" />
+            <div className="acct__body">
+              <div className="acct__identity">
+                <span className="acct__name">Sessão nativa de {adapterId}</span>
+                <span className="acct__pill acct__pill--quiet">Implícita</span>
+              </div>
+              <p className="acct__meta-line">
+                Login do terminal, sem conta salva no vault. Salve a sessão
+                logada para hot-swap e failover.
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div className="acct__standby-head">
+          <span className="acct__standby-label">
+            Reserva{standby.length > 0 ? ` · ${standby.length}` : ''}
+          </span>
+          {standby.length > 0 && (
+            <span className="acct__standby-hint">
+              failover automático no mesmo provider
             </span>
           )}
         </div>
-      </div>
 
-      <div className="acct__section">
-        <span className="acct__section-label">
-          Contas reserva{standby.length > 0 ? ` (${standby.length})` : ''}
-        </span>
         {standby.length === 0 ? (
           <p className="acct__empty">
-            Nenhuma conta reserva. Adicione outra para failover automático.
+            Nenhuma conta reserva. Adicione outra assinatura ou API key para
+            trocar quando o limite bater.
           </p>
         ) : (
-          <ul className="acct__list">
-            {standby.map((a) => (
-              <li key={a.id} className="acct__item">
-                <div className="acct__meta">
-                  <span className="acct__name">{a.label}</span>
-                  <span className="acct__tags">
-                    <span className="acct__badge">{accountKindLabel(a)}</span>
-                    {a.email && <span className="acct__email">{a.email}</span>}
-                    {a.onCooldown && (
-                      <span className="acct__cooldown" title={a.lastError}>
-                        esgotada · volta em {cooldownLabel(a)}
-                      </span>
-                    )}
-                    {!a.hasCredential && (
-                      <span className="acct__warn">sem credencial</span>
-                    )}
-                  </span>
-                </div>
-                <button
-                  className="acct__use"
-                  onClick={() => void useAccount(a.id)}
-                  disabled={busy}
-                  title="Tornar esta a conta em uso"
-                >
-                  usar
-                </button>
-                <button
-                  className="acct__mini"
-                  onClick={() => {
-                    const name = prompt('Novo nome da conta:', a.label);
-                    if (name && name.trim()) void rename(a.id, name.trim());
-                  }}
-                  title="Renomear"
-                >
-                  ✎
-                </button>
-                <button
-                  className="acct__mini acct__mini--danger"
-                  onClick={() => void removeAccount(a.id)}
-                  title="Remover"
-                  disabled={busy}
-                >
-                  ✕
-                </button>
-              </li>
-            ))}
+          <ul className="acct__list" aria-label="Contas reserva">
+            {standby.map((a) => renderRow(a, 'standby'))}
           </ul>
         )}
       </div>
 
-      <div className="acct__section">
-        <span className="acct__section-label">Adicionar conta</span>
-      {addMode === null && (
-        <div className="acct__add-choices">
-          {canSnapshot && (
-            <button
-              className="settings-btn"
-              onClick={() => setAddMode('subscription')}
-              title={`Salva a sessão OAuth/login atual do ${adapterId} (hot-swap sem re-login)`}
-            >
-              ＋ Por assinatura ({adapterId} logado)
-            </button>
-          )}
-          <button
-            className="settings-btn"
-            onClick={() => setAddMode('api-key')}
-            title="Conta com API key (nativa ou roteada: GLM, LongCat, OpenRouter…)"
-          >
-            ＋ Por API key
-          </button>
-        </div>
-      )}
+      <div className="acct__add-zone">
+        <span className="acct__standby-label">Adicionar conta</span>
 
-      {addMode === 'subscription' && (
-        <div className="acct__form">
-          <p className="acct__form-title">
-            Salvar a <strong>sessão logada</strong> de {adapterId} como conta
-            gerida (padrão Orca: troque de login no terminal e salve cada uma).
-            Hot-swap reescreve o ponteiro de credencial — sem re-auth.
-          </p>
-          <div className="acct__add">
-            <input
-              className="settings-input"
-              value={label}
-              placeholder="nome (ex.: trabalho, pessoal)"
-              autoFocus
-              onChange={(e) => setLabel(e.target.value)}
-            />
-            <button
-              className="settings-btn settings-btn--primary"
-              onClick={() => void snapshotSession()}
-              disabled={busy}
-            >
-              Salvar sessão
-            </button>
-            <button className="settings-btn" onClick={closeForm}>
-              cancelar
-            </button>
-          </div>
-        </div>
-      )}
-
-      {addMode === 'api-key' && (
-        <div className="acct__form">
-          <p className="acct__form-title">
-            Conta por <strong>API key</strong> — nativa ou roteada (GLM,
-            LongCat, OpenRouter…). A key vai para o Keychain.
-          </p>
-          <div className="acct__add">
-            <input
-              className="settings-input"
-              value={label}
-              placeholder="nome (ex.: z.ai, longcat)"
-              autoFocus
-              onChange={(e) => setLabel(e.target.value)}
-            />
-            {isClaude && (
-              <select
-                className="settings-input settings-input--narrow"
-                value={upstream}
-                onChange={(e) => setUpstream(e.target.value)}
+        {addMode === null && (
+          <div className="acct__add-choices">
+            {canSnapshot && (
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary acct__add-choice"
+                onClick={() => setAddMode('subscription')}
+                title={`Salva a sessão OAuth/login atual de ${adapterId}`}
               >
-                {UPSTREAMS.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.label}
-                  </option>
-                ))}
-              </select>
+                <PixelIcon name="id-badge" size={12} />
+                <span className="acct__add-choice-text">
+                  <strong>Sessão logada</strong>
+                  <span>Hot-swap sem re-login · {adapterId}</span>
+                </span>
+              </button>
             )}
-          </div>
-          <div className="acct__add">
-            <input
-              className="settings-input"
-              type="password"
-              value={key}
-              placeholder="cole a API key"
-              onChange={(e) => setKey(e.target.value)}
-            />
             <button
-              className="settings-btn settings-btn--primary"
-              onClick={() => void addApiKey()}
-              disabled={busy || !label.trim() || !key.trim()}
+              type="button"
+              className="settings-btn acct__add-choice"
+              onClick={() => setAddMode('api-key')}
+              title="Conta com API key (nativa ou roteada)"
             >
-              Adicionar
-            </button>
-            <button className="settings-btn" onClick={closeForm}>
-              cancelar
+              <PixelIcon name="key" size={12} />
+              <span className="acct__add-choice-text">
+                <strong>API key</strong>
+                <span>Nativa ou upstream (GLM, OpenRouter…)</span>
+              </span>
             </button>
           </div>
-        </div>
-      )}
+        )}
 
-      {notice && <p className="acct__notice">{notice}</p>}
+        {addMode === 'subscription' && (
+          <div className="acct__form" role="group" aria-label="Salvar sessão logada">
+            <p className="acct__form-title">
+              Salva o login atual de <strong>{adapterId}</strong> no vault.
+              Depois você troca de conta sem autenticar de novo. Panes abertos
+              mantêm a conta antiga até reiniciar.
+            </p>
+            <div className="acct__add">
+              <input
+                className="settings-input"
+                value={label}
+                placeholder="nome (ex.: trabalho, pessoal)"
+                autoFocus
+                aria-label="Nome da conta"
+                onChange={(e) => setLabel(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !busy) void snapshotSession();
+                  if (e.key === 'Escape') closeForm();
+                }}
+              />
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary"
+                onClick={() => void snapshotSession()}
+                disabled={busy}
+              >
+                Salvar sessão
+              </button>
+              <button type="button" className="settings-btn" onClick={closeForm} disabled={busy}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+
+        {addMode === 'api-key' && (
+          <div className="acct__form" role="group" aria-label="Adicionar API key">
+            <p className="acct__form-title">
+              Key nativa ou roteada (GLM, LongCat, OpenRouter…). Segredo vai
+              para o Keychain; a UI só mostra máscara.
+            </p>
+            <div className="acct__add">
+              <input
+                className="settings-input"
+                value={label}
+                placeholder="nome (ex.: z.ai, longcat)"
+                autoFocus
+                aria-label="Nome da conta"
+                onChange={(e) => setLabel(e.target.value)}
+              />
+              {isClaude && (
+                <select
+                  className="settings-input settings-input--narrow"
+                  value={upstream}
+                  aria-label="Upstream"
+                  onChange={(e) => setUpstream(e.target.value)}
+                >
+                  {UPSTREAMS.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="acct__add">
+              <input
+                className="settings-input"
+                type="password"
+                value={key}
+                placeholder="cole a API key"
+                aria-label="API key"
+                onChange={(e) => setKey(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && label.trim() && key.trim() && !busy) {
+                    void addApiKey();
+                  }
+                  if (e.key === 'Escape') closeForm();
+                }}
+              />
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary"
+                onClick={() => void addApiKey()}
+                disabled={busy || !label.trim() || !key.trim()}
+              >
+                Adicionar conta
+              </button>
+              <button type="button" className="settings-btn" onClick={closeForm} disabled={busy}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {notice && (
+        <p
+          className={`acct__notice acct__notice--${noticeTone}`}
+          role="status"
+        >
+          {notice}
+        </p>
+      )}
     </div>
   );
 }

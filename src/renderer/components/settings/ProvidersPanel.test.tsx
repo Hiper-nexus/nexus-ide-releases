@@ -82,6 +82,29 @@ describe('ProvidersPanel disclosure', () => {
 
     expect(disclosures[0].getAttribute('aria-expanded')).toBe('true');
     expect(host.textContent).toContain('Binário (vazio');
+    expect(host.textContent).toContain('Contas e login');
+    act(() => root.unmount());
+  });
+
+  it('surfaces active account label in the collapsed provider summary', () => {
+    useAccountStore.setState({
+      accounts: [
+        {
+          id: 'a1',
+          adapterId: 'claude',
+          label: 'Trabalho',
+          mode: 'subscription',
+          upstream: 'anthropic',
+          createdAt: 1,
+          active: true,
+          hasCredential: true,
+          onCooldown: false,
+        },
+      ],
+    });
+    const { host, root } = mount();
+    expect(host.textContent).toContain('claude-default · Trabalho');
+    expect(host.textContent).toContain('1 conta');
     act(() => root.unmount());
   });
 });
