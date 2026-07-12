@@ -17,9 +17,10 @@ import {
  * responsabilidade daqui (mouseenter/leave → nexusPet.setInteractive).
  */
 
-/** Sprite grandão (paridade Codex): dá para VER o pet do outro lado da sala. */
-const SPRITE_SIZE = 128;
-const SHEET_SIZE = 152;
+/** Sprite grandão (paridade Codex): legível a distância no desktop. */
+const SPRITE_SIZE = 200;
+/** Sheets Codex v2 — um pouco maior que o operador (arte com mais detalhe). */
+const SHEET_SIZE = 240;
 const DRAG_THRESHOLD_PX = 4;
 const CELEBRATE_MS = 3_000;
 

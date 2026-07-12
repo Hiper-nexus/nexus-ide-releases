@@ -107,7 +107,7 @@ function LibraryPetCard({
     >
       <span className="settings-pet-library__preview" aria-hidden>
         {sheet ? (
-          <SheetPetSprite sheet={sheet} anim="idle" size={40} />
+          <SheetPetSprite sheet={sheet} anim="idle" size={56} />
         ) : (
           <span className="settings-pet-library__preview-placeholder">
             {failed ? '?' : '…'}

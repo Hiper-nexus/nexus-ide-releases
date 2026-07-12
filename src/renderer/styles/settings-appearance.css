@@ -385,8 +385,8 @@
 .settings-pet-library__preview {
   display: grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
+  width: 64px;
+  height: 64px;
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--bg) 70%, #000 12%);
   overflow: hidden;

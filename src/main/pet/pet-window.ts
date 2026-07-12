@@ -33,7 +33,8 @@ import { homedir } from 'node:os';
  */
 
 /** Janela maior: sprite ~150px lê de longe (paridade com o pet do Codex). */
-export const PET_WINDOW_SIZE = { width: 300, height: 270 } as const;
+/** Janela do companion: cabe sprite ~240px + balão + margem de arrasto. */
+export const PET_WINDOW_SIZE = { width: 420, height: 400 } as const;
 const DRAG_TICK_MS = 16;
 /** Teto de um arrasto: além disso o watchdog assenta a janela sozinho. */
 const DRAG_MAX_MS = 30_000;
@@ -198,9 +199,22 @@ function persistPosition(pos: { x: number; y: number }): void {
  */
 let creatingPetWindow = false;
 
+function ensurePetWindowSize(win: BrowserWindow): void {
+  const [width, height] = win.getSize();
+  if (
+    width !== PET_WINDOW_SIZE.width ||
+    height !== PET_WINDOW_SIZE.height
+  ) {
+    win.setSize(PET_WINDOW_SIZE.width, PET_WINDOW_SIZE.height);
+  }
+}
+
 function createPetWindow(): void {
   if (creatingPetWindow) return;
-  if (petWindow && !petWindow.isDestroyed()) return;
+  if (petWindow && !petWindow.isDestroyed()) {
+    ensurePetWindowSize(petWindow);
+    return;
+  }
   const position = restoredPosition();
 
   creatingPetWindow = true;
