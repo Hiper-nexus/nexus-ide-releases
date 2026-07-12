@@ -188,6 +188,7 @@ import {
 } from "./gamification/gamification-ipc";
 import { registerMcpIpc } from "./jarvis/mcp-ipc";
 import { registerOpsIpc } from "./ops/ops-ipc";
+import { registerEvalRankingIpc } from "./eval/eval-ipc";
 import {
   configureAuditLogRuntime,
   disposeAuditLogRuntime,
@@ -343,6 +344,7 @@ function bootstrap(): void {
   registerGamificationIpc(gamificationService);
   registerMcpIpc();
   registerOpsIpc();
+  registerEvalRankingIpc();
   // Telemetria REAL de tokens (transcript watchers → SQLite). Convive com o
   // cost-tracker heurístico: a UI prefere o real quando ele existe.
   initUsageTelemetry(projectRuntimeManager);

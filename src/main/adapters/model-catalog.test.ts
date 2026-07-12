@@ -113,6 +113,70 @@ describe('published catalog JSON', () => {
     expect(fable?.costTier).toBe('high');
     expect(isModelBlockedForAutoRouting(fable)).toBe(true);
   });
+
+  it('accepts nexus-eval quality blocks on published models', () => {
+    const opus = modelCatalogInfo(
+      PUBLISHED_MODEL_CATALOG,
+      'claude',
+      'claude-opus-4-8',
+    );
+    expect(opus?.quality?.overall).toBeGreaterThan(0);
+    expect(opus?.quality?.overall).toBeLessThanOrEqual(100);
+    expect(opus?.quality?.source).toMatch(/^nexus-eval\//);
+    expect(opus?.quality?.coding).toBeDefined();
+    expect(opus?.quality?.security).toBeDefined();
+  });
+});
+
+describe('loadModelCatalog published quality layer', () => {
+  const tmpDirs: string[] = [];
+
+  afterEach(() => {
+    invalidateModelCatalogCache();
+    for (const dir of tmpDirs) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    tmpDirs.length = 0;
+  });
+
+  it('keeps nexus-eval quality when user overlay has cost-only legacy entries', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-model-catalog-'));
+    tmpDirs.push(dir);
+    const file = path.join(dir, 'model-catalog.json');
+    // Legacy user catalog: same model ids, no quality — used to blank the motor.
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        adapters: {
+          claude: {
+            models: [
+              {
+                id: 'claude-opus-4-8',
+                availability: 'paid',
+                costTier: 'high',
+                source: 'local',
+              },
+              {
+                id: 'claude-haiku-4-5',
+                availability: 'cheap',
+                costTier: 'low',
+                source: 'local',
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    invalidateModelCatalogCache();
+    const catalog = loadModelCatalog(file);
+    const opus = modelCatalogInfo(catalog, 'claude', 'claude-opus-4-8');
+    expect(opus?.source).toBe('local');
+    expect(opus?.quality?.source).toMatch(/^nexus-eval\//);
+    expect(opus?.quality?.overall).toBeGreaterThan(0);
+    expect(opus?.quality?.security).toBeDefined();
+  });
 });
 
 describe('remote model catalog URL', () => {

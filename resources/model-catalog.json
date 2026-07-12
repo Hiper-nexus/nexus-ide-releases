@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-07-08T20:00:00.000Z",
+  "updatedAt": "2026-07-11T21:00:00.000Z",
   "adapters": {
     "claude": {
       "default": "claude-sonnet-5",
@@ -16,7 +16,16 @@
           "id": "claude-opus-4-8",
           "availability": "paid",
           "costTier": "high",
-          "source": "remote"
+          "source": "nexus-eval",
+          "quality": {
+            "overall": 61,
+            "coding": 63,
+            "reasoning": 58,
+            "frontend": 56,
+            "security": 62,
+            "evaluatedAt": "2026-07-11T21:00:00.000Z",
+            "source": "nexus-eval/v1/fixture"
+          }
         },
         {
           "id": "claude-opus-4-7",
@@ -40,7 +49,16 @@
           "id": "claude-haiku-4-5",
           "availability": "cheap",
           "costTier": "low",
-          "source": "remote"
+          "source": "nexus-eval",
+          "quality": {
+            "overall": 49,
+            "coding": 53,
+            "reasoning": 45,
+            "frontend": 56,
+            "security": 41,
+            "evaluatedAt": "2026-07-11T21:00:00.000Z",
+            "source": "nexus-eval/v1/fixture"
+          }
         }
       ]
     },
@@ -51,7 +69,16 @@
           "id": "gpt-5.5",
           "availability": "paid",
           "costTier": "high",
-          "source": "remote"
+          "source": "nexus-eval",
+          "quality": {
+            "overall": 59,
+            "coding": 62,
+            "reasoning": 56,
+            "frontend": 54,
+            "security": 59,
+            "evaluatedAt": "2026-07-11T21:00:00.000Z",
+            "source": "nexus-eval/v1/fixture"
+          }
         },
         {
           "id": "gpt-5.4",
@@ -87,7 +114,16 @@
           "id": "grok-4.1",
           "availability": "paid",
           "costTier": "medium",
-          "source": "remote"
+          "source": "nexus-eval",
+          "quality": {
+            "overall": 58,
+            "coding": 60,
+            "reasoning": 55,
+            "frontend": 65,
+            "security": 49,
+            "evaluatedAt": "2026-07-11T21:00:00.000Z",
+            "source": "nexus-eval/v1/fixture"
+          }
         },
         {
           "id": "grok-4",
@@ -99,7 +135,16 @@
           "id": "grok-4-fast",
           "availability": "cheap",
           "costTier": "low",
-          "source": "remote"
+          "source": "nexus-eval",
+          "quality": {
+            "overall": 45,
+            "coding": 50,
+            "reasoning": 42,
+            "frontend": 52,
+            "security": 34,
+            "evaluatedAt": "2026-07-11T21:00:00.000Z",
+            "source": "nexus-eval/v1/fixture"
+          }
         },
         {
           "id": "grok-code-fast-1",
@@ -128,7 +173,16 @@
           "id": "glm-5.2",
           "availability": "cheap",
           "costTier": "low",
-          "source": "remote"
+          "source": "nexus-eval",
+          "quality": {
+            "overall": 58,
+            "coding": 62,
+            "reasoning": 56,
+            "frontend": 57,
+            "security": 51,
+            "evaluatedAt": "2026-07-11T21:00:00.000Z",
+            "source": "nexus-eval/v1/fixture"
+          }
         },
         {
           "id": "glm-4.6",

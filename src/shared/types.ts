@@ -70,6 +70,7 @@ import type {
 import type { AccountInfo, AddAccountRequest, FailoverEvent } from './account-types';
 import type { CostSnapshot } from './cost-types';
 import type { UsageSnapshot } from './usage-types';
+import type { PublicModelRankingSnapshot } from './eval-ranking-types';
 import type { GamificationSnapshot } from './gamification-types';
 import type {
   MediaProviderId,
@@ -972,6 +973,13 @@ export interface NexusApi {
   ops: {
     auditLog(limit?: number): Promise<AuditLogSnapshot>;
     releaseReadiness(): Promise<ReleaseReadinessSnapshot>;
+  };
+  /**
+   * Public multi-dimension LLM ranking (no secrets). Same DTO as
+   * resources/model-ranking.json for the future customer landing page.
+   */
+  ranking: {
+    public(): Promise<PublicModelRankingSnapshot>;
   };
   media: {
     listProviders(): Promise<MediaProviderInfo[]>;

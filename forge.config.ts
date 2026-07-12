@@ -233,6 +233,7 @@ const config: ForgeConfig = {
     extraResource: [
       'scripts/design-system-sensor.mjs',
       'resources/wake',
+      'resources/model-ranking.json',
     ],
     // App icon (Matrix-hacker mark): packager appends .icns on macOS. Read at
     // build time from the project root — not shipped inside the asar.

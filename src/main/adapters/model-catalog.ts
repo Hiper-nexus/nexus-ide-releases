@@ -162,7 +162,9 @@ function safeModels(models: unknown, source: string): ModelCatalogEntryInfo[] {
         costTier: raw.costTier,
         source: raw.source ?? source,
         warning: raw.warning,
-        quality,
+        // Omit when invalid — explicit `quality: undefined` would wipe published
+        // scores during mergeModelCatalogs ({ ...prev, ...overlay }).
+        ...(quality ? { quality } : {}),
       },
     ];
   });
@@ -209,7 +211,13 @@ export function mergeModelCatalogs(base: ModelCatalog, overlay: ModelCatalog): M
     const byId = new Map<string, ModelCatalogEntryInfo>();
     for (const entry of baseAdapter.models ?? []) byId.set(entry.id, entry);
     for (const entry of overlayAdapter.models ?? []) {
-      byId.set(entry.id, { ...byId.get(entry.id), ...entry });
+      const prev = byId.get(entry.id);
+      const merged: ModelCatalogEntryInfo = { ...prev, ...entry, id: entry.id };
+      // Preserve nexus-eval quality when overlay only carries cost/availability.
+      if (entry.quality === undefined && prev?.quality) {
+        merged.quality = prev.quality;
+      }
+      byId.set(entry.id, merged);
     }
     adapters[adapterId] = {
       models: [...byId.values()],
@@ -236,9 +244,24 @@ export function loadUserModelCatalog(file = USER_MODEL_CATALOG_FILE): ModelCatal
   }
 }
 
+/**
+ * Live catalog for routing, provider UI, and public ranking.
+ *
+ * Layers (later wins per-field; absent fields keep earlier values):
+ *   1. BUILTIN — code defaults
+ *   2. PUBLISHED — shipped resources/model-catalog.json (nexus-eval quality)
+ *   3. USER — ~/.nexus/model-catalog.json or caller path
+ *
+ * Including PUBLISHED is required so routeTask sees nexus-eval quality even when
+ * a legacy user catalog has cost/availability only (no quality blocks).
+ */
 export function loadModelCatalog(file = USER_MODEL_CATALOG_FILE): ModelCatalog {
   if (file === USER_MODEL_CATALOG_FILE && cachedCatalog) return cachedCatalog;
-  const catalog = mergeModelCatalogs(BUILTIN_MODEL_CATALOG, loadUserModelCatalog(file));
+  const withPublished = mergeModelCatalogs(
+    BUILTIN_MODEL_CATALOG,
+    PUBLISHED_MODEL_CATALOG,
+  );
+  const catalog = mergeModelCatalogs(withPublished, loadUserModelCatalog(file));
   if (file === USER_MODEL_CATALOG_FILE) cachedCatalog = catalog;
   return catalog;
 }

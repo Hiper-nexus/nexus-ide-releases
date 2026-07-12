@@ -9,6 +9,7 @@ export type SettingsSection =
   | 'audit'
   | 'media'
   | 'providers'
+  | 'ranking'
   | 'squads'
   | 'marketplace'
   | 'design-systems'
@@ -104,6 +105,20 @@ export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
         title: 'Providers',
         subtitle: 'chaves · modelos',
         aliases: ['keys', 'models'],
+      },
+      {
+        id: 'ranking',
+        icon: 'RNK',
+        title: 'Ranking LLMs',
+        subtitle: 'eval · leaderboard',
+        aliases: [
+          'ranking',
+          'leaderboard',
+          'benchmark',
+          'eval',
+          'qualidade',
+          'quality',
+        ],
       },
       {
         id: 'squads',

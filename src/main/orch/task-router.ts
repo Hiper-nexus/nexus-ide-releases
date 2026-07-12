@@ -246,6 +246,7 @@ export function routeTask(
   // zerados → todos deslogam). glm/longcat usam o mesmo binário mas autenticam
   // por ANTHROPIC_AUTH_TOKEN, então não disputam o keychain e seguem elegíveis.
   reserveClaude = false,
+  /** Defaults to loadModelCatalog() = BUILTIN + PUBLISHED (eval quality) + user. */
   modelCatalog: ModelCatalog = loadModelCatalog(),
 ): RouteDecision | null {
   const available = new Map(

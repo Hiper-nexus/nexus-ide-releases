@@ -29,6 +29,7 @@
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "eval:export-ranking": "node --import tsx scripts/export-public-ranking.mjs",
     "start:forge": "electron-forge start"
   },
   "engines": {

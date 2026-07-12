@@ -40,6 +40,7 @@ import type { AccountInfo, FailoverEvent } from '../shared/account-types';
 import { COST_CHANNELS } from '../shared/cost-types';
 import { USAGE_CHANNELS } from '../shared/usage-types';
 import type { UsageSnapshot } from '../shared/usage-types';
+import { EVAL_RANKING_CHANNELS } from '../shared/eval-ranking-types';
 import { MEDIA_CHANNELS } from '../shared/media-types';
 import type { MediaProviderId } from '../shared/media-types';
 import { GAMIFICATION_CHANNELS } from '../shared/gamification-types';
@@ -738,6 +739,9 @@ const api: NexusApi = {
   ops: {
     auditLog: (limit?: number) => ipcRenderer.invoke(OPS_CHANNELS.auditLog, limit),
     releaseReadiness: () => ipcRenderer.invoke(OPS_CHANNELS.releaseReadiness),
+  },
+  ranking: {
+    public: () => ipcRenderer.invoke(EVAL_RANKING_CHANNELS.publicRanking),
   },
   media: {
     listProviders: () => ipcRenderer.invoke(MEDIA_CHANNELS.listProviders),

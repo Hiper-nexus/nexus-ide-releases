@@ -1,4 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  invalidateModelCatalogCache,
+  loadModelCatalog,
+  modelCatalogInfo,
+} from '../adapters/model-catalog';
 import {
   DEFAULT_ROUTING_TABLE,
   classifyTask,
@@ -255,3 +263,200 @@ describe('routeTask', () => {
     expect(decision!.reason).toContain('avaliação Nexus por dimensão');
   });
 });
+
+describe('routeTask quality-driven motor (shipped router + real catalog quality)', () => {
+  const evaluatedAt = '2026-07-11T21:00:00.000Z';
+  const source = 'nexus-eval/v1/fixture';
+
+  /** Catalog with two models whose dimension strengths differ clearly. */
+  const qualityCatalog = {
+    version: 1,
+    adapters: {
+      grok: {
+        models: [
+          {
+            id: 'grok-ui-champ',
+            availability: 'paid' as const,
+            costTier: 'medium' as const,
+            quality: {
+              overall: 70,
+              coding: 60,
+              reasoning: 55,
+              frontend: 95,
+              security: 40,
+              evaluatedAt,
+              source,
+            },
+          },
+          {
+            id: 'grok-sec-champ',
+            availability: 'paid' as const,
+            costTier: 'medium' as const,
+            quality: {
+              overall: 72,
+              coding: 65,
+              reasoning: 70,
+              frontend: 40,
+              security: 96,
+              evaluatedAt,
+              source,
+            },
+          },
+          {
+            id: 'grok-cheap-ok',
+            availability: 'cheap' as const,
+            costTier: 'low' as const,
+            quality: {
+              overall: 68,
+              coding: 70,
+              reasoning: 50,
+              frontend: 50,
+              security: 45,
+              evaluatedAt,
+              source,
+            },
+          },
+          {
+            id: 'grok-pricey-slightly-better',
+            availability: 'paid' as const,
+            costTier: 'high' as const,
+            quality: {
+              overall: 72,
+              coding: 74,
+              reasoning: 55,
+              frontend: 52,
+              security: 48,
+              evaluatedAt,
+              source,
+            },
+          },
+        ],
+      },
+    },
+  };
+
+  const installedGrok = [
+    {
+      id: 'grok',
+      installed: true,
+      models: [
+        'grok-ui-champ',
+        'grok-sec-champ',
+        'grok-cheap-ok',
+        'grok-pricey-slightly-better',
+      ],
+    },
+  ];
+
+  it('frontend-tagged task prefers higher frontend quality', () => {
+    const decision = routeTask(
+      'corrigir o layout da landing page e a interface responsiva do website',
+      installedGrok,
+      DEFAULT_ROUTING_TABLE,
+      'medium',
+      false,
+      qualityCatalog,
+    );
+    expect(decision).not.toBeNull();
+    expect(decision!.adapterId).toBe('grok');
+    expect(decision!.model).toBe('grok-ui-champ');
+    expect(decision!.reason).toContain('avaliação Nexus por dimensão');
+  });
+
+  it('security-tagged task prefers higher security quality', () => {
+    const decision = routeTask(
+      'auditar a segurança da autenticação OAuth e tokens de pagamento',
+      installedGrok,
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      qualityCatalog,
+    );
+    expect(decision).not.toBeNull();
+    expect(decision!.model).toBe('grok-sec-champ');
+    expect(decision!.reason).toContain('avaliação Nexus por dimensão');
+  });
+
+  it('easy tier applies cost pressure so slightly better expensive model loses', () => {
+    const pair = [
+      {
+        id: 'grok',
+        installed: true,
+        models: ['grok-cheap-ok', 'grok-pricey-slightly-better'],
+      },
+    ];
+    const decision = routeTask(
+      'corrigir typo no README do projeto agora',
+      pair,
+      DEFAULT_ROUTING_TABLE,
+      'easy',
+      false,
+      qualityCatalog,
+    );
+    expect(decision).not.toBeNull();
+    expect(decision!.model).toBe('grok-cheap-ok');
+    expect(decision!.reason).toContain('avaliação Nexus por dimensão');
+  });
+});
+
+describe('routeTask default catalog path (published eval quality)', () => {
+  const tmpDirs: string[] = [];
+
+  afterEach(() => {
+    invalidateModelCatalogCache();
+    for (const dir of tmpDirs) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    tmpDirs.length = 0;
+  });
+
+  it('uses loadModelCatalog quality so security work picks higher-security published model', () => {
+    // Drive the same merge the shipped default argument uses (BUILTIN+PUBLISHED+user).
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-route-catalog-'));
+    tmpDirs.push(dir);
+    const file = path.join(dir, 'model-catalog.json');
+    // Cost-only user overlay — no quality keys (legacy install).
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        adapters: {
+          claude: {
+            models: [
+              { id: 'claude-opus-4-8', availability: 'paid', costTier: 'high' },
+              { id: 'claude-haiku-4-5', availability: 'cheap', costTier: 'low' },
+            ],
+          },
+        },
+      }),
+    );
+    invalidateModelCatalogCache();
+    const catalog = loadModelCatalog(file);
+
+    const opusQ = modelCatalogInfo(catalog, 'claude', 'claude-opus-4-8')?.quality;
+    const haikuQ = modelCatalogInfo(catalog, 'claude', 'claude-haiku-4-5')?.quality;
+    expect(opusQ?.source).toMatch(/^nexus-eval\//);
+    expect(haikuQ?.source).toMatch(/^nexus-eval\//);
+    expect(opusQ?.security ?? 0).toBeGreaterThan(haikuQ?.security ?? 0);
+
+    const decision = routeTask(
+      'auditar a segurança da autenticação OAuth e tokens de pagamento',
+      [
+        {
+          id: 'claude',
+          installed: true,
+          models: ['claude-opus-4-8', 'claude-haiku-4-5'],
+        },
+      ],
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      catalog,
+    );
+
+    expect(decision).not.toBeNull();
+    expect(decision!.model).toBe('claude-opus-4-8');
+    expect(decision!.reason).toContain('avaliação Nexus por dimensão');
+  });
+});
+
+

@@ -22,6 +22,7 @@ import {
   TerminalSection,
 } from './ModuleSections';
 import { ProvidersPanel } from './ProvidersPanel';
+import { ModelRankingSection } from './ModelRankingSection';
 import { PixelIcon } from '../PixelIcon';
 import { AccountSection } from './AccountSection';
 import { trapDialogTabKey } from './settings-dialog-focus';
@@ -353,6 +354,7 @@ export function SettingsDrawer() {
           {section === 'audit' && <AuditSection />}
           {section === 'media' && <MediaSection />}
           {section === 'providers' && <ProvidersPanel />}
+          {section === 'ranking' && <ModelRankingSection />}
           {section === 'squads' && <SquadsSection onNavigate={close} />}
           {section === 'marketplace' && <MarketplaceSection />}
           {section === 'design-systems' && <DesignSystemsSection />}

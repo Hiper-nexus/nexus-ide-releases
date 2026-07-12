@@ -19,10 +19,11 @@ describe('SETTINGS_GROUPS', () => {
     expect(ids).toContain('shortcuts');
   });
 
-  test('primary nav stays compact (8 items)', () => {
+  test('primary nav stays compact (9 items incl. ranking)', () => {
     const primaryIds = SETTINGS_PRIMARY_GROUPS.flatMap((g) => g.items.map((i) => i.id));
-    expect(primaryIds).toHaveLength(8);
+    expect(primaryIds).toHaveLength(9);
     expect(primaryIds).toContain('appearance');
+    expect(primaryIds).toContain('ranking');
     expect(primaryIds).not.toContain('agents');
   });
 
