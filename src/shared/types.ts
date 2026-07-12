@@ -12,6 +12,7 @@ import type {
   PetGalleryListResult,
   PetLibraryApplyResult,
   PetLibraryListResult,
+  PetLibraryPreviewResult,
   PetPickSheetResult,
   PetPrefs,
 } from './pet-types';
@@ -564,6 +565,8 @@ export interface NexusApi {
     libraryList(): Promise<PetLibraryListResult>;
     /** Aplica um pet da biblioteca embutida (liga o pet + preset sheet). */
     libraryApply(id: string): Promise<PetLibraryApplyResult>;
+    /** Sheet para preview na Settings (sem aplicar). */
+    libraryPreview(id: string): Promise<PetLibraryPreviewResult>;
     /** Dialog nativo de spritesheet, aberto direto em ~/.codex/pets. */
     pickSheet(): Promise<PetPickSheetResult>;
   };

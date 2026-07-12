@@ -350,6 +350,20 @@ function registerPetIpc(): void {
       };
     }
   });
+  ipcMain.handle(PET_CHANNELS.libraryPreview, (event, raw: unknown) => {
+    if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
+    if (typeof raw !== 'string' || raw.length === 0 || raw.length > 64) {
+      return { ok: false, error: 'id de biblioteca inválido' };
+    }
+    try {
+      return loadLibrarySheet(raw.trim());
+    } catch (err) {
+      return {
+        ok: false,
+        error: `Falha no preview (${err instanceof Error ? err.message : 'erro'}).`,
+      };
+    }
+  });
   ipcMain.handle(PET_CHANNELS.pickSheet, async (event) => {
     if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
     const owner = BrowserWindow.fromWebContents(event.sender);

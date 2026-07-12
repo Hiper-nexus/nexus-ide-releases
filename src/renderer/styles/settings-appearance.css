@@ -354,15 +354,15 @@
   appearance: none;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  min-height: 64px;
-  padding: 10px 12px;
+  align-items: center;
+  gap: 6px;
+  min-height: 96px;
+  padding: 10px 10px 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--bg) 55%, transparent);
   color: var(--text);
-  text-align: left;
+  text-align: center;
   cursor: pointer;
 }
 
@@ -371,14 +371,37 @@
   background: var(--accent-soft);
 }
 
+.settings-pet-library__card--active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
 .settings-pet-library__card:disabled {
   opacity: 0.55;
   cursor: default;
 }
 
+.settings-pet-library__preview {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg) 70%, #000 12%);
+  overflow: hidden;
+}
+
+.settings-pet-library__preview-placeholder {
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 650;
+}
+
 .settings-pet-library__name {
   font-size: 12px;
   font-weight: 650;
+  line-height: 1.2;
 }
 
 .settings-pet-library__note {

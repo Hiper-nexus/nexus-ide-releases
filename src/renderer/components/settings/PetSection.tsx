@@ -8,6 +8,7 @@ import {
   type PetLibraryEntry,
   type PetPrefs,
   type PetPreset,
+  type PetSheet,
 } from '../../../shared/pet-types';
 import { OperatorSprite } from '../OperatorSprite';
 import { CustomPetSprite } from '../../pet/CustomPetSprite';
@@ -48,6 +49,12 @@ type PetSectionApi = {
     prefs?: PetPrefs;
     error?: string;
   }>;
+  libraryPreview?(id: string): Promise<{
+    ok: boolean;
+    name?: string;
+    sheet?: PetSheet;
+    error?: string;
+  }>;
   pickSheet?(): Promise<{
     ok: boolean;
     canceled?: boolean;
@@ -55,6 +62,67 @@ type PetSectionApi = {
     error?: string;
   }>;
 };
+
+/** Card da biblioteca com preview do frame idle (lazy load do sheet). */
+function LibraryPetCard({
+  entry,
+  busy,
+  active,
+  onPick,
+  loadPreview,
+}: {
+  entry: PetLibraryEntry;
+  busy: boolean;
+  active: boolean;
+  onPick: () => void;
+  loadPreview?: (id: string) => Promise<{
+    ok: boolean;
+    sheet?: PetSheet;
+  }>;
+}) {
+  const [sheet, setSheet] = useState<PetSheet | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!loadPreview || sheet || failed) return;
+    let cancelled = false;
+    void loadPreview(entry.id).then((result) => {
+      if (cancelled) return;
+      if (result.ok && result.sheet) setSheet(result.sheet);
+      else setFailed(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [entry.id, loadPreview, sheet, failed]);
+
+  return (
+    <button
+      type="button"
+      role="listitem"
+      className={`settings-pet-library__card${active ? ' settings-pet-library__card--active' : ''}`}
+      disabled={busy}
+      title={entry.note ? `${entry.label} — ${entry.note}` : entry.label}
+      onClick={onPick}
+    >
+      <span className="settings-pet-library__preview" aria-hidden>
+        {sheet ? (
+          <SheetPetSprite sheet={sheet} anim="idle" size={40} />
+        ) : (
+          <span className="settings-pet-library__preview-placeholder">
+            {failed ? '?' : '…'}
+          </span>
+        )}
+      </span>
+      <span className="settings-pet-library__name">
+        {busy ? '…' : entry.label}
+      </span>
+      {entry.note && (
+        <span className="settings-pet-library__note">{entry.note}</span>
+      )}
+    </button>
+  );
+}
 
 const PRESET_LABEL: Record<PetPreset, string> = {
   operator: 'Operador',
@@ -102,6 +170,7 @@ export function PetSection() {
   const [catalogFilter, setCatalogFilter] = useState('');
   const [library, setLibrary] = useState<PetLibraryEntry[] | null>(null);
   const [libraryBusyId, setLibraryBusyId] = useState<string | null>(null);
+  const [libraryActiveId, setLibraryActiveId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const sheetRef = useRef<HTMLInputElement | null>(null);
 
@@ -160,6 +229,7 @@ export function PetSection() {
         return;
       }
       if (result.prefs) setPrefs(result.prefs);
+      setLibraryActiveId(id);
       setImportNote(
         `"${result.name ?? id}" da biblioteca aplicado — pet ligado.`,
       );
@@ -440,24 +510,20 @@ export function PetSection() {
               </p>
               <div className="settings-pet-library__grid" role="list">
                 {library.map((entry) => (
-                  <button
+                  <LibraryPetCard
                     key={entry.id}
-                    type="button"
-                    role="listitem"
-                    className="settings-pet-library__card"
-                    disabled={libraryBusyId !== null}
-                    title={entry.note ?? entry.label}
-                    onClick={() => void onApplyLibraryPet(entry.id)}
-                  >
-                    <span className="settings-pet-library__name">
-                      {libraryBusyId === entry.id ? '…' : entry.label}
-                    </span>
-                    {entry.note && (
-                      <span className="settings-pet-library__note">
-                        {entry.note}
-                      </span>
-                    )}
-                  </button>
+                    entry={entry}
+                    busy={libraryBusyId === entry.id}
+                    active={
+                      libraryActiveId === entry.id && prefs.preset === 'sheet'
+                    }
+                    onPick={() => void onApplyLibraryPet(entry.id)}
+                    loadPreview={
+                      petApi.libraryPreview
+                        ? (id) => petApi.libraryPreview!(id)
+                        : undefined
+                    }
+                  />
                 ))}
               </div>
             </div>

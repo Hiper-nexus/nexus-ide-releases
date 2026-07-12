@@ -1,122 +1,122 @@
 [
-    {
-        "id": "navi",
-        "slug": "navi",
-        "label": "Navi",
-        "note": "explorador cl\u00e1ssico",
-        "file": "sheets/navi.webp",
-        "bytes": 195696
-    },
-    {
-        "id": "ember",
-        "slug": "ember",
-        "label": "Ember",
-        "note": "fogo / energia",
-        "file": "sheets/ember.webp",
-        "bytes": 223186
-    },
-    {
-        "id": "nova",
-        "slug": "nova",
-        "label": "Nova",
-        "note": "espacial",
-        "file": "sheets/nova.webp",
-        "bytes": 198000
-    },
-    {
-        "id": "pixel",
-        "slug": "pixel",
-        "label": "Pixel",
-        "note": "retro",
-        "file": "sheets/pixel.webp",
-        "bytes": 223804
-    },
-    {
-        "id": "acidling",
-        "slug": "acidling",
-        "label": "Acidling",
-        "note": "criatura slimada",
-        "file": "sheets/acidling.webp",
-        "bytes": 198722
-    },
-    {
-        "id": "aion",
-        "slug": "aion",
-        "label": "Aion",
-        "note": "m\u00edstico",
-        "file": "sheets/aion.webp",
-        "bytes": 246070
-    },
-    {
-        "id": "ai-workbot",
-        "slug": "ai-workbot",
-        "label": "AI Workbot",
-        "note": "rob\u00f4 de trabalho",
-        "file": "sheets/ai-workbot.webp",
-        "bytes": 92464
-    },
-    {
-        "id": "cpu-orb",
-        "slug": "360-cpu-orb",
-        "label": "CPU Orb",
-        "note": "orbe tech",
-        "file": "sheets/cpu-orb.webp",
-        "bytes": 103344
-    },
-    {
-        "id": "tiger-cub",
-        "slug": "adtiger-cub",
-        "label": "Tiger Cub",
-        "note": "filhote tigre",
-        "file": "sheets/tiger-cub.webp",
-        "bytes": 108614
-    },
-    {
-        "id": "feather",
-        "slug": "aiso-feather",
-        "label": "Feather",
-        "note": "leve / p\u00e1ssaro",
-        "file": "sheets/feather.webp",
-        "bytes": 150678
-    },
-    {
-        "id": "ajisai",
-        "slug": "ajisai",
-        "label": "Ajisai",
-        "note": "flor / hort\u00eansia",
-        "file": "sheets/ajisai.webp",
-        "bytes": 180636
-    },
-    {
-        "id": "shiba",
-        "slug": "aka-shiba",
-        "label": "Shiba July",
-        "note": "cachorro",
-        "file": "sheets/shiba.webp",
-        "bytes": 188452
-    },
-    {
-        "id": "ada",
-        "slug": "ada-lovelace",
-        "label": "Ada Lovelace",
-        "note": "hist\u00f3ria / tech",
-        "file": "sheets/ada.webp",
-        "bytes": 179512
-    },
-    {
-        "id": "aegis",
-        "slug": "aegis",
-        "label": "Aegis",
-        "note": "guardi\u00e3o",
-        "file": "sheets/aegis.webp",
-        "bytes": 255258
-    },
-    {
-        "id": "aimisi",
-        "slug": "aimisi",
-        "label": "Aimisi",
-        "note": "estilo anime",
-        "file": "sheets/aimisi.webp",
-        "bytes": 183700
-    }
+  {
+    "id": "navi",
+    "slug": "navi",
+    "label": "Navi",
+    "note": "explorador clássico",
+    "file": "sheets/navi.webp",
+    "bytes": 248606
+  },
+  {
+    "id": "ember",
+    "slug": "ember",
+    "label": "Ember",
+    "note": "fogo / energia",
+    "file": "sheets/ember.webp",
+    "bytes": 272492
+  },
+  {
+    "id": "nova",
+    "slug": "nova",
+    "label": "Nova",
+    "note": "espacial",
+    "file": "sheets/nova.webp",
+    "bytes": 243018
+  },
+  {
+    "id": "pixel",
+    "slug": "pixel",
+    "label": "Pixel",
+    "note": "retro",
+    "file": "sheets/pixel.webp",
+    "bytes": 278696
+  },
+  {
+    "id": "acidling",
+    "slug": "acidling",
+    "label": "Acidling",
+    "note": "criatura slimada",
+    "file": "sheets/acidling.webp",
+    "bytes": 248466
+  },
+  {
+    "id": "aion",
+    "slug": "aion",
+    "label": "Aion",
+    "note": "místico",
+    "file": "sheets/aion.webp",
+    "bytes": 300346
+  },
+  {
+    "id": "ai-workbot",
+    "slug": "ai-workbot",
+    "label": "AI Workbot",
+    "note": "robô de trabalho",
+    "file": "sheets/ai-workbot.webp",
+    "bytes": 123084
+  },
+  {
+    "id": "cpu-orb",
+    "slug": "360-cpu-orb",
+    "label": "CPU Orb",
+    "note": "orbe tech",
+    "file": "sheets/cpu-orb.webp",
+    "bytes": 132744
+  },
+  {
+    "id": "tiger-cub",
+    "slug": "adtiger-cub",
+    "label": "Tiger Cub",
+    "note": "filhote tigre",
+    "file": "sheets/tiger-cub.webp",
+    "bytes": 139396
+  },
+  {
+    "id": "feather",
+    "slug": "aiso-feather",
+    "label": "Feather",
+    "note": "leve / pássaro",
+    "file": "sheets/feather.webp",
+    "bytes": 187280
+  },
+  {
+    "id": "ajisai",
+    "slug": "ajisai",
+    "label": "Ajisai",
+    "note": "flor / hortênsia",
+    "file": "sheets/ajisai.webp",
+    "bytes": 223726
+  },
+  {
+    "id": "shiba",
+    "slug": "aka-shiba",
+    "label": "Shiba July",
+    "note": "cachorro",
+    "file": "sheets/shiba.webp",
+    "bytes": 237590
+  },
+  {
+    "id": "ada",
+    "slug": "ada-lovelace",
+    "label": "Ada Lovelace",
+    "note": "história / tech",
+    "file": "sheets/ada.webp",
+    "bytes": 229166
+  },
+  {
+    "id": "aegis",
+    "slug": "aegis",
+    "label": "Aegis",
+    "note": "guardião",
+    "file": "sheets/aegis.webp",
+    "bytes": 313064
+  },
+  {
+    "id": "aimisi",
+    "slug": "aimisi",
+    "label": "Aimisi",
+    "note": "estilo anime",
+    "file": "sheets/aimisi.webp",
+    "bytes": 229360
+  }
 ]

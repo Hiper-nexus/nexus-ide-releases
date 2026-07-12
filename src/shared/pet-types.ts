@@ -33,6 +33,8 @@ export const PET_CHANNELS = {
   libraryList: 'pet:libraryList',
   /** invoke: janela principal → main. Aplica um pet da biblioteca embutida. */
   libraryApply: 'pet:libraryApply',
+  /** invoke: janela principal → main. Sheet (data URL) para preview na UI. */
+  libraryPreview: 'pet:libraryPreview',
   /** invoke: janela principal → main. Dialog nativo já em ~/.codex/pets. */
   pickSheet: 'pet:pickSheet',
   /** event: main → janela principal. Pedido do pet para abrir Settings. */
@@ -182,6 +184,14 @@ export interface PetLibraryApplyResult {
   ok: boolean;
   name?: string;
   prefs?: PetPrefs;
+  error?: string;
+}
+
+/** Preview do sheet embutido (mesmo payload de apply, sem mutar prefs). */
+export interface PetLibraryPreviewResult {
+  ok: boolean;
+  name?: string;
+  sheet?: PetSheet;
   error?: string;
 }
 

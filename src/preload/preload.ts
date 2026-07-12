@@ -388,6 +388,8 @@ const api: NexusApi = {
     libraryList: () => ipcRenderer.invoke(PET_CHANNELS.libraryList),
     libraryApply: (id: string) =>
       ipcRenderer.invoke(PET_CHANNELS.libraryApply, id),
+    libraryPreview: (id: string) =>
+      ipcRenderer.invoke(PET_CHANNELS.libraryPreview, id),
     pickSheet: () => ipcRenderer.invoke(PET_CHANNELS.pickSheet),
   },
   app: {

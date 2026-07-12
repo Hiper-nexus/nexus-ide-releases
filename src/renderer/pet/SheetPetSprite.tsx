@@ -88,23 +88,34 @@ export function SheetPetSprite({
     return () => window.clearInterval(timer);
   }, [spec, anim, looking !== null]);
 
-  const frameW = image ? image.width / sheet.cols : 1;
-  const frameH = image ? image.height / sheet.rows : 1;
-  const displayW = Math.round((frameW / frameH) * size);
+  // Integer cell size — fractional width/cols drifts and crops frames over rows.
+  const frameW = image ? Math.floor(image.width / sheet.cols) : 1;
+  const frameH = image ? Math.floor(image.height / sheet.rows) : 1;
+  const displayW = Math.max(
+    1,
+    Math.round((frameW / Math.max(frameH, 1)) * size),
+  );
+  const dpr =
+    typeof window !== 'undefined' ? Math.max(1, window.devicePixelRatio || 1) : 1;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
-    if (!canvas || !ctx || !image) return;
+    if (!canvas || !ctx || !image || frameW < 1 || frameH < 1) return;
     const row = looking ? looking.row : spec.row;
     const col = looking
       ? looking.col
       : anim === 'sleep'
         ? SHEET_NEUTRAL.col
         : frame;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
+    const cssW = displayW;
+    const cssH = size;
+    canvas.width = Math.max(1, Math.round(cssW * dpr));
+    canvas.height = Math.max(1, Math.round(cssH * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    // Pixel art: never smooth when scaling frames up/down.
+    ctx.imageSmoothingEnabled = false;
     ctx.drawImage(
       image,
       col * frameW,
@@ -113,17 +124,15 @@ export function SheetPetSprite({
       frameH,
       0,
       0,
-      canvas.width,
-      canvas.height,
+      cssW,
+      cssH,
     );
-  }, [image, frame, anim, spec, looking, frameW, frameH]);
+  }, [image, frame, anim, spec, looking, frameW, frameH, displayW, size, dpr]);
 
   return (
     <canvas
       ref={canvasRef}
-      width={displayW}
-      height={size}
-      style={{ width: displayW, height: size }}
+      style={{ width: displayW, height: size, imageRendering: 'pixelated' }}
       aria-hidden="true"
     />
   );
