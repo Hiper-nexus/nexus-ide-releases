@@ -159,7 +159,7 @@ export async function reopenLiveFollowUpListening(opts: LiveFollowUpOptions): Pr
 export function releaseAfterLiveProviderAnswer(opts: LiveFollowUpOptions & {
   /** False when a tool owns the turn and its narration may still arrive late. */
   armFollowUp?: boolean;
-  followUpSkipReason?: 'realtime-tool' | 'turn-owned-before-audio';
+  followUpSkipReason?: 'realtime-tool' | 'turn-owned-before-audio' | 'audio-only-reply';
 }): void {
   const store = useVoiceStore.getState();
   // Keep speaking status while chunks drain; follow-up arm waits on remainingMs.

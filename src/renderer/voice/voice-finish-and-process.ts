@@ -78,7 +78,10 @@ import {
   releaseAfterLiveProviderAnswer,
   releaseAfterLiveToolAnswer,
 } from './live-followup';
-import { hasRealtimeProviderAudioAnswer } from './live-wake-greeting';
+import {
+  hasRealtimeProviderAudioAnswer,
+  shouldRearmAfterAudioOnly,
+} from './live-wake-greeting';
 import { followUpAuthority } from './follow-up-authority';
 import { isHotSessionCommandCandidate } from '../../shared/hot-session-command';
 
@@ -522,17 +525,23 @@ export async function finishAndProcess(
             },
           );
         }
-        // FIX C: don't set realtimeTurnActive=false; release + arm follow-up
+        // Audio without a final transcript is enough to preserve what the user
+        // heard, but an automatic reply capture cannot renew itself from audio
+        // alone. Otherwise TV/room speech keeps the session in a perpetual
+        // listen → answer → listen loop. Explicit wake/click still gets one
+        // continuity window; valid transcripts and tools use their own paths.
         if (!claimed && turnExecution.owner === 'realtime-tool') {
           releaseAfterRealtimeTool();
         } else {
+          const rearmAudioOnly = claimed && shouldRearmAfterAudioOnly(activeCaptureReason);
           releaseAfterLiveProviderAnswer({
             busy,
             capture,
             beginListening: deps.beginListening,
             wakeAutoStop: deps.wakeAutoStop,
-            armFollowUp: claimed,
-            followUpSkipReason: 'turn-owned-before-audio',
+            armFollowUp: rearmAudioOnly,
+            followUpSkipReason:
+              claimed && !rearmAudioOnly ? 'audio-only-reply' : 'turn-owned-before-audio',
             canReopen: canReopenLiveFollowUp,
           });
         }
