@@ -35,6 +35,11 @@ import { buildProjectSymbolIndex } from './symbol-index';
 import { ingestProjectContext } from './context-ingestor';
 import { detectContextConflicts } from './ambiguity-engine';
 import { compileContextSnapshot, type ContextSnapshot } from './snapshot-compiler';
+import {
+  computeBlastRadius,
+  ensureBlastRadius,
+} from './orientation/orientation-blast-radius';
+import { tryGetProjectOrientationService } from './orientation/orientation-service';
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 
@@ -170,12 +175,52 @@ export class ContextWorkflowService {
   }
 
   inspectReadiness(): ContextReadinessReport {
-    const symbols = buildProjectSymbolIndex(this.scope).symbols;
+    const orientation = tryGetProjectOrientationService()?.get(this.scope);
+    // Cached maps only reconstruct hubs into the symbol set; if empty, fall
+    // back to a full symbol index so stale-symbol checks stay meaningful.
+    const fromMap = orientation?.symbols.symbols;
+    const symbols =
+      fromMap && fromMap.size > 0
+        ? fromMap
+        : buildProjectSymbolIndex(this.scope).symbols;
     return inspectContextReadiness(this.scope, { knownSymbols: symbols });
   }
 
   scaffold(): ReturnType<typeof ensureContextScaffold> {
     return ensureContextScaffold(this.scope);
+  }
+
+  /**
+   * Auto-pilot enrichment: fill empty impacted symbols/domains from the
+   * structural orientation map (never overrides explicit caller values).
+   */
+  async enrichDraftFromOrientation(
+    draft: MissionContractDraft,
+  ): Promise<MissionContractDraft> {
+    const hasSymbols = (draft.impactedSymbols?.length ?? 0) > 0;
+    const hasDomains = (draft.impactedDomains?.length ?? 0) > 0;
+    if (hasSymbols && hasDomains) return draft;
+    try {
+      const radius = await ensureBlastRadius(this.scope, {
+        goal: draft.goal,
+        seedSymbols: draft.impactedSymbols,
+      });
+      return Object.freeze({
+        ...draft,
+        impactedSymbols: hasSymbols
+          ? draft.impactedSymbols
+          : radius.symbols.length > 0
+            ? radius.symbols
+            : draft.impactedSymbols,
+        impactedDomains: hasDomains
+          ? draft.impactedDomains
+          : radius.domains.length > 0
+            ? radius.domains
+            : draft.impactedDomains,
+      });
+    } catch {
+      return draft;
+    }
   }
 
   freezeContract(
@@ -186,6 +231,10 @@ export class ContextWorkflowService {
     if (this.#store.getContract(draft.missionId)) {
       throw new Error('mission contract is already frozen');
     }
+    // Warm orientation cache for blast-radius (fire and forget if cold).
+    void tryGetProjectOrientationService()
+      ?.ensure(this.scope, { reason: 'pre-kickoff', waitMs: 0 })
+      .catch(() => undefined);
     const readiness = this.inspectReadiness();
     if (!readiness.ready || !readiness.contextRevision) {
       throw new ContextReadinessError(readiness);
@@ -196,6 +245,20 @@ export class ContextWorkflowService {
       corpus.facts.filter((fact) => fact.category === 'invariant')
         .map((fact) => fact.id),
     );
+    // Sync enrichment from warm cache when caller left symbols/domains empty.
+    let impactedSymbols = draft.impactedSymbols ? [...draft.impactedSymbols] : [];
+    let impactedDomains = draft.impactedDomains ? [...draft.impactedDomains] : [];
+    if (impactedSymbols.length === 0 || impactedDomains.length === 0) {
+      const map = tryGetProjectOrientationService()?.get(this.scope);
+      if (map) {
+        const radius = computeBlastRadius(map, {
+          goal: draft.goal,
+          seedSymbols: impactedSymbols,
+        });
+        if (impactedSymbols.length === 0) impactedSymbols = [...radius.symbols];
+        if (impactedDomains.length === 0) impactedDomains = [...radius.domains];
+      }
+    }
     const git = (this.#dependencies.inspectGit ?? inspectGitBinding)(this.scope);
     const contract = compileMissionContract(
       {
@@ -216,8 +279,8 @@ export class ContextWorkflowService {
         businessInvariantRefs: draft.businessInvariantRefs
           ? [...draft.businessInvariantRefs]
           : [],
-        impactedDomains: draft.impactedDomains ? [...draft.impactedDomains] : [],
-        impactedSymbols: draft.impactedSymbols ? [...draft.impactedSymbols] : [],
+        impactedDomains,
+        impactedSymbols,
         requestedSensors: [
           ...new Set([
             'typecheck',
@@ -276,14 +339,19 @@ export class ContextWorkflowService {
     if (!stored) throw new Error('mission has no frozen contract');
     this.#assertContextCurrent(stored.contract);
     const corpus = ingestProjectContext(this.scope);
-    const knownSymbols = buildProjectSymbolIndex(this.scope).symbols;
+    const orientation = tryGetProjectOrientationService()?.get(this.scope);
+    const fromMap = orientation?.symbols.symbols;
+    const knownSymbols =
+      fromMap && fromMap.size > 0
+        ? fromMap
+        : buildProjectSymbolIndex(this.scope).symbols;
     const conflicts = detectContextConflicts({
       facts: corpus.facts,
       requiredFactIds: stored.contract.businessInvariantRefs,
       knownSymbols,
       impactedDomains: stored.contract.impactedDomains,
     });
-    return compileContextSnapshot({
+    const snapshot = compileContextSnapshot({
       projectId: this.scope.projectId,
       checkoutId: this.scope.checkoutId,
       contextRevision: stored.contract.contextRevision,
@@ -297,6 +365,25 @@ export class ContextWorkflowService {
         .filter((fact) => fact.category === 'regression')
         .map((fact) => fact.statement),
       requiredSensors: stored.contract.requiredSensors,
+    });
+    if (!orientation) return snapshot;
+    const radius = computeBlastRadius(orientation, {
+      goal: stored.contract.goal,
+      seedSymbols: stored.contract.impactedSymbols,
+    });
+    const orientationBlock = [
+      '',
+      '## Structural orientation (auto — not business authority)',
+      `- Map: ${orientation.mapHash.slice(0, 12)} · status ${orientation.status}`,
+      `- Graph: ${orientation.graph.mode} · ${orientation.graph.edgeCount} edges`,
+      `- Blast files: ${radius.files.slice(0, 12).join(', ') || 'none'}`,
+      `- Hubs: ${radius.hubs.slice(0, 10).join(', ') || 'none'}`,
+    ].join('\n');
+    const markdown = `${snapshot.markdown}${orientationBlock}`;
+    return Object.freeze({
+      ...snapshot,
+      markdown,
+      // Keep original contextHash — orientation is advisory decoration only.
     });
   }
 

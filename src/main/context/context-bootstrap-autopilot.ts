@@ -1,0 +1,326 @@
+import type { ProjectExecutionScope } from '../../shared/types';
+import type { ContextAttestationActor } from './context-attestation';
+import {
+  CliContextDraftReviewer,
+  selectIndependentContextReviewerRoute,
+} from './cli-context-draft-reviewer';
+import type { ContextDraftRecord } from './context-draft-store';
+import {
+  getContextKnowledgeService,
+  getContextWorkflowService,
+} from './context-workflow-registry';
+import type { ContextReadinessReport } from './context-doctor';
+import {
+  buildContextBootstrapProposals,
+  isAutoReviewableBootstrapProposal,
+  type BootstrapDocProposal,
+} from './orientation/orientation-bootstrap-context';
+import {
+  tryGetProjectOrientationService,
+  type ProjectOrientationService,
+} from './orientation/orientation-service';
+import type { OrientationSnapshot } from '../../shared/orientation-types';
+
+export type BootstrapAutopilotPhase =
+  | 'ready'
+  | 'proposed'
+  | 'awaiting-quorum'
+  | 'reviewed'
+  | 'committed'
+  | 'blocked';
+
+export interface BootstrapDraftOutcome {
+  readonly draftId: string;
+  readonly targetPath: string;
+  readonly status: ContextDraftRecord['status'] | 'propose-failed' | 'review-failed';
+  readonly autoReviewable: boolean;
+  readonly error?: string;
+}
+
+export interface ContextBootstrapAutopilotResult {
+  readonly phase: BootstrapAutopilotPhase;
+  readonly readiness: ContextReadinessReport;
+  readonly orientation: OrientationSnapshot | null;
+  readonly bootstrapProposals: readonly {
+    readonly targetPath: string;
+    readonly rationale: string;
+    readonly sourceCount: number;
+    readonly autoReviewable: boolean;
+  }[];
+  readonly proposedDraftIds: readonly string[];
+  readonly draftOutcomes: readonly BootstrapDraftOutcome[];
+  readonly appliedDraftIds: readonly string[];
+  readonly rejectedDraftIds: readonly string[];
+  readonly commitSha: string | null;
+  readonly quorumAvailable: boolean;
+  readonly autopilotHint: string;
+}
+
+export interface ContextBootstrapAutopilotOptions {
+  readonly scope: ProjectExecutionScope;
+  readonly author: ContextAttestationActor;
+  readonly missionId?: string | null;
+  /** When true (default), run independent CLI review when quorum exists. */
+  readonly autoReview?: boolean;
+  /** When true (default), commit applied drafts if readiness becomes green. */
+  readonly autoCommit?: boolean;
+  readonly maxAutoReviews?: number;
+  readonly orientation?: ProjectOrientationService | null;
+  readonly createReviewer?: () => {
+    run(input: {
+      scope: ProjectExecutionScope;
+      draftId: string;
+    }): Promise<ContextDraftRecord>;
+  };
+  readonly selectQuorum?: (authorProvider: string) => { adapterId: string } | null;
+}
+
+function freezeOutcomes(
+  outcomes: readonly BootstrapDraftOutcome[],
+): readonly BootstrapDraftOutcome[] {
+  return Object.freeze(outcomes.map((item) => Object.freeze({ ...item })));
+}
+
+function hintFor(result: Omit<ContextBootstrapAutopilotResult, 'autopilotHint'>): string {
+  if (result.readiness.ready && result.commitSha) {
+    return 'Context authority committed. Freeze the mission contract next.';
+  }
+  if (result.readiness.ready) {
+    return 'Context ready. Freeze the mission contract next (or nexus_context_commit if applied drafts remain).';
+  }
+  if (!result.quorumAvailable && result.proposedDraftIds.length > 0) {
+    return (
+      'Drafts proposed from the code map, but independent reviewer quorum is unavailable. ' +
+      'Install/auth a second CLI provider, then nexus_context_draft_review_run on each draftId.'
+    );
+  }
+  if (result.rejectedDraftIds.length > 0 && result.appliedDraftIds.length === 0) {
+    return (
+      'Independent review rejected structural drafts. Inspect rationales, fix sources, ' +
+      'and re-propose. Do not invent business rules.'
+    );
+  }
+  if (result.appliedDraftIds.length > 0 && !result.readiness.ready) {
+    return (
+      `Applied ${result.appliedDraftIds.length} draft(s); readiness still blocked: ` +
+      `${result.readiness.blockers.map((b) => b.code).join(', ')}. ` +
+      'Fill remaining product docs (e.g. business-model) with source-bound drafts.'
+    );
+  }
+  if (result.proposedDraftIds.length > 0) {
+    return 'Drafts proposed. Autonomous review in progress or pending.';
+  }
+  return (
+    'Context not ready. Use orientation hubs as evidence and propose source-bound drafts. ' +
+    'Never invent business rules.'
+  );
+}
+
+/**
+ * Senior bootstrap pilot: map → scaffold → propose → (quorum) review/apply → commit.
+ * Never self-approves. Never fabricates business authority without independent review.
+ */
+export async function runContextBootstrapAutopilot(
+  options: ContextBootstrapAutopilotOptions,
+): Promise<ContextBootstrapAutopilotResult> {
+  const autoReview = options.autoReview !== false;
+  const autoCommit = options.autoCommit !== false;
+  const maxAutoReviews = Math.min(
+    Math.max(1, options.maxAutoReviews ?? 8),
+    16,
+  );
+  const workflow = getContextWorkflowService(options.scope);
+  const knowledge = getContextKnowledgeService(options.scope);
+  const orientationService =
+    options.orientation === undefined
+      ? tryGetProjectOrientationService()
+      : options.orientation;
+
+  let orientationSnapshot: OrientationSnapshot | null = null;
+  let map = orientationService?.get(options.scope) ?? null;
+  if (orientationService) {
+    try {
+      map = await orientationService.ensure(options.scope, {
+        reason: 'mcp',
+        waitMs: 8_000,
+      });
+      orientationSnapshot = orientationService.toSnapshot(map);
+    } catch {
+      // orientation is advisory; readiness still runs
+    }
+  }
+  // Scaffold is cheap and required before proposals; always attempt when not ready later.
+  try {
+    if (!map?.docs.hasContextScaffold) {
+      workflow.scaffold();
+    }
+  } catch {
+    // scaffold may fail if scope root is read-only; propose path will surface blockers
+  }
+
+  let readiness = workflow.inspectReadiness();
+  if (readiness.ready) {
+    const base = {
+      phase: 'ready' as const,
+      readiness,
+      orientation: orientationSnapshot,
+      bootstrapProposals: Object.freeze([] as const),
+      proposedDraftIds: Object.freeze([] as const),
+      draftOutcomes: Object.freeze([] as const),
+      appliedDraftIds: Object.freeze([] as const),
+      rejectedDraftIds: Object.freeze([] as const),
+      commitSha: null,
+      quorumAvailable: Boolean(
+        (options.selectQuorum ?? selectIndependentContextReviewerRoute)(
+          options.author.provider,
+        ),
+      ),
+    };
+    return Object.freeze({ ...base, autopilotHint: hintFor(base) });
+  }
+
+  const proposals: BootstrapDocProposal[] = map
+    ? [...buildContextBootstrapProposals(options.scope, map)]
+    : [];
+  const proposalMeta = proposals.map((p) =>
+    Object.freeze({
+      targetPath: p.targetPath,
+      rationale: p.rationale,
+      sourceCount: p.sources.length,
+      autoReviewable: isAutoReviewableBootstrapProposal(p),
+    }),
+  );
+
+  const proposedDraftIds: string[] = [];
+  const outcomes: BootstrapDraftOutcome[] = [];
+  const autoReviewQueue: string[] = [];
+
+  for (const proposal of proposals) {
+    const autoReviewable = isAutoReviewableBootstrapProposal(proposal);
+    try {
+      const draft = knowledge.propose(
+        {
+          missionId: options.missionId ?? null,
+          targetPath: proposal.targetPath,
+          content: proposal.content,
+          expectedTargetHash: null,
+          sources: proposal.sources,
+        },
+        options.author,
+      );
+      proposedDraftIds.push(draft.id);
+      outcomes.push({
+        draftId: draft.id,
+        targetPath: proposal.targetPath,
+        status: draft.status,
+        autoReviewable,
+      });
+      if (autoReviewable) autoReviewQueue.push(draft.id);
+    } catch (error) {
+      outcomes.push({
+        draftId: '',
+        targetPath: proposal.targetPath,
+        status: 'propose-failed',
+        autoReviewable,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const selectQuorum =
+    options.selectQuorum ?? selectIndependentContextReviewerRoute;
+  const quorum = selectQuorum(options.author.provider);
+  const quorumAvailable = quorum !== null;
+
+  const appliedDraftIds: string[] = [];
+  const rejectedDraftIds: string[] = [];
+
+  if (autoReview && quorumAvailable && autoReviewQueue.length > 0) {
+    const createReviewer =
+      options.createReviewer ?? (() => new CliContextDraftReviewer());
+    const reviewer = createReviewer();
+    for (const draftId of autoReviewQueue.slice(0, maxAutoReviews)) {
+      try {
+        const reviewed = await reviewer.run({
+          scope: options.scope,
+          draftId,
+        });
+        if (reviewed.status === 'approved' || reviewed.status === 'applied') {
+          const applied =
+            reviewed.status === 'applied'
+              ? { draft: reviewed }
+              : knowledge.apply(draftId);
+          appliedDraftIds.push(applied.draft.id);
+          const idx = outcomes.findIndex((item) => item.draftId === draftId);
+          if (idx >= 0) {
+            outcomes[idx] = {
+              ...outcomes[idx],
+              status: 'applied',
+            };
+          }
+        } else if (reviewed.status === 'rejected') {
+          rejectedDraftIds.push(draftId);
+          const idx = outcomes.findIndex((item) => item.draftId === draftId);
+          if (idx >= 0) {
+            outcomes[idx] = {
+              ...outcomes[idx],
+              status: 'rejected',
+            };
+          }
+        } else {
+          const idx = outcomes.findIndex((item) => item.draftId === draftId);
+          if (idx >= 0) {
+            outcomes[idx] = {
+              ...outcomes[idx],
+              status: reviewed.status,
+            };
+          }
+        }
+      } catch (error) {
+        const idx = outcomes.findIndex((item) => item.draftId === draftId);
+        if (idx >= 0) {
+          outcomes[idx] = {
+            ...outcomes[idx],
+            status: 'review-failed',
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
+    }
+  }
+
+  readiness = workflow.inspectReadiness();
+  let commitSha: string | null = null;
+  if (autoCommit && readiness.ready && appliedDraftIds.length > 0) {
+    try {
+      const committed = knowledge.commitApplied();
+      commitSha = committed.commitSha;
+    } catch {
+      // Commit is best-effort after apply; dirty git / incomplete set fails closed.
+    }
+  }
+
+  let phase: BootstrapAutopilotPhase = 'blocked';
+  if (readiness.ready && commitSha) phase = 'committed';
+  else if (readiness.ready) phase = 'ready';
+  else if (appliedDraftIds.length > 0 || rejectedDraftIds.length > 0) phase = 'reviewed';
+  else if (proposedDraftIds.length > 0 && !quorumAvailable) phase = 'awaiting-quorum';
+  else if (proposedDraftIds.length > 0) phase = 'proposed';
+
+  const base = {
+    phase,
+    readiness,
+    orientation: orientationSnapshot,
+    bootstrapProposals: Object.freeze(proposalMeta),
+    proposedDraftIds: Object.freeze([...proposedDraftIds]),
+    draftOutcomes: freezeOutcomes(outcomes),
+    appliedDraftIds: Object.freeze([...appliedDraftIds]),
+    rejectedDraftIds: Object.freeze([...rejectedDraftIds]),
+    commitSha,
+    quorumAvailable,
+  };
+  return Object.freeze({
+    ...base,
+    autopilotHint: hintFor(base),
+  });
+}

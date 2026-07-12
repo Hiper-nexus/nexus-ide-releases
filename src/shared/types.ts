@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { AdapterInfo } from './adapter-types';
 import type { BrowserDesignEvent } from './browser-design';
 import type { OnboardingState, OnboardingPatch } from './onboarding-types';
+import type { OrientationSnapshot } from './orientation-types';
 import type { UpdateState } from './update-ipc';
 import type {
   VoiceRuntimeInfo,
@@ -838,6 +839,12 @@ export interface NexusApi {
     close(): Promise<WorkspaceState>;
     remove(path: string): Promise<WorkspaceState>;
     onChanged(cb: (state: WorkspaceState) => void): Unsubscribe;
+  };
+  /** L1 structural Project Orientation Map (not business authority). */
+  orientation: {
+    get(): Promise<OrientationSnapshot | null>;
+    ensure(): Promise<OrientationSnapshot | null>;
+    refresh(): Promise<OrientationSnapshot | null>;
   };
   providers: {
     list(): Promise<ProviderSettingsInfo[]>;

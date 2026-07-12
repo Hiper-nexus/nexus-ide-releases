@@ -8,6 +8,7 @@ import { buildGitTools } from './tools-git';
 import { buildEditorTools } from './tools-editor';
 import { buildVisionTools } from './tools-vision';
 import { buildContextTools } from './tools-context';
+import { buildCodeMapTools } from './tools-code-map';
 import { buildSyncTools } from './tools-sync';
 import { buildDesignTools } from './tools-design';
 import { buildDesignSystemTools } from './tools-design-system';
@@ -28,6 +29,7 @@ export function buildToolset(): McpToolDef[] {
     ...buildPaneTools(),
     ...buildDomainTools(),
     ...buildContextTools(),
+    ...buildCodeMapTools(),
     ...buildSyncTools(),
     ...buildMediaTools(),
     ...buildFileTools(),

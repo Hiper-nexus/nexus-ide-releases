@@ -213,10 +213,73 @@ async function drivePrevcAutopilot(
 const doctorTool: McpToolDef = {
   name: 'nexus_context_doctor',
   description:
-    'Fail-closed project readiness check. Reports missing business docs, structured invariants, policy, sensors, stale symbols and context conflicts.',
-  inputSchema: { type: 'object', properties: {} },
-  handler: async (_args, ctx) =>
-    getContextWorkflowService(ctx.scope).inspectReadiness(),
+    'Fail-closed project readiness + autonomous bootstrap pilot. Warms the structural map, scaffolds .context, proposes source-bound drafts, and when an independent provider quorum exists runs review→apply→commit without self-approval. Workers get a read-only readiness report only.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      autoReview: {
+        type: 'boolean',
+        description: 'Run independent draft review when quorum exists (default true for orchestrator).',
+      },
+      autoCommit: {
+        type: 'boolean',
+        description: 'Commit applied drafts when readiness is green (default true).',
+      },
+    },
+  },
+  handler: async (args, ctx) => {
+    const input = z
+      .object({
+        autoReview: z.boolean().optional(),
+        autoCommit: z.boolean().optional(),
+      })
+      .strict()
+      .parse(args ?? {});
+
+    // Workers only observe — never mutate authority.
+    if (ctx.role === 'worker') {
+      const readiness = getContextWorkflowService(ctx.scope).inspectReadiness();
+      return Object.freeze({
+        ...readiness,
+        phase: readiness.ready ? 'ready' : 'blocked',
+        orientation: null,
+        bootstrapProposals: Object.freeze([]),
+        proposedDraftIds: Object.freeze([]),
+        draftOutcomes: Object.freeze([]),
+        appliedDraftIds: Object.freeze([]),
+        rejectedDraftIds: Object.freeze([]),
+        commitSha: null,
+        quorumAvailable: false,
+        autopilotHint: readiness.ready
+          ? 'Context ready (worker observation only).'
+          : 'Context not ready. Orchestrator must run bootstrap pilot.',
+      });
+    }
+
+    const { runContextBootstrapAutopilot } = await import(
+      '../context/context-bootstrap-autopilot'
+    );
+    const result = await runContextBootstrapAutopilot({
+      scope: ctx.scope,
+      author: missionIdentity(ctx),
+      missionId: ctx.missionId ?? null,
+      autoReview: input.autoReview,
+      autoCommit: input.autoCommit,
+    });
+    return Object.freeze({
+      ...result.readiness,
+      phase: result.phase,
+      orientation: result.orientation,
+      bootstrapProposals: result.bootstrapProposals,
+      proposedDraftIds: result.proposedDraftIds,
+      draftOutcomes: result.draftOutcomes,
+      appliedDraftIds: result.appliedDraftIds,
+      rejectedDraftIds: result.rejectedDraftIds,
+      commitSha: result.commitSha,
+      quorumAvailable: result.quorumAvailable,
+      autopilotHint: result.autopilotHint,
+    });
+  },
 };
 
 const systemDoctorTool: McpToolDef = {
@@ -402,13 +465,20 @@ const freezeTool: McpToolDef = {
     if (ctx.role === 'worker') throw new Error('only an orchestrator can freeze a contract');
     const input = freezeSchema.parse(args);
     assertMission(ctx, input.missionId);
-    const frozen = getContextWorkflowService(ctx.scope).freezeContract(
-      input,
-      missionIdentity(ctx),
-    );
+    const service = getContextWorkflowService(ctx.scope);
+    // Auto-pilot: fill empty impact lists from structural blast radius.
+    const enriched = await service.enrichDraftFromOrientation(input);
+    const frozen = service.freezeContract(enriched, missionIdentity(ctx));
     bindContextRevision(ctx, frozen.contract.contextRevision);
     const autopilot = await drivePrevcAutopilot(ctx, input.missionId, false);
-    return { ...getContextWorkflowService(ctx.scope).getMissionWorkflow(input.missionId), autopilot };
+    return {
+      ...service.getMissionWorkflow(input.missionId),
+      autopilot,
+      orientationEnriched: {
+        impactedSymbols: frozen.contract.impactedSymbols,
+        impactedDomains: frozen.contract.impactedDomains,
+      },
+    };
   },
 };
 
@@ -535,16 +605,44 @@ const worktreeCreateTool: McpToolDef = {
     if (!planned) {
       throw new Error('worktree task is outside the sealed Nexus mission plan');
     }
+    // P4 auto-pilot: expand ownership with structural blast radius (still no .context).
+    let ownership = input.ownership;
+    let ownershipExpanded = false;
+    try {
+      const { tryGetProjectOrientationService } = await import(
+        '../context/orientation/orientation-service'
+      );
+      const { expandOwnershipWithBlastRadius } = await import(
+        '../context/orientation/orientation-blast-radius'
+      );
+      const map =
+        tryGetProjectOrientationService()?.get(ctx.scope) ??
+        (await tryGetProjectOrientationService()?.ensure(ctx.scope, {
+          reason: 'mcp',
+          waitMs: 3_000,
+        }));
+      if (map) {
+        const expanded = expandOwnershipWithBlastRadius(ownership, map);
+        ownership = {
+          files: [...expanded.files],
+          symbols: [...expanded.symbols],
+          domains: [...expanded.domains],
+        };
+        ownershipExpanded = expanded.expanded;
+      }
+    } catch {
+      // ownership expansion is advisory
+    }
     const created = requireWorktreeRuntimeRegistry().create({
       scope: ctx.scope,
       missionId: input.missionId,
       taskId: input.taskId,
       workerId: input.workerId,
-      ownership: input.ownership,
+      ownership,
       dependsOn: input.dependsOn,
     });
     tasks.update(input.taskId, { status: 'running' });
-    return created;
+    return Object.freeze({ ...created, ownershipExpanded });
   },
 };
 

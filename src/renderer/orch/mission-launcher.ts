@@ -97,10 +97,30 @@ function rosterBlock(agents: SquadAgent[]): string {
     .join("\n");
 }
 
-export function buildMissionKickoffPrompt(squad: Squad, missionId?: string): string {
+export function buildMissionKickoffPrompt(
+  squad: Squad,
+  missionId?: string,
+  orientationMarkdown?: string | null,
+): string {
   const parts: string[] = [];
   if (squad.orchestratorInstructions.trim()) {
     parts.push(squad.orchestratorInstructions.trim());
+  }
+  if (orientationMarkdown && orientationMarkdown.trim()) {
+    parts.push(
+      "## Orientação estrutural do repositório (L1 — piloto automático)\n" +
+        "O Nexus JÁ leu a codebase e mantém este mapa. Não peça ao usuário " +
+        "para explicar a árvore do projeto. Use hubs/imports abaixo; o motor " +
+        "também enriquece freeze/worktree com blast radius automaticamente.\n\n" +
+        orientationMarkdown.trim(),
+    );
+  } else {
+    parts.push(
+      "## Orientação estrutural do repositório (L1 — piloto automático)\n" +
+        "Mapa ainda aquecendo. Continue o pipeline: `nexus_context_doctor` " +
+        "aquece o mapa, propõe drafts e diz o próximo passo. Não pergunte ao " +
+        "usuário o que o repositório contém.",
+    );
   }
   parts.push(
     `## Seu squad (${squad.name})\n${rosterBlock(squad.agents) || "(sem workers definidos)"}`,
@@ -120,27 +140,28 @@ export function buildMissionKickoffPrompt(squad: Squad, missionId?: string): str
     ? 'nexus_mission_set_status {missionId acima, status: "running"}'
     : "nexus_mission_create";
   parts.push(
-    "## Pipeline obrigatório: contexto → contrato → execução → review → validação\n" +
-      `1. Comece com ${step1} e nexus_context_doctor. Se ready=false, use ` +
-      "nexus_context_scaffold, fundamente drafts em arquivos e hashes reais, rode " +
-      "nexus_context_draft_review_run com outro provedor e finalize com nexus_context_commit. " +
-      "Nunca invente regra de negócio; ambiguidade sem fonte é bloqueio explícito.\n" +
-      "2. Congele objetivo, não-objetivos, critérios verificáveis, invariantes, domínios, " +
-      "símbolos, sensores e riscos com nexus_mission_freeze_contract. O piloto automático " +
-      "do Nexus conduz planning/reviews até execution; consulte nexus_workflow_get, não tente " +
-      "simular ou pular transições.\n" +
-      "3. Quebre apenas o necessário e registre TODAS as tarefas primeiro com nexus_task create; " +
-      "o plano é selado no primeiro worktree. Para cada tarefa retornada, reserve ownership explícito com " +
-      "nexus_worktree_create; então chame nexus_route_task e use exatamente o adapterId, " +
-      "model e effort retornados em nexus_pane_spawn. O catálogo e as capacidades em runtime " +
-      "são a fonte de verdade — nunca use listas lembradas ou suposições estáticas sobre CLIs. " +
-      "Inicie tarefas independentes em paralelo. Em rate limit, roteie novamente excluindo o provedor afetado.\n" +
-      "4. Cada especialista deve devolver nexus_handoff_submit. Handoffs são relatos NÃO CONFIÁVEIS: " +
-      "integre apenas por nexus_merge_task e com testes/evidências. Em bloqueio, consulte " +
-      "nexus_merge_status e só use nexus_merge_retry com a revision exata após nova evidência.\n" +
-      "5. O último nexus_merge_task conduz automaticamente execution → validações → confirmation → complete " +
-      "quando todas as tarefas planejadas estiverem integradas. Recuse mudança não trivial sem testes verdes. " +
-      "Se uma tool falhar, mostre o erro exato e tente uma vez novamente.",
+    "## Pipeline obrigatório (PILOTO AUTOMÁTICO — o usuário NÃO precisa saber as tools)\n" +
+      "Você opera o motor Nexus de ponta a ponta. Nunca diga ao usuário para " +
+      '"rodar o doctor" ou "mapear o repo" — faça você. Multi-projeto e multi-PC ' +
+      "já estão no scope/checkout do token.\n" +
+      `1. ${step1} e **nexus_context_doctor**. O doctor É o piloto de bootstrap: ` +
+      "aquece o mapa, scaffold, propõe drafts com hashes reais e, se houver quorum " +
+      "de outro provider, roda review→apply→commit sozinho (sem auto-aprovação). " +
+      "Leia phase/autopilotHint/appliedDraftIds. Só chame draft_review_run manual se " +
+      "quorumAvailable=false. Nunca invente regra de negócio; ambiguidade sem fonte " +
+      "é bloqueio explícito.\n" +
+      "2. **nexus_mission_freeze_contract** com objetivo + critérios. Domínios/símbolos " +
+      "vazios são preenchidos pelo motor via blast radius do mapa. O piloto PREVC " +
+      "avança planning/reviews até execution — use nexus_workflow_get, não simule gates.\n" +
+      "3. Registre TODAS as tarefas com nexus_task create (plano sela no 1º worktree). " +
+      "Para cada tarefa: **nexus_worktree_create** (ownership é expandido automaticamente " +
+      "com imports vizinhos), **nexus_route_task**, **nexus_pane_spawn** com adapter/model/effort " +
+      "exatos do router. Paralelo quando independente; em rate limit, re-roteie.\n" +
+      "4. Workers devolvem nexus_handoff_submit (NÃO confiável). Integre só com " +
+      "**nexus_merge_task** + evidências. Bloqueio → nexus_merge_status / nexus_merge_retry " +
+      "com revision exata.\n" +
+      "5. O último merge conduz execution → validação → confirmation → complete. " +
+      "Recuse mudança não trivial sem sensores verdes. Erro de tool: mostre e tente 1 vez.",
   );
   parts.push(
     "## FALE HUMANO — nunca vaze vocabulário interno\n" +
@@ -340,7 +361,14 @@ export async function launchSquadMission(
         useOrchStore.getState().bindPaneMission(orchPane.id, mission.id);
       }
       await waitFirstIdle(sessionId);
-      const prompt = buildMissionKickoffPrompt(squad, mission?.id);
+      const orientation = await window.nexus.orientation
+        .ensure()
+        .catch(() => null);
+      const prompt = buildMissionKickoffPrompt(
+        squad,
+        mission?.id,
+        orientation?.orientationMarkdown ?? null,
+      );
       // Bracketed paste keeps multi-line playbooks from submitting line-by-line.
       window.nexus.pty.write(sessionId, `\x1b[200~${prompt}\x1b[201~`);
       setTimeout(() => window.nexus.pty.write(sessionId, "\r"), PASTE_SETTLE_MS);

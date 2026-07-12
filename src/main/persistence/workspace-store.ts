@@ -14,6 +14,10 @@ import {
   clearRendererWorkspaceScope,
 } from './renderer-workspace-scope';
 import { WorkspaceGrantRegistry } from './workspace-grants';
+import {
+  scheduleOrientationForWorkspace,
+  stopOrientationForWorkspace,
+} from '../context/orientation/orientation-bootstrap';
 
 /**
  * Workspace store: current + recent workspaces, persisted in
@@ -124,6 +128,8 @@ function openWorkspace(dir: string, owner: WebContents): WorkspaceState {
   state = { current: info, recents };
   persist();
   broadcast();
+  // L1 structural map — async, never blocks open, never mutates the repo.
+  scheduleOrientationForWorkspace(canonical);
   return state;
 }
 
@@ -199,6 +205,7 @@ export function registerWorkspaceIpc(): void {
 
   ipcMain.handle(WORKSPACE_CHANNELS.close, (event) => {
     clearRendererWorkspaceScope(event.sender);
+    stopOrientationForWorkspace();
     state = { ...state, current: null };
     persist();
     broadcast();

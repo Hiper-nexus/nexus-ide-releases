@@ -29,6 +29,8 @@ import type {
 } from '../shared/settings-types';
 import { WORKSPACE_CHANNELS } from '../shared/workspace-types';
 import type { WorkspaceState } from '../shared/workspace-types';
+import { ORIENTATION_CHANNELS } from '../shared/orientation-types';
+import type { OrientationSnapshot } from '../shared/orientation-types';
 import { PROVIDER_CHANNELS } from '../shared/provider-settings-types';
 import type { ProviderSettingsInfo } from '../shared/provider-settings-types';
 import { FILES_CHANNELS } from '../shared/files-types';
@@ -620,6 +622,14 @@ const api: NexusApi = {
     close: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.close),
     remove: (path) => ipcRenderer.invoke(WORKSPACE_CHANNELS.remove, { path }),
     onChanged: (cb) => addListener(workspaceChangedListeners, cb),
+  },
+  orientation: {
+    get: (): Promise<OrientationSnapshot | null> =>
+      ipcRenderer.invoke(ORIENTATION_CHANNELS.get),
+    ensure: (): Promise<OrientationSnapshot | null> =>
+      ipcRenderer.invoke(ORIENTATION_CHANNELS.ensure),
+    refresh: (): Promise<OrientationSnapshot | null> =>
+      ipcRenderer.invoke(ORIENTATION_CHANNELS.refresh),
   },
   providers: {
     list: () => ipcRenderer.invoke(PROVIDER_CHANNELS.list),

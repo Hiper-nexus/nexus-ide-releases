@@ -144,6 +144,8 @@ import {
   registerWorkspaceListener,
   unregisterWorkspaceListener,
 } from "./persistence/workspace-store";
+import { configureProjectOrientationService } from "./context/orientation/orientation-service";
+import { registerOrientationIpc } from "./context/orientation/orientation-ipc";
 import { resolveProjectExecutionScope } from "./persistence/project-identity";
 import {
   registerProviderIpc,
@@ -291,6 +293,9 @@ function bootstrap(): void {
     resolveIntegratedMission: (scope, missionId, baseSha) =>
       worktreeRuntime.resolveIntegratedMission(scope, missionId, baseSha),
   });
+  configureProjectOrientationService({
+    cacheRoot: path.join(app.getPath("userData"), "orientation-maps"),
+  });
   const gamificationService = configureGamificationService({
     runtimeManager: projectRuntimeManager,
     domainStores: requireProjectDomainStoreRegistry(),
@@ -329,6 +334,7 @@ function bootstrap(): void {
   registerSettingsIpc();
   registerAuthProbeIpc();
   registerWorkspaceIpc();
+  registerOrientationIpc();
   registerProviderIpc();
   registerFilesIpc();
   registerAccountIpc();

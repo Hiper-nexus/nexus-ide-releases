@@ -6,18 +6,21 @@ import {
 
 describe('MCP effect policy', () => {
   it('keeps observations available before a mission exists', () => {
-    expect(effectPolicyForTool('nexus_context_doctor')).toBe('read-only');
     expect(effectPolicyForTool('file_read')).toBe('read-only');
+    expect(effectPolicyForTool('nexus_code_map_get')).toBe('read-only');
+    expect(effectPolicyForTool('nexus_code_map_blast_radius')).toBe('read-only');
   });
 
   it('allows only the context and mission bootstrap chain pre-contract', () => {
     expect(effectPolicyForTool('nexus_mission_create')).toBe('bootstrap-authority');
+    expect(effectPolicyForTool('nexus_context_doctor')).toBe('bootstrap-authority');
     expect(effectPolicyForTool('nexus_context_draft_review_run')).toBe(
       'bootstrap-authority',
     );
     expect(effectPolicyForTool('nexus_mission_freeze_contract')).toBe(
       'bootstrap-authority',
     );
+    expect(effectPolicyForTool('nexus_code_map_refresh')).toBe('bootstrap-authority');
   });
 
   it('requires execution-stage authority for direct code and command effects', () => {
@@ -53,7 +56,7 @@ describe('MCP effect policy', () => {
   });
 
   it('derives confirmation from policy with a fail-closed unknown default', () => {
-    expect(requiresHumanConfirmationForTool('nexus_context_doctor')).toBe(false);
+    expect(requiresHumanConfirmationForTool('nexus_code_map_get')).toBe(false);
     expect(requiresHumanConfirmationForTool('nexus_context_commit')).toBe(false);
     expect(requiresHumanConfirmationForTool('nexus_file_write')).toBe(true);
     expect(requiresHumanConfirmationForTool('nexus_future_unknown_tool')).toBe(true);

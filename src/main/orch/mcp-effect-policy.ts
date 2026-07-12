@@ -17,8 +17,10 @@ const READ_ONLY_TOOLS = new Set([
   'browser_read',
   'browser_screenshot',
   'browser_wait',
-  'context_doctor',
   'context_draft_get',
+  'code_map_get',
+  'code_map_query',
+  'code_map_blast_radius',
   'design_selection_get',
   'file_read',
   'file_search',
@@ -53,11 +55,13 @@ const READ_ONLY_TOOLS = new Set([
  */
 const BOOTSTRAP_AUTHORITY_TOOLS = new Set([
   'context_commit',
+  'context_doctor',
   'context_draft_apply',
   'context_draft_propose',
   'context_draft_review',
   'context_draft_review_run',
   'context_scaffold',
+  'code_map_refresh',
   'mission_create',
   'mission_freeze_contract',
 ]);
