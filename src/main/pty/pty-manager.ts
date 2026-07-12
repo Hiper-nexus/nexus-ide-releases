@@ -596,7 +596,7 @@ export function spawnAgentSession(
   let resumeMode: SpawnedSession['resumeMode'];
   if (req.resume) {
     const captured =
-      req.paneId && adapter.spawn.resumeIdArgs?.length
+      !req.resumeLatestOnly && req.paneId && adapter.spawn.resumeIdArgs?.length
         ? (resumeSessionLookup?.(
             authority.scope,
             req.paneId,

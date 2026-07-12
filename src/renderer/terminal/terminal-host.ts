@@ -152,7 +152,12 @@ function buildTerminal(): {
   return { term, fit, search, serialize };
 }
 
-function startSpawn(pane: PaneModel, host: Host, resume = false): void {
+function startSpawn(
+  pane: PaneModel,
+  host: Host,
+  resume = false,
+  resumeLatestOnly = false,
+): void {
   host.spawnStarted = true;
   host.hibernated = false;
   useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
@@ -172,6 +177,7 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
         rows: host.term.rows,
         kind: spawnKind,
         resume,
+        resumeLatestOnly,
         // paneId estável (layout persistido): com resume, o main retoma a
         // sessão de provider CAPTURADA deste pane (`--resume <id>`).
         paneId: pane.id,
@@ -193,6 +199,7 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
         return;
       }
       setHostSession(host, pane.id, res.sessionId);
+      const spawnedAt = Date.now();
       if (resume) {
         const message =
           res.resumeMode === 'exact'
@@ -224,6 +231,31 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
       host.cleanups.push(() => discardTerminalOutput(host.term));
       host.cleanups.push(
         window.nexus.pty.onExit(res.sessionId, ({ exitCode }) => {
+          const staleExactResume =
+            resume &&
+            !resumeLatestOnly &&
+            res.resumeMode === 'exact' &&
+            exitCode !== 0 &&
+            Date.now() - spawnedAt < 10_000;
+          if (staleExactResume) {
+            // The CLI validates provider conversation ids only after spawn, so
+            // main cannot know synchronously that a captured id expired. Fall
+            // back once to the adapter's latest-session command.
+            const staleSessionId = res.sessionId;
+            setTimeout(() => {
+              if (host.disposed || host.sessionId !== staleSessionId) return;
+              host.cleanups.forEach((cleanup) => cleanup());
+              host.cleanups = [];
+              setHostSession(host, pane.id, null);
+              host.spawnStarted = false;
+              host.term.writeln(
+                '\r\n\x1b[33m[nexus] ID exato expirou — tentando a conversa mais recente…\x1b[0m',
+              );
+              startSpawn(pane, host, true, true);
+            }, 0);
+            return;
+          }
+          setHostSession(host, pane.id, null);
           host.term.writeln(
             `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
           );
@@ -248,7 +280,7 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
           host.term.writeln(
             '\r\n\x1b[36m[nexus] continuidade enviada automaticamente ao agente.\x1b[0m',
           );
-        }, 1_200);
+        }, 1_800);
         host.cleanups.push(() => clearTimeout(continuationTimer));
       }
       const input = host.term.onData((data) => {

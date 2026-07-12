@@ -491,6 +491,8 @@ export interface SpawnRequest {
   orchRequestId?: string;
   /** Re-spawn continuing the previous conversation (adapter resumeArgs). */
   resume?: boolean;
+  /** Skip a stale captured id and use the adapter's latest-session fallback. */
+  resumeLatestOnly?: boolean;
   /**
    * Pane dono do spawn (estável entre boots — vem do layout persistido).
    * Com ele + resume, o main retoma a sessão de provider CAPTURADA daquele
