@@ -26,6 +26,16 @@ export const EMBEDDED_WAKE_MIN_RMS = 0.18;
 export const CUSTOM_WAKE_SCORE_THRESHOLD = 0.05;
 
 /**
+ * Quiet-near-field recovery band. Real calls in the current MacBook session
+ * scored 0.0326–0.0413 while the room/TV path was much louder. This lower cut
+ * is accepted only inside a narrow low-energy voice band; it is not a global
+ * sensitivity reduction.
+ */
+export const CUSTOM_QUIET_WAKE_SCORE_THRESHOLD = 0.03;
+export const CUSTOM_QUIET_WAKE_MIN_RMS = 0.04;
+export const CUSTOM_QUIET_WAKE_MAX_RMS = 0.12;
+
+/**
  * Piso de energia acústica cru para aceitar o head PT. Logs reais: FPs com
  * peakRms 0.007–0.04; fala "Ei Jarvis" tipicamente ≥0.15. 0.09 corta silêncio
  * e eco fraco sem matar o wake falado perto do mic.
@@ -76,11 +86,22 @@ export function resolveWakeDetection(
   const energyOk =
     peakRms === undefined ||
     (Number.isFinite(peakRms) && peakRms >= CUSTOM_WAKE_MIN_RMS);
-  const customOk =
+  const customScore = scores.custom;
+  const regularCustomOk =
     customLoaded &&
-    Number.isFinite(scores.custom) &&
-    (scores.custom as number) >= CUSTOM_WAKE_SCORE_THRESHOLD &&
+    Number.isFinite(customScore) &&
+    (customScore as number) >= CUSTOM_WAKE_SCORE_THRESHOLD &&
     energyOk;
+  const quietCustomOk =
+    customLoaded &&
+    Number.isFinite(customScore) &&
+    (customScore as number) >= CUSTOM_QUIET_WAKE_SCORE_THRESHOLD &&
+    (customScore as number) < CUSTOM_WAKE_SCORE_THRESHOLD &&
+    peakRms !== undefined &&
+    Number.isFinite(peakRms) &&
+    peakRms >= CUSTOM_QUIET_WAKE_MIN_RMS &&
+    peakRms <= CUSTOM_QUIET_WAKE_MAX_RMS;
+  const customOk = regularCustomOk || quietCustomOk;
 
   const candidates: WakeDetection[] = [];
 
@@ -88,7 +109,9 @@ export function resolveWakeDetection(
     candidates.push({
       source: 'custom',
       score: scores.custom as number,
-      threshold: CUSTOM_WAKE_SCORE_THRESHOLD,
+      threshold: quietCustomOk && !regularCustomOk
+        ? CUSTOM_QUIET_WAKE_SCORE_THRESHOLD
+        : CUSTOM_WAKE_SCORE_THRESHOLD,
     });
   }
 

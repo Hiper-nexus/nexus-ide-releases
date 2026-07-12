@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   CUSTOM_WAKE_MIN_RMS,
   CUSTOM_WAKE_SCORE_THRESHOLD,
+  CUSTOM_QUIET_WAKE_MAX_RMS,
+  CUSTOM_QUIET_WAKE_MIN_RMS,
+  CUSTOM_QUIET_WAKE_SCORE_THRESHOLD,
   EMBEDDED_WAKE_MIN_RMS,
   OFFICIAL_WAKE_SCORE_THRESHOLD,
   resolveWakeDetection,
@@ -67,6 +70,31 @@ describe('wake score gate', () => {
       score: 1,
       threshold: CUSTOM_WAKE_SCORE_THRESHOLD,
     });
+  });
+
+  it('recovers a quiet near-field call without lowering the loud-room threshold', () => {
+    expect(
+      resolveWakeDetection(
+        { embedded: 0.003, custom: 0.0413 },
+        { peakRms: 0.06, preferCustom: true },
+      ),
+    ).toEqual({
+      source: 'custom',
+      score: 0.0413,
+      threshold: CUSTOM_QUIET_WAKE_SCORE_THRESHOLD,
+    });
+    expect(
+      resolveWakeDetection(
+        { embedded: 0.003, custom: CUSTOM_QUIET_WAKE_SCORE_THRESHOLD + 0.005 },
+        { peakRms: CUSTOM_QUIET_WAKE_MAX_RMS + 0.2, preferCustom: true },
+      ),
+    ).toBeNull();
+    expect(
+      resolveWakeDetection(
+        { embedded: 0.003, custom: CUSTOM_QUIET_WAKE_SCORE_THRESHOLD + 0.005 },
+        { peakRms: CUSTOM_QUIET_WAKE_MIN_RMS - 0.01, preferCustom: true },
+      ),
+    ).toBeNull();
   });
 
   it('rejects embedded wake when RMS is below the speech floor', () => {
