@@ -6,7 +6,7 @@
  * original vem da comunidade petdex/codex-pets — ver NOTICE no pacote.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import {
   CODEX_SHEET_COLS,
@@ -27,6 +27,10 @@ interface ManifestEntry {
 }
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+/** Só aceitamos sheets no subpath canônico do pacote. */
+const SHEET_FILE_RE = /^sheets\/[a-z0-9][a-z0-9-]{0,62}\.webp$/;
+/** Teto do arquivo em disco antes de materializar data URL (base64 ~4/3). */
+const SHEET_FILE_MAX_BYTES = Math.floor((SHEET_DATA_URL_MAX * 3) / 4);
 
 let cachedRoot: string | null = null;
 let cachedManifest: ManifestEntry[] | null = null;
@@ -36,12 +40,25 @@ export function resolvePetsLibraryRoot(
   appPath: string,
   resourcesPath: string,
   packaged: boolean,
+  cwd: string = process.cwd(),
 ): string {
   if (packaged) {
     return path.join(resourcesPath, 'pets');
   }
-  // plugin-vite: app.getAppPath() costuma ser a pasta do projeto em dev.
-  return path.join(appPath, 'resources', 'pets');
+  // Mesma estratégia do model-ranking: cwd do processo (vite/electron) e
+  // appPath nem sempre coincidem com a raiz do repo em dev.
+  const candidates = [
+    path.join(cwd, 'resources', 'pets'),
+    path.join(appPath, 'resources', 'pets'),
+    path.join(appPath, '..', 'resources', 'pets'),
+    path.join(appPath, '..', '..', 'resources', 'pets'),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(path.join(candidate, 'manifest.json'))) {
+      return path.resolve(candidate);
+    }
+  }
+  return path.resolve(candidates[0]);
 }
 
 export function configurePetsLibraryRoot(root: string): void {
@@ -62,6 +79,28 @@ function libraryRoot(): string {
   return cachedRoot;
 }
 
+function isSafeManifestEntry(item: unknown): item is ManifestEntry {
+  if (!item || typeof item !== 'object') return false;
+  const entry = item as ManifestEntry;
+  if (typeof entry.id !== 'string' || !ID_RE.test(entry.id)) return false;
+  if (typeof entry.label !== 'string' || entry.label.trim().length === 0) {
+    return false;
+  }
+  if (entry.label.length > 128) return false;
+  if (typeof entry.file !== 'string' || !SHEET_FILE_RE.test(entry.file)) {
+    return false;
+  }
+  // file basename must match id (impede apontar sheet de outro id).
+  if (entry.file !== `sheets/${entry.id}.webp`) return false;
+  if (entry.slug !== undefined) {
+    if (typeof entry.slug !== 'string' || !ID_RE.test(entry.slug)) return false;
+  }
+  if (entry.note !== undefined) {
+    if (typeof entry.note !== 'string' || entry.note.length > 256) return false;
+  }
+  return true;
+}
+
 function loadManifest(): ManifestEntry[] {
   if (cachedManifest) return cachedManifest;
   const file = path.join(libraryRoot(), 'manifest.json');
@@ -75,32 +114,12 @@ function loadManifest(): ManifestEntry[] {
       cachedManifest = [];
       return cachedManifest;
     }
-    cachedManifest = raw.filter(
-      (item): item is ManifestEntry =>
-        !!item &&
-        typeof item === 'object' &&
-        typeof (item as ManifestEntry).id === 'string' &&
-        ID_RE.test((item as ManifestEntry).id) &&
-        typeof (item as ManifestEntry).label === 'string' &&
-        typeof (item as ManifestEntry).file === 'string' &&
-        !(item as ManifestEntry).file.includes('..') &&
-        !(item as ManifestEntry).file.startsWith('/'),
-    );
+    cachedManifest = raw.filter(isSafeManifestEntry);
     return cachedManifest;
   } catch {
     cachedManifest = [];
     return cachedManifest;
   }
-}
-
-export function listPetLibrary(): PetLibraryListResult {
-  const items: PetLibraryEntry[] = loadManifest().map((entry) => ({
-    id: entry.id,
-    slug: entry.slug ?? entry.id,
-    label: entry.label,
-    note: entry.note,
-  }));
-  return { ok: true, items };
 }
 
 function sheetPathFor(id: string): string | null {
@@ -115,6 +134,28 @@ function sheetPathFor(id: string): string | null {
   return full;
 }
 
+export function listPetLibrary(): PetLibraryListResult {
+  try {
+    const items: PetLibraryEntry[] = [];
+    for (const entry of loadManifest()) {
+      // Só listar o que realmente existe no pacote (manifest órfão some).
+      if (!sheetPathFor(entry.id)) continue;
+      items.push({
+        id: entry.id,
+        slug: entry.slug ?? entry.id,
+        label: entry.label,
+        note: entry.note,
+      });
+    }
+    return { ok: true, items };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Biblioteca de pets indisponível (${err instanceof Error ? err.message : 'erro'}).`,
+    };
+  }
+}
+
 /** Carrega o sheet da biblioteca como data URL pronto para PetPrefs.sheet. */
 export function loadLibrarySheet(id: string): {
   ok: boolean;
@@ -122,12 +163,31 @@ export function loadLibrarySheet(id: string): {
   sheet?: PetSheet;
   error?: string;
 } {
-  const entry = loadManifest().find((item) => item.id === id);
+  const trimmed = id.trim();
+  if (!ID_RE.test(trimmed)) {
+    return { ok: false, error: 'id de biblioteca inválido' };
+  }
+  const entry = loadManifest().find((item) => item.id === trimmed);
   if (!entry) return { ok: false, error: 'Pet da biblioteca não encontrado.' };
-  const file = sheetPathFor(id);
+  const file = sheetPathFor(trimmed);
   if (!file) return { ok: false, error: 'Arquivo do pet ausente no pacote.' };
   try {
+    const size = statSync(file).size;
+    if (!Number.isFinite(size) || size <= 0 || size > SHEET_FILE_MAX_BYTES) {
+      return { ok: false, error: 'Sheet da biblioteca com tamanho inválido.' };
+    }
     const buf = readFileSync(file);
+    if (buf.byteLength > SHEET_FILE_MAX_BYTES) {
+      return { ok: false, error: 'Sheet da biblioteca excede o limite interno.' };
+    }
+    // WebP RIFF magic — evita data URL de lixo embutido por engano.
+    if (
+      buf.byteLength < 12 ||
+      buf.toString('ascii', 0, 4) !== 'RIFF' ||
+      buf.toString('ascii', 8, 12) !== 'WEBP'
+    ) {
+      return { ok: false, error: 'Sheet da biblioteca não é WebP válido.' };
+    }
     const dataUrl = `data:image/webp;base64,${buf.toString('base64')}`;
     if (dataUrl.length > SHEET_DATA_URL_MAX) {
       return { ok: false, error: 'Sheet da biblioteca excede o limite interno.' };

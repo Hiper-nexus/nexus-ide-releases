@@ -10,11 +10,7 @@ import {
   resolvePetsLibraryRoot,
 } from './pet-library';
 
-const REPO_PETS = path.join(
-  process.cwd(),
-  'resources',
-  'pets',
-);
+const REPO_PETS = path.join(process.cwd(), 'resources', 'pets');
 
 describe('pet-library', () => {
   beforeEach(() => {
@@ -25,13 +21,25 @@ describe('pet-library', () => {
     __resetPetLibraryCacheForTests();
   });
 
-  it('resolvePetsLibraryRoot usa resources/pets empacotado e dev', () => {
+  it('resolvePetsLibraryRoot packaged aponta para resourcesPath/pets', () => {
     expect(resolvePetsLibraryRoot('/app', '/Resources', true)).toBe(
       path.join('/Resources', 'pets'),
     );
-    expect(resolvePetsLibraryRoot('/repo', '/Resources', false)).toBe(
-      path.join('/repo', 'resources', 'pets'),
+  });
+
+  it('resolvePetsLibraryRoot em dev prefere o candidato com manifest', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pet-lib-root-'));
+    const pets = path.join(dir, 'resources', 'pets');
+    fs.mkdirSync(pets, { recursive: true });
+    fs.writeFileSync(path.join(pets, 'manifest.json'), '[]');
+    const resolved = resolvePetsLibraryRoot(
+      path.join(dir, 'somewhere', 'build'),
+      '/Resources',
+      false,
+      dir,
     );
+    expect(resolved).toBe(path.resolve(pets));
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   it('lista o manifest embutido do repositório', () => {
@@ -54,8 +62,9 @@ describe('pet-library', () => {
     expect(loaded.sheet?.rows).toBe(11);
   });
 
-  it('rejeita id inexistente e path traversal no file do manifest', () => {
+  it('rejeita path traversal e file que não casa com id', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pet-lib-'));
+    fs.mkdirSync(path.join(dir, 'sheets'), { recursive: true });
     fs.writeFileSync(
       path.join(dir, 'manifest.json'),
       JSON.stringify([
@@ -65,11 +74,50 @@ describe('pet-library', () => {
           label: 'Evil',
           file: '../outside.webp',
         },
+        {
+          id: 'mismatch',
+          slug: 'mismatch',
+          label: 'Mismatch',
+          file: 'sheets/other.webp',
+        },
       ]),
     );
     configurePetsLibraryRoot(dir);
     expect(listPetLibrary().items).toEqual([]);
-    expect(loadLibrarySheet('missing').ok).toBe(false);
+    expect(loadLibrarySheet('evil').ok).toBe(false);
+    expect(loadLibrarySheet('mismatch').ok).toBe(false);
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('rejeita arquivo sem magic WebP', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pet-lib-'));
+    fs.mkdirSync(path.join(dir, 'sheets'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'sheets', 'bogus.webp'),
+      Buffer.from('not-a-webp-file-at-all'),
+    );
+    fs.writeFileSync(
+      path.join(dir, 'manifest.json'),
+      JSON.stringify([
+        {
+          id: 'bogus',
+          slug: 'bogus',
+          label: 'Bogus',
+          file: 'sheets/bogus.webp',
+        },
+      ]),
+    );
+    configurePetsLibraryRoot(dir);
+    const loaded = loadLibrarySheet('bogus');
+    expect(loaded.ok).toBe(false);
+    expect(loaded.error).toMatch(/WebP/i);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('rejeita id com caracteres inválidos', () => {
+    configurePetsLibraryRoot(REPO_PETS);
+    expect(loadLibrarySheet('../navi').ok).toBe(false);
+    expect(loadLibrarySheet('NAVI').ok).toBe(false);
+    expect(loadLibrarySheet('').ok).toBe(false);
   });
 });

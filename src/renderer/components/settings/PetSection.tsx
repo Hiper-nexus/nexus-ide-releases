@@ -130,7 +130,15 @@ export function PetSection() {
     const off = petApi.onPrefsChanged(setPrefs);
     if (petApi.libraryList) {
       void petApi.libraryList().then((result) => {
-        if (!cancelled && result.ok && result.items) setLibrary(result.items);
+        if (cancelled) return;
+        if (result.ok && result.items) {
+          setLibrary(result.items);
+          return;
+        }
+        setLibrary([]);
+        if (result.error) {
+          setImportNote(result.error);
+        }
       });
     }
     return () => {
@@ -154,6 +162,10 @@ export function PetSection() {
       if (result.prefs) setPrefs(result.prefs);
       setImportNote(
         `"${result.name ?? id}" da biblioteca aplicado — pet ligado.`,
+      );
+    } catch (err) {
+      setImportNote(
+        `Falha ao aplicar pet (${err instanceof Error ? err.message : 'erro'}).`,
       );
     } finally {
       setLibraryBusyId(null);

@@ -325,19 +325,30 @@ function registerPetIpc(): void {
   });
   ipcMain.handle(PET_CHANNELS.libraryApply, (event, raw: unknown) => {
     if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
-    if (typeof raw !== 'string' || raw.length > 64) {
+    if (typeof raw !== 'string' || raw.length === 0 || raw.length > 64) {
       return { ok: false, error: 'id de biblioteca inválido' };
     }
-    const loaded = loadLibrarySheet(raw.trim());
-    if (!loaded.ok || !loaded.sheet) {
-      return { ok: false, error: loaded.error ?? 'pet da biblioteca indisponível' };
+    try {
+      const loaded = loadLibrarySheet(raw.trim());
+      if (!loaded.ok || !loaded.sheet) {
+        return {
+          ok: false,
+          error: loaded.error ?? 'pet da biblioteca indisponível',
+        };
+      }
+      const prefs = applyPrefsPatch({
+        preset: 'sheet',
+        sheet: loaded.sheet,
+        // Aplicar da biblioteca é escolha explícita de “usar este pet agora”.
+        enabled: true,
+      });
+      return { ok: true, name: loaded.name, prefs };
+    } catch (err) {
+      return {
+        ok: false,
+        error: `Falha ao aplicar pet (${err instanceof Error ? err.message : 'erro'}).`,
+      };
     }
-    const prefs = applyPrefsPatch({
-      preset: 'sheet',
-      sheet: loaded.sheet,
-      enabled: true,
-    });
-    return { ok: true, name: loaded.name, prefs };
   });
   ipcMain.handle(PET_CHANNELS.pickSheet, async (event) => {
     if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
