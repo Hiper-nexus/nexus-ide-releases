@@ -62,6 +62,8 @@ export const CODEX_SHEET_ROWS = 11;
 /** Animações do contrato v2 que o pet usa: linha e nº de frames. */
 export const SHEET_ANIMS = {
   idle: { row: 0, frames: 6 },
+  'run-right': { row: 1, frames: 8 },
+  'run-left': { row: 2, frames: 8 },
   wave: { row: 3, frames: 4 },
   failed: { row: 5, frames: 8 },
 } as const;

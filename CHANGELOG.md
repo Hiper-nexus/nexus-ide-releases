@@ -10,6 +10,12 @@ Data: 2026-07-12
   Referer da galeria, tetos de tamanho/MIME e validação da malha 8×11;
   a arte é por submissão e o import mostra o autor do lado da escolha.
   Testado ao vivo contra a galeria (slug `navi`).
+- Arrastar o pet agora mostra a CORRIDA do contrato v2 (linhas
+  running-right/left, cadência própria), na direção do movimento — como
+  no Codex.
+- Pet pixel (Operador e variantes) com muito mais presença: upscale
+  nítido sem blur de retina (image-rendering: pixelated), cores mais
+  acesas, sombra de assentamento e tamanho maior (112px).
 
 ### Build
 - Release `v0.14.2` assinada e notarizada localmente com o perfil

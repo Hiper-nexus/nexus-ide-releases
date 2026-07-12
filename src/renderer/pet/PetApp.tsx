@@ -17,7 +17,7 @@ import {
  * responsabilidade daqui (mouseenter/leave → nexusPet.setInteractive).
  */
 
-const SPRITE_SIZE = 96;
+const SPRITE_SIZE = 112;
 const DRAG_THRESHOLD_PX = 4;
 const CELEBRATE_MS = 3_000;
 
@@ -37,6 +37,8 @@ export function PetApp() {
   const [reaction, setReaction] = useState<'wave' | 'failed' | null>(null);
   // Direção do olhar (0..15) vinda do main — o pet segue o cursor.
   const [lookDir, setLookDir] = useState<number | null>(null);
+  // Arrastando, o pet CORRE na direção do movimento (linhas 1/2 do contrato).
+  const [runDir, setRunDir] = useState<'left' | 'right' | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const celebrateTimer = useRef<number | null>(null);
   const drag = useRef<{ startX: number; startY: number; dragging: boolean } | null>(
@@ -105,10 +107,12 @@ export function PetApp() {
       // captura indisponível — o fluxo ainda funciona no caminho comum
     }
     drag.current = { startX: e.clientX, startY: e.clientY, dragging: false };
+    let lastScreenX = e.screenX;
 
     const finish = (asDrag: boolean) => {
       const state = drag.current;
       drag.current = null;
+      setRunDir(null);
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerup', onUp);
       el.removeEventListener('pointercancel', onCancel);
@@ -131,6 +135,13 @@ export function PetApp() {
         // no main, então as coordenadas de cliente ficam estáveis.
         window.nexusPet.dragBegin({ x: move.clientX, y: move.clientY });
       }
+      // Direção da corrida pelo movimento ABSOLUTO do cursor (screenX): as
+      // coordenadas de cliente ficam paradas enquanto a janela persegue o
+      // cursor. Histerese de 2px segura o flicker em micro-movimentos.
+      const dx = move.screenX - lastScreenX;
+      lastScreenX = move.screenX;
+      if (dx > 2) setRunDir('right');
+      else if (dx < -2) setRunDir('left');
     };
     const onUp = () => finish(false);
     const onCancel = () => finish(true);
@@ -143,13 +154,18 @@ export function PetApp() {
 
   if (!prefs) return null;
 
-  const celebrating = reaction === 'wave';
+  const celebrating = reaction === 'wave' && runDir === null;
   const mood: OperatorMood = prefs.sleeping
     ? 'sleeping'
     : celebrating
       ? 'celebrating'
       : 'idle';
-  const sheetAnim: SheetAnim = prefs.sleeping ? 'sleep' : (reaction ?? 'idle');
+  // Prioridade: dormir > correr (arrasto) > reação > idle/olhar.
+  const sheetAnim: SheetAnim = prefs.sleeping
+    ? 'sleep'
+    : runDir !== null
+      ? (`run-${runDir}` as SheetAnim)
+      : (reaction ?? 'idle');
 
   const balloon = balloons.current;
 
@@ -220,9 +236,13 @@ export function PetApp() {
 
       <div
         ref={hitRef}
-        className={`pet__hit ${prefs.sleeping ? 'pet__hit--sleeping' : ''} ${
+        className={`pet__hit ${
+          prefs.preset === 'sheet' && prefs.sheet
+            ? 'pet__hit--sheet'
+            : 'pet__hit--pixel'
+        } ${prefs.sleeping ? 'pet__hit--sleeping' : ''} ${
           celebrating ? 'pet__hit--celebrating' : ''
-        }`}
+        } ${runDir !== null ? 'pet__hit--dragging' : ''}`}
         onMouseEnter={() => markInteractive(true)}
         onMouseLeave={() => {
           // Durante o arrasto a janela PRECISA continuar interativa, senão o

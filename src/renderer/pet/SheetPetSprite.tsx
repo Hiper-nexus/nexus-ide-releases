@@ -14,7 +14,13 @@ import {
  * frame estático (o look continua, é postura, não animação).
  */
 
-export type SheetAnim = 'idle' | 'wave' | 'failed' | 'sleep';
+export type SheetAnim =
+  | 'idle'
+  | 'run-right'
+  | 'run-left'
+  | 'wave'
+  | 'failed'
+  | 'sleep';
 
 interface SheetPetSpriteProps {
   sheet: PetSheet;
@@ -26,6 +32,8 @@ interface SheetPetSpriteProps {
 }
 
 const FRAME_MS = 140;
+/** Corrida tem cadência mais viva que o idle. */
+const RUN_FRAME_MS = 80;
 
 function prefersReducedMotion(): boolean {
   return (
@@ -71,12 +79,13 @@ export function SheetPetSprite({
   useEffect(() => {
     setFrame(0);
     if (looking || spec.frames <= 1 || prefersReducedMotion()) return undefined;
+    const cadence = anim.startsWith('run-') ? RUN_FRAME_MS : FRAME_MS;
     const timer = window.setInterval(
       () => setFrame((f) => (f + 1) % spec.frames),
-      FRAME_MS,
+      cadence,
     );
     return () => window.clearInterval(timer);
-  }, [spec, looking !== null]);
+  }, [spec, anim, looking !== null]);
 
   const frameW = image ? image.width / sheet.cols : 1;
   const frameH = image ? image.height / sheet.rows : 1;

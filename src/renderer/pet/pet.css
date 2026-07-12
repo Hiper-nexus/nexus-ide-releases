@@ -72,6 +72,26 @@ body,
   animation: pet-celebrate 0.5s ease-in-out infinite;
 }
 
+/* Correndo (arrasto): a corrida do sprite JÁ é o movimento — sem bob. */
+.pet__hit--dragging {
+  animation: none;
+}
+
+/* O operador pixel (16×16 ampliado) precisa de PUNCH sobre qualquer
+   wallpaper: upscale nítido (pixelated, sem blur de retina), cores mais
+   acesas e sombra que descola do fundo. */
+.pet__hit--pixel canvas {
+  image-rendering: pixelated;
+  filter: saturate(1.3) brightness(1.18) contrast(1.06)
+    drop-shadow(0 3px 8px rgba(0, 0, 0, 0.55))
+    drop-shadow(0 0 12px color-mix(in srgb, var(--pet-accent) 35%, transparent));
+}
+
+/* Pets de spritesheet: só a sombra de assentamento (a arte já tem volume). */
+.pet__hit--sheet canvas {
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.45));
+}
+
 @keyframes pet-bob {
   0%,
   100% {
