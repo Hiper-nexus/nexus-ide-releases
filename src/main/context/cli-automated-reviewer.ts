@@ -197,6 +197,15 @@ export class CliAutomatedReviewer {
             'nexus_git_diff',
             'nexus_git_log',
             'nexus_merge_review_submit',
+            ...(input.contract.requiredSensors.includes('design-system')
+              ? [
+                  'nexus_browser_open',
+                  'nexus_browser_read',
+                  'nexus_browser_inspect',
+                  'nexus_browser_screenshot',
+                  'nexus_browser_wait',
+                ]
+              : []),
           ],
           allowedSkills: [
             'find-bugs',
