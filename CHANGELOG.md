@@ -28,6 +28,11 @@ Data: 2026-07-12
 - Cheatsheet de atalhos (⌘/ e entrada "Atalhos do teclado" no ⌘K): todos
   os aceleradores num overlay, sem sair do fluxo.
 
+### Voz e mídia (sessões paralelas)
+- Modelo de wake PT-BR calibrado promovido a padrão.
+- Catálogo de mídia: Seedream 5.0 Pro, Veo e recuperação de jobs via
+  Replicate.
+
 ### Build
 - Wrapper de retry do codesign versionado em
   scripts/codesign-with-retry.sh + receita no build/notarize.md (o TSA da
