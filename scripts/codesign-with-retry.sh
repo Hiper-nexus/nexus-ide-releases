@@ -16,9 +16,9 @@
 set -u
 
 last=1
-for attempt in 1 2 3 4 5; do
+for delay in 4 8 16 30 45 60 90 120; do
   /usr/bin/codesign "$@" && exit 0
   last=$?
-  sleep $((attempt * 4))
+  sleep "$delay"
 done
 exit "$last"
