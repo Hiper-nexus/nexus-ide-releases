@@ -13,6 +13,8 @@ export const PET_CHANNELS = {
   prefsChanged: 'pet:prefsChanged',
   /** event: main → janela do pet. Evento operacional para o balão/mood. */
   event: 'pet:event',
+  /** event: main → janela do pet. Direção de "look" (0..15) ou null. */
+  look: 'pet:look',
   /** send: janela do pet → main. Cursor entrou/saiu de área interativa. */
   setInteractive: 'pet:setInteractive',
   /** send: janela do pet → main. Começa a arrastar (offset do cursor). */
@@ -63,6 +65,28 @@ export const SHEET_ANIMS = {
 } as const;
 /** Frame neutro (parado) do contrato v2: linha 0, coluna 6. */
 export const SHEET_NEUTRAL = { row: 0, col: 6 } as const;
+
+/**
+ * Linhas de "look" do contrato v2: 16 direções em passos de 22,5°, no
+ * sentido horário a partir de CIMA (000=cima, 090=direita da tela,
+ * 180=baixo, 270=esquerda). Direções 0-7 moram na linha 9 (000-157.5),
+ * 8-15 na linha 10 (180-337.5) — ver look-mechanics do hatch-pet.
+ */
+export const SHEET_LOOK = {
+  rowA: 9,
+  rowB: 10,
+  directions: 16,
+  stepDeg: 22.5,
+} as const;
+
+/** Converte a direção quantizada (0..15) em {row, col} do spritesheet. */
+export function sheetLookFrame(dir: number): { row: number; col: number } {
+  const clamped = ((Math.round(dir) % SHEET_LOOK.directions) +
+    SHEET_LOOK.directions) % SHEET_LOOK.directions;
+  return clamped < 8
+    ? { row: SHEET_LOOK.rowA, col: clamped }
+    : { row: SHEET_LOOK.rowB, col: clamped - 8 };
+}
 
 const SHEET_DATA_URL_RE = /^data:image\/(png|webp|jpeg);base64,[A-Za-z0-9+/=]+$/;
 /** Teto do data URL do sheet — exportado para a UI diagnosticar rejeições. */
@@ -124,6 +148,8 @@ export interface NexusPetApi {
   setPrefs(patch: Partial<PetPrefs>): Promise<PetPrefs>;
   onPrefsChanged(cb: (prefs: PetPrefs) => void): () => void;
   onEvent(cb: (event: PetEvent) => void): () => void;
+  /** Direção do olhar (0..15, horário a partir de cima) ou null = idle. */
+  onLook(cb: (dir: number | null) => void): () => void;
   setInteractive(interactive: boolean): void;
   dragBegin(offset: { x: number; y: number }): void;
   dragEnd(): void;

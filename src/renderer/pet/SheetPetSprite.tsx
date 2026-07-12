@@ -2,13 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   SHEET_ANIMS,
   SHEET_NEUTRAL,
+  sheetLookFrame,
   type PetSheet,
 } from '../../shared/pet-types';
 
 /**
  * Sprite de spritesheet Codex v2: anima recortando frames do sheet num
  * canvas. `anim` escolhe a linha do contrato (idle/wave/failed); dormindo
- * congela no frame neutro. Reduced-motion: frame estático.
+ * congela no frame neutro. `lookDir` (0..15) sobrepõe o idle com o frame
+ * direcional das linhas de look — o pet segue o cursor. Reduced-motion:
+ * frame estático (o look continua, é postura, não animação).
  */
 
 export type SheetAnim = 'idle' | 'wave' | 'failed' | 'sleep';
@@ -16,6 +19,8 @@ export type SheetAnim = 'idle' | 'wave' | 'failed' | 'sleep';
 interface SheetPetSpriteProps {
   sheet: PetSheet;
   anim: SheetAnim;
+  /** Direção do olhar quantizada; só vale durante o idle. */
+  lookDir?: number | null;
   /** Altura de exibição em px; a largura segue a proporção do frame. */
   size: number;
 }
@@ -29,7 +34,12 @@ function prefersReducedMotion(): boolean {
   );
 }
 
-export function SheetPetSprite({ sheet, anim, size }: SheetPetSpriteProps) {
+export function SheetPetSprite({
+  sheet,
+  anim,
+  lookDir = null,
+  size,
+}: SheetPetSpriteProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [frame, setFrame] = useState(0);
@@ -43,6 +53,16 @@ export function SheetPetSprite({ sheet, anim, size }: SheetPetSpriteProps) {
     };
   }, [sheet.dataUrl]);
 
+  // Look só sobrepõe o IDLE (wave/failed/sleep têm prioridade) e exige as
+  // linhas de look no sheet (contrato v2 completo tem 11 linhas).
+  const looking = useMemo(
+    () =>
+      anim === 'idle' && lookDir !== null && sheet.rows >= 11
+        ? sheetLookFrame(lookDir)
+        : null,
+    [anim, lookDir, sheet.rows],
+  );
+
   const spec = useMemo(() => {
     if (anim === 'sleep') return { row: SHEET_NEUTRAL.row, frames: 1 };
     return SHEET_ANIMS[anim];
@@ -50,13 +70,13 @@ export function SheetPetSprite({ sheet, anim, size }: SheetPetSpriteProps) {
 
   useEffect(() => {
     setFrame(0);
-    if (spec.frames <= 1 || prefersReducedMotion()) return undefined;
+    if (looking || spec.frames <= 1 || prefersReducedMotion()) return undefined;
     const timer = window.setInterval(
       () => setFrame((f) => (f + 1) % spec.frames),
       FRAME_MS,
     );
     return () => window.clearInterval(timer);
-  }, [spec]);
+  }, [spec, looking !== null]);
 
   const frameW = image ? image.width / sheet.cols : 1;
   const frameH = image ? image.height / sheet.rows : 1;
@@ -66,14 +86,19 @@ export function SheetPetSprite({ sheet, anim, size }: SheetPetSpriteProps) {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx || !image) return;
-    const col = anim === 'sleep' ? SHEET_NEUTRAL.col : frame;
+    const row = looking ? looking.row : spec.row;
+    const col = looking
+      ? looking.col
+      : anim === 'sleep'
+        ? SHEET_NEUTRAL.col
+        : frame;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(
       image,
       col * frameW,
-      spec.row * frameH,
+      row * frameH,
       frameW,
       frameH,
       0,
@@ -81,7 +106,7 @@ export function SheetPetSprite({ sheet, anim, size }: SheetPetSpriteProps) {
       canvas.width,
       canvas.height,
     );
-  }, [image, frame, anim, spec, frameW, frameH]);
+  }, [image, frame, anim, spec, looking, frameW, frameH]);
 
   return (
     <canvas

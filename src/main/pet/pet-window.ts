@@ -13,6 +13,7 @@ import { tapMissionsBroadcast, tapMissionsSeed } from '../orch/orch-ipc';
 import { loadPetPrefs, savePetPrefs } from './pet-prefs';
 import { clampToWorkArea, snapToCorner } from './pet-geometry';
 import { AgentTransitionTracker, MissionTransitionTracker } from './pet-events';
+import { computeLookDir } from './pet-look';
 
 /**
  * Desktop pet: uma janela transparente, sempre-no-topo e fora da taskbar que
@@ -26,12 +27,20 @@ export const PET_WINDOW_SIZE = { width: 240, height: 200 } as const;
 const DRAG_TICK_MS = 16;
 /** Teto de um arrasto: além disso o watchdog assenta a janela sozinho. */
 const DRAG_MAX_MS = 30_000;
+/** Cadência do look (cursor → direção do olhar). 16 passos não pedem 60fps. */
+const LOOK_TICK_MS = 150;
+/** Cursor parado além disso = o pet volta a digitar (idle). */
+const LOOK_CURSOR_IDLE_MAX_MS = 4_000;
 
 let petWindow: BrowserWindow | null = null;
 let prefs: PetPrefs | null = null;
 let dragTimer: NodeJS.Timeout | null = null;
 let dragOffset = { x: 0, y: 0 };
 let initialized = false;
+let lookTimer: NodeJS.Timeout | null = null;
+let lookLastSent: number | null = null;
+let lookLastCursor = { x: 0, y: 0 };
+let lookLastMoveAt = 0;
 
 const agentTracker = new AgentTransitionTracker();
 const missionTracker = new MissionTransitionTracker();
@@ -115,6 +124,55 @@ function stopDrag(): void {
   }
 }
 
+function stopLookLoop(): void {
+  if (lookTimer) {
+    clearInterval(lookTimer);
+    lookTimer = null;
+  }
+  lookLastSent = null;
+}
+
+function sendLook(dir: number | null): void {
+  if (dir === lookLastSent) return;
+  lookLastSent = dir;
+  if (petWindow && !petWindow.isDestroyed() && !petWindow.webContents.isCrashed()) {
+    petWindow.webContents.send(PET_CHANNELS.look, dir);
+  }
+}
+
+/**
+ * Look mechanics (contrato v2): o pet olha para o cursor. O main faz o poll
+ * (a janela é click-through — o renderer não vê o mouse do desktop), quantiza
+ * em 16 direções e só envia quando a direção MUDA. Dormindo ou arrastando,
+ * o olhar volta ao neutro.
+ */
+function startLookLoop(): void {
+  stopLookLoop();
+  lookLastMoveAt = Date.now();
+  lookTimer = setInterval(() => {
+    if (!petWindow || petWindow.isDestroyed()) {
+      stopLookLoop();
+      return;
+    }
+    if (getPrefs().sleeping || dragTimer) {
+      sendLook(null);
+      return;
+    }
+    const cursor = screen.getCursorScreenPoint();
+    const now = Date.now();
+    if (cursor.x !== lookLastCursor.x || cursor.y !== lookLastCursor.y) {
+      lookLastCursor = { x: cursor.x, y: cursor.y };
+      lookLastMoveAt = now;
+    }
+    sendLook(
+      computeLookDir(cursor, petWindow.getBounds(), {
+        cursorIdleMs: now - lookLastMoveAt,
+        maxIdleMs: LOOK_CURSOR_IDLE_MAX_MS,
+      }),
+    );
+  }, LOOK_TICK_MS);
+}
+
 function persistPosition(pos: { x: number; y: number }): void {
   prefs = { ...getPrefs(), position: pos };
   savePetPrefs(userDataDir(), prefs);
@@ -175,16 +233,19 @@ function createPetWindow(): void {
 
   win.on('closed', () => {
     stopDrag();
+    stopLookLoop();
     petWindow = null;
   });
 
   void win.loadURL(petUrl()).catch((err) => {
     console.warn('[pet] load falhou:', err);
   });
+  startLookLoop();
 }
 
 function destroyPetWindow(): void {
   stopDrag();
+  stopLookLoop();
   if (petWindow && !petWindow.isDestroyed()) petWindow.destroy();
   petWindow = null;
 }

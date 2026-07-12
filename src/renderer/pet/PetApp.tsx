@@ -35,6 +35,8 @@ export function PetApp() {
   // spritesheet Codex tem linha própria para cada; o OperatorSprite usa o
   // mood celebrating só no caso feliz.
   const [reaction, setReaction] = useState<'wave' | 'failed' | null>(null);
+  // Direção do olhar (0..15) vinda do main — o pet segue o cursor.
+  const [lookDir, setLookDir] = useState<number | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const celebrateTimer = useRef<number | null>(null);
   const drag = useRef<{ startX: number; startY: number; dragging: boolean } | null>(
@@ -60,10 +62,12 @@ export function PetApp() {
         CELEBRATE_MS,
       );
     });
+    const offLook = window.nexusPet.onLook(setLookDir);
     return () => {
       cancelled = true;
       offPrefs();
       offEvents();
+      offLook();
       if (celebrateTimer.current) window.clearTimeout(celebrateTimer.current);
     };
   }, []);
@@ -232,6 +236,7 @@ export function PetApp() {
           <SheetPetSprite
             sheet={prefs.sheet}
             anim={sheetAnim}
+            lookDir={lookDir}
             size={SPRITE_SIZE + 16}
           />
         ) : prefs.preset === 'custom' && prefs.customGrid ? (
