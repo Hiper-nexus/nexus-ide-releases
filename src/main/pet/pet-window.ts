@@ -24,6 +24,7 @@ import { fetchGalleryCatalog, importGalleryPet } from './pet-gallery';
 import { listPetLibrary, loadLibrarySheet } from './pet-library';
 import { readFileSync, statSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 
 /**
  * Desktop pet: uma janela transparente, sempre-no-topo e fora da taskbar que
@@ -400,15 +401,24 @@ function registerPetIpc(): void {
       return { ok: false, canceled: true };
     }
     // Fototeca/iCloud entregam caminhos temporários que somem antes de a
-    // missão rodar — copiamos para um diretório estável do app.
+    // missão rodar. A cópia precisa viver DENTRO do workspace autorizado:
+    // um path em userData aparecia no prompt, mas ficava fora do sandbox do
+    // orquestrador e portanto não era um anexo realmente utilizável.
     try {
+      const scope = requireRendererWorkspaceScope(event.sender);
       const stable = await copyHatchImage(
         picked.filePaths[0],
-        electronApp.getPath('userData'),
+        path.join(scope.rootRealPath, '.nexus', 'attachments'),
       );
       return { ok: true, path: stable };
-    } catch {
-      return { ok: true, path: picked.filePaths[0] };
+    } catch (cause) {
+      return {
+        ok: false,
+        error:
+          cause instanceof Error
+            ? `Não consegui anexar a imagem ao workspace: ${cause.message}`
+            : 'Não consegui anexar a imagem ao workspace.',
+      };
     }
   });
   ipcMain.handle(PET_CHANNELS.pickSheet, async (event) => {

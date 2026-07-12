@@ -91,7 +91,8 @@ export function petSlugFromImagePath(imagePath: string): string {
 export function hatchPetIntent(imagePath: string): string {
   const slug = petSlugFromImagePath(imagePath);
   return [
-    `Gere um desktop pet completo no contrato Codex v2 a partir da imagem-base ${imagePath}.`,
+    `Gere um desktop pet completo no contrato Codex v2 a partir da imagem-base anexada em ${imagePath}.`,
+    'Antes de executar, comprove que o arquivo existe e é legível; se não estiver, pare com erro explícito.',
     'Use a skill hatch-pet (~/.claude/skills/hatch-pet/SKILL.md) e siga o processo dela por inteiro:',
     'crie o modelo em todas as posições do contrato — spritesheet 8×11 com idle (6 frames + neutro na coluna 6),',
     'running-right (8), running-left (8), waving (4), jumping (5), failed (8), waiting (6), running (6), review (6)',
