@@ -149,7 +149,18 @@ jobs:
             exit 1
           }
           npm ci
-          npm run premake
+          # node-gyp may need Electron headers from the CDN. Retry only this
+          # pre-signing step so a transient network timeout cannot waste a
+          # complete architecture build or leave signing material loaded.
+          for attempt in 1 2 3; do
+            npm run premake && break
+            if [ "$attempt" = 3 ]; then
+              echo "::error::rebuild nativo falhou após 3 tentativas"
+              exit 1
+            fi
+            echo "::warning::rebuild nativo falhou; repetindo ($attempt/3)"
+            sleep $((attempt * 5))
+          done
           npx vitest run \
             build/macos-info-plist.test.ts \
             src/main/runtime/process-sandbox.test.ts

@@ -455,9 +455,9 @@ export function ProvidersPanel() {
     <section>
       <h3 className="settings-detail__title">Providers (CLIs de IA)</h3>
       <p className="settings-detail__hint">
-        Cada cartão é um agente instalado (Claude, Codex, Kimi…). Expanda para
-        configurar em 4 blocos: modelo · permissões · API key · contas.
-        Keys ficam no Keychain do macOS — nunca em plaintext.
+        Confira instalação e login sem abrir cada item. Expanda Claude, Codex,
+        Kimi ou outra CLI para ajustar modelo, permissões, credenciais e contas
+        reserva. Segredos ficam no armazenamento seguro do sistema.
       </p>
       <ul className="prov__list">
         {providers.map((p) => (

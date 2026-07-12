@@ -489,3 +489,28 @@
   margin: 8px 0 0;
   line-height: 1.5;
 }
+
+@media (max-width: 900px) {
+  .prov__head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .prov__disclosure {
+    flex-basis: 100%;
+  }
+
+  .prov__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .prov__field--wide {
+    grid-column: auto;
+  }
+
+  .prov__key-row {
+    align-items: flex-start;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+}

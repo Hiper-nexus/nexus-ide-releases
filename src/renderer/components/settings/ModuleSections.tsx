@@ -9,6 +9,33 @@ import { OrchestratorDefaults } from './OrchestratorDefaults';
 
 /** MÓDULOS sections: Terminal, Voice, Providers, Squads, Marketplace. */
 
+function OrchestrationToggle({
+  checked,
+  title,
+  detail,
+  onChange,
+}: {
+  checked: boolean;
+  title: string;
+  detail: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="settings-toggle-row">
+      <span className="settings-toggle-row__copy">
+        <strong>{title}</strong>
+        <span>{detail}</span>
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span className="settings-toggle-row__control" aria-hidden="true" />
+    </label>
+  );
+}
+
 export function TerminalSection() {
   const terminal = useSettingsStore((s) => s.terminal);
   const update = useSettingsStore((s) => s.update);
@@ -183,71 +210,46 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
     <section>
       <h3 className="settings-detail__title">Squads</h3>
       <p className="settings-detail__hint">
-        {squads.length} squad(s) salvos — schema compatível com o
-        squads.json, com export/import nativo.
+        Defina como os especialistas trabalham e abra o painel para criar,
+        importar ou editar seus {squads.length} squads salvos.
       </p>
 
       <OrchestratorDefaults />
 
-      <label className="settings-field">
-        <span>
-          <input
-            type="checkbox"
-            checked={seniorMode}
-            onChange={(e) => {
-              setSeniorMode(e.target.checked);
-              void window.nexus.settings.orchSet({ seniorMode: e.target.checked });
-            }}
-          />{' '}
-          Disciplina sênior (XP)
-        </span>
-        <span className="settings-field__note">
-          Carta de Engenharia em todo worker: stack certa para o projeto (Go,
-          Ruby, Rust… não só Node/React), handoff só VERDE (testes/lint do
-          projeto), segurança como hábito, refactoring contínuo e spec viva
-          (CLAUDE.md/AGENTS.md evolui a cada missão).
-        </span>
-      </label>
-
-      <label className="settings-field">
-        <span>
-          <input
-            type="checkbox"
-            checked={designPro}
-            onChange={(e) => {
-              setDesignPro(e.target.checked);
-              void window.nexus.settings.orchSet({ designPro: e.target.checked });
-            }}
-          />{' '}
-          Design anti-genérico (Impeccable)
-        </span>
-        <span className="settings-field__note">
-          Carta de Design em tarefas com UI: bane a &quot;cara de IA&quot;
-          (✨ sparkles, gradiente roxo, glassmorphism, grids idênticos),
-          exige design system do projeto, estados completos e roda
-          impeccable detect quando disponível.
-        </span>
-      </label>
-
-      <label className="settings-field">
-        <span>
-          <input
-            type="checkbox"
-            checked={leanCode}
-            onChange={(e) => {
-              setLeanCode(e.target.checked);
-              void window.nexus.settings.orchSet({ leanCode: e.target.checked });
-            }}
-          />{' '}
-          Código enxuto (ponytail)
-        </span>
-        <span className="settings-field__note">
-          Injeta em todo worker as regras &quot;lazy senior dev&quot; do
-          ponytail (MIT): mínimo código que funciona, reuso antes de escrever,
-          sem over-engineering. −54% de código e −20% de custo medidos pelo
-          autor.
-        </span>
-      </label>
+      <h4 className="settings-section-heading">Padrões de execução</h4>
+      <div className="settings-toggle-list">
+        <OrchestrationToggle
+          checked={seniorMode}
+          title="Disciplina sênior"
+          detail="Exige stack correta, testes e lint verdes, revisão de segurança e documentação viva."
+          onChange={(checked) => {
+            setSeniorMode(checked);
+            void window.nexus.settings.orchSet({ seniorMode: checked });
+          }}
+        />
+        <OrchestrationToggle
+          checked={designPro}
+          title="Design profissional"
+          detail="Aplica o design system do projeto, estados completos e revisão Impeccable em tarefas de UI."
+          onChange={(checked) => {
+            setDesignPro(checked);
+            void window.nexus.settings.orchSet({ designPro: checked });
+          }}
+        />
+        <OrchestrationToggle
+          checked={leanCode}
+          title="Código enxuto"
+          detail="Prioriza reuso e a menor implementação segura, sem abstrações ou dependências desnecessárias."
+          onChange={(checked) => {
+            setLeanCode(checked);
+            void window.nexus.settings.orchSet({ leanCode: checked });
+          }}
+        />
+      </div>
+      <div className="settings-section-heading settings-section-heading--with-count">
+        <h4>Squads disponíveis</h4>
+        <span className="settings-chip">{squads.length}</span>
+      </div>
       <ul className="settings-list">
         {[...squads]
           .sort((a, b) => Number(a.builtin ?? false) - Number(b.builtin ?? false))

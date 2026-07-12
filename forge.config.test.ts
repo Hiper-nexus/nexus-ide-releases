@@ -17,6 +17,10 @@ describe('macOS transport security', () => {
 });
 
 describe('Linux sandbox packaging', () => {
+  it('uses the executable name expected by the DEB and RPM makers', () => {
+    expect(forgeConfig.packagerConfig?.executableName).toBe('nexus-ide');
+  });
+
   it('declares Bubblewrap as a runtime dependency for DEB and RPM installs', () => {
     expect(createLinuxDebMakerConfig()).toEqual({
       options: { depends: ['bubblewrap'] },

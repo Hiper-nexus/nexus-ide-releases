@@ -523,6 +523,13 @@
 }
 .acct__title { font-size: 12px; font-weight: 650; color: var(--text); }
 .acct__hint { font-size: 10px; color: var(--text-dim); line-height: 1.45; margin-top: 2px; }
+.acct__auth-detail {
+  margin: -4px 0 0;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
 .acct__section {
   display: flex;
   flex-direction: column;
@@ -598,6 +605,18 @@
 .acct__add { display: flex; gap: 6px; flex-wrap: wrap; }
 .acct__add .settings-input { flex: 1; min-width: 130px; }
 .acct__notice { font-size: 10.5px; color: var(--text-dim); margin: 2px 0 0; font-family: var(--font-mono); }
+
+@media (max-width: 900px) {
+  .acct__head,
+  .acct__item {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .acct__meta {
+    flex-basis: calc(100% - 32px);
+  }
+}
 
 /* ---- Toasts ---- */
 .toasts {

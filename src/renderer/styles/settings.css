@@ -273,9 +273,75 @@
 .settings-detail {
   flex: 1;
   overflow-y: auto;
-  padding: 24px 28px;
   min-width: 0;
   background: rgba(11, 14, 20, 0.48);
+}
+
+.settings-detail__nav {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 28px;
+  border-bottom: 1px solid var(--border-strong);
+  background: rgba(11, 14, 20, 0.96);
+}
+
+.settings-detail__location {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+}
+
+.settings-detail__location strong {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.settings-detail__return {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: rgba(4, 6, 10, 0.46);
+  color: var(--text);
+  font: 600 var(--text-sm)/1 var(--font-ui);
+  cursor: pointer;
+  transition: background 150ms var(--ease-out-expo), border-color 150ms var(--ease-out-expo);
+}
+
+.settings-detail__return:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.settings-detail__return:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.settings-detail__return kbd {
+  padding: 2px 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font: 500 var(--text-xs)/1.2 var(--font-mono);
+}
+
+.settings-detail__content {
+  padding: 24px 28px;
 }
 
 .settings-detail__title {
@@ -298,6 +364,116 @@
   justify-content: space-between;
   gap: 14px;
   margin-bottom: 14px;
+}
+
+.settings-section-heading {
+  margin: 22px 0 9px;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.settings-section-heading--with-count {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-section-heading--with-count h4 {
+  margin: 0;
+  font: inherit;
+}
+
+.settings-toggle-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.settings-toggle-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--bg-elevated) 64%, transparent);
+  cursor: pointer;
+}
+
+.settings-toggle-row + .settings-toggle-row {
+  border-top: 1px solid var(--border);
+}
+
+.settings-toggle-row:hover {
+  background: var(--accent-soft);
+}
+
+.settings-toggle-row__copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-toggle-row__copy strong {
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.settings-toggle-row__copy > span {
+  max-width: 72ch;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.settings-toggle-row > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.settings-toggle-row__control {
+  position: relative;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-round);
+  background: var(--bg);
+  transition: background 150ms var(--ease-out-expo), border-color 150ms var(--ease-out-expo);
+}
+
+.settings-toggle-row__control::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform 150ms var(--ease-out-expo), background 150ms var(--ease-out-expo);
+}
+
+.settings-toggle-row > input:checked + .settings-toggle-row__control {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 18%, var(--bg));
+}
+
+.settings-toggle-row > input:checked + .settings-toggle-row__control::after {
+  transform: translateX(14px);
+  background: var(--ok);
+}
+
+.settings-toggle-row > input:focus-visible + .settings-toggle-row__control {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .settings-error {
@@ -750,7 +926,17 @@
   }
 
   .settings-detail {
-    padding: var(--space-4);
+    padding: 0;
+  }
+
+  .settings-detail__nav,
+  .settings-detail__content {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+
+  .settings-detail__return kbd {
+    display: none;
   }
 
   .settings-detail__split-head,

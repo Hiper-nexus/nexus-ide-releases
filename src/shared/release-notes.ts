@@ -13,40 +13,40 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.13.8',
+  version: '0.13.9',
   date: '2026-07-11',
-  codename: 'Realtime Operator',
+  codename: 'Operator UX',
   summary:
-    'Jarvis mais operacional: Gemini Live pré-aquecido, wake e follow-up resilientes, ações reais no workspace, autenticação preservada e CLIs sempre atualizadas.',
+    'Navegação operacional mais clara, contas verificáveis e configurações responsivas, sem perder as melhorias realtime, de autenticação e descoberta dinâmica de CLIs.',
   highlights: [
     {
-      title: 'Realtime pré-aquecido',
+      title: 'Voltar às missões',
       detail:
-        'Gemini Live permanece conectado antes do wake; barge-in, continuidade e rescue local reduzem turnos perdidos e repetição de comandos.',
+        'Configurações mantém localização e saída visíveis no topo, inclusive após rolar e em telas menores.',
     },
     {
-      title: 'Ações operacionais',
+      title: 'Contas sem ambiguidade',
       detail:
-        'Jarvis abre workspaces, envia comandos ao pane correto e confirma operações sensíveis sem duplicar voz ou perder o transcript explícito.',
+        'Claude, Codex, Kimi e demais CLIs mostram login, conta ativa, reservas e resultado da verificação com linguagem direta.',
     },
     {
-      title: 'CLIs dinâmicas e automáticas',
+      title: 'Configurações responsivas',
       detail:
-        'Modelos e efforts são descobertos dos caches das CLIs, incluindo Codex ultra; providers iniciam no bypass total nativo salvo escolha manual.',
+        'Providers, Squads, credenciais e formulários reorganizam conteúdo e ações sem sobreposição em diferentes tamanhos de tela.',
     },
   ],
   fixes: [
     {
-      title: 'Login Claude em squads',
-      detail: 'OAuth ativo acompanha workers com HOME isolado sem pedir login novamente.',
+      title: 'Pacotes Linux',
+      detail: 'O nome do executável agora coincide com o esperado pelos instaladores DEB e RPM.',
     },
     {
-      title: 'Efforts sem lista fixa',
-      detail: 'Squads aceitam capacidades futuras anunciadas por qualquer CLI.',
+      title: 'Build macOS resiliente',
+      detail: 'Downloads transitórios de dependências nativas recebem tentativas controladas antes da assinatura.',
     },
     {
-      title: 'Wake e áudio',
-      detail: 'AEC3, pre-roll maior, cooldown curto, watchdog e captura durante fala reduzem silêncio e travamentos.',
+      title: 'Continuidade preservada',
+      detail: 'A release mantém wake local, Gemini Live pré-aquecido e execução operacional das melhorias anteriores.',
     },
   ],
 };

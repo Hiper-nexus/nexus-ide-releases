@@ -224,6 +224,9 @@ export function SettingsDrawer() {
       toggleSettingsGroup(expanded, label),
     );
   };
+  const currentSectionTitle = SETTINGS_GROUPS
+    .flatMap((group) => group.items)
+    .find((item) => item.id === section)?.title;
 
   return (
     <div
@@ -344,6 +347,24 @@ export function SettingsDrawer() {
         </nav>
 
         <div className="settings-detail">
+          <header className="settings-detail__nav">
+            <div className="settings-detail__location" aria-live="polite">
+              <span>Configurações</span>
+              <PixelIcon name="chevron" size={9} />
+              <strong>{currentSectionTitle ?? 'Nexus'}</strong>
+            </div>
+            <button
+              type="button"
+              className="settings-detail__return"
+              onClick={close}
+              aria-label="Fechar configurações e voltar às missões"
+            >
+              <PixelIcon name="close" size={10} />
+              <span>Voltar às missões</span>
+              <kbd>Esc</kbd>
+            </button>
+          </header>
+          <div className="settings-detail__content">
           {section === 'account' && <AccountSection />}
           {section === 'appearance' && <AppearanceSection />}
           {section === 'system' && <SystemSection />}
@@ -370,6 +391,7 @@ export function SettingsDrawer() {
           {section === 'hooks' && <HooksSection />}
           {section === 'rules' && <RulesSection />}
           {section === 'shortcuts' && <ShortcutsSection />}
+          </div>
         </div>
       </div>
     </div>

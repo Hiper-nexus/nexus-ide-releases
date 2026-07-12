@@ -55,7 +55,10 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
   const [upstream, setUpstream] = useState('anthropic');
   const [key, setKey] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
-  const [auth, setAuth] = useState<{ state: string; detail: string } | null>(null);
+  const [auth, setAuth] = useState<{ state: string; detail: string } | null>({
+    state: 'checking',
+    detail: 'Verificando a sessão desta CLI…',
+  });
 
   async function refreshAuth() {
     const list = await window.nexus.providers.authStatus();
@@ -161,8 +164,8 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
         <div>
           <span className="acct__title">Contas deste provider</span>
           <p className="acct__hint">
-            1) Conta ativa agora · 2) Outras salvas (failover) · 3) Adicionar.
-            Se a ativa bater limite, o app troca sozinho.
+            Veja qual sessão será usada no próximo terminal e configure contas
+            reserva para troca automática quando houver limite.
           </p>
         </div>
         {auth && (
@@ -171,16 +174,19 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
             title={auth.detail}
           >
             {auth.state === 'ok'
-              ? 'logada'
+              ? 'Login verificado'
               : auth.state === 'missing'
-                ? 'sem login'
-                : 'sem sonda'}
+                ? 'Login necessário'
+                : auth.state === 'checking'
+                  ? 'Verificando login…'
+                  : 'Não foi possível verificar'}
           </span>
         )}
       </div>
+      {auth?.detail && <p className="acct__auth-detail">{auth.detail}</p>}
 
       <div className="acct__section">
-        <span className="acct__section-label">1 · Em uso agora</span>
+        <span className="acct__section-label">Em uso no próximo terminal</span>
         <div className="acct__inuse">
           <span className="acct__inuse-pill">ATIVA</span>
           {active ? (
@@ -226,7 +232,7 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
 
       <div className="acct__section">
         <span className="acct__section-label">
-          2 · Outras contas{standby.length > 0 ? ` (${standby.length})` : ''}
+          Contas reserva{standby.length > 0 ? ` (${standby.length})` : ''}
         </span>
         {standby.length === 0 ? (
           <p className="acct__empty">
@@ -284,7 +290,7 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
       </div>
 
       <div className="acct__section">
-        <span className="acct__section-label">3 · Adicionar conta</span>
+        <span className="acct__section-label">Adicionar conta</span>
       {addMode === null && (
         <div className="acct__add-choices">
           {isClaude && (

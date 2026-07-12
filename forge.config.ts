@@ -227,6 +227,9 @@ const config: ForgeConfig = {
   packagerConfig: {
     appBundleId: APP_BUNDLE_ID,
     appCategoryType: 'public.app-category.developer-tools',
+    // Keep the packaged binary aligned with the Linux makers and the stable
+    // command name. productName still controls the user-facing app label.
+    executableName: 'nexus-ide',
     // design-system-sensor: runtime helper
     // resources/wake: head PT-BR ONNX (também embutido em base64 no main;
     // o arquivo em extraResource permite inspeção/override sem rebuild).

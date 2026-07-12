@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.13.9 — Operator UX
+
+Data: 2026-07-11
+
+### Melhorias
+- Configurações ganhou localização persistente e ação sempre visível para
+  voltar às missões, com suporte ao atalho Esc.
+- Login de Claude, Codex, Kimi e demais CLIs apresenta estados explícitos,
+  detalhe da verificação e conta usada no próximo terminal.
+- Squads ganhou controles consistentes para disciplina sênior, design e código
+  enxuto, com textos objetivos e hierarquia de operação.
+- Providers, contas, formulários e menus se reorganizam em telas menores sem
+  sobreposição, corte de conteúdo ou ações inacessíveis.
+
+### Correções
+- Executável Linux alinhado ao nome esperado pelos pacotes DEB e RPM.
+- Rebuild nativo de macOS repete downloads transitórios antes de carregar a
+  identidade de assinatura.
+
+### Build
+- Release `v0.13.9` multi-arquitetura pelo workflow assinado/notarizado.
+
 ## 0.13.8 — Realtime Operator
 
 Data: 2026-07-11
