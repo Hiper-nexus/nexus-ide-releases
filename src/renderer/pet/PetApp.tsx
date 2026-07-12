@@ -31,10 +31,12 @@ export function PetApp() {
   const [balloons, setBalloons] = useState<BalloonQueueState>(
     EMPTY_BALLOON_QUEUE,
   );
-  // Reação transitória a eventos: comemora (wave) ou lamenta (failed). O
-  // spritesheet Codex tem linha própria para cada; o OperatorSprite usa o
-  // mood celebrating só no caso feliz.
-  const [reaction, setReaction] = useState<'wave' | 'failed' | null>(null);
+  // Reação transitória a eventos: comemora (wave), lamenta (failed) ou pede
+  // atenção (waiting — intervenção humana). O spritesheet Codex tem linha
+  // própria para cada; o OperatorSprite usa o mood celebrating só no feliz.
+  const [reaction, setReaction] = useState<'wave' | 'failed' | 'waiting' | null>(
+    null,
+  );
   // Direção do olhar (0..15) vinda do main — o pet segue o cursor.
   const [lookDir, setLookDir] = useState<number | null>(null);
   // Arrastando, o pet CORRE na direção do movimento (linhas 1/2 do contrato).
@@ -56,7 +58,9 @@ export function PetApp() {
       setReaction(
         event.kind === 'mission-failed' || event.kind === 'agent-exited'
           ? 'failed'
-          : 'wave',
+          : event.kind === 'mission-blocked'
+            ? 'waiting'
+            : 'wave',
       );
       if (celebrateTimer.current) window.clearTimeout(celebrateTimer.current);
       celebrateTimer.current = window.setTimeout(

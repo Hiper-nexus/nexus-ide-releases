@@ -38,6 +38,9 @@ export class MissionTransitionTracker {
         events.push({ kind: 'mission-done', title: mission.title, at });
       } else if (mission.status === 'failed') {
         events.push({ kind: 'mission-failed', title: mission.title, at });
+      } else if (mission.status === 'blocked') {
+        // O aviso que mais importa: a missão parou esperando um humano.
+        events.push({ kind: 'mission-blocked', title: mission.title, at });
       }
     }
     // Poda: missões removidas do escopo saem do mapa — o tracker fica

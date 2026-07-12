@@ -19,6 +19,14 @@ describe('MissionTransitionTracker', () => {
     ).toEqual([{ kind: 'mission-done', title: 'Deploy', at: at + 1 }]);
   });
 
+  it('dispara mission-blocked quando a missão passa a esperar um humano', () => {
+    const t = new MissionTransitionTracker();
+    t.ingest('a', [{ id: '1', title: 'Deploy', status: 'running' }], at);
+    expect(
+      t.ingest('a', [{ id: '1', title: 'Deploy', status: 'blocked' }], at),
+    ).toEqual([{ kind: 'mission-blocked', title: 'Deploy', at }]);
+  });
+
   it('dispara mission-failed e ignora transições irrelevantes', () => {
     const t = new MissionTransitionTracker();
     t.ingest('a', [{ id: '1', title: 'Build', status: 'pending' }], at);

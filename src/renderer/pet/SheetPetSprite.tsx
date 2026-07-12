@@ -20,6 +20,7 @@ export type SheetAnim =
   | 'run-left'
   | 'wave'
   | 'failed'
+  | 'waiting'
   | 'sleep';
 
 interface SheetPetSpriteProps {

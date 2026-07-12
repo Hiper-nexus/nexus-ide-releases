@@ -23,6 +23,10 @@ describe('balloonTextFor', () => {
   it('agent-idle não gera balão', () => {
     expect(balloonTextFor(ev('agent-idle'))).toBeNull();
   });
+
+  it('mission-blocked pede intervenção com o nome da missão', () => {
+    expect(balloonTextFor(ev('mission-blocked'))).toBe('Preciso de você: Deploy');
+  });
 });
 
 describe('enqueueBalloon / dismissBalloon', () => {

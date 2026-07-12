@@ -66,6 +66,7 @@ export const SHEET_ANIMS = {
   'run-left': { row: 2, frames: 8 },
   wave: { row: 3, frames: 4 },
   failed: { row: 5, frames: 8 },
+  waiting: { row: 6, frames: 6 },
 } as const;
 /** Frame neutro (parado) do contrato v2: linha 0, coluna 6. */
 export const SHEET_NEUTRAL = { row: 0, col: 6 } as const;
@@ -144,6 +145,8 @@ export interface PetGalleryImportResult {
 export type PetEventKind =
   | 'mission-done'
   | 'mission-failed'
+  /** Missão travou aguardando decisão/ação humana — o aviso mais importante. */
+  | 'mission-blocked'
   | 'agent-exited'
   | 'agent-idle';
 

@@ -16,6 +16,7 @@
   --pet-text: #d7dfec;
   --pet-accent: #45d7ff;
   --pet-danger: #ff7a90;
+  --pet-warn: #e5c07b;
   --pet-font: ui-sans-serif, -apple-system, 'SF Pro Text', Segoe UI, system-ui,
     sans-serif;
   --pet-font-pixel: 'VT323', 'Courier New', monospace;
@@ -175,6 +176,15 @@ body,
 .pet__balloon--mission-failed,
 .pet__balloon--agent-exited {
   border-color: var(--pet-danger);
+}
+
+/* Intervenção humana: âmbar — atenção, não falha. */
+.pet__balloon--mission-blocked {
+  border-color: var(--pet-warn);
+}
+
+.pet__balloon--mission-blocked::after {
+  border-color: var(--pet-warn);
 }
 
 @keyframes pet-balloon-in {

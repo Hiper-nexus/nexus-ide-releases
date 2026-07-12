@@ -33,6 +33,8 @@ export function balloonTextFor(event: PetEvent): string | null {
       return `Missão concluída: ${event.title}`;
     case 'mission-failed':
       return `Missão falhou: ${event.title}`;
+    case 'mission-blocked':
+      return `Preciso de você: ${event.title}`;
     case 'agent-exited':
       return 'Um agente saiu — dá uma olhada no grid.';
     case 'agent-idle':
