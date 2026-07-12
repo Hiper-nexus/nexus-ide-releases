@@ -36,7 +36,12 @@ import type { ProviderSettingsInfo } from '../shared/provider-settings-types';
 import { FILES_CHANNELS } from '../shared/files-types';
 import { INTEGRATIONS_CHANNELS } from '../shared/integrations-types';
 import { ACCOUNT_CHANNELS } from '../shared/account-types';
-import type { AccountInfo, FailoverEvent } from '../shared/account-types';
+import type {
+  AccountActivatedEvent,
+  AccountInfo,
+  AccountQuotaInfo,
+  FailoverEvent,
+} from '../shared/account-types';
 import { COST_CHANNELS } from '../shared/cost-types';
 import { USAGE_CHANNELS } from '../shared/usage-types';
 import type { UsageSnapshot } from '../shared/usage-types';
@@ -322,12 +327,16 @@ ipcRenderer.on(PROVIDER_CHANNELS.changed, (_e, list: ProviderSettingsInfo[]) =>
 
 const accountsChangedListeners = new Set<(list: AccountInfo[]) => void>();
 const failoverListeners = new Set<(event: FailoverEvent) => void>();
+const accountActivatedListeners = new Set<(event: AccountActivatedEvent) => void>();
 const costChangedListeners = new Set<(snapshot: CostSnapshot) => void>();
 ipcRenderer.on(ACCOUNT_CHANNELS.changed, (_e, list: AccountInfo[]) =>
   accountsChangedListeners.forEach((cb) => cb(list)),
 );
 ipcRenderer.on(ACCOUNT_CHANNELS.failover, (_e, event: FailoverEvent) =>
   failoverListeners.forEach((cb) => cb(event)),
+);
+ipcRenderer.on(ACCOUNT_CHANNELS.activated, (_e, event: AccountActivatedEvent) =>
+  accountActivatedListeners.forEach((cb) => cb(event)),
 );
 ipcRenderer.on(COST_CHANNELS.changed, (_e, snapshot: CostSnapshot) =>
   costChangedListeners.forEach((cb) => cb(snapshot)),
@@ -690,15 +699,21 @@ const api: NexusApi = {
   },
   accounts: {
     list: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.list),
+    quota: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.quota) as Promise<AccountQuotaInfo[]>,
     add: (req) => ipcRenderer.invoke(ACCOUNT_CHANNELS.add, req),
     addActiveClaude: (label: string) =>
       ipcRenderer.invoke(ACCOUNT_CHANNELS.addActiveClaude, { label }),
+    addActiveSession: (adapterId: string, label: string) =>
+      ipcRenderer.invoke(ACCOUNT_CHANNELS.addActiveSession, { adapterId, label }),
+    supportsSnapshot: (adapterId: string) =>
+      ipcRenderer.invoke(ACCOUNT_CHANNELS.supportsSnapshot, { adapterId }),
     rename: (id: string, label: string) =>
       ipcRenderer.invoke(ACCOUNT_CHANNELS.rename, { id, label }),
     remove: (id: string) => ipcRenderer.invoke(ACCOUNT_CHANNELS.remove, { id }),
     activate: (id: string) => ipcRenderer.invoke(ACCOUNT_CHANNELS.activate, { id }),
     onChanged: (cb) => addListener(accountsChangedListeners, cb),
     onFailover: (cb) => addListener(failoverListeners, cb),
+    onActivated: (cb) => addListener(accountActivatedListeners, cb),
   },
   cost: {
     snapshot: () => ipcRenderer.invoke(COST_CHANNELS.snapshot),

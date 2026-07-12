@@ -21,25 +21,45 @@ interface Pattern {
 
 const HOUR = 60 * 60 * 1000;
 
-// Order matters: quota/credit exhaustion before generic rate-limit.
+// Order matters: quota before rate-limit before auth.
+// Patterns stay error-shaped to avoid false positives on docs/agent prose.
 const PATTERNS: Pattern[] = [
-  // Credits / quota exhausted — long cooldown (won't reset on its own soon).
+  // Credits / quota exhausted — long cooldown.
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /insufficient[_\s]?quota/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /credit balance is too low/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /quota (?:exceeded|exhausted)/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /\b402\b|payment required/i },
-  { kind: 'quota', cooldownMs: 12 * HOUR, re: /out of credits|no credits/i },
+  { kind: 'quota', cooldownMs: 12 * HOUR, re: /out of credits|no credits remaining/i },
+  { kind: 'quota', cooldownMs: 12 * HOUR, re: /billing[_\s]?hard[_\s]?limit/i },
+  { kind: 'quota', cooldownMs: 12 * HOUR, re: /you['’]ve used all of your (?:credits|quota|plan)/i },
+  { kind: 'quota', cooldownMs: 12 * HOUR, re: /(?:plan|subscription) limit (?:reached|exceeded)/i },
   // Rate / usage limit — resets within a window.
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /usage limit reached/i },
-  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /reached your (?:usage|5-hour|weekly) limit/i },
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /reached your (?:usage|5-hour|weekly|daily) limit/i },
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /hit your (?:usage|rate|token) limit/i },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /rate[_\s]?limit(?:ed|_error)?/i },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /\b429\b|too many requests/i },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /resource[_\s]?exhausted/i },
+  { kind: 'rate-limit', cooldownMs: HOUR, re: /(?:tokens? per min(?:ute)?|tpm) (?:limit|exceeded)/i },
+  { kind: 'rate-limit', cooldownMs: HOUR, re: /(?:requests? per min(?:ute)?|rpm) (?:limit|exceeded)/i },
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /primary[_\s]?ip[_\s]?rate[_\s]?limit/i },
+  {
+    kind: 'rate-limit',
+    cooldownMs: 5 * HOUR,
+    re: /(?:codex|chatgpt).{0,40}(?:usage|rate)\s+limit\s+(?:reached|exceeded|hit)/i,
+  },
+  {
+    kind: 'rate-limit',
+    cooldownMs: 5 * HOUR,
+    re: /(?:grok|xai).{0,40}(?:rate|usage)\s+limit\s+(?:reached|exceeded|hit)/i,
+  },
   { kind: 'rate-limit', cooldownMs: 15 * 60 * 1000, re: /overloaded(?:_error)?/i },
   // Auth expiry — switching accounts may recover.
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /\b401\b|authentication[_\s]?error/i },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /invalid[_\s]?(?:api[_\s]?key|x-api-key)/i },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /oauth token (?:expired|revoked)/i },
+  { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /(?:error|failed|unable).{0,40}(?:not logged in|session expired)/i },
+  { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /refresh token (?:expired|invalid|revoked)/i },
 ];
 
 /**

@@ -28,7 +28,12 @@ export type PixelIconName =
   | 'status-busy'
   | 'status-exited'
   | 'status-hibernated'
-  | 'status-spawning';
+  | 'status-spawning'
+  | 'scroll-bottom'
+  | 'restart'
+  | 'split-right'
+  | 'split-down'
+  | 'more';
 
 /**
  * Icon set pixel — desenhado no MESMO grid 11×11 do NexusMark, em rects crisp
@@ -295,6 +300,43 @@ const ICONS: Record<PixelIconName, Rect[]> = {
     [3, 5, 1, 1], [7, 5, 1, 1],
     [3, 6, 1, 1], [7, 6, 1, 1],
     [4, 7, 3, 1],
+  ],
+  // seta para o fim do scroll
+  'scroll-bottom': [
+    [5, 1, 1, 5],
+    [3, 4, 1, 1],
+    [4, 5, 1, 1],
+    [5, 6, 1, 1],
+    [6, 5, 1, 1],
+    [7, 4, 1, 1],
+    [2, 8, 7, 1],
+  ],
+  // setas circulares de restart
+  restart: [
+    [3, 2, 5, 1],
+    [7, 2, 1, 3],
+    [6, 4, 1, 1],
+    [3, 8, 5, 1],
+    [3, 5, 1, 3],
+    [4, 6, 1, 1],
+  ],
+  // dois painéis lado a lado (split horizontal / à direita)
+  'split-right': [
+    [1, 2, 4, 7],
+    [6, 2, 4, 7],
+    [5, 2, 1, 7],
+  ],
+  // dois painéis um sobre o outro (split vertical / para baixo)
+  'split-down': [
+    [2, 1, 7, 4],
+    [2, 6, 7, 4],
+    [2, 5, 7, 1],
+  ],
+  // menu ⋯
+  more: [
+    [2, 5, 1, 1],
+    [5, 5, 1, 1],
+    [8, 5, 1, 1],
   ],
 };
 

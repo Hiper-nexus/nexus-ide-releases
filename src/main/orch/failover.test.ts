@@ -71,6 +71,7 @@ vi.mock('../persistence/account-store', () => ({
   getActiveAccount: vi.fn(() => accountMocks.current),
   pickAvailable: vi.fn(() => accountMocks.next),
   setCooldown: accountMocks.setCooldown,
+  activateAccount: vi.fn(() => true),
 }));
 
 import {

@@ -14,6 +14,15 @@ import {
   readActiveClaudeCredential,
   writeActiveClaudeCredential,
 } from '../adapters/claude-credential';
+import {
+  captureNativeAuth,
+  isFileAuthAdapter,
+  managedHomeEnv,
+  materializeManagedHome,
+  readBackFresherAuth,
+  removeManagedHome,
+  type FileAuthAdapterId,
+} from '../adapters/managed-credentials';
 import { chooseAccount } from './account-select';
 import {
   failedPersistenceError,
@@ -192,12 +201,56 @@ export function accountKey(account: Account): string | null {
   return null;
 }
 
-/** Ensure a subscription account's credential is the active Claude session. */
+/**
+ * Materialize a subscription credential for the active/global path.
+ * Claude → Keychain; file-backed providers → managed home under ~/.nexus.
+ */
 export function ensureSubscriptionActive(account: Account): boolean {
   if (account.mode !== 'subscription') return true;
   const blob = getSecret(CRED_PREFIX + account.id);
   if (!blob) return false;
-  return writeActiveClaudeCredential(blob);
+  if (account.adapterId === 'claude') {
+    return writeActiveClaudeCredential(blob);
+  }
+  if (isFileAuthAdapter(account.adapterId)) {
+    try {
+      materializeManagedHome(
+        account.adapterId as FileAuthAdapterId,
+        account.id,
+        blob,
+      );
+      return true;
+    } catch (err) {
+      console.warn('[accounts] materialize managed home failed:', err);
+      return false;
+    }
+  }
+  return false;
+}
+
+/** Process-scoped env for a file-backed subscription account (CODEX_HOME…). */
+export function fileSubscriptionAuthEnv(
+  account: Account,
+): Record<string, string> | null {
+  if (account.mode !== 'subscription' || !isFileAuthAdapter(account.adapterId)) {
+    return null;
+  }
+  let blob = getSecret(CRED_PREFIX + account.id);
+  if (!blob) return null;
+  try {
+    const adapterId = account.adapterId as FileAuthAdapterId;
+    // Persist CLI-refreshed tokens before materialize decides what to write.
+    const fresher = readBackFresherAuth(adapterId, account.id, blob);
+    if (fresher) {
+      const saved = setSecret(CRED_PREFIX + account.id, fresher);
+      if (saved.ok) blob = fresher;
+    }
+    const home = materializeManagedHome(adapterId, account.id, blob);
+    return managedHomeEnv(adapterId, home);
+  } catch (err) {
+    console.warn('[accounts] file subscription env failed:', err);
+    return null;
+  }
 }
 
 export type AccountSpawnPreparation =
@@ -310,6 +363,19 @@ export function prepareAccountForSpawn(
     return { ok: true, account, apiKey, authEnv: {} };
   }
 
+  // File-backed providers (Codex/Grok/…): isolate via managed home env.
+  if (isFileAuthAdapter(account.adapterId)) {
+    const authEnv = fileSubscriptionAuthEnv(account);
+    if (!authEnv) {
+      return {
+        ok: false,
+        error: `selected subscription "${account.label}" has no usable managed credential`,
+      };
+    }
+    return { ok: true, account, apiKey: null, authEnv };
+  }
+
+  // Claude (and any future token-env providers).
   const authEnv = subscriptionAuthEnv(account);
   if (!authEnv) {
     return {
@@ -393,27 +459,45 @@ export function addAccount(input: AddAccountInput): Account {
 }
 
 /**
- * Snapshot the CURRENTLY signed-in Claude session into a subscription account
- * (ai-launcher `conta_save`). The user logs into Claude, then clicks "salvar
- * conta ativa" — we capture the keychain blob into the vault.
+ * Snapshot the CURRENTLY signed-in CLI session into a subscription account.
+ * Claude → Keychain blob; Codex/Grok/Kimi/… → native auth.json (Orca-style).
  */
-export function addActiveClaudeAccount(label: string): Account | null {
-  const blob = readActiveClaudeCredential();
-  if (!blob) return null;
+export function addActiveSessionAccount(
+  adapterId: string,
+  label: string,
+): Account | null {
   requireWritableDb();
+
+  let blob: string | null = null;
+  let email: string | undefined;
+
+  if (adapterId === 'claude') {
+    blob = readActiveClaudeCredential();
+    email = activeClaudeEmail() ?? undefined;
+  } else if (isFileAuthAdapter(adapterId)) {
+    const capture = captureNativeAuth(adapterId);
+    if (capture) {
+      blob = capture.blob;
+      email = capture.email;
+    }
+  } else {
+    return null;
+  }
+  if (!blob) return null;
+
   const account: Account = {
     id: makeId(),
-    adapterId: 'claude',
+    adapterId,
     label,
     mode: 'subscription',
-    upstream: 'anthropic',
-    email: activeClaudeEmail() ?? undefined,
+    upstream: adapterId === 'claude' ? 'anthropic' : adapterId,
+    email,
     createdAt: Date.now(),
   };
   const nextAccounts = new Map(accounts);
   const nextActive = new Map(activeByAdapter);
   nextAccounts.set(account.id, account);
-  nextActive.set('claude', account.id);
+  nextActive.set(adapterId, account.id);
 
   const secretKey = CRED_PREFIX + account.id;
   const result = setSecret(secretKey, blob);
@@ -423,6 +507,10 @@ export function addActiveClaudeAccount(label: string): Account | null {
     );
   }
   try {
+    // Eager materialize so the new active account is ready for the next spawn.
+    if (isFileAuthAdapter(adapterId)) {
+      materializeManagedHome(adapterId as FileAuthAdapterId, account.id, blob);
+    }
     persistSnapshot(nextAccounts, nextActive, 'add subscription');
   } catch (error) {
     const rollback = deleteSecret(secretKey);
@@ -431,6 +519,9 @@ export function addActiveClaudeAccount(label: string): Account | null {
         'account metadata failed and credential rollback was not durable',
       );
     }
+    if (isFileAuthAdapter(adapterId)) {
+      removeManagedHome(adapterId, account.id);
+    }
     throw error;
   }
 
@@ -438,6 +529,11 @@ export function addActiveClaudeAccount(label: string): Account | null {
   replaceMap(activeByAdapter, nextActive);
   emit();
   return account;
+}
+
+/** @deprecated Prefer addActiveSessionAccount('claude', label). */
+export function addActiveClaudeAccount(label: string): Account | null {
+  return addActiveSessionAccount('claude', label);
 }
 
 export function renameAccount(id: string, label: string): void {
@@ -483,6 +579,9 @@ export function removeAccount(id: string): void {
   if (activeByAdapter.get(account.adapterId) === id) {
     activeByAdapter.delete(account.adapterId);
   }
+  if (isFileAuthAdapter(account.adapterId)) {
+    removeManagedHome(account.adapterId, id);
+  }
   emit();
 }
 
@@ -490,7 +589,7 @@ export function activateAccount(id: string): boolean {
   const account = accounts.get(id);
   if (!account) return false;
   requireWritableDb();
-  // Subscription accounts must swap the Claude keychain credential now.
+  // Materialize subscription credential (keychain or managed home).
   if (account.mode === 'subscription' && !ensureSubscriptionActive(account)) {
     return false;
   }
@@ -500,6 +599,11 @@ export function activateAccount(id: string): boolean {
   replaceMap(activeByAdapter, nextActive);
   emit();
   return true;
+}
+
+/** Adapters that support "save active session" subscription snapshots. */
+export function supportsSessionSnapshot(adapterId: string): boolean {
+  return adapterId === 'claude' || isFileAuthAdapter(adapterId);
 }
 
 export function setCooldown(id: string, until: number, reason: string): void {

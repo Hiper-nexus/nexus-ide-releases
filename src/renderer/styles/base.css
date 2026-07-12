@@ -429,6 +429,34 @@ body {
   white-space: nowrap;
 }
 
+.workspace-bar__account-zone {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+}
+
+.workspace-bar__account-zone .account-switcher {
+  max-width: 180px;
+}
+
+.workspace-bar__account-restart {
+  border: 1px solid color-mix(in srgb, var(--accent, #7dd3fc) 50%, transparent);
+  background: color-mix(in srgb, var(--accent, #7dd3fc) 15%, transparent);
+  color: var(--fg, #e8e8e8);
+  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+
+.workspace-bar__account-restart:hover {
+  background: color-mix(in srgb, var(--accent, #7dd3fc) 28%, transparent);
+}
+
 .workspace-bar__account-chip {
   display: inline-flex;
   align-items: center;
@@ -565,12 +593,15 @@ body {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 8px;
+  gap: 6px;
+  padding: 0 6px 0 8px;
   background: var(--bg-bar);
   border-bottom: 1px solid var(--border);
   font-size: 11px;
   user-select: none;
+  min-height: 28px;
+  container-type: inline-size;
+  container-name: pane-toolbar;
 }
 
 .toolbar__dot {
@@ -589,9 +620,12 @@ body {
 /* Estado do agente no toolbar: o glifo COMUNICA (busy respira, spawning pisca
    devagar, idle assenta com um pop único). Sinal operacional, não decoração. */
 .toolbar__state {
+  position: relative;
   flex: 0 0 auto;
   font-size: 10px;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
 }
 .toolbar__state--idle {
   color: var(--ok);
@@ -628,15 +662,18 @@ body {
 }
 
 .toolbar__title {
+  position: relative;
   font-family: var(--font-mono);
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 40%;
+  cursor: default;
 }
 
 .toolbar__badge {
+  position: relative;
   font-size: var(--text-2xs);
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -648,18 +685,56 @@ body {
 
 .toolbar__spacer {
   flex: 1 1 auto;
+  min-width: 8px;
+}
+
+/* Grouped action clusters: sessão | layout | fechar */
+.toolbar__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  padding: 1px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--border, #333) 35%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-strong, #444) 55%, transparent);
+}
+
+.toolbar__group--danger {
+  background: transparent;
+  border-color: transparent;
 }
 
 .toolbar__btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   background: transparent;
   border: none;
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-family: var(--font-ui, inherit);
+  padding: 3px 6px;
+  border-radius: calc(var(--radius-sm) - 1px);
   line-height: 1;
+  min-height: 22px;
+  min-width: 22px;
   transition: color 120ms ease, background 120ms ease;
+}
+
+.toolbar__btn-label {
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.toolbar[data-density='icons'] .toolbar__btn-label,
+.toolbar[data-density='compact'] .toolbar__btn-label {
+  display: none;
 }
 
 .toolbar__btn:hover {
@@ -667,9 +742,143 @@ body {
   background: var(--accent-soft);
 }
 
+.toolbar__btn--active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.toolbar__btn--close {
+  color: var(--text-dim);
+}
+
 .toolbar__btn--close:hover {
   color: var(--danger);
   background: rgba(247, 118, 142, 0.14);
+}
+
+/* Floating tooltip (Orca-style) — clearer than native title */
+.toolbar__btn[data-tip]::after,
+.toolbar__state[data-tip]::after,
+.toolbar__title[data-tip]::after,
+.toolbar__badge[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 6px);
+  transform: translateX(-50%) translateY(2px);
+  z-index: 40;
+  max-width: 240px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-elevated, #1a1b22) 96%, #000);
+  border: 1px solid var(--border-strong, #3a3b45);
+  color: var(--text, #e8e8ee);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: normal;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 100ms ease, transform 100ms ease, visibility 100ms;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.toolbar__btn[data-tip]:hover::after,
+.toolbar__btn[data-tip]:focus-visible::after,
+.toolbar__state[data-tip]:hover::after,
+.toolbar__title:hover[data-tip]::after,
+.toolbar__badge[data-tip]:hover::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Avoid clipping inside pane; allow tooltip to paint over terminal */
+.toolbar {
+  overflow: visible;
+  z-index: 2;
+}
+
+.toolbar__more {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.toolbar__menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 50;
+  min-width: 220px;
+  padding: 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-elevated, #1a1b22) 98%, #000);
+  border: 1px solid var(--border-strong, #3a3b45);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toolbar__menu-head {
+  margin: 0 0 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.toolbar__menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  padding: 7px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.toolbar__menu-item:hover {
+  background: var(--accent-soft);
+}
+
+.toolbar__menu-item.toolbar__btn--close:hover {
+  color: var(--danger);
+  background: rgba(247, 118, 142, 0.14);
+}
+
+.toolbar__menu-item-label {
+  flex: 1 1 auto;
+  font-weight: 500;
+}
+
+.toolbar__menu-item-kbd {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.pane:not(.pane--focused) .toolbar__btn-label {
+  opacity: 0.9;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toolbar__btn[data-tip]::after,
+  .toolbar__state[data-tip]::after,
+  .toolbar__title[data-tip]::after,
+  .toolbar__badge[data-tip]::after {
+    transition: none;
+  }
 }
 
 .pane__terminal {

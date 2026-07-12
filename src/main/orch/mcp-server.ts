@@ -313,7 +313,7 @@ function buildMcpConfig(token: string): object {
 
 /** Wire per-agent spawn decoration: gate tokens, MCP config and skill mirrors. */
 function installSpawnHook(): void {
-  setAgentSpawnHook((adapter, _req, authority) => {
+  setAgentSpawnHook((adapter, _req, authority, preparedEnv) => {
     const meta = authority.context;
     const gated =
       (meta?.allowedTools ?? null) !== null ||
@@ -376,8 +376,11 @@ function installSpawnHook(): void {
         } else if (flavor === 'agy') {
           // AGY 1.1 resolves its config through HOME (and newer builds may
           // honor GEMINI_CLI_HOME). Mirror skills first, then overlay both
-          // variables with a per-session private config tree.
-          const agyConfig = prepareAgyMcpConfig(mcpUrl(), ctx.token);
+          // variables with a per-session private config tree. When a managed
+          // account set GEMINI_CLI_HOME, source auth from that tree.
+          const agyConfig = prepareAgyMcpConfig(mcpUrl(), ctx.token, {
+            geminiHome: preparedEnv?.GEMINI_CLI_HOME,
+          });
           env.HOME = agyConfig.homeDir;
           env.GEMINI_CLI_HOME = agyConfig.geminiHomeDir;
         } else if (flavor === 'opencode') {
@@ -385,11 +388,15 @@ function installSpawnHook(): void {
           Object.assign(env, prepared.env);
           extraArgs.push(...prepared.extraArgs);
         } else if (flavor === 'kimi') {
-          const prepared = prepareKimiMcpSession(mcpUrl(), ctx.token);
+          const prepared = prepareKimiMcpSession(mcpUrl(), ctx.token, {
+            providerHome: preparedEnv?.KIMI_CODE_HOME,
+          });
           Object.assign(env, prepared.env);
           extraArgs.push(...prepared.extraArgs);
         } else if (flavor === 'grok') {
-          const prepared = prepareGrokMcpSession(mcpUrl(), ctx.token);
+          const prepared = prepareGrokMcpSession(mcpUrl(), ctx.token, {
+            providerHome: preparedEnv?.GROK_HOME,
+          });
           Object.assign(env, prepared.env);
           extraArgs.push(...prepared.extraArgs);
         }

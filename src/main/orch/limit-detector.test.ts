@@ -28,6 +28,25 @@ describe('detectLimit', () => {
     expect(detectLimit('invalid api key provided')?.kind).toBe('auth');
   });
 
+  it('detects Codex/ChatGPT and Grok limit signatures', () => {
+    expect(
+      detectLimit('codex: ChatGPT usage limit reached — try again later')?.kind,
+    ).toBe('rate-limit');
+    expect(detectLimit('Grok rate limit exceeded, try later')?.kind).toBe(
+      'rate-limit',
+    );
+    expect(detectLimit('tokens per minute exceeded')?.kind).toBe('rate-limit');
+    expect(
+      detectLimit('error: session expired, please re-authenticate')?.kind,
+    ).toBe('auth');
+  });
+
+  it('does not false-positive on docs or agent prose', () => {
+    expect(detectLimit('Codex has no usage limit in free tier docs')).toBeNull();
+    expect(detectLimit('Please log in to GitHub to continue the OAuth flow')).toBeNull();
+    expect(detectLimit('server busy is a metaphor here')).toBeNull();
+  });
+
   it('parses an explicit retry window to size the cooldown', () => {
     const hit = detectLimit('rate limit — try again in 42 minutes');
     expect(hit?.cooldownMs).toBe(42 * 60 * 1000);

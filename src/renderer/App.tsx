@@ -49,6 +49,7 @@ import { OperatorFx } from './components/OperatorFx';
 import { useOnboardingStore, useOnboardingSync } from './state/onboarding-store';
 import { Onboarding } from './components/Onboarding';
 import { useFailoverController } from './orch/failover-controller';
+import { useAccountRestartController } from './orch/account-restart-controller';
 import { Toasts } from './components/Toasts';
 import { useVoiceStore } from './voice/voice-store';
 import { UpdateNotifier } from './components/UpdateModal';
@@ -96,6 +97,7 @@ export function App() {
   useGamificationSync();
   useOnboardingSync();
   useFailoverController();
+  useAccountRestartController();
 
   // Each workspace owns its pane layout: entering one loads ITS saved tree;
   // leaving to the launcher detaches. A real mission layout restores silently;

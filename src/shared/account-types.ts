@@ -1,18 +1,15 @@
 import { z } from 'zod';
 
 /**
- * Multi-account model with automatic failover. An account belongs to an
- * adapter (usually `claude`) and is either:
- *  - a SUBSCRIPTION account (Claude Max/OAuth): its credential is the Claude
- *    Code keychain blob, snapshotted into our vault and restored on switch;
- *  - an API-KEY account: a key for the native provider OR for a routed upstream
- *    (GLM/z.ai, Sakana Fugu, DeepSeek…) — GLM runs THROUGH the Claude CLI via
- *    ANTHROPIC_BASE_URL, so a GLM account is just a `claude` account with
- *    upstream='glm' and a z.ai key.
+ * Multi-account model with automatic failover (Orca-style hot-swap + Nexus
+ * failover). An account belongs to an adapter and is either:
+ *  - SUBSCRIPTION: Claude Keychain OAuth, or file-backed managed home for
+ *    Codex/Grok/Kimi/OpenCode/AGY (auth.json snapshotted into the vault and
+ *    materialized under ~/.nexus/managed-accounts on switch/spawn);
+ *  - API-KEY: native provider key OR routed upstream (GLM/z.ai, DeepSeek…).
  *
- * When one account hits its limit (rate-limit/quota), the failover engine puts
- * it on cooldown, switches to the next available account for that adapter, and
- * re-spawns the pane's CLI with --resume to continue the conversation.
+ * Hot-swap rewrites the active credential pointer (no re-login). Running panes
+ * keep their account until restart. Failover auto-switches on limit signatures.
  */
 
 export type AccountMode = 'subscription' | 'api-key';
@@ -68,13 +65,48 @@ export interface FailoverEvent {
   toAccountId?: string;
 }
 
+/** Main → renderer: user activated an account; panes may need restart. */
+export interface AccountActivatedEvent {
+  accountId: string;
+  adapterId: string;
+  label: string;
+  /** Running CLI panes keep the old credential until respawned. */
+  needsRestart: boolean;
+}
+
+/** Per-account quota/cooldown view for status-bar usage chip (P4). */
+export interface AccountQuotaInfo {
+  accountId: string;
+  adapterId: string;
+  label: string;
+  active: boolean;
+  onCooldown: boolean;
+  cooldownUntil?: number;
+  lastError?: string;
+  email?: string;
+  mode: AccountMode;
+  hasCredential: boolean;
+  /** Human status for the chip: ready | cooldown | no-credential. */
+  status: 'ready' | 'cooldown' | 'no-credential' | 'inactive';
+}
+
 export const ACCOUNT_CHANNELS = {
   list: 'account:list',
   add: 'account:add',
   addActiveClaude: 'account:addActiveClaude',
+  addActiveSession: 'account:addActiveSession',
   rename: 'account:rename',
   remove: 'account:remove',
   activate: 'account:activate',
+  supportsSnapshot: 'account:supportsSnapshot',
+  quota: 'account:quota',
   changed: 'account:changed',
+  activated: 'account:activated',
   failover: 'account:failover',
 } as const;
+
+export const addActiveSessionSchema = z.object({
+  adapterId: z.string().min(1).max(64),
+  label: z.string().min(1).max(128),
+});
+export type AddActiveSessionRequest = z.infer<typeof addActiveSessionSchema>;

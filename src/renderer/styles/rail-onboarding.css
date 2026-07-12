@@ -349,6 +349,31 @@
   color: var(--text-dim);
 }
 
+.account-switcher__group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.account-switcher__group-label {
+  margin: 6px 8px 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.55;
+}
+
+.account-switcher__restart {
+  border-bottom: 1px solid color-mix(in srgb, var(--border, #333) 80%, transparent);
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+}
+
+.account-switcher__item--restart {
+  color: var(--accent, #7dd3fc);
+  font-weight: 600;
+}
+
 .account-switcher__err {
   margin: 0;
   padding: 4px 10px;

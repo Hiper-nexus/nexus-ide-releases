@@ -1,31 +1,75 @@
 import { useEffect } from 'react';
 import { create } from 'zustand';
-import type { AccountInfo, AddAccountRequest } from '../../shared/account-types';
+import type {
+  AccountActivatedEvent,
+  AccountInfo,
+  AccountQuotaInfo,
+  AddAccountRequest,
+} from '../../shared/account-types';
 
 /** Renderer mirror of the multi-account registry (secret-free). */
 interface AccountStore {
   accounts: AccountInfo[];
+  quota: AccountQuotaInfo[];
+  /** After hot-swap: adapter that needs pane restart (Orca restart chip). */
+  restartAdapterId: string | null;
+  restartLabel: string | null;
   hydrate(): Promise<void>;
   receive(list: AccountInfo[]): void;
+  receiveQuota(list: AccountQuotaInfo[]): void;
+  receiveActivated(event: AccountActivatedEvent): void;
+  clearRestartNotice(): void;
   add(req: AddAccountRequest): Promise<{ ok: boolean; error?: string }>;
   addActiveClaude(label: string): Promise<{ ok: boolean; email?: string; error?: string }>;
+  addActiveSession(
+    adapterId: string,
+    label: string,
+  ): Promise<{ ok: boolean; email?: string; error?: string }>;
+  supportsSnapshot(adapterId: string): Promise<boolean>;
   rename(id: string, label: string): Promise<void>;
   remove(id: string): Promise<void>;
-  activate(id: string): Promise<{ ok: boolean; error?: string }>;
+  activate(id: string): Promise<{ ok: boolean; error?: string; needsRestart?: boolean }>;
 }
 
 export const useAccountStore = create<AccountStore>((set) => ({
   accounts: [],
+  quota: [],
+  restartAdapterId: null,
+  restartLabel: null,
   hydrate: async () => {
     try {
-      set({ accounts: await window.nexus.accounts.list() });
+      const [accounts, quota] = await Promise.all([
+        window.nexus.accounts.list(),
+        window.nexus.accounts.quota(),
+      ]);
+      set({ accounts, quota });
     } catch (err) {
       console.warn('[accounts] hydrate failed:', err);
     }
   },
   receive: (list) => set({ accounts: list }),
+  receiveQuota: (list) => set({ quota: list }),
+  receiveActivated: (event) => {
+    if (event.needsRestart) {
+      set({
+        restartAdapterId: event.adapterId,
+        restartLabel: event.label,
+      });
+    }
+  },
+  clearRestartNotice: () => set({ restartAdapterId: null, restartLabel: null }),
   add: (req) => window.nexus.accounts.add(req),
   addActiveClaude: (label) => window.nexus.accounts.addActiveClaude(label),
+  addActiveSession: (adapterId, label) =>
+    window.nexus.accounts.addActiveSession(adapterId, label),
+  supportsSnapshot: async (adapterId) => {
+    try {
+      const res = await window.nexus.accounts.supportsSnapshot(adapterId);
+      return Boolean(res.ok && res.supported);
+    } catch {
+      return false;
+    }
+  },
   rename: async (id, label) => {
     await window.nexus.accounts.rename(id, label);
   },
@@ -39,8 +83,18 @@ export function useAccountController(): void {
   const hydrate = useAccountStore((s) => s.hydrate);
   useEffect(() => {
     void hydrate();
-    return window.nexus.accounts.onChanged((list) =>
-      useAccountStore.getState().receive(list),
-    );
+    const offChanged = window.nexus.accounts.onChanged((list) => {
+      useAccountStore.getState().receive(list);
+      void window.nexus.accounts.quota().then((q) => {
+        useAccountStore.getState().receiveQuota(q);
+      });
+    });
+    const offActivated = window.nexus.accounts.onActivated((event) => {
+      useAccountStore.getState().receiveActivated(event);
+    });
+    return () => {
+      offChanged();
+      offActivated();
+    };
   }, [hydrate]);
 }

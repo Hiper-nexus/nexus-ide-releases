@@ -161,6 +161,8 @@ export type AgentSpawnHook = (
   adapter: CliPtyAdapter,
   req: SpawnRequest,
   authority: BoundSpawnAuthority,
+  /** Env already prepared for this spawn (API keys, managed CODEX_HOME/…). */
+  preparedEnv?: Readonly<Record<string, string>>,
 ) => AgentSpawnDecoration | null;
 
 let agentSpawnHook: AgentSpawnHook | null = null;
@@ -631,12 +633,24 @@ export function spawnAgentSession(
 
   // Orchestration decoration: MCP endpoint env, optional HOME override and
   // extra argv (e.g. --mcp-config). The hook is trusted main-process code.
+  // Pass prepared env so MCP overlays (Grok/Kimi) can source managed-account homes.
+  const preparedEnvSnapshot = cleanEnv(env);
   const decoration = agentSpawnHook
-    ? agentSpawnHook(adapter, req, authority)
+    ? agentSpawnHook(adapter, req, authority, preparedEnvSnapshot)
     : null;
   if (decoration) {
     Object.assign(env, decoration.env);
     args.push(...decoration.extraArgs);
+  }
+  // Managed-home env from keyEnv must survive overlays that only care about MCP
+  // config content (e.g. OpenCode XDG_DATA_HOME). Grok/Kimi intentionally
+  // replace *_HOME with an ephemeral overlay built FROM that managed home.
+  for (const homeKey of [
+    'CODEX_HOME',
+    'XDG_DATA_HOME',
+  ] as const) {
+    const value = overrides.keyEnv?.[homeKey];
+    if (value) env[homeKey] = value;
   }
   // Adapter-enforced argv is included before the autonomous policy. The final
   // policy removes inherited YOLO/bypass flags and is therefore the last word.

@@ -47,9 +47,42 @@ vi.mock('../adapters/claude-credential', () => ({
   writeActiveClaudeCredential: accountDeps.writeActiveCredential,
 }));
 
+const managedDeps = vi.hoisted(() => ({
+  homes: new Map<string, string>(),
+  materialize: vi.fn((adapterId: string, accountId: string, _blob: string) => {
+    const home = `/tmp/managed/${adapterId}/${accountId}/home`;
+    managedDeps.homes.set(`${adapterId}:${accountId}`, home);
+    return home;
+  }),
+  capture: vi.fn(
+    (_adapterId?: string): null | {
+      blob: string;
+      email?: string;
+      authRelativePath: string;
+    } => null,
+  ),
+}));
+
+vi.mock('../adapters/managed-credentials', async () => {
+  const actual = await vi.importActual<typeof import('../adapters/managed-credentials')>(
+    '../adapters/managed-credentials',
+  );
+  return {
+    ...actual,
+    materializeManagedHome: (
+      adapterId: Parameters<typeof actual.materializeManagedHome>[0],
+      accountId: string,
+      blob: string,
+    ) => managedDeps.materialize(adapterId, accountId, blob),
+    captureNativeAuth: (adapterId: string) => managedDeps.capture(adapterId),
+    removeManagedHome: vi.fn(),
+  };
+});
+
 import {
   addAccount,
   addActiveClaudeAccount,
+  addActiveSessionAccount,
   getAccount,
   initAccountStore,
   isAccountStoreReadOnly,
@@ -90,6 +123,10 @@ describe('prepareAccountForSpawn', () => {
     accountDeps.writeActiveCredential.mockReset();
     accountDeps.writeActiveCredential.mockReturnValue(true);
     accountDeps.activeCredential = oauthCredential('claude-access');
+    managedDeps.homes.clear();
+    managedDeps.materialize.mockClear();
+    managedDeps.capture.mockReset();
+    managedDeps.capture.mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -204,6 +241,31 @@ describe('prepareAccountForSpawn', () => {
       authEnv: { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-work' },
     });
     expect(accountDeps.writeActiveCredential).not.toHaveBeenCalled();
+  });
+
+  it('prepares Codex subscription accounts with managed CODEX_HOME', () => {
+    managedDeps.capture.mockReturnValue({
+      blob: JSON.stringify({
+        tokens: {
+          id_token: 'x',
+          access_token: 'codex-a',
+          refresh_token: 'r',
+          account_id: '1',
+        },
+      }),
+      email: 'codex@example.test',
+      authRelativePath: 'auth.json',
+    });
+    const account = addActiveSessionAccount('codex', 'Codex Work');
+    expect(account).not.toBeNull();
+    expect(account?.email).toBe('codex@example.test');
+
+    const result = prepareAccountForSpawn('codex', account!.id);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.authEnv.CODEX_HOME).toContain('codex');
+    expect(result.authEnv.CODEX_HOME).toContain(account!.id);
+    expect(managedDeps.materialize).toHaveBeenCalled();
   });
 
   it('persists account metadata before returning success', () => {

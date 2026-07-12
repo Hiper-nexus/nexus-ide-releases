@@ -96,6 +96,11 @@ export interface AgyMcpFragment {
 export interface AgyMcpConfigOptions {
   home?: string;
   artifactRoot?: string;
+  /**
+   * Managed Gemini/AGY home (GEMINI_CLI_HOME from account materialize).
+   * When set, auth/config are overlaid from this tree instead of ~/.gemini.
+   */
+  geminiHome?: string;
 }
 
 export interface AgyMcpConfigResult {
@@ -262,11 +267,17 @@ function linkDirectoryEntries(
   }
 }
 
-function buildAgyHomeOverlay(realHome: string, homeDir: string): void {
+function buildAgyHomeOverlay(
+  realHome: string,
+  homeDir: string,
+  geminiSource?: string,
+): void {
   ensurePrivateDirectory(homeDir);
   linkDirectoryEntries(realHome, homeDir, new Set([".gemini", ".nexus"]));
 
-  const realGemini = path.join(realHome, ".gemini");
+  const realGemini = path.resolve(
+    geminiSource ?? path.join(realHome, ".gemini"),
+  );
   const privateGemini = path.join(homeDir, ".gemini");
   ensurePrivateDirectory(privateGemini);
   linkDirectoryEntries(
@@ -281,8 +292,12 @@ function writeAgyConfigOverlay(
   homeDir: string,
   relativeDir: string,
   fragment: AgyMcpFragment,
+  geminiSource?: string,
 ): string {
-  const sourceDir = path.join(realHome, ".gemini", relativeDir);
+  const geminiRoot = path.resolve(
+    geminiSource ?? path.join(realHome, ".gemini"),
+  );
+  const sourceDir = path.join(geminiRoot, relativeDir);
   const targetDir = path.join(homeDir, ".gemini", relativeDir);
   ensurePrivateDirectory(targetDir);
   linkDirectoryEntries(sourceDir, targetDir, new Set(["mcp_config.json"]));
@@ -307,6 +322,9 @@ export function prepareAgyMcpConfig(
   options: AgyMcpConfigOptions = {},
 ): AgyMcpConfigResult {
   const realHome = path.resolve(options.home ?? os.homedir());
+  const geminiSource = options.geminiHome
+    ? path.resolve(options.geminiHome)
+    : undefined;
   const artifactRoot = path.resolve(
     options.artifactRoot ?? path.join(realHome, ".nexus", "ephemeral", "agy"),
   );
@@ -320,14 +338,21 @@ export function prepareAgyMcpConfig(
   fs.rmSync(homeDir, { recursive: true, force: true });
 
   try {
-    buildAgyHomeOverlay(realHome, homeDir);
+    buildAgyHomeOverlay(realHome, homeDir, geminiSource);
     const fragment = agyMcpFragment(url, token);
-    const modern = writeAgyConfigOverlay(realHome, homeDir, "config", fragment);
+    const modern = writeAgyConfigOverlay(
+      realHome,
+      homeDir,
+      "config",
+      fragment,
+      geminiSource,
+    );
     const cli = writeAgyConfigOverlay(
       realHome,
       homeDir,
       "antigravity-cli",
       fragment,
+      geminiSource,
     );
     activeAgyHomes.set(token, homeDir);
     return {

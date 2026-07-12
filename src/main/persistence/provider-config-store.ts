@@ -69,6 +69,7 @@ import {
   activeClaudeAuthEnv,
   accountKey,
   ensureSubscriptionActive,
+  fileSubscriptionAuthEnv,
   getActiveAccount,
   listAccounts,
   prepareAccountForSpawn,
@@ -382,9 +383,7 @@ function buildProviderSpawnOverrides(
       : null);
   if (account) {
     if (account.mode === 'subscription') {
-      // Pane-pinned accounts use process-scoped OAuth and never race through
-      // Claude's single global Keychain slot. Legacy unpinned panes retain the
-      // active-account path until their metadata has been migrated.
+      // Pane-pinned: process-scoped env (Claude OAuth token or CODEX_HOME/…).
       if (preparedAccount) {
         return {
           ...base,
@@ -397,9 +396,24 @@ function buildProviderSpawnOverrides(
           `selected subscription "${account.label}" could not be activated`,
         );
       }
+      // Unpinned active path: Claude via token env; file providers via managed home.
+      // Fail closed for file-auth: empty keyEnv would silently use the system login.
+      if (adapterId === 'claude') {
+        return {
+          ...base,
+          keyEnv: activeClaudeAuthEnv() ?? {},
+          suppressEnv: subscriptionSuppressEnvVars(adapterId),
+        };
+      }
+      const keyEnv = fileSubscriptionAuthEnv(account);
+      if (!keyEnv || Object.keys(keyEnv).length === 0) {
+        throw new Error(
+          `selected subscription "${account.label}" has no usable managed credential`,
+        );
+      }
       return {
         ...base,
-        keyEnv: adapterId === 'claude' ? (activeClaudeAuthEnv() ?? {}) : {},
+        keyEnv,
         suppressEnv: subscriptionSuppressEnvVars(adapterId),
       };
     }

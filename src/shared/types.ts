@@ -67,7 +67,13 @@ import type {
   FileTreeResult,
   ReadFileResult,
 } from './files-types';
-import type { AccountInfo, AddAccountRequest, FailoverEvent } from './account-types';
+import type {
+  AccountActivatedEvent,
+  AccountInfo,
+  AccountQuotaInfo,
+  AddAccountRequest,
+  FailoverEvent,
+} from './account-types';
 import type { CostSnapshot } from './cost-types';
 import type { UsageSnapshot } from './usage-types';
 import type { PublicModelRankingSnapshot } from './eval-ranking-types';
@@ -925,13 +931,22 @@ export interface NexusApi {
   };
   accounts: {
     list(): Promise<AccountInfo[]>;
+    quota(): Promise<AccountQuotaInfo[]>;
     add(req: AddAccountRequest): Promise<{ ok: boolean; id?: string; error?: string }>;
     addActiveClaude(label: string): Promise<{ ok: boolean; id?: string; email?: string; error?: string }>;
+    addActiveSession(
+      adapterId: string,
+      label: string,
+    ): Promise<{ ok: boolean; id?: string; email?: string; error?: string }>;
+    supportsSnapshot(
+      adapterId: string,
+    ): Promise<{ ok: boolean; supported?: boolean }>;
     rename(id: string, label: string): Promise<{ ok: boolean }>;
     remove(id: string): Promise<{ ok: boolean }>;
-    activate(id: string): Promise<{ ok: boolean; error?: string }>;
+    activate(id: string): Promise<{ ok: boolean; error?: string; needsRestart?: boolean }>;
     onChanged(cb: (list: AccountInfo[]) => void): Unsubscribe;
     onFailover(cb: (event: FailoverEvent) => void): Unsubscribe;
+    onActivated(cb: (event: AccountActivatedEvent) => void): Unsubscribe;
   };
   cost: {
     snapshot(): Promise<CostSnapshot>;

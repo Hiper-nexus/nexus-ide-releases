@@ -44,7 +44,8 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
     [allAccounts, adapterId],
   );
   const add = useAccountStore((s) => s.add);
-  const addActiveClaude = useAccountStore((s) => s.addActiveClaude);
+  const addActiveSession = useAccountStore((s) => s.addActiveSession);
+  const supportsSnapshot = useAccountStore((s) => s.supportsSnapshot);
   const rename = useAccountStore((s) => s.rename);
   const remove = useAccountStore((s) => s.remove);
   const activate = useAccountStore((s) => s.activate);
@@ -80,7 +81,18 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
   const [busy, setBusy] = useState(false);
 
   const isClaude = adapterId === 'claude';
+  const [canSnapshot, setCanSnapshot] = useState(false);
   const active = accounts.find((a) => a.active) ?? null;
+
+  useEffect(() => {
+    let alive = true;
+    void supportsSnapshot(adapterId).then((ok) => {
+      if (alive) setCanSnapshot(ok);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [adapterId, supportsSnapshot]);
 
   function closeForm() {
     setAddMode(null);
@@ -110,17 +122,17 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
     }
   }
 
-  async function snapshotClaude() {
-    const name = label.trim() || 'Conta Claude';
+  async function snapshotSession() {
+    const name = label.trim() || `Conta ${adapterId}`;
     setBusy(true);
-    const res = await addActiveClaude(name);
+    const res = await addActiveSession(adapterId, name);
     await hydrate();
     await refreshAuth();
     setBusy(false);
     if (res.ok) {
       closeForm();
       setNotice(
-        `Sessão Claude salva, ativada e sincronizada${res.email ? ` (${res.email})` : ''}.`,
+        `Sessão ${adapterId} salva e ativada (hot-swap)${res.email ? ` · ${res.email}` : ''}. Reinicie panes abertos para aplicar.`,
       );
     } else {
       setNotice(res.error ?? 'Falhou.');
@@ -293,13 +305,13 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
         <span className="acct__section-label">Adicionar conta</span>
       {addMode === null && (
         <div className="acct__add-choices">
-          {isClaude && (
+          {canSnapshot && (
             <button
               className="settings-btn"
               onClick={() => setAddMode('subscription')}
-              title="Salva a sessão Claude atualmente logada (Keychain)"
+              title={`Salva a sessão OAuth/login atual do ${adapterId} (hot-swap sem re-login)`}
             >
-              ＋ Por assinatura (Claude logado)
+              ＋ Por assinatura ({adapterId} logado)
             </button>
           )}
           <button
@@ -315,8 +327,9 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
       {addMode === 'subscription' && (
         <div className="acct__form">
           <p className="acct__form-title">
-            Salvar a <strong>sessão logada</strong> do claude como uma conta
-            (troque de login no terminal para adicionar outras).
+            Salvar a <strong>sessão logada</strong> de {adapterId} como conta
+            gerida (padrão Orca: troque de login no terminal e salve cada uma).
+            Hot-swap reescreve o ponteiro de credencial — sem re-auth.
           </p>
           <div className="acct__add">
             <input
@@ -328,7 +341,7 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
             />
             <button
               className="settings-btn settings-btn--primary"
-              onClick={() => void snapshotClaude()}
+              onClick={() => void snapshotSession()}
               disabled={busy}
             >
               Salvar sessão

@@ -14,6 +14,7 @@ import {
 } from './pane-registry';
 import { detectLimit } from './limit-detector';
 import {
+  activateAccount,
   getAccount,
   getActiveAccount,
   pickAvailable,
@@ -215,6 +216,25 @@ function handleChunk(sessionId: string, data: string, now: number): void {
       fromAccountLabel: fromLabel,
       toAccountLabel: '',
       reason: hit.reason,
+      switched: false,
+    });
+    return;
+  }
+
+  // Materialize next credential; do not claim switched:true if activate fails.
+  let activated = false;
+  try {
+    activated = activateAccount(next.id);
+  } catch (err) {
+    console.warn('[failover] activate next account failed:', err);
+    activated = false;
+  }
+  if (!activated) {
+    emitFailover(authority, {
+      paneId: pane.paneId,
+      fromAccountLabel: fromLabel,
+      toAccountLabel: '',
+      reason: `${hit.reason} (falha ao ativar "${next.label}")`,
       switched: false,
     });
     return;

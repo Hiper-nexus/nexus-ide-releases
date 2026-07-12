@@ -16,7 +16,11 @@ import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { UpdateModal, UpdateStatusButton, useUpdateState } from './UpdateModal';
 import type { AdapterInfo } from '../../shared/types';
 import { setBrowserPaneSuppression } from '../browser/browser-host';
+import { AccountSwitcher } from './AccountSwitcher';
 import { useAccountStore } from '../state/account-store';
+import {
+  restartPanesForPendingAccount,
+} from '../orch/account-restart-controller';
 
 function adapterModelLabel(adapter: AdapterInfo, model: string): string {
   const info = adapter.models.info?.[model];
@@ -97,7 +101,7 @@ export function WorkspaceBar({
   const density = useBarDensity();
   const showLabels = density === 'full';
   const compact = density === 'compact';
-  const activeAccount = useAccountStore((s) => s.accounts.find((a) => a.active) ?? null);
+  const restartAdapterId = useAccountStore((s) => s.restartAdapterId);
 
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -446,16 +450,20 @@ export function WorkspaceBar({
         <div className="workspace-bar__zone workspace-bar__zone--system">
           <VoiceButton />
           <VisionIndicator />
-          {activeAccount && !compact && (
-            <span
-              className="workspace-bar__account-chip"
-              title={`${activeAccount.label} · ${activeAccount.adapterId}${activeAccount.onCooldown ? ' · cooldown' : ''}`}
-            >
-              <span
-                className={`workspace-bar__account-dot ${activeAccount.onCooldown ? 'workspace-bar__account-dot--cool' : ''}`}
-              />
-              {showLabels ? activeAccount.label : activeAccount.adapterId}
-            </span>
+          {!compact && (
+            <div className="workspace-bar__account-zone" title="Hot-swap de contas CLI">
+              <AccountSwitcher compact />
+              {restartAdapterId && (
+                <button
+                  type="button"
+                  className="workspace-bar__account-restart"
+                  title={`Reiniciar panes ${restartAdapterId} após troca de conta`}
+                  onClick={() => restartPanesForPendingAccount()}
+                >
+                  ↻
+                </button>
+              )}
+            </div>
           )}
           {updateState && !compact && (
             <UpdateStatusButton
