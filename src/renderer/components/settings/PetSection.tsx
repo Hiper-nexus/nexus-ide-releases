@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CODEX_SHEET_COLS,
   CODEX_SHEET_ROWS,
   PET_PRESETS,
   SHEET_DATA_URL_MAX,
+  type PetGalleryEntry,
   type PetPrefs,
   type PetPreset,
 } from '../../../shared/pet-types';
@@ -11,6 +12,7 @@ import { OperatorSprite } from '../OperatorSprite';
 import { CustomPetSprite } from '../../pet/CustomPetSprite';
 import { SheetPetSprite } from '../../pet/SheetPetSprite';
 import { imageFileToGrid } from '../../pet/pixelize';
+import { filterPaletteActions } from '../../lib/command-palette-filter';
 
 /**
  * Settings → Aparência → Pet de mesa: liga/desliga o companion, escolhe o
@@ -26,6 +28,17 @@ type PetSectionApi = {
   galleryImport?(slugOrUrl: string): Promise<{
     ok: boolean;
     name?: string;
+    dataUrl?: string;
+    error?: string;
+  }>;
+  galleryList?(): Promise<{
+    ok: boolean;
+    items?: PetGalleryEntry[];
+    error?: string;
+  }>;
+  pickSheet?(): Promise<{
+    ok: boolean;
+    canceled?: boolean;
     dataUrl?: string;
     error?: string;
   }>;
@@ -72,8 +85,20 @@ export function PetSection() {
   const [importNote, setImportNote] = useState<string | null>(null);
   const [gallerySlug, setGallerySlug] = useState('');
   const [galleryBusy, setGalleryBusy] = useState(false);
+  const [catalog, setCatalog] = useState<PetGalleryEntry[] | null>(null);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [catalogFilter, setCatalogFilter] = useState('');
   const fileRef = useRef<HTMLInputElement | null>(null);
   const sheetRef = useRef<HTMLInputElement | null>(null);
+
+  const filteredCatalog = useMemo(() => {
+    if (!catalog) return [];
+    const matched = filterPaletteActions(
+      catalog.map((entry) => ({ ...entry, keywords: entry.slug })),
+      catalogFilter,
+    );
+    return matched.slice(0, 48);
+  }, [catalog, catalogFilter]);
 
   // Skew preload/renderer (HMR recarrega o renderer, não o preload; ou
   // instalação antiga): a API do pet pode não existir em runtime, mesmo que
@@ -108,17 +133,74 @@ export function PetSection() {
     try {
       const grid = await imageFileToGrid(file);
       patch({ customGrid: grid, preset: 'custom' });
-      setImportNote(null);
+      setImportNote(
+        'Pet criado da imagem e selecionado ✓ — funciona melhor com um personagem em fundo limpo/transparente.',
+      );
     } catch {
       setImportNote('Não consegui ler essa imagem. Tente outra (png/jpg).');
     }
   };
 
-  const onGalleryImport = async () => {
-    const query = gallerySlug.trim();
+  /** Aplica um dataUrl de spritesheet validado (dialog nativo ou arquivo). */
+  const applySheetDataUrl = async (dataUrl: string) => {
+    if (!(await imageIsCodexSheet(dataUrl))) {
+      setImportNote(
+        `O arquivo não bate com o contrato Codex v2 (malha ${CODEX_SHEET_COLS}×${CODEX_SHEET_ROWS}).`,
+      );
+      return;
+    }
+    const applied = await petApi.setPrefs({
+      sheet: { dataUrl, cols: CODEX_SHEET_COLS, rows: CODEX_SHEET_ROWS },
+      preset: 'sheet',
+    });
+    setImportNote(
+      applied.preset === 'sheet' && applied.sheet
+        ? 'Spritesheet importado e selecionado ✓'
+        : dataUrl.length > SHEET_DATA_URL_MAX
+          ? 'O arquivo é grande demais para importar (limite ~2,5 MB).'
+          : 'Formato não suportado — use png, webp ou jpeg.',
+    );
+  };
+
+  /** Dialog nativo abrindo direto em ~/.codex/pets (mac/win/linux). */
+  const onPickSheetNative = async () => {
+    if (!petApi.pickSheet) {
+      sheetRef.current?.click();
+      return;
+    }
+    const picked = await petApi.pickSheet();
+    if (picked.canceled) return;
+    if (!picked.ok || !picked.dataUrl) {
+      setImportNote(picked.error ?? 'Não consegui ler esse arquivo.');
+      return;
+    }
+    await applySheetDataUrl(picked.dataUrl);
+  };
+
+  const onOpenCatalog = async () => {
+    if (!petApi.galleryList) return;
+    if (catalogOpen) {
+      setCatalogOpen(false);
+      return;
+    }
+    setCatalogOpen(true);
+    if (catalog) return;
+    setImportNote('Carregando a galeria…');
+    const result = await petApi.galleryList();
+    if (result.ok && result.items) {
+      setCatalog(result.items);
+      setImportNote(null);
+    } else {
+      setImportNote(result.error ?? 'Galeria indisponível agora.');
+      setCatalogOpen(false);
+    }
+  };
+
+  const onGalleryImport = async (slugOverride?: string) => {
+    const query = (slugOverride ?? gallerySlug).trim();
     if (!query || !petApi.galleryImport || galleryBusy) return;
     setGalleryBusy(true);
-    setImportNote('Baixando da galeria…');
+    setImportNote(`Baixando "${query}" da galeria…`);
     try {
       const result = await petApi.galleryImport(query);
       if (!result.ok || !result.dataUrl) {
@@ -154,32 +236,21 @@ export function PetSection() {
     if (!file) return;
     setImportNote('Validando spritesheet…');
     try {
-      const dataUrl = await fileToDataUrl(file);
-      if (!(await imageIsCodexSheet(dataUrl))) {
-        setImportNote(
-          `O arquivo não bate com o contrato Codex v2 (malha ${CODEX_SHEET_COLS}×${CODEX_SHEET_ROWS}).`,
-        );
-        return;
-      }
-      const applied = await petApi.setPrefs({
-        sheet: {
-          dataUrl,
-          cols: CODEX_SHEET_COLS,
-          rows: CODEX_SHEET_ROWS,
-        },
-        preset: 'sheet',
-      });
-      // O sanitizador rejeita por TAMANHO ou por FORMATO — diagnostica certo.
-      setImportNote(
-        applied.preset === 'sheet' && applied.sheet
-          ? null
-          : dataUrl.length > SHEET_DATA_URL_MAX
-            ? 'O arquivo é grande demais para importar (limite ~2,5 MB).'
-            : 'Formato não suportado — use png, webp ou jpeg.',
-      );
+      await applySheetDataUrl(await fileToDataUrl(file));
     } catch {
       setImportNote('Não consegui ler esse arquivo.');
     }
+  };
+
+  /** Remove o conteúdo de um pet criado/importado (volta para o Operador). */
+  const onRemovePet = (which: 'custom' | 'sheet') => {
+    patch({
+      ...(which === 'custom' ? { customGrid: null } : { sheet: null }),
+      ...(prefs.preset === which ? { preset: 'operator' as const } : {}),
+    });
+    setImportNote(
+      which === 'custom' ? 'Pet de imagem removido.' : 'Spritesheet removido.',
+    );
   };
 
   return (
@@ -240,9 +311,23 @@ export function PetSection() {
               const disabled =
                 (preset === 'custom' && !prefs.customGrid) ||
                 (preset === 'sheet' && !prefs.sheet);
+              const removable =
+                (preset === 'custom' && prefs.customGrid) ||
+                (preset === 'sheet' && prefs.sheet);
               return (
+                <div className="settings-pet-wrap" key={preset}>
+                {removable && (
+                  <button
+                    type="button"
+                    className="settings-pet__remove"
+                    title={`Remover ${PRESET_LABEL[preset]}`}
+                    aria-label={`Remover ${PRESET_LABEL[preset]}`}
+                    onClick={() => onRemovePet(preset as 'custom' | 'sheet')}
+                  >
+                    ×
+                  </button>
+                )}
                 <button
-                  key={preset}
                   type="button"
                   className={`settings-pet ${
                     prefs.preset === preset ? 'settings-pet--active' : ''
@@ -288,6 +373,7 @@ export function PetSection() {
                     {PRESET_LABEL[preset]}
                   </span>
                 </button>
+                </div>
               );
             })}
           </div>
@@ -303,7 +389,7 @@ export function PetSection() {
             <button
               type="button"
               className="settings-pet-import__btn"
-              onClick={() => sheetRef.current?.click()}
+              onClick={() => void onPickSheetNative()}
             >
               Importar spritesheet do Codex…
             </button>
@@ -354,10 +440,51 @@ export function PetSection() {
               >
                 {galleryBusy ? 'Baixando…' : 'Importar da galeria'}
               </button>
+              {petApi.galleryList && (
+                <button
+                  type="button"
+                  className="settings-pet-import__btn"
+                  onClick={() => void onOpenCatalog()}
+                >
+                  {catalogOpen ? 'Fechar galeria' : 'Ver galeria…'}
+                </button>
+              )}
               <span className="settings-field__note">
                 Galeria da comunidade (codex-pets.net / petdex.dev). A arte é
                 de quem publicou — importe só o que você tem direito de usar.
               </span>
+            </div>
+          )}
+          {catalogOpen && catalog && (
+            <div className="settings-pet-catalog">
+              <input
+                className="settings-input settings-pet-gallery__input"
+                type="text"
+                value={catalogFilter}
+                placeholder={`Filtrar ${catalog.length} pets publicados…`}
+                aria-label="Filtrar pets da galeria"
+                onChange={(e) => setCatalogFilter(e.target.value)}
+              />
+              <div className="settings-pet-catalog__chips" role="list">
+                {filteredCatalog.map((entry) => (
+                  <button
+                    key={entry.slug}
+                    type="button"
+                    role="listitem"
+                    className="settings-pet-catalog__chip"
+                    disabled={galleryBusy}
+                    title={`Importar "${entry.label}" (${entry.slug})`}
+                    onClick={() => void onGalleryImport(entry.slug)}
+                  >
+                    {entry.label}
+                  </button>
+                ))}
+                {filteredCatalog.length === 0 && (
+                  <span className="settings-field__note">
+                    Nada com esse nome na galeria.
+                  </span>
+                )}
+              </div>
             </div>
           )}
           {importNote && (

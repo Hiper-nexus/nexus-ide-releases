@@ -19,7 +19,9 @@ import {
 } from './pet-events';
 import { tapAgentHookStatus } from '../agent-hooks/hook-ingest';
 import { computeLookDir } from './pet-look';
-import { importGalleryPet } from './pet-gallery';
+import { fetchGalleryCatalog, importGalleryPet } from './pet-gallery';
+import { readFileSync, statSync, existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 
 /**
  * Desktop pet: uma janela transparente, sempre-no-topo e fora da taskbar que
@@ -29,7 +31,8 @@ import { importGalleryPet } from './pet-gallery';
  * uma janela principal, e dorme sob demanda (sem balões).
  */
 
-export const PET_WINDOW_SIZE = { width: 240, height: 200 } as const;
+/** Janela maior: sprite ~150px lê de longe (paridade com o pet do Codex). */
+export const PET_WINDOW_SIZE = { width: 300, height: 270 } as const;
 const DRAG_TICK_MS = 16;
 /** Teto de um arrasto: além disso o watchdog assenta a janela sozinho. */
 const DRAG_MAX_MS = 30_000;
@@ -310,6 +313,50 @@ function registerPetIpc(): void {
     // O fetch vive no main de propósito: a CSP do renderer (connect-src
     // 'self') não fala com a galeria — e não deve.
     return importGalleryPet(raw);
+  });
+  ipcMain.handle(PET_CHANNELS.galleryList, (event) => {
+    if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
+    return fetchGalleryCatalog();
+  });
+  ipcMain.handle(PET_CHANNELS.pickSheet, async (event) => {
+    if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    // Abre direto onde o Codex guarda os pets (mesmo caminho nos 3 OS).
+    const codexPets = path.join(homedir(), '.codex', 'pets');
+    const { dialog } = await import('electron');
+    const dialogOptions = {
+      title: 'Importar spritesheet do Codex',
+      defaultPath: existsSync(codexPets) ? codexPets : homedir(),
+      properties: ['openFile' as const],
+      filters: [
+        {
+          name: 'Spritesheet (png/webp/jpeg)',
+          extensions: ['png', 'webp', 'jpg', 'jpeg'],
+        },
+      ],
+    };
+    const picked = owner
+      ? await dialog.showOpenDialog(owner, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
+    if (picked.canceled || picked.filePaths.length === 0) {
+      return { ok: false, canceled: true };
+    }
+    const file = picked.filePaths[0];
+    try {
+      if (statSync(file).size > 2_600_000) {
+        return { ok: false, error: 'Arquivo grande demais (limite ~2,5 MB).' };
+      }
+      const ext = path.extname(file).toLowerCase().replace('.', '');
+      const mime =
+        ext === 'png' ? 'png' : ext === 'jpg' || ext === 'jpeg' ? 'jpeg' : 'webp';
+      const dataUrl = `data:image/${mime};base64,${readFileSync(file).toString('base64')}`;
+      return { ok: true, dataUrl };
+    } catch (err) {
+      return {
+        ok: false,
+        error: `Não consegui ler o arquivo (${err instanceof Error ? err.message : 'erro'}).`,
+      };
+    }
   });
 
   ipcMain.on(PET_CHANNELS.setInteractive, (event, interactive: unknown) => {

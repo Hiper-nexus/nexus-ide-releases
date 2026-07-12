@@ -14,11 +14,12 @@ import type { Point, Rect } from './pet-geometry';
 /** Cursor mais perto que isso do centro do sprite = "olhando para si": idle. */
 export const LOOK_NEAR_RADIUS_PX = 90;
 
-/** Centro visual do sprite: bottom-center da janela (o pet ancora embaixo). */
+/** Centro visual do sprite: bottom-center da janela (o pet ancora embaixo,
+    sprite ~150px → centro ≈ 80px acima da base). */
 export function petAnchor(bounds: Rect): Point {
   return {
     x: bounds.x + bounds.width / 2,
-    y: bounds.y + bounds.height - 60,
+    y: bounds.y + bounds.height - 80,
   };
 }
 

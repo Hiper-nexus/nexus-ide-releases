@@ -49,15 +49,29 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
   {
     id: 'replicate-video',
     kind: 'video',
-    label: 'Replicate — vídeo (Seedance/Kling)',
+    // Flagship path is Seedance 2.0 (ByteDance multimodal + native audio).
+    // Veo 3.1 / Kling / Hailuo share the same Replicate token + poller.
+    label: 'Replicate — vídeo (Seedance / Veo / Kling)',
     envVar: 'REPLICATE_API_TOKEN',
     defaultModel: 'bytedance/seedance-2.0',
     models: [
+      // ByteDance Seedance 2.x — multimodal refs + last frame + native audio.
+      // (There is no public "Seedance 5"; 2.0 is the current flagship.)
       'bytedance/seedance-2.0',
       'bytedance/seedance-2.0-fast',
-      'kwaivgi/kling-v3',
-      'kwaivgi/kling-v2.5',
-      'minimax/hailuo-02',
+      'bytedance/seedance-2.0-mini',
+      // Google Veo 3.1 family via Replicate.
+      'google/veo-3.1',
+      'google/veo-3.1-fast',
+      'google/veo-3.1-lite',
+      // Kling — live Replicate slugs (verified; bare kling-v3 404s).
+      'kwaivgi/kling-v3-video',
+      'kwaivgi/kling-v3-omni-video',
+      'kwaivgi/kling-v2.5-turbo-pro',
+      'kwaivgi/kling-v2.1',
+      // Minimax + Wan (i2v field differs — see media-generation adapters).
+      'minimax/hailuo-2.3',
+      'wan-video/wan-2.5-i2v',
     ],
     // Vídeo varia demais por modelo/resolução/duração — sem estimativa falsa.
     estimateCost: () => null,

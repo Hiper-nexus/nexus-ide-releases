@@ -236,24 +236,84 @@ export async function generateImage(
 
 // ── Video ────────────────────────────────────────────────────────────────────
 
-function replicateInput(
+/**
+ * Image-to-video input FIELD NAME differs by Replicate model family. Passing
+ * the wrong one drops the first frame silently. Verified against live OpenAPI
+ * schemas (2026-07) and the Overclock mediaGeneration adapter.
+ */
+export function replicateImageField(model: string): string {
+  if (model.startsWith('kwaivgi/kling')) return 'start_image';
+  if (model.startsWith('minimax/hailuo') || model.startsWith('minimax/video-01')) {
+    return 'first_frame_image';
+  }
+  // seedance, veo, wan-video, default
+  return 'image';
+}
+
+/** End / last-frame field when the family supports keyframe interpolation. */
+export function replicateEndImageField(model: string): string | null {
+  if (model.startsWith('kwaivgi/kling')) return 'end_image';
+  if (model.startsWith('bytedance/seedance')) return 'last_frame_image';
+  if (model.startsWith('google/veo')) return 'last_frame';
+  return null;
+}
+
+function dataUri(image: MediaInputFile): string {
+  const ext = path.extname(image.path).toLowerCase().replace('.', '');
+  const mime =
+    ext === 'jpg' || ext === 'jpeg'
+      ? 'image/jpeg'
+      : ext === 'webp'
+        ? 'image/webp'
+        : 'image/png';
+  return `data:${mime};base64,${image.data.toString('base64')}`;
+}
+
+/**
+ * Build the Replicate prediction `input` for the requested model. Seedance /
+ * Veo get duration/resolution/aspect/audio knobs; Kling/Hailuo only get the
+ * fields their OpenAPI accepts (avoid enum mismatches on foreign params).
+ */
+export function replicateInput(
   req: VideoRequest,
   model: string,
   image?: MediaInputFile,
   endImage?: MediaInputFile,
 ): Record<string, unknown> {
+  const isSeedance = model.startsWith('bytedance/seedance');
+  const isVeo = model.startsWith('google/veo');
+  const isKling = model.startsWith('kwaivgi/kling');
+  const isHailuo = model.startsWith('minimax/hailuo');
+
   const input: Record<string, unknown> = { prompt: req.prompt };
-  if (model.includes('seedance')) {
-    input.resolution = req.resolution ?? '720p';
+
+  if (isSeedance || isVeo) {
     input.duration = req.durationSeconds ?? 5;
+    input.resolution = req.resolution ?? '720p';
     input.aspect_ratio = req.aspectRatio ?? '16:9';
-    input.generate_audio = true;
+    // Lite has no generate_audio in its schema; skip it there.
+    if (!(isVeo && model.endsWith('-lite'))) {
+      input.generate_audio = true;
+    }
+  } else if (isKling) {
+    // Kling v3 accepts duration + aspect_ratio + generate_audio; mode maps
+    // resolution (standard/pro/4k) — only set duration/aspect when provided.
+    if (req.durationSeconds !== undefined) input.duration = req.durationSeconds;
+    if (req.aspectRatio) input.aspect_ratio = req.aspectRatio;
+    if (req.resolution === '720p') input.mode = 'standard';
+    else if (req.resolution === '1080p') input.mode = 'pro';
+    else if (req.resolution === '4k') input.mode = '4k';
+  } else if (isHailuo) {
+    if (req.durationSeconds !== undefined) input.duration = req.durationSeconds;
+    if (req.resolution) input.resolution = req.resolution;
   }
+
   if (image) {
-    input.image = `data:image/png;base64,${image.data.toString('base64')}`;
+    input[replicateImageField(model)] = dataUri(image);
   }
-  if (endImage && model.includes('kling')) {
-    input.end_image = `data:image/png;base64,${endImage.data.toString('base64')}`;
+  if (endImage) {
+    const endField = replicateEndImageField(model);
+    if (endField) input[endField] = dataUri(endImage);
   }
   return input;
 }

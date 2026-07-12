@@ -137,3 +137,53 @@ describe('importGalleryPet', () => {
     expect(result.error).toContain('não é uma imagem suportada');
   });
 });
+
+describe('extractPetSlug — hash routing (codex-pets.net)', () => {
+  it('resolve /#/pets/<slug> e /#/install/<slug>', () => {
+    expect(extractPetSlug('https://codex-pets.net/#/pets/axiom')).toBe('axiom');
+    expect(extractPetSlug('https://petdex.dev/#/install/navi')).toBe('navi');
+  });
+});
+
+describe('fetchGalleryCatalog', () => {
+  it('parseia o sitemap, deduplica, rotula e ordena', async () => {
+    const { fetchGalleryCatalog, __resetGalleryCatalogCacheForTests } =
+      await import('./pet-gallery');
+    __resetGalleryCatalogCacheForTests();
+    const xml = [
+      '<urlset>',
+      '<url><loc>https://petdex.dev/pets/zeta-cat</loc></url>',
+      '<url><loc>https://petdex.dev/es/pets/zeta-cat</loc></url>',
+      '<url><loc>https://petdex.dev/pets/aurelion-sol-2</loc></url>',
+      '<url><loc>https://petdex.dev/pets/eve-743f1e0e6b0d</loc></url>',
+      '<url><loc>https://petdex.dev/about</loc></url>',
+      '</urlset>',
+    ].join('');
+    const mock = (async () =>
+      new Response(xml, { status: 200 })) as unknown as typeof fetch;
+    const result = await fetchGalleryCatalog(mock, 1);
+    expect(result.ok).toBe(true);
+    expect(result.items).toEqual([
+      { slug: 'aurelion-sol-2', label: 'Aurelion Sol 2' },
+      { slug: 'eve-743f1e0e6b0d', label: 'Eve' },
+      { slug: 'zeta-cat', label: 'Zeta Cat' },
+    ]);
+  });
+
+  it('usa o cache dentro do TTL', async () => {
+    const { fetchGalleryCatalog, __resetGalleryCatalogCacheForTests } =
+      await import('./pet-gallery');
+    __resetGalleryCatalogCacheForTests();
+    let calls = 0;
+    const mock = (async () => {
+      calls += 1;
+      return new Response(
+        '<url><loc>https://petdex.dev/pets/solo</loc></url>',
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    await fetchGalleryCatalog(mock, 1);
+    await fetchGalleryCatalog(mock, 2);
+    expect(calls).toBe(1);
+  });
+});

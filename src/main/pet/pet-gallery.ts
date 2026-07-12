@@ -7,9 +7,10 @@
  * A arte é licenciada por submissão: o import é escolha explícita do usuário.
  */
 
+/** petdex.dev primeiro: o codex-pets.net responde 404 nas rotas /install. */
 export const GALLERY_BASES = [
-  'https://codex-pets.net',
   'https://petdex.dev',
+  'https://codex-pets.net',
 ] as const;
 
 const GALLERY_REFERER = 'https://petdex.dev/';
@@ -51,10 +52,85 @@ export function extractPetSlug(input: string): string | null {
     GALLERY_BASES.map((base) => new URL(base).host),
   );
   if (!galleryHosts.has(url.host)) return null;
-  const match = url.pathname.match(
-    /^(?:\/[a-z-]{2,5})?\/(?:pets|install)\/([a-z0-9][a-z0-9-]{0,62})\/?$/,
-  );
-  return match ? match[1] : null;
+  const PATH_RE = /^(?:\/[a-z-]{2,5})?\/(?:pets|install)\/([a-z0-9][a-z0-9-]{0,62})\/?$/;
+  const match = url.pathname.match(PATH_RE);
+  if (match) return match[1];
+  // Frontends com hash-routing (codex-pets.net usa /#/pets/<slug>).
+  const hashMatch = url.hash.replace(/^#/, '').match(PATH_RE);
+  return hashMatch ? hashMatch[1] : null;
+}
+
+export interface GalleryCatalogEntry {
+  slug: string;
+  label: string;
+}
+
+const CATALOG_MAX_BYTES = 10_000_000;
+const CATALOG_MAX_ITEMS = 400;
+const CATALOG_TTL_MS = 10 * 60 * 1000;
+let catalogCache: { at: number; items: GalleryCatalogEntry[] } | null = null;
+
+/** "aurelion-sol-2" → "Aurelion Sol 2"; sufixos hex de dedupe caem fora. */
+function labelFromSlug(slug: string): string {
+  return slug
+    .replace(/-[0-9a-f]{12}$/, '')
+    .split('-')
+    .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
+    .join(' ');
+}
+
+/**
+ * Catálogo AO VIVO da galeria via sitemap (não embarcamos arte nem lista
+ * curada: a galeria é da comunidade e os personagens podem ter direitos de
+ * terceiros — o app só mostra o que o site publica, como um navegador).
+ */
+export async function fetchGalleryCatalog(
+  fetchImpl: typeof fetch = fetch,
+  now: number = Date.now(),
+): Promise<{ ok: boolean; items?: GalleryCatalogEntry[]; error?: string }> {
+  if (catalogCache && now - catalogCache.at < CATALOG_TTL_MS) {
+    return { ok: true, items: catalogCache.items };
+  }
+  try {
+    const res = await fetchImpl(`${GALLERY_BASES[0]}/sitemap.xml`, {
+      redirect: 'follow',
+      headers: { accept: 'application/xml,text/xml' },
+    });
+    if (!res.ok) {
+      return { ok: false, error: `Galeria indisponível (${res.status}).` };
+    }
+    const body = await readCapped(res, CATALOG_MAX_BYTES);
+    if (!body) return { ok: false, error: 'Sitemap da galeria grande demais.' };
+    const xml = body.toString('utf8');
+    const seen = new Set<string>();
+    const items: GalleryCatalogEntry[] = [];
+    const re = new RegExp(
+      `<loc>${GALLERY_BASES[0]}/pets/([a-z0-9][a-z0-9-]{0,62})</loc>`,
+      'g',
+    );
+    for (const match of xml.matchAll(re)) {
+      const slug = match[1];
+      if (seen.has(slug)) continue;
+      seen.add(slug);
+      items.push({ slug, label: labelFromSlug(slug) });
+      if (items.length >= CATALOG_MAX_ITEMS) break;
+    }
+    if (items.length === 0) {
+      return { ok: false, error: 'A galeria não listou nenhum pet.' };
+    }
+    items.sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
+    catalogCache = { at: now, items };
+    return { ok: true, items };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Sem conexão com a galeria (${err instanceof Error ? err.message : 'erro de rede'}).`,
+    };
+  }
+}
+
+export function __resetGalleryCatalogCacheForTests(): void {
+  catalogCache = null;
 }
 
 /**

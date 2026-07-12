@@ -17,7 +17,9 @@ import {
  * responsabilidade daqui (mouseenter/leave → nexusPet.setInteractive).
  */
 
-const SPRITE_SIZE = 112;
+/** Sprite grandão (paridade Codex): dá para VER o pet do outro lado da sala. */
+const SPRITE_SIZE = 128;
+const SHEET_SIZE = 152;
 const DRAG_THRESHOLD_PX = 4;
 const CELEBRATE_MS = 3_000;
 
@@ -189,7 +191,8 @@ export function PetApp() {
           }}
           title="Abrir o NexusIDE"
         >
-          {balloon.text}
+          <strong className="pet__balloon-title">{balloon.title}</strong>
+          <span className="pet__balloon-text">{balloon.text}</span>
         </button>
       )}
 
@@ -261,7 +264,7 @@ export function PetApp() {
             sheet={prefs.sheet}
             anim={sheetAnim}
             lookDir={lookDir}
-            size={SPRITE_SIZE + 16}
+            size={SHEET_SIZE}
           />
         ) : prefs.preset === 'custom' && prefs.customGrid ? (
           <CustomPetSprite grid={prefs.customGrid} size={SPRITE_SIZE} />

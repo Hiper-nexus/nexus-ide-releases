@@ -1,0 +1,29 @@
+model_name: ei_jarvis_pt_v5
+target_phrases: ["jarvis", "ei jarvis", "hey jarvis", "oi jarvis"]
+tts_backend: piper_vits
+data_dir: ./data
+output_dir: ./output
+
+augmentation:
+  clip_duration: 2.0
+  batch_size: 16
+  rounds: 8
+  background_paths: [./data/backgrounds]
+  rir_paths: [./data/rirs]
+
+model:
+  model_type: dnn
+  model_size: medium
+
+steps: 30000
+learning_rate: 0.0001
+weight_decay: 0.01
+label_smoothing: 0.02
+max_negative_weight: 80
+target_fp_per_hour: 0.5
+
+batch_n_per_class:
+  positive: 256
+  adversarial_negative: 128
+  ACAV100M_sample: 256
+  background_noise: 128

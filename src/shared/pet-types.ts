@@ -27,6 +27,10 @@ export const PET_CHANNELS = {
   requestSettings: 'pet:requestSettings',
   /** invoke: janela principal → main. Importa um pet da galeria petdex. */
   galleryImport: 'pet:galleryImport',
+  /** invoke: janela principal → main. Catálogo ao vivo da galeria. */
+  galleryList: 'pet:galleryList',
+  /** invoke: janela principal → main. Dialog nativo já em ~/.codex/pets. */
+  pickSheet: 'pet:pickSheet',
   /** event: main → janela principal. Pedido do pet para abrir Settings. */
   openSettings: 'pet:openSettings',
 } as const;
@@ -103,8 +107,10 @@ export interface PetSheet {
   rows: number;
 }
 
-/** Lado da grade do pet custom (mesma malha 16×16 do OperatorSprite). */
-export const PET_CUSTOM_GRID_SIZE = 16;
+/** Lado da grade do pet custom. 32 dá detalhe suficiente para fotos; grids
+    16 antigos continuam válidos (compat com prefs já salvas). */
+export const PET_CUSTOM_GRID_SIZE = 32;
+export const PET_CUSTOM_GRID_SIZES: readonly number[] = [16, 32];
 
 /** Célula da grade custom: cor `#rrggbb` ou null (transparente). */
 export type PetCustomCell = string | null;
@@ -138,6 +144,27 @@ export interface PetPrefs {
 export interface PetGalleryImportResult {
   ok: boolean;
   name?: string;
+  dataUrl?: string;
+  error?: string;
+}
+
+/** Item do catálogo ao vivo da galeria (sitemap → slugs publicados). */
+export interface PetGalleryEntry {
+  slug: string;
+  label: string;
+}
+
+export interface PetGalleryListResult {
+  ok: boolean;
+  items?: PetGalleryEntry[];
+  error?: string;
+}
+
+/** Resultado do dialog nativo de spritesheet (abre em ~/.codex/pets). */
+export interface PetPickSheetResult {
+  ok: boolean;
+  /** false + canceled=true quando o usuário fechou o dialog sem escolher. */
+  canceled?: boolean;
   dataUrl?: string;
   error?: string;
 }
@@ -209,13 +236,14 @@ function isValidSheet(value: unknown): value is PetSheet {
 const HEX_COLOR_RE = /^#[0-9a-f]{6}$/;
 
 function isValidCustomGrid(value: unknown): value is PetCustomGrid {
-  if (!Array.isArray(value) || value.length !== PET_CUSTOM_GRID_SIZE) {
+  if (!Array.isArray(value) || !PET_CUSTOM_GRID_SIZES.includes(value.length)) {
     return false;
   }
+  const side = value.length;
   return value.every(
     (row) =>
       Array.isArray(row) &&
-      row.length === PET_CUSTOM_GRID_SIZE &&
+      row.length === side &&
       row.every(
         (cell) =>
           cell === null || (typeof cell === 'string' && HEX_COLOR_RE.test(cell)),

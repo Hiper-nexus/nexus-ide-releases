@@ -77,12 +77,15 @@ const imageGenerateTool: McpToolDef = {
 const videoGenerateTool: McpToolDef = {
   name: 'nexus_video_generate',
   description:
-    'Generate a video clip from a prompt via Replicate (Seedance default; ' +
-    'Kling supports start+end keyframes via imagePath/endImagePath). Waits ' +
-    'for completion (up to 6 min) and saves the mp4 in the workspace. ' +
-    'Every input/output path must remain inside the open workspace. Returns ' +
-    '{path}. If the key is missing, STOP and report "configure o ' +
-    'provider em Settings → Mídia".',
+    'Generate a video clip via Replicate and save the mp4 in the workspace. ' +
+    'Default model: bytedance/seedance-2.0 (multimodal + native audio). ' +
+    'Also: seedance-2.0-fast/mini, google/veo-3.1(-fast|-lite), ' +
+    'kwaivgi/kling-v3-video (start+end keyframes), minimax/hailuo-2.3, ' +
+    'wan-video/wan-2.5-i2v. Call nexus_media_providers first and ONLY use ' +
+    'listed model ids. imagePath = first frame; endImagePath = last frame ' +
+    '(Seedance last_frame_image / Veo last_frame / Kling end_image). ' +
+    'Waits up to ~6 min. Paths must stay inside the open workspace. ' +
+    'Missing key → STOP and report "configure o provider em Settings → Mídia".',
   inputSchema: {
     type: 'object',
     properties: {

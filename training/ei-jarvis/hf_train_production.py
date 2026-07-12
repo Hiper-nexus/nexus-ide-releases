@@ -82,6 +82,25 @@ def stage_reviewed(dataset: Path, model_dir: Path) -> dict[str, int]:
     return counts
 
 
+def stage_runtime_guard_negatives(model_dir: Path) -> None:
+    """Teach the head the exact out-of-distribution probes enforced by Nexus."""
+    rng = np.random.default_rng(20260712)
+    for split, total in (("train", 1024), ("test", 256)):
+        features = np.empty((total, 16, 96), dtype=np.float32)
+        quarter = total // 4
+        features[:quarter] = 0
+        features[quarter : 2 * quarter] = rng.uniform(
+            -0.05, 0.05, (quarter, 16, 96)
+        )
+        features[2 * quarter : 3 * quarter] = rng.normal(
+            0, 0.05, (quarter, 16, 96)
+        )
+        features[3 * quarter :] = rng.uniform(
+            -1.0, 1.0, (total - 3 * quarter, 16, 96)
+        )
+        np.save(model_dir / f"background_noise_features_{split}.npy", features)
+
+
 def config_model_name(config: Path) -> str:
     for line in config.read_text().splitlines():
         if line.startswith("model_name:"):
@@ -163,6 +182,7 @@ def main() -> None:
 
     model_dir = workspace / "output" / config_model_name(config)
     split_counts = stage_reviewed(dataset, model_dir)
+    stage_runtime_guard_negatives(model_dir)
 
     for stage in ("augment", "train", "export", "eval"):
         run("livekit-wakeword", stage, str(config))

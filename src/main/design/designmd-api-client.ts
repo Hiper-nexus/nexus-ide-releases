@@ -31,25 +31,125 @@ const licenseSchema = z.enum([
   'unknown',
 ]).catch('unknown');
 
-const kitSummarySchema = z.object({
-  slug: z.string().trim().min(1).max(512),
-  name: z.string().trim().min(1).max(512),
-  description: z.string().max(8_192).default(''),
-  author: z.string().trim().max(512).default(''),
-  url: z.string().url().max(4_096).default('https://designmd.ai'),
-  tags: z.array(z.string().trim().min(1).max(128)).default([]),
-  license: licenseSchema,
-  downloadCount: z.number().int().nonnegative().default(0),
-  likeCount: z.number().int().nonnegative().default(0),
-}).strict();
+/**
+ * designmd.ai returns snake_case fields and nested author objects. Normalize
+ * into a stable camelCase summary used by Nexus tools/UI. Matches the official
+ * designmd CLI mapping (author.username, download_count, like_count).
+ */
+const authorSchema = z.union([
+  z.string().trim().max(512),
+  z.object({
+    username: z.string().trim().max(512).optional(),
+    display_name: z.string().trim().max(512).optional(),
+    displayName: z.string().trim().max(512).optional(),
+    avatar_url: z.string().max(4_096).optional(),
+    avatarUrl: z.string().max(4_096).optional(),
+  }).passthrough(),
+]);
 
-const kitDetailSchema = kitSummarySchema.extend({
-  content: z.string().max(1024 * 1024),
-}).strict();
+function authorToString(author: z.infer<typeof authorSchema> | undefined): string {
+  if (typeof author === 'string') return author.trim();
+  if (!author || typeof author !== 'object') return '';
+  const username = typeof author.username === 'string' ? author.username.trim() : '';
+  if (username) return username;
+  const display =
+    (typeof author.display_name === 'string' && author.display_name.trim()) ||
+    (typeof author.displayName === 'string' && author.displayName.trim()) ||
+    '';
+  return display;
+}
 
-export type DesignMdKitSummary = z.infer<typeof kitSummarySchema>;
-export type DesignMdKitDetail = z.infer<typeof kitDetailSchema>;
+function pickString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function pickNonNegativeInt(...values: unknown[]): number {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return Math.floor(value);
+    }
+  }
+  return 0;
+}
+
+const kitSummarySchema = z
+  .object({
+    id: z.string().optional(),
+    slug: z.string().trim().min(1).max(512),
+    name: z.string().trim().min(1).max(512),
+    description: z.string().max(8_192).optional(),
+    author: authorSchema.optional(),
+    author_username: z.string().trim().max(512).optional(),
+    url: z.string().max(4_096).optional(),
+    tags: z.array(z.string().trim().min(1).max(128)).optional(),
+    license: licenseSchema.optional(),
+    downloadCount: z.number().optional(),
+    download_count: z.number().optional(),
+    likeCount: z.number().optional(),
+    like_count: z.number().optional(),
+    preview_colors: z.array(z.string()).optional(),
+    previewColors: z.array(z.string()).optional(),
+    created_at: z.string().optional(),
+    createdAt: z.string().optional(),
+  })
+  .passthrough()
+  .transform((raw): DesignMdKitSummary => {
+    const author =
+      authorToString(raw.author) ||
+      pickString(raw.author_username) ||
+      '';
+    const bareSlug = raw.slug.trim();
+    // API list responses use bare kit slug; composite author/slug is what get/import need.
+    const slug =
+      bareSlug.includes('/')
+        ? bareSlug
+        : author
+          ? `${author}/${bareSlug}`
+          : bareSlug;
+    const url =
+      pickString(raw.url) ||
+      (slug.includes('/') ? `https://designmd.ai/${slug}` : 'https://designmd.ai');
+    return {
+      slug,
+      name: raw.name.trim(),
+      description: typeof raw.description === 'string' ? raw.description : '',
+      author,
+      url,
+      tags: Array.isArray(raw.tags) ? raw.tags : [],
+      license: raw.license ?? 'unknown',
+      downloadCount: pickNonNegativeInt(raw.downloadCount, raw.download_count),
+      likeCount: pickNonNegativeInt(raw.likeCount, raw.like_count),
+    };
+  });
+
+const kitDetailFieldsSchema = z
+  .object({
+    content: z.string().max(1024 * 1024).optional(),
+    content_preview: z.string().max(1024 * 1024).optional(),
+    contentPreview: z.string().max(1024 * 1024).optional(),
+  })
+  .passthrough();
+
 export type DesignMdLicense = z.infer<typeof licenseSchema>;
+
+export interface DesignMdKitSummary {
+  slug: string;
+  name: string;
+  description: string;
+  author: string;
+  url: string;
+  tags: string[];
+  license: DesignMdLicense;
+  downloadCount: number;
+  likeCount: number;
+}
+
+export interface DesignMdKitDetail extends DesignMdKitSummary {
+  content: string;
+}
 
 export interface DesignMdApiDeps {
   readonly baseUrl: string;
@@ -97,10 +197,10 @@ export class DesignMdLicenseError extends Error {
   }
 }
 
-async function boundedJson(
+async function boundedBody(
   response: Response,
   maxBytes: number = DEFAULT_RESPONSE_BUDGET,
-): Promise<unknown> {
+): Promise<string> {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_RESPONSE_BUDGET) {
     throw new DesignMdApiError('invalid API response budget');
   }
@@ -108,7 +208,7 @@ async function boundedJson(
   if (Number.isFinite(declared) && declared > maxBytes) {
     throw new DesignMdApiError('API response exceeds byte budget');
   }
-  if (!response.body) return null;
+  if (!response.body) return '';
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -126,15 +226,24 @@ async function boundedJson(
   } finally {
     reader.releaseLock();
   }
-  if (total === 0) return null;
+  if (total === 0) return '';
   const bytes = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) {
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
+  return new TextDecoder().decode(bytes);
+}
+
+async function boundedJson(
+  response: Response,
+  maxBytes: number = DEFAULT_RESPONSE_BUDGET,
+): Promise<unknown> {
+  const text = await boundedBody(response, maxBytes);
+  if (!text) return null;
   try {
-    return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    return JSON.parse(text) as unknown;
   } catch {
     throw new DesignMdApiError('API response is not valid JSON');
   }
@@ -144,10 +253,20 @@ async function apiRequest(
   path: string,
   init: RequestInit = {},
   deps: DesignMdApiDeps,
-  { auth = false, maxBytes }: { auth?: boolean; maxBytes?: number } = {},
+  {
+    auth = false,
+    maxBytes,
+    accept = 'application/json',
+    asText = false,
+  }: {
+    auth?: boolean;
+    maxBytes?: number;
+    accept?: string;
+    asText?: boolean;
+  } = {},
 ): Promise<unknown> {
   const headers = new Headers(init.headers);
-  headers.set('accept', 'application/json');
+  if (!headers.has('accept')) headers.set('accept', accept);
   if (init.body !== undefined && !headers.has('content-type')) {
     headers.set('content-type', 'application/json');
   }
@@ -184,6 +303,13 @@ async function apiRequest(
     throw new DesignMdApiError(`DesignMd API returned ${response.status}`);
   }
 
+  if (asText) {
+    return boundedBody(response, maxBytes);
+  }
+  const contentType = response.headers.get('content-type') ?? '';
+  if (contentType.includes('text/plain') || contentType.includes('text/markdown')) {
+    return boundedBody(response, maxBytes);
+  }
   return boundedJson(response, maxBytes);
 }
 
@@ -191,8 +317,24 @@ function parseKitSummary(value: unknown): DesignMdKitSummary {
   return kitSummarySchema.parse(value);
 }
 
-function parseKitDetail(value: unknown): DesignMdKitDetail {
-  return kitDetailSchema.parse(value);
+function parseKitDetail(value: unknown, contentOverride?: string): DesignMdKitDetail {
+  const summary = parseKitSummary(value);
+  const fields = kitDetailFieldsSchema.parse(
+    typeof value === 'object' && value !== null ? value : {},
+  );
+  const content =
+    (typeof contentOverride === 'string' && contentOverride) ||
+    (typeof fields.content === 'string' && fields.content) ||
+    (typeof fields.content_preview === 'string' && fields.content_preview) ||
+    (typeof fields.contentPreview === 'string' && fields.contentPreview) ||
+    '';
+  if (!content) {
+    throw new DesignMdApiError('kit content missing from DesignMd API response');
+  }
+  if (content.length > 1024 * 1024) {
+    throw new DesignMdApiError('kit content exceeds size limit');
+  }
+  return { ...summary, content };
 }
 
 function parseKitList(body: unknown): DesignMdKitSummary[] {
@@ -208,7 +350,51 @@ function parseTagList(body: unknown): string[] {
     ? (body as Record<string, unknown>).data
     : body;
   const list = Array.isArray(payload) ? payload : [];
-  return list.filter((item): item is string => typeof item === 'string');
+  const tags: string[] = [];
+  for (const item of list) {
+    if (typeof item === 'string' && item.trim()) {
+      tags.push(item.trim());
+      continue;
+    }
+    if (item && typeof item === 'object') {
+      const record = item as Record<string, unknown>;
+      const name = pickString(record.slug, record.name);
+      if (name) tags.push(name);
+    }
+  }
+  return tags;
+}
+
+/** Parse `username/slug` or a full designmd.ai URL into path segments. */
+export function parseKitIdentifier(identifier: string): { username: string; slug: string } {
+  let cleaned = identifier.trim();
+  if (!cleaned || cleaned.length > 512) {
+    throw new DesignMdApiError('invalid kit identifier');
+  }
+  try {
+    const url = new URL(cleaned);
+    if (!/^(?:www\.)?designmd\.ai$/i.test(url.hostname)) {
+      throw new DesignMdApiError('invalid kit identifier');
+    }
+    cleaned = url.pathname.replace(/^\/+/, '');
+  } catch (error) {
+    if (error instanceof DesignMdApiError) throw error;
+    // not a URL — keep as-is
+  }
+  cleaned = cleaned.replace(/^\/+/, '').replace(/\/+$/, '');
+  const parts = cleaned.split('/').filter(Boolean);
+  if (parts.length !== 2 || parts.some((part) => part === '.' || part === '..')) {
+    throw new DesignMdApiError('invalid kit identifier');
+  }
+  const [username, slug] = parts;
+  if (!username || !slug || username.includes('//') || slug.includes('//')) {
+    throw new DesignMdApiError('invalid kit identifier');
+  }
+  return { username, slug };
+}
+
+function kitPath(username: string, slug: string, suffix = ''): string {
+  return `/kits/${encodeURIComponent(username)}/${encodeURIComponent(slug)}${suffix}`;
 }
 
 export interface DesignMdSearchOptions {
@@ -239,8 +425,9 @@ export class DesignMdApiClient {
   async searchKits(options: DesignMdSearchOptions = {}): Promise<DesignMdKitSummary[]> {
     const params = new URLSearchParams();
     if (options.query) params.set('q', options.query);
+    // Official API expects a comma-separated `tags` query param (not repeated `tag=`).
     if (options.tags && options.tags.length > 0) {
-      for (const tag of options.tags) params.append('tag', tag);
+      params.set('tags', options.tags.join(','));
     }
     if (options.sort) params.set('sort', options.sort);
     if (options.limit !== undefined) params.set('limit', String(options.limit));
@@ -251,14 +438,8 @@ export class DesignMdApiClient {
   }
 
   async listPopularKits(limit?: number): Promise<DesignMdKitSummary[]> {
-    const params = limit !== undefined ? `?limit=${encodeURIComponent(String(limit))}` : '';
-    const body = await apiRequest(
-      `/kits/popular${params}`,
-      {},
-      this.#deps,
-      { maxBytes: LIST_RESPONSE_BUDGET },
-    );
-    return parseKitList(body);
+    // `/kits/popular` is not a live route; popular kits are listed via sort.
+    return this.searchKits({ sort: 'popular', ...(limit !== undefined ? { limit } : {}) });
   }
 
   async listTags(): Promise<string[]> {
@@ -267,22 +448,30 @@ export class DesignMdApiClient {
   }
 
   async getKit(identifier: string): Promise<DesignMdKitDetail> {
-    const normalized = identifier.trim();
-    if (!normalized || normalized.length > 512) {
-      throw new DesignMdApiError('invalid kit identifier');
-    }
-    // Accept either `user/slug` or a full designmd.ai URL.
-    const slug = normalized.replace(/^https:\/\/designmd\.ai\//, '').replace(/^\/+/, '');
-    if (!slug || slug.includes('..') || slug.includes('//')) {
-      throw new DesignMdApiError('invalid kit identifier');
-    }
-    const body = await apiRequest(
-      `/kits/${encodeURIComponent(slug)}`,
-      {},
-      this.#deps,
-      { auth: true, maxBytes: 1024 * 1024 },
-    );
-    return parseKitDetail(body);
+    const { username, slug } = parseKitIdentifier(identifier);
+    // Metadata is public; full DESIGN.md content requires auth via /raw
+    // (matches official designmd CLI).
+    const [metaBody, contentBody] = await Promise.all([
+      apiRequest(kitPath(username, slug), {}, this.#deps, {
+        maxBytes: LIST_RESPONSE_BUDGET,
+      }),
+      apiRequest(kitPath(username, slug, '/raw'), {}, this.#deps, {
+        auth: true,
+        maxBytes: 1024 * 1024,
+        accept: 'text/plain, application/json',
+        asText: true,
+      }),
+    ]);
+    const content =
+      typeof contentBody === 'string'
+        ? contentBody
+        : typeof contentBody === 'object' &&
+            contentBody !== null &&
+            'content' in contentBody &&
+            typeof (contentBody as { content: unknown }).content === 'string'
+          ? (contentBody as { content: string }).content
+          : undefined;
+    return parseKitDetail(metaBody, content);
   }
 
   async publishKit(input: {
@@ -320,6 +509,6 @@ export class DesignMdApiClient {
       this.#deps,
       { auth: true, maxBytes: 1024 * 1024 },
     );
-    return parseKitDetail(body);
+    return parseKitDetail(body, input.content);
   }
 }

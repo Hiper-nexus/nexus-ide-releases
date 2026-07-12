@@ -21,7 +21,7 @@ function rgbaBuffer(
 
 describe('rgbaToGrid', () => {
   it('converte cores opacas para #rrggbb minúsculo', () => {
-    const grid = rgbaToGrid(rgbaBuffer(16, () => [255, 0, 68, 255]));
+    const grid = rgbaToGrid(rgbaBuffer(16, () => [255, 0, 68, 255]), 16);
     expect(grid).toHaveLength(16);
     expect(grid[0]).toHaveLength(16);
     expect(grid[5][7]).toBe('#ff0044');
@@ -30,13 +30,14 @@ describe('rgbaToGrid', () => {
   it('alpha abaixo do piso vira null (transparente)', () => {
     const grid = rgbaToGrid(
       rgbaBuffer(16, (x) => (x < 8 ? [10, 20, 30, 255] : [10, 20, 30, 40])),
+      16,
     );
     expect(grid[3][2]).toBe('#0a141e');
     expect(grid[3][12]).toBeNull();
   });
 
   it('padding hex de canal de um dígito', () => {
-    const grid = rgbaToGrid(rgbaBuffer(16, () => [1, 2, 3, 255]));
+    const grid = rgbaToGrid(rgbaBuffer(16, () => [1, 2, 3, 255]), 16);
     expect(grid[0][0]).toBe('#010203');
   });
 
@@ -46,7 +47,7 @@ describe('rgbaToGrid', () => {
 
   it('grade resultante passa no sanitizador de prefs (round-trip IPC)', async () => {
     const { sanitizePetPrefsPatch } = await import('../../shared/pet-types');
-    const grid = rgbaToGrid(rgbaBuffer(16, () => [200, 150, 100, 255]));
+    const grid = rgbaToGrid(rgbaBuffer(16, () => [200, 150, 100, 255]), 16);
     expect(sanitizePetPrefsPatch({ customGrid: grid }).customGrid).toEqual(grid);
   });
 });

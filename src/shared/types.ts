@@ -7,7 +7,12 @@ import { z } from 'zod';
 import type { AdapterInfo } from './adapter-types';
 import type { BrowserDesignEvent } from './browser-design';
 import type { OnboardingState, OnboardingPatch } from './onboarding-types';
-import type { PetGalleryImportResult, PetPrefs } from './pet-types';
+import type {
+  PetGalleryImportResult,
+  PetGalleryListResult,
+  PetPickSheetResult,
+  PetPrefs,
+} from './pet-types';
 import type { OrientationSnapshot } from './orientation-types';
 import type { UpdateState } from './update-ipc';
 import type {
@@ -551,6 +556,10 @@ export interface NexusApi {
     onOpenSettings(cb: () => void): Unsubscribe;
     /** Baixa um pet da galeria petdex por slug/URL (fetch no main). */
     galleryImport(slugOrUrl: string): Promise<PetGalleryImportResult>;
+    /** Catálogo ao vivo da galeria (sitemap), com cache no main. */
+    galleryList(): Promise<PetGalleryListResult>;
+    /** Dialog nativo de spritesheet, aberto direto em ~/.codex/pets. */
+    pickSheet(): Promise<PetPickSheetResult>;
   };
   /** App-shell lifecycle signals to the main process. */
   app: {

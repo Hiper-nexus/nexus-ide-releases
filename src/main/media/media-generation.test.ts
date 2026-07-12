@@ -12,6 +12,9 @@ import {
   generateAudio,
   generateImage,
   generateVideo,
+  replicateEndImageField,
+  replicateImageField,
+  replicateInput,
   type MediaDeps,
 } from './media-generation';
 
@@ -197,6 +200,93 @@ describe('generateImage', () => {
   });
 });
 
+describe('replicate adapters', () => {
+  it('mapeia o campo de imagem por família (i2v silencioso se errado)', () => {
+    expect(replicateImageField('bytedance/seedance-2.0')).toBe('image');
+    expect(replicateImageField('google/veo-3.1')).toBe('image');
+    expect(replicateImageField('kwaivgi/kling-v3-video')).toBe('start_image');
+    expect(replicateImageField('minimax/hailuo-2.3')).toBe('first_frame_image');
+    expect(replicateImageField('wan-video/wan-2.5-i2v')).toBe('image');
+  });
+
+  it('mapeia o last/end frame por família', () => {
+    expect(replicateEndImageField('bytedance/seedance-2.0')).toBe(
+      'last_frame_image',
+    );
+    expect(replicateEndImageField('google/veo-3.1-fast')).toBe('last_frame');
+    expect(replicateEndImageField('kwaivgi/kling-v3-video')).toBe('end_image');
+    expect(replicateEndImageField('minimax/hailuo-2.3')).toBeNull();
+  });
+
+  it('seedance: duration/resolution/aspect/audio + last_frame_image', () => {
+    const start = {
+      path: path.join(dir, 'a.png'),
+      data: Buffer.from('start'),
+    };
+    const end = { path: path.join(dir, 'b.png'), data: Buffer.from('end') };
+    const input = replicateInput(
+      {
+        prompt: 'cinematic pan',
+        baseDir: dir,
+        durationSeconds: 8,
+        resolution: '1080p',
+        aspectRatio: '9:16',
+      },
+      'bytedance/seedance-2.0',
+      start,
+      end,
+    );
+    expect(input.prompt).toBe('cinematic pan');
+    expect(input.duration).toBe(8);
+    expect(input.resolution).toBe('1080p');
+    expect(input.aspect_ratio).toBe('9:16');
+    expect(input.generate_audio).toBe(true);
+    expect(String(input.image)).toMatch(/^data:image\/png;base64,/);
+    expect(String(input.last_frame_image)).toMatch(/^data:image\/png;base64,/);
+    expect(input).not.toHaveProperty('start_image');
+  });
+
+  it('veo-3.1-lite: sem generate_audio; last_frame no end', () => {
+    const start = {
+      path: path.join(dir, 'a.png'),
+      data: Buffer.from('start'),
+    };
+    const end = { path: path.join(dir, 'b.png'), data: Buffer.from('end') };
+    const input = replicateInput(
+      { prompt: 'city night', baseDir: dir },
+      'google/veo-3.1-lite',
+      start,
+      end,
+    );
+    expect(input.generate_audio).toBeUndefined();
+    expect(input.image).toBeDefined();
+    expect(input.last_frame).toBeDefined();
+  });
+
+  it('kling: start_image + end_image + mode a partir da resolution', () => {
+    const start = {
+      path: path.join(dir, 'a.png'),
+      data: Buffer.from('start'),
+    };
+    const end = { path: path.join(dir, 'b.png'), data: Buffer.from('end') };
+    const input = replicateInput(
+      {
+        prompt: 'face turn',
+        baseDir: dir,
+        durationSeconds: 5,
+        resolution: '1080p',
+      },
+      'kwaivgi/kling-v3-video',
+      start,
+      end,
+    );
+    expect(input.start_image).toBeDefined();
+    expect(input.end_image).toBeDefined();
+    expect(input.mode).toBe('pro');
+    expect(input).not.toHaveProperty('image');
+  });
+});
+
 describe('generateVideo', () => {
   it('replicate: cria prediction, faz poll até succeeded e baixa o mp4', async () => {
     const { deps, calls } = fakeDeps([
@@ -221,6 +311,36 @@ describe('generateVideo', () => {
       '/v1/models/bytedance/seedance-2.0/predictions',
     );
     expect(calls[1].url).toContain('/v1/predictions/pred-1');
+  });
+
+  it('replicate veo-3.1: usa o slug correto na prediction', async () => {
+    const { deps, calls } = fakeDeps([
+      { json: { id: 'pred-veo', status: 'starting' } },
+      {
+        json: {
+          id: 'pred-veo',
+          status: 'succeeded',
+          output: 'https://replicate.delivery/veo.mp4',
+        },
+      },
+      { body: Buffer.from('veo-mp4') },
+    ]);
+    const result = await generateVideo(
+      {
+        prompt: 'slow dolly',
+        baseDir: dir,
+        model: 'google/veo-3.1',
+        outPath: 'veo.mp4',
+      },
+      deps,
+    );
+    expect(result.model).toBe('google/veo-3.1');
+    expect(calls[0].url).toContain('/v1/models/google/veo-3.1/predictions');
+    const body = JSON.parse(String(calls[0].init?.body ?? '{}')) as {
+      input: Record<string, unknown>;
+    };
+    expect(body.input.generate_audio).toBe(true);
+    expect(body.input.resolution).toBe('720p');
   });
 
   it('replicate: prediction failed vira erro com a causa', async () => {

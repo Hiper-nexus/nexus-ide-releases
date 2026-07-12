@@ -10,6 +10,20 @@ Data: 2026-07-12
   "Um agente precisa de você" com a pose waiting — fecha o ciclo
   terminou/falhou/preciso-de-você por missão E por agente.
 
+- Galeria navegável dentro do app: "Ver galeria…" lista os pets
+  publicados no petdex (sitemap ao vivo, cache de 10 min) com filtro e
+  import em um clique; URLs com hash (#/pets/slug) agora resolvem e o
+  domínio canônico petdex.dev virou a base primária (codex-pets.net
+  respondia 404 nos installs).
+- Balão no formato Codex: título em negrito + detalhe (nome da missão),
+  com clamp de 2 linhas.
+- Pet maior (janela 300×270; sheet 152px, pixel 128px) — dá para ver do
+  outro lado da sala.
+- "Importar spritesheet do Codex…" abre o dialog nativo já em
+  ~/.codex/pets (mac/win/linux) com filtro de extensões.
+- Pet de imagem: grade 32×32 (muito mais detalhe), feedback de sucesso
+  ao criar, e botão × para remover pet criado/importado.
+
 ### Teclado
 - Cheatsheet de atalhos (⌘/ e entrada "Atalhos do teclado" no ⌘K): todos
   os aceleradores num overlay, sem sair do fluxo.
