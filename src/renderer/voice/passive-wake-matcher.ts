@@ -10,6 +10,35 @@ export interface PassiveWakeMatch {
   command: string;
 }
 
+const PASSIVE_PREFIX_FILLERS = new Set(['ei', 'hey', 'oi', 'ola', 'ok', 'okay', 'acorda']);
+
+function words(value: string): string[] {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .match(/[a-z0-9]+/g) ?? [];
+}
+
+/**
+ * Embedded commands are more dangerous than a wake-only acknowledgement.
+ * Accept them from passive STT only when the configured name is exact and at
+ * the start (optionally after one natural wake filler). Fuzzy aliases,
+ * truncations and mid-sentence mentions remain useful for wake-only matching,
+ * but can no longer turn TV/video speech into Nexus commands.
+ */
+export function isTrustedPassiveEmbeddedCommand(
+  transcript: string,
+  assistantName = 'Jarvis',
+): boolean {
+  const transcriptWords = words(transcript);
+  const nameWords = words(assistantName);
+  if (transcriptWords.length === 0 || nameWords.length === 0) return false;
+  const offset = PASSIVE_PREFIX_FILLERS.has(transcriptWords[0] ?? '') ? 1 : 0;
+  if (transcriptWords.length <= offset + nameWords.length) return false;
+  return nameWords.every((word, index) => transcriptWords[offset + index] === word);
+}
+
 /**
  * Detecta chamada à assistente no transcript do STT passivo.
  * Delega 100% ao matchWakeWord do Overclock (+ truncamentos no mesmo módulo).

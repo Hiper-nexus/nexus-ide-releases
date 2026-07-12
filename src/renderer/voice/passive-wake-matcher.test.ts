@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { matchPassiveWakeWord } from './passive-wake-matcher';
+import {
+  isTrustedPassiveEmbeddedCommand,
+  matchPassiveWakeWord,
+} from './passive-wake-matcher';
 
 describe('matchPassiveWakeWord (= Overclock matchWakeWord)', () => {
   it('matches jarvis + command rest', () => {
@@ -42,5 +45,29 @@ describe('matchPassiveWakeWord (= Overclock matchWakeWord)', () => {
     expect(matchPassiveWakeWord('Alfredo, abra os logs', 'Alfredo')).toEqual({
       command: 'abra os logs',
     });
+  });
+});
+
+describe('isTrustedPassiveEmbeddedCommand', () => {
+  it.each([
+    'Jarvis abra o terminal',
+    'Ei Jarvis, analise os logs',
+    'ok jarvis cria uma missão',
+  ])('aceita nome exato no início: %s', (text) => {
+    expect(isTrustedPassiveEmbeddedCommand(text)).toBe(true);
+  });
+
+  it.each([
+    'obrigado jarvis abra o log',
+    'o vídeo disse jarvis abra tudo',
+    'jarbas mostra os panes',
+    'e ja abre o terminal',
+    'Jarvis',
+  ])('não autoriza comando ambiente/fuzzy: %s', (text) => {
+    expect(isTrustedPassiveEmbeddedCommand(text)).toBe(false);
+  });
+
+  it('suporta nome personalizado de várias palavras', () => {
+    expect(isTrustedPassiveEmbeddedCommand('Ei Sexta Feira abra o terminal', 'Sexta Feira')).toBe(true);
   });
 });

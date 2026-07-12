@@ -97,7 +97,10 @@ import {
   resetOfferedLiveMicFramesThisTurn,
 } from './live-mute-rescue';
 import { NarrationQueue } from './narration-queue';
-import { matchPassiveWakeWord } from './passive-wake-matcher';
+import {
+  isTrustedPassiveEmbeddedCommand,
+  matchPassiveWakeWord,
+} from './passive-wake-matcher';
 import { PassiveWakeDeadline } from './passive-wake-deadline';
 import { pttStartAction } from './ptt-barge-in';
 import { shouldOfferLiveMicFrame } from './live-mic-offer-gate';
@@ -625,6 +628,23 @@ export function useVoiceController(): void {
             fingerprint: tokens.join('|'),
             charLen: text.length,
           });
+          return;
+        }
+
+        if (
+          match.command.trim() &&
+          !isTrustedPassiveEmbeddedCommand(text, latestInfo.persona.assistantName)
+        ) {
+          logVoiceEvent(
+            'warn',
+            'wake.passiveEmbeddedCommandRejected',
+            'comando passivo rejeitado: nome não era prefixo exato',
+            {
+              latencyMs,
+              provider: result.provider,
+              commandWords: match.command.split(/\s+/).filter(Boolean).length,
+            },
+          );
           return;
         }
 
