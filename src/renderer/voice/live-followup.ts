@@ -171,6 +171,20 @@ export function releaseAfterLiveProviderAnswer(opts: LiveFollowUpOptions & {
     });
     return;
   }
+  // Provider completion and playback drain do not share a clock. Users start
+  // speaking when the answer sounds finished, while the reopen routine may
+  // still be waiting for a late chunk. Authorize that narrow bridge now; the
+  // reopen path renews the full window when reply capture actually starts.
+  const bridgeDeadline = followUpAuthority.arm();
+  logVoiceEvent(
+    'info',
+    'jarvis.followUpAuthorityBridgeArmed',
+    'continuidade autorizada durante drenagem do áudio',
+    {
+      durationMs: Math.round(followUpAuthority.remainingMs()),
+      deadlineMonotonicMs: Math.round(bridgeDeadline),
+    },
+  );
   void reopenLiveFollowUpListening(opts);
 }
 
@@ -212,5 +226,19 @@ function startToolFollowUp(request: ToolFollowUpRequest, source: string): void {
     turnId: request.turnId,
     source,
   });
+  // Tool narration has the same provider/playback clock gap as a normal
+  // answer. Authorize speech immediately when the correlated tool turn is
+  // complete; the drain routine renews the window when capture opens.
+  const bridgeDeadline = followUpAuthority.arm();
+  logVoiceEvent(
+    'info',
+    'jarvis.toolFollowUpAuthorityBridgeArmed',
+    'continuidade de ferramenta autorizada durante drenagem do áudio',
+    {
+      durationMs: Math.round(followUpAuthority.remainingMs()),
+      deadlineMonotonicMs: Math.round(bridgeDeadline),
+      turnId: request.turnId,
+    },
+  );
   void reopenLiveFollowUpListening(request);
 }

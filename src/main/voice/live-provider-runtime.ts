@@ -147,6 +147,10 @@ function bindTranscripts(
   provider: TurnManagedRealtimeProvider,
   host: LiveProviderRuntimeHost,
 ): void {
+  // Gemini may emit a function call before it marks input transcription final.
+  // Keep the accumulated user deltas as current-turn authority so action gates
+  // never consult the previous wake transcript during that ordering window.
+  let pendingUserTranscript = '';
   provider.onRoleTranscript((line) => {
     if (host.getProvider() !== provider) return;
     const activeTurnId = host.getActiveTurnId();
@@ -159,6 +163,11 @@ function bindTranscripts(
       return;
     }
     if (!line.text.trim()) return;
+    if (line.role === 'user' && !line.final) {
+      pendingUserTranscript += line.text;
+      const evidence = pendingUserTranscript.trim();
+      if (evidence) host.setLastUserTranscript(evidence);
+    }
     if (line.role === 'assistant') echoSuppressor.record(line.text);
     if (line.role === 'user' && line.final && echoSuppressor.isEcho(line.text)) {
       logVoice('info', 'live.inputEchoDiscarded', 'eco do TTS/ack descartado (live)', {
@@ -180,6 +189,7 @@ function bindTranscripts(
     }
     if (line.role === 'user' && line.final) {
       const text = line.text.trim();
+      pendingUserTranscript = '';
       host.setLastUserTranscript(text);
       host.routePendingAnswer(text);
     }

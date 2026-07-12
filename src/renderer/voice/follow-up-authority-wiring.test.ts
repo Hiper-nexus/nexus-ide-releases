@@ -38,4 +38,20 @@ describe('follow-up authority wiring', () => {
     expect(followup).toContain('followUpAuthority.clear()');
     expect(finish).toContain('const MAX_REPLY_MUTE_REOPENS = 0');
   });
+
+  it('authorizes the provider-answer drain gap before reopening capture', () => {
+    const bridge = followup.indexOf('jarvis.followUpAuthorityBridgeArmed');
+    const reopen = followup.indexOf('void reopenLiveFollowUpListening(opts)');
+    expect(bridge).toBeGreaterThan(-1);
+    expect(reopen).toBeGreaterThan(bridge);
+  });
+
+  it('authorizes the tool-result drain gap before reopening capture', () => {
+    const ready = followup.indexOf('jarvis.liveToolFollowUpReady');
+    const bridge = followup.indexOf('jarvis.toolFollowUpAuthorityBridgeArmed');
+    const reopen = followup.indexOf('void reopenLiveFollowUpListening(request)');
+    expect(ready).toBeGreaterThan(-1);
+    expect(bridge).toBeGreaterThan(ready);
+    expect(reopen).toBeGreaterThan(bridge);
+  });
 });

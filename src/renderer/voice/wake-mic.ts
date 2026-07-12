@@ -17,6 +17,7 @@ import { rmsToLevel } from './voice-level';
 import { preferredInputConstraints } from './audio-device-preferences';
 import { LiveFrameGate } from './live-frame-gate';
 import { PassiveWakeCapture } from './passive-wake-capture';
+import { PASSIVE_WAKE_LATENCY_POLICY } from './passive-wake-latency-policy';
 
 /**
  * Mic sempre-ligado do wake word: stream 16 kHz mono de baixo custo que
@@ -145,15 +146,15 @@ export class WakeMic {
     // utterance alive until maxMs. Use the same floor as speech onset so normal
     // speech endpoints promptly instead of requiring a shouted peak.
     speechHangoverRms: PASSIVE_WAKE_RAW_SPEECH_RMS,
-    silenceMs: 650,
-    maxMs: 2_600,
+    silenceMs: PASSIVE_WAKE_LATENCY_POLICY.silenceMs,
+    maxMs: PASSIVE_WAKE_LATENCY_POLICY.maxMs,
     // Text matching still proves the assistant name; this peak only blocks
     // very low-energy noise from spending an STT request.
-    forceEmitMinPeakRms: 0.08,
+    forceEmitMinPeakRms: PASSIVE_WAKE_LATENCY_POLICY.forceEmitMinPeakRms,
     // A 900ms blind gap after every 2.6s forced ambient window made the first
     // “Jarvis” disappear roughly one attempt in four. Pre-roll bridges this
     // short debounce; textual matching remains the actual wake authority.
-    cooldownMs: 120,
+    cooldownMs: PASSIVE_WAKE_LATENCY_POLICY.cooldownMs,
   });
 
   // Utterance capture (comando pós-wake/F6) sobre o MESMO stream quente.
