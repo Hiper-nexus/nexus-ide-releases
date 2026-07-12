@@ -59,8 +59,9 @@ describe('pet-library', () => {
       true,
     );
     expect(loaded.sheet?.cols).toBe(8);
-    // Packs petdex: 8×9 (célula 192×208); Codex full seria 8×11.
+    // Packs petdex: 8×9 (célula 192×208 em full-res); Codex full seria 8×11.
     expect(loaded.sheet?.rows).toBe(9);
+    expect(loaded.sheet?.cols).toBe(8);
   });
 
   it('rejeita path traversal e file que não casa com id', () => {

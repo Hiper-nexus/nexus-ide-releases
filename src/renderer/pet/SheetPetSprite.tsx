@@ -82,13 +82,16 @@ export function SheetPetSprite({
   );
 
   const spec = useMemo(() => {
-    if (anim === 'sleep') return { row: SHEET_NEUTRAL.row, frames: 1 };
+    if (anim === 'sleep') {
+      // Col 6 do Codex full é o neutro; em packs petdex 8×9 costuma ser vazio.
+      return { row: 0, frames: 1, col: 0 as number | null };
+    }
     const base = SHEET_ANIMS[anim];
     // Sheets com menos de 11 linhas (ex.: petdex 8×9) — clampa a row válida.
     if (base.row >= grid.rows) {
-      return { row: Math.max(0, grid.rows - 1), frames: base.frames };
+      return { row: Math.max(0, grid.rows - 1), frames: base.frames, col: null };
     }
-    return base;
+    return { ...base, col: null as number | null };
   }, [anim, grid.rows]);
 
   useEffect(() => {
@@ -117,11 +120,12 @@ export function SheetPetSprite({
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx || !image || frameW < 1 || frameH < 1) return;
     const row = looking ? looking.row : spec.row;
+    const maxCol = Math.max(0, grid.cols - 1);
     const col = looking
       ? looking.col
-      : anim === 'sleep'
-        ? SHEET_NEUTRAL.col
-        : frame;
+      : spec.col !== null && spec.col !== undefined
+        ? Math.min(spec.col, maxCol)
+        : Math.min(frame, maxCol);
     const cssW = displayW;
     const cssH = size;
     canvas.width = Math.max(1, Math.round(cssW * dpr));

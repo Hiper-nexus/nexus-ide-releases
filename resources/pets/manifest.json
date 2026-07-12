@@ -5,7 +5,7 @@
     "label": "Navi",
     "note": "explorador clássico",
     "file": "sheets/navi.webp",
-    "bytes": 261502,
+    "bytes": 2066490,
     "cols": 8,
     "rows": 9
   },
@@ -15,7 +15,7 @@
     "label": "Ember",
     "note": "fogo / energia",
     "file": "sheets/ember.webp",
-    "bytes": 283846,
+    "bytes": 2351986,
     "cols": 8,
     "rows": 9
   },
@@ -25,7 +25,7 @@
     "label": "Nova",
     "note": "espacial",
     "file": "sheets/nova.webp",
-    "bytes": 254134,
+    "bytes": 2146682,
     "cols": 8,
     "rows": 9
   },
@@ -35,7 +35,7 @@
     "label": "Pixel",
     "note": "retro",
     "file": "sheets/pixel.webp",
-    "bytes": 299168,
+    "bytes": 964084,
     "cols": 8,
     "rows": 9
   },
@@ -45,7 +45,7 @@
     "label": "Acidling",
     "note": "criatura slimada",
     "file": "sheets/acidling.webp",
-    "bytes": 260942,
+    "bytes": 2136710,
     "cols": 8,
     "rows": 9
   },
@@ -55,7 +55,7 @@
     "label": "Aion",
     "note": "místico",
     "file": "sheets/aion.webp",
-    "bytes": 313422,
+    "bytes": 2394794,
     "cols": 8,
     "rows": 9
   },
@@ -65,7 +65,7 @@
     "label": "AI Workbot",
     "note": "robô de trabalho",
     "file": "sheets/ai-workbot.webp",
-    "bytes": 133380,
+    "bytes": 35036,
     "cols": 8,
     "rows": 9
   },
@@ -75,7 +75,7 @@
     "label": "CPU Orb",
     "note": "orbe tech",
     "file": "sheets/cpu-orb.webp",
-    "bytes": 140584,
+    "bytes": 1249252,
     "cols": 8,
     "rows": 9
   },
@@ -85,7 +85,7 @@
     "label": "Tiger Cub",
     "note": "filhote tigre",
     "file": "sheets/tiger-cub.webp",
-    "bytes": 146916,
+    "bytes": 28240,
     "cols": 8,
     "rows": 9
   },
@@ -95,7 +95,7 @@
     "label": "Feather",
     "note": "leve / pássaro",
     "file": "sheets/feather.webp",
-    "bytes": 196158,
+    "bytes": 1624582,
     "cols": 8,
     "rows": 9
   },
@@ -105,7 +105,7 @@
     "label": "Ajisai",
     "note": "flor / hortênsia",
     "file": "sheets/ajisai.webp",
-    "bytes": 236018,
+    "bytes": 1823466,
     "cols": 8,
     "rows": 9
   },
@@ -115,7 +115,7 @@
     "label": "Shiba July",
     "note": "cachorro",
     "file": "sheets/shiba.webp",
-    "bytes": 249816,
+    "bytes": 2136556,
     "cols": 8,
     "rows": 9
   },
@@ -125,7 +125,7 @@
     "label": "Ada Lovelace",
     "note": "história / tech",
     "file": "sheets/ada.webp",
-    "bytes": 241074,
+    "bytes": 2118578,
     "cols": 8,
     "rows": 9
   },
@@ -135,7 +135,7 @@
     "label": "Aegis",
     "note": "guardião",
     "file": "sheets/aegis.webp",
-    "bytes": 334002,
+    "bytes": 1116812,
     "cols": 8,
     "rows": 9
   },
@@ -145,7 +145,7 @@
     "label": "Aimisi",
     "note": "estilo anime",
     "file": "sheets/aimisi.webp",
-    "bytes": 239946,
+    "bytes": 2090432,
     "cols": 8,
     "rows": 9
   }

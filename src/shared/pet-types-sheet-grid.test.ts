@@ -14,8 +14,16 @@ describe('detectSheetGrid', () => {
     expect(detectSheetGrid(768, 936)).toEqual({ cols: 8, rows: 9 });
   });
 
-  it('não força 11 linhas em altura só quase divisível', () => {
-    // 1872 % 11 === 2 — se forçasse 11, cortaria o personagem
-    expect(detectSheetGrid(1536, 1872).rows).not.toBe(11);
+  it('não força 11 linhas só porque divide (935÷11=85, célula errada)', () => {
+    // 768×935 divide em 11, mas a razão da célula não é a canônica 192:208
+    const grid = detectSheetGrid(768, 935);
+    expect(grid.cols).toBe(8);
+    // Deve preferir razão próxima de 104px de altura (96*(208/192)), não 85
+    const cellH = 935 / grid.rows;
+    expect(Math.abs(cellH - 104)).toBeLessThan(Math.abs(85 - 104));
+  });
+
+  it('não força 11 em 1536×1872 (petdex)', () => {
+    expect(detectSheetGrid(1536, 1872).rows).toBe(9);
   });
 });

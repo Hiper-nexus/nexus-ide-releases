@@ -72,9 +72,10 @@ export const CODEX_SHEET_ROWS = 11;
 
 /**
  * Detecta malha de um spritesheet a partir das dimensões.
- * Codex v2 completo é 8×11; packs petdex costumam vir 8×9 (mesma célula
- * 192×208 em 1536px de largura, sem as 2 linhas de look). Forçar 11 linhas
- * num sheet de 9 corta o personagem e mistura frames.
+ * Célula canônica Codex/petdex em 1536px: 192×208 (razão 192:208).
+ * Codex full = 8×11; petdex costuma ser 8×9 (sem linhas de look).
+ * Escolhe o nº de linhas pela razão da célula — não bastar “dividir
+ * exatamente” (935÷11=85 corta o pet; o certo é ~9 linhas × ~104px).
  */
 export function detectSheetGrid(
   width: number,
@@ -84,16 +85,33 @@ export function detectSheetGrid(
     width >= CODEX_SHEET_COLS && width % CODEX_SHEET_COLS === 0
       ? CODEX_SHEET_COLS
       : Math.max(1, width);
-  if (width % cols !== 0) {
+  if (width % cols !== 0 || width < cols) {
     return { cols: CODEX_SHEET_COLS, rows: CODEX_SHEET_ROWS };
   }
-  // Prefer exact row counts (11 = Codex full; 9 = petdex common).
+  const cellW = width / cols;
+  // 208/192 = razão da célula nos packs oficiais.
+  const idealCellH = cellW * (208 / 192);
+  let bestExact: { rows: number; score: number } | null = null;
   for (const rows of [11, 9, 12, 10, 13, 8, 14, 15, 16]) {
-    if (height % rows === 0) return { cols, rows };
+    if (height % rows !== 0) continue;
+    const score = Math.abs(height / rows - idealCellH);
+    if (!bestExact || score < bestExact.score) {
+      bestExact = { rows, score };
+    }
   }
-  const cell = Math.max(1, Math.floor(width / cols));
-  const rows = Math.max(1, Math.floor(height / cell));
-  return { cols, rows };
+  const approxRows = Math.min(
+    16,
+    Math.max(1, Math.round(height / idealCellH)),
+  );
+  const approxScore = Math.abs(height / approxRows - idealCellH);
+  // Exact só vence se a célula ficar perto da razão canônica (≤ 8px).
+  if (bestExact && bestExact.score <= 8) {
+    return { cols, rows: bestExact.rows };
+  }
+  if (!bestExact || approxScore < bestExact.score) {
+    return { cols, rows: approxRows };
+  }
+  return { cols, rows: bestExact.rows };
 }
 /** Animações do contrato v2 que o pet usa: linha e nº de frames. */
 export const SHEET_ANIMS = {
