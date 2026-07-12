@@ -185,7 +185,7 @@ export function SheetPetSprite({
     const base = SHEET_ANIMS[anim];
     const row =
       base.row >= grid.rows ? Math.max(0, grid.rows - 1) : base.row;
-    let frames = base.frames;
+    let frames: number = base.frames;
     // Corta colunas vazias no fim (petdex). Só quando a imagem já carregou.
     if (image && frameW > 1 && frameH > 1) {
       frames = countOpaqueColumns(
