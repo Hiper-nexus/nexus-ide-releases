@@ -201,6 +201,13 @@ async function probeWakeHeadFalsePositive(
 /** Above this on silence/noise the PT head is considered broken (overfit). */
 const CUSTOM_WAKE_FP_PROBE_MAX = 0.85;
 
+// The wake head scores a temporal feature window, so its highest score can
+// arrive a few audio chunks after the syllable that supplied the strongest
+// speech energy. Keep only a short energy history: long enough to align the
+// acoustic gate with inference latency, short enough that unrelated room
+// noise cannot authorize a later score.
+const WAKE_ENERGY_HOLD_CHUNKS = 10; // 10 × 80 ms = 800 ms
+
 export class WakeEngine {
   private mel: ort.InferenceSession | null = null;
   private emb: ort.InferenceSession | null = null;
@@ -222,6 +229,7 @@ export class WakeEngine {
   private peakThreshold = THRESHOLD;
   private lastScoreLogAt = 0;
   private peakRms = 0;
+  private recentRms: number[] = [];
   private scoredChunks = 0;
 
   constructor(
@@ -453,6 +461,7 @@ export class WakeEngine {
     this.peakSource = 'embedded';
     this.peakThreshold = THRESHOLD;
     this.peakRms = 0;
+    this.recentRms = [];
     this.scoredChunks = 0;
     const sessions = [
       this.mel,
@@ -482,6 +491,7 @@ export class WakeEngine {
     this.peakSource = 'embedded';
     this.peakThreshold = THRESHOLD;
     this.peakRms = 0;
+    this.recentRms = [];
     this.scoredChunks = 0;
   }
 
@@ -534,6 +544,11 @@ export class WakeEngine {
     }
     const rms = Math.sqrt(squaredSum / Math.max(1, samples.length));
     this.peakRms = Math.max(this.peakRms, rms);
+    this.recentRms.push(rms);
+    if (this.recentRms.length > WAKE_ENERGY_HOLD_CHUNKS) {
+      this.recentRms.shift();
+    }
+    const recentPeakRms = Math.max(...this.recentRms);
     this.scoredChunks += 1;
     // Escala int16 (o mel espera amplitude de int16, não [-1,1]).
     const chunk = new Float32Array(samples.length);
@@ -621,8 +636,10 @@ export class WakeEngine {
         custom: customWake ? (customScore ?? 0) : undefined,
         official: officialScore,
       },
-      // Gate no RMS do chunk atual (não o pico da janela de telemetria).
-      { peakRms: rms, preferCustom },
+      // Align the energy gate with the temporal model window. Using only the
+      // current 80 ms chunk caused real calls to score high one chunk after
+      // their voice peak and be silently rejected.
+      { peakRms: recentPeakRms, preferCustom },
     );
     const now = Date.now();
     if (detection) {
@@ -641,7 +658,7 @@ export class WakeEngine {
     if (detection && now - this.lastFireAt > DEBOUNCE_MS) {
       this.lastFireAt = now;
       console.log(
-        `[wake] "Hey Jarvis" detectado (${detection.source}, score ${detection.score.toFixed(2)}, rms ${rms.toFixed(3)})`,
+        `[wake] "Hey Jarvis" detectado (${detection.source}, score ${detection.score.toFixed(2)}, rms ${rms.toFixed(3)}, recentPeakRms ${recentPeakRms.toFixed(3)})`,
       );
       this.onDetected();
     }
