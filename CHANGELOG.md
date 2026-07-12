@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.8 — Realtime Operator
+
+Data: 2026-07-11
+
+### Correções
+- Gate de release estabilizado para conexões TLS simultâneas do bridge remoto:
+  cada cliente usa credencial curta própria, eliminando corrida de expiração em
+  runners concorridos sem relaxar a segurança do runtime.
+
+### Build
+- Release `v0.13.8` multi-arquitetura pelo workflow assinado/notarizado.
+
 ## 0.13.7 — Realtime Operator
 
 Data: 2026-07-11

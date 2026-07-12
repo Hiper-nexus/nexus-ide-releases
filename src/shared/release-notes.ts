@@ -13,7 +13,7 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.13.7',
+  version: '0.13.8',
   date: '2026-07-11',
   codename: 'Realtime Operator',
   summary:

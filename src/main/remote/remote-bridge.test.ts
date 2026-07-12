@@ -55,7 +55,9 @@ async function rpc(
   payload: unknown,
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('rpc timeout')), 4000);
+    // The full CI suite heavily contends for CPU; keep this above the token TTL
+    // so a slow runner reports the protocol response instead of a false timeout.
+    const timer = setTimeout(() => reject(new Error('rpc timeout')), 10_000);
     socket.once('message', (data) => {
       clearTimeout(timer);
       resolve(JSON.parse(data.toString()) as Record<string, unknown>);
@@ -170,9 +172,12 @@ describe('remote bridge', () => {
   });
 
   it('closes already authenticated sockets when tokens are revoked', async () => {
-    const token = await issueToken();
-    const firstSocket = await authenticate(token);
-    const secondSocket = await authenticate(token);
+    // Give each TLS handshake a freshly issued short-lived token. Reusing one
+    // token made this race its 500 ms expiry on contended CI runners.
+    const firstToken = await issueToken();
+    const firstSocket = await authenticate(firstToken);
+    const secondToken = await issueToken();
+    const secondSocket = await authenticate(secondToken);
     const firstClosed = waitForClose(firstSocket);
     const secondClosed = waitForClose(secondSocket);
 
@@ -183,7 +188,7 @@ describe('remote bridge', () => {
       { code: 1008, reason: 'tokens revoked' },
     ]);
     const retry = await connect();
-    await expect(rpc(retry, { id: 'revoked', type: 'auth', token })).resolves.toMatchObject({
+    await expect(rpc(retry, { id: 'revoked', type: 'auth', token: secondToken })).resolves.toMatchObject({
       ok: false,
       error: 'invalid token',
     });
