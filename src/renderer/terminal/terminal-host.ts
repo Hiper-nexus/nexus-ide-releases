@@ -230,6 +230,27 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
           useSessionStateStore.getState().setPaneState(pane.id, 'exited');
         }),
       );
+
+      // `--resume` restores provider memory but every supported CLI returns to
+      // an idle prompt; it does not continue the interrupted task by itself.
+      // The user explicitly clicked Restart, so submit one bounded continuation
+      // instruction after the TUI has mounted. Guard by session id so a rapid
+      // second restart can never write into the replacement process.
+      if (resume && res.resumeMode !== 'unsupported') {
+        const resumedSessionId = res.sessionId;
+        const continuationTimer = setTimeout(() => {
+          if (host.disposed || host.sessionId !== resumedSessionId) return;
+          const role = pane.role === 'orchestrator' ? 'orchestrator' : 'agent';
+          window.nexus.pty.write(
+            resumedSessionId,
+            `Continue the current mission from exactly where you stopped as the ${role}. Preserve existing context and execute the next pending step now.\n`,
+          );
+          host.term.writeln(
+            '\r\n\x1b[36m[nexus] continuidade enviada automaticamente ao agente.\x1b[0m',
+          );
+        }, 1_200);
+        host.cleanups.push(() => clearTimeout(continuationTimer));
+      }
       const input = host.term.onData((data) => {
         if (host.sessionId) window.nexus.pty.write(host.sessionId, data);
       });
