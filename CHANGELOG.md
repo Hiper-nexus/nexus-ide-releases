@@ -28,6 +28,11 @@ Data: 2026-07-12
 - Cheatsheet de atalhos (⌘/ e entrada "Atalhos do teclado" no ⌘K): todos
   os aceleradores num overlay, sem sair do fluxo.
 
+### Biblioteca embutida (sessão paralela)
+- Starter pack offline com 15 sprites Codex v2 em resources/pets,
+  aplicáveis com um clique (NOTICE com origem/remoção; arte pertence aos
+  autores da comunidade — regularização em andamento).
+
 ### Voz e mídia (sessões paralelas)
 - Modelo de wake PT-BR calibrado promovido a padrão.
 - Catálogo de mídia: Seedream 5.0 Pro, Veo e recuperação de jobs via
