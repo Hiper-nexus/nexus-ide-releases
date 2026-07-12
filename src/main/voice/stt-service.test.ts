@@ -120,12 +120,14 @@ describe('transcribe — quota/rate-limit fallback (free-tier Groq)', () => {
     }
   });
 
-  // ITEM 7: on the wake path a hung cloud provider must NOT hold the turn ~16s.
-  it('wake budget: after one failed cloud attempt, skips the 2nd cloud straight to local', async () => {
+  // A quick provider failure must not silence machines without local whisper.
+  // The total budget still bounds a genuinely hung provider.
+  it('wake budget: after one fast cloud failure, tries the 2nd cloud inside the remaining budget', async () => {
     const calledHosts: string[] = [];
     const fetchImpl = vi.fn(async (url: string | URL | Request) => {
       calledHosts.push(String(url));
-      return jsonResponse(500, {}); // groq errors
+      if (String(url).includes('groq.com')) return jsonResponse(429, {});
+      return jsonResponse(200, { text: 'openai recovered the wake' });
     }) as unknown as typeof fetch;
 
     const result = await transcribe(
@@ -134,19 +136,18 @@ describe('transcribe — quota/rate-limit fallback (free-tier Groq)', () => {
       PROBES,
       deps({
         fetchImpl,
-        findBin: vi.fn(() => 'whisper-cli'),
-        fileExists: vi.fn(() => true),
-        readText: vi.fn(() => '  local after stall  '),
+        findBin: vi.fn(() => null),
+        fileExists: vi.fn(() => false),
       }),
     );
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.provider).toBe('local-whisper');
-      expect(result.stalled).toBe(true);
+      expect(result.provider).toBe('openai');
+      expect(result.text).toBe('openai recovered the wake');
     }
-    // Only ONE cloud host was hit (groq); openai was skipped by the budget.
-    expect(calledHosts.filter((h) => h.includes('openai.com'))).toHaveLength(0);
+    expect(calledHosts.filter((h) => h.includes('groq.com'))).toHaveLength(1);
+    expect(calledHosts.filter((h) => h.includes('openai.com'))).toHaveLength(1);
   });
 
   it('wake budget: skips ALL cloud when the budget is already spent (injected clock)', async () => {

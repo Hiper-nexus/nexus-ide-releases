@@ -354,8 +354,12 @@ export function parseReply(raw: string): JarvisReply {
       typeof obj.say === 'string'
         ? obj.say.trim()
         : spokenFromStructuredShape(obj as Record<string, unknown>) || 'Certo.';
+    // The model occasionally emits expectReply=false while its spoken text
+    // explicitly asks a question (and may append options after the '?'). The
+    // observable conversation wins over contradictory metadata.
     let expectReply =
-      typeof obj.expectReply === 'boolean' ? obj.expectReply : (say ? /\?\s*$/.test(say) : false);
+      (typeof obj.expectReply === 'boolean' ? obj.expectReply : false) ||
+      (say ? say.includes('?') : false);
     if (!say || /\b(n[aã]o entendi|n[aã]o compreendi|repita|pode repetir)\b/i.test(say)) {
       expectReply = false;
     }

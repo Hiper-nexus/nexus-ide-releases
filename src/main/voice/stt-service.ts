@@ -48,9 +48,10 @@ export const STT_LOCAL_TIMEOUT_MS = 30_000;
  * ITEM 7 (STT stall bound on the WAKE path): 12s/cloud is too long for a
  * conversational wake turn — a hung Whisper cloud held the turn ~16s and the HUD
  * lapsed. On the wake path we tighten the per-cloud deadline AND cap the total
- * wall-clock: after one cloud attempt (or once the budget is spent) we jump
- * straight to keyless local whisper.cpp instead of burning a second cloud
- * round-trip. Logged as stt.stall so the stall is visible, never silent.
+ * wall-clock. Every cloud receives only the remaining slice of the budget, so
+ * a fast 429/auth failure can still fall through to the next configured cloud.
+ * This matters on machines without whisper.cpp: skipping OpenAI merely because
+ * Groq rejected immediately turned a recoverable wake into a silent turn.
  */
 export const STT_WAKE_CLOUD_TIMEOUT_MS = 6_000;
 export const STT_WAKE_BUDGET_MS = 8_000;
@@ -339,7 +340,6 @@ export async function transcribe(
   const budgetMs = req.budgetMs;
   const now = deps.now ?? Date.now;
   const tStart = now();
-  let cloudTried = false;
   let stalled = false;
 
   for (const plugin of chain) {
@@ -369,14 +369,13 @@ export async function transcribe(
         }
         cloudTimeoutMs = Math.min(STT_PASSIVE_WAKE_CLOUD_TIMEOUT_MS, remaining);
       } else {
-      // No time (or budget) left for a second cloud round-trip → skip to local.
-        if (cloudTried || remaining <= 1_000) {
+        // A fast failure (notably Groq 429) must not consume the whole fallback
+        // chain. Only skip clouds when the actual wall-clock budget is spent.
+        if (remaining <= 1_000) {
           stalled = true;
           attempts.push({
             provider: plugin.provider,
-            reason: cloudTried
-              ? 'wake budget: 1 cloud tried, skipped to local'
-              : `wake budget ${budgetMs}ms spent, skipped to local`,
+            reason: `wake budget ${budgetMs}ms spent, skipped to local`,
           });
           continue;
         }
@@ -387,7 +386,6 @@ export async function transcribe(
     }
 
     const outcome = await attemptProvider(plugin, req, deps, cloudTimeoutMs);
-    if (isCloud) cloudTried = true;
     if (outcome.ok) {
       const note =
         attempts.length > 0

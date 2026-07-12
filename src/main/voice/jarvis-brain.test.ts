@@ -241,6 +241,14 @@ describe('jarvisThink brain providers', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('keeps continuity when spoken text asks a question despite contradictory model metadata', () => {
+    const reply = parseReply(
+      '{"say":"Como deseja prosseguir? Posso iniciar ou detalhar o plano.","expectReply":false,"action":{"type":"none"}}',
+    );
+
+    expect(reply.expectReply).toBe(true);
+  });
+
   it('keeps likely noise silent when the local brain fallback is active', async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch;
 

@@ -56,6 +56,7 @@ import { stripPromptEcho } from './response-echo';
 import type { VoiceCapture, AutoStopOptions } from './voice-capture';
 import { resolveDelegationReply } from './delegation-confirm';
 import { isClassicActionGrounded } from './classic-action-grounding';
+import { followUpAuthority } from './follow-up-authority';
 
 const BRAIN_DEADLINE_MS_LOCAL = 35_000;
 const JARVIS_MEMORY_MS_LOCAL = 300_000;
@@ -277,6 +278,12 @@ export async function runJarvisTurn(
     wakeMic.suppressWakeDetection(reopenDelay + REPLY_MIN_LISTEN_MS);
     await delay(reopenDelay);
     noteAutoReplyOpened({ sayText });
+    const authorityDeadline = followUpAuthority.arm();
+    logVoiceEvent('info', 'jarvis.followUpAuthorityArmed', 'janela Classic sem wake autorizada', {
+      durationMs: Math.round(followUpAuthority.remainingMs()),
+      deadlineMonotonicMs: Math.round(authorityDeadline),
+      source: 'classic-reply',
+    });
     void deps.beginListening(
       capture,
       buildReplyAutoStop(() => {

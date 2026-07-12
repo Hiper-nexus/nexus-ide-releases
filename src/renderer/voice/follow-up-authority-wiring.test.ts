@@ -36,6 +36,10 @@ describe('follow-up authority wiring', () => {
   it('arms once for a real follow-up and never reopens a silent one', () => {
     expect(followup).toContain('followUpAuthority.arm()');
     expect(followup).toContain('followUpAuthority.clear()');
+
+    const classic = fs.readFileSync(path.join(__dirname, 'voice-run-jarvis-turn.ts'), 'utf-8');
+    expect(classic).toContain('followUpAuthority.arm()');
+    expect(classic).toContain("source: 'classic-reply'");
     expect(finish).toContain('const MAX_REPLY_MUTE_REOPENS = 0');
   });
 
