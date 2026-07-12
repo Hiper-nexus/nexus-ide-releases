@@ -9,6 +9,7 @@ import type { TerminalSettings } from '../../shared/settings-types';
 import { DEFAULT_TERMINAL_SETTINGS } from '../../shared/settings-types';
 import { setRestoredPanesHandler, useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { useToastStore } from '../state/toast-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
 import {
@@ -44,6 +45,45 @@ interface Host {
   cleanups: Array<() => void>;
   /** Devolve o slot de WebGL ao pool quando o host morre. */
   webglRelease?: () => void;
+}
+
+function reportPaneResumeIncident(
+  pane: PaneModel,
+  code: 'stale-exact-id' | 'resume-fallback-failed',
+  message: string,
+  recovered: boolean,
+): void {
+  const record = {
+    id: crypto.randomUUID(),
+    action: 'pane_resume',
+    code,
+    message,
+    paneId: pane.id,
+    adapterId: pane.adapterId,
+    recovered,
+    occurredAt: Date.now(),
+  };
+  try {
+    const key = 'nexus.runtime-incidents.v1';
+    const previous = JSON.parse(sessionStorage.getItem(key) ?? '[]');
+    sessionStorage.setItem(
+      key,
+      JSON.stringify([...(Array.isArray(previous) ? previous : []), record].slice(-50)),
+    );
+  } catch {
+    // Incident reporting must never break pane recovery.
+  }
+  window.nexus.voice.logVoice({
+    level: recovered ? 'warn' : 'error',
+    event: 'runtime.incident',
+    msg: message,
+    data: record,
+  });
+  useToastStore.getState().push(
+    recovered ? 'warn' : 'error',
+    recovered ? 'Doctor recuperando sessão do pane' : 'Doctor interrompeu o loop de retomada',
+    message,
+  );
 }
 
 // Chromium limita contextos WebGL por página (~8-16); um squad grande +
@@ -242,6 +282,12 @@ function startSpawn(
             // main cannot know synchronously that a captured id expired. Fall
             // back once to the adapter's latest-session command.
             const staleSessionId = res.sessionId;
+            reportPaneResumeIncident(
+              pane,
+              'stale-exact-id',
+              'O ID exato expirou; tentando uma única retomada pela conversa mais recente.',
+              true,
+            );
             setTimeout(() => {
               if (host.disposed || host.sessionId !== staleSessionId) return;
               host.cleanups.forEach((cleanup) => cleanup());
@@ -255,7 +301,23 @@ function startSpawn(
             }, 0);
             return;
           }
+          const failedFallback =
+            resume &&
+            exitCode !== 0 &&
+            Date.now() - spawnedAt < 10_000 &&
+            (resumeLatestOnly || res.resumeMode === 'latest');
           setHostSession(host, pane.id, null);
+          if (failedFallback) {
+            reportPaneResumeIncident(
+              pane,
+              'resume-fallback-failed',
+              'A conversa exata e a conversa mais recente não puderam ser recuperadas. O pane foi preservado e o retry automático foi encerrado.',
+              false,
+            );
+            host.term.writeln(
+              '\r\n\x1b[31m[nexus doctor] recuperação esgotada sem loop; inicie uma nova sessão neste pane.\x1b[0m',
+            );
+          }
           host.term.writeln(
             `\r\n\x1b[90m[nexus] process exited (code ${exitCode})\x1b[0m`,
           );
