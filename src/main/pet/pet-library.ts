@@ -24,6 +24,8 @@ interface ManifestEntry {
   note?: string;
   file: string;
   bytes?: number;
+  cols?: number;
+  rows?: number;
 }
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -192,13 +194,28 @@ export function loadLibrarySheet(id: string): {
     if (dataUrl.length > SHEET_DATA_URL_MAX) {
       return { ok: false, error: 'Sheet da biblioteca excede o limite interno.' };
     }
+    // Prefer cols/rows do manifest; fallback Codex 8×11 só se ausentes.
+    const cols =
+      typeof entry.cols === 'number' &&
+      Number.isInteger(entry.cols) &&
+      entry.cols >= 1 &&
+      entry.cols <= 16
+        ? entry.cols
+        : CODEX_SHEET_COLS;
+    const rows =
+      typeof entry.rows === 'number' &&
+      Number.isInteger(entry.rows) &&
+      entry.rows >= 1 &&
+      entry.rows <= 16
+        ? entry.rows
+        : CODEX_SHEET_ROWS;
     return {
       ok: true,
       name: entry.label,
       sheet: {
         dataUrl,
-        cols: CODEX_SHEET_COLS,
-        rows: CODEX_SHEET_ROWS,
+        cols,
+        rows,
       },
     };
   } catch (err) {

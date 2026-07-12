@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  detectSheetGrid,
   SHEET_ANIMS,
   SHEET_NEUTRAL,
   sheetLookFrame,
@@ -62,20 +63,33 @@ export function SheetPetSprite({
     };
   }, [sheet.dataUrl]);
 
-  // Look só sobrepõe o IDLE (wave/failed/sleep têm prioridade) e exige as
-  // linhas de look no sheet (contrato v2 completo tem 11 linhas).
+  // Se o sheet em prefs diz 11 linhas mas a imagem é 8×9 (petdex), recalcula.
+  const grid = useMemo(() => {
+    if (!image) return { cols: sheet.cols, rows: sheet.rows };
+    if (image.width % sheet.cols === 0 && image.height % sheet.rows === 0) {
+      return { cols: sheet.cols, rows: sheet.rows };
+    }
+    return detectSheetGrid(image.width, image.height);
+  }, [image, sheet.cols, sheet.rows]);
+
+  // Look só sobrepõe o IDLE e exige as linhas 9–10 (Codex v2 completo).
   const looking = useMemo(
     () =>
-      anim === 'idle' && lookDir !== null && sheet.rows >= 11
+      anim === 'idle' && lookDir !== null && grid.rows >= 11
         ? sheetLookFrame(lookDir)
         : null,
-    [anim, lookDir, sheet.rows],
+    [anim, lookDir, grid.rows],
   );
 
   const spec = useMemo(() => {
     if (anim === 'sleep') return { row: SHEET_NEUTRAL.row, frames: 1 };
-    return SHEET_ANIMS[anim];
-  }, [anim]);
+    const base = SHEET_ANIMS[anim];
+    // Sheets com menos de 11 linhas (ex.: petdex 8×9) — clampa a row válida.
+    if (base.row >= grid.rows) {
+      return { row: Math.max(0, grid.rows - 1), frames: base.frames };
+    }
+    return base;
+  }, [anim, grid.rows]);
 
   useEffect(() => {
     setFrame(0);
@@ -89,8 +103,8 @@ export function SheetPetSprite({
   }, [spec, anim, looking !== null]);
 
   // Integer cell size — fractional width/cols drifts and crops frames over rows.
-  const frameW = image ? Math.floor(image.width / sheet.cols) : 1;
-  const frameH = image ? Math.floor(image.height / sheet.rows) : 1;
+  const frameW = image ? Math.floor(image.width / grid.cols) : 1;
+  const frameH = image ? Math.floor(image.height / grid.rows) : 1;
   const displayW = Math.max(
     1,
     Math.round((frameW / Math.max(frameH, 1)) * size),

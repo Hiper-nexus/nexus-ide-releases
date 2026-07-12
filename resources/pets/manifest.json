@@ -5,7 +5,9 @@
     "label": "Navi",
     "note": "explorador clássico",
     "file": "sheets/navi.webp",
-    "bytes": 248606
+    "bytes": 261502,
+    "cols": 8,
+    "rows": 9
   },
   {
     "id": "ember",
@@ -13,7 +15,9 @@
     "label": "Ember",
     "note": "fogo / energia",
     "file": "sheets/ember.webp",
-    "bytes": 272492
+    "bytes": 283846,
+    "cols": 8,
+    "rows": 9
   },
   {
     "id": "nova",
@@ -21,7 +25,9 @@
     "label": "Nova",
     "note": "espacial",
     "file": "sheets/nova.webp",
-    "bytes": 243018
+    "bytes": 254134,
+    "cols": 8,
+    "rows": 9
   },
   {
     "id": "pixel",
@@ -29,7 +35,9 @@
     "label": "Pixel",
     "note": "retro",
     "file": "sheets/pixel.webp",
-    "bytes": 278696
+    "bytes": 299168,
+    "cols": 8,
+    "rows": 9
   },
   {
     "id": "acidling",
@@ -37,7 +45,9 @@
     "label": "Acidling",
     "note": "criatura slimada",
     "file": "sheets/acidling.webp",
-    "bytes": 248466
+    "bytes": 260942,
+    "cols": 8,
+    "rows": 9
   },
   {
     "id": "aion",
@@ -45,7 +55,9 @@
     "label": "Aion",
     "note": "místico",
     "file": "sheets/aion.webp",
-    "bytes": 300346
+    "bytes": 313422,
+    "cols": 8,
+    "rows": 9
   },
   {
     "id": "ai-workbot",
@@ -53,7 +65,9 @@
     "label": "AI Workbot",
     "note": "robô de trabalho",
     "file": "sheets/ai-workbot.webp",
-    "bytes": 123084
+    "bytes": 133380,
+    "cols": 8,
+    "rows": 9
   },
   {
     "id": "cpu-orb",
@@ -61,7 +75,9 @@
     "label": "CPU Orb",
     "note": "orbe tech",
     "file": "sheets/cpu-orb.webp",
-    "bytes": 132744
+    "bytes": 140584,
+    "cols": 8,
+    "rows": 9
   },
   {
     "id": "tiger-cub",
@@ -69,7 +85,9 @@
     "label": "Tiger Cub",
     "note": "filhote tigre",
     "file": "sheets/tiger-cub.webp",
-    "bytes": 139396
+    "bytes": 146916,
+    "cols": 8,
+    "rows": 9
   },
   {
     "id": "feather",
@@ -77,7 +95,9 @@
     "label": "Feather",
     "note": "leve / pássaro",
     "file": "sheets/feather.webp",
-    "bytes": 187280
+    "bytes": 196158,
+    "cols": 8,
+    "rows": 9
   },
   {
     "id": "ajisai",
@@ -85,7 +105,9 @@
     "label": "Ajisai",
     "note": "flor / hortênsia",
     "file": "sheets/ajisai.webp",
-    "bytes": 223726
+    "bytes": 236018,
+    "cols": 8,
+    "rows": 9
   },
   {
     "id": "shiba",
@@ -93,7 +115,9 @@
     "label": "Shiba July",
     "note": "cachorro",
     "file": "sheets/shiba.webp",
-    "bytes": 237590
+    "bytes": 249816,
+    "cols": 8,
+    "rows": 9
   },
   {
     "id": "ada",
@@ -101,7 +125,9 @@
     "label": "Ada Lovelace",
     "note": "história / tech",
     "file": "sheets/ada.webp",
-    "bytes": 229166
+    "bytes": 241074,
+    "cols": 8,
+    "rows": 9
   },
   {
     "id": "aegis",
@@ -109,7 +135,9 @@
     "label": "Aegis",
     "note": "guardião",
     "file": "sheets/aegis.webp",
-    "bytes": 313064
+    "bytes": 334002,
+    "cols": 8,
+    "rows": 9
   },
   {
     "id": "aimisi",
@@ -117,6 +145,8 @@
     "label": "Aimisi",
     "note": "estilo anime",
     "file": "sheets/aimisi.webp",
-    "bytes": 229360
+    "bytes": 239946,
+    "cols": 8,
+    "rows": 9
   }
 ]

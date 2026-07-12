@@ -69,6 +69,32 @@ export const PET_PRESETS: readonly PetPreset[] = [
  */
 export const CODEX_SHEET_COLS = 8;
 export const CODEX_SHEET_ROWS = 11;
+
+/**
+ * Detecta malha de um spritesheet a partir das dimensões.
+ * Codex v2 completo é 8×11; packs petdex costumam vir 8×9 (mesma célula
+ * 192×208 em 1536px de largura, sem as 2 linhas de look). Forçar 11 linhas
+ * num sheet de 9 corta o personagem e mistura frames.
+ */
+export function detectSheetGrid(
+  width: number,
+  height: number,
+): { cols: number; rows: number } {
+  const cols =
+    width >= CODEX_SHEET_COLS && width % CODEX_SHEET_COLS === 0
+      ? CODEX_SHEET_COLS
+      : Math.max(1, width);
+  if (width % cols !== 0) {
+    return { cols: CODEX_SHEET_COLS, rows: CODEX_SHEET_ROWS };
+  }
+  // Prefer exact row counts (11 = Codex full; 9 = petdex common).
+  for (const rows of [11, 9, 12, 10, 13, 8, 14, 15, 16]) {
+    if (height % rows === 0) return { cols, rows };
+  }
+  const cell = Math.max(1, Math.floor(width / cols));
+  const rows = Math.max(1, Math.floor(height / cell));
+  return { cols, rows };
+}
 /** Animações do contrato v2 que o pet usa: linha e nº de frames. */
 export const SHEET_ANIMS = {
   idle: { row: 0, frames: 6 },
