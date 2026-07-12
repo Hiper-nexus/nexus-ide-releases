@@ -20,6 +20,7 @@ import {
 import { tapAgentHookStatus } from '../agent-hooks/hook-ingest';
 import { computeLookDir } from './pet-look';
 import { fetchGalleryCatalog, importGalleryPet } from './pet-gallery';
+import { listPetLibrary, loadLibrarySheet } from './pet-library';
 import { readFileSync, statSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 
@@ -317,6 +318,26 @@ function registerPetIpc(): void {
   ipcMain.handle(PET_CHANNELS.galleryList, (event) => {
     if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
     return fetchGalleryCatalog();
+  });
+  ipcMain.handle(PET_CHANNELS.libraryList, (event) => {
+    if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
+    return listPetLibrary();
+  });
+  ipcMain.handle(PET_CHANNELS.libraryApply, (event, raw: unknown) => {
+    if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
+    if (typeof raw !== 'string' || raw.length > 64) {
+      return { ok: false, error: 'id de biblioteca inválido' };
+    }
+    const loaded = loadLibrarySheet(raw.trim());
+    if (!loaded.ok || !loaded.sheet) {
+      return { ok: false, error: loaded.error ?? 'pet da biblioteca indisponível' };
+    }
+    const prefs = applyPrefsPatch({
+      preset: 'sheet',
+      sheet: loaded.sheet,
+      enabled: true,
+    });
+    return { ok: true, name: loaded.name, prefs };
   });
   ipcMain.handle(PET_CHANNELS.pickSheet, async (event) => {
     if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');

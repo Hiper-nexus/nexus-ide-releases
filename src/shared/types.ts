@@ -10,6 +10,8 @@ import type { OnboardingState, OnboardingPatch } from './onboarding-types';
 import type {
   PetGalleryImportResult,
   PetGalleryListResult,
+  PetLibraryApplyResult,
+  PetLibraryListResult,
   PetPickSheetResult,
   PetPrefs,
 } from './pet-types';
@@ -558,6 +560,10 @@ export interface NexusApi {
     galleryImport(slugOrUrl: string): Promise<PetGalleryImportResult>;
     /** Catálogo ao vivo da galeria (sitemap), com cache no main. */
     galleryList(): Promise<PetGalleryListResult>;
+    /** Pacote offline de ~15 pets embutidos no app. */
+    libraryList(): Promise<PetLibraryListResult>;
+    /** Aplica um pet da biblioteca embutida (liga o pet + preset sheet). */
+    libraryApply(id: string): Promise<PetLibraryApplyResult>;
     /** Dialog nativo de spritesheet, aberto direto em ~/.codex/pets. */
     pickSheet(): Promise<PetPickSheetResult>;
   };

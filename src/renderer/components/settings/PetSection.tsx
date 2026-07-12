@@ -5,6 +5,7 @@ import {
   PET_PRESETS,
   SHEET_DATA_URL_MAX,
   type PetGalleryEntry,
+  type PetLibraryEntry,
   type PetPrefs,
   type PetPreset,
 } from '../../../shared/pet-types';
@@ -34,6 +35,17 @@ type PetSectionApi = {
   galleryList?(): Promise<{
     ok: boolean;
     items?: PetGalleryEntry[];
+    error?: string;
+  }>;
+  libraryList?(): Promise<{
+    ok: boolean;
+    items?: PetLibraryEntry[];
+    error?: string;
+  }>;
+  libraryApply?(id: string): Promise<{
+    ok: boolean;
+    name?: string;
+    prefs?: PetPrefs;
     error?: string;
   }>;
   pickSheet?(): Promise<{
@@ -88,6 +100,8 @@ export function PetSection() {
   const [catalog, setCatalog] = useState<PetGalleryEntry[] | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [catalogFilter, setCatalogFilter] = useState('');
+  const [library, setLibrary] = useState<PetLibraryEntry[] | null>(null);
+  const [libraryBusyId, setLibraryBusyId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const sheetRef = useRef<HTMLInputElement | null>(null);
 
@@ -97,7 +111,8 @@ export function PetSection() {
       catalog.map((entry) => ({ ...entry, keywords: entry.slug })),
       catalogFilter,
     );
-    return matched.slice(0, 48);
+    // Sem teto artificial: a área de chips já tem scroll; 48 escondia a maioria.
+    return matched;
   }, [catalog, catalogFilter]);
 
   // Skew preload/renderer (HMR recarrega o renderer, não o preload; ou
@@ -113,6 +128,11 @@ export function PetSection() {
       if (!cancelled) setPrefs(loaded);
     });
     const off = petApi.onPrefsChanged(setPrefs);
+    if (petApi.libraryList) {
+      void petApi.libraryList().then((result) => {
+        if (!cancelled && result.ok && result.items) setLibrary(result.items);
+      });
+    }
     return () => {
       cancelled = true;
       off();
@@ -120,6 +140,25 @@ export function PetSection() {
     // petApi é estável por sessão (contextBridge); petApiReady cobre o gate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [petApiReady]);
+
+  const onApplyLibraryPet = async (id: string) => {
+    if (!petApi?.libraryApply || libraryBusyId) return;
+    setLibraryBusyId(id);
+    setImportNote('Aplicando pet da biblioteca…');
+    try {
+      const result = await petApi.libraryApply(id);
+      if (!result.ok) {
+        setImportNote(result.error ?? 'Não consegui aplicar esse pet.');
+        return;
+      }
+      if (result.prefs) setPrefs(result.prefs);
+      setImportNote(
+        `"${result.name ?? id}" da biblioteca aplicado — pet ligado.`,
+      );
+    } finally {
+      setLibraryBusyId(null);
+    }
+  };
 
   if (!petApiReady || !petApi || !prefs) return null;
 
@@ -378,6 +417,40 @@ export function PetSection() {
             })}
           </div>
 
+          {library && library.length > 0 && (
+            <div className="settings-pet-library">
+              <p className="settings-appearance__label">
+                Biblioteca inclusa ({library.length})
+              </p>
+              <p className="settings-field__note">
+                Pets diversos já no app — um clique aplica o spritesheet e liga
+                o companion. Offline, sem baixar da galeria.
+              </p>
+              <div className="settings-pet-library__grid" role="list">
+                {library.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    role="listitem"
+                    className="settings-pet-library__card"
+                    disabled={libraryBusyId !== null}
+                    title={entry.note ?? entry.label}
+                    onClick={() => void onApplyLibraryPet(entry.id)}
+                  >
+                    <span className="settings-pet-library__name">
+                      {libraryBusyId === entry.id ? '…' : entry.label}
+                    </span>
+                    {entry.note && (
+                      <span className="settings-pet-library__note">
+                        {entry.note}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="settings-pet-import">
             <button
               type="button"
@@ -458,13 +531,17 @@ export function PetSection() {
           {catalogOpen && catalog && (
             <div className="settings-pet-catalog">
               <input
-                className="settings-input settings-pet-gallery__input"
-                type="text"
+                className="settings-input settings-pet-catalog__filter"
+                type="search"
                 value={catalogFilter}
                 placeholder={`Filtrar ${catalog.length} pets publicados…`}
                 aria-label="Filtrar pets da galeria"
                 onChange={(e) => setCatalogFilter(e.target.value)}
               />
+              <p className="settings-field__note">
+                {filteredCatalog.length} de {catalog.length} — clique no nome
+                para importar. Prefira a biblioteca inclusa se quiser offline.
+              </p>
               <div className="settings-pet-catalog__chips" role="list">
                 {filteredCatalog.map((entry) => (
                   <button

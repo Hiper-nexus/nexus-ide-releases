@@ -385,6 +385,9 @@ const api: NexusApi = {
     galleryImport: (slugOrUrl: string) =>
       ipcRenderer.invoke(PET_CHANNELS.galleryImport, slugOrUrl),
     galleryList: () => ipcRenderer.invoke(PET_CHANNELS.galleryList),
+    libraryList: () => ipcRenderer.invoke(PET_CHANNELS.libraryList),
+    libraryApply: (id: string) =>
+      ipcRenderer.invoke(PET_CHANNELS.libraryApply, id),
     pickSheet: () => ipcRenderer.invoke(PET_CHANNELS.pickSheet),
   },
   app: {

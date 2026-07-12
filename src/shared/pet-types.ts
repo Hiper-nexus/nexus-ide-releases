@@ -29,6 +29,10 @@ export const PET_CHANNELS = {
   galleryImport: 'pet:galleryImport',
   /** invoke: janela principal → main. Catálogo ao vivo da galeria. */
   galleryList: 'pet:galleryList',
+  /** invoke: janela principal → main. Biblioteca embutida (~15 pets). */
+  libraryList: 'pet:libraryList',
+  /** invoke: janela principal → main. Aplica um pet da biblioteca embutida. */
+  libraryApply: 'pet:libraryApply',
   /** invoke: janela principal → main. Dialog nativo já em ~/.codex/pets. */
   pickSheet: 'pet:pickSheet',
   /** event: main → janela principal. Pedido do pet para abrir Settings. */
@@ -157,6 +161,27 @@ export interface PetGalleryEntry {
 export interface PetGalleryListResult {
   ok: boolean;
   items?: PetGalleryEntry[];
+  error?: string;
+}
+
+/** Pet do pacote embutido (resources/pets) — disponível offline. */
+export interface PetLibraryEntry {
+  id: string;
+  slug: string;
+  label: string;
+  note?: string;
+}
+
+export interface PetLibraryListResult {
+  ok: boolean;
+  items?: PetLibraryEntry[];
+  error?: string;
+}
+
+export interface PetLibraryApplyResult {
+  ok: boolean;
+  name?: string;
+  prefs?: PetPrefs;
   error?: string;
 }
 

@@ -237,6 +237,8 @@ const config: ForgeConfig = {
       'scripts/design-system-sensor.mjs',
       'resources/wake',
       'resources/model-ranking.json',
+      // Pacote de ~15 pets Codex v2 offline (manifest + sheets/*.webp).
+      'resources/pets',
     ],
     // App icon (nó-nexus pixel: anel + núcleo aceso + satélites): packager
     // appends .icns on macOS. Read at build time from the project root — not
