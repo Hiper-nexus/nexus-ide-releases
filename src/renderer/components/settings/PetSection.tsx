@@ -13,7 +13,6 @@ import {
 import { OperatorSprite } from '../OperatorSprite';
 import { CustomPetSprite } from '../../pet/CustomPetSprite';
 import { SheetPetSprite } from '../../pet/SheetPetSprite';
-import { imageFileToGrid } from '../../pet/pixelize';
 import { filterPaletteActions } from '../../lib/command-palette-filter';
 import { useSettingsStore } from '../../state/settings-store';
 import { useMissionWizardStore } from '../../state/mission-wizard-store';
@@ -212,7 +211,6 @@ export function PetSection() {
   const [library, setLibrary] = useState<PetLibraryEntry[] | null>(null);
   const [libraryBusyId, setLibraryBusyId] = useState<string | null>(null);
   const [libraryActiveId, setLibraryActiveId] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement | null>(null);
   const sheetRef = useRef<HTMLInputElement | null>(null);
 
   const filteredCatalog = useMemo(() => {
@@ -287,20 +285,6 @@ export function PetSection() {
 
   const patch = (partial: Partial<PetPrefs>) => {
     void petApi.setPrefs(partial);
-  };
-
-  const onPickImage = async (file: File | undefined) => {
-    if (!file) return;
-    setImportNote('Pixelizando…');
-    try {
-      const grid = await imageFileToGrid(file);
-      patch({ customGrid: grid, preset: 'custom' });
-      setImportNote(
-        'Pet criado da imagem e selecionado ✓ — funciona melhor com um personagem em fundo limpo/transparente.',
-      );
-    } catch {
-      setImportNote('Não consegui ler essa imagem. Tente outra (png/jpg).');
-    }
   };
 
   /** Aplica um dataUrl de spritesheet validado (dialog nativo ou arquivo). */
@@ -590,13 +574,15 @@ export function PetSection() {
           )}
 
           <div className="settings-pet-import">
-            <button
-              type="button"
-              className="settings-pet-import__btn"
-              onClick={() => fileRef.current?.click()}
-            >
-              Criar pet de uma imagem…
-            </button>
+            {petApi.pickImage && (
+              <button
+                type="button"
+                className="settings-pet-import__btn"
+                onClick={() => void onHatchPet()}
+              >
+                Criar pet com IA…
+              </button>
+            )}
             <button
               type="button"
               className="settings-pet-import__btn"
@@ -604,31 +590,12 @@ export function PetSection() {
             >
               Importar spritesheet do Codex…
             </button>
-            {petApi.pickImage && (
-              <button
-                type="button"
-                className="settings-pet-import__btn"
-                onClick={() => void onHatchPet()}
-              >
-                Gerar pet com IA (hatch)…
-              </button>
-            )}
             <span className="settings-field__note">
-              Tudo local; nada é enviado. Spritesheets no contrato Codex v2
-              (8×11) funcionam direto — inclusive os de ~/.codex/pets. Gerar
-              com IA abre uma missão que cria o modelo em todas as posições
-              (processo lento, padrão Codex).
+              Criar com IA abre uma missão que desenha seu pet em todas as
+              poses a partir de uma foto (processo lento, padrão Codex).
+              Spritesheets no contrato v2 (8×11) importam direto — inclusive
+              os de ~/.codex/pets. Tudo local; nada é enviado.
             </span>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              hidden
-              onChange={(e) => {
-                void onPickImage(e.target.files?.[0]);
-                e.target.value = '';
-              }}
-            />
             <input
               ref={sheetRef}
               type="file"

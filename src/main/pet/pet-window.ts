@@ -19,6 +19,7 @@ import {
 } from './pet-events';
 import { tapAgentHookStatus } from '../agent-hooks/hook-ingest';
 import { computeLookDir } from './pet-look';
+import { copyHatchImage } from './pet-hatch-image';
 import { fetchGalleryCatalog, importGalleryPet } from './pet-gallery';
 import { listPetLibrary, loadLibrarySheet } from './pet-library';
 import { readFileSync, statSync, existsSync } from 'node:fs';
@@ -398,7 +399,17 @@ function registerPetIpc(): void {
     if (picked.canceled || picked.filePaths.length === 0) {
       return { ok: false, canceled: true };
     }
-    return { ok: true, path: picked.filePaths[0] };
+    // Fototeca/iCloud entregam caminhos temporários que somem antes de a
+    // missão rodar — copiamos para um diretório estável do app.
+    try {
+      const stable = await copyHatchImage(
+        picked.filePaths[0],
+        electronApp.getPath('userData'),
+      );
+      return { ok: true, path: stable };
+    } catch {
+      return { ok: true, path: picked.filePaths[0] };
+    }
   });
   ipcMain.handle(PET_CHANNELS.pickSheet, async (event) => {
     if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');

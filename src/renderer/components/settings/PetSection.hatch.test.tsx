@@ -34,7 +34,7 @@ function installPetApi() {
   };
 }
 
-describe('PetSection — Gerar pet com IA (hatch)', () => {
+describe('PetSection — Criar pet com IA (hatch)', () => {
   let host: HTMLDivElement;
   let root: Root;
 
@@ -60,7 +60,7 @@ describe('PetSection — Gerar pet com IA (hatch)', () => {
     });
 
     const button = [...host.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('Gerar pet com IA'),
+      b.textContent?.includes('Criar pet com IA'),
     );
     expect(button).toBeTruthy();
 
