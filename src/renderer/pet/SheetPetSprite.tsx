@@ -63,12 +63,13 @@ export function SheetPetSprite({
     };
   }, [sheet.dataUrl]);
 
-  // Se o sheet em prefs diz 11 linhas mas a imagem é 8×9 (petdex), recalcula.
+  // Sempre deriva a malha das dimensões reais da imagem.
+  // Prefs antigas podem ter rows:11 gravado num sheet petdex 8×9 — e
+  // 1872%11≠0 mas 936%11≠0; mesmo quando “divide exacto” (ex. half-res
+  // errado), a razão da célula canónica 192:208 manda mais do que o
+  // metadata stale.
   const grid = useMemo(() => {
     if (!image) return { cols: sheet.cols, rows: sheet.rows };
-    if (image.width % sheet.cols === 0 && image.height % sheet.rows === 0) {
-      return { cols: sheet.cols, rows: sheet.rows };
-    }
     return detectSheetGrid(image.width, image.height);
   }, [image, sheet.cols, sheet.rows]);
 
@@ -132,8 +133,16 @@ export function SheetPetSprite({
     canvas.height = Math.max(1, Math.round(cssH * dpr));
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
-    // Pixel art: never smooth when scaling frames up/down.
-    ctx.imageSmoothingEnabled = false;
+    // Sheets Codex/petdex são arte pintada em alta res (não pixel 16×16).
+    // Suavizar o scale evita o aspecto “bloco/corte” ao ampliar o frame.
+    const integerScale =
+      cssW % frameW === 0 &&
+      cssH % frameH === 0 &&
+      cssW / frameW === cssH / frameH;
+    ctx.imageSmoothingEnabled = !integerScale;
+    if (ctx.imageSmoothingEnabled) {
+      ctx.imageSmoothingQuality = 'high';
+    }
     ctx.drawImage(
       image,
       col * frameW,
@@ -145,12 +154,25 @@ export function SheetPetSprite({
       cssW,
       cssH,
     );
-  }, [image, frame, anim, spec, looking, frameW, frameH, displayW, size, dpr]);
+  }, [
+    image,
+    frame,
+    anim,
+    spec,
+    looking,
+    frameW,
+    frameH,
+    displayW,
+    size,
+    dpr,
+    grid.cols,
+    grid.rows,
+  ]);
 
   return (
     <canvas
       ref={canvasRef}
-      style={{ width: displayW, height: size, imageRendering: 'pixelated' }}
+      style={{ width: displayW, height: size, imageRendering: 'auto' }}
       aria-hidden="true"
     />
   );

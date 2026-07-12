@@ -11,6 +11,7 @@ import path from 'node:path';
 import {
   CODEX_SHEET_COLS,
   CODEX_SHEET_ROWS,
+  detectSheetGrid,
   SHEET_DATA_URL_MAX,
   type PetLibraryEntry,
   type PetLibraryListResult,
@@ -158,6 +159,71 @@ export function listPetLibrary(): PetLibraryListResult {
   }
 }
 
+/**
+ * Lê width/height de um WebP (VP8X / VP8L / VP8) sem dependências.
+ * Usado para detectar malha 8×9 vs 8×11 a partir do arquivo real.
+ */
+export function readWebpDimensions(
+  buf: Buffer,
+): { width: number; height: number } | null {
+  if (
+    buf.byteLength < 30 ||
+    buf.toString('ascii', 0, 4) !== 'RIFF' ||
+    buf.toString('ascii', 8, 12) !== 'WEBP'
+  ) {
+    return null;
+  }
+  let offset = 12;
+  while (offset + 8 <= buf.byteLength) {
+    const fourcc = buf.toString('ascii', offset, offset + 4);
+    const size = buf.readUInt32LE(offset + 4);
+    const dataStart = offset + 8;
+    if (dataStart > buf.byteLength) return null;
+    if (fourcc === 'VP8X' && size >= 10 && dataStart + 10 <= buf.byteLength) {
+      const width =
+        1 +
+        buf[dataStart + 4]! +
+        (buf[dataStart + 5]! << 8) +
+        (buf[dataStart + 6]! << 16);
+      const height =
+        1 +
+        buf[dataStart + 7]! +
+        (buf[dataStart + 8]! << 8) +
+        (buf[dataStart + 9]! << 16);
+      if (width > 0 && height > 0 && width <= 16384 && height <= 16384) {
+        return { width, height };
+      }
+      return null;
+    }
+    if (fourcc === 'VP8L' && size >= 5 && dataStart + 5 <= buf.byteLength) {
+      if (buf[dataStart] !== 0x2f) return null;
+      const bits =
+        buf[dataStart + 1]! |
+        (buf[dataStart + 2]! << 8) |
+        (buf[dataStart + 3]! << 16) |
+        (buf[dataStart + 4]! << 24);
+      const width = (bits & 0x3fff) + 1;
+      const height = ((bits >> 14) & 0x3fff) + 1;
+      return { width, height };
+    }
+    if (fourcc === 'VP8 ' && size >= 10 && dataStart + 10 <= buf.byteLength) {
+      const sig = dataStart + 3;
+      if (
+        buf[sig] === 0x9d &&
+        buf[sig + 1] === 0x01 &&
+        buf[sig + 2] === 0x2a
+      ) {
+        const width = buf.readUInt16LE(sig + 3) & 0x3fff;
+        const height = buf.readUInt16LE(sig + 5) & 0x3fff;
+        if (width > 0 && height > 0) return { width, height };
+      }
+    }
+    // Chunks são padados a 2 bytes.
+    offset = dataStart + size + (size & 1);
+  }
+  return null;
+}
+
 /** Carrega o sheet da biblioteca como data URL pronto para PetPrefs.sheet. */
 export function loadLibrarySheet(id: string): {
   ok: boolean;
@@ -194,21 +260,27 @@ export function loadLibrarySheet(id: string): {
     if (dataUrl.length > SHEET_DATA_URL_MAX) {
       return { ok: false, error: 'Sheet da biblioteca excede o limite interno.' };
     }
-    // Prefer cols/rows do manifest; fallback Codex 8×11 só se ausentes.
+    // Dimensões reais do WebP (RIFF) > manifest — evita rows:11 stale.
+    const dims = readWebpDimensions(buf);
+    const detected = dims
+      ? detectSheetGrid(dims.width, dims.height)
+      : null;
     const cols =
-      typeof entry.cols === 'number' &&
+      detected?.cols ??
+      (typeof entry.cols === 'number' &&
       Number.isInteger(entry.cols) &&
       entry.cols >= 1 &&
       entry.cols <= 16
         ? entry.cols
-        : CODEX_SHEET_COLS;
+        : CODEX_SHEET_COLS);
     const rows =
-      typeof entry.rows === 'number' &&
+      detected?.rows ??
+      (typeof entry.rows === 'number' &&
       Number.isInteger(entry.rows) &&
       entry.rows >= 1 &&
       entry.rows <= 16
         ? entry.rows
-        : CODEX_SHEET_ROWS;
+        : CODEX_SHEET_ROWS);
     return {
       ok: true,
       name: entry.label,

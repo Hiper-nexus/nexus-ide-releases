@@ -7,6 +7,7 @@ import {
   configurePetsLibraryRoot,
   listPetLibrary,
   loadLibrarySheet,
+  readWebpDimensions,
   resolvePetsLibraryRoot,
 } from './pet-library';
 
@@ -62,6 +63,34 @@ describe('pet-library', () => {
     // Packs petdex: 8×9 (célula 192×208 em full-res); Codex full seria 8×11.
     expect(loaded.sheet?.rows).toBe(9);
     expect(loaded.sheet?.cols).toBe(8);
+  });
+
+  it('detecta 8×9 a partir das dimensões reais do WebP (ignora rows:11 no manifest)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pet-lib-dims-'));
+    fs.mkdirSync(path.join(dir, 'sheets'), { recursive: true });
+    const source = path.join(REPO_PETS, 'sheets', 'ai-workbot.webp');
+    fs.copyFileSync(source, path.join(dir, 'sheets', 'ai-workbot.webp'));
+    const dims = readWebpDimensions(fs.readFileSync(source));
+    expect(dims).toEqual({ width: 1536, height: 1872 });
+    fs.writeFileSync(
+      path.join(dir, 'manifest.json'),
+      JSON.stringify([
+        {
+          id: 'ai-workbot',
+          slug: 'ai-workbot',
+          label: 'AI Workbot',
+          file: 'sheets/ai-workbot.webp',
+          cols: 8,
+          rows: 11, // stale — dimensões reais mandam
+        },
+      ]),
+    );
+    configurePetsLibraryRoot(dir);
+    const loaded = loadLibrarySheet('ai-workbot');
+    expect(loaded.ok).toBe(true);
+    expect(loaded.sheet?.cols).toBe(8);
+    expect(loaded.sheet?.rows).toBe(9);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   it('rejeita path traversal e file que não casa com id', () => {
