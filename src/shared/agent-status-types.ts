@@ -9,7 +9,10 @@
 // agent misses its own cancellation hook. We still do not infer status from
 // terminal titles anywhere in the data flow.
 
-import type { AgentProviderSessionMetadata } from './agent-session-resume'
+import {
+  normalizeAgentProviderSession,
+  type AgentProviderSessionMetadata,
+} from './agent-session-resume'
 
 export const AGENT_STATUS_STATES = ['working', 'blocked', 'waiting', 'done'] as const
 export type AgentStatusState = (typeof AGENT_STATUS_STATES)[number]
@@ -163,6 +166,7 @@ export type AgentStatusPayload = {
   interactivePrompt?: string
   lastAssistantMessage?: string
   interrupted?: boolean
+  providerSession?: AgentProviderSessionMetadata
 }
 
 /**
@@ -456,7 +460,8 @@ function normalizeAgentStatusObject(parsed: unknown): ParsedAgentStatusPayload |
     ),
     // Why: only meaningful on `done`. Coerce to undefined on other states so
     // the field doesn't leak stale truth through state transitions.
-    interrupted: obj.interrupted === true && state === 'done' ? true : undefined
+    interrupted: obj.interrupted === true && state === 'done' ? true : undefined,
+    providerSession: normalizeAgentProviderSession(obj.providerSession) ?? undefined,
   }
 }
 

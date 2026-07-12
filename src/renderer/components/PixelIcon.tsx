@@ -33,7 +33,11 @@ export type PixelIconName =
   | 'restart'
   | 'split-right'
   | 'split-down'
-  | 'more';
+  | 'more'
+  | 'update'
+  | 'star'
+  | 'star-outline'
+  | 'search';
 
 /**
  * Icon set pixel — desenhado no MESMO grid 11×11 do NexusMark, em rects crisp
@@ -337,6 +341,58 @@ const ICONS: Record<PixelIconName, Rect[]> = {
     [2, 5, 1, 1],
     [5, 5, 1, 1],
     [8, 5, 1, 1],
+  ],
+  // seta subindo para a bandeja (atualização disponível)
+  update: [
+    [5, 1, 1, 5],
+    [4, 2, 1, 1],
+    [6, 2, 1, 1],
+    [3, 3, 1, 1],
+    [7, 3, 1, 1],
+    [2, 7, 1, 2],
+    [8, 7, 1, 2],
+    [2, 8, 7, 1],
+  ],
+  // estrela cheia (pin ativo)
+  star: [
+    [5, 1, 1, 1],
+    [4, 2, 3, 1],
+    [1, 3, 9, 1],
+    [2, 4, 7, 1],
+    [3, 5, 5, 1],
+    [2, 6, 3, 1],
+    [6, 6, 3, 1],
+    [2, 7, 1, 1],
+    [8, 7, 1, 1],
+  ],
+  // estrela vazada (pin inativo)
+  'star-outline': [
+    [5, 1, 1, 1],
+    [4, 2, 1, 1],
+    [6, 2, 1, 1],
+    [1, 3, 3, 1],
+    [7, 3, 3, 1],
+    [2, 4, 1, 1],
+    [8, 4, 1, 1],
+    [3, 5, 1, 1],
+    [7, 5, 1, 1],
+    [2, 6, 1, 1],
+    [4, 6, 3, 1],
+    [8, 6, 1, 1],
+    [2, 7, 1, 1],
+    [8, 7, 1, 1],
+  ],
+  // lupa
+  search: [
+    [3, 2, 3, 1],
+    [2, 3, 1, 1],
+    [6, 3, 1, 1],
+    [2, 4, 1, 1],
+    [6, 4, 1, 1],
+    [3, 5, 3, 1],
+    [6, 6, 1, 1],
+    [7, 7, 1, 1],
+    [8, 8, 1, 1],
   ],
 };
 

@@ -7,7 +7,7 @@ import '@xterm/xterm/css/xterm.css';
 import type { PaneModel } from '../../shared/types';
 import type { TerminalSettings } from '../../shared/settings-types';
 import { DEFAULT_TERMINAL_SETTINGS } from '../../shared/settings-types';
-import { useLayoutStore } from '../state/layout-store';
+import { setRestoredPanesHandler, useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
@@ -193,6 +193,15 @@ function startSpawn(pane: PaneModel, host: Host, resume = false): void {
         return;
       }
       setHostSession(host, pane.id, res.sessionId);
+      if (resume) {
+        const message =
+          res.resumeMode === 'exact'
+            ? '[nexus] sessão exata recuperada para este pane.'
+            : res.resumeMode === 'latest'
+              ? '[nexus] retomada aproximada: a CLI abriu a conversa mais recente deste workspace.'
+              : '[nexus] nova sessão: esta CLI não oferece recuperação nativa.';
+        host.term.writeln(`\r\n\x1b[${res.resumeMode === 'exact' ? '32' : '33'}m${message}\x1b[0m`);
+      }
 
       host.cleanups.push(
         window.nexus.pty.onStateChange(res.sessionId, (state) => {
@@ -515,6 +524,12 @@ export function markResumeOnSpawn(paneId: string): void {
   resumeOnFirstSpawn.add(paneId);
 }
 
+setRestoredPanesHandler((panes) => {
+  for (const pane of panes) {
+    if (pane.kind === 'cli-agent') markResumeOnSpawn(pane.id);
+  }
+});
+
 export function focusHost(paneId: string): void {
   for (const [id, host] of hosts) {
     if (host.disposed) continue;
@@ -566,7 +581,7 @@ export function scrollPaneToBottom(paneId: string, sendJumpKey = false): void {
  */
 export function respawnWithResume(
   pane: PaneModel,
-  note = '[nexus] limite atingido — trocando de conta e retomando…',
+  note = '[nexus] reiniciando a CLI e verificando a sessão anterior…',
 ): void {
   const host = hosts.get(pane.id);
   if (!host || host.disposed) return;

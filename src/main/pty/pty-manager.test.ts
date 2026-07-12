@@ -341,7 +341,7 @@ describe("cli-agent spawn argv hardening", () => {
     const authority = trustedSpawn();
     const { sessionId } = spawnAgentSession(
       owner,
-      { kind: "cli-agent", cols: 80, rows: 24 },
+      { kind: "cli-agent", cols: 80, rows: 24, paneId: "pane-a" },
       makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
       {},
       authority,
@@ -351,6 +351,7 @@ describe("cli-agent spawn argv hardening", () => {
       ptySessionId: sessionId,
       adapterId: "test-cli",
       cwd: authority.cwd,
+      paneId: "pane-a",
     });
     setSessionDictationHook(null);
     killSession(owner, sessionId);

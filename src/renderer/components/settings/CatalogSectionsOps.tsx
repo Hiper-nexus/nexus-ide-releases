@@ -8,6 +8,7 @@ import type {
 import { useOrchStore } from '../../state/orch-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { useLayoutStore } from '../../state/layout-store';
+import { askConfirm } from '../../state/confirm-store';
 import { waitForSession } from '../../terminal/terminal-host';
 
 /**
@@ -299,9 +300,11 @@ export function RemoteSection() {
     });
     setResult(next);
     if (next.ok && next.attachCommand) {
-      const proceed = window.confirm(
-        `Abrir um shell pane e executar automaticamente?\n\n${next.attachCommand}`,
-      );
+      const proceed = await askConfirm({
+        title: 'Anexar à sessão tmux?',
+        body: `Abrir um shell pane e executar automaticamente: ${next.attachCommand}`,
+        confirmLabel: 'Abrir e executar',
+      });
       if (!proceed) return;
       const paneId = useLayoutStore.getState().addShellPane();
       const sessionId = await waitForSession(paneId);

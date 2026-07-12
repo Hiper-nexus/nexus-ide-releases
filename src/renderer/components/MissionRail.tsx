@@ -21,6 +21,8 @@ import {
 import { useWorkspaceStore } from '../state/workspace-store';
 import { PixelIcon } from './PixelIcon';
 import { AccountSwitcher } from './AccountSwitcher';
+import { OperatorHud } from './OperatorHud';
+import { askConfirm } from '../state/confirm-store';
 import { AgentDropZone } from './AgentDropZone';
 import type { ExternalIssue } from '../../shared/integrations-types';
 import { useMissionWizardStore as useWizard } from '../state/mission-wizard-store';
@@ -117,11 +119,16 @@ export function MissionRail() {
     setPinnedIds(togglePinnedMissionId(id));
   }
 
-  function removeMission(m: Mission, active: boolean) {
-    const warn = active
-      ? `A missão "${m.title}" está aberta. Remover da lista? Os panes continuam abertos.`
-      : `Remover a missão "${m.title}" da lista?`;
-    if (!window.confirm(warn)) return;
+  async function removeMission(m: Mission, active: boolean) {
+    const ok = await askConfirm({
+      title: `Remover "${m.title}"?`,
+      body: active
+        ? 'A missão está aberta. Remover tira o registro da lista; os panes continuam abertos.'
+        : 'A missão sai da lista de trabalho.',
+      confirmLabel: 'Remover missão',
+      danger: true,
+    });
+    if (!ok) return;
     setNote(null);
     void window.nexus.orch
       .removeMission(m.id)
@@ -298,7 +305,14 @@ export function MissionRail() {
                       setPinnedWorkspaces(togglePinnedWorkspacePath(workspace.path))
                     }
                   >
-                    {pinnedWorkspaces.includes(workspace.path) ? '★' : '☆'}
+                    <PixelIcon
+                      name={
+                        pinnedWorkspaces.includes(workspace.path)
+                          ? 'star'
+                          : 'star-outline'
+                      }
+                      size={11}
+                    />
                   </button>
                 </li>
               )}
@@ -326,7 +340,7 @@ export function MissionRail() {
                         setPinnedWorkspaces(togglePinnedWorkspacePath(w.path))
                       }
                     >
-                      ★
+                      <PixelIcon name="star" size={11} />
                     </button>
                   </li>
                 ))}
@@ -395,7 +409,8 @@ export function MissionRail() {
                               />
                               <span className="mission-rail__item-body">
                                 <span className="mission-rail__item-title">
-                                  {pinned ? '★ ' : ''}
+                                  {pinned && <PixelIcon name="star" size={9} />}
+                                  {pinned ? ' ' : ''}
                                   {m.title}
                                 </span>
                                 <span className="mission-rail__item-meta">
@@ -415,7 +430,10 @@ export function MissionRail() {
                                 togglePin(m.id);
                               }}
                             >
-                              {pinned ? '★' : '☆'}
+                              <PixelIcon
+                                name={pinned ? 'star' : 'star-outline'}
+                                size={11}
+                              />
                             </button>
                             <button
                               className="mission-rail__remove"
@@ -445,6 +463,9 @@ export function MissionRail() {
       )}
 
       <footer className="activity-rail__footer">
+        {/* Gamificação mora aqui, não na zona de status da bar: XP é meta,
+            não sinal operacional (P1 do critique). */}
+        <OperatorHud />
         <AccountSwitcher />
       </footer>
     </aside>

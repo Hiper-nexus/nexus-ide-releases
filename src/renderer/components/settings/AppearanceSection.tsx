@@ -5,6 +5,7 @@ import {
 import { TERMINAL_THEMES } from '../../styles/terminal-theme';
 import { useSettingsStore } from '../../state/settings-store';
 import { OperatorSprite } from '../OperatorSprite';
+import { PetSection } from './PetSection';
 
 /**
  * Aparência global: modo pixel (identidade retrô) e paleta do app.
@@ -84,6 +85,8 @@ export function AppearanceSection() {
           })}
         </div>
       </div>
+
+      <PetSection />
     </section>
   );
 }

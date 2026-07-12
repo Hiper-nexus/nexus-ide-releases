@@ -18,6 +18,7 @@ export function VoiceButton() {
   const liveState = useVoiceStore((s) => s.liveState);
   const responseMuted = useVoiceStore((s) => s.responseMuted);
   const openSettings = useVoiceStore((s) => s.openSettings);
+  const setHudMode = useVoiceStore((s) => s.setHudMode);
 
   const stt = providerShort(info?.stt.active?.provider);
   const tts = providerShort(info?.tts.active?.provider);
@@ -88,6 +89,13 @@ export function VoiceButton() {
       openSettings();
       return;
     }
+    // “MUDA” is a state that needs an explicit recovery surface. Opening the
+    // expanded HUD exposes the unmute control instead of silently starting a
+    // voice turn that the user still cannot hear.
+    if (responseMuted) {
+      setHudMode('expanded');
+      return;
+    }
     requestJarvisWake();
   }
 
@@ -103,7 +111,7 @@ export function VoiceButton() {
       onContextMenu={handleContextMenu}
       title={
         info
-          ? `Clique para acordar a Jarvis · ⌥/⌘ clique para ajustes · Push-to-talk: ${info.shortcut} (${info.hotkeyMode}) · STT ${stt} · TTS ${tts}${liveOn ? ' · Jarvis Live' : ''}${responseMuted ? ' · respostas mudas' : ''}${wakeBlocked ? ` · wake preso pelo PID ${wakeBlockedPid}` : ''}`
+          ? `${responseMuted ? 'Clique para abrir os controles e ativar o áudio' : 'Clique para acordar a Jarvis'} · ⌥/⌘ clique para ajustes · Push-to-talk: ${info.shortcut} (${info.hotkeyMode}) · STT ${stt} · TTS ${tts}${liveOn ? ' · Jarvis Live' : ''}${responseMuted ? ' · respostas mudas' : ''}${wakeBlocked ? ` · wake preso pelo PID ${wakeBlockedPid}` : ''}`
           : 'Voice pipeline'
       }
     >

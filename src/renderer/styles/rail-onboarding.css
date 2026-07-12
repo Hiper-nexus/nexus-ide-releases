@@ -498,13 +498,21 @@
 }
 .mission-rail__item:disabled { opacity: 0.6; cursor: default; }
 .mission-rail__dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: 0 0 8px; }
-/* Estados nos tokens compartilhados (--ok/--warn/--danger) — mesmo
-   significado, mesma cor no rail, no Ops Board e no orch panel. */
-.mission-rail__dot--running { background: var(--warn); }
-.mission-rail__dot--done { background: var(--ok); }
-.mission-rail__dot--failed { background: var(--danger); }
-.mission-rail__dot--blocked { background: var(--warn); }
-.mission-rail__dot--pending { background: var(--text-dim); }
+/* Estados nos tokens --state-* (base.css) — um estado, uma cor, em TODA
+   superfície: trabalhando = ciano (pulsa), feito = verde, bloqueado = âmbar,
+   falha = vermelho, pendente = dim. */
+.mission-rail__dot--running {
+  background: var(--state-running);
+  box-shadow: 0 0 6px var(--accent-glow);
+  animation: state-breathe 2.2s ease-in-out infinite;
+}
+.mission-rail__dot--done { background: var(--state-done); }
+.mission-rail__dot--failed { background: var(--state-failed); }
+.mission-rail__dot--blocked { background: var(--state-blocked); }
+.mission-rail__dot--pending { background: var(--state-pending); }
+@media (prefers-reduced-motion: reduce) {
+  .mission-rail__dot--running { animation: none; }
+}
 .mission-rail__item-body { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
 .mission-rail__item-title { font-size: var(--text-md); font-weight: 550; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mission-rail__item-meta { font-size: var(--text-xs); line-height: 1.35; color: var(--text-dim); }
@@ -624,8 +632,8 @@
   border: 1px solid var(--border-strong);
   color: var(--text-dim);
 }
-.onb__pill--ok { color: var(--ok); border-color: rgba(126, 226, 168, 0.5); }
-.onb__pill--warn { color: var(--warn); border-color: rgba(229, 192, 123, 0.5); }
+.onb__pill--ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+.onb__pill--warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 
 .onb__cli-row {
   display: flex;
@@ -645,7 +653,7 @@
   border: 1px solid var(--border);
   background: var(--bg);
 }
-.onb__cli--ok { border-color: rgba(126, 226, 168, 0.4); }
+.onb__cli--ok { border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
 .onb__cli-glyph { color: var(--accent); }
 
 .onb__missing { margin-top: 12px; }
@@ -734,7 +742,7 @@
 }
 .onb__victory--done .onb__check {
   border-color: var(--ok);
-  background: rgba(126, 226, 168, 0.12);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
 }
 
 .onb__foot {
@@ -769,3 +777,16 @@
 }
 .onb__cta:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 .onb__cta:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* OperatorHud realocado da bar para o rodapé do rail (dieta da bar): a
+   gamificação vive junto da conta, fora da zona de sinal operacional. */
+.activity-rail__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.activity-rail__footer .operator-hud {
+  width: 100%;
+  justify-content: flex-start;
+}

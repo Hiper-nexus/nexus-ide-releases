@@ -5,6 +5,12 @@ import type { TerminalThemeId } from '../../shared/settings-types';
  * Settings → Terminal restyles the WHOLE IDE (bar, drawers, launcher,
  * panels) by overriding the CSS custom properties on :root — the terminal
  * panes get their matching xterm palette via terminal-host.
+ *
+ * Derivados do acento (--accent-soft/strong/hover/glow) NÃO moram aqui:
+ * base.css os computa com color-mix a partir de --accent, então cada tema
+ * os herda corretamente de graça. Aqui só entra o que não dá para derivar —
+ * incluindo --accent-ink (tinta sobre CTA sólido), que é decisão de
+ * contraste por tema, não conta de cor.
  */
 
 interface UiPalette {
@@ -16,24 +22,25 @@ interface UiPalette {
   text: string;
   textDim: string;
   accent: string;
-  accentSoft: string;
+  accentInk: string;
   danger: string;
 }
 
 const PALETTES: Record<TerminalThemeId, UiPalette> = {
   'nexus-dark': {
-    bg: '#0b0e14',
-    bgElevated: '#10141d',
-    bgBar: '#0d1119',
-    border: '#1c2333',
-    borderStrong: '#273049',
-    text: '#c9d1e0',
-    // ~5.3:1 sobre --bg (clears WCAG AA). NÃO baixar pra #6b7690 (~4.25:1,
-    // falha AA) — este valor tem que casar com o de global.css:root.
-    textDim: '#7c869e',
-    accent: '#6ea8fe',
-    accentSoft: 'rgba(110, 168, 254, 0.14)',
-    danger: '#f7768e',
+    bg: '#0a0e15',
+    bgElevated: '#101623',
+    bgBar: '#0c1119',
+    border: '#1d2637',
+    borderStrong: '#2c3a55',
+    text: '#d7dfec',
+    // ≥5:1 sobre --bg e --bg-elevated (WCAG AA). Não baixar — tem que casar
+    // com o valor de base.css:root.
+    textDim: '#8a94aa',
+    // Ciano operacional: o que está VIVO (agente ativo, ação primária).
+    accent: '#45d7ff',
+    accentInk: '#051019',
+    danger: '#ff7a90',
   },
   'nexus-light': {
     bg: '#f7f8fb',
@@ -42,9 +49,9 @@ const PALETTES: Record<TerminalThemeId, UiPalette> = {
     border: '#dde3ee',
     borderStrong: '#c3cddf',
     text: '#2a3040',
-    textDim: '#6b7690',
-    accent: '#2563eb',
-    accentSoft: 'rgba(37, 99, 235, 0.10)',
+    textDim: '#5d6880',
+    accent: '#0e7ac4',
+    accentInk: '#ffffff',
     danger: '#c73a52',
   },
   dracula: {
@@ -56,7 +63,7 @@ const PALETTES: Record<TerminalThemeId, UiPalette> = {
     text: '#f8f8f2',
     textDim: '#8b91b0',
     accent: '#bd93f9',
-    accentSoft: 'rgba(189, 147, 249, 0.14)',
+    accentInk: '#14101f',
     danger: '#ff5555',
   },
   'solarized-dark': {
@@ -66,9 +73,9 @@ const PALETTES: Record<TerminalThemeId, UiPalette> = {
     border: '#0e4250',
     borderStrong: '#1a5261',
     text: '#93a1a1',
-    textDim: '#586e75',
-    accent: '#268bd2',
-    accentSoft: 'rgba(38, 139, 210, 0.14)',
+    textDim: '#6f8489',
+    accent: '#2aa4e8',
+    accentInk: '#01222c',
     danger: '#dc322f',
   },
 };
@@ -82,9 +89,12 @@ const VAR_MAP: Array<[keyof UiPalette, string]> = [
   ['text', '--text'],
   ['textDim', '--text-dim'],
   ['accent', '--accent'],
-  ['accentSoft', '--accent-soft'],
+  ['accentInk', '--accent-ink'],
   ['danger', '--danger'],
 ];
+
+/** Vars que versões antigas setavam inline e hoje são derivadas em CSS. */
+const LEGACY_INLINE_VARS = ['--accent-soft'];
 
 /** Restyle the whole app to the palette matching the selected theme. */
 export function applyUiTheme(themeId: TerminalThemeId): void {
@@ -92,6 +102,11 @@ export function applyUiTheme(themeId: TerminalThemeId): void {
   const root = document.documentElement;
   for (const [key, cssVar] of VAR_MAP) {
     root.style.setProperty(cssVar, palette[key]);
+  }
+  // Um set inline antigo venceria o color-mix de base.css para sempre;
+  // limpar garante que os derivados sigam o acento do tema atual.
+  for (const cssVar of LEGACY_INLINE_VARS) {
+    root.style.removeProperty(cssVar);
   }
   root.dataset.theme = themeId;
 }

@@ -13,25 +13,37 @@
 }
 
 :root {
-  --bg: #0b0e14;
-  --bg-elevated: #10141d;
-  --bg-bar: #0d1119;
-  --border: #1c2333;
-  --border-strong: #273049;
-  --text: #c9d1e0;
-  /* Secondary text. Lifted from #6b7690 (~4.25:1 on --bg, fails WCAG AA) to
-     ~5.3:1 so small meta/detail/empty-state copy clears AA everywhere. */
-  --text-dim: #7c869e;
-  --accent: #6ea8fe;
-  --accent-soft: rgba(110, 168, 254, 0.14);
-  --accent-strong: rgba(110, 168, 254, 0.28);
-  /* Hover do CTA sólido — antes era #8db9ff hardcoded em cada componente. */
-  --accent-hover: #8db9ff;
-  --danger: #f7768e;
+  /* Cockpit: azul-negro profundo com um acento ciano operacional. A doutrina
+     de cor é aviônica — ciano = vivo/interativo, verde = nominal/pronto,
+     âmbar = atenção/bloqueado, vermelho = falha. Decoração nunca usa sinal. */
+  --bg: #0a0e15;
+  --bg-elevated: #101623;
+  --bg-bar: #0c1119;
+  --border: #1d2637;
+  --border-strong: #2c3a55;
+  --text: #d7dfec;
+  /* Secondary text. Mantido ≥5:1 sobre --bg e --bg-elevated (WCAG AA para
+     meta/detail/empty-state). Não baixar. */
+  --text-dim: #8a94aa;
+  --accent: #45d7ff;
+  /* Tinta sobre superfícies sólidas de acento (CTA). Um token, não #hex solto:
+     temas claros trocam para branco via ui-theme.ts. */
+  --accent-ink: #051019;
+  /* Derivados do acento — color-mix segue o tema automaticamente (Dracula,
+     Solarized…), então NÃO os sobrescreva por tema. */
+  --accent-soft: color-mix(in srgb, var(--accent) 15%, transparent);
+  --accent-strong: color-mix(in srgb, var(--accent) 30%, transparent);
+  --accent-hover: color-mix(in srgb, var(--accent) 80%, #ffffff);
+  --accent-glow: color-mix(in srgb, var(--accent) 45%, transparent);
+  --danger: #ff7a90;
+  /* Acento do DESIGN MODE (segunda voz deliberada, azul-ferramenta): fora da
+     doutrina de sinal operacional de propósito — marca "modo de edição". */
+  --design: #2f6ae0;
+  --danger-soft: color-mix(in srgb, var(--danger) 14%, transparent);
   --scrollbar-track: rgba(4, 6, 10, 0.44);
   --scrollbar-thumb: rgba(124, 134, 158, 0.36);
-  --scrollbar-thumb-hover: rgba(110, 168, 254, 0.62);
-  --pixel-grid: rgba(110, 168, 254, 0.045);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 62%, transparent);
+  --pixel-grid: color-mix(in srgb, var(--accent) 5%, transparent);
   --radius: 8px;
   --bar-height: 44px;
   --toolbar-height: 28px;
@@ -83,9 +95,29 @@
 
   /* Estados operacionais compartilhados entre temas — sinal, não decoração. */
   --ok: #7ee2a8;
-  --live: #35e08d;
+  --live: #3ce08d;
   --warn: #e5c07b;
   --gold: #ffd166;
+
+  /* Semântica de estado ÚNICA para missões/agentes em toda superfície
+     (rail, ops board, orch panel, toolbar). Um estado, uma cor, em todo
+     lugar — trabalhando pulsa em ciano, pronto/feito assenta em verde,
+     bloqueado pede atenção em âmbar, falha grita em vermelho. */
+  --state-running: var(--accent);
+  --state-ready: var(--ok);
+  --state-done: var(--ok);
+  --state-blocked: var(--warn);
+  --state-failed: var(--danger);
+  --state-pending: var(--text-dim);
+}
+
+/* Ajustes de sinal para o tema claro (ui-theme.ts seta data-theme no <html>):
+   verdes/âmbares de dark não seguram contraste sobre branco. */
+[data-theme='nexus-light'] {
+  --ok: #1a9e5c;
+  --live: #0f9d58;
+  --warn: #9a6b00;
+  --gold: #8a6d00;
 }
 
 * {
@@ -111,6 +143,19 @@ body {
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+}
+
+/* Anel de foco padrão da app: :where() zera a especificidade, então qualquer
+   regra de componente existente continua ganhando. Garante que teclado nunca
+   navega às cegas, mesmo em superfícies sem foco desenhado. */
+:where(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--accent-strong);
+  color: var(--text);
 }
 
 /* Modo pixel opt-in (ui-theme.applyPixelMode seta data-theme-pixel no <html>):
@@ -164,13 +209,52 @@ body {
   background: transparent;
 }
 
+/* Boot: o primeiro frame do mission control liga os instrumentos — marca
+   pulsando + rótulo. Nada de texto dim solto. */
 .boot {
   display: grid;
   place-items: center;
   height: 100%;
+  background: var(--bg);
+}
+
+.boot__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.boot__mark {
+  color: var(--accent);
+  animation: boot-pulse 1.6s ease-in-out infinite;
+}
+
+.boot__label {
   color: var(--text-dim);
+  font-family: var(--font-pixel);
   font-size: 14px;
-  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+@keyframes boot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 6px var(--accent-glow));
+  }
+  50% {
+    opacity: 0.55;
+    filter: drop-shadow(0 0 1px transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot__mark {
+    animation: none;
+    filter: drop-shadow(0 0 6px var(--accent-glow));
+  }
 }
 
 .app {
@@ -259,15 +343,9 @@ body {
   line-height: 1;
 }
 
-.workspace-bar__tag {
-  color: var(--text-dim);
-  /* Superfície retrô: fonte bitmap direto. VT323 é condensada — 13px aqui
-     equivale visualmente aos 11px da sans e mantém legibilidade AA. */
-  font-family: var(--font-pixel);
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-}
+/* (.workspace-bar__tag removida — classe morta: nenhum componente a renderiza.
+   A identidade VT323 agora aparece no default em .toolbar__badge, eyebrows e
+   no chip de frota.) */
 
 .workspace-bar__actions {
   display: flex;
@@ -387,6 +465,20 @@ body {
 .workspace-bar__btn:hover {
   background: var(--accent-soft);
   border-color: var(--accent);
+}
+
+/* Feedback tátil de pressão — estado, não coreografia (80ms). */
+.workspace-bar__btn:active,
+.toolbar__btn:active {
+  transform: translateY(0.5px);
+  transition-duration: 80ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-bar__btn:active,
+  .toolbar__btn:active {
+    transform: none;
+  }
 }
 
 .workspace-bar__btn--more {
@@ -585,7 +677,51 @@ body {
 
 .pane--focused {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent-soft), 0 6px 24px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    0 0 0 1px var(--accent-soft),
+    0 0 18px -6px var(--accent-glow),
+    0 6px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* Estado da frota legível de LONGE, não só no glifo de 10px: agente
+   trabalhando respira ciano na borda do pane; morto tinge de vermelho —
+   o evento mais crítico deixa de ser o mais silencioso. O pane focado
+   mantém prioridade visual (regra acima vence por ordem). */
+.pane--state-busy:not(.pane--focused) {
+  border-color: color-mix(in srgb, var(--state-running) 55%, var(--border));
+  animation: pane-breathe 2.2s ease-in-out infinite;
+}
+
+.pane--state-exited:not(.pane--focused) {
+  border-color: color-mix(in srgb, var(--state-failed) 60%, var(--border));
+  box-shadow: 0 0 14px -8px var(--danger);
+}
+
+.pane--state-exited .toolbar {
+  background: color-mix(in srgb, var(--danger) 7%, var(--bg-bar));
+}
+
+/* Dormindo: presença apagada — borda tracejada dim, sem sinal vivo. */
+.pane--state-hibernated:not(.pane--focused) {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--text-dim) 40%, var(--border));
+}
+
+@keyframes pane-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 16px -7px var(--accent-glow);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane--state-busy:not(.pane--focused) {
+    animation: none;
+    box-shadow: 0 0 12px -7px var(--accent-glow);
+  }
 }
 
 .toolbar {
@@ -628,22 +764,22 @@ body {
   align-items: center;
 }
 .toolbar__state--idle {
-  color: var(--ok);
+  color: var(--state-ready);
   animation: state-settle 250ms var(--ease-out-quart);
 }
 .toolbar__state--busy {
-  color: var(--warn);
+  color: var(--state-running);
   animation: state-breathe 1.4s ease-in-out infinite;
 }
 .toolbar__state--spawning {
-  color: var(--text-dim);
+  color: var(--state-pending);
   animation: state-breathe 0.9s ease-in-out infinite;
 }
 .toolbar__state--exited {
-  color: var(--danger);
+  color: var(--state-failed);
 }
 .toolbar__state--hibernated {
-  color: var(--accent);
+  color: var(--state-pending);
 }
 @keyframes state-breathe {
   0%, 100% { opacity: 1; }
@@ -674,7 +810,10 @@ body {
 
 .toolbar__badge {
   position: relative;
-  font-size: var(--text-2xs);
+  /* Identidade pixel no default: VT323 é condensada, 12px aqui lê como os
+     10px da sans e respeita o piso de legibilidade da fonte bitmap. */
+  font-family: var(--font-pixel);
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--text-dim);
@@ -753,7 +892,7 @@ body {
 
 .toolbar__btn--close:hover {
   color: var(--danger);
-  background: rgba(247, 118, 142, 0.14);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
 }
 
 /* Floating tooltip (Orca-style) — clearer than native title */
@@ -853,7 +992,7 @@ body {
 
 .toolbar__menu-item.toolbar__btn--close:hover {
   color: var(--danger);
-  background: rgba(247, 118, 142, 0.14);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
 }
 
 .toolbar__menu-item-label {
@@ -948,9 +1087,9 @@ body {
   gap: 4px;
   height: 20px;
   padding: 0 8px;
-  border: 1px solid color-mix(in srgb, #22c55e 45%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--live) 45%, var(--border));
   border-radius: 999px;
-  background: color-mix(in srgb, #22c55e 14%, transparent);
+  background: color-mix(in srgb, var(--live) 14%, transparent);
   color: var(--text);
   font-size: 11px;
   cursor: pointer;
@@ -958,7 +1097,7 @@ body {
 }
 
 .devserver-chip:hover:not(:disabled) {
-  background: color-mix(in srgb, #22c55e 26%, transparent);
+  background: color-mix(in srgb, var(--live) 26%, transparent);
 }
 
 .devserver-chip:disabled {
@@ -981,9 +1120,9 @@ body {
 }
 
 .design-bar--active {
-  background: color-mix(in srgb, #2f6ae0 14%, var(--bg-bar));
-  border-bottom-color: color-mix(in srgb, #2f6ae0 55%, var(--border));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, #2f6ae0 22%, transparent);
+  background: color-mix(in srgb, var(--design) 14%, var(--bg-bar));
+  border-bottom-color: color-mix(in srgb, var(--design) 55%, var(--border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--design) 22%, transparent);
 }
 
 .design-bar__toggle {
@@ -1025,8 +1164,8 @@ body {
 
 .design-bar__toggle--on {
   color: #fff;
-  background: #2f6ae0;
-  border-color: #2f6ae0;
+  background: var(--design);
+  border-color: var(--design);
 }
 
 .design-bar__hint {
@@ -1037,7 +1176,7 @@ body {
 .design-bar__label {
   font-family: var(--font-mono, ui-monospace, monospace);
   color: var(--text);
-  background: color-mix(in srgb, #2f6ae0 18%, transparent);
+  background: color-mix(in srgb, var(--design) 18%, transparent);
   border-radius: var(--radius-sm);
   padding: 1px 6px;
   white-space: nowrap;
@@ -1116,7 +1255,7 @@ body {
 .design-sidebar__head {
   font-family: var(--font-mono, ui-monospace, monospace);
   color: var(--text);
-  background: color-mix(in srgb, #2f6ae0 18%, transparent);
+  background: color-mix(in srgb, var(--design) 18%, transparent);
   border-radius: var(--radius-sm);
   padding: 2px 6px;
   white-space: nowrap;
@@ -1182,8 +1321,8 @@ body {
 }
 
 .design-sidebar__apply:not(:disabled) {
-  background: #2f6ae0;
-  border-color: #2f6ae0;
+  background: var(--design);
+  border-color: var(--design);
   color: #fff;
 }
 
@@ -1200,9 +1339,9 @@ body {
 .browser-pane__error {
   flex: 0 0 auto;
   padding: 5px 8px;
-  border-bottom: 1px solid rgba(247, 118, 142, 0.25);
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
   color: #ff9aa8;
-  background: rgba(247, 118, 142, 0.10);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
   font-size: 11px;
   overflow-wrap: anywhere;
 }
@@ -1244,5 +1383,77 @@ body {
 }
 
 .workspace-bar__btn--agent:hover {
-  background: rgba(110, 168, 254, 0.25);
+  background: var(--accent-strong);
+}
+
+/* ---- Fleet chip: rollup da frota na zona de status ---- */
+/* Responde "quantos trabalhando / prontos / mortos" sem caçar pane por pane.
+   Clique foca o pane que precisa de atenção (morto primeiro, depois ocupado). */
+.fleet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-round);
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  color: var(--text-dim);
+  font-family: var(--font-pixel);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.fleet-chip:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.fleet-chip__seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fleet-chip__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--state-pending);
+}
+
+.fleet-chip__seg--working {
+  color: var(--text);
+}
+.fleet-chip__seg--working .fleet-chip__dot {
+  background: var(--state-running);
+  box-shadow: 0 0 6px var(--accent-glow);
+  animation: state-breathe 2.2s ease-in-out infinite;
+}
+
+.fleet-chip__seg--ready .fleet-chip__dot {
+  background: var(--state-ready);
+}
+
+.fleet-chip__seg--sleeping .fleet-chip__dot {
+  background: var(--state-pending);
+}
+
+.fleet-chip__seg--down {
+  color: var(--danger);
+}
+.fleet-chip__seg--down .fleet-chip__dot {
+  background: var(--state-failed);
+  box-shadow: 0 0 6px var(--danger-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fleet-chip__seg--working .fleet-chip__dot {
+    animation: none;
+  }
 }

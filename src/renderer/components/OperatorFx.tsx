@@ -13,9 +13,11 @@ import { fmt } from './operator-sprite-data';
  * deltas do snapshot (o backend continua a fonte de verdade) e injeta:
  *  - toasts "+XP" que sobem e desaparecem a cada ganho de poder;
  *  - um burst de TIER UP / TRANSCENDÊNCIA (anéis, partículas, glitch, sprite
- *    evoluindo) que trava a atenção por ~2.6s;
+ *    evoluindo) por ~2.6s;
  *  - toasts de CONQUISTA deslizando pela direita.
- * Overlay fixo, `pointer-events:none` (o burst aceita clique para dispensar).
+ * Overlay fixo, `pointer-events:none` — inclusive o véu do burst: um clique
+ * durante a celebração cai no terminal, não aqui. Só o núcleo do burst aceita
+ * clique (abre o perfil).
  * Respeita prefers-reduced-motion (degrada para um selo estático curto) e o
  * modo sóbrio (não renderiza nada — o XP segue sendo contabilizado).
  */

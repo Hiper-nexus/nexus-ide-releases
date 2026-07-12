@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
+import { useSessionStateStore } from '../state/session-state-store';
 import { attachHost, blurHost, focusHost } from '../terminal/terminal-host';
 import { BrowserPane } from './BrowserPane';
 import { PaneToolbar } from './PaneToolbar';
@@ -25,6 +26,9 @@ export function PaneLeaf({ pane }: Props) {
 function TerminalPaneLeaf({ pane }: Props) {
   const slotRef = useRef<HTMLDivElement>(null);
   const isFocused = useLayoutStore((s) => s.focusedPaneId === pane.id);
+  // Estado da sessão vira modificador visual do pane: a frota é legível na
+  // visão periférica (busy respira, exited tinge), não só no glifo do toolbar.
+  const sessionState = useSessionStateStore((s) => s.paneStates.get(pane.id));
 
   useEffect(() => {
     const slot = slotRef.current;
@@ -40,7 +44,11 @@ function TerminalPaneLeaf({ pane }: Props) {
   }, [isFocused, pane.id]);
 
   return (
-    <div className={`pane ${isFocused ? 'pane--focused' : ''}`}>
+    <div
+      className={`pane ${isFocused ? 'pane--focused' : ''} ${
+        sessionState ? `pane--state-${sessionState}` : ''
+      }`}
+    >
       <PaneToolbar pane={pane} isFocused={isFocused} />
       <div className="pane__terminal" ref={slotRef} />
     </div>

@@ -7,7 +7,7 @@
 .workspace-bar__btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #0b0e14;
+  color: var(--accent-ink);
   font-weight: 600;
 }
 .workspace-bar__btn--primary:hover {
@@ -29,9 +29,20 @@
   z-index: 30; /* above panes, below the side columns + wizard/drawers */
   display: grid;
   place-items: center;
-  /* Scrim sólido (sem blur/glassmorphism): opacidade maior compensa a
-     ausência do backdrop-filter e mantém o contraste do painel acima. */
-  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  /* Scrim sólido (sem blur/glassmorphism) + grade pixel sutil: a identidade
+     "mission control" aparece no default, não só no pixel-mode. */
+  background:
+    repeating-linear-gradient(
+      0deg,
+      var(--pixel-grid) 0 1px,
+      transparent 1px 24px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      var(--pixel-grid) 0 1px,
+      transparent 1px 24px
+    ),
+    color-mix(in srgb, var(--bg) 88%, transparent);
   border-radius: var(--radius);
 }
 
@@ -48,10 +59,19 @@
   width: min(780px, calc(100% - 48px));
   max-height: calc(100% - 48px);
   overflow-y: auto;
-  background: var(--bg-elevated);
+  /* Luz vinda de cima: um sopro de acento no topo dá dimensão sem virar
+     gradiente decorativo. */
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 4%, var(--bg-elevated)) 0%,
+    var(--bg-elevated) 220px
+  );
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
   padding: var(--space-6);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    var(--shadow-3);
   animation: home-deck-rise 180ms var(--ease-out-expo);
 }
 
@@ -159,6 +179,8 @@
 }
 .home-deck__stat--live .home-deck__dot {
   background: var(--live);
+  /* O que está vivo, brilha — sinal, não decoração. */
+  box-shadow: 0 0 8px color-mix(in srgb, var(--live) 55%, transparent);
 }
 
 .home-deck__next {
@@ -178,8 +200,12 @@
 .home-deck__next-label {
   margin: 0 0 var(--space-2);
   color: var(--accent);
-  font-size: var(--text-md);
-  font-weight: 600;
+  /* Identidade pixel no default: eyebrow operacional em VT323 (≥12px). */
+  font-family: var(--font-pixel);
+  font-size: 15px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
 }
 
 .home-deck__next h2 {
@@ -226,11 +252,16 @@
 .home-deck__cta {
   background: var(--accent);
   border: 1px solid var(--accent);
-  color: #0b0e14;
+  color: var(--accent-ink);
+  box-shadow: 0 4px 18px -8px var(--accent-glow);
 }
 .home-deck__cta:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
+  box-shadow: 0 6px 22px -8px var(--accent-glow);
+}
+.home-deck__cta:active {
+  transform: translateY(0.5px);
 }
 .home-deck__cta:focus-visible {
   outline: 2px solid var(--accent);
@@ -317,9 +348,23 @@
   align-items: center;
   color: var(--text-dim);
   font-size: 15px;
+  transition: transform 150ms var(--ease-out-quart), color 150ms var(--ease-out-quart);
 }
 .home-deck__squad:hover .home-deck__squad-go {
   color: var(--accent);
+  transform: translateX(3px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-deck__squad-go {
+    transition: none;
+  }
+  .home-deck__squad:hover .home-deck__squad-go {
+    transform: none;
+  }
+  .home-deck__cta:active {
+    transform: none;
+  }
 }
 
 .home-deck__foot {

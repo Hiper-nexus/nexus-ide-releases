@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { AdapterInfo } from './adapter-types';
 import type { BrowserDesignEvent } from './browser-design';
 import type { OnboardingState, OnboardingPatch } from './onboarding-types';
+import type { PetPrefs } from './pet-types';
 import type { OrientationSnapshot } from './orientation-types';
 import type { UpdateState } from './update-ipc';
 import type {
@@ -493,7 +494,11 @@ export interface SpawnRequest {
 }
 
 export type SpawnResult =
-  | { ok: true; sessionId: string }
+  | {
+      ok: true;
+      sessionId: string;
+      resumeMode?: 'exact' | 'latest' | 'unsupported';
+    }
   | { ok: false; error: string };
 
 export interface PtyDataEvent {
@@ -537,6 +542,14 @@ import type {
 } from './billing-types';
 
 export interface NexusApi {
+  /** Desktop pet (companion flutuante): prefs + pedido de abrir Settings. */
+  pet: {
+    getPrefs(): Promise<PetPrefs>;
+    setPrefs(patch: Partial<PetPrefs>): Promise<PetPrefs>;
+    onPrefsChanged(cb: (prefs: PetPrefs) => void): Unsubscribe;
+    /** O pet pediu para abrir as configurações (menu "Configurar…"). */
+    onOpenSettings(cb: () => void): Unsubscribe;
+  };
   /** App-shell lifecycle signals to the main process. */
   app: {
     /** Tell main that React committed its first frame (mount watchdog). */

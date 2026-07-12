@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Mission, MissionStatus } from '../../shared/orch-types';
 import { useOrchStore } from '../state/orch-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
+import { askConfirm } from '../state/confirm-store';
 import { useGamificationStore } from '../state/gamification-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { OperatorSprite } from './OperatorSprite';
@@ -79,11 +80,16 @@ export function OpsBoard() {
       .finally(() => setBusy(null));
   }
 
-  function remover(m: Mission, active: boolean) {
-    const warn = active
-      ? `A missão "${m.title}" está aberta. Remover da lista? Os panes continuam abertos.`
-      : `Remover a missão "${m.title}" da lista?`;
-    if (!window.confirm(warn)) return;
+  async function remover(m: Mission, active: boolean) {
+    const ok = await askConfirm({
+      title: `Remover "${m.title}"?`,
+      body: active
+        ? 'A missão está aberta. Remover tira o registro da lista; os panes continuam abertos.'
+        : 'A missão sai da lista de trabalho.',
+      confirmLabel: 'Remover missão',
+      danger: true,
+    });
+    if (!ok) return;
     void window.nexus.orch.removeMission(m.id).then((r) => {
       if (!r.removed) setNote('Missão já não estava na lista.');
     });
@@ -238,7 +244,7 @@ export function OpsBoard() {
                                 {busy === m.id ? (
                                   'retomando…'
                                 ) : (
-                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                  <span className="ops-board__resume-label">
                                     <PixelIcon name="mission" size={8} /> retomar
                                   </span>
                                 )}

@@ -88,7 +88,7 @@
 }
 
 .diff-panel__line--add {
-  color: #9ece6a;
+  color: var(--ok);
   cursor: pointer;
 }
 
@@ -152,7 +152,7 @@
 .int-panel__btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #0b0e14;
+  color: var(--accent-ink);
 }
 
 .diff-panel__btn:disabled,
@@ -247,4 +247,10 @@
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-drop {
+    transition: none;
+  }
 }

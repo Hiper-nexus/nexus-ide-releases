@@ -12,6 +12,8 @@ import {
   TEAM_CHANNELS,
 } from '../shared/channels';
 import { OPS_CHANNELS } from '../shared/ops-ipc';
+import { PET_CHANNELS } from '../shared/pet-types';
+import type { PetPrefs } from '../shared/pet-types';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { VISION_CHANNELS } from '../shared/vision-ipc';
 import type { ScreenCaptureMetadata } from '../shared/vision-ipc';
@@ -364,6 +366,23 @@ ipcRenderer.on(PIPE_CHANNELS.changed, (_e, pipes: Pipe[]) =>
 );
 
 const api: NexusApi = {
+  pet: {
+    getPrefs: () => ipcRenderer.invoke(PET_CHANNELS.getPrefs),
+    setPrefs: (patch: Partial<PetPrefs>) =>
+      ipcRenderer.invoke(PET_CHANNELS.setPrefs, patch),
+    onPrefsChanged: (cb: (prefs: PetPrefs) => void) => {
+      const listener = (_e: unknown, prefs: PetPrefs) => cb(prefs);
+      ipcRenderer.on(PET_CHANNELS.prefsChanged, listener);
+      return () =>
+        ipcRenderer.removeListener(PET_CHANNELS.prefsChanged, listener);
+    },
+    onOpenSettings: (cb: () => void) => {
+      const listener = () => cb();
+      ipcRenderer.on(PET_CHANNELS.openSettings, listener);
+      return () =>
+        ipcRenderer.removeListener(PET_CHANNELS.openSettings, listener);
+    },
+  },
   app: {
     signalMounted: (report) => ipcRenderer.send(WINDOW_CHANNELS.mounted, report),
     openExternal: (url: string) =>

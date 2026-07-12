@@ -1,15 +1,5 @@
 import { useToastStore } from '../state/toast-store';
-
-const CloseIcon = () => (
-  <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
-    <path
-      d="M2.5 2.5 L9.5 9.5 M9.5 2.5 L2.5 9.5"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-    />
-  </svg>
-);
+import { PixelIcon } from './PixelIcon';
 
 /** Stacked transient notifications, bottom-right. Severity reads from a small
  * status dot — not a side-tab accent border, which is a tell of AI-generated UI. */
@@ -31,7 +21,7 @@ export function Toasts() {
             onClick={() => dismiss(t.id)}
             aria-label="Fechar"
           >
-            <CloseIcon />
+            <PixelIcon name="close" size={11} />
           </button>
         </div>
       ))}

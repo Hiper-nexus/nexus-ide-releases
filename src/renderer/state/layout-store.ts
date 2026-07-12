@@ -133,6 +133,15 @@ export function bumpTreeVersion(): void {
 
 let inFlightSwitch: { path: string; promise: Promise<boolean> } | null = null;
 
+let restoredPanesHandler: ((panes: readonly PaneModel[]) => void) | null = null;
+
+/** Terminal runtime hook: restored CLI panes must request provider resume on first spawn. */
+export function setRestoredPanesHandler(
+  handler: ((panes: readonly PaneModel[]) => void) | null,
+): void {
+  restoredPanesHandler = handler;
+}
+
 /**
  * Swap the pane tree to another workspace: flush the outgoing layout, load
  * the target's saved layout (or a fresh single-shell tree) and hydrate.
@@ -155,6 +164,7 @@ export function switchWorkspaceLayout(workspacePath: string): Promise<boolean> {
     if (persistKey !== workspacePath) return true;
     // A local mutation landed while we were loading — it wins; don't hydrate.
     if (treeVersion !== versionAtStart) return layout !== null;
+    if (layout) restoredPanesHandler?.(listPanes(layout.root));
     useLayoutStore.getState().hydrate(layout);
     return layout !== null;
   })();

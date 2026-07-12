@@ -37,7 +37,18 @@ const PATTERNS: Pattern[] = [
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /usage limit reached/i },
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /reached your (?:usage|5-hour|weekly|daily) limit/i },
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /hit your (?:usage|rate|token) limit/i },
-  { kind: 'rate-limit', cooldownMs: HOUR, re: /rate[_\s]?limit(?:ed|_error)?/i },
+  // Never match the bare phrase "rate limit": squad instructions legitimately
+  // mention it ("em rate limit, re-roteie") and are echoed into the PTY. A
+  // limit signal must carry error/outcome semantics.
+  {
+    kind: 'rate-limit',
+    cooldownMs: HOUR,
+    // Grafias reais de provider que carregam semântica de erro por si:
+    // rate_limit_exceeded / rate_limit_reached (código da OpenAI, separador
+    // underscore) e RateLimitError (classe de exceção dos SDKs, CamelCase).
+    // A prosa nua "rate limit" continua fora (ver comentário acima).
+    re: /rate[_\s]?limit(?:ed|_error)|rate[_\s]?limit[_\s]+(?:exceeded|reached|hit)|ratelimiterror|rate[_\s]?limit.{0,24}\btry again\b|(?:error|failed|failure)\b.{0,40}\brate[_\s]?limit/i,
+  },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /\b429\b|too many requests/i },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /resource[_\s]?exhausted/i },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /(?:tokens? per min(?:ute)?|tpm) (?:limit|exceeded)/i },

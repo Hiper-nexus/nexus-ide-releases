@@ -18,6 +18,7 @@ import { CostBadge } from './CostBadge';
 import { DevServerChip } from './DevServerChip';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { requestPaneClose } from '../terminal/pane-close-guard';
+import { askConfirm } from '../state/confirm-store';
 
 interface Props {
   pane: PaneModel;
@@ -206,15 +207,18 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
             wakeHost(pane);
             return;
           }
-          if (
-            pane.kind !== 'cli-agent' ||
-            paneState !== 'busy' ||
-            window.confirm(
-              'O agente está trabalhando. Dormir encerra o processo atual. Continuar?',
-            )
-          ) {
+          if (pane.kind !== 'cli-agent' || paneState !== 'busy') {
             hibernateHost(pane.id);
+            return;
           }
+          void askConfirm({
+            title: 'Dormir este agente?',
+            body: 'O agente está trabalhando. Dormir encerra o processo atual.',
+            confirmLabel: 'Dormir agente',
+            danger: true,
+          }).then((ok) => {
+            if (ok) hibernateHost(pane.id);
+          });
         },
       });
     }
@@ -228,15 +232,18 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         primary: true,
         run: () => {
           const state = useSessionStateStore.getState().paneStates.get(pane.id);
-          if (
-            state === 'busy' &&
-            !window.confirm(
-              'O agente está trabalhando. Reiniciar interrompe a tarefa. Continuar?',
-            )
-          ) {
+          if (state !== 'busy') {
+            respawnWithResume(pane, '[nexus] retomando a sessão anterior…');
             return;
           }
-          respawnWithResume(pane, '[nexus] retomando a sessão anterior…');
+          void askConfirm({
+            title: 'Reiniciar este agente?',
+            body: 'O agente está trabalhando. Reiniciar interrompe a tarefa atual e retoma a conversa (--resume).',
+            confirmLabel: 'Reiniciar agente',
+            danger: true,
+          }).then((ok) => {
+            if (ok) respawnWithResume(pane, '[nexus] retomando a sessão anterior…');
+          });
         },
       });
     }

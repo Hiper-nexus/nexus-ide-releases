@@ -4,24 +4,38 @@ interface NexusMarkProps {
 }
 
 /**
- * Logomarca do NexusIDE — um "nó" pixel: diamante em anel com núcleo aceso.
- * Substitui o placeholder ◈ (glifo Unicode) por arte pixel de verdade, na
- * mesma pegada do Operator sprite. currentColor herda o acento de quem o usa.
+ * Logomarca do NexusIDE — o "nó-nexus" pixel: anel diamante com núcleo aceso
+ * e quatro satélites orbitais (a frota convergindo ao nó). Grade 13×13, na
+ * mesma pegada do PixelIcon/Operator sprite; profundidade por opacidade, tudo
+ * em currentColor para herdar o acento de quem o usa. Mesmo desenho do ícone
+ * do app (assets/icon.png).
  */
 
-// Anel do diamante (borda) — pares esquerda/direita por linha + ápices.
+// Anel do diamante |dx|+|dy| = 4 em volta do centro (6,6).
 const RING: Array<[number, number]> = [
-  [5, 0],
-  [4, 1], [6, 1],
-  [3, 2], [7, 2],
-  [2, 3], [8, 3],
-  [1, 4], [9, 4],
-  [0, 5], [10, 5],
-  [1, 6], [9, 6],
-  [2, 7], [8, 7],
-  [3, 8], [7, 8],
-  [4, 9], [6, 9],
-  [5, 10],
+  [6, 2],
+  [7, 3], [8, 4], [9, 5],
+  [10, 6],
+  [9, 7], [8, 8], [7, 9],
+  [6, 10],
+  [5, 9], [4, 8], [3, 7],
+  [2, 6],
+  [3, 5], [4, 4], [5, 3],
+];
+
+// Núcleo aceso: plus central — o "nó" vivo.
+const CORE: Array<[number, number]> = [
+  [6, 6],
+  [5, 6], [7, 6],
+  [6, 5], [6, 7],
+];
+
+// Satélites orbitais nos eixos cardeais — a frota.
+const ORBITALS: Array<[number, number]> = [
+  [6, 0],
+  [12, 6],
+  [6, 12],
+  [0, 6],
 ];
 
 export function NexusMark({ size = 16, className }: NexusMarkProps) {
@@ -30,17 +44,21 @@ export function NexusMark({ size = 16, className }: NexusMarkProps) {
       className={className}
       width={size}
       height={size}
-      viewBox="0 0 11 11"
+      viewBox="0 0 13 13"
       shapeRendering="crispEdges"
       fill="currentColor"
       role="img"
       aria-label="NexusIDE"
     >
       {RING.map(([x, y]) => (
-        <rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" />
+        <rect key={`r${x}-${y}`} x={x} y={y} width="1" height="1" opacity="0.92" />
       ))}
-      {/* Núcleo aceso — o "nó" no centro do diamante. */}
-      <rect x="5" y="5" width="1" height="1" />
+      {ORBITALS.map(([x, y]) => (
+        <rect key={`o${x}-${y}`} x={x} y={y} width="1" height="1" opacity="0.55" />
+      ))}
+      {CORE.map(([x, y]) => (
+        <rect key={`c${x}-${y}`} x={x} y={y} width="1" height="1" />
+      ))}
     </svg>
   );
 }

@@ -36,6 +36,7 @@
     "resumeIdArgs": [
       "--resume"
     ],
+    "sessionIdArg": "--session-id",
     "extraArgs": []
   },
   "env": {

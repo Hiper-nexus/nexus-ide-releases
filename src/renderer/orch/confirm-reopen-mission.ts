@@ -1,4 +1,5 @@
 import type { Mission } from '../../shared/orch-types';
+import { askConfirm } from '../state/confirm-store';
 import {
   hardReopenWouldDisplaceLayout,
   hardReopenWouldKillAgents,
@@ -28,9 +29,12 @@ export async function confirmAndReopenMission(
     }
 
     if (wouldKill) {
-      const ok = window.confirm(
-        `Retomar "${mission.title}" exige encerrar o orquestrador Claude já em execução (login partilhado).\n\nOutros panes podem permanecer. Continuar?`,
-      );
+      const ok = await askConfirm({
+        title: `Retomar "${mission.title}"?`,
+        body: 'Retomar exige encerrar o orquestrador Claude já em execução (login partilhado). Outros panes podem permanecer.',
+        confirmLabel: 'Encerrar e retomar',
+        danger: true,
+      });
       if (!ok) {
         return { ok: false, error: 'Retoma cancelada.' };
       }

@@ -49,7 +49,7 @@
 .prov__ctl-btn--danger.prov__ctl-btn--on {
   color: var(--danger);
   border-color: var(--danger);
-  background: rgba(247, 118, 142, 0.1);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 /* ---- Cost tracker (badge por pane + resumo no topo) ---- */
@@ -269,7 +269,7 @@
   z-index: 60;
   display: grid;
   place-items: center;
-  background: rgba(4, 6, 10, 0.62);
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
 }
 .operator-profile {
   position: relative;
@@ -280,9 +280,9 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   background:
-    linear-gradient(90deg, rgba(110, 168, 254, 0.045) 1px, transparent 1px),
-    linear-gradient(0deg, rgba(126, 226, 168, 0.035) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(16, 20, 29, 0.98), rgba(9, 12, 18, 0.98));
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(0deg, color-mix(in srgb, var(--ok) 3.5%, transparent) 1px, transparent 1px),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 98%, transparent), color-mix(in srgb, var(--bg) 98%, transparent));
   background-size: 24px 24px, 24px 24px, auto;
   color: var(--text);
   box-shadow: var(--shadow-3);
@@ -354,7 +354,7 @@
   align-items: start;
   padding: 4px 40px 18px 0;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(90deg, rgba(110, 168, 254, 0.06), transparent 70%);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent 70%);
 }
 .operator-profile__header > :first-child {
   flex-shrink: 0;
@@ -399,7 +399,7 @@
   margin-top: 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xs);
-  background: rgba(4, 6, 10, 0.62);
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
   overflow: hidden;
 }
 .operator-profile__bar-fill {
@@ -423,7 +423,7 @@
   right: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: rgba(4, 6, 10, 0.28);
+  background: color-mix(in srgb, var(--bg) 28%, transparent);
   padding: 4px 8px;
   cursor: pointer;
   color: var(--text-dim);
@@ -442,7 +442,7 @@
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: rgba(4, 6, 10, 0.42);
+  background: color-mix(in srgb, var(--bg) 42%, transparent);
   font-size: 12px;
   color: var(--text-dim);
 }
@@ -503,7 +503,7 @@
   padding: 9px 11px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: rgba(4, 6, 10, 0.36);
+  background: color-mix(in srgb, var(--bg) 36%, transparent);
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -531,7 +531,7 @@
   padding: 4px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: rgba(4, 6, 10, 0.36);
+  background: color-mix(in srgb, var(--bg) 36%, transparent);
   font-size: 12px;
   color: var(--text-dim);
   cursor: pointer;
@@ -561,7 +561,7 @@
   padding: 5px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: rgba(4, 6, 10, 0.36);
+  background: color-mix(in srgb, var(--bg) 36%, transparent);
   font-size: 12px;
   color: var(--text);
   cursor: pointer;
@@ -733,6 +733,8 @@
 }
 
 /* ---- Burst de TIER UP / TRANSCENDÊNCIA (centro da tela) ---- */
+/* Celebra SEM roubar a operação: o véu é click-through (um clique perdido cai
+   no terminal, não aqui) e mais claro — só o núcleo aceita clique (perfil). */
 .operator-fx__burst {
   position: absolute;
   inset: 0;
@@ -741,16 +743,20 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  pointer-events: auto;
-  cursor: pointer;
+  pointer-events: none;
   background: radial-gradient(
     circle at center,
-    color-mix(in oklab, var(--accent) 14%, transparent) 0%,
-    rgba(4, 6, 10, 0.55) 42%,
-    rgba(4, 6, 10, 0.78) 100%
+    color-mix(in oklab, var(--accent) 12%, transparent) 0%,
+    rgba(4, 6, 10, 0.32) 42%,
+    rgba(4, 6, 10, 0.5) 100%
   );
   animation: operator-fx-burst-in 240ms var(--ease-out-quint),
     operator-fx-burst-out 400ms 2200ms var(--ease-out-quart) forwards;
+}
+
+.operator-fx__burst-core {
+  pointer-events: auto;
+  cursor: pointer;
 }
 .operator-fx__burst--prestige {
   background: radial-gradient(
@@ -940,6 +946,8 @@
   text-shadow: 0 0 8px color-mix(in oklab, var(--accent) 32%, transparent);
 }
 /* Shimmer contínuo e sutil percorrendo a barra de progresso. */
+/* Shimmer só quando o operador OLHA (hover/foco) — "calmo em ruído": nada
+   de brilho perpétuo em repouso na zona operacional. */
 .operator-hud__bar-fill::after {
   content: '';
   position: absolute;
@@ -951,6 +959,9 @@
     transparent 100%
   );
   transform: translateX(-100%);
+}
+.operator-hud:hover .operator-hud__bar-fill::after,
+.operator-hud:focus-visible .operator-hud__bar-fill::after {
   animation: operator-hud-shimmer 2.6s var(--ease-out-quart) infinite;
 }
 .operator-hud__bar-fill { position: relative; overflow: hidden; }

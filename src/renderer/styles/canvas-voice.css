@@ -48,8 +48,8 @@
 }
 
 .vision-indicator--consent {
-  border-color: rgba(126, 226, 168, 0.7);
-  background: rgba(126, 226, 168, 0.12);
+  border-color: color-mix(in srgb, var(--ok) 70%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
   color: var(--ok);
 }
 
@@ -116,13 +116,13 @@
   z-index: 1200;
   pointer-events: auto;
   user-select: none;
-  border: 1px solid rgba(110, 168, 254, 0.28);
-  /* Overlay hero da identidade pixel: canto reto, fundo SÓLIDO no lugar do
-     glassmorphism (blur 14px removido) — o color-mix escurece o elevated
-     para manter o contraste do conteúdo sobre qualquer terminal atrás. */
-  border-radius: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  /* Fundo SÓLIDO no lugar do glassmorphism (blur 14px removido) — o color-mix
+     escurece o elevated para manter o contraste sobre qualquer terminal atrás.
+     Raio via token: o pixel-mode achata a escala inteira. */
+  border-radius: var(--radius-lg);
   background:
-    radial-gradient(circle at 50% 0%, rgba(110, 168, 254, 0.12), transparent 52%),
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 52%),
     color-mix(in srgb, var(--bg-elevated) 88%, #000);
   box-shadow:
     0 14px 44px rgba(0, 0, 0, 0.5),
@@ -137,7 +137,7 @@
 }
 
 .voice-hud--error {
-  border-color: rgba(247, 118, 142, 0.42);
+  border-color: color-mix(in srgb, var(--danger) 42%, transparent);
 }
 
 @keyframes voice-hud-in {
@@ -157,7 +157,7 @@
   align-items: center;
   gap: 8px;
   padding: 6px 8px 5px 10px;
-  border-bottom: 1px solid rgba(110, 168, 254, 0.16);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
   cursor: grab;
   touch-action: none;
 }
@@ -167,7 +167,7 @@
 }
 
 .voice-hud__grip {
-  color: rgba(110, 168, 254, 0.55);
+  color: color-mix(in srgb, var(--accent) 55%, transparent);
   font-size: 9px;
   letter-spacing: 0.1em;
   line-height: 1;
@@ -182,8 +182,8 @@
 .voice-hud__ctl {
   appearance: none;
   background: transparent;
-  border: 1px solid rgba(110, 168, 254, 0.28);
-  border-radius: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   font-family: var(--font-mono);
   font-size: 10px;
@@ -196,8 +196,8 @@
 
 .voice-hud__ctl:hover {
   color: var(--text);
-  border-color: rgba(110, 168, 254, 0.6);
-  background: rgba(110, 168, 254, 0.12);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .voice-hud__ctl--active {
@@ -229,11 +229,11 @@
   top: 0;
   bottom: 0;
   width: 1px;
-  background: rgba(110, 168, 254, 0.25);
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
 .voice-hud__resize:hover::after {
-  background: rgba(110, 168, 254, 0.7);
+  background: color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 .voice-hud__shell {
@@ -273,8 +273,8 @@
 .voice-orb--mini {
   width: 26px !important;
   box-shadow:
-    0 0 12px rgba(110, 168, 254, 0.45),
-    inset 0 0 8px rgba(110, 168, 254, 0.34);
+    0 0 12px color-mix(in srgb, var(--accent) 45%, transparent),
+    inset 0 0 8px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
 .voice-orb {
@@ -287,11 +287,11 @@
   border-radius: 50%;
   background:
     radial-gradient(circle, rgba(247, 248, 248, 0.96) 0 4%, transparent 5%),
-    radial-gradient(circle, rgba(110, 168, 254, 0.68) 0 18%, transparent 19%),
-    radial-gradient(circle, rgba(110, 168, 254, 0.18) 0 48%, transparent 49%);
+    radial-gradient(circle, color-mix(in srgb, var(--accent) 68%, transparent) 0 18%, transparent 19%),
+    radial-gradient(circle, color-mix(in srgb, var(--accent) 18%, transparent) 0 48%, transparent 49%);
   box-shadow:
-    0 0 34px rgba(110, 168, 254, 0.45),
-    inset 0 0 28px rgba(110, 168, 254, 0.34);
+    0 0 34px color-mix(in srgb, var(--accent) 45%, transparent),
+    inset 0 0 28px color-mix(in srgb, var(--accent) 34%, transparent);
   animation: none;
 }
 
@@ -314,11 +314,11 @@
 .voice-hud--error .voice-orb {
   background:
     radial-gradient(circle, rgba(255, 255, 255, 0.92) 0 4%, transparent 5%),
-    radial-gradient(circle, rgba(247, 118, 142, 0.58) 0 18%, transparent 19%),
-    radial-gradient(circle, rgba(247, 118, 142, 0.18) 0 48%, transparent 49%);
+    radial-gradient(circle, color-mix(in srgb, var(--danger) 58%, transparent) 0 18%, transparent 19%),
+    radial-gradient(circle, color-mix(in srgb, var(--danger) 18%, transparent) 0 48%, transparent 49%);
   box-shadow:
-    0 0 28px rgba(247, 118, 142, 0.42),
-    inset 0 0 24px rgba(247, 118, 142, 0.3);
+    0 0 28px color-mix(in srgb, var(--danger) 42%, transparent),
+    inset 0 0 24px color-mix(in srgb, var(--danger) 30%, transparent);
 }
 
 .voice-orb__ring,
@@ -330,7 +330,7 @@
 }
 
 .voice-orb__ring {
-  border: 1px solid rgba(110, 168, 254, 0.42);
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
 .voice-orb__ring--outer {
@@ -357,8 +357,8 @@
 .voice-orb__core {
   inset: 39%;
   background:
-    radial-gradient(circle, rgba(247, 248, 248, 0.98), rgba(110, 168, 254, 0.8) 48%, transparent 70%);
-  box-shadow: 0 0 22px rgba(110, 168, 254, 0.72);
+    radial-gradient(circle, rgba(247, 248, 248, 0.98), color-mix(in srgb, var(--accent) 80%, transparent) 48%, transparent 70%);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 72%, transparent);
   animation: none;
 }
 
@@ -403,7 +403,7 @@
 }
 
 .voice-orb__scan--b {
-  border-left-color: rgba(110, 168, 254, 0.5);
+  border-left-color: color-mix(in srgb, var(--accent) 50%, transparent);
   transform: rotateY(66deg);
 }
 

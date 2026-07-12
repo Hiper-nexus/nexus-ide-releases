@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLayoutStore } from '../state/layout-store';
+import { useSessionStateStore } from '../state/session-state-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useWorkspaceStore } from '../state/workspace-store';
@@ -7,7 +8,6 @@ import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useCloseWorkspaceStore } from './CloseWorkspaceDialog';
 import { useFilesStore } from '../state/files-store';
 import { CostSummary } from './CostBadge';
-import { OperatorHud } from './OperatorHud';
 import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
 import { VisionIndicator } from './VisionIndicator';
@@ -29,6 +29,88 @@ function adapterModelLabel(adapter: AdapterInfo, model: string): string {
     info?.costTier && info.costTier !== 'unknown' ? `cost:${info.costTier}` : null,
   ].filter(Boolean);
   return tags.length > 0 ? `${model} (${tags.join(', ')})` : model;
+}
+
+/**
+ * Rollup da frota: "3 trabalhando · 2 prontos · 1 morto" num relance, sem
+ * caçar pane por pane. Clique foca quem precisa de atenção — morto primeiro,
+ * depois o próximo ocupado. Some quando não há sessões.
+ */
+function FleetChip() {
+  const paneStates = useSessionStateStore((s) => s.paneStates);
+  const root = useLayoutStore((s) => s.root);
+  const focus = useLayoutStore((s) => s.focus);
+
+  let working = 0;
+  let ready = 0;
+  let sleeping = 0;
+  let down = 0;
+  let firstDown: string | null = null;
+  let firstWorking: string | null = null;
+  for (const pane of listPanes(root)) {
+    const st = paneStates.get(pane.id);
+    if (!st) continue;
+    if (st === 'busy' || st === 'spawning') {
+      working += 1;
+      firstWorking ??= pane.id;
+    } else if (st === 'exited') {
+      down += 1;
+      firstDown ??= pane.id;
+    } else if (st === 'hibernated') {
+      // Dormindo NÃO é pronto: sem processo vivo, não recebe trabalho.
+      sleeping += 1;
+    } else {
+      ready += 1;
+    }
+  }
+  if (working + ready + sleeping + down === 0) return null;
+
+  const target = firstDown ?? firstWorking;
+  const label = [
+    working > 0 ? `${working} trabalhando` : null,
+    ready > 0 ? `${ready} pronto${ready === 1 ? '' : 's'}` : null,
+    sleeping > 0 ? `${sleeping} dormindo` : null,
+    down > 0 ? `${down} morto${down === 1 ? '' : 's'}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <button
+      type="button"
+      className="fleet-chip"
+      title={`Frota: ${label}${target ? ' — clique para focar quem precisa de atenção' : ''}`}
+      aria-label={`Frota: ${label}`}
+      onClick={() => {
+        if (target) focus(target);
+      }}
+    >
+      {working > 0 && (
+        <span className="fleet-chip__seg fleet-chip__seg--working">
+          <span className="fleet-chip__dot" aria-hidden="true" />
+          {working}
+        </span>
+      )}
+      {ready > 0 && (
+        <span className="fleet-chip__seg fleet-chip__seg--ready">
+          <span className="fleet-chip__dot" aria-hidden="true" />
+          {ready}
+        </span>
+      )}
+      {sleeping > 0 && (
+        <span className="fleet-chip__seg fleet-chip__seg--sleeping">
+          <span className="fleet-chip__dot" aria-hidden="true" />
+          {sleeping}
+        </span>
+      )}
+      {down > 0 && (
+        <span className="fleet-chip__seg fleet-chip__seg--down">
+          <span className="fleet-chip__dot" aria-hidden="true" />
+          {down}
+        </span>
+      )}
+    </button>
+  );
 }
 
 type BarDensity = 'full' | 'icons' | 'compact';
@@ -235,14 +317,29 @@ export function WorkspaceBar({
     },
   ];
 
-  // Compact: only Terminal + Browser stay inline; rest go to ⋯
-  // Icons/full: all secondary stay inline (labels hide via CSS density)
-  const inlineTools = compact
-    ? secondaryTools.filter((t) => t.id === 'terminal' || t.id === 'browser')
-    : secondaryTools;
-  const overflowTools = compact
-    ? secondaryTools.filter((t) => t.id !== 'terminal' && t.id !== 'browser')
-    : [];
+  // Dieta da bar (critique P1): só Terminal fica inline; todo o resto mora no
+  // ⋯ em TODAS as densidades — e a 1 tecla via ⌘K. Cada control visível
+  // precisa merecer o lugar.
+  if (onOpenDiff) {
+    secondaryTools.push({
+      id: 'diff',
+      label: 'Diff',
+      icon: 'files',
+      title: 'Ver diferenças e anotar para o agente',
+      onClick: onOpenDiff,
+    });
+  }
+  if (onOpenIntegrations) {
+    secondaryTools.push({
+      id: 'apps',
+      label: 'Apps',
+      icon: 'config',
+      title: 'GitHub, Linear e port forward',
+      onClick: onOpenIntegrations,
+    });
+  }
+  const inlineTools = secondaryTools.filter((t) => t.id === 'terminal');
+  const overflowTools = secondaryTools.filter((t) => t.id !== 'terminal');
 
   function renderToolBtn(tool: ToolDef, opts?: { menu?: boolean }) {
     if (opts?.menu) {
@@ -338,14 +435,15 @@ export function WorkspaceBar({
       </div>
 
       <div className="workspace-bar__actions">
-        {/* Status: HUD + cost (capped width) */}
+        {/* Status: frota + cost (capped width). O OperatorHud (XP) mora no
+            rail — a zona de status da bar é só sinal operacional. */}
         <div className="workspace-bar__zone workspace-bar__zone--status">
-          <OperatorHud />
+          <FleetChip />
           {!compact && <CostSummary />}
           {activeTodo && !compact && (
             <span
               className="workspace-bar__todo"
-              title="Current orchestration task"
+              title="Tarefa de orquestração atual"
             >
               <PixelIcon name="mission" size={10} />
               <span className="workspace-bar__todo-text">{activeTodo}</span>
@@ -358,7 +456,7 @@ export function WorkspaceBar({
           <button
             className="workspace-bar__btn workspace-bar__btn--primary"
             onClick={openWizard}
-            title="Nova missão (livre ou com equipe)"
+            title="Nova missão (⌘N) — livre ou com equipe"
             aria-label="Nova missão"
           >
             <PixelIcon name="mission" />
@@ -373,28 +471,6 @@ export function WorkspaceBar({
             <PixelIcon name="agent" />
             {showLabels && <span className="workspace-bar__btn-label">Agente</span>}
           </button>
-          {onOpenDiff && (
-            <button
-              className="workspace-bar__btn"
-              onClick={onOpenDiff}
-              title="Ver diferenças e anotar para o agente"
-              aria-label="Diff e anotações"
-            >
-              <PixelIcon name="files" />
-              {showLabels && <span className="workspace-bar__btn-label">Diff</span>}
-            </button>
-          )}
-          {onOpenIntegrations && (
-            <button
-              className="workspace-bar__btn"
-              onClick={onOpenIntegrations}
-              title="GitHub, Linear e port forward"
-              aria-label="Integrações"
-            >
-              <PixelIcon name="config" />
-              {showLabels && <span className="workspace-bar__btn-label">Apps</span>}
-            </button>
-          )}
         </div>
 
         <span className="workspace-bar__sep" aria-hidden="true" />
@@ -433,7 +509,7 @@ export function WorkspaceBar({
                           setMoreOpen(false);
                         }}
                       >
-                        <span aria-hidden="true">⇪</span>
+                        <PixelIcon name="update" size={12} />
                         <span>Atualizações</span>
                       </button>
                     </>
@@ -458,9 +534,10 @@ export function WorkspaceBar({
                   type="button"
                   className="workspace-bar__account-restart"
                   title={`Reiniciar panes ${restartAdapterId} após troca de conta`}
+                  aria-label={`Reiniciar panes ${restartAdapterId} após troca de conta`}
                   onClick={() => restartPanesForPendingAccount()}
                 >
-                  ↻
+                  <PixelIcon name="restart" size={12} />
                 </button>
               )}
             </div>

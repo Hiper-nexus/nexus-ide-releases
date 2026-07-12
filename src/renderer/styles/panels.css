@@ -284,8 +284,8 @@
   width: min(440px, 92vw);
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
-  /* Overlay hero da identidade pixel: canto reto. */
-  border-radius: 0;
+  /* Um dialeto de raio só: token (o pixel-mode zera a escala inteira). */
+  border-radius: var(--radius-xl);
   padding: 22px;
   box-shadow: var(--shadow-3);
   z-index: 61;
@@ -333,6 +333,18 @@
   background: var(--danger);
   color: #fff;
   border-color: var(--danger);
+}
+
+.confirm__btn--primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.confirm__btn--primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 /* ---- Files panel (explorer + editor) ---- */
@@ -466,7 +478,7 @@
 
 .files-editor__save {
   background: var(--accent);
-  color: #04121f;
+  color: var(--accent-ink);
   border: none;
   border-radius: var(--radius-md);
   font-size: 11px;
@@ -584,7 +596,7 @@
   padding: 3px 7px;
 }
 .acct__status--ok {
-  color: #5fd38d;
+  color: var(--ok);
   border-color: rgba(95, 211, 141, 0.45);
   background: rgba(95, 211, 141, 0.08);
 }

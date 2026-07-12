@@ -7,6 +7,7 @@ import type {
   TodoList,
 } from '../../shared/orch-types';
 import { useOrchStore, type OrchPanelTab } from '../state/orch-store';
+import { askConfirm } from '../state/confirm-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 
 /**
@@ -249,14 +250,14 @@ export function OrchestrationPanel() {
     })();
   }
 
-  function onRemoveMission(mission: Mission) {
-    if (
-      !window.confirm(
-        `Remover a missão "${mission.title}" da lista? Os panes abertos continuam; só o registro sai.`,
-      )
-    ) {
-      return;
-    }
+  async function onRemoveMission(mission: Mission) {
+    const ok = await askConfirm({
+      title: `Remover "${mission.title}"?`,
+      body: 'Os panes abertos continuam; só o registro sai da lista.',
+      confirmLabel: 'Remover missão',
+      danger: true,
+    });
+    if (!ok) return;
     void window.nexus.orch.removeMission(mission.id).then((r) => {
       if (!r.removed) setNotice('Missão já não estava na lista.');
     });

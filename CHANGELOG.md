@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.14.0 — Mission Control Vivo
+
+Data: 2026-07-12
+
+### Identidade visual
+- Nova identidade "mission control": acento ciano operacional (#45d7ff),
+  fundo azul-negro mais profundo, grade pixel sutil no Launch/Home e VT323
+  nos eyebrows/badges operacionais — a linguagem pixel agora aparece no
+  default, não só no modo pixel.
+- Novo ícone do app e NexusMark: nó-nexus com núcleo aceso, retícula de
+  radar e satélites orbitais (a frota convergindo ao nexo).
+- Doutrina de cor aviônica unificada: tokens `--state-*` únicos para
+  rail, Ops Board, orch panel, toolbar e borda de pane — trabalhando pulsa
+  em ciano, pronto/feito em verde, bloqueado em âmbar, falha em vermelho.
+- Derivados do acento (`--accent-soft/strong/hover/glow`) via `color-mix`:
+  Dracula/Solarized/light herdam hovers e brilhos corretos; superfícies
+  escuras hardcoded convertidas para tokens (tema claro legível em Voice
+  Settings, Perfil do Operador e Settings).
+- Boot screen com a marca pulsando; toasts, wizard e confirm no mesmo
+  dialeto de raio; celebração de tier-up não captura mais o ponteiro.
+
+### Frota visível
+- Chip de frota na barra: trabalhando · prontos · dormindo · mortos num
+  relance, clique foca quem precisa de atenção (morto primeiro).
+- Borda do pane fala: agente ocupado respira ciano, morto tinge de
+  vermelho, hibernado fica tracejado — visão periférica de verdade.
+
+### Desktop pet (novo)
+- Companion pixel flutuante sobre o desktop: sempre no topo, click-through
+  fora do sprite, arrastável com snap de canto e posição persistida.
+- Avisa em balão quando missão conclui/falha ou um agente morre; celebra
+  quando o trabalho termina; dorme quando você quiser (sem balões).
+- Presets do Operador (Ouro, Chama, Centurião, Prestígio), pet
+  personalizado pixelizado localmente de qualquer imagem, e suporte a
+  spritesheets Codex v2 (8×11) — o pet criado no Codex/hatch-pet funciona
+  direto, incluindo os da galeria codex-pets.net.
+- Opt-in em Settings → Aparência; fundo sólido para Linux sem compositor.
+
+### Teclado primeiro
+- ⌘K command palette: panes, missões e ações com busca sem acento.
+- ⌘N nova missão, ⌘1-9 foca o N-ésimo pane; atalhos visíveis nos tooltips
+  e no rodapé do Home.
+
+### UX
+- Dieta da workspace bar: só Terminal inline + ⋯; OperatorHud (XP) mudou
+  para o rodapé do rail — a zona de status é só sinal operacional.
+- `window.confirm` nativo eliminado: confirm da casa modal de verdade
+  (fila serializada, Esc não vaza para o overlay de baixo, focus trap),
+  com rótulos verbo+objeto.
+- Resume dirigido por sessão de provider com feedback exact/latest no
+  terminal; botão da Jarvis em "mudo" abre os controles em vez de acordar
+  sem áudio.
+
+### Correções
+- Detector de rate-limit reconhece `rate_limit_exceeded` e
+  `RateLimitError` sem recasar prosa de instruções de squad.
+- Terminal e janela pré-paint casados com os novos tokens (sem hex-drift).
+
+### Build
+- Release `v0.14.0` assinada e notarizada localmente com o perfil
+  `nexus-notary` (upload manual — Actions sem créditos).
+
 ## 0.13.13 — Account Hot-Swap
 
 Data: 2026-07-12

@@ -195,13 +195,13 @@
 .canvas-command__actions .canvas-command__primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #0b0e14;
+  color: var(--accent-ink);
 }
 
 .canvas-command__actions .canvas-command__primary:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
-  color: #0b0e14;
+  color: var(--accent-ink);
 }
 
 .canvas-command__actions kbd {

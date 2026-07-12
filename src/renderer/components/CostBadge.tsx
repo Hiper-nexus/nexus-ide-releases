@@ -1,5 +1,6 @@
 import { useCostStore } from '../state/cost-store';
 import { useUsageStore } from '../state/usage-store';
+import { PixelIcon } from './PixelIcon';
 
 /**
  * Cost tracker UI. Not mounted anywhere yet — the integration layer plugs
@@ -83,7 +84,7 @@ export function CostSummary() {
           className="cost-summary__item"
           title={`${media.generations} gerações de mídia (imagem/vídeo/áudio)`}
         >
-          🎬 {formatUsd(media.costUsd)}
+          <PixelIcon name="sparkle" size={10} /> {formatUsd(media.costUsd)}
         </span>
       )}
     </div>

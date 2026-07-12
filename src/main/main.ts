@@ -166,6 +166,7 @@ import {
 import { registerBillingIpc } from "./persistence/billing-ipc";
 import { syncLicenseOnBoot } from "./license-sync";
 import { registerTeamIpc } from "./team-ipc";
+import { initDesktopPet, isPetWindow } from "./pet/pet-window";
 import { registerOnboardingIpc } from "./persistence/onboarding-store";
 import {
   registerNotesIpc,
@@ -361,6 +362,9 @@ function bootstrap(): void {
   registerPipeIpc(); // also calls initPanePipes()
   registerRemoteIpc();
   registerIntegrationsIpc();
+  // Desktop pet (opt-in): companion flutuante que reage à frota. Depois da
+  // janela principal — o pet só existe enquanto houver uma janela de app.
+  initDesktopPet();
   // Orchestration boots async (MCP server binds a localhost port); the window
   // is already open and orchestration attaches when ready.
   // Gamificação SÓ depois: o retro replay precisa dos stores orch hidratados
@@ -486,7 +490,11 @@ app.on("activate", () => {
     shouldCreateWindowOnActivate({
       isShutdownInProgress: shutdownPromise !== null,
       isShutdownComplete: shutdownComplete,
-      windowCount: BrowserWindow.getAllWindows().length,
+      // O pet não conta como janela de app: com ele vivo, o clique no Dock
+      // ainda precisa reabrir a janela principal.
+      windowCount: BrowserWindow.getAllWindows().filter(
+        (win) => !isPetWindow(win),
+      ).length,
     })
   ) {
     createMainWindow();

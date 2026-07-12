@@ -52,7 +52,7 @@
   gap: 3px;
   border-right: 1px solid var(--border-strong);
   background:
-    linear-gradient(180deg, rgba(13, 17, 25, 0.98), rgba(8, 11, 17, 0.96)),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-bar) 98%, transparent), rgba(8, 11, 17, 0.96)),
     var(--bg-bar);
   min-height: 0;
   overflow: hidden;
@@ -79,8 +79,8 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   background:
-    linear-gradient(90deg, rgba(110, 168, 254, 0.1), transparent 72%),
-    rgba(4, 6, 10, 0.38);
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 72%),
+    color-mix(in srgb, var(--bg) 38%, transparent);
 }
 
 .settings-nav__brand-mark {
@@ -88,10 +88,10 @@
   height: 34px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(110, 168, 254, 0.62);
+  border: 1px solid color-mix(in srgb, var(--accent) 62%, transparent);
   background:
-    linear-gradient(90deg, transparent 48%, rgba(110, 168, 254, 0.24) 49%, transparent 51%),
-    rgba(110, 168, 254, 0.1);
+    linear-gradient(90deg, transparent 48%, color-mix(in srgb, var(--accent) 24%, transparent) 49%, transparent 51%),
+    color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -150,7 +150,7 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  background: rgba(4, 6, 10, 0.16);
+  background: color-mix(in srgb, var(--bg) 16%, transparent);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   padding: 8px 9px;
@@ -161,13 +161,13 @@
 }
 
 .settings-nav__item:hover {
-  background: rgba(110, 168, 254, 0.08);
-  border-color: rgba(110, 168, 254, 0.24);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .settings-nav__item--active {
-  background: rgba(110, 168, 254, 0.14);
-  border-color: rgba(110, 168, 254, 0.72);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 72%, transparent);
 }
 
 .settings-nav__icon {
@@ -177,7 +177,7 @@
   place-items: center;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: rgba(6, 9, 15, 0.72);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
   font-size: 12px;
   font-family: var(--font-ui);
   font-weight: 600;
@@ -315,7 +315,7 @@
   padding: 6px 9px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  background: rgba(4, 6, 10, 0.46);
+  background: color-mix(in srgb, var(--bg) 46%, transparent);
   color: var(--text);
   font: 600 var(--text-sm)/1 var(--font-ui);
   cursor: pointer;
@@ -629,12 +629,12 @@
 
 .settings-chip--ok {
   color: var(--ok);
-  border-color: rgba(126, 226, 168, 0.55);
+  border-color: color-mix(in srgb, var(--ok) 55%, transparent);
 }
 
 .settings-chip--warn {
   color: var(--warn);
-  border-color: rgba(229, 192, 123, 0.55);
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
 }
 
 .settings-chip--danger {
@@ -715,8 +715,8 @@
   padding: 14px;
   margin-bottom: 14px;
   background:
-    linear-gradient(90deg, rgba(126, 226, 168, 0.08), transparent 68%),
-    rgba(4, 6, 10, 0.34);
+    linear-gradient(90deg, color-mix(in srgb, var(--ok) 8%, transparent), transparent 68%),
+    color-mix(in srgb, var(--bg) 34%, transparent);
 }
 
 .ops-consent-panel__title {
@@ -764,9 +764,9 @@
 }
 
 .ops-switch--on {
-  border-color: rgba(126, 226, 168, 0.72);
+  border-color: color-mix(in srgb, var(--ok) 72%, transparent);
   color: var(--ok);
-  background: rgba(126, 226, 168, 0.08);
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
 }
 
 .ops-switch__track {
@@ -808,16 +808,16 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 9px 10px;
-  background: rgba(4, 6, 10, 0.32);
+  background: color-mix(in srgb, var(--bg) 32%, transparent);
   overflow: hidden;
 }
 
 .ops-metric--ok {
-  border-color: rgba(126, 226, 168, 0.44);
+  border-color: color-mix(in srgb, var(--ok) 44%, transparent);
 }
 
 .ops-metric--warn {
-  border-color: rgba(229, 192, 123, 0.42);
+  border-color: color-mix(in srgb, var(--warn) 42%, transparent);
 }
 
 .ops-metric--danger {

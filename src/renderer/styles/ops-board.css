@@ -143,18 +143,18 @@
   background: var(--border-strong);
 }
 .ops-board__col--running .ops-board__col-rail {
-  background: var(--accent);
-  box-shadow: 0 0 10px rgba(110, 168, 254, 0.4);
+  background: var(--state-running);
+  box-shadow: 0 0 10px var(--accent-glow);
 }
 .ops-board__col--blocked .ops-board__col-rail {
-  background: var(--warn);
+  background: var(--state-blocked);
 }
 .ops-board__col--done .ops-board__col-rail {
-  background: var(--live);
-  box-shadow: 0 0 10px rgba(53, 224, 141, 0.4);
+  background: var(--state-done);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--state-done) 40%, transparent);
 }
 .ops-board__col--failed .ops-board__col-rail {
-  background: var(--danger);
+  background: var(--state-failed);
 }
 
 .ops-board__col-head {
@@ -171,16 +171,16 @@
   background: var(--text-dim);
 }
 .ops-board__col--running .ops-board__col-glyph {
-  background: var(--accent);
+  background: var(--state-running);
 }
 .ops-board__col--blocked .ops-board__col-glyph {
-  background: var(--warn);
+  background: var(--state-blocked);
 }
 .ops-board__col--done .ops-board__col-glyph {
-  background: var(--live);
+  background: var(--state-done);
 }
 .ops-board__col--failed .ops-board__col-glyph {
-  background: var(--danger);
+  background: var(--state-failed);
 }
 .ops-board__col-label {
   font-size: 11px;
@@ -427,13 +427,21 @@
 .voice-hud--listening .voice-orb {
   box-shadow:
     0 0 calc(34px + var(--voice-amp) * 46px)
-      rgba(110, 168, 254, calc(0.45 + var(--voice-amp) * 0.4)),
-    inset 0 0 28px rgba(110, 168, 254, 0.34);
+      color-mix(
+        in srgb,
+        var(--accent) calc(45% + var(--voice-amp) * 40%),
+        transparent
+      ),
+    inset 0 0 28px color-mix(in srgb, var(--accent) 34%, transparent);
   transition: box-shadow 90ms linear;
 }
 .voice-hud--listening .voice-orb__core {
   box-shadow: 0 0 calc(22px + var(--voice-amp) * 34px)
-    rgba(110, 168, 254, calc(0.72 + var(--voice-amp) * 0.28));
+    color-mix(
+      in srgb,
+      var(--accent) calc(72% + var(--voice-amp) * 28%),
+      transparent
+    );
   transition: box-shadow 90ms linear;
 }
 
@@ -564,4 +572,10 @@
 .mission-rail__item:active {
   background: var(--accent-soft) !important;
   border-color: var(--accent) !important;
+}
+
+.ops-board__resume-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }

@@ -9,6 +9,7 @@ import {
   orchPaneSpawnResultSchema,
   panesSyncSchema,
   squadSchema,
+  type Mission,
 } from "../../shared/orch-types";
 import { getDb } from "../persistence/db";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
@@ -151,6 +152,16 @@ export function configureRendererMissionAuthority(
   projectDomainStores.onChange((scope, store) => {
     broadcastProjectStore(scope, store);
   });
+  // Semente para serviços derivados (desktop pet): a lista corrente de cada
+  // escopo no momento em que ele abre — sem isso, o PRIMEIRO broadcast de um
+  // escopo pode ser justamente a transição →done, que o diff engoliria como
+  // seed. onScope replaya suites existentes na inscrição.
+  projectDomainStores.onScope((scope, suite) => {
+    const scopeKey = JSON.stringify(scope);
+    const missions = suite.missions.list();
+    lastMissionsByScope.set(scopeKey, missions);
+    for (const tap of missionsSeedTaps) tap(scopeKey, missions);
+  });
 }
 
 function requireMissionAuthority(): RendererMissionAuthority {
@@ -167,6 +178,34 @@ function requireProjectStores(owner: WebContents): ProjectDomainStoreSuite {
   return projectDomainStores.forScope(requireRendererWorkspaceScope(owner));
 }
 
+/**
+ * Tap main-side de missões (mesma pegada dos taps do pty-manager): módulos
+ * confiáveis do main — hoje o desktop pet — observam a lista publicada por
+ * escopo sem entrar na cadeia de broadcast dos renderers.
+ */
+type MissionsBroadcastTap = (scopeKey: string, missions: Mission[]) => void;
+const missionsBroadcastTaps = new Set<MissionsBroadcastTap>();
+const missionsSeedTaps = new Set<MissionsBroadcastTap>();
+/** Última lista publicada por escopo — replay para taps que chegam depois. */
+const lastMissionsByScope = new Map<string, Mission[]>();
+
+export function tapMissionsBroadcast(cb: MissionsBroadcastTap): () => void {
+  missionsBroadcastTaps.add(cb);
+  return () => missionsBroadcastTaps.delete(cb);
+}
+
+/**
+ * Semeadura de estado por escopo (sem semântica de transição): dispara na
+ * ABERTURA de cada escopo com a lista corrente, e replaya escopos já
+ * conhecidos na inscrição — independe da ordem de boot entre orquestração e
+ * o serviço derivado.
+ */
+export function tapMissionsSeed(cb: MissionsBroadcastTap): () => void {
+  missionsSeedTaps.add(cb);
+  for (const [scopeKey, missions] of lastMissionsByScope) cb(scopeKey, missions);
+  return () => missionsSeedTaps.delete(cb);
+}
+
 function broadcastProjectStore(
   scope: ReturnType<typeof requireRendererWorkspaceScope>,
   store: ProjectDomainStoreName,
@@ -174,12 +213,16 @@ function broadcastProjectStore(
   if (!projectDomainStores) return;
   const suite = projectDomainStores.forScope(scope);
   if (store === "missions") {
+    const missions = suite.missions.list();
     broadcastToProject(
       listeners,
       scope,
       ORCH_CHANNELS.missionsChanged,
-      suite.missions.list(),
+      missions,
     );
+    const scopeKey = JSON.stringify(scope);
+    lastMissionsByScope.set(scopeKey, missions);
+    for (const tap of missionsBroadcastTaps) tap(scopeKey, missions);
   } else if (store === "handoffs") {
     broadcastToProject(
       listeners,
@@ -238,6 +281,7 @@ export function closeOrchestration(): void {
   disposeProjectDomainStoreRegistry();
   projectDomainStores = null;
   rendererMissionAuthority = null;
+  lastMissionsByScope.clear();
 }
 
 export function registerOrchIpc(): void {

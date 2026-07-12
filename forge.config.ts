@@ -238,8 +238,9 @@ const config: ForgeConfig = {
       'resources/wake',
       'resources/model-ranking.json',
     ],
-    // App icon (Matrix-hacker mark): packager appends .icns on macOS. Read at
-    // build time from the project root — not shipped inside the asar.
+    // App icon (nó-nexus pixel: anel + núcleo aceso + satélites): packager
+    // appends .icns on macOS. Read at build time from the project root — not
+    // shipped inside the asar.
     icon: 'assets/icon',
     // Natives cannot execute from inside the asar: unpack .node binaries and
     // node-pty's spawn-helper executable. Using packager's own asar.unpack
@@ -367,6 +368,9 @@ const config: ForgeConfig = {
         // exposes no page API; it only accepts the closed browser-automation IPC
         // contract from main, keeping model input out of executeJavaScript.
         { entry: 'src/preload/browser-preload.ts', config: 'vite.preload.config.ts', target: 'preload' },
+        // Desktop pet: preload mínimo (prefs/eventos/drag) — a janela do pet
+        // nunca vê o contrato completo do window.nexus.
+        { entry: 'src/preload/pet-preload.ts', config: 'vite.preload.config.ts', target: 'preload' },
       ],
       renderer: [{ name: 'main_window', config: 'vite.renderer.config.ts' }],
     }),

@@ -10,11 +10,14 @@ import {
   resolveHookSource,
   type HookListenerState,
 } from '../../shared/agent-hook-listener';
+import { extractAgentProviderSession } from '../../shared/agent-session-resume';
 import {
   normalizeAgentStatusPayload,
   type AgentStatusState,
 } from '../../shared/agent-status-types';
 import { publishAgentHookActivity } from '../agent-runtime/agent-runtime-bridge';
+import { getAgentSessionInfo } from '../pty/pty-manager';
+import { saveProviderPaneSession } from '../persistence/provider-session-store';
 
 let listenerState: HookListenerState | null = null;
 
@@ -59,6 +62,22 @@ export function ingestAgentHookStatus(
     sessionId,
     agentType: parsed.agentType,
   });
+  const providerSession =
+    parsed.providerSession ??
+    (source && typeof payload === 'object' && payload !== null
+      ? extractAgentProviderSession(source, payload as Record<string, unknown>)
+      : null);
+  if (providerSession) {
+    const agent = getAgentSessionInfo(sessionId);
+    if (agent?.paneId) {
+      saveProviderPaneSession(
+        agent.scope,
+        agent.paneId,
+        agent.adapterId,
+        providerSession,
+      );
+    }
+  }
   return {
     ok: true,
     sessionId,

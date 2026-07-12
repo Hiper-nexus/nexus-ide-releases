@@ -24,7 +24,7 @@ function showRecoveryScreen(wc: WebContents): void {
   console.error('[window] app não montou após várias tentativas — tela de recuperação');
   const script = `(() => {
     document.documentElement.innerHTML =
-      '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0e14;color:#e6e9ef;font-family:system-ui,sans-serif">' +
+      '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0a0e15;color:#d7dfec;font-family:system-ui,sans-serif">' +
       '<div style="max-width:520px;text-align:center;padding:24px">' +
       '<h1 style="font-size:18px;font-weight:600;margin:0 0 12px">NexusIDE não iniciou</h1>' +
       '<p style="font-size:13px;line-height:1.5;color:#9aa4b2;margin:0 0 20px">A interface não carregou após várias tentativas. Recarregue ou reinicie o app.</p>' +
@@ -167,7 +167,8 @@ export function createMainWindow(): BrowserWindow {
     height: 820,
     minWidth: 640,
     minHeight: 420,
-    backgroundColor: '#0b0e14',
+    // Precisa casar com --bg (base.css) — cor de pré-paint da janela.
+    backgroundColor: '#0a0e15',
     title: 'NexusIDE',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {

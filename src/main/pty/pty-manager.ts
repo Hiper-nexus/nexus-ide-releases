@@ -183,6 +183,8 @@ export interface DictatedSessionInfo {
   ptySessionId: string;
   adapterId: string;
   cwd: string;
+  /** Stable renderer pane id bound by the trusted spawn authority. */
+  paneId?: string;
 }
 
 export type SessionDictationHook = (info: DictatedSessionInfo) => void;
@@ -478,6 +480,7 @@ function finalizeSession(
 
 export interface SpawnedSession {
   sessionId: string;
+  resumeMode?: 'exact' | 'latest' | 'unsupported';
 }
 
 /** Spawn a shell PTY. */
@@ -590,6 +593,7 @@ export function spawnAgentSession(
   // Failover re-spawn: retoma a conversa anterior. Com session id CAPTURADO
   // para este pane, o resume é direcionado (`--resume <id>` — cada pane volta
   // para a SUA conversa); sem captura, cai no genérico (`--continue`).
+  let resumeMode: SpawnedSession['resumeMode'];
   if (req.resume) {
     const captured =
       req.paneId && adapter.spawn.resumeIdArgs?.length
@@ -601,8 +605,12 @@ export function spawnAgentSession(
         : null;
     if (captured) {
       args.push(...adapter.spawn.resumeIdArgs!, captured);
+      resumeMode = 'exact';
     } else if (adapter.spawn.resumeArgs.length > 0) {
       args.push(...adapter.spawn.resumeArgs);
+      resumeMode = 'latest';
+    } else {
+      resumeMode = 'unsupported';
     }
   }
   // Telemetria real: dita o session id do provider em spawns FRESCOS (num
@@ -743,12 +751,13 @@ export function spawnAgentSession(
         ptySessionId: sessionId,
         adapterId: adapter.id,
         cwd,
+        paneId: req.paneId,
       });
     } catch (err) {
       console.warn("[pty-manager] session dictation hook threw:", err);
     }
   }
-  return { sessionId };
+  return { sessionId, ...(resumeMode ? { resumeMode } : {}) };
 }
 
 function ownedSession(wc: WebContents, sessionId: string): Session | null {
@@ -775,6 +784,12 @@ export function getOwnedAgentSessionInfo(
   sessionId: string,
 ): OwnedAgentSessionInfo | null {
   const info = ownedSession(wc, sessionId)?.agent;
+  return info ? cloneAgentInfo(info) : null;
+}
+
+/** Trusted main-process lookup for internal services that receive an exact PTY id. */
+export function getAgentSessionInfo(sessionId: string): OwnedAgentSessionInfo | null {
+  const info = sessions.get(sessionId)?.agent;
   return info ? cloneAgentInfo(info) : null;
 }
 

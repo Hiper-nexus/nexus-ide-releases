@@ -17,7 +17,10 @@ const COUNT_MS = 600;
 const TIER_ORDER = Object.keys(GAMIFICATION_COPY.tiers);
 
 function reducedMotion(): boolean {
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  return (
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
 }
 
 /** Conta do valor anterior ao novo em ~600ms (direto com reduced-motion). */

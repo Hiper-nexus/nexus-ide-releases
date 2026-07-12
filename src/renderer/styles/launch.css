@@ -5,7 +5,19 @@
 /* ---- Launch / onboarding screen ---- */
 .launch {
   height: 100%;
-  background: var(--bg);
+  /* Grade pixel sutil: identidade mission-control no primeiro contato. */
+  background:
+    repeating-linear-gradient(
+      0deg,
+      var(--pixel-grid) 0 1px,
+      transparent 1px 24px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      var(--pixel-grid) 0 1px,
+      transparent 1px 24px
+    ),
+    var(--bg);
 }
 
 .launch__panel {
@@ -14,10 +26,17 @@
   max-height: calc(100vh - var(--bar-height) - 48px);
   display: grid;
   grid-template-columns: minmax(0, 1.02fr) minmax(360px, 0.98fr);
-  background: var(--bg-elevated);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 4%, var(--bg-elevated)) 0%,
+    var(--bg-elevated) 220px
+  );
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
   overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    var(--shadow-3);
 }
 
 .launch__command,
@@ -87,6 +106,7 @@
 
 .launch__readiness .is-live i {
   background: var(--live);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--live) 55%, transparent);
 }
 
 .launch__next {
@@ -96,8 +116,12 @@
 .launch__next-label {
   margin: 0 0 var(--space-2);
   color: var(--accent);
-  font-size: var(--text-md);
-  font-weight: 600;
+  /* Eyebrow operacional na fonte da identidade (VT323 ≥12px). */
+  font-family: var(--font-pixel);
+  font-size: 15px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
 }
 
 .launch__next h2 {
@@ -147,13 +171,15 @@
 
 .launch__primary {
   background: var(--accent);
-  color: #04121f;
+  color: var(--accent-ink);
   border: 1px solid var(--accent);
+  box-shadow: 0 4px 18px -8px var(--accent-glow);
 }
 
 .launch__primary:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
+  box-shadow: 0 6px 22px -8px var(--accent-glow);
 }
 
 .launch__primary:disabled,

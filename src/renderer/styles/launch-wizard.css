@@ -17,8 +17,8 @@
   flex-direction: column;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
-  /* Overlay hero da identidade pixel: canto reto. */
-  border-radius: 0;
+  /* Um dialeto de raio só: token (o pixel-mode zera a escala inteira). */
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-3);
   z-index: 51;
   overflow: hidden;
@@ -313,11 +313,11 @@
   gap: 8px;
   min-height: 48px;
   padding: 7px 10px;
-  background: rgba(10, 13, 20, 0.72);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
 }
 
 .prov__head:hover {
-  background: rgba(110, 168, 254, 0.055);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .prov__disclosure {
@@ -512,5 +512,14 @@
     align-items: flex-start;
     gap: 8px;
     flex-wrap: wrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wizard__mode {
+    transition: none;
+  }
+  .wizard__mode:hover:not(:disabled) {
+    transform: none;
   }
 }

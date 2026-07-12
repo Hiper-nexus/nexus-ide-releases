@@ -544,7 +544,7 @@ export async function executeJarvisAction(
     const target = layout.focusedPaneId;
     if (target) {
       const title = listPanes(layout.root).find((p) => p.id === target)?.title ?? 'pane';
-      const closed = requestPaneClose(target);
+      const closed = await requestPaneClose(target);
       toolResult = {
         tool: action.type,
         ok: closed,

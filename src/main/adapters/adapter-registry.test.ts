@@ -159,6 +159,7 @@ describe('builtin adapters', () => {
         headless?: string[];
         resumeArgs?: string[];
         resumeIdArgs?: string[];
+        sessionIdArg?: string;
       };
       control?: { permission?: { safe?: string[] } };
     } | undefined;
@@ -363,6 +364,13 @@ describe('builtin adapters', () => {
     (id, latest, exact) => {
       expect(builtin(id)?.spawn?.resumeArgs).toEqual(latest);
       expect(builtin(id)?.spawn?.resumeIdArgs).toEqual(exact);
+    },
+  );
+
+  it.each(['claude', 'glm', 'longcat', 'grok'])(
+    '%s dictates a fresh provider session id for exact per-pane recovery',
+    (id) => {
+      expect(builtin(id)?.spawn?.sessionIdArg).toBe('--session-id');
     },
   );
 

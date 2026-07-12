@@ -134,7 +134,7 @@ export function registerPtyIpc(): void {
         // spawnAgentSession independently ignores renderer cwd and consumes
         // authority.cwd as the actual PTY working directory.
         const authorizedRequest = { ...req, cwd: authority.cwd };
-        const { sessionId } = spawnAgentSession(
+        const { sessionId, resumeMode } = spawnAgentSession(
           event.sender,
           authorizedRequest,
           adapter,
@@ -156,7 +156,11 @@ export function registerPtyIpc(): void {
           );
         }
         attachSessionScope(sessionId, authority.scope);
-        return { ok: true, sessionId };
+        return {
+          ok: true,
+          sessionId,
+          ...(req.resume && resumeMode ? { resumeMode } : {}),
+        };
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "failed to spawn agent";

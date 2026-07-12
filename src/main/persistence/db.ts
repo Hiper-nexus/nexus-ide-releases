@@ -111,6 +111,19 @@ CREATE TABLE IF NOT EXISTS accounts (
   active          INTEGER NOT NULL DEFAULT 0,
   created_at     INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS provider_pane_sessions (
+  installation_id TEXT NOT NULL,
+  project_id      TEXT NOT NULL,
+  checkout_id     TEXT NOT NULL,
+  pane_id         TEXT NOT NULL,
+  adapter_id      TEXT NOT NULL,
+  session_key     TEXT NOT NULL CHECK (session_key IN ('session_id', 'conversation_id')),
+  session_id      TEXT NOT NULL,
+  transcript_path TEXT,
+  updated_at      INTEGER NOT NULL,
+  PRIMARY KEY (installation_id, project_id, checkout_id, pane_id, adapter_id)
+);
 `;
 
 let db: Db | null = null;

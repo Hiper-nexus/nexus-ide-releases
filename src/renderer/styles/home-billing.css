@@ -325,7 +325,7 @@
 
 .acct__inuse-pill {
   background: var(--accent);
-  color: #0b0e14;
+  color: var(--accent-ink);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0;

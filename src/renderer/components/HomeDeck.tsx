@@ -120,14 +120,7 @@ export function HomeDeck() {
             title="Fechar (Esc) — usa o terminal ao fundo"
             aria-label="Fechar o painel inicial"
           >
-            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-              <path
-                d="M3 3 L11 11 M11 3 L3 11"
-                stroke="currentColor"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-              />
-            </svg>
+            <PixelIcon name="close" size={12} />
           </button>
         </header>
 
@@ -245,9 +238,9 @@ export function HomeDeck() {
         <footer className="home-deck__foot">
           <span className="home-deck__keys">
             {viewKind === 'canvas' ? (
-              <><kbd>F</kbd> centralizar · arraste panes · conecte pelas laterais</>
+              <><kbd>⌘K</kbd> comandos · <kbd>F</kbd> centralizar · arraste panes</>
             ) : (
-              <><kbd>⌘D</kbd> dividir · <kbd>⇧⌘D</kbd> dividir ↓ · <kbd>⌘W</kbd> fechar pane</>
+              <><kbd>⌘K</kbd> comandos · <kbd>⌘N</kbd> missão · <kbd>⌘D</kbd> dividir · <kbd>⌘1-9</kbd> focar</>
             )}
           </span>
           <button className="home-deck__dismiss" onClick={hide}>

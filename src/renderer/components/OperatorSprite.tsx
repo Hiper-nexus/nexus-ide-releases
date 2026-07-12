@@ -30,13 +30,16 @@ interface OperatorSpriteProps {
 const GRID_SIZE = 16;
 
 function usePrefersReducedMotion(): boolean {
+  // matchMedia pode não existir (jsdom nos testes, ambientes headless) —
+  // tratar como motion permitido em vez de quebrar a montagem.
   const [reduced, setReduced] = useState(() =>
-    typeof window === 'undefined'
+    typeof window === 'undefined' || typeof window.matchMedia !== 'function'
       ? false
       : window.matchMedia('(prefers-reduced-motion: reduce)').matches,
   );
   useEffect(() => {
-    if (typeof window === 'undefined') return undefined;
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function')
+      return undefined;
     const query = window.matchMedia('(prefers-reduced-motion: reduce)');
     const onChange = () => setReduced(query.matches);
     onChange();

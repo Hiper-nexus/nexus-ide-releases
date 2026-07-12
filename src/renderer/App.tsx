@@ -19,6 +19,10 @@ import {
   CloseWorkspaceDialog,
   useCloseWorkspaceStore,
 } from './components/CloseWorkspaceDialog';
+import { CommandPalette } from './components/CommandPalette';
+import { useCommandPaletteStore } from './state/command-palette-store';
+import { ConfirmDialog } from './components/ConfirmDialog';
+import { useConfirmStore } from './state/confirm-store';
 import { FilesPanel } from './components/FilesPanel';
 import { OpsBoard } from './components/OpsBoard';
 import { DiffAnnotatePanel } from './components/DiffAnnotatePanel';
@@ -54,6 +58,19 @@ import { Toasts } from './components/Toasts';
 import { useVoiceStore } from './voice/voice-store';
 import { UpdateNotifier } from './components/UpdateModal';
 import { requestPaneClose } from './terminal/pane-close-guard';
+import { NexusMark } from './components/NexusMark';
+
+/** Primeiro frame do cockpit: marca pulsando enquanto os instrumentos ligam. */
+function BootScreen() {
+  return (
+    <div className="boot">
+      <div className="boot__inner">
+        <NexusMark size={30} className="boot__mark" />
+        <span className="boot__label">Iniciando o NexusIDE</span>
+      </div>
+    </div>
+  );
+}
 
 /**
  * App root: hydrates the saved layout on boot and wires global keyboard
@@ -75,6 +92,8 @@ export function App() {
     (s) => s.loaded && !s.state.completed && !s.state.skipped,
   );
   const operatorProfileOpen = useGamificationStore((s) => s.profileOpen);
+  const paletteOpen = useCommandPaletteStore((s) => s.open);
+  const confirmOpen = useConfirmStore((s) => s.pending !== null);
   const suppressBrowserPanes =
     settingsDrawerOpen ||
     missionWizardOpen ||
@@ -84,7 +103,9 @@ export function App() {
     diffOpen ||
     integrationsOpen ||
     onboardingVisible ||
-    operatorProfileOpen;
+    operatorProfileOpen ||
+    paletteOpen ||
+    confirmOpen;
 
   useVoiceController();
   useOrchBridge();
@@ -141,6 +162,9 @@ export function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Confirm pendente = modal: nenhum atalho global dispara por baixo do
+      // dialog (cinto extra além do capture-stop do próprio ConfirmDialog).
+      if (useConfirmStore.getState().pending) return;
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
       // ⌘, — macOS-standard settings shortcut (works with no pane focused).
@@ -162,6 +186,31 @@ export function App() {
         if (!useWorkspaceStore.getState().current) return;
         e.preventDefault();
         useOrchStore.getState().toggleBoard();
+        return;
+      }
+      // ⌘K — command palette: panes, missões e ações a um teclado de distância.
+      if (e.key.toLowerCase() === 'k' && !e.shiftKey && !e.altKey) {
+        if (!useWorkspaceStore.getState().current) return;
+        e.preventDefault();
+        useCommandPaletteStore.getState().toggle();
+        return;
+      }
+      // ⌘N — nova missão (a ação primária merece o atalho primário).
+      if (e.key.toLowerCase() === 'n' && !e.shiftKey && !e.altKey) {
+        if (!useWorkspaceStore.getState().current) return;
+        e.preventDefault();
+        useMissionWizardStore.getState().openForMission();
+        return;
+      }
+      // ⌘1-9 — foca o N-ésimo pane (ordem do grid). Frota sem mouse.
+      if (!e.shiftKey && !e.altKey && e.key >= '1' && e.key <= '9') {
+        const layout = useLayoutStore.getState();
+        const panes = listPanes(layout.root);
+        const pane = panes[Number(e.key) - 1];
+        if (pane) {
+          e.preventDefault();
+          layout.focus(pane.id);
+        }
         return;
       }
       const { focusedPaneId, split, viewKind: vk } = useLayoutStore.getState();
@@ -202,8 +251,20 @@ export function App() {
   useEffect(() => initDevServerStore(), []);
   useEffect(() => initDesignSelectionStore(), []);
 
+  // "Configurar…" no menu do desktop pet: foca esta janela e abre Aparência.
+  useEffect(() => {
+    // Preload changes require a full Electron restart while renderer changes
+    // arrive through HMR. Keep optional desktop features from taking down the
+    // entire app during that short version skew (or on an older installation).
+    const petApi = window.nexus.pet;
+    if (!petApi?.onOpenSettings) return;
+    return petApi.onOpenSettings(() => {
+      useSettingsStore.getState().openDrawer('appearance');
+    });
+  }, []);
+
   if (!workspaceHydrated) {
-    return <div className="boot">Starting NexusIDE…</div>;
+    return <BootScreen />;
   }
 
   // No workspace open → onboarding launcher (first screen).
@@ -217,6 +278,7 @@ export function App() {
         <SettingsDrawer />
         <MissionWizard />
         <OperatorProfile />
+        <ConfirmDialog />
         <Toasts />
         <UpdateNotifier alwaysVisible />
       </div>
@@ -225,7 +287,7 @@ export function App() {
 
   // Workspace chosen but its layout still loading.
   if (!hydrated) {
-    return <div className="boot">Starting NexusIDE…</div>;
+    return <BootScreen />;
   }
 
   return (
@@ -255,6 +317,8 @@ export function App() {
       <OperatorFx />
       <CloseWorkspaceDialog />
       <Onboarding />
+      <CommandPalette />
+      <ConfirmDialog />
       <Toasts />
     </div>
   );

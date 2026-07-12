@@ -251,25 +251,25 @@
 
 .orch-badge--running,
 .orch-badge--in_progress {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--state-running);
+  border-color: var(--state-running);
 }
 
 .orch-badge--done,
 .orch-badge--success {
-  color: var(--ok);
-  border-color: rgba(126, 226, 168, 0.55);
+  color: var(--state-done);
+  border-color: color-mix(in srgb, var(--state-done) 55%, transparent);
 }
 
 .orch-badge--blocked,
 .orch-badge--partial {
-  color: var(--warn);
-  border-color: rgba(229, 192, 123, 0.55);
+  color: var(--state-blocked);
+  border-color: color-mix(in srgb, var(--state-blocked) 55%, transparent);
 }
 
 .orch-badge--failed {
-  color: var(--danger);
-  border-color: var(--danger);
+  color: var(--state-failed);
+  border-color: var(--state-failed);
 }
 
 /* Handoff sintético do watchdog: worker em silêncio prolongado. Âmbar pulsante
@@ -352,12 +352,12 @@
 
 .orch-tag--pending {
   color: var(--warn);
-  border-color: rgba(229, 192, 123, 0.5);
+  border-color: color-mix(in srgb, var(--warn) 50%, transparent);
 }
 
 .orch-tag--done {
   color: var(--ok);
-  border-color: rgba(126, 226, 168, 0.5);
+  border-color: color-mix(in srgb, var(--ok) 50%, transparent);
 }
 
 /* Handoff artifacts: a compact, monospaced bulleted list of file paths / names. */

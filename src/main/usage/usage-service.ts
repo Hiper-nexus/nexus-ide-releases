@@ -21,6 +21,10 @@ import {
   type DictatedSessionInfo,
 } from '../pty/pty-manager';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import {
+  getProviderPaneSession,
+  saveProviderPaneSession,
+} from '../persistence/provider-session-store';
 import { ClaudeTranscriptWatcher } from './claude-transcript-watcher';
 import type { UsageEvent } from './claude-transcript';
 import { CodexUsageScanner } from './codex-scanner';
@@ -40,6 +44,7 @@ import {
 interface DictatedAttribution {
   ptySessionId: string;
   adapterId: string;
+  paneId: string;
 }
 
 interface ScopeTelemetryState {
@@ -211,7 +216,11 @@ export class UsageTelemetryService {
     if (!isInside(state.scope.rootRealPath, cwd)) {
       throw new Error('dictated session cwd escapes its project scope');
     }
-    if (info.providerSessionId) {
+    if (info.providerSessionId && info.paneId) {
+      saveProviderPaneSession(state.scope, info.paneId, info.adapterId, {
+        key: 'session_id',
+        id: info.providerSessionId,
+      });
       const existing = state.dictated.get(info.providerSessionId);
       if (existing && existing.ptySessionId !== info.ptySessionId) {
         throw new Error('provider session is attributed to multiple PTYs');
@@ -219,6 +228,7 @@ export class UsageTelemetryService {
       state.dictated.set(info.providerSessionId, {
         ptySessionId: info.ptySessionId,
         adapterId: info.adapterId,
+        paneId: info.paneId,
       });
     } else {
       state.pendingLaunches.set(info.ptySessionId, {
@@ -234,8 +244,19 @@ export class UsageTelemetryService {
     paneId: string,
     adapterId: string,
   ): string | null {
-    if (adapterId !== 'claude' && adapterId !== 'codex') return null;
     const state = this.#ensureScope(scope);
+    const persisted = getProviderPaneSession(scope, paneId, adapterId);
+    if (persisted) {
+      state.pendingResumePanes.set(paneId, Date.now());
+      const paneIds = state.resumedPaneIds.get(persisted.id) ?? new Set();
+      paneIds.add(paneId);
+      state.resumedPaneIds.set(persisted.id, paneIds);
+      if (adapterId === 'claude' || adapterId === 'codex') {
+        this.#watchProvider(scope, adapterId);
+      }
+      return persisted.id;
+    }
+    if (adapterId !== 'claude' && adapterId !== 'codex') return null;
     const captured = state.stores.usage.latestProviderSessionByPane(paneId);
     if (!captured) return null;
     if (captured.provider !== adapterId) return null;
@@ -297,17 +318,18 @@ export class UsageTelemetryService {
     const dictated = state.dictated.get(providerSessionId);
     let paneId: string | null = null;
     if (dictated) {
-      paneId = getPaneAuthzInfo(dictated.ptySessionId)?.paneId ?? null;
+      // The pane registry is renderer-lifecycle state and can disappear during
+      // a reload before a provider transcript is observed. The spawn hook is
+      // already scoped/trusted, so retain its stable pane id directly.
+      paneId = dictated.paneId;
     } else {
       const resumed = state.resumedPaneIds.get(providerSessionId);
       if (resumed?.size === 1) paneId = [...resumed][0];
     }
     if (!paneId) return null;
     const pane = getPaneAuthzInfo(paneId);
-    if (!pane?.scope || !sameProjectScope(pane.scope, state.scope)) {
-      return null;
-    }
-    return { paneId, missionId: pane.missionId ?? null };
+    if (pane?.scope && !sameProjectScope(pane.scope, state.scope)) return null;
+    return { paneId, missionId: pane?.missionId ?? null };
   }
 
   /**

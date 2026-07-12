@@ -261,7 +261,7 @@ export function SettingsDrawer() {
             </div>
             <div className="settings-nav__search">
               <span className="settings-nav__search-icon" aria-hidden>
-                ⌕
+                <PixelIcon name="search" size={12} />
               </span>
               <input
                 ref={searchRef}

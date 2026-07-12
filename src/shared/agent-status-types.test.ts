@@ -31,6 +31,17 @@ describe('parseAgentStatusPayload', () => {
     })
   })
 
+  it('preserves a validated provider session for exact pane resume', () => {
+    const result = normalizeAgentStatusPayload({
+      state: 'working',
+      providerSession: { key: 'session_id', id: 'session-123' },
+    })
+    expect(result?.providerSession).toEqual({
+      key: 'session_id',
+      id: 'session-123',
+    })
+  })
+
   it('parses all AGENT_STATUS_STATES', () => {
     for (const state of AGENT_STATUS_STATES) {
       const result = parseAgentStatusPayload(`{"state":"${state}"}`)

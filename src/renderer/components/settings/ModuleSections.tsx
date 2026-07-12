@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSettingsStore } from '../../state/settings-store';
+import { askConfirm } from '../../state/confirm-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useVoiceStore } from '../../voice/voice-store';
 import { CURRENT_RELEASE } from '../../../shared/release-notes';
@@ -267,11 +268,14 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
                     className="settings-btn settings-btn--danger"
                     title="Apagar este squad (não pode desfazer)"
                     onClick={() => {
-                      if (
-                        window.confirm(`Apagar o squad "${s.name}"? Não dá para desfazer.`)
-                      ) {
-                        void window.nexus.orch.deleteSquad(s.id);
-                      }
+                      void askConfirm({
+                        title: `Apagar o squad "${s.name}"?`,
+                        body: 'Não dá para desfazer.',
+                        confirmLabel: 'Apagar squad',
+                        danger: true,
+                      }).then((ok) => {
+                        if (ok) void window.nexus.orch.deleteSquad(s.id);
+                      });
                     }}
                   >
                     Apagar

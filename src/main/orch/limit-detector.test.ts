@@ -12,6 +12,20 @@ describe('detectLimit', () => {
     expect(detectLimit('{"type":"rate_limit_error"}')?.kind).toBe('rate-limit');
   });
 
+  it('detects real provider spellings without an error prefix', () => {
+    // Código de erro da OpenAI (separador underscore, sem "429" junto).
+    expect(detectLimit('rate_limit_exceeded')?.kind).toBe('rate-limit');
+    // Classe de exceção dos SDKs (CamelCase).
+    expect(detectLimit('openai.RateLimitError')?.kind).toBe('rate-limit');
+  });
+
+  it('ignores rate-limit guidance echoed from a squad prompt', () => {
+    expect(
+      detectLimit('RATE LIMIT: em rate limit, re-roteie para outra CLI e siga.'),
+    ).toBeNull();
+    expect(detectLimit('Documente como tratar rate limit no provider.')).toBeNull();
+  });
+
   it('detects credit/quota exhaustion as quota (long cooldown)', () => {
     const hit = detectLimit('Your credit balance is too low to run this request.');
     expect(hit?.kind).toBe('quota');
