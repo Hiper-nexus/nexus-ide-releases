@@ -16,7 +16,7 @@
 set -u
 
 last=1
-for delay in 4 8 16 30 45 60 90 120; do
+for delay in 4 8 15 30 60 90 120 120 120 120 120 120; do
   /usr/bin/codesign "$@" && exit 0
   last=$?
   sleep "$delay"
