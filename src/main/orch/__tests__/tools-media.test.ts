@@ -17,9 +17,24 @@ vi.mock('../../media/media-generation', () => ({
   generateImage: mocks.generateImage,
   generateVideo: mocks.generateVideo,
   generateAudio: mocks.generateAudio,
+  MediaJobTimeoutError: class MediaJobTimeoutError extends Error {
+    jobId: string;
+    provider: string;
+    constructor(provider: string, jobId: string) {
+      super(`${provider}: timeout ${jobId}`);
+      this.jobId = jobId;
+      this.provider = provider;
+    }
+  },
 }));
 vi.mock('../../media/media-providers', () => ({
   listMediaProviders: () => [],
+}));
+vi.mock('../../media/media-model-aliases', () => ({
+  listMediaModelAliases: () => ({
+    seedream: 'bytedance/seedream-5-pro',
+    seedance: 'bytedance/seedance-2.0',
+  }),
 }));
 vi.mock('../../media/media-keys', () => ({
   hasMediaKey: () => false,

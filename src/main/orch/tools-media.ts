@@ -3,11 +3,13 @@ import {
   generateAudio,
   generateImage,
   generateVideo,
+  MediaJobTimeoutError,
 } from '../media/media-generation';
 import { listMediaProviders } from '../media/media-providers';
+import { listMediaModelAliases } from '../media/media-model-aliases';
 import { hasMediaKey, maskedMediaKey } from '../media/media-keys';
 import { recordMediaUsage } from '../usage/media-usage-recorder';
-import { num, requireStr, str } from './tool-util';
+import { num, requireStr, str, strArray } from './tool-util';
 import { resolveCwdForScope } from './workspace-path';
 import type { AgentGateContext } from './gate';
 import { executionScopeFor } from './gate';
@@ -29,33 +31,49 @@ function baseDirFor(ctx: AgentGateContext): string {
 const mediaProvidersTool: McpToolDef = {
   name: 'nexus_media_providers',
   description:
-    'List media generation providers (image/video/audio), their models and ' +
-    'whether an API key is configured. Call before generating to know what ' +
-    'is available; never invent providers/models outside this list.',
+    'List media generation providers (image/video/audio), their models, ' +
+    'whether an API key is configured, and friendly model aliases ' +
+    '(seedream, seedance, veo, kling, sora, runway, luma…). Call before ' +
+    'generating; never invent providers/models outside this list.',
   inputSchema: { type: 'object', properties: {} },
-  handler: async () =>
-    listMediaProviders(hasMediaKey, maskedMediaKey).map(
+  handler: async () => ({
+    providers: listMediaProviders(hasMediaKey, maskedMediaKey).map(
       ({ maskedKey: _masked, ...info }) => info,
     ),
+    aliases: listMediaModelAliases(),
+  }),
 };
 
 const imageGenerateTool: McpToolDef = {
   name: 'nexus_image_generate',
   description:
-    'Generate an image from a prompt and save it in the workspace. Returns ' +
-    '{path}. provider: google-image (default, cheapest) | openai-image. ' +
-    'All input/output paths must remain inside the open workspace; use a ' +
-    'relative outPath (e.g. "assets/hero.png"). Pass imagePath for ' +
-    'image-to-image edits. If the key is missing, STOP and ' +
-    'report "configure o provider em Settings → Mídia" — never invent env vars.',
+    'Generate an image and save it in the workspace. Returns {path}. ' +
+    'Providers: google-image (default/cheap) | openai-image | ' +
+    'replicate-image (ByteDance Seedream 5.0 Pro — flagship multimodal ' +
+    'image; official seed.bytedance.com/en/seedream5_0_pro; aliases: ' +
+    'seedream, seedream-5-pro, seedream5-0-pro, seedream-lite). ' +
+    'Seedream aspectRatio: match_input_image|1:1|4:3|3:4|16:9|9:16|3:2|2:3|21:9. ' +
+    'Seedream size: 1K|2K only (default 2K). imagePath + ' +
+    'referenceImagePaths[] → image_input (1–10 refs). ' +
+    'Paths stay in the open workspace. Missing key → STOP and report ' +
+    '"configure o provider em Settings → Mídia".',
   inputSchema: {
     type: 'object',
     properties: {
       prompt: { type: 'string' },
-      provider: { type: 'string', enum: ['google-image', 'openai-image'] },
+      provider: {
+        type: 'string',
+        enum: ['google-image', 'openai-image', 'replicate-image'],
+      },
       model: { type: 'string' },
       outPath: { type: 'string' },
       imagePath: { type: 'string' },
+      referenceImagePaths: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+      aspectRatio: { type: 'string' },
+      size: { type: 'string' },
     },
     required: ['prompt'],
   },
@@ -67,6 +85,9 @@ const imageGenerateTool: McpToolDef = {
       model: str(args, 'model'),
       outPath: str(args, 'outPath'),
       imagePath: str(args, 'imagePath'),
+      referenceImagePaths: strArray(args, 'referenceImagePaths'),
+      aspectRatio: str(args, 'aspectRatio'),
+      size: str(args, 'size'),
       baseDir: baseDirFor(ctx),
     });
     await recordMediaUsage(result, ctx);
@@ -77,20 +98,23 @@ const imageGenerateTool: McpToolDef = {
 const videoGenerateTool: McpToolDef = {
   name: 'nexus_video_generate',
   description:
-    'Generate a video clip via Replicate and save the mp4 in the workspace. ' +
-    'Default model: bytedance/seedance-2.0 (multimodal + native audio). ' +
-    'Also: seedance-2.0-fast/mini, google/veo-3.1(-fast|-lite), ' +
-    'kwaivgi/kling-v3-video (start+end keyframes), minimax/hailuo-2.3, ' +
-    'wan-video/wan-2.5-i2v. Call nexus_media_providers first and ONLY use ' +
-    'listed model ids. imagePath = first frame; endImagePath = last frame ' +
-    '(Seedance last_frame_image / Veo last_frame / Kling end_image). ' +
-    'Waits up to ~6 min. Paths must stay inside the open workspace. ' +
-    'Missing key → STOP and report "configure o provider em Settings → Mídia".',
+    'Generate a video clip and save the mp4 in the workspace. ' +
+    'Providers: replicate-video (default Seedance 2.0; also Veo/Kling/Sora/' +
+    'Runway/Luma) | google-video (native Veo via Gemini API key). ' +
+    'Friendly model aliases work: seedance, veo, kling, sora, runway, luma. ' +
+    'imagePath=first frame; endImagePath=last frame; referenceImagePaths[] ' +
+    'for Seedance/Veo character refs (max 9). On timeout the error includes ' +
+    'recoverJobId — call again with that id to resume without double charge. ' +
+    'Call nexus_media_providers first. Paths stay in the open workspace. ' +
+    'Missing key → STOP and report Settings → Mídia.',
   inputSchema: {
     type: 'object',
     properties: {
       prompt: { type: 'string' },
-      provider: { type: 'string', enum: ['replicate-video'] },
+      provider: {
+        type: 'string',
+        enum: ['replicate-video', 'google-video'],
+      },
       model: { type: 'string' },
       outPath: { type: 'string' },
       durationSeconds: { type: 'number' },
@@ -98,25 +122,51 @@ const videoGenerateTool: McpToolDef = {
       aspectRatio: { type: 'string' },
       imagePath: { type: 'string' },
       endImagePath: { type: 'string' },
+      referenceImagePaths: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+      recoverJobId: { type: 'string' },
     },
-    required: ['prompt'],
+    // prompt required unless recovering a job
+    required: [],
   },
   requiresConfirm: true,
   handler: async (args, ctx) => {
-    const result = await generateVideo({
-      prompt: requireStr(args, 'prompt'),
-      provider: str(args, 'provider'),
-      model: str(args, 'model'),
-      outPath: str(args, 'outPath'),
-      durationSeconds: num(args, 'durationSeconds'),
-      resolution: str(args, 'resolution'),
-      aspectRatio: str(args, 'aspectRatio'),
-      imagePath: str(args, 'imagePath'),
-      endImagePath: str(args, 'endImagePath'),
-      baseDir: baseDirFor(ctx),
-    });
-    await recordMediaUsage(result, ctx);
-    return result;
+    const recoverJobId = str(args, 'recoverJobId');
+    const prompt = str(args, 'prompt');
+    if (!recoverJobId && !prompt) {
+      throw new Error('missing required argument: prompt (or recoverJobId)');
+    }
+    try {
+      const result = await generateVideo({
+        prompt: prompt ?? '',
+        provider: str(args, 'provider'),
+        model: str(args, 'model'),
+        outPath: str(args, 'outPath'),
+        durationSeconds: num(args, 'durationSeconds'),
+        resolution: str(args, 'resolution'),
+        aspectRatio: str(args, 'aspectRatio'),
+        imagePath: str(args, 'imagePath'),
+        endImagePath: str(args, 'endImagePath'),
+        referenceImagePaths: strArray(args, 'referenceImagePaths'),
+        recoverJobId,
+        baseDir: baseDirFor(ctx),
+      });
+      await recordMediaUsage(result, ctx);
+      return result;
+    } catch (err) {
+      if (err instanceof MediaJobTimeoutError) {
+        return {
+          ok: false,
+          error: err.message,
+          jobId: err.jobId,
+          recoverJobId: err.jobId,
+          provider: err.provider,
+        };
+      }
+      throw err;
+    }
   },
 };
 

@@ -135,7 +135,9 @@ export function MediaSection() {
       <p className="settings-section__hint">
         Providers de imagem, vídeo e voz que viram MCP tools pros agentes. A
         key fica no processo principal (Keychain) — o agente só dispara a tool
-        e recebe o caminho do arquivo gerado no workspace.
+        e recebe o caminho do arquivo gerado no workspace. Imagem flagship:
+        Seedream 5.0 Pro (ByteDance, alias seedream / seedream-5-pro). Vídeo:
+        Seedance 2.0, Veo 3.1, Kling, Sora… Aliases: seedream, seedance, veo…
       </p>
       {totals.generations > 0 && (
         <p className="settings-section__hint">
@@ -157,6 +159,9 @@ export function MediaSection() {
               {provider.hasKey ? provider.maskedKey ?? 'ok' : 'sem key'}
             </span>
           </div>
+          <p className="settings-section__hint">
+            default: <code>{provider.defaultModel}</code>
+          </p>
           <p className="settings-section__hint">
             modelos: {provider.models.join(' · ')}
           </p>

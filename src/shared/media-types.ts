@@ -10,7 +10,9 @@ export type MediaKind = 'image' | 'video' | 'audio';
 export type MediaProviderId =
   | 'google-image'
   | 'openai-image'
+  | 'replicate-image'
   | 'replicate-video'
+  | 'google-video'
   | 'elevenlabs';
 
 export interface MediaProviderInfo {
@@ -37,6 +39,8 @@ export interface MediaGenerationResult {
   /** Rough cost estimate in USD; null when the provider price is unknown. */
   estimatedCostUsd: number | null;
   durationMs: number;
+  /** Long-running video job id (resume with recoverJobId on timeout). */
+  jobId?: string;
 }
 
 export interface MediaUsageTotals {

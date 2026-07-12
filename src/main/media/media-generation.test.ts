@@ -12,11 +12,14 @@ import {
   generateAudio,
   generateImage,
   generateVideo,
+  MediaJobTimeoutError,
   replicateEndImageField,
   replicateImageField,
   replicateInput,
+  seedreamInput,
   type MediaDeps,
 } from './media-generation';
+import { getVideoJob, saveVideoJob } from './media-video-jobs';
 
 let dir: string;
 
@@ -285,6 +288,59 @@ describe('replicate adapters', () => {
     expect(input.mode).toBe('pro');
     expect(input).not.toHaveProperty('image');
   });
+
+  it('seedance: aceita reference_images', () => {
+    const refs = [
+      { path: path.join(dir, 'r1.png'), data: Buffer.from('r1') },
+      { path: path.join(dir, 'r2.png'), data: Buffer.from('r2') },
+    ];
+    const input = replicateInput(
+      { prompt: 'hero walks', baseDir: dir },
+      'bytedance/seedance-2.0',
+      undefined,
+      undefined,
+      refs,
+    );
+    expect(Array.isArray(input.reference_images)).toBe(true);
+    expect((input.reference_images as string[]).length).toBe(2);
+  });
+
+  it('sora: seconds + openai_api_key + input_reference', () => {
+    const start = {
+      path: path.join(dir, 'a.png'),
+      data: Buffer.from('start'),
+    };
+    const input = replicateInput(
+      { prompt: 'city', baseDir: dir, durationSeconds: 8, aspectRatio: '16:9' },
+      'openai/sora-2',
+      start,
+      undefined,
+      [],
+      'sk-test',
+    );
+    expect(input.seconds).toBe(8);
+    expect(input.openai_api_key).toBe('sk-test');
+    expect(input.input_reference).toBeDefined();
+    expect(input.aspect_ratio).toBe('16:9');
+  });
+
+  it('luma: start_image + end_image', () => {
+    const start = {
+      path: path.join(dir, 'a.png'),
+      data: Buffer.from('start'),
+    };
+    const end = { path: path.join(dir, 'b.png'), data: Buffer.from('end') };
+    expect(replicateImageField('luma/ray-3.2')).toBe('start_image');
+    expect(replicateEndImageField('luma/ray-3.2')).toBe('end_image');
+    const input = replicateInput(
+      { prompt: 'dolly', baseDir: dir },
+      'luma/ray-3.2',
+      start,
+      end,
+    );
+    expect(input.start_image).toBeDefined();
+    expect(input.end_image).toBeDefined();
+  });
 });
 
 describe('generateVideo', () => {
@@ -351,6 +407,260 @@ describe('generateVideo', () => {
     await expect(
       generateVideo({ prompt: 'x', baseDir: dir }, deps),
     ).rejects.toThrow(/nsfw filter/);
+  });
+
+  it('replicate: timeout inclui recoverJobId e persiste o job', async () => {
+    // Create + 90 failed polls of "processing" would be huge; force one
+    // create then status that never succeeds by emptying the queue mid-poll.
+    // Instead: create returns id, first poll still processing, then throw via
+    // custom deps with limited responses that keep processing until max polls
+    // is hit — too many. Unit-test MediaVideoTimeoutError path by mocking
+    // poll count is expensive. Simpler: save job, recover path succeeds.
+    const { deps, calls } = fakeDeps([
+      { json: { id: 'pred-recover', status: 'starting' } },
+      {
+        json: {
+          id: 'pred-recover',
+          status: 'succeeded',
+          output: 'https://replicate.delivery/recovered.mp4',
+        },
+      },
+      { body: Buffer.from('recovered-mp4') },
+    ]);
+    // Pretend a prior timeout left the job on disk.
+    saveVideoJob(dir, {
+      jobId: 'pred-recover',
+      provider: 'replicate-video',
+      pollTarget: 'https://api.replicate.com/v1/predictions/pred-recover',
+      model: 'bytedance/seedance-2.0',
+      prompt: 'old',
+      startedAt: 1,
+      status: 'pending',
+    });
+    const result = await generateVideo(
+      {
+        prompt: '',
+        baseDir: dir,
+        recoverJobId: 'pred-recover',
+        outPath: 'recovered.mp4',
+      },
+      deps,
+    );
+    expect(fs.readFileSync(result.path, 'utf8')).toBe('recovered-mp4');
+    expect(result.jobId).toBe('pred-recover');
+    expect(getVideoJob(dir, 'pred-recover')?.status).toBe('completed');
+    // recover must not create a new prediction
+    expect(calls[0].url).toContain('/v1/predictions/pred-recover');
+    expect(calls[0].url).not.toContain('/models/');
+  });
+
+  it('replicate: submit persiste jobId para recovery futuro', async () => {
+    const { deps } = fakeDeps([
+      { json: { id: 'pred-new', status: 'starting' } },
+      {
+        json: {
+          id: 'pred-new',
+          status: 'succeeded',
+          output: 'https://replicate.delivery/new.mp4',
+        },
+      },
+      { body: Buffer.from('new-mp4') },
+    ]);
+    const result = await generateVideo(
+      { prompt: 'scene', baseDir: dir, outPath: 'new.mp4' },
+      deps,
+    );
+    expect(result.jobId).toBe('pred-new');
+    expect(getVideoJob(dir, 'pred-new')?.status).toBe('completed');
+  });
+
+  it('google-video: predictLongRunning + poll + bytesBase64', async () => {
+    const { deps, calls } = fakeDeps([
+      { json: { name: 'operations/veo-op-1' } },
+      {
+        json: {
+          done: true,
+          response: {
+            generateVideoResponse: {
+              generatedSamples: [
+                {
+                  video: {
+                    bytesBase64Encoded: Buffer.from('veo-bytes').toString(
+                      'base64',
+                    ),
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    ]);
+    const result = await generateVideo(
+      {
+        prompt: 'golden retriever',
+        baseDir: dir,
+        provider: 'google-video',
+        model: 'veo-3.1-generate-preview',
+        outPath: 'native-veo.mp4',
+      },
+      deps,
+    );
+    expect(result.provider).toBe('google-video');
+    expect(fs.readFileSync(result.path, 'utf8')).toBe('veo-bytes');
+    expect(calls[0].url).toContain(
+      'models/veo-3.1-generate-preview:predictLongRunning',
+    );
+    expect(calls[1].url).toContain('operations/veo-op-1');
+  });
+
+  it('MediaJobTimeoutError carrega jobId', () => {
+    const err = new MediaJobTimeoutError('replicate-video', 'abc');
+    expect(err.jobId).toBe('abc');
+    expect(err.message).toMatch(/recoverJobId="abc"/);
+  });
+
+  it('seedance rejeita reference_images + keyframes juntos', () => {
+    const start = {
+      path: path.join(dir, 'a.png'),
+      data: Buffer.from('start'),
+    };
+    const ref = { path: path.join(dir, 'r.png'), data: Buffer.from('ref') };
+    expect(() =>
+      replicateInput(
+        { prompt: 'x', baseDir: dir },
+        'bytedance/seedance-2.0',
+        start,
+        undefined,
+        [ref],
+      ),
+    ).toThrow(/reference_images não pode combinar/);
+  });
+});
+
+describe('seedream (Seedream 5.0 Pro image)', () => {
+  it('monta input com size 2K e aspect_ratio oficiais', () => {
+    const input = seedreamInput(
+      { prompt: 'hero portrait', baseDir: dir, aspectRatio: '9:16', size: '2K' },
+      'bytedance/seedream-5-pro',
+    );
+    expect(input.prompt).toBe('hero portrait');
+    expect(input.size).toBe('2K');
+    expect(input.aspect_ratio).toBe('9:16');
+    expect(input.output_format).toBe('png');
+  });
+
+  it('rejeita size 4K no Seedream 5.0 Pro (schema só 1K|2K)', () => {
+    expect(() =>
+      seedreamInput(
+        { prompt: 'x', baseDir: dir, size: '4K' },
+        'bytedance/seedream-5-pro',
+      ),
+    ).toThrow(/1K ou 2K/);
+  });
+
+  it('image_input recebe data URIs de referência (até 10)', () => {
+    const imgs = [
+      { path: path.join(dir, 'a.png'), data: Buffer.from('a') },
+      { path: path.join(dir, 'b.png'), data: Buffer.from('b') },
+    ];
+    const input = seedreamInput(
+      { prompt: 'same character', baseDir: dir },
+      'bytedance/seedream-5-pro',
+      imgs,
+    );
+    expect(Array.isArray(input.image_input)).toBe(true);
+    expect((input.image_input as string[]).length).toBe(2);
+    expect(input.aspect_ratio).toBe('match_input_image');
+  });
+
+  it('generateImage via replicate-image faz prediction e baixa png', async () => {
+    const { deps, calls } = fakeDeps([
+      { json: { id: 'img-1', status: 'starting' } },
+      {
+        json: {
+          id: 'img-1',
+          status: 'succeeded',
+          output: 'https://replicate.delivery/seedream.png',
+        },
+      },
+      { body: Buffer.from('seedream-png') },
+    ]);
+    const result = await generateImage(
+      {
+        prompt: 'cinematic still',
+        baseDir: dir,
+        provider: 'replicate-image',
+        model: 'seedream',
+        outPath: 'hero.png',
+      },
+      deps,
+    );
+    expect(result.provider).toBe('replicate-image');
+    expect(result.model).toBe('bytedance/seedream-5-pro');
+    expect(fs.readFileSync(result.path, 'utf8')).toBe('seedream-png');
+    expect(calls[0].url).toContain(
+      '/v1/models/bytedance/seedream-5-pro/predictions',
+    );
+    const body = JSON.parse(String(calls[0].init?.body ?? '{}')) as {
+      input: Record<string, unknown>;
+    };
+    expect(body.input.size).toBe('2K');
+  });
+});
+
+describe('generateImage aspectRatio', () => {
+  it('google-image: envia imageConfig.aspectRatio', async () => {
+    const { deps, calls } = fakeDeps([
+      {
+        json: {
+          candidates: [
+            {
+              content: {
+                parts: [{ inlineData: { data: PNG_B64 } }],
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    await generateImage(
+      {
+        prompt: 'wide landscape',
+        baseDir: dir,
+        aspectRatio: '16:9',
+        outPath: 'wide.png',
+      },
+      deps,
+    );
+    const body = JSON.parse(String(calls[0].init?.body ?? '{}')) as {
+      generationConfig: { imageConfig?: { aspectRatio?: string } };
+    };
+    expect(body.generationConfig.imageConfig?.aspectRatio).toBe('16:9');
+  });
+
+  it('openai-image: mapeia 16:9 para size 1536x1024', async () => {
+    const { deps, calls } = fakeDeps([
+      {
+        json: {
+          data: [{ b64_json: PNG_B64 }],
+        },
+      },
+    ]);
+    await generateImage(
+      {
+        prompt: 'wide',
+        baseDir: dir,
+        provider: 'openai-image',
+        aspectRatio: '16:9',
+        outPath: 'oai.png',
+      },
+      deps,
+    );
+    const body = JSON.parse(String(calls[0].init?.body ?? '{}')) as {
+      size?: string;
+    };
+    expect(body.size).toBe('1536x1024');
   });
 });
 

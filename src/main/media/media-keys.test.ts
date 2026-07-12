@@ -41,4 +41,20 @@ describe('shared media provider credentials', () => {
     expect(resolveMediaKey(provider)).toBe('media-openai-secret-5678');
     expect(maskedMediaKey('openai-image')).toBe('med…5678');
   });
+
+  it('shares Gemini key between google-image and google-video', () => {
+    secrets.set('mediakey:google-image', 'gemini-image-only-9999');
+    const video = findMediaProvider('google-video')!;
+    expect(resolveMediaKey(video)).toBe('gemini-image-only-9999');
+    expect(hasMediaKey(video)).toBe(true);
+  });
+
+  it('shares Replicate token between replicate-image and replicate-video', () => {
+    secrets.set('mediakey:replicate-video', 'r8-video-token-abcd');
+    const image = findMediaProvider('replicate-image')!;
+    expect(resolveMediaKey(image)).toBe('r8-video-token-abcd');
+    expect(hasMediaKey(image)).toBe(true);
+    // Masked preview must reflect the shared key so Settings shows usable state.
+    expect(maskedMediaKey('replicate-image')).toBe('r8-…abcd');
+  });
 });

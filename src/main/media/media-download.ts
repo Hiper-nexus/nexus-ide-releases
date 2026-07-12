@@ -8,7 +8,11 @@ import net from 'node:net';
 import { Readable } from 'node:stream';
 import tls from 'node:tls';
 
-export type DynamicMediaProvider = 'openai-image' | 'replicate-video';
+export type DynamicMediaProvider =
+  | 'openai-image'
+  | 'replicate-image'
+  | 'replicate-video'
+  | 'google-video';
 
 export type PinnedMediaFetch = (
   url: URL,
@@ -34,11 +38,20 @@ const MAX_ERROR_DETAIL_CHARS = 400;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const DEFAULT_LIMITS: Record<DynamicMediaProvider, MediaDownloadLimits> = {
   'openai-image': { maxBytes: 64 * 1024 * 1024, timeoutMs: 120_000 },
+  'replicate-image': { maxBytes: 64 * 1024 * 1024, timeoutMs: 120_000 },
   'replicate-video': { maxBytes: 256 * 1024 * 1024, timeoutMs: 120_000 },
+  'google-video': { maxBytes: 256 * 1024 * 1024, timeoutMs: 120_000 },
 };
 const ALLOWED_HOST_SUFFIXES: Record<DynamicMediaProvider, string[]> = {
   'openai-image': ['openai.com', 'oaistatic.com', 'blob.core.windows.net'],
+  'replicate-image': ['replicate.delivery'],
   'replicate-video': ['replicate.delivery'],
+  'google-video': [
+    'googleapis.com',
+    'googleusercontent.com',
+    'gstatic.com',
+    'storage.googleapis.com',
+  ],
 };
 
 interface ApprovedDownloadTarget {

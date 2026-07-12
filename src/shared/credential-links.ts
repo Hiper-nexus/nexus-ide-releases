@@ -54,7 +54,9 @@ const PROVIDER_LINKS: Record<string, CredentialLink> = {
   claude: ENV_LINKS.ANTHROPIC_API_KEY,
   codex: ENV_LINKS.OPENAI_API_KEY,
   'google-image': ENV_LINKS.GEMINI_API_KEY,
+  'google-video': ENV_LINKS.GEMINI_API_KEY,
   'openai-image': ENV_LINKS.OPENAI_API_KEY,
+  'replicate-image': ENV_LINKS.REPLICATE_API_TOKEN,
   'replicate-video': ENV_LINKS.REPLICATE_API_TOKEN,
   elevenlabs: ENV_LINKS.ELEVENLABS_API_KEY,
   glm: {

@@ -17,7 +17,9 @@ const setKeySchema = z.object({
   providerId: z.enum([
     'google-image',
     'openai-image',
+    'replicate-image',
     'replicate-video',
+    'google-video',
     'elevenlabs',
   ]),
   /** Empty string clears the stored key. */

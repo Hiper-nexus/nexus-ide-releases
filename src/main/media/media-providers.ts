@@ -3,6 +3,7 @@ import type {
   MediaProviderId,
   MediaProviderInfo,
 } from '../../shared/media-types';
+import { resolveMediaModelAlias } from './media-model-aliases';
 import { resolveMediaOutputPath } from './media-path-policy';
 
 /**
@@ -24,7 +25,11 @@ export interface MediaProviderDef {
   defaultModel: string;
   models: string[];
   /** Rough USD estimate per generation; null when unknown. */
-  estimateCost(params: { model: string; chars?: number; seconds?: number }): number | null;
+  estimateCost(params: {
+    model: string;
+    chars?: number;
+    seconds?: number;
+  }): number | null;
 }
 
 export const MEDIA_PROVIDERS: MediaProviderDef[] = [
@@ -47,33 +52,68 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
     estimateCost: () => 0.07,
   },
   {
+    id: 'replicate-image',
+    kind: 'image',
+    // ByteDance Seedream 5.0 Pro — multimodal image (official product page:
+    // https://seed.bytedance.com/en/seedream5_0_pro). Via Replicate; shares
+    // REPLICATE_API_TOKEN with replicate-video.
+    label: 'Replicate — Seedream 5.0 Pro (imagem)',
+    envVar: 'REPLICATE_API_TOKEN',
+    defaultModel: 'bytedance/seedream-5-pro',
+    models: [
+      'bytedance/seedream-5-pro',
+      'bytedance/seedream-5-lite',
+      'bytedance/seedream-4.5',
+      'bytedance/seedream-4',
+      'bytedance/seedream-3',
+    ],
+    estimateCost: () => null,
+  },
+  {
     id: 'replicate-video',
     kind: 'video',
-    // Flagship path is Seedance 2.0 (ByteDance multimodal + native audio).
-    // Veo 3.1 / Kling / Hailuo share the same Replicate token + poller.
-    label: 'Replicate — vídeo (Seedance / Veo / Kling)',
+    // Flagship video path is Seedance 2.0 (ByteDance multimodal + native audio).
+    // Veo / Kling / Sora / Runway / Luma share the same Replicate token.
+    label: 'Replicate — vídeo (Seedance / Veo / Kling / Sora…)',
     envVar: 'REPLICATE_API_TOKEN',
     defaultModel: 'bytedance/seedance-2.0',
     models: [
-      // ByteDance Seedance 2.x — multimodal refs + last frame + native audio.
-      // (There is no public "Seedance 5"; 2.0 is the current flagship.)
+      // ByteDance Seedance 2.x (video — not Seedream, which is image)
       'bytedance/seedance-2.0',
       'bytedance/seedance-2.0-fast',
       'bytedance/seedance-2.0-mini',
-      // Google Veo 3.1 family via Replicate.
+      // Google Veo 3.1 via Replicate
       'google/veo-3.1',
       'google/veo-3.1-fast',
       'google/veo-3.1-lite',
-      // Kling — live Replicate slugs (verified; bare kling-v3 404s).
+      // Kling (live Replicate slugs — bare kling-v3 404s)
       'kwaivgi/kling-v3-video',
       'kwaivgi/kling-v3-omni-video',
       'kwaivgi/kling-v2.5-turbo-pro',
       'kwaivgi/kling-v2.1',
-      // Minimax + Wan (i2v field differs — see media-generation adapters).
+      // Minimax + Wan
       'minimax/hailuo-2.3',
       'wan-video/wan-2.5-i2v',
+      // Premium alternatives
+      'openai/sora-2',
+      'openai/sora-2-pro',
+      'runwayml/gen-4.5',
+      'luma/ray-3.2',
     ],
-    // Vídeo varia demais por modelo/resolução/duração — sem estimativa falsa.
+    estimateCost: () => null,
+  },
+  {
+    id: 'google-video',
+    kind: 'video',
+    label: 'Google Veo nativo (AI Studio)',
+    envVar: 'GEMINI_API_KEY',
+    defaultModel: 'veo-3.1-generate-preview',
+    models: [
+      'veo-3.1-generate-preview',
+      'veo-3.1-fast-generate-preview',
+      'veo-3.1-lite-generate-preview',
+      'veo-2.0-generate-001',
+    ],
     estimateCost: () => null,
   },
   {
@@ -84,7 +124,9 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
     defaultModel: 'eleven_multilingual_v2',
     models: ['eleven_multilingual_v2', 'eleven_turbo_v2_5'],
     estimateCost: ({ chars }) =>
-      typeof chars === 'number' ? Number(((chars / 1_000) * 0.18).toFixed(4)) : null,
+      typeof chars === 'number'
+        ? Number(((chars / 1_000) * 0.18).toFixed(4))
+        : null,
   },
 ];
 
@@ -94,14 +136,15 @@ export function findMediaProvider(id: string): MediaProviderDef | null {
 
 /**
  * Pick the provider for a request. Explicit provider: must exist, match the
- * kind and have a key — otherwise error (never silently substitute). No
- * provider: cheapest provider of the kind WITH a key (cost routing — table
- * order is already cheapest-first per kind).
+ * kind and have a key — otherwise error (never silently substitute).
+ * No provider: if preferredModel is set, prefer a keyed provider that lists it;
+ * else cheapest provider of the kind WITH a key (table order).
  */
 export function resolveMediaProvider(
   kind: MediaKind,
   requested: string | undefined,
   hasKeyFn: (def: MediaProviderDef) => boolean,
+  preferredModel?: string,
 ): MediaProviderDef {
   if (requested) {
     const def = findMediaProvider(requested);
@@ -116,6 +159,16 @@ export function resolveMediaProvider(
     }
     return def;
   }
+
+  if (preferredModel) {
+    const resolved =
+      resolveMediaModelAlias(preferredModel, kind) ?? preferredModel;
+    const match = MEDIA_PROVIDERS.find(
+      (p) => p.kind === kind && hasKeyFn(p) && p.models.includes(resolved),
+    );
+    if (match) return match;
+  }
+
   const available = MEDIA_PROVIDERS.filter(
     (p) => p.kind === kind && hasKeyFn(p),
   );
@@ -134,13 +187,15 @@ export function resolveMediaModel(
   requested: string | undefined,
 ): string {
   if (!requested) return def.defaultModel;
-  if (!def.models.includes(requested)) {
+  const resolved =
+    resolveMediaModelAlias(requested, def.kind) ?? requested.trim();
+  if (!def.models.includes(resolved)) {
     throw new Error(
       `modelo ${requested} não habilitado para ${def.id} ` +
         `(disponíveis: ${def.models.join(', ')})`,
     );
   }
-  return requested;
+  return resolved;
 }
 
 /**

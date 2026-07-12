@@ -152,16 +152,27 @@ function mediaConfirmation(
   const provider = safeMediaArg(
     args.provider,
     kind === 'video'
-      ? 'replicate-video'
-      : 'automatic (google-image or openai-image)',
+      ? 'replicate-video|google-video'
+      : 'automatic (google-image, openai-image or replicate-image/seedream)',
   );
   const prompt = `prompt (${textLength(args.prompt)} chars)`;
   const image = safeMediaArg(args.imagePath, 'none');
+  const refCount = Array.isArray(args.referenceImagePaths)
+    ? args.referenceImagePaths.filter((x) => typeof x === 'string').length
+    : 0;
   if (kind === 'image') {
-    return `generate image via ${provider}; inputs: ${prompt}, image: ${image}; output: ${output}`;
+    return (
+      `generate image via ${provider}; inputs: ${prompt}, image: ${image}` +
+      `${refCount > 0 ? `, refs: ${refCount}` : ''}; output: ${output}`
+    );
   }
   const endImage = safeMediaArg(args.endImagePath, 'none');
-  return `generate video via ${provider}; inputs: ${prompt}, start: ${image}, end: ${endImage}; output: ${output}`;
+  const model = safeMediaArg(args.model, 'default');
+  return (
+    `generate video via ${provider} model ${model}; inputs: ${prompt}, ` +
+    `start: ${image}, end: ${endImage}` +
+    `${refCount > 0 ? `, refs: ${refCount}` : ''}; output: ${output}`
+  );
 }
 
 function safeBrowserTarget(raw: unknown): string {
