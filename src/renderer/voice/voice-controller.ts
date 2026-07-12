@@ -102,6 +102,7 @@ import {
   matchPassiveWakeWord,
 } from './passive-wake-matcher';
 import { PassiveWakeDeadline } from './passive-wake-deadline';
+import { PassiveWakeAdmission } from './passive-wake-admission';
 import { pttStartAction } from './ptt-barge-in';
 import { shouldOfferLiveMicFrame } from './live-mic-offer-gate';
 import {
@@ -266,6 +267,7 @@ export function useVoiceController(): void {
     const store = useVoiceStore.getState();
     const workNarrationSupervisor = new WorkNarrationSupervisor();
     const passiveWakeDeadline = new PassiveWakeDeadline(PASSIVE_WAKE_RENDERER_DEADLINE_MS);
+    const passiveWakeAdmission = new PassiveWakeAdmission();
 
     const handleWake = async (source: WakeSource, preRollSeed?: Float32Array[]) => {
       if (wakeOpenInProgress) return;
@@ -435,6 +437,14 @@ export function useVoiceController(): void {
       if (passiveWakeDeadline.isChecking() || wakeOpenInProgress) return;
       const info = useVoiceStore.getState().info;
       if (!info?.enabled || !info.wakeWordEnabled || info.routing !== 'jarvis') return;
+      const admissionNow = Date.now();
+      if (!passiveWakeAdmission.shouldTranscribe(utterance, admissionNow)) {
+        logVoiceEvent('info', 'wake.passiveLocalRejected', 'clip ambiente bloqueado antes do STT', {
+          rawSpeechMs: Math.round(utterance.rawSpeechMs),
+          peakRms: Number(utterance.rawMaxRms.toFixed(4)),
+        });
+        return;
+      }
       const voiceStatus = useVoiceStore.getState().status;
       const hot = isLiveSessionHot();
       // Quiet playback leakage stays blocked, but a nearby human voice well
@@ -498,6 +508,7 @@ export function useVoiceController(): void {
         );
         const latencyMs = Date.now() - startedAt;
         if (request.kind === 'timeout') {
+          passiveWakeAdmission.reject(Date.now());
           logVoiceEvent('warn', 'wake.passiveSttTimeout', 'STT passivo excedeu deadline local', {
             latencyMs,
           });
@@ -506,6 +517,7 @@ export function useVoiceController(): void {
         if (request.kind !== 'completed') return;
         const result = request.value;
         if (!result.ok) {
+          passiveWakeAdmission.reject(Date.now());
           logVoiceEvent('warn', 'wake.passiveSttFail', 'STT passivo não concluiu', {
             latencyMs,
             stalled: result.stalled ?? false,
@@ -514,6 +526,7 @@ export function useVoiceController(): void {
           return;
         }
         if (result.discarded === 'echo') {
+          passiveWakeAdmission.reject(Date.now());
           logVoiceEvent('info', 'wake.passiveEchoDiscarded', 'frase passiva era eco do app', {
             latencyMs,
             provider: result.provider,
@@ -558,6 +571,7 @@ export function useVoiceController(): void {
               charLen: text.length,
               fingerprint,
             });
+            passiveWakeAdmission.reject(Date.now());
             return;
           }
           if (
@@ -573,6 +587,7 @@ export function useVoiceController(): void {
               peakRms: Number(utterance.rawMaxRms.toFixed(4)),
               minPeak: HOT_COMMAND_MIN_PEAK_RMS,
             });
+            passiveWakeAdmission.reject(Date.now());
             return;
           }
           followUpAuthority.clear();
@@ -604,6 +619,7 @@ export function useVoiceController(): void {
             fingerprint: tokens.join('|'),
             charLen: text.length,
           });
+          passiveWakeAdmission.reject(Date.now());
           return;
         }
 
@@ -618,8 +634,11 @@ export function useVoiceController(): void {
               commandWords: match.command.split(/\s+/).filter(Boolean).length,
             },
           );
+          passiveWakeAdmission.reject(Date.now());
           return;
         }
+
+        passiveWakeAdmission.accept();
 
         // Passive STT is an untrusted ambient sensor. Even an exact-prefix
         // phrase can come from a video or another person, so it may wake Jarvis
@@ -672,6 +691,7 @@ export function useVoiceController(): void {
         // Frio: wake-only. Passive STT never carries command authority.
         onWake(statusNow === 'speaking' ? 'voice-barge' : 'voice', utterance.preRoll);
       } catch (error) {
+        passiveWakeAdmission.reject(Date.now());
         logVoiceEvent('warn', 'wake.passiveSttError', 'falha no STT passivo', {
           latencyMs: Date.now() - startedAt,
           error: errMsg(error),
@@ -763,6 +783,7 @@ export function useVoiceController(): void {
           }
         : null;
       if (!shouldUsePassiveWake) wakeMic.cancelPassiveWake();
+      if (!shouldUsePassiveWake) passiveWakeAdmission.reset();
       if (info.enabled && info.wakeWordEnabled) {
         invalidateAckCacheIfPersonaChanged(info);
         if (!canAttemptRealtime(info)) {

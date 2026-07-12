@@ -16,6 +16,7 @@ import {
 import { applyTerminalSettings } from '../terminal/terminal-host';
 import { applyPixelMode, applyUiTheme } from '../styles/ui-theme';
 import { setAudioDevicePreferences } from '../voice/audio-device-preferences';
+import type { SettingsSection } from '../components/settings/settings-nav';
 
 /** One entry point: restyle terminals AND the whole app UI. */
 function applyEverywhere(settings: TerminalSettings): void {
@@ -50,6 +51,7 @@ interface SettingsState {
   ui: UiSettings;
   audio: AudioSettings;
   drawerOpen: boolean;
+  drawerSection: SettingsSection | null;
   hydrated: boolean;
 
   hydrate(): Promise<void>;
@@ -60,7 +62,7 @@ interface SettingsState {
   receiveUi(ui: UiSettings): void;
   receiveAudio(audio: AudioSettings): void;
   toggleDrawer(): void;
-  openDrawer(): void;
+  openDrawer(section?: SettingsSection): void;
   closeDrawer(): void;
 }
 
@@ -69,6 +71,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   ui: DEFAULT_UI_SETTINGS,
   audio: DEFAULT_AUDIO_SETTINGS,
   drawerOpen: false,
+  drawerSection: null,
   hydrated: false,
 
   hydrate: async () => {
@@ -126,7 +129,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   },
 
   toggleDrawer: () => set((s) => ({ drawerOpen: !s.drawerOpen })),
-  openDrawer: () => set({ drawerOpen: true }),
+  openDrawer: (section) => set({ drawerOpen: true, drawerSection: section ?? null }),
   closeDrawer: () => set({ drawerOpen: false }),
 }));
 

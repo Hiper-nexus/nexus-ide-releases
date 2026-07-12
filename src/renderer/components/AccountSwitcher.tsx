@@ -218,7 +218,7 @@ export function AccountSwitcher({
             role="menuitem"
             onClick={() => {
               setOpen(false);
-              openDrawer();
+              openDrawer('providers');
             }}
           >
             <PixelIcon name="config" size={12} />

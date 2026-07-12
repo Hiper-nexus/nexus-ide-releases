@@ -140,6 +140,7 @@ function AdvancedGroupNav({
 
 export function SettingsDrawer() {
   const open = useSettingsStore((s) => s.drawerOpen);
+  const requestedSection = useSettingsStore((s) => s.drawerSection);
   const close = useSettingsStore((s) => s.closeDrawer);
   const squadsCount = useOrchStore((s) => s.squads.length);
   const [section, setSection] = useState<SettingsSection>('account');
@@ -169,6 +170,10 @@ export function SettingsDrawer() {
   useEffect(() => {
     if (isAdvancedSettingsSection(section)) setAdvancedOpen(true);
   }, [section]);
+
+  useEffect(() => {
+    if (open && requestedSection) setSection(requestedSection);
+  }, [open, requestedSection]);
 
   useEffect(() => {
     if (!open) return undefined;
