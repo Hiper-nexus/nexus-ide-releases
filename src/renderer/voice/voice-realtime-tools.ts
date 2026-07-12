@@ -45,12 +45,50 @@ import {
   type RealtimeToolExecution,
 } from './realtime-tool-execution';
 import { cancelLiveFollowUp } from './live-followup';
+import {
+  persistRuntimeIncidents,
+  superviseJarvisAction,
+} from './runtime-incident-supervisor';
+import { useToastStore } from '../state/toast-store';
 
 export async function executeJarvisActionForTurn(
   ...args: Parameters<typeof executeJarvisAction>
 ): ReturnType<typeof executeJarvisAction> {
   try {
-    return await executeJarvisAction(...args);
+    const [reply, context, control = {}] = args;
+    const supervised = await superviseJarvisAction(
+      reply.action,
+      (supervisedControl) => executeJarvisAction(reply, context, supervisedControl),
+      control,
+    );
+    persistRuntimeIncidents(supervised.incidents);
+    for (const runtimeIncident of supervised.incidents) {
+      logVoiceEvent(
+        runtimeIncident.recovered ? 'warn' : 'error',
+        'runtime.incident',
+        runtimeIncident.message,
+        {
+          incidentId: runtimeIncident.id,
+          action: runtimeIncident.action,
+          code: runtimeIncident.code,
+          attempt: runtimeIncident.attempt,
+          recovered: runtimeIncident.recovered,
+          effectMayHaveCommitted: runtimeIncident.effectMayHaveCommitted,
+        },
+      );
+    }
+    const unresolved = supervised.incidents.findLast((item) => !item.recovered);
+    if (unresolved) {
+      useVoiceStore.getState().setNote(
+        `Doctor: ${unresolved.action} falhou — ${unresolved.message}`,
+      );
+      useToastStore.getState().push(
+        'error',
+        'O Doctor interrompeu uma ação com falha',
+        `${unresolved.action}: ${unresolved.message}`,
+      );
+    }
+    return supervised.result;
   } finally {
     await clearJarvisMcpSession();
   }

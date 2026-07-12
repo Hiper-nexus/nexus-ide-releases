@@ -373,15 +373,29 @@ export function MissionWizard() {
         setError('Abra (ou informe) um workspace antes de montar o time.');
         return;
       }
-      const res = await Promise.race([
-        window.nexus.orch.designSquad(workspacePath, intent.trim()),
-        new Promise<never>((_, reject) => {
-          setTimeout(
-            () => reject(new Error('O arquiteto demorou demais. Tente novamente.')),
-            30_000,
-          );
-        }),
-      ]);
+      const designOnce = () => Promise.race([
+          window.nexus.orch.designSquad(workspacePath, intent.trim()),
+          new Promise<never>((_, reject) => {
+            setTimeout(
+              () => reject(new Error('O arquiteto demorou demais. Tente novamente.')),
+              30_000,
+            );
+          }),
+        ]);
+      let res = await designOnce();
+      // Runtime Doctor recipe: malformed/temporary model output proves no
+      // squad was saved, so one deterministic retry is safe. Never loop.
+      if (
+        (!res.ok || !res.squad) &&
+        /json|modelo|timeout|demorou|temporar/i.test(res.error ?? '')
+      ) {
+        useToastStore.getState().push(
+          'warn',
+          'O Doctor está tentando recuperar o arquiteto',
+          res.error ?? 'Resposta inválida do modelo.',
+        );
+        res = await designOnce();
+      }
       if (!res.ok || !res.squad) {
         const message = res.error ?? 'Não consegui montar o time.';
         if (isMissingModelKeyError(message)) {
@@ -398,10 +412,14 @@ export function MissionWizard() {
       setSquadId(res.squad.id);
       setStep('squad-review');
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : 'Não consegui montar o time. Tente novamente.',
+      const message = cause instanceof Error
+        ? cause.message
+        : 'Não consegui montar o time. Tente novamente.';
+      setError(message);
+      useToastStore.getState().push(
+        'error',
+        'O Doctor liberou o wizard após a falha',
+        message,
       );
     } finally {
       setDesigning(false);
