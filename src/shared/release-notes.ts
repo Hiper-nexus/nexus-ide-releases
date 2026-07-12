@@ -13,26 +13,26 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.13.12',
+  version: '0.13.13',
   date: '2026-07-11',
-  codename: 'Operator UX',
+  codename: 'Account Hot-Swap',
   summary:
-    'Navegação operacional mais clara, contas verificáveis e configurações responsivas, sem perder as melhorias realtime, de autenticação e descoberta dinâmica de CLIs.',
+    'Troca multi-conta operacional, failover por limite e credenciais isoladas para as principais CLIs, com panes mais claros e todas as melhorias anteriores.',
   highlights: [
     {
-      title: 'Voltar às missões',
+      title: 'Hot-swap multi-conta',
       detail:
-        'Configurações mantém localização e saída visíveis no topo, inclusive após rolar e em telas menores.',
+        'Codex, Grok, Kimi, OpenCode e AGY recebem credenciais isoladas por conta, com troca operacional e sessão preservada.',
     },
     {
-      title: 'Contas sem ambiguidade',
+      title: 'Failover por limite',
       detail:
-        'Claude, Codex, Kimi e demais CLIs mostram login, conta ativa, reservas e resultado da verificação com linguagem direta.',
+        'O Nexus reconhece limites de uso e prepara a retomada em uma conta reserva compatível.',
     },
     {
-      title: 'Configurações responsivas',
+      title: 'Panes mais claros',
       detail:
-        'Providers, Squads, credenciais e formulários reorganizam conteúdo e ações sem sobreposição em diferentes tamanhos de tela.',
+        'A toolbar usa ações rotuladas, tooltips não recortados e um menu compacto para reduzir ruído sem esconder capacidade.',
     },
   ],
   fixes: [

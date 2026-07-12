@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.13.13 — Account Hot-Swap
+
+Data: 2026-07-12
+
+### Melhorias
+- Hot-swap multi-conta com homes e credenciais gerenciados para Codex, Grok,
+  Kimi, OpenCode e AGY, preservando a sessão de cada CLI.
+- Failover reconhece limites de uso e pode retomar a operação usando uma conta
+  reserva compatível.
+- Toolbar dos panes ganhou ações rotuladas, tooltips fora da área de corte e
+  menu compacto para comandos menos frequentes.
+- Seletor de contas informa conta ativa, disponibilidade e reinício necessário
+  de forma mais clara.
+
+### Segurança
+- Material de autenticação fica isolado por conta e é aplicado apenas ao
+  processo da CLI correspondente.
+
+### Build
+- Release `v0.13.13` assinada e notarizada com o perfil `nexus-notary`.
+
 ## 0.13.12 — Operator UX
 
 Data: 2026-07-11
