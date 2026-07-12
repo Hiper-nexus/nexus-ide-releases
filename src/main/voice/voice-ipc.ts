@@ -343,8 +343,13 @@ function acceptWakeFrame(sender: WebContents): WakeOwnership | null {
     releaseWakeOwnership(current.generation);
   }
 
-  // Fresh claim requires a focused, authorized window (fail closed).
-  if (!focusedAlive || focusedAlive !== sender) return null;
+  // A single authorized renderer must be able to claim wake at cold start even
+  // while another application has OS focus. Requiring Nexus focus here made
+  // every startup deaf until the user clicked the window. When a Nexus window
+  // is focused it still has exclusive priority; without one, the first
+  // project-bound renderer becomes the captured owner and subsequent senders
+  // cannot steal it through the guards above.
+  if (focusedAlive && focusedAlive !== sender) return null;
 
   const generation = ++wakeGeneration;
   const releaseOnOwnerGone = () => {

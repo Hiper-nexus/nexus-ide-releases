@@ -951,6 +951,19 @@ describe("Voice PTT and wake multi-window isolation", () => {
     expect(wakeEngineDeps.instances).toHaveLength(1);
   });
 
+  it("claims wake on cold start while Nexus is authorized but not OS-focused", () => {
+    voiceConfig.wakeWord.enabled = true;
+    const windowA = new TestRenderer(735);
+    scopeDeps.scopes.set(windowA.id, scopeA);
+    electronDeps.windows.push({ webContents: windowA });
+    electronDeps.focusedWindow = null;
+
+    send(VOICE_CHANNELS.wakeAudio, windowA, pcmFrame());
+
+    expect(wakeEngineDeps.instances).toHaveLength(1);
+    expect(wakeEngineDeps.instances[0]!.feed).toHaveBeenCalledTimes(1);
+  });
+
   it("does not deliver wakeDetected from A to project B", () => {
     voiceConfig.wakeWord.enabled = true;
     const windowA = new TestRenderer(741);
@@ -1070,13 +1083,12 @@ describe("Voice PTT and wake multi-window isolation", () => {
     voiceConfig.wakeWord.enabled = true;
     const windowB = new TestRenderer(782);
     scopeDeps.scopes.set(windowB.id, scopeB);
-    // No focus: B cannot steal a cleared owner, and without focus cannot claim.
+    // B is a new authorized renderer and can claim cold-start wake without OS focus.
     electronDeps.focusedWindow = null;
     send(VOICE_CHANNELS.wakeAudio, windowB, pcmFrame());
-    // After close, no owner — without focus, claim is refused.
     expect(
       wakeEngineDeps.instances.filter((i) => i !== engineA),
-    ).toHaveLength(0);
+    ).toHaveLength(1);
   });
 
   it("preserves wake owner without focused window and blocks steal", () => {
@@ -1104,7 +1116,7 @@ describe("Voice PTT and wake multi-window isolation", () => {
     expect(wakeEngineDeps.instances).toHaveLength(1);
   });
 
-  it("disposes a failed WakeEngine and requires a fresh focused claim", async () => {
+  it("disposes a failed WakeEngine and permits a fresh authorized background claim", async () => {
     voiceConfig.wakeWord.enabled = true;
     const windowA = new TestRenderer(801);
     scopeDeps.scopes.set(windowA.id, scopeA);
@@ -1120,11 +1132,11 @@ describe("Voice PTT and wake multi-window isolation", () => {
 
     electronDeps.focusedWindow = null;
     send(VOICE_CHANNELS.wakeAudio, windowA, pcmFrame());
-    expect(wakeEngineDeps.instances).toHaveLength(1);
+    expect(wakeEngineDeps.instances).toHaveLength(2);
 
     electronDeps.focusedWindow = { webContents: windowA };
     send(VOICE_CHANNELS.wakeAudio, windowA, pcmFrame());
     expect(wakeEngineDeps.instances).toHaveLength(2);
-    expect(wakeEngineDeps.instances[1]!.feed).toHaveBeenCalledTimes(1);
+    expect(wakeEngineDeps.instances[1]!.feed).toHaveBeenCalledTimes(2);
   });
 });
