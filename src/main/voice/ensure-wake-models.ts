@@ -17,7 +17,7 @@ export const DEFAULT_WAKE_MODEL_FILE = 'speechkit-hey-jarvis.onnx';
 export const DEFAULT_PTBR_WAKE_MODEL_FILE = 'custom.onnx';
 export const DEFAULT_PTBR_WAKE_MODEL_SHA256 = EI_JARVIS_PTBR_ONNX_SHA256;
 
-function defaultWakeDirectory(): string {
+export function resolveWakeModelDirectory(): string {
   const configuredRoot = process.env.NEXUS_USER_DATA_DIR?.trim();
   const nexusRoot = configuredRoot
     ? path.resolve(configuredRoot)
@@ -83,7 +83,7 @@ function installModelFile(
 }
 
 export function ensureDefaultWakeModelInstalled(
-  targetDirectory = defaultWakeDirectory(),
+  targetDirectory = resolveWakeModelDirectory(),
 ): string | null {
   return installModelFile(
     targetDirectory,
@@ -95,7 +95,7 @@ export function ensureDefaultWakeModelInstalled(
 }
 
 export function ensureDefaultPtbrWakeModelInstalled(
-  targetDirectory = defaultWakeDirectory(),
+  targetDirectory = resolveWakeModelDirectory(),
 ): string | null {
   const target = path.join(targetDirectory, DEFAULT_PTBR_WAKE_MODEL_FILE);
   // A local retraining is an explicit user override and must survive upgrades.
@@ -116,7 +116,7 @@ export function ensureDefaultPtbrWakeModelInstalled(
 }
 
 export function ensureAllDefaultWakeModelsInstalled(
-  targetDirectory = defaultWakeDirectory(),
+  targetDirectory = resolveWakeModelDirectory(),
 ): { readonly en: string | null; readonly ptbr: string | null } {
   return Object.freeze({
     en: ensureDefaultWakeModelInstalled(targetDirectory),

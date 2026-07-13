@@ -100,7 +100,7 @@ describe('LiveTransportController P4 grace lifecycle', () => {
       session.start({ reason: 'manual' });
       const controller = new LiveTransportController(() => {}, session);
 
-      await controller.onStart();
+      await controller.onStart({ freshTurn: true });
       expect(session.getState().realtimeReady).toBe(true);
 
       controller.onStop();
@@ -122,7 +122,7 @@ describe('LiveTransportController P4 grace lifecycle', () => {
       let now = 1_000;
       const controller = new LiveTransportController(() => {}, session, () => now);
 
-      await controller.onStart();
+      await controller.onStart({ freshTurn: true });
       expect(provider.connect).toHaveBeenCalledTimes(1);
       expect(provider.close).not.toHaveBeenCalled();
 
@@ -130,7 +130,7 @@ describe('LiveTransportController P4 grace lifecycle', () => {
       expect(controller.inGrace).toBe(true);
 
       now = 2_000;
-      await controller.onStart();
+      await controller.onStart({ freshTurn: true });
       expect(provider.connect).toHaveBeenCalledTimes(2);
       expect(provider.close).toHaveBeenCalledTimes(1);
       expect(controller.inGrace).toBe(false);
@@ -150,13 +150,13 @@ describe('LiveTransportController P4 grace lifecycle', () => {
       let now = 1_000;
       const controller = new LiveTransportController(() => {}, session, () => now);
 
-      await controller.onStart();
+      await controller.onStart({ freshTurn: true });
       expect(provider.connect).toHaveBeenCalledTimes(1);
       controller.onStop();
       expect(controller.inGrace).toBe(true);
 
       now = 61_000;
-      await controller.onStart();
+      await controller.onStart({ freshTurn: true });
       controller.contextIn('[wake] diga Olá.');
 
       expect(provider.connect).toHaveBeenCalledTimes(2);

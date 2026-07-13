@@ -11,6 +11,7 @@ import {
   ensureAllDefaultWakeModelsInstalled,
   ensureDefaultPtbrWakeModelInstalled,
   ensureDefaultWakeModelInstalled,
+  resolveWakeModelDirectory,
 } from './ensure-wake-models';
 import { HEY_JARVIS_ONNX_B64 } from './wake-models';
 import { EI_JARVIS_PTBR_ONNX_B64 } from './wake-models-ptbr';
@@ -24,6 +25,23 @@ afterEach(() => {
 });
 
 describe('ensureDefaultWakeModelInstalled', () => {
+  it('uses the same isolated model directory in dev and packaged runtimes', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wake-user-data-'));
+    roots.push(root);
+    const previous = process.env.NEXUS_USER_DATA_DIR;
+    process.env.NEXUS_USER_DATA_DIR = root;
+    try {
+      expect(resolveWakeModelDirectory()).toBe(path.join(root, 'models', 'wake'));
+      const installed = ensureAllDefaultWakeModelsInstalled();
+      expect(installed.ptbr).toBe(
+        path.join(resolveWakeModelDirectory(), DEFAULT_PTBR_WAKE_MODEL_FILE),
+      );
+    } finally {
+      if (previous === undefined) delete process.env.NEXUS_USER_DATA_DIR;
+      else process.env.NEXUS_USER_DATA_DIR = previous;
+    }
+  });
+
   it('installs SpeechKit EN and the trained PT-BR head by default', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wake-default-'));
     roots.push(root);

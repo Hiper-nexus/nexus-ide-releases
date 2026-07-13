@@ -91,6 +91,8 @@ interface RealtimeStartOptions {
   greeting?: string;
   /** ClockVoice parity: connect without creating audible/user activity. */
   prewarm?: boolean;
+  /** A renderer-proven new wake/PTT turn must not reuse a stale Live socket. */
+  freshTurn?: boolean;
 }
 
 interface PendingRendererAudioDelivery {
@@ -302,7 +304,7 @@ export class LiveTransportController {
     // A locally-open Live socket can already be a server-side zombie. Actual
     // wake/click turns reconnect and pendingMic bridges the setup latency;
     // prewarm may still keep its idle socket.
-    if (this._provider?.isReady && !options.prewarm) {
+    if (this._provider?.isReady && options.freshTurn) {
       logVoice('warn', 'live.hotReuseDisabled', 'descartando socket quente antes do wake', {
         inGrace: this._inGrace,
       });

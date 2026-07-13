@@ -526,6 +526,8 @@ describe('LiveTransportController', () => {
     await controller.onStart();
     const state = await controller.say('Abrindo um terminal, patrão.');
 
+    expect(provider.connect).toHaveBeenCalledTimes(1);
+    expect(provider.close).not.toHaveBeenCalled();
     expect(provider.sendText).toHaveBeenCalledWith(
       expect.stringContaining('Abrindo um terminal, patrão.'),
     );
@@ -749,7 +751,7 @@ describe('LiveTransportController', () => {
     const controller = new LiveTransportController(() => {}, session);
 
     await controller.onStart();
-    await controller.onStart({ greeting: '[wake] diga Olá.' });
+    await controller.onStart({ greeting: '[wake] diga Olá.', freshTurn: true });
     controller.micIn(pcmBase64([4, 5, 6]));
 
     expect(provider.sendText).toHaveBeenCalledWith('[wake] diga Olá.');
