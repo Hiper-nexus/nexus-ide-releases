@@ -31,6 +31,7 @@ function renderer(): WebContents & { send: ReturnType<typeof vi.fn> } {
 let registered: WebContents | null = null;
 
 afterEach(() => {
+  vi.useRealTimers();
   if (registered) unregisterOrchRenderer(registered);
   registered = null;
 });
@@ -178,6 +179,29 @@ describe("pending pane spawn authority", () => {
       owner,
     );
     await expect(resultPromise).resolves.toMatchObject({ ok: false });
+  });
+
+  it("replays an unclaimed spawn when the renderer syncs after a remount", async () => {
+    vi.useFakeTimers();
+    const owner = renderer();
+    registered = owner;
+    registerOrchRenderer(owner);
+    const resultPromise = requestPaneSpawn({
+      adapterId: "codex",
+      missionId: "mission-replay",
+      scope: testProjectScope(),
+    });
+    const request = owner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
+    vi.advanceTimersByTime(600);
+    syncPanes([], owner);
+    expect(owner.send).toHaveBeenCalledTimes(2);
+    expect(owner.send.mock.calls[1]?.[1]).toEqual(request);
+    resolvePaneSpawn(
+      { requestId: request.requestId, ok: false, error: "test cleanup" },
+      owner,
+    );
+    await expect(resultPromise).resolves.toMatchObject({ ok: false });
+    vi.useRealTimers();
   });
 
   it("ignores a forged completion from another renderer", async () => {

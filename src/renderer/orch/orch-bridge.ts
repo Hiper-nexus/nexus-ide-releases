@@ -51,18 +51,22 @@ export function useOrchBridge(): void {
       window.nexus.orch.onPaneSpawnRequest((req) => {
         void (async () => {
           try {
-            const paneId = useLayoutStore.getState().spawnOrchPane({
-              adapterId: req.adapterId,
-              model: req.model,
-              effort: req.effort,
-              cwd: req.cwd,
-              title: req.title,
-              orchRequestId: req.requestId,
-              agentName: req.agentName,
-              role: req.role ?? 'worker',
-            });
+            const existing = listPanes(useLayoutStore.getState().root).find(
+              (pane) => pane.orchRequestId === req.requestId,
+            );
+            const paneId = existing?.id ??
+              useLayoutStore.getState().spawnOrchPane({
+                adapterId: req.adapterId,
+                model: req.model,
+                effort: req.effort,
+                cwd: req.cwd,
+                title: req.title,
+                orchRequestId: req.requestId,
+                agentName: req.agentName,
+                role: req.role ?? 'worker',
+              });
             useOrchStore.getState().bindPaneMission(paneId, req.missionId);
-            const sessionId = await waitForSession(paneId);
+            const sessionId = await waitForSession(paneId, 75_000);
             window.nexus.orch.syncPanes(snapshotPanes());
             if (!sessionId) {
               window.nexus.orch.sendPaneSpawnResult({

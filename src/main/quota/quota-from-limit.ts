@@ -13,7 +13,7 @@ import { exhaustedWindow, mergeWindows, unknownWindow } from './quota-normalize'
  */
 export function windowsFromLimitHit(
   hit: LimitHit,
-  adapterId: string,
+  _adapterId: string,
   now = Date.now(),
   hitAt = now,
 ): QuotaWindow[] {
@@ -68,7 +68,7 @@ export function applyLimitHitToWindows(
 
 export function windowsFromCooldown(
   cooldownUntil: number,
-  adapterId: string,
+  _adapterId: string,
   now = Date.now(),
 ): QuotaWindow[] {
   if (cooldownUntil <= now) {

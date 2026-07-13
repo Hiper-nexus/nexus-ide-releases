@@ -105,6 +105,9 @@ interface PendingSpawn {
   owner: WebContents;
   claimed: boolean;
   claimedSessionId: string | null;
+  request: OrchPaneSpawnRequest;
+  lastSentAt: number;
+  attempts: number;
 }
 const pendingSpawns = new Map<string, PendingSpawn>();
 
@@ -288,6 +291,21 @@ export function syncPanes(
     const prefix = `${owner.id}:`;
     if (key.startsWith(prefix) && !liveIds.has(key.slice(prefix.length))) {
       orchMetaByPane.delete(key);
+    }
+  }
+  // React/HMR may remount after main emitted the one-shot spawn event. Treat
+  // pane sync as the renderer-ready heartbeat and replay unclaimed requests;
+  // the renderer deduplicates them by orchRequestId.
+  const now = Date.now();
+  for (const pending of pendingSpawns.values()) {
+    if (
+      pending.owner === owner &&
+      !pending.claimed &&
+      now - pending.lastSentAt >= 500
+    ) {
+      pending.lastSentAt = now;
+      pending.attempts += 1;
+      owner.send(ORCH_CHANNELS.paneSpawnRequest, pending.request);
     }
   }
 }
@@ -619,13 +637,16 @@ export function requestPaneSpawn(
       pendingSpawns.delete(requestId);
       resolve({ requestId, ok: false, error: "pane spawn timed out" });
     }, SPAWN_TIMEOUT_MS);
-    pendingSpawns.set(requestId, {
+    const pending: PendingSpawn = {
       resolve,
       timer,
       owner,
       claimed: false,
       claimedSessionId: null,
       requestedCwd: options.cwd,
+      request,
+      lastSentAt: Date.now(),
+      attempts: 1,
       meta: {
         missionId: options.missionId,
         contextRevision: options.contextRevision,
@@ -637,7 +658,8 @@ export function requestPaneSpawn(
         executionScope: options.executionScope,
         readOnly: options.readOnly === true,
       },
-    });
+    };
+    pendingSpawns.set(requestId, pending);
     owner.send(ORCH_CHANNELS.paneSpawnRequest, request);
   });
 }

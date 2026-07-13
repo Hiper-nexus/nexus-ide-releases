@@ -550,8 +550,12 @@ app.on("browser-window-created", (_event, win) => {
   // the `win.webContents` getter throws "Object has been destroyed" — which, as an
   // uncaught exception inside the event emit, crashes the whole main process.
   const wc = win.webContents;
+  // The desktop-pet window has no pane grid/OrchBridge. Registering it as an
+  // orchestration listener made it replace the main window as pane-spawn
+  // target, so every delegated reviewer disappeared into a 90s timeout.
+  const hostsOrchestration = !isPetWindow(win);
   registerAdapterListener(wc);
-  registerOrchListener(wc);
+  if (hostsOrchestration) registerOrchListener(wc);
   registerSettingsListener(wc);
   registerWorkspaceListener(wc);
   registerProviderListener(wc);
@@ -565,7 +569,7 @@ app.on("browser-window-created", (_event, win) => {
       console.error("[design] window cleanup failed:", error);
     });
     unregisterAdapterListener(wc);
-    unregisterOrchListener(wc);
+    if (hostsOrchestration) unregisterOrchListener(wc);
     unregisterSettingsListener(wc);
     unregisterWorkspaceListener(wc);
     unregisterProviderListener(wc);
