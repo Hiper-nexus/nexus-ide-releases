@@ -48,7 +48,10 @@ export const defaultDriveConfig: DriveConfig = Object.freeze({
   maxWallClockMs: 4 * 60 * 60_000, // 4h
   chronicStallCount: 5,
   baseBackoffMs: 1_000,
-  mode: 'active' as DriveMode,
+  // Default SHADOW: só observa/loga (zero efeito). Ativar efeitos autônomos
+  // (Fase C) exige opt-in — settings missionDriverActiveMode ou config.mode
+  // explícito. Nunca shipar active como default sem validação runtime.
+  mode: 'shadow' as DriveMode,
 });
 
 export interface DriveStep {

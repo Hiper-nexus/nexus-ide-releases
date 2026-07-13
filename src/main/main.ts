@@ -222,6 +222,7 @@ import {
 } from "./orch/cron-runtime";
 import {
   configureMissionDriver,
+  defaultDriveConfig,
   disposeMissionDriverIo,
   startMissionDriverLoop,
   stopMissionDriverLoop,
@@ -333,9 +334,18 @@ function bootstrap(): void {
     scheduleBackend: cronBackend ?? undefined,
     listScopes: knownCronScopes,
   });
-  // Mission driver (Fases A–D): tick 30s, pure decide + active apply budgeted.
-  // Spec: docs/superpowers/specs/2026-07-13-mission-driver-design.md
-  configureMissionDriver({ listScopes: knownCronScopes });
+  // Mission driver: default SHADOW (só observa/loga). Ativa efeitos autônomos
+  // (Fase C, budgetado) via settings missionDriverActiveMode. Spec 2026-07-13.
+  configureMissionDriver({
+    listScopes: knownCronScopes,
+    config: {
+      ...defaultDriveConfig,
+      mode:
+        getOrchSettings().missionDriverActiveMode === true
+          ? 'active'
+          : 'shadow',
+    },
+  });
   configureNexusDoctorRuntime({
     runtimeManager: projectRuntimeManager,
     multiPc: {

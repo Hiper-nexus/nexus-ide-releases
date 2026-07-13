@@ -332,7 +332,8 @@ export function createDefaultDriveDeps(options: {
 
 /**
  * Conveniência de wiring: monta deps padrão e registra no runtime.
- * Default mode is active (Fase C). Pass config.mode: 'shadow' to observe only.
+ * Default mode is SHADOW (observe-only). Enable active (Fase C, aplica efeitos)
+ * via settings `missionDriverActiveMode` ou passando config.mode: 'active'.
  */
 export function configureMissionDriver(options: {
   listScopes: () => readonly ProjectExecutionScope[];
@@ -351,6 +352,7 @@ export function configureMissionDriver(options: {
 }
 
 export {
+  defaultDriveConfig,
   disposeMissionDriverRuntime,
   startMissionDriverLoop,
   stopMissionDriverLoop,
