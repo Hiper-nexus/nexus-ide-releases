@@ -3,6 +3,7 @@ import type { WebContents } from "electron";
 import type { OrchPaneSpawnRequest } from "../../shared/orch-types";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import {
+  attachOrchMeta,
   bindPendingSpawnSession,
   claimPendingSpawnMeta,
   findPane,
@@ -17,8 +18,10 @@ import {
   unregisterOrchRenderer,
 } from "./pane-registry";
 
+let rendererId = 100;
 function renderer(): WebContents & { send: ReturnType<typeof vi.fn> } {
   return {
+    id: rendererId++,
     isDestroyed: () => false,
     isCrashed: () => false,
     send: vi.fn(),
@@ -33,6 +36,38 @@ afterEach(() => {
 });
 
 describe("pending pane spawn authority", () => {
+  it("routes a worker spawn back to the renderer that owns its mission", async () => {
+    const missionOwner = renderer();
+    const unrelatedOwner = renderer();
+    syncPanes(
+      [{ paneId: "mission-orch", sessionId: null, title: "Orch", kind: "cli-agent" }],
+      missionOwner,
+    );
+    attachOrchMeta(missionOwner, "mission-orch", {
+      missionId: "mission-a",
+      role: "orchestrator",
+      scope: testProjectScope(),
+    });
+    registered = unrelatedOwner;
+    registerOrchRenderer(unrelatedOwner);
+
+    const resultPromise = requestPaneSpawn({
+      adapterId: "codex",
+      missionId: "mission-a",
+      role: "worker",
+      scope: testProjectScope(),
+    });
+    expect(missionOwner.send).toHaveBeenCalledOnce();
+    expect(unrelatedOwner.send).not.toHaveBeenCalled();
+    const request = missionOwner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
+    resolvePaneSpawn(
+      { requestId: request.requestId, ok: false, error: "test cleanup" },
+      missionOwner,
+    );
+    await expect(resultPromise).resolves.toMatchObject({ ok: false });
+    syncPanes([], missionOwner);
+  });
+
   it("keeps pane registrations isolated per renderer and fails closed on ambiguous ids", () => {
     const ownerA = renderer();
     const ownerB = renderer();

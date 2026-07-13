@@ -191,6 +191,25 @@ function rendererAvailable(): boolean {
   );
 }
 
+function rendererForMission(missionId?: string): WebContents | null {
+  if (missionId) {
+    const owners = new Set<WebContents>();
+    for (const registered of panes) {
+      const meta = orchMetaByPane.get(
+        paneMetaKey(registered.owner, registered.entry.paneId),
+      );
+      if (
+        meta?.missionId === missionId &&
+        meta.role === "orchestrator" &&
+        !registered.owner.isDestroyed() &&
+        !registered.owner.isCrashed()
+      ) owners.add(registered.owner);
+    }
+    if (owners.size === 1) return [...owners][0];
+  }
+  return rendererAvailable() ? orchRenderer : null;
+}
+
 export function initPaneRegistry(): void {
   tapSessionData((sessionId, data) => {
     let buffer = buffers.get(sessionId);
@@ -575,14 +594,14 @@ export function bindPendingSpawnSession(
 export function requestPaneSpawn(
   options: PaneSpawnOptions,
 ): Promise<OrchPaneSpawnResult> {
-  if (!rendererAvailable()) {
+  const owner = rendererForMission(options.missionId);
+  if (!owner) {
     return Promise.resolve({
       requestId: "",
       ok: false,
       error: "no renderer window available",
     });
   }
-  const owner = orchRenderer!;
   const requestId = makeId("orchspawn");
   const request: OrchPaneSpawnRequest = {
     requestId,
