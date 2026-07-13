@@ -74,8 +74,13 @@ describe('re-wake com pendência viva confirma em vez de morrer no stripper (C3 
 
 describe('tool nativa do Live consome a pendência (review final, item 3)', () => {
   it('descarta apenas a pendência que já existia, preservando a criada pela tool atual', () => {
-    const branchIdx = finishSource.indexOf('if (hasRealtimeNativeToolSince(tRealtime))');
+    const branchIdx = finishSource.indexOf(
+      "turnExecution.isOwnedBy('realtime-tool', turnToken)",
+    );
     expect(branchIdx).toBeGreaterThanOrEqual(0);
+    expect(finishSource.slice(branchIdx, branchIdx + 220)).toContain(
+      'hasRealtimeNativeToolSince(tRealtime)',
+    );
     const clearIdx = finishSource.indexOf('clearPendingDelegation()', branchIdx);
     const dropLogIdx = finishSource.indexOf("'jarvis.delegationDropped'", branchIdx);
     const releaseIdx = finishSource.indexOf('releaseAfterRealtimeTool();', branchIdx);

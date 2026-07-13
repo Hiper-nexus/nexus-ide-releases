@@ -302,7 +302,10 @@ export async function finishAndProcess(
         return;
       }
       const liveTranscript = wait.text;
-      if (hasRealtimeNativeToolSince(tRealtime)) {
+      if (
+        turnExecution.isOwnedBy('realtime-tool', turnToken) ||
+        hasRealtimeNativeToolSince(tRealtime)
+      ) {
         // Tool already owns narration — keep Live audio open, don't mute.
         openLiveAudioGate();
         resetLiveMuteRescues();
