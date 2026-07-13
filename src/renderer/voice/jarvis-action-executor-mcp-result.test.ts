@@ -204,6 +204,47 @@ describe('Jarvis MCP result propagation', () => {
     });
   });
 
+  it('keeps a real shell command with accented arguments in the confirmed shell path', async () => {
+    layoutState.focusedPaneId = 'pane-shell';
+    layoutState.panes = [
+      { id: 'pane-shell', kind: 'shell', title: 'Terminal principal' },
+    ];
+    waitForSession.mockResolvedValue('session-shell');
+    confirmCommand.mockResolvedValue(true);
+    writeToPane.mockReturnValue(true);
+
+    const execution = await executeJarvisAction(
+      {
+        say: '',
+        action: { type: 'run_command', command: 'git commit -m "correção do bug"' },
+      },
+      context,
+    );
+
+    expect(confirmCommand).toHaveBeenCalledWith('git commit -m "correção do bug"');
+    expect(writeToPane).toHaveBeenCalledWith(
+      'pane-shell',
+      'git commit -m "correção do bug"\n',
+    );
+    expect(submitPromptToPane).not.toHaveBeenCalled();
+    expect(execution.toolResult).toMatchObject({ tool: 'run_command', ok: true });
+  });
+
+  it('rejects a multiline shell payload before opening a terminal or requesting approval', async () => {
+    const execution = await executeJarvisAction(
+      {
+        say: '',
+        action: { type: 'run_command', command: 'echo seguro\nrm -rf /' },
+      },
+      context,
+    );
+
+    expect(confirmCommand).not.toHaveBeenCalled();
+    expect(writeToPane).not.toHaveBeenCalled();
+    expect(execution.toolResult).toMatchObject({ tool: 'run_command', ok: false });
+    expect(execution.sayText).toContain('uma única linha');
+  });
+
   it('opens an agentic mission instead of failing when no agent pane exists for delegation', async () => {
     resolveSendToPaneTarget.mockReturnValue({ kind: 'no-agent-pane' });
 
