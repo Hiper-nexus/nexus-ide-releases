@@ -619,6 +619,16 @@ CREATE INDEX idx_context_drafts_mission_updated
   ON context_drafts(mission_id, updated_at);
 `;
 
+/**
+ * Aditivo (Fase A do mission driver): adiciona a coluna learnings à tabela
+ * missions pré-existente. DEFAULT '' → missões antigas ficam vazias, nunca
+ * NULL. Nunca edite o baseline INITIAL_PROJECT_SCHEMA (quebraria o checksum de
+ * DBs já migrados) — sempre append de migration ALTER como esta.
+ */
+const MISSION_LEARNINGS_SCHEMA = `
+ALTER TABLE missions ADD COLUMN learnings TEXT NOT NULL DEFAULT '';
+`;
+
 export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
   validateProjectMigrations([
     createProjectMigration({
@@ -680,5 +690,11 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       schemaVersion: 10,
       appVersion: '0.15.1',
       sql: CONTEXT_DRAFT_SUPERSESSION_SCHEMA,
+    }),
+    createProjectMigration({
+      id: '011-mission-learnings',
+      schemaVersion: 11,
+      appVersion: '0.15.2',
+      sql: MISSION_LEARNINGS_SCHEMA,
     }),
   ]);

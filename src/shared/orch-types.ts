@@ -86,13 +86,118 @@ export const missionStatusSchema = z.enum([
 ]);
 export type MissionStatus = z.infer<typeof missionStatusSchema>;
 
+/** PREVC-aligned step status (mission driver Fase B). */
+export const milestoneStatusSchema = z.enum([
+  'pending',
+  'in-progress',
+  'blocked',
+  'done',
+]);
+export type MilestoneStatus = z.infer<typeof milestoneStatusSchema>;
+
+export const missionMilestoneSchema = z.object({
+  id: z.string().min(1).max(128),
+  label: z.string().min(1).max(1024),
+  status: milestoneStatusSchema,
+  evidenceIds: z.array(z.string().min(1).max(256)).max(64),
+});
+export type MissionMilestone = z.infer<typeof missionMilestoneSchema>;
+
+/**
+ * Create/patch input: legacy plain string OR structured object.
+ * Strings coerce to `{id, label, status:'pending', evidenceIds:[]}`.
+ */
+export const missionMilestoneInputSchema = z.union([
+  z.string().min(1).max(1024),
+  z.object({
+    id: z.string().min(1).max(128).optional(),
+    label: z.string().min(1).max(1024),
+    status: milestoneStatusSchema.optional(),
+    evidenceIds: z.array(z.string().min(1).max(256)).max(64).optional(),
+  }),
+]);
+export type MissionMilestoneInput = z.input<typeof missionMilestoneInputSchema>;
+
+/** Coerce a single legacy string or partial object into a structured milestone. */
+export function normalizeMilestone(
+  input: MissionMilestoneInput,
+  index: number,
+): MissionMilestone {
+  if (typeof input === 'string') {
+    return {
+      id: `step-${index + 1}`,
+      label: input,
+      status: 'pending',
+      evidenceIds: [],
+    };
+  }
+  return {
+    id: input.id ?? `step-${index + 1}`,
+    label: input.label,
+    status: input.status ?? 'pending',
+    evidenceIds: [...(input.evidenceIds ?? [])],
+  };
+}
+
+export function normalizeMilestones(
+  inputs: ReadonlyArray<MissionMilestoneInput>,
+): MissionMilestone[] {
+  return inputs.map((item, index) => normalizeMilestone(item, index));
+}
+
+/**
+ * Structural rule: `done` requires non-empty evidenceIds. Without them the
+ * step is coerced off `done` (stays non-done). Trust resolution is separate
+ * (`canMarkMilestoneDone` with a nexus-trusted id set).
+ */
+export function structuralCoerceMilestones(
+  milestones: readonly MissionMilestone[],
+): MissionMilestone[] {
+  return milestones.map((milestone) => {
+    const evidenceIds = [...milestone.evidenceIds];
+    if (milestone.status === 'done' && evidenceIds.length === 0) {
+      return { ...milestone, status: 'pending', evidenceIds };
+    }
+    return { ...milestone, evidenceIds };
+  });
+}
+
+/**
+ * A step may only be marked `done` when every evidenceId resolves as
+ * nexus-trusted. Empty evidenceIds never qualify.
+ */
+export function canMarkMilestoneDone(
+  milestone: Pick<MissionMilestone, 'evidenceIds'>,
+  trustedEvidenceIds: ReadonlySet<string>,
+): boolean {
+  if (milestone.evidenceIds.length === 0) return false;
+  return milestone.evidenceIds.every((id) => trustedEvidenceIds.has(id));
+}
+
+/** Project structured milestones to label strings (UI / legacy join surfaces). */
+export function milestoneLabels(
+  milestones: readonly MissionMilestone[],
+): string[] {
+  return milestones.map((milestone) => milestone.label);
+}
+
 export interface Mission {
   id: string;
   title: string;
   description: string;
   status: MissionStatus;
   squadId?: string;
-  milestones: string[];
+  /**
+   * Structured step checkpoints (Fase B). Legacy string[] rows coerce on load
+   * via `normalizeMilestones`. `done` requires trusted evidenceIds.
+   */
+  milestones: MissionMilestone[];
+  /**
+   * Markdown append-only de aprendizados da missão: seção "## Padrões" no topo
+   * (consolidada) + entradas cronológicas. Consumido por iterações de
+   * contexto-fresco (Fase C). Ver spec 2026-07-13-mission-driver-design.md.
+   */
+  learnings: string;
   /** Session that created the mission — receives handoffs when idle. */
   orchestratorSessionId?: string;
   createdAt: number;
@@ -104,7 +209,7 @@ export const missionPatchSchema = z.object({
   title: z.string().min(1).max(512).optional(),
   description: z.string().max(65_536).optional(),
   status: missionStatusSchema.optional(),
-  milestones: z.array(z.string().max(1024)).max(256).optional(),
+  milestones: z.array(missionMilestoneInputSchema).max(256).optional(),
 });
 export type MissionPatch = z.infer<typeof missionPatchSchema>;
 

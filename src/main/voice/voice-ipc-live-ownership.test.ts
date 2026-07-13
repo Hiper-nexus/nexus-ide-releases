@@ -38,24 +38,51 @@ const brainDeps = vi.hoisted(() => ({
   jarvisThink: vi.fn(),
 }));
 
-const domainDeps = vi.hoisted(() => ({
-  getProjectDomainStores: vi.fn((scope: ProjectExecutionScope) => ({
-    handoffs: {
-      list: vi.fn(() =>
-        scope.projectId === "project-a"
-          ? [
-              {
-                id: "handoff-a",
-                sessionId: "pane-a",
-                status: "blocked",
-                summary: "Pergunta A",
-              },
-            ]
-          : [],
-      ),
-    },
-  })),
-}));
+const domainDeps = vi.hoisted(() => {
+  const missionList = vi.fn(() => [] as {
+    id: string;
+    status: string;
+    updatedAt: number;
+    title: string;
+  }[]);
+  const missionCreate = vi.fn((input: { title: string }) => ({
+    id: "mission-voice-new",
+    title: input.title,
+    status: "pending" as const,
+    updatedAt: Date.now(),
+  }));
+  const missionSetStatus = vi.fn((id: string, status: string) => ({
+    id,
+    status,
+  }));
+  return {
+    missionList,
+    missionCreate,
+    missionSetStatus,
+    getProjectDomainStores: vi.fn((scope: ProjectExecutionScope) => ({
+      handoffs: {
+        list: vi.fn(() =>
+          scope.projectId === "project-a"
+            ? [
+                {
+                  id: "handoff-a",
+                  sessionId: "pane-a",
+                  status: "blocked",
+                  summary: "Pergunta A",
+                },
+              ]
+            : [],
+        ),
+      },
+      // Phase D voice→mission bridge uses missions on wake detection.
+      missions: {
+        list: missionList,
+        create: missionCreate,
+        setStatus: missionSetStatus,
+      },
+    })),
+  };
+});
 
 const liveTransportDeps = vi.hoisted(() => ({
   constructed: 0,
@@ -962,6 +989,59 @@ describe("Voice PTT and wake multi-window isolation", () => {
 
     expect(wakeEngineDeps.instances).toHaveLength(1);
     expect(wakeEngineDeps.instances[0]!.feed).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts a mission in active scope on trusted WakeEngine detection", () => {
+    voiceConfig.wakeWord.enabled = true;
+    domainDeps.missionList.mockReturnValue([]);
+    domainDeps.missionCreate.mockClear();
+    domainDeps.missionSetStatus.mockClear();
+
+    const windowA = new TestRenderer(801);
+    scopeDeps.scopes.set(windowA.id, scopeA);
+    electronDeps.windows.push({ webContents: windowA });
+    electronDeps.focusedWindow = { webContents: windowA };
+
+    send(VOICE_CHANNELS.wakeAudio, windowA, pcmFrame());
+    const onDetected = wakeEngineDeps.lastOnDetected;
+    expect(onDetected).toBeTypeOf("function");
+
+    onDetected?.();
+
+    expect(windowA.send).toHaveBeenCalledWith(VOICE_CHANNELS.wakeDetected);
+    // Phase D: detection path invokes start-or-resume once.
+    expect(domainDeps.missionList).toHaveBeenCalled();
+    expect(domainDeps.missionCreate).toHaveBeenCalledTimes(1);
+    expect(domainDeps.missionSetStatus).toHaveBeenCalledWith(
+      "mission-voice-new",
+      "running",
+    );
+  });
+
+  it("resumes an existing running mission on wake detection (no create)", () => {
+    voiceConfig.wakeWord.enabled = true;
+    domainDeps.missionList.mockReturnValue([
+      {
+        id: "mission-existing",
+        status: "running",
+        updatedAt: 100,
+        title: "Already running",
+      },
+    ]);
+    domainDeps.missionCreate.mockClear();
+    domainDeps.missionSetStatus.mockClear();
+
+    const windowA = new TestRenderer(802);
+    scopeDeps.scopes.set(windowA.id, scopeA);
+    electronDeps.windows.push({ webContents: windowA });
+    electronDeps.focusedWindow = { webContents: windowA };
+
+    send(VOICE_CHANNELS.wakeAudio, windowA, pcmFrame());
+    wakeEngineDeps.lastOnDetected?.();
+
+    expect(windowA.send).toHaveBeenCalledWith(VOICE_CHANNELS.wakeDetected);
+    expect(domainDeps.missionCreate).not.toHaveBeenCalled();
+    expect(domainDeps.missionSetStatus).not.toHaveBeenCalled();
   });
 
   it("does not deliver wakeDetected from A to project B", () => {

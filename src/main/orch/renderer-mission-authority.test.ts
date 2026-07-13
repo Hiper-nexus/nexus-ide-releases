@@ -63,6 +63,7 @@ const mission = {
   status: "pending" as const,
   squadId: "review-squad",
   milestones: [],
+  learnings: "",
   orchestratorSessionId: "pty-a",
   createdAt: 1,
   updatedAt: 1,
