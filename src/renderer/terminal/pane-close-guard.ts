@@ -46,9 +46,9 @@ export async function requestPaneClose(
       (candidate) => candidate.id === paneId,
     );
     if (!still) return false;
-    fresh.close(paneId);
+    fresh.close(paneId, 'user-confirm');
     return true;
   }
-  layout.close(paneId);
+  layout.close(paneId, 'user');
   return true;
 }

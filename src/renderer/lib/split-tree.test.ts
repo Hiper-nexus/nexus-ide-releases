@@ -58,6 +58,19 @@ describe('split-tree', () => {
     expect(closePane(only, id)).toBeNull();
   });
 
+  it('closes exactly one leaf in a 3-pane tree (sibling intact)', () => {
+    const a = createPane('shell');
+    const b = createPane('cli-agent', undefined, 'codex');
+    const c = createPane('cli-agent', undefined, 'claude');
+    const root = buildGridTree([a, b, c]);
+    expect(listPanes(root)).toHaveLength(3);
+    const next = closePane(root, b.id);
+    expect(next).not.toBeNull();
+    const remaining = listPanes(next!);
+    expect(remaining).toHaveLength(2);
+    expect(remaining.map((p) => p.id).sort()).toEqual([a.id, c.id].sort());
+  });
+
   it('leaves the tree unchanged (same reference) for an unknown pane id', () => {
     const left = createLeaf(createPane('shell'));
     const right = createLeaf(createPane('shell'));

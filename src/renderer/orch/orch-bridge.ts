@@ -107,7 +107,7 @@ export function useOrchBridge(): void {
             });
           } catch (err) {
             if (paneId) {
-              useLayoutStore.getState().close(paneId);
+              useLayoutStore.getState().close(paneId, 'browser-open-failed');
               window.nexus.orch.syncPanes(snapshotPanes());
             }
             window.nexus.orch.sendBrowserOpenResult({
@@ -120,7 +120,7 @@ export function useOrchBridge(): void {
       }),
 
       window.nexus.orch.onPaneCloseRequest((paneId) => {
-        useLayoutStore.getState().close(paneId);
+        useLayoutStore.getState().close(paneId, 'orch-close-request');
         window.nexus.orch.syncPanes(snapshotPanes());
       }),
 

@@ -122,12 +122,20 @@ export function registerPtyIpc(): void {
             "persisted pane adapter does not match spawn request",
           );
         }
+        // Stale orchRequestId after a failed/expired first spawn: the layout
+        // leaf still exists and the user hits Reiniciar. Re-throwing
+        // "unknown or expired" leaves a dead pane forever. Drop the id and
+        // bind as a direct user spawn (scope from workspace / persisted).
+        const orchRequestId =
+          req.orchRequestId && !pending && !persistedPane
+            ? undefined
+            : req.orchRequestId;
         const needsActiveScope = !pending?.scope && !persistedPane?.scope;
         const trustedUserScope = needsActiveScope
           ? requireRendererWorkspaceScope(event.sender)
           : null;
         const authority = bindSpawnAuthority({
-          requestId: req.orchRequestId,
+          requestId: orchRequestId,
           pending,
           squads: listSquads(),
           persistedPane,

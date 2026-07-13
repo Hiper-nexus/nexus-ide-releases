@@ -302,6 +302,16 @@ function startSpawn(
         host.term.writeln(
           `\r\n\x1b[31m[nexus] failed to start: ${res.error}\x1b[0m`,
         );
+        // Spent orch tokens leave a permanent dead pane on Reiniciar — drop them.
+        if (
+          pane.orchRequestId &&
+          /unknown or expired|orchestration spawn request/i.test(res.error)
+        ) {
+          useLayoutStore.getState().clearOrchRequestId(pane.id);
+          host.term.writeln(
+            '\r\n\x1b[33m[nexus] token de spawn expirado limpo — use Reiniciar de novo.\x1b[0m',
+          );
+        }
         useSessionStateStore.getState().setPaneState(pane.id, 'exited');
         return;
       }
@@ -791,10 +801,20 @@ export function respawnWithResume(
   host.spawnStarted = false;
   host.hibernated = false;
   host.term.writeln(`\r\n\x1b[33m${note}\x1b[0m`);
+  // User-driven restart: never re-claim a spent orchspawn token. Authority
+  // comes from resume/persisted pane or direct workspace scope.
+  const spawnPane =
+    pane.orchRequestId
+      ? (() => {
+          useLayoutStore.getState().clearOrchRequestId(pane.id);
+          const { orchRequestId: _drop, ...rest } = pane;
+          return rest as PaneModel;
+        })()
+      : pane;
   const cross = options?.mode === 'cross-account-continuity';
   // Cross-account: do not pass resume=true (would try wrong-account session id).
   startSpawn(
-    pane,
+    spawnPane,
     host,
     !cross,
     false,

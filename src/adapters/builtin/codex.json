@@ -107,7 +107,7 @@
     },
     "effort": {
       "arg": "-c model_reasoning_effort=",
-      "levels": []
+      "levels": ["low", "medium", "high", "xhigh"]
     }
   }
 }

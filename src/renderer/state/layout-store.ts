@@ -13,6 +13,8 @@ import {
   createPane,
   initialTree,
   listPanes,
+  MAX_LIVE_PANES_HARD,
+  MAX_LIVE_PANES_SOFT,
   splitPane,
   updatePane,
   pickBalancedTarget,
@@ -58,7 +60,13 @@ interface LayoutState {
     agentName?: string;
     role?: 'orchestrator' | 'worker';
   }): string;
-  close(paneId: string): void;
+  /**
+   * Remove a pane. `reason` is logged for operational forensics (why did two
+   * panes disappear?) — never omit on automated paths.
+   */
+  close(paneId: string, reason?: string): void;
+  /** Drop a spent orchRequestId so Reiniciar does not reuse a dead token. */
+  clearOrchRequestId(paneId: string): void;
   focus(paneId: string): void;
   setTitle(paneId: string, title: string): void;
   /** User rename — pins the title so shell escapes stop overriding it. */
@@ -246,6 +254,15 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
 
   spawnOrchPane: (req) => {
     const { root: currentRoot, viewKind, canvasNodeLayouts } = get();
+    const liveCount = listPanes(currentRoot).length;
+    if (liveCount >= MAX_LIVE_PANES_SOFT) {
+      console.warn(
+        `[layout] refuse orch spawn (live=${liveCount} soft=${MAX_LIVE_PANES_SOFT} hard=${MAX_LIVE_PANES_HARD}) title=${req.title ?? req.adapterId}`,
+      );
+      throw new Error(
+        `Limite de panes (${MAX_LIVE_PANES_SOFT}). Feche algum antes de spawnar outro worker.`,
+      );
+    }
     const base = createPane(
       'cli-agent',
       req.cwd ?? getActiveWorkspacePath() ?? undefined,
@@ -315,12 +332,22 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
 
   setPanes: (panes) => {
     if (panes.length === 0) return;
-    const root = buildGridTree(panes);
-    const focusedPaneId = panes[0].id;
+    // Hard cap: reopen/merge must not flood a small screen silently.
+    const capped =
+      panes.length > MAX_LIVE_PANES_HARD
+        ? panes.slice(0, MAX_LIVE_PANES_HARD)
+        : panes;
+    if (capped.length < panes.length) {
+      console.warn(
+        `[layout] setPanes capped ${panes.length}→${capped.length} (hard=${MAX_LIVE_PANES_HARD})`,
+      );
+    }
+    const root = buildGridTree(capped);
+    const focusedPaneId = capped[0]!.id;
     const { viewKind, canvasNodeLayouts } = get();
     const updatedLayouts =
       viewKind === 'canvas'
-        ? panes.reduce(
+        ? capped.reduce(
             (acc, pane, index) => ({
               ...acc,
               [pane.id]: defaultCanvasLayout(index),
@@ -335,6 +362,12 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
 
   spawnAgent: (adapterId, model) => {
     const { focusedPaneId: targetId, root: currentRoot, viewKind, canvasNodeLayouts } = get();
+    if (listPanes(currentRoot).length >= MAX_LIVE_PANES_HARD) {
+      console.warn(
+        `[layout] refuse spawnAgent (hard=${MAX_LIVE_PANES_HARD}) adapter=${adapterId}`,
+      );
+      return;
+    }
     const newPane: PaneModel = createPane(
       'cli-agent',
       getActiveWorkspacePath() ?? undefined,
@@ -366,9 +399,28 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     persist({ ...get(), root, focusedPaneId, canvasNodeLayouts: updatedLayouts });
   },
 
-  close: (paneId) => {
+  close: (paneId, reason = 'unspecified') => {
+    const before = listPanes(get().root);
+    const beforeCount = before.length;
+    if (!before.some((p) => p.id === paneId)) {
+      console.warn(
+        `[layout] close no-op pane=${paneId} reason=${reason} live=${beforeCount}`,
+      );
+      return;
+    }
     const next = closePane(get().root, paneId);
     const root = next ?? initialTree();
+    const afterCount = listPanes(root).length;
+    // Guardrail: pure closePane must remove exactly one leaf (or last→shell).
+    if (next !== null && afterCount !== beforeCount - 1) {
+      console.error(
+        `[layout] close anomaly pane=${paneId} reason=${reason} before=${beforeCount} after=${afterCount}`,
+      );
+    } else {
+      console.info(
+        `[layout] close pane=${paneId} reason=${reason} before=${beforeCount} after=${afterCount}`,
+      );
+    }
     const focusedPaneId =
       get().focusedPaneId === paneId ? firstPaneId(root) : get().focusedPaneId;
     bumpTreeVersion();
@@ -378,6 +430,14 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     // Closing the LAST pane replaces it with a fresh shell — visually a no-op.
     // Surface the Home deck so the click has feedback and a next step.
     if (next === null) useHomeStore.getState().show();
+  },
+
+  clearOrchRequestId: (paneId) => {
+    const pane = listPanes(get().root).find((p) => p.id === paneId);
+    if (!pane?.orchRequestId) return;
+    const root = updatePane(get().root, paneId, { orchRequestId: undefined });
+    set({ root });
+    persist({ ...get(), root });
   },
 
   addBrowserPane: (url) => {

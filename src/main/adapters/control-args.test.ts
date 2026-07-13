@@ -67,6 +67,63 @@ describe('buildControlArgs', () => {
     ).toEqual(['--permission-mode', 'manual', '--effort', 'high', '--verbose']);
   });
 
+  it('builds Codex config effort as a non-empty -c assignment', () => {
+    const codexLike = adapter({
+      effort: {
+        arg: '-c model_reasoning_effort=',
+        levels: ['low', 'medium', 'high', 'xhigh'],
+      },
+    });
+    expect(buildControlArgs(codexLike, { effort: 'high' })).toEqual([
+      '-c',
+      'model_reasoning_effort=high',
+    ]);
+  });
+
+  it('forces medium for assignment-style effort when blank (Codex boot-safe)', () => {
+    const codexLike = adapter({
+      effort: {
+        arg: '-c model_reasoning_effort=',
+        levels: ['low', 'medium', 'high', 'xhigh'],
+      },
+    });
+    expect(buildControlArgs(codexLike, { effort: '' })).toEqual([
+      '-c',
+      'model_reasoning_effort=medium',
+    ]);
+    expect(buildControlArgs(codexLike, {})).toEqual([
+      '-c',
+      'model_reasoning_effort=medium',
+    ]);
+  });
+
+  it('never emits an empty effort for any built-in CLI adapter', () => {
+    const cliAdapters = BUILTIN_ADAPTERS
+      .map((raw) => adapterSchema.parse(raw))
+      .filter((item): item is CliPtyAdapter => item.kind === 'cli-pty');
+
+    for (const item of cliAdapters) {
+      for (const blank of ['', '   ', undefined]) {
+        const args = buildControlArgs(item, { effort: blank });
+        expect(args.some((arg) => /(?:effort|reasoning)[^\s]*=$/.test(arg))).toBe(false);
+      }
+    }
+  });
+
+  it('emits a concrete effort value for every advertised built-in CLI level', () => {
+    const cliAdapters = BUILTIN_ADAPTERS
+      .map((raw) => adapterSchema.parse(raw))
+      .filter((item): item is CliPtyAdapter => item.kind === 'cli-pty');
+
+    for (const item of cliAdapters) {
+      for (const level of item.control.effort?.levels ?? []) {
+        const args = buildControlArgs(item, { effort: level });
+        expect(args.join(' ')).toContain(level);
+        expect(args.some((arg) => /(?:effort|reasoning)[^\s]*=$/.test(arg))).toBe(false);
+      }
+    }
+  });
+
   it('applies the explicit safe baseline for empty choices', () => {
     expect(buildControlArgs(CLAUDE_LIKE, {})).toEqual(['--permission-mode', 'manual']);
     expect(buildControlArgs(CLAUDE_LIKE, { permissionMode: '', effort: '' })).toEqual([

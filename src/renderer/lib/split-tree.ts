@@ -10,6 +10,13 @@ import type {
  * effects — every function returns a fresh tree so the store can swap it in.
  */
 
+/**
+ * Soft/hard caps for live panes. Above soft, new orch spawns are refused so a
+ * stalled mission cannot flood a small screen; hard is a hard stop for any path.
+ */
+export const MAX_LIVE_PANES_SOFT = 12;
+export const MAX_LIVE_PANES_HARD = 20;
+
 function id(prefix: string): string {
   return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
 }
@@ -164,7 +171,14 @@ export function updatePane(
 ): LayoutNode {
   if (root.kind === 'leaf') {
     if (root.pane.id !== paneId) return root;
-    return { ...root, pane: { ...root.pane, ...patch } };
+    const next: PaneModel = { ...root.pane, ...patch };
+    // Explicit undefined must clear optional keys (e.g. spent orchRequestId).
+    for (const key of Object.keys(patch) as (keyof PaneModel)[]) {
+      if (patch[key] === undefined) {
+        delete next[key];
+      }
+    }
+    return { ...root, pane: next };
   }
   return {
     ...root,

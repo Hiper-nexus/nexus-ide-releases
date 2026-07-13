@@ -466,15 +466,17 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
-  it("fails closed for an unknown or already-consumed orchestration request", () => {
+  it("falls back to direct-user spawn when orchRequestId is spent (Reiniciar)", () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true,
       overrides: {},
     });
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    const sender = { id: 7 };
 
+    // claimPending returns null (default) → spent token; must not throw.
     const result = handler?.(
-      { sender: { id: 7 } },
+      { sender },
       {
         kind: "cli-agent",
         adapterId: "claude",
@@ -484,13 +486,25 @@ describe("registerPtyIpc account fail-fast", () => {
       },
     );
 
-    expect(result).toEqual({
-      ok: false,
-      error: expect.stringMatching(
-        /unknown or expired orchestration spawn request/,
-      ),
-    });
-    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: true, sessionId: "pty-created" });
+    expect(authorityDeps.requireRendererWorkspaceScope).toHaveBeenCalledWith(
+      sender,
+    );
+    expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
+      sender,
+      expect.objectContaining({
+        adapterId: "claude",
+        orchRequestId: "orchspawn-stale",
+        cwd: "/workspace/a",
+      }),
+      expect.objectContaining({ id: "claude" }),
+      {},
+      expect.objectContaining({
+        source: "direct-user",
+        scope: authorityDeps.scope,
+        cwd: "/workspace/a",
+      }),
+    );
   });
 
   it("binds a user shell to the renderer-authorized workspace and configured shell", () => {

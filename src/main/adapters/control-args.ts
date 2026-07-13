@@ -42,9 +42,31 @@ export function buildControlArgs(
     }
   }
 
-  const effort = choice.effort ?? '';
-  if (control.effort && effort && control.effort.levels.includes(effort)) {
-    out.push(control.effort.arg, effort);
+  // Effort: drop unknown levels. Assignment-style flags (`-c key=`) MUST get a
+  // concrete value — empty `model_reasoning_effort=` makes Codex refuse to boot
+  // ("reasoning_effort must not be empty"). Space-style flags (`--effort`) may
+  // stay omitted so the CLI keeps its own default.
+  if (control.effort) {
+    const levels = control.effort.levels;
+    const effortArg = control.effort.arg.trim();
+    const assignmentStyle = effortArg.endsWith('=');
+    let effort = choice.effort?.trim() ?? '';
+    if (effort && levels.length > 0 && !levels.includes(effort)) {
+      effort = '';
+    }
+    if (!effort && assignmentStyle && levels.length > 0) {
+      effort = levels.includes('medium') ? 'medium' : levels[0]!;
+    }
+    if (effort && (levels.length === 0 || levels.includes(effort))) {
+      const effortArgs = effortArg.split(/\s+/).filter(Boolean);
+      const valueSlot = effortArgs.at(-1);
+      if (valueSlot?.endsWith('=')) {
+        effortArgs[effortArgs.length - 1] = `${valueSlot}${effort}`;
+        out.push(...effortArgs);
+      } else {
+        out.push(...effortArgs, effort);
+      }
+    }
   }
 
   if (choice.verbose && control.verbose) {
