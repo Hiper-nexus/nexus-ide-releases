@@ -548,13 +548,18 @@
 
 .account-switcher__menu {
   position: absolute;
-  left: 0;
+  /* Wider than the narrow chip so empty-state / long labels are readable */
+  left: auto;
   right: 0;
   bottom: calc(100% + 6px);
-  z-index: 50;
-  max-height: 280px;
+  z-index: 80;
+  width: max(100%, min(320px, 92vw));
+  min-width: min(280px, 92vw);
+  max-width: min(360px, 94vw);
+  max-height: min(420px, 70vh);
+  overflow-x: hidden;
   overflow-y: auto;
-  padding: 4px;
+  padding: 6px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--bg-elevated, var(--bg-bar));
@@ -562,6 +567,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  box-sizing: border-box;
 }
 
 .account-switcher__item {
@@ -639,35 +645,74 @@
   font-weight: 600;
 }
 
-.account-switcher__empty-block {
-  padding: 2px 0;
-}
-
-.account-switcher__empty-copy {
+/* Compact empty vault panel — full width of wide menu, no clipping */
+.account-switcher__empty-panel {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  text-align: left;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 10px 12px;
+  box-sizing: border-box;
+  border: 1px dashed color-mix(in srgb, var(--border-strong, #444) 90%, transparent);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--bg, #111) 55%, transparent);
 }
 
-.account-switcher__empty-copy p {
+.account-switcher__empty-title {
   margin: 0;
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.3;
+  color: var(--text);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+}
+
+.account-switcher__empty-body {
+  margin: 0;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--text-dim);
+  white-space: normal;
+  overflow: visible;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
-.account-switcher__empty-copy strong {
+.account-switcher__empty-body strong {
   color: var(--text);
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .account-switcher__empty-step {
-  padding: 6px 8px;
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: normal;
+  overflow: visible;
   border-radius: var(--radius-sm, 6px);
-  border: 1px dashed color-mix(in srgb, var(--accent, #4db8ff) 40%, transparent);
-  background: color-mix(in srgb, var(--accent, #4db8ff) 8%, transparent);
-  color: var(--text) !important;
+  border: 1px dashed color-mix(in srgb, var(--accent, #4db8ff) 45%, transparent);
+  background: color-mix(in srgb, var(--accent, #4db8ff) 10%, transparent);
+}
+
+.account-switcher__empty-cta {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.account-switcher__empty-cta .action-card__copy {
+  min-width: 0;
+}
+
+.account-switcher__empty-cta .action-card__title,
+.account-switcher__empty-cta .action-card__sub {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
 }
 
 .account-switcher__empty,
@@ -677,6 +722,8 @@
   font-size: 11px;
   line-height: 1.4;
   color: var(--text-dim);
+  white-space: normal;
+  overflow: visible;
 }
 
 .account-switcher__group {

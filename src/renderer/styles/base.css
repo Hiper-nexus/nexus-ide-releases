@@ -525,11 +525,24 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  max-width: 220px;
+  max-width: 240px;
+  /* Menu is position:absolute and wider than the chip — don't clip it */
+  overflow: visible;
+  position: relative;
+  z-index: 40;
 }
 
 .workspace-bar__account-zone .account-switcher {
-  max-width: 180px;
+  max-width: 200px;
+  overflow: visible;
+}
+
+.workspace-bar__account-zone .account-switcher__menu {
+  /* Prefer opening leftward from the right edge of the chip in the top bar */
+  right: 0;
+  left: auto;
+  width: min(320px, 92vw);
+  min-width: min(280px, 92vw);
 }
 
 .workspace-bar__account-restart {

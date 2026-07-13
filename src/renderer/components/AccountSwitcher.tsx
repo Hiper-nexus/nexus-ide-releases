@@ -14,7 +14,7 @@ import {
   restartPanesForPendingAccount,
 } from '../orch/account-restart-controller';
 import { PixelIcon } from './PixelIcon';
-import { ActionCard, EmptyState } from './ActionCard';
+import { ActionCard } from './ActionCard';
 
 /**
  * Compact multi-account control (hot-swap chip).
@@ -161,13 +161,13 @@ export function AccountSwitcher({
   const label = active
     ? active.label
     : visible.length === 0
-      ? 'Sessão nativa'
+      ? 'Nativa'
       : 'Nenhuma ativa';
   const sub = active
     ? `${active.adapterId}${active.onCooldown ? ' · cooldown' : ''}`
     : visible.length > 0
-      ? `${visible.length} no vault`
-      : 'vault vazio';
+      ? `${visible.length} vault`
+      : 'sem vault';
 
   const showRestart =
     restartAdapterId &&
@@ -252,42 +252,34 @@ export function AccountSwitcher({
             </div>
           )}
           {visible.length === 0 ? (
-            <EmptyState
-              className="account-switcher__empty-block"
-              icon="id-badge"
-              title="Vault multi-conta vazio"
-              body={
-                <div className="account-switcher__empty-copy">
-                  <p>
-                    <strong>Estar logado no CLI</strong> (Claude/Codex no
-                    terminal) não é a mesma coisa que ter uma{' '}
-                    <strong>conta salva no vault do Nexus</strong>.
-                  </p>
-                  <p>
-                    A sessão nativa do sistema continua a funcionar nos panes.
-                    O vault é só para hot-swap e failover automático entre
-                    várias contas do mesmo provider.
-                  </p>
-                  <p className="account-switcher__empty-step">
-                    Em Providers → conta do CLI →{' '}
-                    <strong>Salvar sessão logada</strong> (ou API key).
-                  </p>
-                </div>
-              }
-              action={
-                <ActionCard
-                  icon="key"
-                  title="Abrir Providers"
-                  subtitle="salvar sessão · API key"
-                  variant="primary"
-                  size="sm"
-                  onClick={() => {
-                    setOpen(false);
-                    openDrawer('providers');
-                  }}
-                />
-              }
-            />
+            <div
+              className="account-switcher__empty-panel"
+              role="status"
+            >
+              <p className="account-switcher__empty-title">
+                Vault multi-conta vazio
+              </p>
+              <p className="account-switcher__empty-body">
+                CLI logado no sistema <strong>≠</strong> conta no vault. Os
+                panes usam a sessão nativa; o vault serve para trocar de conta
+                e failover.
+              </p>
+              <p className="account-switcher__empty-step">
+                Providers → CLI → <strong>Salvar sessão logada</strong>
+              </p>
+              <ActionCard
+                icon="key"
+                title="Abrir Providers"
+                subtitle="salvar sessão · API key"
+                variant="primary"
+                size="sm"
+                className="account-switcher__empty-cta"
+                onClick={() => {
+                  setOpen(false);
+                  openDrawer('providers');
+                }}
+              />
+            </div>
           ) : (
             grouped.map(([adapterId, list]) => (
               <div key={adapterId} className="account-switcher__group" role="group" aria-label={adapterId}>

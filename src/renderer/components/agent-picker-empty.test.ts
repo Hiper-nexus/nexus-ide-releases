@@ -26,11 +26,11 @@ describe('agent-picker / empty CTA contracts', () => {
       path.join(ROOT, 'renderer/components/AccountSwitcher.tsx'),
       'utf8',
     );
-    expect(src).toContain('EmptyState');
+    expect(src).toContain('account-switcher__empty-panel');
     expect(src).toContain("openDrawer('providers')");
     expect(src).toContain('Vault multi-conta vazio');
-    expect(src).toContain('sessão nativa');
     expect(src).toContain('Salvar sessão logada');
+    expect(src).toContain('Abrir Providers');
   });
 
   it('PetSection primary create/import use ActionCard', () => {
