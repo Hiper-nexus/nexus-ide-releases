@@ -24,21 +24,27 @@ export function buildControlArgs(
   const control = adapter.control ?? {};
 
   const perm = control.permission;
-  const mode = choice.permissionMode ?? '';
+  const mode = (choice.permissionMode ?? '').trim();
   if (perm && !mode) {
-    // An explicit safe baseline wins over user-level CLI configuration. This
-    // keeps a globally configured danger-full-access/bypass from leaking into
-    // Nexus panes when the Nexus setting says "Padrão seguro".
-    out.push(...(perm.safe ?? []));
+    // System default: when the adapter declares a verified yolo sequence
+    // (Claude/GLM/Longcat, Codex, …), empty/unset always means full-auto —
+    // never the interactive permission dialog. Adapters without yolo keep the
+    // safe baseline (or nothing).
+    if (perm.yolo.length > 0) {
+      out.push(...perm.yolo);
+    } else {
+      out.push(...(perm.safe ?? []));
+    }
   } else if (perm && mode) {
-    // "yolo" always maps to the standalone full-auto args when the adapter
-    // declares them; otherwise fall back to the arg+value mode.
-    if (mode === 'yolo' && perm.yolo.length > 0) {
+    // Prefer standalone full-auto args for both "yolo" and "bypass". Claude Code
+    // 2.1.x still paints an interactive "Yes, I accept" dialog for
+    // --permission-mode bypassPermissions; the verified yolo argv (incl.
+    // --allow-dangerously-skip-permissions) is the zero-click path
+    // (GLM/Claude/Longcat).
+    if ((mode === 'yolo' || mode === 'bypass') && perm.yolo.length > 0) {
       out.push(...perm.yolo);
     } else if (perm.arg && perm.modes[mode]) {
       out.push(perm.arg, perm.modes[mode]);
-    } else if (mode === 'bypass' && perm.yolo.length > 0) {
-      out.push(...perm.yolo);
     }
   }
 
@@ -89,9 +95,9 @@ export function availablePermissionModes(adapter: CliPtyAdapter): string[] {
 export function defaultPermissionMode(adapter: CliPtyAdapter): string {
   const permission = adapter.control?.permission;
   if (!permission) return '';
-  // The standalone yolo entry is each adapter's verified full-bypass flag.
-  // Claude 2.1.x maps it to --dangerously-skip-permissions, which activates
-  // the same bypassPermissions mode immediately (the --allow-* flag does not).
+  // System default is always full-auto when the adapter declares a verified
+  // yolo sequence (Claude/GLM/Longcat: --allow-dangerously-skip-permissions
+  // + --dangerously-skip-permissions). No human click on boot.
   if (permission.yolo.length > 0) return 'yolo';
   if (permission.modes.bypass) return 'bypass';
   if (permission.modes.auto) return 'auto';

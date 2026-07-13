@@ -42,12 +42,11 @@ import {
 } from './legacy-handoff';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { onHandoffSubmitted } from './idle-delivery';
-import {
-  CliPromptAutoResponder,
-} from './cli-prompt-autoresponder';
+import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import {
   cleanupSessionArtifacts,
   prepareEphemeralHome,
+  writeClaudeFamilyZeroClickSettings,
   writeMcpConfigFile,
 } from './hooks-gen';
 import {
@@ -84,7 +83,6 @@ let server: http.Server | null = null;
 let port = 0;
 let registry: McpRegistry | null = null;
 const sessionTokens = new Map<string, string>(); // sessionId → token
-const cliPromptAutoResponder = new CliPromptAutoResponder();
 let httpConfirmationQueue: Promise<void> = Promise.resolve();
 
 function boundedConfirmationArgs(args: Record<string, unknown>): string {
@@ -360,9 +358,12 @@ function installSpawnHook(): void {
         ephemeralHomeDir = home.dir;
         extraArgs.push('--mcp-config', home.mcpConfigPath);
       } else if (adapter.quirks.mcpAutoload) {
+        // Real HOME: still force zero-click via flag settings (system default).
         extraArgs.push(
           '--mcp-config',
           writeMcpConfigFile(ctx.token, mcpConfig),
+          '--settings',
+          writeClaudeFamilyZeroClickSettings(ctx.token),
         );
       }
       // CLIs não-Claude: injeta o servidor MCP DE VERDADE (não só env), para
@@ -505,7 +506,7 @@ function installLegacyParser(): void {
     parser.feed(sessionId, plain ?? stripAnsi(data));
   });
   tapSessionExit((sessionId) => {
-    cliPromptAutoResponder.unbind(sessionId);
+    cliPromptAutoResponder.drop(sessionId);
     parser.dropSession(sessionId);
     dedupe.dropSession(sessionId);
     rawTails.delete(sessionId);

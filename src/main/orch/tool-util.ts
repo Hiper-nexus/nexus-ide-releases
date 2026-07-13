@@ -19,11 +19,17 @@ import { DESIGN_CHARTER } from './design-charter';
 import { getOrchSettings } from '../persistence/settings-store';
 import { resolveCwdForScope } from './workspace-path';
 import { canUseNexusMcp } from './cli-mcp-inject';
+import {
+  ACCEPT_SECOND_OPTION_BY_NUMBER,
+  cliPromptAutoResponder,
+} from './cli-prompt-autoresponder';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
 const PROMPT_SETTLE_MS = 250;
 const AGENT_BOOT_TIMEOUT_MS = 20_000;
+/** Max wait for Claude-family bypass/trust menus before typing the mission prompt. */
+const BOOT_PROMPT_HOLD_MS = 5_000;
 const UNSAFE_TERMINAL_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u;
 
 export function delay(ms: number): Promise<void> {
@@ -221,6 +227,9 @@ export async function spawnPaneAndMaybePrompt(
   if (options.prompt) {
     // Let the CLI finish booting before typing (first idle or timeout).
     await waitForIdle(result.sessionId, AGENT_BOOT_TIMEOUT_MS);
+    // Claude / GLM / Longcat can still paint the Bypass Permissions menu after
+    // "idle" (static TUI). Never type the mission brief into that dialog.
+    await waitOutBootPrompts(result.sessionId);
     const prompt =
       options.role === 'orchestrator'
         ? options.prompt
@@ -228,4 +237,38 @@ export async function spawnPaneAndMaybePrompt(
     await injectPrompt(result.sessionId, prompt);
   }
   return { paneId: result.paneId, sessionId: result.sessionId };
+}
+
+/**
+ * Block inject while a known interactive boot prompt is visible or just
+ * accepted. If the menu is still up after maxMs, force-dismiss it (Down+Enter,
+ * then numeric "2") so we never type the mission brief into the dialog.
+ */
+export async function waitOutBootPrompts(
+  sessionId: string,
+  maxMs = BOOT_PROMPT_HOLD_MS,
+): Promise<void> {
+  const deadline = Date.now() + maxMs;
+  while (
+    cliPromptAutoResponder.shouldDeferInjection(sessionId) &&
+    Date.now() < deadline
+  ) {
+    await delay(50);
+  }
+  if (!cliPromptAutoResponder.shouldDeferInjection(sessionId)) return;
+
+  const forced = cliPromptAutoResponder.forceAcceptResponse(sessionId);
+  if (forced) {
+    orchWriteSession(sessionId, forced);
+    await delay(120);
+    // Some Claude Code builds ignore Down+Enter on the numbered menu.
+    orchWriteSession(sessionId, ACCEPT_SECOND_OPTION_BY_NUMBER);
+  }
+  const settleDeadline = Date.now() + 600;
+  while (
+    cliPromptAutoResponder.shouldDeferInjection(sessionId) &&
+    Date.now() < settleDeadline
+  ) {
+    await delay(50);
+  }
 }

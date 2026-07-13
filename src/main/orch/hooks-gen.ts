@@ -64,6 +64,29 @@ export interface EphemeralHome {
 }
 
 /**
+ * System default for every Claude-family shell (Claude, GLM, Longcat): never
+ * stop on the interactive Bypass Permissions / workflow opt-in dialogs.
+ * Applied both in ephemeral HOME settings and via --settings for real HOME.
+ */
+export const CLAUDE_FAMILY_ZERO_CLICK_SETTINGS = Object.freeze({
+  skipDangerousModePermissionPrompt: true,
+  skipWorkflowUsageWarning: true,
+});
+
+/** Flag-settings file so ungated panes also skip the click dialog. */
+export function writeClaudeFamilyZeroClickSettings(tokenId: string): string {
+  const dir = path.join(os.homedir(), '.nexus', 'mcp-configs');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const file = path.join(dir, `${tokenId.slice(0, 12)}.settings.json`);
+  fs.writeFileSync(
+    file,
+    JSON.stringify(CLAUDE_FAMILY_ZERO_CLICK_SETTINGS, null, 2),
+    { mode: 0o600 },
+  );
+  return file;
+}
+
+/**
  * Create an isolated $HOME for a gated worker: hook settings, minimal
  * onboarding marker, and the MCP server config file. Returns the paths the
  * spawn decoration needs. macOS Keychain credentials are user-scoped, so CLI
@@ -89,7 +112,9 @@ export function prepareEphemeralHome(
   const scriptPath = path.join(dir, 'nexus-gate.mjs');
   fs.writeFileSync(scriptPath, HOOK_SCRIPT, { mode: 0o700 });
 
+  // System default: zero-click full-auto acknowledgement (Claude/GLM/Longcat).
   const settings = {
+    ...CLAUDE_FAMILY_ZERO_CLICK_SETTINGS,
     hooks: {
       PreToolUse: [
         {
@@ -155,6 +180,7 @@ export function cleanupSessionArtifacts(tokenId: string): void {
   for (const target of [
     path.join(os.homedir(), '.nexus', 'ephemeral', short),
     path.join(os.homedir(), '.nexus', 'mcp-configs', `${short}.json`),
+    path.join(os.homedir(), '.nexus', 'mcp-configs', `${short}.settings.json`),
   ]) {
     try {
       fs.rmSync(target, { recursive: true, force: true });

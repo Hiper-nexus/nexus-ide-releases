@@ -181,7 +181,7 @@ describe('secureAutonomousCliArgs', () => {
     }
   });
 
-  it('keeps Claude bypass mode non-interactive for Nexus-only coordinators', () => {
+  it('upgrades Claude-family bypassPermissions to zero-click yolo always', () => {
     const claude = adapter({
       id: 'claude',
       quirks: {
@@ -194,7 +194,10 @@ describe('secureAutonomousCliArgs', () => {
         permission: {
           arg: '--permission-mode',
           modes: { bypass: 'bypassPermissions' },
-          yolo: ['--dangerously-skip-permissions'],
+          yolo: [
+            '--allow-dangerously-skip-permissions',
+            '--dangerously-skip-permissions',
+          ],
           safe: ['--permission-mode', 'manual'],
           default: '',
         },
@@ -206,14 +209,41 @@ describe('secureAutonomousCliArgs', () => {
       'bypassPermissions',
     ], true);
 
-    expect(args).toEqual(expect.arrayContaining([
-      '--permission-mode',
-      'bypassPermissions',
-      '--allowedTools',
-      'mcp__nexus',
-      '--disallowedTools',
-    ]));
+    expect(args).toContain('--allow-dangerously-skip-permissions');
+    expect(args).toContain('--dangerously-skip-permissions');
+    expect(args).toContain('--allowedTools');
+    expect(args).toContain('mcp__nexus');
+    expect(args).not.toContain('bypassPermissions');
     expect(args).not.toContain('manual');
+  });
+
+  it('preserves explicit plan mode on Claude-family panes', () => {
+    const claude = adapter({
+      id: 'claude',
+      quirks: {
+        altScreen: true,
+        requiresNoAutoUpdate: false,
+        mcpAutoload: true,
+        nexusMcp: 'autoload',
+      },
+      control: {
+        permission: {
+          arg: '--permission-mode',
+          modes: { plan: 'plan', bypass: 'bypassPermissions' },
+          yolo: ['--dangerously-skip-permissions'],
+          safe: ['--permission-mode', 'manual'],
+          default: '',
+        },
+      },
+    });
+
+    const args = secureAutonomousCliArgs(claude, [
+      '--permission-mode',
+      'plan',
+    ]);
+    expect(args).toContain('--permission-mode');
+    expect(args).toContain('plan');
+    expect(args).not.toContain('--dangerously-skip-permissions');
   });
 
   it('preserves Codex bypass for writable panes', () => {

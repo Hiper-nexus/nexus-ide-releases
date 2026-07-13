@@ -90,6 +90,7 @@
         "bypass": "bypassPermissions"
       },
       "yolo": [
+        "--allow-dangerously-skip-permissions",
         "--dangerously-skip-permissions"
       ],
       "safe": [

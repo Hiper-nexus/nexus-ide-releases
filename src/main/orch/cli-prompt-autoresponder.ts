@@ -1,4 +1,12 @@
 const PROMPT_WINDOW = 4_096;
+/** After auto-accepting a boot prompt, hold prompt injection briefly so the TUI can leave the menu. */
+const SETTLE_AFTER_ACCEPT_MS = 450;
+/**
+ * Only watch the first N ms of a session for interactive boot menus. After that
+ * we unbind: otherwise Claude-family panes with skipDangerous set would keep
+ * stripAnsi on every PTY chunk for the whole mission.
+ */
+const WATCH_WINDOW_MS = 20_000;
 
 interface PromptSignature {
   adapterIds: readonly string[];
@@ -10,7 +18,14 @@ interface PromptSignature {
 export const ACCEPT_DEFAULT_PROMPT_RESPONSE = '\r';
 /** Move from the safe first option to the explicit second option, then enter. */
 export const ACCEPT_SECOND_PROMPT_RESPONSE = '\x1b[B\r';
+/** Fallback when Down+Enter is ignored (some Claude Code TUI builds). */
+export const ACCEPT_SECOND_OPTION_BY_NUMBER = '2\r';
 
+/**
+ * Claude Code 2.1.x (and Claude-family shells: glm/longcat) show this disclaimer
+ * whenever full-auto / bypass is enabled. The live UI no longer always prints
+ * "Enter to confirm" — matching on that phrase left GLM workers stuck forever.
+ */
 export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
   {
     adapterIds: ['claude', 'glm', 'longcat'],
@@ -19,7 +34,6 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
       'claude code running in bypass permissions mode',
       '1. no, exit',
       '2. yes, i accept',
-      'enter to confirm',
     ],
     response: ACCEPT_SECOND_PROMPT_RESPONSE,
   },
@@ -66,30 +80,95 @@ function signaturesFor(adapterId: string): PromptSignature[] {
 export class CliPromptAutoResponder {
   private readonly buffers = new Map<string, string>();
   private readonly sessions = new Map<string, PromptSignature[]>();
+  private readonly settlingUntil = new Map<string, number>();
+  private readonly boundAt = new Map<string, number>();
 
-  bind(sessionId: string, adapterId: string): void {
+  bind(sessionId: string, adapterId: string, now = Date.now()): void {
     const signatures = signaturesFor(adapterId);
     if (signatures.length === 0) return;
     this.sessions.set(sessionId, signatures);
+    this.boundAt.set(sessionId, now);
     this.buffers.delete(sessionId);
+    this.settlingUntil.delete(sessionId);
   }
 
   unbind(sessionId: string): void {
     this.sessions.delete(sessionId);
     this.buffers.delete(sessionId);
+    this.boundAt.delete(sessionId);
+    // Intentionally keep settlingUntil so post-accept inject hold still works.
   }
 
-  isPending(sessionId: string): boolean {
-    return this.sessions.has(sessionId);
+  /** Drop every per-session map, including settle (session exit / shutdown). */
+  drop(sessionId: string): void {
+    this.unbind(sessionId);
+    this.settlingUntil.delete(sessionId);
+  }
+
+  /** True while we are still watching PTY output for a known boot prompt. */
+  isPending(sessionId: string, now = Date.now()): boolean {
+    return this.watchingSignatures(sessionId, now) !== null;
+  }
+
+  private watchingSignatures(
+    sessionId: string,
+    now: number,
+  ): PromptSignature[] | null {
+    const signatures = this.sessions.get(sessionId);
+    if (!signatures) return null;
+    const started = this.boundAt.get(sessionId) ?? now;
+    if (now - started > WATCH_WINDOW_MS) {
+      this.unbind(sessionId);
+      return null;
+    }
+    return signatures;
+  }
+
+  /**
+   * Hold nexus prompt injection while a known interactive boot menu is on
+   * screen or we just auto-accepted one (TUI still leaving the dialog).
+   */
+  shouldDeferInjection(sessionId: string, now = Date.now()): boolean {
+    const settleUntil = this.settlingUntil.get(sessionId);
+    if (settleUntil !== undefined) {
+      if (now < settleUntil) return true;
+      this.settlingUntil.delete(sessionId);
+    }
+    const signatures = this.watchingSignatures(sessionId, now);
+    if (!signatures) return false;
+    const buffer = normalizePromptText(this.buffers.get(sessionId) ?? '');
+    if (!buffer) return false;
+    // Full signature match, or early hold as soon as the Claude-family bypass
+    // banner is visible (options may still be painting).
+    return signatures.some(
+      (signature) =>
+        matchesPromptSignature(buffer, signature) ||
+        (signature.name === 'claude-bypass-acknowledgement' &&
+          buffer.includes('claude code running in bypass permissions mode')),
+    );
+  }
+
+  /**
+   * Keys to force-dismiss a still-visible Claude-family bypass menu when the
+   * normal observe path did not fire before inject timeout.
+   */
+  forceAcceptResponse(sessionId: string, now = Date.now()): string | null {
+    if (!this.shouldDeferInjection(sessionId, now)) return null;
+    // Prefer Down+Enter; settle so callers wait before typing the mission brief.
+    this.unbind(sessionId);
+    this.settlingUntil.set(sessionId, now + SETTLE_AFTER_ACCEPT_MS);
+    return ACCEPT_SECOND_PROMPT_RESPONSE;
   }
 
   clear(): void {
     this.sessions.clear();
     this.buffers.clear();
+    this.settlingUntil.clear();
+    this.boundAt.clear();
   }
 
-  observe(sessionId: string, output: string): string | null {
-    const signatures = this.sessions.get(sessionId);
+  observe(sessionId: string, output: string, now = Date.now()): string | null {
+    const signatures = this.watchingSignatures(sessionId, now);
     if (!signatures) return null;
     const buffer = `${this.buffers.get(sessionId) ?? ''}${output}`.slice(
       -PROMPT_WINDOW,
@@ -102,6 +181,10 @@ export class CliPromptAutoResponder {
       return null;
     }
     this.unbind(sessionId);
+    this.settlingUntil.set(sessionId, now + SETTLE_AFTER_ACCEPT_MS);
     return match.response;
   }
 }
+
+/** Process-wide instance shared by MCP spawn decoration and prompt injection. */
+export const cliPromptAutoResponder = new CliPromptAutoResponder();

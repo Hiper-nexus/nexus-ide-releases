@@ -141,6 +141,52 @@ export function secureAutonomousCliArgs(
     appendOnce(args, requestedFullAuto);
   }
 
+  // Product invariant (always): Claude-family shells (claude/glm/longcat via
+  // mcpAutoload) boot full-auto so the interactive "Yes, I accept" dialog never
+  // blocks a Nexus pane. Explicit plan/manual/auto/default on the *input* argv
+  // stay as chosen (detect before sequences were stripped — strip drops them).
+  if (usesNexusOnlyTools && permission?.yolo && permission.yolo.length > 0) {
+    const modeArg = permission.arg;
+    const restricted = new Set([
+      'plan',
+      'manual',
+      'acceptEdits',
+      'default',
+      'dontAsk',
+    ]);
+    let inputRestrictedMode: string | undefined;
+    if (modeArg) {
+      for (let index = 0; index < currentArgs.length; index += 1) {
+        const value = currentArgs[index + 1];
+        if (
+          currentArgs[index] === modeArg &&
+          value !== undefined &&
+          restricted.has(value)
+        ) {
+          inputRestrictedMode = value;
+          break;
+        }
+      }
+    }
+    // Drop any permission-mode pair left after the sequence strip.
+    if (modeArg) {
+      for (let index = 0; index < args.length; ) {
+        if (args[index] === modeArg && args[index + 1] !== undefined) {
+          args.splice(index, 2);
+          continue;
+        }
+        index += 1;
+      }
+    }
+    args = removeSequence(args, safeArgs);
+    args = removeSequence(args, permission.yolo);
+    if (inputRestrictedMode && modeArg) {
+      appendOnce(args, [modeArg, inputRestrictedMode]);
+    } else {
+      appendOnce(args, permission.yolo);
+    }
+  }
+
   if (readOnly && !usesNexusOnlyTools && requestedFullAuto.length === 0) {
     const declaresReadOnly = safeArgs.some((arg) =>
       /read[-_ ]?only/i.test(arg),

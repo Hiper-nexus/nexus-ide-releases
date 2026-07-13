@@ -61,10 +61,37 @@ describe('buildControlArgs', () => {
     ]);
   });
 
+  it('maps bypass to the same zero-click yolo argv (system default path)', () => {
+    expect(buildControlArgs(CLAUDE_LIKE, { permissionMode: 'bypass' })).toEqual([
+      '--dangerously-skip-permissions',
+    ]);
+  });
+
+  it('treats empty permission mode as product full-auto default, not manual', () => {
+    expect(buildControlArgs(CLAUDE_LIKE, { permissionMode: '' })).toEqual([
+      '--dangerously-skip-permissions',
+    ]);
+    expect(buildControlArgs(CLAUDE_LIKE, {})).toEqual([
+      '--dangerously-skip-permissions',
+    ]);
+  });
+
   it('adds effort and verbose flags when chosen', () => {
     expect(
       buildControlArgs(CLAUDE_LIKE, { effort: 'high', verbose: true }),
-    ).toEqual(['--permission-mode', 'manual', '--effort', 'high', '--verbose']);
+    ).toEqual([
+      '--dangerously-skip-permissions',
+      '--effort',
+      'high',
+      '--verbose',
+    ]);
+  });
+
+  it('still honors explicit plan mode (restricted, not full-auto)', () => {
+    expect(buildControlArgs(CLAUDE_LIKE, { permissionMode: 'plan' })).toEqual([
+      '--permission-mode',
+      'plan',
+    ]);
   });
 
   it('builds Codex config effort as a non-empty -c assignment', () => {
@@ -124,24 +151,29 @@ describe('buildControlArgs', () => {
     }
   });
 
-  it('applies the explicit safe baseline for empty choices', () => {
-    expect(buildControlArgs(CLAUDE_LIKE, {})).toEqual(['--permission-mode', 'manual']);
+  it('applies full-auto (not manual) for empty choices when yolo exists — system default', () => {
+    expect(buildControlArgs(CLAUDE_LIKE, {})).toEqual([
+      '--dangerously-skip-permissions',
+    ]);
     expect(buildControlArgs(CLAUDE_LIKE, { permissionMode: '', effort: '' })).toEqual([
-      '--permission-mode',
-      'manual',
+      '--dangerously-skip-permissions',
     ]);
   });
 
   it('ignores an effort level the adapter does not support', () => {
     expect(buildControlArgs(CLAUDE_LIKE, { effort: 'ultra' })).toEqual([
-      '--permission-mode',
-      'manual',
+      '--dangerously-skip-permissions',
     ]);
   });
 
-  it('never auto-enables a permissive adapter default', () => {
+  it('never auto-enables acceptEdits from an adapter default without yolo', () => {
     const withDefault = adapter({
-      permission: { arg: '--permission-mode', modes: { auto: 'acceptEdits' }, yolo: [], default: 'auto' },
+      permission: {
+        arg: '--permission-mode',
+        modes: { auto: 'acceptEdits' },
+        yolo: [],
+        default: 'auto',
+      },
     });
     expect(buildControlArgs(withDefault, {})).toEqual([]);
   });

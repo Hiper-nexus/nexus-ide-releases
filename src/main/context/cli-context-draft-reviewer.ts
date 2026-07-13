@@ -13,7 +13,11 @@ import {
   waitForIdle,
 } from '../orch/pane-registry';
 import { routeTask } from '../orch/task-router';
-import { injectPrompt, type SpawnToolOptions } from '../orch/tool-util';
+import {
+  injectPrompt,
+  waitOutBootPrompts,
+  type SpawnToolOptions,
+} from '../orch/tool-util';
 import { resolveCwdForScope } from '../orch/workspace-path';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { secureAutonomousCliArgs } from '../pty/autonomous-cli-policy';
@@ -227,6 +231,7 @@ async function spawnContextDraftReviewerPane(
   try {
     if (prompt) {
       await waitForIdle(result.sessionId, AGENT_BOOT_TIMEOUT_MS);
+      await waitOutBootPrompts(result.sessionId);
       await injectPrompt(result.sessionId, prompt);
     }
     return { paneId: partialPaneId, sessionId: result.sessionId };
