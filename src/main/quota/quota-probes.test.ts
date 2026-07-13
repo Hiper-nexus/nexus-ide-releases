@@ -22,9 +22,9 @@ describe('quota-probes', () => {
       cooldownUntil: now + 3_600_000,
       now,
     });
-    const session = w.find((x) => x.kind === 'session');
-    expect(session?.usedRatio).toBe(1);
-    expect(session?.source).toMatch(/cooldown|limit-hit/);
+    const hours = w.find((x) => x.kind === 'hours');
+    expect(hours?.usedRatio).toBe(1);
+    expect(hours?.source).toMatch(/cooldown|limit-hit/);
     const weekly = w.find((x) => x.kind === 'weekly');
     expect(weekly?.usedRatio).toBeNull();
   });

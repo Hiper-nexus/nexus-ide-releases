@@ -224,15 +224,15 @@ export function parseGenericUsageJson(
   for (const [key, kind, label] of [
     ['five_hour_percent', 'hours', '5 Horas'],
     ['five_hour_usage_percent', 'hours', '5 Horas'],
-    ['used_percent', 'session', 'Sessão'],
-    ['usage_percent', 'session', 'Sessão'],
+    ['used_percent', 'hours', '5 Horas'],
+    ['usage_percent', 'hours', '5 Horas'],
     ['weekly_percent', 'weekly', 'Semanal'],
     ['weekly_usage_percent', 'weekly', 'Semanal'],
   ] as const) {
     if (key in root) tryRatio(root[key], kind, label);
   }
 
-  // used + limit
+  // used + limit → 5h slot (fleet default when window type unknown)
   const used = root.used ?? root.usage;
   const limit = root.limit ?? root.quota;
   if (
@@ -244,8 +244,8 @@ export function parseGenericUsageJson(
   ) {
     out.push(
       knownWindow({
-        kind: 'session',
-        label: 'Sessão',
+        kind: 'hours',
+        label: '5 Horas',
         usedRatio: Math.max(0, Math.min(1, used / limit)),
         source: 'provider-api',
         confidence: 'medium',

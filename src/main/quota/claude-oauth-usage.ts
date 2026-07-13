@@ -58,7 +58,7 @@ function parseResetsAt(raw: unknown): number | undefined {
 
 function bucketWindow(
   bucket: UsageBucket | null | undefined,
-  kind: 'session' | 'weekly',
+  kind: 'hours' | 'weekly',
   label: string,
   now: number,
 ): QuotaWindow | null {
@@ -79,6 +79,7 @@ function bucketWindow(
 /**
  * Parse Anthropic OAuth usage JSON into quota windows.
  * Empty array = could not extract any known window (caller keeps unknowns).
+ * five_hour → **5 Horas**, seven_day → **Semanal** (same UX as Codex/GLM fleet).
  */
 export function parseClaudeOauthUsage(
   body: unknown,
@@ -90,9 +91,9 @@ export function parseClaudeOauthUsage(
     seven_day?: UsageBucket | null;
   };
   const out: QuotaWindow[] = [];
-  // five_hour ↔ Claude "Current session" rolling window (limits.kind=session).
-  const session = bucketWindow(root.five_hour, 'session', 'Sessão', now);
-  if (session) out.push(session);
+  // five_hour is the rolling ~5h window (Anthropic also labels it "session").
+  const hours = bucketWindow(root.five_hour, 'hours', '5 Horas', now);
+  if (hours) out.push(hours);
   const weekly = bucketWindow(root.seven_day, 'weekly', 'Semanal', now);
   if (weekly) out.push(weekly);
   return out;

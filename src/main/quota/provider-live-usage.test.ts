@@ -66,7 +66,7 @@ describe('fetchLiveProviderWindows', () => {
       resolveClaudeToken: () => 'claude-tok',
       fetchImpl,
     });
-    expect(claude?.find((w) => w.kind === 'session')?.usedRatio).toBe(0.1);
+    expect(claude?.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.1);
 
     const codex = await fetchLiveProviderWindows('codex', undefined, {
       resolveCodexAuthCandidates: () => [

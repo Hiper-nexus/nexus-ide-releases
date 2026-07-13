@@ -83,45 +83,23 @@ export function exhaustedWindow(input: {
   });
 }
 
-/** Default shell for a CLI without telemetry: honest unknowns. */
+/**
+ * Default shell for a CLI without telemetry: honest unknowns.
+ * Majority of cloud LLMs share the same two windows: rolling **5 Horas** + **Semanal**.
+ * Only pure-local (Ollama) differs.
+ */
 export function defaultUnknownWindows(
   adapterId: string,
 ): QuotaWindow[] {
   if (adapterId === 'ollama') {
     return [
       unknownWindow('local', 'Local'),
-      unknownWindow('session', 'Sessão'),
-    ];
-  }
-  if (adapterId === 'claude') {
-    return [
-      unknownWindow('session', 'Sessão'),
-      unknownWindow('weekly', 'Semanal'),
-    ];
-  }
-  if (adapterId === 'agy') {
-    return [
-      unknownWindow('session', 'Pedidos'),
-      unknownWindow('weekly', 'Semanal'),
-    ];
-  }
-  // Cloud coding CLIs (Codex, GLM, Kimi, Grok, LongCat, OpenCode, Aider, …)
-  if (
-    adapterId === 'codex' ||
-    adapterId === 'glm' ||
-    adapterId === 'kimi' ||
-    adapterId === 'grok' ||
-    adapterId === 'longcat' ||
-    adapterId === 'opencode' ||
-    adapterId === 'aider'
-  ) {
-    return [
       unknownWindow('hours', '5 Horas'),
-      unknownWindow('weekly', 'Semanal'),
     ];
   }
+  // Claude, Codex, GLM, Kimi, Grok, AGY, LongCat, OpenCode, Aider, custom…
   return [
-    unknownWindow('session', 'Sessão'),
+    unknownWindow('hours', '5 Horas'),
     unknownWindow('weekly', 'Semanal'),
   ];
 }
@@ -143,11 +121,11 @@ export function mergeWindows(
       byKind.set(key, w);
     }
   }
-  // Prefer stable order: session, hours, weekly, monthly, credits, local
+  // Prefer stable order: 5h first (majority LLM UX), then weekly, rest.
   const order: QuotaWindowKind[] = [
-    'session',
     'hours',
     'weekly',
+    'session',
     'monthly',
     'credits',
     'local',

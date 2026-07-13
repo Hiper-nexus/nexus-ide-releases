@@ -57,11 +57,11 @@ describe('QuotaService limit-hit expiry', () => {
     const during = await svc.snapshot(HIT_AT + 1_000);
     const duringEntry = during.entries.find((e) => e.adapterId === 'claude');
     expect(duringEntry).toBeDefined();
-    const sessionDuring = duringEntry!.windows.find((w) => w.kind === 'session');
-    expect(sessionDuring?.usedRatio).toBe(1);
-    expect(sessionDuring?.source).toBe('limit-hit');
+    const hoursDuring = duringEntry!.windows.find((w) => w.kind === 'hours');
+    expect(hoursDuring?.usedRatio).toBe(1);
+    expect(hoursDuring?.source).toBe('limit-hit');
     // resetsAt fixed at hitAt+cooldown — not now+cooldown (perpetual full bar)
-    expect(sessionDuring?.resetsAt).toBe(HIT_AT + COOLDOWN_MS);
+    expect(hoursDuring?.resetsAt).toBe(HIT_AT + COOLDOWN_MS);
 
     const after = await svc.snapshot(HIT_AT + COOLDOWN_MS + 1);
     const afterEntry = after.entries.find((e) => e.adapterId === 'claude');
@@ -187,10 +187,11 @@ describe('QuotaService live Claude OAuth usage', () => {
     const snap = await svc.snapshot(HIT_AT);
     const entry = snap.entries.find((e) => e.adapterId === 'claude');
     expect(entry).toBeDefined();
-    expect(entry!.windows.find((w) => w.kind === 'session')).toMatchObject({
+    expect(entry!.windows.find((w) => w.kind === 'hours')).toMatchObject({
       usedRatio: 0.12,
       source: 'provider-api',
       confidence: 'high',
+      label: '5 Horas',
     });
     expect(entry!.windows.find((w) => w.kind === 'weekly')).toMatchObject({
       usedRatio: 0.47,
@@ -294,8 +295,8 @@ describe('QuotaService live Claude OAuth usage', () => {
     const snap = await svc.snapshot(HIT_AT);
     const a = snap.entries.find((e) => e.accountId === 'acc-a');
     const b = snap.entries.find((e) => e.accountId === 'acc-b');
-    expect(a?.windows.find((w) => w.kind === 'session')?.usedRatio).toBe(0.1);
-    expect(b?.windows.find((w) => w.kind === 'session')?.usedRatio).toBe(0.8);
+    expect(a?.windows.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.1);
+    expect(b?.windows.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.8);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     svc.stop();
   });
@@ -330,7 +331,7 @@ describe('QuotaService live Claude OAuth usage', () => {
     expect(
       refreshed.entries
         .find((e) => e.adapterId === 'claude')
-        ?.windows.find((w) => w.kind === 'session')?.usedRatio,
+        ?.windows.find((w) => w.kind === 'hours')?.usedRatio,
     ).toBe(0.4);
     svc.stop();
   });

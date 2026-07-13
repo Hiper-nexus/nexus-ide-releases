@@ -12,7 +12,8 @@ describe('grok-usage', () => {
     });
     expect(w).toHaveLength(1);
     expect(w[0]).toMatchObject({
-      kind: 'session',
+      kind: 'hours',
+      label: '5 Horas',
       usedRatio: 0.75,
       source: 'provider-api',
     });

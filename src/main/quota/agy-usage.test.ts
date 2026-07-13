@@ -30,7 +30,8 @@ describe('parseAgyUserQuota', () => {
     // worst remaining 0.25 → used 0.75
     expect(w[0]?.usedRatio).toBeCloseTo(0.75);
     expect(w[0]?.source).toBe('provider-api');
-    expect(w[0]?.kind).toBe('session');
+    expect(w[0]?.kind).toBe('hours');
+    expect(w[0]?.label).toBe('5 Horas');
   });
 
   it('treats remainingFraction 1 as real 0% used', () => {

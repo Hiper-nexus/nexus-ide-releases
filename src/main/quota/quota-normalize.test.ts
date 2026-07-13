@@ -54,12 +54,27 @@ describe('quota-normalize', () => {
     const m = mergeWindows(base, overlay);
     const weekly = m.find((w) => w.kind === 'weekly');
     expect(weekly?.usedRatio).toBe(0.54);
-    const session = m.find((w) => w.kind === 'session');
-    expect(session?.usedRatio).toBeNull();
+    const hours = m.find((w) => w.kind === 'hours');
+    expect(hours?.usedRatio).toBeNull();
+    expect(hours?.label).toBe('5 Horas');
   });
 
-  it('codex defaults include 5h window', () => {
-    const w = defaultUnknownWindows('codex');
-    expect(w.some((x) => x.kind === 'hours')).toBe(true);
+  it('fleet defaults are 5 Horas + Semanal for cloud LLMs', () => {
+    for (const id of [
+      'claude',
+      'codex',
+      'glm',
+      'kimi',
+      'grok',
+      'agy',
+      'longcat',
+      'opencode',
+      'aider',
+    ]) {
+      const w = defaultUnknownWindows(id);
+      expect(w.map((x) => x.kind)).toEqual(['hours', 'weekly']);
+      expect(w.map((x) => x.label)).toEqual(['5 Horas', 'Semanal']);
+      expect(w.every((x) => x.usedRatio === null)).toBe(true);
+    }
   });
 });

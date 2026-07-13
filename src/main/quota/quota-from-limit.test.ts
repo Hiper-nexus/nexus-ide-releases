@@ -37,8 +37,8 @@ describe('quota-from-limit', () => {
       'claude',
       10_000,
     );
-    const session = next.find((x) => x.kind === 'session');
-    expect(session?.usedRatio).toBe(1);
+    const hours = next.find((x) => x.kind === 'hours');
+    expect(hours?.usedRatio).toBe(1);
     const weekly = next.find((x) => x.kind === 'weekly');
     expect(weekly?.usedRatio).toBeNull();
   });

@@ -101,10 +101,13 @@ export function parseAgyUserQuota(
 
   if (worstUsed === null || count === 0) return [];
 
+  // Fleet UX: same two slots as other LLMs (5h + weekly). Google returns
+  // daily-ish request buckets; map worst load onto 5h and leave weekly for
+  // merge defaults when no weekly signal exists.
   return [
     knownWindow({
-      kind: 'session',
-      label: 'Pedidos (pior modelo)',
+      kind: 'hours',
+      label: '5 Horas',
       usedRatio: worstUsed,
       source: 'provider-api',
       confidence: 'high',

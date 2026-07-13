@@ -122,11 +122,10 @@ export function UsageQuotaSection() {
           Uso e cotas
         </h3>
         <p className="settings-detail__hint">
-          Frota completa: Claude, Codex, GLM, AGY, Kimi, Grok, LongCat, OpenCode,
-          Aider e qualquer CLI com chave no vault/launcher. % só com fonte real
-          (API / OAuth / tokens do projeto); sem telemetria mostra &quot;—&quot;,
-          nunca 0% inventado. OpenCode agrega chaves de todos os providers
-          ligados no auth.json.
+          Janelas padrão da frota: <strong>5 Horas</strong> (janela rolante) e{' '}
+          <strong>Semanal</strong> — o mesmo modelo da maioria das LLMs (Claude,
+          Codex, GLM, Kimi, Grok, AGY, LongCat, OpenCode, Aider…). % só com
+          fonte real; sem telemetria mostra &quot;—&quot;, nunca 0% inventado.
         </p>
       </header>
 

@@ -34,31 +34,21 @@ export function windowsFromLimitHit(
     ];
   }
   if (hit.kind === 'rate-limit') {
-    // 5h pattern is common for Codex; Claude often session-like.
-    if (adapterId === 'codex' || hit.cooldownMs >= 4 * 60 * 60 * 1000) {
-      return [
-        exhaustedWindow({
-          kind: 'hours',
-          label: '5 Horas',
-          resetsAt,
-          source: 'limit-hit',
-          now,
-        }),
-      ];
-    }
+    // Majority of cloud LLMs share a rolling ~5h window (Codex, Claude, GLM…).
+    // Long cooldowns (≥4h) and short rate-limits both paint the 5h bar.
     return [
       exhaustedWindow({
-        kind: 'session',
-        label: 'Sessão',
+        kind: 'hours',
+        label: '5 Horas',
         resetsAt,
         source: 'limit-hit',
         now,
       }),
     ];
   }
-  // auth — not a usage window; leave unknown shell
+  // auth — not a usage window; leave unknown shell (same fleet slots)
   return [
-    unknownWindow('session', 'Sessão'),
+    unknownWindow('hours', '5 Horas'),
     unknownWindow('weekly', 'Semanal'),
   ];
 }
@@ -84,15 +74,11 @@ export function windowsFromCooldown(
   if (cooldownUntil <= now) {
     return [];
   }
-  const kind =
-    adapterId === 'codex'
-      ? ('hours' as const)
-      : ('session' as const);
-  const label = kind === 'hours' ? '5 Horas' : 'Sessão';
+  // Fleet-wide: cooldown paints the shared 5h window (not session).
   return [
     exhaustedWindow({
-      kind,
-      label,
+      kind: 'hours',
+      label: '5 Horas',
       resetsAt: cooldownUntil,
       source: 'cooldown',
       now,

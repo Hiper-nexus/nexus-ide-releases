@@ -69,8 +69,8 @@ export function windowsFromRateLimitHeaders(
   const used = Math.max(0, Math.min(1, 1 - remaining / limit));
   return [
     knownWindow({
-      kind: 'session',
-      label: 'Sessão API',
+      kind: 'hours',
+      label: '5 Horas',
       usedRatio: used,
       source: 'provider-api',
       confidence: 'medium',
@@ -158,9 +158,11 @@ export function parseGrokTeamsUsage(
   const root = body as Record<string, unknown>;
   // Direct percent fields (future-proof)
   for (const [key, kind, label] of [
-    ['used_percent', 'session', 'Sessão'],
-    ['usage_percent', 'session', 'Sessão'],
+    ['used_percent', 'hours', '5 Horas'],
+    ['usage_percent', 'hours', '5 Horas'],
+    ['five_hour_percent', 'hours', '5 Horas'],
     ['weekly_used_percent', 'weekly', 'Semanal'],
+    ['weekly_percent', 'weekly', 'Semanal'],
   ] as const) {
     const raw = root[key];
     if (typeof raw === 'number' && Number.isFinite(raw)) {

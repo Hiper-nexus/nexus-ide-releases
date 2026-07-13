@@ -49,19 +49,19 @@ describe('extractClaudeAccessToken', () => {
 describe('parseClaudeOauthUsage', () => {
   const NOW = Date.parse('2026-07-12T12:00:00.000Z');
 
-  it('maps five_hour + seven_day to session/weekly with provider-api source', () => {
+  it('maps five_hour + seven_day to 5h/weekly with provider-api source', () => {
     const windows = parseClaudeOauthUsage(LIVE_SHAPE, NOW);
     expect(windows).toHaveLength(2);
 
-    const session = windows.find((w) => w.kind === 'session');
-    expect(session).toMatchObject({
-      label: 'Sessão',
+    const hours = windows.find((w) => w.kind === 'hours');
+    expect(hours).toMatchObject({
+      label: '5 Horas',
       usedRatio: 0.02,
       source: 'provider-api',
       confidence: 'high',
     });
-    expect(session?.resetsAt).toBe(Date.parse(LIVE_SHAPE.five_hour.resets_at));
-    expect(session?.remainingLabel).toBeTruthy();
+    expect(hours?.resetsAt).toBe(Date.parse(LIVE_SHAPE.five_hour.resets_at));
+    expect(hours?.remainingLabel).toBeTruthy();
 
     const weekly = windows.find((w) => w.kind === 'weekly');
     expect(weekly).toMatchObject({
@@ -90,14 +90,14 @@ describe('parseClaudeOauthUsage', () => {
       { five_hour: { utilization: 150 }, seven_day: { utilization: 100 } },
       NOW,
     );
-    expect(high.find((w) => w.kind === 'session')?.usedRatio).toBe(1);
+    expect(high.find((w) => w.kind === 'hours')?.usedRatio).toBe(1);
     expect(high.find((w) => w.kind === 'weekly')?.usedRatio).toBe(1);
 
     const onePct = parseClaudeOauthUsage(
       { five_hour: { utilization: 1 }, seven_day: { utilization: 0.5 } },
       NOW,
     );
-    expect(onePct.find((w) => w.kind === 'session')?.usedRatio).toBeCloseTo(0.01);
+    expect(onePct.find((w) => w.kind === 'hours')?.usedRatio).toBeCloseTo(0.01);
     expect(onePct.find((w) => w.kind === 'weekly')?.usedRatio).toBeCloseTo(0.005);
   });
 
