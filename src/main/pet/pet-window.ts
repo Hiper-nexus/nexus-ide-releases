@@ -340,11 +340,27 @@ function stopDrag(): void {
   dragOrigin = null;
 }
 
-function applyIgnoreMouseEvents(ignore: boolean): void {
+/**
+ * Click-through do companion.
+ * - ignore=true + forward: rato atravessa, mas o renderer ainda recebe
+ *   mousemove (para mouseenter/leave no sprite).
+ * - force=true: reaplicar no OS mesmo se o cache coincidir — após
+ *   showInactive/raise o AppKit por vezes perde o forward e o pet fica
+ *   “de vidro” (visível, não clicável) até toggle.
+ */
+function applyIgnoreMouseEvents(ignore: boolean, force = false): void {
   if (!petWindow || petWindow.isDestroyed()) return;
-  if (petIgnoresMouse === ignore) return;
+  if (!force && petIgnoresMouse === ignore) return;
   petIgnoresMouse = ignore;
-  petWindow.setIgnoreMouseEvents(ignore, { forward: true });
+  try {
+    petWindow.setIgnoreMouseEvents(ignore, { forward: true });
+  } catch {
+    try {
+      petWindow.setIgnoreMouseEvents(ignore);
+    } catch {
+      // ignore
+    }
+  }
 }
 
 /**
@@ -388,6 +404,10 @@ function raisePetAboveAll(force = false): void {
     petWindow.showInactive();
   }
   petPinnedTop = true;
+  // show/moveTop no macOS por vezes dropa o forward do ignore-mouse → pet de vidro.
+  if (force || demoted) {
+    applyIgnoreMouseEvents(petIgnoresMouse, true);
+  }
 }
 
 let raiseTimer: NodeJS.Timeout | null = null;
@@ -679,7 +699,8 @@ function assertPetVisible(force = false): void {
   }
   petPinnedTop = false;
   raisePetAboveAll(true);
-  applyIgnoreMouseEvents(petIgnoresMouse);
+  // SEMPRE re-aplicar forward após show (cache pode estar certo e o OS não).
+  applyIgnoreMouseEvents(petIgnoresMouse, true);
 }
 
 const bootReassertTimers: NodeJS.Timeout[] = [];
@@ -1084,9 +1105,9 @@ function registerPetIpc(): void {
 
   ipcMain.on(PET_CHANNELS.setInteractive, (event, interactive: unknown) => {
     if (!fromPetWindow(event) || !petWindow) return;
-    // Idempotent — mouseenter/leave no canto da tela dispara em rajada e cada
-    // setIgnoreMouseEvents recompõe a janela transparente (pisca forte no macOS).
-    applyIgnoreMouseEvents(interactive !== true);
+    // Idempotent no cache; force=false evita spam de recompose no macOS.
+    // O renderer re-sincroniza em mousemove (corrige ignore perdido após drag).
+    applyIgnoreMouseEvents(interactive !== true, false);
   });
 
   /**

@@ -79,8 +79,10 @@ export function PetApp() {
   const drag = useRef<{ startX: number; startY: number; dragging: boolean } | null>(
     null,
   );
-  // Idempotent + leave-debounce: enter/leave no canto dispara em rajada;
-  // cada setIgnoreMouseEvents no main recompõe a janela transparente (pisca).
+  // Leave-debounce: enter/leave no canto dispara em rajada.
+  // NÃO skip o IPC quando interactiveRef já é true — o main pode ter voltado
+  // a ignore=true (drag settle / showInactive) e o early-return deixava o pet
+  // “de vidro”: visível, mouseenter não re-arma, não arrasta.
   const interactiveRef = useRef(false);
   const leaveTimerRef = useRef<number | null>(null);
   const hitRef = useRef<HTMLDivElement | null>(null);
@@ -90,8 +92,8 @@ export function PetApp() {
         window.clearTimeout(leaveTimerRef.current);
         leaveTimerRef.current = null;
       }
-      if (interactiveRef.current) return;
       interactiveRef.current = true;
+      // Sempre re-sincroniza com o main (idempotente lá).
       window.nexusPet.setInteractive(true);
       return;
     }
@@ -151,11 +153,28 @@ export function PetApp() {
         );
       }
     });
+    // Com ignore+forward o Electron manda mousemove mesmo em click-through.
+    // Se o main perdeu o forward (pet de vidro), isto ainda falha — mas quando
+    // o forward existe, recupera o hit sem depender de mouseenter.
+    const onWinMove = (e: MouseEvent) => {
+      if (drag.current?.dragging) return;
+      const hit = hitRef.current;
+      if (!hit) return;
+      const r = hit.getBoundingClientRect();
+      const over =
+        e.clientX >= r.left &&
+        e.clientX <= r.right &&
+        e.clientY >= r.top &&
+        e.clientY <= r.bottom;
+      if (over) markInteractive(true);
+    };
+    window.addEventListener('mousemove', onWinMove);
     return () => {
       cancelled = true;
       offPrefs();
       offPlacement();
       offEvents();
+      window.removeEventListener('mousemove', onWinMove);
       if (celebrateTimer.current) window.clearTimeout(celebrateTimer.current);
       if (leaveTimerRef.current !== null) {
         window.clearTimeout(leaveTimerRef.current);
@@ -168,7 +187,7 @@ export function PetApp() {
         // preload pode já ter morrido com a janela
       }
     };
-  }, []);
+  }, [markInteractive]);
 
   // Balão atual expira sozinho e promove o próximo da fila. A expiração pode
   // acontecer com o cursor sobre o balão (nenhum mouseleave dispara): solta o
@@ -237,6 +256,10 @@ export function PetApp() {
       }
       if (state?.dragging || asDrag) {
         window.nexusPet.dragEnd();
+        // settle no main força ignore=true; re-sincroniza se o rato ficou no pet.
+        interactiveRef.current = false;
+        if (el.matches(':hover')) markInteractive(true);
+        else markInteractive(false);
       } else if (state) {
         // Clique sem arrasto: se há intervenção, age; senão abre o menu.
         setBalloons((queue) => {
@@ -444,7 +467,9 @@ export function PetApp() {
               sheet={prefs.sheet}
               anim={sheetAnim}
               lookDir={lookDir}
-              size={SHEET_SIZE}
+              // Reserva altura para o balão dentro do BrowserWindow de
+              // 360px; sem isto o sheet 3D de 280px podia recortar o aviso.
+              size={balloon ? 220 : SHEET_SIZE}
             />
           ) : prefs.preset === 'custom' && prefs.customGrid ? (
             <CustomPetSprite grid={prefs.customGrid} size={SPRITE_SIZE} />
