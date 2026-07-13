@@ -31,7 +31,7 @@ describe('agent-picker / empty CTA contracts', () => {
     expect(src).toContain('Vault vazio');
     expect(src).toContain('createPortal');
     expect(src).toContain('account-switcher__menu--fixed');
-    expect(src).toContain('Abrir Providers');
+    expect(src).toContain('Abrir Providers e salvar sessão');
   });
 
   it('PetSection primary create/import use ActionCard', () => {

@@ -642,14 +642,14 @@
   font-weight: 600;
 }
 
-/* Compact empty vault — short copy, no nested step box, no clip */
+/* Compact empty vault — short copy + single-line CTA button */
 .account-switcher__empty-panel {
   display: flex;
   flex-direction: column;
   gap: 10px;
   width: 100%;
   min-width: 0;
-  padding: 4px 2px 6px;
+  padding: 6px 4px 8px;
   box-sizing: border-box;
 }
 
@@ -670,25 +670,41 @@
   color: var(--text-dim);
   white-space: normal;
   overflow: visible;
-  word-break: normal;
   overflow-wrap: break-word;
 }
 
 .account-switcher__empty-cta {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
   box-sizing: border-box;
-  flex-shrink: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.account-switcher__empty-cta .action-card__copy {
-  min-width: 0;
+.account-switcher__empty-cta:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-.account-switcher__empty-cta .action-card__title,
-.account-switcher__empty-cta .action-card__sub {
-  white-space: normal;
-  overflow: visible;
-  text-overflow: unset;
+.account-switcher__empty-cta:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .account-switcher__empty,

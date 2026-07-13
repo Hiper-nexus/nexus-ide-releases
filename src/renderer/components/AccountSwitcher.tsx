@@ -15,7 +15,6 @@ import {
   restartPanesForPendingAccount,
 } from '../orch/account-restart-controller';
 import { PixelIcon } from './PixelIcon';
-import { ActionCard } from './ActionCard';
 
 const MENU_WIDTH = 300;
 const MENU_GAP = 6;
@@ -271,26 +270,24 @@ export function AccountSwitcher({
             )}
             {visible.length === 0 ? (
               <div className="account-switcher__empty-panel" role="status">
-                <p className="account-switcher__empty-title">
-                  Vault vazio
-                </p>
+                <p className="account-switcher__empty-title">Vault vazio</p>
                 <p className="account-switcher__empty-body">
-                  Login do CLI no sistema não cria conta no vault. Salve a
-                  sessão em Providers para multi-conta e failover.
+                  Estar logado no CLI não cria conta no vault. Para multi-conta
+                  e failover, salve a sessão em Providers.
                 </p>
-                <ActionCard
-                  icon="key"
-                  title="Abrir Providers"
-                  subtitle="Salvar sessão logada"
-                  variant="primary"
-                  size="sm"
+                <button
+                  type="button"
                   className="account-switcher__empty-cta"
                   role="menuitem"
+                  tabIndex={-1}
                   onClick={() => {
                     closeMenu(false);
                     openDrawer('providers');
                   }}
-                />
+                >
+                  <PixelIcon name="key" size={14} />
+                  <span>Abrir Providers e salvar sessão</span>
+                </button>
               </div>
             ) : (
               grouped.map(([adapterId, list]) => (
