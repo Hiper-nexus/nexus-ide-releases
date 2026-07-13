@@ -12,7 +12,7 @@ import { RENDERER_PROTOCOL_ENTRY_URL } from '../renderer-protocol';
 import { getAgentSessionInfo, tapSessionState } from '../pty/pty-manager';
 import { tapMissionsBroadcast, tapMissionsSeed } from '../orch/orch-ipc';
 import { loadPetPrefs, savePetPrefs } from './pet-prefs';
-import { clampToWorkArea, snapToCorner } from './pet-geometry';
+import { clampToWorkArea } from './pet-geometry';
 import {
   AgentAttentionTracker,
   AgentTransitionTracker,
@@ -319,7 +319,7 @@ function createPetWindow(): void {
     frame: false,
     transparent: true,
     resizable: false,
-    movable: false, // movimento é nosso (drag manual + snap)
+    movable: false, // movimento é nosso (drag manual + clamp na workArea)
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
@@ -566,8 +566,9 @@ function registerPetIpc(): void {
     petWindow.setIgnoreMouseEvents(interactive !== true, { forward: true });
   });
 
-  // Assenta a janela onde parou (snap + clamp) e persiste. Usado pelo
-  // dragEnd normal e pelo watchdog do arrasto.
+  // Assenta a janela ONDE o utilizador soltou (só clampa na workArea —
+  // sem snap de canto). Snap automático roubava a posição perto das bordas
+  // e "devolvia" o pet a cantos fixos. Usado pelo dragEnd e pelo watchdog.
   const settleDrag = (): void => {
     stopDrag();
     if (!petWindow || petWindow.isDestroyed()) return;
@@ -578,9 +579,13 @@ function registerPetIpc(): void {
       width: PET_WINDOW_SIZE.width,
       height: PET_WINDOW_SIZE.height,
     });
-    const snapped = snapToCorner({ x, y }, PET_WINDOW_SIZE, display.workArea);
-    petWindow.setPosition(snapped.x, snapped.y);
-    persistPosition(snapped);
+    const settled = clampToWorkArea(
+      { x, y },
+      PET_WINDOW_SIZE,
+      display.workArea,
+    );
+    petWindow.setPosition(settled.x, settled.y);
+    persistPosition(settled);
   };
 
   ipcMain.on(PET_CHANNELS.dragBegin, (event, rawOffset: unknown) => {

@@ -1,6 +1,7 @@
 /**
  * Geometria do pet — funções puras (testáveis sem Electron): manter a janela
- * dentro de uma área visível e o snap suave de canto ao soltar o arrasto.
+ * dentro de uma área visível. O settle do arrasto usa só clamp (posição livre);
+ * `snapToCorner` fica disponível se no futuro houver dock explícito.
  */
 
 export interface Rect {
