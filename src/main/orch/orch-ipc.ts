@@ -53,6 +53,10 @@ import {
 import { broadcastToProject } from "./project-scoped-broadcast";
 import { initIdleDelivery, redeliverPendingHandoffs } from "./idle-delivery";
 import { initStallWatchdog, shutdownStallWatchdog } from "./stall-watchdog";
+import {
+  initDelegationSupervisor,
+  shutdownDelegationSupervisor,
+} from "./delegation-supervisor";
 import { stopAllPreviews } from "./preview-server";
 import { stopRemoteBridge } from "../remote/remote-bridge";
 import { buildRecipeOverlay } from "./recipe-overlay";
@@ -266,6 +270,7 @@ export async function initOrchestration(): Promise<void> {
   initPaneRegistry();
   initIdleDelivery();
   initStallWatchdog();
+  initDelegationSupervisor();
   await startMcpServer();
   // SEGURANÇA: a remote bridge NÃO sobe no boot — só sob demanda, via IPC
   // explícito do usuário (remote:bridge.start) ou pela tool MCP dedicada.
@@ -274,6 +279,7 @@ export async function initOrchestration(): Promise<void> {
 }
 
 export function closeOrchestration(): void {
+  shutdownDelegationSupervisor();
   shutdownStallWatchdog();
   stopAllPreviews();
   stopRemoteBridge();
