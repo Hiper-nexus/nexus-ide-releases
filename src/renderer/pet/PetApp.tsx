@@ -24,10 +24,10 @@ import { PET_INTERACTIVE_SELECTOR } from './pet-hit-test';
  * - menu "Ver missões"
  */
 
-/** Sprite grandão (paridade Codex): legível a distância no desktop. */
-const SPRITE_SIZE = 200;
-/** Altura do sheet no desktop — legível; full-res usa smooth scale. */
-const SHEET_SIZE = 280;
+/** Sprite compacto no desktop (evita o pet “gigante” em monitores 1x/2x). */
+const SPRITE_SIZE = 96;
+/** Altura do sheet no desktop — compacta; full-res usa smooth scale. */
+const SHEET_SIZE = 120;
 /** Limiar baixo: o utilizador reportava ter de “forçar” o rato para arrastar. */
 const DRAG_THRESHOLD_PX = 2;
 /** Re-sync IPC no máximo a cada N ms enquanto o cursor está sobre o hit. */
@@ -483,9 +483,9 @@ export function PetApp() {
               sheet={prefs.sheet}
               anim={sheetAnim}
               lookDir={lookDir}
-              // Reserva altura para o balão dentro do BrowserWindow de
-              // 360px; sem isto o sheet 3D de 280px podia recortar o aviso.
-              size={balloon ? 220 : SHEET_SIZE}
+              // Reserva altura para o balão dentro do BrowserWindow compacto;
+              // com balão o sheet encolhe um pouco para não recortar o aviso.
+              size={balloon ? Math.min(SHEET_SIZE, 100) : SHEET_SIZE}
             />
           ) : prefs.preset === 'custom' && prefs.customGrid ? (
             <CustomPetSprite grid={prefs.customGrid} size={SPRITE_SIZE} />

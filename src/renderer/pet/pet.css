@@ -45,8 +45,8 @@ body,
 
 /*
  * Canto visual sem overhang nativo: desloca somente o conteúdo opaco dentro
- * dos 380×360 px transparentes. Assim o mascote toca o canto e o WindowServer
- * nunca recebe pixels fora do display.
+ * da janela transparente compacta. Assim o mascote toca o canto e o
+ * WindowServer nunca recebe pixels fora do display.
  */
 .pet--left {
   align-items: flex-start;
@@ -171,15 +171,15 @@ body,
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-width: 260px;
-  margin-bottom: 10px;
-  padding: 10px 12px;
+  max-width: 160px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
   border: 1px solid var(--pet-accent);
   border-radius: 10px;
   background: color-mix(in srgb, var(--pet-bg) 94%, #000);
   color: var(--pet-text);
   font-family: var(--pet-font);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.35;
   text-align: left;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
