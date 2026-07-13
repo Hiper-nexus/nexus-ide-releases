@@ -126,7 +126,7 @@ export async function runContextBootstrapAutopilot(
   const autoReview = options.autoReview !== false;
   const autoCommit = options.autoCommit !== false;
   const maxAutoReviews = Math.min(
-    Math.max(1, options.maxAutoReviews ?? 8),
+    Math.max(1, options.maxAutoReviews ?? 16),
     16,
   );
   const workflow = getContextWorkflowService(options.scope);
@@ -313,6 +313,66 @@ export async function runContextBootstrapAutopilot(
             error: error instanceof Error ? error.message : String(error),
           };
         }
+      }
+    }
+
+    // A rejected draft may be an obsolete placeholder created by an older
+    // orientation build. When the current deterministic proposal is materially
+    // different and source-bound, replace and review it in this same Doctor
+    // pass instead of forcing the orchestrator into another discovery loop.
+    for (const rejectedId of [...rejectedDraftIds]) {
+      if (appliedDraftIds.length + rejectedDraftIds.length >= maxAutoReviews) break;
+      const rejected = knowledge.get(rejectedId);
+      const replacement = rejected
+        ? proposalsByTarget.get(rejected.targetPath)
+        : undefined;
+      if (
+        !rejected ||
+        !replacement ||
+        rejected.content === replacement.content ||
+        !isAutoReviewableBootstrapProposal(replacement)
+      ) {
+        continue;
+      }
+      try {
+        const next = knowledge.propose(
+          {
+            missionId: options.missionId ?? null,
+            targetPath: replacement.targetPath,
+            content: replacement.content,
+            expectedTargetHash: null,
+            sources: replacement.sources,
+          },
+          options.author,
+        );
+        proposedDraftIds.push(next.id);
+        outcomes.push({
+          draftId: next.id,
+          targetPath: next.targetPath,
+          status: next.status,
+          autoReviewable: true,
+        });
+        const reviewed = await reviewer.run({ scope: options.scope, draftId: next.id });
+        if (reviewed.status === 'approved' || reviewed.status === 'applied') {
+          const applied = reviewed.status === 'applied'
+            ? { draft: reviewed }
+            : knowledge.apply(next.id);
+          appliedDraftIds.push(applied.draft.id);
+          const index = outcomes.findIndex((item) => item.draftId === next.id);
+          if (index >= 0) outcomes[index] = { ...outcomes[index], status: 'applied' };
+        } else if (reviewed.status === 'rejected') {
+          rejectedDraftIds.push(next.id);
+          const index = outcomes.findIndex((item) => item.draftId === next.id);
+          if (index >= 0) outcomes[index] = { ...outcomes[index], status: 'rejected' };
+        }
+      } catch (error) {
+        outcomes.push({
+          draftId: '',
+          targetPath: replacement.targetPath,
+          status: 'review-failed',
+          autoReviewable: true,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }

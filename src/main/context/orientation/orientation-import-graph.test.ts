@@ -7,7 +7,10 @@ import { DEFAULT_ORIENTATION_LIMITS } from './orientation-types';
 import { buildOrientationImportGraph } from './orientation-import-graph';
 import { walkOrientationTree } from './orientation-walker';
 import { computeBlastRadius } from './orientation-blast-radius';
-import { buildContextBootstrapProposals } from './orientation-bootstrap-context';
+import {
+  buildContextBootstrapProposals,
+  isAutoReviewableBootstrapProposal,
+} from './orientation-bootstrap-context';
 import { ProjectOrientationService } from './orientation-service';
 
 const roots: string[] = [];
@@ -78,6 +81,7 @@ describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => 
     roots.push(root, cacheRoot);
     write(root, 'package.json', JSON.stringify({ name: 'boot-app', scripts: { test: 'vitest' } }));
     write(root, 'README.md', '# Boot\n');
+    write(root, 'PRODUCT.md', '# Product\n\n## Users\nDevelopers using AI CLIs.\n\n## Purpose\nCoordinate agents.\n');
     write(root, 'src/main.ts', 'export function main() {}\n');
 
     const service = new ProjectOrientationService({
@@ -90,5 +94,9 @@ describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => 
     expect(proposals.every((p) => p.sources.length > 0)).toBe(true);
     expect(proposals.some((p) => p.targetPath.includes('architecture'))).toBe(true);
     expect(proposals[0].content).toContain('Auto-proposed');
+    const business = proposals.find((proposal) => proposal.targetPath.endsWith('business-model.md'));
+    expect(business?.content).toContain('Developers using AI CLIs');
+    expect(business?.content).not.toContain('TODO');
+    expect(business && isAutoReviewableBootstrapProposal(business)).toBe(true);
   });
 });

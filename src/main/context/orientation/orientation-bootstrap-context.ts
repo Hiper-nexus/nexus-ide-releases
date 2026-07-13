@@ -28,6 +28,18 @@ function sha256File(root: string, relative: string): string | null {
   }
 }
 
+function readSourceText(root: string, relative: string): string | null {
+  try {
+    const absolute = path.join(root, relative);
+    const stat = fs.lstatSync(absolute);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 1024 * 1024) return null;
+    const content = fs.readFileSync(absolute, 'utf8').trim();
+    return content && !content.includes('\0') ? content.slice(0, 48_000) : null;
+  } catch {
+    return null;
+  }
+}
+
 function collectSources(
   root: string,
   candidates: readonly string[],
@@ -199,25 +211,32 @@ export function buildContextBootstrapProposals(
   }
 
   if (missing.has('.context/docs/business-model.md')) {
-    const content = [
-      '# Business model',
-      '',
-      `> Auto-proposed skeleton from orientation (${map.mapHash.slice(0, 12)}).`,
-      `> Must be rewritten with real product/revenue rules before authority.`,
-      '',
-      '## Customers',
-      '',
-      '- TODO: who pays / who uses this product?',
-      '',
-      '## Value',
-      '',
-      '- TODO: what job is completed for the customer?',
-      '',
-      '## Constraints',
-      '',
-      '- TODO: non-negotiable business rules (tenancy, billing, privacy).',
-      '',
-    ].join('\n');
+    const productSource = ['PRODUCT.md', 'README.md']
+      .map((file) => ({ file, content: readSourceText(root, file) }))
+      .find((entry) => entry.content);
+    const content = productSource
+      ? [
+          '# Business model',
+          '',
+          `> Source-bound product context copied from \`${productSource.file}\`.`,
+          '> Independent review must reject any claim not present in that source.',
+          '',
+          productSource.content,
+          '',
+          '## Explicit unknowns',
+          '',
+          '- Revenue, pricing, billing and tenancy rules are not asserted unless the source above states them.',
+          '',
+        ].join('\n')
+      : [
+          '# Business model',
+          '',
+          `> Auto-proposed skeleton from orientation (${map.mapHash.slice(0, 12)}).`,
+          '> Product authority is absent from the repository.',
+          '',
+          '- TODO: add source-backed customers, value and non-negotiable rules.',
+          '',
+        ].join('\n');
     const sources = collectSources(root, map.docs.rootDocs.length > 0
       ? map.docs.rootDocs
       : map.inventory.manifests);
@@ -236,14 +255,14 @@ export function buildContextBootstrapProposals(
   if (missing.has('.context/docs/domain-glossary.md')) {
     const terms = map.symbols.hubs
       .slice(0, 20)
-      .map((h) => `- **${h.name}**: TODO — define domain meaning (code hub at \`${h.samplePaths[0] ?? '?'}\`)`)
+      .map((h) => `- **${h.name}**: observed repository symbol hub at \`${h.samplePaths[0] ?? '?'}\`; no additional business meaning is asserted.`)
       .join('\n');
     const content = [
       '# Domain glossary',
       '',
       `> Auto-proposed term list from code hubs (${map.mapHash.slice(0, 12)}).`,
       '',
-      terms || '- TODO: add domain terms',
+      terms || '- No domain symbol hubs were detected; no terminology is asserted.',
       '',
     ].join('\n');
     const sources = collectSources(root, sourceCandidates);
@@ -343,7 +362,6 @@ export function isAutoReviewableBootstrapProposal(
   proposal: BootstrapDocProposal,
 ): boolean {
   if (/\bTODO\b/.test(proposal.content)) return false;
-  if (proposal.targetPath.includes('business-model')) return false;
   // Glossary with TODO markers is product work, not structural truth.
   if (proposal.targetPath.includes('domain-glossary') && /\bTODO\b/.test(proposal.content)) {
     return false;

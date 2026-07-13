@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   selectQuorum: vi.fn(),
   reviewerRun: vi.fn(),
   list: vi.fn(() => [] as ContextDraftRecord[]),
+  readDraft: vi.fn(),
 }));
 
 vi.mock('./context-workflow-registry', () => ({
@@ -43,6 +44,7 @@ vi.mock('./context-workflow-registry', () => ({
   }),
   getContextKnowledgeService: () => ({
     list: mocks.list,
+    get: mocks.readDraft,
     propose: mocks.propose,
     apply: mocks.apply,
     commitApplied: mocks.commitApplied,
@@ -164,6 +166,48 @@ describe('runContextBootstrapAutopilot', () => {
     mocks.list.mockReturnValue([]);
     mocks.propose.mockClear();
     mocks.reviewerRun.mockClear();
+  });
+  it('replaces a rejected stale placeholder and reviews the current source-bound proposal', async () => {
+    mocks.inspectReadiness.mockReturnValue(mocks.readiness);
+    const stale = Object.freeze({
+      ...draft('draft-stale', 'proposed'),
+      content: '# Architecture\nTODO: describe it\n',
+    });
+    mocks.proposals = [{
+      targetPath: '.context/docs/architecture.md',
+      content: '# Architecture\nObserved from package.json.\n',
+      sources: [{ type: 'file', locator: 'package.json', sourceHash: 'b'.repeat(64) }],
+      rationale: 'arch',
+    }];
+    mocks.list.mockReturnValue([stale]);
+    mocks.readDraft.mockReturnValue(stale);
+    mocks.ensure.mockResolvedValue({ docs: { hasContextScaffold: true }, status: 'ready' });
+    mocks.selectQuorum.mockReturnValue({ adapterId: 'claude' });
+    mocks.reviewerRun
+      .mockResolvedValueOnce(draft('draft-stale', 'rejected'))
+      .mockResolvedValueOnce(draft('draft-replacement', 'approved'));
+    mocks.propose.mockReturnValue(draft('draft-replacement', 'proposed'));
+    mocks.apply.mockReturnValue({
+      draft: draft('draft-replacement', 'applied'),
+      attestation: {},
+      attestationPath: '.context/nexus/attestations/x.json',
+      replacedAttestationPaths: [],
+    });
+
+    const result = await runContextBootstrapAutopilot({
+      scope,
+      author,
+      autoCommit: false,
+      createReviewer: () => ({ run: mocks.reviewerRun }),
+    });
+
+    expect(mocks.reviewerRun).toHaveBeenNthCalledWith(1, { scope, draftId: 'draft-stale' });
+    expect(mocks.reviewerRun).toHaveBeenNthCalledWith(2, { scope, draftId: 'draft-replacement' });
+    expect(result.appliedDraftIds).toContain('draft-replacement');
+    mocks.list.mockReturnValue([]);
+    mocks.readDraft.mockReset();
+    mocks.reviewerRun.mockReset();
+    mocks.propose.mockReset();
   });
   it('proposes drafts and skips review when quorum is missing', async () => {
     mocks.inspectReadiness.mockReturnValue(mocks.readiness);
