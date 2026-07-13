@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import bundledSystemPrompt from '../prompts/system.en.md?raw';
 import { resolveVoiceApiKey } from '../../voice/voice-secrets';
 import type { VoiceConfig } from '../../../shared/voice-config';
+import { coarseVoiceToolsAsRealtimeDefinitions } from './coarse-voice-tools';
 import { GeminiLiveProvider } from './gemini-live-provider';
 import { createNexusRealtimeTools } from './nexus-realtime-tools';
 import { createGeminiRealtimeTools } from './gemini-realtime-tools';
@@ -172,7 +173,10 @@ export function createRealtimeProviderCandidates(
               model: live.openaiModel,
               voice,
               instructions,
-              tools: createNexusRealtimeTools(),
+              tools: [
+                ...coarseVoiceToolsAsRealtimeDefinitions(),
+                ...createNexusRealtimeTools(),
+              ],
             }),
           });
         }

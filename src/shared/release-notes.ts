@@ -15,9 +15,9 @@ export interface AppRelease {
 export const CURRENT_RELEASE: AppRelease = {
   version: '0.15.5',
   date: '2026-07-13',
-  codename: 'Direct Operations',
+  codename: 'Direct Operations & Voice Reliability',
   summary:
-    'Jarvis agora distingue operações diretas de missões: sincronização Git segura não abre squad, pane, terminal ou Doctor.',
+    'Jarvis separa operações diretas de missões e fecha falhas de voz do app empacotado e de handoff realtime.',
   highlights: [
     {
       title: 'Sincronização Git direta',
@@ -33,6 +33,16 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Recibos falados reais',
       detail:
         'A Jarvis informa atualizado, já atualizado ou bloqueado com o motivo sem afirmar progresso por suposição.',
+    },
+    {
+      title: 'Microfone confiável no app instalado',
+      detail:
+        'Wake e captura carregam o worklet PCM por blob compatível com a CSP, sem fallback silencioso para o processador lento.',
+    },
+    {
+      title: 'Realtime coerente entre provedores',
+      detail:
+        'A rota OpenAI recebe as mesmas ferramentas curtas de consultar e ler usadas pela rota Gemini.',
     },
   ],
   fixes: [
@@ -50,6 +60,11 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Autoridade estreita',
       detail:
         'Somente a rota renderer do usuário pode disparar essa operação; agentes MCP não recebem esse atalho antes de uma missão.',
+    },
+    {
+      title: 'Sem chamada de voz pendurada',
+      detail:
+        'Durante handoff ou encerramento, a chamada realtime recebe erro explícito em vez de deixar o modelo aguardando sem resposta.',
     },
     {
       title: 'Release consistente',

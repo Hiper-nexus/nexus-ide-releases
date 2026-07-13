@@ -3,8 +3,8 @@
 // 16kHz); posting each quantum caused 125 structured-clone/store updates per
 // second while the always-on wake mic was idle. 640 samples keeps endpointing
 // responsive and matches Gemini Live's recommended 20–40ms input chunks.
-// Plain JS (not TS) so it can be loaded verbatim as a worklet module via Vite's
-// `?url` import — it runs in the AudioWorkletGlobalScope, not the DOM.
+// Plain JS (not TS) so it can be embedded verbatim and loaded as a blob: URL
+// by pcm-worklet.ts. It runs in the AudioWorkletGlobalScope, not the DOM.
 const FRAME_SAMPLES = 640;
 
 class PcmProcessor extends AudioWorkletProcessor {

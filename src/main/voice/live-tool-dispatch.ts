@@ -19,6 +19,7 @@ import {
   type NexusRealtimeActionArgs,
 } from '../jarvis/realtime/nexus-realtime-tools';
 import { jarvisLatencyTracker } from '../jarvis/realtime/metrics';
+import { isLocalToolCallId } from './live-transport-helpers';
 import type { RealtimeToolCallEvent, TurnManagedRealtimeProvider } from '../jarvis/realtime/provider';
 import type { JarvisLiveSession } from './jarvis-live';
 import type { JarvisLiveToolEvent, JarvisLiveToolResultEvent } from '../../shared/voice-ipc';
@@ -82,6 +83,26 @@ export interface ToolDispatchHost {
   onStop(): void;
   /** Hard teardown — closes the socket immediately (encerrar / farewell). */
   hardStop(): void;
+}
+
+/**
+ * A provider tool call must always receive an output. The session FSM can
+ * refuse an event during teardown or ownership handover; replying directly in
+ * that narrow case prevents the realtime model from waiting forever.
+ */
+export function answerProviderWithoutSession(
+  host: ToolDispatchHost,
+  call: RealtimeToolCallEvent,
+  payload: { ok: boolean; tool: string; summary: string; output: unknown },
+): void {
+  logVoice(
+    'warn',
+    'live.toolResultFsmDropped',
+    'FSM sem sessão — resultado enviado direto ao provider',
+    { callId: call.callId, name: call.name, tool: payload.tool },
+  );
+  if (!call.callId || isLocalToolCallId(call.callId) || !host.provider?.isReady) return;
+  host.provider.sendToolResult(call.callId, payload);
 }
 
 export function handleCoarseVoiceToolCall(host: ToolDispatchHost, call: RealtimeToolCallEvent): void {
@@ -167,7 +188,15 @@ export function dispatchNexusAction(
     summary: summarizeNexusRealtimeAction(args),
     args: argsRecord,
   });
-  if (!event) return;
+  if (!event) {
+    answerProviderWithoutSession(host, call, {
+      ok: false,
+      tool: action?.type ?? 'none',
+      summary: 'sessão de voz indisponível',
+      output: { error: 'session_unavailable' },
+    });
+    return;
+  }
   if (action) {
     if (args.action === 'send_to_pane') host.markDelegationAttempt?.();
     if (host.currentTurnId) {
@@ -178,6 +207,12 @@ export function dispatchNexusAction(
     host.armToolResultTimeout(event);
     return;
   }
+  const invalidSummary = `ação realtime inválida: ${summarizeNexusRealtimeAction(args)}`;
+  const invalidOutput = {
+    error: 'invalid_action',
+    expected: 'valid Nexus action arguments',
+    args: argsRecord,
+  };
   const result = host.fsm.toolResult({
     source: 'realtime',
     callId: call.callId,
@@ -185,10 +220,16 @@ export function dispatchNexusAction(
     tool: event.tool,
     args: argsRecord,
     ok: false,
-    summary: `ação realtime inválida: ${summarizeNexusRealtimeAction(args)}`,
-    output: { error: 'invalid_action', expected: 'valid Nexus action arguments', args: argsRecord },
+    summary: invalidSummary,
+    output: invalidOutput,
   });
   if (result) host.toolResult(result);
+  else answerProviderWithoutSession(host, call, {
+    ok: false,
+    tool: event.tool,
+    summary: invalidSummary,
+    output: invalidOutput,
+  });
 }
 
 function answerDirectToolCall(
@@ -220,13 +261,21 @@ function answerDirectToolCall(
     summary,
     args: call.arguments,
   });
-  if (!event) return;
   const context = buildDirectAnswerContext(host);
   const output =
     context ||
     (resolution.intent === 'consult'
       ? 'Sem contexto de tela disponível agora.'
       : 'Sem output de pane disponível agora.');
+  if (!event) {
+    answerProviderWithoutSession(host, call, {
+      ok: false,
+      tool: 'none',
+      summary: 'sessão de voz indisponível',
+      output: { error: 'session_unavailable' },
+    });
+    return;
+  }
   const result = host.fsm.toolResult({
     source: 'realtime',
     callId: call.callId,
@@ -238,6 +287,7 @@ function answerDirectToolCall(
     output,
   });
   if (result) host.toolResult(result);
+  else answerProviderWithoutSession(host, call, { ok: true, tool: 'none', summary, output });
 }
 
 function answerEndToolCall(host: ToolDispatchHost, call: RealtimeToolCallEvent): void {
@@ -259,7 +309,16 @@ function answerEndToolCall(host: ToolDispatchHost, call: RealtimeToolCallEvent):
     summary: 'encerrar sessão',
     args: call.arguments,
   });
-  if (!event) return;
+  if (!event) {
+    answerProviderWithoutSession(host, call, {
+      ok: true,
+      tool: 'none',
+      summary: 'encerrar sessão',
+      output: { ended: true },
+    });
+    host.hardStop();
+    return;
+  }
   const result = host.fsm.toolResult({
     source: 'realtime',
     callId: call.callId,
@@ -290,7 +349,10 @@ export function rejectToolCall(
     summary: reason,
     args: call.arguments,
   });
-  if (!event) return;
+  if (!event) {
+    answerProviderWithoutSession(host, call, { ok: false, tool: 'none', summary: reason, output });
+    return;
+  }
   const result = host.fsm.toolResult({
     source: 'realtime',
     callId: call.callId,
@@ -302,6 +364,7 @@ export function rejectToolCall(
     output,
   });
   if (result) host.toolResult(result);
+  else answerProviderWithoutSession(host, call, { ok: false, tool: 'none', summary: reason, output });
 }
 
 export function buildDirectAnswerContext(host: ToolDispatchHost): string {

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  answerProviderWithoutSession,
   isExplicitEngineeringWorkIntent,
   isExplicitNewWorkspaceIntent,
   sanitizeNexusActionArgs,
@@ -7,6 +8,40 @@ import {
 import type { NexusRealtimeActionArgs } from '../jarvis/realtime/nexus-realtime-tools';
 
 const hasQuestionOn = (validPaneId: string) => (paneId: string) => paneId === validPaneId;
+
+describe('answerProviderWithoutSession', () => {
+  it('returns a failed tool output directly to a ready provider', () => {
+    const sendToolResult = vi.fn();
+    answerProviderWithoutSession(
+      {
+        provider: { isReady: true, sendToolResult },
+      } as never,
+      { callId: 'call-1', name: 'consultar', arguments: {}, argumentsJson: '{}' },
+      {
+        ok: false,
+        tool: 'none',
+        summary: 'sessão de voz indisponível',
+        output: { error: 'session_unavailable' },
+      },
+    );
+    expect(sendToolResult).toHaveBeenCalledWith('call-1', {
+      ok: false,
+      tool: 'none',
+      summary: 'sessão de voz indisponível',
+      output: { error: 'session_unavailable' },
+    });
+  });
+
+  it('never emits an output for local synthetic calls', () => {
+    const sendToolResult = vi.fn();
+    answerProviderWithoutSession(
+      { provider: { isReady: true, sendToolResult } } as never,
+      { callId: 'local:consult:1', name: 'consultar', arguments: {}, argumentsJson: '{}' },
+      { ok: false, tool: 'none', summary: 'indisponível', output: {} },
+    );
+    expect(sendToolResult).not.toHaveBeenCalled();
+  });
+});
 
 describe('sanitizeNexusActionArgs (C3 follow-up 2)', () => {
   it('mantém paneId de send_to_pane quando o pane TEM pergunta pendente no router', () => {

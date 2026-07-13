@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.15.5 — Direct Operations
+## 0.15.5 — Direct Operations & Voice Reliability
 
 Data: 2026-07-13
 
@@ -12,6 +12,20 @@ Data: 2026-07-13
 - Histórico divergente, commits locais, alterações rastreadas, upstream ausente
   ou possível colisão local bloqueiam com recibo claro, sem stage, commit,
   rebase, push ou sobrescrita.
+- Missões, preferências do rail e restauração de panes agora são estritamente
+  delimitadas pelo workspace atual; uma sessão de outro projeto não volta à tela
+  ativa por engano.
+
+### Voz em produção
+- O processador PCM de wake e captura passa a ser carregado por `blob:`
+  compatível com a CSP do app empacotado. Isso elimina a queda silenciosa para
+  ScriptProcessor causada pelo `data:` URL do Vite e registra qualquer fallback
+  real no log de voz.
+- OpenAI Realtime recebe as mesmas ferramentas curtas de consulta/leitura da
+  rota Gemini, para responder estado da tela sem inventar uma ação de UI.
+- Quando uma chamada realtime chega durante handoff/encerramento da sessão, a
+  Jarvis devolve um resultado explícito ao modelo em vez de deixá-lo esperando
+  indefinidamente.
 
 ### Integridade
 - A rota direta só está disponível à ação iniciada pelo usuário no renderer;

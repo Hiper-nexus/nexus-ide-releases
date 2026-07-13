@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   COARSE_VOICE_TOOLS,
   COARSE_VOICE_TOOL_NAMES,
+  coarseVoiceToolsAsRealtimeDefinitions,
   resolveCoarseVoiceTool,
 } from './coarse-voice-tools';
 
@@ -40,6 +41,19 @@ describe('COARSE_VOICE_TOOLS declarations', () => {
 
   it('COARSE_VOICE_TOOL_NAMES matches the declarations', () => {
     expect([...COARSE_VOICE_TOOL_NAMES]).toEqual(COARSE_VOICE_TOOLS.map((t) => t.name));
+  });
+
+  it('converts the same coarse surface to OpenAI JSON schema', () => {
+    const defs = coarseVoiceToolsAsRealtimeDefinitions();
+    expect(defs.map((tool) => tool.name)).toEqual([...COARSE_VOICE_TOOL_NAMES]);
+    for (const definition of defs) {
+      expect(definition.type).toBe('function');
+      expect(definition.parameters.type).toBe('object');
+    }
+    const consultar = defs.find((tool) => tool.name === 'consultar');
+    expect(consultar?.parameters.required).toEqual(['pergunta']);
+    const ler = defs.find((tool) => tool.name === 'ler');
+    expect(ler?.parameters.required).toBeUndefined();
   });
 });
 
