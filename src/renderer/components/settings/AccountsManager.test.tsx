@@ -76,9 +76,10 @@ describe('AccountsManager', () => {
     expect(host.textContent).toContain('Login verificado');
     expect(host.textContent).toContain('API key');
     expect(host.textContent).toMatch(/multi-conta/i);
-    expect(host.textContent).toMatch(/adicionar a 1ª conta/i);
+    // Login verificado + sessão nativa = 1ª já em uso → próximo add é a 2ª.
+    expect(host.textContent).toMatch(/adicionar a 2ª conta/i);
+    expect(host.textContent).not.toMatch(/adicionar a 1ª conta/i);
     expect(host.textContent).toMatch(/nenhuma conta reserva/i);
-    expect(host.textContent).toMatch(/2ª conta|outra conta/i);
     // Snapshot button appears after supportsSnapshot resolves.
     expect(host.textContent).toMatch(/sessão logada/i);
     act(() => root.unmount());

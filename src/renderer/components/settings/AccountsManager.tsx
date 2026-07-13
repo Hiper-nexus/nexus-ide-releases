@@ -366,6 +366,21 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
 
   const vaultCount = accounts.length;
   const multiReady = vaultCount >= 2;
+  // Em uso já conta como 1ª (vault ativa ou sessão nativa logada). O próximo
+  // add NÃO é "1ª conta" — é a 2ª (ou N+1 no vault).
+  const hasEmUso = Boolean(active) || auth?.state === 'ok';
+  const addStepTitle = (() => {
+    if (vaultCount === 0 && hasEmUso) return 'Adicionar a 2ª conta';
+    if (vaultCount === 0) return 'Adicionar a 1ª conta';
+    if (vaultCount === 1) return 'Adicionar a 2ª conta';
+    return `Adicionar a ${vaultCount + 1}ª conta`;
+  })();
+  const addStepSub =
+    vaultCount === 0 && hasEmUso
+      ? 'A sessão em uso já é a 1ª. Grave outra assinatura ou API key no vault como reserva (2ª, 3ª…).'
+      : vaultCount === 0
+        ? 'Primeira entrada no vault deste provider. Depois pode repetir para multi-conta.'
+        : `Já há ${vaultCount} no vault. Cada nova entrada vira mais um slot para failover.`;
 
   return (
     <div className="acct">
@@ -464,20 +479,8 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
       <div className="acct__add-zone" data-open={addMode !== null ? 'true' : 'false'}>
         <div className="acct__add-head">
           <div className="acct__add-head-copy">
-            <span className="acct__section-kicker">
-              3 · {vaultCount === 0 ? 'Adicionar a 1ª conta' : 'Adicionar outra conta'}
-            </span>
-            <p className="acct__add-sub">
-              Pode repetir quantas vezes quiser — cada entrada vira slot no
-              vault para multi-conta.
-              {vaultCount > 0 && (
-                <>
-                  {' '}
-                  Agora: <strong>{vaultCount}</strong> no vault
-                  {standby.length > 0 ? ` (${standby.length} reserva)` : ''}.
-                </>
-              )}
-            </p>
+            <span className="acct__section-kicker">3 · {addStepTitle}</span>
+            <p className="acct__add-sub">{addStepSub}</p>
           </div>
         </div>
 
@@ -488,7 +491,7 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
                 type="button"
                 className="settings-btn settings-btn--primary acct__add-choice"
                 onClick={() => setAddMode('subscription')}
-                title={`Salva a sessão OAuth/login atual de ${adapterId} como mais uma conta`}
+                title={`Salva a sessão OAuth/login atual de ${adapterId} como mais uma conta no vault`}
               >
                 <span className="acct__add-choice-icon" aria-hidden="true">
                   <PixelIcon name="id-badge" size={14} />
@@ -496,8 +499,9 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
                 <span className="acct__add-choice-text">
                   <strong>Sessão logada</strong>
                   <span>
-                    Grava o login atual de {adapterId} no vault — ideal para
-                    2ª assinatura sem re-login
+                    {hasEmUso && vaultCount === 0
+                      ? `Guarda o login de ${adapterId} no vault como 2ª conta (ou troca de conta no CLI e salva de novo)`
+                      : `Grava o login atual de ${adapterId} no vault — sem re-login no hot-swap`}
                   </span>
                 </span>
                 <span className="acct__add-plus" aria-hidden="true">
@@ -509,7 +513,7 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
               type="button"
               className="settings-btn acct__add-choice"
               onClick={() => setAddMode('api-key')}
-              title="Adicionar outra conta com API key (nativa ou roteada)"
+              title="Adicionar conta com API key (nativa ou roteada)"
             >
               <span className="acct__add-choice-icon" aria-hidden="true">
                 <PixelIcon name="key" size={14} />
@@ -517,7 +521,9 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
               <span className="acct__add-choice-text">
                 <strong>API key</strong>
                 <span>
-                  Outra conta via key nativa ou upstream (GLM, OpenRouter…)
+                  {hasEmUso && vaultCount === 0
+                    ? '2ª conta via key nativa ou upstream (GLM, OpenRouter…)'
+                    : 'Conta via key nativa ou upstream (GLM, OpenRouter…)'}
                 </span>
               </span>
               <span className="acct__add-plus" aria-hidden="true">
