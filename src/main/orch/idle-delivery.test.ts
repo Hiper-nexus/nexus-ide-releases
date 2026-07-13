@@ -5,7 +5,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 
 const ptyMocks = vi.hoisted(() => ({
   state: 'busy' as string | null,
-  writes: vi.fn(() => true),
+  writes: vi.fn((_sessionId: string, _data: string) => true),
   stateTaps: [] as Array<(sessionId: string, state: string) => void>,
   exitTaps: [] as Array<(sessionId: string) => void>,
 }));
@@ -235,6 +235,38 @@ describe('idle delivery authority and lifecycle', () => {
 
     expect(ptyMocks.writes).toHaveBeenLastCalledWith('orchestrator-session', '\r');
     expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('retries Enter once when the CLI swallowed submit and stayed idle', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    await vi.advanceTimersByTimeAsync(550);
+
+    expect(ptyMocks.writes.mock.calls.filter((call) => call[1] === '\r')).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(ptyMocks.writes.mock.calls.filter((call) => call[1] === '\r')).toHaveLength(2);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('does not retry Enter after the first submit made the CLI busy', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    await vi.advanceTimersByTimeAsync(150);
+    ptyMocks.state = 'busy';
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(ptyMocks.writes.mock.calls.filter((call) => call[1] === '\r')).toHaveLength(1);
     delivery.shutdownIdleDelivery();
   });
 

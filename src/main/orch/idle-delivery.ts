@@ -42,6 +42,7 @@ interface PendingEnter {
   readonly authority: DeliveryAuthority;
   readonly handoffId: string;
   readonly timer: ReturnType<typeof setTimeout>;
+  retryTimer?: ReturnType<typeof setTimeout>;
 }
 
 const queues = new Map<string, QueuedHandoff[]>();
@@ -144,15 +145,29 @@ function isCurrentAuthority(authority: DeliveryAuthority): boolean {
 function scheduleEnter(authority: DeliveryAuthority, handoffId: string): void {
   let pending: PendingEnter;
   const timer = setTimeout(() => {
-    pendingEnters.delete(pending);
     if (isCurrentAuthority(authority)) {
       const submitted = orchWriteSession(authority.sessionId, '\r');
       if (submitted) {
         // `delivered` means the complete prompt was submitted to the live TUI,
         // not merely painted into its input buffer.
         getProjectDomainStores(authority.scope).handoffs.markDelivered(handoffId);
+        // Some interactive CLIs consume the first CR while leaving the pasted
+        // prompt in their editor (notably after resume/modal transitions). A
+        // bounded second CR is safe only while the exact session is still
+        // idle; once it became busy the first submit is proven and we stop.
+        pending.retryTimer = setTimeout(() => {
+          if (
+            isCurrentAuthority(authority) &&
+            getSessionState(authority.sessionId) === 'idle'
+          ) {
+            orchWriteSession(authority.sessionId, '\r');
+          }
+          pendingEnters.delete(pending);
+        }, 400);
+        return;
       }
     }
+    pendingEnters.delete(pending);
   }, 150);
   pending = { authority, handoffId, timer };
   pendingEnters.add(pending);
@@ -202,6 +217,7 @@ export function initIdleDelivery(): void {
     for (const pending of [...pendingEnters]) {
       if (pending.authority.sessionId !== sessionId) continue;
       clearTimeout(pending.timer);
+      if (pending.retryTimer) clearTimeout(pending.retryTimer);
       pendingEnters.delete(pending);
     }
   });
@@ -225,6 +241,7 @@ export function initIdleDelivery(): void {
           continue;
         }
         clearTimeout(pending.timer);
+        if (pending.retryTimer) clearTimeout(pending.retryTimer);
         pendingEnters.delete(pending);
       }
     },
@@ -239,7 +256,10 @@ export function shutdownIdleDelivery(): void {
   untapExit = null;
   unsubscribeScopeChanges = null;
   queues.clear();
-  for (const pending of pendingEnters) clearTimeout(pending.timer);
+  for (const pending of pendingEnters) {
+    clearTimeout(pending.timer);
+    if (pending.retryTimer) clearTimeout(pending.retryTimer);
+  }
   pendingEnters.clear();
 }
 

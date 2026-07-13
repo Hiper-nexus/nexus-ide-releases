@@ -18,6 +18,7 @@ const READ_ONLY_TOOLS = new Set([
   'browser_screenshot',
   'browser_wait',
   'context_draft_get',
+  'context_draft_list',
   'code_map_get',
   'code_map_query',
   'code_map_blast_radius',

@@ -14,6 +14,7 @@ describe('MCP effect policy', () => {
   it('allows only the context and mission bootstrap chain pre-contract', () => {
     expect(effectPolicyForTool('nexus_mission_create')).toBe('bootstrap-authority');
     expect(effectPolicyForTool('nexus_context_doctor')).toBe('bootstrap-authority');
+    expect(effectPolicyForTool('nexus_context_draft_list')).toBe('read-only');
     expect(effectPolicyForTool('nexus_context_draft_review_run')).toBe(
       'bootstrap-authority',
     );
