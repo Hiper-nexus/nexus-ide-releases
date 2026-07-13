@@ -220,6 +220,12 @@ import {
   startCronLoop,
   stopCronLoop,
 } from "./orch/cron-runtime";
+import {
+  configureMissionDriver,
+  disposeMissionDriverIo,
+  startMissionDriverLoop,
+  stopMissionDriverLoop,
+} from "./orch/mission-driver-io";
 import { createHttpCronBackendFromEnvironment } from "./orch/http-cron-backend";
 import {
   configureSyncRuntime,
@@ -327,6 +333,9 @@ function bootstrap(): void {
     scheduleBackend: cronBackend ?? undefined,
     listScopes: knownCronScopes,
   });
+  // Mission driver (Fases A–D): tick 30s, pure decide + active apply budgeted.
+  // Spec: docs/superpowers/specs/2026-07-13-mission-driver-design.md
+  configureMissionDriver({ listScopes: knownCronScopes });
   configureNexusDoctorRuntime({
     runtimeManager: projectRuntimeManager,
     multiPc: {
@@ -420,6 +429,8 @@ function bootstrap(): void {
     });
   // Cron: squads/agentes agendados (tick 60s, skip-if-stale).
   startCronLoop();
+  // Mission driver active loop (tick 30s, budgeted apply). Spec 2026-07-13-mission-driver.
+  startMissionDriverLoop();
   // Deep link nexus:// vindo no lançamento a frio (após a janela existir) +
   // auto-updater (opt-in por ambiente; no-op sem servidor configurado).
   consumeLaunchDeepLink();
@@ -607,6 +618,8 @@ function shutdown(): Promise<void> {
     shutdownGamificationService();
     stopCronLoop();
     disposeCronRuntime();
+    stopMissionDriverLoop();
+    disposeMissionDriverIo();
     disposeSyncRuntime();
     disposeNexusDoctorRuntime();
     disposeAuditLogRuntime();

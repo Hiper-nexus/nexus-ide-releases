@@ -14,6 +14,7 @@ function mkMission(over: Partial<Mission> & { id: string }): Mission {
     description: '',
     status: 'pending',
     milestones: [],
+    learnings: '',
     createdAt: 1_000,
     updatedAt: 1_000,
     ...over,

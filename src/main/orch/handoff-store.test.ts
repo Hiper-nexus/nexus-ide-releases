@@ -346,18 +346,27 @@ describe('scoped handoff store', () => {
 
   it('migrates legacy handoffs as unverified and makes evidence bindings immutable', () => {
     const scope = testProjectScope();
+    // Pre-008 schema (no trusted evidence columns, no learnings). Insert mission
+    // via raw SQL so the modern ScopedMissionStore (which expects learnings) is
+    // not used against the legacy shape.
     const legacyManager = manager(INITIAL_PROJECT_MIGRATIONS.slice(0, 7));
-    const missions = createScopedMissionStore(legacyManager, scope, {
-      idFactory: () => 'mission-a',
-    });
-    missions.create({ title: 'Mission A' });
-    legacyManager.open(scope).db.prepare(
-      `INSERT INTO handoffs
-         (id, mission_id, session_id, status, summary, artifacts_json,
-          delivered, created_at)
-       VALUES ('legacy-handoff', 'mission-a', 'legacy-session', 'success',
-               'legacy report', '[]', 0, 1)`,
-    ).run();
+    const legacyDb = legacyManager.open(scope).db;
+    legacyDb
+      .prepare(
+        `INSERT INTO missions
+           (id, title, description, status, milestones_json, created_at, updated_at)
+         VALUES ('mission-a', 'Mission A', '', 'pending', '[]', 1, 1)`,
+      )
+      .run();
+    legacyDb
+      .prepare(
+        `INSERT INTO handoffs
+           (id, mission_id, session_id, status, summary, artifacts_json,
+            delivered, created_at)
+         VALUES ('legacy-handoff', 'mission-a', 'legacy-session', 'success',
+                 'legacy report', '[]', 0, 1)`,
+      )
+      .run();
     legacyManager.closeAll();
 
     const upgradedManager = manager();

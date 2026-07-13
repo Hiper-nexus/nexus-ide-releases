@@ -276,6 +276,7 @@ describe('ProjectRuntimeManager physical isolation', () => {
       ).map((column) => column.name),
     );
     expect(missionColumns).toContain('orch_session_id');
+    expect(missionColumns).toContain('learnings');
     expect(missionColumns).not.toContain('orchestrator_run_id');
     const handoffColumns = new Set(
       (

@@ -95,7 +95,8 @@ function MissionRow({
       )}
       {mission.milestones.length > 0 && (
         <p className="orch-item__detail">
-          Marcos: {mission.milestones.join(' · ')}
+          Marcos:{' '}
+          {mission.milestones.map((step) => step.label).join(' · ')}
         </p>
       )}
       <span className="orch-item__meta">{timeLabel(mission.createdAt)}</span>
