@@ -1,7 +1,15 @@
-import { canMarkMilestoneDone } from '../../shared/orch-types';
+import {
+  canMarkMilestoneDone,
+  type MissionPaneSpec,
+  type PaneSnapshot,
+} from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { onHandoffSubmitted } from './idle-delivery';
+import {
+  listPaneSnapshots,
+  requestMissionPaneRecovery,
+} from './pane-registry';
 import {
   deriveDriveState,
   unusedTrustedEvidenceIds,
@@ -37,15 +45,39 @@ function driveKey(missionId: string, scope: ProjectExecutionScope): string {
 
 /** Memória em-processo do último signal-stall emitido pelo drive (debounce). */
 const driveSignalMemory = new Map<string, number>();
-/** Memória em-processo do contador de iterações (budget). */
-const driveIterationMemory = new Map<string, number>();
-/** Memória em-processo do lastActionAt (exponential backoff). */
-const driveLastActionMemory = new Map<string, number>();
 /**
- * Wall-clock budget anchor: first time the driver observed this mission as
- * running. Using mission.createdAt would exhaust maxWallClockMs for old rows.
+ * Shadow mode remains observation-only, so its debounce/start anchors stay in
+ * memory. Active mode uses mission_drive_state and survives app restarts.
  */
 const driveStartedAtMemory = new Map<string, number>();
+
+function snapshotForPersistedPane(
+  missionId: string,
+  persisted: MissionPaneSpec,
+  snapshots: readonly PaneSnapshot[],
+): PaneSnapshot | undefined {
+  return snapshots.find(
+    (pane) =>
+      pane.missionId === missionId &&
+      pane.role === persisted.role &&
+      pane.paneId === persisted.paneId,
+  );
+}
+
+/** Stable identity makes a missing worker/orchestrator recoverable after exit. */
+export function findDeadMissionPane(
+  missionId: string,
+  persisted: readonly MissionPaneSpec[],
+  snapshots: readonly PaneSnapshot[],
+): MissionPaneSpec | null {
+  return (
+    persisted.find((pane) => {
+      if (!pane.paneId) return false;
+      const snapshot = snapshotForPersistedPane(missionId, pane, snapshots);
+      return !snapshot || snapshot.state === 'exited';
+    }) ?? null
+  );
+}
 
 /**
  * Loader IO: monta DriveState a partir dos stores reais (mission + handoffs,
@@ -56,6 +88,7 @@ const driveStartedAtMemory = new Map<string, number>();
 export function loadDriveState(
   missionId: string,
   scope: ProjectExecutionScope,
+  options: { readonly persistRuntime?: boolean } = {},
 ): DriveState | null {
   const stores = getProjectDomainStores(scope);
   const mission = stores.missions.get(missionId);
@@ -65,14 +98,30 @@ export function loadDriveState(
     includeDelivered: true,
   });
   const key = driveKey(missionId, scope);
-  const iteration = driveIterationMemory.get(key) ?? 0;
-  const lastActionAt = driveLastActionMemory.get(key);
-  let startedAt = driveStartedAtMemory.get(key);
+  const runtime = options.persistRuntime
+    ? stores.missions.ensureDriveRuntimeState(missionId, Date.now())
+    : null;
+  const iteration = runtime?.attemptCount ?? 0;
+  const lastActionAt = runtime?.lastAttemptAt;
+  let startedAt = runtime?.runStartedAt ?? driveStartedAtMemory.get(key);
   if (startedAt === undefined) {
-    // First observation of this running mission in this process.
     startedAt = Date.now();
     driveStartedAtMemory.set(key, startedAt);
   }
+  const persistedPanes = stores.missionPanes
+    .list(missionId)
+    .filter((pane) => pane.paneId);
+  const snapshots = listPaneSnapshots();
+  // An empty registry means the renderer has not announced itself yet. Once
+  // any pane is mirrored, a missing persisted mission pane is genuinely dead.
+  const paneDead =
+    snapshots.length > 0 &&
+    findDeadMissionPane(missionId, persistedPanes, snapshots) !== null;
+  const completionVerified = getContextWorkflowService(scope)
+    .isMissionDriverComplete(
+      missionId,
+      mission.milestones.map((milestone) => milestone.id),
+    );
   return deriveDriveState({
     mission: {
       id: mission.id,
@@ -90,6 +139,8 @@ export function loadDriveState(
     signals: {
       iteration,
       startedAt,
+      paneDead,
+      completionVerified,
       ...(lastActionAt !== undefined ? { lastActionAt } : {}),
     },
   });
@@ -107,6 +158,8 @@ export function createProductionApplyPorts(
   getStores: (
     scope: ProjectExecutionScope,
   ) => DomainStores = getProjectDomainStores,
+  recoverPane = requestMissionPaneRecovery,
+  paneSnapshots = listPaneSnapshots,
 ): ApplyActionPorts {
   const collectTrusted = (
     scope: ProjectExecutionScope,
@@ -141,23 +194,58 @@ export function createProductionApplyPorts(
       onHandoffSubmitted(handoff, scope);
     },
     respawnFreshContext: async (missionId, scope, reason) => {
-      console.info(
-        `[mission-driver:active] respawn-fresh-context mission=${missionId} ` +
-          `reason="${reason}" (learning recorded; no kill)`,
-      );
-      getStores(scope).missions.appendLearning(
+      const stores = getStores(scope);
+      const mission = stores.missions.get(missionId);
+      const persisted = stores.missionPanes
+        .list(missionId)
+        .filter((pane) => pane.paneId);
+      const snapshots = paneSnapshots();
+      const dead = findDeadMissionPane(missionId, persisted, snapshots);
+      const target =
+        dead ?? persisted.find((pane) => pane.role === 'orchestrator');
+      if (!mission || !target?.paneId) {
+        throw new Error('fresh-context rejected: persisted mission pane missing');
+      }
+      const snapshot = snapshotForPersistedPane(missionId, target, snapshots);
+      const expectedSessionId =
+        snapshot?.sessionId ??
+        (target.role === 'orchestrator'
+          ? mission.orchestratorSessionId
+          : undefined);
+      const recap = [
+        `Mission: ${mission.title}`,
+        `Recovered role: ${target.role}${target.agentName ? ` (${target.agentName})` : ''}`,
+        mission.description ? `Objective: ${mission.description}` : '',
+        mission.learnings ? `Learnings:\n${mission.learnings}` : '',
+        `Recovery reason: ${reason}`,
+        'Continue this mission from a fresh context. Inspect current repository and pane state before changing files.',
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+        .slice(0, 65_536);
+      const result = await recoverPane({
         missionId,
-        `respawn-fresh-context requested: ${reason}`,
+        paneId: target.paneId,
+        role: target.role,
+        expectedSessionId,
+        pane: target,
+        scope,
+        recap,
+      });
+      if (!result.ok || !result.sessionId) {
+        throw new Error(
+          `fresh-context failed: ${result.error ?? 'renderer did not acknowledge'}`,
+        );
+      }
+      stores.missions.appendLearning(
+        missionId,
+        `respawn-fresh-context completed (${result.sessionId}): ${reason}`,
       );
     },
-    reRoute: async (missionId, scope, reason) => {
-      console.info(
-        `[mission-driver:active] re-route mission=${missionId} reason="${reason}"`,
-      );
-      getStores(scope).missions.appendLearning(
-        missionId,
-        `re-route requested: ${reason}`,
-      );
+    reRoute: async () => {
+      // Account failover owns provider/account switching. Never report a fake
+      // success from the Ralph driver if that subsystem did not acknowledge it.
+      throw new Error('re-route is owned by the account failover controller');
     },
     advanceStep: (missionId, scope, stepId) => {
       const stores = getStores(scope);
@@ -174,40 +262,18 @@ export function createProductionApplyPorts(
       // Only unused trusted evidence may be inherited (no reuse across steps).
       const unused = unusedTrustedEvidenceIds(mission.milestones, trustSet);
       const evidenceForStep =
-        step.evidenceIds.length > 0 ? [...step.evidenceIds] : [...unused];
+        step.evidenceIds.length > 0 ? [...step.evidenceIds] : unused.slice(0, 1);
       if (!canMarkMilestoneDone({ evidenceIds: evidenceForStep }, trustSet)) {
         throw new Error(
           `advance rejected: step ${stepId} lacks nexus-trusted evidence`,
         );
       }
-      if (step.evidenceIds.length === 0 && evidenceForStep.length > 0) {
-        const nextMilestones = mission.milestones.map((item) =>
-          item.id === stepId
-            ? {
-                ...item,
-                status:
-                  item.status === 'pending'
-                    ? ('in-progress' as const)
-                    : item.status,
-                evidenceIds: evidenceForStep,
-              }
-            : item,
-        );
-        stores.missions.update(missionId, { milestones: nextMilestones });
-      }
+      // The PREVC port owns the SQLite transaction that advances the workflow,
+      // binds evidence, inserts a receipt and marks the milestone done.
+      prevc.advanceMissionStep(missionId, scope, stepId, evidenceForStep);
 
-      // Trusted-evidence gate first: mark step done before PREVC so a PREVC
-      // failure cannot leave the workflow advanced with the step non-done.
-      const updated = stores.missions.markMilestoneDone(
-        missionId,
-        stepId,
-        trustedIds,
-      );
-      if (!updated) {
-        throw new Error(
-          `advance rejected: markMilestoneDone failed for ${stepId}`,
-        );
-      }
+      const updated = stores.missions.get(missionId);
+      if (!updated) throw new Error(`advance rejected: mission ${missionId} vanished`);
       const still = updated.milestones.find((item) => item.id === stepId);
       if (still?.status !== 'done') {
         throw new Error(
@@ -215,22 +281,6 @@ export function createProductionApplyPorts(
         );
       }
 
-      // PREVC path: soft-fail — step checkpoint already secured. A frozen
-      // workflow that is not yet ready for the next stage must not roll back
-      // the mission step; next ticks / complete gate will re-check PREVC.
-      try {
-        prevc.advanceWorkflowStage(missionId, scope);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn(
-          `[mission-driver:active] PREVC advance soft-failed after step ` +
-            `${stepId} done on ${missionId}: ${message}`,
-        );
-        stores.missions.appendLearning(
-          missionId,
-          `prevc advance soft-failed after step ${stepId} done: ${message}`,
-        );
-      }
     },
     setMissionStatus: (missionId, scope, status) => {
       const updated = getStores(scope).missions.setStatus(missionId, status);
@@ -261,23 +311,18 @@ export function createProductionApplyPorts(
           );
         }
       }
-      // PREVC gate: if a workflow is frozen and not yet complete, refuse to
-      // flip mission status outside advanceWorkflow.
-      if (!prevc.isWorkflowCompleteOrAbsent(missionId, scope)) {
-        try {
-          prevc.advanceWorkflowStage(missionId, scope);
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          throw new Error(
-            `complete rejected: PREVC advance failed (${message})`,
-          );
-        }
-        if (!prevc.isWorkflowCompleteOrAbsent(missionId, scope)) {
-          throw new Error(
-            'complete rejected: PREVC workflow not complete (advanceWorkflow required)',
-          );
-        }
+      // Completion is verification-only. It never advances PREVC as a side
+      // effect and it never treats registry errors/absence as success.
+      if (
+        !prevc.isMissionComplete(
+          missionId,
+          scope,
+          mission.milestones.map((step) => step.id),
+        )
+      ) {
+        throw new Error(
+          'complete rejected: PREVC workflow or step receipts incomplete',
+        );
       }
       const current = stores.missions.get(missionId);
       if (current?.status === 'done') return;
@@ -298,6 +343,7 @@ export function createDefaultDriveDeps(options: {
   applyPorts?: ApplyActionPorts;
 }): DriveDeps {
   const config = options.config ?? defaultDriveConfig;
+  const isActive = config.mode === 'active';
   const applyPorts =
     options.applyPorts ??
     (config.mode === 'active' ? createProductionApplyPorts() : undefined);
@@ -307,24 +353,49 @@ export function createDefaultDriveDeps(options: {
       getProjectDomainStores(scope)
         .missions.list('running')
         .map((mission) => ({ id: mission.id })),
-    loadDriveState,
+    loadDriveState: (missionId, scope) =>
+      loadDriveState(missionId, scope, { persistRuntime: isActive }),
     now: () => Date.now(),
     onDecision:
       config.mode === 'active' ? logDecisionActive : logDecisionShadow,
     getDriveSignalAt: (missionId, scope) =>
-      driveSignalMemory.get(driveKey(missionId, scope)),
+      isActive
+        ? getProjectDomainStores(scope).missions.getDriveRuntimeState(missionId)
+            ?.lastSignalAt
+        : driveSignalMemory.get(driveKey(missionId, scope)),
     recordDriveSignal: (missionId, scope, at) => {
-      driveSignalMemory.set(driveKey(missionId, scope), at);
+      if (isActive) {
+        getProjectDomainStores(scope).missions.recordDriveSignal(missionId, at);
+      } else {
+        driveSignalMemory.set(driveKey(missionId, scope), at);
+      }
     },
     getIteration: (missionId, scope) =>
-      driveIterationMemory.get(driveKey(missionId, scope)) ?? 0,
-    recordIteration: (missionId, scope, next) => {
-      driveIterationMemory.set(driveKey(missionId, scope), next);
+      isActive
+        ? getProjectDomainStores(scope).missions.getDriveRuntimeState(missionId)
+            ?.attemptCount ?? 0
+        : 0,
+    reserveAttempt: (missionId, scope, actionKind, at) => {
+      if (!isActive) return;
+      getProjectDomainStores(scope).missions.reserveDriveAttempt(
+        missionId,
+        actionKind,
+        at,
+      );
     },
     getLastActionAt: (missionId, scope) =>
-      driveLastActionMemory.get(driveKey(missionId, scope)),
-    recordLastActionAt: (missionId, scope, at) => {
-      driveLastActionMemory.set(driveKey(missionId, scope), at);
+      isActive
+        ? getProjectDomainStores(scope).missions.getDriveRuntimeState(missionId)
+            ?.lastAttemptAt
+        : undefined,
+    finishAttempt: (missionId, scope, outcome, at, error) => {
+      if (!isActive) return;
+      getProjectDomainStores(scope).missions.finishDriveAttempt(
+        missionId,
+        outcome,
+        at,
+        error,
+      );
     },
     ...(applyPorts ? { applyPorts } : {}),
   };
@@ -361,8 +432,6 @@ export {
 /** Clear in-process budget/signal/backoff/start memory (tests + dispose). */
 export function resetDriveIoMemoryForTests(): void {
   driveSignalMemory.clear();
-  driveIterationMemory.clear();
-  driveLastActionMemory.clear();
   driveStartedAtMemory.clear();
 }
 

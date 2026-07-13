@@ -1,8 +1,9 @@
 import type { WebContents } from "electron";
-import type {
-  Mission,
-  MissionPaneSpec,
-  MissionPatch,
+import {
+  normalizeMilestones,
+  type Mission,
+  type MissionPaneSpec,
+  type MissionPatch,
 } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
@@ -138,8 +139,39 @@ export class RendererMissionAuthority {
         "mission done is computed only after the PREVC workflow reaches complete",
       );
     }
+    const hasForgedCompletion = patch.milestones?.some(
+      (milestone) =>
+        typeof milestone !== "string" &&
+        (milestone.status === "done" ||
+          (milestone.evidenceIds?.length ?? 0) > 0),
+    );
+    if (hasForgedCompletion) {
+      throw new Error(
+        "milestone completion and evidence are computed only by Nexus PREVC",
+      );
+    }
+    if (patch.milestones) {
+      const ids = normalizeMilestones(patch.milestones).map(
+        (milestone) => milestone.id,
+      );
+      if (new Set(ids).size !== ids.length) {
+        throw new Error("mission milestone ids must be unique");
+      }
+    }
     const scope = requireRendererWorkspaceScope(owner);
-    return this.#stores.forScope(scope).missions.update(missionId, patch);
+    const missions = this.#stores.forScope(scope).missions;
+    const current = missions.get(missionId);
+    if (!current) return null;
+    if (current.status === "done") {
+      throw new Error("completed missions are immutable");
+    }
+    if (
+      patch.milestones &&
+      current.milestones.some((milestone) => milestone.status === "done")
+    ) {
+      throw new Error("completed mission milestones are immutable");
+    }
+    return missions.update(missionId, patch);
   }
 
   createMissionFromRenderer(

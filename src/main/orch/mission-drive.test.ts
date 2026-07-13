@@ -22,6 +22,7 @@ function baseRunning(overrides: Partial<DriveState> = {}): DriveState {
     steps: [],
     trustedEvidenceReadyForCurrent: false,
     allStepsDone: false,
+    completionVerified: false,
     contextRot: false,
     paneDead: false,
     accountFailed: false,
@@ -131,9 +132,47 @@ describe('decideDriveAction', () => {
         },
       ],
       allStepsDone: true,
+      completionVerified: true,
       lastProgressAt: NOW - 1_000,
     });
     expect(decideDriveAction(state, NOW, CONFIG).kind).toBe('complete');
+  });
+
+  it('complete prevalece quando o último avanço consumiu exatamente o budget', () => {
+    const completeAtBoundary = baseRunning({
+      steps: [{
+        id: 's1',
+        label: 'A',
+        status: 'done',
+        evidenceIds: ['e1'],
+        trustedEvidenceReady: true,
+      }],
+      allStepsDone: true,
+      completionVerified: true,
+      iteration: CONFIG.maxIterations,
+      startedAt: NOW - CONFIG.maxWallClockMs,
+    });
+
+    expect(decideDriveAction(completeAtBoundary, NOW, CONFIG).kind).toBe('complete');
+  });
+
+  it('bloqueia finitamente quando milestones done não possuem receipts válidos', () => {
+    const invalidCompletion = baseRunning({
+      steps: [{
+        id: 's1',
+        label: 'A',
+        status: 'done',
+        evidenceIds: ['e1'],
+        trustedEvidenceReady: true,
+      }],
+      allStepsDone: true,
+      completionVerified: false,
+      iteration: CONFIG.maxIterations + 100,
+    });
+
+    const action = decideDriveAction(invalidCompletion, NOW, CONFIG);
+    expect(action.kind).toBe('block-human');
+    expect(action.reason).toMatch(/receipts are incomplete/i);
   });
 
   it('re-route quando accountFailed', () => {
@@ -238,6 +277,7 @@ describe('decideDriveAction', () => {
       iteration: 5,
       lastActionAt: NOW - 100, // deep inside backoff
       allStepsDone: true,
+      completionVerified: true,
       steps: [
         {
           id: 's1',

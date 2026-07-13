@@ -74,7 +74,6 @@ const domainDeps = vi.hoisted(() => {
             : [],
         ),
       },
-      // Phase D voice→mission bridge uses missions on wake detection.
       missions: {
         list: missionList,
         create: missionCreate,
@@ -640,6 +639,27 @@ describe("Voice Live IPC ownership", () => {
     expect(transcriptDeps.append).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['manual', true],
+    ['wake', true],
+    ['click', true],
+    ['ptt', true],
+    ['reply', false],
+  ] as const)(
+    'derives fresh realtime socket ownership for %s turns',
+    async (reason, freshTurn) => {
+      const owner = new TestRenderer(92);
+      scopeDeps.scopes.set(owner.id, scopeA);
+
+      await invoke(VOICE_CHANNELS.liveStart, owner, { reason });
+
+      expect(liveTransportDeps.onStart).toHaveBeenLastCalledWith({
+        greeting: undefined,
+        freshTurn,
+      });
+    },
+  );
+
   it("claims live ownership from smokeTest without a prior liveStart", async () => {
     const owner = new TestRenderer(99);
     const otherProject = new TestRenderer(199);
@@ -803,6 +823,21 @@ describe("Voice Live IPC ownership", () => {
       invoke(VOICE_CHANNELS.liveQuiesce, owner, { reason: "classic-tts" }),
     ).toMatchObject({ status: expect.any(String) });
     expect(liveTransportDeps.hardStop).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    VOICE_CHANNELS.liveEndTurn,
+    VOICE_CHANNELS.liveEndUserAudio,
+  ])("treats a late %s after ownership release as an idempotent no-op", async (channel) => {
+    const owner = new TestRenderer(404);
+    scopeDeps.scopes.set(owner.id, scopeA);
+
+    await invoke(VOICE_CHANNELS.liveStart, owner, { reason: "manual" });
+    await invoke(VOICE_CHANNELS.liveQuiesce, owner, { reason: "classic-action" });
+    liveTransportDeps.endTurn.mockClear();
+
+    expect(invoke(channel, owner)).toMatchObject({ status: expect.any(String) });
+    expect(liveTransportDeps.endTurn).not.toHaveBeenCalled();
   });
 
   it("releases ownership when the owner closes and on closeVoiceIpc", async () => {
@@ -991,7 +1026,7 @@ describe("Voice PTT and wake multi-window isolation", () => {
     expect(wakeEngineDeps.instances[0]!.feed).toHaveBeenCalledTimes(1);
   });
 
-  it("starts a mission in active scope on trusted WakeEngine detection", () => {
+  it("wakes Jarvis without mutating missions", () => {
     voiceConfig.wakeWord.enabled = true;
     domainDeps.missionList.mockReturnValue([]);
     domainDeps.missionCreate.mockClear();
@@ -1009,16 +1044,12 @@ describe("Voice PTT and wake multi-window isolation", () => {
     onDetected?.();
 
     expect(windowA.send).toHaveBeenCalledWith(VOICE_CHANNELS.wakeDetected);
-    // Phase D: detection path invokes start-or-resume once.
-    expect(domainDeps.missionList).toHaveBeenCalled();
-    expect(domainDeps.missionCreate).toHaveBeenCalledTimes(1);
-    expect(domainDeps.missionSetStatus).toHaveBeenCalledWith(
-      "mission-voice-new",
-      "running",
-    );
+    expect(domainDeps.missionList).not.toHaveBeenCalled();
+    expect(domainDeps.missionCreate).not.toHaveBeenCalled();
+    expect(domainDeps.missionSetStatus).not.toHaveBeenCalled();
   });
 
-  it("resumes an existing running mission on wake detection (no create)", () => {
+  it("does not resume an existing mission until transcript intent is understood", () => {
     voiceConfig.wakeWord.enabled = true;
     domainDeps.missionList.mockReturnValue([
       {
@@ -1040,6 +1071,7 @@ describe("Voice PTT and wake multi-window isolation", () => {
     wakeEngineDeps.lastOnDetected?.();
 
     expect(windowA.send).toHaveBeenCalledWith(VOICE_CHANNELS.wakeDetected);
+    expect(domainDeps.missionList).not.toHaveBeenCalled();
     expect(domainDeps.missionCreate).not.toHaveBeenCalled();
     expect(domainDeps.missionSetStatus).not.toHaveBeenCalled();
   });

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { autopilotActionFor, missionPlanIntegrated } from './prevc-autopilot-policy';
+import {
+  autopilotActionFor,
+  canAutopilotAdvanceTo,
+  missionPlanIntegrated,
+} from './prevc-autopilot-policy';
 
 describe('PREVC autopilot policy', () => {
   it('never leaves execution until every sealed task has an integrated worktree', () => {
@@ -22,5 +26,11 @@ describe('PREVC autopilot policy', () => {
     expect(autopilotActionFor('validation-primary', true, true)).toBe('validate');
     expect(autopilotActionFor('confirmation', true, true)).toBe('advance');
     expect(autopilotActionFor('complete', true, true)).toBe('complete');
+  });
+
+  it('reserves the final complete transition for the atomic step receipt path', () => {
+    expect(canAutopilotAdvanceTo('validation-primary')).toBe(true);
+    expect(canAutopilotAdvanceTo('confirmation')).toBe(true);
+    expect(canAutopilotAdvanceTo('complete')).toBe(false);
   });
 });

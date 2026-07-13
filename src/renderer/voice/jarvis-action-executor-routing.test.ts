@@ -28,6 +28,7 @@ describe('Jarvis action execution routing', () => {
   it('reroutes an execution-ready mission mislabeled as a command', () => {
     expect(source).toContain("reply.action.type === 'run_command'");
     expect(source).toContain('isExecutionReadyDelegationPrompt(reply.action.command)');
+    expect(source).toContain('!looksLikeShellCommand(reply.action.command)');
     expect(source).toContain("? { type: 'send_to_pane', text: reply.action.command }");
   });
 

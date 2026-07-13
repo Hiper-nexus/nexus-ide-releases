@@ -12,6 +12,7 @@ import { useWorkspaceStore } from './workspace-store';
 vi.mock('../terminal/terminal-host', () => ({
   getPaneSessionId: vi.fn(() => null),
   onPaneSessionChange: vi.fn(() => vi.fn()),
+  respawnWithResume: vi.fn(),
   waitForSession: vi.fn(async () => null),
 }));
 
@@ -67,6 +68,7 @@ function nexusApi() {
       listSquads: vi.fn(async () => []),
       getMcpInfo: vi.fn(async () => ({ running: true, url: null, toolCount: 1 })),
       onPaneSpawnRequest: listener(),
+      onPaneRecoveryRequest: listener(),
       onBrowserOpenRequest: listener(),
       onPaneCloseRequest: listener(),
       onMissionsChanged: listener(),
@@ -75,6 +77,7 @@ function nexusApi() {
       onSquadsChanged: listener(),
       syncPanes: vi.fn(),
       sendPaneSpawnResult: vi.fn(),
+      sendPaneRecoveryResult: vi.fn(),
       sendBrowserOpenResult: vi.fn(),
     },
     cost: {

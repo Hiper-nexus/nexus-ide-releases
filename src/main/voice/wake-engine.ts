@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
-import os from 'node:os';
 import path from 'node:path';
 import * as ort from 'onnxruntime-node';
 import {
@@ -12,6 +11,11 @@ import {
   EI_JARVIS_PTBR_ONNX_B64,
   EI_JARVIS_PTBR_ONNX_SHA256,
 } from './wake-models-ptbr';
+import {
+  DEFAULT_PTBR_WAKE_MODEL_FILE,
+  DEFAULT_WAKE_MODEL_FILE,
+  resolveWakeModelDirectory,
+} from './ensure-wake-models';
 import { PcmRingBuffer } from './pcm-ring-buffer';
 import {
   CUSTOM_WAKE_SCORE_THRESHOLD,
@@ -26,26 +30,18 @@ import {
  * tem prioridade sobre o head PT-BR embutido no binário.
  * Path: ~/.nexus/models/wake/custom.onnx
  */
-const CUSTOM_WAKE_MODEL = path.join(
-  os.homedir(),
-  '.nexus',
-  'models',
-  'wake',
-  'custom.onnx',
-);
+function customWakeModelPath(): string {
+  return path.join(resolveWakeModelDirectory(), DEFAULT_PTBR_WAKE_MODEL_FILE);
+}
 
 /**
  * Verified third-party Apache-2.0 OpenWakeWord head. It is downloaded by our
  * installer only after checksum + runtime-shape verification, then remains an
  * optional second detector beside the embedded model.
  */
-const OFFICIAL_OPEN_SOURCE_WAKE_MODEL = path.join(
-  os.homedir(),
-  '.nexus',
-  'models',
-  'wake',
-  'speechkit-hey-jarvis.onnx',
-);
+function officialWakeModelPath(): string {
+  return path.join(resolveWakeModelDirectory(), DEFAULT_WAKE_MODEL_FILE);
+}
 const OFFICIAL_OPEN_SOURCE_WAKE_SHA256 =
   '7256019a18029c7bea33abc3344f7a3d0e07655cf4a5f18e65c9b6329eac3fb6';
 
@@ -130,14 +126,15 @@ function checkWakeModel(filePath: string): string | null {
 }
 
 function checkCustomWakeModel(): string | null {
-  return checkWakeModel(CUSTOM_WAKE_MODEL);
+  return checkWakeModel(customWakeModelPath());
 }
 
 function checkOfficialWakeModel(): string | null {
-  const rejected = checkWakeModel(OFFICIAL_OPEN_SOURCE_WAKE_MODEL);
+  const modelPath = officialWakeModelPath();
+  const rejected = checkWakeModel(modelPath);
   if (rejected !== null) return rejected;
   try {
-    const bytes = fs.readFileSync(OFFICIAL_OPEN_SOURCE_WAKE_MODEL);
+    const bytes = fs.readFileSync(modelPath);
     const checksum = createHash('sha256').update(bytes).digest('hex');
     return checksum === OFFICIAL_OPEN_SOURCE_WAKE_SHA256
       ? null
@@ -295,8 +292,9 @@ export class WakeEngine {
   ): Promise<ort.InferenceSession | null> {
     const rejected = checkCustomWakeModel();
     if (rejected === null) {
+      const modelPath = customWakeModelPath();
       try {
-        const bytes = new Uint8Array(fs.readFileSync(CUSTOM_WAKE_MODEL));
+        const bytes = new Uint8Array(fs.readFileSync(modelPath));
         // ModelProto começa com ir_version (field 1, varint) → 1º byte 0x08.
         if (bytes[0] !== 0x08) {
           throw new Error('cabeçalho não parece um ONNX/protobuf');
@@ -311,7 +309,7 @@ export class WakeEngine {
           );
         }
         console.log(
-          `[wake] modelo PT-BR (override local) carregado: ${CUSTOM_WAKE_MODEL} (fpProbe=${fp.toFixed(3)})`,
+          `[wake] modelo PT-BR (override local) carregado: ${modelPath} (fpProbe=${fp.toFixed(3)})`,
         );
         return wake;
       } catch (err) {
@@ -367,11 +365,12 @@ export class WakeEngine {
       return null;
     }
     try {
-      const bytes = new Uint8Array(fs.readFileSync(OFFICIAL_OPEN_SOURCE_WAKE_MODEL));
+      const modelPath = officialWakeModelPath();
+      const bytes = new Uint8Array(fs.readFileSync(modelPath));
       const wake = await ort.InferenceSession.create(bytes, opts);
       await verifyWakeHead(wake);
       console.log(
-        `[wake] modelo open-source adicional carregado: ${OFFICIAL_OPEN_SOURCE_WAKE_MODEL}`,
+        `[wake] modelo open-source adicional carregado: ${modelPath}`,
       );
       return wake;
     } catch (err) {

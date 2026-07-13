@@ -924,16 +924,21 @@ export function writeSession(
   wc: WebContents,
   sessionId: string,
   data: string,
-): void {
+): boolean {
   const session = ownedSession(wc, sessionId);
-  if (!session) return;
+  if (!session) return false;
   // User wrote input → re-arm the idle timer if applicable.
   if (session.state === "idle") {
     session.state = "busy";
     emitStateChange(wc, sessionId, "busy");
   }
   if (session.idleTimeoutMs > 0) armIdleTimer(sessionId, session);
-  session.proc.write(data);
+  try {
+    session.proc.write(data);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function resizeSession(

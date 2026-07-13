@@ -38,6 +38,7 @@ export const spawnRequestSchema = z.object({
   // re-launches the CLI with its resumeArgs).
   resume: z.boolean().optional(),
   resumeLatestOnly: z.boolean().optional(),
+  restorePersistedAuthority: z.boolean().optional(),
   paneId: z.string().max(64).optional(),
   // Per-spawn reasoning effort (task-router decision). Validated against the
   // adapter's declared levels at arg-build time; unknown values are dropped.

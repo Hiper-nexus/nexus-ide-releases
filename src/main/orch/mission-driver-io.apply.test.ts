@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Mission, MissionMilestone } from '../../shared/orch-types';
+import type {
+  Mission,
+  MissionMilestone,
+  MissionPaneSpec,
+  PaneSnapshot,
+} from '../../shared/orch-types';
 import { testProjectScope } from './__tests__/scope-fixture';
-import { createProductionApplyPorts } from './mission-driver-io';
+import {
+  createProductionApplyPorts,
+  findDeadMissionPane,
+} from './mission-driver-io';
 import type { PrevcAdvancePort } from './mission-driver-prevc';
 
 function step(
@@ -38,10 +46,26 @@ describe('createProductionApplyPorts advance/complete', () => {
     let mission = makeMission([
       step({ id: 's1', label: 'Design', status: 'in-progress' }),
     ]);
-    const prevcAdvance = vi.fn();
+    const prevcAdvance = vi.fn(
+      (
+        _missionId: string,
+        _scope: unknown,
+        stepId: string,
+        evidenceIds: readonly string[],
+      ) => {
+        mission = {
+          ...mission,
+          milestones: mission.milestones.map((item) =>
+            item.id === stepId
+              ? { ...item, status: 'done' as const, evidenceIds: [...evidenceIds] }
+              : item,
+          ),
+        };
+      },
+    );
     const prevc: PrevcAdvancePort = {
-      advanceWorkflowStage: prevcAdvance,
-      isWorkflowCompleteOrAbsent: () => true,
+      advanceMissionStep: prevcAdvance,
+      isMissionComplete: () => true,
     };
     const ports = createProductionApplyPorts(prevc, () => ({
       missions: {
@@ -99,22 +123,27 @@ describe('createProductionApplyPorts advance/complete', () => {
 
     ports.advanceStep('mission-a', scope, 's1');
 
-    expect(prevcAdvance).toHaveBeenCalledWith('mission-a', scope);
+    expect(prevcAdvance).toHaveBeenCalledWith(
+      'mission-a',
+      scope,
+      's1',
+      ['ev-1'],
+    );
     expect(mission.milestones[0]?.status).toBe('done');
     expect(mission.milestones[0]?.evidenceIds).toEqual(['ev-1']);
   });
 
-  it('marks step done before PREVC; PREVC throw still leaves step done (soft-fail)', () => {
+  it('PREVC failure is fail-closed and leaves the milestone non-done', () => {
     let mission = makeMission([
       step({ id: 's1', label: 'Design', status: 'in-progress' }),
     ]);
     const order: string[] = [];
     const prevc: PrevcAdvancePort = {
-      advanceWorkflowStage: () => {
+      advanceMissionStep: () => {
         order.push('prevc');
         throw new Error('workflow not ready for next stage');
       },
-      isWorkflowCompleteOrAbsent: () => true,
+      isMissionComplete: () => true,
     };
     const ports = createProductionApplyPorts(prevc, () => ({
       missions: {
@@ -169,12 +198,12 @@ describe('createProductionApplyPorts advance/complete', () => {
       },
     }) as never);
 
-    // Must not throw — soft-fail PREVC after step secured.
-    expect(() => ports.advanceStep('mission-a', scope, 's1')).not.toThrow();
-    expect(order[0]).toBe('mark-done');
-    expect(order).toContain('prevc');
-    expect(order).toContain('learn');
-    expect(mission.milestones[0]?.status).toBe('done');
+    expect(() => ports.advanceStep('mission-a', scope, 's1')).toThrow(
+      /workflow not ready/,
+    );
+    expect(order).toEqual(['prevc']);
+    expect(mission.milestones[0]?.status).toBe('in-progress');
+    expect(mission.milestones[0]?.evidenceIds).toEqual([]);
   });
 
   it('does not attach evidence already used by a done step', () => {
@@ -190,8 +219,8 @@ describe('createProductionApplyPorts advance/complete', () => {
     const prevcAdvance = vi.fn();
     const ports = createProductionApplyPorts(
       {
-        advanceWorkflowStage: prevcAdvance,
-        isWorkflowCompleteOrAbsent: () => true,
+        advanceMissionStep: prevcAdvance,
+        isMissionComplete: () => true,
       },
       () =>
         ({
@@ -224,6 +253,50 @@ describe('createProductionApplyPorts advance/complete', () => {
     expect(prevcAdvance).not.toHaveBeenCalled();
   });
 
+  it('reserves later trusted evidence for later mission steps', () => {
+    const mission = makeMission([
+      step({ id: 's1', label: 'First', status: 'in-progress' }),
+      step({ id: 's2', label: 'Second', status: 'pending' }),
+    ]);
+    const prevcAdvance = vi.fn();
+    const ports = createProductionApplyPorts(
+      {
+        advanceMissionStep: prevcAdvance,
+        isMissionComplete: () => false,
+      },
+      () => ({
+        missions: {
+          get: () => mission,
+          update: () => mission,
+          markMilestoneDone: () => mission,
+          setStatus: () => mission,
+          appendLearning: () => mission,
+          list: () => [mission],
+          create: () => mission,
+        },
+        handoffs: {
+          list: () => [{
+            evidenceTrust: 'nexus-trusted',
+            evidenceIds: ['ev-1', 'ev-2'],
+            status: 'success',
+            createdAt: 10,
+          }],
+          submit: vi.fn(),
+        },
+      }) as never,
+    );
+
+    expect(() => ports.advanceStep('mission-a', scope, 's1')).toThrow(
+      /remains non-done/,
+    );
+    expect(prevcAdvance).toHaveBeenCalledWith(
+      'mission-a',
+      scope,
+      's1',
+      ['ev-1'],
+    );
+  });
+
   it('rejects advance when no nexus-trusted evidence exists', async () => {
     const mission = makeMission([
       step({ id: 's1', label: 'Design', status: 'in-progress' }),
@@ -231,8 +304,8 @@ describe('createProductionApplyPorts advance/complete', () => {
     const prevcAdvance = vi.fn();
     const ports = createProductionApplyPorts(
       {
-        advanceWorkflowStage: prevcAdvance,
-        isWorkflowCompleteOrAbsent: () => true,
+        advanceMissionStep: prevcAdvance,
+        isMissionComplete: () => true,
       },
       () =>
         ({
@@ -277,8 +350,8 @@ describe('createProductionApplyPorts advance/complete', () => {
     const prevcAdvance = vi.fn();
     const ports = createProductionApplyPorts(
       {
-        advanceWorkflowStage: prevcAdvance,
-        isWorkflowCompleteOrAbsent: () => false,
+        advanceMissionStep: prevcAdvance,
+        isMissionComplete: () => false,
       },
       () =>
         ({
@@ -299,9 +372,9 @@ describe('createProductionApplyPorts advance/complete', () => {
     );
 
     expect(() => ports.completeMission('mission-a', scope)).toThrow(
-      /PREVC workflow not complete/,
+      /workflow or step receipts incomplete/,
     );
-    expect(prevcAdvance).toHaveBeenCalled();
+    expect(prevcAdvance).not.toHaveBeenCalled();
     expect(mission.status).toBe('running');
   });
 
@@ -316,8 +389,8 @@ describe('createProductionApplyPorts advance/complete', () => {
     ]);
     const ports = createProductionApplyPorts(
       {
-        advanceWorkflowStage: vi.fn(),
-        isWorkflowCompleteOrAbsent: () => true,
+        advanceMissionStep: vi.fn(),
+        isMissionComplete: () => true,
       },
       () =>
         ({
@@ -339,5 +412,74 @@ describe('createProductionApplyPorts advance/complete', () => {
 
     ports.completeMission('mission-a', scope);
     expect(mission.status).toBe('done');
+  });
+
+  it('treats a missing persisted worker as dead by stable pane identity', () => {
+    const persisted: MissionPaneSpec[] = [
+      {
+        id: 'spec-orch', missionId: 'mission-a', paneId: 'pane-orch',
+        adapterId: 'codex', title: 'Orchestrator', role: 'orchestrator', createdAt: 1,
+      },
+      {
+        id: 'spec-worker', missionId: 'mission-a', paneId: 'pane-worker',
+        adapterId: 'claude', title: 'Worker', role: 'worker', createdAt: 2,
+      },
+    ];
+    const snapshots: PaneSnapshot[] = [{
+      paneId: 'pane-orch', sessionId: 'session-orch', title: 'Orchestrator',
+      kind: 'cli-agent', state: 'idle', missionId: 'mission-a', role: 'orchestrator',
+    }];
+
+    expect(findDeadMissionPane('mission-a', persisted, snapshots))
+      .toMatchObject({ paneId: 'pane-worker', role: 'worker' });
+  });
+
+  it('recovers a missing worker and records success only after renderer ACK', async () => {
+    const mission = makeMission([], { orchestratorSessionId: 'session-orch' });
+    const persisted: MissionPaneSpec[] = [
+      {
+        id: 'spec-orch', missionId: mission.id, paneId: 'pane-orch',
+        adapterId: 'codex', title: 'Orchestrator', role: 'orchestrator', createdAt: 1,
+      },
+      {
+        id: 'spec-worker', missionId: mission.id, paneId: 'pane-worker',
+        adapterId: 'claude', title: 'Worker', agentName: 'Builder',
+        role: 'worker', createdAt: 2,
+      },
+    ];
+    const appendLearning = vi.fn();
+    const recoverPane = vi.fn(async () => ({
+      requestId: 'recovery-a',
+      ok: true as const,
+      paneId: 'pane-worker',
+      sessionId: 'session-worker-new',
+    }));
+    const ports = createProductionApplyPorts(
+      { advanceMissionStep: vi.fn(), isMissionComplete: () => false },
+      () => ({
+        missions: { get: () => mission, appendLearning },
+        missionPanes: { list: () => persisted },
+      }) as never,
+      recoverPane,
+      () => [{
+        paneId: 'pane-orch', sessionId: 'session-orch', title: 'Orchestrator',
+        kind: 'cli-agent', state: 'idle', missionId: mission.id,
+        role: 'orchestrator',
+      }],
+    );
+
+    await ports.respawnFreshContext(mission.id, scope, 'worker exited');
+
+    expect(recoverPane).toHaveBeenCalledWith(expect.objectContaining({
+      missionId: mission.id,
+      paneId: 'pane-worker',
+      role: 'worker',
+      expectedSessionId: undefined,
+      pane: expect.objectContaining({ agentName: 'Builder' }),
+    }));
+    expect(appendLearning).toHaveBeenCalledWith(
+      mission.id,
+      expect.stringContaining('session-worker-new'),
+    );
   });
 });

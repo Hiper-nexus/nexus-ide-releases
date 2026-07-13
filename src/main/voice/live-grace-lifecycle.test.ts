@@ -100,7 +100,7 @@ describe('LiveTransportController P4 grace lifecycle', () => {
       session.start({ reason: 'manual' });
       const controller = new LiveTransportController(() => {}, session);
 
-      await controller.onStart();
+      await controller.onStart({ freshTurn: true });
       expect(session.getState().realtimeReady).toBe(true);
 
       controller.onStop();
@@ -111,9 +111,9 @@ describe('LiveTransportController P4 grace lifecycle', () => {
         realtimeReady: false,
       });
     });
-  });
+  }, 15_000);
 
-  it('onStart during grace promotes the warm socket (no second connect)', async () => {
+  it('onStart during grace discards the warm socket and reconnects fresh', async () => {
     const provider = fakeProvider(async () => {});
     await withGeminiMocks(provider, async (LiveTransportController) => {
       const session = new JarvisLiveSession(() => {}, () => 1000);
@@ -122,15 +122,17 @@ describe('LiveTransportController P4 grace lifecycle', () => {
       let now = 1_000;
       const controller = new LiveTransportController(() => {}, session, () => now);
 
-      await controller.onStart();
+      await controller.onStart({ freshTurn: true });
       expect(provider.connect).toHaveBeenCalledTimes(1);
+      expect(provider.close).not.toHaveBeenCalled();
 
       controller.onStop();
       expect(controller.inGrace).toBe(true);
 
       now = 2_000;
-      await controller.onStart();
-      expect(provider.connect).toHaveBeenCalledTimes(1);
+      await controller.onStart({ freshTurn: true });
+      expect(provider.connect).toHaveBeenCalledTimes(2);
+      expect(provider.close).toHaveBeenCalledTimes(1);
       expect(controller.inGrace).toBe(false);
       expect(session.getState()).toMatchObject({
         status: 'listening',
@@ -139,7 +141,7 @@ describe('LiveTransportController P4 grace lifecycle', () => {
     });
   });
 
-  it('reuses a ready socket after a long quiet period instead of treating silence as stale', async () => {
+  it('reconnects fresh after a long quiet period instead of sending wake text into a zombie', async () => {
     const provider = fakeProvider(async () => {});
     await withGeminiMocks(provider, async (LiveTransportController) => {
       const session = new JarvisLiveSession(() => {}, () => 1000);
@@ -148,17 +150,17 @@ describe('LiveTransportController P4 grace lifecycle', () => {
       let now = 1_000;
       const controller = new LiveTransportController(() => {}, session, () => now);
 
-      await controller.onStart();
+      await controller.onStart({ freshTurn: true });
       expect(provider.connect).toHaveBeenCalledTimes(1);
       controller.onStop();
       expect(controller.inGrace).toBe(true);
 
       now = 61_000;
-      await controller.onStart();
+      await controller.onStart({ freshTurn: true });
       controller.contextIn('[wake] diga Olá.');
 
-      expect(provider.connect).toHaveBeenCalledTimes(1);
-      expect(provider.close).not.toHaveBeenCalled();
+      expect(provider.connect).toHaveBeenCalledTimes(2);
+      expect(provider.close).toHaveBeenCalledTimes(1);
       expect(provider.interrupt).not.toHaveBeenCalled();
       expect(provider.sendText).toHaveBeenCalledWith('[wake] diga Olá.');
       expect(controller.inGrace).toBe(false);

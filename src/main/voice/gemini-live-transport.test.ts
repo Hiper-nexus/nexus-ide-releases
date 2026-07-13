@@ -125,6 +125,10 @@ describe('buildSetupMessage', () => {
     const gen = msg.setup.generationConfig as Record<string, unknown>;
     expect(msg.setup.model).toBe(`models/${GEMINI_31_LIVE_MODEL}`);
     expect(gen.thinkingConfig).toEqual({ thinkingLevel: 'minimal' });
+    expect(gen.speechConfig).toEqual({
+      voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } },
+      languageCode: 'pt-BR',
+    });
   });
 
   it('declara as 4 tools coarse (delegar/consultar/ler/navegar) + encerrar no setup', () => {

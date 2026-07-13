@@ -95,6 +95,8 @@ import type {
   BrowserPaneOpenRequest,
   Mission,
   MissionPatch,
+  MissionPaneRecoveryRequest,
+  MissionPaneRecoveryResult,
   OrchPaneSpawnRequest,
   Squad,
   TodoList,
@@ -342,6 +344,9 @@ function addListener<T>(set: Set<T>, cb: T): () => void {
 
 // Orchestration event fan-out (same pattern as voice above).
 const paneSpawnRequestListeners = new Set<(req: OrchPaneSpawnRequest) => void>();
+const paneRecoveryRequestListeners = new Set<
+  (req: MissionPaneRecoveryRequest) => void
+>();
 const browserOpenRequestListeners = new Set<(req: BrowserPaneOpenRequest) => void>();
 const paneCloseRequestListeners = new Set<(paneId: string) => void>();
 const missionsChangedListeners = new Set<(missions: Mission[]) => void>();
@@ -351,6 +356,11 @@ const squadsChangedListeners = new Set<(squads: Squad[]) => void>();
 
 ipcRenderer.on(ORCH_CHANNELS.paneSpawnRequest, (_e, req: OrchPaneSpawnRequest) =>
   paneSpawnRequestListeners.forEach((cb) => cb(req)),
+);
+ipcRenderer.on(
+  ORCH_CHANNELS.paneRecoveryRequest,
+  (_e, req: MissionPaneRecoveryRequest) =>
+    paneRecoveryRequestListeners.forEach((cb) => cb(req)),
 );
 ipcRenderer.on(ORCH_CHANNELS.browserOpenRequest, (_e, req: BrowserPaneOpenRequest) =>
   browserOpenRequestListeners.forEach((cb) => cb(req)),
@@ -502,6 +512,8 @@ const api: NexusApi = {
       ipcRenderer.invoke(PTY_CHANNELS.spawn, req),
     write: (sessionId, data) =>
       ipcRenderer.send(PTY_CHANNELS.write, { sessionId, data }),
+    writeConfirmed: (sessionId, data) =>
+      ipcRenderer.invoke(PTY_CHANNELS.writeConfirmed, { sessionId, data }),
     resize: (sessionId, cols, rows) =>
       ipcRenderer.send(PTY_CHANNELS.resize, { sessionId, cols, rows }),
     kill: (sessionId) => ipcRenderer.send(PTY_CHANNELS.kill, { sessionId }),
@@ -655,6 +667,10 @@ const api: NexusApi = {
     syncPanes: (entries) => ipcRenderer.send(ORCH_CHANNELS.panesSync, entries),
     sendPaneSpawnResult: (result) =>
       ipcRenderer.send(ORCH_CHANNELS.paneSpawnResult, result),
+    sendPaneRecoveryResult: (result: MissionPaneRecoveryResult) =>
+      ipcRenderer.send(ORCH_CHANNELS.paneRecoveryResult, result),
+    onPaneRecoveryRequest: (cb) =>
+      addListener(paneRecoveryRequestListeners, cb),
     onBrowserOpenRequest: (cb) =>
       addListener(browserOpenRequestListeners, cb),
     sendBrowserOpenResult: (result) =>

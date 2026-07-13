@@ -355,4 +355,58 @@ describe('scoped mission store', () => {
       },
     ]);
   });
+
+  it('persists Ralph budget, failed attempts and signal debounce across restart', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'ralph-runtime' });
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => 'mission-ralph',
+    });
+    store.create({ title: 'Durable loop' });
+
+    expect(store.ensureDriveRuntimeState('mission-ralph', 100)).toMatchObject({
+      runStartedAt: 100,
+      attemptCount: 0,
+    });
+    expect(
+      store.reserveDriveAttempt('mission-ralph', 'signal-stall', 200),
+    ).toMatchObject({
+      attemptCount: 1,
+      lastAttemptAt: 200,
+      lastOutcome: 'reserved',
+    });
+    expect(
+      store.finishDriveAttempt(
+        'mission-ralph',
+        'failed',
+        250,
+        'delivery failed',
+      ),
+    ).toMatchObject({
+      attemptCount: 1,
+      lastOutcome: 'failed',
+      lastError: 'delivery failed',
+    });
+    store.recordDriveSignal('mission-ralph', 275);
+
+    runtimeManager.close(scope);
+    const reopened = createScopedMissionStore(runtimeManager, scope);
+    expect(reopened.getDriveRuntimeState('mission-ralph')).toMatchObject({
+      runStartedAt: 100,
+      attemptCount: 1,
+      lastAttemptAt: 200,
+      lastSignalAt: 275,
+      lastOutcome: 'failed',
+    });
+    expect(
+      reopened.reserveDriveAttempt('mission-ralph', 'advance', 300),
+    ).toMatchObject({
+      runStartedAt: 100,
+      attemptCount: 2,
+      lastAttemptAt: 300,
+    });
+    reopened.setStatus('mission-ralph', 'blocked');
+    reopened.setStatus('mission-ralph', 'running');
+    expect(reopened.getDriveRuntimeState('mission-ralph')).toBeNull();
+  });
 });

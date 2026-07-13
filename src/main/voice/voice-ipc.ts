@@ -64,10 +64,6 @@ import {
 } from "./live-transport-controller";
 import { getProjectDomainStores } from "../orch/project-domain-store-registry";
 import {
-  createVoiceMissionPorts,
-  startOrResumeMissionFromVoice,
-} from "../orch/mission-voice-bridge";
-import {
   getRendererWorkspaceScope,
   requireRendererWorkspaceScope,
 } from "../persistence/renderer-workspace-scope";
@@ -87,6 +83,7 @@ import {
   liveRuntimeFingerprint,
 } from "./live-runtime-config";
 import { requiresVoiceCommandConfirmation } from "../jarvis/guardrails";
+import { ensureAllDefaultWakeModelsInstalled } from "./ensure-wake-models";
 
 /**
  * Wires the voice pipeline into IPC. Every renderer payload is zod-validated
@@ -374,32 +371,6 @@ function acceptWakeFrame(sender: WebContents): WakeOwnership | null {
   return ownership;
 }
 
-/**
- * Phase D bridge: on trusted wake detection, start or resume a mission in the
- * active project scope. Failures are logged only — never touch wake ownership.
- */
-function tryStartOrResumeMissionFromWake(scope: ProjectExecutionScope): void {
-  try {
-    const ports = createVoiceMissionPorts(scope, getProjectDomainStores);
-    const intent = startOrResumeMissionFromVoice(ports);
-    logVoice("info", "wake.mission", "voice→mission bridge", {
-      kind: intent.kind,
-      ...(intent.kind === "noop"
-        ? { reason: intent.reason }
-        : { missionId: intent.missionId }),
-      ...(intent.kind === "resumed" ? { fromStatus: intent.fromStatus } : {}),
-      projectId: scope.projectId,
-      checkoutId: scope.checkoutId,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logVoice("warn", "wake.missionFail", message, {
-      projectId: scope.projectId,
-      checkoutId: scope.checkoutId,
-    });
-  }
-}
-
 function emitWakeDetected(generation: number, owner: WebContents, scope: ProjectExecutionScope): void {
   const ownership = wakeOwnership;
   if (!ownership) return;
@@ -408,9 +379,6 @@ function emitWakeDetected(generation: number, owner: WebContents, scope: Project
   if (!isTrustedWakeOwner(ownership)) return;
   if (!sameProjectScope(ownership.scope, scope)) return;
   ownership.owner.send(VOICE_CHANNELS.wakeDetected);
-  // Phase D: optional voice→mission start/resume in the active project scope.
-  // Isolated from wake ownership/dispose — failures never release the engine.
-  tryStartOrResumeMissionFromWake(scope);
 }
 
 const liveSession = new JarvisLiveSession(
@@ -661,6 +629,11 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     "voice.restart",
     `=== ${restartMarker} ${new Date().toISOString()} ===`,
   );
+  const wakeModels = ensureAllDefaultWakeModelsInstalled();
+  logVoice("info", "wake.defaultModels", "modelos wake padrão verificados", {
+    en: Boolean(wakeModels.en),
+    ptbr: Boolean(wakeModels.ptbr),
+  });
   // Narração proativa: handoff novo (entrega/travamento/falha) vira aviso de
   // voz — o renderer fala quando não houver turno ativo.
   initJarvisNarrator(broadcastToScope);
@@ -1076,7 +1049,10 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
       // Se a config pede transporte realtime, conecta o socket antes do mic;
       // senão isto é no-op e o Classic segue (fallback keyless).
       if (liveSession.getState().sessionId) {
-        await liveTransport.onStart({ greeting: req.greeting });
+        await liveTransport.onStart({
+          greeting: req.greeting,
+          freshTurn: req.reason !== "reply",
+        });
         requireLiveOwnership(event.sender);
         state = liveSession.getState();
       } else {
@@ -1155,11 +1131,13 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     }
   });
   ipcMain.handle(VOICE_CHANNELS.liveEndTurn, (event) => {
+    if (!activeLiveOwnership) return liveSession.getState();
     requireLiveOwnership(event.sender);
     liveTransport.endTurn();
     return liveSession.endTurn();
   });
   ipcMain.handle(VOICE_CHANNELS.liveEndUserAudio, (event) => {
+    if (!activeLiveOwnership) return liveSession.getState();
     requireLiveOwnership(event.sender);
     liveTransport.endTurn();
     return liveSession.getState();

@@ -1,13 +1,24 @@
 import { useEffect } from 'react';
-import type { PaneRegistryEntry } from '../../shared/orch-types';
+import type {
+  MissionPaneRecoveryRequest,
+  MissionPaneRecoveryResult,
+  PaneRegistryEntry,
+} from '../../shared/orch-types';
+import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useWorkspaceStore } from '../state/workspace-store';
-import { listPanes } from '../lib/split-tree';
+import { createPane, listPanes } from '../lib/split-tree';
 import {
+  cancelPaneRecovery,
   getPaneSessionId,
+  isPaneSessionHealthy,
+  markPersistedAuthorityOnSpawn,
   onPaneSessionChange,
+  respawnMissionPaneFresh,
+  submitPromptToPaneConfirmed,
+  waitForHealthyPaneSession,
   waitForSession,
 } from '../terminal/terminal-host';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
@@ -34,6 +45,118 @@ function snapshotPanes(): PaneRegistryEntry[] {
     accountId: pane.accountId,
     state: paneStates.get(pane.id),
   }));
+}
+
+const recoveryInFlight = new Set<string>();
+const recoveryResults = new Map<string, MissionPaneRecoveryResult>();
+const RECOVERY_HEALTH_TIMEOUT_MS = 75_000;
+
+function cacheRecoveryResult(result: MissionPaneRecoveryResult): void {
+  recoveryResults.set(result.requestId, result);
+  if (recoveryResults.size <= 64) return;
+  const oldest = recoveryResults.keys().next().value as string | undefined;
+  if (oldest) recoveryResults.delete(oldest);
+}
+
+function paneFromRecovery(req: MissionPaneRecoveryRequest): PaneModel {
+  if (req.pane.role !== req.role) {
+    throw new Error('mission pane role does not match recovery request');
+  }
+  const base = createPane(
+    'cli-agent',
+    req.pane.cwd,
+    req.pane.adapterId,
+    req.pane.model,
+  );
+  return {
+    ...base,
+    id: req.paneId,
+    title: req.pane.title,
+    accountId: req.pane.accountId,
+    effort: req.pane.effort,
+    agentName: req.pane.agentName,
+    role: req.role,
+  };
+}
+
+async function recoverMissionPane(
+  req: MissionPaneRecoveryRequest,
+): Promise<MissionPaneRecoveryResult> {
+  let replacementSessionId: string | undefined;
+  let recoveryOwned = false;
+  try {
+    let pane = listPanes(useLayoutStore.getState().root).find(
+      (candidate) => candidate.id === req.paneId,
+    );
+    if (pane && pane.kind !== 'cli-agent') {
+      throw new Error('stable mission pane is not a CLI agent');
+    }
+    if (pane) {
+      replacementSessionId = await respawnMissionPaneFresh(
+        pane,
+        req.expectedSessionId,
+      );
+      // The helper owns cleanup until its CAS check, spawn and health check
+      // succeed. Only then may this request cancel the exact replacement.
+      recoveryOwned = true;
+    } else {
+      pane = paneFromRecovery(req);
+      recoveryOwned = true;
+      markPersistedAuthorityOnSpawn(pane.id);
+      useOrchStore.getState().bindPaneMission(pane.id, req.missionId);
+      const existing = listPanes(useLayoutStore.getState().root);
+      useLayoutStore.getState().setPanes([...existing, pane]);
+      replacementSessionId =
+        (await waitForHealthyPaneSession(
+          pane.id,
+          req.expectedSessionId,
+          RECOVERY_HEALTH_TIMEOUT_MS,
+        )) ?? undefined;
+      if (!replacementSessionId) {
+        throw new Error('missing mission pane did not become healthy');
+      }
+    }
+
+    useOrchStore.getState().bindPaneMission(req.paneId, req.missionId);
+    window.nexus.orch.syncPanes(snapshotPanes());
+    if (
+      !(await submitPromptToPaneConfirmed(
+        req.paneId,
+        req.recap,
+        replacementSessionId,
+      )) ||
+      !isPaneSessionHealthy(req.paneId, replacementSessionId)
+    ) {
+      throw new Error('mission recap was not submitted to a healthy session');
+    }
+    if (req.role === 'orchestrator') {
+      const rebound = await window.nexus.orch.rebindMissionOrchestrator(
+        req.missionId,
+        replacementSessionId,
+      );
+      if (!rebound.ok) {
+        throw new Error('fresh pane session was not rebound to mission');
+      }
+    }
+    window.nexus.orch.syncPanes(snapshotPanes());
+    return {
+      requestId: req.requestId,
+      ok: true,
+      paneId: req.paneId,
+      sessionId: replacementSessionId,
+    };
+  } catch (error) {
+    if (recoveryOwned) {
+      cancelPaneRecovery(req.paneId, replacementSessionId);
+      window.nexus.orch.syncPanes(snapshotPanes());
+    }
+    return {
+      requestId: req.requestId,
+      ok: false,
+      paneId: req.paneId,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export function useOrchBridge(): void {
@@ -91,6 +214,21 @@ export function useOrchBridge(): void {
             });
           }
         })();
+      }),
+
+      window.nexus.orch.onPaneRecoveryRequest((req) => {
+        const cached = recoveryResults.get(req.requestId);
+        if (cached) {
+          window.nexus.orch.sendPaneRecoveryResult(cached);
+          return;
+        }
+        if (recoveryInFlight.has(req.requestId)) return;
+        recoveryInFlight.add(req.requestId);
+        void recoverMissionPane(req).then((result) => {
+          recoveryInFlight.delete(req.requestId);
+          cacheRecoveryResult(result);
+          window.nexus.orch.sendPaneRecoveryResult(result);
+        });
       }),
 
       window.nexus.orch.onBrowserOpenRequest((req) => {
@@ -166,12 +304,16 @@ export function useOrchBridge(): void {
     const unsubSession = onPaneSessionChange(() => {
       window.nexus.orch.syncPanes(snapshotPanes());
     });
+    const unsubState = useSessionStateStore.subscribe(() => {
+      window.nexus.orch.syncPanes(snapshotPanes());
+    });
     window.nexus.orch.syncPanes(snapshotPanes());
 
     return () => {
       un.forEach((fn) => fn());
       unsubLayout();
       unsubSession();
+      unsubState();
     };
   }, []);
 }

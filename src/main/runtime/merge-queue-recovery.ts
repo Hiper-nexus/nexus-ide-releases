@@ -30,7 +30,7 @@ import {
 
 export interface MergeRetryAttempt {
   readonly claimed: MergeQueueClaim;
-  readonly mode: 'full' | 'post-integration';
+  readonly mode: 'full' | 'post-integration' | 'finalization';
   readonly prepared: PreparedWorktreeIntegration;
   readonly acknowledgementEvidenceIds: readonly string[];
 }
@@ -221,6 +221,10 @@ export class MergeQueueRecovery {
       prepared,
     );
     const isPostIntegration = integratedCandidateSha !== undefined;
+    const isFinalization = isPostIntegration && this.#wasFinalizing(
+      blockedEntry,
+      snapshot.events,
+    );
     this.#assertRetryBasis(
       blockedEntry,
       prepared,
@@ -228,6 +232,7 @@ export class MergeQueueRecovery {
       revisionId,
       evidenceIds,
       isPostIntegration,
+      isFinalization,
     );
 
     const nextAttempt = blockedEntry.attempt + 1;
@@ -251,6 +256,7 @@ export class MergeQueueRecovery {
           nextAttempt,
           evidenceIds,
           integratedCandidateSha,
+          isFinalization,
         );
         return {
           ...state,
@@ -290,7 +296,11 @@ export class MergeQueueRecovery {
     }
     return Object.freeze({
       claimed: Object.freeze({ scopeKey, entry: retriedEntry }),
-      mode: isPostIntegration ? 'post-integration' : 'full',
+      mode: isFinalization
+        ? 'finalization'
+        : isPostIntegration
+          ? 'post-integration'
+          : 'full',
       prepared,
       acknowledgementEvidenceIds: evidenceIds,
     });
@@ -324,25 +334,27 @@ export class MergeQueueRecovery {
         candidateSha,
         'primary checkout no longer matches the approved candidate',
       );
-      const decision = await input.validate(Object.freeze({
-        phase: 'post-integration',
-        scope: Object.freeze({ ...input.scope }),
-        missionId: input.missionId,
-        taskId: input.taskId,
-        taskKey: entry.taskKey,
-        checkoutPath: attempt.prepared.record.rootRealPath,
-        integrationBaseSha,
-        taskHeadSha,
-        candidateSha,
-        diffHash,
-        changedFiles: Object.freeze([...attempt.prepared.changedFiles]),
-      }));
-      evidenceIds = Object.freeze([
-        ...new Set([
-          ...evidenceIds,
-          ...this.#approvedEvidence(decision),
-        ]),
-      ]);
+      if (attempt.mode !== 'finalization') {
+        const decision = await input.validate(Object.freeze({
+          phase: 'post-integration',
+          scope: Object.freeze({ ...input.scope }),
+          missionId: input.missionId,
+          taskId: input.taskId,
+          taskKey: entry.taskKey,
+          checkoutPath: attempt.prepared.record.rootRealPath,
+          integrationBaseSha,
+          taskHeadSha,
+          candidateSha,
+          diffHash,
+          changedFiles: Object.freeze([...attempt.prepared.changedFiles]),
+        }));
+        evidenceIds = Object.freeze([
+          ...new Set([
+            ...evidenceIds,
+            ...this.#approvedEvidence(decision),
+          ]),
+        ]);
+      }
       this.#assertTaskUnchanged(input, attempt.prepared);
       this.#assertIntegration(
         attempt.prepared.record,
@@ -356,13 +368,7 @@ export class MergeQueueRecovery {
         taskHeadSha,
         candidateSha,
       );
-      this.#state.complete(
-        attempt.claimed,
-        candidateSha,
-        evidenceIds,
-        this.#timestamp(),
-      );
-      return Object.freeze({
+      const result = Object.freeze({
         taskKey: entry.taskKey,
         taskHeadSha,
         integrationBaseSha,
@@ -371,6 +377,14 @@ export class MergeQueueRecovery {
         diffHash,
         evidenceIds,
       });
+      await input.finalize?.(result);
+      this.#state.complete(
+        attempt.claimed,
+        candidateSha,
+        evidenceIds,
+        this.#timestamp(),
+      );
+      return result;
     } catch (error) {
       try {
         this.#worktrees.markFailed(
@@ -461,7 +475,12 @@ export class MergeQueueRecovery {
     revisionId: string | undefined,
     evidenceIds: readonly string[],
     isPostIntegration: boolean,
+    isFinalization: boolean,
   ): void {
+    // The exact durable state revision is itself the acknowledgement for an
+    // idempotent finalizer replay. Validation already completed and its
+    // evidence was persisted before the queue entered `finalizing`.
+    if (isFinalization) return;
     const taskEvents = events.filter((event) => event.taskKey === entry.taskKey);
     const knownEvidenceIds = new Set([
       ...entry.evidenceIds,
@@ -492,12 +511,13 @@ export class MergeQueueRecovery {
     attempt: number,
     evidenceIds: readonly string[],
     integratedCandidateSha: string | undefined,
+    isFinalization: boolean,
   ): MergeQueueEntry {
     if (integratedCandidateSha) {
       return cloneEntry({
         ...current,
         attempt,
-        status: 'post-validating',
+        status: isFinalization ? 'finalizing' : 'post-validating',
         integratedSha: integratedCandidateSha,
         evidenceIds: Object.freeze([
           ...new Set([...current.evidenceIds, ...evidenceIds]),
@@ -519,6 +539,19 @@ export class MergeQueueRecovery {
       failureReason: undefined,
       updatedAt: this.#timestamp(),
     });
+  }
+
+  #wasFinalizing(
+    entry: MergeQueueEntry,
+    events: ReturnType<MergeQueueStateController['snapshot']>['events'],
+  ): boolean {
+    return events.some(
+      (event) =>
+        event.taskKey === entry.taskKey &&
+        event.attempt === entry.attempt &&
+        (event.type === 'blocked' || event.type === 'restart-reconciled') &&
+        event.fromStatus === 'finalizing',
+    );
   }
 
   #approvedEvidence(decision: {
