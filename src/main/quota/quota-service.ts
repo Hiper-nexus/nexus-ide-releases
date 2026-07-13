@@ -61,21 +61,36 @@ export interface QuotaServiceDeps {
   resolveCodexAuth?: (
     accountId?: string,
   ) => CodexChatGptAuth | null | Promise<CodexChatGptAuth | null>;
+  resolveCodexAuthCandidates?: (
+    accountId?: string,
+  ) => CodexChatGptAuth[] | Promise<CodexChatGptAuth[]>;
   resolveGlmApiKey?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
+  resolveGlmApiKeyCandidates?: (
+    accountId?: string,
+  ) => string[] | Promise<string[]>;
   resolveGrokToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
+  resolveGrokTokenCandidates?: (
+    accountId?: string,
+  ) => string[] | Promise<string[]>;
   resolveKimiToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
+  resolveKimiTokenCandidates?: (
+    accountId?: string,
+  ) => string[] | Promise<string[]>;
   resolveGeminiToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
   resolveLongcatApiKey?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
+  resolveLongcatApiKeyCandidates?: (
+    accountId?: string,
+  ) => string[] | Promise<string[]>;
   /** Injectable fetch for tests. */
   fetchImpl?: FetchLike;
 }
@@ -219,6 +234,18 @@ export class QuotaService {
         });
         continue;
       }
+      // Always keep a bare system/CLI row for live-probe adapters so the
+      // native login (~/.codex, launcher key, keychain) still shows % even
+      // when vault accounts exist with stale blobs.
+      if (LIVE_PROBE_ADAPTERS.has(p.adapterId)) {
+        draft.push({
+          adapterId: p.adapterId,
+          label: `${p.label} · CLI nativo`,
+          installed: p.installed,
+          onCooldown: false,
+          tokens: tokens[p.adapterId],
+        });
+      }
       for (const a of vault) {
         draft.push({
           adapterId: p.adapterId,
@@ -263,11 +290,16 @@ export class QuotaService {
     return {
       resolveClaudeToken: this.#deps.resolveClaudeAccessToken,
       resolveCodexAuth: this.#deps.resolveCodexAuth,
+      resolveCodexAuthCandidates: this.#deps.resolveCodexAuthCandidates,
       resolveGlmApiKey: this.#deps.resolveGlmApiKey,
+      resolveGlmApiKeyCandidates: this.#deps.resolveGlmApiKeyCandidates,
       resolveGrokToken: this.#deps.resolveGrokToken,
+      resolveGrokTokenCandidates: this.#deps.resolveGrokTokenCandidates,
       resolveKimiToken: this.#deps.resolveKimiToken,
+      resolveKimiTokenCandidates: this.#deps.resolveKimiTokenCandidates,
       resolveGeminiToken: this.#deps.resolveGeminiToken,
       resolveLongcatApiKey: this.#deps.resolveLongcatApiKey,
+      resolveLongcatApiKeyCandidates: this.#deps.resolveLongcatApiKeyCandidates,
       fetchImpl: this.#deps.fetchImpl,
     };
   }

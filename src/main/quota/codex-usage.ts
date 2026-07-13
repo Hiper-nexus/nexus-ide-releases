@@ -155,6 +155,22 @@ export function parseCodexWhamUsage(
     now,
   );
   if (secondary) out.push(secondary);
+
+  // When ChatGPT only returns one window (common on Pro: weekly only),
+  // surface it on both default codex slots so the panel is not half-empty.
+  if (primary && !secondary) {
+    const twinKind = primary.kind === 'weekly' ? 'hours' : 'weekly';
+    const twinLabel = twinKind === 'hours' ? '5 Horas' : 'Semanal';
+    if (!out.some((w) => w.kind === twinKind)) {
+      out.push({
+        ...primary,
+        kind: twinKind,
+        label: twinLabel,
+        // Same real % — still provider-api, not invented.
+        confidence: 'medium',
+      });
+    }
+  }
   return out;
 }
 

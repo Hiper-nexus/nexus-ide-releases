@@ -139,11 +139,11 @@ import { listProviderSettings } from "./persistence/provider-config-store";
 import { listAccountInfos } from "./persistence/account-store";
 import {
   resolveClaudeToken,
-  resolveCodexAuth,
+  resolveCodexAuthCandidates,
   resolveGeminiAccessToken,
-  resolveGrokAccessToken,
-  resolveKimiAccessToken,
-  resolveProviderApiKey,
+  resolveGrokAccessTokenCandidates,
+  resolveKimiAccessTokenCandidates,
+  resolveProviderApiKeyCandidates,
 } from "./quota/provider-usage-auth";
 import { closeDb } from "./persistence/db";
 import {
@@ -366,17 +366,20 @@ function bootstrap(): void {
   initQuotaService({
     listProviders: () => listProviderSettings(),
     listAccounts: () => listAccountInfos(),
-    // Live usage probes (best-effort). Never invents ratios — missing
-    // credentials/API → honest "—". Claude OAuth, Codex ChatGPT wham,
-    // GLM Z.ai quota, Kimi when token valid; Grok/AGY/LongCat reserved.
+    // Multi-candidate probes (vault → launcher → env → system CLI).
+    // Never invents ratios; tries every credential until one yields %.
     resolveClaudeAccessToken: (accountId) => resolveClaudeToken(accountId),
-    resolveCodexAuth: (accountId) => resolveCodexAuth(accountId),
-    resolveGlmApiKey: (accountId) => resolveProviderApiKey("glm", accountId),
-    resolveGrokToken: (accountId) => resolveGrokAccessToken(accountId),
-    resolveKimiToken: (accountId) => resolveKimiAccessToken(accountId),
+    resolveCodexAuthCandidates: (accountId) =>
+      resolveCodexAuthCandidates(accountId),
+    resolveGlmApiKeyCandidates: (accountId) =>
+      resolveProviderApiKeyCandidates("glm", accountId),
+    resolveGrokTokenCandidates: (accountId) =>
+      resolveGrokAccessTokenCandidates(accountId),
+    resolveKimiTokenCandidates: (accountId) =>
+      resolveKimiAccessTokenCandidates(accountId),
     resolveGeminiToken: (accountId) => resolveGeminiAccessToken(accountId),
-    resolveLongcatApiKey: (accountId) =>
-      resolveProviderApiKey("longcat", accountId),
+    resolveLongcatApiKeyCandidates: (accountId) =>
+      resolveProviderApiKeyCandidates("longcat", accountId),
   });
   registerNotesIpc(projectRuntimeManager);
   registerBillingIpc();

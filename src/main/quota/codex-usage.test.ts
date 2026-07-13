@@ -66,6 +66,25 @@ describe('parseCodexWhamUsage', () => {
     expect(weekly?.resetsAt).toBe(1784489178 * 1000);
   });
 
+  it('mirrors sole primary window onto the other codex slot so panel is not half-empty', () => {
+    const w = parseCodexWhamUsage(
+      {
+        rate_limit: {
+          primary_window: {
+            used_percent: 6,
+            limit_window_seconds: 604800,
+            reset_at: 1784489178,
+          },
+          secondary_window: null,
+        },
+      },
+      NOW,
+    );
+    expect(w.find((x) => x.kind === 'weekly')?.usedRatio).toBe(0.06);
+    expect(w.find((x) => x.kind === 'hours')?.usedRatio).toBe(0.06);
+    expect(w.every((x) => x.source === 'provider-api')).toBe(true);
+  });
+
   it('treats used_percent 0 as real 0%', () => {
     const w = parseCodexWhamUsage(
       {

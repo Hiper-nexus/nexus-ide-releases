@@ -30,6 +30,9 @@ interface QuotaStore {
   reset(): void;
 }
 
+/** Shared in-flight hydrate so boot + panel open do not race/no-op. */
+let hydrateInFlight: Promise<void> | null = null;
+
 function quotaApi() {
   return window.nexus?.quota;
 }
@@ -58,17 +61,28 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
   error: null,
 
   hydrate: async () => {
-    // Avoid stacking concurrent hydrates when the panel remounts.
-    if (get().status === 'loading') return;
-    set({ status: 'loading', error: null });
-    try {
-      const snapshot = await fetchSnapshot('hydrate');
-      set({ snapshot, status: 'ready', error: null });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn('[quota] hydrate failed:', err);
-      set({ status: 'error', error: message });
+    // Coalesce concurrent hydrates (boot + panel open) onto one in-flight
+    // request instead of silently no-op'ing the second caller.
+    if (get().status === 'loading' && hydrateInFlight) {
+      await hydrateInFlight;
+      return;
     }
+    set({ status: 'loading', error: null });
+    hydrateInFlight = (async () => {
+      try {
+        // Prefer force refresh so multi-provider probes always re-run when
+        // the panel opens (avoids stuck empty cache after partial failures).
+        const snapshot = await fetchSnapshot('refresh');
+        set({ snapshot, status: 'ready', error: null });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn('[quota] hydrate failed:', err);
+        set({ status: 'error', error: message });
+      } finally {
+        hydrateInFlight = null;
+      }
+    })();
+    await hydrateInFlight;
   },
 
   refresh: async () => {

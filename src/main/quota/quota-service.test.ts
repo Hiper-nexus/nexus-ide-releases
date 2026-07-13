@@ -382,9 +382,11 @@ describe('QuotaService live Claude OAuth usage', () => {
         provider('grok', 'Grok'),
       ],
       listAccounts: () => [] as AccountInfo[],
-      resolveCodexAuth: () => ({ accessToken: 'c-tok', accountId: 'a1' }),
-      resolveGlmApiKey: () => 'glm-key',
-      resolveGrokToken: () => 'grok-jwt',
+      resolveCodexAuthCandidates: () => [
+        { accessToken: 'c-tok', accountId: 'a1' },
+      ],
+      resolveGlmApiKeyCandidates: () => ['glm-key'],
+      resolveGrokTokenCandidates: () => ['grok-jwt'],
       fetchImpl,
     });
 

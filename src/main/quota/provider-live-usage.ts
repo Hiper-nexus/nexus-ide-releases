@@ -1,6 +1,9 @@
 /**
  * Dispatch live usage probes per adapter. Each probe is best-effort and
  * returns null when credentials or network fail — never invents usedRatio.
+ *
+ * Tries multiple credential candidates (vault / launcher / system CLI) so a
+ * single stale key cannot hide real telemetry.
  */
 
 import type { QuotaWindow } from '../../shared/quota-types';
@@ -8,33 +11,73 @@ import {
   fetchClaudeOauthUsageWindows,
   type FetchLike,
 } from './claude-oauth-usage';
-import { fetchCodexUsageWindows, type CodexChatGptAuth } from './codex-usage';
+import {
+  fetchCodexUsageWindows,
+  type CodexChatGptAuth,
+} from './codex-usage';
 import { fetchGlmUsageWindows } from './glm-usage';
+import { fetchGrokUsageWindows } from './grok-usage';
 import { knownWindow } from './quota-normalize';
 
 export interface LiveUsageAuthResolvers {
   resolveClaudeToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
+  /** Prefer multi-candidate; single still supported. */
   resolveCodexAuth?: (
     accountId?: string,
   ) => CodexChatGptAuth | null | Promise<CodexChatGptAuth | null>;
+  resolveCodexAuthCandidates?: (
+    accountId?: string,
+  ) => CodexChatGptAuth[] | Promise<CodexChatGptAuth[]>;
   resolveGlmApiKey?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
+  resolveGlmApiKeyCandidates?: (
+    accountId?: string,
+  ) => string[] | Promise<string[]>;
   resolveGrokToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
+  resolveGrokTokenCandidates?: (
+    accountId?: string,
+  ) => string[] | Promise<string[]>;
   resolveKimiToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
+  resolveKimiTokenCandidates?: (
+    accountId?: string,
+  ) => string[] | Promise<string[]>;
   resolveGeminiToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
   resolveLongcatApiKey?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
+  resolveLongcatApiKeyCandidates?: (
+    accountId?: string,
+  ) => string[] | Promise<string[]>;
   fetchImpl?: FetchLike;
+}
+
+async function stringCandidates(
+  multi:
+    | ((accountId?: string) => string[] | Promise<string[]>)
+    | undefined,
+  single:
+    | ((accountId?: string) => string | null | Promise<string | null>)
+    | undefined,
+  accountId?: string,
+): Promise<string[]> {
+  if (multi) {
+    const list = await Promise.resolve(multi(accountId));
+    return (list ?? []).filter((x) => typeof x === 'string' && x.trim());
+  }
+  if (single) {
+    const one = await Promise.resolve(single(accountId));
+    return one?.trim() ? [one.trim()] : [];
+  }
+  return [];
 }
 
 /**
@@ -56,42 +99,74 @@ export async function fetchLiveProviderWindows(
       return fetchClaudeOauthUsageWindows(token, { fetchImpl, now });
     }
     case 'codex': {
-      if (!deps.resolveCodexAuth) return null;
-      const auth = await Promise.resolve(deps.resolveCodexAuth(accountId));
-      if (!auth) return null;
-      return fetchCodexUsageWindows(auth, { fetchImpl, now });
-    }
-    case 'glm': {
-      if (!deps.resolveGlmApiKey) return null;
-      const key = await Promise.resolve(deps.resolveGlmApiKey(accountId));
-      if (!key) return null;
-      return fetchGlmUsageWindows(key, { fetchImpl, now });
-    }
-    case 'longcat': {
-      // LongCat has no public quota % API yet. If a key exists we still stay
-      // honest (null). Hook reserved for when Meituan exposes usage.
-      if (deps.resolveLongcatApiKey) {
-        await Promise.resolve(deps.resolveLongcatApiKey(accountId));
+      let candidates: CodexChatGptAuth[] = [];
+      if (deps.resolveCodexAuthCandidates) {
+        candidates = await Promise.resolve(
+          deps.resolveCodexAuthCandidates(accountId),
+        );
+      } else if (deps.resolveCodexAuth) {
+        const one = await Promise.resolve(deps.resolveCodexAuth(accountId));
+        if (one) candidates = [one];
+      }
+      for (const auth of candidates) {
+        const windows = await fetchCodexUsageWindows(auth, { fetchImpl, now });
+        if (windows && windows.length > 0) return windows;
       }
       return null;
     }
+    case 'glm': {
+      const keys = await stringCandidates(
+        deps.resolveGlmApiKeyCandidates,
+        deps.resolveGlmApiKey,
+        accountId,
+      );
+      for (const key of keys) {
+        // Global Z.ai first, then CN BigModel.
+        for (const platform of ['zai', 'zhipu'] as const) {
+          const windows = await fetchGlmUsageWindows(key, {
+            fetchImpl,
+            now,
+            platform,
+          });
+          if (windows && windows.length > 0) return windows;
+        }
+      }
+      return null;
+    }
+    case 'longcat': {
+      // No public quota % API yet — keep honest null.
+      await stringCandidates(
+        deps.resolveLongcatApiKeyCandidates,
+        deps.resolveLongcatApiKey,
+        accountId,
+      );
+      return null;
+    }
     case 'grok': {
-      // xAI has no public subscription used% endpoint for CLI OAuth (models
-      // list works but carries no quota %). Stay honest unless rate-limit hit.
-      if (deps.resolveGrokToken) {
-        await Promise.resolve(deps.resolveGrokToken(accountId));
+      const tokens = await stringCandidates(
+        deps.resolveGrokTokenCandidates,
+        deps.resolveGrokToken,
+        accountId,
+      );
+      for (const token of tokens) {
+        const windows = await fetchGrokUsageWindows(token, { fetchImpl, now });
+        if (windows && windows.length > 0) return windows;
       }
       return null;
     }
     case 'kimi': {
-      // Token often short-lived; endpoint auth is brittle. Probe best-effort.
-      if (!deps.resolveKimiToken) return null;
-      const token = await Promise.resolve(deps.resolveKimiToken(accountId));
-      if (!token) return null;
-      return fetchKimiUsageWindows(token, { fetchImpl, now });
+      const tokens = await stringCandidates(
+        deps.resolveKimiTokenCandidates,
+        deps.resolveKimiToken,
+        accountId,
+      );
+      for (const token of tokens) {
+        const windows = await fetchKimiUsageWindows(token, { fetchImpl, now });
+        if (windows && windows.length > 0) return windows;
+      }
+      return null;
     }
     case 'agy': {
-      // AGY/Gemini: no stable public used% for consumer OAuth yet.
       if (deps.resolveGeminiToken) {
         await Promise.resolve(deps.resolveGeminiToken(accountId));
       }
@@ -104,7 +179,6 @@ export async function fetchLiveProviderWindows(
 
 /**
  * Best-effort Kimi Coding usage. Returns null on any failure.
- * Endpoint may change; parse is defensive.
  */
 export async function fetchKimiUsageWindows(
   accessToken: string,
@@ -115,7 +189,7 @@ export async function fetchKimiUsageWindows(
   const fetchImpl = opts?.fetchImpl ?? (globalThis.fetch as FetchLike);
   if (typeof fetchImpl !== 'function') return null;
   const now = opts?.now ?? Date.now();
-  const timeoutMs = opts?.timeoutMs ?? 8_000;
+  const timeoutMs = opts?.timeoutMs ?? 5_000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -140,7 +214,7 @@ export async function fetchKimiUsageWindows(
         const windows = parseKimiUsage(body, now);
         if (windows.length > 0) return windows;
       } catch {
-        // try next url
+        // try next
       }
     }
     return null;
@@ -149,11 +223,9 @@ export async function fetchKimiUsageWindows(
   }
 }
 
-/** Defensive parse for Kimi usage JSON shapes (best-effort). */
 export function parseKimiUsage(body: unknown, now = Date.now()): QuotaWindow[] {
   if (!body || typeof body !== 'object') return [];
   const root = body as Record<string, unknown>;
-  // Nested data wrappers
   const data =
     root.data && typeof root.data === 'object'
       ? (root.data as Record<string, unknown>)
@@ -167,7 +239,8 @@ export function parseKimiUsage(body: unknown, now = Date.now()): QuotaWindow[] {
     label: string,
   ): void => {
     if (typeof raw !== 'number' || !Number.isFinite(raw)) return;
-    const ratio = raw > 1 ? Math.min(1, raw / 100) : Math.max(0, Math.min(1, raw));
+    const ratio =
+      raw > 1 ? Math.min(1, raw / 100) : Math.max(0, Math.min(1, raw));
     out.push(
       knownWindow({
         kind,
@@ -180,7 +253,6 @@ export function parseKimiUsage(body: unknown, now = Date.now()): QuotaWindow[] {
     );
   };
 
-  // Common field names across Moonshot / Kimi coding responses
   for (const [key, kind, label] of [
     ['five_hour_usage_percent', 'hours', '5 Horas'],
     ['five_hour_percent', 'hours', '5 Horas'],
@@ -192,7 +264,6 @@ export function parseKimiUsage(body: unknown, now = Date.now()): QuotaWindow[] {
     if (key in data) tryPercent(data[key], kind, label);
   }
 
-  // Nested rate_limit-like
   const rl = data.rate_limit;
   if (rl && typeof rl === 'object') {
     const r = rl as Record<string, unknown>;

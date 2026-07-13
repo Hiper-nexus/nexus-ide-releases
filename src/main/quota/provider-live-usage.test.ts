@@ -69,13 +69,15 @@ describe('fetchLiveProviderWindows', () => {
     expect(claude?.find((w) => w.kind === 'session')?.usedRatio).toBe(0.1);
 
     const codex = await fetchLiveProviderWindows('codex', undefined, {
-      resolveCodexAuth: () => ({ accessToken: 'codex-tok', accountId: 'a' }),
+      resolveCodexAuthCandidates: () => [
+        { accessToken: 'codex-tok', accountId: 'a' },
+      ],
       fetchImpl,
     });
     expect(codex?.find((w) => w.kind === 'weekly')?.usedRatio).toBe(0.15);
 
     const glm = await fetchLiveProviderWindows('glm', undefined, {
-      resolveGlmApiKey: () => 'glm-key',
+      resolveGlmApiKeyCandidates: () => ['bad-key', 'glm-key'],
       fetchImpl,
     });
     expect(glm?.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.05);

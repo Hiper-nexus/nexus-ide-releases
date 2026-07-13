@@ -1,6 +1,9 @@
 /**
  * Resolve credentials for live provider usage probes.
- * Never logs secrets. Best-effort; null = skip network probe.
+ * Never logs secrets. Best-effort; empty list = skip network probe.
+ *
+ * Prefer multiple candidates (vault → launcher → env → system files) so a
+ * stale vault key cannot shadow a working launcher/CLI login.
  */
 
 import fs from 'node:fs';
@@ -19,6 +22,7 @@ import {
 import { extractClaudeAccessToken } from './claude-oauth-usage';
 
 const CRED_PREFIX = 'acctcred:';
+const KEY_PREFIX = 'acctkey:';
 
 function readText(filePath: string): string | null {
   try {
@@ -29,59 +33,103 @@ function readText(filePath: string): string | null {
   }
 }
 
+function safeGetKey(adapterId: string): string | null {
+  try {
+    return getKey(adapterId)?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function safeGetSecret(key: string): string | null {
+  try {
+    const v = getSecret(key);
+    return typeof v === 'string' && v.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function pushUnique(out: string[], value: string | null | undefined): void {
+  const v = value?.trim();
+  if (!v) return;
+  if (!out.includes(v)) out.push(v);
+}
+
 /** Claude OAuth token (vault account or active CLI). */
 export function resolveClaudeToken(accountId?: string): string | null {
   return claudeOAuthAccessToken(accountId);
 }
 
 /**
- * Codex ChatGPT OAuth from vault blob or ~/.codex/auth.json.
+ * All Codex ChatGPT auth candidates (account vault first, then system login).
+ * Callers try each until usage API succeeds.
  */
-export function resolveCodexAuth(accountId?: string): CodexChatGptAuth | null {
+export function resolveCodexAuthCandidates(
+  accountId?: string,
+): CodexChatGptAuth[] {
+  const out: CodexChatGptAuth[] = [];
+  const seen = new Set<string>();
+
+  const add = (auth: CodexChatGptAuth | null): void => {
+    if (!auth?.accessToken) return;
+    const key = `${auth.accessToken}::${auth.accountId ?? ''}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(auth);
+  };
+
   if (accountId) {
     const account = getAccount(accountId);
-    if (!account || account.adapterId !== 'codex') return null;
-    const blob = getSecret(CRED_PREFIX + accountId);
-    if (typeof blob === 'string') {
-      const fromVault = parseCodexAuthJson(blob);
-      if (fromVault) return fromVault;
+    if (account?.adapterId === 'codex') {
+      const blob = safeGetSecret(CRED_PREFIX + accountId);
+      if (blob) add(parseCodexAuthJson(blob));
     }
-    return null;
   }
+
+  // Always include active CLI login so multi-account vault rows still get a
+  // live % when the vault blob is stale/missing.
   const system = readText(path.join(os.homedir(), '.codex', 'auth.json'));
-  if (system) {
-    const parsed = parseCodexAuthJson(system);
-    if (parsed) return parsed;
-  }
-  return null;
+  if (system) add(parseCodexAuthJson(system));
+
+  return out;
 }
 
-const KEY_PREFIX = 'acctkey:';
+/** Back-compat: first codex auth candidate. */
+export function resolveCodexAuth(accountId?: string): CodexChatGptAuth | null {
+  return resolveCodexAuthCandidates(accountId)[0] ?? null;
+}
 
 /**
- * API key for key-based providers.
- * Priority: vault account key → adapter vault key → launcher → env.
+ * API key candidates for key-based providers (glm, longcat, …).
+ * Order: account vault → adapter vault → launcher → env aliases.
  */
-export function resolveProviderApiKey(
+export function resolveProviderApiKeyCandidates(
   adapterId: string,
   accountId?: string,
-): string | null {
+): string[] {
+  const out: string[] = [];
+
   if (accountId) {
-    const accKey = getSecret(KEY_PREFIX + accountId);
-    if (typeof accKey === 'string' && accKey.trim()) return accKey.trim();
+    pushUnique(out, safeGetSecret(KEY_PREFIX + accountId));
   }
 
-  const fromVault = getKey(adapterId)?.trim();
-  if (fromVault) return fromVault;
+  pushUnique(out, safeGetKey(adapterId));
 
-  const fromLauncher = loadLauncherProviderKey(adapterId)?.trim();
-  if (fromLauncher) return fromLauncher;
+  try {
+    pushUnique(out, loadLauncherProviderKey(adapterId));
+  } catch {
+    // ignore
+  }
 
-  // Common aliases for GLM / Z.ai
   if (adapterId === 'glm') {
-    for (const alias of ['zai', 'zhipu', 'z-ai'] as const) {
-      const k = getKey(alias)?.trim() || loadLauncherProviderKey(alias)?.trim();
-      if (k) return k;
+    for (const alias of ['zai', 'zhipu', 'z-ai', 'z.ai'] as const) {
+      pushUnique(out, safeGetKey(alias));
+      try {
+        pushUnique(out, loadLauncherProviderKey(alias));
+      } catch {
+        // ignore
+      }
     }
     for (const envName of [
       'ANTHROPIC_AUTH_TOKEN',
@@ -89,73 +137,78 @@ export function resolveProviderApiKey(
       'ZHIPU_API_KEY',
       'ZHIPUAI_API_KEY',
     ]) {
-      const v = process.env[envName]?.trim();
-      if (v) return v;
+      pushUnique(out, process.env[envName]);
     }
   }
 
   if (adapterId === 'longcat') {
     for (const envName of ['ANTHROPIC_AUTH_TOKEN', 'LONGCAT_API_KEY']) {
-      const v = process.env[envName]?.trim();
-      if (v) return v;
+      pushUnique(out, process.env[envName]);
     }
   }
 
   if (adapterId === 'grok') {
-    const env = process.env.XAI_API_KEY?.trim();
-    if (env) return env;
+    pushUnique(out, process.env.XAI_API_KEY);
   }
 
   if (adapterId === 'kimi') {
     for (const envName of ['KIMI_MODEL_API_KEY', 'MOONSHOT_API_KEY']) {
-      const v = process.env[envName]?.trim();
-      if (v) return v;
+      pushUnique(out, process.env[envName]);
     }
   }
 
-  return null;
+  return out;
+}
+
+/** First API key candidate (back-compat). */
+export function resolveProviderApiKey(
+  adapterId: string,
+  accountId?: string,
+): string | null {
+  return resolveProviderApiKeyCandidates(adapterId, accountId)[0] ?? null;
 }
 
 /**
- * Grok CLI OAuth access JWT from ~/.grok/auth.json (nested `{ url::id: { key } }`).
- * Also accepts vault API key via resolveProviderApiKey('grok').
+ * Grok CLI OAuth access JWT candidates (vault, API key, ~/.grok/auth.json).
  */
-export function resolveGrokAccessToken(accountId?: string): string | null {
+export function resolveGrokAccessTokenCandidates(
+  accountId?: string,
+): string[] {
+  const out: string[] = [];
   if (accountId) {
-    const blob = getSecret(CRED_PREFIX + accountId);
-    if (typeof blob === 'string') {
-      const nested = extractGrokKeyFromAuthJson(blob);
-      if (nested) return nested;
-      // vault may store raw API key
-      if (blob.trim().length > 8 && !blob.trim().startsWith('{')) {
-        return blob.trim();
-      }
+    const blob = safeGetSecret(CRED_PREFIX + accountId);
+    if (blob) {
+      pushUnique(out, extractGrokKeyFromAuthJson(blob));
+      if (!blob.trim().startsWith('{')) pushUnique(out, blob);
     }
   }
-  const api = resolveProviderApiKey('grok');
-  if (api) return api;
+  for (const k of resolveProviderApiKeyCandidates('grok', accountId)) {
+    pushUnique(out, k);
+  }
   const system = readText(path.join(os.homedir(), '.grok', 'auth.json'));
-  if (system) return extractGrokKeyFromAuthJson(system);
-  return null;
+  if (system) pushUnique(out, extractGrokKeyFromAuthJson(system));
+  return out;
+}
+
+export function resolveGrokAccessToken(accountId?: string): string | null {
+  return resolveGrokAccessTokenCandidates(accountId)[0] ?? null;
 }
 
 export function extractGrokKeyFromAuthJson(blob: string): string | null {
   try {
     const parsed = JSON.parse(blob) as Record<string, unknown>;
     for (const value of Object.values(parsed)) {
-      if (typeof value === 'string' && value.length > 20) {
-        // flat map style
-        continue;
-      }
       if (value && typeof value === 'object') {
         const rec = value as Record<string, unknown>;
         if (typeof rec.key === 'string' && rec.key.length > 0) return rec.key;
-        if (typeof rec.access_token === 'string' && rec.access_token.length > 0) {
+        if (
+          typeof rec.access_token === 'string' &&
+          rec.access_token.length > 0
+        ) {
           return rec.access_token;
         }
       }
     }
-    // flat keys ending in .key
     for (const [k, v] of Object.entries(parsed)) {
       if (k.endsWith('.key') && typeof v === 'string' && v.length > 0) return v;
     }
@@ -165,30 +218,29 @@ export function extractGrokKeyFromAuthJson(blob: string): string | null {
   }
 }
 
-/**
- * Kimi Code OAuth access token from credentials file or vault.
- */
-export function resolveKimiAccessToken(accountId?: string): string | null {
+export function resolveKimiAccessTokenCandidates(
+  accountId?: string,
+): string[] {
+  const out: string[] = [];
   if (accountId) {
-    const blob = getSecret(CRED_PREFIX + accountId);
-    if (typeof blob === 'string') {
-      const t = extractKimiToken(blob);
-      if (t) return t;
-    }
+    const blob = safeGetSecret(CRED_PREFIX + accountId);
+    if (blob) pushUnique(out, extractKimiToken(blob));
   }
-  const api = resolveProviderApiKey('kimi');
-  if (api) return api;
+  for (const k of resolveProviderApiKeyCandidates('kimi', accountId)) {
+    pushUnique(out, k);
+  }
   for (const rel of [
     path.join('.kimi-code', 'credentials', 'kimi-code.json'),
     path.join('.kimi', 'credentials', 'kimi-code.json'),
   ]) {
     const blob = readText(path.join(os.homedir(), rel));
-    if (blob) {
-      const t = extractKimiToken(blob);
-      if (t) return t;
-    }
+    if (blob) pushUnique(out, extractKimiToken(blob));
   }
-  return null;
+  return out;
+}
+
+export function resolveKimiAccessToken(accountId?: string): string | null {
+  return resolveKimiAccessTokenCandidates(accountId)[0] ?? null;
 }
 
 function extractKimiToken(blob: string): string | null {
@@ -209,13 +261,10 @@ function extractKimiToken(blob: string): string | null {
   }
 }
 
-/**
- * Gemini / AGY OAuth access token from ~/.gemini/oauth_creds.json.
- */
 export function resolveGeminiAccessToken(accountId?: string): string | null {
   if (accountId) {
-    const blob = getSecret(CRED_PREFIX + accountId);
-    if (typeof blob === 'string') {
+    const blob = safeGetSecret(CRED_PREFIX + accountId);
+    if (blob) {
       const t = extractGeminiToken(blob);
       if (t) return t;
     }
@@ -236,5 +285,4 @@ function extractGeminiToken(blob: string): string | null {
   }
 }
 
-// re-export for tests that already use extractClaudeAccessToken via account path
 export { extractClaudeAccessToken };
