@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.15.4 — Jarvis Wake Safety
+
+Data: 2026-07-13
+
+### Jarvis em tempo real
+- O pre-roll de áudio encaminha apenas a fala contígua ao wake, eliminando o
+  contexto ambiente anterior que fazia a Jarvis interpretar televisão ou
+  conversa alheia como comando.
+- Detectar a palavra de ativação não inicia nem retoma missão: a mudança de
+  estado exige um comando explícito do usuário pela rota auditada da Jarvis.
+- Comandos de terminal em PT-BR continuam sendo classificados como shell mesmo
+  quando trazem acentos nos argumentos. Entradas com quebra de linha são
+  bloqueadas antes de qualquer confirmação ou envio ao pane.
+
+### Release
+- A distribuição usa a versão `0.15.4`, com os artefatos macOS assinados e
+  notarizados no perfil local de produção.
+
 ## 0.15.3 — Reliable Orchestration
 
 Data: 2026-07-13

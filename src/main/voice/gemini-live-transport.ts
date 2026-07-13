@@ -437,10 +437,22 @@ export class GeminiLiveTransport {
       this.audioStreamOpen = true;
       return;
     }
+    // Overclock parity (C-071.1c / F-138): buffer as a DROP-OLDEST ring, never
+    // drop-newest. A slow setupComplete used to discard the END of the command
+    // once the buffer filled ("só entendeu 'gritar'"). Keeping the most recent
+    // audio preserves the actual spoken command; the 160 KB cap (~5s) holds a
+    // normal utterance. A single chunk larger than the whole cap cannot buffer.
     const bytes = b64.length;
-    if (this.pendingMicBytes + bytes > PENDING_MIC_MAX_BYTES) return;
+    if (bytes > PENDING_MIC_MAX_BYTES) return;
     this.pendingMic.push(b64);
     this.pendingMicBytes += bytes;
+    while (
+      this.pendingMicBytes > PENDING_MIC_MAX_BYTES &&
+      this.pendingMic.length > 1
+    ) {
+      const oldest = this.pendingMic.shift();
+      this.pendingMicBytes -= oldest ? oldest.length : 0;
+    }
   }
 
   private flushPendingMic(): void {

@@ -48,8 +48,23 @@ const STRONG_SPEECH_RMS = 0.055;
 const STRONG_SPEECH_PEAK = 0.12;
 const MIN_SPEECH_MS = 320;
 const MAX_PREROLL_MS = 3_000;
-const REALTIME_PREROLL_MS = 750;
+// Overclock parity (C-071.1c / pre-roll→pendingMic bridge): the wake seed is
+// the audio captured BEFORE wake fired — it holds the wake word AND any command
+// glued to it ("Ei Jarvis, cria uma missão"). When wake fires late (user has to
+// shout), that command onset sits >750ms before detection; clipping the seed to
+// the last 750ms dropped it at the renderer, so Gemini only ever heard the tail
+// ("gritar") while the local fallback WAV kept the full phrase. Forward the
+// whole captured wake window (matching PASSIVE_WAKE_HANDOFF_MS / WAKE_PREROLL_MS)
+// so the command reaches the Live socket; the transport's 160KB drop-oldest ring
+// (~5s) is the single authority that bounds overflow, preserving the newest audio.
+const REALTIME_PREROLL_MS = 2_500;
 const LIVE_FRAME_PREROLL_MS = 750;
+// A pause longer than this inside the wake seed marks the boundary between
+// pre-wake room/TV audio and the wake word + command. Only the trailing run
+// after the last such gap is streamed to Live, so ambient audio that preceded
+// the wake never becomes a transcript. ~600ms is a natural inter-utterance
+// pause without cutting a normally-spoken "Ei Jarvis, <command>".
+const WAKE_SEED_SILENCE_GAP_MS = 600;
 /** Preserve the complete first syllable even when speech starts at a forced
  * VAD-window boundary. 300ms still lost “Jar-” in real continuous-room logs. */
 const PASSIVE_WAKE_PREROLL_MS = 700;
@@ -277,10 +292,22 @@ export class WakeMic {
     this.liveFrameGate.reset();
     this.markSeededSpeech(seeded);
     // The local WAV retains the full wake seed for fallback STT. Live gets only
-    // the trailing window: enough to preserve a command glued to the wake word,
-    // without bursting seconds of wake/silence into automatic VAD.
+    // the TRAILING CONTIGUOUS-SPEECH RUN of the seed, capped at
+    // REALTIME_PREROLL_MS. Forwarding a flat 2.5s window preserved a command
+    // glued to the wake word ("Ei Jarvis, cria missão") but, in a loud room,
+    // also injected seconds of pre-wake TV/room audio — Gemini transcribed
+    // "o mundo aqui. Ei, Jarvis." and acted on the noise. Dropping everything
+    // before the last silence gap keeps the wake word + command onset while
+    // discarding ambient audio that preceded them; the transport's drop-oldest
+    // ring still bounds the tail. Room audio with no gap is still handled
+    // downstream (echo/energy gates), never re-lengthened here.
     const sampleRate = this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE;
-    for (const frame of tailFrames(seeded, sampleRate, REALTIME_PREROLL_MS)) {
+    const speechSeed = trailingSpeechRun(
+      tailFrames(seeded, sampleRate, REALTIME_PREROLL_MS),
+      sampleRate,
+      WAKE_SEED_SILENCE_GAP_MS,
+    );
+    for (const frame of speechSeed) {
       this.uttFrameTap?.(frame, sampleRate);
     }
     // Deadline DURO por timer: o auto-stop normal roda dentro do onFrame — se
@@ -766,6 +793,49 @@ function tailFrames(
     remaining -= take;
   }
   return tail;
+}
+
+/**
+ * Keep only the trailing run of frames after the last silence gap longer than
+ * `gapMs`. This drops pre-wake room/TV audio that sits before the wake word
+ * while preserving the wake word and any command glued to it. A per-frame RMS
+ * below SPEECH_RMS counts as silence; a run of such frames totalling more than
+ * `gapMs` is treated as the boundary. If no gap is found (continuous speech),
+ * the input is returned unchanged so a legitimate "Ei Jarvis, <command>" is
+ * never truncated. Exported for unit testing.
+ */
+export function trailingSpeechRun(
+  frames: readonly Float32Array[],
+  sampleRate: number,
+  gapMs: number,
+): Float32Array[] {
+  if (frames.length === 0) return [];
+  const gapSamples = Math.max(1, Math.ceil((sampleRate * gapMs) / 1_000));
+  const isSilent = (frame: Float32Array): boolean => {
+    let sum = 0;
+    for (let i = 0; i < frame.length; i += 1) sum += frame[i] * frame[i];
+    const rms = Math.sqrt(sum / Math.max(1, frame.length));
+    return rms < SPEECH_RMS;
+  };
+  // Walk backwards; find the last contiguous silence block >= gapSamples and
+  // cut after the block, returning only the speech run that follows it.
+  let runSilentSamples = 0;
+  let blockEndIndex = -1; // highest index of the current contiguous silence run
+  for (let index = frames.length - 1; index >= 0; index -= 1) {
+    if (isSilent(frames[index])) {
+      if (runSilentSamples === 0) blockEndIndex = index;
+      runSilentSamples += frames[index].length;
+      if (runSilentSamples >= gapSamples) {
+        return frames
+          .slice(blockEndIndex + 1)
+          .map((frame) => Float32Array.from(frame));
+      }
+    } else {
+      runSilentSamples = 0;
+      blockEndIndex = -1;
+    }
+  }
+  return frames.map((frame) => Float32Array.from(frame));
 }
 
 /** Remove só o silêncio que o endpoint VAD acrescentou ao sample passivo. */

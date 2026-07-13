@@ -22,7 +22,12 @@ describe('Jarvis action execution routing', () => {
     expect(sendBranch).not.toContain("recoveredFrom: 'send_to_pane'");
     expect(sendBranch).not.toContain('confirmCommand(');
     expect(sendBranch).not.toContain('writeToPane(focused.id');
-    expect(sendBranch).toContain('Não achei um pane de agente');
+    // No-agent fallback: a natural-language delegation with no live agent/
+    // orchestrator pane opens the agentic mission wizard with the objective
+    // filled — it must never surface a shell command dialog nor a hard-fail
+    // toast that silently drops the user's mission.
+    expect(sendBranch).toContain("target.kind === 'no-agent-pane'");
+    expect(sendBranch).toContain('openForAgentic(action.text)');
   });
 
   it('reroutes an execution-ready mission mislabeled as a command', () => {

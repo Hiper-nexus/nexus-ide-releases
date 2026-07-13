@@ -671,6 +671,66 @@ describe('LiveTransportController', () => {
     vi.doUnmock('../jarvis/realtime/factory');
   });
 
+  it('pendingMic do controller também é drop-oldest durante setup lento', async () => {
+    vi.resetModules();
+    const pending = deferred();
+    const provider = fakeProvider(() => pending.promise);
+    const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
+
+    vi.doMock('./voice-config-store', () => ({
+      getVoiceConfig: () => ({
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          enabled: true,
+          transport: 'gemini-live',
+        },
+      }),
+    }));
+    vi.doMock('./voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'key',
+      voiceApiKeySource: () => 'env',
+    }));
+    vi.doMock('./jarvis-memory', () => ({
+      jarvisMemory: { factsBlock: () => '' },
+    }));
+    vi.doMock('../jarvis/realtime/factory', () => ({
+      createRealtimeProviderCandidates: () => candidates,
+      loadJarvisSystemPrompt: () => 'You are Jarvis.',
+      resolveRealtimeProviderIds: () => ['gemini'],
+    }));
+
+    const { LiveTransportController } = await import('./live-transport-controller');
+    const session = new JarvisLiveSession(() => {}, () => 1000);
+    session.setEnabled(true);
+    session.start({ reason: 'wake' });
+    const controller = new LiveTransportController(() => {}, session);
+
+    const started = controller.onStart();
+    // 16 chunks × 32KB = exactly the 512KB controller cap.
+    for (let i = 0; i < 16; i += 1) {
+      controller.micIn(pcmBase64(new Array(16 * 1024).fill(i + 1)));
+    }
+    // Adding one more chunk must evict only the oldest chunk, not reject the
+    // newest command tail.
+    const newest = new Array(16 * 1024).fill(99);
+    controller.micIn(pcmBase64(newest));
+
+    pending.resolve();
+    await started;
+
+    expect(provider.sendAudioChunk).toHaveBeenCalledTimes(16);
+    expect(provider.sendAudioChunk).not.toHaveBeenCalledWith(
+      new Int16Array(new Array(16 * 1024).fill(1)),
+    );
+    expect(provider.sendAudioChunk).toHaveBeenLastCalledWith(new Int16Array(newest));
+
+    vi.doUnmock('./voice-config-store');
+    vi.doUnmock('./voice-secrets');
+    vi.doUnmock('./jarvis-memory');
+    vi.doUnmock('../jarvis/realtime/factory');
+  });
+
   it('omits a cold wake greeting when user audio arrived during connect', async () => {
     vi.resetModules();
     const pending = deferred();

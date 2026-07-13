@@ -157,10 +157,10 @@ function stripEnvAssignments(command: string): string {
 function looksLikeShellCommand(command: string): boolean {
   const trimmed = command.trim();
   if (!trimmed || trimmed.length > 4_096) return false;
-  if (!SHELL_COMMAND_RE.test(trimmed) || /[À-ÿ]/.test(trimmed)) return false;
-  if (/[;&|<>`$(){}[\]*?~]/.test(trimmed)) return true;
   const firstToken = stripEnvAssignments(trimmed).split(/\s+/, 1)[0] ?? '';
   if (!firstToken) return false;
+  if (!SHELL_COMMAND_RE.test(trimmed) || /[À-ÿ]/.test(firstToken)) return false;
+  if (/[;&|<>`$(){}[\]*?~]/.test(trimmed)) return true;
   if (firstToken.includes('/') || firstToken.includes('.')) return true;
   return KNOWN_SHELL_COMMANDS.has(firstToken);
 }
@@ -884,6 +884,21 @@ export async function executeJarvisAction(
       };
     }
   } else if (action.type === 'run_command') {
+    // A terminal Enter executes every physical line. Native confirmation is
+    // intentionally per command, so a model-produced newline must never turn
+    // one approved command into a second hidden execution.
+    const terminalCommand = action.command.trim() === 'I' ? 'ai' : action.command;
+    if (/[\r\n]/.test(terminalCommand)) {
+      return {
+        sayText: 'Por segurança, eu só executo comandos de uma única linha.',
+        expectReply: false,
+        toolResult: {
+          tool: action.type,
+          ok: false,
+          summary: 'comando multilinha bloqueado',
+        },
+      };
+    }
     const { focusedPaneId: fp, root: rc } = useLayoutStore.getState();
     const panesNow = listPanes(rc);
     const focused = fp ? panesNow.find((p) => p.id === fp) : undefined;
@@ -902,7 +917,6 @@ export async function executeJarvisAction(
       // Gemini occasionally converts the Portuguese literal command “ai” to
       // the English pronoun “I”. For this exact one-token ambiguity preserve
       // the user's intended lowercase CLI command. Other commands stay exact.
-      const terminalCommand = action.command.trim() === 'I' ? 'ai' : action.command;
       // Native dialog is sufficient feedback. A parallel local TTS here raced
       // Gemini Live narration and produced two overlapping Jarvis voices.
       const approved = await window.nexus.voice.confirmCommand(terminalCommand);
