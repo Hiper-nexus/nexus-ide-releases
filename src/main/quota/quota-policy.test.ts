@@ -1,0 +1,117 @@
+import { describe, expect, it } from 'vitest';
+import type { ProviderQuotaEntry } from '../../shared/quota-types';
+import {
+  buildFleetSnapshot,
+  entryWorstRatio,
+  isHighUsage,
+  preferAccountByQuota,
+  quotaAvailabilityScore,
+  spawnWarningForAccount,
+} from './quota-policy';
+
+function entry(
+  partial: Partial<ProviderQuotaEntry> & Pick<ProviderQuotaEntry, 'id' | 'adapterId'>,
+): ProviderQuotaEntry {
+  return {
+    label: partial.id,
+    installed: true,
+    onCooldown: false,
+    windows: [],
+    updatedAt: 1,
+    ...partial,
+  };
+}
+
+describe('quota-policy', () => {
+  it('computes worst ratio and high usage', () => {
+    const e = entry({
+      id: 'claude:a',
+      adapterId: 'claude',
+      windows: [
+        {
+          kind: 'session',
+          label: 'Sessão',
+          usedRatio: 0.1,
+          source: 'provider-api',
+          confidence: 'high',
+        },
+        {
+          kind: 'weekly',
+          label: 'Semanal',
+          usedRatio: 0.9,
+          source: 'provider-api',
+          confidence: 'high',
+        },
+      ],
+    });
+    expect(entryWorstRatio(e)).toBe(0.9);
+    expect(isHighUsage(e)).toBe(true);
+    expect(spawnWarningForAccount(e)).toMatch(/90%/);
+  });
+
+  it('unknown windows do not invent worst ratio of zero', () => {
+    const e = entry({
+      id: 'x',
+      adapterId: 'kimi',
+      windows: [
+        {
+          kind: 'weekly',
+          label: 'Semanal',
+          usedRatio: null,
+          source: 'unknown',
+          confidence: 'low',
+        },
+      ],
+    });
+    expect(entryWorstRatio(e)).toBeNull();
+    const fleet = buildFleetSnapshot([e]);
+    expect(fleet.worstUsedRatio).toBeNull();
+    expect(fleet.unknownCount).toBe(1);
+  });
+
+  it('prefers freer account for failover weight', () => {
+    const low = entry({
+      id: 'a',
+      adapterId: 'claude',
+      windows: [
+        {
+          kind: 'weekly',
+          label: 'Semanal',
+          usedRatio: 0.2,
+          source: 'provider-api',
+          confidence: 'high',
+        },
+      ],
+    });
+    const high = entry({
+      id: 'b',
+      adapterId: 'claude',
+      windows: [
+        {
+          kind: 'weekly',
+          label: 'Semanal',
+          usedRatio: 0.95,
+          source: 'provider-api',
+          confidence: 'high',
+        },
+      ],
+    });
+    expect(preferAccountByQuota(low, high).id).toBe('a');
+    expect(quotaAvailabilityScore(low)).toBeGreaterThan(
+      quotaAvailabilityScore(high),
+    );
+  });
+
+  it('cooldown is high usage with score 0', () => {
+    const e = entry({
+      id: 'c',
+      adapterId: 'codex',
+      onCooldown: true,
+      cooldownUntil: Date.now() + 60_000,
+      windows: [],
+    });
+    expect(isHighUsage(e)).toBe(true);
+    expect(quotaAvailabilityScore(e)).toBe(0);
+    expect(spawnWarningForAccount(e)).toMatch(/cooldown/i);
+  });
+});

@@ -49,4 +49,15 @@ describe('chooseAccount (failover selection)', () => {
   it('returns null for an empty roster', () => {
     expect(chooseAccount([], null, null, NOW)).toBeNull();
   });
+
+  it('when no active, prefers freer quota score', () => {
+    const accounts = [acct('a', 1), acct('b', 2)];
+    const scores = new Map([
+      ['a', 0.2],
+      ['b', 0.9],
+    ]);
+    const chosen = chooseAccount(accounts, null, null, NOW, scores);
+    expect(chosen?.id).toBe('b');
+  });
 });
+

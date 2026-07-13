@@ -21,6 +21,11 @@ import {
   setCooldown,
 } from '../persistence/account-store';
 import { broadcastToProject, sameProjectScope } from './project-scoped-broadcast';
+import {
+  noteQuotaLimitHit,
+  requireQuotaService,
+} from '../quota/quota-service';
+import { quotaAvailabilityScore } from '../quota/quota-policy';
 
 /**
  * Automatic account failover. Watches each pane's output for a limit signature
@@ -206,9 +211,32 @@ function handleChunk(sessionId: string, data: string, now: number): void {
   const current = pinned?.adapterId === adapterId ? pinned : getActiveAccount(adapterId);
   const fromLabel = current?.label ?? adapterId;
 
+  // Feed fleet quota UI (session/5h/weekly bars) from the same limit signal.
+  noteQuotaLimitHit(adapterId, hit, current?.id);
+
   // Put the exhausted account on cooldown, then pick the next available one.
   if (current) setCooldown(current.id, now + hit.cooldownMs, hit.reason);
-  const next = pickAvailable(adapterId, current?.id ?? null, now);
+  // P3: prefer freer cota among eligible accounts when fleet snapshot exists.
+  let quotaScores: Map<string, number> | undefined;
+  try {
+    const snap = requireQuotaService().lastSnapshot();
+    if (snap) {
+      quotaScores = new Map();
+      for (const e of snap.entries) {
+        if (e.adapterId === adapterId && e.accountId) {
+          quotaScores.set(e.accountId, quotaAvailabilityScore(e));
+        }
+      }
+    }
+  } catch {
+    /* quota service optional at boot race */
+  }
+  const next = pickAvailable(
+    adapterId,
+    current?.id ?? null,
+    now,
+    quotaScores,
+  );
 
   if (!next) {
     emitFailover(authority, {

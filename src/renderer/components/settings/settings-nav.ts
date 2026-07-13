@@ -9,6 +9,7 @@ export type SettingsSection =
   | 'audit'
   | 'media'
   | 'providers'
+  | 'usage-quota'
   | 'ranking'
   | 'squads'
   | 'marketplace'
@@ -106,6 +107,21 @@ export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
         title: 'Providers',
         subtitle: 'chaves · modelos',
         aliases: ['keys', 'models', 'cli', 'clis'],
+      },
+      {
+        id: 'usage-quota',
+        icon: 'QTA',
+        pixelIcon: 'bolt',
+        title: 'Uso e cotas',
+        subtitle: 'sessão · 5h · semanal',
+        aliases: [
+          'quota',
+          'usage',
+          'cotas',
+          'rate limit',
+          'semanal',
+          'analytics',
+        ],
       },
       {
         id: 'ranking',

@@ -8,6 +8,7 @@ import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useCloseWorkspaceStore } from './CloseWorkspaceDialog';
 import { useFilesStore } from '../state/files-store';
 import { CostSummary } from './CostBadge';
+import { QuotaChip } from './QuotaChip';
 import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
 import { VisionIndicator } from './VisionIndicator';
@@ -440,6 +441,7 @@ export function WorkspaceBar({
             rail — a zona de status da bar é só sinal operacional. */}
         <div className="workspace-bar__zone workspace-bar__zone--status">
           <FleetChip />
+          <QuotaChip />
           {!compact && <CostSummary />}
           {activeTodo && !compact && (
             <span

@@ -26,6 +26,7 @@ import {
   TerminalSection,
 } from './ModuleSections';
 import { ProvidersPanel } from './ProvidersPanel';
+import { UsageQuotaSection } from './UsageQuotaSection';
 import { ModelRankingSection } from './ModelRankingSection';
 import { PixelIcon } from '../PixelIcon';
 import { OperatorHud } from '../OperatorHud';
@@ -403,6 +404,7 @@ export function SettingsDrawer() {
           {section === 'audit' && <AuditSection />}
           {section === 'media' && <MediaSection />}
           {section === 'providers' && <ProvidersPanel />}
+          {section === 'usage-quota' && <UsageQuotaSection />}
           {section === 'ranking' && <ModelRankingSection />}
           {section === 'squads' && <SquadsSection onNavigate={close} />}
           {section === 'marketplace' && <MarketplaceSection />}

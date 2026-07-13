@@ -8,6 +8,8 @@ import {
 } from 'react';
 import { useAccountStore } from '../state/account-store';
 import { useSettingsStore } from '../state/settings-store';
+import { useQuotaStore, entryForAccount } from '../state/quota-store';
+import { shortWindowsLine } from '../lib/quota-display';
 import {
   restartPanesForPendingAccount,
 } from '../orch/account-restart-controller';
@@ -30,6 +32,7 @@ export function AccountSwitcher({
 }) {
   const accounts = useAccountStore((s) => s.accounts);
   const quota = useAccountStore((s) => s.quota);
+  const fleetQuota = useQuotaStore((s) => s.snapshot);
   const activate = useAccountStore((s) => s.activate);
   const restartAdapterId = useAccountStore((s) => s.restartAdapterId);
   const restartLabel = useAccountStore((s) => s.restartLabel);
@@ -294,6 +297,14 @@ export function AccountSwitcher({
                   const kind =
                     a.mode === 'subscription' ? 'sub' : a.upstream || 'key';
                   const disabled = busy || a.onCooldown || !a.hasCredential;
+                  const fleetEntry = entryForAccount(
+                    fleetQuota,
+                    a.adapterId,
+                    a.id,
+                  );
+                  const windowsLine = fleetEntry
+                    ? shortWindowsLine(fleetEntry)
+                    : 'cota · —';
                   return (
                     <button
                       key={a.id}
@@ -308,7 +319,7 @@ export function AccountSwitcher({
                           ? `Em cooldown${a.lastError ? `: ${a.lastError}` : ''}`
                           : !a.hasCredential
                             ? 'Sem credencial salva'
-                            : `Ativar ${a.label}`
+                            : `Ativar ${a.label} · ${windowsLine}`
                       }
                       onClick={() => {
                         setBusy(true);
@@ -342,6 +353,9 @@ export function AccountSwitcher({
                           {kind}
                           {a.email ? ` · ${a.email}` : ''}
                           {` · ${status}`}
+                        </span>
+                        <span className="account-switcher__quota">
+                          {windowsLine}
                         </span>
                       </span>
                     </button>

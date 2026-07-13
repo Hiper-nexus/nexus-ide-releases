@@ -47,6 +47,8 @@ import type {
 import { COST_CHANNELS } from '../shared/cost-types';
 import { USAGE_CHANNELS } from '../shared/usage-types';
 import type { UsageSnapshot } from '../shared/usage-types';
+import { QUOTA_CHANNELS } from '../shared/quota-types';
+import type { QuotaFleetSnapshot } from '../shared/quota-types';
 import { EVAL_RANKING_CHANNELS } from '../shared/eval-ranking-types';
 import { MEDIA_CHANNELS } from '../shared/media-types';
 import type { MediaProviderId } from '../shared/media-types';
@@ -346,6 +348,10 @@ ipcRenderer.on(COST_CHANNELS.changed, (_e, snapshot: CostSnapshot) =>
 const usageChangedListeners = new Set<(snapshot: UsageSnapshot) => void>();
 ipcRenderer.on(USAGE_CHANNELS.changed, (_e, snapshot: UsageSnapshot) =>
   usageChangedListeners.forEach((cb) => cb(snapshot)),
+);
+const quotaChangedListeners = new Set<(snapshot: QuotaFleetSnapshot) => void>();
+ipcRenderer.on(QUOTA_CHANNELS.changed, (_e, snapshot: QuotaFleetSnapshot) =>
+  quotaChangedListeners.forEach((cb) => cb(snapshot)),
 );
 const gamificationChangedListeners = new Set<
   (snapshot: GamificationSnapshot) => void
@@ -767,6 +773,14 @@ const api: NexusApi = {
     snapshot: () => ipcRenderer.invoke(USAGE_CHANNELS.snapshot),
     onChanged: (cb: (snapshot: UsageSnapshot) => void) =>
       addListener(usageChangedListeners, cb),
+  },
+  quota: {
+    snapshot: () =>
+      ipcRenderer.invoke(QUOTA_CHANNELS.snapshot) as Promise<QuotaFleetSnapshot>,
+    refresh: () =>
+      ipcRenderer.invoke(QUOTA_CHANNELS.refresh) as Promise<QuotaFleetSnapshot>,
+    onChanged: (cb: (snapshot: QuotaFleetSnapshot) => void) =>
+      addListener(quotaChangedListeners, cb),
   },
   gamification: {
     snapshot: () => ipcRenderer.invoke(GAMIFICATION_CHANNELS.snapshot),

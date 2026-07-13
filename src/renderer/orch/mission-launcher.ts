@@ -1,5 +1,6 @@
 import type { AdapterInfo, PaneModel } from "../../shared/types";
 import type { Squad, SquadAgent } from "../../shared/orch-types";
+import { QUOTA_HIGH_USAGE_THRESHOLD } from "../../shared/quota-types";
 import { useLayoutStore } from "../state/layout-store";
 import { useHomeStore } from "../state/home-store";
 import { useOrchStore } from "../state/orch-store";
@@ -240,9 +241,10 @@ export async function launchSquadMission(
     return { ok: false, error: "Este squad não tem agentes." };
   }
 
-  const [orchDefaults, accounts] = await Promise.all([
+  const [orchDefaults, accounts, quotaSnap] = await Promise.all([
     window.nexus.settings.orchGet(),
     window.nexus.accounts.list(),
+    window.nexus.quota?.snapshot?.().catch(() => null) ?? Promise.resolve(null),
   ]);
   const configuredAdapterId =
     orchDefaults.defaultAdapterId || FALLBACK_ORCHESTRATOR_ADAPTER_ID;
@@ -275,6 +277,52 @@ export async function launchSquadMission(
   }
 
   const cli = selectedAdapter.id;
+  // P2: warn when default account for orchestrator CLI is high-usage / cooldown.
+  if (quotaSnap) {
+    const defaultAcct =
+      accounts.find(
+        (a) =>
+          a.adapterId === cli &&
+          (a.id === orchDefaults.defaultAccountId || a.active),
+      ) ?? accounts.find((a) => a.adapterId === cli && a.active);
+    const entry = quotaSnap.entries.find(
+      (e) =>
+        e.adapterId === cli &&
+        (defaultAcct ? e.accountId === defaultAcct.id : !e.accountId),
+    ) ?? quotaSnap.entries.find((e) => e.adapterId === cli);
+    if (entry) {
+      const worst = entry.onCooldown
+        ? 1
+        : entry.windows.reduce<number | null>((acc, w) => {
+            if (w.usedRatio === null) return acc;
+            if (acc === null || w.usedRatio > acc) return w.usedRatio;
+            return acc;
+          }, null);
+      if (
+        entry.onCooldown ||
+        (worst !== null && worst >= QUOTA_HIGH_USAGE_THRESHOLD)
+      ) {
+        console.warn(
+          '[mission-launcher] high quota pressure on orchestrator account:',
+          entry.label,
+          worst,
+        );
+        // Soft signal: still launches, but surfaces toast for the operator.
+        try {
+          const { useToastStore } = await import('../state/toast-store');
+          useToastStore.getState().push(
+            'warn',
+            'Cota alta no orquestrador',
+            entry.onCooldown
+              ? `"${entry.label}" em cooldown — squad pode falhar no limite.`
+              : `"${entry.label}" com ~${Math.round((worst ?? 0) * 100)}% na pior janela.`,
+          );
+        } catch {
+          /* toast optional */
+        }
+      }
+    }
+  }
   const runtime = resolveOrchestratorRuntime({
     adapterId: cli,
     squadModel: orchestrator.cli === cli ? orchestrator.model : undefined,

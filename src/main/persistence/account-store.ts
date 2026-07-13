@@ -395,12 +395,14 @@ export function pickAvailable(
   adapterId: string,
   excludeId: string | null,
   now = Date.now(),
+  quotaScoreByAccountId?: ReadonlyMap<string, number>,
 ): Account | null {
   return chooseAccount(
     listAccounts(adapterId),
     activeByAdapter.get(adapterId) ?? null,
     excludeId,
     now,
+    quotaScoreByAccountId,
   );
 }
 

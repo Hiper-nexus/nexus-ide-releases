@@ -1006,6 +1006,17 @@ export interface NexusApi {
     snapshot(): Promise<UsageSnapshot>;
     onChanged(cb: (snapshot: UsageSnapshot) => void): Unsubscribe;
   };
+  /**
+   * Fleet provider quota windows (session / hours / weekly). Distinct from
+   * project token spend in `usage`. Unknown ratios are null, never fake 0%.
+   */
+  quota: {
+    snapshot(): Promise<import('./quota-types').QuotaFleetSnapshot>;
+    refresh(): Promise<import('./quota-types').QuotaFleetSnapshot>;
+    onChanged(
+      cb: (snapshot: import('./quota-types').QuotaFleetSnapshot) => void,
+    ): Unsubscribe;
+  };
   /** Gamificação power-scaling: XP por entrega, nunca por consumo. */
   gamification: {
     snapshot(): Promise<GamificationSnapshot>;

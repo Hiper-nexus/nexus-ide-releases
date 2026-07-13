@@ -6,7 +6,9 @@ import {
   pickValue,
   radarPoints,
   radarPolygon,
+  scoreWithQuota,
   sortEntries,
+  sortEntriesWithQuota,
 } from './ranking-view';
 
 function entry(
@@ -87,4 +89,36 @@ describe('ranking-view', () => {
     // overall axis points up from center
     expect(pts[0]!.y).toBeLessThan(100);
   });
+
+  it('scoreWithQuota boosts freer accounts without inventing free when null', () => {
+    const e = pack[0]!;
+    const free = scoreWithQuota(e, 1);
+    const tight = scoreWithQuota(e, 0);
+    const unknown = scoreWithQuota(e, null);
+    expect(free).toBeGreaterThan(tight);
+    expect(unknown).toBeGreaterThan(tight);
+    expect(unknown).toBeLessThan(free);
+  });
+
+  it('sortEntriesWithQuota demotes exhausted adapters on overall sort', () => {
+    const quota = new Map<string, number | null>([
+      ['claude', 0.1],
+      ['grok', 0.95],
+      ['glm', null],
+    ]);
+    const ranked = sortEntriesWithQuota(pack, 'overall', quota);
+    const idx = (adapter: string) =>
+      ranked.findIndex((e) => e.adapterId === adapter);
+    // freer grok ranks above exhausted claude despite lower raw overall
+    expect(scoreWithQuota(pack[1]!, 0.95)).toBeGreaterThan(
+      scoreWithQuota(pack[0]!, 0.1),
+    );
+    expect(idx('grok')).toBeLessThan(idx('claude'));
+    // unknown glm uses neutral weight — stays competitive with raw 58 overall
+    expect(idx('glm')).toBeLessThan(idx('claude'));
+    // coding sort ignores quota map path for non-overall keys
+    const byCoding = sortEntriesWithQuota(pack, 'coding', quota);
+    expect(byCoding[0]!.modelId).toBe(sortEntries(pack, 'coding')[0]!.modelId);
+  });
 });
+

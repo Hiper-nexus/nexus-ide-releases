@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { PublicModelRankingEntry } from '../../../shared/eval-ranking-types';
+import type { QuotaFleetSnapshot } from '../../../shared/quota-types';
 import { useProviderStore } from '../../state/provider-store';
+import { useQuotaStore } from '../../state/quota-store';
 import {
   RADAR_AXES,
   SORT_LABELS,
@@ -17,7 +19,40 @@ import {
   scoreOf,
   scoreOrZero,
   sortEntries,
+  sortEntriesWithQuota,
 } from './ranking-view';
+
+/**
+ * Per-adapter free capacity 0..1 for ranking blend. Uses freest account of each
+ * adapter; null = no known ratios (neutral weight in scoreWithQuota).
+ */
+function quotaAvailabilityByAdapter(
+  snapshot: QuotaFleetSnapshot,
+): Map<string, number | null> {
+  const map = new Map<string, number | null>();
+  for (const e of snapshot.entries) {
+    let free: number | null;
+    if (e.onCooldown) {
+      free = 0;
+    } else {
+      let worst: number | null = null;
+      for (const w of e.windows) {
+        if (w.usedRatio === null) continue;
+        if (worst === null || w.usedRatio > worst) worst = w.usedRatio;
+      }
+      free = worst === null ? null : Math.max(0, Math.min(1, 1 - worst));
+    }
+    const prev = map.get(e.adapterId);
+    if (prev === undefined) {
+      map.set(e.adapterId, free);
+      continue;
+    }
+    // Prefer freer account when comparing known values; null loses to known free.
+    if (free === null) continue;
+    if (prev === null || free > prev) map.set(e.adapterId, free);
+  }
+  return map;
+}
 
 /**
  * Operational LLM ranking cockpit — race + radar + mission picks.
@@ -249,6 +284,11 @@ export function ModelRankingSection() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const providers = useProviderStore((s) => s.providers);
+  const fleetQuota = useQuotaStore((s) => s.snapshot);
+  const quotaByAdapter = useMemo(
+    () => quotaAvailabilityByAdapter(fleetQuota),
+    [fleetQuota],
+  );
   const installed = useMemo(() => {
     const set = new Set<string>();
     for (const p of providers) {
@@ -273,7 +313,11 @@ export function ModelRankingSection() {
         setError(null);
         setSelectedId((prev) => {
           if (prev && data.entries.some((e) => e.id === prev)) return prev;
-          const top = sortEntries(data.entries, 'overall')[0];
+          const top = sortEntriesWithQuota(
+            data.entries,
+            'overall',
+            quotaAvailabilityByAdapter(useQuotaStore.getState().snapshot),
+          )[0];
           return top?.id ?? null;
         });
       })
@@ -292,8 +336,11 @@ export function ModelRankingSection() {
 
   const rows = useMemo(() => {
     if (!snapshot) return [];
+    if (sort === 'overall') {
+      return sortEntriesWithQuota(snapshot.entries, sort, quotaByAdapter);
+    }
     return sortEntries(snapshot.entries, sort);
-  }, [snapshot, sort]);
+  }, [snapshot, sort, quotaByAdapter]);
 
   const selected = useMemo(() => {
     if (!snapshot || !selectedId) return null;
@@ -302,8 +349,8 @@ export function ModelRankingSection() {
 
   const leader = useMemo(() => {
     if (!snapshot) return null;
-    return sortEntries(snapshot.entries, 'overall')[0] ?? null;
-  }, [snapshot]);
+    return sortEntriesWithQuota(snapshot.entries, 'overall', quotaByAdapter)[0] ?? null;
+  }, [snapshot, quotaByAdapter]);
 
   const liveCount = useMemo(
     () => rows.filter((r) => installed.has(r.adapterId)).length,

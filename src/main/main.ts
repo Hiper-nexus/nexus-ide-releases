@@ -131,6 +131,12 @@ import {
   initUsageTelemetry,
   shutdownUsageTelemetry,
 } from "./usage/usage-service";
+import {
+  initQuotaService,
+  shutdownQuotaService,
+} from "./quota/quota-service";
+import { listProviderSettings } from "./persistence/provider-config-store";
+import { listAccountInfos } from "./persistence/account-store";
 import { closeDb } from "./persistence/db";
 import {
   getOrchSettings,
@@ -349,6 +355,10 @@ function bootstrap(): void {
   // Telemetria REAL de tokens (transcript watchers → SQLite). Convive com o
   // cost-tracker heurístico: a UI prefere o real quando ele existe.
   initUsageTelemetry(projectRuntimeManager);
+  initQuotaService({
+    listProviders: () => listProviderSettings(),
+    listAccounts: () => listAccountInfos(),
+  });
   registerNotesIpc(projectRuntimeManager);
   registerBillingIpc();
   registerTeamIpc();
@@ -556,6 +566,7 @@ function shutdown(): Promise<void> {
     closeAdapterRegistry();
     closeVoiceIpc();
     shutdownUsageTelemetry();
+    shutdownQuotaService();
     shutdownGamificationService();
     stopCronLoop();
     disposeCronRuntime();

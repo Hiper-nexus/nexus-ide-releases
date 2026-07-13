@@ -50,6 +50,7 @@ import { useFilesStore } from './state/files-store';
 import { useAccountController } from './state/account-store';
 import { useCostController } from './state/cost-store';
 import { useUsageSync } from './state/usage-store';
+import { useQuotaSync } from './state/quota-store';
 import { useGamificationSync, useGamificationStore } from './state/gamification-store';
 import { OperatorProfile } from './components/OperatorProfile';
 import { OperatorFx } from './components/OperatorFx';
@@ -120,6 +121,7 @@ export function App() {
   useAccountController();
   useCostController();
   useUsageSync();
+  useQuotaSync();
   useGamificationSync();
   useOnboardingSync();
   useFailoverController();

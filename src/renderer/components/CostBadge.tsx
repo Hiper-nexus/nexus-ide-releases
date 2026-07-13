@@ -1,5 +1,9 @@
 import { useCostStore } from '../state/cost-store';
 import { useUsageStore } from '../state/usage-store';
+import { useQuotaStore, entryForAccount } from '../state/quota-store';
+import { useLayoutStore } from '../state/layout-store';
+import { listPanes } from '../lib/split-tree';
+import { shortWindowsLine } from '../lib/quota-display';
 import { PixelIcon } from './PixelIcon';
 
 /**
@@ -26,6 +30,18 @@ export function CostBadge({ paneId }: { paneId: string }) {
   // Telemetria REAL (transcript watcher) tem precedência sobre a estimativa
   // por bytes — quando existe, o badge mostra o número auditável.
   const real = useUsageStore((s) => s.snapshot.byPane[paneId]);
+  const fleet = useQuotaStore((s) => s.snapshot);
+  const layoutRoot = useLayoutStore((s) => s.root);
+  const layoutPane = listPanes(layoutRoot).find((p) => p.id === paneId);
+  const quotaEntry =
+    layoutPane?.kind === 'cli-agent' && layoutPane.adapterId
+      ? entryForAccount(
+          fleet,
+          layoutPane.adapterId,
+          layoutPane.accountId,
+        )
+      : undefined;
+  const quotaLine = quotaEntry ? shortWindowsLine(quotaEntry) : null;
   if (!pane && !real) return null;
 
   const hasCap = !!pane && pane.capUsd !== undefined && pane.capUsd > 0;
@@ -37,9 +53,14 @@ export function CostBadge({ paneId }: { paneId: string }) {
   const sourceNote = real
     ? `custo REAL (transcript, ${real.turns} turnos; cache read ${Math.round(real.cacheReadTokens / 1000)}k tok)`
     : 'custo estimado (heurística por bytes)';
-  const capTitle = hasCap
-    ? `${formatUsd(shownUsd)} de ${formatUsd(pane!.capUsd!)} (cap) — ${sourceNote}`
-    : `${formatUsd(shownUsd)} — ${sourceNote}`;
+  const capTitle = [
+    hasCap
+      ? `${formatUsd(shownUsd)} de ${formatUsd(pane!.capUsd!)} (cap) — ${sourceNote}`
+      : `${formatUsd(shownUsd)} — ${sourceNote}`,
+    quotaLine ? `Cota conta: ${quotaLine}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <span

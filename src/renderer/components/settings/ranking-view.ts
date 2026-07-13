@@ -93,6 +93,37 @@ export function costEfficiency(entry: PublicModelRankingEntry): number {
   return Math.round((entry.overall / costWeight) * 10) / 10;
 }
 
+/**
+ * Blend overall score with quota availability (0..1 free capacity).
+ * Unknown quota (null) uses neutral 0.55 so we never invent a free ride.
+ */
+export function scoreWithQuota(
+  entry: PublicModelRankingEntry,
+  quotaAvailability: number | null,
+): number {
+  const q = quotaAvailability === null ? 0.55 : Math.max(0, Math.min(1, quotaAvailability));
+  return Math.round(entry.overall * (0.65 + 0.35 * q) * 10) / 10;
+}
+
+export function sortEntriesWithQuota(
+  entries: readonly PublicModelRankingEntry[],
+  key: SortKey,
+  quotaByAdapter: ReadonlyMap<string, number | null>,
+): PublicModelRankingEntry[] {
+  return [...entries].sort((a, b) => {
+    if (key === 'overall') {
+      const sa = scoreWithQuota(a, quotaByAdapter.get(a.adapterId) ?? null);
+      const sb = scoreWithQuota(b, quotaByAdapter.get(b.adapterId) ?? null);
+      if (sb !== sa) return sb - sa;
+    } else {
+      const sa = scoreOf(a, key) ?? -1;
+      const sb = scoreOf(b, key) ?? -1;
+      if (sb !== sa) return sb - sa;
+    }
+    return a.modelId.localeCompare(b.modelId);
+  });
+}
+
 export interface RadarPoint {
   key: SortKey;
   label: string;
