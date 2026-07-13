@@ -20,6 +20,7 @@ const AGENT_BOOT_TIMEOUT_MS = 20_000;
 const MAX_REVIEW_TIMEOUT_MS = 30 * 60_000;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const reviewFlights = new Map<string, Promise<ContextDraftRecord>>();
+const reviewQueues = new Map<string, Promise<void>>();
 
 const draftIdSchema = z
   .string()
@@ -322,9 +323,27 @@ export class CliContextDraftReviewer {
     ].join('\0');
     const existing = reviewFlights.get(key);
     if (existing) return existing;
-    const flight = this.#execute({ scope, draftId }).finally(() => {
+    const scopeKey = [
+      scope.installationId,
+      scope.projectId,
+      scope.checkoutId,
+      scope.rootRealPath,
+    ].join('\0');
+    const previous = reviewQueues.get(scopeKey) ?? Promise.resolve();
+    const flight = previous
+      .catch(() => undefined)
+      .then(() => this.#execute({ scope, draftId }))
+      .finally(() => {
       if (reviewFlights.get(key) === flight) reviewFlights.delete(key);
+      });
+    let tail: Promise<void>;
+    tail = flight.then(
+      () => undefined,
+      () => undefined,
+    ).finally(() => {
+      if (reviewQueues.get(scopeKey) === tail) reviewQueues.delete(scopeKey);
     });
+    reviewQueues.set(scopeKey, tail);
     reviewFlights.set(key, flight);
     return flight;
   }
