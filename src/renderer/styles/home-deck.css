@@ -25,7 +25,10 @@
 /* ---- Home deck (in-workspace empty state) ---- */
 .home-deck {
   position: absolute;
-  inset: 8px; /* anchored to .app__body (position: relative), inside its padding */
+  inset: var(--app-body-inset);
+  /* The mission rail stays interactive above Home, so the Home surface must
+     begin after it instead of being centered underneath it. */
+  left: calc(var(--app-body-inset) + var(--mission-rail-width) + var(--app-body-inset));
   z-index: 30; /* above panes, below the side columns + wizard/drawers */
   display: grid;
   place-items: center;
@@ -56,6 +59,9 @@
 }
 
 .home-deck__panel {
+  /* Width/max-height are the final frame dimensions. Without border-box,
+     padding was added on top and erased the intended 24px centered gutter. */
+  box-sizing: border-box;
   width: min(820px, calc(100% - 48px));
   max-height: calc(100% - 48px);
   overflow-y: auto;

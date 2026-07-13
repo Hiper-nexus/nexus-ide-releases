@@ -606,11 +606,19 @@ body {
    height:100% do grid para fora da janela — as últimas linhas do terminal
    ficavam abaixo da borda e o xterm "não rolava até embaixo". */
 .app__body {
+  --app-body-inset: 8px;
+  --mission-rail-width: 248px;
   flex: 1 1 auto;
   min-height: 0;
-  padding: 8px;
+  padding: var(--app-body-inset);
   display: flex;
-  gap: 8px;
+  gap: var(--app-body-inset);
+}
+
+@media (max-width: 1120px) {
+  .app__body {
+    --mission-rail-width: 210px;
+  }
 }
 
 .grid,
