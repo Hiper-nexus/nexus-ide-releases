@@ -61,14 +61,3 @@ export async function waitForLiveSpeakEvidence({
   }
   return evidence;
 }
-
-export function liveSpeakEvidenceTimeoutMs(text: string): number {
-  const chars = text.trim().length;
-  return Math.min(
-    LIVE_SPEAK_EVIDENCE_MAX_TIMEOUT_MS,
-    Math.max(
-      LIVE_SPEAK_EVIDENCE_MIN_TIMEOUT_MS,
-      chars * LIVE_SPEAK_EVIDENCE_MS_PER_CHAR,
-    ),
-  );
-}
