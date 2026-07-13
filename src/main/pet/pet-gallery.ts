@@ -16,8 +16,12 @@ export const GALLERY_BASES = [
 const GALLERY_REFERER = 'https://petdex.dev/';
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const SCRIPT_MAX_BYTES = 64_000;
-/** Raw ≤ ~2,6 MB para o base64 caber no teto das prefs (3,5 M chars). */
-const SHEET_MAX_BYTES = 2_600_000;
+/**
+ * Teto de rede. O renderer reduz sheets acima do limite das prefs para uma
+ * malha equivalente antes de persistir; manter este limite separado evita
+ * rejeitar boa parte do catálogo petdex sem aceitar downloads arbitrários.
+ */
+const SHEET_MAX_BYTES = 12_000_000;
 const SHEET_MIME_RE = /^image\/(png|webp|jpeg)(;|$)/i;
 
 export interface GalleryPet {
@@ -237,7 +241,7 @@ async function importPetShareInstance(
     }
     const sheet = await readCapped(res, SHEET_MAX_BYTES);
     if (!sheet) {
-      return { ok: false, error: 'Spritesheet grande demais (limite ~2,5 MB).' };
+      return { ok: false, error: 'Spritesheet grande demais (limite 12 MB).' };
     }
     const mime = SHEET_MIME_RE.exec(contentType)?.[1] ?? 'webp';
     return {
@@ -315,7 +319,7 @@ export async function importGalleryPet(
     }
     const sheet = await readCapped(res, SHEET_MAX_BYTES);
     if (!sheet) {
-      return { ok: false, error: 'Spritesheet grande demais (limite ~2,5 MB).' };
+      return { ok: false, error: 'Spritesheet grande demais (limite 12 MB).' };
     }
     const mime = SHEET_MIME_RE.exec(contentType)?.[1] ?? 'webp';
     return {

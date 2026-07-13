@@ -121,3 +121,32 @@ export function railStatusDisplay(
       return { label: 'Na fila', tone: 'pending' };
   }
 }
+
+/** Operational copy must distinguish focusing a live pane from restoring one. */
+export function missionRailResumeCopy(
+  status: MissionStatus,
+  liveInGrid: boolean,
+): { meta: string | null; title: string } {
+  if (liveInGrid) {
+    return {
+      meta: null,
+      title: 'Missão aberta no grid — clique para focar',
+    };
+  }
+  if (status === 'running') {
+    return {
+      meta: 'Retomar panes salvos',
+      title: 'Panes salvos — clique para retomar',
+    };
+  }
+  if (status === 'blocked') {
+    return {
+      meta: null,
+      title: 'Missão travada — clique para retomar',
+    };
+  }
+  return {
+    meta: null,
+    title: 'Retomar esta missão',
+  };
+}

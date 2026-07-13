@@ -163,6 +163,20 @@ describe('jarvisActionFastPath', () => {
     expect(reply?.expectReply).toBe(true);
   });
 
+  it('abrir modo squad sem nome pergunta qual squad existente deve subir', () => {
+    for (const text of ['abrir modo squad', 'iniciar o squad', 'abre um squad']) {
+      const reply = jarvisActionFastPath(text, {
+        ...CTX,
+        squads: ['Code Review', 'QA Swarm'],
+      });
+      expect(reply?.action).toEqual({ type: 'none' });
+      expect(reply?.expectReply).toBe(true);
+      expect(reply?.say).toMatch(/qual squad/i);
+      expect(reply?.say).toContain('Code Review');
+      expect(reply?.say).toContain('QA Swarm');
+    }
+  });
+
   it('iniciar missão no modo agêntico preserva o modo antes do fast-path genérico', () => {
     expect(jarvisActionFastPath('iniciar missão no modo agêntico', CTX)?.action).toEqual({
       type: 'new_agentic_mission',

@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { FollowUpAuthority } from './follow-up-authority';
+import {
+  FOLLOW_UP_AUTHORITY_MS,
+  FollowUpAuthority,
+} from './follow-up-authority';
 
 describe('FollowUpAuthority', () => {
+  it('keeps a realtime conversational turn open for one minute', () => {
+    expect(FOLLOW_UP_AUTHORITY_MS).toBe(60_000);
+  });
+
   it('autoriza somente dentro do deadline monotônico', () => {
     const authority = new FollowUpAuthority();
     authority.arm(1_000, 8_000);

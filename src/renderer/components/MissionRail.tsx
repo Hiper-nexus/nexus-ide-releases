@@ -7,6 +7,7 @@ import { livePaneIdsForMission } from '../orch/mission-reopen';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import {
   groupMissionsForRail,
+  missionRailResumeCopy,
   railStatusDisplay,
   statusLabel,
 } from '../lib/mission-rail-groups';
@@ -202,7 +203,7 @@ export function MissionRail() {
     }
 
     if (mission.status === 'running') {
-      return `Clique para focar${handBit}`;
+      return `${missionRailResumeCopy(mission.status, liveInGrid).meta ?? 'Retomar'}${handBit}`;
     }
     if (mission.status === 'blocked') {
       return `Precisa de ti${handBit}`;
@@ -449,12 +450,12 @@ export function MissionRail() {
                     <ul className="mission-rail__list activity-rail__list">
                       {section.missions.map((m) => {
                         const liveInGrid = openMissionIds.has(m.id);
-                        const inFlight =
-                          liveInGrid ||
-                          m.status === 'running' ||
-                          m.status === 'blocked';
                         const pinned = pinnedIds.includes(m.id);
                         const statusUi = railStatusDisplay(m.status, liveInGrid);
+                        const resumeCopy = missionRailResumeCopy(
+                          m.status,
+                          liveInGrid,
+                        );
                         const dotStatus =
                           m.status === 'blocked' || m.status === 'failed'
                             ? m.status
@@ -471,13 +472,7 @@ export function MissionRail() {
                               } mission-rail__item--tone-${statusUi.tone}`}
                               disabled={busy !== null}
                               aria-current={liveInGrid ? 'true' : undefined}
-                              title={
-                                liveInGrid
-                                  ? 'Missão aberta no grid — clique para focar'
-                                  : inFlight
-                                    ? 'Missão em andamento — clique para reabrir'
-                                    : 'Retomar esta missão'
-                              }
+                              title={resumeCopy.title}
                               onClick={() => selectMission(m)}
                             >
                               <span

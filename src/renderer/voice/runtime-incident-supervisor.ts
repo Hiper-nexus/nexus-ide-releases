@@ -161,6 +161,14 @@ export async function superviseJarvisAction(
       };
     } catch (cause) {
       clearTimeout(timer);
+      // Provider interruption, barge-in and user cancellation are expected
+      // control flow. Before any effect commits, propagate them to the outer
+      // realtime executor, which already records a clean cancellation. Turning
+      // them into incidents caused the false "Doctor interrompeu" toast and
+      // the repeated spoken "supervisão travada" warning.
+      if (parentControl.signal?.aborted && !effectMayHaveCommitted && !timedOut) {
+        throw cause;
+      }
       const message = cause instanceof Error ? cause.message : String(cause);
       const code: RuntimeIncidentCode = timedOut ? 'action-timeout' : 'executor-threw';
       const canRetry = attempt === 1 && !effectMayHaveCommitted && maxAttempts === 2;

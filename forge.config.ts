@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { signAsync } from '@electron/osx-sign';
 import { notarize } from '@electron/notarize';
@@ -27,6 +28,42 @@ const MICROPHONE_USAGE_DESCRIPTION =
 const SCREEN_CAPTURE_USAGE_DESCRIPTION =
   'NexusIDE uses screen capture to give Jarvis visual context of your workspace.';
 const APP_BUNDLE_ID = 'com.nexuside.app';
+const REQUIRED_WAKE_MODEL_FILE = 'ei-jarvis-ptbr.onnx';
+
+export function assertRequiredWakeResource(resourcesDir: string): void {
+  const manifestPath = path.join(resourcesDir, 'wake', 'manifest.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    schemaVersion?: unknown;
+    defaultModel?: Record<string, unknown>;
+  };
+  const model = manifest.defaultModel;
+  if (
+    manifest.schemaVersion !== 1 ||
+    model?.file !== REQUIRED_WAKE_MODEL_FILE ||
+    model.locale !== 'pt-BR' ||
+    model.required !== true ||
+    model.wakePhrase !== 'Ei Jarvis' ||
+    typeof model.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(model.sha256)
+  ) {
+    throw new Error('release wake manifest does not declare the required PT-BR default');
+  }
+  const bytes = readFileSync(path.join(resourcesDir, 'wake', REQUIRED_WAKE_MODEL_FILE));
+  const observedHash = createHash('sha256').update(bytes).digest('hex');
+  if (observedHash !== model.sha256) {
+    throw new Error(`release PT-BR wake model checksum mismatch: ${observedHash}`);
+  }
+}
+
+function packagedMacApps(outputPaths: readonly string[]): string[] {
+  return outputPaths.flatMap((outputPath) => {
+    if (outputPath.endsWith('.app')) return [outputPath];
+    if (!existsSync(outputPath) || !statSync(outputPath).isDirectory()) return [];
+    return readdirSync(outputPath)
+      .filter((entry) => entry.endsWith('.app'))
+      .map((entry) => path.join(outputPath, entry));
+  });
+}
 
 export function shouldPackageFile(file: string): boolean {
   if (!file) return true;
@@ -193,22 +230,25 @@ const config: ForgeConfig = {
       }
     },
     postPackage: async (_forgeConfig, packageResult) => {
+      const appPaths = packageResult.platform === 'darwin'
+        ? packagedMacApps(packageResult.outputPaths)
+        : [];
+      const resourceDirs = packageResult.platform === 'darwin'
+        ? appPaths.map((appPath) => path.join(appPath, 'Contents', 'Resources'))
+        : packageResult.outputPaths.map((outputPath) =>
+            path.join(outputPath, 'resources'));
+      if (resourceDirs.length === 0) {
+        throw new Error('release package produced no resource directory to validate');
+      }
+      for (const resourcesDir of resourceDirs) {
+        assertRequiredWakeResource(resourcesDir);
+      }
+
       if (
         process.platform !== 'darwin' ||
         packageResult.platform !== 'darwin' ||
         isAppleReleaseSigning(process.env.APPLE_TEAM_ID)
-      ) {
-        return;
-      }
-      const appPaths = packageResult.outputPaths.flatMap((outputPath) => {
-        if (outputPath.endsWith('.app')) return [outputPath];
-        if (!existsSync(outputPath) || !statSync(outputPath).isDirectory()) {
-          return [];
-        }
-        return readdirSync(outputPath)
-          .filter((entry) => entry.endsWith('.app'))
-          .map((entry) => path.join(outputPath, entry));
-      });
+      ) return;
 
       for (const outputPath of appPaths) {
         // Fuses modify the main executable after Packager's first signing pass.

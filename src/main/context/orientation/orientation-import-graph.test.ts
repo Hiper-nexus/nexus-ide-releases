@@ -50,11 +50,36 @@ describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => 
     write(root, 'src/c.ts', 'export const c = 1;\n');
     write(root, '.dev-user-data/cache/generated.ts', 'export const noise = 1;\n');
     write(root, '.dev-electron/dist/generated.js', 'module.exports = {};\n');
+    write(root, '.claude/worktrees/stale/package.json', '{"name":"stale"}\n');
+    write(root, '.codex/cache/generated.ts', 'export const noise = 1;\n');
+    write(root, '.context/docs/generated.ts', 'export const noise = 1;\n');
+    write(root, '.gemini/cache/generated.ts', 'export const noise = 1;\n');
+    write(root, '.overclock-app/panes.json', '{}\n');
+    write(root, '.worktrees/old/package.json', '{"name":"old"}\n');
+    write(root, '.vite/cache/generated.js', 'module.exports = {};\n');
+    write(root, 'graphify-out/generated.ts', 'export const noise = 1;\n');
+    write(root, 'release-assets/generated.js', 'module.exports = {};\n');
 
     const scope = scopeFor(root);
     const walk = walkOrientationTree(scope, DEFAULT_ORIENTATION_LIMITS);
     expect(walk.files.some((file) => file.relativePath.includes('.dev-user-data'))).toBe(false);
     expect(walk.files.some((file) => file.relativePath.includes('.dev-electron'))).toBe(false);
+    for (const excluded of [
+      '.claude/',
+      '.codex/',
+      '.context/',
+      '.gemini/',
+      '.overclock-app/',
+      '.worktrees/',
+      '.vite/',
+      'graphify-out/',
+      'release-assets/',
+    ]) {
+      expect(
+        walk.files.some((file) => file.relativePath.startsWith(excluded)),
+        `${excluded} leaked into orientation`,
+      ).toBe(false);
+    }
     const graph = buildOrientationImportGraph(scope, walk, DEFAULT_ORIENTATION_LIMITS);
     expect(graph.graph.edgeCount).toBeGreaterThanOrEqual(2);
     expect(graph.graph.mode).toBe('imports');
@@ -79,7 +104,27 @@ describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => 
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-boot-')));
     const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-boot-cache-'));
     roots.push(root, cacheRoot);
-    write(root, 'package.json', JSON.stringify({ name: 'boot-app', scripts: { test: 'vitest' } }));
+    write(root, 'package.json', JSON.stringify({
+      name: 'boot-app',
+      scripts: {
+        test: 'vitest',
+        typecheck: 'tsc --noEmit',
+        lint: 'eslint .',
+        build: 'vite build',
+        dev: 'vite',
+        start: 'node dist/main.js',
+        check: 'npm run typecheck',
+        'test:unit': 'vitest run',
+        'test:e2e': 'playwright test',
+        'lint:fix': 'eslint . --fix',
+        'build:prod': 'vite build --mode production',
+        'dev:electron': 'electron .',
+        'start:debug': 'node --inspect dist/main.js',
+        release: 'node scripts/release.mjs',
+      },
+    }));
+    write(root, 'package-lock.json', JSON.stringify({ lockfileVersion: 3 }));
+    write(root, '.claude/worktrees/stale/package.json', '{"name":"stale"}\n');
     write(root, 'README.md', '# Boot\n');
     write(root, 'PRODUCT.md', '# Product\n\n## Users\nDevelopers using AI CLIs.\n\n## Purpose\nCoordinate agents.\n');
     write(root, 'src/main.ts', 'export function main() {}\n');
@@ -92,11 +137,31 @@ describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => 
     const proposals = buildContextBootstrapProposals(scopeFor(root), map);
     expect(proposals.length).toBeGreaterThan(0);
     expect(proposals.every((p) => p.sources.length > 0)).toBe(true);
+    expect(proposals.every((p) => p.sources.length <= 4)).toBe(true);
+    expect(
+      proposals.flatMap((proposal) => proposal.sources)
+        .every((source) => !/(?:^|\/)(?:package-lock\.json|\.claude)(?:\/|$)/.test(source.locator)),
+    ).toBe(true);
     expect(proposals.some((p) => p.targetPath.includes('architecture'))).toBe(true);
     expect(proposals[0].content).toContain('Auto-proposed');
+    for (const proposal of proposals.filter((item) => item.targetPath.endsWith('.md'))) {
+      for (const source of proposal.sources) {
+        expect(
+          proposal.content,
+          `${proposal.targetPath} does not identify bound source ${source.locator}`,
+        ).toContain(source.locator);
+      }
+    }
     const business = proposals.find((proposal) => proposal.targetPath.endsWith('business-model.md'));
     expect(business?.content).toContain('Developers using AI CLIs');
     expect(business?.content).not.toContain('TODO');
+    expect(business?.sources.map((source) => source.locator)).toEqual(['PRODUCT.md']);
     expect(business && isAutoReviewableBootstrapProposal(business)).toBe(true);
+    const testing = proposals.find((proposal) => proposal.targetPath.endsWith('testing.md'));
+    expect(testing?.sources.map((source) => source.locator)).toEqual(['package.json']);
+    const scripts = proposals.find((proposal) =>
+      proposal.targetPath.endsWith('package-scripts.json'));
+    expect(scripts?.content).toContain('Selected operational scripts from package.json');
+    expect(scripts?.content).toContain('"claimKey": "package.scripts.selected"');
   });
 });

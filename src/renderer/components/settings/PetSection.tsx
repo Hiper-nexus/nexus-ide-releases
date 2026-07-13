@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CODEX_SHEET_COLS,
   CODEX_SHEET_ROWS,
+  detectSheetGrid,
   PET_PRESETS,
   SHEET_DATA_URL_MAX,
   type PetGalleryEntry,
@@ -223,18 +224,85 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-/** Confere se a imagem tem a malha 8×11 do contrato Codex v2. */
-function imageIsCodexSheet(dataUrl: string): Promise<boolean> {
+const PETDEX_SHEET_ROWS = 9;
+const GALLERY_COMPACT_CELL_WIDTHS = [96, 64] as const;
+const GALLERY_COMPACT_QUALITIES = [0.92, 0.8] as const;
+
+interface PreparedPetSheet {
+  ok: boolean;
+  sheet?: PetSheet;
+  error?: string;
+}
+
+function compactSheetDataUrl(
+  image: HTMLImageElement,
+  cols: number,
+  rows: number,
+): string | null {
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  const sourceCellWidth = sourceWidth / cols;
+  const sourceCellHeight = sourceHeight / rows;
+
+  for (const cellWidth of GALLERY_COMPACT_CELL_WIDTHS) {
+    if (cellWidth >= sourceCellWidth) continue;
+    const cellHeight = Math.max(
+      1,
+      Math.round(sourceCellHeight * (cellWidth / sourceCellWidth)),
+    );
+    const canvas = document.createElement('canvas');
+    canvas.width = cellWidth * cols;
+    canvas.height = cellHeight * rows;
+    const context = canvas.getContext('2d');
+    if (!context) continue;
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    for (const quality of GALLERY_COMPACT_QUALITIES) {
+      const candidate = canvas.toDataURL('image/webp', quality);
+      if (candidate.length <= SHEET_DATA_URL_MAX) return candidate;
+    }
+  }
+  return null;
+}
+
+/** Decodifica e normaliza contratos Codex v2 (8×11) e petdex (8×9). */
+export function preparePetSheetDataUrl(dataUrl: string): Promise<PreparedPetSheet> {
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () =>
-      resolve(
-        img.width % CODEX_SHEET_COLS === 0 &&
-          img.height % CODEX_SHEET_ROWS === 0 &&
-          img.width > 0 &&
-          img.height > 0,
-      );
-    img.onerror = () => resolve(false);
+    img.onload = () => {
+      const width = img.naturalWidth || img.width;
+      const height = img.naturalHeight || img.height;
+      const grid = detectSheetGrid(width, height);
+      if (
+        grid.cols !== CODEX_SHEET_COLS ||
+        (grid.rows !== CODEX_SHEET_ROWS && grid.rows !== PETDEX_SHEET_ROWS)
+      ) {
+        resolve({
+          ok: false,
+          error: 'O arquivo não usa uma malha compatível 8×9 ou 8×11.',
+        });
+        return;
+      }
+      const normalized = dataUrl.length <= SHEET_DATA_URL_MAX
+        ? dataUrl
+        : compactSheetDataUrl(img, grid.cols, grid.rows);
+      if (!normalized) {
+        resolve({
+          ok: false,
+          error: 'Não consegui compactar o spritesheet para o limite local.',
+        });
+        return;
+      }
+      resolve({
+        ok: true,
+        sheet: { dataUrl: normalized, cols: grid.cols, rows: grid.rows },
+      });
+    };
+    img.onerror = () => resolve({
+      ok: false,
+      error: 'O arquivo não é uma imagem compatível.',
+    });
     img.src = dataUrl;
   });
 }
@@ -244,6 +312,11 @@ export function PetSection() {
   const [importNote, setImportNote] = useState<string | null>(null);
   const [gallerySlug, setGallerySlug] = useState('');
   const [galleryBusy, setGalleryBusy] = useState(false);
+  const [galleryCandidate, setGalleryCandidate] = useState<{
+    query: string;
+    name: string;
+    sheet: PetSheet;
+  } | null>(null);
   const [catalog, setCatalog] = useState<PetGalleryEntry[] | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [catalogFilter, setCatalogFilter] = useState('');
@@ -409,22 +482,19 @@ export function PetSection() {
 
   /** Aplica um dataUrl de spritesheet validado (dialog nativo ou arquivo). */
   const applySheetDataUrl = async (dataUrl: string) => {
-    if (!(await imageIsCodexSheet(dataUrl))) {
-      setImportNote(
-        `O arquivo não bate com o contrato Codex v2 (malha ${CODEX_SHEET_COLS}×${CODEX_SHEET_ROWS}).`,
-      );
+    const prepared = await preparePetSheetDataUrl(dataUrl);
+    if (!prepared.ok || !prepared.sheet) {
+      setImportNote(prepared.error ?? 'Spritesheet incompatível.');
       return;
     }
     const applied = await petApi.setPrefs({
-      sheet: { dataUrl, cols: CODEX_SHEET_COLS, rows: CODEX_SHEET_ROWS },
+      sheet: prepared.sheet,
       preset: 'sheet',
     });
     setImportNote(
       applied.preset === 'sheet' && applied.sheet
         ? 'Spritesheet importado e selecionado ✓'
-        : dataUrl.length > SHEET_DATA_URL_MAX
-          ? 'O arquivo é grande demais para importar (limite ~2,5 MB).'
-          : 'Formato não suportado — use png, webp ou jpeg.',
+        : 'Formato não suportado — use png, webp ou jpeg.',
     );
   };
 
@@ -462,37 +532,57 @@ export function PetSection() {
     }
   };
 
-  const onGalleryImport = async (slugOverride?: string) => {
+  const onGalleryPreview = async (slugOverride?: string) => {
     const query = (slugOverride ?? gallerySlug).trim();
     if (!query || !petApi.galleryImport || galleryBusy) return;
     setGalleryBusy(true);
-    setImportNote(`Baixando "${query}" da galeria…`);
+    setGalleryCandidate(null);
+    setImportNote(`Carregando preview de "${query}"…`);
     try {
       const result = await petApi.galleryImport(query);
       if (!result.ok || !result.dataUrl) {
         setImportNote(result.error ?? 'Não consegui importar esse pet.');
         return;
       }
-      if (!(await imageIsCodexSheet(result.dataUrl))) {
-        setImportNote(
-          `O pet baixado não bate com a malha ${CODEX_SHEET_COLS}×${CODEX_SHEET_ROWS} do contrato v2.`,
-        );
+      const prepared = await preparePetSheetDataUrl(result.dataUrl);
+      if (!prepared.ok || !prepared.sheet) {
+        setImportNote(prepared.error ?? 'O pet baixado é incompatível.');
         return;
       }
+      setGallerySlug(query);
+      setGalleryCandidate({
+        query,
+        name: result.name ?? query,
+        sheet: prepared.sheet,
+      });
+      setImportNote('Preview carregado — confira o pet antes de importar.');
+    } catch (error) {
+      setImportNote(
+        `Falha ao carregar preview (${error instanceof Error ? error.message : 'erro'}).`,
+      );
+    } finally {
+      setGalleryBusy(false);
+    }
+  };
+
+  const onApplyGalleryCandidate = async () => {
+    if (!galleryCandidate || galleryBusy) return;
+    setGalleryBusy(true);
+    setImportNote(`Importando "${galleryCandidate.name}"…`);
+    try {
       const applied = await petApi.setPrefs({
-        sheet: {
-          dataUrl: result.dataUrl,
-          cols: CODEX_SHEET_COLS,
-          rows: CODEX_SHEET_ROWS,
-        },
+        sheet: galleryCandidate.sheet,
         preset: 'sheet',
       });
       setImportNote(
         applied.preset === 'sheet' && applied.sheet
-          ? `"${result.name ?? query}" importado da galeria.`
-          : 'O pet baixado é grande demais para importar.',
+          ? `"${galleryCandidate.name}" importado da galeria.`
+          : 'Não consegui salvar esse pet no perfil local.',
       );
-      if (applied.preset === 'sheet' && applied.sheet) setGallerySlug('');
+    } catch (error) {
+      setImportNote(
+        `Falha ao importar (${error instanceof Error ? error.message : 'erro'}).`,
+      );
     } finally {
       setGalleryBusy(false);
     }
@@ -774,7 +864,7 @@ export function PetSection() {
             <p className="settings-field__note">
               Criar com IA abre uma missão que desenha seu pet em todas as
               poses a partir de uma foto (processo lento, padrão Codex).
-              Spritesheets no contrato v2 (8×11) importam direto — inclusive
+              Spritesheets Codex v2 (8×11) e petdex (8×9) importam direto — inclusive
               os de ~/.codex/pets. Os arquivos finais ficam locais; a geração
               usa o provider Codex configurado.
             </p>
@@ -800,17 +890,20 @@ export function PetSection() {
                   placeholder="Slug ou URL do pet (codex-pets.net)"
                   aria-label="Slug ou URL do pet na galeria petdex"
                   disabled={galleryBusy}
-                  onChange={(e) => setGallerySlug(e.target.value)}
+                  onChange={(e) => {
+                    setGallerySlug(e.target.value);
+                    setGalleryCandidate(null);
+                  }}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') void onGalleryImport();
+                    if (e.key === 'Enter') void onGalleryPreview();
                   }}
                 />
                 <ActionCard
                   icon="star"
-                  title={galleryBusy ? 'Baixando…' : 'Importar da galeria'}
+                  title={galleryBusy ? 'Carregando…' : 'Ver preview'}
                   size="sm"
                   disabled={galleryBusy || !gallerySlug.trim()}
-                  onClick={() => void onGalleryImport()}
+                  onClick={() => void onGalleryPreview()}
                 />
                 {petApi.galleryList && (
                   <ActionCard
@@ -825,6 +918,32 @@ export function PetSection() {
                 Galeria da comunidade (codex-pets.net / petdex.dev). A arte é
                 de quem publicou — importe só o que você tem direito de usar.
               </p>
+              {galleryCandidate && (
+                <div className="settings-pet-gallery__preview" aria-label="Pré-visualização do pet">
+                  <span className="settings-pet-gallery__preview-stage" aria-hidden>
+                    <SheetPetSprite
+                      sheet={galleryCandidate.sheet}
+                      anim="idle"
+                      size={96}
+                    />
+                  </span>
+                  <span className="settings-pet-gallery__preview-copy">
+                    <strong>Pré-visualização · {galleryCandidate.name}</strong>
+                    <small>
+                      Compatível {galleryCandidate.sheet.cols}×{galleryCandidate.sheet.rows}
+                    </small>
+                  </span>
+                  <ActionCard
+                    icon="star"
+                    title={galleryBusy ? 'Importando…' : 'Importar este pet'}
+                    subtitle="Aplicar no companion"
+                    size="sm"
+                    variant="primary"
+                    disabled={galleryBusy}
+                    onClick={() => void onApplyGalleryCandidate()}
+                  />
+                </div>
+              )}
             </div>
           )}
           {catalogOpen && catalog && (
@@ -839,7 +958,7 @@ export function PetSection() {
               />
               <p className="settings-field__note">
                 {filteredCatalog.length} de {catalog.length} — clique no nome
-                para importar. Prefira a biblioteca inclusa se quiser offline.
+                para ver o preview. Prefira a biblioteca inclusa se quiser offline.
               </p>
               <div className="settings-pet-catalog__chips" role="list">
                 {filteredCatalog.map((entry) => (
@@ -847,10 +966,11 @@ export function PetSection() {
                     key={entry.slug}
                     type="button"
                     role="listitem"
-                    className="settings-pet-catalog__chip"
+                    className={`settings-pet-catalog__chip ${galleryCandidate?.query === entry.slug ? 'settings-pet-catalog__chip--selected' : ''}`}
                     disabled={galleryBusy}
-                    title={`Importar "${entry.label}" (${entry.slug})`}
-                    onClick={() => void onGalleryImport(entry.slug)}
+                    aria-pressed={galleryCandidate?.query === entry.slug}
+                    title={`Ver preview de "${entry.label}" (${entry.slug})`}
+                    onClick={() => void onGalleryPreview(entry.slug)}
                   >
                     {entry.label}
                   </button>

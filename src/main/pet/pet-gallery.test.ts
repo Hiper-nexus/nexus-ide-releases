@@ -105,8 +105,8 @@ describe('importGalleryPet', () => {
     expect(result.error).toContain('não encontrado');
   });
 
-  it('sheet acima do teto é rejeitado', async () => {
-    const big = Buffer.alloc(2_600_001);
+  it('aceita sheet acima do teto das prefs para o renderer compactar', async () => {
+    const big = Buffer.alloc(3_000_000);
     const mock = vi.fn(async (url: RequestInfo | URL) => {
       const href = String(url);
       if (href.includes('/install/')) {
@@ -118,8 +118,26 @@ describe('importGalleryPet', () => {
       });
     }) as unknown as typeof fetch;
     const result = await importGalleryPet('navi', mock);
+    expect(result.ok).toBe(true);
+    expect(result.dataUrl?.length).toBeGreaterThan(3_500_000);
+  });
+
+  it('mantém um teto de rede para assets excessivos', async () => {
+    const mock = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes('/install/')) {
+        return new Response(SCRIPT, { status: 200 });
+      }
+      return new Response(Buffer.from('too-large'), {
+        status: 200,
+        headers: {
+          'content-type': 'image/webp',
+          'content-length': '12000001',
+        },
+      });
+    }) as unknown as typeof fetch;
+    const result = await importGalleryPet('navi', mock);
     expect(result.ok).toBe(false);
-    expect(result.error).toContain('grande demais');
+    expect(result.error).toContain('12 MB');
   });
 
   it('MIME fora da lista é rejeitado', async () => {

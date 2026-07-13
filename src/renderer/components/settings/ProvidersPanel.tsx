@@ -601,19 +601,25 @@ export function ProvidersPanel() {
     const order = PROVIDERS_HUB_TABS;
     const idx = order.indexOf(tab);
     if (idx < 0) return;
+    let nextTab: ProvidersHubTab | null = null;
     if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
       event.preventDefault();
-      setTab(order[(idx + 1) % order.length]!);
+      nextTab = order[(idx + 1) % order.length]!;
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
       event.preventDefault();
-      setTab(order[(idx - 1 + order.length) % order.length]!);
+      nextTab = order[(idx - 1 + order.length) % order.length]!;
     } else if (event.key === 'Home') {
       event.preventDefault();
-      setTab(order[0]!);
+      nextTab = order[0]!;
     } else if (event.key === 'End') {
       event.preventDefault();
-      setTab(order[order.length - 1]!);
+      nextTab = order[order.length - 1]!;
     }
+    if (!nextTab) return;
+    setTab(nextTab);
+    event.currentTarget
+      .querySelector<HTMLButtonElement>(`#prov-tab-${nextTab}`)
+      ?.focus();
   }
 
   return (
@@ -639,7 +645,7 @@ export function ProvidersPanel() {
             type="button"
             role="tab"
             id={`prov-tab-${id}`}
-            aria-controls={`prov-tabpanel-${id}`}
+            aria-controls="prov-tabpanel"
             aria-selected={tab === id}
             tabIndex={tab === id ? 0 : -1}
             className={`prov-hub__tab ${tab === id ? 'prov-hub__tab--on' : ''}`}
@@ -653,7 +659,7 @@ export function ProvidersPanel() {
       <div
         className="prov-hub__panel"
         role="tabpanel"
-        id={`prov-tabpanel-${tab}`}
+        id="prov-tabpanel"
         aria-labelledby={`prov-tab-${tab}`}
       >
         <div className="prov-hub__toolbar">

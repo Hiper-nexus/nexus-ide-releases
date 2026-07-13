@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import path from 'node:path';
 
 import forgeConfig, {
+  assertRequiredWakeResource,
   createLinuxDebMakerConfig,
   createLinuxRpmMakerConfig,
 } from './forge.config';
@@ -36,5 +38,15 @@ describe('native terminal packaging', () => {
     expect(forgeConfig.packagerConfig?.asar).toMatchObject({
       unpackDir: '**/node_modules/@lydell/{node-pty,node-pty-*}',
     });
+  });
+});
+
+describe('required PT-BR wake model packaging', () => {
+  it('ships the wake resource directory on every Forge target', () => {
+    expect(forgeConfig.packagerConfig?.extraResource).toContain('resources/wake');
+  });
+
+  it('validates the pinned source resource before release completion', () => {
+    expect(() => assertRequiredWakeResource(path.resolve('resources'))).not.toThrow();
   });
 });

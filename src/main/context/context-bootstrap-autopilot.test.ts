@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ContextDraftRecord } from './context-draft-store';
 import type { ContextReadinessReport } from './context-doctor';
@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   }>,
   propose: vi.fn(),
   apply: vi.fn(),
+  review: vi.fn(),
   commitApplied: vi.fn(),
   scaffold: vi.fn(),
   inspectReadiness: vi.fn(),
@@ -46,6 +47,7 @@ vi.mock('./context-workflow-registry', () => ({
     list: mocks.list,
     get: mocks.readDraft,
     propose: mocks.propose,
+    review: mocks.review,
     apply: mocks.apply,
     commitApplied: mocks.commitApplied,
   }),
@@ -129,7 +131,47 @@ function draft(id: string, status: ContextDraftRecord['status']): ContextDraftRe
   });
 }
 
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.proposals = [];
+  mocks.list.mockReturnValue([]);
+  mocks.readDraft.mockReturnValue(null);
+  mocks.get.mockReturnValue(null);
+  mocks.inspectReadiness.mockReturnValue(mocks.readiness);
+  mocks.selectQuorum.mockReturnValue({ adapterId: 'claude' });
+  mocks.ensure.mockResolvedValue({ docs: { hasContextScaffold: true }, status: 'ready' });
+});
+
 describe('runContextBootstrapAutopilot', () => {
+  it('commits durable applied drafts left by a previous Doctor pass once context is ready', async () => {
+    const ready: ContextReadinessReport = Object.freeze({
+      ready: true,
+      blockers: Object.freeze([]),
+      warnings: Object.freeze([]),
+      contextRevision: 'e'.repeat(64),
+      sensorIds: Object.freeze(['typecheck']),
+    });
+    const pending = draft('draft-pending-commit', 'applied');
+    mocks.inspectReadiness.mockReturnValue(ready);
+    mocks.list.mockReturnValue([pending]);
+    mocks.commitApplied.mockReturnValue({
+      commitSha: 'f'.repeat(40),
+      drafts: [pending],
+      recovered: false,
+    });
+
+    const result = await runContextBootstrapAutopilot({
+      scope,
+      author,
+      autoCommit: true,
+    });
+
+    expect(mocks.commitApplied).toHaveBeenCalledOnce();
+    expect(result.phase).toBe('committed');
+    expect(result.commitSha).toBe('f'.repeat(40));
+    expect(result.appliedDraftIds).toEqual(['draft-pending-commit']);
+  });
+
   it('resumes and reviews durable drafts left by a previous Doctor session', async () => {
     mocks.inspectReadiness.mockReturnValue(mocks.readiness);
     mocks.proposals = [{
@@ -163,6 +205,11 @@ describe('runContextBootstrapAutopilot', () => {
     expect(mocks.propose).not.toHaveBeenCalled();
     expect(mocks.reviewerRun).toHaveBeenCalledWith({ scope, draftId: 'draft-existing' });
     expect(result.appliedDraftIds).toEqual(['draft-existing']);
+    expect(mocks.ensure).toHaveBeenCalledWith(scope, {
+      reason: 'mcp',
+      waitMs: 8_000,
+      force: true,
+    });
     mocks.list.mockReturnValue([]);
     mocks.propose.mockClear();
     mocks.reviewerRun.mockClear();
@@ -198,6 +245,7 @@ describe('runContextBootstrapAutopilot', () => {
       scope,
       author,
       autoCommit: false,
+      maxAutoReviews: 2,
       createReviewer: () => ({ run: mocks.reviewerRun }),
     });
 
@@ -208,6 +256,104 @@ describe('runContextBootstrapAutopilot', () => {
     mocks.readDraft.mockReset();
     mocks.reviewerRun.mockReset();
     mocks.propose.mockReset();
+  });
+
+  it('reviews one draft per Doctor pass and directs the orchestrator to continue safely', async () => {
+    mocks.inspectReadiness.mockReturnValue(mocks.readiness);
+    mocks.proposals = [
+      {
+        targetPath: '.context/docs/architecture.md',
+        content: '# Architecture\nObserved layout.\n',
+        sources: [{ type: 'file', locator: 'package.json', sourceHash: 'b'.repeat(64) }],
+        rationale: 'arch',
+      },
+      {
+        targetPath: '.context/docs/testing.md',
+        content: '# Testing\nRun unit tests.\n',
+        sources: [{ type: 'file', locator: 'package.json', sourceHash: 'b'.repeat(64) }],
+        rationale: 'testing',
+      },
+    ];
+    mocks.list.mockReturnValue([]);
+    mocks.propose
+      .mockReturnValueOnce(draft('draft-first', 'proposed'))
+      .mockReturnValueOnce(Object.freeze({
+        ...draft('draft-second', 'proposed'),
+        targetPath: '.context/docs/testing.md',
+      }));
+    mocks.reviewerRun.mockResolvedValue(draft('draft-first', 'rejected'));
+    mocks.selectQuorum.mockReturnValue({ adapterId: 'claude' });
+    mocks.ensure.mockResolvedValue({ docs: { hasContextScaffold: true }, status: 'ready' });
+
+    const result = await runContextBootstrapAutopilot({
+      scope,
+      author,
+      autoCommit: false,
+      createReviewer: () => ({ run: mocks.reviewerRun }),
+    });
+
+    expect(mocks.reviewerRun).toHaveBeenCalledTimes(1);
+    expect(result.draftOutcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ draftId: 'draft-second', status: 'proposed' }),
+    ]));
+    expect(result.autopilotHint).toMatch(/nexus_context_doctor again/i);
+    expect(result.autopilotHint).toMatch(/do not fan out nexus_context_draft_review_run/i);
+    mocks.propose.mockReset();
+    mocks.reviewerRun.mockReset();
+  });
+
+  it('policy-rejects a contaminated durable draft before reviewing its clean replacement', async () => {
+    mocks.inspectReadiness.mockReturnValue(mocks.readiness);
+    const unsafe = Object.freeze({
+      ...draft('draft-unsafe', 'proposed'),
+      sources: Object.freeze([Object.freeze({
+        type: 'file' as const,
+        locator: '.claude/worktrees/stale/package.json',
+        sourceHash: 'b'.repeat(64),
+      })]),
+    });
+    const replacement = draft('draft-clean', 'proposed');
+    mocks.proposals = [{
+      targetPath: '.context/docs/architecture.md',
+      content: '# Architecture\nBound to the root manifest.\n',
+      sources: [{ type: 'file', locator: 'package.json', sourceHash: 'b'.repeat(64) }],
+      rationale: 'arch',
+    }];
+    mocks.list.mockReturnValue([unsafe]);
+    mocks.review.mockReturnValue(Object.freeze({
+      ...unsafe,
+      status: 'rejected' as const,
+      reviewer: Object.freeze({
+        id: 'nexus-bootstrap-policy',
+        sessionId: 'source-policy-v1',
+        provider: 'nexus-policy',
+      }),
+      reviewRationale: 'unsafe source',
+      reviewedAt: 2,
+    }));
+    mocks.propose.mockReturnValue(replacement);
+    mocks.reviewerRun.mockResolvedValue(draft('draft-clean', 'approved'));
+    mocks.apply.mockReturnValue({ draft: draft('draft-clean', 'applied') });
+    mocks.selectQuorum.mockReturnValue({ adapterId: 'claude' });
+    mocks.ensure.mockResolvedValue({ docs: { hasContextScaffold: true }, status: 'ready' });
+
+    const result = await runContextBootstrapAutopilot({
+      scope,
+      author,
+      autoCommit: false,
+      createReviewer: () => ({ run: mocks.reviewerRun }),
+    });
+
+    expect(mocks.review).toHaveBeenCalledWith('draft-unsafe', expect.objectContaining({
+      decision: 'reject',
+      reviewer: expect.objectContaining({ provider: 'nexus-policy' }),
+    }));
+    expect(mocks.reviewerRun).toHaveBeenCalledWith({ scope, draftId: 'draft-clean' });
+    expect(result.appliedDraftIds).toContain('draft-clean');
+    mocks.list.mockReturnValue([]);
+    mocks.review.mockReset();
+    mocks.propose.mockReset();
+    mocks.reviewerRun.mockReset();
   });
   it('proposes drafts and skips review when quorum is missing', async () => {
     mocks.inspectReadiness.mockReturnValue(mocks.readiness);

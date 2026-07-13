@@ -36,6 +36,16 @@ const selectionDeps = vi.hoisted(() => ({
   ),
 }));
 
+const paneDeps = vi.hoisted(() => ({
+  snapshots: [] as Array<{
+    paneId: string;
+    sessionId: string | null;
+    title: string;
+    kind: 'cli-agent';
+    state: 'busy' | 'idle' | 'exited' | 'hibernated';
+  }>,
+}));
+
 vi.mock('../persistence/provider-config-store', () => ({
   listProviderSettings: () => selectionDeps.providers,
 }));
@@ -49,6 +59,8 @@ vi.mock('../orch/task-router', () => ({
 import {
   CONTEXT_DRAFT_REVIEW_TOOLS,
   CliContextDraftReviewer,
+  DEFAULT_CONTEXT_DRAFT_REVIEW_TIMEOUT_MS,
+  contextDraftReviewerPaneTitle,
   selectIndependentContextReviewerRoute,
 } from './cli-context-draft-reviewer';
 
@@ -110,9 +122,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   selectionDeps.providers.length = 0;
   selectionDeps.adapters.clear();
+  paneDeps.snapshots.length = 0;
 });
 
 describe('CLI context draft reviewer', () => {
+  it('bounds a production review to the same two-minute recovery window as Overclock', () => {
+    expect(DEFAULT_CONTEXT_DRAFT_REVIEW_TIMEOUT_MS).toBe(120_000);
+  });
+
   it('selects one installed MCP-capable CLI outside the author provider', () => {
     selectionDeps.providers.push(
       {
@@ -306,7 +323,7 @@ describe('CLI context draft reviewer', () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it('times out fail-closed and always closes the reviewer pane', async () => {
+  it('times out fail-closed and preserves the reviewer pane for recovery', async () => {
     const scope = testProjectScope();
     const draft = proposedDraft();
     let now = 100;
@@ -332,8 +349,30 @@ describe('CLI context draft reviewer', () => {
       reviewer.run({ scope, draftId: draft.id }),
     ).rejects.toThrow(/timed out/i);
     expect(poll).toHaveBeenCalledWith(10);
-    expect(close).toHaveBeenCalledOnce();
-    expect(close).toHaveBeenCalledWith('pane-timeout');
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it('does not duplicate a preserved reviewer pane on the next Doctor pass', async () => {
+    const scope = testProjectScope();
+    const draft = proposedDraft();
+    paneDeps.snapshots.push({
+      paneId: 'pane-preserved',
+      sessionId: 'session-preserved',
+      title: contextDraftReviewerPaneTitle(draft.id),
+      kind: 'cli-agent',
+      state: 'idle',
+    });
+    const spawn = vi.fn();
+    const reviewer = new CliContextDraftReviewer({
+      readDraft: () => draft,
+      listPanes: () => paneDeps.snapshots,
+      spawn,
+    });
+
+    await expect(reviewer.run({ scope, draftId: draft.id })).rejects.toThrow(
+      /preserved reviewer pane/i,
+    );
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it('closes a partially initialized reviewer pane before failing', async () => {

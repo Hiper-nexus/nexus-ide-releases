@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
 import {
   groupMissionsForRail,
+  missionRailResumeCopy,
   railStatusDisplay,
 } from './mission-rail-groups';
 
@@ -117,5 +118,21 @@ describe('railStatusDisplay', () => {
     expect(railStatusDisplay('blocked', false).label).toBe('Travada');
     expect(railStatusDisplay('done', false).label).toBe('Concluída');
     expect(railStatusDisplay('failed', false).label).toBe('Falhou');
+  });
+});
+
+describe('missionRailResumeCopy', () => {
+  it('labels an off-grid running mission as recoverable instead of focusable', () => {
+    expect(missionRailResumeCopy('running', false)).toEqual({
+      meta: 'Retomar panes salvos',
+      title: 'Panes salvos — clique para retomar',
+    });
+  });
+
+  it('keeps a live mission focused on its existing grid panes', () => {
+    expect(missionRailResumeCopy('running', true)).toEqual({
+      meta: null,
+      title: 'Missão aberta no grid — clique para focar',
+    });
   });
 });

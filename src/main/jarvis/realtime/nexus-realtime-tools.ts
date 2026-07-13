@@ -19,7 +19,7 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
       type: 'function',
       name: NEXUS_REALTIME_ACTION_TOOL,
       description:
-        'Operate Nexus IDE through the audited action executor. Opening an existing project always means open_workspace; new_workspace is only for an explicit request to create a new workspace. Use read_current_view for the visible screen. send_to_pane is ONLY for delegating an engineering task to an AI agent/orchestrator and NEVER writes to a terminal. When the user asks to type, send, execute, or run a shell/terminal command, use run_command with the exact command; it will request native confirmation. Use mcp_tool for Nexus MCP tools. Never claim success before the tool result.',
+        'Operate Nexus IDE through the audited action executor. Opening an existing project always means open_workspace; new_workspace is only for an explicit request to create a new workspace. Opening squad mode without a name requires asking which saved squad first; do not call a tool. Use open_squad only with a saved name from current context, and design_squad only for an explicit new/create/design request. Use read_current_view for the visible screen. send_to_pane is ONLY for delegating an engineering task to an AI agent/orchestrator and NEVER writes to a terminal. When the user asks to type, send, execute, or run a shell/terminal command, use run_command with the exact command; it will request native confirmation. Use mcp_tool for Nexus MCP tools. Never claim success before the tool result.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -37,7 +37,7 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
           },
           squadName: {
             type: 'string',
-            description: 'Required for open_squad. Use the spoken squad name.',
+            description: 'Required for open_squad. Use a saved squad name from the injected catalog; never invent one.',
           },
           workspaceName: {
             type: 'string',

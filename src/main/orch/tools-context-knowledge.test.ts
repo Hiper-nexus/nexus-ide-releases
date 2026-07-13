@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   configureContextWorkflowRegistry,
@@ -12,6 +12,14 @@ import { ensureContextScaffold } from '../context/context-doctor';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import type { AgentGateContext } from './gate';
 import { buildContextTools } from './tools-context';
+
+const doctorMocks = vi.hoisted(() => ({
+  run: vi.fn(),
+}));
+
+vi.mock('../context/context-bootstrap-autopilot', () => ({
+  runContextBootstrapAutopilot: doctorMocks.run,
+}));
 
 let baseDir = '';
 let root = '';
@@ -45,6 +53,7 @@ function tool(name: string) {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-context-tools-runtime-'));
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-context-tools-')));
   scope = Object.freeze({
@@ -80,6 +89,56 @@ describe('native context knowledge MCP tools', () => {
         'nexus_merge_status',
         'nexus_merge_retry',
       ]),
+    );
+  });
+
+  it('publishes the complete contract criterion schema instead of an opaque object', () => {
+    const schema = tool('nexus_mission_freeze_contract').inputSchema as {
+      properties?: Record<string, unknown>;
+    };
+    expect(schema.properties?.acceptanceCriteria).toMatchObject({
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: expect.objectContaining({
+          statement: { type: 'string' },
+          requiredArtifactIds: { type: 'array', items: { type: 'string' } },
+        }),
+      },
+    });
+  });
+
+  it('accepts legacy description criteria and human artifact labels before workflow gates', async () => {
+    const missionId = 'legacy-contract-mission';
+    manager.open(scope).db.prepare(
+      `INSERT INTO missions
+         (id, title, description, status, milestones_json, created_at, updated_at)
+       VALUES (?, 'Legacy contract', '', 'active', '[]', 1, 1)`,
+    ).run(missionId);
+
+    let failure: unknown;
+    try {
+      await tool('nexus_mission_freeze_contract').handler({
+        missionId,
+        goal: 'Exercise backwards-compatible contract parsing.',
+        impactedDomains: ['context'],
+        impactedSymbols: ['ContextKnowledgeService'],
+        acceptanceCriteria: [{
+          description: 'The legacy orchestrator can freeze a valid contract.',
+          requiredArtifactIds: ['full test report'],
+        }],
+        requiredArtifacts: ['functional smoke report.md'],
+      }, {
+        ...context('codex', 'legacy-contract-session', 'orchestrator'),
+        missionId,
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).not.toMatch(
+      /expected string, received undefined|unrecognized key.*description|invalid_format/i,
     );
   });
 
@@ -134,5 +193,54 @@ describe('native context knowledge MCP tools', () => {
       ...context('codex', 'author-worker', 'worker'),
       missionId: 'mission-a',
     })).rejects.toThrow(/only the mission orchestrator/i);
+  });
+
+  it('does not queue a manual reviewer while the checkout Doctor is active', async () => {
+    const source = '# Source\n';
+    fs.writeFileSync(path.join(root, 'README.md'), source);
+    const proposed = await tool('nexus_context_draft_propose').handler({
+      targetPath: '.context/docs/architecture.md',
+      content: '# Architecture\nSource bound.\n',
+      expectedTargetHash: null,
+      sources: [{
+        type: 'file',
+        locator: 'README.md',
+        sourceHash: createHash('sha256').update(source).digest('hex'),
+      }],
+    }, context('codex', 'author-session')) as { id: string };
+
+    let finishDoctor!: (value: unknown) => void;
+    doctorMocks.run.mockReturnValue(new Promise((resolve) => {
+      finishDoctor = resolve;
+    }));
+    const doctorCall = tool('nexus_context_doctor').handler(
+      {},
+      context('codex', 'doctor-session'),
+    );
+    await vi.waitFor(() => expect(doctorMocks.run).toHaveBeenCalledOnce());
+
+    await expect(tool('nexus_context_draft_review_run').handler({
+      draftId: proposed.id,
+    }, context('codex', 'manual-review-session'))).resolves.toMatchObject({
+      reviewed: null,
+      applied: null,
+      pending: true,
+      reason: expect.stringMatching(/no duplicate review was queued/i),
+    });
+
+    finishDoctor({
+      phase: 'proposed',
+      readiness: { ready: false, blockers: [], warnings: [], sensorIds: [] },
+      orientation: null,
+      bootstrapProposals: [],
+      proposedDraftIds: [proposed.id],
+      draftOutcomes: [],
+      appliedDraftIds: [],
+      rejectedDraftIds: [],
+      commitSha: null,
+      quorumAvailable: true,
+      autopilotHint: 'continue',
+    });
+    await doctorCall;
   });
 });
