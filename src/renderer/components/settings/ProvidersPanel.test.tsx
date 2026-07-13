@@ -10,7 +10,11 @@ import { ProvidersPanel } from './ProvidersPanel';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
-function provider(adapterId: string, label: string): ProviderSettingsInfo {
+function provider(
+  adapterId: string,
+  label: string,
+  opts: Partial<ProviderSettingsInfo> = {},
+): ProviderSettingsInfo {
   return {
     adapterId,
     label,
@@ -21,7 +25,7 @@ function provider(adapterId: string, label: string): ProviderSettingsInfo {
     binPath: '',
     detectedBin: adapterId,
     defaultModel: `${adapterId}-default`,
-    models: [`${adapterId}-default`],
+    models: [`${adapterId}-default`, `${adapterId}-alt`],
     extraArgs: [],
     keyEnvVar: null,
     hasKey: false,
@@ -39,6 +43,7 @@ function provider(adapterId: string, label: string): ProviderSettingsInfo {
     verbose: false,
     supportsVerbose: false,
     customModels: [],
+    ...opts,
   };
 }
 
@@ -50,12 +55,33 @@ function mount(): { host: HTMLDivElement; root: Root } {
   return { host, root };
 }
 
-describe('ProvidersPanel disclosure', () => {
+describe('ProvidersPanel hub', () => {
   beforeEach(() => {
     useProviderStore.setState({
-      providers: [provider('claude', 'Claude'), provider('codex', 'Codex')],
+      providers: [
+        provider('claude', 'Claude'),
+        provider('codex', 'Codex'),
+        provider('kimi', 'Kimi', { installed: false }),
+        provider('glm', 'GLM', { kind: 'api-provider' }),
+      ],
+      hydrate: vi.fn(async () => undefined),
+    } as never);
+    useAccountStore.setState({
+      accounts: [
+        {
+          id: 'a1',
+          adapterId: 'claude',
+          label: 'Principal',
+          mode: 'subscription',
+          upstream: 'anthropic',
+          createdAt: 1,
+          active: true,
+          hasCredential: true,
+          onCooldown: false,
+          email: 'retornoja@gmail.com',
+        },
+      ],
     });
-    useAccountStore.setState({ accounts: [] });
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
@@ -70,43 +96,51 @@ describe('ProvidersPanel disclosure', () => {
     vi.restoreAllMocks();
   });
 
-  it('keeps the provider catalog compact until one provider is expanded', async () => {
+  it('shows a detected count and tile grid of installed CLIs by default', () => {
     const { host, root } = mount();
-    const disclosures = [...host.querySelectorAll<HTMLButtonElement>('.prov__disclosure')];
-
-    expect(disclosures).toHaveLength(2);
-    expect(host.querySelectorAll('.provider-logo img')).toHaveLength(2);
-    expect(host.querySelectorAll('.prov__status-cluster')).toHaveLength(2);
-    expect(disclosures[0].getAttribute('aria-expanded')).toBe('false');
-    expect(host.textContent).not.toContain('Binário (vazio');
-
-    await act(async () => disclosures[0].click());
-
-    expect(disclosures[0].getAttribute('aria-expanded')).toBe('true');
-    expect(host.textContent).toContain('Binário (vazio');
-    expect(host.textContent).toContain('Contas e login');
+    expect(host.querySelector('[data-testid="prov-detected-count"]')?.textContent)
+      .toMatch(/2 detectados/);
+    const tiles = host.querySelectorAll('[data-testid="prov-tile-grid"] .prov-tile');
+    expect(tiles.length).toBe(2);
+    expect(host.textContent).toContain('Claude');
+    expect(host.textContent).toContain('Codex');
+    expect(host.textContent).not.toContain('Kimi');
+    expect(host.textContent).toContain('2/2');
+    // Single refresh CTA (no duplicate buttons).
+    const refresh = [...host.querySelectorAll('button')].filter((b) =>
+      /Atualizar modelos|Atualizando/.test(b.textContent ?? ''),
+    );
+    expect(refresh).toHaveLength(1);
     act(() => root.unmount());
   });
 
-  it('surfaces active account label in the collapsed provider summary', () => {
-    useAccountStore.setState({
-      accounts: [
-        {
-          id: 'a1',
-          adapterId: 'claude',
-          label: 'Trabalho',
-          mode: 'subscription',
-          upstream: 'anthropic',
-          createdAt: 1,
-          active: true,
-          hasCredential: true,
-          onCooldown: false,
-        },
-      ],
-    });
+  it('keeps power controls behind Avançado until expanded', async () => {
     const { host, root } = mount();
-    expect(host.textContent).toContain('claude-default · Trabalho');
-    expect(host.textContent).toContain('1 conta');
+    expect(host.textContent).toContain('Contas');
+    expect(host.textContent).not.toContain('Binário (vazio');
+
+    const advanced = host.querySelector<HTMLButtonElement>('.prov-advanced__toggle');
+    expect(advanced).toBeTruthy();
+    await act(async () => advanced!.click());
+    expect(host.textContent).toContain('Binário (vazio');
+    act(() => root.unmount());
+  });
+
+  it('switches to Remotos/API tab for api-provider adapters', async () => {
+    const { host, root } = mount();
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>('.prov-hub__tab')];
+    const remote = tabs.find((t) => t.textContent?.includes('Remotos'));
+    expect(remote).toBeTruthy();
+    await act(async () => remote!.click());
+    expect(host.textContent).toContain('GLM');
+    expect(host.querySelectorAll('.prov-tile').length).toBe(1);
+    act(() => root.unmount());
+  });
+
+  it('surfaces account chip on the tile and detail accounts block', () => {
+    const { host, root } = mount();
+    expect(host.textContent).toContain('1 ct');
+    expect(host.textContent).toContain('Principal');
     act(() => root.unmount());
   });
 });
