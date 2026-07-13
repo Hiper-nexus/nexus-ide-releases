@@ -576,6 +576,49 @@ CREATE INDEX idx_handoffs_delivery_state
   ON handoffs(mission_id, delivery_state, created_at);
 `;
 
+const CONTEXT_DRAFT_SUPERSESSION_SCHEMA = `
+ALTER TABLE context_drafts RENAME TO context_drafts_pre_supersession;
+
+CREATE TABLE context_drafts (
+  id                   TEXT PRIMARY KEY,
+  mission_id           TEXT,
+  target_path          TEXT NOT NULL,
+  content              TEXT NOT NULL,
+  content_hash         TEXT NOT NULL,
+  expected_target_hash TEXT,
+  source_refs_json     TEXT NOT NULL,
+  status               TEXT NOT NULL CHECK (
+    status IN ('proposed', 'approved', 'applied', 'rejected', 'superseded')
+  ),
+  author_id             TEXT NOT NULL,
+  author_session_id     TEXT NOT NULL,
+  author_provider       TEXT NOT NULL,
+  reviewer_id           TEXT,
+  reviewer_session_id   TEXT,
+  reviewer_provider     TEXT,
+  review_rationale      TEXT,
+  attestation_id        TEXT,
+  applied_commit        TEXT,
+  created_at            INTEGER NOT NULL CHECK (created_at >= 0),
+  updated_at            INTEGER NOT NULL CHECK (updated_at >= 0),
+  reviewed_at           INTEGER CHECK (reviewed_at IS NULL OR reviewed_at >= 0),
+  applied_at            INTEGER CHECK (applied_at IS NULL OR applied_at >= 0),
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE SET NULL
+);
+
+INSERT INTO context_drafts
+SELECT * FROM context_drafts_pre_supersession;
+DROP TABLE context_drafts_pre_supersession;
+
+CREATE UNIQUE INDEX idx_context_drafts_active_target
+  ON context_drafts(target_path)
+  WHERE status IN ('proposed', 'approved');
+CREATE INDEX idx_context_drafts_status_updated
+  ON context_drafts(status, updated_at);
+CREATE INDEX idx_context_drafts_mission_updated
+  ON context_drafts(mission_id, updated_at);
+`;
+
 export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
   validateProjectMigrations([
     createProjectMigration({
@@ -631,5 +674,11 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       schemaVersion: 9,
       appVersion: '0.14.4',
       sql: HANDOFF_DELIVERY_RECEIPTS_SCHEMA,
+    }),
+    createProjectMigration({
+      id: '010-context-draft-supersession',
+      schemaVersion: 10,
+      appVersion: '0.15.1',
+      sql: CONTEXT_DRAFT_SUPERSESSION_SCHEMA,
     }),
   ]);

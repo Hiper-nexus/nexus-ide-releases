@@ -13,43 +13,53 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.15.0',
+  version: '0.15.1',
   date: '2026-07-13',
-  codename: 'Autopilot Fleet',
+  codename: 'Supervision Handoff',
   summary:
-    'Piloto automático confiável para squads e Pet Studio, terminais em tempo real, recuperação sem ações duplicadas e uma frota mais clara para operar.',
+    'Doctor sem falsos travamentos, handoff recuperável entre panes, Jarvis em tempo real e wake PT-BR garantido em todo pacote de produção.',
   highlights: [
     {
-      title: 'Pet Studio direto ao resultado',
+      title: 'Orquestração recuperável',
       detail:
-        'Um squad dedicado cria o pet a partir da imagem, valida o pacote e o publica em Meus pets sem carregar o fluxo de desenvolvimento.',
+        'Panes preservam sessões recuperáveis, revisores não duplicam e o Doctor limita cada passagem para devolver o controle sem encerrar trabalho saudável.',
     },
     {
-      title: 'Piloto automático de verdade',
+      title: 'Jarvis acompanha a operação',
       detail:
-        'Squads usam o modo autônomo nativo de cada CLI por padrão; confirmações manuais só voltam quando o usuário escolhe o modo seguro.',
+        'A voz recebe a tela e os squads atuais continuamente, pergunta qual squad abrir quando falta o nome e mantém o follow-up ativo por um minuto.',
     },
     {
-      title: 'Frota em tempo real',
+      title: 'Providers prontos para produção',
       detail:
-        'Terminais acompanham a saída ao vivo, panes retomam sem duplicar comandos e cotas reais ajudam a decidir failover entre contas e providers.',
+        'O novo hub separa CLIs, modelos e remotos, atualiza o catálogo detectado e preserva navegação completa por teclado.',
     },
   ],
   fixes: [
     {
-      title: 'Avisos do companion',
+      title: 'Cancelamento não é falha',
       detail:
-        'O pet atual avisa conclusão, falha e pedidos de intervenção, inclusive quando o evento acontece durante a inicialização da janela.',
+        'Interrupções normais do Jarvis deixam de gerar incidente, toast do Doctor ou anúncio incorreto de supervisão travada.',
     },
     {
-      title: 'Doctor sem falso travamento',
+      title: 'Wake PT-BR sempre presente',
       detail:
-        'A supervisão usa atividade real do PTY, alerta uma vez e não fecha, reinicia nem reenvia comandos enquanto o agente continua trabalhando.',
+        'O modelo treinado ei-jarvis-ptbr.onnx é o padrão, tem hash versionado e o build falha se ele ou o manifesto estiverem ausentes ou divergentes.',
     },
     {
-      title: 'Inicialização e companion estáveis',
+      title: 'Versões alinhadas',
       detail:
-        'O boot não bloqueia esperando o Keychain, e o pet preserva posição, visibilidade e click-through entre telas e reinicializações.',
+        'Aplicativo, servidor, lockfile, changelog e notas internas avançam juntos para impedir releases mistos.',
+    },
+    {
+      title: 'Galeria de pets utilizável',
+      detail:
+        'Pets da comunidade exibem preview antes da aplicação, aceitam os contratos 8×9 e 8×11 e compactam arquivos grandes mantendo a grade.',
+    },
+    {
+      title: 'Missões antigas continuam operando',
+      detail:
+        'O runtime converte critérios e rótulos legados, arquiva drafts substituídos sem perder auditoria e retoma o commit de contexto numa árvore Git limpa.',
     },
   ],
 };

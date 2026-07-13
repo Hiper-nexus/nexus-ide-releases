@@ -295,12 +295,28 @@ export function jarvisActionFastPath(
   if (
     /\b(monta|monte|montar|cria|crie|criar|design)\b.*\bsquad\b/.test(t) ||
     /\bsquad\b.*\b(custom|personalizado|projeto)\b/.test(t) ||
-    /\b(?:inicia|inicie|iniciar|sobe|suba|liga|ligue)\b(?:\s+o)?\s+(?:um\s+)?(?:novo\s+)?squad\s*$/.test(t)
+    /\b(?:inicia|inicie|iniciar|sobe|suba|liga|ligue)\b(?:\s+o)?\s+(?:um\s+)?novo\s+squad\s*$/.test(t)
   ) {
     return {
       say: say(ctx, 'Vou montar um squad para este projeto.'),
       expectReply: true,
       action: { type: 'design_squad' },
+    };
+  }
+
+  if (
+    /\b(?:abre|abra|abrir|sobe|suba|inicia|inicie|iniciar|liga|ligue|roda|rode)\b(?:\s+o)?\s+(?:um\s+)?(?:modo\s+)?squad\s*$/.test(
+      t,
+    )
+  ) {
+    const available = ctx.squads.slice(0, 4);
+    const choices = available.length > 0
+      ? ` Os disponíveis são: ${available.join(', ')}.`
+      : ' Ainda não há um squad salvo neste projeto.';
+    return {
+      say: say(ctx, `Qual squad você quer iniciar?${choices}`),
+      expectReply: true,
+      action: { type: 'none' },
     };
   }
 

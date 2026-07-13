@@ -165,8 +165,9 @@ export function buildMissionKickoffPrompt(
       `1. ${step1} e **nexus_context_doctor**. O doctor É o piloto de bootstrap: ` +
       "aquece o mapa, scaffold, propõe drafts com hashes reais e, se houver quorum " +
       "de outro provider, roda review→apply→commit sozinho (sem auto-aprovação). " +
-      "Leia phase/autopilotHint/appliedDraftIds. Só chame draft_review_run manual se " +
-      "quorumAvailable=false. Nunca invente regra de negócio; ambiguidade sem fonte " +
+      "Leia phase/autopilotHint/appliedDraftIds. Se restarem drafts propostos, " +
+      "chame nexus_context_doctor novamente; não abra draft_review_run em paralelo. " +
+      "Se quorumAvailable=false, peça configuração de outro provider. Nunca invente regra de negócio; ambiguidade sem fonte " +
       "é bloqueio explícito.\n" +
       "2. **nexus_mission_freeze_contract** com objetivo + critérios. Domínios/símbolos " +
       "vazios são preenchidos pelo motor via blast radius do mapa. O piloto PREVC " +

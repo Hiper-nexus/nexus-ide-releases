@@ -1,11 +1,17 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import type { PaneSnapshot } from '../../shared/orch-types';
 import {
   projectExecutionScopeSchema,
   type ProjectExecutionScope,
 } from '../../shared/types';
 import { getAdapter } from '../adapters/adapter-registry';
-import { requestPaneClose, requestPaneSpawn, waitForIdle } from '../orch/pane-registry';
+import {
+  listPaneSnapshots,
+  requestPaneClose,
+  requestPaneSpawn,
+  waitForIdle,
+} from '../orch/pane-registry';
 import { routeTask } from '../orch/task-router';
 import { injectPrompt, type SpawnToolOptions } from '../orch/tool-util';
 import { resolveCwdForScope } from '../orch/workspace-path';
@@ -14,7 +20,7 @@ import { secureAutonomousCliArgs } from '../pty/autonomous-cli-policy';
 import { getContextKnowledgeService } from './context-workflow-registry';
 import type { ContextDraftRecord } from './context-draft-store';
 
-const DEFAULT_REVIEW_TIMEOUT_MS = 10 * 60_000;
+export const DEFAULT_CONTEXT_DRAFT_REVIEW_TIMEOUT_MS = 2 * 60_000;
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const AGENT_BOOT_TIMEOUT_MS = 20_000;
 const MAX_REVIEW_TIMEOUT_MS = 30 * 60_000;
@@ -73,6 +79,7 @@ export interface CliContextDraftReviewerDependencies {
     draftId: string,
   ) => MaybePromise<ContextDraftRecord | null>;
   readonly close?: (paneId: string) => MaybePromise<boolean | void>;
+  readonly listPanes?: () => readonly PaneSnapshot[];
   readonly clock?: () => number;
   readonly poll?: (delayMs: number) => Promise<void>;
   readonly timeoutMs?: number;
@@ -105,6 +112,11 @@ function defaultReadDraft(
 
 function sameProvider(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+export function contextDraftReviewerPaneTitle(draftId: string): string {
+  const suffix = createHash('sha256').update(draftIdSchema.parse(draftId)).digest('hex').slice(0, 12);
+  return `context-review-${suffix}`;
 }
 
 /** Select one installed provider whose native effects can be confined read-only. */
@@ -285,6 +297,7 @@ export class CliContextDraftReviewer {
   readonly #spawn: NonNullable<CliContextDraftReviewerDependencies['spawn']>;
   readonly #readDraft: NonNullable<CliContextDraftReviewerDependencies['readDraft']>;
   readonly #close: NonNullable<CliContextDraftReviewerDependencies['close']>;
+  readonly #listPanes: NonNullable<CliContextDraftReviewerDependencies['listPanes']>;
   readonly #clock: NonNullable<CliContextDraftReviewerDependencies['clock']>;
   readonly #poll: NonNullable<CliContextDraftReviewerDependencies['poll']>;
   readonly #timeoutMs: number;
@@ -297,10 +310,11 @@ export class CliContextDraftReviewer {
     this.#spawn = dependencies.spawn ?? spawnContextDraftReviewerPane;
     this.#readDraft = dependencies.readDraft ?? defaultReadDraft;
     this.#close = dependencies.close ?? requestPaneClose;
+    this.#listPanes = dependencies.listPanes ?? listPaneSnapshots;
     this.#clock = dependencies.clock ?? Date.now;
     this.#poll = dependencies.poll ?? sleep;
     this.#timeoutMs = boundedPositiveInteger(
-      dependencies.timeoutMs ?? DEFAULT_REVIEW_TIMEOUT_MS,
+      dependencies.timeoutMs ?? DEFAULT_CONTEXT_DRAFT_REVIEW_TIMEOUT_MS,
       'context draft review timeout',
       MAX_REVIEW_TIMEOUT_MS,
     );
@@ -334,7 +348,7 @@ export class CliContextDraftReviewer {
       .catch(() => undefined)
       .then(() => this.#execute({ scope, draftId }))
       .finally(() => {
-      if (reviewFlights.get(key) === flight) reviewFlights.delete(key);
+        if (reviewFlights.get(key) === flight) reviewFlights.delete(key);
       });
     let tail: Promise<void>;
     tail = flight.then(
@@ -361,6 +375,16 @@ export class CliContextDraftReviewer {
       throw new Error('context draft has an invalid content hash');
     }
 
+    const paneTitle = contextDraftReviewerPaneTitle(initial.id);
+    const preservedReviewer = this.#listPanes().find(
+      (pane) => pane.title === paneTitle && pane.state !== 'exited',
+    );
+    if (preservedReviewer) {
+      throw new Error(
+        `preserved reviewer pane is still recoverable: ${preservedReviewer.paneId}`,
+      );
+    }
+
     const selected = await this.#selectRoute(initial.author.provider, initial);
     if (!selected) {
       throw new Error(
@@ -372,15 +396,13 @@ export class CliContextDraftReviewer {
       throw new Error('context draft review requires a different provider');
     }
 
-    const reviewerSuffix = createHash('sha256')
-      .update(initial.id)
-      .digest('hex')
-      .slice(0, 12);
+    const reviewerSuffix = paneTitle.replace('context-review-', '');
     const agentName = `context-reviewer-${route.adapterId}-${reviewerSuffix}`;
     const startedAt = this.#timestamp();
     const maximumPolls = Math.ceil(this.#timeoutMs / this.#pollIntervalMs) + 1;
     let paneId: string | null = null;
     let sessionId: string | null = null;
+    let reviewCompleted = false;
     let lastObservedAt = startedAt;
     try {
       const spawned = await this.#spawn({
@@ -388,7 +410,7 @@ export class CliContextDraftReviewer {
         model: route.model,
         effort: route.effort,
         cwd: scope.rootRealPath,
-        title: `context-review-${reviewerSuffix}`,
+        title: paneTitle,
         ...(initial.missionId ? { missionId: initial.missionId } : {}),
         agentName,
         allowedTools: [...CONTEXT_DRAFT_REVIEW_TOOLS],
@@ -422,6 +444,7 @@ export class CliContextDraftReviewer {
         assertStableDraft(initial, current);
         if (current.status !== 'proposed') {
           assertReviewerOutcome(current, route, agentName, sessionId);
+          reviewCompleted = true;
           return current;
         }
         if (pollCount === maximumPolls) {
@@ -431,7 +454,12 @@ export class CliContextDraftReviewer {
       }
       throw new Error('context draft review timed out');
     } finally {
-      if (paneId) {
+      // Successful transient reviewers are removed. A fully started reviewer
+      // that times out or fails stays visible so its transcript/session can be
+      // inspected and recovered, matching mission-pane recovery semantics.
+      // Partially initialized panes are still cleaned up because they cannot
+      // own a recoverable provider session.
+      if (paneId && (reviewCompleted || !sessionId)) {
         const closed = await this.#close(paneId);
         if (closed === false) {
           throw new Error(`failed to close context draft reviewer pane: ${paneId}`);

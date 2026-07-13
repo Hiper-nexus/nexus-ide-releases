@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   getContextKnowledgeService,
@@ -38,9 +39,48 @@ const contextDoctorFlights = new Map<
   Promise<ContextBootstrapAutopilotResult>
 >();
 
+function contextDoctorScopeKey(ctx: AgentGateContext): string {
+  return [
+    ctx.scope.installationId,
+    ctx.scope.projectId,
+    ctx.scope.checkoutId,
+    ctx.scope.rootRealPath,
+  ].join('\0');
+}
+
 const identifier = z.string().trim().min(1).max(160)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
-const criterionSchema = z
+function normalizeCompatibleIdentifier(value: string, prefix: string): string {
+  const normalized = value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+  if (/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(normalized)) return normalized;
+  const slug = normalized
+    .replace(/[^A-Za-z0-9._:-]+/g, '-')
+    .replace(/^[^A-Za-z0-9]+/, '')
+    .replace(/-+$/g, '')
+    .slice(0, 160);
+  if (/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(slug)) return slug;
+  const digest = createHash('sha256').update(value).digest('hex').slice(0, 12);
+  return `${prefix}-${digest}`;
+}
+
+function compatibleIdentifier(prefix: string) {
+  return z.string().trim().min(1).max(4_096)
+    .transform((value) => normalizeCompatibleIdentifier(value, prefix));
+}
+
+const criterionSchema = z.preprocess((value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const raw = value as Record<string, unknown>;
+  const { description, ...rest } = raw;
+  return {
+    ...rest,
+    statement:
+      typeof rest.statement === 'string' ? rest.statement : description,
+  };
+}, z
   .object({
     // Models frequently provide a valid checklist but omit bookkeeping ids.
     // The id is not business authority, so Nexus may derive it deterministically.
@@ -48,9 +88,9 @@ const criterionSchema = z
     statement: z.string().trim().min(1).max(4_096),
     requiredSensorIds: z.array(identifier).max(64).default([]),
     invariantRefs: z.array(identifier).max(64).default([]),
-    requiredArtifactIds: z.array(identifier).max(64).default([]),
+    requiredArtifactIds: z.array(compatibleIdentifier('artifact')).max(64).default([]),
   })
-  .strict();
+  .strict());
 const freezeSchema = z
   .object({
     missionId: identifier,
@@ -61,7 +101,7 @@ const freezeSchema = z
     impactedDomains: z.array(identifier).max(256).default([]),
     impactedSymbols: z.array(z.string().trim().min(1).max(512)).max(1_024).default([]),
     requestedSensors: z.array(identifier).max(256).default([]),
-    requiredArtifacts: z.array(identifier).max(256).default([]),
+    requiredArtifacts: z.array(compatibleIdentifier('artifact')).max(256).default([]),
     riskHints: z.array(z.string().trim().min(1).max(256)).max(256).default([]),
   })
   .strict();
@@ -269,13 +309,7 @@ const doctorTool: McpToolDef = {
       });
     }
 
-    const key = [
-      ctx.scope.installationId,
-      ctx.scope.projectId,
-      ctx.scope.checkoutId,
-      ctx.scope.rootRealPath,
-      ctx.missionId ?? '',
-    ].join('\0');
+    const key = contextDoctorScopeKey(ctx);
     let flight = contextDoctorFlights.get(key);
     if (!flight) {
       flight = runContextBootstrapAutopilot({
@@ -477,6 +511,16 @@ const contextDraftReviewRunTool: McpToolDef = {
     if (ctx.role === 'worker') {
       throw new Error('only an orchestrator can launch autonomous context review');
     }
+    if (contextDoctorFlights.has(contextDoctorScopeKey(ctx))) {
+      return Object.freeze({
+        reviewed: null,
+        applied: null,
+        pending: true,
+        reason:
+          'A bounded nexus_context_doctor review pass is already active for this checkout. ' +
+          'Wait for it and call nexus_context_doctor again if drafts remain; no duplicate review was queued.',
+      });
+    }
     const draftId = identifier.parse(args.draftId);
     const service = getContextKnowledgeService(ctx.scope);
     const draft = service.get(draftId);
@@ -514,7 +558,24 @@ const freezeTool: McpToolDef = {
       missionId: { type: 'string' },
       goal: { type: 'string' },
       nonGoals: { type: 'array', items: { type: 'string' } },
-      acceptanceCriteria: { type: 'array', items: { type: 'object' } },
+      acceptanceCriteria: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            statement: { type: 'string' },
+            description: {
+              type: 'string',
+              description: 'Legacy alias for statement; prefer statement.',
+            },
+            requiredSensorIds: { type: 'array', items: { type: 'string' } },
+            invariantRefs: { type: 'array', items: { type: 'string' } },
+            requiredArtifactIds: { type: 'array', items: { type: 'string' } },
+          },
+          additionalProperties: false,
+        },
+      },
       businessInvariantRefs: { type: 'array', items: { type: 'string' } },
       impactedDomains: { type: 'array', items: { type: 'string' } },
       impactedSymbols: { type: 'array', items: { type: 'string' } },

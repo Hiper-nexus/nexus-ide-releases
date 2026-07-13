@@ -9,6 +9,23 @@ function result(ok: boolean, summary: string) {
 }
 
 describe('runtime incident supervisor', () => {
+  it('propagates a clean parent cancellation without creating a Doctor incident', async () => {
+    const parent = new AbortController();
+    const execute = vi.fn(async () => {
+      parent.abort('provider-cancelled');
+      throw new Error('Jarvis action cancelled');
+    });
+
+    await expect(
+      superviseJarvisAction(
+        { type: 'read_current_view' },
+        execute,
+        { signal: parent.signal },
+      ),
+    ).rejects.toThrow('Jarvis action cancelled');
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
   it('retries a signed recoverable JSON failure once', async () => {
     const execute = vi.fn()
       .mockResolvedValueOnce(result(false, 'o modelo não devolveu JSON'))

@@ -283,6 +283,15 @@ export class ContextKnowledgeService {
     });
     const attestationPath = writeContextAttestation(this.scope, attestation);
     const applied = this.#store.markApplied(id, attestation.id);
+    for (const previous of this.#store.list({ status: 'applied' })) {
+      if (
+        previous.id !== applied.id &&
+        previous.targetPath === applied.targetPath &&
+        previous.appliedCommit === null
+      ) {
+        this.#store.markSuperseded(previous.id);
+      }
+    }
     return Object.freeze({
       draft: applied,
       attestation,
@@ -292,9 +301,16 @@ export class ContextKnowledgeService {
   }
 
   commitApplied(): CommittedKnowledgeDrafts {
-    const pending = this.#store.list({ status: 'applied' })
+    let pending = this.#store.list({ status: 'applied' })
       .filter((draft) => draft.appliedCommit === null);
     if (pending.length === 0) throw new Error('no applied context drafts are waiting for commit');
+
+    this.#repairLegacySupersededDrafts(pending);
+    pending = this.#store.list({ status: 'applied' })
+      .filter((draft) => draft.appliedCommit === null);
+    if (pending.length === 0) {
+      throw new Error('no current applied context drafts are waiting for commit');
+    }
 
     const readiness = inspectContextReadiness(this.scope, {
       knownSymbols: buildProjectSymbolIndex(this.scope).symbols,
@@ -416,6 +432,22 @@ export class ContextKnowledgeService {
       attestationPath: contextAttestationPath(attestation.id),
       replacedAttestationPaths: Object.freeze([]),
     });
+  }
+
+  #repairLegacySupersededDrafts(
+    pending: readonly ContextDraftRecord[],
+  ): void {
+    const inspection = inspectContextAttestations(this.scope);
+    if (inspection.diagnostics.length > 0) return;
+    const currentByTarget = new Map(
+      inspection.attestations.map((attestation) => [attestation.targetPath, attestation]),
+    );
+    for (const draft of pending) {
+      const current = currentByTarget.get(draft.targetPath);
+      if (!current || current.id === draft.attestationId) continue;
+      if (workspaceFileHashOrNull(this.scope, draft.targetPath) !== current.targetHash) continue;
+      this.#store.markSuperseded(draft.id);
+    }
   }
 
   #assertSourcesCommitted(drafts: readonly ContextDraftRecord[]): void {

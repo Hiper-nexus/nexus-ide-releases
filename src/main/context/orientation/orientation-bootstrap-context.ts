@@ -4,6 +4,32 @@ import path from 'node:path';
 import type { ProjectExecutionScope } from '../../../shared/types';
 import type { ProjectOrientationMap } from './orientation-types';
 
+const MAX_BOOTSTRAP_SOURCES = 4;
+const NON_SEMANTIC_SOURCE_BASENAMES = new Set([
+  'bun.lock',
+  'bun.lockb',
+  'cargo.lock',
+  'composer.lock',
+  'gemfile.lock',
+  'package-lock.json',
+  'pipfile.lock',
+  'pnpm-lock.yaml',
+  'podfile.lock',
+  'poetry.lock',
+  'yarn.lock',
+]);
+const INTERNAL_SOURCE_SEGMENTS = new Set([
+  '.claude',
+  '.codex',
+  '.context',
+  '.gemini',
+  '.overclock-app',
+  '.worktrees',
+  '.vite',
+  'graphify-out',
+  'release-assets',
+]);
+
 export interface BootstrapDocProposal {
   readonly targetPath: string;
   readonly content: string;
@@ -40,6 +66,14 @@ function readSourceText(root: string, relative: string): string | null {
   }
 }
 
+function findProductSource(root: string): { file: string; content: string } | null {
+  for (const file of ['PRODUCT.md', 'README.md']) {
+    const content = readSourceText(root, file);
+    if (content) return { file, content };
+  }
+  return null;
+}
+
 function collectSources(
   root: string,
   candidates: readonly string[],
@@ -49,12 +83,23 @@ function collectSources(
     locator: string;
     sourceHash: string;
   }> = [];
-  for (const locator of candidates) {
+  for (const locator of new Set(candidates)) {
+    if (!isSafeBootstrapSourceLocator(locator)) continue;
     const hash = sha256File(root, locator);
     if (hash) sources.push({ type: 'file', locator, sourceHash: hash });
-    if (sources.length >= 8) break;
+    if (sources.length >= MAX_BOOTSTRAP_SOURCES) break;
   }
   return Object.freeze(sources);
+}
+
+/** Bootstrap evidence must be authored source, never generated agent/runtime state. */
+export function isSafeBootstrapSourceLocator(locator: string): boolean {
+  const normalized = locator.replaceAll('\\', '/').replace(/^\.\//, '');
+  if (!normalized || normalized.startsWith('/') || normalized.includes('../')) return false;
+  const segments = normalized.toLowerCase().split('/');
+  const basename = segments.at(-1) ?? '';
+  return !segments.some((segment) => INTERNAL_SOURCE_SEGMENTS.has(segment)) &&
+    !NON_SEMANTIC_SOURCE_BASENAMES.has(basename);
 }
 
 /**
@@ -67,55 +112,42 @@ export function buildContextBootstrapProposals(
 ): readonly BootstrapDocProposal[] {
   const root = scope.rootRealPath;
   const proposals: BootstrapDocProposal[] = [];
-  const sourceCandidates = [
-    ...map.inventory.manifests,
-    ...map.inventory.entrypoints,
-    ...map.docs.rootDocs,
-    ...map.symbols.hubs.flatMap((h) => h.samplePaths).slice(0, 12),
-  ];
+  const productSource = findProductSource(root);
 
   const missing = new Set(map.docs.contextDocsMissing);
-  const languages = map.inventory.languages
-    .map((l) => `${l.id} (${l.files} files)`)
-    .join(', ');
-  const hubs = map.symbols.hubs
-    .slice(0, 12)
-    .map((h) => `- ${h.name} — ${h.samplePaths[0] ?? '?'}`)
-    .join('\n');
-  const dirs = map.inventory.topDirs
-    .map((d) => `- \`${d.path}/\` (${d.files} files)`)
-    .join('\n');
   const scripts = Object.entries(map.inventory.scripts)
     .map(([k, v]) => `- \`${k}\`: \`${v}\``)
     .join('\n');
-  const entrypoints = map.inventory.entrypoints.map((e) => `- \`${e}\``).join('\n');
 
   if (missing.has('.context/docs/project-overview.md')) {
+    const sources = collectSources(root, [
+      'package.json',
+      ...(productSource ? [productSource.file] : []),
+    ]);
     const content = [
       '# Project overview',
       '',
       `> Auto-proposed by Nexus orientation map (${map.mapHash.slice(0, 12)}).`,
-      `> Structural draft only — requires independent review before authority.`,
+      '> Source-bound draft only — requires independent review before authority.',
       '',
-      `**Name:** ${map.inventory.projectName ?? path.basename(root)}`,
-      `**Languages:** ${languages || 'unknown'}`,
-      `**Package managers:** ${map.inventory.packageManagers.join(', ') || 'unknown'}`,
+      '## Bound sources',
       '',
-      '## What this repository appears to be',
+      ...sources.map((source) => `- \`${source.locator}\``),
       '',
-      'This draft was generated from the repository tree, manifests and symbol hubs.',
-      'Replace this paragraph with the real product pitch after review.',
+      '## Repository identity',
       '',
-      '## Top directories',
+      sources.some((source) => source.locator === 'package.json')
+        ? `The root \`package.json\` declares the package name \`${map.inventory.projectName ?? path.basename(root)}\`.`
+        : 'No root package identity is asserted.',
       '',
-      dirs || '- (none)',
+      '## Product description',
       '',
-      '## Entrypoints',
-      '',
-      entrypoints || '- (none detected)',
+      productSource
+        ? `The following text is copied from \`${productSource.file}\` as unmodified product evidence:`
+        : 'No product description is asserted because PRODUCT.md/README.md evidence is absent.',
+      ...(productSource ? ['', productSource.content] : []),
       '',
     ].join('\n');
-    const sources = collectSources(root, sourceCandidates);
     if (sources.length > 0) {
       proposals.push(
         Object.freeze({
@@ -129,38 +161,30 @@ export function buildContextBootstrapProposals(
   }
 
   if (missing.has('.context/docs/architecture.md')) {
-    const edges = map.graph.sampleEdges
-      .slice(0, 16)
-      .map((e) => `- \`${e.from}\` → \`${e.to}\` (${e.relation})`)
-      .join('\n');
+    const sources = collectSources(root, [
+      'package.json',
+      ...map.inventory.entrypoints,
+      ...map.symbols.hubs.flatMap((hub) => hub.samplePaths),
+    ]);
     const content = [
       '# Architecture',
       '',
       `> Auto-proposed by Nexus orientation map (${map.mapHash.slice(0, 12)}).`,
-      `> Not business authority until reviewed.`,
+      '> Only the hashed files listed below are asserted as structural anchors.',
       '',
-      '## Languages and scale',
+      '## Bound structural anchors',
       '',
-      languages || 'unknown',
+      ...sources.map((source) => `- \`${source.locator}\``),
       '',
-      '## Directory layout',
+      'No runtime topology, deployment boundary or business behavior is asserted beyond the contents of those files.',
       '',
-      dirs || '- (none)',
+      '## Selected root runtime scripts',
       '',
-      '## Symbol hubs (likely core modules)',
-      '',
-      hubs || '- (none)',
-      '',
-      '## Import sketch',
-      '',
-      edges || '- (import graph not available)',
-      '',
-      '## Runtime scripts',
-      '',
-      scripts || '- (none)',
+      sources.some((source) => source.locator === 'package.json')
+        ? (scripts || '- No operational scripts were selected from `package.json`.')
+        : '- No root `package.json` is bound, so no Node.js runtime scripts are asserted.',
       '',
     ].join('\n');
-    const sources = collectSources(root, sourceCandidates);
     if (sources.length > 0) {
       proposals.push(
         Object.freeze({
@@ -178,15 +202,20 @@ export function buildContextBootstrapProposals(
       .filter(([k]) => /test|typecheck|lint|check/i.test(k))
       .map(([k, v]) => `- \`${k}\`: \`${v}\``)
       .join('\n');
+    const sources = collectSources(root, map.inventory.manifests);
     const content = [
       '# Testing',
       '',
       `> Auto-proposed by Nexus orientation map (${map.mapHash.slice(0, 12)}).`,
       '',
-      '## Declared scripts',
+      '## Bound manifests',
+      '',
+      ...sources.map((source) => `- \`${source.locator}\``),
+      '',
+      '## Selected verification scripts from the root `package.json`',
       '',
       testScripts ||
-        '- No test/typecheck scripts found in package manifests. Document how to verify changes.',
+        '- No test/typecheck scripts were selected from the root `package.json`. Document how to verify changes.',
       '',
       '## Minimum bar',
       '',
@@ -194,10 +223,6 @@ export function buildContextBootstrapProposals(
       '- Do not claim green without Nexus sensor evidence.',
       '',
     ].join('\n');
-    const sources = collectSources(root, [
-      ...map.inventory.manifests,
-      ...map.docs.rootDocs,
-    ]);
     if (sources.length > 0) {
       proposals.push(
         Object.freeze({
@@ -211,9 +236,6 @@ export function buildContextBootstrapProposals(
   }
 
   if (missing.has('.context/docs/business-model.md')) {
-    const productSource = ['PRODUCT.md', 'README.md']
-      .map((file) => ({ file, content: readSourceText(root, file) }))
-      .find((entry) => entry.content);
     const content = productSource
       ? [
           '# Business model',
@@ -237,9 +259,12 @@ export function buildContextBootstrapProposals(
           '- TODO: add source-backed customers, value and non-negotiable rules.',
           '',
         ].join('\n');
-    const sources = collectSources(root, map.docs.rootDocs.length > 0
-      ? map.docs.rootDocs
-      : map.inventory.manifests);
+    const sources = collectSources(
+      root,
+      productSource
+        ? [productSource.file]
+        : (map.docs.rootDocs.length > 0 ? [map.docs.rootDocs[0]] : map.inventory.manifests),
+    );
     if (sources.length > 0) {
       proposals.push(
         Object.freeze({
@@ -253,19 +278,27 @@ export function buildContextBootstrapProposals(
   }
 
   if (missing.has('.context/docs/domain-glossary.md')) {
+    const sources = collectSources(
+      root,
+      map.symbols.hubs.flatMap((hub) => hub.samplePaths),
+    );
+    const boundLocators = new Set(sources.map((source) => source.locator));
     const terms = map.symbols.hubs
-      .slice(0, 20)
-      .map((h) => `- **${h.name}**: observed repository symbol hub at \`${h.samplePaths[0] ?? '?'}\`; no additional business meaning is asserted.`)
+      .filter((hub) => hub.samplePaths.some((sample) => boundLocators.has(sample)))
+      .slice(0, MAX_BOOTSTRAP_SOURCES)
+      .map((hub) => {
+        const sample = hub.samplePaths.find((candidate) => boundLocators.has(candidate))!;
+        return `- **${hub.name}**: observed code symbol in \`${sample}\`; no business meaning is asserted.`;
+      })
       .join('\n');
     const content = [
       '# Domain glossary',
       '',
       `> Auto-proposed term list from code hubs (${map.mapHash.slice(0, 12)}).`,
       '',
-      terms || '- No domain symbol hubs were detected; no terminology is asserted.',
+      terms || '- No source-bound code term is asserted.',
       '',
     ].join('\n');
-    const sources = collectSources(root, sourceCandidates);
     if (sources.length > 0) {
       proposals.push(
         Object.freeze({
@@ -323,8 +356,8 @@ export function buildContextBootstrapProposals(
       facts: [
         {
           id: 'inv:package-scripts',
-          statement: `package.json declares scripts: ${scriptKeys.join(', ')}.`,
-          claimKey: 'package.scripts',
+          statement: `Selected operational scripts from package.json: ${scriptKeys.join(', ')}.`,
+          claimKey: 'package.scripts.selected',
           value: scriptKeys,
           kind: 'observed' as const,
           category: 'invariant' as const,

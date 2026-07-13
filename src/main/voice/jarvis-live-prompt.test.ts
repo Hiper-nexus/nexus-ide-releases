@@ -15,6 +15,8 @@ describe('buildLiveSystemInstruction', () => {
     expect(s).toContain('domain/work question is perguntar');
     expect(s).toContain('must not be hijacked as the answer');
     expect(s).toContain('Only observable running/output/handoff');
+    expect(s).toMatch(/without a squad name/i);
+    expect(s).toMatch(/ask which saved squad/i);
     expect(s).not.toContain('never call yourself Jarvis');
   });
 

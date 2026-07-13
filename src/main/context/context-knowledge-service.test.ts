@@ -245,6 +245,74 @@ describe('ContextKnowledgeService autonomous authority workflow', () => {
     );
   });
 
+  it('supersedes an older uncommitted draft when newer reviewed authority replaces it', () => {
+    const { root, service } = fixture();
+    initializeGit(root);
+    const draftIds = applyCompleteContext(root, service);
+    const first = service.get(draftIds.find((id) =>
+      service.get(id)?.targetPath === '.context/docs/testing.md',
+    ) as string)!;
+    const sourceHash = hash(fs.readFileSync(path.join(root, 'README.md')));
+    const replacementContent = '# Testing\nRun unit, integration and smoke tests.\n';
+    const replacement = service.propose({
+      targetPath: first.targetPath,
+      content: replacementContent,
+      expectedTargetHash: first.contentHash,
+      sources: [{ type: 'file', locator: 'README.md', sourceHash }],
+    }, { ...author, sessionId: 'replacement-author' });
+    service.review(replacement.id, {
+      decision: 'approve',
+      reviewer: { ...reviewer, sessionId: 'replacement-reviewer' },
+      rationale: 'The replacement remains bound to the committed project source.',
+    });
+
+    service.apply(replacement.id);
+
+    expect(service.get(first.id)).toMatchObject({
+      status: 'superseded',
+      attestationId: null,
+      appliedCommit: null,
+    });
+    expect(service.commitApplied()).toMatchObject({ recovered: false });
+    expect(fs.readFileSync(path.join(root, first.targetPath), 'utf8'))
+      .toBe(replacementContent);
+  });
+
+  it('repairs legacy duplicate applied rows before committing the current attestation', () => {
+    const { root, scope, manager, service } = fixture();
+    initializeGit(root);
+    const draftIds = applyCompleteContext(root, service);
+    const first = service.get(draftIds.find((id) =>
+      service.get(id)?.targetPath === '.context/docs/testing.md',
+    ) as string)!;
+    const oldAttestationId = first.attestationId as string;
+    const sourceHash = hash(fs.readFileSync(path.join(root, 'README.md')));
+    const replacement = service.propose({
+      targetPath: first.targetPath,
+      content: '# Testing\nCurrent reviewed test authority.\n',
+      expectedTargetHash: first.contentHash,
+      sources: [{ type: 'file', locator: 'README.md', sourceHash }],
+    }, { ...author, sessionId: 'legacy-repair-author' });
+    service.review(replacement.id, {
+      decision: 'approve',
+      reviewer: { ...reviewer, sessionId: 'legacy-repair-reviewer' },
+      rationale: 'Current authority is independently source-bound.',
+    });
+    service.apply(replacement.id);
+
+    // Reproduce the v0.15.0 runtime state: the older applied row survived even
+    // though its sidecar was replaced by the newer valid attestation.
+    manager.open(scope).db.prepare(
+      `UPDATE context_drafts
+       SET status = 'applied', attestation_id = ?, updated_at = updated_at + 1
+       WHERE id = ?`,
+    ).run(oldAttestationId, first.id);
+
+    expect(service.commitApplied()).toMatchObject({ recovered: false });
+    expect(service.get(first.id)?.status).toBe('superseded');
+    expect(service.get(replacement.id)?.appliedCommit).toMatch(/^[a-f0-9]{40,64}$/);
+  });
+
   it('refuses context commit when extra files or pre-staged code could be smuggled in', () => {
     const { root, service } = fixture();
     initializeGit(root);

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -10,6 +11,7 @@ import {
   assertFunctionalMarker,
   assertPackagedMainBundleBootable,
   inspectPackagedLegalArtifacts,
+  inspectPackagedWakeModel,
   assertNativeArtifactsPresent,
   assertNoNativeLoadFailure,
   assertPackagedSmokeProof,
@@ -250,6 +252,32 @@ describe('isolation args and environment', () => {
 });
 
 describe('proofs: renderer, functional, marker, natives', () => {
+  it('requires the pinned default PT-BR wake model in packaged resources', async () => {
+    const resources = makeTemp('nexus-smoke-wake-');
+    const wakeDir = path.join(resources, 'wake');
+    fs.mkdirSync(wakeDir, { recursive: true });
+    const model = Buffer.from('required-ptbr-model');
+    const sha256 = createHash('sha256').update(model).digest('hex');
+    fs.writeFileSync(path.join(wakeDir, 'ei-jarvis-ptbr.onnx'), model);
+    fs.writeFileSync(path.join(wakeDir, 'manifest.json'), JSON.stringify({
+      schemaVersion: 1,
+      defaultModel: {
+        file: 'ei-jarvis-ptbr.onnx',
+        locale: 'pt-BR',
+        required: true,
+        sha256,
+        wakePhrase: 'Ei Jarvis',
+      },
+    }));
+
+    await expect(inspectPackagedWakeModel(resources)).resolves.toMatchObject({
+      sha256,
+      bytes: model.length,
+    });
+    fs.rmSync(path.join(wakeDir, 'ei-jarvis-ptbr.onnx'));
+    await expect(inspectPackagedWakeModel(resources)).rejects.toThrow(/wake model/i);
+  });
+
   it('rejects a main bundle that rewrites import.meta.url to undefined', () => {
     const broken = Buffer.from(
       'const req=(0,node_module.createRequire)({}.url);req.resolve("asset");',
@@ -595,6 +623,21 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
       );
     }
     writeTree(unpacked, files);
+    const wakeDir = path.join(path.dirname(unpacked), 'wake');
+    const wakeModel = Buffer.from('fixture-ptbr-wake-model');
+    const wakeHash = createHash('sha256').update(wakeModel).digest('hex');
+    fs.mkdirSync(wakeDir, { recursive: true });
+    fs.writeFileSync(path.join(wakeDir, 'ei-jarvis-ptbr.onnx'), wakeModel);
+    fs.writeFileSync(path.join(wakeDir, 'manifest.json'), JSON.stringify({
+      schemaVersion: 1,
+      defaultModel: {
+        file: 'ei-jarvis-ptbr.onnx',
+        locale: 'pt-BR',
+        required: true,
+        sha256: wakeHash,
+        wakePhrase: 'Ei Jarvis',
+      },
+    }));
     return { root, binary, targetPath: platform === 'darwin' ? path.join(root, 'NexusIDE.app') : root };
   }
 

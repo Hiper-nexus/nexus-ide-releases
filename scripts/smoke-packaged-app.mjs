@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { extractFile as extractAsarFile } from '@electron/asar';
 import { constants as fsConstants, existsSync, statSync } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -14,6 +15,8 @@ const PACKAGED_LICENSE_PATHS = [
   'third_party/licenses/Apache-2.0.txt',
   'third_party/licenses/OFL-1.1.txt',
 ];
+const PACKAGED_WAKE_MANIFEST_PATH = 'wake/manifest.json';
+const REQUIRED_WAKE_MODEL_FILE = 'ei-jarvis-ptbr.onnx';
 const PRODUCT_NAME = 'NexusIDE';
 const EXECUTABLE_NAME = 'nexus-ide';
 const PACKAGED_SMOKE_ARGUMENT = 'nexus-smoke-test';
@@ -328,6 +331,36 @@ export function inspectPackagedLegalArtifacts(resourcesDir) {
   }
 }
 
+/** A release without the trained PT-BR default model is not a valid Nexus build. */
+export async function inspectPackagedWakeModel(resourcesDir) {
+  const wakeDir = path.join(resourcesDir, 'wake');
+  const manifestPath = path.join(resourcesDir, PACKAGED_WAKE_MANIFEST_PATH);
+  try {
+    const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+    const model = manifest?.defaultModel;
+    if (
+      manifest?.schemaVersion !== 1 ||
+      model?.file !== REQUIRED_WAKE_MODEL_FILE ||
+      model?.locale !== 'pt-BR' ||
+      model?.required !== true ||
+      model?.wakePhrase !== 'Ei Jarvis' ||
+      !/^[a-f0-9]{64}$/u.test(model?.sha256 ?? '')
+    ) {
+      throw new Error('wake manifest does not declare the required PT-BR default');
+    }
+    const modelPath = path.join(wakeDir, REQUIRED_WAKE_MODEL_FILE);
+    const bytes = await fs.readFile(modelPath);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    if (sha256 !== model.sha256) {
+      throw new Error(`wake model checksum mismatch: ${sha256}`);
+    }
+    return Object.freeze({ path: modelPath, sha256, bytes: bytes.length });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`packaged PT-BR wake model is missing or invalid: ${message}`);
+  }
+}
+
 /**
  * Fail if the log shows a native binding load crash (presence on disk is not enough).
  */
@@ -581,6 +614,7 @@ export async function runPackagedSmoke(
     killTree = killProcessTree,
     inspectMainBundle = inspectPackagedMainBundle,
     inspectLegalArtifacts = inspectPackagedLegalArtifacts,
+    inspectWakeModel = inspectPackagedWakeModel,
   } = {},
 ) {
   const target = resolvePackagedTarget(targetPath, { platform, arch });
@@ -591,6 +625,7 @@ export async function runPackagedSmoke(
   await assertNativeArtifactsPresent(target.unpackedRoot, { platform, arch });
   inspectMainBundle(target.resourcesDir);
   inspectLegalArtifacts(target.resourcesDir);
+  await inspectWakeModel(target.resourcesDir);
 
   const userData = await fs.mkdtemp(
     path.join(os.tmpdir(), 'nexus-packaged-smoke-'),

@@ -26,7 +26,13 @@ const identitySchema = z.object({
   provider: z.string().trim().min(1).max(256),
 }).strict();
 const idSchema = z.string().trim().min(1).max(256);
-const statusSchema = z.enum(['proposed', 'approved', 'applied', 'rejected']);
+const statusSchema = z.enum([
+  'proposed',
+  'approved',
+  'applied',
+  'rejected',
+  'superseded',
+]);
 
 export type ContextDraftStatus = z.infer<typeof statusSchema>;
 export type ContextDraftIdentity = ContextAttestationActor;
@@ -171,7 +177,17 @@ function parseDraftRow(row: DraftRow): ContextDraftRecord {
     if (status === 'applied' && (!attestationId || appliedAt === null)) {
       throw new Error('applied draft is missing portable attestation state');
     }
-    if (status !== 'applied' && (attestationId || appliedAt !== null || appliedCommit)) {
+    if (
+      status === 'superseded' &&
+      (attestationId !== null || appliedAt === null || appliedCommit !== null)
+    ) {
+      throw new Error('superseded draft has invalid applied state');
+    }
+    if (
+      status !== 'applied' &&
+      status !== 'superseded' &&
+      (attestationId || appliedAt !== null || appliedCommit)
+    ) {
       throw new Error('non-applied draft has applied state');
     }
     const rationale = row.review_rationale === null
@@ -372,6 +388,24 @@ export class ContextDraftStore {
       if (current.status !== 'applied') throw new Error('only an applied context draft can be committed');
       if (current.appliedCommit === commitSha) return current;
       throw new Error('context draft commit concurrency conflict');
+    }
+    this.#binding.emitChange();
+    return this.#required(id);
+  }
+
+  markSuperseded(rawId: string): ContextDraftRecord {
+    const id = idSchema.parse(rawId);
+    const now = this.#binding.now();
+    const result = this.#binding.writeDatabase().prepare(
+      `UPDATE context_drafts
+       SET status = 'superseded', attestation_id = NULL,
+           applied_commit = NULL, updated_at = ?
+       WHERE id = ? AND status = 'applied' AND applied_commit IS NULL`,
+    ).run(now, id);
+    if (result.changes !== 1) {
+      const current = this.#required(id);
+      if (current.status === 'superseded') return current;
+      throw new Error('only an uncommitted applied context draft can be superseded');
     }
     this.#binding.emitChange();
     return this.#required(id);

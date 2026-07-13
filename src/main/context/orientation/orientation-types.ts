@@ -157,6 +157,13 @@ export const SKIP_DIRECTORIES = Object.freeze(
   new Set([
     '.git',
     '.nexus',
+    '.claude',
+    '.codex',
+    '.context',
+    '.gemini',
+    '.overclock-app',
+    '.worktrees',
+    '.vite',
     '.dev-user-data',
     '.dev-electron',
     'node_modules',
@@ -172,6 +179,8 @@ export const SKIP_DIRECTORIES = Object.freeze(
     'venv',
     'out',
     '.cache',
+    'graphify-out',
+    'release-assets',
   ]),
 );
 

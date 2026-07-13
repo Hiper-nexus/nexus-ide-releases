@@ -45,6 +45,9 @@ describe('mission kickoff context/PREVC contract', () => {
     expect(prompt).toContain('nexus_context_doctor');
     expect(prompt).toContain('quorumAvailable');
     expect(prompt).toContain('review→apply→commit');
+    expect(prompt).toContain('chame nexus_context_doctor novamente');
+    expect(prompt).toContain('não abra draft_review_run em paralelo');
+    expect(prompt).not.toContain('Só chame draft_review_run manual se quorumAvailable=false');
     expect(prompt).not.toContain('Só claude/glm/longcat');
     expect(prompt).not.toContain('gpt-5.4-mini');
     expect(prompt).not.toContain('gpt-5.5');

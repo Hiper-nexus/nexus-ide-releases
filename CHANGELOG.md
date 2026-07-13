@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.15.1 — Supervision Handoff
+
+Data: 2026-07-13
+
+### Doctor, panes e handoff
+- Revisões de contexto usam uma única passagem de até dois minutos, preservam
+  o pane quando há timeout e não criam outro revisor enquanto a sessão anterior
+  ainda pode ser recuperada.
+- O contexto de orientação ignora artefatos internos, lockfiles e saídas de
+  runtime, recarrega fontes reais e rejeita rascunhos contaminados antes de
+  qualquer aplicação.
+- Missões e panes expõem recuperação explícita em vez de fechar ou reenviar
+  trabalho automaticamente; o Doctor continua a missão pelo orquestrador após
+  as correções, sem ciclos paralelos duplicados.
+- Contratos emitidos por orquestradores antigos aceitam o alias `description`
+  e normalizam rótulos humanos de artefatos. Drafts aplicados substituídos são
+  migrados para `superseded`, evitando loops de commit por atestação obsoleta;
+  um Doctor posterior conclui automaticamente o commit quando o Git está limpo.
+
+### Jarvis em tempo real
+- “Abrir modo squad” sem nome agora pergunta qual squad salvo deve subir e
+  apresenta nomes reais do catálogo; criar/desenhar um squad novo permanece uma
+  intenção distinta.
+- O contexto estruturado da tela, workspaces e squads é atualizado de forma
+  contínua e deduplicada durante a sessão Live. O follow-up permanece autorizado
+  por 60 segundos para permitir respostas naturais sem repetir a wake word.
+- Cancelamento do provider, interrupção pelo usuário e barge-in antes de efeitos
+  não são mais registrados como incidentes. Isso elimina o falso toast do Doctor
+  e o anúncio repetido de “supervisão travada”.
+
+### Providers e acessibilidade
+- Hub de Providers reorganizado em CLIs, modelos e remotos, com detecção,
+  atualização de catálogo e estados operacionais mais claros.
+- Tabs mantêm foco por teclado e uma relação ARIA estável com o painel ativo.
+
+### Galeria de pets
+- A galeria mostra uma pré-visualização animada antes de aplicar qualquer pet;
+  a importação só acontece após confirmação explícita no card selecionado.
+- Sheets petdex `8×9` e Codex v2 `8×11` são detectados pelas dimensões reais.
+  Assets acima do teto das preferências são compactados mantendo a malha, com
+  limite de rede independente de 12 MB.
+
+### Wake PT-BR e release
+- `ei-jarvis-ptbr.onnx` passa a ser o wake model padrão de todos os clientes.
+  Manifesto com SHA-256 é empacotado junto e o build falha fechado se modelo,
+  manifesto ou hash divergirem.
+- Versões do app, servidor, lockfile, changelog e notas internas avançam juntas
+  para `0.15.1`; dependências nativas opcionais necessárias ao SSH têm scripts
+  de instalação explicitamente permitidos.
+
 ## 0.15.0 — Autopilot Fleet
 
 Data: 2026-07-13

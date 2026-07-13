@@ -113,6 +113,7 @@ import {
 import { DEFAULT_DUPLEX_MODE, duplexModePolicy } from './duplex-mode-policy';
 import { WorkNarrationSupervisor } from './work-narration-supervisor';
 import { FOLLOW_UP_AUTHORITY_MS, followUpAuthority } from './follow-up-authority';
+import { startLiveContextSync } from './live-context-sync';
 
 /**
  * Jarvis voice pipeline. Mounted once from App.
@@ -974,6 +975,7 @@ export function useVoiceController(): void {
       })) return;
       narrationQueue.enqueue(event.text);
     });
+    const stopLiveContextSync = startLiveContextSync();
 
     const cleanup = () => {
       clearInterval(micHealthTimer);
@@ -989,6 +991,7 @@ export function useVoiceController(): void {
       unsubWake();
       unsubClickWake();
       unsubNarrate();
+      stopLiveContextSync();
       unsubLiveState();
       unsubLiveTranscript();
       unsubTranscriptAppend();

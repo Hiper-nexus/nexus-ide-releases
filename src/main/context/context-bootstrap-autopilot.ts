@@ -12,6 +12,7 @@ import {
 import type { ContextReadinessReport } from './context-doctor';
 import {
   buildContextBootstrapProposals,
+  isSafeBootstrapSourceLocator,
   isAutoReviewableBootstrapProposal,
   type BootstrapDocProposal,
 } from './orientation/orientation-bootstrap-context';
@@ -75,6 +76,13 @@ export interface ContextBootstrapAutopilotOptions {
   readonly selectQuorum?: (authorProvider: string) => { adapterId: string } | null;
 }
 
+const DEFAULT_MAX_AUTO_REVIEWS_PER_PASS = 1;
+const BOOTSTRAP_SOURCE_POLICY_REVIEWER = Object.freeze({
+  id: 'nexus-bootstrap-policy',
+  sessionId: 'source-policy-v1',
+  provider: 'nexus-policy',
+});
+
 function freezeOutcomes(
   outcomes: readonly BootstrapDraftOutcome[],
 ): readonly BootstrapDraftOutcome[] {
@@ -92,6 +100,15 @@ function hintFor(result: Omit<ContextBootstrapAutopilotResult, 'autopilotHint'>)
     return (
       'Drafts proposed from the code map, but independent reviewer quorum is unavailable. ' +
       'Install/auth a second CLI provider, then nexus_context_draft_review_run on each draftId.'
+    );
+  }
+  const hasPendingAutoReview = result.draftOutcomes.some(
+    (outcome) => outcome.autoReviewable && outcome.status === 'proposed',
+  );
+  if (result.quorumAvailable && hasPendingAutoReview) {
+    return (
+      'Bounded review pass complete. Call nexus_context_doctor again to continue ' +
+      'the remaining drafts; do not fan out nexus_context_draft_review_run.'
     );
   }
   if (result.rejectedDraftIds.length > 0 && result.appliedDraftIds.length === 0) {
@@ -126,7 +143,7 @@ export async function runContextBootstrapAutopilot(
   const autoReview = options.autoReview !== false;
   const autoCommit = options.autoCommit !== false;
   const maxAutoReviews = Math.min(
-    Math.max(1, options.maxAutoReviews ?? 16),
+    Math.max(1, options.maxAutoReviews ?? DEFAULT_MAX_AUTO_REVIEWS_PER_PASS),
     16,
   );
   const workflow = getContextWorkflowService(options.scope);
@@ -143,6 +160,7 @@ export async function runContextBootstrapAutopilot(
       map = await orientationService.ensure(options.scope, {
         reason: 'mcp',
         waitMs: 8_000,
+        force: true,
       });
       orientationSnapshot = orientationService.toSnapshot(map);
     } catch {
@@ -160,16 +178,27 @@ export async function runContextBootstrapAutopilot(
 
   let readiness = workflow.inspectReadiness();
   if (readiness.ready) {
+    const durableApplied = knowledge.list({ status: 'applied' })
+      .filter((draft) => draft.appliedCommit === null);
+    let recoveredCommitSha: string | null = null;
+    if (autoCommit && durableApplied.length > 0) {
+      try {
+        recoveredCommitSha = knowledge.commitApplied().commitSha;
+      } catch {
+        // The corpus may be ready while Git is intentionally dirty. Keep the
+        // applied IDs visible so the next clean Doctor pass retries once.
+      }
+    }
     const base = {
-      phase: 'ready' as const,
+      phase: recoveredCommitSha ? 'committed' as const : 'ready' as const,
       readiness,
       orientation: orientationSnapshot,
       bootstrapProposals: Object.freeze([] as const),
       proposedDraftIds: Object.freeze([] as const),
       draftOutcomes: Object.freeze([] as const),
-      appliedDraftIds: Object.freeze([] as const),
+      appliedDraftIds: Object.freeze(durableApplied.map((draft) => draft.id)),
       rejectedDraftIds: Object.freeze([] as const),
-      commitSha: null,
+      commitSha: recoveredCommitSha,
       quorumAvailable: Boolean(
         (options.selectQuorum ?? selectIndependentContextReviewerRoute)(
           options.author.provider,
@@ -194,6 +223,8 @@ export async function runContextBootstrapAutopilot(
   const proposedDraftIds: string[] = [];
   const outcomes: BootstrapDraftOutcome[] = [];
   const autoReviewQueue: string[] = [];
+  const appliedDraftIds: string[] = [];
+  const rejectedDraftIds: string[] = [];
 
   // A previous Doctor run may have proposed drafts and then lost its CLI
   // session before review. Those records are durable authority, so resume them
@@ -211,6 +242,26 @@ export async function runContextBootstrapAutopilot(
   for (const draft of resumableDrafts) {
     const proposal = proposalsByTarget.get(draft.targetPath)!;
     const autoReviewable = isAutoReviewableBootstrapProposal(proposal);
+    const unsafeSource = draft.sources.find(
+      (source) => !isSafeBootstrapSourceLocator(source.locator),
+    );
+    if (unsafeSource) {
+      const rejected = knowledge.review(draft.id, {
+        decision: 'reject',
+        reviewer: BOOTSTRAP_SOURCE_POLICY_REVIEWER,
+        rationale:
+          `Rejected by fail-closed bootstrap source policy: ${unsafeSource.locator} ` +
+          'is generated agent/runtime state or a non-semantic lockfile.',
+      });
+      rejectedDraftIds.push(rejected.id);
+      outcomes.push({
+        draftId: rejected.id,
+        targetPath: rejected.targetPath,
+        status: 'rejected',
+        autoReviewable,
+      });
+      continue;
+    }
     resumableTargets.add(draft.targetPath);
     proposedDraftIds.push(draft.id);
     outcomes.push({
@@ -259,9 +310,6 @@ export async function runContextBootstrapAutopilot(
     options.selectQuorum ?? selectIndependentContextReviewerRoute;
   const quorum = selectQuorum(options.author.provider);
   const quorumAvailable = quorum !== null;
-
-  const appliedDraftIds: string[] = [];
-  const rejectedDraftIds: string[] = [];
 
   if (autoReview && quorumAvailable && autoReviewQueue.length > 0) {
     const createReviewer =

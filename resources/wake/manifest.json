@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "defaultModel": {
+    "file": "ei-jarvis-ptbr.onnx",
+    "locale": "pt-BR",
+    "required": true,
+    "sha256": "db04699d88fa7b16473a4e8691c56eecaa7cfc4594c06e7899473d387f653957",
+    "wakePhrase": "Ei Jarvis"
+  }
+}

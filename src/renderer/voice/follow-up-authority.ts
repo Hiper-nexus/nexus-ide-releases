@@ -2,7 +2,7 @@
 // A natural pause after a spoken/tool response often exceeds eight seconds.
 // Keep the already-open Gemini mic authoritative long enough for a real
 // conversational follow-up without forcing the user to repeat "Jarvis".
-export const FOLLOW_UP_AUTHORITY_MS = 15_000;
+export const FOLLOW_UP_AUTHORITY_MS = 60_000;
 
 export class FollowUpAuthority {
   private deadline = 0;

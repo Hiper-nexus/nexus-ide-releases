@@ -137,6 +137,25 @@ describe('ProvidersPanel hub', () => {
     act(() => root.unmount());
   });
 
+  it('moves keyboard focus with the selected tab and keeps one stable tabpanel', async () => {
+    const { host, root } = mount();
+    const tabs = [...host.querySelectorAll<HTMLButtonElement>('.prov-hub__tab')];
+    tabs[0]!.focus();
+
+    await act(async () => {
+      tabs[0]!.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'ArrowRight',
+        bubbles: true,
+      }));
+    });
+
+    expect(document.activeElement).toBe(tabs[1]);
+    expect(tabs[1]!.getAttribute('aria-selected')).toBe('true');
+    expect(tabs.every((tab) => tab.getAttribute('aria-controls') === 'prov-tabpanel')).toBe(true);
+    expect(host.querySelectorAll('#prov-tabpanel')).toHaveLength(1);
+    act(() => root.unmount());
+  });
+
   it('surfaces account chip on the tile and detail accounts block', () => {
     const { host, root } = mount();
     expect(host.textContent).toContain('1 ct');
