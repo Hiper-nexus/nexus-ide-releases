@@ -165,11 +165,8 @@ export function clampPetDragAcrossDisplays(
 }
 
 /**
- * Arrasto multi-monitor anti-flicker (macOS Retina + monitor 1×).
- *
- * Janela transparente a CAVALO entre monitores com scaleFactor diferente
- * re-rasteriza a cada frame e pisca. Esta função mantém a janela 100%
- * dentro de UM display (overhang 0). A troca de monitor é externa (cursor).
+ * Janela 100% dentro de UM display (overhang 0). Usar no settle/persist —
+ * não no arrasto livre (gruda na costura multi-monitor).
  */
 export function clampPetFullyOnDisplay(
   pos: Point,
@@ -177,6 +174,48 @@ export function clampPetFullyOnDisplay(
   displayBounds: Rect,
 ): Point {
   return clampPetDrag(pos, size, displayBounds, 0);
+}
+
+/** Bounding box de todos os monitores (desktop virtual contínuo). */
+export function unionRects(rects: readonly Rect[]): Rect {
+  if (rects.length === 0) {
+    return { x: 0, y: 0, width: 0, height: 0 };
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const r of rects) {
+    minX = Math.min(minX, r.x);
+    minY = Math.min(minY, r.y);
+    maxX = Math.max(maxX, r.x + r.width);
+    maxY = Math.max(maxY, r.y + r.height);
+  }
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(0, maxX - minX),
+    height: Math.max(0, maxY - minY),
+  };
+}
+
+/**
+ * Arrasto livre no desktop virtual (todos os monitores).
+ * Sem “parede” na costura Mac↔LG — o settle é que assenta num display.
+ */
+export function clampPetDragFreeDesktop(
+  pos: Point,
+  size: Size,
+  displayBoundsList: readonly Rect[],
+  overhang = EDGE_OVERHANG_DRAG,
+): Point {
+  if (displayBoundsList.length === 0) {
+    return { x: Math.round(pos.x), y: Math.round(pos.y) };
+  }
+  if (displayBoundsList.length === 1) {
+    return clampPetDrag(pos, size, displayBoundsList[0]!, overhang);
+  }
+  return clampPetDrag(pos, size, unionRects(displayBoundsList), overhang);
 }
 
 /** True se a janela tem pixels em mais de um display (straddle = flicker). */
@@ -194,6 +233,14 @@ export function windowStraddlesDisplays(
   }
   return false;
 }
+
+/** Largura típica da faixa explorer+activity bar (px de ecrã). */
+export const PET_SIDEBAR_COVER_WIDTH = 340;
+/**
+ * Fração da área do pet sobre a faixa esquerda a partir da qual
+ * consideramos que tapa a árvore de ficheiros.
+ */
+export const PET_SIDEBAR_COVER_RATIO = 0.25;
 
 /**
  * Fração máxima da área do pet que intersecta algum obstáculo (0..1).
@@ -217,22 +264,33 @@ export function petWindowOverlapRatio(
  * Cantos de estacionamento na workArea (ordem = preferência em empate):
  * BR → TR → BL → TL. O explorer do IDE fica à esquerda — BR/TR cobrem
  * menos a árvore de ficheiros quando a janela principal está maximizada.
+ *
+ * Cada candidato é clampado à workArea (display minúsculo / pet maior que
+ * a área): evita right < left e posições NaN/fora.
  */
 export function petParkCornerCandidates(
   size: Size,
   workArea: Rect,
   margin = SNAP_MARGIN,
 ): Point[] {
-  const left = workArea.x + margin;
-  const top = workArea.y + margin;
-  const right = workArea.x + workArea.width - size.width - margin;
-  const bottom = workArea.y + workArea.height - size.height - margin;
-  return [
-    { x: right, y: bottom },
-    { x: right, y: top },
-    { x: left, y: bottom },
-    { x: left, y: top },
+  const m = Math.max(0, margin);
+  // Espaço interior com margem; se a workArea for apertada, o clamp
+  // abaixo colapsa para o canto real da área.
+  const inner: Rect = {
+    x: workArea.x + m,
+    y: workArea.y + m,
+    width: Math.max(0, workArea.width - 2 * m),
+    height: Math.max(0, workArea.height - 2 * m),
+  };
+  const raw: Point[] = [
+    { x: inner.x + inner.width - size.width, y: inner.y + inner.height - size.height },
+    { x: inner.x + inner.width - size.width, y: inner.y },
+    { x: inner.x, y: inner.y + inner.height - size.height },
+    { x: inner.x, y: inner.y },
   ];
+  // clampToWorkArea na workArea completa (não só inner) para não empurrar
+  // para fora quando size > inner.
+  return raw.map((p) => clampToWorkArea(p, size, workArea));
 }
 
 /**
@@ -265,12 +323,15 @@ export function bestPetParkPosition(
  * True se o pet cobre uma faixa esquerda da janela principal (explorer /
  * activity bar). Utilizador a apontar o pet sobre a árvore de ficheiros é o
  * caso típico — re-estacionamos para o canto livre em vez de tapar pastas.
+ *
+ * Nota: assume layout LTR (explorer à esquerda). Nexus não espelha o rail.
  */
 export function petCoversMainSidebar(
   pos: Point,
   size: Size,
   mainBounds: Rect,
-  sidebarWidth = 340,
+  sidebarWidth = PET_SIDEBAR_COVER_WIDTH,
+  coverRatio = PET_SIDEBAR_COVER_RATIO,
 ): boolean {
   if (mainBounds.width <= 0 || mainBounds.height <= 0) return false;
   const stripW = Math.min(Math.max(0, sidebarWidth), mainBounds.width);
@@ -283,8 +344,8 @@ export function petCoversMainSidebar(
   };
   const area = size.width * size.height;
   if (area <= 0) return false;
-  // ≥25% do pet sobre a faixa esquerda = tapa várias linhas do explorer.
-  return windowOverlapArea(pos, size, strip) / area >= 0.25;
+  const ratio = Math.min(1, Math.max(0, coverRatio));
+  return windowOverlapArea(pos, size, strip) / area >= ratio;
 }
 
 /**

@@ -30,11 +30,8 @@ const SPRITE_SIZE = 200;
  * no desktop; 1× (208) fica pequeno — meio-termo legível e estável.
  */
 const SHEET_SIZE = 260;
-const DRAG_THRESHOLD_PX = 4;
-/** Histerese de direção da corrida — micro-dx no arrasto rápido não vira o pet. */
-const RUN_DIR_HYSTERESIS_PX = 14;
-/** Tempo mínimo numa direção antes de poder inverter (evita piscar L↔R). */
-const RUN_DIR_MIN_MS = 90;
+/** Limiar baixo: o utilizador reportava ter de “forçar” o rato para arrastar. */
+const DRAG_THRESHOLD_PX = 2;
 const CELEBRATE_MS = 3_000;
 
 /** Preset → props do OperatorSprite (skins já existentes da gamificação). */
@@ -59,10 +56,11 @@ export function PetApp() {
   const [reaction, setReaction] = useState<'wave' | 'failed' | 'waiting' | null>(
     null,
   );
-  // Direção do olhar (0..15) vinda do main — o pet segue o cursor.
-  const [lookDir, setLookDir] = useState<number | null>(null);
-  // Arrastando, o pet CORRE na direção do movimento (linhas 1/2 do contrato).
-  const [runDir, setRunDir] = useState<'left' | 'right' | null>(null);
+  // Look DESLIGADO na UI: idle↔look (notebook ao lado ↔ peito) + ghost de
+  // canvas = “dois notebooks”. Manter estado só se reativarmos no futuro.
+  const [lookDir] = useState<number | null>(null);
+  // Arrasto: sem anim de corrida (frames L/R com notebook lateral = “duplica”).
+  const [dragging, setDragging] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const celebrateTimer = useRef<number | null>(null);
   const drag = useRef<{ startX: number; startY: number; dragging: boolean } | null>(
@@ -72,6 +70,7 @@ export function PetApp() {
   // cada setIgnoreMouseEvents no main recompõe a janela transparente (pisca).
   const interactiveRef = useRef(false);
   const leaveTimerRef = useRef<number | null>(null);
+  const hitRef = useRef<HTMLDivElement | null>(null);
   const markInteractive = useCallback((interactive: boolean) => {
     if (interactive) {
       if (leaveTimerRef.current !== null) {
@@ -88,9 +87,30 @@ export function PetApp() {
     leaveTimerRef.current = window.setTimeout(() => {
       leaveTimerRef.current = null;
       if (!interactiveRef.current) return;
+      // Arrasto a meio: nunca largar o hit-test (mouseup vaza para o IDE).
+      if (drag.current?.dragging) return;
       interactiveRef.current = false;
       window.nexusPet.setInteractive(false);
     }, 140);
+  }, []);
+
+  /**
+   * Após balão sumir: se o cursor ainda está no sprite, re-armar interactive
+   * (mouseenter não re-dispara). Senão, click-through limpo.
+   */
+  const releaseInteractiveAfterOverlay = useCallback(() => {
+    if (leaveTimerRef.current !== null) {
+      window.clearTimeout(leaveTimerRef.current);
+      leaveTimerRef.current = null;
+    }
+    const stillOnHit = Boolean(hitRef.current?.matches(':hover'));
+    if (stillOnHit || drag.current?.dragging) {
+      interactiveRef.current = true;
+      window.nexusPet.setInteractive(true);
+      return;
+    }
+    interactiveRef.current = false;
+    window.nexusPet.setInteractive(false);
   }, []);
 
   useEffect(() => {
@@ -101,14 +121,12 @@ export function PetApp() {
     const offPrefs = window.nexusPet.onPrefsChanged(setPrefs);
     const offEvents = window.nexusPet.onEvent((event) => {
       setBalloons((state) => enqueueBalloon(state, event));
-      const nextReaction =
+      const nextReaction: 'wave' | 'failed' | 'waiting' =
         event.kind === 'mission-failed' || event.kind === 'agent-exited'
           ? 'failed'
           : event.kind === 'mission-blocked' || event.kind === 'agent-waiting'
             ? 'waiting'
-            : event.kind === 'agent-idle'
-              ? 'wave'
-              : 'wave';
+            : 'wave';
       setReaction(nextReaction);
       if (celebrateTimer.current) window.clearTimeout(celebrateTimer.current);
       // Intervenção fica no mood waiting enquanto o balão existir.
@@ -119,23 +137,29 @@ export function PetApp() {
         );
       }
     });
-    const offLook = window.nexusPet.onLook(setLookDir);
+    // onLook ignorado de propósito (ver lookDir acima).
     return () => {
       cancelled = true;
       offPrefs();
       offEvents();
-      offLook();
       if (celebrateTimer.current) window.clearTimeout(celebrateTimer.current);
       if (leaveTimerRef.current !== null) {
         window.clearTimeout(leaveTimerRef.current);
         leaveTimerRef.current = null;
+      }
+      // Unmount: largar hit-test para o desktop não ficar “preso”.
+      interactiveRef.current = false;
+      try {
+        window.nexusPet.setInteractive(false);
+      } catch {
+        // preload pode já ter morrido com a janela
       }
     };
   }, []);
 
   // Balão atual expira sozinho e promove o próximo da fila. A expiração pode
   // acontecer com o cursor sobre o balão (nenhum mouseleave dispara): solta o
-  // click-through explicitamente para a janela não engolir cliques do desktop.
+  // click-through sem matar o hit se o rato ainda está no sprite.
   const currentBalloon = balloons.current;
   const currentBalloonId = currentBalloon?.id ?? null;
   const balloonDuration =
@@ -145,55 +169,54 @@ export function PetApp() {
     if (currentBalloonId === null) return undefined;
     const timer = window.setTimeout(() => {
       setBalloons(dismissBalloon);
-      interactiveRef.current = false;
-      if (leaveTimerRef.current !== null) {
-        window.clearTimeout(leaveTimerRef.current);
-        leaveTimerRef.current = null;
-      }
-      window.nexusPet.setInteractive(false);
+      releaseInteractiveAfterOverlay();
       setReaction((r) => (r === 'waiting' ? null : r));
     }, balloonDuration);
     return () => window.clearTimeout(timer);
-  }, [currentBalloonId, balloonDuration]);
+  }, [currentBalloonId, balloonDuration, releaseInteractiveAfterOverlay]);
 
   const dismissAndAct = useCallback((action: 'focus-main' | 'open-ops') => {
     runBalloonAction(action);
     setBalloons(dismissBalloon);
     setReaction(null);
-    markInteractive(false);
     setMenuOpen(false);
-  }, [markInteractive]);
+    releaseInteractiveAfterOverlay();
+  }, [releaseInteractiveAfterOverlay]);
 
-  // Drag manual com desambiguação clique×arrasto (limiar de movimento).
-  // Pointer capture prende move/up ao elemento mesmo se o cursor escapar da
-  // janela entre ticks do main; blur/pointercancel fecham o arrasto para o
-  // timer do main NUNCA ficar preso seguindo o cursor.
-  const hitRef = useRef<HTMLDivElement | null>(null);
+  // Drag: limiar em screen coords (clientX “congela” quando a janela segue).
+  // Main faz o follow por cursor; pointer capture + interactive forçado.
   const onSpritePointerDown = useCallback((e: React.PointerEvent) => {
     if (e.button !== 0) return;
     e.preventDefault();
     const el = hitRef.current;
     if (!el) return;
+    // Hit-test ON durante todo o gesto (click-through matava o arrasto).
+    markInteractive(true);
     try {
       el.setPointerCapture(e.pointerId);
     } catch {
       // captura indisponível — o fluxo ainda funciona no caminho comum
     }
-    drag.current = { startX: e.clientX, startY: e.clientY, dragging: false };
-    let lastScreenX = e.screenX;
-    let runDirLocked: 'left' | 'right' | null = null;
-    let runDirSince = 0;
-    let dxAccum = 0;
+    drag.current = {
+      startX: e.screenX,
+      startY: e.screenY,
+      dragging: false,
+    };
 
     const finish = (asDrag: boolean) => {
       const state = drag.current;
       drag.current = null;
-      setRunDir(null);
+      setDragging(false);
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerup', onUp);
       el.removeEventListener('pointercancel', onCancel);
-      window.removeEventListener('blur', onBlur);
-      if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+      if (el.hasPointerCapture(e.pointerId)) {
+        try {
+          el.releasePointerCapture(e.pointerId);
+        } catch {
+          // ignore
+        }
+      }
       if (state?.dragging || asDrag) {
         window.nexusPet.dragEnd();
       } else if (state) {
@@ -217,68 +240,42 @@ export function PetApp() {
       if (!state) return;
       if (!state.dragging) {
         const dist = Math.hypot(
-          move.clientX - state.startX,
-          move.clientY - state.startY,
+          move.screenX - state.startX,
+          move.screenY - state.startY,
         );
         if (dist < DRAG_THRESHOLD_PX) return;
         state.dragging = true;
-        // Offset do cursor dentro da janela: a janela passa a seguir o cursor
-        // no main, então as coordenadas de cliente ficam estáveis.
+        setDragging(true);
+        markInteractive(true);
         window.nexusPet.dragBegin({ x: move.clientX, y: move.clientY });
       }
-      // Direção pelo screenX (cliente fica parado enquanto a janela segue).
-      // Acumula dx + histerese + tempo mínimo: sheets petdex têm frames de
-      // corrida bem distintos; inverter L↔R a cada 2px “pisca erro”.
-      const dx = move.screenX - lastScreenX;
-      lastScreenX = move.screenX;
-      dxAccum += dx;
-      const now = performance.now();
-      const want: 'left' | 'right' | null =
-        dxAccum > RUN_DIR_HYSTERESIS_PX
-          ? 'right'
-          : dxAccum < -RUN_DIR_HYSTERESIS_PX
-            ? 'left'
-            : null;
-      if (want === null) return;
-      dxAccum = 0;
-      if (want === runDirLocked) return;
-      if (
-        runDirLocked !== null &&
-        now - runDirSince < RUN_DIR_MIN_MS
-      ) {
-        return;
-      }
-      runDirLocked = want;
-      runDirSince = now;
-      setRunDir(want);
     };
     const onUp = () => finish(false);
+    // NÃO terminar no blur da janela — ao arrastar o panel pode “blur” e
+    // matava o drag a meio do ecrã (utilizador “forçava” o rato).
     const onCancel = () => finish(true);
-    const onBlur = () => finish(true);
     el.addEventListener('pointermove', onMove);
     el.addEventListener('pointerup', onUp);
     el.addEventListener('pointercancel', onCancel);
-    window.addEventListener('blur', onBlur);
   }, [markInteractive]);
 
   if (!prefs) return null;
 
-  const celebrating = reaction === 'wave' && runDir === null;
-  const needingYou = reaction === 'waiting' && runDir === null;
-  const mood: OperatorMood = prefs.sleeping && !currentBalloon?.urgent
-    ? 'sleeping'
-    : celebrating
-      ? 'celebrating'
-      : needingYou
-        ? 'idle'
+  const celebrating = reaction === 'wave' && !dragging;
+  const needingYou = reaction === 'waiting' && !dragging;
+  const mood: OperatorMood =
+    prefs.sleeping && !currentBalloon?.urgent
+      ? 'sleeping'
+      : celebrating
+        ? 'celebrating'
         : 'idle';
-  // Prioridade: dormir > correr (arrasto) > reação > idle/olhar.
-  // Intervenção urgente sobrescreve o visual de sleep no sprite.
+  // Prioridade: dormir > arrasto (idle estático) > reação > idle.
+  // Sem run L/R: frames de corrida com notebook lateral “duplicavam” o braço.
   const sheetAnim: SheetAnim =
     prefs.sleeping && !currentBalloon?.urgent
       ? 'sleep'
-      : runDir !== null
-        ? (`run-${runDir}` as SheetAnim)
+      : dragging
+        ? 'idle'
         : (reaction ?? 'idle');
 
   const balloon = balloons.current;
@@ -314,7 +311,7 @@ export function PetApp() {
               onClick={() => {
                 setBalloons(dismissBalloon);
                 setReaction(null);
-                markInteractive(false);
+                releaseInteractiveAfterOverlay();
               }}
               title="Dispensar"
             >
@@ -387,7 +384,7 @@ export function PetApp() {
         } ${prefs.sleeping && !balloon?.urgent ? 'pet__hit--sleeping' : ''} ${
           celebrating ? 'pet__hit--celebrating' : ''
         } ${needingYou || balloon?.urgent ? 'pet__hit--waiting' : ''} ${
-          runDir !== null ? 'pet__hit--dragging' : ''
+          dragging ? 'pet__hit--dragging' : ''
         }`}
         onMouseEnter={() => markInteractive(true)}
         onMouseLeave={() => {

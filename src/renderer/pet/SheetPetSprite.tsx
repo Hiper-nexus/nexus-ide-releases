@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   detectSheetGrid,
   SHEET_ANIMS,
-  sheetLookFrame,
   type PetSheet,
 } from '../../shared/pet-types';
 
@@ -155,11 +154,20 @@ export function SheetPetSprite({
   const familyRef = useRef<string>(animFamily(anim));
 
   useEffect(() => {
+    let cancelled = false;
     const img = new Image();
-    img.onload = () => setImage(img);
+    img.onload = () => {
+      if (!cancelled) setImage(img);
+    };
+    img.onerror = () => {
+      // dataUrl inválido / sheet truncado — não ficar com frame fantasma.
+      if (!cancelled) setImage(null);
+    };
     img.src = sheet.dataUrl;
     return () => {
+      cancelled = true;
       img.onload = null;
+      img.onerror = null;
     };
   }, [sheet.dataUrl]);
 
@@ -168,13 +176,12 @@ export function SheetPetSprite({
     return detectSheetGrid(image.width, image.height);
   }, [image, sheet.cols, sheet.rows]);
 
-  const looking = useMemo(
-    () =>
-      anim === 'idle' && lookDir !== null && grid.rows >= 11
-        ? sheetLookFrame(lookDir)
-        : null,
-    [anim, lookDir, grid.rows],
-  );
+  // Look frames desligados: idle (notebook lateral) ↔ look (peito) + residual
+  // de canvas = “dois notebooks”. lookDir prop mantida na API por compat.
+  const looking = useMemo(() => {
+    void lookDir;
+    return null as { row: number; col: number } | null;
+  }, [lookDir]);
 
   const frameW = image ? Math.floor(image.width / grid.cols) : 1;
   const frameH = image ? Math.floor(image.height / grid.rows) : 1;
@@ -186,6 +193,11 @@ export function SheetPetSprite({
     const base = SHEET_ANIMS[anim];
     const row =
       base.row >= grid.rows ? Math.max(0, grid.rows - 1) : base.row;
+    // Idle: 1 frame estático. Loop 0–5 com notebook em poses ligeiramente
+    // diferentes + ghost de compositor = “braço/notebook duplicado” lateral.
+    if (anim === 'idle') {
+      return { row, frames: 1, col: 0 as number | null };
+    }
     let frames: number = base.frames;
     // Corta colunas vazias no fim (petdex). Só quando a imagem já carregou.
     if (image && frameW > 1 && frameH > 1) {
@@ -257,24 +269,19 @@ export function SheetPetSprite({
     const sw = Math.floor(frameW);
     const sh = Math.floor(frameH);
 
+    // Reset do buffer = clear garantido (transparent + GPU no macOS por vezes
+    // falha clearRect e deixa ghost → notebook/braço duplicado).
     if (canvas.width !== bufferW || canvas.height !== bufferH) {
       canvas.width = bufferW;
       canvas.height = bufferH;
+    } else {
+      // Reassign força wipe completo sem mudar tamanho.
+      canvas.width = bufferW;
     }
-
-    // Clear em coordenadas de DISPOSITIVO (identity). clearRect com
-    // setTransform(dpr) em janela transparente no macOS por vezes deixa
-    // ghost do frame anterior → notebook/braço “duplicado” na lateral.
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    // `copy` substitui o destino (não faz alpha-blend com residual).
     ctx.globalCompositeOperation = 'copy';
-    ctx.imageSmoothingEnabled = !integer;
-    if (ctx.imageSmoothingEnabled) {
-      ctx.imageSmoothingQuality = 'high';
-    }
+    ctx.imageSmoothingEnabled = false;
     ctx.drawImage(image, sx, sy, sw, sh, 0, 0, displayW, displayH);
     ctx.globalCompositeOperation = 'source-over';
   }, [

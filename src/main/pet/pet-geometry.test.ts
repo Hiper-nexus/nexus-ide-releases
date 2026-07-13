@@ -3,14 +3,18 @@ import {
   bestPetParkPosition,
   clampPetDrag,
   clampPetDragAcrossDisplays,
+  clampPetDragFreeDesktop,
   clampPetFullyOnDisplay,
   clampToWorkArea,
   petCoversMainSidebar,
+  petParkCornerCandidates,
   petWindowOverlapRatio,
   snapToCorner,
+  unionRects,
   windowIntersectsOffDisplay,
   windowStraddlesDisplays,
   EDGE_OVERHANG,
+  PET_SIDEBAR_COVER_WIDTH,
   SNAP_MARGIN,
   SNAP_THRESHOLD,
 } from './pet-geometry';
@@ -127,18 +131,27 @@ describe('clampPetDrag', () => {
     ).toEqual(straddling);
   });
 
-  it('clampPetFullyOnDisplay: janela 100% num monitor (anti-flicker multi-DPI)', () => {
+  it('clampPetFullyOnDisplay: janela 100% num monitor', () => {
     const mac = { x: 0, y: 0, width: 1440, height: 900 };
-    // Tentativa de ir para a costura — puxa para dentro do Mac.
     const clamped = clampPetFullyOnDisplay({ x: 1300, y: 200 }, SIZE, mac);
-    expect(clamped.x).toBe(1440 - SIZE.width); // 1200
+    expect(clamped.x).toBe(1440 - SIZE.width);
     expect(clamped.y).toBe(200);
-    expect(
-      windowStraddlesDisplays(clamped, SIZE, [
-        mac,
-        { x: 1440, y: 0, width: 1920, height: 1080 },
-      ]),
-    ).toBe(false);
+  });
+
+  it('clampPetDragFreeDesktop: atravessa Mac→LG sem parede', () => {
+    const mac = { x: 0, y: 0, width: 1440, height: 900 };
+    const lg = { x: 1440, y: -100, width: 1920, height: 1080 };
+    const mid = { x: 1300, y: 200 };
+    expect(clampPetDragFreeDesktop(mid, SIZE, [mac, lg], 96)).toEqual(mid);
+    const onLg = { x: 2000, y: 50 };
+    expect(clampPetDragFreeDesktop(onLg, SIZE, [mac, lg], 96)).toEqual(onLg);
+    // minY=-100, maxY=max(900, 980)=980 → height 1080
+    expect(unionRects([mac, lg])).toEqual({
+      x: 0,
+      y: -100,
+      width: 3360,
+      height: 1080,
+    });
   });
 
   it('windowStraddlesDisplays deteta janela a cavalo', () => {
@@ -182,7 +195,12 @@ describe('bestPetParkPosition / sidebar cover', () => {
     const main = { x: 0, y: 0, width: 1440, height: 900 };
     // Canto superior-esquerdo do IDE = explorer.
     expect(
-      petCoversMainSidebar({ x: 20, y: 80 }, pet, main, 340),
+      petCoversMainSidebar(
+        { x: 20, y: 80 },
+        pet,
+        main,
+        PET_SIDEBAR_COVER_WIDTH,
+      ),
     ).toBe(true);
     // Canto inferior-direito = chat/status, não explorer.
     expect(
@@ -193,7 +211,7 @@ describe('bestPetParkPosition / sidebar cover', () => {
         },
         pet,
         main,
-        340,
+        PET_SIDEBAR_COVER_WIDTH,
       ),
     ).toBe(false);
   });
@@ -207,5 +225,35 @@ describe('bestPetParkPosition / sidebar cover', () => {
     // Pet no canto sobre o obstáculo 200×200.
     const ratio = petWindowOverlapRatio({ x: 0, y: 0 }, pet, [obstacle]);
     expect(ratio).toBeCloseTo((200 * 200) / (380 * 360), 5);
+  });
+
+  it('workArea minúscula: candidatos park não rebentam (right < left)', () => {
+    const tiny = { x: 0, y: 0, width: 200, height: 150 };
+    const candidates = petParkCornerCandidates(pet, tiny);
+    expect(candidates).toHaveLength(4);
+    for (const c of candidates) {
+      expect(Number.isFinite(c.x)).toBe(true);
+      expect(Number.isFinite(c.y)).toBe(true);
+      // Todos colapsam para o único ponto clampável.
+      expect(c).toEqual(clampToWorkArea(c, pet, tiny));
+    }
+    expect(bestPetParkPosition(pet, tiny, [])).toEqual(candidates[0]);
+  });
+
+  it('unionRects + free desktop atravessam costura multi-monitor', () => {
+    const mac = { x: 0, y: 0, width: 1440, height: 900 };
+    const lg = { x: 1440, y: -100, width: 1920, height: 1080 };
+    const union = unionRects([mac, lg]);
+    expect(union.x).toBe(0);
+    expect(union.y).toBe(-100);
+    expect(union.width).toBe(1440 + 1920);
+    // Straddle: free permite; fully-on não.
+    const straddle = { x: 1300, y: 200 };
+    expect(
+      clampPetDragFreeDesktop(straddle, pet, [mac, lg], 96),
+    ).toEqual(straddle);
+    expect(clampPetFullyOnDisplay(straddle, pet, mac).x).toBe(
+      mac.width - pet.width,
+    );
   });
 });
