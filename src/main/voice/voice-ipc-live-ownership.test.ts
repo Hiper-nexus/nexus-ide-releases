@@ -804,6 +804,21 @@ describe("Voice Live IPC ownership", () => {
     expect(liveTransportDeps.hardStop).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    VOICE_CHANNELS.liveEndTurn,
+    VOICE_CHANNELS.liveEndUserAudio,
+  ])("treats a late %s after ownership release as an idempotent no-op", async (channel) => {
+    const owner = new TestRenderer(404);
+    scopeDeps.scopes.set(owner.id, scopeA);
+
+    await invoke(VOICE_CHANNELS.liveStart, owner, { reason: "manual" });
+    await invoke(VOICE_CHANNELS.liveQuiesce, owner, { reason: "classic-action" });
+    liveTransportDeps.endTurn.mockClear();
+
+    expect(invoke(channel, owner)).toMatchObject({ status: expect.any(String) });
+    expect(liveTransportDeps.endTurn).not.toHaveBeenCalled();
+  });
+
   it("releases ownership when the owner closes and on closeVoiceIpc", async () => {
     const ownerA = new TestRenderer(501);
     const ownerB = new TestRenderer(502);

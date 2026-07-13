@@ -299,15 +299,22 @@ export class LiveTransportController {
       return Promise.resolve();
     }
 
-    // A healthy Live socket is intentionally quiet between turns. `isReady`,
-    // disconnect and error callbacks—not elapsed silence—own recovery.
-    if (this._provider?.isReady) {
+    // A locally-open Live socket can already be a server-side zombie. Actual
+    // wake/click turns reconnect and pendingMic bridges the setup latency;
+    // prewarm may still keep its idle socket.
+    if (this._provider?.isReady && !options.prewarm) {
+      logVoice('warn', 'live.hotReuseDisabled', 'descartando socket quente antes do wake', {
+        inGrace: this._inGrace,
+      });
+      this.hardStop();
+      this._fsm.start({ reason: 'wake' });
+    } else if (this._provider?.isReady) {
       if (this._inGrace) this.promoteGrace();
       else this.touchIdle();
       this.sendGreetingIfSafe(this._provider, options.greeting);
       this.flushPendingMic(this._provider);
       this._fsm.patchStatus({
-        status: options.prewarm ? 'dormant' : 'listening',
+        status: 'dormant',
         realtimeReady: true,
       });
       return Promise.resolve();

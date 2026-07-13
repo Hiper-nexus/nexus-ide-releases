@@ -83,6 +83,7 @@ import {
   liveRuntimeFingerprint,
 } from "./live-runtime-config";
 import { requiresVoiceCommandConfirmation } from "../jarvis/guardrails";
+import { ensureAllDefaultWakeModelsInstalled } from "./ensure-wake-models";
 
 /**
  * Wires the voice pipeline into IPC. Every renderer payload is zod-validated
@@ -628,6 +629,11 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     "voice.restart",
     `=== ${restartMarker} ${new Date().toISOString()} ===`,
   );
+  const wakeModels = ensureAllDefaultWakeModelsInstalled();
+  logVoice("info", "wake.defaultModels", "modelos wake padrão verificados", {
+    en: Boolean(wakeModels.en),
+    ptbr: Boolean(wakeModels.ptbr),
+  });
   // Narração proativa: handoff novo (entrega/travamento/falha) vira aviso de
   // voz — o renderer fala quando não houver turno ativo.
   initJarvisNarrator(broadcastToScope);
@@ -1122,11 +1128,13 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     }
   });
   ipcMain.handle(VOICE_CHANNELS.liveEndTurn, (event) => {
+    if (!activeLiveOwnership) return liveSession.getState();
     requireLiveOwnership(event.sender);
     liveTransport.endTurn();
     return liveSession.endTurn();
   });
   ipcMain.handle(VOICE_CHANNELS.liveEndUserAudio, (event) => {
+    if (!activeLiveOwnership) return liveSession.getState();
     requireLiveOwnership(event.sender);
     liveTransport.endTurn();
     return liveSession.getState();

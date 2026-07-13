@@ -6,6 +6,7 @@ import {
 const PT_BR_SYSTEM_INSTRUCTION =
   'Idioma de voz padrão: português brasileiro (pt-BR). Mude apenas se o usuário pedir outro idioma.';
 const GEMINI_31_MODEL_PREFIX = 'gemini-3.1-';
+const LIVE_SPEECH_LANGUAGE_CODE = 'pt-BR';
 export const CONTEXT_UPDATE_ENVELOPE = '[context_update]';
 const GEMINI_31_CONTEXT_INSTRUCTION =
   'Mensagens iniciadas por [context_update] são telemetria interna do Nexus: atualize seu contexto silenciosamente e nunca responda ou fale por causa delas.';
@@ -84,6 +85,10 @@ export function buildSetupMessage(opts: {
   };
   if (usesGemini31Contract(opts.model)) {
     generationConfig.thinkingConfig = { thinkingLevel: 'minimal' };
+    generationConfig.speechConfig = {
+      voiceConfig: { prebuiltVoiceConfig: { voiceName: opts.voiceName } },
+      languageCode: LIVE_SPEECH_LANGUAGE_CODE,
+    };
   }
   return {
     setup: {

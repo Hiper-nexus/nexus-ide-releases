@@ -32,6 +32,7 @@ import {
   resetPendingRealtimeAudioOut,
 } from './voice-live-audio-out';
 import {
+  liveSpeakEvidenceTimeoutMs,
   waitForLiveSpeakEvidence,
   type LiveSpeakEvidenceSnapshot,
 } from './voice-live-speak-evidence';
@@ -138,6 +139,7 @@ export async function speakViaLiveProvider(text: string): Promise<boolean> {
     }
     const evidence = await waitForLiveSpeakEvidence({
       baseline,
+      timeoutMs: liveSpeakEvidenceTimeoutMs(trimmed),
       read: () => ({
         audioPlayed: realtimeAudioPlayedCounter.total,
         nativeToolInFlight: realtimeNativeToolInFlight,
