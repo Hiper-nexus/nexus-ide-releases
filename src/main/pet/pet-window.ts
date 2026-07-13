@@ -41,6 +41,11 @@ import { computeLookDir } from './pet-look';
 import { copyHatchImage } from './pet-hatch-image';
 import { fetchGalleryCatalog, importGalleryPet } from './pet-gallery';
 import { listPetLibrary, loadLibrarySheet } from './pet-library';
+import {
+  deleteInstalledPet,
+  listInstalledPets,
+  loadInstalledPet,
+} from './pet-installed';
 import { readFileSync, statSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
@@ -652,10 +657,66 @@ function petNearDisplayEdge(
   );
 }
 
+/**
+ * Garante companion visível e no topo. No boot macOS a janela transparente +
+ * alwaysOnTop por vezes nasce "fantasma" (enabled=true mas nada se vê até
+ * toggle off/on). Esta assert re-mostra sem destruir a janela.
+ */
+function assertPetVisible(force = false): void {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  if (!getPrefs().enabled) return;
+  ensurePetWindowSize(petWindow);
+  if (force || !petWindow.isVisible()) {
+    try {
+      petWindow.showInactive();
+    } catch {
+      try {
+        petWindow.show();
+      } catch {
+        // ignore
+      }
+    }
+  }
+  petPinnedTop = false;
+  raisePetAboveAll(true);
+  applyIgnoreMouseEvents(petIgnoresMouse);
+}
+
+const bootReassertTimers: NodeJS.Timeout[] = [];
+
+function clearBootReassert(): void {
+  while (bootReassertTimers.length > 0) {
+    const t = bootReassertTimers.pop();
+    if (t) clearTimeout(t);
+  }
+}
+
+/** Re-asserts staggered: compositor macOS por vezes engole o 1º show. */
+function scheduleBootReassert(): void {
+  clearBootReassert();
+  for (const ms of [200, 700, 1_800]) {
+    bootReassertTimers.push(
+      setTimeout(() => {
+        if (!getPrefs().enabled) return;
+        if (!petWindow || petWindow.isDestroyed()) {
+          if (mainAppWindows().length > 0) createPetWindow();
+          return;
+        }
+        assertPetVisible(true);
+      }, ms),
+    );
+  }
+}
+
 function createPetWindow(): void {
   if (creatingPetWindow) return;
   if (petWindow && !petWindow.isDestroyed()) {
-    ensurePetWindowSize(petWindow);
+    assertPetVisible(true);
+    if (!petReady && !petWindow.webContents.isLoading()) {
+      void petWindow.loadURL(petUrl()).catch((err) => {
+        console.warn('[pet] reload falhou:', err);
+      });
+    }
     return;
   }
   const position = restoredPosition();
@@ -703,14 +764,16 @@ function createPetWindow(): void {
     // Nunca rouba o foco do terminal do usuário: pet é presença, não janela.
     focusable: false,
     alwaysOnTop: true,
+    // Mostrar só em ready-to-show — evita surface transparente “morta” no boot.
+    show: false,
     // Permite posicionar a janela frameless na borda física, não só dentro da
     // workArea do AppKit. Evita o NSPanel, que diverge as coordenadas entre
     // Electron e WindowServer quando os monitores têm origens negativas.
     enableLargerThanScreen: true,
     title: 'NexusIDE Pet',
     backgroundColor: '#00000000',
-    // Evita re-raster agressivo da superfície transparente no macOS.
-    paintWhenInitiallyHidden: false,
+    // Precisa de paint mesmo escondida para o 1º frame não ser vazio.
+    paintWhenInitiallyHidden: true,
     webPreferences: {
       preload: path.join(__dirname, 'pet-preload.js'),
       contextIsolation: true,
@@ -731,10 +794,16 @@ function createPetWindow(): void {
   win.webContents.on('will-navigate', (event) => event.preventDefault());
 
   petPinnedTop = false;
-  raisePetAboveAll(true);
   // Click-through até o renderer marcar uma área interativa sob o cursor.
   petIgnoresMouse = true;
   win.setIgnoreMouseEvents(true, { forward: true });
+
+  win.once('ready-to-show', () => {
+    if (petWindow !== win || win.isDestroyed()) return;
+    if (!getPrefs().enabled) return;
+    setPetBounds(bootPos, true);
+    assertPetVisible(true);
+  });
 
   win.webContents.once('did-finish-load', () => {
     petReady = true;
@@ -743,17 +812,31 @@ function createPetWindow(): void {
     setPetBounds(bootPos, true);
     // Click-through garantido após load (renderer ainda não enviou leave).
     applyIgnoreMouseEvents(true);
-    raisePetAboveAll(true);
+    assertPetVisible(true);
     flushPendingPetEvents();
     sendPetPlacement(bootPos);
     // Corrige posição suja legada sem esperar plug de monitor.
     reclampPetToVisibleDisplay();
+    scheduleBootReassert();
+  });
+
+  win.webContents.on('did-fail-load', (_e, code, desc) => {
+    console.warn(`[pet] did-fail-load code=${code} ${desc}`);
+    petReady = false;
+    if (!getPrefs().enabled) return;
+    setTimeout(() => {
+      if (petWindow !== win || win.isDestroyed()) return;
+      void win.loadURL(petUrl()).catch((err) => {
+        console.warn('[pet] retry load falhou:', err);
+      });
+    }, 600);
   });
 
   win.on('closed', () => {
     stopDrag();
     stopLookLoop();
     stopRaiseWatch();
+    clearBootReassert();
     petReady = false;
     petIgnoresMouse = true;
     petPinnedTop = false;
@@ -771,6 +854,7 @@ function destroyPetWindow(): void {
   stopDrag();
   stopLookLoop();
   stopRaiseWatch();
+  clearBootReassert();
   petReady = false;
   petIgnoresMouse = true;
   petPinnedTop = false;
@@ -782,8 +866,12 @@ function destroyPetWindow(): void {
 function syncWindowToPrefs(): void {
   const current = getPrefs();
   const shouldShow = current.enabled && mainAppWindows().length > 0;
-  if (shouldShow) createPetWindow();
-  else destroyPetWindow();
+  if (shouldShow) {
+    createPetWindow();
+    assertPetVisible(true);
+  } else {
+    destroyPetWindow();
+  }
 }
 
 function applyPrefsPatch(raw: unknown): PetPrefs {
@@ -881,6 +969,38 @@ function registerPetIpc(): void {
         error: `Falha no preview (${err instanceof Error ? err.message : 'erro'}).`,
       };
     }
+  });
+  ipcMain.handle(PET_CHANNELS.installedList, (event) => {
+    if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
+    return listInstalledPets();
+  });
+  ipcMain.handle(PET_CHANNELS.installedApply, (event, raw: unknown) => {
+    if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
+    if (typeof raw !== 'string' || raw.length === 0 || raw.length > 128) {
+      return { ok: false, error: 'id de pet local inválido' };
+    }
+    const loaded = loadInstalledPet(raw.trim());
+    if (!loaded.ok || !loaded.sheet) return loaded;
+    const prefs = applyPrefsPatch({
+      preset: 'sheet',
+      sheet: loaded.sheet,
+      enabled: true,
+    });
+    return { ok: true, name: loaded.name, prefs };
+  });
+  ipcMain.handle(PET_CHANNELS.installedPreview, (event, raw: unknown) => {
+    if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
+    if (typeof raw !== 'string' || raw.length === 0 || raw.length > 128) {
+      return { ok: false, error: 'id de pet local inválido' };
+    }
+    return loadInstalledPet(raw.trim());
+  });
+  ipcMain.handle(PET_CHANNELS.installedDelete, (event, raw: unknown) => {
+    if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
+    if (typeof raw !== 'string' || raw.length === 0 || raw.length > 128) {
+      return { ok: false, error: 'id de pet local inválido' };
+    }
+    return deleteInstalledPet(raw.trim());
   });
   ipcMain.handle(PET_CHANNELS.pickImage, async (event) => {
     if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
@@ -1155,10 +1275,13 @@ export function initDesktopPet(): void {
   // NÃO escutar browser-window-focus: dispara em rajada e recompõe o pet
   // (pisca). activate / did-become-active bastam para Spaces / dock click.
   app.on('activate', () => {
-    raisePetAboveAll(true);
+    // Se o pet sumiu no boot, recria/re-mostra em vez de só re-pin no vazio.
+    syncWindowToPrefs();
+    assertPetVisible(true);
   });
   app.on('did-become-active', () => {
-    raisePetAboveAll(true);
+    syncWindowToPrefs();
+    assertPetVisible(true);
   });
 
   // Multi-monitor: plug/unplug/resolution — reclamp debounced (metrics-changed
@@ -1173,4 +1296,7 @@ export function initDesktopPet(): void {
   screen.on('display-metrics-changed', onDisplayTopology);
 
   syncWindowToPrefs();
+  // 2ª passagem: main window por vezes ainda não está em getAllWindows()
+  // no instante exacto do 1º sync (ou o compositor ignora o 1º show).
+  scheduleBootReassert();
 }
