@@ -109,24 +109,28 @@ export function AccountSwitcher({
     [menuItems],
   );
 
-  /** Place menu above the trigger, fully on-screen, never clipped by rail. */
+  /**
+   * Place menu fully on-screen. Rail is on the LEFT — open to the RIGHT of the
+   * chip (not left-aligned to the chip's right edge, which goes off-screen).
+   */
   const placeMenu = useCallback(() => {
     const trigger = triggerRef.current;
     if (!trigger) return;
     const rect = trigger.getBoundingClientRect();
     const width = Math.min(MENU_WIDTH, Math.max(260, window.innerWidth - 16));
-    let left = rect.right - width;
-    if (left < 8) left = 8;
+    // Prefer expanding rightward from the chip (rail footer lives on the left).
+    let left = rect.left;
     if (left + width > window.innerWidth - 8) {
-      left = Math.max(8, window.innerWidth - width - 8);
+      left = Math.max(8, rect.right - width);
     }
-    // Prefer above the chip (rail footer / bar). Fall back below if no room.
+    if (left < 8) left = 8;
+    // Prefer above the chip. Fall back below if no room.
     const spaceAbove = rect.top - 8;
     const spaceBelow = window.innerHeight - rect.bottom - 8;
     const openAbove = spaceAbove >= 160 || spaceAbove >= spaceBelow;
     const maxHeight = Math.min(
       MENU_MAX_H,
-      Math.max(140, openAbove ? spaceAbove - MENU_GAP : spaceBelow - MENU_GAP),
+      Math.max(160, openAbove ? spaceAbove - MENU_GAP : spaceBelow - MENU_GAP),
     );
     const top = openAbove
       ? Math.max(8, rect.top - MENU_GAP - maxHeight)
@@ -198,13 +202,13 @@ export function AccountSwitcher({
   const label = active
     ? active.label
     : visible.length === 0
-      ? 'Nativa'
+      ? 'Login do CLI'
       : 'Nenhuma ativa';
   const sub = active
     ? `${active.adapterId}${active.onCooldown ? ' · cooldown' : ''}`
     : visible.length > 0
-      ? `${visible.length} vault`
-      : 'sem vault';
+      ? `${visible.length} salva${visible.length === 1 ? '' : 's'}`
+      : 'sem reserva';
 
   const showRestart =
     restartAdapterId &&
@@ -270,10 +274,18 @@ export function AccountSwitcher({
             )}
             {visible.length === 0 ? (
               <div className="account-switcher__empty-panel" role="status">
-                <p className="account-switcher__empty-title">Vault vazio</p>
+                <p className="account-switcher__empty-title">
+                  Nenhuma conta reserva salva
+                </p>
                 <p className="account-switcher__empty-body">
-                  Estar logado no CLI não cria conta no vault. Para multi-conta
-                  e failover, salve a sessão em Providers.
+                  Estar <strong>logado no Claude/Codex</strong> no computador já
+                  deixa os panes funcionarem. Isso é o login normal do CLI.
+                </p>
+                <p className="account-switcher__empty-body">
+                  Aqui o Nexus só lista contas que <strong>você salvou</strong>{' '}
+                  para trocar de conta ou continuar se o limite (ex.: 5h)
+                  acabar. Ainda não salvou nenhuma — por isso a lista está
+                  vazia.
                 </p>
                 <button
                   type="button"
@@ -286,7 +298,7 @@ export function AccountSwitcher({
                   }}
                 >
                   <PixelIcon name="key" size={14} />
-                  <span>Abrir Providers e salvar sessão</span>
+                  <span>Salvar conta em Providers</span>
                 </button>
               </div>
             ) : (
@@ -441,8 +453,8 @@ export function AccountSwitcher({
         aria-label={`Conta CLI: ${label}. ${sub}`}
         title={
           visible.length === 0
-            ? 'CLI pode estar logado no sistema. Vault multi-conta vazio — salve sessão em Providers.'
-            : 'Hot-swap de contas salvas no vault do Nexus'
+            ? 'Login do CLI ok nos panes. Nenhuma conta reserva salva no Nexus para troca automática.'
+            : 'Contas salvas no Nexus para troca e failover'
         }
         disabled={busy}
         onClick={() => setOpen((v) => !v)}

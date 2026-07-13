@@ -21,17 +21,18 @@ describe('agent-picker / empty CTA contracts', () => {
     expect(src).toContain('Abrir Providers');
   });
 
-  it('AccountSwitcher empty vault opens providers and escapes rail clip', () => {
+  it('AccountSwitcher empty state opens providers without vault jargon', () => {
     const src = readFileSync(
       path.join(ROOT, 'renderer/components/AccountSwitcher.tsx'),
       'utf8',
     );
     expect(src).toContain('account-switcher__empty-panel');
     expect(src).toContain("openDrawer('providers')");
-    expect(src).toContain('Vault vazio');
+    expect(src).toContain('Nenhuma conta reserva salva');
     expect(src).toContain('createPortal');
     expect(src).toContain('account-switcher__menu--fixed');
-    expect(src).toContain('Abrir Providers e salvar sessão');
+    expect(src).toContain('Salvar conta em Providers');
+    expect(src).not.toMatch(/Vault vazio/);
   });
 
   it('PetSection primary create/import use ActionCard', () => {
