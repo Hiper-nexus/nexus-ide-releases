@@ -25,9 +25,9 @@ export const PET_STUDIO_SQUAD: Squad = {
       category: 'orchestrator',
       cli: 'codex',
       effort: 'high',
-      // Empty is intentional: the gate still exposes the one universal
-      // handoff tool, while every generic Nexus workflow tool stays hidden.
-      allowedTools: [],
+      // Pet Studio needs the same runtime loader that Codex Desktop injects
+      // for hatch-pet. Every generic Nexus workflow tool stays hidden.
+      allowedTools: ['load_workspace_dependencies'],
       allowedSkills: ['hatch-pet'],
     },
   ],

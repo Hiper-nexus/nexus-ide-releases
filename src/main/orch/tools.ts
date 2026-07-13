@@ -12,6 +12,7 @@ import { buildCodeMapTools } from './tools-code-map';
 import { buildSyncTools } from './tools-sync';
 import { buildDesignTools } from './tools-design';
 import { buildDesignSystemTools } from './tools-design-system';
+import { buildWorkspaceDependencyTools } from './tools-workspace-dependencies';
 
 /**
  * The MCP toolset — the orchestration tools in the
@@ -39,5 +40,6 @@ export function buildToolset(): McpToolDef[] {
     ...buildVisionTools(),
     ...buildDesignTools(),
     ...buildDesignSystemTools(),
+    ...buildWorkspaceDependencyTools(),
   ];
 }

@@ -8,8 +8,21 @@ interface PromptSignature {
 }
 
 export const ACCEPT_DEFAULT_PROMPT_RESPONSE = '\r';
+/** Move from the safe first option to the explicit second option, then enter. */
+export const ACCEPT_SECOND_PROMPT_RESPONSE = '\x1b[B\r';
 
 export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
+  {
+    adapterIds: ['claude', 'glm', 'longcat'],
+    name: 'claude-bypass-acknowledgement',
+    phrases: [
+      'claude code running in bypass permissions mode',
+      '1. no, exit',
+      '2. yes, i accept',
+      'enter to confirm',
+    ],
+    response: ACCEPT_SECOND_PROMPT_RESPONSE,
+  },
   {
     adapterIds: ['agy'],
     name: 'agy-workspace-trust',

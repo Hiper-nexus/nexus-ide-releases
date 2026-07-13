@@ -12,6 +12,7 @@ export type McpEffectPolicy =
   | 'execution-effect';
 
 const READ_ONLY_TOOLS = new Set([
+  'load_workspace_dependencies',
   'agent_get',
   'agent_list',
   'browser_inspect',

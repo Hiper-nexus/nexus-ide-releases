@@ -68,6 +68,7 @@ const browserWaitSchema = z
   });
 
 const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
+  ['load_workspace_dependencies', z.object({}).strict()],
   [
     'terminal_run',
     z.object({

@@ -25,7 +25,7 @@ const SPEAK_HUMAN =
 /**
  * Allowlist mínima e explícita por papel (SEC#5 — antes `null` = irrestrito em
  * todos). Em squads gerais o orquestrador é o dono da missão e usa o toolset
- * completo; o Pet Studio declara `[]` explicitamente. Todo
+ * completo; o Pet Studio declara apenas `load_workspace_dependencies`. Todo
  * worker é uma folha que só precisa entregar o handoff (nexus_handoff_submit é
  * sempre permitido), então seu `allowedTools` é `[]` — sem pane cross-access,
  * sem spawnar panes, sem controlar a missão. `allowedSkills` fica aberto de
