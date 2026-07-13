@@ -643,6 +643,33 @@
   padding: 2px 0;
 }
 
+.account-switcher__empty-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+
+.account-switcher__empty-copy p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.account-switcher__empty-copy strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.account-switcher__empty-step {
+  padding: 6px 8px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px dashed color-mix(in srgb, var(--accent, #4db8ff) 40%, transparent);
+  background: color-mix(in srgb, var(--accent, #4db8ff) 8%, transparent);
+  color: var(--text) !important;
+}
+
 .account-switcher__empty,
 .account-switcher__hint {
   margin: 0;

@@ -156,16 +156,18 @@ export function AccountSwitcher({
     }
   };
 
+  // Empty vault ≠ CLI not logged in. Native OS login still runs panes;
+  // vault accounts are what multi-account failover/hot-swap needs.
   const label = active
     ? active.label
     : visible.length === 0
-      ? 'Conta CLI'
+      ? 'Sessão nativa'
       : 'Nenhuma ativa';
   const sub = active
     ? `${active.adapterId}${active.onCooldown ? ' · cooldown' : ''}`
     : visible.length > 0
-      ? `${visible.length} salva${visible.length === 1 ? '' : 's'}`
-      : 'configurar';
+      ? `${visible.length} no vault`
+      : 'vault vazio';
 
   const showRestart =
     restartAdapterId &&
@@ -189,7 +191,11 @@ export function AccountSwitcher({
         aria-expanded={open}
         aria-controls={open ? 'account-switcher-menu' : undefined}
         aria-label={`Conta CLI: ${label}. ${sub}`}
-        title="Hot-swap de conta (Codex, Claude, Grok…) — sem re-login"
+        title={
+          visible.length === 0
+            ? 'CLI pode estar logado no sistema (sessão nativa). O vault multi-conta ainda está vazio — salve uma sessão ou API key para failover.'
+            : 'Hot-swap de conta (Codex, Claude, Grok…) — contas salvas no vault do Nexus'
+        }
         disabled={busy}
         onClick={() => setOpen((v) => !v)}
         onKeyDown={onTriggerKeyDown}
@@ -249,17 +255,30 @@ export function AccountSwitcher({
             <EmptyState
               className="account-switcher__empty-block"
               icon="id-badge"
-              title="Nenhuma conta no vault"
+              title="Vault multi-conta vazio"
               body={
-                <p>
-                  Salve a sessão logada ou uma API key em Config → Providers.
-                </p>
+                <div className="account-switcher__empty-copy">
+                  <p>
+                    <strong>Estar logado no CLI</strong> (Claude/Codex no
+                    terminal) não é a mesma coisa que ter uma{' '}
+                    <strong>conta salva no vault do Nexus</strong>.
+                  </p>
+                  <p>
+                    A sessão nativa do sistema continua a funcionar nos panes.
+                    O vault é só para hot-swap e failover automático entre
+                    várias contas do mesmo provider.
+                  </p>
+                  <p className="account-switcher__empty-step">
+                    Em Providers → conta do CLI →{' '}
+                    <strong>Salvar sessão logada</strong> (ou API key).
+                  </p>
+                </div>
               }
               action={
                 <ActionCard
                   icon="key"
                   title="Abrir Providers"
-                  subtitle="chaves · CLIs"
+                  subtitle="salvar sessão · API key"
                   variant="primary"
                   size="sm"
                   onClick={() => {
