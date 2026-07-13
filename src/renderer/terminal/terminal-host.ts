@@ -15,6 +15,7 @@ import {
 import { useSessionStateStore } from '../state/session-state-store';
 import { useToastStore } from '../state/toast-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
+import { listPanes } from '../lib/split-tree';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
 import {
   discardTerminalOutput,
@@ -46,6 +47,8 @@ interface Host {
   serialize: SerializeAddon;
   ro: ResizeObserver;
   sessionId: string | null;
+  /** One-shot notice when agent is held pending user approval. */
+  holdNoticeWritten?: boolean;
   /** Invalidates a late async spawn after recovery timeout/replacement. */
   spawnGeneration: number;
   opened: boolean;
@@ -756,6 +759,23 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
   }
 
   if (!host.spawnStarted && !host.hibernated) {
+    if (heldSpawnPanes.has(pane.id)) {
+      // Restored mission agent waiting for explicit user approval.
+      useSessionStateStore.getState().setPaneState(pane.id, 'hibernated');
+      if (host.opened && !host.holdNoticeWritten) {
+        host.holdNoticeWritten = true;
+        try {
+          host.term.writeln(
+            '\r\n  [Nexus] Agente em pausa — a sessão anterior NÃO foi ' +
+              'reiniciada automaticamente.\r\n' +
+              '  Confirme o diálogo ou retome a missão no rail quando quiser.\r\n',
+          );
+        } catch {
+          // xterm may not be ready; ignore.
+        }
+      }
+      return;
+    }
     void startSpawn(
       pane,
       host,
@@ -776,19 +796,84 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
  */
 const resumeOnFirstSpawn = new Set<string>();
 const restoreAuthorityOnFirstSpawn = new Set<string>();
+/** Restored agents held until the user confirms resume (no silent auto-work). */
+const heldSpawnPanes = new Set<string>();
 
 export function markResumeOnSpawn(paneId: string): void {
+  // Intentional resume (reopen mission / user confirmed) always clears a hold.
+  heldSpawnPanes.delete(paneId);
   resumeOnFirstSpawn.add(paneId);
+  kickHeldSpawnIfReady(paneId);
+}
+
+/** Pause spawn for a restored agent until the user approves (or reopens). */
+export function holdSpawnUntilApproved(paneId: string): void {
+  heldSpawnPanes.add(paneId);
+  resumeOnFirstSpawn.delete(paneId);
+}
+
+export function isSpawnHeld(paneId: string): boolean {
+  return heldSpawnPanes.has(paneId);
+}
+
+/**
+ * Release held agents after the restore gate. `resume:true` continues the
+ * previous CLI conversation; `resume:false` drops the hold and leaves panes
+ * paused (user must retomar no rail).
+ */
+export function releaseHeldSpawns(
+  paneIds: readonly string[],
+  opts: { resume: boolean },
+): void {
+  for (const paneId of paneIds) {
+    // Always drop the hold flag even if it was already cleared — callers may
+    // re-release after a coalesced prompt.
+    heldSpawnPanes.delete(paneId);
+    if (opts.resume) {
+      resumeOnFirstSpawn.add(paneId);
+      kickHeldSpawnIfReady(paneId);
+    } else {
+      // UI/session marker only — do NOT set host.hibernated or kickHeldSpawn
+      // would refuse a later explicit resume.
+      useSessionStateStore.getState().setPaneState(paneId, 'hibernated');
+    }
+  }
+}
+
+function kickHeldSpawnIfReady(paneId: string): void {
+  if (heldSpawnPanes.has(paneId)) return;
+  const host = hosts.get(paneId);
+  if (!host || host.disposed || host.spawnStarted) return;
+  // Host may have been soft-paused via session state without host.hibernated;
+  // clear host flag so intentional resume always works.
+  host.hibernated = false;
+  const pane = listPanesFromLayout().find((p) => p.id === paneId);
+  if (!pane || pane.kind !== 'cli-agent') return;
+  void startSpawn(
+    pane,
+    host,
+    resumeOnFirstSpawn.delete(paneId),
+    false,
+    undefined,
+    restoreAuthorityOnFirstSpawn.delete(paneId),
+  );
+}
+
+function listPanesFromLayout(): readonly PaneModel[] {
+  return listPanes(useLayoutStore.getState().root);
 }
 
 /** Mark a missing mission pane to start fresh with its persisted authority. */
 export function markPersistedAuthorityOnSpawn(paneId: string): void {
   restoreAuthorityOnFirstSpawn.add(paneId);
+  heldSpawnPanes.delete(paneId);
 }
 
+// Default: do NOT auto-resume restored agents. The restore-agents-gate module
+// installs a handler that holds spawn and asks the user first.
 setRestoredPanesHandler((panes) => {
   for (const pane of panes) {
-    if (pane.kind === 'cli-agent') markResumeOnSpawn(pane.id);
+    if (pane.kind === 'cli-agent') holdSpawnUntilApproved(pane.id);
   }
 });
 

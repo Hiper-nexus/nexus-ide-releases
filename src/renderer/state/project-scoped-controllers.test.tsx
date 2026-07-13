@@ -132,6 +132,8 @@ describe('project-scoped renderer controllers', () => {
       handoffs: [],
       todoLists: [],
       paneMissions: {},
+      boundWorkspacePath: null,
+      workspaceEpoch: 0,
     });
     useCostStore.setState({ snapshot: EMPTY_COST_SNAPSHOT });
     useUsageStore.setState({ snapshot: EMPTY_USAGE_SNAPSHOT });

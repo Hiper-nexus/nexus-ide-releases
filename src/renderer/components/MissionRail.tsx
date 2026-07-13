@@ -19,15 +19,10 @@ import {
   togglePinnedMissionId,
   type RailSectionId,
 } from '../lib/mission-rail-prefs';
-import {
-  loadPinnedWorkspacePaths,
-  togglePinnedWorkspacePath,
-} from '../lib/workspace-rail-prefs';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useLayoutStore } from '../state/layout-store';
 import { PixelIcon } from './PixelIcon';
 import { ActionCard, EmptyState } from './ActionCard';
-import { AccountSwitcher } from './AccountSwitcher';
 import { OperatorHud } from './OperatorHud';
 import { askConfirm } from '../state/confirm-store';
 import { AgentDropZone } from './AgentDropZone';
@@ -35,30 +30,39 @@ import type { ExternalIssue } from '../../shared/integrations-types';
 import { useMissionWizardStore as useWizard } from '../state/mission-wizard-store';
 
 /**
- * Activity Rail — mapa permanente do trabalho (Orca-style sections):
- * Fixadas · Em progresso · Na fila · Concluídas + busca + conta CLI.
- * Soft-focus when mission already live; hard reopen otherwise.
+ * Activity Rail — missões **deste workspace** apenas:
+ * Fixadas · Em progresso · Na fila · Concluídas + busca.
+ * Troca de pasta limpa a lista (orch-store) e recarrega pins locais.
  */
 
 export function MissionRail() {
   const missions = useOrchStore((s) => s.missions);
+  const boundWorkspacePath = useOrchStore((s) => s.boundWorkspacePath);
   const paneMissions = useOrchStore((s) => s.paneMissions);
   const handoffs = useOrchStore((s) => s.handoffs);
   const openMissionWizard = useMissionWizardStore((s) => s.openForMission);
   const openAgentic = useWizard((s) => s.openForAgentic);
+  const openBoard = useOrchStore((s) => s.openBoard);
   const paneStates = useSessionStateStore((s) => s.paneStates);
   const [extIssues, setExtIssues] = useState<ExternalIssue[]>([]);
   const workspace = useWorkspaceStore((s) => s.current);
-  const recents = useWorkspaceStore((s) => s.recents);
-  const openWorkspace = useWorkspaceStore((s) => s.open);
+  const workspacePath = workspace?.path ?? null;
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [pinnedIds, setPinnedIds] = useState<string[]>(() => loadPinnedMissionIds());
-  const [pinnedWorkspaces, setPinnedWorkspaces] = useState<string[]>(() =>
-    loadPinnedWorkspacePaths(),
+  const [pinnedIds, setPinnedIds] = useState<string[]>(() =>
+    loadPinnedMissionIds(workspacePath),
   );
-  const [collapsed, setCollapsed] = useState<RailSectionId[]>(() => loadCollapsedSections());
+  const [collapsed, setCollapsed] = useState<RailSectionId[]>(() =>
+    loadCollapsedSections(),
+  );
+
+  // Pins e lista só deste path — ao trocar workspace, recarrega pins locais.
+  useEffect(() => {
+    setPinnedIds(loadPinnedMissionIds(workspacePath));
+    setQuery('');
+    setNote(null);
+  }, [workspacePath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,18 +109,24 @@ export function MissionRail() {
     return map;
   }, [handoffs]);
 
+  // Só lista missões quando o store está bound a ESTE path (evita flash de
+  // outra pasta durante a troca).
+  const listReady =
+    Boolean(workspacePath) && boundWorkspacePath === workspacePath;
+  const localMissions = listReady ? missions : [];
+
   const sections = useMemo(
     () =>
       groupMissionsForRail({
-        missions,
+        missions: listReady ? missions : [],
         openMissionIds,
         pinnedIds,
         query,
       }),
-    [missions, openMissionIds, pinnedIds, query],
+    [listReady, missions, openMissionIds, pinnedIds, query],
   );
 
-  const activeCount = missions.filter(
+  const activeCount = localMissions.filter(
     (m) =>
       openMissionIds.has(m.id) ||
       m.status === 'running' ||
@@ -132,7 +142,7 @@ export function MissionRail() {
   }
 
   function togglePin(id: string) {
-    setPinnedIds(togglePinnedMissionId(id));
+    setPinnedIds(togglePinnedMissionId(workspacePath, id));
   }
 
   async function removeMission(m: Mission, active: boolean) {
@@ -152,7 +162,7 @@ export function MissionRail() {
         if (!r.removed) setNote('Missão já não estava na lista.');
         setPinnedIds((prev) => {
           const next = prev.filter((x) => x !== m.id);
-          savePinnedMissionIds(next);
+          savePinnedMissionIds(workspacePath, next);
           return next;
         });
       })
@@ -230,48 +240,60 @@ export function MissionRail() {
       .finally(() => setBusy(null));
   }
 
-  const pinnedWsEntries = useMemo(() => {
-    const byPath = new Map(recents.map((w) => [w.path, w]));
-    if (workspace) byPath.set(workspace.path, workspace);
-    return pinnedWorkspaces
-      .map((p) => byPath.get(p))
-      .filter((w): w is NonNullable<typeof w> => Boolean(w));
-  }, [pinnedWorkspaces, recents, workspace]);
-
   return (
-    <aside className="mission-rail activity-rail" aria-label="Trabalho">
+    <aside className="mission-rail activity-rail" aria-label="Missões deste workspace">
       <header className="mission-rail__head">
         <div className="mission-rail__heading">
-          <span className="mission-rail__title">Trabalho</span>
+          <span className="mission-rail__title">Missões</span>
+          <span
+            className="mission-rail__workspace"
+            title={workspace?.path ?? undefined}
+          >
+            {workspace?.name ?? 'sem pasta'}
+          </span>
           <span className="mission-rail__summary">
-            {activeCount} em progresso · {missions.length} total
+            {listReady
+              ? `${activeCount} ativas · ${localMissions.length} aqui`
+              : 'a carregar…'}
           </span>
         </div>
-        <button
-          className="mission-rail__new"
-          title="Iniciar uma nova missão (a atual fica salva aqui)"
-          aria-label="Iniciar nova missão"
-          onClick={openMissionWizard}
-        >
-          <PixelIcon name="plus" size={10} /> <span>Nova</span>
-        </button>
+        <div className="mission-rail__head-actions">
+          <button
+            type="button"
+            className="mission-rail__new mission-rail__new--primary"
+            title="Nova missão neste workspace (⌘N)"
+            aria-label="Nova missão neste workspace"
+            onClick={openMissionWizard}
+          >
+            <PixelIcon name="plus" size={10} /> <span>Nova</span>
+          </button>
+          <button
+            type="button"
+            className="mission-rail__board-btn"
+            title="Painel de operações (⌘B)"
+            aria-label="Abrir painel de operações"
+            onClick={openBoard}
+          >
+            <PixelIcon name="board" size={11} />
+          </button>
+        </div>
       </header>
 
       <div className="activity-rail__search">
         <input
           className="activity-rail__search-input"
           type="search"
-          placeholder="Filtrar missões…"
+          placeholder="Filtrar missões desta pasta…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          aria-label="Filtrar missões"
+          aria-label="Filtrar missões deste workspace"
         />
       </div>
       <AgentDropZone compact />
 
       <div className="activity-rail__body">
         {extIssues.length > 0 && (
-          <section className="activity-rail__section">
+          <section className="activity-rail__section activity-rail__section--issues">
             <div className="activity-rail__section-head activity-rail__section-head--static">
               <span className="activity-rail__section-label">Issues</span>
               <span className="activity-rail__section-count">{extIssues.length}</span>
@@ -312,104 +334,29 @@ export function MissionRail() {
           </section>
         )}
 
-        {(workspace || pinnedWsEntries.length > 0) && (
-          <section
-            className="activity-rail__section activity-rail__section--workspaces"
-            aria-label="Workspaces"
-          >
-            <div className="activity-rail__section-head activity-rail__section-head--static">
-              <span className="activity-rail__section-label">Pasta</span>
-            </div>
-            <ul className="activity-rail__ws-list">
-              {workspace && (
-                <li className="activity-rail__ws-row">
-                  <div
-                    className="activity-rail__ws-chip activity-rail__ws-chip--current"
-                    title={workspace.path}
-                  >
-                    <span className="activity-rail__ws-icon" aria-hidden="true">
-                      ⌂
-                    </span>
-                    <span className="activity-rail__ws-body">
-                      <span className="activity-rail__ws-name">{workspace.name}</span>
-                      <span className="activity-rail__ws-badge">atual</span>
-                    </span>
-                    <button
-                      type="button"
-                      className="activity-rail__ws-pin"
-                      title={
-                        pinnedWorkspaces.includes(workspace.path)
-                          ? 'Desafixar workspace'
-                          : 'Fixar workspace'
-                      }
-                      onClick={() =>
-                        setPinnedWorkspaces(
-                          togglePinnedWorkspacePath(workspace.path),
-                        )
-                      }
-                    >
-                      <PixelIcon
-                        name={
-                          pinnedWorkspaces.includes(workspace.path)
-                            ? 'star'
-                            : 'star-outline'
-                        }
-                        size={10}
-                      />
-                    </button>
-                  </div>
-                </li>
-              )}
-              {pinnedWsEntries
-                .filter((w) => w.path !== workspace?.path)
-                .map((w) => (
-                  <li key={w.path} className="activity-rail__ws-row">
-                    <button
-                      type="button"
-                      className="activity-rail__ws-chip"
-                      title={w.path}
-                      onClick={() => void openWorkspace(w.path)}
-                    >
-                      <span className="activity-rail__ws-icon" aria-hidden="true">
-                        ⌂
-                      </span>
-                      <span className="activity-rail__ws-body">
-                        <span className="activity-rail__ws-name">{w.name}</span>
-                        <span className="activity-rail__ws-meta">fixado · abrir</span>
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="activity-rail__ws-pin activity-rail__ws-pin--absolute"
-                      title="Desafixar workspace"
-                      onClick={() =>
-                        setPinnedWorkspaces(togglePinnedWorkspacePath(w.path))
-                      }
-                    >
-                      <PixelIcon name="star" size={10} />
-                    </button>
-                  </li>
-                ))}
-            </ul>
-          </section>
-        )}
-
-        {missions.length === 0 ? (
+        {!listReady ? (
           <EmptyState
             className="activity-rail__empty"
             icon="mission"
-            title="Nenhuma missão"
+            title="A carregar missões"
+            body={<p>Sincronizando o trabalho desta pasta…</p>}
+          />
+        ) : localMissions.length === 0 ? (
+          <EmptyState
+            className="activity-rail__empty"
+            icon="mission"
+            title="Nenhuma missão nesta pasta"
             body={
               <p>
-                Nova missão ou squad aparece aqui com status e retomar em um
-                clique.
+                Só aparecem missões de <strong>{workspace?.name ?? 'este workspace'}</strong>.
+                Crie uma nova — a lista de outras pastas fica isolada.
               </p>
             }
             action={
               <ActionCard
                 icon="mission"
                 title="Nova missão"
-                subtitle="squad · objetivo"
+                subtitle="neste workspace"
                 variant="primary"
                 size="sm"
                 onClick={openMissionWizard}
@@ -549,10 +496,8 @@ export function MissionRail() {
       )}
 
       <footer className="activity-rail__footer">
-        {/* Gamificação mora aqui, não na zona de status da bar: XP é meta,
-            não sinal operacional (P1 do critique). */}
+        {/* XP no rail; conta CLI fica só na workspace bar (menos mistura). */}
         <OperatorHud />
-        <AccountSwitcher />
       </footer>
     </aside>
   );

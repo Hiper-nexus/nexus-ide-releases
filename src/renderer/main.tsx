@@ -1,7 +1,11 @@
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { installRestoredAgentsGate } from './orch/restore-agents-gate';
 import './styles/global.css';
+
+// Hold restored mission agents until the user confirms — never silent auto-work.
+installRestoredAgentsGate();
 
 // No StrictMode: its dev-time double-mount would spawn/kill PTYs twice per pane.
 const container = document.getElementById('root');

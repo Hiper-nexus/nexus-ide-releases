@@ -382,7 +382,12 @@ body {
   flex: 0 0 auto;
 }
 
-.workspace-bar__more {
+.workspace-bar__zone--primary {
+  gap: 6px;
+}
+
+.workspace-bar__more,
+.workspace-bar__mission-menu {
   position: relative;
 }
 
@@ -405,6 +410,91 @@ body {
 .workspace-bar__menu--end {
   left: auto;
   right: 0;
+}
+
+.workspace-bar__menu--missions {
+  min-width: 260px;
+  max-width: min(360px, 70vw);
+  max-height: min(420px, 70vh);
+  overflow-y: auto;
+}
+
+.workspace-bar__menu-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.workspace-bar__menu-heading-meta {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.workspace-bar__menu-empty {
+  margin: 0;
+  padding: 8px 10px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.workspace-bar__menu-item--accent {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.workspace-bar__menu-item--accent:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.workspace-bar__menu-mission {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  text-align: left;
+}
+
+.workspace-bar__menu-mission-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.workspace-bar__menu-mission-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.workspace-bar__mission-count {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.workspace-bar__btn--missions {
+  gap: 6px;
+}
+
+/* Nova missão always shows a label — primary action must be scannable. */
+.workspace-bar--compact .workspace-bar__zone--primary .workspace-bar__btn--primary .workspace-bar__btn-label,
+.workspace-bar--icons .workspace-bar__zone--primary .workspace-bar__btn--primary .workspace-bar__btn-label {
+  display: inline;
 }
 
 .workspace-bar__menu-item {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useOrchStore } from '../state/orch-store';
@@ -24,6 +24,8 @@ import { useAccountStore } from '../state/account-store';
 import {
   restartPanesForPendingAccount,
 } from '../orch/account-restart-controller';
+import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
+import { statusLabel } from '../lib/mission-rail-groups';
 
 function adapterModelLabel(adapter: AdapterInfo, model: string): string {
   const info = adapter.models.info?.[model];
@@ -168,6 +170,8 @@ export function WorkspaceBar({
   const toggleOrchPanel = useOrchStore((s) => s.togglePanel);
   const opsBoardOpen = useOrchStore((s) => s.boardOpen);
   const toggleOpsBoard = useOrchStore((s) => s.toggleBoard);
+  const missions = useOrchStore((s) => s.missions);
+  const boundWorkspacePath = useOrchStore((s) => s.boundWorkspacePath);
   const toggleSettings = useSettingsStore((s) => s.toggleDrawer);
   const workspace = useWorkspaceStore((s) => s.current);
   const openWizard = useMissionWizardStore((s) => s.openForMission);
@@ -196,8 +200,24 @@ export function WorkspaceBar({
   const [selectedModel, setSelectedModel] = useState('');
   const [wsMenuOpen, setWsMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [missionMenuOpen, setMissionMenuOpen] = useState(false);
+  const [missionBusy, setMissionBusy] = useState(false);
   const wsMenuRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
+  const missionMenuRef = useRef<HTMLDivElement>(null);
+
+  const localMissions = useMemo(() => {
+    if (!workspace?.path || boundWorkspacePath !== workspace.path) return [];
+    return [...missions].sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [boundWorkspacePath, missions, workspace?.path]);
+
+  const quickMissions = useMemo(
+    () =>
+      localMissions
+        .filter((m) => m.status === 'running' || m.status === 'blocked' || m.status === 'pending')
+        .slice(0, 8),
+    [localMissions],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -219,7 +239,7 @@ export function WorkspaceBar({
   }, [pickerOpen]);
 
   useEffect(() => {
-    if (!wsMenuOpen && !moreOpen) return;
+    if (!wsMenuOpen && !moreOpen && !missionMenuOpen) return;
     const onDoc = (e: MouseEvent) => {
       const t = e.target as Node;
       if (wsMenuOpen && wsMenuRef.current && !wsMenuRef.current.contains(t)) {
@@ -228,11 +248,19 @@ export function WorkspaceBar({
       if (moreOpen && moreRef.current && !moreRef.current.contains(t)) {
         setMoreOpen(false);
       }
+      if (
+        missionMenuOpen &&
+        missionMenuRef.current &&
+        !missionMenuRef.current.contains(t)
+      ) {
+        setMissionMenuOpen(false);
+      }
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setWsMenuOpen(false);
         setMoreOpen(false);
+        setMissionMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', onDoc);
@@ -241,7 +269,7 @@ export function WorkspaceBar({
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
     };
-  }, [wsMenuOpen, moreOpen]);
+  }, [wsMenuOpen, moreOpen, missionMenuOpen]);
 
   const installedAdapters = adapters.filter((a) => a.installed);
 
@@ -455,17 +483,126 @@ export function WorkspaceBar({
           )}
         </div>
 
-        {/* Primary: always visible */}
+        {/* Primary: always visible — Nova missão + seletor local desta pasta */}
         <div className="workspace-bar__zone workspace-bar__zone--primary">
           <button
             className="workspace-bar__btn workspace-bar__btn--primary"
             onClick={openWizard}
-            title="Nova missão (⌘N) — livre ou com equipe"
-            aria-label="Nova missão"
+            title="Nova missão neste workspace (⌘N)"
+            aria-label="Nova missão neste workspace"
           >
-            <PixelIcon name="mission" />
-            {showLabels && <span className="workspace-bar__btn-label">Missão</span>}
+            <PixelIcon name="plus" />
+            <span className="workspace-bar__btn-label">
+              {compact ? 'Nova' : 'Nova missão'}
+            </span>
           </button>
+          <div className="workspace-bar__mission-menu" ref={missionMenuRef}>
+            <button
+              type="button"
+              className={`workspace-bar__btn workspace-bar__btn--missions ${
+                missionMenuOpen ? 'workspace-bar__btn--view-active' : ''
+              }`}
+              title={
+                workspace
+                  ? `Missões de ${workspace.name} — abrir ou retomar`
+                  : 'Missões do workspace'
+              }
+              aria-label="Lista de missões deste workspace"
+              aria-haspopup="menu"
+              aria-expanded={missionMenuOpen}
+              onClick={() => {
+                setMissionMenuOpen((o) => !o);
+                setMoreOpen(false);
+                setWsMenuOpen(false);
+              }}
+            >
+              <PixelIcon name="mission" />
+              {!compact && (
+                <span className="workspace-bar__btn-label">
+                  Missões
+                  {localMissions.length > 0 ? ` (${localMissions.length})` : ''}
+                </span>
+              )}
+              {compact && localMissions.length > 0 && (
+                <span className="workspace-bar__mission-count">
+                  {localMissions.length}
+                </span>
+              )}
+            </button>
+            {missionMenuOpen && (
+              <div
+                className="workspace-bar__menu workspace-bar__menu--missions"
+                role="menu"
+              >
+                <div className="workspace-bar__menu-heading">
+                  {workspace ? workspace.name : 'Workspace'}
+                  <span className="workspace-bar__menu-heading-meta">
+                    só esta pasta
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="workspace-bar__menu-item workspace-bar__menu-item--accent"
+                  role="menuitem"
+                  onClick={() => {
+                    openWizard();
+                    setMissionMenuOpen(false);
+                  }}
+                >
+                  <PixelIcon name="plus" size={12} />
+                  <span>Nova missão</span>
+                </button>
+                {quickMissions.length === 0 ? (
+                  <p className="workspace-bar__menu-empty">
+                    Nenhuma missão ativa aqui.
+                  </p>
+                ) : (
+                  quickMissions.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      className="workspace-bar__menu-item"
+                      role="menuitem"
+                      disabled={missionBusy}
+                      title={m.title}
+                      onClick={() => {
+                        setMissionBusy(true);
+                        void confirmAndReopenMission(m)
+                          .catch(() => undefined)
+                          .finally(() => {
+                            setMissionBusy(false);
+                            setMissionMenuOpen(false);
+                          });
+                      }}
+                    >
+                      <PixelIcon name="mission" size={12} />
+                      <span className="workspace-bar__menu-mission">
+                        <span className="workspace-bar__menu-mission-title">
+                          {m.title}
+                        </span>
+                        <span className="workspace-bar__menu-mission-meta">
+                          {statusLabel(m.status)}
+                        </span>
+                      </span>
+                    </button>
+                  ))
+                )}
+                <div className="workspace-bar__menu-sep" />
+                <button
+                  type="button"
+                  className="workspace-bar__menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    toggleOpsBoard();
+                    setMissionMenuOpen(false);
+                  }}
+                >
+                  <PixelIcon name="board" size={12} />
+                  <span>Painel de operações</span>
+                </button>
+              </div>
+            )}
+          </div>
           <button
             className="workspace-bar__btn workspace-bar__btn--agent"
             onClick={openPicker}

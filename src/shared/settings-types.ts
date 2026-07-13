@@ -85,6 +85,14 @@ export const orchSettingsSchema = z.object({
    *  signal-stall/respawn) com budget. Default false = SHADOW (só observa/loga).
    *  Ative só após validação runtime; exige restart para aplicar. */
   missionDriverActiveMode: z.boolean().default(false),
+  /**
+   * When a saved layout with mission agents is restored (app start, workspace
+   * open, any OS — macOS / Linux / Windows, same code path):
+   * - `ask` (default, safe): hold agents and confirm before they run
+   * - `pause`: never auto-start; user must retomar no rail
+   * - `resume`: legacy silent auto-resume (power users only)
+   */
+  agentRestorePolicy: z.enum(['ask', 'pause', 'resume']).default('ask'),
   /** CLI provider used by the next squad orchestrator. */
   defaultAdapterId: z.string().max(64).default('claude'),
   /** Empty means the selected provider's configured default model. */

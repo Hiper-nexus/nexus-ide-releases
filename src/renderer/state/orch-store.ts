@@ -29,6 +29,13 @@ interface OrchState {
   boardOpen: boolean;
   /** paneId → missionId for panes spawned by the orchestration layer. */
   paneMissions: Record<string, string>;
+  /**
+   * Path this store currently mirrors. Null while switching workspaces so
+   * late IPC from the previous project cannot repaint the mission list.
+   */
+  boundWorkspacePath: string | null;
+  /** Bumps on every reset so in-flight hydrate calls drop their result. */
+  workspaceEpoch: number;
 
   hydrate(workspacePath: string): Promise<void>;
   resetProjectState(): void;
@@ -36,6 +43,7 @@ interface OrchState {
   openPanel(tab: OrchPanelTab): void;
   setPanelTab(tab: OrchPanelTab): void;
   toggleBoard(): void;
+  openBoard(): void;
   closeBoard(): void;
   bindPaneMission(paneId: string, missionId: string | undefined): void;
   /** Remove bindings de panes que não existem mais no layout. */
@@ -47,7 +55,15 @@ interface OrchState {
   setSquads(squads: Squad[]): void;
 }
 
-export const useOrchStore = create<OrchState>((set) => ({
+function acceptsWorkspacePayload(path: string | null): boolean {
+  if (!path) return false;
+  const active = getActiveWorkspacePath();
+  if (active !== path) return false;
+  const { boundWorkspacePath } = useOrchStore.getState();
+  return boundWorkspacePath === path;
+}
+
+export const useOrchStore = create<OrchState>((set, get) => ({
   missions: [],
   handoffs: [],
   todoLists: [],
@@ -57,9 +73,12 @@ export const useOrchStore = create<OrchState>((set) => ({
   panelTab: 'missions',
   boardOpen: false,
   paneMissions: {},
+  boundWorkspacePath: null,
+  workspaceEpoch: 0,
 
   hydrate: async (workspacePath) => {
     if (getActiveWorkspacePath() !== workspacePath) return;
+    const epoch = get().workspaceEpoch;
     try {
       const [missions, handoffs, todoLists, squads, mcpInfo] =
         await Promise.all([
@@ -70,26 +89,41 @@ export const useOrchStore = create<OrchState>((set) => ({
           window.nexus.orch.getMcpInfo(),
         ]);
       if (getActiveWorkspacePath() !== workspacePath) return;
-      set({ missions, handoffs, todoLists, squads, mcpInfo });
+      if (get().workspaceEpoch !== epoch) return;
+      set({
+        missions,
+        handoffs,
+        todoLists,
+        squads,
+        mcpInfo,
+        boundWorkspacePath: workspacePath,
+      });
     } catch (err) {
-      if (getActiveWorkspacePath() === workspacePath) {
+      if (
+        getActiveWorkspacePath() === workspacePath &&
+        get().workspaceEpoch === epoch
+      ) {
         console.warn('[orch] failed to hydrate orchestration state:', err);
       }
     }
   },
 
   resetProjectState: () =>
-    set({
+    set((s) => ({
       missions: [],
       handoffs: [],
       todoLists: [],
+      squads: [],
       paneMissions: {},
-    }),
+      boundWorkspacePath: null,
+      workspaceEpoch: s.workspaceEpoch + 1,
+    })),
 
   togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
   openPanel: (tab) => set({ panelOpen: true, panelTab: tab }),
   setPanelTab: (tab) => set({ panelTab: tab }),
   toggleBoard: () => set((s) => ({ boardOpen: !s.boardOpen })),
+  openBoard: () => set({ boardOpen: true }),
   closeBoard: () => set({ boardOpen: false }),
 
   bindPaneMission: (paneId, missionId) =>
@@ -111,13 +145,25 @@ export const useOrchStore = create<OrchState>((set) => ({
     }),
 
   setMissions: (missions) => {
+    const path = getActiveWorkspacePath();
+    if (!acceptsWorkspacePayload(path)) return;
     if (missions.length > 0) markVictory('firstMission');
     set({ missions });
   },
   setHandoffs: (handoffs) => {
+    const path = getActiveWorkspacePath();
+    if (!acceptsWorkspacePayload(path)) return;
     if (handoffs.length > 0) markVictory('firstHandoff');
     set({ handoffs });
   },
-  setTodoLists: (todoLists) => set({ todoLists }),
-  setSquads: (squads) => set({ squads }),
+  setTodoLists: (todoLists) => {
+    const path = getActiveWorkspacePath();
+    if (!acceptsWorkspacePayload(path)) return;
+    set({ todoLists });
+  },
+  setSquads: (squads) => {
+    const path = getActiveWorkspacePath();
+    if (!acceptsWorkspacePayload(path)) return;
+    set({ squads });
+  },
 }));

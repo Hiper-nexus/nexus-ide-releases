@@ -40,7 +40,11 @@ import { useWorkspaceController, useWorkspaceStore } from './state/workspace-sto
 import { useProviderController } from './state/provider-store';
 import { useMissionWizardStore } from './state/mission-wizard-store';
 import { useHomeStore } from './state/home-store';
-import { reconcileHosts, markResumeOnSpawn } from './terminal/terminal-host';
+import { reconcileHosts } from './terminal/terminal-host';
+import {
+  gateRestoredAgents,
+  resetRestoredAgentsGate,
+} from './orch/restore-agents-gate';
 import {
   reconcileBrowserPanes,
   setBrowserPaneSuppression,
@@ -141,6 +145,9 @@ export function App() {
       // warned). Disposing all hosts kills their PTYs.
       reconcileHosts(new Set());
       reconcileBrowserPanes(new Set());
+      // Drop any in-flight "retomar agentes?" so a closed folder cannot answer
+      // for the next one (same process, any OS).
+      resetRestoredAgentsGate();
       lastWorkspacePath.current = path;
       return;
     }
@@ -151,14 +158,12 @@ export function App() {
       // Show the (non-modal) Home deck whenever what loaded is just a single
       // bare shell — a fresh folder AND a trivially-restored one look the same
       // to the user (an empty prompt), so both get the deck. A real mission
-      // layout (agents, splits) restores silently. If the "Novo workspace"
-      // wizard is mid-flow it owns the launch; the deck would get in its way.
+      // layout (agents, splits) restores the grid but does NOT auto-run agents
+      // without confirmation (see restore-agents-gate).
       const panes = listPanes(useLayoutStore.getState().root);
-      // Retomada de sessão: panes de AGENTE restaurados voltam com --continue
-      // (a mesma conversa de onde pararam), em vez de um agente zerado.
-      for (const p of panes) {
-        if (p.kind === 'cli-agent') markResumeOnSpawn(p.id);
-      }
+      // Gate is also installed on layout restore; call again so App-path
+      // restores that skipped the handler still pause agents.
+      void gateRestoredAgents(panes);
       const loneBarShell =
         panes.length === 1 && panes[0].kind === 'shell' && !panes[0].orchRequestId;
       if (loneBarShell && !useMissionWizardStore.getState().open) {

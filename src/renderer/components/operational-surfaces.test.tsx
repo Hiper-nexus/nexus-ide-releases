@@ -14,6 +14,7 @@ import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useWorkspaceStore } from '../state/workspace-store';
+import { setActiveWorkspacePath } from '../state/active-workspace';
 import { buildGridTree } from '../lib/split-tree';
 
 vi.mock('../terminal/terminal-host', () => ({
@@ -223,6 +224,11 @@ describe('MissionRail operational hierarchy', () => {
       id === 'active' ? ['pane-1'] : [],
     );
 
+    setActiveWorkspacePath('/ws/demo');
+    useWorkspaceStore.setState({
+      current: { path: '/ws/demo', name: 'demo', lastOpenedAt: 1 },
+      hydrated: true,
+    });
     useOrchStore.setState({
       missions: [
         {
@@ -247,12 +253,15 @@ describe('MissionRail operational hierarchy', () => {
         },
       ],
       paneMissions: { 'pane-1': 'active' },
+      boundWorkspacePath: '/ws/demo',
     });
     useSessionStateStore.setState({ paneStates: new Map([['pane-1', 'busy']]) });
 
     const { host, root } = mount(<MissionRail />);
     const text = host.textContent ?? '';
 
+    expect(text).toMatch(/Missões/);
+    expect(text).toMatch(/demo/);
     expect(text).toMatch(/Em progresso/);
     expect(text).toMatch(/Na fila/);
     expect(text).toContain('Corrigir Jarvis');
@@ -262,6 +271,7 @@ describe('MissionRail operational hierarchy', () => {
     expect(text).toMatch(/trabalhando|em progresso|rodando/i);
 
     act(() => root.unmount());
+    setActiveWorkspacePath(null);
   });
 });
 

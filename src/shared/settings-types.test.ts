@@ -85,6 +85,19 @@ describe('orchSettingsSchema', () => {
     expect(DEFAULT_ORCH_SETTINGS.defaultAdapterId).toBe('claude');
     expect(DEFAULT_ORCH_SETTINGS.defaultModel).toBe('');
     expect(DEFAULT_ORCH_SETTINGS.defaultAccountId).toBe('');
+    // Multi-OS safe default: never silent-resume agents on layout restore.
+    expect(DEFAULT_ORCH_SETTINGS.agentRestorePolicy).toBe('ask');
+  });
+
+  it('accepts agent restore policies used on every platform', () => {
+    for (const policy of ['ask', 'pause', 'resume'] as const) {
+      expect(
+        orchSettingsSchema.safeParse({ agentRestorePolicy: policy }).success,
+      ).toBe(true);
+    }
+    expect(
+      orchSettingsSchema.safeParse({ agentRestorePolicy: 'yolo' }).success,
+    ).toBe(false);
   });
 
   it('bounds opaque provider, model and account identifiers', () => {

@@ -1,7 +1,34 @@
 import { useEffect, useRef, useState } from 'react';
+import type { OrchSettings } from '../../../shared/settings-types';
+
+type AgentRestorePolicy = OrchSettings['agentRestorePolicy'];
+
+const RESTORE_OPTIONS: {
+  value: AgentRestorePolicy;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: 'ask',
+    label: 'Perguntar (recomendado)',
+    hint: 'Pausa agentes e pede confirmação — igual em Mac, Linux e Windows.',
+  },
+  {
+    value: 'pause',
+    label: 'Sempre pausar',
+    hint: 'Nunca reinicia sozinho; você retoma no rail de missões.',
+  },
+  {
+    value: 'resume',
+    label: 'Retomar automaticamente',
+    hint: 'Comportamento antigo: agentes voltam a trabalhar sem diálogo.',
+  },
+];
 
 export function MissionDriverSettings() {
   const [isActive, setIsActive] = useState(false);
+  const [restorePolicy, setRestorePolicy] =
+    useState<AgentRestorePolicy>('ask');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -12,7 +39,10 @@ export function MissionDriverSettings() {
     void window.nexus.settings
       .orchGet()
       .then((settings) => {
-        if (!cancelled) setIsActive(settings.missionDriverActiveMode);
+        if (!cancelled) {
+          setIsActive(settings.missionDriverActiveMode);
+          setRestorePolicy(settings.agentRestorePolicy ?? 'ask');
+        }
       })
       .catch((cause) => {
         if (!cancelled) {
@@ -56,9 +86,64 @@ export function MissionDriverSettings() {
     }
   };
 
+  const saveRestorePolicy = async (next: AgentRestorePolicy) => {
+    if (savingRef.current) return;
+    const previous = restorePolicy;
+    savingRef.current = true;
+    setRestorePolicy(next);
+    setIsSaving(true);
+    setError(null);
+    try {
+      const saved = await window.nexus.settings.orchSet({
+        agentRestorePolicy: next,
+      });
+      setRestorePolicy(saved.agentRestorePolicy ?? 'ask');
+    } catch (cause) {
+      setRestorePolicy(previous);
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : 'Falha ao salvar a política de retoma.',
+      );
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div aria-busy={isLoading || isSaving}>
       <div className="settings-section-heading settings-section-heading--with-count">
+        <h4>Retoma de agentes</h4>
+        <span className="settings-chip" aria-live="polite">
+          Multi-SO: {restorePolicy === 'ask' ? 'perguntar' : restorePolicy}
+        </span>
+      </div>
+      <p className="settings-section-desc" style={{ marginBottom: 12 }}>
+        Ao abrir o app ou um workspace com missões salvas, o Nexus usa a mesma
+        regra em <strong>macOS, Linux e Windows</strong> — sem auto-trabalho
+        silencioso por padrão.
+      </p>
+      <div className="settings-toggle-list" role="radiogroup" aria-label="Política de retoma">
+        {RESTORE_OPTIONS.map((opt) => (
+          <label key={opt.value} className="settings-toggle-row">
+            <span className="settings-toggle-row__copy">
+              <strong>{opt.label}</strong>
+              <span>{opt.hint}</span>
+            </span>
+            <input
+              type="radio"
+              name="agent-restore-policy"
+              value={opt.value}
+              checked={restorePolicy === opt.value}
+              disabled={isLoading || isSaving}
+              onChange={() => void saveRestorePolicy(opt.value)}
+            />
+          </label>
+        ))}
+      </div>
+
+      <div className="settings-section-heading settings-section-heading--with-count" style={{ marginTop: 20 }}>
         <h4>Ralph loop</h4>
         <span
           className={`settings-chip ${isActive ? 'settings-chip--ok' : ''}`}
