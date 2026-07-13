@@ -13,6 +13,8 @@ export interface PendingDelegation {
   targetPaneId: string;
   text: string;
   createdAt: number;
+  /** Realtime tool that created this confirmation, when applicable. */
+  originCallId?: string;
 }
 
 export const DELEGATION_CONFIRM_TTL_MS = 15_000;
@@ -153,8 +155,10 @@ export function isPendingDelegationConfirmation(text: string, now: number): bool
 export function shouldDiscardPendingDelegationAfterUnrelatedTool(
   pendingAtTurnStart: PendingDelegation | null,
   current: PendingDelegation | null,
+  currentToolCallId?: string,
 ): boolean {
   if (!pendingAtTurnStart || !current) return false;
+  if (currentToolCallId && current.originCallId === currentToolCallId) return false;
   return (
     current.createdAt === pendingAtTurnStart.createdAt &&
     current.targetPaneId === pendingAtTurnStart.targetPaneId &&

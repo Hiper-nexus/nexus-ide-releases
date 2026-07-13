@@ -50,6 +50,7 @@ import {
   superviseJarvisAction,
 } from './runtime-incident-supervisor';
 import { useToastStore } from '../state/toast-store';
+import { armRealtimeToolNarration } from './realtime-tool-narration';
 
 export async function executeJarvisActionForTurn(
   ...args: Parameters<typeof executeJarvisAction>
@@ -236,6 +237,7 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
     const reply = { say: '', action };
     const exec = await executeJarvisActionForTurn(reply, context, {
       signal: execution.signal,
+      originCallId: event.callId,
       onEffectMayHaveCommitted: () => execution.markEffectMayHaveCommitted(),
     });
     const toolResult = exec.toolResult ?? {
@@ -251,6 +253,16 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
       toolResult.summary,
       { tool: toolResult.tool, ok: toolResult.ok, callId: event.callId },
     );
+    const sayText =
+      exec.sayText.trim() ||
+      (toolResult.ok ? 'Feito, patrão.' : `Não consegui: ${toolResult.summary}.`);
+    if (REALTIME_PROVIDER_AUDIO_ENABLED) {
+      armRealtimeToolNarration(
+        event.callId,
+        sayText,
+        realtimeAudioPlayedCounter.total,
+      );
+    }
     window.nexus.voice.liveToolResult({
       source: 'realtime',
       callId: event.callId,
@@ -279,9 +291,6 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
     }
 
     if (!REALTIME_PROVIDER_AUDIO_ENABLED) {
-      const sayText =
-        exec.sayText.trim() ||
-        (toolResult.ok ? 'Feito, patrão.' : `Não consegui: ${toolResult.summary}.`);
       await speakRealtimeToolResult(sayText);
     } else {
       // Live narrates the tool result — keep the audio gate open.

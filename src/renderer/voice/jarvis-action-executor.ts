@@ -43,6 +43,8 @@ export interface JarvisExecutionResult {
 export interface JarvisExecutionControl {
   signal?: AbortSignal;
   onEffectMayHaveCommitted?: () => void;
+  /** Correlates state created by a native realtime tool with its completion. */
+  originCallId?: string;
 }
 
 function checkpoint(control: JarvisExecutionControl): void {
@@ -396,7 +398,11 @@ export async function executeJarvisAction(
       const adapters = await window.nexus.adapters.list();
       checkpoint(control);
       const res = await launchSquadMission(match, adapters);
-      if (res.ok) markEffect(control);
+      if (res.ok) {
+        markEffect(control);
+        useMissionWizardStore.getState().close();
+        sayText = `Squad ${match.name} iniciado.`;
+      }
       checkpoint(control);
       console.log(`[voice] launch squad "${match.name}" → ${res.ok ? 'NO AR' : `falhou: ${res.error}`}`);
       if (!res.ok) sayText = res.error ?? 'Não consegui subir o squad.';
@@ -838,6 +844,7 @@ export async function executeJarvisAction(
         targetPaneId: target.orchestratorPaneId,
         text: missionPrompt,
         createdAt: Date.now(),
+        ...(control.originCallId ? { originCallId: control.originCallId } : {}),
       });
       const confirmationDeadline = followUpAuthority.arm();
       logVoiceEvent(

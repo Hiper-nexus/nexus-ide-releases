@@ -74,28 +74,32 @@ describe('re-wake com pendência viva confirma em vez de morrer no stripper (C3 
 
 describe('tool nativa do Live consome a pendência (review final, item 3)', () => {
   it('descarta apenas a pendência que já existia, preservando a criada pela tool atual', () => {
+    const helperIdx = finishSource.indexOf('const finishRealtimeToolTurn = ()');
+    const waitIdx = finishSource.indexOf('realtimeTranscriptWaiter.wait(');
     const branchIdx = finishSource.indexOf(
       "turnExecution.isOwnedBy('realtime-tool', turnToken)",
+      waitIdx,
     );
+    expect(helperIdx).toBeGreaterThanOrEqual(0);
     expect(branchIdx).toBeGreaterThanOrEqual(0);
     expect(finishSource.slice(branchIdx, branchIdx + 220)).toContain(
       'hasRealtimeNativeToolSince(tRealtime)',
     );
-    const clearIdx = finishSource.indexOf('clearPendingDelegation()', branchIdx);
-    const dropLogIdx = finishSource.indexOf("'jarvis.delegationDropped'", branchIdx);
-    const releaseIdx = finishSource.indexOf('releaseAfterRealtimeTool();', branchIdx);
-    expect(clearIdx).toBeGreaterThan(branchIdx);
-    expect(dropLogIdx).toBeGreaterThan(branchIdx);
-    expect(finishSource.slice(branchIdx, clearIdx)).toContain(
+    const clearIdx = finishSource.indexOf('clearPendingDelegation()', helperIdx);
+    const dropLogIdx = finishSource.indexOf("'jarvis.delegationDropped'", helperIdx);
+    const releaseIdx = finishSource.indexOf('releaseAfterRealtimeTool();', helperIdx);
+    expect(clearIdx).toBeGreaterThan(helperIdx);
+    expect(dropLogIdx).toBeGreaterThan(helperIdx);
+    expect(finishSource.slice(helperIdx, clearIdx)).toContain(
       'shouldDiscardPendingDelegationAfterUnrelatedTool',
     );
     // Descarte (clear + log) acontece antes do release que encerra o turno.
     expect(releaseIdx).toBeGreaterThan(clearIdx);
     expect(releaseIdx).toBeGreaterThan(dropLogIdx);
     const toolBranch = finishSource.slice(branchIdx, finishSource.indexOf('if (liveTranscript)', branchIdx));
-    // Ferramentas podem narrar áudio depois do resultado; a reabertura agora
-    // espera o completion correlacionado em vez de abrir cedo ou dormir.
-    expect(toolBranch).toContain('releaseAfterRealtimeTool();');
+    // Ferramentas podem narrar áudio depois do resultado; a reabertura passa
+    // pelo helper único que espera o completion correlacionado.
+    expect(toolBranch).toContain('finishRealtimeToolTurn();');
   });
 });
 
@@ -137,6 +141,32 @@ describe('continuidade pós-tool do Gemini Live', () => {
     expect(finishSource).toContain("turnExecution.owner === 'realtime-tool'");
     expect(finishSource).toContain('releaseAfterLiveToolAnswer({');
     expect(finishSource).toContain('callId,');
+  });
+
+  it('encerra a captura ativa assim que a tool correlacionada termina', () => {
+    const completionIdx = controllerSource.indexOf(
+      'onLiveToolTurnComplete((event) =>',
+    );
+    const completionBlock = controllerSource.slice(completionIdx, completionIdx + 2_200);
+
+    expect(completionIdx).toBeGreaterThanOrEqual(0);
+    expect(completionBlock).toContain('lastRealtimeNativeToolCallId === event.callId');
+    expect(completionBlock).toContain(
+      "turnExecution.isOwnedBy('realtime-tool', turnToken)",
+    );
+    expect(completionBlock).toContain('isListening(capture.current)');
+    expect(completionBlock).toContain('finishAndProcessFacade(capture.current, busy)');
+  });
+
+  it('libera uma tool já concluída antes de esperar transcript ou timeout', () => {
+    const earlyOwnerIdx = finishSource.indexOf(
+      "turnExecution.isOwnedBy('realtime-tool', turnToken)",
+    );
+    const transcriptWaitIdx = finishSource.indexOf('realtimeTranscriptWaiter.wait(');
+
+    expect(earlyOwnerIdx).toBeGreaterThanOrEqual(0);
+    expect(transcriptWaitIdx).toBeGreaterThanOrEqual(0);
+    expect(earlyOwnerIdx).toBeLessThan(transcriptWaitIdx);
   });
 });
 

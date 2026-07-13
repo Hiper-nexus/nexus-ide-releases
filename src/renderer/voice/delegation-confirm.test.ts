@@ -135,6 +135,28 @@ describe('pending delegation lifecycle', () => {
     expect(shouldDiscardPendingDelegationAfterUnrelatedTool(delegation, replacement)).toBe(false);
     expect(shouldDiscardPendingDelegationAfterUnrelatedTool(null, replacement)).toBe(false);
   });
+
+  it('não apaga a confirmação criada pelo callId da tool que está terminando', () => {
+    const createdByCurrentTool = {
+      ...delegation,
+      originCallId: 'call-current',
+    };
+
+    expect(
+      shouldDiscardPendingDelegationAfterUnrelatedTool(
+        createdByCurrentTool,
+        createdByCurrentTool,
+        'call-current',
+      ),
+    ).toBe(false);
+    expect(
+      shouldDiscardPendingDelegationAfterUnrelatedTool(
+        createdByCurrentTool,
+        createdByCurrentTool,
+        'call-other',
+      ),
+    ).toBe(true);
+  });
 });
 
 describe('refreshPendingDelegation (re-ask C3 Fase 1)', () => {

@@ -30,4 +30,17 @@ describe('Jarvis action execution routing', () => {
     expect(pickerBranch).not.toContain('launchSquadMission');
     expect(pickerBranch).not.toContain('designSquad');
   });
+
+  it('closes the squad picker and confirms the named squad after launch', () => {
+    const squadBranch = source.slice(
+      source.indexOf("action.type === 'open_squad'"),
+      source.indexOf("action.type === 'open_workspace'"),
+    );
+
+    expect(squadBranch).toContain('useMissionWizardStore.getState().close()');
+    expect(squadBranch).toContain('Squad ${match.name} iniciado.');
+    expect(squadBranch.indexOf('if (res.ok)')).toBeLessThan(
+      squadBranch.indexOf('useMissionWizardStore.getState().close()'),
+    );
+  });
 });

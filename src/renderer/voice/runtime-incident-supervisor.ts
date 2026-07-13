@@ -110,6 +110,7 @@ export async function superviseJarvisAction(
       const result = await Promise.race([
         execute({
           signal: mergedSignal(parentControl.signal, controller.signal),
+          originCallId: parentControl.originCallId,
           onEffectMayHaveCommitted: () => {
             effectMayHaveCommitted = true;
             parentControl.onEffectMayHaveCommitted?.();

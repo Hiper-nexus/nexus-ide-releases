@@ -18,7 +18,7 @@ import {
   stripWakeAckEcho,
 } from './transcript-filter';
 import { onJarvisWakeRequest } from './manual-wake';
-import { type JarvisCaptureReason } from './jarvis-reply-loop';
+import { delay, type JarvisCaptureReason } from './jarvis-reply-loop';
 import {
   clearLocalAudioGate,
   isLocalAudioAudible,
@@ -80,12 +80,17 @@ import {
   turnExecution,
   realtimeAudioPlayedCounter,
   realtimeAudioSuppressedCounter,
+  lastRealtimeNativeToolCallId,
   setLastRealtimeNativeToolCallId,
   REALTIME_ACTION_BRIDGE_ENABLED,
   REALTIME_PROVIDER_AUDIO_ENABLED,
 } from './voice-session-state';
 import { personaUserName } from './jarvis-screen-context';
-import { executeRealtimeToolCall } from './voice-realtime-tools';
+import {
+  executeRealtimeToolCall,
+  speakRealtimeToolResult,
+} from './voice-realtime-tools';
+import { takeSilentRealtimeToolNarration } from './realtime-tool-narration';
 import { cancelRealtimeToolExecution } from './realtime-tool-execution';
 import { finishAndProcess, type FinishAndProcessDeps } from './voice-finish-and-process';
 import {
@@ -965,7 +970,61 @@ export function useVoiceController(): void {
       useVoiceStore.getState().setLiveTool(event);
     });
     const unsubLiveToolTurnComplete = window.nexus.voice.onLiveToolTurnComplete((event) => {
-      notifyLiveToolTurnComplete(event);
+      const turnToken = turnExecution.currentToken;
+      const isCorrelated = (): boolean =>
+        event.turnId === String(turnToken) &&
+        lastRealtimeNativeToolCallId === event.callId &&
+        turnExecution.isOwnedBy('realtime-tool', turnToken);
+      if (!isCorrelated()) {
+        takeSilentRealtimeToolNarration(event.callId, realtimeAudioPlayedCounter.total);
+        notifyLiveToolTurnComplete(event);
+        return;
+      }
+      void (async () => {
+        try {
+          // IPC completion can overtake WebAudio scheduling by a few frames.
+          // Give the first real PCM chunk a short chance to prove narration
+          // before choosing local TTS, avoiding two voices.
+          await delay(250);
+          if (!isCorrelated()) {
+            takeSilentRealtimeToolNarration(event.callId, realtimeAudioPlayedCounter.total);
+            return;
+          }
+          const silentNarration = takeSilentRealtimeToolNarration(
+            event.callId,
+            realtimeAudioPlayedCounter.total,
+          );
+          if (silentNarration) {
+            logVoiceEvent(
+              'warn',
+              'jarvis.liveToolNarrationFallback',
+              'provider concluiu sem áudio — usando voz local',
+              { callId: event.callId, chars: silentNarration.length },
+            );
+            await speakRealtimeToolResult(silentNarration);
+          }
+        } catch (error) {
+          logVoiceEvent('error', 'jarvis.liveToolNarrationFallbackFailed', errMsg(error), {
+            callId: event.callId,
+          });
+        } finally {
+          notifyLiveToolTurnComplete(event);
+          if (
+            !isCorrelated() ||
+            !capture.current ||
+            !isListening(capture.current)
+          ) {
+            return;
+          }
+          logVoiceEvent(
+            'info',
+            'jarvis.liveToolCaptureFinalized',
+            'captura anterior encerrada no completion da ferramenta',
+            { turnId: event.turnId, callId: event.callId },
+          );
+          void finishAndProcessFacade(capture.current, busy);
+        }
+      })();
     });
     const unsubLiveInterrupted = window.nexus.voice.onLiveInterrupted((event) => {
       useVoiceStore.getState().setLiveInterrupted(event);
