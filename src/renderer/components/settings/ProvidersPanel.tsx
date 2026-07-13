@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ProviderSettingsInfo } from '../../../shared/provider-settings-types';
 import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { useAccountStore } from '../../state/account-store';
@@ -7,13 +7,19 @@ import { openExternalFromAnchor } from '../../lib/open-external';
 import { ActionCard } from '../ActionCard';
 import { AccountsManager } from './AccountsManager';
 import { ProviderLogo } from '../ProviderLogo';
+import {
+  countDetectedClis,
+  filterProvidersForTab,
+  isLocalCliProvider,
+  modelCountLabel,
+  pickDefaultSelection,
+  providerStatusLabel,
+  type ProvidersHubTab,
+} from './providers-panel-view';
 
 /**
- * Providers/CLIs + Keys hub — the central place to enable/disable each CLI,
- * override its binary path, default model and extra args, route a
- * Claude-compatible CLI to another upstream (ai-launcher port), and store its
- * API key SECURELY (macOS Keychain via safeStorage — the key never returns to
- * the UI, only a masked preview).
+ * Providers hub — Overclock-style scan (tiles + detected count + tabs),
+ * Nexus-depth underneath (vault multi-conta, Keychain, permissões, routing).
  */
 
 function modelLabel(provider: ProviderSettingsInfo, model: string): string {
@@ -84,9 +90,7 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
               <a
                 className="settings-link"
                 href={credentialLink.url}
-                onClick={(e) =>
-                  openExternalFromAnchor(e, credentialLink.url)
-                }
+                onClick={(e) => openExternalFromAnchor(e, credentialLink.url)}
               >
                 obter em {credentialLink.label}
               </a>
@@ -150,11 +154,6 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
   );
 }
 
-/**
- * Add any model the provider offers that we didn't bundle (e.g. a brand-new
- * "glm-5.2" or "gpt-5.6"). Custom models appear everywhere the adapter's models
- * do — provider default, Modo Livre picker, squad roster.
- */
 function CustomModels({ provider }: { provider: ProviderSettingsInfo }) {
   const addModel = useProviderStore((s) => s.addModel);
   const removeModel = useProviderStore((s) => s.removeModel);
@@ -211,13 +210,6 @@ const PERMISSION_LABEL: Record<string, string> = {
   untrusted: 'Untrusted',
 };
 
-/**
- * Auto-operation controls per CLI: permission mode (turn on bypass/yolo so the
- * agent runs without asking), reasoning effort and verbose. Only the options
- * the adapter actually declares are shown, so no CLI gets a flag it can't
- * parse. "Seguro Nexus" applies the adapter's explicit sandbox/approval
- * baseline and overrides a dangerous user-level CLI default.
- */
 function ControlFlags({
   provider,
   patch,
@@ -233,7 +225,10 @@ function ControlFlags({
     <div className="prov__control">
       {hasPerm && (
         <div className="prov__ctl-row">
-          <span className="prov__ctl-label" title="Como o agente pede permissão. Seguro Nexus força sandbox/aprovação; Auto/YOLO/Bypass exigem confirmação nativa.">
+          <span
+            className="prov__ctl-label"
+            title="Como o agente pede permissão. Seguro Nexus força sandbox/aprovação; Auto/YOLO/Bypass exigem confirmação nativa."
+          >
             Permissão
           </span>
           <div className="prov__ctl-btns">
@@ -300,92 +295,82 @@ function ControlFlags({
   );
 }
 
-function providerAccountSummary(
-  provider: ProviderSettingsInfo,
-  accounts: readonly { adapterId: string; active: boolean; label: string }[],
-): string {
-  const mine = accounts.filter((a) => a.adapterId === provider.adapterId);
-  const active = mine.find((a) => a.active);
-  const model = provider.defaultModel;
-  if (active) return `${model} · ${active.label}`;
-  if (mine.length > 0) return `${model} · ${mine.length} contas`;
-  return model;
+function ProviderTile({
+  provider,
+  selected,
+  accountCount,
+  onSelect,
+}: {
+  provider: ProviderSettingsInfo;
+  selected: boolean;
+  accountCount: number;
+  onSelect: () => void;
+}) {
+  const status = providerStatusLabel(provider);
+  const models = modelCountLabel(provider);
+
+  return (
+    <button
+      type="button"
+      className={`prov-tile ${selected ? 'prov-tile--selected' : ''} ${provider.enabled ? '' : 'prov-tile--off'}`}
+      onClick={onSelect}
+      aria-pressed={selected}
+      data-adapter={provider.adapterId}
+    >
+      <ProviderLogo
+        adapterId={provider.adapterId}
+        label={provider.label}
+        fallback={provider.icon}
+      />
+      <span className="prov-tile__name">{provider.label}</span>
+      <span className={`prov-tile__status prov-tile__status--${status.tone}`}>
+        {status.label}
+      </span>
+      <span className="prov-tile__meta">
+        <span className="prov-tile__models" title="Modelos prontos / no catálogo">
+          {models}
+        </span>
+        {accountCount > 0 && (
+          <span className="prov-tile__accounts" title="Contas no vault">
+            {accountCount} ct
+          </span>
+        )}
+      </span>
+    </button>
+  );
 }
 
-function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
+function ProviderDetail({ provider }: { provider: ProviderSettingsInfo }) {
   const setConfig = useProviderStore((s) => s.setConfig);
-  const accounts = useAccountStore((s) => s.accounts);
-  const [expanded, setExpanded] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [binDraft, setBinDraft] = useState(provider.binPath);
   const [argsDraft, setArgsDraft] = useState(provider.extraArgs.join(' '));
   const riskWarning = providerRiskWarning(provider);
-  const accountSummary = useMemo(
-    () => providerAccountSummary(provider, accounts),
-    [provider, accounts],
-  );
-  const accountCount = useMemo(
-    () => accounts.filter((a) => a.adapterId === provider.adapterId).length,
-    [accounts, provider.adapterId],
-  );
+
+  useEffect(() => {
+    setBinDraft(provider.binPath);
+    setArgsDraft(provider.extraArgs.join(' '));
+  }, [provider.adapterId, provider.binPath, provider.extraArgs]);
 
   const patch = (p: Partial<Parameters<typeof setConfig>[0]>) =>
     void setConfig({ adapterId: provider.adapterId, ...p });
 
   return (
-    <li className={`prov ${provider.enabled ? '' : 'prov--off'}`}>
-      <div className="prov__head">
-        <button
-          type="button"
-          className="prov__disclosure"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          <span className="prov__chevron" aria-hidden="true">
-            {expanded ? '−' : '+'}
-          </span>
-          <ProviderLogo
-            adapterId={provider.adapterId}
-            label={provider.label}
-            fallback={provider.icon}
-          />
-          <span className="prov__identity">
-            <span className="prov__title">{provider.label}</span>
-            <span className="prov__summary" title={accountSummary}>
-              {accountSummary}
-            </span>
-          </span>
-        </button>
-        <span className="prov__status-cluster">
-          <span
-            className={`settings-chip ${provider.installed ? 'settings-chip--ok' : 'settings-chip--warn'}`}
-          >
-            {provider.installed ? 'detectado' : 'ausente'}
-          </span>
-          <span
-            className={`settings-chip ${
-              provider.authStrategy === 'subscription'
-                ? 'settings-chip--ok'
-                : provider.authStrategy === 'api-key'
-                  ? ''
-                  : 'settings-chip--warn'
-            }`}
-            title="Prioridade: assinatura (OAuth/plano). API key é só fallback."
-          >
-            {provider.authStrategy === 'subscription'
-              ? 'assinatura'
-              : provider.authStrategy === 'api-key'
-                ? 'via API key'
-                : 'login pendente'}
-          </span>
-          {accountCount > 0 && (
-            <span
-              className="settings-chip prov__acct-chip"
-              title={`${accountCount} conta${accountCount === 1 ? '' : 's'} no vault`}
-            >
-              {accountCount} conta{accountCount === 1 ? '' : 's'}
-            </span>
-          )}
-        </span>
+    <div className="prov-detail" data-adapter={provider.adapterId}>
+      <header className="prov-detail__head">
+        <ProviderLogo
+          adapterId={provider.adapterId}
+          label={provider.label}
+          fallback={provider.icon}
+        />
+        <div className="prov-detail__identity">
+          <h4 className="prov-detail__title">{provider.label}</h4>
+          <p className="prov-detail__sub">
+            {provider.installed
+              ? `Detectado · ${provider.detectedBin || provider.adapterId}`
+              : 'Não encontrado no PATH — instale a CLI ou aponte o binário em Avançado'}
+          </p>
+        </div>
         <label className="prov__toggle" title="Habilitar/desabilitar">
           <input
             type="checkbox"
@@ -395,96 +380,35 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
           <span className="prov__switch" aria-hidden="true">
             <span className="prov__switch-thumb" />
           </span>
-          <span className="prov__toggle-label">{provider.enabled ? 'on' : 'off'}</span>
+          <span className="prov__toggle-label">
+            {provider.enabled ? 'on' : 'off'}
+          </span>
         </label>
-      </div>
+      </header>
 
-      {expanded && <div className="prov__body">
       <div className="prov__block">
-        <span className="prov__block-title">Modelo e execução</span>
-        <div className="prov__grid">
-          <label className="prov__field">
-            Binário (vazio = <code>{provider.detectedBin}</code>)
-            <input
-              className="settings-input"
-              value={binDraft}
-              placeholder={provider.detectedBin}
-              onChange={(e) => setBinDraft(e.target.value)}
-              onBlur={() => patch({ binPath: binDraft })}
-            />
-          </label>
-
-          <label className="prov__field">
-            Modelo padrão
-            <select
-              className="settings-input"
-              value={provider.defaultModel}
-              onChange={(e) => patch({ defaultModel: e.target.value })}
-            >
-              {provider.models.map((m) => (
-                <option key={m} value={m}>
-                  {modelLabel(provider, m)}
-                </option>
-              ))}
-            </select>
-            {provider.modelInfo?.[provider.defaultModel]?.warning && (
-              <span className="prov__hint">
-                {provider.modelInfo[provider.defaultModel].warning}
-              </span>
-            )}
-          </label>
-
-          <div className="prov__field prov__field--wide">
-            <CustomModels provider={provider} />
-          </div>
-
-          <label className="prov__field prov__field--wide">
-            Args extras
-            <input
-              className="settings-input"
-              value={argsDraft}
-              placeholder="ex.: --verbose --foo bar"
-              onChange={(e) => setArgsDraft(e.target.value)}
-              onBlur={() =>
-                patch({
-                  extraArgs: argsDraft.split(/\s+/).filter(Boolean),
-                })
-              }
-            />
-          </label>
-
-          {provider.routable && (
-            <label className="prov__field prov__field--wide">
-              Roteamento (upstream)
-              <select
-                className="settings-input"
-                value={provider.upstream}
-                onChange={(e) => patch({ upstream: e.target.value })}
-              >
-                {provider.upstreams.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.label}
-                    {u.requiresToken ? ' (requer key)' : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
+        <span className="prov__block-title">Modelo padrão</span>
+        <label className="prov__field prov__field--wide">
+          <select
+            className="settings-input"
+            value={provider.defaultModel}
+            onChange={(e) => patch({ defaultModel: e.target.value })}
+          >
+            {provider.models.map((m) => (
+              <option key={m} value={m}>
+                {modelLabel(provider, m)}
+              </option>
+            ))}
+          </select>
+          {provider.modelInfo?.[provider.defaultModel]?.warning && (
+            <span className="prov__hint">
+              {provider.modelInfo[provider.defaultModel].warning}
+            </span>
           )}
+        </label>
+        <div className="prov__field prov__field--wide">
+          <CustomModels provider={provider} />
         </div>
-      </div>
-
-      <div className="prov__block">
-        <span className="prov__block-title">Permissões do agente</span>
-        <ControlFlags provider={provider} patch={patch} />
-      </div>
-
-      <div className="prov__block">
-        <span className="prov__block-title">API key do provider</span>
-        <p className="prov__block-hint">
-          Key do provedor (env). Contas de assinatura/failover ficam no bloco
-          seguinte — não misture os dois.
-        </p>
-        <KeyField provider={provider} />
       </div>
 
       <div className="prov__block prov__block--accounts">
@@ -494,30 +418,239 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
         />
       </div>
 
-      {provider.loginHint && (
-        <p className="prov__hint">{provider.loginHint}</p>
+      {(provider.keyEnvVar || provider.hasKey || !isLocalCliProvider(provider)) && (
+        <div className="prov__block">
+          <span className="prov__block-title">API key do provider</span>
+          <p className="prov__block-hint">
+            Key do provedor (env). Contas de assinatura/failover ficam no bloco
+            de contas — não misture os dois.
+          </p>
+          <KeyField provider={provider} />
+        </div>
       )}
+
+      <div className="prov-advanced">
+        <button
+          type="button"
+          className="prov-advanced__toggle"
+          aria-expanded={advancedOpen}
+          onClick={() => setAdvancedOpen((v) => !v)}
+        >
+          <span>{advancedOpen ? '▾' : '▸'} Avançado</span>
+          <span className="prov-advanced__hint">
+            binário, args, permissões, roteamento
+          </span>
+        </button>
+        {advancedOpen && (
+          <div className="prov-advanced__body">
+            <div className="prov__block">
+              <span className="prov__block-title">Modelo e execução</span>
+              <div className="prov__grid">
+                <label className="prov__field">
+                  Binário (vazio = <code>{provider.detectedBin}</code>)
+                  <input
+                    className="settings-input"
+                    value={binDraft}
+                    placeholder={provider.detectedBin}
+                    onChange={(e) => setBinDraft(e.target.value)}
+                    onBlur={() => patch({ binPath: binDraft })}
+                  />
+                </label>
+                <label className="prov__field prov__field--wide">
+                  Args extras
+                  <input
+                    className="settings-input"
+                    value={argsDraft}
+                    placeholder="ex.: --verbose --foo bar"
+                    onChange={(e) => setArgsDraft(e.target.value)}
+                    onBlur={() =>
+                      patch({
+                        extraArgs: argsDraft.split(/\s+/).filter(Boolean),
+                      })
+                    }
+                  />
+                </label>
+                {provider.routable && (
+                  <label className="prov__field prov__field--wide">
+                    Roteamento (upstream)
+                    <select
+                      className="settings-input"
+                      value={provider.upstream}
+                      onChange={(e) => patch({ upstream: e.target.value })}
+                    >
+                      {provider.upstreams.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.label}
+                          {u.requiresToken ? ' (requer key)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+            </div>
+            <div className="prov__block">
+              <span className="prov__block-title">Permissões do agente</span>
+              <ControlFlags provider={provider} patch={patch} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {provider.loginHint && <p className="prov__hint">{provider.loginHint}</p>}
       {riskWarning && <p className="prov__warn">{riskWarning}</p>}
-      </div>}
-    </li>
+    </div>
   );
 }
 
+const TAB_LABELS: Record<ProvidersHubTab, string> = {
+  clis: 'CLIs',
+  login: 'Login externo',
+  remote: 'Remotos / API',
+};
+
 export function ProvidersPanel() {
   const providers = useProviderStore((s) => s.providers);
+  const hydrate = useProviderStore((s) => s.hydrate);
+  const accounts = useAccountStore((s) => s.accounts);
+  const [tab, setTab] = useState<ProvidersHubTab>('clis');
+  const [showAbsent, setShowAbsent] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const detected = useMemo(() => countDetectedClis(providers), [providers]);
+  const visible = useMemo(
+    () => filterProvidersForTab(providers, tab, { showAbsent }),
+    [providers, tab, showAbsent],
+  );
+
+  useEffect(() => {
+    setSelectedId((prev) => pickDefaultSelection(visible, prev));
+  }, [visible]);
+
+  const selected = useMemo(
+    () => visible.find((p) => p.adapterId === selectedId) ?? null,
+    [visible, selectedId],
+  );
+
+  const accountCountByAdapter = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const a of accounts) {
+      map.set(a.adapterId, (map.get(a.adapterId) ?? 0) + 1);
+    }
+    return map;
+  }, [accounts]);
+
+  async function refresh() {
+    setRefreshing(true);
+    try {
+      await hydrate();
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   return (
-    <section>
-      <h3 className="settings-detail__title">Providers e contas CLI</h3>
-      <p className="settings-detail__hint">
-        Instalação, login e vault multi-conta por CLI. Expanda um provider para
-        modelo, permissões, API key e contas reserva (hot-swap + failover).
-        Segredos ficam no Keychain.
-      </p>
-      <ul className="prov__list">
-        {providers.map((p) => (
-          <ProviderCard key={p.adapterId} provider={p} />
+    <section className="prov-hub">
+      <header className="prov-hub__header">
+        <div>
+          <h3 className="settings-detail__title">Providers</h3>
+          <p className="settings-detail__hint prov-hub__lede">
+            tokens · modelos · contas
+          </p>
+        </div>
+      </header>
+
+      <div className="prov-hub__tabs" role="tablist" aria-label="Tipo de provider">
+        {(Object.keys(TAB_LABELS) as ProvidersHubTab[]).map((id) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={tab === id}
+            className={`prov-hub__tab ${tab === id ? 'prov-hub__tab--on' : ''}`}
+            onClick={() => setTab(id)}
+          >
+            {TAB_LABELS[id]}
+          </button>
         ))}
-      </ul>
+      </div>
+
+      <div className="prov-hub__toolbar">
+        <span className="prov-hub__detected" data-testid="prov-detected-count">
+          {tab === 'remote'
+            ? `${visible.length} remoto${visible.length === 1 ? '' : 's'}`
+            : `${detected} detectado${detected === 1 ? '' : 's'}`}
+        </span>
+        {tab !== 'remote' && (
+          <label className="prov-hub__show-absent">
+            <input
+              type="checkbox"
+              checked={showAbsent}
+              onChange={(e) => setShowAbsent(e.target.checked)}
+            />
+            Mostrar ausentes
+          </label>
+        )}
+        <div className="prov-hub__actions">
+          <button
+            type="button"
+            className="settings-btn"
+            disabled={refreshing}
+            onClick={() => void refresh()}
+          >
+            {refreshing ? 'Atualizando…' : 'Atualizar'}
+          </button>
+          <button
+            type="button"
+            className="settings-btn settings-btn--primary"
+            disabled={refreshing}
+            onClick={() => void refresh()}
+            title="Re-lê CLIs no PATH e o catálogo de modelos"
+          >
+            Atualizar modelos
+          </button>
+        </div>
+      </div>
+
+      {visible.length === 0 ? (
+        <div className="prov-hub__empty" data-testid="prov-empty">
+          {tab === 'clis' && detected === 0 ? (
+            <>
+              <p>
+                Nenhuma CLI detectada no PATH. Instale Claude, Codex, Gemini ou
+                outra e clique em <strong>Atualizar</strong>.
+              </p>
+              <p className="prov-hub__empty-hint">
+                Dica: o Nexus procura em PATH + ~/.local/bin após o boot.
+              </p>
+            </>
+          ) : tab === 'remote' ? (
+            <p>Nenhum provider remoto/API configurado neste build.</p>
+          ) : (
+            <p>
+              Nenhuma CLI de login externo nesta lista.
+              {showAbsent ? '' : ' Ative “Mostrar ausentes” para ver as instaláveis.'}
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="prov-tile-grid" role="list" data-testid="prov-tile-grid">
+          {visible.map((p) => (
+            <ProviderTile
+              key={p.adapterId}
+              provider={p}
+              selected={p.adapterId === selectedId}
+              accountCount={accountCountByAdapter.get(p.adapterId) ?? 0}
+              onSelect={() => setSelectedId(p.adapterId)}
+            />
+          ))}
+        </div>
+      )}
+
+      {selected && (
+        <ProviderDetail key={selected.adapterId} provider={selected} />
+      )}
     </section>
   );
 }
