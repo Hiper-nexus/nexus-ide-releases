@@ -152,8 +152,36 @@ export function resolveProviderApiKeyCandidates(
   }
 
   if (adapterId === 'kimi') {
-    for (const envName of ['KIMI_MODEL_API_KEY', 'MOONSHOT_API_KEY']) {
+    for (const envName of [
+      'KIMI_MODEL_API_KEY',
+      'KIMI_API_KEY',
+      'KIMI_CODING_API_KEY',
+      'MOONSHOT_API_KEY',
+    ]) {
       pushUnique(out, process.env[envName]);
+    }
+  }
+
+  // Multi-key CLIs: harvest every common provider credential.
+  if (adapterId === 'opencode' || adapterId === 'aider') {
+    for (const envName of [
+      'ANTHROPIC_API_KEY',
+      'ANTHROPIC_AUTH_TOKEN',
+      'OPENAI_API_KEY',
+      'XAI_API_KEY',
+      'ZAI_API_KEY',
+      'KIMI_API_KEY',
+      'KIMI_CODING_API_KEY',
+    ]) {
+      pushUnique(out, process.env[envName]);
+    }
+    for (const alias of ['glm', 'zai', 'kimi', 'grok', 'claude', 'codex']) {
+      try {
+        pushUnique(out, loadLauncherProviderKey(alias));
+      } catch {
+        // ignore
+      }
+      pushUnique(out, safeGetKey(alias));
     }
   }
 

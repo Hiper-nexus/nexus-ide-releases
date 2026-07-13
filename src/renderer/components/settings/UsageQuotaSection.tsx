@@ -122,10 +122,11 @@ export function UsageQuotaSection() {
           Uso e cotas
         </h3>
         <p className="settings-detail__hint">
-          % reais via API quando há credencial: Claude OAuth, Codex/ChatGPT,
-          GLM/Z.ai, AGY/Gemini (OAuth), Kimi Coding Plan (chave sk-kimi-…).
-          Grok e LongCat ficam em &quot;—&quot; se o provider não expõe used%
-          (nunca 0% inventado). Gasto $ do projeto fica no chip de custo da bar.
+          Frota completa: Claude, Codex, GLM, AGY, Kimi, Grok, LongCat, OpenCode,
+          Aider e qualquer CLI com chave no vault/launcher. % só com fonte real
+          (API / OAuth / tokens do projeto); sem telemetria mostra &quot;—&quot;,
+          nunca 0% inventado. OpenCode agrega chaves de todos os providers
+          ligados no auth.json.
         </p>
       </header>
 

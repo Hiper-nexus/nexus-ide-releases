@@ -93,19 +93,28 @@ export function defaultUnknownWindows(
       unknownWindow('session', 'Sessão'),
     ];
   }
-  if (adapterId === 'codex' || adapterId === 'glm' || adapterId === 'kimi') {
-    return [
-      unknownWindow('hours', '5 Horas'),
-      unknownWindow('weekly', 'Semanal'),
-    ];
-  }
   if (adapterId === 'claude') {
     return [
       unknownWindow('session', 'Sessão'),
       unknownWindow('weekly', 'Semanal'),
     ];
   }
-  if (adapterId === 'grok' || adapterId === 'agy' || adapterId === 'longcat') {
+  if (adapterId === 'agy') {
+    return [
+      unknownWindow('session', 'Pedidos'),
+      unknownWindow('weekly', 'Semanal'),
+    ];
+  }
+  // Cloud coding CLIs (Codex, GLM, Kimi, Grok, LongCat, OpenCode, Aider, …)
+  if (
+    adapterId === 'codex' ||
+    adapterId === 'glm' ||
+    adapterId === 'kimi' ||
+    adapterId === 'grok' ||
+    adapterId === 'longcat' ||
+    adapterId === 'opencode' ||
+    adapterId === 'aider'
+  ) {
     return [
       unknownWindow('hours', '5 Horas'),
       unknownWindow('weekly', 'Semanal'),

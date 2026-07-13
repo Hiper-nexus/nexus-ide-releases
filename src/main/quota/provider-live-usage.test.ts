@@ -85,19 +85,30 @@ describe('fetchLiveProviderWindows', () => {
   });
 
   it('returns null for grok/agy/longcat without inventing %', async () => {
+    const failFetch = vi.fn(async () => ({
+      ok: false,
+      status: 404,
+      json: async () => ({}),
+      text: async () => '',
+    }));
     expect(
       await fetchLiveProviderWindows('grok', undefined, {
         resolveGrokToken: () => 'jwt',
+        fetchImpl: failFetch,
       }),
     ).toBeNull();
     expect(
       await fetchLiveProviderWindows('agy', undefined, {
         resolveGeminiToken: () => 'gat',
+        // expired-looking token without refresh → null / fail
+        resolveGeminiOauthCreds: () => ({ accessToken: 'gat' }),
+        fetchImpl: failFetch,
       }),
     ).toBeNull();
     expect(
       await fetchLiveProviderWindows('longcat', undefined, {
-        resolveLongcatApiKey: () => 'key',
+        resolveLongcatApiKey: () => 'longcat-key-value-here',
+        fetchImpl: failFetch,
       }),
     ).toBeNull();
   });

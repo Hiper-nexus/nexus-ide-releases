@@ -28,16 +28,11 @@ import {
 /** Cache live API windows briefly — avoid hammering providers on every paint. */
 const PROVIDER_API_TTL_MS = 60_000;
 
-/** Adapters that may have a live usage probe (others stay local/unknown). */
-const LIVE_PROBE_ADAPTERS = new Set([
-  'claude',
-  'codex',
-  'glm',
-  'kimi',
-  'grok',
-  'agy',
-  'longcat',
-]);
+/**
+ * Every fleet CLI is eligible for a live/generic probe. Unknown adapters
+ * still go through key-shape routing (OpenCode/Aider/custom).
+ */
+const LIVE_PROBE_ADAPTERS: ReadonlySet<string> | 'all' = 'all';
 
 export interface QuotaServiceDeps {
   listProviders: () => ProviderSettingsInfo[] | Promise<ProviderSettingsInfo[]>;
@@ -99,6 +94,10 @@ export interface QuotaServiceDeps {
     accountId?: string,
   ) => string | null | Promise<string | null>;
   resolveLongcatApiKeyCandidates?: (
+    accountId?: string,
+  ) => string[] | Promise<string[]>;
+  resolveGenericApiKeyCandidates?: (
+    adapterId: string,
     accountId?: string,
   ) => string[] | Promise<string[]>;
   /** Injectable fetch for tests. */
@@ -244,18 +243,15 @@ export class QuotaService {
         });
         continue;
       }
-      // Always keep a bare system/CLI row for live-probe adapters so the
-      // native login (~/.codex, launcher key, keychain) still shows % even
-      // when vault accounts exist with stale blobs.
-      if (LIVE_PROBE_ADAPTERS.has(p.adapterId)) {
-        draft.push({
-          adapterId: p.adapterId,
-          label: `${p.label} · CLI nativo`,
-          installed: p.installed,
-          onCooldown: false,
-          tokens: tokens[p.adapterId],
-        });
-      }
+      // Always keep a bare system/CLI row so native login / launcher keys
+      // still show % even when vault accounts exist with stale blobs.
+      draft.push({
+        adapterId: p.adapterId,
+        label: `${p.label} · CLI nativo`,
+        installed: p.installed,
+        onCooldown: false,
+        tokens: tokens[p.adapterId],
+      });
       for (const a of vault) {
         draft.push({
           adapterId: p.adapterId,
@@ -311,6 +307,7 @@ export class QuotaService {
       resolveGeminiOauthCreds: this.#deps.resolveGeminiOauthCreds,
       resolveLongcatApiKey: this.#deps.resolveLongcatApiKey,
       resolveLongcatApiKeyCandidates: this.#deps.resolveLongcatApiKeyCandidates,
+      resolveGenericApiKeyCandidates: this.#deps.resolveGenericApiKeyCandidates,
       fetchImpl: this.#deps.fetchImpl,
     };
   }
@@ -320,7 +317,12 @@ export class QuotaService {
     now: number,
     forceApi: boolean,
   ): Promise<void> {
-    const rows = draft.filter((d) => LIVE_PROBE_ADAPTERS.has(d.adapterId));
+    const rows =
+      LIVE_PROBE_ADAPTERS === 'all'
+        ? [...draft]
+        : draft.filter((d) =>
+            (LIVE_PROBE_ADAPTERS as ReadonlySet<string>).has(d.adapterId),
+          );
     if (rows.length === 0) return;
 
     const resolvers = this.#liveResolvers();

@@ -19,6 +19,11 @@ import { fetchGlmUsageWindows } from './glm-usage';
 import { fetchGrokUsageWindows } from './grok-usage';
 import { fetchAgyUsageWindows, type GeminiOauthCreds } from './agy-usage';
 import { fetchKimiCodingUsageWindows } from './kimi-usage';
+import {
+  fetchWindowsForApiKey,
+  mergeWorstWindows,
+} from './key-shape-usage';
+import { loadOpenCodeAuthKeys } from './opencode-auth';
 import { knownWindow } from './quota-normalize';
 
 export interface LiveUsageAuthResolvers {
@@ -61,6 +66,11 @@ export interface LiveUsageAuthResolvers {
     accountId?: string,
   ) => string | null | Promise<string | null>;
   resolveLongcatApiKeyCandidates?: (
+    accountId?: string,
+  ) => string[] | Promise<string[]>;
+  /** Generic vault/launcher/env keys for any adapter (opencode, aider, …). */
+  resolveGenericApiKeyCandidates?: (
+    adapterId: string,
     accountId?: string,
   ) => string[] | Promise<string[]>;
   fetchImpl?: FetchLike;
@@ -140,12 +150,19 @@ export async function fetchLiveProviderWindows(
       return null;
     }
     case 'longcat': {
-      // No public quota % API yet — keep honest null.
-      await stringCandidates(
+      const keys = await stringCandidates(
         deps.resolveLongcatApiKeyCandidates,
         deps.resolveLongcatApiKey,
         accountId,
       );
+      for (const key of keys) {
+        const w = await fetchWindowsForApiKey(key, {
+          fetchImpl,
+          now,
+          adapterHint: 'longcat',
+        });
+        if (w?.length) return w;
+      }
       return null;
     }
     case 'grok': {
@@ -190,9 +207,104 @@ export async function fetchLiveProviderWindows(
       if (!creds) return null;
       return fetchAgyUsageWindows(creds, { fetchImpl, now });
     }
-    default:
-      return null;
+    case 'opencode': {
+      return fetchOpenCodeFleetWindows(deps, accountId, fetchImpl, now);
+    }
+    case 'aider': {
+      // Aider is multi-provider: try every stored key (Anthropic/OpenAI/…).
+      return fetchMultiKeyWindows(
+        'aider',
+        deps,
+        accountId,
+        fetchImpl,
+        now,
+      );
+    }
+    default: {
+      // Any future / custom CLI: generic vault+launcher key routing.
+      return fetchMultiKeyWindows(
+        adapterId,
+        deps,
+        accountId,
+        fetchImpl,
+        now,
+      );
+    }
   }
+}
+
+async function fetchMultiKeyWindows(
+  adapterId: string,
+  deps: LiveUsageAuthResolvers,
+  accountId: string | undefined,
+  fetchImpl: FetchLike | undefined,
+  now: number,
+): Promise<QuotaWindow[] | null> {
+  const keys: string[] = [];
+  if (deps.resolveGenericApiKeyCandidates) {
+    const list = await Promise.resolve(
+      deps.resolveGenericApiKeyCandidates(adapterId, accountId),
+    );
+    for (const k of list ?? []) {
+      if (k?.trim() && !keys.includes(k.trim())) keys.push(k.trim());
+    }
+  }
+  // Also try adapter-specific resolvers when present
+  if (adapterId === 'longcat') {
+    for (const k of await stringCandidates(
+      deps.resolveLongcatApiKeyCandidates,
+      deps.resolveLongcatApiKey,
+      accountId,
+    )) {
+      if (!keys.includes(k)) keys.push(k);
+    }
+  }
+  if (keys.length === 0) return null;
+  const sets: QuotaWindow[][] = [];
+  for (const key of keys) {
+    const w = await fetchWindowsForApiKey(key, {
+      fetchImpl,
+      now,
+      adapterHint: adapterId,
+    });
+    if (w?.length) sets.push(w);
+  }
+  if (sets.length === 0) return null;
+  const merged = mergeWorstWindows(sets);
+  return merged.length > 0 ? merged : null;
+}
+
+async function fetchOpenCodeFleetWindows(
+  deps: LiveUsageAuthResolvers,
+  accountId: string | undefined,
+  fetchImpl: FetchLike | undefined,
+  now: number,
+): Promise<QuotaWindow[] | null> {
+  const keys: string[] = [];
+  // 1) OpenCode auth.json (all providers the user connected)
+  for (const e of loadOpenCodeAuthKeys()) {
+    if (!keys.includes(e.key)) keys.push(e.key);
+  }
+  // 2) Vault / launcher / env for opencode + common upstreams
+  if (deps.resolveGenericApiKeyCandidates) {
+    for (const id of ['opencode', 'anthropic', 'openai', 'glm', 'kimi', 'grok']) {
+      const list = await Promise.resolve(
+        deps.resolveGenericApiKeyCandidates(id, accountId),
+      );
+      for (const k of list ?? []) {
+        if (k?.trim() && !keys.includes(k.trim())) keys.push(k.trim());
+      }
+    }
+  }
+  if (keys.length === 0) return null;
+  const sets: QuotaWindow[][] = [];
+  for (const key of keys) {
+    const w = await fetchWindowsForApiKey(key, { fetchImpl, now });
+    if (w?.length) sets.push(w);
+  }
+  if (sets.length === 0) return null;
+  const merged = mergeWorstWindows(sets);
+  return merged.length > 0 ? merged : null;
 }
 
 /**

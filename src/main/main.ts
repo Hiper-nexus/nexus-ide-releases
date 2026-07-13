@@ -385,6 +385,9 @@ function bootstrap(): void {
       resolveGeminiOauthCreds(accountId),
     resolveLongcatApiKeyCandidates: (accountId) =>
       resolveProviderApiKeyCandidates("longcat", accountId),
+    // OpenCode / Aider / any future CLI: vault + launcher + env keys.
+    resolveGenericApiKeyCandidates: (adapterId, accountId) =>
+      resolveProviderApiKeyCandidates(adapterId, accountId),
   });
   registerNotesIpc(projectRuntimeManager);
   registerBillingIpc();

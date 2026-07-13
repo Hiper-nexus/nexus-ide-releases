@@ -59,19 +59,19 @@ export function probeProviderWindows(input: ProbeInput): QuotaWindow[] {
     );
   }
 
-  // Ollama / local: surface token activity as local usage intensity, not cloud %.
-  if (input.adapterId === 'ollama' && input.localTokens) {
+  // Project-local token activity for ANY CLI (transcript/cost store).
+  // Labeled "Projeto" / local-tokens — never claimed as cloud provider %.
+  if (input.localTokens) {
     const tok =
       input.localTokens.inputTokens + input.localTokens.outputTokens;
-    // Soft heuristic: 0 tokens → null unknown; else map log-ish scale for UI bar
-    // only as local-tokens source (not provider quota). Cap display at 1.0 after
-    // ~2M tokens in session aggregate — clearly labeled local.
     if (tok > 0) {
       const ratio = Math.min(1, Math.log10(tok + 1) / 6.3); // ~2e6 → ~1
+      const label =
+        input.adapterId === 'ollama' ? 'Local' : 'Projeto';
       windows = mergeWindows(windows, [
         knownWindow({
           kind: 'local',
-          label: 'Local',
+          label,
           usedRatio: ratio,
           source: 'local-tokens',
           confidence: 'low',
@@ -81,7 +81,6 @@ export function probeProviderWindows(input: ProbeInput): QuotaWindow[] {
     }
   }
 
-  // Non-Ollama local token totals stay spend-only; do not invent cloud % bars.
   return windows;
 }
 
