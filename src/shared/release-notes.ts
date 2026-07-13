@@ -13,51 +13,46 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.15.3',
+  version: '0.15.5',
   date: '2026-07-13',
-  codename: 'Reliable Orchestration',
+  codename: 'Direct Operations',
   summary:
-    'Ralph Loop, Doctor, panes e Jarvis agora compartilham autoridade durável, evidência verificável e recuperação em tempo real.',
+    'Jarvis agora distingue operações diretas de missões: sincronização Git segura não abre squad, pane, terminal ou Doctor.',
   highlights: [
     {
-      title: 'Ralph Loop verificável',
+      title: 'Sincronização Git direta',
       detail:
-        'O Mission Driver persiste tentativas e só conclui marcos por receipts PREVC ligados a evidência Nexus atual e confiável.',
+        '“Atualizar repositório com GitHub” executa uma pré-checagem local e só avança a branch por fast-forward validado.',
     },
     {
-      title: 'Recuperação atômica de panes',
+      title: 'Intenção antes de orquestração',
       detail:
-        'Panes mortos renascem na mesma identidade; recap e Enter são confirmados na nova sessão antes de o orquestrador ser religado.',
+        'Pedidos de sincronização chegam à operação Git auditada em vez de receber contrato, Doctor, prompt gigante ou squad.',
     },
     {
-      title: 'Jarvis realmente realtime',
+      title: 'Recibos falados reais',
       detail:
-        'Wake descarta sockets Live zumbis, preserva áudio pendente e transforma fala natural em briefing executável para o squad correto.',
+        'A Jarvis informa atualizado, já atualizado ou bloqueado com o motivo sem afirmar progresso por suposição.',
     },
   ],
   fixes: [
     {
-      title: 'Autopilot com evidência',
+      title: 'Sem push implícito',
       detail:
-        'Sensores e revisão final publicam um handoff idempotente, e cada marco recebe apenas sua própria evidência antes de avançar.',
+        'A operação nunca faz stage, commit, rebase, push ou merge de histórico divergente.',
     },
     {
-      title: 'Supervisão sem falsos travamentos',
+      title: 'Bloqueio preserva alterações',
       detail:
-        'O Doctor respeita panes vivos e atividade real, com timeouts finitos e sem fechar ou duplicar trabalho que continua operando.',
+        'Arquivos rastreados alterados, ausência de upstream, divergência ou colisão local retornam bloqueio sem mudar o checkout.',
     },
     {
-      title: 'Wake PT-BR instalado',
+      title: 'Autoridade estreita',
       detail:
-        'O pacote treinado é verificado e instalado por padrão como custom.onnx; modelos treinados localmente pelo usuário permanecem intactos.',
+        'Somente a rota renderer do usuário pode disparar essa operação; agentes MCP não recebem esse atalho antes de uma missão.',
     },
     {
-      title: 'Squads e pets operacionais',
-      detail:
-        'Seleção de squads usa nomes reais e fuzzy matching; galeria de pets mantém preview, compactação e Pet Studio com dependências disponíveis.',
-    },
-    {
-      title: 'Versões alinhadas',
+      title: 'Release consistente',
       detail:
         'Aplicativo, servidor, lockfile, changelog e notas internas avançam juntos para impedir releases mistos.',
     },

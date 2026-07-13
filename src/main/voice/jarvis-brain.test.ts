@@ -109,6 +109,14 @@ describe('parseReply — DEFECT 3: a brace must never reach TTS', () => {
     ).toEqual({ type: 'read_current_view' });
   });
 
+  it('parses direct repository sync without falling back to a mission', () => {
+    expect(
+      parseReply(
+        '{"say":"","action":{"type":"sync_repository"}}',
+      ).action,
+    ).toEqual({ type: 'sync_repository' });
+  });
+
   it('recoverSpokenText silences a bare truncated brace', () => {
     expect(recoverSpokenText('{')).toBe('');
     expect(recoverSpokenText('{ "type": "message",')).toBe('');

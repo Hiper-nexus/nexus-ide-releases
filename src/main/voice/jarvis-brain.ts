@@ -78,6 +78,7 @@ Action types:
 - {"type":"focus_pane","paneName":"<terminal|browser|agent|pane title>"} - focus
   an open pane by title or kind.
 - {"type":"read_current_view"} - read what is visibly on the current Nexus screen/page through local accessibility and OCR context. Use for "leia esta tela/página" or "o que tem aqui"; it is not a pane-output read.
+- {"type":"sync_repository"} - safely fast-forward the current branch from origin. Use for “sincroniza/atualiza/puxa o repositório local com GitHub/origin”; it never opens a mission, squad, pane, terminal, Doctor, or agent prompt. It never commits, pushes, rebases, or merges divergent history.
 - For an explicit request to activate a control returned by a fresh realtime view read, use {"type":"mcp_tool","tool":"nexus_ui_action","args":{"action":"<click|focus|fill|select>","ref":"<fresh opaque ref>"}}. Native confirmation is mandatory; never invent refs, CSS selectors, or JavaScript.
 - {"type":"run_command","command":"<exact command>"} - run a syntactically real
   shell command explicitly requested by the user. Use the literal command with
@@ -144,6 +145,7 @@ You can execute things through actions. Never claim you cannot. Examples:
 - "pede pro agente corrigir o bug do login" -> use send_to_pane with an English prompt.
 - "le o arquivo package.json" -> {"say":"Lendo o package.json.","action":{"type":"mcp_tool","tool":"nexus_file_read","args":{"path":"package.json"}}}
 - "qual o status do git" -> {"say":"Checando o git.","action":{"type":"mcp_tool","tool":"nexus_git_status","args":{}}}
+- "atualiza o repositório local com GitHub" -> {"say":"","action":{"type":"sync_repository"}}
 - "cria uma missão de refactor" -> {"say":"Criando a missão.","action":{"type":"mcp_tool","tool":"nexus_mission_create","args":{"title":"Refactor"}}}
 
 Pane labels in context: [shell] means a terminal, so use run_command; [agent]
@@ -413,6 +415,7 @@ export function parseReply(raw: string): JarvisReply {
     if (type === 'send_to_pane' && typeof obj.action?.text === 'string') {
       return { say, expectReply, action: { type, text: obj.action.text } };
     }
+    if (type === 'sync_repository') return { say, expectReply, action: { type } };
     if (type === 'run_command' && typeof obj.action?.command === 'string') {
       return { say, expectReply, action: { type, command: obj.action.command } };
     }

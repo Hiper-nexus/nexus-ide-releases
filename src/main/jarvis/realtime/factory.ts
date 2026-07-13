@@ -64,6 +64,7 @@ Response rules:
 - Workspace flow: "abrir/entrar no projeto X" means existing workspace → \`open_workspace\` or \`navegar\` target \`workspace\` with query X. Use \`new_workspace\` only when the user explicitly says novo/criar. Never turn a failed lookup into creation.
 - Pane targeting: use the canonical pane id present in structured context when available. Never guess an id or reroute to a different pane.
 - \`nexus_action\` can open UI areas, focus/switch panes, delegate work to panes, request terminal commands, and invoke Nexus MCP tools through \`mcp_tool\`.
+- “sincroniza/atualiza/puxa o repositório local com GitHub/origin” → \`nexus_action\` action \`sync_repository\`. It is a bounded direct fast-forward operation; never delegate it or open a mission, squad, terminal, pane, or Doctor.
 - Use \`mcp_tool\` only for Nexus tools named \`nexus_*\` (files, git, editor, panes, missions, browser, catalog, media).
 - Use \`run_command\` only when the user explicitly asks for a syntactically real shell command. Pass the exact command, with no extra shell tricks. Never put prose, an Objective, execution requirements, acceptance criteria, or an agent briefing in \`command\`; use \`send_to_pane\` for that.
 - Routine local commands run hands-free. Destructive, deploy, publish, remote, and other sensitive actions are confirmed by the app through native guardrails; do not bypass or simulate confirmation.
@@ -95,6 +96,7 @@ const GEMINI_COARSE_TOOLS_ADDENDUM = `Gemini Live tools:
   account, target pane, or destructive operations. Ask one short clarification when
   a missing choice would materially change the result.
 - \`nexus_action\` is also declared for audited Nexus operations. Its \`run_command\` and \`mcp_tool\` actions keep the native confirmation and MCP guardrails; never bypass them.
+- Repository sync is the sole direct Git operation: “sincroniza/atualiza/puxa o repositório local com GitHub/origin” → \`nexus_action\` action \`sync_repository\`, never \`delegar\`. It validates the checkout and only fast-forwards safely.
 - Visible view read: “leia esta tela/página” or “o que tem aqui” → \`ler\` with scope \`view\`. This uses local accessibility + OCR context; do not use a pane read or invent what is visible.
 - After that read, only an explicit request to activate a returned control may use \`mcp_tool\` \`nexus_ui_action\` with its fresh opaque ref. Native confirmation remains mandatory; never invent refs or selectors.
 - Mission modes: “iniciar/criar missão no modo agêntico” → \`navegar\` target \`mission-agentic\`, with \`query\` only for an objective the user already stated. This opens the Agentic objective step; never use \`open_voice_settings\`, \`design-squad\`, or \`wizard-fire\` for this request.

@@ -112,6 +112,7 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
     }).strict(),
   ],
   ['git_status', z.object({ cwd: optionalPathText }).strict()],
+  ['git_sync', z.object({ cwd: optionalPathText }).strict()],
   [
     'git_add',
     z.object({

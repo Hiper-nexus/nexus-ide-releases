@@ -140,6 +140,192 @@ const gitStatus: McpToolDef = {
   },
 };
 
+type GitSyncStatus = 'updated' | 'up_to_date' | 'blocked';
+
+interface GitSyncResult {
+  cwd: string;
+  status: GitSyncStatus;
+  branch: string;
+  upstream?: string;
+  ahead?: number;
+  behind?: number;
+  untrackedFiles: number;
+  reason?: string;
+}
+
+function countStatusLines(output: string, predicate: (line: string) => boolean): number {
+  return output.split('\n').filter((line) => line && predicate(line)).length;
+}
+
+async function getUntrackedFileCount(cwd: string): Promise<number> {
+  const { stdout } = await gitExec(
+    ['status', '--porcelain=v1', '--untracked-files=normal'],
+    cwd,
+  );
+  return countStatusLines(stdout, (line) => line.startsWith('?? '));
+}
+
+function blockedGitSync(
+  cwd: string,
+  branch: string,
+  untrackedFiles: number,
+  reason: string,
+  extra: Pick<GitSyncResult, 'upstream' | 'ahead' | 'behind'> = {},
+): GitSyncResult {
+  return { cwd, status: 'blocked', branch, untrackedFiles, reason, ...extra };
+}
+
+/**
+ * Narrow, idempotent repository update for the user-facing “sync” operation.
+ * It never stages, commits, pushes, rebases, merges divergent history, or
+ * overwrites tracked local work. The only mutation allowed is a verified
+ * fast-forward to the current origin upstream.
+ */
+async function syncRepository(cwd: string): Promise<GitSyncResult> {
+  const { stdout: branchOutput } = await gitExec(
+    ['rev-parse', '--abbrev-ref', 'HEAD'],
+    cwd,
+  );
+  const branch = branchOutput.trim();
+  if (!branch || branch === 'HEAD') {
+    return blockedGitSync(
+      cwd,
+      'HEAD',
+      await getUntrackedFileCount(cwd),
+      'o checkout está em HEAD destacado; escolha uma branch antes de sincronizar',
+    );
+  }
+
+  const { stdout: trackedStatus } = await gitExec(
+    ['status', '--porcelain=v1', '--untracked-files=no'],
+    cwd,
+  );
+  const untrackedFiles = await getUntrackedFileCount(cwd);
+  if (trackedStatus) {
+    return blockedGitSync(
+      cwd,
+      branch,
+      untrackedFiles,
+      'existem alterações em arquivos já versionados; preservei tudo e não sincronizei',
+    );
+  }
+
+  let upstream: string;
+  try {
+    ({ stdout: upstream } = await gitExec(
+      ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'],
+      cwd,
+    ));
+  } catch {
+    return blockedGitSync(
+      cwd,
+      branch,
+      untrackedFiles,
+      'a branch atual não rastreia um remoto; configure o upstream antes de sincronizar',
+    );
+  }
+  upstream = upstream.trim();
+  if (!upstream.startsWith('origin/')) {
+    return blockedGitSync(
+      cwd,
+      branch,
+      untrackedFiles,
+      `a branch atual rastreia ${upstream || 'um remoto desconhecido'}, não origin`,
+      { upstream },
+    );
+  }
+
+  await assertSafeConfiguredRemote(cwd, 'origin');
+  await gitExec(['fetch', '--prune', 'origin'], cwd);
+
+  const { stdout: divergence } = await gitExec(
+    ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'],
+    cwd,
+  );
+  const [aheadRaw, behindRaw] = divergence.trim().split(/\s+/);
+  const ahead = Number.parseInt(aheadRaw ?? '', 10);
+  const behind = Number.parseInt(behindRaw ?? '', 10);
+  if (!Number.isInteger(ahead) || !Number.isInteger(behind)) {
+    throw new Error('could not determine repository divergence');
+  }
+  if (ahead > 0) {
+    const reason = behind > 0
+      ? 'o histórico local divergiu do origin; não fiz merge nem push automaticamente'
+      : 'a branch local tem commits que ainda não estão no origin; não fiz push automaticamente';
+    return blockedGitSync(cwd, branch, untrackedFiles, reason, {
+      upstream,
+      ahead,
+      behind,
+    });
+  }
+  if (behind === 0) {
+    return {
+      cwd,
+      status: 'up_to_date',
+      branch,
+      upstream,
+      ahead,
+      behind,
+      untrackedFiles,
+    };
+  }
+
+  const { stdout: finalTrackedStatus } = await gitExec(
+    ['status', '--porcelain=v1', '--untracked-files=no'],
+    cwd,
+  );
+  if (finalTrackedStatus) {
+    return blockedGitSync(
+      cwd,
+      branch,
+      untrackedFiles,
+      'surgiram alterações em arquivos versionados durante a checagem; não sincronizei',
+      { upstream, ahead, behind },
+    );
+  }
+
+  try {
+    await gitExec(['merge', '--ff-only', '@{upstream}'], cwd);
+  } catch {
+    return blockedGitSync(
+      cwd,
+      branch,
+      untrackedFiles,
+      'a atualização poderia sobrescrever um arquivo local ou exige intervenção; não alterei o checkout',
+      { upstream, ahead, behind },
+    );
+  }
+
+  return {
+    cwd,
+    status: 'updated',
+    branch,
+    upstream,
+    ahead,
+    behind,
+    untrackedFiles,
+  };
+}
+
+const gitSync: McpToolDef = {
+  name: 'nexus_git_sync',
+  description:
+    'Safely update the current branch from its origin upstream. It only performs a verified fast-forward and never opens a mission, stages, commits, pushes, rebases, or merges divergent history.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      cwd: {
+        type: 'string',
+        description: 'Working directory (defaults to workspace root)',
+      },
+    },
+  },
+  handler: async (args, ctx) => {
+    const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
+    return syncRepository(cwd);
+  },
+};
+
 const gitAdd: McpToolDef = {
   name: 'nexus_git_add',
   description:
@@ -416,6 +602,7 @@ const gitBranchSwitch: McpToolDef = {
 export function buildGitTools(): McpToolDef[] {
   return [
     gitStatus,
+    gitSync,
     gitAdd,
     gitCommit,
     gitPush,

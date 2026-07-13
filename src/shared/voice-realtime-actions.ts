@@ -28,6 +28,7 @@ export const SAFE_REALTIME_ACTIONS = [
   'read_pane',
   'read_current_view',
   'send_to_pane',
+  'sync_repository',
   'run_command',
   'mcp_tool',
   'restore_mission_panes',
@@ -112,6 +113,8 @@ export function summarizeNexusRealtimeAction(args: NexusRealtimeActionArgs): str
       return 'ler visão atual';
     case 'send_to_pane':
       return 'enviar missão ao pane';
+    case 'sync_repository':
+      return 'sincronizar repositório local com origin';
     case 'run_command':
       return args.command ? `rodar comando ${args.command}` : 'rodar comando';
     case 'mcp_tool':
@@ -168,6 +171,9 @@ export function realtimeArgsToJarvisAction(
     if (!text) return null;
     const paneId = cleanText(args.paneId, 128);
     return paneId ? { type: 'send_to_pane', text, paneId } : { type: 'send_to_pane', text };
+  }
+  if (args.action === 'sync_repository') {
+    return { type: 'sync_repository' };
   }
   if (args.action === 'run_command') {
     const command = cleanText(args.command, 2_000);

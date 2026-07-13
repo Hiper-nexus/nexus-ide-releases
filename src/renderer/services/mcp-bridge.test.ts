@@ -97,6 +97,13 @@ describe('mcp-bridge action mapping', () => {
     });
   });
 
+  it('routes repository sync through its narrow Git operation', () => {
+    expect(mapActionToTool({ type: 'sync_repository' })).toEqual({
+      tool: 'nexus_git_sync',
+      args: {},
+    });
+  });
+
   it('confirms denied MCP calls and retries after native approval', async () => {
     mcp.invoke
       .mockResolvedValueOnce({

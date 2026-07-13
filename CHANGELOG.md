@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.15.5 — Direct Operations
+
+Data: 2026-07-13
+
+### Jarvis e Git
+- “Atualizar/sincronizar/puxar o repositório local com GitHub/origin” agora é
+  uma operação direta, sem Doctor, contrato de missão, squad, pane ou terminal.
+- A operação valida branch/upstream e arquivos rastreados, faz `fetch --prune`
+  e somente aplica `merge --ff-only` quando o checkout pode avançar sem risco.
+- Histórico divergente, commits locais, alterações rastreadas, upstream ausente
+  ou possível colisão local bloqueiam com recibo claro, sem stage, commit,
+  rebase, push ou sobrescrita.
+
+### Integridade
+- A rota direta só está disponível à ação iniciada pelo usuário no renderer;
+  agentes MCP continuam sujeitos à autoridade de missão.
+- Metadados de release e o teste de roteamento da Jarvis foram alinhados com o
+  comportamento atual para impedir uma distribuição com testes divergentes.
+
 ## 0.15.4 — Jarvis Wake Safety
 
 Data: 2026-07-13

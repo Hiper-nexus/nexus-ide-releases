@@ -8,6 +8,7 @@ export type McpEffectPolicy =
   | 'handoff-authority'
   | 'mission-control'
   | 'renderer-authorized-effect'
+  | 'routine-local-operation'
   | 'mission-effect'
   | 'execution-effect';
 
@@ -112,6 +113,13 @@ const MISSION_CONTROL_TOOLS = new Set([
  */
 const RENDERER_AUTHORIZED_EFFECT_TOOLS = new Set(['ui_action']);
 
+/**
+ * Local operations that may be initiated directly by the user-facing renderer
+ * before a mission exists. Their handlers must enforce a narrow, reversible
+ * operation themselves; this is deliberately not a general shell escape.
+ */
+const ROUTINE_LOCAL_OPERATION_TOOLS = new Set(['git_sync']);
+
 /** Effects whose handlers may run only in PREVC's execution stage. */
 const EXECUTION_EFFECT_TOOLS = new Set([
   'audio_generate',
@@ -146,6 +154,9 @@ export function effectPolicyForTool(toolName: string): McpEffectPolicy {
   if (MISSION_CONTROL_TOOLS.has(canonical)) return 'mission-control';
   if (RENDERER_AUTHORIZED_EFFECT_TOOLS.has(canonical)) {
     return 'renderer-authorized-effect';
+  }
+  if (ROUTINE_LOCAL_OPERATION_TOOLS.has(canonical)) {
+    return 'routine-local-operation';
   }
   if (EXECUTION_EFFECT_TOOLS.has(canonical)) return 'execution-effect';
   return 'mission-effect';

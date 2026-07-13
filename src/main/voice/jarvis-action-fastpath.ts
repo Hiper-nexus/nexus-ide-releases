@@ -270,6 +270,22 @@ export function jarvisActionFastPath(
     };
   }
 
+  const requestsRepositorySync =
+    (/\b(?:sincroniza|sincronize|atualiza|atualize|puxa|puxe|pull)\b.*\b(?:repositorio|repo|github|git)\b/.test(
+      t,
+    ) ||
+      /\b(?:repositorio|repo)\b.*\b(?:com|para|no)\b.*\b(?:github|origin)\b/.test(
+        t,
+      )) &&
+    !/\b(?:push|publique|publica|deploy|release)\b/.test(t);
+  if (requestsRepositorySync) {
+    return {
+      say: '',
+      expectReply: false,
+      action: { type: 'sync_repository' },
+    };
+  }
+
   const requestsMission =
     /\b(nova|novo|cria|crie|criar|abre|abra|abrir|inicia|inicie|iniciar|comeca|comece|comecar)\b/.test(
       t,

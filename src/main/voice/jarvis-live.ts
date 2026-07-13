@@ -86,6 +86,8 @@ function actionSummary(action: JarvisAction): string {
       return 'ler visão atual';
     case 'send_to_pane':
       return 'enviar tarefa ao pane';
+    case 'sync_repository':
+      return 'sincronizar repositório local';
     case 'run_command':
       return `rodar comando: ${action.command}`;
     case 'mcp_tool':

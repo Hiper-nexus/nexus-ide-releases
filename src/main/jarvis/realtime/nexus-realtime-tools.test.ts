@@ -23,6 +23,7 @@ describe('nexus realtime tools', () => {
         'read_current_view',
         'mcp_tool',
         'new_agentic_mission',
+        'sync_repository',
       ]),
     );
     expect(params.properties.text.description).toContain('Objective');
