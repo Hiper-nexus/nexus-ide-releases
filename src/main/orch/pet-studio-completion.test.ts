@@ -88,6 +88,7 @@ beforeEach(() => {
     status: 'running',
     squadId: PET_STUDIO_SQUAD_ID,
     milestones: [],
+    learnings: '',
     orchestratorSessionId: 'pet-session',
     createdAt: Date.now() - 100,
     updatedAt: Date.now() - 100,

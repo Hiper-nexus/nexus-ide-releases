@@ -101,6 +101,7 @@ describe('reopenMission soft / multi', () => {
       description: '',
       status: 'running',
       milestones: [],
+      learnings: '',
       createdAt: 1,
       updatedAt: 2,
     });
@@ -128,6 +129,7 @@ describe('reopenMission soft / multi', () => {
       description: '',
       status: 'running',
       milestones: [],
+      learnings: '',
       createdAt: 1,
       updatedAt: 2,
     });
@@ -160,6 +162,7 @@ describe('reopenMission soft / multi', () => {
         description: '',
         status: 'running',
         milestones: [],
+        learnings: '',
         createdAt: 1,
         updatedAt: 2,
       },
@@ -200,6 +203,7 @@ describe('reopenMission soft / multi', () => {
       description: '',
       status: 'running',
       milestones: [],
+      learnings: '',
       createdAt: 1,
       updatedAt: 2,
     });

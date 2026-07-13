@@ -13,6 +13,7 @@ const mission: Mission = {
   status: 'pending',
   squadId: 'squad-a',
   milestones: [],
+  learnings: '',
   createdAt: 1_000,
   updatedAt: 1_000,
 };

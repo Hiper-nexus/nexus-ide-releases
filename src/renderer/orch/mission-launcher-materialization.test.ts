@@ -35,6 +35,7 @@ describe('materializeSquadMission', () => {
       description: '',
       status: 'pending' as const,
       milestones: [],
+      learnings: '',
       createdAt: 1,
       updatedAt: 1,
     };
