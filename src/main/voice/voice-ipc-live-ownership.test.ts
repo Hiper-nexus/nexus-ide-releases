@@ -639,6 +639,27 @@ describe("Voice Live IPC ownership", () => {
     expect(transcriptDeps.append).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['manual', true],
+    ['wake', true],
+    ['click', true],
+    ['ptt', true],
+    ['reply', false],
+  ] as const)(
+    'derives fresh realtime socket ownership for %s turns',
+    async (reason, freshTurn) => {
+      const owner = new TestRenderer(92);
+      scopeDeps.scopes.set(owner.id, scopeA);
+
+      await invoke(VOICE_CHANNELS.liveStart, owner, { reason });
+
+      expect(liveTransportDeps.onStart).toHaveBeenLastCalledWith({
+        greeting: undefined,
+        freshTurn,
+      });
+    },
+  );
+
   it("claims live ownership from smokeTest without a prior liveStart", async () => {
     const owner = new TestRenderer(99);
     const otherProject = new TestRenderer(199);

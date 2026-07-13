@@ -1049,7 +1049,10 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
       // Se a config pede transporte realtime, conecta o socket antes do mic;
       // senão isto é no-op e o Classic segue (fallback keyless).
       if (liveSession.getState().sessionId) {
-        await liveTransport.onStart({ greeting: req.greeting, freshTurn: true });
+        await liveTransport.onStart({
+          greeting: req.greeting,
+          freshTurn: req.reason !== "reply",
+        });
         requireLiveOwnership(event.sender);
         state = liveSession.getState();
       } else {
