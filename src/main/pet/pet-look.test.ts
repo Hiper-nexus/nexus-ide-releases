@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { sheetLookFrame } from '../../shared/pet-types';
 import {
+  angleDeltaDeg,
   computeLookDir,
+  LOOK_FAR_RADIUS_PX,
   LOOK_NEAR_RADIUS_PX,
   lookAngleDeg,
   petAnchor,
   quantizeLookDir,
+  stickyQuantizeLookDir,
 } from './pet-look';
 
 const BOUNDS = { x: 1000, y: 500, width: 240, height: 200 };
@@ -39,6 +42,27 @@ describe('quantizeLookDir', () => {
     expect(quantizeLookDir(11)).toBe(0);
     expect(quantizeLookDir(12)).toBe(1);
   });
+
+  it('nunca devolve resto negativo (JS % keeps dividend sign)', () => {
+    expect(quantizeLookDir(-1)).toBeGreaterThanOrEqual(0);
+    expect(quantizeLookDir(-22.5)).toBeGreaterThanOrEqual(0);
+    expect(quantizeLookDir(-22.5)).toBeLessThan(16);
+  });
+});
+
+describe('stickyQuantizeLookDir', () => {
+  it('mantém lastDir na fronteira de setores (anti-flicker 0↔1)', () => {
+    // Centro do dir 0 = 0°; half sticky ≈ 11.25+8 = 19.25°
+    // 12° quantiza para 1 sem sticky, mas com lastDir=0 deve manter 0
+    expect(stickyQuantizeLookDir(12, 0)).toBe(0);
+    // Longe o suficiente da fatia 0 → pode mudar
+    expect(stickyQuantizeLookDir(30, 0)).toBe(1);
+  });
+
+  it('angleDeltaDeg wrap', () => {
+    expect(angleDeltaDeg(350, 10)).toBeCloseTo(20);
+    expect(angleDeltaDeg(10, 350)).toBeCloseTo(-20);
+  });
 });
 
 describe('sheetLookFrame', () => {
@@ -68,6 +92,35 @@ describe('computeLookDir', () => {
         { x: ANCHOR.x + LOOK_NEAR_RADIUS_PX - 5, y: ANCHOR.y },
         BOUNDS,
         OPTS,
+      ),
+    ).toBeNull();
+  });
+
+  it('histerese: idle não entra no look até FAR, look só sai abaixo de NEAR', () => {
+    // Entre NEAR e FAR: se já idle, continua idle
+    const mid = LOOK_NEAR_RADIUS_PX + 10;
+    expect(mid).toBeLessThan(LOOK_FAR_RADIUS_PX);
+    expect(
+      computeLookDir(
+        { x: ANCHOR.x + mid, y: ANCHOR.y },
+        BOUNDS,
+        { ...OPTS, lastDir: null },
+      ),
+    ).toBeNull();
+    // Se já olhava, mantém look (sticky distância)
+    expect(
+      computeLookDir(
+        { x: ANCHOR.x + mid, y: ANCHOR.y },
+        BOUNDS,
+        { ...OPTS, lastDir: 4 },
+      ),
+    ).toBe(4);
+    // Abaixo de NEAR com lastDir → idle
+    expect(
+      computeLookDir(
+        { x: ANCHOR.x + LOOK_NEAR_RADIUS_PX - 5, y: ANCHOR.y },
+        BOUNDS,
+        { ...OPTS, lastDir: 4 },
       ),
     ).toBeNull();
   });

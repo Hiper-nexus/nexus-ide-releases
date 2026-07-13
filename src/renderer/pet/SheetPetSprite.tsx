@@ -200,6 +200,9 @@ export function SheetPetSprite({
     return { row, frames, col: null as number | null };
   }, [anim, grid.rows, grid.cols, image, frameW, frameH]);
 
+  // Boolean only: lookDir N→N+1 must NOT restart the idle frame timer.
+  const isLooking = looking !== null;
+
   useEffect(() => {
     const family = animFamily(anim);
     // Só reinicia o loop ao mudar de família (idle→run, run→wave…),
@@ -208,14 +211,14 @@ export function SheetPetSprite({
       familyRef.current = family;
       setFrame(0);
     }
-    if (looking || spec.frames <= 1 || prefersReducedMotion()) return undefined;
+    if (isLooking || spec.frames <= 1 || prefersReducedMotion()) return undefined;
     const cadence = family === 'run' ? RUN_FRAME_MS : FRAME_MS;
     const timer = window.setInterval(
       () => setFrame((f) => (f + 1) % spec.frames),
       cadence,
     );
     return () => window.clearInterval(timer);
-  }, [spec.frames, anim, looking !== null]);
+  }, [spec.frames, anim, isLooking]);
 
   // Clamp se a linha passou a ter menos frames (sheet/anim).
   useEffect(() => {

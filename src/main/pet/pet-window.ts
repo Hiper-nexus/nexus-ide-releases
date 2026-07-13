@@ -283,6 +283,9 @@ function startLookLoop(): void {
       computeLookDir(cursor, petWindow.getBounds(), {
         cursorIdleMs: now - lookLastMoveAt,
         maxIdleMs: LOOK_CURSOR_IDLE_MAX_MS,
+        // Sticky lastDir: evita piscar idle↔look / dir N↔N+1 nos cantos
+        // e ao cruzar monitores (bounds + cursor “tremem” no limiar).
+        lastDir: lookLastSent,
       }),
     );
   }, LOOK_TICK_MS);
@@ -310,6 +313,51 @@ function ensurePetWindowSize(win: BrowserWindow): void {
   ) {
     win.setSize(PET_WINDOW_SIZE.width, PET_WINDOW_SIZE.height);
   }
+}
+
+/**
+ * Clamp drag position to the **nearest real display**, not the rectangular
+ * union of all monitors. The union includes empty space in L-shaped / offset
+ * layouts — transparent alwaysOnTop windows flicker badly in those gaps.
+ */
+function clampDragToNearestDisplay(pos: {
+  x: number;
+  y: number;
+}): { x: number; y: number } {
+  const display = screen.getDisplayMatching({
+    x: pos.x,
+    y: pos.y,
+    width: PET_WINDOW_SIZE.width,
+    height: PET_WINDOW_SIZE.height,
+  });
+  // bounds (not workArea): menu-bar overhang is fine mid-drag; settle uses workArea.
+  return clampPetDrag(pos, PET_WINDOW_SIZE, display.bounds);
+}
+
+/** Pull the pet back onto a real workArea after display plug/unplug / resolution. */
+function reclampPetToVisibleDisplay(): void {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  const [x, y] = petWindow.getPosition();
+  const display = screen.getDisplayMatching({
+    x,
+    y,
+    width: PET_WINDOW_SIZE.width,
+    height: PET_WINDOW_SIZE.height,
+  });
+  const settled = clampPetDrag(
+    { x, y },
+    PET_WINDOW_SIZE,
+    display.workArea,
+  );
+  const [cx, cy] = petWindow.getPosition();
+  if (cx === settled.x && cy === settled.y) return;
+  petWindow.setBounds({
+    x: settled.x,
+    y: settled.y,
+    width: PET_WINDOW_SIZE.width,
+    height: PET_WINDOW_SIZE.height,
+  });
+  persistPosition(settled);
 }
 
 function createPetWindow(): void {
@@ -636,11 +684,11 @@ function registerPetIpc(): void {
         x: Math.round(dragOrigin.winX + (c.x - dragOrigin.cursorX)),
         y: Math.round(dragOrigin.winY + (c.y - dragOrigin.cursorY)),
       };
-      lastDragPos = next;
-      // Durante o arrasto não clampa — o settle faz o clamp solto no release.
+      const clamped = clampDragToNearestDisplay(next);
+      lastDragPos = clamped;
       petWindow.setBounds({
-        x: next.x,
-        y: next.y,
+        x: clamped.x,
+        y: clamped.y,
         width: PET_WINDOW_SIZE.width,
         height: PET_WINDOW_SIZE.height,
       });
@@ -735,6 +783,15 @@ export function initDesktopPet(): void {
     watchAppWindow(win);
     syncWindowToPrefs();
   });
+
+  // Multi-monitor: plug/unplug/resolution — puxa o pet de volta para workArea
+  // real (evita janela transparente a piscar no vácuo entre ecrãs).
+  const onDisplayTopology = (): void => {
+    reclampPetToVisibleDisplay();
+  };
+  screen.on('display-added', onDisplayTopology);
+  screen.on('display-removed', onDisplayTopology);
+  screen.on('display-metrics-changed', onDisplayTopology);
 
   syncWindowToPrefs();
 }
