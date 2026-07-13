@@ -11,6 +11,7 @@ import {
   enqueueBalloon,
   type BalloonQueueState,
 } from './pet-balloon-queue';
+import { PET_INTERACTIVE_SELECTOR } from './pet-hit-test';
 
 /**
  * Janela do pet: sprite arrastável + balões de evento + menu de contexto.
@@ -25,14 +26,12 @@ import {
 
 /** Sprite grandão (paridade Codex): legível a distância no desktop. */
 const SPRITE_SIZE = 200;
-/**
- * Altura-alvo do sheet (~1,25× da célula 208). 2× (416) era grande demais
- * no desktop; 1× (208) fica pequeno — meio-termo legível e estável.
- */
 /** Altura do sheet no desktop — legível; full-res usa smooth scale. */
 const SHEET_SIZE = 280;
 /** Limiar baixo: o utilizador reportava ter de “forçar” o rato para arrastar. */
 const DRAG_THRESHOLD_PX = 2;
+/** Re-sync IPC no máximo a cada N ms enquanto o cursor está sobre o hit. */
+const INTERACTIVE_RESYNC_MS = 400;
 /** Histerese de direção da corrida — micro-dx no arrasto não vira o pet. */
 const RUN_DIR_HYSTERESIS_PX = 14;
 /** Tempo mínimo numa direção antes de poder inverter (evita piscar L↔R). */
@@ -85,6 +84,7 @@ export function PetApp() {
   // “de vidro”: visível, mouseenter não re-arma, não arrasta.
   const interactiveRef = useRef(false);
   const leaveTimerRef = useRef<number | null>(null);
+  const lastInteractiveSyncAt = useRef(0);
   const hitRef = useRef<HTMLDivElement | null>(null);
   const markInteractive = useCallback((interactive: boolean) => {
     if (interactive) {
@@ -92,9 +92,15 @@ export function PetApp() {
         window.clearTimeout(leaveTimerRef.current);
         leaveTimerRef.current = null;
       }
+      const now = performance.now();
+      const was = interactiveRef.current;
       interactiveRef.current = true;
-      // Sempre re-sincroniza com o main (idempotente lá).
-      window.nexusPet.setInteractive(true);
+      // 1º enter: IPC imediato. Enquanto fica em cima: re-sync throttled
+      // (corrige main a perder ignore sem flood a cada mousemove).
+      if (!was || now - lastInteractiveSyncAt.current >= INTERACTIVE_RESYNC_MS) {
+        lastInteractiveSyncAt.current = now;
+        window.nexusPet.setInteractive(true);
+      }
       return;
     }
     // Debounce leave: bob/edge micro-leave não desliga o hit-test.
@@ -105,6 +111,7 @@ export function PetApp() {
       // Arrasto a meio: nunca largar o hit-test (mouseup vaza para o IDE).
       if (drag.current?.dragging) return;
       interactiveRef.current = false;
+      lastInteractiveSyncAt.current = 0;
       window.nexusPet.setInteractive(false);
     }, 140);
   }, []);
@@ -154,19 +161,13 @@ export function PetApp() {
       }
     });
     // Com ignore+forward o Electron manda mousemove mesmo em click-through.
-    // Se o main perdeu o forward (pet de vidro), isto ainda falha — mas quando
-    // o forward existe, recupera o hit sem depender de mouseenter.
+    // Cobre sprite + balão + menu (não só pet__hit).
     const onWinMove = (e: MouseEvent) => {
       if (drag.current?.dragging) return;
-      const hit = hitRef.current;
-      if (!hit) return;
-      const r = hit.getBoundingClientRect();
-      const over =
-        e.clientX >= r.left &&
-        e.clientX <= r.right &&
-        e.clientY >= r.top &&
-        e.clientY <= r.bottom;
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      const over = Boolean(under?.closest?.(PET_INTERACTIVE_SELECTOR));
       if (over) markInteractive(true);
+      else markInteractive(false);
     };
     window.addEventListener('mousemove', onWinMove);
     return () => {

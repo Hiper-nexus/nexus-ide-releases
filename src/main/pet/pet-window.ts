@@ -681,6 +681,9 @@ function petNearDisplayEdge(
  * Garante companion visível e no topo. No boot macOS a janela transparente +
  * alwaysOnTop por vezes nasce "fantasma" (enabled=true mas nada se vê até
  * toggle off/on). Esta assert re-mostra sem destruir a janela.
+ *
+ * raisePetAboveAll(force) já re-aplica ignore+forward — não duplicar aqui
+ * (spam de setIgnoreMouseEvents pisca o compositor).
  */
 function assertPetVisible(force = false): void {
   if (!petWindow || petWindow.isDestroyed()) return;
@@ -699,11 +702,12 @@ function assertPetVisible(force = false): void {
   }
   petPinnedTop = false;
   raisePetAboveAll(true);
-  // SEMPRE re-aplicar forward após show (cache pode estar certo e o OS não).
-  applyIgnoreMouseEvents(petIgnoresMouse, true);
 }
 
 const bootReassertTimers: NodeJS.Timeout[] = [];
+/** Tentativas de reload após did-fail-load (por janela). */
+const petLoadFailRetries = new WeakMap<Electron.BrowserWindow, number>();
+const PET_LOAD_FAIL_MAX = 3;
 
 function clearBootReassert(): void {
   while (bootReassertTimers.length > 0) {
@@ -715,7 +719,7 @@ function clearBootReassert(): void {
 /** Re-asserts staggered: compositor macOS por vezes engole o 1º show. */
 function scheduleBootReassert(): void {
   clearBootReassert();
-  for (const ms of [200, 700, 1_800]) {
+  for (const ms of [250, 900, 2_000]) {
     bootReassertTimers.push(
       setTimeout(() => {
         if (!getPrefs().enabled) return;
@@ -845,12 +849,18 @@ function createPetWindow(): void {
     console.warn(`[pet] did-fail-load code=${code} ${desc}`);
     petReady = false;
     if (!getPrefs().enabled) return;
+    const n = (petLoadFailRetries.get(win) ?? 0) + 1;
+    petLoadFailRetries.set(win, n);
+    if (n > PET_LOAD_FAIL_MAX) {
+      console.warn(`[pet] load desistiu após ${PET_LOAD_FAIL_MAX} tentativas`);
+      return;
+    }
     setTimeout(() => {
       if (petWindow !== win || win.isDestroyed()) return;
       void win.loadURL(petUrl()).catch((err) => {
         console.warn('[pet] retry load falhou:', err);
       });
-    }, 600);
+    }, 600 * n);
   });
 
   win.on('closed', () => {
@@ -858,6 +868,7 @@ function createPetWindow(): void {
     stopLookLoop();
     stopRaiseWatch();
     clearBootReassert();
+    petLoadFailRetries.delete(win);
     petReady = false;
     petIgnoresMouse = true;
     petPinnedTop = false;
