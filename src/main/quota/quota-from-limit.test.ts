@@ -46,4 +46,23 @@ describe('quota-from-limit', () => {
   it('cooldown window empties when expired', () => {
     expect(windowsFromCooldown(100, 'codex', 200)).toEqual([]);
   });
+
+  it('uses hitAt for stable resetsAt and drops when past cooldown', () => {
+    const hitAt = 10_000;
+    const cooldownMs = 5_000;
+    const hit = {
+      kind: 'rate-limit' as const,
+      reason: 'x',
+      cooldownMs,
+    };
+    const mid = windowsFromLimitHit(hit, 'claude', hitAt + 1_000, hitAt);
+    expect(mid[0]?.resetsAt).toBe(hitAt + cooldownMs);
+    expect(mid[0]?.usedRatio).toBe(1);
+    // Rebuilding later still anchors to hitAt, not a sliding now+cooldown
+    const later = windowsFromLimitHit(hit, 'claude', hitAt + 2_000, hitAt);
+    expect(later[0]?.resetsAt).toBe(hitAt + cooldownMs);
+    expect(windowsFromLimitHit(hit, 'claude', hitAt + cooldownMs + 1, hitAt)).toEqual(
+      [],
+    );
+  });
 });

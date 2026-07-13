@@ -6,12 +6,22 @@ import type { LimitHit } from '../orch/limit-detector';
 import type { QuotaWindow } from '../../shared/quota-types';
 import { exhaustedWindow, mergeWindows, unknownWindow } from './quota-normalize';
 
+/**
+ * Map a limit hit onto exhausted windows. `hitAt` is when the hit was recorded
+ * so `resetsAt = hitAt + cooldownMs` stays stable across rebuilds (not
+ * `now + cooldownMs`, which would keep remaining forever full).
+ */
 export function windowsFromLimitHit(
   hit: LimitHit,
   adapterId: string,
   now = Date.now(),
+  hitAt = now,
 ): QuotaWindow[] {
-  const resetsAt = now + hit.cooldownMs;
+  const resetsAt = hitAt + hit.cooldownMs;
+  // Expired: caller should have filtered, but stay honest if not.
+  if (now >= resetsAt) {
+    return [];
+  }
   if (hit.kind === 'quota') {
     return [
       exhaustedWindow({
@@ -58,8 +68,12 @@ export function applyLimitHitToWindows(
   hit: LimitHit,
   adapterId: string,
   now = Date.now(),
+  hitAt = now,
 ): QuotaWindow[] {
-  return mergeWindows(current, windowsFromLimitHit(hit, adapterId, now));
+  if (now >= hitAt + hit.cooldownMs) {
+    return [...current];
+  }
+  return mergeWindows(current, windowsFromLimitHit(hit, adapterId, now, hitAt));
 }
 
 export function windowsFromCooldown(

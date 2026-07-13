@@ -28,6 +28,8 @@ export interface ProbeInput {
     costUsd: number;
   };
   lastLimitHit?: LimitHit | null;
+  /** Epoch ms when lastLimitHit was observed (for stable resetsAt). */
+  lastLimitHitAt?: number;
   now?: number;
 }
 
@@ -47,11 +49,13 @@ export function probeProviderWindows(input: ProbeInput): QuotaWindow[] {
   }
 
   if (input.lastLimitHit) {
+    const hitAt = input.lastLimitHitAt ?? now;
     windows = applyLimitHitToWindows(
       windows,
       input.lastLimitHit,
       input.adapterId,
       now,
+      hitAt,
     );
   }
 

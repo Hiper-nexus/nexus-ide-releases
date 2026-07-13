@@ -36,13 +36,20 @@ interface EntryKey {
   accountId?: string;
 }
 
+/** Stored limit signal with observation time so cooldown can expire. */
+export interface RecordedLimitHit {
+  hit: LimitHit;
+  /** Epoch ms when the hit was noted. */
+  at: number;
+}
+
 function entryId(k: EntryKey): string {
   return k.accountId ? `${k.adapterId}:${k.accountId}` : k.adapterId;
 }
 
 export class QuotaService {
   readonly #deps: QuotaServiceDeps;
-  readonly #limitByKey = new Map<string, LimitHit>();
+  readonly #limitByKey = new Map<string, RecordedLimitHit>();
   #broadcastTimer: ReturnType<typeof setTimeout> | null = null;
   #lastSnapshot: QuotaFleetSnapshot | null = null;
   #stopped = false;
@@ -59,16 +66,44 @@ export class QuotaService {
     }
   }
 
-  /** Record a limit hit for adapter/account (from failover path). */
+  /**
+   * Record a limit hit for adapter/account (from failover path).
+   * `at` defaults to now; pass explicitly in tests for deterministic expiry.
+   */
   noteLimitHit(
     adapterId: string,
     hit: LimitHit,
     accountId?: string,
+    at = Date.now(),
   ): void {
     if (this.#stopped) return;
     const id = entryId({ adapterId, accountId });
-    this.#limitByKey.set(id, hit);
+    this.#limitByKey.set(id, { hit, at });
     this.#scheduleBroadcast();
+  }
+
+  /**
+   * Active recorded hit for a key, or null if missing/expired.
+   * Drops expired entries so they cannot re-exhaust forever.
+   */
+  #activeRecordedHit(
+    adapterId: string,
+    accountId: string | undefined,
+    now: number,
+  ): RecordedLimitHit | null {
+    const keys = accountId
+      ? [entryId({ adapterId, accountId }), adapterId]
+      : [adapterId];
+    for (const key of keys) {
+      const rec = this.#limitByKey.get(key);
+      if (!rec) continue;
+      if (now >= rec.at + rec.hit.cooldownMs) {
+        this.#limitByKey.delete(key);
+        continue;
+      }
+      return rec;
+    }
+    return null;
   }
 
   async snapshot(now = Date.now()): Promise<QuotaFleetSnapshot> {
@@ -156,15 +191,20 @@ export class QuotaService {
       adapterId: input.adapterId,
       accountId: input.accountId,
     });
-    const hit = this.#limitByKey.get(id) ?? this.#limitByKey.get(input.adapterId);
-    // probeProviderWindows already merges limit-hit + cooldown; no second apply.
+    const recorded = this.#activeRecordedHit(
+      input.adapterId,
+      input.accountId,
+      input.now,
+    );
+    // probeProviderWindows merges limit-hit + cooldown; only active (non-expired) hits.
     let windows = probeProviderWindows({
       adapterId: input.adapterId,
       accountId: input.accountId,
       onCooldown: input.onCooldown,
       cooldownUntil: input.cooldownUntil,
       localTokens: input.tokens,
-      lastLimitHit: hit ?? null,
+      lastLimitHit: recorded?.hit ?? null,
+      lastLimitHitAt: recorded?.at,
       now: input.now,
     });
     if (windows.length === 0) {
