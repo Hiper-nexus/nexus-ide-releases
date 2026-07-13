@@ -80,6 +80,35 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null;
  * save that fires mid-switch can never write panes into the wrong workspace.
  */
 let persistKey: string | null = null;
+let terminalSnapshotProvider: ((paneId: string) => string | undefined) | null = null;
+
+export function setTerminalSnapshotProvider(
+  provider: ((paneId: string) => string | undefined) | null,
+): void {
+  terminalSnapshotProvider = provider;
+}
+
+function rootWithTerminalSnapshots(root: LayoutNode): LayoutNode {
+  if (!terminalSnapshotProvider) return root;
+  if (root.kind === 'leaf') {
+    if (root.pane.kind === 'browser') return root;
+    const terminalScrollback = terminalSnapshotProvider(root.pane.id);
+    return {
+      ...root,
+      pane: {
+        ...root.pane,
+        ...(terminalScrollback ? { terminalScrollback } : {}),
+      },
+    };
+  }
+  return {
+    ...root,
+    children: [
+      rootWithTerminalSnapshots(root.children[0]),
+      rootWithTerminalSnapshots(root.children[1]),
+    ],
+  };
+}
 
 type PersistPayload = Pick<
   LayoutState,
@@ -93,7 +122,7 @@ function persist(state: PersistPayload): void {
   persistTimer = setTimeout(() => {
     persistTimer = null;
     void window.nexus.layout.save(key, {
-      root: state.root,
+      root: rootWithTerminalSnapshots(state.root),
       focusedPaneId: state.focusedPaneId,
       viewKind: state.viewKind,
       canvasNodeLayouts: state.canvasNodeLayouts,
@@ -102,7 +131,7 @@ function persist(state: PersistPayload): void {
   }, 300);
 }
 
-export function flushLayout(): void {
+export function flushLayout(sync = false): void {
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = null;
@@ -110,13 +139,18 @@ export function flushLayout(): void {
   if (!persistKey) return;
   const { root, focusedPaneId, viewKind, canvasNodeLayouts, canvasViewport } =
     useLayoutStore.getState();
-  void window.nexus.layout.save(persistKey, {
-    root,
+  const snapshot = {
+    root: rootWithTerminalSnapshots(root),
     focusedPaneId,
     viewKind,
     canvasNodeLayouts,
     canvasViewport,
-  });
+  };
+  if (sync) {
+    window.nexus.layout.saveSync(persistKey, snapshot);
+  } else {
+    void window.nexus.layout.save(persistKey, snapshot);
+  }
 }
 
 /**
@@ -182,7 +216,7 @@ export function detachWorkspaceLayout(): void {
 }
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', flushLayout);
+  window.addEventListener('beforeunload', () => flushLayout(true));
 }
 
 function firstPaneId(root: LayoutNode): string | null {

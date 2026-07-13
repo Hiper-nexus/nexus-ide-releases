@@ -59,6 +59,16 @@ export const killSchema = z.object({
   sessionId: z.string().min(1).max(128),
 });
 
+export const ptyAcknowledgeSchema = z.object({
+  sessionId: z.string().min(1).max(128),
+  sequence: z.number().int().nonnegative(),
+});
+
+export const ptyRecoverSchema = z.object({
+  sessionId: z.string().min(1).max(128),
+  afterSequence: z.number().int().nonnegative(),
+});
+
 const paneModelSchema = z.object({
   id: z.string().min(1).max(128),
   kind: z.enum(['shell', 'cli-agent', 'browser']),
@@ -73,6 +83,7 @@ const paneModelSchema = z.object({
   effort: z.string().min(1).max(32).optional(),
   titlePinned: z.boolean().optional(),
   orchRequestId: z.string().min(1).max(128).optional(),
+  terminalScrollback: z.string().max(256_000).optional(),
 });
 
 // Recursive layout tree schema (leaf | split with two children).

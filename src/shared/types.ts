@@ -438,6 +438,8 @@ export interface PaneModel {
    * context minted for that request.
    */
   orchRequestId?: string;
+  /** Bounded ANSI snapshot used only to repaint scrollback after a cold restart. */
+  terminalScrollback?: string;
 }
 
 /**
@@ -515,6 +517,7 @@ export type SpawnResult =
 export interface PtyDataEvent {
   sessionId: string;
   data: string;
+  sequence: number;
 }
 
 export interface PtyExitEvent {
@@ -676,6 +679,8 @@ export interface NexusApi {
   layout: {
     /** Layouts are keyed per workspace folder. */
     save(workspacePath: string, layout: WorkspaceLayout): Promise<{ ok: boolean }>;
+    /** Blocking quit-path flush; never use on normal render updates. */
+    saveSync(workspacePath: string, layout: WorkspaceLayout): boolean;
     load(workspacePath: string): Promise<WorkspaceLayout | null>;
   };
   adapters: {

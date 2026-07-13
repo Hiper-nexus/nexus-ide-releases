@@ -14,10 +14,10 @@ import {
 } from './pane-registry';
 import { detectLimit } from './limit-detector';
 import {
-  activateAccount,
   getAccount,
   getActiveAccount,
   pickAvailable,
+  prepareAccountForSpawn,
   setCooldown,
 } from '../persistence/account-store';
 import { broadcastToProject, sameProjectScope } from './project-scoped-broadcast';
@@ -29,15 +29,28 @@ import { quotaAvailabilityScore } from '../quota/quota-policy';
 
 /**
  * Automatic account failover. Watches each pane's output for a limit signature
- * (rate-limit / quota / auth). When one fires: puts the pane's active account
- * on cooldown, switches to the next available account for that adapter, and
- * asks the renderer to re-spawn the pane's CLI with --resume so the
- * conversation continues on the fresh account. Debounced per session so one
- * error burst triggers a single switch.
+ * (rate-limit / quota / auth). When one fires: puts the pane's account on
+ * cooldown, picks the next available account for that adapter, pins it on the
+ * pane (no global activate thrash), and asks the renderer to re-spawn.
+ *
+ * Cross-account: fresh session + continuity pack (provider session ids are
+ * account-owned). Same-account recovery still uses native resume.
+ * Multi-pane storms coalesce on the same from-account → same to-account.
  */
 
 const WINDOW_CHARS = 4000;
 const REARM_MS = 30_000;
+/** Reuse the same A→B decision for concurrent panes hitting the same limit. */
+const COALESCE_MS = 5_000;
+
+interface CoalesceEntry {
+  toAccountId: string;
+  toLabel: string;
+  expiresAt: number;
+}
+
+/** adapterId\0fromAccountId → recent replacement. */
+const coalesceByFrom = new Map<string, CoalesceEntry>();
 
 interface SessionWatch {
   readonly authority: FailoverAuthority;
@@ -208,65 +221,121 @@ function handleChunk(sessionId: string, data: string, now: number): void {
 
   const adapterId = pane.adapterId;
   const pinned = pane.accountId ? getAccount(pane.accountId) : null;
-  const current = pinned?.adapterId === adapterId ? pinned : getActiveAccount(adapterId);
+  const current =
+    pinned?.adapterId === adapterId ? pinned : getActiveAccount(adapterId);
   const fromLabel = current?.label ?? adapterId;
+  const fromAccountId = current?.id;
 
   // Feed fleet quota UI (session/5h/weekly bars) from the same limit signal.
   noteQuotaLimitHit(adapterId, hit, current?.id);
 
   // Put the exhausted account on cooldown, then pick the next available one.
   if (current) setCooldown(current.id, now + hit.cooldownMs, hit.reason);
-  // P3: prefer freer cota among eligible accounts when fleet snapshot exists.
-  let quotaScores: Map<string, number> | undefined;
-  try {
-    const snap = requireQuotaService().lastSnapshot();
-    if (snap) {
-      quotaScores = new Map();
-      for (const e of snap.entries) {
-        if (e.adapterId === adapterId && e.accountId) {
-          quotaScores.set(e.accountId, quotaAvailabilityScore(e));
-        }
-      }
+
+  const coalesceKey = `${adapterId}\0${fromAccountId ?? '_'}`;
+  let coalesced = false;
+  let next = null as ReturnType<typeof pickAvailable>;
+  const recent = coalesceByFrom.get(coalesceKey);
+  if (recent && recent.expiresAt > now) {
+    const reused = getAccount(recent.toAccountId);
+    if (
+      reused &&
+      reused.adapterId === adapterId &&
+      (!reused.cooldownUntil || reused.cooldownUntil <= now)
+    ) {
+      next = reused;
+      coalesced = true;
     }
-  } catch {
-    /* quota service optional at boot race */
   }
-  const next = pickAvailable(
-    adapterId,
-    current?.id ?? null,
-    now,
-    quotaScores,
-  );
 
   if (!next) {
+    // Prefer freer cota among eligible accounts when fleet snapshot exists.
+    let quotaScores: Map<string, number> | undefined;
+    try {
+      const snap = requireQuotaService().lastSnapshot();
+      if (snap) {
+        quotaScores = new Map();
+        for (const e of snap.entries) {
+          if (e.adapterId === adapterId && e.accountId) {
+            quotaScores.set(e.accountId, quotaAvailabilityScore(e));
+          }
+        }
+      }
+    } catch {
+      /* quota service optional at boot race */
+    }
+    next = pickAvailable(
+      adapterId,
+      current?.id ?? null,
+      now,
+      quotaScores,
+    );
+    if (next) {
+      coalesceByFrom.set(coalesceKey, {
+        toAccountId: next.id,
+        toLabel: next.label,
+        expiresAt: now + COALESCE_MS,
+      });
+    }
+  }
+
+  if (!next) {
+    console.info(
+      '[failover]',
+      JSON.stringify({
+        paneId: pane.paneId,
+        adapterId,
+        fromAccountId: fromAccountId ?? null,
+        toAccountId: null,
+        reason: hit.reason,
+        switched: false,
+      }),
+    );
     emitFailover(authority, {
       paneId: pane.paneId,
       fromAccountLabel: fromLabel,
       toAccountLabel: '',
       reason: hit.reason,
       switched: false,
+      fromAccountId,
     });
     return;
   }
 
-  // Materialize next credential; do not claim switched:true if activate fails.
-  let activated = false;
-  try {
-    activated = activateAccount(next.id);
-  } catch (err) {
-    console.warn('[failover] activate next account failed:', err);
-    activated = false;
-  }
-  if (!activated) {
+  // Pin-only: materialize/validate credentials for the next account WITHOUT
+  // flipping global active (avoids thrash when many panes failover together).
+  // Spawn uses prepareAccountForSpawn via pane.accountId pin.
+  const prepared = prepareAccountForSpawn(adapterId, next.id, now);
+  if (!prepared.ok) {
+    console.warn('[failover] next account not spawnable:', prepared.error);
     emitFailover(authority, {
       paneId: pane.paneId,
       fromAccountLabel: fromLabel,
       toAccountLabel: '',
-      reason: `${hit.reason} (falha ao ativar "${next.label}")`,
+      reason: `${hit.reason} (falha na conta "${next.label}": ${prepared.error})`,
       switched: false,
+      fromAccountId,
     });
     return;
   }
+
+  const crossAccount = Boolean(
+    fromAccountId ? fromAccountId !== next.id : true,
+  );
+
+  console.info(
+    '[failover]',
+    JSON.stringify({
+      paneId: pane.paneId,
+      adapterId,
+      fromAccountId: fromAccountId ?? null,
+      toAccountId: next.id,
+      reason: hit.reason,
+      switched: true,
+      crossAccount,
+      coalesced,
+    }),
+  );
 
   emitFailover(authority, {
     paneId: pane.paneId,
@@ -275,6 +344,9 @@ function handleChunk(sessionId: string, data: string, now: number): void {
     reason: hit.reason,
     switched: true,
     toAccountId: next.id,
+    fromAccountId,
+    crossAccount,
+    coalesced,
   });
 }
 
@@ -300,6 +372,7 @@ export function shutdownFailover(): void {
   untapData = null;
   untapExit = null;
   watches.clear();
+  coalesceByFrom.clear();
   for (const [wc, onDestroyed] of destroyHandlers) {
     wc.removeListener('destroyed', onDestroyed);
   }
@@ -328,7 +401,10 @@ export function requestSessionRecovery(sessionId: string, reason: string): boole
     toAccountLabel: account?.label ?? pane.adapterId,
     reason,
     switched: true,
-    ...(account?.id ? { toAccountId: account.id } : {}),
+    crossAccount: false,
+    ...(account?.id
+      ? { toAccountId: account.id, fromAccountId: account.id }
+      : {}),
   });
   return true;
 }

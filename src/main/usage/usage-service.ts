@@ -104,8 +104,8 @@ export class UsageTelemetryService {
   start(): void {
     if (this.#stopped) throw new Error('usage telemetry service is stopped');
     setSessionDictationHook((info) => this.#onSessionDictated(info));
-    setResumeSessionLookup((scope, paneId, adapterId) =>
-      this.#resumeSessionForPane(scope, paneId, adapterId),
+    setResumeSessionLookup((scope, paneId, adapterId, accountId) =>
+      this.#resumeSessionForPane(scope, paneId, adapterId, accountId),
     );
   }
 
@@ -217,10 +217,16 @@ export class UsageTelemetryService {
       throw new Error('dictated session cwd escapes its project scope');
     }
     if (info.providerSessionId && info.paneId) {
-      saveProviderPaneSession(state.scope, info.paneId, info.adapterId, {
-        key: 'session_id',
-        id: info.providerSessionId,
-      });
+      saveProviderPaneSession(
+        state.scope,
+        info.paneId,
+        info.adapterId,
+        {
+          key: 'session_id',
+          id: info.providerSessionId,
+        },
+        info.accountId,
+      );
       const existing = state.dictated.get(info.providerSessionId);
       if (existing && existing.ptySessionId !== info.ptySessionId) {
         throw new Error('provider session is attributed to multiple PTYs');
@@ -243,9 +249,16 @@ export class UsageTelemetryService {
     scope: ProjectExecutionScope,
     paneId: string,
     adapterId: string,
+    accountId?: string,
   ): string | null {
     const state = this.#ensureScope(scope);
-    const persisted = getProviderPaneSession(scope, paneId, adapterId);
+    // Exact resume is account-bound. When accountId is set, SQLite row must match.
+    const persisted = getProviderPaneSession(
+      scope,
+      paneId,
+      adapterId,
+      accountId,
+    );
     if (persisted) {
       state.pendingResumePanes.set(paneId, Date.now());
       const paneIds = state.resumedPaneIds.get(persisted.id) ?? new Set();
@@ -256,6 +269,9 @@ export class UsageTelemetryService {
       }
       return persisted.id;
     }
+    // Telemetry fallback also skips when we have an explicit account pin:
+    // in-memory latest session has no account ownership metadata.
+    if (accountId) return null;
     if (adapterId !== 'claude' && adapterId !== 'codex') return null;
     const captured = state.stores.usage.latestProviderSessionByPane(paneId);
     if (!captured) return null;

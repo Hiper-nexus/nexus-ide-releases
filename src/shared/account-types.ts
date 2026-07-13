@@ -53,7 +53,11 @@ export const renameAccountSchema = z.object({
   label: z.string().min(1).max(128),
 });
 
-/** Main → renderer: a pane's account hit a limit; re-spawn it with --resume. */
+/**
+ * Main → renderer: a pane's account hit a limit.
+ * Cross-account: pin + fresh session + continuity pack (not native --resume).
+ * Same-account recovery: native resume may still apply.
+ */
 export interface FailoverEvent {
   paneId: string;
   fromAccountLabel: string;
@@ -63,6 +67,15 @@ export interface FailoverEvent {
   switched: boolean;
   /** Replacement account pinned to the pane before its resume spawn. */
   toAccountId?: string;
+  /** Exhausted account id (when known). */
+  fromAccountId?: string;
+  /**
+   * True when credentials change (multi-account handoff). Renderer must NOT
+   * exact-resume a provider session id from the previous account.
+   */
+  crossAccount?: boolean;
+  /** True when this pane re-used a recent switch decision for the same from-account. */
+  coalesced?: boolean;
 }
 
 /** Main → renderer: user activated an account; panes may need restart. */

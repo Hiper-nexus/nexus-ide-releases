@@ -6,6 +6,8 @@ import {
   writeSchema,
   resizeSchema,
   killSchema,
+  ptyAcknowledgeSchema,
+  ptyRecoverSchema,
 } from "../../shared/ipc";
 import type { SpawnResult } from "../../shared/types";
 import {
@@ -14,6 +16,8 @@ import {
   writeSession,
   resizeSession,
   killSession,
+  acknowledgeSessionOutput,
+  recoverSessionOutput,
   setPtyHost,
 } from "./pty-manager";
 import { createRealPtyHost } from "./pty-host-client";
@@ -214,5 +218,26 @@ export function registerPtyIpc(): void {
     if (parsed.success) {
       killSession(event.sender, parsed.data.sessionId);
     }
+  });
+
+  ipcMain.on(PTY_CHANNELS.acknowledge, (event, raw) => {
+    const parsed = ptyAcknowledgeSchema.safeParse(raw);
+    if (parsed.success) {
+      acknowledgeSessionOutput(
+        event.sender,
+        parsed.data.sessionId,
+        parsed.data.sequence,
+      );
+    }
+  });
+
+  ipcMain.handle(PTY_CHANNELS.recover, (event, raw) => {
+    const parsed = ptyRecoverSchema.safeParse(raw);
+    if (!parsed.success) return [];
+    return recoverSessionOutput(
+      event.sender,
+      parsed.data.sessionId,
+      parsed.data.afterSequence,
+    );
   });
 }

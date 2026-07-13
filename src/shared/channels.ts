@@ -10,6 +10,8 @@ export const PTY_CHANNELS = {
   resize: 'pty:resize',
   kill: 'pty:kill',
   data: 'pty:data',
+  acknowledge: 'pty:acknowledge',
+  recover: 'pty:recover',
   exit: 'pty:exit',
   stateChange: 'pty:stateChange',
 } as const;
@@ -65,6 +67,7 @@ export const MCP_CHANNELS = {
 
 export const LAYOUT_CHANNELS = {
   save: 'layout:save',
+  saveSync: 'layout:saveSync',
   load: 'layout:load',
 } as const;
 

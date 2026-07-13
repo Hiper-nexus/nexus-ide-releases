@@ -93,6 +93,7 @@ export function ingestAgentHookStatus(
         agent.paneId,
         agent.adapterId,
         providerSession,
+        agent.accountId,
       );
     }
   }

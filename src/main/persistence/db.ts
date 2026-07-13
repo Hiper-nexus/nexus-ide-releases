@@ -122,6 +122,8 @@ CREATE TABLE IF NOT EXISTS provider_pane_sessions (
   session_id      TEXT NOT NULL,
   transcript_path TEXT,
   updated_at      INTEGER NOT NULL,
+  /** Vault account that owns this provider session (exact resume guard). */
+  account_id      TEXT,
   PRIMARY KEY (installation_id, project_id, checkout_id, pane_id, adapter_id)
 );
 `;

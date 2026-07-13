@@ -7,7 +7,11 @@ import '@xterm/xterm/css/xterm.css';
 import type { PaneModel } from '../../shared/types';
 import type { TerminalSettings } from '../../shared/settings-types';
 import { DEFAULT_TERMINAL_SETTINGS } from '../../shared/settings-types';
-import { setRestoredPanesHandler, useLayoutStore } from '../state/layout-store';
+import {
+  setRestoredPanesHandler,
+  setTerminalSnapshotProvider,
+  useLayoutStore,
+} from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useToastStore } from '../state/toast-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
@@ -94,6 +98,18 @@ const WEBGL_MAX = 4;
 let webglInUse = 0;
 
 const hosts = new Map<string, Host>();
+const MAX_PERSISTED_SCROLLBACK = 256_000;
+
+setTerminalSnapshotProvider((paneId) => {
+  const host = hosts.get(paneId);
+  if (!host || host.disposed || !host.opened) return undefined;
+  try {
+    flushTerminalOutput(host.term);
+    return host.serialize.serialize().slice(-MAX_PERSISTED_SCROLLBACK);
+  } catch {
+    return undefined;
+  }
+});
 
 // Notified when a pane's PTY sessionId is assigned or cleared. A session
 // materializes ASYNCHRONOUSLY after spawn — not on a layout change — so this
@@ -192,17 +208,68 @@ function buildTerminal(): {
   return { term, fit, search, serialize };
 }
 
+export type RespawnMode = 'same-account-resume' | 'cross-account-continuity';
+
+/**
+ * Strip ANSI CSI/OSC sequences for continuity pack excerpts (best-effort).
+ */
+function stripAnsiForExcerpt(text: string): string {
+  return text
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, '')
+    .replace(/\u001b./g, '');
+}
+
+/** Last N chars of xterm buffer for failover handoff (empty if host missing). */
+export function getScrollbackExcerpt(paneId: string, max = 2_400): string {
+  const host = hosts.get(paneId);
+  if (!host || host.disposed || !host.opened) return '';
+  try {
+    flushTerminalOutput(host.term);
+    const raw = host.serialize.serialize().slice(-max * 2);
+    return stripAnsiForExcerpt(raw).slice(-max);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Ensure cli-agent panes pin a vault account before spawn so failover and
+ * multi-account isolation always know which credential is in use.
+ */
+async function ensurePaneAccountPin(
+  pane: PaneModel,
+): Promise<string | undefined> {
+  if (pane.kind !== 'cli-agent' || !pane.adapterId) return pane.accountId;
+  if (pane.accountId) return pane.accountId;
+  try {
+    const accounts = await window.nexus.accounts.list();
+    const forAdapter = accounts.filter((a) => a.adapterId === pane.adapterId);
+    const pick =
+      forAdapter.find((a) => a.active && a.hasCredential && !a.onCooldown) ??
+      forAdapter.find((a) => a.hasCredential && !a.onCooldown) ??
+      forAdapter.find((a) => a.hasCredential);
+    if (!pick) return undefined;
+    useLayoutStore.getState().setAccountId(pane.id, pick.id);
+    return pick.id;
+  } catch {
+    return undefined;
+  }
+}
+
 function startSpawn(
   pane: PaneModel,
   host: Host,
   resume = false,
   resumeLatestOnly = false,
+  continuityPack?: string,
 ): void {
   host.spawnStarted = true;
   host.hibernated = false;
   useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
   void (async () => {
     try {
+      const accountId = await ensurePaneAccountPin(pane);
       const spawnKind = pane.kind === 'cli-agent' ? 'cli-agent' : 'shell';
       const res = await window.nexus.pty.spawn({
         // Panes always live inside the active workspace: restored panes from
@@ -223,7 +290,7 @@ function startSpawn(
         paneId: pane.id,
         adapterId: pane.adapterId,
         model: pane.model,
-        accountId: pane.accountId,
+        accountId: accountId ?? pane.accountId,
         effort: pane.effort,
         orchRequestId: pane.orchRequestId,
       });
@@ -325,32 +392,32 @@ function startSpawn(
         }),
       );
 
-      // `--resume` restores provider memory but every supported CLI returns to
-      // an idle prompt; it does not continue the interrupted task by itself.
-      // The user explicitly clicked Restart, so submit one bounded continuation
-      // instruction after the TUI has mounted. Guard by session id so a rapid
-      // second restart can never write into the replacement process.
-      if (resume && res.resumeMode !== 'unsupported') {
+      // After mount: inject either same-account continue or cross-account pack.
+      // Cross-account always injects (fresh session). Same-account resume only
+      // when the adapter actually restored something.
+      const shouldInjectContinue =
+        Boolean(continuityPack) ||
+        (resume && res.resumeMode !== 'unsupported');
+      if (shouldInjectContinue) {
         const resumedSessionId = res.sessionId;
         const continuationTimer = setTimeout(() => {
           if (host.disposed || host.sessionId !== resumedSessionId) return;
           const role = pane.role === 'orchestrator' ? 'orchestrator' : 'agent';
           const continuation =
-            `Continue the current mission from exactly where you stopped as the ${role}. ` +
-            'Preserve existing context and execute the next pending step now.';
-          window.nexus.pty.write(
-            resumedSessionId,
-            continuation,
-          );
+            continuityPack ??
+            (`Continue the current mission from exactly where you stopped as the ${role}. ` +
+              'Preserve existing context and execute the next pending step now.');
+          window.nexus.pty.write(resumedSessionId, continuation);
           // Agent TUIs receive Enter as CR from xterm. LF only paints a new
-          // line in Claude/Codex/Grok and leaves the prompt waiting, which is
-          // exactly what the Restart button used to do. Split paste and submit
-          // so bracketed/async input handlers finish ingesting the text first.
+          // line in Claude/Codex/Grok and leaves the prompt waiting. Split
+          // paste and submit so async input handlers finish first.
           const submitTimer = setTimeout(() => {
             if (host.disposed || host.sessionId !== resumedSessionId) return;
             window.nexus.pty.write(resumedSessionId, '\r');
             host.term.writeln(
-              '\r\n\x1b[36m[nexus] continuidade submetida automaticamente ao agente.\x1b[0m',
+              continuityPack
+                ? '\r\n\x1b[36m[nexus] handoff multi-conta submetido (sessão nova nesta conta).\x1b[0m'
+                : '\r\n\x1b[36m[nexus] continuidade submetida automaticamente ao agente.\x1b[0m',
             );
           }, 80);
           host.cleanups.push(() => clearTimeout(submitTimer));
@@ -604,6 +671,9 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
 
   if (!host.opened) {
     host.term.open(host.element);
+    if (pane.terminalScrollback) {
+      host.term.write(pane.terminalScrollback);
+    }
     if (webglInUse < WEBGL_MAX) {
       try {
         const webgl = new WebglAddon();
@@ -699,16 +769,18 @@ export function scrollPaneToBottom(paneId: string, sendJumpKey = false): void {
 }
 
 /**
- * Re-spawn a cli-agent pane with the adapter's --resume flags in the SAME
- * xterm, so the conversation continues (old output stays as scrollback). Used
- * for two flows:
- *  - failover (limit hit → new account), with the default note, and
- *  - user-initiated "retomar" after an app restart / crash, with a custom note.
- * For a CLI with no resumeArgs (e.g. codex) this simply restarts the session.
+ * Re-spawn a cli-agent pane in the SAME xterm (scrollback preserved).
+ * - same-account-resume: adapter --resume / --continue
+ * - cross-account-continuity: fresh session + continuity pack (no exact resume
+ *   of another account's provider session id)
  */
 export function respawnWithResume(
   pane: PaneModel,
   note = '[nexus] reiniciando a CLI e verificando a sessão anterior…',
+  options?: {
+    mode?: RespawnMode;
+    continuityPack?: string;
+  },
 ): void {
   const host = hosts.get(pane.id);
   if (!host || host.disposed) return;
@@ -719,7 +791,15 @@ export function respawnWithResume(
   host.spawnStarted = false;
   host.hibernated = false;
   host.term.writeln(`\r\n\x1b[33m${note}\x1b[0m`);
-  startSpawn(pane, host, true);
+  const cross = options?.mode === 'cross-account-continuity';
+  // Cross-account: do not pass resume=true (would try wrong-account session id).
+  startSpawn(
+    pane,
+    host,
+    !cross,
+    false,
+    cross ? options?.continuityPack : undefined,
+  );
 }
 
 export function hibernateHost(paneId: string): boolean {

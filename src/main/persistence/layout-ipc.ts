@@ -45,6 +45,22 @@ export function registerLayoutIpc(
     return { ok: true };
   });
 
+  ipcMain.on(LAYOUT_CHANNELS.saveSync, (event, raw) => {
+    try {
+      const scope = requireRendererWorkspaceScope(event.sender);
+      const parsed = saveRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        event.returnValue = false;
+        return;
+      }
+      assertWorkspaceIntent(scope, parsed.data.workspacePath);
+      createScopedLayoutStore(runtimeManager, scope).save(parsed.data.layout);
+      event.returnValue = true;
+    } catch {
+      event.returnValue = false;
+    }
+  });
+
   ipcMain.handle(LAYOUT_CHANNELS.load, (event, raw) => {
     const scope = requireRendererWorkspaceScope(event.sender);
     const parsed = loadRequestSchema.safeParse(raw);

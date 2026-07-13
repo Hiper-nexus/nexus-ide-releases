@@ -113,6 +113,7 @@ type StateCb = (state: PaneSessionState) => void;
 type AdapterChangedCb = (adapters: AdapterInfo[]) => void;
 
 const dataSubs = new Map<string, Set<DataCb>>();
+const lastPtySequence = new Map<string, number>();
 const exitSubs = new Map<string, Set<ExitCb>>();
 const stateSubs = new Map<string, Set<StateCb>>();
 const browserStateListeners = new Set<(state: BrowserPaneState) => void>();
@@ -127,9 +128,33 @@ ipcRenderer.on(
     deepOpenListeners.forEach((cb) => cb(payload)),
 );
 
-ipcRenderer.on(PTY_CHANNELS.data, (_event, payload: PtyDataEvent) => {
+function deliverPtyData(payload: PtyDataEvent): void {
+  const previous = lastPtySequence.get(payload.sessionId) ?? 0;
+  if (payload.sequence <= previous) return;
+  lastPtySequence.set(payload.sessionId, payload.sequence);
   dataSubs.get(payload.sessionId)?.forEach((cb) => cb(payload.data));
+  ipcRenderer.send(PTY_CHANNELS.acknowledge, {
+    sessionId: payload.sessionId,
+    sequence: payload.sequence,
+  });
+}
+
+ipcRenderer.on(PTY_CHANNELS.data, (_event, payload: PtyDataEvent) => {
+  deliverPtyData(payload);
 });
+
+// Invoke remains operational in the Electron failure mode where main→renderer
+// push delivery wedges. Pull missing sequenced chunks on a quiet cadence; the
+// sequence dedupe makes recovery safe if a delayed push arrives afterward.
+setInterval(() => {
+  for (const sessionId of dataSubs.keys()) {
+    const afterSequence = lastPtySequence.get(sessionId) ?? 0;
+    void ipcRenderer
+      .invoke(PTY_CHANNELS.recover, { sessionId, afterSequence })
+      .then((events: PtyDataEvent[]) => events.forEach(deliverPtyData))
+      .catch(() => {});
+  }
+}, 15_000);
 
 ipcRenderer.on(PTY_CHANNELS.exit, (_event, payload: PtyExitEvent) => {
   exitSubs.get(payload.sessionId)?.forEach((cb) =>
@@ -481,6 +506,8 @@ const api: NexusApi = {
   layout: {
     save: (workspacePath: string, layout: WorkspaceLayout) =>
       ipcRenderer.invoke(LAYOUT_CHANNELS.save, { workspacePath, layout }),
+    saveSync: (workspacePath: string, layout: WorkspaceLayout) =>
+      ipcRenderer.sendSync(LAYOUT_CHANNELS.saveSync, { workspacePath, layout }) === true,
     load: (workspacePath: string) =>
       ipcRenderer.invoke(LAYOUT_CHANNELS.load, { workspacePath }),
   },

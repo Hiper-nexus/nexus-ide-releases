@@ -75,4 +75,16 @@ describe('detectLimit', () => {
     const hit = detectLimit('rate limited: insufficient_quota, out of credits');
     expect(hit?.kind).toBe('quota');
   });
+
+  it('detects 5-hour / weekly and Portuguese limit signatures', () => {
+    expect(detectLimit('Error: 5-hour usage limit reached')?.kind).toBe(
+      'rate-limit',
+    );
+    expect(detectLimit('weekly usage limit exceeded')?.kind).toBe('rate-limit');
+    expect(
+      detectLimit('Erro: limite de uso atingido para esta conta')?.kind,
+    ).toBe('rate-limit');
+    expect(detectLimit('limite de 5 horas excedido')?.kind).toBe('rate-limit');
+    expect(detectLimit('cota esgotada — upgrade o plano')?.kind).toBe('quota');
+  });
 });

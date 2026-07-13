@@ -30,6 +30,13 @@ describe('migrateSchema', () => {
     const { db, calls, columns } = fakeDb({
       squads: [],
       mission_panes: ['effort'],
+      provider_pane_sessions: [
+        'installation_id',
+        'project_id',
+        'checkout_id',
+        'pane_id',
+        'adapter_id',
+      ],
     });
 
     migrateSchema(db);
@@ -45,6 +52,8 @@ describe('migrateSchema', () => {
         'allowed_skills_json',
       ]),
     );
+    expect(columns.get('provider_pane_sessions')).toContain('account_id');
+
     expect(calls.at(0)).toBe('BEGIN IMMEDIATE');
     expect(calls.at(-1)).toBe('COMMIT');
   });
@@ -71,6 +80,7 @@ describe('migrateSchema', () => {
         'allowed_tools_json',
         'allowed_skills_json',
       ],
+      provider_pane_sessions: ['account_id'],
     });
 
     migrateSchema(db);

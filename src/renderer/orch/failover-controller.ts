@@ -1,14 +1,17 @@
 import { useEffect } from 'react';
 import { useLayoutStore } from '../state/layout-store';
 import { useToastStore } from '../state/toast-store';
+import { useOrchStore } from '../state/orch-store';
 import { listPanes } from '../lib/split-tree';
-import { respawnWithResume } from '../terminal/terminal-host';
+import { respawnWithResume, getScrollbackExcerpt } from '../terminal/terminal-host';
+import {
+  buildContinuityPack,
+} from './failover-continuity';
 
 /**
- * Reacts to main-process failover events: when an account hits its limit and
- * the engine switched to another, re-spawn the pane's CLI with --resume so the
- * conversation continues seamlessly on the new account. Shows a toast either
- * way (switched, or "no account left").
+ * Reacts to main-process failover events.
+ * Cross-account: pin + fresh session + continuity pack (no native --resume).
+ * Same-account recovery: native resume in the same xterm.
  */
 export function useFailoverController(): void {
   useEffect(() => {
@@ -33,23 +36,58 @@ export function useFailoverController(): void {
           (candidate) => candidate.id === pane.id,
         );
         if (updated) {
-          const recovery = event.fromAccountLabel === event.toAccountLabel;
-          respawnWithResume(
-            updated,
-            recovery
-              ? `[nexus] ${event.reason}; retomando sessão…`
-              : '[nexus] limite atingido — trocando de conta e retomando…',
-          );
+          const sameAccount =
+            event.crossAccount === false ||
+            event.fromAccountLabel === event.toAccountLabel;
+          if (sameAccount) {
+            respawnWithResume(
+              updated,
+              `[nexus] ${event.reason}; retomando sessão na mesma conta…`,
+              { mode: 'same-account-resume' },
+            );
+          } else {
+            const missions = useOrchStore.getState().missions;
+            const openMissions = missions
+              .filter((m) => m.status === 'running' || m.status === 'blocked')
+              .slice(0, 3);
+            const open = openMissions
+              .map((m) => `${m.id}${m.title ? `: ${m.title}` : ''}`)
+              .join('; ');
+            const continuityPack = buildContinuityPack({
+              fromAccountLabel: event.fromAccountLabel,
+              toAccountLabel: event.toAccountLabel,
+              reason: event.reason,
+              role: updated.role,
+              missionId: openMissions[0]?.id,
+              openWorkHint: open || undefined,
+              scrollbackExcerpt: getScrollbackExcerpt(updated.id),
+            });
+            respawnWithResume(
+              updated,
+              `[nexus] limite em "${event.fromAccountLabel}" → conta "${event.toAccountLabel}" (sessão nova + handoff)`,
+              {
+                mode: 'cross-account-continuity',
+                continuityPack,
+              },
+            );
+          }
         }
       }
-      if (event.fromAccountLabel === event.toAccountLabel) {
+      if (
+        event.crossAccount === false ||
+        event.fromAccountLabel === event.toAccountLabel
+      ) {
         push('success', 'Sessão recuperada automaticamente', event.reason);
         return;
       }
+      const coalesceNote = event.coalesced
+        ? ' (mesmo destino que outro pane na rajada)'
+        : '';
       push(
         'success',
-        `Trocado para "${event.toAccountLabel}"`,
-        `"${event.fromAccountLabel}" atingiu o limite (${event.reason}) — retomando a conversa na nova conta.`,
+        `Trocado para "${event.toAccountLabel}"${coalesceNote}`,
+        `"${event.fromAccountLabel}" atingiu o limite (${event.reason}). ` +
+          'Histórico do terminal mantido; sessão do provider é nova nesta conta — contexto reinjetado via handoff.',
       );
     });
   }, []);

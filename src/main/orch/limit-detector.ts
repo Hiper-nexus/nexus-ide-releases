@@ -33,10 +33,19 @@ const PATTERNS: Pattern[] = [
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /billing[_\s]?hard[_\s]?limit/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /you['’]ve used all of your (?:credits|quota|plan)/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /(?:plan|subscription) limit (?:reached|exceeded)/i },
+  // PT: cota / créditos esgotados (error-shaped only).
+  { kind: 'quota', cooldownMs: 12 * HOUR, re: /cota (?:esgotada|excedida)|sem cr[eé]ditos?|cr[eé]ditos? insuficientes/i },
+  { kind: 'quota', cooldownMs: 12 * HOUR, re: /limite (?:do )?plano (?:atingido|excedido)|assinatura (?:esgotada|excedida)/i },
   // Rate / usage limit — resets within a window.
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /usage limit reached/i },
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /reached your (?:usage|5-hour|weekly|daily) limit/i },
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /hit your (?:usage|rate|token) limit/i },
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /5[-\s]?hour (?:usage )?limit (?:reached|exceeded|hit)/i },
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /weekly (?:usage )?limit (?:reached|exceeded|hit)/i },
+  // PT: limite de uso / 5 horas (error-shaped).
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /limite de (?:uso|utiliza[cç][aã]o) (?:atingido|excedido|alcan[cç]ado)/i },
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /limite de 5\s*horas? (?:atingido|excedido)/i },
+  { kind: 'rate-limit', cooldownMs: HOUR, re: /erro[:\s].{0,40}limite de (?:taxa|requisi[cç][oõ]es)/i },
   // Never match the bare phrase "rate limit": squad instructions legitimately
   // mention it ("em rate limit, re-roteie") and are echoed into the PTY. A
   // limit signal must carry error/outcome semantics.
@@ -71,6 +80,7 @@ const PATTERNS: Pattern[] = [
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /oauth token (?:expired|revoked)/i },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /(?:error|failed|unable).{0,40}(?:not logged in|session expired)/i },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /refresh token (?:expired|invalid|revoked)/i },
+  { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /(?:erro|falha).{0,40}(?:n[aã]o autenticado|sess[aã]o expirada|token inv[aá]lido)/i },
 ];
 
 /**

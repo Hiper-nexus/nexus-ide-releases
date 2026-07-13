@@ -65,13 +65,38 @@ vi.mock('./limit-detector', () => ({
 }));
 
 vi.mock('../persistence/account-store', () => ({
-  getAccount: vi.fn((id: string) =>
-    id === accountMocks.current.id ? accountMocks.current : null,
-  ),
+  getAccount: vi.fn((id: string) => {
+    if (id === accountMocks.current.id) return accountMocks.current;
+    if (accountMocks.next && id === accountMocks.next.id) return accountMocks.next;
+    return null;
+  }),
   getActiveAccount: vi.fn(() => accountMocks.current),
   pickAvailable: vi.fn(() => accountMocks.next),
   setCooldown: accountMocks.setCooldown,
-  activateAccount: vi.fn(() => true),
+  prepareAccountForSpawn: vi.fn((adapterId: string, id: string) => {
+    const acct =
+      id === accountMocks.current.id
+        ? accountMocks.current
+        : accountMocks.next && id === accountMocks.next.id
+          ? accountMocks.next
+          : null;
+    if (!acct || acct.adapterId !== adapterId) {
+      return { ok: false as const, error: 'missing' };
+    }
+    return {
+      ok: true as const,
+      account: acct,
+      apiKey: null,
+      authEnv: {},
+    };
+  }),
+}));
+
+vi.mock('../quota/quota-service', () => ({
+  noteQuotaLimitHit: vi.fn(),
+  requireQuotaService: vi.fn(() => {
+    throw new Error('quota optional in test');
+  }),
 }));
 
 import {
@@ -206,10 +231,60 @@ describe('account failover authority and lifecycle', () => {
 
     expect(windowA.send).toHaveBeenCalledWith(
       ACCOUNT_CHANNELS.failover,
-      expect.objectContaining({ paneId: 'shared-pane', switched: true }),
+      expect.objectContaining({
+        paneId: 'shared-pane',
+        switched: true,
+        toAccountId: 'account-b',
+        crossAccount: true,
+      }),
     );
     expect(windowB.send).not.toHaveBeenCalled();
     expect(accountMocks.setCooldown).toHaveBeenCalledOnce();
+  });
+
+  it('coalesces multi-pane bursts on the same exhausted account to one target', () => {
+    const scope = testProjectScope();
+    const owner = renderer(606);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({
+      owner,
+      paneId: 'pane-1',
+      sessionId: 'sess-1',
+      missionId: 'm1',
+      scope,
+    });
+    addPane({
+      owner,
+      paneId: 'pane-2',
+      sessionId: 'sess-2',
+      missionId: 'm2',
+      scope,
+    });
+
+    ptyMocks.dataTaps[0]!('sess-1', 'LIMIT');
+    ptyMocks.dataTaps[0]!('sess-2', 'LIMIT');
+
+    const sends = owner.send.mock.calls.filter(
+      (c) => c[0] === ACCOUNT_CHANNELS.failover,
+    );
+    expect(sends).toHaveLength(2);
+    expect(sends[0]![1]).toEqual(
+      expect.objectContaining({
+        toAccountId: 'account-b',
+        coalesced: false,
+        crossAccount: true,
+      }),
+    );
+    expect(sends[1]![1]).toEqual(
+      expect.objectContaining({
+        toAccountId: 'account-b',
+        coalesced: true,
+      }),
+    );
+    // Cooldown once per pane path still marks exhausted account; target not re-picked.
+    expect(accountMocks.setCooldown).toHaveBeenCalled();
   });
 
   it('fails closed before account mutation for ambiguous, unscoped or ownerless panes', () => {

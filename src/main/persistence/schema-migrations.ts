@@ -8,7 +8,7 @@ export interface MigrationDb {
 }
 
 interface AddColumnMigration {
-  table: 'squads' | 'mission_panes';
+  table: 'squads' | 'mission_panes' | 'provider_pane_sessions';
   column: string;
   definition: string;
 }
@@ -32,6 +32,12 @@ const ADD_COLUMN_MIGRATIONS: AddColumnMigration[] = [
     table: 'mission_panes',
     column: 'allowed_skills_json',
     definition: 'allowed_skills_json TEXT',
+  },
+  // Exact provider resume must not cross accounts (session ids are account-owned).
+  {
+    table: 'provider_pane_sessions',
+    column: 'account_id',
+    definition: 'account_id TEXT',
   },
 ];
 

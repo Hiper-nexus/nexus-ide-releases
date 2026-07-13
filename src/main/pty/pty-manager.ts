@@ -42,6 +42,9 @@ interface Session {
   /** Main-owned identity for cli-agent panes; never sourced from pane sync. */
   agent: OwnedAgentSessionInfo | null;
   missionOrchestratorGrantAvailable: boolean;
+  outputSequence: number;
+  acknowledgedSequence: number;
+  replay: Array<{ sequence: number; data: string }>;
 }
 
 export interface OwnedAgentSessionInfo {
@@ -185,6 +188,8 @@ export interface DictatedSessionInfo {
   cwd: string;
   /** Stable renderer pane id bound by the trusted spawn authority. */
   paneId?: string;
+  /** Vault account that owns this spawn (exact resume is account-bound). */
+  accountId?: string;
 }
 
 export type SessionDictationHook = (info: DictatedSessionInfo) => void;
@@ -201,11 +206,13 @@ export function setSessionDictationHook(
  * Lookup injetado de sessão de provider capturada (project scope, paneId) →
  * session id real — permite resume DIRECIONADO (`--resume <id>`) em vez do
  * genérico `--continue`. O caminho local nunca seleciona o store.
+ * `accountId` must match the stored owner or exact resume is denied.
  */
 export type ResumeSessionLookup = (
   scope: Readonly<ProjectExecutionScope>,
   paneId: string,
   adapterId: string,
+  accountId?: string,
 ) => string | null;
 
 let resumeSessionLookup: ResumeSessionLookup | null = null;
@@ -435,8 +442,19 @@ function onSessionData(
   sessionId: string,
   data: string,
 ): void {
+  session.outputSequence += 1;
+  const event = { sessionId, data, sequence: session.outputSequence };
+  session.replay.push({ sequence: event.sequence, data });
+  let bufferedChars = 0;
+  for (let index = session.replay.length - 1; index >= 0; index -= 1) {
+    bufferedChars += session.replay[index].data.length;
+    if (bufferedChars > 1_000_000) {
+      session.replay.splice(0, index + 1);
+      break;
+    }
+  }
   if (canSend(session.wc)) {
-    session.wc.send(PTY_CHANNELS.data, { sessionId, data });
+    session.wc.send(PTY_CHANNELS.data, event);
   }
   fireTaps(dataTaps, sessionId, data);
   if (session.state !== "busy") {
@@ -516,6 +534,9 @@ export function spawnSession(
     cwd,
     agent: null,
     missionOrchestratorGrantAvailable: false,
+    outputSequence: 0,
+    acknowledgedSequence: 0,
+    replay: [],
   };
   sessions.set(sessionId, session);
   return { sessionId };
@@ -590,9 +611,8 @@ export function spawnAgentSession(
   ) {
     args.push(adapter.models.flag, model);
   }
-  // Failover re-spawn: retoma a conversa anterior. Com session id CAPTURADO
-  // para este pane, o resume é direcionado (`--resume <id>` — cada pane volta
-  // para a SUA conversa); sem captura, cai no genérico (`--continue`).
+  // Resume only when the captured provider session belongs to this account.
+  // Cross-account failover must spawn fresh + inject a continuity pack instead.
   let resumeMode: SpawnedSession['resumeMode'];
   if (req.resume) {
     const captured =
@@ -601,6 +621,7 @@ export function spawnAgentSession(
             authority.scope,
             req.paneId,
             adapter.id,
+            req.accountId,
           ) ?? null)
         : null;
     if (captured) {
@@ -613,6 +634,7 @@ export function spawnAgentSession(
       resumeMode = 'unsupported';
     }
   }
+
   // Telemetria real: dita o session id do provider em spawns FRESCOS (num
   // resume o CLI decide o id — a atribuição fica com o watcher de transcript).
   let dictatedSessionId: string | null = null;
@@ -740,6 +762,9 @@ export function spawnAgentSession(
       authority.source === "legacy-squad" &&
       authority.context?.role === "orchestrator" &&
       Boolean(authority.context.squadId),
+    outputSequence: 0,
+    acknowledgedSequence: 0,
+    replay: [],
   };
   sessions.set(sessionId, session);
   emitStateChange(wc, sessionId, "spawning");
@@ -752,6 +777,7 @@ export function spawnAgentSession(
         adapterId: adapter.id,
         cwd,
         paneId: req.paneId,
+        accountId: req.accountId,
       });
     } catch (err) {
       console.warn("[pty-manager] session dictation hook threw:", err);
@@ -777,6 +803,34 @@ function cloneAgentInfo(info: OwnedAgentSessionInfo): OwnedAgentSessionInfo {
 
 export function isSessionOwnedBy(wc: WebContents, sessionId: string): boolean {
   return ownedSession(wc, sessionId) !== null;
+}
+
+export function acknowledgeSessionOutput(
+  wc: WebContents,
+  sessionId: string,
+  sequence: number,
+): void {
+  const session = ownedSession(wc, sessionId);
+  if (!session) return;
+  session.acknowledgedSequence = Math.max(
+    session.acknowledgedSequence,
+    Math.min(sequence, session.outputSequence),
+  );
+  session.replay = session.replay.filter(
+    (entry) => entry.sequence > session.acknowledgedSequence,
+  );
+}
+
+export function recoverSessionOutput(
+  wc: WebContents,
+  sessionId: string,
+  afterSequence: number,
+): Array<{ sessionId: string; sequence: number; data: string }> {
+  const session = ownedSession(wc, sessionId);
+  if (!session) return [];
+  return session.replay
+    .filter((entry) => entry.sequence > afterSequence)
+    .map((entry) => ({ sessionId, ...entry }));
 }
 
 export function getOwnedAgentSessionInfo(
