@@ -68,6 +68,30 @@ export function PetApp() {
   const drag = useRef<{ startX: number; startY: number; dragging: boolean } | null>(
     null,
   );
+  // Idempotent + leave-debounce: enter/leave no canto dispara em rajada;
+  // cada setIgnoreMouseEvents no main recompõe a janela transparente (pisca).
+  const interactiveRef = useRef(false);
+  const leaveTimerRef = useRef<number | null>(null);
+  const markInteractive = useCallback((interactive: boolean) => {
+    if (interactive) {
+      if (leaveTimerRef.current !== null) {
+        window.clearTimeout(leaveTimerRef.current);
+        leaveTimerRef.current = null;
+      }
+      if (interactiveRef.current) return;
+      interactiveRef.current = true;
+      window.nexusPet.setInteractive(true);
+      return;
+    }
+    // Debounce leave: bob/edge micro-leave não desliga o hit-test.
+    if (leaveTimerRef.current !== null) return;
+    leaveTimerRef.current = window.setTimeout(() => {
+      leaveTimerRef.current = null;
+      if (!interactiveRef.current) return;
+      interactiveRef.current = false;
+      window.nexusPet.setInteractive(false);
+    }, 140);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,6 +126,10 @@ export function PetApp() {
       offEvents();
       offLook();
       if (celebrateTimer.current) window.clearTimeout(celebrateTimer.current);
+      if (leaveTimerRef.current !== null) {
+        window.clearTimeout(leaveTimerRef.current);
+        leaveTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -117,15 +145,16 @@ export function PetApp() {
     if (currentBalloonId === null) return undefined;
     const timer = window.setTimeout(() => {
       setBalloons(dismissBalloon);
+      interactiveRef.current = false;
+      if (leaveTimerRef.current !== null) {
+        window.clearTimeout(leaveTimerRef.current);
+        leaveTimerRef.current = null;
+      }
       window.nexusPet.setInteractive(false);
       setReaction((r) => (r === 'waiting' ? null : r));
     }, balloonDuration);
     return () => window.clearTimeout(timer);
   }, [currentBalloonId, balloonDuration]);
-
-  const markInteractive = useCallback((interactive: boolean) => {
-    window.nexusPet.setInteractive(interactive);
-  }, []);
 
   const dismissAndAct = useCallback((action: 'focus-main' | 'open-ops') => {
     runBalloonAction(action);
@@ -375,34 +404,36 @@ export function PetApp() {
               : 'NexusIDE Pet — clique para menu · arraste para mover'
         }
       >
-        {prefs.preset === 'sheet' && prefs.sheet ? (
-          <SheetPetSprite
-            sheet={prefs.sheet}
-            anim={sheetAnim}
-            lookDir={lookDir}
-            size={SHEET_SIZE}
-          />
-        ) : prefs.preset === 'custom' && prefs.customGrid ? (
-          <CustomPetSprite grid={prefs.customGrid} size={SPRITE_SIZE} />
-        ) : (
-          <OperatorSprite
-            size={SPRITE_SIZE}
-            tier="ELITE"
-            branch="base"
-            skin={spriteSkinFor(prefs.preset)}
-            mood={mood}
-          />
-        )}
-        {prefs.sleeping && !balloon?.urgent && (
-          <span className="pet__zzz" aria-hidden="true">
-            z z z
-          </span>
-        )}
-        {(needingYou || balloon?.urgent) && (
-          <span className="pet__alert" aria-hidden="true">
-            !
-          </span>
-        )}
+        <div className="pet__visual">
+          {prefs.preset === 'sheet' && prefs.sheet ? (
+            <SheetPetSprite
+              sheet={prefs.sheet}
+              anim={sheetAnim}
+              lookDir={lookDir}
+              size={SHEET_SIZE}
+            />
+          ) : prefs.preset === 'custom' && prefs.customGrid ? (
+            <CustomPetSprite grid={prefs.customGrid} size={SPRITE_SIZE} />
+          ) : (
+            <OperatorSprite
+              size={SPRITE_SIZE}
+              tier="ELITE"
+              branch="base"
+              skin={spriteSkinFor(prefs.preset)}
+              mood={mood}
+            />
+          )}
+          {prefs.sleeping && !balloon?.urgent && (
+            <span className="pet__zzz" aria-hidden="true">
+              z z z
+            </span>
+          )}
+          {(needingYou || balloon?.urgent) && (
+            <span className="pet__alert" aria-hidden="true">
+              !
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

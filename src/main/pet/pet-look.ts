@@ -17,14 +17,15 @@ import type { Point, Rect } from './pet-geometry';
  */
 
 /** Cursor mais perto que isso (já olhando) = volta a idle. */
-export const LOOK_NEAR_RADIUS_PX = 90;
+export const LOOK_NEAR_RADIUS_PX = 55;
 /**
  * Para COMEÇAR a olhar, o cursor precisa estar mais longe (histerese).
- * Sem isto, no limiar de 90px o lookDir alterna null↔N e o sprite pisca.
+ * Sem isto, no limiar o lookDir alterna null↔N e o sprite “duplica”
+ * notebook (idle lateral ↔ look ao peito) no canvas transparente.
  */
-export const LOOK_FAR_RADIUS_PX = 130;
+export const LOOK_FAR_RADIUS_PX = 170;
 /** Margem angular extra (° ) para trocar de direção quantizada. */
-export const LOOK_DIR_STICK_DEG = 8;
+export const LOOK_DIR_STICK_DEG = 16;
 
 /** Centro visual do sprite: bottom-center da janela (o pet ancora embaixo,
     sprite ~150px → centro ≈ 80px acima da base). */

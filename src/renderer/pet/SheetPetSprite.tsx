@@ -33,9 +33,10 @@ interface SheetPetSpriteProps {
   size: number;
 }
 
-const FRAME_MS = 140;
+/** Idle mais lento: pets 3D (notebook) com frames próximos “somam” no olho. */
+const FRAME_MS = 200;
 /** Corrida um pouco mais calma — packs petdex têm frames bem distintos. */
-const RUN_FRAME_MS = 100;
+const RUN_FRAME_MS = 110;
 
 function prefersReducedMotion(): boolean {
   return (
@@ -233,9 +234,14 @@ export function SheetPetSprite({
   const dpr =
     typeof window !== 'undefined' ? Math.max(1, window.devicePixelRatio || 1) : 1;
 
+  // Só redimensionar o buffer quando o tamanho muda — `canvas.width = …` a
+  // cada frame limpa o bitmap e pisca a janela transparente no macOS.
+  const bufferW = Math.max(1, Math.round(displayW * dpr));
+  const bufferH = Math.max(1, Math.round(displayH * dpr));
+
   useEffect(() => {
     const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d');
+    const ctx = canvas?.getContext('2d', { alpha: true });
     if (!canvas || !ctx || !image || frameW < 1 || frameH < 1) return;
     const row = looking ? looking.row : spec.row;
     const maxCol = Math.max(0, Math.min(grid.cols, spec.frames) - 1);
@@ -245,26 +251,32 @@ export function SheetPetSprite({
         ? Math.min(spec.col, maxCol)
         : Math.min(frame, maxCol);
 
-    canvas.width = Math.max(1, Math.round(displayW * dpr));
-    canvas.height = Math.max(1, Math.round(displayH * dpr));
+    // Source rect inteiro em px de textura (sem subpixel) — half-frame = “dois braços”.
+    const sx = Math.max(0, Math.floor(col * frameW));
+    const sy = Math.max(0, Math.floor(row * frameH));
+    const sw = Math.floor(frameW);
+    const sh = Math.floor(frameH);
+
+    if (canvas.width !== bufferW || canvas.height !== bufferH) {
+      canvas.width = bufferW;
+      canvas.height = bufferH;
+    }
+
+    // Clear em coordenadas de DISPOSITIVO (identity). clearRect com
+    // setTransform(dpr) em janela transparente no macOS por vezes deixa
+    // ghost do frame anterior → notebook/braço “duplicado” na lateral.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, displayW, displayH);
-    // Nearest no desktop (integer flag true também no meio-termo).
+    // `copy` substitui o destino (não faz alpha-blend com residual).
+    ctx.globalCompositeOperation = 'copy';
     ctx.imageSmoothingEnabled = !integer;
     if (ctx.imageSmoothingEnabled) {
       ctx.imageSmoothingQuality = 'high';
     }
-    ctx.drawImage(
-      image,
-      col * frameW,
-      row * frameH,
-      frameW,
-      frameH,
-      0,
-      0,
-      displayW,
-      displayH,
-    );
+    ctx.drawImage(image, sx, sy, sw, sh, 0, 0, displayW, displayH);
+    ctx.globalCompositeOperation = 'source-over';
   }, [
     image,
     frame,
@@ -277,6 +289,8 @@ export function SheetPetSprite({
     displayH,
     integer,
     dpr,
+    bufferW,
+    bufferH,
     grid.cols,
     grid.rows,
   ]);
