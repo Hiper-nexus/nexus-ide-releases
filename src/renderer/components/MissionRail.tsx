@@ -472,31 +472,35 @@ export function MissionRail() {
                               } mission-rail__item--tone-${statusUi.tone}`}
                               disabled={busy !== null}
                               aria-current={liveInGrid ? 'true' : undefined}
-                              title={resumeCopy.title}
+                              aria-label={`${m.title}. ${statusUi.label}. ${resumeCopy.title}`}
+                              title={`${m.title}\n${resumeCopy.title}`}
                               onClick={() => selectMission(m)}
                             >
                               <span
                                 className={`mission-rail__dot mission-rail__dot--${dotStatus}`}
                               />
                               <span className="mission-rail__item-body">
-                                <span className="mission-rail__item-top">
-                                  <span className="mission-rail__item-title">
-                                    {pinned && (
-                                      <PixelIcon name="star" size={9} />
-                                    )}
-                                    {pinned ? ' ' : ''}
-                                    {m.title}
-                                  </span>
+                                {/* Título em linha própria (até 2 linhas): o
+                                    status pill ao lado cortava "Execução + QA"
+                                    em "Execução+…". */}
+                                <span className="mission-rail__item-title">
+                                  {pinned && (
+                                    <PixelIcon name="star" size={9} />
+                                  )}
+                                  {pinned ? ' ' : ''}
+                                  {m.title}
+                                </span>
+                                <span className="mission-rail__item-meta">
                                   <span
                                     className={`mission-rail__status mission-rail__status--${statusUi.tone}`}
                                   >
                                     {statusUi.label}
                                   </span>
-                                </span>
-                                <span className="mission-rail__item-meta">
-                                  {busy === m.id
-                                    ? 'Retomando…'
-                                    : missionMeta(m, liveInGrid)}
+                                  <span className="mission-rail__item-meta-text">
+                                    {busy === m.id
+                                      ? 'Retomando…'
+                                      : missionMeta(m, liveInGrid)}
+                                  </span>
                                 </span>
                               </span>
                             </button>
