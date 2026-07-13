@@ -328,6 +328,25 @@ export function activeClaudeAuthEnv(): Record<string, string> | null {
 }
 
 /**
+ * Claude Code OAuth access token for quota probes.
+ * - with accountId: vault subscription blob for that account
+ * - without: currently signed-in Claude (keychain / ~/.claude credentials)
+ * Never logs the token. Returns null when unavailable.
+ */
+export function claudeOAuthAccessToken(accountId?: string): string | null {
+  if (accountId) {
+    const account = getAccount(accountId);
+    if (!account || account.adapterId !== 'claude') return null;
+    const env = subscriptionAuthEnv(account);
+    const token = env?.CLAUDE_CODE_OAUTH_TOKEN;
+    return typeof token === 'string' && token.length > 0 ? token : null;
+  }
+  const env = activeClaudeAuthEnv();
+  const token = env?.CLAUDE_CODE_OAUTH_TOKEN;
+  return typeof token === 'string' && token.length > 0 ? token : null;
+}
+
+/**
  * Resolve and activate the exact account pinned to a pane before its PTY is
  * created. This deliberately does not fall back to the provider's active
  * account: a pinned account is an isolation boundary, not a preference hint.

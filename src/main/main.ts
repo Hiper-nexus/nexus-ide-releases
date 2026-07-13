@@ -136,7 +136,10 @@ import {
   shutdownQuotaService,
 } from "./quota/quota-service";
 import { listProviderSettings } from "./persistence/provider-config-store";
-import { listAccountInfos } from "./persistence/account-store";
+import {
+  claudeOAuthAccessToken,
+  listAccountInfos,
+} from "./persistence/account-store";
 import { closeDb } from "./persistence/db";
 import {
   getOrchSettings,
@@ -358,6 +361,9 @@ function bootstrap(): void {
   initQuotaService({
     listProviders: () => listProviderSettings(),
     listAccounts: () => listAccountInfos(),
+    // Live Claude 5h/7d % via Anthropic OAuth usage API (token from vault
+    // account blob or active keychain login). Never invents ratios.
+    resolveClaudeAccessToken: (accountId) => claudeOAuthAccessToken(accountId),
   });
   registerNotesIpc(projectRuntimeManager);
   registerBillingIpc();

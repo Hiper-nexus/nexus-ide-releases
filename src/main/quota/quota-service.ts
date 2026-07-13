@@ -1,7 +1,8 @@
 /**
  * In-memory fleet quota service. Builds ProviderQuotaEntry[] from installed
- * adapters + vault accounts + limit/cooldown signals. Broadcasts coalesced
- * snapshots to renderers. O(accounts), not O(panes).
+ * adapters + vault accounts + limit/cooldown signals + live provider APIs
+ * (Claude OAuth usage). Broadcasts coalesced snapshots to renderers.
+ * O(accounts), not O(panes). Never invents usedRatio without a source.
  */
 
 import { BrowserWindow, ipcMain } from 'electron';
@@ -9,6 +10,7 @@ import {
   QUOTA_CHANNELS,
   type ProviderQuotaEntry,
   type QuotaFleetSnapshot,
+  type QuotaWindow,
 } from '../../shared/quota-types';
 import type { LimitHit } from '../orch/limit-detector';
 import type { AccountInfo } from '../../shared/account-types';
@@ -16,6 +18,13 @@ import type { ProviderSettingsInfo } from '../../shared/provider-settings-types'
 import { buildFleetSnapshot } from './quota-policy';
 import { defaultUnknownWindows, mergeWindows } from './quota-normalize';
 import { probeProviderWindows } from './quota-probes';
+import {
+  fetchClaudeOauthUsageWindows,
+  type FetchLike,
+} from './claude-oauth-usage';
+
+/** Cache live API windows briefly — avoid hammering Anthropic on every paint. */
+const PROVIDER_API_TTL_MS = 60_000;
 
 export interface QuotaServiceDeps {
   listProviders: () => ProviderSettingsInfo[] | Promise<ProviderSettingsInfo[]>;
@@ -29,6 +38,15 @@ export interface QuotaServiceDeps {
           { inputTokens: number; outputTokens: number; costUsd: number }
         >
       >;
+  /**
+   * Resolve Claude OAuth access token for live /api/oauth/usage probe.
+   * accountId set → vault account; omitted → active CLI login.
+   */
+  resolveClaudeAccessToken?: (
+    accountId?: string,
+  ) => string | null | Promise<string | null>;
+  /** Injectable fetch for tests. */
+  fetchImpl?: FetchLike;
 }
 
 interface EntryKey {
@@ -43,6 +61,11 @@ export interface RecordedLimitHit {
   at: number;
 }
 
+interface CachedApiWindows {
+  windows: QuotaWindow[];
+  at: number;
+}
+
 function entryId(k: EntryKey): string {
   return k.accountId ? `${k.adapterId}:${k.accountId}` : k.adapterId;
 }
@@ -50,9 +73,13 @@ function entryId(k: EntryKey): string {
 export class QuotaService {
   readonly #deps: QuotaServiceDeps;
   readonly #limitByKey = new Map<string, RecordedLimitHit>();
+  /** Live provider-api windows by entry id. */
+  readonly #apiCache = new Map<string, CachedApiWindows>();
   #broadcastTimer: ReturnType<typeof setTimeout> | null = null;
   #lastSnapshot: QuotaFleetSnapshot | null = null;
   #stopped = false;
+  /** In-flight refresh coalescing. */
+  #snapshotInFlight: Promise<QuotaFleetSnapshot> | null = null;
 
   constructor(deps: QuotaServiceDeps) {
     this.#deps = deps;
@@ -64,6 +91,7 @@ export class QuotaService {
       clearTimeout(this.#broadcastTimer);
       this.#broadcastTimer = null;
     }
+    this.#apiCache.clear();
   }
 
   /**
@@ -106,7 +134,28 @@ export class QuotaService {
     return rec;
   }
 
-  async snapshot(now = Date.now()): Promise<QuotaFleetSnapshot> {
+  async snapshot(
+    now = Date.now(),
+    opts?: { forceApi?: boolean },
+  ): Promise<QuotaFleetSnapshot> {
+    // Coalesce concurrent snapshot() so one open of Settings doesn't fan-out
+    // N parallel Anthropic calls.
+    if (this.#snapshotInFlight && !opts?.forceApi) {
+      return this.#snapshotInFlight;
+    }
+    const run = this.#buildSnapshot(now, opts?.forceApi === true);
+    this.#snapshotInFlight = run;
+    try {
+      return await run;
+    } finally {
+      if (this.#snapshotInFlight === run) this.#snapshotInFlight = null;
+    }
+  }
+
+  async #buildSnapshot(
+    now: number,
+    forceApi: boolean,
+  ): Promise<QuotaFleetSnapshot> {
     const [providers, accounts] = await Promise.all([
       Promise.resolve(this.#deps.listProviders()),
       Promise.resolve(this.#deps.listAccounts()),
@@ -115,67 +164,113 @@ export class QuotaService {
       ? await Promise.resolve(this.#deps.tokensByAdapter())
       : {};
 
-    const entries: ProviderQuotaEntry[] = [];
-    // List every known provider (not only installed). Disabled CLIs still get
-    // an honest unknown row so Settings → Uso e cotas is never a blank wall
-    // when Providers already shows the fleet.
-    const fleet = providers.length > 0
-      ? providers
-      : [];
+    const draft: Array<{
+      adapterId: string;
+      accountId?: string;
+      label: string;
+      installed: boolean;
+      onCooldown: boolean;
+      cooldownUntil?: number;
+      tokens?: { inputTokens: number; outputTokens: number; costUsd: number };
+    }> = [];
+
+    const fleet = providers.length > 0 ? providers : [];
 
     for (const p of fleet) {
       const vault = accounts.filter((a) => a.adapterId === p.adapterId);
       if (vault.length === 0) {
-        entries.push(
-          this.#buildEntry({
-            adapterId: p.adapterId,
-            label: p.label,
-            installed: p.installed,
-            onCooldown: false,
-            tokens: tokens[p.adapterId],
-            now,
-          }),
-        );
+        draft.push({
+          adapterId: p.adapterId,
+          label: p.label,
+          installed: p.installed,
+          onCooldown: false,
+          tokens: tokens[p.adapterId],
+        });
         continue;
       }
       for (const a of vault) {
-        entries.push(
-          this.#buildEntry({
-            adapterId: p.adapterId,
-            accountId: a.id,
-            label: `${p.label} · ${a.label}`,
-            installed: p.installed,
-            onCooldown: a.onCooldown,
-            cooldownUntil: a.cooldownUntil,
-            tokens: tokens[p.adapterId],
-            now,
-          }),
-        );
+        draft.push({
+          adapterId: p.adapterId,
+          accountId: a.id,
+          label: `${p.label} · ${a.label}`,
+          installed: p.installed,
+          onCooldown: a.onCooldown,
+          cooldownUntil: a.cooldownUntil,
+          tokens: tokens[p.adapterId],
+        });
       }
     }
 
-    // Include non-installed only if they have vault accounts (user still cares).
     for (const a of accounts) {
-      if (entries.some((e) => e.accountId === a.id)) continue;
+      if (draft.some((e) => e.accountId === a.id)) continue;
       const p = providers.find((x) => x.adapterId === a.adapterId);
-      entries.push(
-        this.#buildEntry({
-          adapterId: a.adapterId,
-          accountId: a.id,
-          label: `${p?.label ?? a.adapterId} · ${a.label}`,
-          installed: p?.installed ?? false,
-          onCooldown: a.onCooldown,
-          cooldownUntil: a.cooldownUntil,
-          tokens: tokens[a.adapterId],
-          now,
-        }),
-      );
+      draft.push({
+        adapterId: a.adapterId,
+        accountId: a.id,
+        label: `${p?.label ?? a.adapterId} · ${a.label}`,
+        installed: p?.installed ?? false,
+        onCooldown: a.onCooldown,
+        cooldownUntil: a.cooldownUntil,
+        tokens: tokens[a.adapterId],
+      });
     }
+
+    // Live Claude OAuth usage for every Claude row (vault token or active CLI).
+    await this.#hydrateClaudeApiWindows(draft, now, forceApi);
+
+    const entries: ProviderQuotaEntry[] = draft.map((d) =>
+      this.#buildEntry({ ...d, now }),
+    );
 
     entries.sort((a, b) => a.label.localeCompare(b.label, 'pt'));
     const snap = buildFleetSnapshot(entries, now);
     this.#lastSnapshot = snap;
     return snap;
+  }
+
+  async #hydrateClaudeApiWindows(
+    draft: ReadonlyArray<{ adapterId: string; accountId?: string }>,
+    now: number,
+    forceApi: boolean,
+  ): Promise<void> {
+    if (!this.#deps.resolveClaudeAccessToken) return;
+
+    const claudeRows = draft.filter((d) => d.adapterId === 'claude');
+    if (claudeRows.length === 0) return;
+
+    await Promise.all(
+      claudeRows.map(async (row) => {
+        const id = entryId({
+          adapterId: row.adapterId,
+          accountId: row.accountId,
+        });
+        if (!forceApi) {
+          const cached = this.#apiCache.get(id);
+          if (cached && now - cached.at < PROVIDER_API_TTL_MS) return;
+        }
+        try {
+          const token = await Promise.resolve(
+            this.#deps.resolveClaudeAccessToken!(row.accountId),
+          );
+          if (!token) {
+            this.#apiCache.delete(id);
+            return;
+          }
+          const windows = await fetchClaudeOauthUsageWindows(token, {
+            fetchImpl: this.#deps.fetchImpl,
+            now,
+          });
+          if (windows && windows.length > 0) {
+            this.#apiCache.set(id, { windows, at: now });
+          } else if (forceApi) {
+            // Force refresh failed — drop stale so UI does not show old %.
+            this.#apiCache.delete(id);
+          }
+        } catch {
+          if (forceApi) this.#apiCache.delete(id);
+        }
+      }),
+    );
   }
 
   lastSnapshot(): QuotaFleetSnapshot | null {
@@ -201,7 +296,6 @@ export class QuotaService {
       input.accountId,
       input.now,
     );
-    // probeProviderWindows merges limit-hit + cooldown; only active (non-expired) hits.
     let windows = probeProviderWindows({
       adapterId: input.adapterId,
       accountId: input.accountId,
@@ -212,6 +306,10 @@ export class QuotaService {
       lastLimitHitAt: recorded?.at,
       now: input.now,
     });
+    const api = this.#apiCache.get(id);
+    if (api?.windows.length) {
+      windows = mergeWindows(windows, api.windows);
+    }
     if (windows.length === 0) {
       windows = defaultUnknownWindows(input.adapterId);
     }
@@ -243,9 +341,9 @@ export class QuotaService {
     this.#broadcastTimer.unref?.();
   }
 
-  /** Force rebuild + broadcast (UI refresh button). */
+  /** Force rebuild + live API re-probe + broadcast (UI refresh button). */
   async refresh(): Promise<QuotaFleetSnapshot> {
-    const snap = await this.snapshot();
+    const snap = await this.snapshot(Date.now(), { forceApi: true });
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed() && !win.webContents.isCrashed()) {
         win.webContents.send(QUOTA_CHANNELS.changed, snap);
