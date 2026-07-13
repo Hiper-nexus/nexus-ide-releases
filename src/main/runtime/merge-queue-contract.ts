@@ -7,6 +7,7 @@ export type MergeQueueEntryStatus =
   | 'candidate-validating'
   | 'integrating'
   | 'post-validating'
+  | 'finalizing'
   | 'integrated'
   | 'blocked';
 

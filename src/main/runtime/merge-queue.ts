@@ -386,6 +386,13 @@ export class MergeQueue {
         candidate.candidateSha,
         'post-integration validation changed the integrated checkout',
       );
+      this.#state.updateEntry(claimed, (entry) => ({
+        ...entry,
+        status: 'finalizing',
+        integratedSha: candidate?.candidateSha,
+        evidenceIds,
+        updatedAt: this.#timestamp(),
+      }));
       this.#worktrees.markIntegrated(
         input.scope,
         input.missionId,
