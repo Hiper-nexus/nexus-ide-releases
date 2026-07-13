@@ -47,6 +47,19 @@ describe('quota-from-limit', () => {
     expect(windowsFromCooldown(100, 'codex', 200)).toEqual([]);
   });
 
+  it('maps quota-kind weekly exhaustion (not 5h) for weekly limit hits', () => {
+    const now = 10_000;
+    const w = windowsFromLimitHit(
+      { kind: 'quota', reason: 'weekly usage limit exceeded', cooldownMs: 12 * 3600_000 },
+      'claude',
+      now,
+      now,
+    );
+    expect(w[0]?.kind).toBe('weekly');
+    expect(w[0]?.label).toBe('Semanal');
+    expect(w[0]?.usedRatio).toBe(1);
+  });
+
   it('uses hitAt for stable resetsAt and drops when past cooldown', () => {
     const hitAt = 10_000;
     const cooldownMs = 5_000;
