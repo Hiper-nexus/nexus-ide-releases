@@ -175,7 +175,7 @@ export function MissionRail() {
 
     // Status já vai na pill — meta fica operacional (tempo / panes).
     if (mission.status === 'pending' && !liveInGrid) {
-      return `${started}${handBit}`;
+      return `Retomar · ${started}${handBit}`;
     }
 
     if (liveInGrid) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BALLOON_QUEUE_LIMIT,
+  BALLOON_DONE_DURATION_MS,
   BALLOON_URGENT_DURATION_MS,
   EMPTY_BALLOON_QUEUE,
   balloonDurationFor,
@@ -87,5 +88,10 @@ describe('enqueueBalloon / dismissBalloon', () => {
     expect(balloonDurationFor('mission-blocked')).toBeGreaterThan(
       balloonDurationFor('mission-done'),
     );
+  });
+
+  it('mantém a conclusão visível por tempo suficiente para ser percebida', () => {
+    expect(balloonDurationFor('mission-done')).toBe(BALLOON_DONE_DURATION_MS);
+    expect(BALLOON_DONE_DURATION_MS).toBeGreaterThanOrEqual(10_000);
   });
 });

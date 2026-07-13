@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.15.0 — Autopilot Fleet
+
+Data: 2026-07-13
+
+### Piloto automático e terminais
+- Modo autônomo passa a usar a flag nativa correta de cada CLI em todos os
+  squads e serviços. O usuário só recebe confirmações interativas quando opta
+  explicitamente pelo modo seguro.
+- O terminal acompanha a saída em tempo real sem arrancar o usuário de uma
+  posição de scroll manual.
+- Retomada de panes preserva a sessão e o dono da missão, evita sessões
+  obsoletas e não reenvia o mesmo comando.
+- O Doctor mede atividade real do PTY, emite um único alerta de travamento e
+  nunca fecha, reinicia ou duplica trabalho que continua produzindo saída.
+
+### Pet Studio e desktop pet
+- Squad fixo `Pet Studio`, com um único Pet Maker e somente a skill de criação
+  de pet, substitui o pipeline de desenvolvimento para missões de imagem.
+- A criação usa a imagem anexada, valida o contrato Codex v2 e só conclui a
+  missão quando existe um pacote íntegro em `~/.codex/pets`.
+- Pets gerados aparecem em `Meus pets`, com preview, aplicação explícita e
+  exclusão local segura. O pet em uso nunca é trocado automaticamente.
+- Recuperação de missão finalizada encontra pacotes válidos criados durante
+  uma interrupção e evita concluir quando a autoria é ambígua.
+- O companion atual avisa conclusão, falha e pedidos de intervenção. Eventos
+  ocorridos antes do renderer estar pronto ficam em fila e são confirmados
+  somente depois de o balão aparecer.
+- Posição livre, múltiplos monitores, visibilidade no boot e click-through foram
+  estabilizados para o pet não cobrir o trabalho nem sumir da tela.
+
+### Operação da frota
+- Uso e cotas reais para Claude, Codex, Gemini/AGY, GLM, Grok, Kimi e demais
+  CLIs compatíveis, com janelas normalizadas e estado desconhecido honesto.
+- Failover multi-conta preserva o contexto do terminal e escolhe apenas contas
+  compatíveis, sem expor credenciais entre providers.
+- Mission rail, Ops Board, toolbars, contas, rankings e estados vazios foram
+  reorganizados com hierarquia operacional, ações visíveis e navegação por
+  teclado.
+- Jarvis ganhou continuidade de wake/follow-up, autoridade acústica e painel de
+  voz mais legível, sem loops de áudio passivo.
+
+### Confiabilidade e release
+- O boot não consulta o Keychain de forma síncrona quando ainda não há sessão
+  de autenticação em memória, evitando inicialização aparentemente travada.
+- Metadados de versão, lockfile, changelog e notas internas voltaram a avançar
+  juntos; o gate impede publicar uma versão com notas divergentes.
+- Build macOS mantém retry controlado do timestamp da Apple e verificação
+  independente de assinatura, notarização, ticket stapled, fuses e smoke do
+  aplicativo extraído do DMG e do ZIP.
+
 ## 0.14.3 — Pet Operacional Completo
 
 Data: 2026-07-12

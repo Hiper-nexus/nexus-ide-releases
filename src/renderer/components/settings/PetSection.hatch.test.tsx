@@ -33,6 +33,11 @@ const PREFS: PetPrefs = {
 };
 
 const IMAGE_PATH = '/Users/x/Pictures/Meu Gato.png';
+const installedApply = vi.fn(async () => ({
+  ok: true,
+  name: 'Codex Companion',
+  prefs: { ...PREFS, preset: 'sheet' as const },
+}));
 
 function installPetApi() {
   (window as unknown as { nexus: { pet: unknown } }).nexus = {
@@ -42,6 +47,20 @@ function installPetApi() {
         Promise.resolve({ ...PREFS, ...patch }),
       onPrefsChanged: () => () => {},
       pickImage: () => Promise.resolve({ ok: true, path: IMAGE_PATH }),
+      installedList: () =>
+        Promise.resolve({
+          ok: true,
+          items: [
+            {
+              id: 'generated-pet',
+              slug: 'generated-pet',
+              label: 'Codex Companion',
+              note: 'Pet criado pelo Pet Studio',
+            },
+          ],
+        }),
+      installedPreview: () => Promise.resolve({ ok: false }),
+      installedApply,
     },
   };
 }
@@ -52,6 +71,7 @@ describe('PetSection — Criar pet com IA (hatch)', () => {
 
   beforeEach(() => {
     launchPetHatchMission.mockClear();
+    installedApply.mockClear();
     installPetApi();
     host = document.createElement('div');
     document.body.appendChild(host);
@@ -84,5 +104,24 @@ describe('PetSection — Criar pet com IA (hatch)', () => {
     expect(launchPetHatchMission).toHaveBeenCalledWith(IMAGE_PATH);
     expect(useMissionWizardStore.getState().open).toBe(false);
     expect(useSettingsStore.getState().drawerOpen).toBe(false);
+  });
+
+  it('lista pets gerados separadamente e só troca o atual após clique', async () => {
+    await act(async () => {
+      root.render(<PetSection />);
+    });
+
+    expect(host.textContent).toContain('Meus pets (1)');
+    expect(host.textContent).toContain('Codex Companion');
+    expect(installedApply).not.toHaveBeenCalled();
+
+    const generated = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Codex Companion'),
+    );
+    expect(generated).toBeTruthy();
+    await act(async () => {
+      generated!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(installedApply).toHaveBeenCalledWith('generated-pet');
   });
 });

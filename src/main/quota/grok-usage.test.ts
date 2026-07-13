@@ -61,16 +61,16 @@ describe('fetchGrokUsageWindows', () => {
           ok: true,
           status: 200,
           json: async () => BILLING_FIXTURE,
-          text: async () => '',
-          headers: { get: () => null },
+          text: async (): Promise<string> => '',
+          headers: { get: (): null => null },
         };
       }
       return {
         ok: true,
         status: 200,
         json: async () => ({ data: [] }),
-        text: async () => '',
-        headers: { get: () => null },
+        text: async (): Promise<string> => '',
+        headers: { get: (): null => null },
       };
     });
 

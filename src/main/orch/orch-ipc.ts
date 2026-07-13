@@ -85,6 +85,7 @@ import {
 import { DesignMdApiClient } from "../design/designmd-api-client";
 import { buildDesignSystemTools } from "./tools-design-system";
 import type { AgentGateContext } from "./gate";
+import { reconcileCompletedPetStudioMissions } from "./pet-studio-completion";
 import { z } from "zod";
 
 /**
@@ -167,6 +168,17 @@ export function configureRendererMissionAuthority(
     const missions = suite.missions.list();
     lastMissionsByScope.set(scopeKey, missions);
     for (const tap of missionsSeedTaps) tap(scopeKey, missions);
+    // A geração pode terminar segundos antes de um crash/restart. Não abra
+    // outro Codex nem repita imagens: se houver uma única missão Pet Studio e
+    // um único pacote v2 novo e válido, fecha a missão existente. A semente
+    // acontece antes para que running -> done ainda dispare o balão do pet.
+    for (const recovery of reconcileCompletedPetStudioMissions(suite)) {
+      if (recovery.completed) {
+        console.log(
+          `[pet-studio] recovered ${recovery.missionId} from ${recovery.packageDir}`,
+        );
+      }
+    }
   });
 }
 

@@ -27,6 +27,8 @@ const api: NexusPetApi = {
     ipcRenderer.on(PET_CHANNELS.event, listener);
     return () => ipcRenderer.removeListener(PET_CHANNELS.event, listener);
   },
+  ready: () => ipcRenderer.send(PET_CHANNELS.rendererReady),
+  eventShown: (kind) => ipcRenderer.send(PET_CHANNELS.eventShown, kind),
   onLook: (cb) => {
     const listener = (_e: unknown, dir: number | null) => cb(dir);
     ipcRenderer.on(PET_CHANNELS.look, listener);

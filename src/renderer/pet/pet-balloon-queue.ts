@@ -36,6 +36,7 @@ export interface BalloonQueueState {
 
 export const BALLOON_QUEUE_LIMIT = 3;
 export const BALLOON_DURATION_MS = 6_000;
+export const BALLOON_DONE_DURATION_MS = 10_000;
 export const BALLOON_URGENT_DURATION_MS = 14_000;
 
 export const EMPTY_BALLOON_QUEUE: BalloonQueueState = {
@@ -89,9 +90,9 @@ export function balloonContentFor(
 }
 
 export function balloonDurationFor(kind: PetEventKind): number {
-  return isPetUrgentEvent(kind)
-    ? BALLOON_URGENT_DURATION_MS
-    : BALLOON_DURATION_MS;
+  if (isPetUrgentEvent(kind)) return BALLOON_URGENT_DURATION_MS;
+  if (kind === 'mission-done') return BALLOON_DONE_DURATION_MS;
+  return BALLOON_DURATION_MS;
 }
 
 /** Compat: texto único (título: detalhe) para quem só precisa da string. */

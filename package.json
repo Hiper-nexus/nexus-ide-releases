@@ -1,7 +1,7 @@
 {
   "name": "nexus-ide",
   "productName": "NexusIDE",
-  "version": "0.14.4",
+  "version": "0.15.0",
   "description": "Terminal IDE multi-agente: grid de panes de terminal com PTYs reais, base para adapters de CLIs de IA e orquestra\u00e7\u00e3o de squads.",
   "main": ".vite/build/main.js",
   "author": "NexusIDE",

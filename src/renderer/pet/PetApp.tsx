@@ -160,6 +160,9 @@ export function PetApp() {
         );
       }
     });
+    // StrictMode monta/limpa o primeiro effect de propósito. Adiar um tick e
+    // cancelar no cleanup garante que só a assinatura estável libera a fila.
+    const readyTimer = window.setTimeout(() => window.nexusPet.ready(), 0);
     // Com ignore+forward o Electron manda mousemove mesmo em click-through.
     // Cobre sprite + balão + menu (não só pet__hit).
     const onWinMove = (e: MouseEvent) => {
@@ -172,6 +175,7 @@ export function PetApp() {
     window.addEventListener('mousemove', onWinMove);
     return () => {
       cancelled = true;
+      window.clearTimeout(readyTimer);
       offPrefs();
       offPlacement();
       offEvents();
@@ -200,13 +204,24 @@ export function PetApp() {
 
   useEffect(() => {
     if (currentBalloonId === null) return undefined;
+    const shownFrame = window.requestAnimationFrame(() => {
+      if (currentBalloon) window.nexusPet.eventShown(currentBalloon.kind);
+    });
     const timer = window.setTimeout(() => {
       setBalloons(dismissBalloon);
       releaseInteractiveAfterOverlay();
       setReaction((r) => (r === 'waiting' ? null : r));
     }, balloonDuration);
-    return () => window.clearTimeout(timer);
-  }, [currentBalloonId, balloonDuration, releaseInteractiveAfterOverlay]);
+    return () => {
+      window.cancelAnimationFrame(shownFrame);
+      window.clearTimeout(timer);
+    };
+  }, [
+    currentBalloon,
+    currentBalloonId,
+    balloonDuration,
+    releaseInteractiveAfterOverlay,
+  ]);
 
   const dismissAndAct = useCallback((action: 'focus-main' | 'open-ops') => {
     runBalloonAction(action);

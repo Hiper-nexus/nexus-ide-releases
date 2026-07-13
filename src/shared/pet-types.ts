@@ -15,6 +15,8 @@ export const PET_CHANNELS = {
   event: 'pet:event',
   /** send: pet → main. React já assinou eventos; agora a fila pode ser solta. */
   rendererReady: 'pet:rendererReady',
+  /** send: pet → main. O balão entrou no ciclo de renderização local. */
+  eventShown: 'pet:eventShown',
   /** event: main → janela do pet. Direção de "look" (0..15) ou null. */
   look: 'pet:look',
   /** event: main → janela do pet. Alinha o conteúdo ao canto sem overhang. */
@@ -368,6 +370,8 @@ export interface NexusPetApi {
   onEvent(cb: (event: PetEvent) => void): () => void;
   /** Handshake após registrar onEvent; impede perder avisos durante o boot. */
   ready(): void;
+  /** Confirma localmente que o balão entrou na renderização. */
+  eventShown(kind: PetEventKind): void;
   /** Direção do olhar (0..15, horário a partir de cima) ou null = idle. */
   onLook(cb: (dir: number | null) => void): () => void;
   /** Ancoragem visual dentro da janela transparente segura. */

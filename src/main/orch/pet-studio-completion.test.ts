@@ -13,7 +13,10 @@ import type { Handoff } from '../../shared/orch-types';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import { testProjectScope } from './__tests__/scope-fixture';
 import type { ScopedMission } from './mission-store';
-import { completePetStudioHandoff } from './pet-studio-completion';
+import {
+  completePetStudioHandoff,
+  reconcileCompletedPetStudioMissions,
+} from './pet-studio-completion';
 
 const scope = testProjectScope();
 let sandbox = '';
@@ -170,6 +173,66 @@ describe('Pet Studio completion boundary', () => {
         getStores: stores,
       }),
     ).toBeNull();
+    expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it('recovers one finished package after restart without reopening a maker', () => {
+    writeValidPackage();
+    const result = reconcileCompletedPetStudioMissions(
+      {
+        missions: {
+          list: vi.fn(() => [mission]),
+          setStatus,
+        },
+      },
+      { codexHome },
+    );
+
+    expect(result).toEqual([
+      {
+        missionId: mission.id,
+        completed: true,
+        packageDir: realpathSync(packageDir),
+      },
+    ]);
+    expect(setStatus).toHaveBeenCalledOnce();
+    expect(setStatus).toHaveBeenCalledWith(mission.id, 'done');
+  });
+
+  it('does not recover when two fresh packages make ownership ambiguous', () => {
+    writeValidPackage();
+    const secondDir = join(codexHome, 'pets', 'second');
+    mkdirSync(secondDir, { recursive: true });
+    writeFileSync(
+      join(secondDir, 'spritesheet.webp'),
+      Buffer.from('RIFF\u0004\u0000\u0000\u0000WEBP', 'binary'),
+    );
+    writeFileSync(
+      join(secondDir, 'pet.json'),
+      JSON.stringify({
+        id: 'second',
+        spriteVersionNumber: 2,
+        spritesheetPath: 'spritesheet.webp',
+      }),
+    );
+
+    const result = reconcileCompletedPetStudioMissions(
+      {
+        missions: {
+          list: vi.fn(() => [mission]),
+          setStatus,
+        },
+      },
+      { codexHome },
+    );
+
+    expect(result).toMatchObject([
+      {
+        missionId: mission.id,
+        completed: false,
+        error: expect.stringMatching(/ambígua/),
+      },
+    ]);
     expect(setStatus).not.toHaveBeenCalled();
   });
 });

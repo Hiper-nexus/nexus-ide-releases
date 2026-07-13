@@ -119,7 +119,7 @@ const LOOK_EDGE_FREEZE_PX = 64;
 const RAISE_DEBOUNCE_MS = 1_200;
 /** Watch só se o SO demover o flag alwaysOnTop (não re-pin preventivo). */
 const RAISE_WATCH_MS = 5_000;
-/** Renderer do pet pronto para receber IPC de evento (did-finish-load). */
+/** Renderer do pet pronto após o handshake feito com onEvent já registrado. */
 let petReady = false;
 /** Eventos enfileirados até o pet carregar — evita balão perdido no boot. */
 const pendingPetEvents: PetEvent[] = [];
@@ -1126,6 +1126,23 @@ function registerPetIpc(): void {
     petReady = true;
     flushPendingPetEvents();
     sendPetPlacement();
+  });
+
+  ipcMain.on(PET_CHANNELS.eventShown, (event, kind: unknown) => {
+    if (!fromPetWindow(event)) return;
+    if (
+      typeof kind !== 'string' ||
+      ![
+        'mission-done',
+        'mission-failed',
+        'mission-blocked',
+        'agent-waiting',
+        'agent-exited',
+      ].includes(kind)
+    ) {
+      return;
+    }
+    console.log(`[pet] balloon shown: ${kind}`);
   });
 
   /**

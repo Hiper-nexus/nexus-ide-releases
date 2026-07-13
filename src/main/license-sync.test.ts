@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { startCheckoutPolling, syncLicenseOnce } from './license-sync';
+import {
+  startCheckoutPolling,
+  syncLicenseOnBoot,
+  syncLicenseOnce,
+} from './license-sync';
 
 function deps(over: Record<string, unknown> = {}) {
   return {
@@ -52,5 +56,23 @@ describe('startCheckoutPolling', () => {
     expect(d.clearIntervalFn).not.toHaveBeenCalled();
     await tick();
     expect(d.clearIntervalFn).toHaveBeenCalledWith(7);
+  });
+});
+
+describe('syncLicenseOnBoot', () => {
+  it('não consulta licença em cold boot sem sessão já desbloqueada', () => {
+    const sync = vi.fn().mockResolvedValue(true);
+
+    syncLicenseOnBoot({ hasCachedAuthSession: () => false, sync });
+
+    expect(sync).not.toHaveBeenCalled();
+  });
+
+  it('sincroniza quando a sessão já está em memória', () => {
+    const sync = vi.fn().mockResolvedValue(true);
+
+    syncLicenseOnBoot({ hasCachedAuthSession: () => true, sync });
+
+    expect(sync).toHaveBeenCalledOnce();
   });
 });

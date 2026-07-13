@@ -296,6 +296,14 @@ export function hasSecret(key: string): boolean {
   }
 }
 
+/**
+ * Cache-only lookup. Unlike `hasSecret`/`getSecret`, this never touches disk or
+ * macOS Keychain and is therefore safe on the Electron boot path.
+ */
+export function hasCachedSecret(key: string): boolean {
+  return cache?.has(key) ?? false;
+}
+
 export function setSecret(key: string, value: string): SecretWriteResult {
   const store = ensureCache();
   if (value === '') return deleteSecret(key);

@@ -13,40 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.13.13',
-  date: '2026-07-11',
-  codename: 'Account Hot-Swap',
+  version: '0.15.0',
+  date: '2026-07-13',
+  codename: 'Autopilot Fleet',
   summary:
-    'Troca multi-conta operacional, failover por limite e credenciais isoladas para as principais CLIs, com panes mais claros e todas as melhorias anteriores.',
+    'Piloto automático confiável para squads e Pet Studio, terminais em tempo real, recuperação sem ações duplicadas e uma frota mais clara para operar.',
   highlights: [
     {
-      title: 'Hot-swap multi-conta',
+      title: 'Pet Studio direto ao resultado',
       detail:
-        'Codex, Grok, Kimi, OpenCode e AGY recebem credenciais isoladas por conta, com troca operacional e sessão preservada.',
+        'Um squad dedicado cria o pet a partir da imagem, valida o pacote e o publica em Meus pets sem carregar o fluxo de desenvolvimento.',
     },
     {
-      title: 'Failover por limite',
+      title: 'Piloto automático de verdade',
       detail:
-        'O Nexus reconhece limites de uso e prepara a retomada em uma conta reserva compatível.',
+        'Squads usam o modo autônomo nativo de cada CLI por padrão; confirmações manuais só voltam quando o usuário escolhe o modo seguro.',
     },
     {
-      title: 'Panes mais claros',
+      title: 'Frota em tempo real',
       detail:
-        'A toolbar usa ações rotuladas, tooltips não recortados e um menu compacto para reduzir ruído sem esconder capacidade.',
+        'Terminais acompanham a saída ao vivo, panes retomam sem duplicar comandos e cotas reais ajudam a decidir failover entre contas e providers.',
     },
   ],
   fixes: [
     {
-      title: 'Pacotes Linux',
-      detail: 'O nome do executável agora coincide com o esperado pelos instaladores DEB e RPM.',
+      title: 'Avisos do companion',
+      detail:
+        'O pet atual avisa conclusão, falha e pedidos de intervenção, inclusive quando o evento acontece durante a inicialização da janela.',
     },
     {
-      title: 'Build macOS resiliente',
-      detail: 'Downloads transitórios de dependências nativas recebem tentativas controladas antes da assinatura.',
+      title: 'Doctor sem falso travamento',
+      detail:
+        'A supervisão usa atividade real do PTY, alerta uma vez e não fecha, reinicia nem reenvia comandos enquanto o agente continua trabalhando.',
     },
     {
-      title: 'Continuidade preservada',
-      detail: 'A release mantém wake local, Gemini Live pré-aquecido e execução operacional das melhorias anteriores.',
+      title: 'Inicialização e companion estáveis',
+      detail:
+        'O boot não bloqueia esperando o Keychain, e o pet preserva posição, visibilidade e click-through entre telas e reinicializações.',
     },
   ],
 };

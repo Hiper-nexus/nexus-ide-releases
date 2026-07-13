@@ -9,6 +9,11 @@ export interface LicenseSyncDeps {
   clearIntervalFn: (id: unknown) => void;
 }
 
+export interface LicenseBootSyncDeps {
+  hasCachedAuthSession: () => boolean;
+  sync: () => Promise<boolean>;
+}
+
 const POLL_MS = 5_000;
 const POLL_MAX = 24;
 
@@ -54,6 +59,22 @@ export function startCheckoutPolling(deps: LicenseSyncDeps = defaultDeps()): voi
   }, POLL_MS);
 }
 
-export function syncLicenseOnBoot(): void {
-  void syncLicenseOnce().catch(() => undefined);
+function defaultBootSyncDeps(): LicenseBootSyncDeps {
+  // Reading/decrypting the encrypted auth session here can synchronously block
+  // Electron in SecItemCopyMatching before the first window paints. A session
+  // already unlocked in this process is safe; a cold boot keeps the persisted
+  // local license and refreshes through the explicit account/checkout flows.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const secrets = require('./persistence/secrets-store') as typeof import('./persistence/secrets-store');
+  return {
+    hasCachedAuthSession: () => secrets.hasCachedSecret('auth:session'),
+    sync: () => syncLicenseOnce(),
+  };
+}
+
+export function syncLicenseOnBoot(
+  deps: LicenseBootSyncDeps = defaultBootSyncDeps(),
+): void {
+  if (!deps.hasCachedAuthSession()) return;
+  void deps.sync().catch(() => undefined);
 }

@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { Handoff } from '../../shared/orch-types';
@@ -21,6 +21,13 @@ type CompletionStores = {
   readonly handoffs: Pick<
     ProjectDomainStoreSuite['handoffs'],
     'markSubmitted' | 'markConsumed'
+  >;
+};
+
+type RecoveryStores = {
+  readonly missions: Pick<
+    ProjectDomainStoreSuite['missions'],
+    'list' | 'setStatus'
   >;
 };
 
@@ -65,12 +72,12 @@ function consume(
   stores.handoffs.markConsumed(handoffId, missionId);
 }
 
-function validatePackage(
-  handoff: Handoff,
+function validatePackageArtifacts(
+  artifacts: readonly unknown[],
   missionCreatedAt: number,
   codexHome: string,
 ): { packageDir: string } {
-  const paths = handoff.artifacts
+  const paths = artifacts
     .map(artifactPath)
     .filter((path): path is string => Boolean(path))
     .map(expandArtifactPath)
@@ -145,6 +152,114 @@ function validatePackage(
     );
   }
   return { packageDir: dirname(manifestRealPath) };
+}
+
+function validatePackage(
+  handoff: Handoff,
+  missionCreatedAt: number,
+  codexHome: string,
+): { packageDir: string } {
+  return validatePackageArtifacts(
+    handoff.artifacts,
+    missionCreatedAt,
+    codexHome,
+  );
+}
+
+function recoverablePackages(
+  missionCreatedAt: number,
+  codexHome: string,
+): string[] {
+  let petRoot: string;
+  try {
+    petRoot = realpathSync(join(codexHome, 'pets'));
+  } catch {
+    return [];
+  }
+
+  let entries;
+  try {
+    entries = readdirSync(petRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const packages: string[] = [];
+  for (const entry of entries) {
+    // Recovery ignores symlinked package directories. The normal handoff
+    // validator still canonicalizes every artifact before accepting it.
+    if (!entry.isDirectory()) continue;
+    const packageDir = join(petRoot, entry.name);
+    try {
+      const validated = validatePackageArtifacts(
+        [
+          join(packageDir, 'spritesheet.webp'),
+          join(packageDir, 'pet.json'),
+        ],
+        missionCreatedAt,
+        codexHome,
+      );
+      packages.push(validated.packageDir);
+    } catch {
+      // Missing, stale or malformed packages are not completion evidence.
+    }
+  }
+  return packages;
+}
+
+export interface PetStudioRecoveryResult {
+  readonly missionId: string;
+  readonly completed: boolean;
+  readonly packageDir?: string;
+  readonly error?: string;
+}
+
+/**
+ * Crash/restart recovery for a maker that wrote the package but could not
+ * submit its final handoff. Strict by design: one running Pet Studio mission
+ * and exactly one fresh valid package. Ambiguity never closes a mission.
+ */
+export function reconcileCompletedPetStudioMissions(
+  stores: RecoveryStores,
+  dependencies: Pick<PetStudioCompletionDependencies, 'codexHome'> = {},
+): PetStudioRecoveryResult[] {
+  const missions = stores.missions
+    .list()
+    .filter(
+      (mission) =>
+        mission.squadId === PET_STUDIO_SQUAD_ID &&
+        mission.status === 'running',
+    );
+  if (missions.length !== 1) return [];
+
+  const mission = missions[0]!;
+  const codexHome = resolve(
+    dependencies.codexHome ??
+      process.env.CODEX_HOME ??
+      join(homedir(), '.codex'),
+  );
+  const candidates = recoverablePackages(mission.createdAt, codexHome);
+  if (candidates.length !== 1) {
+    return [
+      {
+        missionId: mission.id,
+        completed: false,
+        error:
+          candidates.length === 0
+            ? 'nenhum pacote Pet Studio recente e válido encontrado'
+            : 'mais de um pacote Pet Studio recente; recuperação ambígua',
+      },
+    ];
+  }
+
+  stores.missions.setStatus(mission.id, 'done');
+  return [
+    {
+      missionId: mission.id,
+      completed: true,
+      packageDir: candidates[0],
+    },
+  ];
 }
 
 /**
