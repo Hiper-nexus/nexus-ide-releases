@@ -1,7 +1,7 @@
 /**
  * In-memory fleet quota service. Builds ProviderQuotaEntry[] from installed
  * adapters + vault accounts + limit/cooldown signals + live provider APIs
- * (Claude OAuth usage). Broadcasts coalesced snapshots to renderers.
+ * (Claude, Codex, GLM, Kimi best-effort, …). Broadcasts coalesced snapshots.
  * O(accounts), not O(panes). Never invents usedRatio without a source.
  */
 
@@ -18,13 +18,26 @@ import type { ProviderSettingsInfo } from '../../shared/provider-settings-types'
 import { buildFleetSnapshot } from './quota-policy';
 import { defaultUnknownWindows, mergeWindows } from './quota-normalize';
 import { probeProviderWindows } from './quota-probes';
+import type { FetchLike } from './claude-oauth-usage';
+import type { CodexChatGptAuth } from './codex-usage';
 import {
-  fetchClaudeOauthUsageWindows,
-  type FetchLike,
-} from './claude-oauth-usage';
+  fetchLiveProviderWindows,
+  type LiveUsageAuthResolvers,
+} from './provider-live-usage';
 
-/** Cache live API windows briefly — avoid hammering Anthropic on every paint. */
+/** Cache live API windows briefly — avoid hammering providers on every paint. */
 const PROVIDER_API_TTL_MS = 60_000;
+
+/** Adapters that may have a live usage probe (others stay local/unknown). */
+const LIVE_PROBE_ADAPTERS = new Set([
+  'claude',
+  'codex',
+  'glm',
+  'kimi',
+  'grok',
+  'agy',
+  'longcat',
+]);
 
 export interface QuotaServiceDeps {
   listProviders: () => ProviderSettingsInfo[] | Promise<ProviderSettingsInfo[]>;
@@ -43,6 +56,24 @@ export interface QuotaServiceDeps {
    * accountId set → vault account; omitted → active CLI login.
    */
   resolveClaudeAccessToken?: (
+    accountId?: string,
+  ) => string | null | Promise<string | null>;
+  resolveCodexAuth?: (
+    accountId?: string,
+  ) => CodexChatGptAuth | null | Promise<CodexChatGptAuth | null>;
+  resolveGlmApiKey?: (
+    accountId?: string,
+  ) => string | null | Promise<string | null>;
+  resolveGrokToken?: (
+    accountId?: string,
+  ) => string | null | Promise<string | null>;
+  resolveKimiToken?: (
+    accountId?: string,
+  ) => string | null | Promise<string | null>;
+  resolveGeminiToken?: (
+    accountId?: string,
+  ) => string | null | Promise<string | null>;
+  resolveLongcatApiKey?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
   /** Injectable fetch for tests. */
@@ -215,8 +246,8 @@ export class QuotaService {
       });
     }
 
-    // Live Claude OAuth usage for every Claude row (vault token or active CLI).
-    await this.#hydrateClaudeApiWindows(draft, now, forceApi);
+    // Live provider APIs for every supported row (vault / keychain / launcher).
+    await this.#hydrateLiveApiWindows(draft, now, forceApi);
 
     const entries: ProviderQuotaEntry[] = draft.map((d) =>
       this.#buildEntry({ ...d, now }),
@@ -228,18 +259,30 @@ export class QuotaService {
     return snap;
   }
 
-  async #hydrateClaudeApiWindows(
+  #liveResolvers(): LiveUsageAuthResolvers {
+    return {
+      resolveClaudeToken: this.#deps.resolveClaudeAccessToken,
+      resolveCodexAuth: this.#deps.resolveCodexAuth,
+      resolveGlmApiKey: this.#deps.resolveGlmApiKey,
+      resolveGrokToken: this.#deps.resolveGrokToken,
+      resolveKimiToken: this.#deps.resolveKimiToken,
+      resolveGeminiToken: this.#deps.resolveGeminiToken,
+      resolveLongcatApiKey: this.#deps.resolveLongcatApiKey,
+      fetchImpl: this.#deps.fetchImpl,
+    };
+  }
+
+  async #hydrateLiveApiWindows(
     draft: ReadonlyArray<{ adapterId: string; accountId?: string }>,
     now: number,
     forceApi: boolean,
   ): Promise<void> {
-    if (!this.#deps.resolveClaudeAccessToken) return;
+    const rows = draft.filter((d) => LIVE_PROBE_ADAPTERS.has(d.adapterId));
+    if (rows.length === 0) return;
 
-    const claudeRows = draft.filter((d) => d.adapterId === 'claude');
-    if (claudeRows.length === 0) return;
-
+    const resolvers = this.#liveResolvers();
     await Promise.all(
-      claudeRows.map(async (row) => {
+      rows.map(async (row) => {
         const id = entryId({
           adapterId: row.adapterId,
           accountId: row.accountId,
@@ -249,17 +292,12 @@ export class QuotaService {
           if (cached && now - cached.at < PROVIDER_API_TTL_MS) return;
         }
         try {
-          const token = await Promise.resolve(
-            this.#deps.resolveClaudeAccessToken!(row.accountId),
-          );
-          if (!token) {
-            this.#apiCache.delete(id);
-            return;
-          }
-          const windows = await fetchClaudeOauthUsageWindows(token, {
-            fetchImpl: this.#deps.fetchImpl,
+          const windows = await fetchLiveProviderWindows(
+            row.adapterId,
+            row.accountId,
+            resolvers,
             now,
-          });
+          );
           if (windows && windows.length > 0) {
             this.#apiCache.set(id, { windows, at: now });
           } else if (forceApi) {

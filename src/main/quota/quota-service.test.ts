@@ -334,4 +334,72 @@ describe('QuotaService live Claude OAuth usage', () => {
     ).toBe(0.4);
     svc.stop();
   });
+
+  it('hydrates codex + glm live usage in the same fleet snapshot', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).includes('wham/usage')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            rate_limit: {
+              primary_window: {
+                used_percent: 6,
+                limit_window_seconds: 604800,
+              },
+            },
+          }),
+          text: async () => '',
+        };
+      }
+      if (String(url).includes('quota/limit')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              limits: [
+                { type: 'TOKENS_LIMIT', unit: 3, number: 5, percentage: 8 },
+                { type: 'TOKENS_LIMIT', unit: 6, number: 1, percentage: 12 },
+              ],
+            },
+          }),
+          text: async () => '',
+        };
+      }
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+        text: async () => '',
+      };
+    });
+
+    const svc = new QuotaService({
+      listProviders: () => [
+        provider('codex', 'Codex'),
+        provider('glm', 'GLM'),
+        provider('grok', 'Grok'),
+      ],
+      listAccounts: () => [] as AccountInfo[],
+      resolveCodexAuth: () => ({ accessToken: 'c-tok', accountId: 'a1' }),
+      resolveGlmApiKey: () => 'glm-key',
+      resolveGrokToken: () => 'grok-jwt',
+      fetchImpl,
+    });
+
+    const snap = await svc.snapshot(HIT_AT);
+    const codex = snap.entries.find((e) => e.adapterId === 'codex');
+    const glm = snap.entries.find((e) => e.adapterId === 'glm');
+    const grok = snap.entries.find((e) => e.adapterId === 'grok');
+
+    expect(codex?.windows.find((w) => w.kind === 'weekly')?.usedRatio).toBe(
+      0.06,
+    );
+    expect(glm?.windows.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.08);
+    expect(glm?.windows.find((w) => w.kind === 'weekly')?.usedRatio).toBe(0.12);
+    // Grok has no public used% API — honest unknown, not fake 0
+    expect(grok?.windows.every((w) => w.usedRatio === null)).toBe(true);
+    svc.stop();
+  });
 });

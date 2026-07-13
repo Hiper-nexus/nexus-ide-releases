@@ -93,7 +93,7 @@ export function defaultUnknownWindows(
       unknownWindow('session', 'Sessão'),
     ];
   }
-  if (adapterId === 'codex') {
+  if (adapterId === 'codex' || adapterId === 'glm' || adapterId === 'kimi') {
     return [
       unknownWindow('hours', '5 Horas'),
       unknownWindow('weekly', 'Semanal'),
@@ -102,6 +102,12 @@ export function defaultUnknownWindows(
   if (adapterId === 'claude') {
     return [
       unknownWindow('session', 'Sessão'),
+      unknownWindow('weekly', 'Semanal'),
+    ];
+  }
+  if (adapterId === 'grok' || adapterId === 'agy' || adapterId === 'longcat') {
+    return [
+      unknownWindow('hours', '5 Horas'),
       unknownWindow('weekly', 'Semanal'),
     ];
   }

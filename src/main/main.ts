@@ -136,10 +136,15 @@ import {
   shutdownQuotaService,
 } from "./quota/quota-service";
 import { listProviderSettings } from "./persistence/provider-config-store";
+import { listAccountInfos } from "./persistence/account-store";
 import {
-  claudeOAuthAccessToken,
-  listAccountInfos,
-} from "./persistence/account-store";
+  resolveClaudeToken,
+  resolveCodexAuth,
+  resolveGeminiAccessToken,
+  resolveGrokAccessToken,
+  resolveKimiAccessToken,
+  resolveProviderApiKey,
+} from "./quota/provider-usage-auth";
 import { closeDb } from "./persistence/db";
 import {
   getOrchSettings,
@@ -361,9 +366,17 @@ function bootstrap(): void {
   initQuotaService({
     listProviders: () => listProviderSettings(),
     listAccounts: () => listAccountInfos(),
-    // Live Claude 5h/7d % via Anthropic OAuth usage API (token from vault
-    // account blob or active keychain login). Never invents ratios.
-    resolveClaudeAccessToken: (accountId) => claudeOAuthAccessToken(accountId),
+    // Live usage probes (best-effort). Never invents ratios — missing
+    // credentials/API → honest "—". Claude OAuth, Codex ChatGPT wham,
+    // GLM Z.ai quota, Kimi when token valid; Grok/AGY/LongCat reserved.
+    resolveClaudeAccessToken: (accountId) => resolveClaudeToken(accountId),
+    resolveCodexAuth: (accountId) => resolveCodexAuth(accountId),
+    resolveGlmApiKey: (accountId) => resolveProviderApiKey("glm", accountId),
+    resolveGrokToken: (accountId) => resolveGrokAccessToken(accountId),
+    resolveKimiToken: (accountId) => resolveKimiAccessToken(accountId),
+    resolveGeminiToken: (accountId) => resolveGeminiAccessToken(accountId),
+    resolveLongcatApiKey: (accountId) =>
+      resolveProviderApiKey("longcat", accountId),
   });
   registerNotesIpc(projectRuntimeManager);
   registerBillingIpc();

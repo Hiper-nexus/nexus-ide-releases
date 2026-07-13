@@ -122,9 +122,11 @@ export function UsageQuotaSection() {
           Uso e cotas
         </h3>
         <p className="settings-detail__hint">
-          Janelas de cota por CLI e conta (sessão, horas, semanal). Percentagens
-          só aparecem com fonte real — desconhecido mostra &quot;—&quot;, nunca
-          0% inventado. Gasto em $ do projeto fica no chip de custo da bar.
+          Janelas de cota por CLI e conta (sessão, 5h, semanal). % reais via API
+          quando há credencial: Claude OAuth, Codex/ChatGPT, GLM/Z.ai; Kimi
+          best-effort. Grok, AGY e LongCat ficam em &quot;—&quot; até o
+          provider expor cota (nunca 0% inventado). Gasto $ do projeto fica no
+          chip de custo da bar.
         </p>
       </header>
 
