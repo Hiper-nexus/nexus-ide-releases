@@ -364,14 +364,30 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
     );
   }
 
+  const vaultCount = accounts.length;
+  const multiReady = vaultCount >= 2;
+
   return (
     <div className="acct">
       <div className="acct__head">
         <div className="acct__head-copy">
-          <h4 className="acct__title">Contas e login</h4>
+          <div className="acct__title-row">
+            <h4 className="acct__title">Contas e login</h4>
+            <span
+              className={`acct__multi-chip${multiReady ? ' acct__multi-chip--on' : ''}`}
+              title={
+                multiReady
+                  ? `${vaultCount} contas no vault — failover e troca manual ativos`
+                  : 'Adicione 2 ou mais contas no vault para multi-conta e failover'
+              }
+            >
+              {multiReady ? `Multi-conta · ${vaultCount}` : 'Multi-conta'}
+            </span>
+          </div>
           <p className="acct__hint">
-            Sessão do próximo terminal, contas reserva para failover e login
-            verificado desta CLI.
+            Guarde <strong>várias contas</strong> do mesmo provider (trabalho,
+            pessoal, API key…). A em uso abre o próximo terminal; as reserva
+            entram no failover quando o limite bater.
           </p>
         </div>
         {auth && (
@@ -388,6 +404,11 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
       )}
 
       <div className="acct__roster">
+        <div className="acct__section-head">
+          <span className="acct__section-kicker">1 · Em uso</span>
+          <span className="acct__section-hint">próximo terminal / pane</span>
+        </div>
+
         {active ? (
           <ul className="acct__list" aria-label="Conta em uso">
             {renderRow(active, 'active')}
@@ -401,29 +422,38 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
                 <span className="acct__pill acct__pill--quiet">Implícita</span>
               </div>
               <p className="acct__meta-line">
-                Login do terminal, sem conta salva no vault. Salve a sessão
-                logada para hot-swap e failover.
+                Login do terminal, ainda sem entrada no vault. Salve esta
+                sessão (ou uma API key) abaixo — pode repetir para 2ª, 3ª…
+                conta.
               </p>
             </div>
           </div>
         )}
 
-        <div className="acct__standby-head">
-          <span className="acct__standby-label">
-            Reserva{standby.length > 0 ? ` · ${standby.length}` : ''}
+        <div className="acct__section-head">
+          <span className="acct__section-kicker">
+            2 · Reserva{standby.length > 0 ? ` · ${standby.length}` : ' · vazia'}
           </span>
-          {standby.length > 0 && (
-            <span className="acct__standby-hint">
-              failover automático no mesmo provider
-            </span>
-          )}
+          <span className="acct__section-hint">
+            failover automático no mesmo provider
+          </span>
         </div>
 
         {standby.length === 0 ? (
-          <p className="acct__empty">
-            Nenhuma conta reserva. Adicione outra assinatura ou API key para
-            trocar quando o limite bater.
-          </p>
+          <div className="acct__empty acct__empty--cta" role="status">
+            <div className="acct__empty-copy">
+              <strong>Nenhuma conta reserva ainda</strong>
+              <span>
+                Adicione a <em>2ª conta</em> (outra assinatura ou API key) para
+                hot-swap e troca automática quando a em uso esgotar o limite.
+              </span>
+            </div>
+            <span className="acct__empty-steps" aria-hidden="true">
+              <span className="acct__empty-step">1 em uso</span>
+              <span className="acct__empty-arrow">→</span>
+              <span className="acct__empty-step acct__empty-step--need">+ reserva</span>
+            </span>
+          </div>
         ) : (
           <ul className="acct__list" aria-label="Contas reserva">
             {standby.map((a) => renderRow(a, 'standby'))}
@@ -431,8 +461,25 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
         )}
       </div>
 
-      <div className="acct__add-zone">
-        <span className="acct__standby-label">Adicionar conta</span>
+      <div className="acct__add-zone" data-open={addMode !== null ? 'true' : 'false'}>
+        <div className="acct__add-head">
+          <div className="acct__add-head-copy">
+            <span className="acct__section-kicker">
+              3 · {vaultCount === 0 ? 'Adicionar a 1ª conta' : 'Adicionar outra conta'}
+            </span>
+            <p className="acct__add-sub">
+              Pode repetir quantas vezes quiser — cada entrada vira slot no
+              vault para multi-conta.
+              {vaultCount > 0 && (
+                <>
+                  {' '}
+                  Agora: <strong>{vaultCount}</strong> no vault
+                  {standby.length > 0 ? ` (${standby.length} reserva)` : ''}.
+                </>
+              )}
+            </p>
+          </div>
+        </div>
 
         {addMode === null && (
           <div className="acct__add-choices">
@@ -441,12 +488,20 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
                 type="button"
                 className="settings-btn settings-btn--primary acct__add-choice"
                 onClick={() => setAddMode('subscription')}
-                title={`Salva a sessão OAuth/login atual de ${adapterId}`}
+                title={`Salva a sessão OAuth/login atual de ${adapterId} como mais uma conta`}
               >
-                <PixelIcon name="id-badge" size={12} />
+                <span className="acct__add-choice-icon" aria-hidden="true">
+                  <PixelIcon name="id-badge" size={14} />
+                </span>
                 <span className="acct__add-choice-text">
                   <strong>Sessão logada</strong>
-                  <span>Hot-swap sem re-login · {adapterId}</span>
+                  <span>
+                    Grava o login atual de {adapterId} no vault — ideal para
+                    2ª assinatura sem re-login
+                  </span>
+                </span>
+                <span className="acct__add-plus" aria-hidden="true">
+                  +
                 </span>
               </button>
             )}
@@ -454,12 +509,19 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
               type="button"
               className="settings-btn acct__add-choice"
               onClick={() => setAddMode('api-key')}
-              title="Conta com API key (nativa ou roteada)"
+              title="Adicionar outra conta com API key (nativa ou roteada)"
             >
-              <PixelIcon name="key" size={12} />
+              <span className="acct__add-choice-icon" aria-hidden="true">
+                <PixelIcon name="key" size={14} />
+              </span>
               <span className="acct__add-choice-text">
                 <strong>API key</strong>
-                <span>Nativa ou upstream (GLM, OpenRouter…)</span>
+                <span>
+                  Outra conta via key nativa ou upstream (GLM, OpenRouter…)
+                </span>
+              </span>
+              <span className="acct__add-plus" aria-hidden="true">
+                +
               </span>
             </button>
           </div>
@@ -468,15 +530,16 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
         {addMode === 'subscription' && (
           <div className="acct__form" role="group" aria-label="Salvar sessão logada">
             <p className="acct__form-title">
-              Salva o login atual de <strong>{adapterId}</strong> no vault.
-              Depois você troca de conta sem autenticar de novo. Panes abertos
-              mantêm a conta antiga até reiniciar.
+              Nomeie esta conta (ex.: <em>trabalho</em>, <em>pessoal</em>) e
+              salve o login atual de <strong>{adapterId}</strong> no vault.
+              Depois pode adicionar mais. Panes abertos mantêm a conta antiga
+              até reiniciar.
             </p>
             <div className="acct__add">
               <input
                 className="settings-input"
                 value={label}
-                placeholder="nome (ex.: trabalho, pessoal)"
+                placeholder="nome da conta (ex.: trabalho, pessoal)"
                 autoFocus
                 aria-label="Nome da conta"
                 onChange={(e) => setLabel(e.target.value)}
@@ -491,7 +554,7 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
                 onClick={() => void snapshotSession()}
                 disabled={busy}
               >
-                Salvar sessão
+                Salvar no vault
               </button>
               <button type="button" className="settings-btn" onClick={closeForm} disabled={busy}>
                 Cancelar
@@ -503,14 +566,15 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
         {addMode === 'api-key' && (
           <div className="acct__form" role="group" aria-label="Adicionar API key">
             <p className="acct__form-title">
-              Key nativa ou roteada (GLM, LongCat, OpenRouter…). Segredo vai
-              para o Keychain; a UI só mostra máscara.
+              Nova entrada no vault com key nativa ou roteada (GLM, LongCat,
+              OpenRouter…). Segredo no Keychain; a UI só mostra máscara. Pode
+              adicionar várias keys com nomes diferentes.
             </p>
             <div className="acct__add">
               <input
                 className="settings-input"
                 value={label}
-                placeholder="nome (ex.: z.ai, longcat)"
+                placeholder="nome da conta (ex.: z.ai, longcat-pessoal)"
                 autoFocus
                 aria-label="Nome da conta"
                 onChange={(e) => setLabel(e.target.value)}
@@ -551,13 +615,21 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
                 onClick={() => void addApiKey()}
                 disabled={busy || !label.trim() || !key.trim()}
               >
-                Adicionar conta
+                Adicionar ao vault
               </button>
               <button type="button" className="settings-btn" onClick={closeForm} disabled={busy}>
                 Cancelar
               </button>
             </div>
           </div>
+        )}
+
+        {addMode === null && (
+          <p className="acct__add-footnote">
+            Fluxo típico: salve a sessão atual → mude de conta no CLI ou cole
+            outra key → <strong>adicione de novo</strong> como reserva. Quantas
+            quiser no mesmo provider.
+          </p>
         )}
       </div>
 

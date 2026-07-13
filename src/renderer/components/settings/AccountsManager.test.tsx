@@ -52,7 +52,7 @@ describe('AccountsManager', () => {
           ]),
         },
         accounts: {
-          supportsSnapshot: vi.fn(async () => true),
+          supportsSnapshot: vi.fn(async () => ({ ok: true, supported: true })),
         },
       },
     });
@@ -69,12 +69,18 @@ describe('AccountsManager', () => {
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(host.textContent).toContain('Sessão nativa de claude');
     expect(host.textContent).toContain('Login verificado');
-    expect(host.textContent).toMatch(/sessão logada/i);
     expect(host.textContent).toContain('API key');
+    expect(host.textContent).toMatch(/multi-conta/i);
+    expect(host.textContent).toMatch(/adicionar a 1ª conta/i);
+    expect(host.textContent).toMatch(/nenhuma conta reserva/i);
+    expect(host.textContent).toMatch(/2ª conta|outra conta/i);
+    // Snapshot button appears after supportsSnapshot resolves.
+    expect(host.textContent).toMatch(/sessão logada/i);
     act(() => root.unmount());
   });
 
