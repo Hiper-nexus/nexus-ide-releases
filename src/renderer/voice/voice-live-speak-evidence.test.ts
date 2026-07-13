@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   detectLiveSpeakEvidence,
+  liveSpeakEvidenceTimeoutMs,
   waitForLiveSpeakEvidence,
   type LiveSpeakEvidenceSnapshot,
 } from './voice-live-speak-evidence';
@@ -35,5 +36,11 @@ describe('Live speak evidence', () => {
     });
     expect(evidence).toBe('none');
     expect(sleeps).toEqual([25, 25, 25, 15]);
+  });
+
+  it('uses a longer bounded liveSay evidence window for Gemini before Classic TTS', () => {
+    expect(liveSpeakEvidenceTimeoutMs('ok')).toBe(2_400);
+    expect(liveSpeakEvidenceTimeoutMs('x'.repeat(200))).toBe(3_600);
+    expect(liveSpeakEvidenceTimeoutMs('x'.repeat(1_000))).toBe(6_500);
   });
 });

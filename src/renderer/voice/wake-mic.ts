@@ -48,7 +48,16 @@ const STRONG_SPEECH_RMS = 0.055;
 const STRONG_SPEECH_PEAK = 0.12;
 const MIN_SPEECH_MS = 320;
 const MAX_PREROLL_MS = 3_000;
-const REALTIME_PREROLL_MS = 750;
+// Overclock parity (C-071.1c / pre-roll→pendingMic bridge): the wake seed is
+// the audio captured BEFORE wake fired — it holds the wake word AND any command
+// glued to it ("Ei Jarvis, cria uma missão"). When wake fires late (user has to
+// shout), that command onset sits >750ms before detection; clipping the seed to
+// the last 750ms dropped it at the renderer, so Gemini only ever heard the tail
+// ("gritar") while the local fallback WAV kept the full phrase. Forward the
+// whole captured wake window (matching PASSIVE_WAKE_HANDOFF_MS / WAKE_PREROLL_MS)
+// so the command reaches the Live socket; the transport's 160KB drop-oldest ring
+// (~5s) is the single authority that bounds overflow, preserving the newest audio.
+const REALTIME_PREROLL_MS = 2_500;
 const LIVE_FRAME_PREROLL_MS = 750;
 /** Preserve the complete first syllable even when speech starts at a forced
  * VAD-window boundary. 300ms still lost “Jar-” in real continuous-room logs. */
@@ -276,9 +285,13 @@ export class WakeMic {
     this.uttLastSpeechAt = this.uttStartedAt;
     this.liveFrameGate.reset();
     this.markSeededSpeech(seeded);
-    // The local WAV retains the full wake seed for fallback STT. Live gets only
-    // the trailing window: enough to preserve a command glued to the wake word,
-    // without bursting seconds of wake/silence into automatic VAD.
+    // The local WAV retains the full wake seed for fallback STT. Live now gets
+    // the full captured wake window (REALTIME_PREROLL_MS): the seed already ends
+    // on the last spoken frame (trailing silence trimmed for the passive path
+    // and time-bounded to WAKE_PREROLL_MS for the direct path), so forwarding it
+    // whole preserves a command glued to the wake word instead of clipping it to
+    // a 750ms tail. Overflow is bounded downstream by the transport's drop-oldest
+    // pendingMic ring (newest audio wins), never here — clipping here starves it.
     const sampleRate = this.ctx?.sampleRate ?? TARGET_SAMPLE_RATE;
     for (const frame of tailFrames(seeded, sampleRate, REALTIME_PREROLL_MS)) {
       this.uttFrameTap?.(frame, sampleRate);

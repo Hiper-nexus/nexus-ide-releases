@@ -17,6 +17,9 @@ interface WaitForLiveSpeakEvidenceOptions {
 
 const DEFAULT_TIMEOUT_MS = 1_800;
 const DEFAULT_POLL_MS = 25;
+export const LIVE_SPEAK_EVIDENCE_MIN_TIMEOUT_MS = 2_400;
+export const LIVE_SPEAK_EVIDENCE_MAX_TIMEOUT_MS = 6_500;
+const LIVE_SPEAK_EVIDENCE_MS_PER_CHAR = 18;
 
 export function detectLiveSpeakEvidence(
   baseline: LiveSpeakEvidenceSnapshot,
@@ -47,4 +50,15 @@ export async function waitForLiveSpeakEvidence({
     evidence = detectLiveSpeakEvidence(baseline, read());
   }
   return evidence;
+}
+
+export function liveSpeakEvidenceTimeoutMs(text: string): number {
+  const chars = text.trim().length;
+  return Math.min(
+    LIVE_SPEAK_EVIDENCE_MAX_TIMEOUT_MS,
+    Math.max(
+      LIVE_SPEAK_EVIDENCE_MIN_TIMEOUT_MS,
+      chars * LIVE_SPEAK_EVIDENCE_MS_PER_CHAR,
+    ),
+  );
 }

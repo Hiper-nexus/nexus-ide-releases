@@ -299,15 +299,25 @@ export class LiveTransportController {
       return Promise.resolve();
     }
 
-    // A healthy Live socket is intentionally quiet between turns. `isReady`,
-    // disconnect and error callbacks—not elapsed silence—own recovery.
-    if (this._provider?.isReady) {
+    // Overclock F-138 parity: a locally-open Gemini Live socket can be a
+    // server-side zombie. The symptom in Nexus logs was exactly the Overclock
+    // finding: “reuso quente” + hundreds of mic frames sent + zero
+    // transcript/audio, followed by Classic fallback and a mute Jarvis. Prewarm
+    // may keep an idle socket, but an actual user wake/click must start from a
+    // fresh provider and rely on pendingMic to bridge setup latency.
+    if (this._provider?.isReady && !options.prewarm) {
+      logVoice('warn', 'live.hotReuseDisabled', 'descartando socket quente antes do wake', {
+        inGrace: this._inGrace,
+      });
+      this.hardStop();
+      this._fsm.start({ reason: 'wake' });
+    } else if (this._provider?.isReady) {
       if (this._inGrace) this.promoteGrace();
       else this.touchIdle();
       this.sendGreetingIfSafe(this._provider, options.greeting);
       this.flushPendingMic(this._provider);
       this._fsm.patchStatus({
-        status: options.prewarm ? 'dormant' : 'listening',
+        status: 'dormant',
         realtimeReady: true,
       });
       return Promise.resolve();

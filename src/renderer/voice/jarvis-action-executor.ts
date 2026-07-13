@@ -28,6 +28,7 @@ import { sanitizeMcpResultOutput } from './mcp-result-output';
 import { currentViewNarration, currentViewToolOutput } from './current-view-read';
 import { waitForActionEvidence } from './action-evidence';
 import { resolveWorkspaceByVoiceName } from './workspace-name-resolver';
+import { resolveSquadByVoiceName } from './squad-name-resolver';
 import { logVoiceEvent } from './voice-live-ipc';
 import {
   isExecutionReadyDelegationPrompt,
@@ -138,6 +139,72 @@ function normPaneName(text: string): string {
     .trim();
 }
 
+const SHELL_COMMAND_RE = /^(?:\.\/|\/|[A-Za-z0-9_.-]+=|[A-Za-z0-9_.-]+(?:\s|$))/;
+
+const KNOWN_SHELL_COMMANDS = new Set([
+  'agy',
+  'ai',
+  'awk',
+  'cat',
+  'cd',
+  'chmod',
+  'chown',
+  'claude',
+  'clear',
+  'codex',
+  'cp',
+  'curl',
+  'docker',
+  'echo',
+  'electron-forge',
+  'find',
+  'gemini',
+  'gh',
+  'git',
+  'grep',
+  'head',
+  'kill',
+  'kimi',
+  'ls',
+  'make',
+  'mkdir',
+  'mv',
+  'node',
+  'npm',
+  'npx',
+  'pnpm',
+  'pwd',
+  'python',
+  'python3',
+  'rg',
+  'rm',
+  'sed',
+  'tail',
+  'touch',
+  'tsx',
+  'yarn',
+]);
+
+function stripEnvAssignments(command: string): string {
+  return command
+    .trim()
+    .replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S+)\s+)+/, '');
+}
+
+function looksLikeShellCommand(command: string): boolean {
+  const trimmed = command.trim();
+  if (!trimmed || trimmed.length > 4096) return false;
+  if (!SHELL_COMMAND_RE.test(trimmed)) return false;
+  if (/[À-ÿ]/.test(trimmed)) return false;
+  if (/[;&|<>`$(){}[\]*?~]/.test(trimmed)) return true;
+
+  const withoutEnv = stripEnvAssignments(trimmed);
+  const firstToken = withoutEnv.split(/\s+/, 1)[0] ?? '';
+  if (!firstToken) return false;
+  if (firstToken.includes('/') || firstToken.includes('.')) return true;
+  return KNOWN_SHELL_COMMANDS.has(firstToken);
+}
+
 function findPaneByVoiceName(
   panes: ReturnType<typeof listPanes>,
   paneName: string,
@@ -241,7 +308,8 @@ export async function executeJarvisAction(
   let expectReply = reply.expectReply;
   const action: JarvisAction =
     reply.action.type === 'run_command' &&
-    isExecutionReadyDelegationPrompt(reply.action.command)
+    (isExecutionReadyDelegationPrompt(reply.action.command) ||
+      !looksLikeShellCommand(reply.action.command))
       ? { type: 'send_to_pane', text: reply.action.command }
       : reply.action;
 
@@ -386,19 +454,18 @@ export async function executeJarvisAction(
       };
     }
   } else if (action.type === 'open_squad') {
-    const wanted = action.squadName.toLowerCase();
     const squads = useOrchStore.getState().squads;
-    const match =
-      squads.find((s) => s.name.toLowerCase() === wanted) ??
-      squads.find(
-        (s) =>
-          s.name.toLowerCase().includes(wanted) ||
-          wanted.includes(s.name.toLowerCase()),
-      );
+    const resolution = resolveSquadByVoiceName(action.squadName, squads);
+    const match = resolution.kind === 'match' ? resolution.squad : null;
     console.log(
-      `[voice] ação open_squad "${action.squadName}" → ${match ? `match: ${match.name}` : 'SEM MATCH'}`,
+      `[voice] ação open_squad "${action.squadName}" → ${match ? `match: ${match.name}` : resolution.kind.toUpperCase()}`,
     );
-    if (match && !useWorkspaceStore.getState().current) {
+    if (resolution.kind === 'ambiguous') {
+      const choices = resolution.candidates.slice(0, 4).map((s) => s.name).join(', ');
+      sayText = `Encontrei mais de um squad parecido: ${choices}. Qual deles você quer iniciar?`;
+      expectReply = true;
+      toolResult = { tool: action.type, ok: false, summary: 'squad ambíguo' };
+    } else if (match && !useWorkspaceStore.getState().current) {
       sayText =
         'Antes eu preciso de um projeto aberto. Quer que eu abra um dos recentes? Diga o nome.';
       expectReply = true;
@@ -810,12 +877,17 @@ export async function executeJarvisAction(
       // as shell input: that produced a misleading native command dialog for
       // ordinary mission objectives. Explicit shell requests still use the
       // dedicated run_command branch and retain its confirmation guardrail.
+      // If no agent/orchestrator pane exists yet, open the agentic mission
+      // wizard with the objective filled instead of surfacing a hard failure.
+      useMissionWizardStore.getState().openForAgentic(action.text);
+      markEffect(control);
       sayText =
-        'Não achei um pane de agente pra receber a missão — abre o orquestrador primeiro.';
+        'Abri uma missão agêntica com esse objetivo. Revise e inicie quando quiser.';
       toolResult = {
         tool: action.type,
-        ok: false,
-        summary: 'sem pane de agente válido (delegação não virou comando de shell)',
+        ok: true,
+        summary: 'sem pane de agente — wizard agêntico aberto com objetivo',
+        output: { intent: action.text },
       };
     } else {
       const missionPrompt = prepareDelegationPrompt(action.text);

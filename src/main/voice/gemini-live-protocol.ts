@@ -6,6 +6,12 @@ import {
 const PT_BR_SYSTEM_INSTRUCTION =
   'Idioma de voz padrão: português brasileiro (pt-BR). Mude apenas se o usuário pedir outro idioma.';
 const GEMINI_31_MODEL_PREFIX = 'gemini-3.1-';
+// F-090 (paridade Overclock): modelos half-cascade (gemini-3.1-*-live) usam
+// `languageCode` no speechConfig para PINAR o pt-BR do TTS — sem ele o sotaque
+// e a prosódia variam e o STT confunde comandos, o que derruba o turno pro
+// fallback Classic. Modelos native-audio (2.5) IGNORAM o campo e auto-detectam,
+// então lá ele fica de fora (a instrução de idioma no prompt segura o sotaque).
+const LIVE_SPEECH_LANGUAGE_CODE = 'pt-BR';
 export const CONTEXT_UPDATE_ENVELOPE = '[context_update]';
 const GEMINI_31_CONTEXT_INSTRUCTION =
   'Mensagens iniciadas por [context_update] são telemetria interna do Nexus: atualize seu contexto silenciosamente e nunca responda ou fale por causa delas.';
@@ -84,6 +90,12 @@ export function buildSetupMessage(opts: {
   };
   if (usesGemini31Contract(opts.model)) {
     generationConfig.thinkingConfig = { thinkingLevel: 'minimal' };
+    // Half-cascade: pina o idioma do TTS (Overclock F-090). Native-audio (2.5)
+    // fica sem o campo para não conflitar com a auto-detecção do modelo.
+    generationConfig.speechConfig = {
+      voiceConfig: { prebuiltVoiceConfig: { voiceName: opts.voiceName } },
+      languageCode: LIVE_SPEECH_LANGUAGE_CODE,
+    };
   }
   return {
     setup: {

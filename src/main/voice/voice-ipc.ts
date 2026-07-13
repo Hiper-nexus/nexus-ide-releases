@@ -87,6 +87,7 @@ import {
   liveRuntimeFingerprint,
 } from "./live-runtime-config";
 import { requiresVoiceCommandConfirmation } from "../jarvis/guardrails";
+import { ensureAllDefaultWakeModelsInstalled } from "./ensure-wake-models";
 
 /**
  * Wires the voice pipeline into IPC. Every renderer payload is zod-validated
@@ -638,6 +639,11 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     execPath: process.execPath,
     version: app.getVersion(),
   });
+  const wakeModels = ensureAllDefaultWakeModelsInstalled();
+  logVoice("info", "wake.defaultModels", "modelos wake padrão verificados", {
+    en: Boolean(wakeModels.en),
+    ptbr: Boolean(wakeModels.ptbr),
+  });
   const aec = getAecRuntimeStatus(app.isPackaged ? process.resourcesPath : undefined);
   logVoice(aec.degraded ? "warn" : "info", "voice.aecRuntime", aec.reason, {
     backend: aec.backend,
@@ -1155,11 +1161,19 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     }
   });
   ipcMain.handle(VOICE_CHANNELS.liveEndTurn, (event) => {
+    // Soft no-op when the session was already released (wake→Classic fallback
+    // race: the renderer still fires endTurn after `live.quiescedForClassic`
+    // dropped ownership). A missing owner means there is no turn to end; only
+    // a live session owned by ANOTHER window must still fail closed.
+    if (!activeLiveOwnership) return liveSession.getState();
     requireLiveOwnership(event.sender);
     liveTransport.endTurn();
     return liveSession.endTurn();
   });
   ipcMain.handle(VOICE_CHANNELS.liveEndUserAudio, (event) => {
+    // Same benign race as liveEndTurn: flushing user audio after the session
+    // was released is a no-op, not an error. Cross-window access still throws.
+    if (!activeLiveOwnership) return liveSession.getState();
     requireLiveOwnership(event.sender);
     liveTransport.endTurn();
     return liveSession.getState();

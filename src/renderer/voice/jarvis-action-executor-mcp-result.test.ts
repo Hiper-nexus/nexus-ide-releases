@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JarvisContext, JarvisReply } from '../../shared/voice-ipc';
 
 const {
+  confirmCommand,
   invokeMcpWithConfirm,
   layoutState,
   missionWizardState,
@@ -11,8 +12,8 @@ const {
   waitForSession,
   writeToPane,
 } = vi.hoisted(() => ({
+  confirmCommand: vi.fn(),
   invokeMcpWithConfirm: vi.fn(),
-  resolveSendToPaneTarget: vi.fn(),
   setPendingDelegation: vi.fn(),
   submitPromptToPane: vi.fn(),
   waitForSession: vi.fn(),
@@ -22,8 +23,13 @@ const {
   },
   layoutState: {
     focusedPaneId: null as string | null,
-    panes: [] as Array<{ id: string; kind: 'shell' | 'cli-agent' | 'browser'; title: string }>,
+    panes: [] as Array<{
+      id: string;
+      kind: 'shell' | 'cli-agent' | 'browser';
+      title: string;
+    }>,
   },
+  resolveSendToPaneTarget: vi.fn(),
 }));
 
 vi.mock('../state/layout-store', () => ({
@@ -47,6 +53,7 @@ vi.mock('../state/gamification-store', () => ({
   useGamificationStore: { getState: vi.fn() },
 }));
 vi.mock('./voice-store', () => ({ useVoiceStore: { getState: vi.fn() } }));
+vi.mock('./voice-live-ipc', () => ({ logVoiceEvent: vi.fn() }));
 vi.mock('../state/settings-store', () => ({
   useSettingsStore: { getState: vi.fn() },
 }));
@@ -107,7 +114,7 @@ describe('Jarvis MCP result propagation', () => {
     layoutState.focusedPaneId = null;
     layoutState.panes = [];
     vi.stubGlobal('window', {
-      nexus: { voice: { logVoice: vi.fn() } },
+      nexus: { voice: { confirmCommand, logVoice: vi.fn() } },
     });
   });
 
@@ -137,6 +144,87 @@ describe('Jarvis MCP result propagation', () => {
       ok: true,
       summary: 'nexus_pane_read ok',
       output: 'TEST_OUTPUT_MARKER',
+    });
+  });
+
+  it('submits a pending-question answer with a real agent Enter', async () => {
+    resolveSendToPaneTarget.mockReturnValue({
+      kind: 'asking-pane',
+      paneId: 'pane-agent',
+    });
+    waitForSession.mockResolvedValue('session-agent');
+    submitPromptToPane.mockReturnValue(true);
+
+    const execution = await executeJarvisAction(
+      {
+        say: '',
+        action: {
+          type: 'send_to_pane',
+          paneId: 'pane-agent',
+          text: 'Objective\nAcceptance criteria',
+        },
+      },
+      context,
+    );
+
+    expect(submitPromptToPane).toHaveBeenCalledWith(
+      'pane-agent',
+      'Objective\nAcceptance criteria',
+    );
+    expect(execution.toolResult).toEqual(
+      expect.objectContaining({ ok: true, tool: 'send_to_pane' }),
+    );
+  });
+
+  it('reroutes natural-language prose mislabeled as run_command to agent delegation', async () => {
+    resolveSendToPaneTarget.mockReturnValue({
+      kind: 'delegation',
+      orchestratorPaneId: 'pane-orq',
+    });
+    waitForSession.mockResolvedValue('session-orq');
+    submitPromptToPane.mockReturnValue(true);
+
+    const execution = await executeJarvisAction(
+      {
+        say: '',
+        action: { type: 'run_command', command: 'análise completa de UX' },
+      },
+      context,
+    );
+
+    expect(confirmCommand).not.toHaveBeenCalled();
+    expect(writeToPane).not.toHaveBeenCalled();
+    expect(submitPromptToPane).toHaveBeenCalledWith(
+      'pane-orq',
+      expect.stringContaining('Objective: análise completa de UX'),
+    );
+    expect(execution.toolResult).toMatchObject({
+      tool: 'send_to_pane',
+      ok: true,
+    });
+  });
+
+  it('opens an agentic mission instead of failing when no agent pane exists for delegation', async () => {
+    resolveSendToPaneTarget.mockReturnValue({ kind: 'no-agent-pane' });
+
+    const execution = await executeJarvisAction(
+      {
+        say: '',
+        action: { type: 'send_to_pane', text: 'análise completa de UX' },
+      },
+      context,
+    );
+
+    expect(missionWizardState.openForAgentic).toHaveBeenCalledWith(
+      'análise completa de UX',
+    );
+    expect(confirmCommand).not.toHaveBeenCalled();
+    expect(writeToPane).not.toHaveBeenCalled();
+    expect(execution.sayText).toContain('missão agêntica');
+    expect(execution.toolResult).toMatchObject({
+      tool: 'send_to_pane',
+      ok: true,
+      summary: 'sem pane de agente — wizard agêntico aberto com objetivo',
     });
   });
 
