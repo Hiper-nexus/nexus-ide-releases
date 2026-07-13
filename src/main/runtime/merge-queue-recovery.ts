@@ -356,13 +356,7 @@ export class MergeQueueRecovery {
         taskHeadSha,
         candidateSha,
       );
-      this.#state.complete(
-        attempt.claimed,
-        candidateSha,
-        evidenceIds,
-        this.#timestamp(),
-      );
-      return Object.freeze({
+      const result = Object.freeze({
         taskKey: entry.taskKey,
         taskHeadSha,
         integrationBaseSha,
@@ -371,6 +365,14 @@ export class MergeQueueRecovery {
         diffHash,
         evidenceIds,
       });
+      await input.finalize?.(result);
+      this.#state.complete(
+        attempt.claimed,
+        candidateSha,
+        evidenceIds,
+        this.#timestamp(),
+      );
+      return result;
     } catch (error) {
       try {
         this.#worktrees.markFailed(

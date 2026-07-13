@@ -54,6 +54,7 @@ import {
   ensureBlastRadius,
 } from './orientation/orientation-blast-radius';
 import { tryGetProjectOrientationService } from './orientation/orientation-service';
+import { canonicalJson } from './canonical-json';
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -960,6 +961,172 @@ export class ContextWorkflowService {
       ...this.#store.listSensorEvidence(missionId).map((evidence) => evidence.id),
       ...this.#store.listReviewReports(missionId).map((report) => `review:${report.reviewId}`),
     ].sort());
+  }
+
+  /** Current, passing evidence only; safe for final-gate crash reconciliation. */
+  listCurrentPersistedEvidenceIds(missionId: string): readonly string[] {
+    const workflow = this.#store.getWorkflow(missionId);
+    if (!workflow) throw new Error('evidence mission has no frozen workflow');
+    const matchesBinding = (binding: EvidenceBinding) =>
+      binding.missionId === workflow.binding.missionId &&
+      binding.contextHash === workflow.binding.contextHash &&
+      binding.contractHash === workflow.binding.contractHash &&
+      binding.baseSha === workflow.binding.baseSha &&
+      binding.headSha === workflow.binding.headSha &&
+      binding.diffHash === workflow.binding.diffHash;
+    const sensors = this.#store.listSensorEvidence(missionId)
+      .filter((evidence) =>
+        evidence.exitCode === 0 &&
+        !evidence.timedOut &&
+        matchesBinding(evidence),
+      )
+      .map((evidence) => evidence.id);
+    const reviews = this.#store
+      .listReviewReports(missionId, workflow.binding.diffHash)
+      .filter((report) => matchesBinding(report.binding))
+      .map((report) => `review:${report.reviewId}`);
+    return Object.freeze([...new Set([...sensors, ...reviews])].sort());
+  }
+
+  /**
+   * Derive one immutable Nexus attestation per pending Ralph milestone from a
+   * successful final validation bundle. The deterministic IDs make a crash
+   * during persistence safe to replay without reusing evidence across steps.
+   */
+  recordMilestoneValidationEvidence(
+    missionId: string,
+    rawSourceEvidenceIds: readonly string[],
+  ): readonly string[] {
+    const mission = this.#missions.get(missionId);
+    const workflow = this.#store.getWorkflow(missionId);
+    if (!mission || !workflow) {
+      throw new Error('milestone attestation requires a frozen mission');
+    }
+    if (!workflow.stage.startsWith('validation')) {
+      throw new Error('milestone attestations require successful final validation');
+    }
+    const sourceEvidenceIds = [...new Set(rawSourceEvidenceIds)].sort();
+    const currentIds = new Set(this.listCurrentPersistedEvidenceIds(missionId));
+    if (
+      sourceEvidenceIds.length === 0 ||
+      sourceEvidenceIds.some((id) => !currentIds.has(id))
+    ) {
+      throw new Error('milestone attestation source evidence is stale or missing');
+    }
+    this.#assertFinalValidationSources(
+      missionId,
+      workflow.binding,
+      sourceEvidenceIds,
+    );
+    const existing = new Map(
+      this.#store.listSensorEvidence(missionId).map((evidence) => [evidence.id, evidence]),
+    );
+    const attestationIds = mission.milestones
+      .filter((milestone) => milestone.status !== 'done')
+      .map((milestone) => this.#recordMilestoneAttestation(
+        missionId,
+        milestone.id,
+        workflow.binding,
+        sourceEvidenceIds,
+        existing,
+      ));
+    if (attestationIds.length === 0) {
+      throw new Error('milestone attestation requires a pending mission step');
+    }
+    return Object.freeze([...new Set(attestationIds)].sort());
+  }
+
+  #recordMilestoneAttestation(
+    missionId: string,
+    milestoneId: string,
+    binding: EvidenceBinding,
+    sourceEvidenceIds: readonly string[],
+    existing: ReadonlyMap<string, TrustedEvidence>,
+  ): string {
+    const identity = {
+      version: 'nexus-milestone-validation-v1',
+      missionId,
+      milestoneId,
+      binding,
+    };
+    const statement = {
+      ...identity,
+      sourceEvidenceIds,
+    };
+    const identityDigest = createHash('sha256')
+      .update(canonicalJson(identity))
+      .digest('hex');
+    const statementDigest = createHash('sha256')
+      .update(canonicalJson(statement))
+      .digest('hex');
+    const id = `milestone:${identityDigest}`;
+    const prior = existing.get(id);
+    if (prior) {
+      if (prior.sensorId !== 'nexus-milestone-attestation') {
+        throw new Error(`milestone attestation collision for ${milestoneId}`);
+      }
+      return id;
+    }
+    const timestamp = new Date(this.#dependencies.now?.() ?? Date.now()).toISOString();
+    this.#store.recordSensorEvidence(Object.freeze({
+      id,
+      producer: 'nexus' as const,
+      projectId: this.scope.projectId,
+      checkoutId: this.scope.checkoutId,
+      missionId,
+      sensorId: 'nexus-milestone-attestation',
+      baseSha: binding.baseSha,
+      headSha: binding.headSha,
+      diffHash: binding.diffHash,
+      contextHash: binding.contextHash,
+      contractHash: binding.contractHash,
+      sensorConfigHash: identityDigest,
+      command: [
+        'nexus-internal',
+        'attest-final-validation',
+        milestoneId,
+        ...sourceEvidenceIds,
+      ],
+      exitCode: 0,
+      stdoutHash: statementDigest,
+      stderrHash: createHash('sha256').update('').digest('hex'),
+      timedOut: false,
+      truncated: false,
+      startedAt: timestamp,
+      finishedAt: timestamp,
+    }));
+    return id;
+  }
+
+  #assertFinalValidationSources(
+    missionId: string,
+    binding: EvidenceBinding,
+    sourceEvidenceIds: readonly string[],
+  ): void {
+    const stored = this.#store.getContract(missionId);
+    if (!stored) throw new Error('final validation contract is missing');
+    const sourceSet = new Set(sourceEvidenceIds);
+    const sourceSensors = this.#store.listSensorEvidence(missionId).filter(
+      (evidence) => sourceSet.has(evidence.id),
+    );
+    const trustedSensorIds = new Set(sourceSensors.map((evidence) => evidence.sensorId));
+    if (
+      stored.contract.requiredSensors.some(
+        (sensorId) => !trustedSensorIds.has(sensorId),
+      )
+    ) {
+      throw new Error('milestone attestation lacks a required final sensor');
+    }
+    const council = new ReviewCouncil(stored.contract.risk, binding);
+    for (const report of this.#store.listReviewReports(missionId, binding.diffHash)) {
+      if (sourceSet.has(`review:${report.reviewId}`)) {
+        council.submit(reviewSubmissionFromReport(report));
+      }
+    }
+    const gate = council.evaluate();
+    if (!gate.ready) {
+      throw new Error(`milestone attestation review blocked: ${gate.reason}`);
+    }
   }
 
   #listPersistedArtifactIds(missionId: string): readonly string[] {

@@ -392,13 +392,7 @@ export class MergeQueue {
         input.taskId,
         candidate.candidateSha,
       );
-      this.#state.complete(
-        claimed,
-        candidate.candidateSha,
-        evidenceIds,
-        this.#timestamp(),
-      );
-      return Object.freeze({
+      const result = Object.freeze({
         taskKey,
         taskHeadSha: prepared.taskHeadSha,
         integrationBaseSha: integration.headSha,
@@ -407,6 +401,14 @@ export class MergeQueue {
         diffHash: candidate.diffHash,
         evidenceIds,
       });
+      await input.finalize?.(result);
+      this.#state.complete(
+        claimed,
+        candidate.candidateSha,
+        evidenceIds,
+        this.#timestamp(),
+      );
+      return result;
     } catch (error) {
       if (candidateAttached && candidate && prepared) {
         try {

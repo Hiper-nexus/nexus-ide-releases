@@ -753,6 +753,53 @@ describe('MergeQueue', () => {
     )?.status).toBe('integrated');
   });
 
+  it('keeps an integrated candidate blocked until durable mission finalization succeeds', async () => {
+    commitTask(
+      'mission-finalizer-retry',
+      'task-finalizer-retry',
+      'worker-finalizer-retry',
+      'finalizer-retry.txt',
+      'integrated but not finalized\n',
+    );
+    const failedFinalizer = vi.fn(async () => {
+      throw new Error('simulated crash during mission finalization');
+    });
+
+    await expect(queue.enqueue({
+      scope,
+      missionId: 'mission-finalizer-retry',
+      taskId: 'task-finalizer-retry',
+      validate: approved,
+      finalize: failedFinalizer,
+    })).rejects.toThrow('simulated crash during mission finalization');
+
+    const blocked = queue.snapshot(scope);
+    expect(failedFinalizer).toHaveBeenCalledOnce();
+    expect(blocked).toMatchObject({
+      activeTaskKey: null,
+      blocked: { errorName: 'Error' },
+      entries: [{ status: 'blocked', integratedSha: expect.any(String) }],
+    });
+
+    const recoveredFinalizer = vi.fn(async () => {});
+    await queue.retry({
+      scope,
+      missionId: 'mission-finalizer-retry',
+      taskId: 'task-finalizer-retry',
+      expectedStateRevision: blocked.revision,
+      acknowledgement: { revisionId: 'finalizer-recovery-2' },
+      validate: approved,
+      finalize: recoveredFinalizer,
+    });
+
+    expect(recoveredFinalizer).toHaveBeenCalledOnce();
+    expect(queue.snapshot(scope)).toMatchObject({
+      activeTaskKey: null,
+      blocked: null,
+      entries: [{ status: 'integrated', attempt: 2 }],
+    });
+  });
+
   it('blocks on a real merge conflict even when overlap had an explicit dependency', async () => {
     const first = commitTask(
       'mission-a',

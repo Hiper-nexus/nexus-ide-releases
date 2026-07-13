@@ -191,6 +191,70 @@ afterEach(() => {
 });
 
 describe('native context workflow service', () => {
+  it('derives one replay-safe current validation attestation per milestone', () => {
+    const { manager, scope, service } = fixture();
+    const stepIds = ['step-a', 'step-b', 'step-c', 'step-d', 'step-e'];
+    createScopedMissionStore(manager, scope).update('mission-a', {
+      milestones: stepIds.map((id, index) => ({
+        id,
+        label: id,
+        status: index === 0 ? 'in-progress' as const : 'pending' as const,
+        evidenceIds: [],
+      })),
+    });
+    service.freezeContract(
+      {
+        missionId: 'mission-a',
+        goal: 'Small isolated behavior change',
+        acceptanceCriteria: [{
+          id: 'works', statement: 'Behavior remains correct',
+          requiredSensorIds: [], invariantRefs: [], requiredArtifactIds: [],
+        }],
+      },
+      { id: 'author-a', sessionId: 'author-session', provider: 'codex' },
+    );
+    service.advance('mission-a', 'validation-primary');
+    const binding = service.getMissionWorkflow('mission-a').workflow!.binding;
+    recordTrustedSensor(manager, scope, binding, 'sensor-typecheck', 'typecheck');
+    recordTrustedSensor(manager, scope, binding, 'sensor-unit', 'unit');
+    const review = service.submitReview({
+      missionId: 'mission-a',
+      reviewer: { id: 'reviewer-b', sessionId: 'review-session', provider: 'claude' },
+      findings: [],
+    });
+    const sourceIds = [
+      'sensor-typecheck',
+      'sensor-unit',
+      `review:${review.report.reviewId}`,
+    ];
+
+    expect(() => service.recordMilestoneValidationEvidence(
+      'mission-a',
+      ['sensor-typecheck'],
+    )).toThrow(/required final sensor/);
+    const first = service.recordMilestoneValidationEvidence('mission-a', sourceIds);
+    const second = service.recordMilestoneValidationEvidence('mission-a', sourceIds);
+    recordTrustedSensor(manager, scope, binding, 'sensor-typecheck-retry', 'typecheck');
+    recordTrustedSensor(manager, scope, binding, 'sensor-unit-retry', 'unit');
+    const retryReview = service.submitReview({
+      missionId: 'mission-a',
+      reviewer: { id: 'reviewer-c', sessionId: 'review-retry', provider: 'gemini' },
+      findings: [],
+    });
+    const replayed = service.recordMilestoneValidationEvidence('mission-a', [
+      'sensor-typecheck-retry',
+      'sensor-unit-retry',
+      `review:${retryReview.report.reviewId}`,
+    ]);
+
+    expect(second).toEqual(first);
+    expect(replayed).toEqual(first);
+    expect(first.filter((id) => id.startsWith('milestone:'))).toHaveLength(5);
+    expect(new Set(first)).toHaveLength(stepIds.length);
+    expect(service.listCurrentPersistedEvidenceIds('mission-a'))
+      .toEqual(expect.arrayContaining([...first]));
+  });
+
   it('gates mutation, requires independent review and computes done itself', async () => {
     const { manager, scope, service } = fixture();
     expect(() => service.assertMutationAllowed('mission-a', 'nexus_file_write', { path: 'src/a.ts' }))

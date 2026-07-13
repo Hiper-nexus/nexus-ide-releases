@@ -112,6 +112,14 @@ export interface EnqueueMergeInput {
   readonly validate: (
     context: MergeValidationContext,
   ) => Promise<MergeValidationDecision> | MergeValidationDecision;
+  /**
+   * Completes the mission/task bookkeeping while the durable queue attempt is
+   * still active. A rejection leaves the integrated candidate blocked and
+   * recoverable through the exact-CAS retry path.
+   */
+  readonly finalize?: (
+    result: MergeQueueResult,
+  ) => Promise<void> | void;
 }
 
 export interface MergeRetryAcknowledgement {
