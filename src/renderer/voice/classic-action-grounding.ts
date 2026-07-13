@@ -6,6 +6,7 @@ const TARGETS: Partial<Record<JarvisAction['type'], RegExp>> = {
   open_workspace: /\b(workspace|projeto|project)\b/,
   new_workspace: /\b(workspace|projeto|project)\b/,
   open_squad: /\b(squad|equipe|team)\b/,
+  open_squad_picker: /\b(squad|equipe|team)\b/,
   design_squad: /\b(squad|equipe|team)\b/,
   confirm_squad: /\b(squad|equipe|team)\b/,
   new_mission: /\b(missao|mission)\b/,
@@ -39,4 +40,3 @@ export function isClassicActionGrounded(transcript: string, action: JarvisAction
   if (target && !target.test(normalized)) return false;
   return true;
 }
-

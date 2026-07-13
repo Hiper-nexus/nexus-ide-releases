@@ -38,6 +38,8 @@ function actionSummary(action: JarvisAction): string {
       return 'conversa';
     case 'open_squad':
       return `abrir squad ${action.squadName}`;
+    case 'open_squad_picker':
+      return 'abrir seletor de squads salvos';
     case 'open_workspace':
       return `abrir workspace ${action.workspaceName}`;
     case 'design_squad':

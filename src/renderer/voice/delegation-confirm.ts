@@ -137,6 +137,31 @@ export function classifyConfirmationReply(text: string): 'yes' | 'no' | 'other' 
   return 'other';
 }
 
+/** A pending confirmation owns an isolated yes/no before generic Live chat. */
+export function isPendingDelegationConfirmation(text: string, now: number): boolean {
+  return (
+    peekPendingDelegation(now) !== null &&
+    classifyConfirmationReply(text) !== 'other'
+  );
+}
+
+/**
+ * A native tool may replace an old pending confirmation with a new one. Only
+ * discard the exact pending item that already existed when the turn started;
+ * never erase the confirmation created by the tool that just completed.
+ */
+export function shouldDiscardPendingDelegationAfterUnrelatedTool(
+  pendingAtTurnStart: PendingDelegation | null,
+  current: PendingDelegation | null,
+): boolean {
+  if (!pendingAtTurnStart || !current) return false;
+  return (
+    current.createdAt === pendingAtTurnStart.createdAt &&
+    current.targetPaneId === pendingAtTurnStart.targetPaneId &&
+    current.text === pendingAtTurnStart.text
+  );
+}
+
 export type DelegationReply =
   | { kind: 'dispatch'; delegation: PendingDelegation }
   | { kind: 'cancel' }

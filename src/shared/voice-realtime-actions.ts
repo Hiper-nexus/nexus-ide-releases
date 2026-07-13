@@ -4,6 +4,7 @@ export const NEXUS_REALTIME_ACTION_TOOL = 'nexus_action';
 
 export const SAFE_REALTIME_ACTIONS = [
   'open_squad',
+  'open_squad_picker',
   'open_workspace',
   'design_squad',
   'confirm_squad',
@@ -59,6 +60,8 @@ export function summarizeNexusRealtimeAction(args: NexusRealtimeActionArgs): str
   switch (args.action) {
     case 'open_squad':
       return args.squadName ? `abrir squad ${args.squadName}` : 'abrir squad';
+    case 'open_squad_picker':
+      return 'abrir seletor de squads salvos';
     case 'open_workspace':
       return args.workspaceName
         ? `abrir workspace ${args.workspaceName}`

@@ -1,5 +1,7 @@
 import type { McpToolDef } from './mcp-protocol';
+import type { PaneSnapshot } from '../../shared/orch-types';
 import {
+  listPaneSnapshots,
   listVisiblePaneSnapshots,
   readSessionOutput,
   requestPaneClose,
@@ -25,6 +27,35 @@ import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-regi
 import { getProjectDomainStores } from './project-domain-store-registry';
 
 /** The 11 pane tools of the embedded MCP server (tool group 1). */
+
+const SAME_CHECKOUT_ACTIVE_STATES = new Set<PaneSnapshot['state']>([
+  'spawning',
+  'busy',
+]);
+
+export function activeSameCheckoutWorker(
+  panes: readonly PaneSnapshot[],
+  checkoutRoot: string,
+): PaneSnapshot | null {
+  return panes.find((pane) =>
+    pane.role === 'worker' &&
+    pane.executionScope?.rootRealPath === checkoutRoot &&
+    SAME_CHECKOUT_ACTIVE_STATES.has(pane.state)
+  ) ?? null;
+}
+
+export function withSameCheckoutWorkerContract(prompt: string): string {
+  return (
+    '## Nexus execution authority\n' +
+    'executionMode=`same_checkout`: esta tarefa depende do WIP atual e roda no ' +
+    'checkout já aberto. Preserve integralmente o trabalho existente: não use stash, ' +
+    'reset, checkout, clean nem troque de branch. Há no máximo um worker escrevendo ' +
+    'por vez; limite mudanças ao escopo pedido, inspecione o git status antes de editar ' +
+    'e não reverta arquivos que você não criou. Ao terminar, chame nexus_handoff_submit ' +
+    'uma vez com arquivos tocados, validações e qualquer bloqueio.\n\n' +
+    prompt
+  );
+}
 
 export function childMissionId(
   ctx: AgentGateContext,
@@ -89,6 +120,7 @@ const paneSpawn: McpToolDef = {
   handler: async (args, ctx) => {
     const agentRef = str(args, 'agentName');
     let options: SpawnToolOptions;
+    let executionMode: 'same_checkout' | 'isolated_worktree' | undefined;
     if (agentRef) {
       const requestedMissionId = childMissionId(ctx, str(args, 'missionId'));
       const mission = requestedMissionId
@@ -148,6 +180,7 @@ const paneSpawn: McpToolDef = {
       const workflowService = getContextWorkflowService(ctx.scope);
       const missionWorkflow = workflowService.getMissionWorkflow(missionId);
       if (missionWorkflow.contract) {
+        executionMode = 'isolated_worktree';
         const taskId = str(args, 'taskId');
         if (!taskId) {
           throw new Error('frozen missions require taskId and an allocated worktree');
@@ -179,9 +212,33 @@ const paneSpawn: McpToolDef = {
             `Task ownership: ${JSON.stringify(worktree.ownership)}\n\n` +
             options.prompt;
         }
+      } else {
+        executionMode = 'same_checkout';
+        const activeWorker = activeSameCheckoutWorker(
+          listPaneSnapshots(),
+          ctx.scope.rootRealPath,
+        );
+        if (activeWorker) {
+          throw new Error(
+            `same-checkout delegation is serialized; worker ${activeWorker.paneId} ` +
+            `is still ${activeWorker.state}`,
+          );
+        }
+        options = {
+          ...options,
+          cwd: ctx.scope.rootRealPath,
+          executionScope: ctx.scope,
+          prompt: withSameCheckoutWorkerContract(
+            options.prompt ?? 'Inspecione o estado atual e aguarde uma tarefa com escopo explícito.',
+          ),
+        };
       }
     }
-    return spawnPaneAndMaybePrompt(options);
+    const spawned = await spawnPaneAndMaybePrompt(options);
+    return {
+      ...spawned,
+      ...(executionMode ? { executionMode } : {}),
+    };
   },
 };
 

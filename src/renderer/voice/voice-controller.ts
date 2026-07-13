@@ -114,6 +114,12 @@ import { DEFAULT_DUPLEX_MODE, duplexModePolicy } from './duplex-mode-policy';
 import { WorkNarrationSupervisor } from './work-narration-supervisor';
 import { FOLLOW_UP_AUTHORITY_MS, followUpAuthority } from './follow-up-authority';
 import { startLiveContextSync } from './live-context-sync';
+import { runJarvisTurn } from './voice-run-jarvis-turn';
+import {
+  isRecentDuplicateTranscript,
+  type RecentTranscript,
+} from './recent-transcript-dedupe';
+import { isPendingDelegationConfirmation } from './delegation-confirm';
 
 /**
  * Jarvis voice pipeline. Mounted once from App.
@@ -141,6 +147,7 @@ const MIC_HEALTH_CHECK_MS = 5_000;
 const PASSIVE_WAKE_STT_BUDGET_MS = 3_500;
 const PASSIVE_WAKE_RENDERER_DEADLINE_MS = PASSIVE_WAKE_STT_BUDGET_MS + 500;
 type WakeSource = 'voice' | 'voice-barge' | 'click';
+let latestRealtimeUserTranscript: RecentTranscript | null = null;
 
 function isAckGatedCapture(reason: JarvisCaptureReason = activeCaptureReason): boolean {
   return reason === 'wake' || reason === 'click';
@@ -173,6 +180,7 @@ function onRealtimeTranscriptForActionBridge(event: JarvisLiveTranscriptEvent): 
     }
     return;
   }
+  latestRealtimeUserTranscript = { text, at: Date.now() };
   if (realtimeTranscriptWaiter.deliver(text, event.turnId)) return;
   window.setTimeout(() => finishRealtimeCapture?.(), 80);
 }
@@ -227,6 +235,7 @@ export function useVoiceController(): void {
     // every audio/transcript event fires twice → mute races + double tools).
     voiceControllerCleanup?.();
     voiceControllerCleanup = null;
+    latestRealtimeUserTranscript = null;
 
     capture.current = new VoiceCapture();
     const publishVoiceLevel = (level: number) => {
@@ -275,6 +284,7 @@ export function useVoiceController(): void {
       if (wakeOpenInProgress) return;
       setWakeOpenInProgress(true);
       passiveWakeDeadline.invalidate();
+      latestRealtimeUserTranscript = null;
       try {
         markVictory('voiceEnabled');
         stopAllPlayback();
@@ -398,16 +408,67 @@ export function useVoiceController(): void {
       return true;
     };
 
+    const beginInjectedTextTurn = (): number => {
+      cancelLiveFollowUp();
+      followUpAuthority.clear();
+      setPendingLiveStartSettle(null);
+      setLastRealtimeNativeToolCallId(null);
+      resetPendingRealtimeAudioOut();
+      clearLocalAudioGate();
+      realtimeTranscriptWaiter.supersede();
+      const turnToken = turnExecution.beginTurn();
+      const turnId = String(turnToken);
+      realtimeTranscriptWaiter.beginTurn(turnId);
+      window.nexus.voice.liveTurnBegin(turnId);
+      setActiveCaptureReason('wake');
+      setFinishRealtimeCapture(null);
+      return turnToken;
+    };
+
+    const runClassicTextCommand = async (
+      text: string,
+      meta: { latencyMs: number; provider?: string; via: string },
+    ): Promise<void> => {
+      const cmd = text.trim();
+      if (!cmd || !capture.current) return;
+      const turnToken = beginInjectedTextTurn();
+      latestRealtimeUserTranscript = { text: cmd, at: Date.now() };
+      busy.current = true;
+      setRealtimeTurnActive(false);
+      useVoiceStore.getState().setStatus('transcribing');
+      logVoiceEvent('info', 'jarvis.validatedTextCommand', 'comando validado sem recaptura', {
+        latencyMs: meta.latencyMs,
+        provider: meta.provider,
+        via: meta.via,
+        chars: cmd.length,
+      });
+      try {
+        if (!turnExecution.claim('classic-brain', turnToken)) return;
+        await runJarvisTurn(cmd, capture.current, busy, turnToken, {
+          beginListening,
+          isListening,
+          finishAndProcess: finishAndProcessFacade,
+        });
+      } catch (error) {
+        useVoiceStore.getState().setError(errMsg(error));
+        logVoiceEvent('warn', 'jarvis.validatedTextCommandFail', 'comando textual falhou', {
+          error: errMsg(error),
+          via: meta.via,
+        });
+      } finally {
+        if (useVoiceStore.getState().status !== 'listening') busy.current = false;
+      }
+    };
+
     const injectHotSessionCommand = async (
       text: string,
       meta: { latencyMs: number; provider?: string; via: string },
     ): Promise<void> => {
       const cmd = text.trim();
       if (!cmd) return;
-      const turnId =
-        typeof crypto !== 'undefined' && 'randomUUID' in crypto
-          ? crypto.randomUUID()
-          : `hot-${Date.now()}`;
+      const turnToken = beginInjectedTextTurn();
+      const turnId = String(turnToken);
+      latestRealtimeUserTranscript = { text: cmd, at: Date.now() };
       logVoiceEvent(
         'info',
         'jarvis.hotSessionCommand',
@@ -419,6 +480,8 @@ export function useVoiceController(): void {
           chars: cmd.length,
         },
       );
+      busy.current = true;
+      setRealtimeTurnActive(true);
       useVoiceStore.getState().setStatus('transcribing');
       liveStatus('thinking');
       try {
@@ -427,11 +490,15 @@ export function useVoiceController(): void {
           logVoiceEvent('warn', 'jarvis.hotSessionCommandRejected', 'Live recusou comando hot', {
             turnId,
           });
+          await runClassicTextCommand(cmd, { ...meta, via: `${meta.via}-classic-fallback` });
         }
       } catch (err) {
         logVoiceEvent('warn', 'jarvis.hotSessionCommandFail', 'falha ao injetar comando hot', {
           error: errMsg(err),
         });
+        await runClassicTextCommand(cmd, { ...meta, via: `${meta.via}-classic-error` });
+      } finally {
+        if (turnExecution.currentToken === turnToken) busy.current = false;
       }
     };
 
@@ -549,9 +616,38 @@ export function useVoiceController(): void {
         const stillHot = isLiveSessionHot();
         const statusNow = useVoiceStore.getState().status;
 
+        if (isRecentDuplicateTranscript(text, latestRealtimeUserTranscript)) {
+          passiveWakeAdmission.reject(Date.now());
+          logVoiceEvent(
+            'info',
+            'wake.passiveDuplicateDiscarded',
+            'fala já recebida pelo turno realtime',
+            { latencyMs, provider: result.provider, charLen: text.length },
+          );
+          return;
+        }
+
         // ── Sessão Live QUENTE: follow-up SEM re-dizer o nome (Overclock) ──
         // NÃO injetar TV/ambiente (logs: "camelo vindo", "aplaus" → alucinação).
         if (!match && stillHot) {
+          if (isPendingDelegationConfirmation(text, Date.now())) {
+            if (utterance.rawMaxRms < HOT_COMMAND_MIN_PEAK_RMS) {
+              passiveWakeAdmission.reject(Date.now());
+              logVoiceEvent(
+                'info',
+                'jarvis.delegationReplyEnergyRejected',
+                'confirmação pendente sem energia acústica suficiente',
+                { peakRms: Number(utterance.rawMaxRms.toFixed(4)) },
+              );
+              return;
+            }
+            await runClassicTextCommand(text, {
+              latencyMs,
+              provider: result.provider,
+              via: 'pending-delegation-reply',
+            });
+            return;
+          }
           if (statusNow === 'speaking' || statusNow === 'transcribing') {
             logVoiceEvent('info', 'wake.passiveHotWhileSpeaking', 'hot sem nome durante fala — ignore', {
               latencyMs,
@@ -666,12 +762,22 @@ export function useVoiceController(): void {
           await window.nexus.voice.liveInterrupt('voice-barge').catch(() => undefined);
         }
 
-        // Já quente + comando no mesmo utterance → injeta sem reset (não corta sessão)
+        // Comando embutido já foi validado pelo STT: nunca abra uma segunda
+        // captura vazia e espere 15s. Sessão quente recebe texto; sessão fria
+        // usa o cérebro Classic e mantém o mesmo follow-up conversacional.
         if (stillHot && match.command.trim()) {
           await injectHotSessionCommand(match.command.trim(), {
             latencyMs,
             provider: result.provider,
             via: 'wake-rest-hot',
+          });
+          return;
+        }
+        if (!stillHot && match.command.trim()) {
+          await runClassicTextCommand(match.command.trim(), {
+            latencyMs,
+            provider: result.provider,
+            via: 'wake-rest-cold',
           });
           return;
         }
@@ -682,7 +788,7 @@ export function useVoiceController(): void {
           return;
         }
 
-        // Frio: wake-only. Passive STT never carries command authority.
+        // Frio e sem comando: abre a captura normal após o wake-only.
         onWake(statusNow === 'speaking' ? 'voice-barge' : 'voice', utterance.preRoll);
       } catch (error) {
         passiveWakeAdmission.reject(Date.now());

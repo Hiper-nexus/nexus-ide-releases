@@ -19,4 +19,15 @@ describe('Jarvis action execution routing', () => {
     expect(source).toContain('confirmCommand(action.text)');
     expect(source).toContain('writeToPane(focused.id, `${action.text}\\n`)');
   });
+
+  it('opens the saved-squad picker without launching or designing a squad', () => {
+    const pickerBranch = source.slice(
+      source.indexOf("action.type === 'open_squad_picker'"),
+      source.indexOf("action.type === 'open_squad'"),
+    );
+    expect(pickerBranch).toContain('openSquadPicker()');
+    expect(pickerBranch).toContain("wizard.visibleStep === 'squad-select'");
+    expect(pickerBranch).not.toContain('launchSquadMission');
+    expect(pickerBranch).not.toContain('designSquad');
+  });
 });

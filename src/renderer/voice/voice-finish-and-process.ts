@@ -55,7 +55,11 @@ import {
 } from './voice-session-state';
 import { openLiveAudioGate } from './voice-live-audio-out';
 import { shouldOpenGateOnTurnExit } from './turn-gate';
-import { clearPendingDelegation, peekPendingDelegation } from './delegation-confirm';
+import {
+  clearPendingDelegation,
+  peekPendingDelegation,
+  shouldDiscardPendingDelegationAfterUnrelatedTool,
+} from './delegation-confirm';
 import { reaskPendingDelegation } from './delegation-reask';
 import {
   canAttemptRealtime,
@@ -126,6 +130,7 @@ export async function finishAndProcess(
   const store = useVoiceStore.getState();
   busy.current = true;
   const turnToken = turnExecution.currentToken;
+  const pendingDelegationAtTurnStart = peekPendingDelegation(Date.now());
   const canReopenLiveFollowUp = (): boolean =>
     turnExecution.currentToken === turnToken && turnExecution.owner === 'realtime-audio';
   const canReopenLiveToolFollowUp = (): boolean =>
@@ -307,7 +312,12 @@ export async function finishAndProcess(
         // resolvido por tool nativa do Live — senão um "sim" isolado depois,
         // dentro do TTL, despacharia a missão obsoleta respondendo outra
         // pergunta que não tem nada a ver com a delegação.
-        if (peekPendingDelegation(Date.now()) !== null) {
+        if (
+          shouldDiscardPendingDelegationAfterUnrelatedTool(
+            pendingDelegationAtTurnStart,
+            peekPendingDelegation(Date.now()),
+          )
+        ) {
           clearPendingDelegation();
           store.setNote('Missão pro squad descartada — o turno virou outra ação.');
           logVoiceEvent(

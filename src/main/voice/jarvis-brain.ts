@@ -55,6 +55,7 @@ closed.
 Action types:
 - {"type":"none"} - conversation only.
 - {"type":"open_squad","squadName":"<approximate name>"} - start a squad now.
+- {"type":"open_squad_picker"} - open the saved-squad selection screen without creating or launching a squad.
 - {"type":"open_workspace","workspaceName":"<approximate name>"} - open a
   recent project/workspace.
 - {"type":"design_squad"} - create a custom squad for the current project (opens review; ask confirmation).
@@ -108,11 +109,11 @@ Golden rule: never say you did or will do something unless you return the
 matching action. Without an action, nothing happens in the app. For file/git/
 editor/browser/mission tasks, use mcp_tool with the correct nexus_* tool.
 
-Squad selection rule: when the user asks to open/start squad mode but does not
-name a squad, ask which saved squad they want, list only names from the provided
-context, set expectReply=true, and return action none. Use open_squad for a named
-saved squad. Use design_squad only when the user explicitly asks to create,
-design, or start a new squad.
+Squad selection rule: when the user asks to open, choose, or use squad mode but
+does not name a squad, return open_squad_picker. This opens the saved choices;
+it does not create or launch anything. Use open_squad for a named saved squad.
+Use design_squad only when the user explicitly asks to create or design a new
+squad.
 
 Visibility rule: context.screen is structured state, NOT pixels. A shell pane
 listed in panes[] is NOT visible if surface mentions home deck, operator profile,
@@ -136,7 +137,7 @@ You can execute things through actions. Never claim you cannot. Examples:
 - "pane anterior" -> {"say":"Focando o pane anterior.","action":{"type":"focus_previous_pane"}}
 - "foca terminal" -> {"say":"Focando terminal.","action":{"type":"focus_pane","paneName":"terminal"}}
 - "leia esta tela" -> {"say":"Vou ler o que está visível.","action":{"type":"read_current_view"}}
-- "abrir modo squad" -> {"say":"Qual squad você quer iniciar? Os disponíveis são: <real context names>.","expectReply":true,"action":{"type":"none"}}
+- "abrir modo squad" -> {"say":"Abrindo seus squads salvos. Qual você quer usar?","expectReply":true,"action":{"type":"open_squad_picker"}}
 - "abre o squad de review" -> {"say":"Subindo o Code Review.","action":{"type":"open_squad","squadName":"Code Review"}}
 - "abre o projeto saasbarbearia" -> {"say":"Abrindo o saasbarbearia.","action":{"type":"open_workspace","workspaceName":"saasbarbearia"}}
 - "pede pro agente corrigir o bug do login" -> use send_to_pane with an English prompt.
@@ -374,6 +375,7 @@ export function parseReply(raw: string): JarvisReply {
     if (type === 'open_squad' && typeof obj.action?.squadName === 'string') {
       return { say, expectReply, action: { type, squadName: obj.action.squadName } };
     }
+    if (type === 'open_squad_picker') return { say, expectReply, action: { type } };
     if (type === 'open_workspace' && typeof obj.action?.workspaceName === 'string') {
       return { say, expectReply, action: { type, workspaceName: obj.action.workspaceName } };
     }

@@ -181,6 +181,14 @@ function bindEffectAuthority(
   ) {
     return ctx.contextRevision;
   }
+  if (policy === 'delegation-authority') {
+    if (ctx.role !== 'orchestrator' || !ctx.missionId) {
+      throw new Error(
+        'delegation authority requires an orchestrator bound to a mission',
+      );
+    }
+    return ctx.contextRevision;
+  }
   if (policy === 'renderer-authorized-effect') {
     if (source !== 'ipc-renderer' || ctx.role !== 'user') {
       throw new Error(

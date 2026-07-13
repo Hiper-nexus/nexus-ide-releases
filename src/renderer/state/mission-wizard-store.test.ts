@@ -10,6 +10,8 @@ describe('mission-wizard-store voice launches', () => {
       voiceLaunchNonce: 0,
       agenticIntent: null,
       agenticLaunchNonce: 0,
+      squadPickerNonce: 0,
+      visibleStep: null,
     });
   });
 
@@ -37,5 +39,48 @@ describe('mission-wizard-store voice launches', () => {
       agenticIntent: 'auditar a aplicação',
       agenticLaunchNonce: 2,
     });
+  });
+
+  it('keeps agentic launch signals monotonic across other wizard modes', () => {
+    const store = useMissionWizardStore.getState();
+    store.openForAgentic('primeira missão');
+    store.close();
+    store.openForMission();
+    store.openForAgentic('segunda missão');
+
+    expect(useMissionWizardStore.getState()).toMatchObject({
+      agenticIntent: 'segunda missão',
+      agenticLaunchNonce: 2,
+      visibleStep: 'agentic-intent',
+    });
+  });
+
+  it('requests the existing-squad picker repeatedly without faking rendered state', () => {
+    const store = useMissionWizardStore.getState();
+    store.openForMission();
+    store.openSquadPicker();
+    store.openSquadPicker();
+
+    expect(useMissionWizardStore.getState()).toMatchObject({
+      open: true,
+      variant: 'mission',
+      presetSquadId: null,
+      agenticIntent: null,
+      squadPickerNonce: 2,
+      visibleStep: 'mode',
+    });
+  });
+
+  it('tracks the exact wizard step visible to Jarvis', () => {
+    const store = useMissionWizardStore.getState();
+    store.openForMission();
+    store.setVisibleStep('mode');
+    expect(useMissionWizardStore.getState().visibleStep).toBe('mode');
+
+    store.setVisibleStep('squad-select');
+    expect(useMissionWizardStore.getState().visibleStep).toBe('squad-select');
+
+    store.close();
+    expect(useMissionWizardStore.getState().visibleStep).toBeNull();
   });
 });

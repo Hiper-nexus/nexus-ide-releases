@@ -9,6 +9,14 @@ import { create } from 'zustand';
  */
 
 export type WizardVariant = 'workspace' | 'mission';
+export type MissionWizardStep =
+  | 'new-ws'
+  | 'mode'
+  | 'libre-count'
+  | 'libre-slots'
+  | 'squad-select'
+  | 'agentic-intent'
+  | 'squad-review';
 
 interface MissionWizardStore {
   open: boolean;
@@ -22,6 +30,10 @@ interface MissionWizardStore {
    * switches back to Modo Agêntico instead of retaining its previous step.
    */
   agenticLaunchNonce: number;
+  /** Bumped whenever voice requests the saved-squad selection screen. */
+  squadPickerNonce: number;
+  /** Exact wizard step currently rendered, published to Jarvis live context. */
+  visibleStep: MissionWizardStep | null;
   /**
    * Voice / Live "wizard-fire": bump to ask MissionWizard to launch the
    * squad currently on the review step (Overclock navegar wizard-fire).
@@ -31,10 +43,13 @@ interface MissionWizardStore {
   openForMission(): void;
   /** Open Nova Missão already on Modo Agêntico, optionally with its objective. */
   openForAgentic(intent?: string): void;
+  /** Open Nova Missão directly on the existing saved-squad list. */
+  openSquadPicker(): void;
   /** Open directly on a squad's review (used by the Home deck shortcuts). */
   openForSquad(squadId: string): void;
   /** Request launch of the open squad-review (confirm_squad / voice "sim"). */
   requestVoiceLaunch(): void;
+  setVisibleStep(step: MissionWizardStep): void;
   close(): void;
 }
 
@@ -44,6 +59,8 @@ export const useMissionWizardStore = create<MissionWizardStore>((set) => ({
   presetSquadId: null,
   agenticIntent: null,
   agenticLaunchNonce: 0,
+  squadPickerNonce: 0,
+  visibleStep: null,
   voiceLaunchNonce: 0,
   openForNewWorkspace: () =>
     set({
@@ -51,8 +68,8 @@ export const useMissionWizardStore = create<MissionWizardStore>((set) => ({
       variant: 'workspace',
       presetSquadId: null,
       agenticIntent: null,
-      agenticLaunchNonce: 0,
       voiceLaunchNonce: 0,
+      visibleStep: 'new-ws',
     }),
   openForMission: () =>
     set({
@@ -60,8 +77,8 @@ export const useMissionWizardStore = create<MissionWizardStore>((set) => ({
       variant: 'mission',
       presetSquadId: null,
       agenticIntent: null,
-      agenticLaunchNonce: 0,
       voiceLaunchNonce: 0,
+      visibleStep: 'mode',
     }),
   openForAgentic: (intent) =>
     set((state) => ({
@@ -71,6 +88,16 @@ export const useMissionWizardStore = create<MissionWizardStore>((set) => ({
       agenticIntent: intent?.trim() || null,
       agenticLaunchNonce: state.agenticLaunchNonce + 1,
       voiceLaunchNonce: 0,
+      visibleStep: 'agentic-intent',
+    })),
+  openSquadPicker: () =>
+    set((state) => ({
+      open: true,
+      variant: 'mission',
+      presetSquadId: null,
+      agenticIntent: null,
+      squadPickerNonce: state.squadPickerNonce + 1,
+      voiceLaunchNonce: 0,
     })),
   openForSquad: (squadId) =>
     set({
@@ -78,17 +105,18 @@ export const useMissionWizardStore = create<MissionWizardStore>((set) => ({
       variant: 'mission',
       presetSquadId: squadId,
       agenticIntent: null,
-      agenticLaunchNonce: 0,
       voiceLaunchNonce: 0,
+      visibleStep: 'squad-review',
     }),
   requestVoiceLaunch: () =>
     set((s) => ({ voiceLaunchNonce: s.voiceLaunchNonce + 1 })),
+  setVisibleStep: (visibleStep) => set({ visibleStep }),
   close: () =>
     set({
       open: false,
       presetSquadId: null,
       agenticIntent: null,
-      agenticLaunchNonce: 0,
       voiceLaunchNonce: 0,
+      visibleStep: null,
     }),
 }));

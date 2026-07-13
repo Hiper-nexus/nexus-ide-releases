@@ -163,18 +163,59 @@ describe('jarvisActionFastPath', () => {
     expect(reply?.expectReply).toBe(true);
   });
 
-  it('abrir modo squad sem nome pergunta qual squad existente deve subir', () => {
-    for (const text of ['abrir modo squad', 'iniciar o squad', 'abre um squad']) {
+  it('abrir ou escolher modo squad sem nome abre o seletor de squads salvos', () => {
+    for (const text of [
+      'abrir modo squad',
+      'iniciar o squad',
+      'abre um squad',
+      'escolher um squad',
+      'quero usar um squad',
+      'selecionar squad',
+    ]) {
       const reply = jarvisActionFastPath(text, {
         ...CTX,
+        screen:
+          'wizard open: nova missão; visible step: mode; visible choices: Modo Livre, Modo Squad, Modo Agêntico',
         squads: ['Code Review', 'QA Swarm'],
       });
-      expect(reply?.action).toEqual({ type: 'none' });
+      expect(reply?.action).toEqual({ type: 'open_squad_picker' });
       expect(reply?.expectReply).toBe(true);
-      expect(reply?.say).toMatch(/qual squad/i);
-      expect(reply?.say).toContain('Code Review');
-      expect(reply?.say).toContain('QA Swarm');
+      expect(reply?.say).toMatch(/squads salvos/i);
+      expect(reply?.say).toMatch(/qual.*usar/i);
     }
+  });
+
+  it('inicia pelo nome falado quando a lista de squads está visível', () => {
+    const context = {
+      ...CTX,
+      screen:
+        'wizard open: nova missão; visible step: squad-select; visible actions: Code Review, QA Swarm',
+      squads: ['Code Review', 'QA Swarm'],
+    };
+
+    expect(jarvisActionFastPath('Code Review', context)?.action).toEqual({
+      type: 'open_squad',
+      squadName: 'Code Review',
+    });
+    expect(jarvisActionFastPath('quero o QA Swarm', context)?.action).toEqual({
+      type: 'open_squad',
+      squadName: 'QA Swarm',
+    });
+  });
+
+  it('nunca transforma escolha de squad salvo em criação de squad', () => {
+    const context = {
+      ...CTX,
+      screen: 'wizard open: nova missão; visible step: mode',
+      squads: ['Code Review'],
+    };
+
+    expect(jarvisActionFastPath('escolhe modo squad', context)?.action).toEqual({
+      type: 'open_squad_picker',
+    });
+    expect(jarvisActionFastPath('crie um squad novo', context)?.action).toEqual({
+      type: 'design_squad',
+    });
   });
 
   it('iniciar missão no modo agêntico preserva o modo antes do fast-path genérico', () => {

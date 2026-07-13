@@ -26,6 +26,7 @@ import { currentViewNarration, currentViewToolOutput } from './current-view-read
 import { waitForActionEvidence } from './action-evidence';
 import { resolveWorkspaceByVoiceName } from './workspace-name-resolver';
 import { logVoiceEvent } from './voice-live-ipc';
+import { followUpAuthority } from './follow-up-authority';
 
 export interface JarvisExecutionResult {
   sayText: string;
@@ -342,6 +343,36 @@ export async function executeJarvisAction(
         ? { ...read.toolResult, tool: 'read_pane' }
         : null,
     };
+  } else if (action.type === 'open_squad_picker') {
+    const workspace = useWorkspaceStore.getState().current;
+    const squads = useOrchStore.getState().squads;
+    if (!workspace) {
+      sayText = 'Antes eu preciso de um projeto aberto. Quer abrir um dos recentes?';
+      expectReply = true;
+      toolResult = { tool: action.type, ok: false, summary: 'sem workspace aberto' };
+    } else if (squads.length === 0) {
+      sayText = 'Este projeto ainda não tem squads salvos. Quer criar um novo?';
+      expectReply = true;
+      toolResult = { tool: action.type, ok: false, summary: 'nenhum squad salvo' };
+    } else {
+      useMissionWizardStore.getState().openSquadPicker();
+      markEffect(control);
+      const confirmed = await confirmUiState(
+        () => useMissionWizardStore.getState(),
+        (wizard) => wizard.open && wizard.visibleStep === 'squad-select',
+        control,
+      );
+      sayText = confirmed
+        ? 'Abrindo seus squads salvos. Qual você quer usar?'
+        : 'Tentei abrir a lista de squads, mas ainda não confirmei a tela.';
+      toolResult = {
+        tool: action.type,
+        ok: confirmed,
+        summary: confirmed
+          ? 'seletor de squads salvos aberto e confirmado'
+          : 'seletor de squads sem pós-condição confirmada',
+      };
+    }
   } else if (action.type === 'open_squad') {
     const wanted = action.squadName.toLowerCase();
     const squads = useOrchStore.getState().squads;
@@ -806,6 +837,16 @@ export async function executeJarvisAction(
         text: action.text,
         createdAt: Date.now(),
       });
+      const confirmationDeadline = followUpAuthority.arm();
+      logVoiceEvent(
+        'info',
+        'jarvis.delegationAuthorityArmed',
+        'confirmação de delegação autorizada',
+        {
+          durationMs: Math.round(followUpAuthority.remainingMs()),
+          deadlineMonotonicMs: Math.round(confirmationDeadline),
+        },
+      );
       sayText = delegationConfirmPrompt(action.text);
       expectReply = true;
       toolResult = {

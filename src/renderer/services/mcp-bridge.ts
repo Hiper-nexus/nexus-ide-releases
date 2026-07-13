@@ -37,6 +37,7 @@ export function mapActionToTool(
     case 'mcp_tool':
       return { tool: action.tool, args: action.args ?? {} };
     case 'open_squad':
+    case 'open_squad_picker':
     case 'open_workspace':
     case 'design_squad':
     case 'confirm_squad':

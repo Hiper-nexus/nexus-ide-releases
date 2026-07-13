@@ -22,6 +22,18 @@ describe('MCP effect policy', () => {
       'bootstrap-authority',
     );
     expect(effectPolicyForTool('nexus_code_map_refresh')).toBe('bootstrap-authority');
+    expect(effectPolicyForTool('nexus_mission_set_status')).toBe('bootstrap-authority');
+  });
+
+  it('keeps a narrow delegation route available before contract freeze', () => {
+    for (const tool of [
+      'nexus_agent_invoke',
+      'nexus_pane_spawn',
+      'nexus_mission_spawn_pane',
+    ]) {
+      expect(effectPolicyForTool(tool)).toBe('delegation-authority');
+      expect(requiresHumanConfirmationForTool(tool)).toBe(false);
+    }
   });
 
   it('requires execution-stage authority for direct code and command effects', () => {
@@ -36,7 +48,6 @@ describe('MCP effect policy', () => {
       'nexus_workflow_advance',
       'nexus_validation_run',
       'nexus_merge_task',
-      'nexus_mission_set_status',
     ]) {
       expect(effectPolicyForTool(tool)).toBe('workflow-authority');
       expect(requiresHumanConfirmationForTool(tool)).toBe(false);

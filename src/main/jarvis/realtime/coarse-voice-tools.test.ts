@@ -47,7 +47,11 @@ describe('resolveCoarseVoiceTool', () => {
     expect(resolveCoarseVoiceTool('delegar', {}).kind).toBe('invalid');
   });
 
-  it('navegar design-squad / wizard-fire / mission-new map to squad flow', () => {
+  it('navegar squad-picker / design-squad / wizard-fire / mission-new map to distinct flows', () => {
+    expect(resolveCoarseVoiceTool('navegar', { target: 'squad-picker' })).toMatchObject({
+      kind: 'action',
+      action: { action: 'open_squad_picker' },
+    });
     expect(resolveCoarseVoiceTool('navegar', { target: 'design-squad' })).toMatchObject({
       kind: 'action',
       action: { action: 'design_squad' },

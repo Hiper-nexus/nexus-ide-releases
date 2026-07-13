@@ -36,6 +36,11 @@ const mocks = vi.hoisted(() => ({
   reviewerRun: vi.fn(),
   list: vi.fn(() => [] as ContextDraftRecord[]),
   readDraft: vi.fn(),
+  inspectGit: vi.fn(),
+}));
+
+vi.mock('./git-binding', () => ({
+  inspectGitBinding: mocks.inspectGit,
 }));
 
 vi.mock('./context-workflow-registry', () => ({
@@ -138,11 +143,41 @@ beforeEach(() => {
   mocks.readDraft.mockReturnValue(null);
   mocks.get.mockReturnValue(null);
   mocks.inspectReadiness.mockReturnValue(mocks.readiness);
+  mocks.inspectGit.mockReturnValue({
+    baseSha: 'a'.repeat(40),
+    headSha: 'a'.repeat(40),
+    diffHash: 'b'.repeat(64),
+  });
   mocks.selectQuorum.mockReturnValue({ adapterId: 'claude' });
   mocks.ensure.mockResolvedValue({ docs: { hasContextScaffold: true }, status: 'ready' });
 });
 
 describe('runContextBootstrapAutopilot', () => {
+  it('reports dirty workflow binding as blocked and routes to same-checkout delegation', async () => {
+    const ready: ContextReadinessReport = Object.freeze({
+      ready: true,
+      blockers: Object.freeze([]),
+      warnings: Object.freeze([]),
+      contextRevision: 'e'.repeat(64),
+      sensorIds: Object.freeze(['typecheck']),
+    });
+    mocks.inspectReadiness.mockReturnValue(ready);
+    mocks.inspectGit.mockImplementationOnce(() => {
+      throw new Error('workflow binding requires a clean committed checkout');
+    });
+
+    const result = await runContextBootstrapAutopilot({
+      scope,
+      author,
+      autoCommit: true,
+    });
+
+    expect(result.phase).toBe('blocked');
+    expect(result.blockingError).toMatch(/clean committed checkout/i);
+    expect(result.autopilotHint).toMatch(/same_checkout/i);
+    expect(result.autopilotHint).toMatch(/do not ask.*stash/i);
+  });
+
   it('commits durable applied drafts left by a previous Doctor pass once context is ready', async () => {
     const ready: ContextReadinessReport = Object.freeze({
       ready: true,

@@ -97,6 +97,29 @@ describe('buildScreenSnapshot', () => {
     expect(snapshot.context).toContain('terminal NOT visible');
   });
 
+  it('reports the exact mission wizard step and saved squad choices', () => {
+    const snapshot = buildScreenSnapshot({
+      workspaceName: 'nexus-ide',
+      viewKind: 'grid',
+      focusedPaneId: null,
+      orchestratorPaneId: null,
+      activeMissions: [],
+      panes: [],
+      surface: {
+        kind: 'wizard',
+        mode: 'nova missão',
+        step: 'mode',
+        visibleActions: ['Modo Livre', 'Modo Squad', 'Modo Agêntico'],
+        readySquads: ['Code Review', 'QA Swarm'],
+      },
+    });
+
+    expect(snapshot.context).toContain('visible step: mode');
+    expect(snapshot.context).toContain('visible actions: Modo Livre, Modo Squad, Modo Agêntico');
+    expect(snapshot.context).toContain('saved squads: Code Review, QA Swarm');
+    expect(snapshot.wakePrompt).toContain('escolha de modo');
+  });
+
   it('lists blocking overlays on workspace surface', () => {
     const snapshot = buildScreenSnapshot({
       workspaceName: 'nexus-ide',
@@ -130,7 +153,13 @@ describe('buildScreenSnapshot', () => {
         'Mission B with a long title (review)',
       ],
       panes,
-      surface: { kind: 'wizard', mode: 'novo workspace' },
+      surface: {
+        kind: 'wizard',
+        mode: 'novo workspace',
+        step: 'mode',
+        visibleActions: ['Modo Livre', 'Modo Squad', 'Modo Agêntico'],
+        readySquads: [],
+      },
     });
 
     expect(snapshot.context.length).toBeLessThanOrEqual(900);

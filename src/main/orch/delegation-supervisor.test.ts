@@ -54,6 +54,17 @@ describe('delegation supervisor policy', () => {
     }, mission.createdAt + DELEGATION_SLA_MS * 2)).toBe(0);
   });
 
+  it('does not call an orchestrator stalled while its terminal is working', () => {
+    expect(delegationRecoveryStage({
+      mission,
+      expectedWorkers: 3,
+      workerPanes: 0,
+      tasks: 0,
+      recoveries: [],
+      orchestratorState: 'busy',
+    }, mission.createdAt + DELEGATION_SLA_MS * 10)).toBe(0);
+  });
+
   it('retries once and never loops', () => {
     const first = recovery(mission.createdAt + DELEGATION_SLA_MS);
     const atRetry = first.createdAt + DELEGATION_RETRY_MS;

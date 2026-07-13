@@ -21,6 +21,7 @@ import {
   type ProjectOrientationService,
 } from './orientation/orientation-service';
 import type { OrientationSnapshot } from '../../shared/orientation-types';
+import { inspectGitBinding } from './git-binding';
 
 export type BootstrapAutopilotPhase =
   | 'ready'
@@ -53,6 +54,7 @@ export interface ContextBootstrapAutopilotResult {
   readonly appliedDraftIds: readonly string[];
   readonly rejectedDraftIds: readonly string[];
   readonly commitSha: string | null;
+  readonly blockingError: string | null;
   readonly quorumAvailable: boolean;
   readonly autopilotHint: string;
 }
@@ -90,6 +92,13 @@ function freezeOutcomes(
 }
 
 function hintFor(result: Omit<ContextBootstrapAutopilotResult, 'autopilotHint'>): string {
+  if (result.blockingError) {
+    return (
+      `Workflow binding blocked: ${result.blockingError}. ` +
+      'Use delegated workers in `same_checkout` mode, one writer at a time. ' +
+      'Do not ask the user to stash, reset, clean, or switch branches.'
+    );
+  }
   if (result.readiness.ready && result.commitSha) {
     return 'Context authority committed. Freeze the mission contract next.';
   }
@@ -131,6 +140,15 @@ function hintFor(result: Omit<ContextBootstrapAutopilotResult, 'autopilotHint'>)
     'Context not ready. Use orientation hubs as evidence and propose source-bound drafts. ' +
     'Never invent business rules.'
   );
+}
+
+function workflowBindingError(scope: ProjectExecutionScope): string | null {
+  try {
+    inspectGitBinding(scope);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 /**
@@ -181,16 +199,21 @@ export async function runContextBootstrapAutopilot(
     const durableApplied = knowledge.list({ status: 'applied' })
       .filter((draft) => draft.appliedCommit === null);
     let recoveredCommitSha: string | null = null;
+    let blockingError: string | null = null;
     if (autoCommit && durableApplied.length > 0) {
       try {
         recoveredCommitSha = knowledge.commitApplied().commitSha;
-      } catch {
-        // The corpus may be ready while Git is intentionally dirty. Keep the
-        // applied IDs visible so the next clean Doctor pass retries once.
+      } catch (error) {
+        blockingError = error instanceof Error ? error.message : String(error);
       }
     }
+    blockingError ??= workflowBindingError(options.scope);
     const base = {
-      phase: recoveredCommitSha ? 'committed' as const : 'ready' as const,
+      phase: blockingError
+        ? 'blocked' as const
+        : recoveredCommitSha
+          ? 'committed' as const
+          : 'ready' as const,
       readiness,
       orientation: orientationSnapshot,
       bootstrapProposals: Object.freeze([] as const),
@@ -199,6 +222,7 @@ export async function runContextBootstrapAutopilot(
       appliedDraftIds: Object.freeze(durableApplied.map((draft) => draft.id)),
       rejectedDraftIds: Object.freeze([] as const),
       commitSha: recoveredCommitSha,
+      blockingError,
       quorumAvailable: Boolean(
         (options.selectQuorum ?? selectIndependentContextReviewerRoute)(
           options.author.provider,
@@ -427,18 +451,20 @@ export async function runContextBootstrapAutopilot(
 
   readiness = workflow.inspectReadiness();
   let commitSha: string | null = null;
+  let blockingError: string | null = null;
   if (autoCommit && readiness.ready && appliedDraftIds.length > 0) {
     try {
       const committed = knowledge.commitApplied();
       commitSha = committed.commitSha;
-    } catch {
-      // Commit is best-effort after apply; dirty git / incomplete set fails closed.
+    } catch (error) {
+      blockingError = error instanceof Error ? error.message : String(error);
     }
   }
+  if (readiness.ready) blockingError ??= workflowBindingError(options.scope);
 
   let phase: BootstrapAutopilotPhase = 'blocked';
-  if (readiness.ready && commitSha) phase = 'committed';
-  else if (readiness.ready) phase = 'ready';
+  if (readiness.ready && !blockingError && commitSha) phase = 'committed';
+  else if (readiness.ready && !blockingError) phase = 'ready';
   else if (appliedDraftIds.length > 0 || rejectedDraftIds.length > 0) phase = 'reviewed';
   else if (proposedDraftIds.length > 0 && !quorumAvailable) phase = 'awaiting-quorum';
   else if (proposedDraftIds.length > 0) phase = 'proposed';
@@ -453,6 +479,7 @@ export async function runContextBootstrapAutopilot(
     appliedDraftIds: Object.freeze([...appliedDraftIds]),
     rejectedDraftIds: Object.freeze([...rejectedDraftIds]),
     commitSha,
+    blockingError,
     quorumAvailable,
   };
   return Object.freeze({

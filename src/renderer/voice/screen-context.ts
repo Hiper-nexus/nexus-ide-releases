@@ -9,7 +9,13 @@ export type ScreenSurface =
   | { kind: 'voice-settings' }
   | { kind: 'operator-profile' }
   | { kind: 'settings' }
-  | { kind: 'wizard'; mode: string }
+  | {
+      kind: 'wizard';
+      mode: string;
+      step: string;
+      visibleActions: string[];
+      readySquads: string[];
+    }
   | { kind: 'home'; readySquads: string[]; hiddenShellCount: number }
   | { kind: 'files'; file: string | null; dirty: boolean }
   | { kind: 'ops-board'; missionCount: number }
@@ -93,7 +99,7 @@ function surfaceContext(surface: ScreenSurface, workspaceName: string): string {
     case 'settings':
       return 'settings drawer open: providers, accounts, catalog, media, shortcuts, modules';
     case 'wizard':
-      return `wizard open: ${surface.mode}`;
+      return `wizard open: ${surface.mode}; visible step: ${surface.step}; visible actions: ${surface.visibleActions.join(', ') || 'none'}; saved squads: ${surface.readySquads.join(', ') || 'none'}`;
     case 'home': {
       const squads = surface.readySquads.length > 0
         ? `; ready squads: ${surface.readySquads.join(', ')}`
@@ -135,7 +141,13 @@ function wakePrompt(surface: ScreenSurface, focused: string, workspaceName: stri
     case 'settings':
       return 'Estou nas configuracoes. Quer ajustar providers, keys ou outro modulo?';
     case 'wizard':
-      return `Estou no assistente de ${surface.mode}. Qual opcao vamos escolher?`;
+      if (surface.step === 'mode') {
+        return 'Estou na escolha de modo da nova missao. Posso abrir a lista dos squads salvos.';
+      }
+      if (surface.step === 'squad-select') {
+        return 'Estou na lista de squads salvos. Qual deles voce quer selecionar?';
+      }
+      return `Estou no assistente de ${surface.mode}, etapa ${surface.step}. Qual opcao vamos escolher?`;
     case 'home':
       return surface.hiddenShellCount > 0
         ? 'Estou na tela Pronto para operar; ha um terminal por baixo mas voce nao ve. Quer que eu mostre o terminal?'

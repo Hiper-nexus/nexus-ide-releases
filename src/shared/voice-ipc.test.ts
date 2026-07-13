@@ -55,6 +55,7 @@ describe('transcribeRequestSchema', () => {
 describe('jarvisLiveToolResultInputSchema', () => {
   it.each([
     ['new_agentic_mission', 'modo agêntico aberto'],
+    ['open_squad_picker', 'seletor de squads salvos aberto'],
     ['read_current_view', 'visão atual lida'],
   ])('accepts the %s tool result', (tool, summary) => {
     expect(

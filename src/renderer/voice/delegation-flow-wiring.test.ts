@@ -12,6 +12,10 @@ const finishSource = fs.readFileSync(
   'utf-8',
 );
 const controllerSource = fs.readFileSync(path.join(__dirname, 'voice-controller.ts'), 'utf-8');
+const executorSource = fs.readFileSync(
+  path.join(__dirname, 'jarvis-action-executor.ts'),
+  'utf-8',
+);
 
 describe('guard Live-force-to-Classic (C3)', () => {
   it('a primeira fala pós-"Confirmo?" NUNCA vai pro provider Live', () => {
@@ -69,7 +73,7 @@ describe('re-wake com pendência viva confirma em vez de morrer no stripper (C3 
 });
 
 describe('tool nativa do Live consome a pendência (review final, item 3)', () => {
-  it('o early-return de tool nativa descarta a pendência ANTES de liberar o turno', () => {
+  it('descarta apenas a pendência que já existia, preservando a criada pela tool atual', () => {
     const branchIdx = finishSource.indexOf('if (hasRealtimeNativeToolSince(tRealtime))');
     expect(branchIdx).toBeGreaterThanOrEqual(0);
     const clearIdx = finishSource.indexOf('clearPendingDelegation()', branchIdx);
@@ -77,6 +81,9 @@ describe('tool nativa do Live consome a pendência (review final, item 3)', () =
     const releaseIdx = finishSource.indexOf('releaseAfterRealtimeTool();', branchIdx);
     expect(clearIdx).toBeGreaterThan(branchIdx);
     expect(dropLogIdx).toBeGreaterThan(branchIdx);
+    expect(finishSource.slice(branchIdx, clearIdx)).toContain(
+      'shouldDiscardPendingDelegationAfterUnrelatedTool',
+    );
     // Descarte (clear + log) acontece antes do release que encerra o turno.
     expect(releaseIdx).toBeGreaterThan(clearIdx);
     expect(releaseIdx).toBeGreaterThan(dropLogIdx);
@@ -84,6 +91,19 @@ describe('tool nativa do Live consome a pendência (review final, item 3)', () =
     // Ferramentas podem narrar áudio depois do resultado; a reabertura agora
     // espera o completion correlacionado em vez de abrir cedo ou dormir.
     expect(toolBranch).toContain('releaseAfterRealtimeTool();');
+  });
+});
+
+describe('confirmação de delegação possui o próximo sim/não', () => {
+  it('arma autoridade quando cria a pendência e resolve o fallback passivo no Classic', () => {
+    const pendingIdx = executorSource.indexOf('setPendingDelegation({');
+    const authorityIdx = executorSource.indexOf('followUpAuthority.arm()', pendingIdx);
+    expect(pendingIdx).toBeGreaterThanOrEqual(0);
+    expect(authorityIdx).toBeGreaterThan(pendingIdx);
+    expect(executorSource).toContain('jarvis.delegationAuthorityArmed');
+    expect(controllerSource).toContain('isPendingDelegationConfirmation(text, Date.now())');
+    expect(controllerSource).toContain("via: 'pending-delegation-reply'");
+    expect(controllerSource).toContain('utterance.rawMaxRms < HOT_COMMAND_MIN_PEAK_RMS');
   });
 });
 

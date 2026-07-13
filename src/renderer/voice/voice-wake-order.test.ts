@@ -69,6 +69,8 @@ describe('voice wake order', () => {
     expect(passiveBlock).toContain("request.kind === 'timeout'");
     expect(passiveBlock).toContain("statusNow === 'speaking' || statusNow === 'transcribing'");
     expect(passiveBlock).toContain('isHotSessionCommandCandidate');
+    expect(passiveBlock).toContain('isRecentDuplicateTranscript');
+    expect(passiveBlock).toContain('wake.passiveDuplicateDiscarded');
     expect(passiveBlock).toContain('passiveWakeWord: info.persona.assistantName');
     expect(passiveBlock).toContain("'voice-barge'");
     expect(source).toContain('wakeMic.cancelPassiveWake()');
@@ -77,6 +79,24 @@ describe('voice wake order', () => {
     expect(source.slice(wakeStart, wakeEnd)).toContain('passiveWakeDeadline.invalidate()');
     expect(source).toContain("if (stillHot && !match.command.trim())");
     expect(source).toContain("onWake('voice', utterance.preRoll)");
+  });
+
+  it('executes a trusted cold embedded command without opening a second mic capture', () => {
+    expect(source).toContain("via: 'wake-rest-cold'");
+    expect(source).toContain('await runClassicTextCommand(match.command.trim()');
+    expect(source).toContain('jarvis.validatedTextCommand');
+  });
+
+  it('opens a fresh turn boundary before injecting text into a hot provider', () => {
+    const start = source.indexOf('const beginInjectedTextTurn');
+    const end = source.indexOf('const handlePassiveWake', start);
+    const injectedBlock = source.slice(start, end);
+    expect(injectedBlock).toContain('turnExecution.beginTurn()');
+    expect(injectedBlock).toContain('realtimeTranscriptWaiter.beginTurn(turnId)');
+    expect(injectedBlock).toContain('window.nexus.voice.liveTurnBegin(turnId)');
+    expect(injectedBlock.indexOf('turnExecution.beginTurn()')).toBeLessThan(
+      injectedBlock.indexOf('window.nexus.voice.liveRescueIn'),
+    );
   });
 });
 

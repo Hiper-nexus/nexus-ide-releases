@@ -54,10 +54,11 @@ const OPERATING_MODEL = `Nexus operating model:
   blocked, not working.
 - Creation wizards follow the fields currently visible. Ask only for a missing
   field the UI actually requires; never fabricate wizard values.
-- A request to open/start squad mode without a squad name is not a creation
-  request: ask which saved squad the user wants, using only names in current
-  context. Use open_squad for a named saved squad; use design_squad only when
-  the user explicitly asks to create/design a new squad.`;
+- A request to open, choose or use squad mode without a squad name is not a
+  creation request: call open_squad_picker to show saved choices, then ask which saved squad
+  the user wants. Use open_squad for a named saved squad;
+  use design_squad only when the user explicitly asks to create/design a new
+  squad.`;
 
 export function buildLiveSystemInstruction(
   persona: VoicePersona,

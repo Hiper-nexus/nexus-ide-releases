@@ -80,11 +80,11 @@ export async function executeJarvisActionForTurn(
     const unresolved = supervised.incidents.findLast((item) => !item.recovered);
     if (unresolved) {
       useVoiceStore.getState().setNote(
-        `Doctor: ${unresolved.action} falhou — ${unresolved.message}`,
+        `Falha de execução: ${unresolved.action} — ${unresolved.message}`,
       );
       useToastStore.getState().push(
         'error',
-        'O Doctor interrompeu uma ação com falha',
+        'Uma ação da Jarvis falhou',
         `${unresolved.action}: ${unresolved.message}`,
       );
     }

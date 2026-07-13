@@ -345,6 +345,7 @@ const doctorTool: McpToolDef = {
       appliedDraftIds: result.appliedDraftIds,
       rejectedDraftIds: result.rejectedDraftIds,
       commitSha: result.commitSha,
+      blockingError: result.blockingError,
       quorumAvailable: result.quorumAvailable,
       autopilotHint: result.autopilotHint,
     });
