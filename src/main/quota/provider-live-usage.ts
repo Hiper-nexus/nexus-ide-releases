@@ -18,7 +18,11 @@ import {
 import { fetchGlmUsageWindows } from './glm-usage';
 import { fetchGrokUsageWindows } from './grok-usage';
 import { fetchAgyUsageWindows, type GeminiOauthCreds } from './agy-usage';
-import { fetchKimiCodingUsageWindows } from './kimi-usage';
+import {
+  fetchKimiCodingUsageWindows,
+  fetchKimiUsageWithOauth,
+  type KimiOauthCreds,
+} from './kimi-usage';
 import {
   fetchWindowsForApiKey,
   mergeWorstWindows,
@@ -55,6 +59,10 @@ export interface LiveUsageAuthResolvers {
   resolveKimiTokenCandidates?: (
     accountId?: string,
   ) => string[] | Promise<string[]>;
+  /** Full Kimi OAuth (access + refresh) — CLI path with auto-refresh. */
+  resolveKimiOauthCreds?: (
+    accountId?: string,
+  ) => KimiOauthCreds | null | Promise<KimiOauthCreds | null>;
   resolveGeminiToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
@@ -178,19 +186,32 @@ export async function fetchLiveProviderWindows(
       return null;
     }
     case 'kimi': {
+      // 1) OAuth from ~/.kimi-code (same as `kimi login`) — refresh if expired.
+      if (deps.resolveKimiOauthCreds) {
+        const oauth = await Promise.resolve(
+          deps.resolveKimiOauthCreds(accountId),
+        );
+        if (oauth?.refreshToken || oauth?.accessToken) {
+          const w = await fetchKimiUsageWithOauth(oauth, {
+            fetchImpl,
+            now,
+            persistRefresh: true,
+          });
+          if (w?.length) return w;
+        }
+      }
+      // 2) API keys (sk-kimi-…) + any bare tokens.
       const tokens = await stringCandidates(
         deps.resolveKimiTokenCandidates,
         deps.resolveKimiToken,
         accountId,
       );
       for (const token of tokens) {
-        // Coding Plan API key (sk-kimi-…) first — authoritative usages.
         const coding = await fetchKimiCodingUsageWindows(token, {
           fetchImpl,
           now,
         });
         if (coding && coding.length > 0) return coding;
-        // OAuth / alternate shapes
         const windows = await fetchKimiUsageWindows(token, { fetchImpl, now });
         if (windows && windows.length > 0) return windows;
       }

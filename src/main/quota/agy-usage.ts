@@ -21,6 +21,8 @@ export const GEMINI_OAUTH_CLIENT_SECRET =
 export const GEMINI_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const AGY_RETRIEVE_USER_QUOTA_URL =
   'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota';
+export const AGY_LOAD_CODE_ASSIST_URL =
+  'https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist';
 
 export const AGY_USAGE_TIMEOUT_MS = 10_000;
 
@@ -183,27 +185,56 @@ export async function fetchAgyUsageWindows(
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await (fetchImpl as (
+  const headers = {
+    Authorization: `Bearer ${access}`,
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+    'User-Agent': 'antigravity',
+  };
+  const post = async (url: string, body: string) =>
+    (fetchImpl as (
       input: string,
       init?: Record<string, unknown>,
-    ) => Promise<{ ok: boolean; json(): Promise<unknown> }>)(
-      AGY_RETRIEVE_USER_QUOTA_URL,
+    ) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>)(
+      url,
       {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${access}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: '{}',
+        headers,
+        body,
         signal: controller.signal,
       },
     );
-    if (!res.ok) return null;
-    const body = await res.json();
-    const windows = parseAgyUserQuota(body, now);
-    return windows.length > 0 ? windows : null;
+
+  try {
+    // 1) Preferred: retrieveUserQuota (paid / eligible tiers).
+    try {
+      const res = await post(AGY_RETRIEVE_USER_QUOTA_URL, '{}');
+      if (res.ok) {
+        const body = await res.json();
+        const windows = parseAgyUserQuota(body, now);
+        if (windows.length > 0) return windows;
+      }
+    } catch {
+      // fall through
+    }
+
+    // 2) Free Antigravity often 403s on retrieveUserQuota. loadCodeAssist
+    //    still authenticates; it only returns tier metadata (no used%), so
+    //    we stay honest null — do not invent 0% from free-tier name alone.
+    try {
+      await post(
+        AGY_LOAD_CODE_ASSIST_URL,
+        JSON.stringify({
+          metadata: {
+            ideType: 'ANTIGRAVITY',
+            platform: 'PLATFORM_UNSPECIFIED',
+          },
+        }),
+      );
+    } catch {
+      // ignore
+    }
+    return null;
   } catch {
     return null;
   } finally {

@@ -1,23 +1,39 @@
 /**
- * Kimi Coding Plan usage probe.
+ * Kimi Coding Plan usage probe (same path as Kimi CLI).
  *
- * GET https://api.kimi.com/coding/v1/usages
- * Authorization: Bearer sk-kimi-xxx   (Coding Plan key, NOT moonshot sk-xxx)
- * User-Agent: KimiCLI/1.6
+ * 1) Refresh OAuth when access_token expired:
+ *    POST https://auth.kimi.com/api/oauth/token
+ *    (form: grant_type=refresh_token, client_id, refresh_token)
+ * 2) GET https://api.kimi.com/coding/v1/usages
+ *    Authorization: Bearer <access_token | sk-kimi-…>
  *
- * Shape (kimi-code-usage compatible):
- *   { data: [{ model_name, used, limit, resetTime }, ...] }
- *   or { usage: {...}, limits: [...] }
+ * Live shape (2026-07):
+ *   usage: { limit, remaining, resetTime }          → Semanal
+ *   limits[].window.duration=300 TIME_UNIT_MINUTE   → 5 Horas
+ *   totalQuota: { limit, remaining }
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { QuotaWindow } from '../../shared/quota-types';
 import { knownWindow } from './quota-normalize';
 import type { FetchLike } from './claude-oauth-usage';
 
 export const KIMI_USAGES_URL = 'https://api.kimi.com/coding/v1/usages';
 export const KIMI_USAGE_FALLBACK_URL = 'https://api.kimi.com/coding/v1/usage';
-export const KIMI_USAGE_TIMEOUT_MS = 8_000;
+export const KIMI_OAUTH_TOKEN_URL = 'https://auth.kimi.com/api/oauth/token';
+/** Public client id embedded in Kimi Code CLI (device-code OAuth). */
+export const KIMI_OAUTH_CLIENT_ID = '17e5f671-d194-4dfb-9706-5516cb48c098';
+export const KIMI_USAGE_TIMEOUT_MS = 10_000;
 export const KIMI_USER_AGENT = 'KimiCLI/1.6';
+
+export interface KimiOauthCreds {
+  accessToken?: string;
+  refreshToken?: string;
+  /** Epoch seconds (Kimi credentials file). */
+  expiresAt?: number;
+}
 
 function toInt(v: unknown): number | null {
   if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
@@ -39,9 +55,9 @@ function parseResetAt(data: Record<string, unknown>): number | undefined {
   return undefined;
 }
 
-function rowToWindow(
+function detailToWindow(
   data: Record<string, unknown>,
-  kind: 'hours' | 'weekly' | 'session',
+  kind: 'hours' | 'weekly',
   label: string,
   now: number,
 ): QuotaWindow | null {
@@ -49,30 +65,13 @@ function rowToWindow(
   let used = toInt(data.used ?? data.used_amount);
   if (used === null) {
     const remaining = toInt(data.remaining);
-    if (remaining !== null && limit !== null) used = limit - remaining;
-  }
-  // percent fields
-  if (used === null && typeof data.percent === 'number') {
-    const ratio =
-      data.percent > 1
-        ? Math.min(1, data.percent / 100)
-        : Math.max(0, Math.min(1, data.percent));
-    return knownWindow({
-      kind,
-      label,
-      usedRatio: ratio,
-      source: 'provider-api',
-      confidence: 'high',
-      resetsAt: parseResetAt(data),
-      now,
-    });
+    if (remaining !== null && limit !== null) used = Math.max(0, limit - remaining);
   }
   if (used === null || limit === null || limit <= 0) return null;
-  const ratio = Math.max(0, Math.min(1, used / limit));
   return knownWindow({
     kind,
     label,
-    usedRatio: ratio,
+    usedRatio: Math.max(0, Math.min(1, used / limit)),
     source: 'provider-api',
     confidence: 'high',
     resetsAt: parseResetAt(data),
@@ -80,27 +79,27 @@ function rowToWindow(
   });
 }
 
-function classifyLabel(
-  label: string,
-): { kind: 'hours' | 'weekly' | 'session'; label: string } {
-  const l = label.toLowerCase();
-  if (
-    l.includes('5h') ||
-    l.includes('5 h') ||
-    l.includes('five') ||
-    /\b5\s*hour/.test(l) ||
-    l.includes('hour')
-  ) {
-    return { kind: 'hours', label: '5 Horas' };
-  }
-  if (l.includes('week') || l.includes('seman') || l.includes('7d')) {
-    return { kind: 'weekly', label: 'Semanal' };
-  }
-  return { kind: 'session', label: label || 'Sessão' };
+function isFiveHourWindow(window: Record<string, unknown>): boolean {
+  const duration = toInt(window.duration);
+  const unit = String(window.timeUnit ?? window.time_unit ?? '').toUpperCase();
+  if (duration === null) return false;
+  // Live CLI: duration=300 TIME_UNIT_MINUTE → 5h
+  if (unit.includes('MINUTE') && duration >= 240 && duration <= 360) return true;
+  if (unit.includes('HOUR') && duration === 5) return true;
+  return false;
+}
+
+function isWeeklyWindow(window: Record<string, unknown>): boolean {
+  const duration = toInt(window.duration);
+  const unit = String(window.timeUnit ?? window.time_unit ?? '').toUpperCase();
+  if (duration === null) return false;
+  if (unit.includes('DAY') && (duration === 7 || duration === 1)) return true;
+  if (unit.includes('HOUR') && duration >= 168) return true;
+  return false;
 }
 
 /**
- * Parse Kimi Coding Plan usages JSON.
+ * Parse Kimi Coding Plan /usages JSON (OAuth or sk-kimi).
  */
 export function parseKimiUsagesPayload(
   body: unknown,
@@ -110,26 +109,10 @@ export function parseKimiUsagesPayload(
   const root = body as Record<string, unknown>;
   const out: QuotaWindow[] = [];
 
-  const dataList = root.data;
-  if (Array.isArray(dataList)) {
-    for (const item of dataList) {
-      if (!item || typeof item !== 'object') continue;
-      const rec = item as Record<string, unknown>;
-      const model =
-        typeof rec.model_name === 'string' ? rec.model_name : '';
-      const meta =
-        model === 'all' || model === ''
-          ? { kind: 'weekly' as const, label: 'Semanal' }
-          : classifyLabel(String(rec.name ?? rec.title ?? model));
-      const w = rowToWindow(rec, meta.kind, meta.label, now);
-      if (w) out.push(w);
-    }
-  }
-
-  const usage = root.usage;
-  if (usage && typeof usage === 'object') {
-    const w = rowToWindow(
-      usage as Record<string, unknown>,
+  // Primary: usage block → weekly (rolling membership window)
+  if (root.usage && typeof root.usage === 'object') {
+    const w = detailToWindow(
+      root.usage as Record<string, unknown>,
       'weekly',
       'Semanal',
       now,
@@ -137,9 +120,20 @@ export function parseKimiUsagesPayload(
     if (w) out.push(w);
   }
 
-  const limits = root.limits;
-  if (Array.isArray(limits)) {
-    for (const item of limits) {
+  // totalQuota often mirrors weekly remaining
+  if (root.totalQuota && typeof root.totalQuota === 'object' && !out.some((x) => x.kind === 'weekly')) {
+    const w = detailToWindow(
+      root.totalQuota as Record<string, unknown>,
+      'weekly',
+      'Semanal',
+      now,
+    );
+    if (w) out.push(w);
+  }
+
+  // limits[] with window duration → 5h / weekly
+  if (Array.isArray(root.limits)) {
+    for (const item of root.limits) {
       if (!item || typeof item !== 'object') continue;
       const rec = item as Record<string, unknown>;
       const detail =
@@ -150,26 +144,33 @@ export function parseKimiUsagesPayload(
         rec.window && typeof rec.window === 'object'
           ? (rec.window as Record<string, unknown>)
           : {};
-      const duration = toInt(window.duration);
-      const timeUnit = String(window.timeUnit ?? window.time_unit ?? '').toUpperCase();
-      let kind: 'hours' | 'weekly' | 'session' = 'session';
-      let label = 'Sessão';
-      if (timeUnit.includes('HOUR') && duration === 5) {
-        kind = 'hours';
-        label = '5 Horas';
-      } else if (timeUnit.includes('DAY') && (duration === 7 || duration === 1)) {
-        kind = duration === 7 ? 'weekly' : 'session';
-        label = duration === 7 ? 'Semanal' : 'Diário';
-      } else if (timeUnit.includes('MINUTE') && duration !== null && duration >= 240) {
-        kind = 'hours';
-        label = '5 Horas';
+      if (isFiveHourWindow(window)) {
+        const w = detailToWindow(detail, 'hours', '5 Horas', now);
+        if (w) out.push(w);
+      } else if (isWeeklyWindow(window)) {
+        const w = detailToWindow(detail, 'weekly', 'Semanal', now);
+        if (w) out.push(w);
       }
-      const w = rowToWindow(detail, kind, label, now);
-      if (w) out.push(w);
     }
   }
 
-  // Dedupe by kind — keep highest usedRatio (worst)
+  // Legacy data[] array shape
+  if (Array.isArray(root.data)) {
+    for (const item of root.data) {
+      if (!item || typeof item !== 'object') continue;
+      const rec = item as Record<string, unknown>;
+      const model = typeof rec.model_name === 'string' ? rec.model_name : '';
+      if (model === 'all' || model === '') {
+        const w = detailToWindow(rec, 'weekly', 'Semanal', now);
+        if (w) out.push(w);
+      } else {
+        const w = detailToWindow(rec, 'hours', '5 Horas', now);
+        if (w) out.push(w);
+      }
+    }
+  }
+
+  // Dedupe by kind — keep highest usedRatio
   const byKind = new Map<string, QuotaWindow>();
   for (const w of out) {
     const prev = byKind.get(w.kind);
@@ -180,11 +181,128 @@ export function parseKimiUsagesPayload(
   return [...byKind.values()];
 }
 
+export function parseKimiCredentialsJson(blob: string): KimiOauthCreds | null {
+  try {
+    const parsed = JSON.parse(blob) as {
+      access_token?: unknown;
+      refresh_token?: unknown;
+      expires_at?: unknown;
+    };
+    const accessToken =
+      typeof parsed.access_token === 'string' ? parsed.access_token : undefined;
+    const refreshToken =
+      typeof parsed.refresh_token === 'string' ? parsed.refresh_token : undefined;
+    const expiresAt =
+      typeof parsed.expires_at === 'number' ? parsed.expires_at : undefined;
+    if (!accessToken && !refreshToken) return null;
+    return { accessToken, refreshToken, expiresAt };
+  } catch {
+    return null;
+  }
+}
+
+export async function refreshKimiAccessToken(
+  refreshToken: string,
+  opts?: { fetchImpl?: FetchLike; timeoutMs?: number },
+): Promise<{ accessToken: string; refreshToken?: string; expiresIn?: number } | null> {
+  const rt = refreshToken?.trim();
+  if (!rt) return null;
+  const fetchImpl = opts?.fetchImpl ?? (globalThis.fetch as FetchLike);
+  if (typeof fetchImpl !== 'function') return null;
+  const timeoutMs = opts?.timeoutMs ?? KIMI_USAGE_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const body = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: rt,
+      client_id: KIMI_OAUTH_CLIENT_ID,
+    }).toString();
+    const res = await (fetchImpl as (
+      input: string,
+      init?: Record<string, unknown>,
+    ) => Promise<{ ok: boolean; json(): Promise<unknown> }>)(KIMI_OAUTH_TOKEN_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json',
+        'User-Agent': KIMI_USER_AGENT,
+      },
+      body,
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as {
+      access_token?: unknown;
+      refresh_token?: unknown;
+      expires_in?: unknown;
+    };
+    if (typeof json.access_token !== 'string' || !json.access_token) return null;
+    return {
+      accessToken: json.access_token,
+      refreshToken:
+        typeof json.refresh_token === 'string' ? json.refresh_token : undefined,
+      expiresIn:
+        typeof json.expires_in === 'number' ? json.expires_in : undefined,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Persist refreshed tokens so `kimi` CLI stays logged in. */
+export function writeKimiCredentialsFile(
+  update: {
+    accessToken: string;
+    refreshToken?: string;
+    expiresIn?: number;
+  },
+  home = os.homedir(),
+): void {
+  const filePath = path.join(
+    home,
+    '.kimi-code',
+    'credentials',
+    'kimi-code.json',
+  );
+  try {
+    let prev: Record<string, unknown> = {};
+    try {
+      prev = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      prev = {};
+    }
+    const next = {
+      ...prev,
+      access_token: update.accessToken,
+      refresh_token: update.refreshToken ?? prev.refresh_token,
+      token_type: 'Bearer',
+      scope: prev.scope ?? 'kimi-code',
+      expires_in: update.expiresIn ?? prev.expires_in ?? 900,
+      expires_at:
+        Math.floor(Date.now() / 1000) +
+        (update.expiresIn ?? 900),
+    };
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(next, null, 2), {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+  } catch {
+    // best-effort — probe can still use in-memory token
+  }
+}
+
 export async function fetchKimiCodingUsageWindows(
-  apiKey: string,
+  apiKeyOrAccessToken: string,
   opts?: { fetchImpl?: FetchLike; timeoutMs?: number; now?: number },
 ): Promise<QuotaWindow[] | null> {
-  const key = apiKey?.trim();
+  const key = apiKeyOrAccessToken?.trim();
   if (!key) return null;
   const fetchImpl = opts?.fetchImpl ?? (globalThis.fetch as FetchLike);
   if (typeof fetchImpl !== 'function') return null;
@@ -219,4 +337,52 @@ export async function fetchKimiCodingUsageWindows(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Full probe: OAuth creds (refresh if needed) or raw API key → 5h + weekly windows.
+ */
+export async function fetchKimiUsageWithOauth(
+  creds: KimiOauthCreds | string,
+  opts?: {
+    fetchImpl?: FetchLike;
+    timeoutMs?: number;
+    now?: number;
+    /** Write refreshed tokens back to ~/.kimi-code/credentials */
+    persistRefresh?: boolean;
+  },
+): Promise<QuotaWindow[] | null> {
+  const now = opts?.now ?? Date.now();
+  const nowSec = Math.floor(now / 1000);
+
+  // Plain API key (sk-kimi-…)
+  if (typeof creds === 'string') {
+    return fetchKimiCodingUsageWindows(creds, opts);
+  }
+
+  let access = creds.accessToken?.trim() || null;
+  const refresh = creds.refreshToken?.trim() || null;
+  const expired =
+    !access ||
+    (typeof creds.expiresAt === 'number' && creds.expiresAt < nowSec + 30);
+
+  if (expired && refresh) {
+    const refreshed = await refreshKimiAccessToken(refresh, {
+      fetchImpl: opts?.fetchImpl,
+      timeoutMs: opts?.timeoutMs,
+    });
+    if (refreshed) {
+      access = refreshed.accessToken;
+      if (opts?.persistRefresh !== false) {
+        writeKimiCredentialsFile({
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken ?? refresh,
+          expiresIn: refreshed.expiresIn,
+        });
+      }
+    }
+  }
+
+  if (!access) return null;
+  return fetchKimiCodingUsageWindows(access, opts);
 }

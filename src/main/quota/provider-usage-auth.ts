@@ -271,22 +271,62 @@ export function resolveKimiAccessToken(accountId?: string): string | null {
   return resolveKimiAccessTokenCandidates(accountId)[0] ?? null;
 }
 
-function extractKimiToken(blob: string): string | null {
+export interface KimiOauthCredsResolved {
+  accessToken?: string;
+  refreshToken?: string;
+  /** Epoch seconds. */
+  expiresAt?: number;
+}
+
+/**
+ * Full Kimi OAuth blob from CLI credentials (for refresh + /usages).
+ * Prefer this over bare access token — access expires in ~15 min.
+ */
+export function resolveKimiOauthCreds(
+  accountId?: string,
+): KimiOauthCredsResolved | null {
+  if (accountId) {
+    const blob = safeGetSecret(CRED_PREFIX + accountId);
+    if (blob) {
+      const c = parseKimiCredsBlob(blob);
+      if (c) return c;
+    }
+  }
+  for (const rel of [
+    path.join('.kimi-code', 'credentials', 'kimi-code.json'),
+    path.join('.kimi', 'credentials', 'kimi-code.json'),
+  ]) {
+    const blob = readText(path.join(os.homedir(), rel));
+    if (blob) {
+      const c = parseKimiCredsBlob(blob);
+      if (c) return c;
+    }
+  }
+  return null;
+}
+
+function parseKimiCredsBlob(blob: string): KimiOauthCredsResolved | null {
   try {
     const parsed = JSON.parse(blob) as {
       access_token?: unknown;
-      accessToken?: unknown;
+      refresh_token?: unknown;
+      expires_at?: unknown;
     };
-    if (typeof parsed.access_token === 'string' && parsed.access_token) {
-      return parsed.access_token;
-    }
-    if (typeof parsed.accessToken === 'string' && parsed.accessToken) {
-      return parsed.accessToken;
-    }
-    return null;
+    const accessToken =
+      typeof parsed.access_token === 'string' ? parsed.access_token : undefined;
+    const refreshToken =
+      typeof parsed.refresh_token === 'string' ? parsed.refresh_token : undefined;
+    const expiresAt =
+      typeof parsed.expires_at === 'number' ? parsed.expires_at : undefined;
+    if (!accessToken && !refreshToken) return null;
+    return { accessToken, refreshToken, expiresAt };
   } catch {
     return null;
   }
+}
+
+function extractKimiToken(blob: string): string | null {
+  return parseKimiCredsBlob(blob)?.accessToken ?? null;
 }
 
 export function resolveGeminiAccessToken(accountId?: string): string | null {

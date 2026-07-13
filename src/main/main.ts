@@ -143,6 +143,7 @@ import {
   resolveGeminiOauthCreds,
   resolveGrokAccessTokenCandidates,
   resolveKimiAccessTokenCandidates,
+  resolveKimiOauthCreds,
   resolveProviderApiKeyCandidates,
 } from "./quota/provider-usage-auth";
 import { closeDb } from "./persistence/db";
@@ -376,11 +377,13 @@ function bootstrap(): void {
     resolveGrokTokenCandidates: (accountId) =>
       resolveGrokAccessTokenCandidates(accountId),
     resolveKimiTokenCandidates: (accountId) => {
-      // Coding Plan API key (vault/launcher) + OAuth tokens from CLI login.
+      // Coding Plan API key (vault/launcher) + bare OAuth access tokens.
       const keys = resolveProviderApiKeyCandidates("kimi", accountId);
       const oauth = resolveKimiAccessTokenCandidates(accountId);
       return [...keys, ...oauth.filter((t) => !keys.includes(t))];
     },
+    // Full OAuth blob — refresh via auth.kimi.com (same as `kimi login`).
+    resolveKimiOauthCreds: (accountId) => resolveKimiOauthCreds(accountId),
     resolveGeminiOauthCreds: (accountId) =>
       resolveGeminiOauthCreds(accountId),
     resolveLongcatApiKeyCandidates: (accountId) =>
