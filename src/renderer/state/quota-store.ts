@@ -18,8 +18,12 @@ export const EMPTY_QUOTA_SNAPSHOT: QuotaFleetSnapshot = {
   unknownCount: 0,
 };
 
+export type QuotaLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
+
 interface QuotaStore {
   snapshot: QuotaFleetSnapshot;
+  status: QuotaLoadStatus;
+  error: string | null;
   hydrate(): Promise<void>;
   refresh(): Promise<void>;
   receive(snapshot: QuotaFleetSnapshot): void;
@@ -30,33 +34,63 @@ function quotaApi() {
   return window.nexus?.quota;
 }
 
-export const useQuotaStore = create<QuotaStore>((set) => ({
+async function fetchSnapshot(
+  mode: 'hydrate' | 'refresh',
+): Promise<QuotaFleetSnapshot> {
+  const api = quotaApi();
+  if (!api) {
+    throw new Error(
+      'API de cotas indisponível neste build — reinicia o Nexus (npm start).',
+    );
+  }
+  if (mode === 'refresh' && typeof api.refresh === 'function') {
+    return api.refresh();
+  }
+  if (typeof api.snapshot !== 'function') {
+    throw new Error('API de cotas incompleta (snapshot em falta).');
+  }
+  return api.snapshot();
+}
+
+export const useQuotaStore = create<QuotaStore>((set, get) => ({
   snapshot: EMPTY_QUOTA_SNAPSHOT,
+  status: 'idle',
+  error: null,
 
   hydrate: async () => {
-    const api = quotaApi();
-    if (!api) return;
+    // Avoid stacking concurrent hydrates when the panel remounts.
+    if (get().status === 'loading') return;
+    set({ status: 'loading', error: null });
     try {
-      const snapshot = await api.snapshot();
-      set({ snapshot });
+      const snapshot = await fetchSnapshot('hydrate');
+      set({ snapshot, status: 'ready', error: null });
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       console.warn('[quota] hydrate failed:', err);
+      set({ status: 'error', error: message });
     }
   },
 
   refresh: async () => {
-    const api = quotaApi();
-    if (!api) return;
+    set({ status: 'loading', error: null });
     try {
-      const snapshot = await api.refresh();
-      set({ snapshot });
+      const snapshot = await fetchSnapshot('refresh');
+      set({ snapshot, status: 'ready', error: null });
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       console.warn('[quota] refresh failed:', err);
+      set({ status: 'error', error: message });
     }
   },
 
-  receive: (snapshot) => set({ snapshot }),
-  reset: () => set({ snapshot: EMPTY_QUOTA_SNAPSHOT }),
+  receive: (snapshot) =>
+    set({ snapshot, status: 'ready', error: null }),
+  reset: () =>
+    set({
+      snapshot: EMPTY_QUOTA_SNAPSHOT,
+      status: 'idle',
+      error: null,
+    }),
 }));
 
 export function useQuotaSync(): void {

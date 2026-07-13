@@ -1,4 +1,6 @@
+import { useEffect } from 'react';
 import { useQuotaStore } from '../../state/quota-store';
+import { useSettingsStore } from '../../state/settings-store';
 import { windowDisplay } from '../../lib/quota-display';
 import type { ProviderQuotaEntry } from '../../../shared/quota-types';
 
@@ -84,10 +86,34 @@ function EntryCard({ entry }: { entry: ProviderQuotaEntry }) {
   );
 }
 
+function statusLabel(
+  status: 'idle' | 'loading' | 'ready' | 'error',
+  updatedAt: number,
+): string {
+  if (status === 'loading') return 'a carregar…';
+  if (status === 'error') return 'falha ao carregar';
+  if (status === 'ready' && updatedAt) {
+    return `atualizado ${new Date(updatedAt).toLocaleTimeString()}`;
+  }
+  if (status === 'idle') return 'ainda não carregado';
+  return 'sem dados';
+}
+
 export function UsageQuotaSection() {
   const snapshot = useQuotaStore((s) => s.snapshot);
+  const status = useQuotaStore((s) => s.status);
+  const error = useQuotaStore((s) => s.error);
+  const hydrate = useQuotaStore((s) => s.hydrate);
   const refresh = useQuotaStore((s) => s.refresh);
+  const openDrawer = useSettingsStore((s) => s.openDrawer);
   const entries = snapshot.entries;
+  const loaded = status === 'ready' && snapshot.updatedAt > 0;
+
+  // Always re-fetch when this settings panel is opened (boot hydrate can race
+  // before main IPC is ready, or the process was an old build).
+  useEffect(() => {
+    void hydrate();
+  }, [hydrate]);
 
   return (
     <section className="quota-panel" aria-labelledby="quota-title">
@@ -122,25 +148,67 @@ export function UsageQuotaSection() {
           ·
         </span>
         <span className="quota-panel__dim">
-          {snapshot.updatedAt
-            ? `atualizado ${new Date(snapshot.updatedAt).toLocaleTimeString()}`
-            : 'ainda não carregado'}
+          {statusLabel(status, snapshot.updatedAt)}
         </span>
         <button
           type="button"
           className="settings-btn quota-panel__refresh"
+          disabled={status === 'loading'}
           onClick={() => void refresh()}
         >
-          Atualizar
+          {status === 'loading' ? 'A carregar…' : 'Atualizar'}
         </button>
       </div>
 
-      {entries.length === 0 ? (
-        <p className="quota-panel__empty">
-          Nenhum provider instalado ou conta no vault. Configure CLIs em
-          Providers.
-        </p>
-      ) : (
+      {status === 'error' && (
+        <div className="quota-panel__empty quota-panel__empty--error" role="alert">
+          <p>
+            <strong>Não foi possível carregar as cotas.</strong>
+          </p>
+          <p>{error ?? 'Erro desconhecido.'}</p>
+          <p>
+            Reinicia o Nexus (fecha o app e corre de novo) e clica Atualizar.
+            Se Providers lista CLIs, o serviço de cotas deve listá-los aqui com
+            barras em &quot;—&quot; até haver sinal de limite real.
+          </p>
+          <button
+            type="button"
+            className="settings-btn settings-btn--primary"
+            onClick={() => void refresh()}
+          >
+            Tentar de novo
+          </button>
+        </div>
+      )}
+
+      {status !== 'error' && entries.length === 0 && (
+        <div className="quota-panel__empty" role="status">
+          {!loaded && status === 'loading' ? (
+            <p>A carregar providers e janelas de cota…</p>
+          ) : !loaded ? (
+            <p>
+              Cotas ainda não chegaram do processo principal. Clica{' '}
+              <strong>Atualizar</strong> ou reinicia o app se continuar vazio.
+            </p>
+          ) : (
+            <>
+              <p>
+                Nenhum CLI listado. Confirma em Providers que os adapters estão
+                habilitados (mesmo sem % de cota, devem aparecer aqui).
+              </p>
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary"
+                onClick={() => openDrawer('providers')}
+              >
+                Abrir Providers
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {entries.length > 0 && (
         <ul className="quota-panel__list">
           {entries.map((e) => (
             <EntryCard key={e.id} entry={e} />

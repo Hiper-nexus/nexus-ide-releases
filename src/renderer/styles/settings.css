@@ -1199,6 +1199,23 @@
   margin-left: auto;
 }
 
+.quota-panel__empty--error {
+  border-color: color-mix(in srgb, var(--danger, #f07178) 45%, var(--border-strong));
+  background: color-mix(in srgb, var(--danger, #f07178) 8%, transparent);
+}
+
+.quota-panel__empty p {
+  margin: 0 0 8px;
+}
+
+.quota-panel__empty p:last-child {
+  margin-bottom: 0;
+}
+
+.quota-panel__empty .settings-btn {
+  margin-top: 8px;
+}
+
 .quota-panel__empty {
   margin: 0;
   padding: 12px 14px;

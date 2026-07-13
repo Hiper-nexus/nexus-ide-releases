@@ -116,9 +116,14 @@ export class QuotaService {
       : {};
 
     const entries: ProviderQuotaEntry[] = [];
-    const installed = providers.filter((p) => p.installed || p.enabled);
+    // List every known provider (not only installed). Disabled CLIs still get
+    // an honest unknown row so Settings → Uso e cotas is never a blank wall
+    // when Providers already shows the fleet.
+    const fleet = providers.length > 0
+      ? providers
+      : [];
 
-    for (const p of installed) {
+    for (const p of fleet) {
       const vault = accounts.filter((a) => a.adapterId === p.adapterId);
       if (vault.length === 0) {
         entries.push(
