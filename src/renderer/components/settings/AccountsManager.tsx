@@ -3,11 +3,18 @@ import type { AccountInfo } from '../../../shared/account-types';
 import { useAccountStore } from '../../state/account-store';
 import { askConfirm } from '../../state/confirm-store';
 import { PixelIcon } from '../PixelIcon';
+import {
+  apiKeyChoiceBlurb,
+  multiAccountAddCopy,
+  sessionChoiceBlurb,
+} from './multi-account-copy';
 
 /**
  * Multi-account manager for one adapter — the failover roster.
  * Always answers "which account runs on the next terminal", including the
  * implicit native CLI session when nothing is vaulted yet.
+ * Mesma UX para todas as CLIs (Claude, Codex, AGY, Grok, Kimi, OpenCode,
+ * GLM, LongCat, Aider): só muda o label e se snapshot OAuth está disponível.
  */
 
 const UPSTREAMS = [
@@ -49,7 +56,14 @@ function authStatusLabel(state: string | undefined): string {
   return 'Não verificado';
 }
 
-export function AccountsManager({ adapterId }: { adapterId: string }) {
+export function AccountsManager({
+  adapterId,
+  adapterLabel,
+}: {
+  adapterId: string;
+  /** Nome legível do provider (Claude, AGY…). Fallback = adapterId. */
+  adapterLabel?: string;
+}) {
   // Select the whole array (stable reference) and filter in a memo — a
   // selector that returns `.filter(...)` makes a NEW array every render, which
   // sends zustand's useSyncExternalStore into an infinite loop (white screen).
@@ -365,44 +379,33 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
   }
 
   const vaultCount = accounts.length;
-  const multiReady = vaultCount >= 2;
-  // Em uso já conta como 1ª (vault ativa ou sessão nativa logada). O próximo
-  // add NÃO é "1ª conta" — é a 2ª (ou N+1 no vault).
+  const displayName = (adapterLabel?.trim() || adapterId).trim();
+  // Em uso já conta como 1ª (vault ativa ou sessão nativa/API key ok).
   const hasEmUso = Boolean(active) || auth?.state === 'ok';
-  const addStepTitle = (() => {
-    if (vaultCount === 0 && hasEmUso) return 'Adicionar a 2ª conta';
-    if (vaultCount === 0) return 'Adicionar a 1ª conta';
-    if (vaultCount === 1) return 'Adicionar a 2ª conta';
-    return `Adicionar a ${vaultCount + 1}ª conta`;
-  })();
-  const addStepSub =
-    vaultCount === 0 && hasEmUso
-      ? 'A sessão em uso já é a 1ª. Grave outra assinatura ou API key no vault como reserva (2ª, 3ª…).'
-      : vaultCount === 0
-        ? 'Primeira entrada no vault deste provider. Depois pode repetir para multi-conta.'
-        : `Já há ${vaultCount} no vault. Cada nova entrada vira mais um slot para failover.`;
+  const addCopy = multiAccountAddCopy({
+    vaultCount,
+    standbyCount: standby.length,
+    hasEmUso,
+  });
 
   return (
-    <div className="acct">
+    <div className="acct" data-adapter={adapterId}>
       <div className="acct__head">
         <div className="acct__head-copy">
           <div className="acct__title-row">
-            <h4 className="acct__title">Contas e login</h4>
+            <h4 className="acct__title">Contas e login · {displayName}</h4>
             <span
-              className={`acct__multi-chip${multiReady ? ' acct__multi-chip--on' : ''}`}
-              title={
-                multiReady
-                  ? `${vaultCount} contas no vault — failover e troca manual ativos`
-                  : 'Adicione 2 ou mais contas no vault para multi-conta e failover'
-              }
+              className={`acct__multi-chip${addCopy.chipOn ? ' acct__multi-chip--on' : ''}`}
+              title={addCopy.chipTitle}
             >
-              {multiReady ? `Multi-conta · ${vaultCount}` : 'Multi-conta'}
+              {addCopy.chip}
             </span>
           </div>
           <p className="acct__hint">
-            Guarde <strong>várias contas</strong> do mesmo provider (trabalho,
+            Guarde <strong>várias contas</strong> de {displayName} (trabalho,
             pessoal, API key…). A em uso abre o próximo terminal; as reserva
-            entram no failover quando o limite bater.
+            entram no failover quando o limite bater. Mesmo fluxo em todas as
+            CLIs.
           </p>
         </div>
         {auth && (
@@ -433,7 +436,7 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
             <span className="acct__led" data-state={auth?.state === 'ok' ? 'ready' : 'idle'} aria-hidden="true" />
             <div className="acct__body">
               <div className="acct__identity">
-                <span className="acct__name">Sessão nativa de {adapterId}</span>
+                <span className="acct__name">Sessão nativa de {displayName}</span>
                 <span className="acct__pill acct__pill--quiet">Implícita</span>
               </div>
               <p className="acct__meta-line">
@@ -479,8 +482,8 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
       <div className="acct__add-zone" data-open={addMode !== null ? 'true' : 'false'}>
         <div className="acct__add-head">
           <div className="acct__add-head-copy">
-            <span className="acct__section-kicker">3 · {addStepTitle}</span>
-            <p className="acct__add-sub">{addStepSub}</p>
+            <span className="acct__section-kicker">3 · {addCopy.title}</span>
+            <p className="acct__add-sub">{addCopy.sub}</p>
           </div>
         </div>
 
@@ -491,7 +494,7 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
                 type="button"
                 className="settings-btn settings-btn--primary acct__add-choice"
                 onClick={() => setAddMode('subscription')}
-                title={`Salva a sessão OAuth/login atual de ${adapterId} como mais uma conta no vault`}
+                title={`Salva a sessão OAuth/login atual de ${displayName} como mais uma conta no vault`}
               >
                 <span className="acct__add-choice-icon" aria-hidden="true">
                   <PixelIcon name="id-badge" size={14} />
@@ -499,9 +502,11 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
                 <span className="acct__add-choice-text">
                   <strong>Sessão logada</strong>
                   <span>
-                    {hasEmUso && vaultCount === 0
-                      ? `Guarda o login de ${adapterId} no vault como 2ª conta (ou troca de conta no CLI e salva de novo)`
-                      : `Grava o login atual de ${adapterId} no vault — sem re-login no hot-swap`}
+                    {sessionChoiceBlurb({
+                      adapterLabel: displayName,
+                      hasEmUso,
+                      vaultCount,
+                    })}
                   </span>
                 </span>
                 <span className="acct__add-plus" aria-hidden="true">
@@ -513,7 +518,7 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
               type="button"
               className="settings-btn acct__add-choice"
               onClick={() => setAddMode('api-key')}
-              title="Adicionar conta com API key (nativa ou roteada)"
+              title={`Adicionar conta ${displayName} com API key`}
             >
               <span className="acct__add-choice-icon" aria-hidden="true">
                 <PixelIcon name="key" size={14} />
@@ -521,9 +526,7 @@ export function AccountsManager({ adapterId }: { adapterId: string }) {
               <span className="acct__add-choice-text">
                 <strong>API key</strong>
                 <span>
-                  {hasEmUso && vaultCount === 0
-                    ? '2ª conta via key nativa ou upstream (GLM, OpenRouter…)'
-                    : 'Conta via key nativa ou upstream (GLM, OpenRouter…)'}
+                  {apiKeyChoiceBlurb({ hasEmUso, vaultCount })}
                 </span>
               </span>
               <span className="acct__add-plus" aria-hidden="true">

@@ -30,7 +30,11 @@ function mount(adapterId = 'claude'): { host: HTMLDivElement; root: Root } {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
-  act(() => root.render(<AccountsManager adapterId={adapterId} />));
+  act(() =>
+    root.render(
+      <AccountsManager adapterId={adapterId} adapterLabel={adapterId} />,
+    ),
+  );
   return { host, root };
 }
 

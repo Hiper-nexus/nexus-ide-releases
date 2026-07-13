@@ -6,6 +6,7 @@ import { useProviderStore } from '../../state/provider-store';
 import { openExternalFromAnchor } from '../../lib/open-external';
 import { ActionCard } from '../ActionCard';
 import { AccountsManager } from './AccountsManager';
+import { ProviderLogo } from '../ProviderLogo';
 
 /**
  * Providers/CLIs + Keys hub — the central place to enable/disable each CLI,
@@ -342,49 +343,59 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
           <span className="prov__chevron" aria-hidden="true">
             {expanded ? '−' : '+'}
           </span>
-          <span className="prov__title">
-            {provider.icon} {provider.label}
-          </span>
-          <span className="prov__summary" title={accountSummary}>
-            {accountSummary}
+          <ProviderLogo
+            adapterId={provider.adapterId}
+            label={provider.label}
+            fallback={provider.icon}
+          />
+          <span className="prov__identity">
+            <span className="prov__title">{provider.label}</span>
+            <span className="prov__summary" title={accountSummary}>
+              {accountSummary}
+            </span>
           </span>
         </button>
-        <span
-          className={`settings-chip ${provider.installed ? 'settings-chip--ok' : 'settings-chip--warn'}`}
-        >
-          {provider.installed ? 'detectado' : 'ausente'}
-        </span>
-        <span
-          className={`settings-chip ${
-            provider.authStrategy === 'subscription'
-              ? 'settings-chip--ok'
-              : provider.authStrategy === 'api-key'
-                ? ''
-                : 'settings-chip--warn'
-          }`}
-          title="Prioridade: assinatura (OAuth/plano). API key é só fallback."
-        >
-          {provider.authStrategy === 'subscription'
-            ? 'assinatura'
-            : provider.authStrategy === 'api-key'
-              ? 'via API key'
-              : 'login pendente'}
-        </span>
-        {accountCount > 0 && (
+        <span className="prov__status-cluster">
           <span
-            className="settings-chip prov__acct-chip"
-            title={`${accountCount} conta${accountCount === 1 ? '' : 's'} no vault`}
+            className={`settings-chip ${provider.installed ? 'settings-chip--ok' : 'settings-chip--warn'}`}
           >
-            {accountCount} conta{accountCount === 1 ? '' : 's'}
+            {provider.installed ? 'detectado' : 'ausente'}
           </span>
-        )}
+          <span
+            className={`settings-chip ${
+              provider.authStrategy === 'subscription'
+                ? 'settings-chip--ok'
+                : provider.authStrategy === 'api-key'
+                  ? ''
+                  : 'settings-chip--warn'
+            }`}
+            title="Prioridade: assinatura (OAuth/plano). API key é só fallback."
+          >
+            {provider.authStrategy === 'subscription'
+              ? 'assinatura'
+              : provider.authStrategy === 'api-key'
+                ? 'via API key'
+                : 'login pendente'}
+          </span>
+          {accountCount > 0 && (
+            <span
+              className="settings-chip prov__acct-chip"
+              title={`${accountCount} conta${accountCount === 1 ? '' : 's'} no vault`}
+            >
+              {accountCount} conta{accountCount === 1 ? '' : 's'}
+            </span>
+          )}
+        </span>
         <label className="prov__toggle" title="Habilitar/desabilitar">
           <input
             type="checkbox"
             checked={provider.enabled}
             onChange={(e) => patch({ enabled: e.target.checked })}
           />
-          <span>{provider.enabled ? 'on' : 'off'}</span>
+          <span className="prov__switch" aria-hidden="true">
+            <span className="prov__switch-thumb" />
+          </span>
+          <span className="prov__toggle-label">{provider.enabled ? 'on' : 'off'}</span>
         </label>
       </div>
 
@@ -477,7 +488,10 @@ function ProviderCard({ provider }: { provider: ProviderSettingsInfo }) {
       </div>
 
       <div className="prov__block prov__block--accounts">
-        <AccountsManager adapterId={provider.adapterId} />
+        <AccountsManager
+          adapterId={provider.adapterId}
+          adapterLabel={provider.label}
+        />
       </div>
 
       {provider.loginHint && (
