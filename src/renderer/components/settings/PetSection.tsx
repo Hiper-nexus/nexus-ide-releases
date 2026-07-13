@@ -11,6 +11,7 @@ import {
   type PetSheet,
 } from '../../../shared/pet-types';
 import { OperatorSprite } from '../OperatorSprite';
+import { ActionCard } from '../ActionCard';
 import { CustomPetSprite } from '../../pet/CustomPetSprite';
 import { SheetPetSprite } from '../../pet/SheetPetSprite';
 import { filterPaletteActions } from '../../lib/command-palette-filter';
@@ -574,29 +575,35 @@ export function PetSection() {
             </div>
           )}
 
-          <div className="settings-pet-import">
-            {petApi.pickImage && (
-              <button
-                type="button"
-                className="settings-pet-import__btn"
-                onClick={() => void onHatchPet()}
-              >
-                Criar pet com IA…
-              </button>
-            )}
-            <button
-              type="button"
-              className="settings-pet-import__btn"
-              onClick={() => void onPickSheetNative()}
-            >
-              Importar spritesheet do Codex…
-            </button>
-            <span className="settings-field__note">
+          <div className="settings-pet-import" aria-label="Criar e importar pets">
+            <p className="settings-appearance__label">Criar e importar</p>
+            <p className="settings-field__note settings-pet-import__lead">
+              Três caminhos: gerar com IA, importar spritesheet local, ou
+              buscar na galeria da comunidade.
+            </p>
+            <div className="settings-pet-import__actions action-card-row">
+              {petApi.pickImage && (
+                <ActionCard
+                  icon="sparkle"
+                  title="Criar pet com IA"
+                  subtitle="Foto → poses (missão Codex)"
+                  variant="primary"
+                  onClick={() => void onHatchPet()}
+                />
+              )}
+              <ActionCard
+                icon="grid"
+                title="Importar spritesheet do Codex"
+                subtitle="Contrato v2 · ~/.codex/pets"
+                onClick={() => void onPickSheetNative()}
+              />
+            </div>
+            <p className="settings-field__note">
               Criar com IA abre uma missão que desenha seu pet em todas as
               poses a partir de uma foto (processo lento, padrão Codex).
               Spritesheets no contrato v2 (8×11) importam direto — inclusive
               os de ~/.codex/pets. Tudo local; nada é enviado.
-            </span>
+            </p>
             <input
               ref={sheetRef}
               type="file"
@@ -610,39 +617,40 @@ export function PetSection() {
           </div>
           {petApi.galleryImport && (
             <div className="settings-pet-gallery">
-              <input
-                className="settings-input settings-pet-gallery__input"
-                type="text"
-                value={gallerySlug}
-                placeholder="Slug ou URL do pet (codex-pets.net)"
-                aria-label="Slug ou URL do pet na galeria petdex"
-                disabled={galleryBusy}
-                onChange={(e) => setGallerySlug(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void onGalleryImport();
-                }}
-              />
-              <button
-                type="button"
-                className="settings-pet-import__btn"
-                disabled={galleryBusy || !gallerySlug.trim()}
-                onClick={() => void onGalleryImport()}
-              >
-                {galleryBusy ? 'Baixando…' : 'Importar da galeria'}
-              </button>
-              {petApi.galleryList && (
-                <button
-                  type="button"
-                  className="settings-pet-import__btn"
-                  onClick={() => void onOpenCatalog()}
-                >
-                  {catalogOpen ? 'Fechar galeria' : 'Ver galeria…'}
-                </button>
-              )}
-              <span className="settings-field__note">
+              <p className="settings-appearance__label">Galeria da comunidade</p>
+              <div className="settings-pet-gallery__row">
+                <input
+                  className="settings-input settings-pet-gallery__input"
+                  type="text"
+                  value={gallerySlug}
+                  placeholder="Slug ou URL do pet (codex-pets.net)"
+                  aria-label="Slug ou URL do pet na galeria petdex"
+                  disabled={galleryBusy}
+                  onChange={(e) => setGallerySlug(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void onGalleryImport();
+                  }}
+                />
+                <ActionCard
+                  icon="star"
+                  title={galleryBusy ? 'Baixando…' : 'Importar da galeria'}
+                  size="sm"
+                  disabled={galleryBusy || !gallerySlug.trim()}
+                  onClick={() => void onGalleryImport()}
+                />
+                {petApi.galleryList && (
+                  <ActionCard
+                    icon="users"
+                    title={catalogOpen ? 'Fechar galeria' : 'Ver galeria…'}
+                    size="sm"
+                    onClick={() => void onOpenCatalog()}
+                  />
+                )}
+              </div>
+              <p className="settings-field__note">
                 Galeria da comunidade (codex-pets.net / petdex.dev). A arte é
                 de quem publicou — importe só o que você tem direito de usar.
-              </span>
+              </p>
             </div>
           )}
           {catalogOpen && catalog && (

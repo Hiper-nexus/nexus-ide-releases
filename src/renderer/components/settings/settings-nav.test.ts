@@ -19,12 +19,18 @@ describe('SETTINGS_GROUPS', () => {
     expect(ids).toContain('shortcuts');
   });
 
-  test('primary nav stays compact (9 items incl. ranking)', () => {
+  test('primary nav surfaces arsenal (MCP, tools, mídia) without advanced dig', () => {
     const primaryIds = SETTINGS_PRIMARY_GROUPS.flatMap((g) => g.items.map((i) => i.id));
-    expect(primaryIds).toHaveLength(9);
+    expect(primaryIds).toHaveLength(12);
     expect(primaryIds).toContain('appearance');
     expect(primaryIds).toContain('ranking');
+    expect(primaryIds).toContain('mcps');
+    expect(primaryIds).toContain('tools');
+    expect(primaryIds).toContain('media');
     expect(primaryIds).not.toContain('agents');
+    expect(isAdvancedSettingsSection('mcps')).toBe(false);
+    expect(isAdvancedSettingsSection('tools')).toBe(false);
+    expect(isAdvancedSettingsSection('media')).toBe(false);
   });
 
   test('advanced sections are flagged correctly', () => {
@@ -93,17 +99,20 @@ describe('SETTINGS_ADVANCED_GROUPS', () => {
     const ids = SETTINGS_ADVANCED_GROUPS.flatMap((g) => g.items.map((i) => i.id));
     expect(ids).toContain('llms');
     expect(ids).toContain('system');
+    expect(ids).not.toContain('mcps');
+    expect(ids).not.toContain('tools');
+    expect(ids).not.toContain('media');
     expect(SETTINGS_ADVANCED_GROUPS).toHaveLength(4);
     expect(Math.max(...SETTINGS_ADVANCED_GROUPS.map((g) => g.items.length))).toBeLessThanOrEqual(6);
   });
 
   test('reveals only a selected or explicitly expanded group', () => {
-    const [system, integrations, arsenal] = SETTINGS_ADVANCED_GROUPS;
+    const [system, integrations, catalog] = SETTINGS_ADVANCED_GROUPS;
     const expanded = toggleSettingsGroup(new Set<string>(), integrations.label);
 
     expect(isSettingsGroupExpanded(system, 'account', expanded)).toBe(false);
     expect(isSettingsGroupExpanded(integrations, 'account', expanded)).toBe(true);
-    expect(isSettingsGroupExpanded(arsenal, 'agents', new Set())).toBe(true);
+    expect(isSettingsGroupExpanded(catalog, 'agents', new Set())).toBe(true);
     expect(isSettingsGroupExpanded(system, 'agents', new Set())).toBe(false);
     expect(toggleSettingsGroup(expanded, integrations.label).size).toBe(0);
   });

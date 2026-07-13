@@ -15,6 +15,10 @@ import {
   type SettingsSection,
 } from './settings-nav';
 import {
+  resolveOpenDrawerSection,
+  SETTINGS_DRAWER_DEFAULT_SECTION,
+} from './settings-drawer-section';
+import {
   VoiceSection,
   MarketplaceSection,
   SquadsSection,
@@ -24,6 +28,7 @@ import {
 import { ProvidersPanel } from './ProvidersPanel';
 import { ModelRankingSection } from './ModelRankingSection';
 import { PixelIcon } from '../PixelIcon';
+import { OperatorHud } from '../OperatorHud';
 import { AccountSection } from './AccountSection';
 import { trapDialogTabKey } from './settings-dialog-focus';
 import { AppearanceSection } from './AppearanceSection';
@@ -143,7 +148,15 @@ export function SettingsDrawer() {
   const requestedSection = useSettingsStore((s) => s.drawerSection);
   const close = useSettingsStore((s) => s.closeDrawer);
   const squadsCount = useOrchStore((s) => s.squads.length);
-  const [section, setSection] = useState<SettingsSection>('account');
+  const mcpToolCount = useOrchStore((s) => s.mcpInfo?.toolCount ?? 0);
+  const [section, setSection] = useState<SettingsSection>(
+    SETTINGS_DRAWER_DEFAULT_SECTION,
+  );
+  /** Manual nav keeps store target in sync so openDrawer/close stay coherent. */
+  const selectSection = (id: SettingsSection) => {
+    setSection(id);
+    useSettingsStore.setState({ drawerSection: id });
+  };
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [query, setQuery] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -171,8 +184,11 @@ export function SettingsDrawer() {
     if (isAdvancedSettingsSection(section)) setAdvancedOpen(true);
   }, [section]);
 
+  // On open: apply targeted section, or default — never keep a stale local panel
+  // after closeDrawer() + openDrawer() with no arg (requestedSection null).
   useEffect(() => {
-    if (open && requestedSection) setSection(requestedSection);
+    if (!open) return;
+    setSection(resolveOpenDrawerSection(requestedSection));
   }, [open, requestedSection]);
 
   useEffect(() => {
@@ -223,6 +239,8 @@ export function SettingsDrawer() {
   const badges: Partial<Record<SettingsSection, number>> = {
     providers: adapters.length,
     squads: squadsCount,
+    tools: mcpToolCount > 0 ? mcpToolCount : undefined,
+    mcps: mcpToolCount > 0 ? 1 : undefined,
   };
   const toggleAdvancedGroup = (label: string) => {
     setExpandedAdvancedGroups((expanded) =>
@@ -286,7 +304,7 @@ export function SettingsDrawer() {
                         item={item}
                         active={section === item.id}
                         badge={badges[item.id]}
-                        onSelect={setSection}
+                        onSelect={selectSection}
                       />
                     ))}
                   </div>
@@ -303,7 +321,7 @@ export function SettingsDrawer() {
                         item={item}
                         active={section === item.id}
                         badge={badges[item.id]}
-                        onSelect={setSection}
+                        onSelect={selectSection}
                       />
                     ))}
                   </div>
@@ -336,7 +354,7 @@ export function SettingsDrawer() {
                         )}
                         badges={badges}
                         onToggle={toggleAdvancedGroup}
-                        onSelect={setSection}
+                        onSelect={selectSection}
                       />
                     ))}
                   </div>
@@ -345,6 +363,11 @@ export function SettingsDrawer() {
             )}
           </div>
           <div className="settings-nav__footer">
+            {/* Pet + gamificação sempre visíveis em Config — mesmo padrão do
+                rodapé da rail de missões; o overlay não pode esconder o companion. */}
+            <div className="settings-nav__operator">
+              <OperatorHud compact />
+            </div>
             <button type="button" className="settings-nav__close" onClick={close}>
               Fechar configurações
             </button>

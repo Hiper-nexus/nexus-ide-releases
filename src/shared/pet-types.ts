@@ -25,6 +25,18 @@ export const PET_CHANNELS = {
   focusMain: 'pet:focusMain',
   /** send: janela do pet → main. Foca a principal E pede o Settings. */
   requestSettings: 'pet:requestSettings',
+  /**
+   * send: janela do pet → main. Foca a principal e pede o Ops Board
+   * (missão terminou / precisa de intervenção humana).
+   */
+  requestOpenOps: 'pet:requestOpenOps',
+  /** event: main → janela principal. Abrir Ops Board / pipeline de missões. */
+  openOps: 'pet:openOps',
+  /**
+   * event: main → janela principal. Intervenção (missão blocked / agent waiting).
+   * Espelhado em toast mesmo com pet off ou ainda a carregar.
+   */
+  attention: 'pet:attention',
   /** invoke: janela principal → main. Importa um pet da galeria petdex. */
   galleryImport: 'pet:galleryImport',
   /** invoke: janela principal → main. Catálogo ao vivo da galeria. */
@@ -268,11 +280,32 @@ export type PetEventKind =
   | 'agent-exited'
   | 'agent-idle';
 
+/** Ação que o pet pede à janela principal quando o usuário interage. */
+export type PetOpenAction = 'focus-main' | 'open-ops';
+
 export interface PetEvent {
   kind: PetEventKind;
   /** Título curto para o balão (nome da missão / título do pane). */
   title: string;
   at: number;
+}
+
+/** Intervenção humana: atravessa o modo "dormindo" e pede ação no Ops Board. */
+export function isPetUrgentEvent(kind: PetEventKind): boolean {
+  return kind === 'mission-blocked' || kind === 'agent-waiting';
+}
+
+export function petOpenActionFor(kind: PetEventKind): PetOpenAction {
+  if (
+    kind === 'mission-blocked' ||
+    kind === 'agent-waiting' ||
+    kind === 'mission-failed' ||
+    kind === 'mission-done' ||
+    kind === 'agent-exited'
+  ) {
+    return 'open-ops';
+  }
+  return 'focus-main';
 }
 
 /** Contrato exposto pelo pet-preload como `window.nexusPet` (janela do pet). */
@@ -290,6 +323,11 @@ export interface NexusPetApi {
   focusMain(): void;
   /** Foca a principal e abre Settings → Aparência (menu "Configurar…"). */
   openSettings(): void;
+  /**
+   * Foca a principal e pede o Ops Board (missão pronta / precisa de você).
+   * Usado no clique do balão e no menu do pet.
+   */
+  openOps(): void;
 }
 
 export function defaultPetPrefs(platform: NodeJS.Platform): PetPrefs {

@@ -13,6 +13,7 @@ import { VoiceButton } from './VoiceButton';
 import { VisionIndicator } from './VisionIndicator';
 import { NexusMark } from './NexusMark';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
+import { ActionCard, EmptyState } from './ActionCard';
 import { UpdateModal, UpdateStatusButton, useUpdateState } from './UpdateModal';
 import type { AdapterInfo } from '../../shared/types';
 import { setBrowserPaneSuppression } from '../browser/browser-host';
@@ -576,15 +577,34 @@ export function WorkspaceBar({
             <h3 className="agent-picker__title">Abrir agente</h3>
 
             {installedAdapters.length === 0 ? (
-              <p className="agent-picker__empty">
-                Nenhuma CLI encontrada. Instale uma para começar.
-                {adapters.length > 0 && (
-                  <span>
-                    {' '}
-                    Tente: <code>{adapters[0].installCommand}</code>
-                  </span>
-                )}
-              </p>
+              <EmptyState
+                className="agent-picker__empty"
+                icon="key"
+                title="Nenhuma CLI encontrada"
+                body={
+                  <>
+                    <p>Instale e conecte um provider para abrir agentes.</p>
+                    {adapters.length > 0 && (
+                      <p>
+                        Ex.: <code>{adapters[0].installCommand}</code>
+                      </p>
+                    )}
+                  </>
+                }
+                action={
+                  <ActionCard
+                    icon="key"
+                    title="Abrir Providers"
+                    subtitle="chaves · CLIs"
+                    variant="primary"
+                    size="sm"
+                    onClick={() => {
+                      closePicker();
+                      useSettingsStore.getState().openDrawer('providers');
+                    }}
+                  />
+                }
+              />
             ) : (
               <>
                 <label className="agent-picker__label">

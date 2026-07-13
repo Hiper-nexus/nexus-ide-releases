@@ -6,10 +6,9 @@ import type { OperatorMood } from './OperatorSprite';
 import { fmt } from './operator-sprite-data';
 
 /**
- * HUD do Operador (WorkspaceBar): mascote 24px + power level + barra até o
- * próximo tier. Compacto por padrão (densidade calma), expande no hover.
- * Reage em tempo real: power "conta" subindo e o mascote celebra por 3s ao
- * entregar. Respeita prefers-reduced-motion e o modo sóbrio (some, XP segue).
+ * HUD do Operador (rail de missões + footer do Settings): pet escolhido +
+ * power/level. Compacto, clica para o perfil. Em modo sóbrio o XP some mas o
+ * pet permanece — presença do companion, sem gamificação barulhenta.
  */
 
 const CELEBRATE_MS = 3_000;
@@ -49,7 +48,12 @@ function useCountUp(target: number): number {
   return shown;
 }
 
-export function OperatorHud() {
+export function OperatorHud({
+  compact = false,
+}: {
+  /** Variante mais densa (footer do Settings). */
+  compact?: boolean;
+}) {
   const snapshot = useGamificationStore((s) => s.snapshot);
   const sober = useGamificationStore((s) => s.sober);
   const openProfile = useGamificationStore((s) => s.openProfile);
@@ -57,6 +61,7 @@ export function OperatorHud() {
   const [mood, setMood] = useState<OperatorMood>('idle');
   const prevPower = useRef(snapshot.powerLevel);
   useEffect(() => {
+    if (sober) return;
     if (snapshot.powerLevel > prevPower.current) {
       prevPower.current = snapshot.powerLevel;
       setMood('celebrating');
@@ -65,47 +70,61 @@ export function OperatorHud() {
     }
     prevPower.current = snapshot.powerLevel;
     return undefined;
-  }, [snapshot.powerLevel]);
+  }, [snapshot.powerLevel, sober]);
 
   const shownPower = useCountUp(snapshot.powerLevel);
-  if (sober) return null;
-
   const level = TIER_ORDER.indexOf(snapshot.tier) + 1;
   const progress = snapshot.nextTierAt
     ? Math.min(1, snapshot.powerLevel / snapshot.nextTierAt)
     : 1;
-  const stars = snapshot.prestige > 0 ? '★'.repeat(Math.min(snapshot.prestige, 5)) : '';
+  const stars =
+    snapshot.prestige > 0 ? '★'.repeat(Math.min(snapshot.prestige, 5)) : '';
+  const petSize = compact ? 28 : 32;
 
   return (
     <button
       type="button"
-      className="operator-hud"
+      className={`operator-hud ${compact ? 'operator-hud--compact' : ''} ${sober ? 'operator-hud--sober' : ''}`}
       onClick={openProfile}
-      title="Perfil de Operador"
-      aria-label={`Perfil de Operador — nível ${level}, ${GAMIFICATION_COPY.tiers[snapshot.tier]}, poder ${snapshot.powerLevel}`}
+      title={
+        sober
+          ? 'Pet e perfil (modo sóbrio — XP oculto)'
+          : 'Perfil de Operador'
+      }
+      aria-label={
+        sober
+          ? 'Abrir perfil do pet'
+          : `Perfil de Operador — nível ${level}, ${GAMIFICATION_COPY.tiers[snapshot.tier]}, poder ${snapshot.powerLevel}`
+      }
     >
       <ChosenPetPortrait
-        size={24}
+        size={petSize}
         mood={mood}
         fallbackTier={snapshot.tier}
         fallbackBranch={snapshot.branch}
         fallbackSkin={snapshot.selectedSkin}
         className="operator-hud__pet"
       />
-      <span className="operator-hud__level" aria-hidden="true">
-        Lv {level}
-      </span>
-      <span className="operator-hud__power">{fmt(shownPower)}</span>
-      <span className="operator-hud__detail">
-        {GAMIFICATION_COPY.tiers[snapshot.tier]}
-        {stars && <span className="operator-hud__stars">{stars}</span>}
-      </span>
-      <span className="operator-hud__bar" aria-hidden="true">
-        <span
-          className="operator-hud__bar-fill"
-          style={{ transform: `scaleX(${progress})` }}
-        />
-      </span>
+      {sober ? (
+        <span className="operator-hud__sober-label">Pet</span>
+      ) : (
+        <>
+          <span className="operator-hud__level" aria-hidden="true">
+            Lv {level}
+          </span>
+          <span className="operator-hud__power">{fmt(shownPower)}</span>
+          <span className="operator-hud__detail">
+            {GAMIFICATION_COPY.tiers[snapshot.tier]}
+            {stars && <span className="operator-hud__stars">{stars}</span>}
+          </span>
+          <span className="operator-hud__bar" aria-hidden="true">
+            <span
+              className="operator-hud__bar-fill"
+              style={{ transform: `scaleX(${progress})` }}
+            />
+          </span>
+        </>
+      )}
     </button>
   );
 }

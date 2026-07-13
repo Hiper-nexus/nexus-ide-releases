@@ -23,6 +23,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { useCommandPaletteStore } from './state/command-palette-store';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { useConfirmStore } from './state/confirm-store';
+import { useToastStore } from './state/toast-store';
 import { KeyboardCheatsheet } from './components/KeyboardCheatsheet';
 import { useCheatsheetStore } from './state/cheatsheet-store';
 import { FilesPanel } from './components/FilesPanel';
@@ -261,16 +262,59 @@ export function App() {
   useEffect(() => initDevServerStore(), []);
   useEffect(() => initDesignSelectionStore(), []);
 
-  // "Configurar…" no menu do desktop pet: foca esta janela e abre Aparência.
+  // Desktop pet → janela principal: Settings (Configurar…) e Ops Board
+  // (missão pronta / precisa de intervenção — balão ou "Ver missões").
   useEffect(() => {
     // Preload changes require a full Electron restart while renderer changes
     // arrive through HMR. Keep optional desktop features from taking down the
     // entire app during that short version skew (or on an older installation).
     const petApi = window.nexus.pet;
-    if (!petApi?.onOpenSettings) return;
-    return petApi.onOpenSettings(() => {
-      useSettingsStore.getState().openDrawer('appearance');
-    });
+    if (!petApi) return;
+    const offs: Array<() => void> = [];
+    if (petApi.onOpenSettings) {
+      offs.push(
+        petApi.onOpenSettings(() => {
+          useSettingsStore.getState().openDrawer('appearance');
+        }),
+      );
+    }
+    if (petApi.onOpenOps) {
+      offs.push(
+        petApi.onOpenOps(() => {
+          const orch = useOrchStore.getState();
+          if (!orch.boardOpen) orch.toggleBoard();
+          orch.openPanel('missions');
+        }),
+      );
+    }
+    // Intervenção: toast rate-limited no main (digest/cooldown). Um aviso
+    // agregado, não 20 toasts se 20 panes pedirem input ao mesmo tempo.
+    if (petApi.onAttention) {
+      offs.push(
+        petApi.onAttention((event) => {
+          const isBlock = event.kind === 'mission-blocked';
+          const isWait = event.kind === 'agent-waiting';
+          if (!isBlock && !isWait) return;
+          const multi = /·|\d+\s+(missões|agentes)/i.test(event.title);
+          useToastStore.getState().push(
+            'warn',
+            multi
+              ? 'Várias coisas pedem você'
+              : isBlock
+                ? 'Missão precisa de você'
+                : 'Agente pediu input',
+            multi
+              ? `${event.title}. Abra o Ops Board ou o pet.`
+              : isBlock
+                ? `${event.title} — travada aguardando decisão.`
+                : `${event.title} — permissão/resposta pendente no terminal.`,
+          );
+        }),
+      );
+    }
+    return () => {
+      for (const off of offs) off();
+    };
   }, []);
 
   if (!workspaceHydrated) {

@@ -560,6 +560,16 @@ export interface NexusApi {
     onPrefsChanged(cb: (prefs: PetPrefs) => void): Unsubscribe;
     /** O pet pediu para abrir as configurações (menu "Configurar…"). */
     onOpenSettings(cb: () => void): Unsubscribe;
+    /**
+     * O pet pediu o Ops Board (missão concluída / falhou / precisa de
+     * intervenção humana — clique no balão ou menu "Ver missões").
+     */
+    onOpenOps(cb: () => void): Unsubscribe;
+    /**
+     * Main avisa intervenção (missão blocked / agent waiting). Sempre chega
+     * mesmo com pet desligado — a UI mostra toast e pode abrir o Ops Board.
+     */
+    onAttention(cb: (event: import('./pet-types').PetEvent) => void): Unsubscribe;
     /** Baixa um pet da galeria petdex por slug/URL (fetch no main). */
     galleryImport(slugOrUrl: string): Promise<PetGalleryImportResult>;
     /** Catálogo ao vivo da galeria (sitemap), com cache no main. */

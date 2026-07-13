@@ -12,6 +12,7 @@ import {
   restartPanesForPendingAccount,
 } from '../orch/account-restart-controller';
 import { PixelIcon } from './PixelIcon';
+import { ActionCard, EmptyState } from './ActionCard';
 
 /**
  * Compact multi-account control (hot-swap chip).
@@ -242,12 +243,29 @@ export function AccountSwitcher({
             </div>
           )}
           {visible.length === 0 ? (
-            <div className="account-switcher__empty-block">
-              <p className="account-switcher__empty">
-                Nenhuma conta no vault. Salve a sessão logada ou uma API key em
-                Config → Providers.
-              </p>
-            </div>
+            <EmptyState
+              className="account-switcher__empty-block"
+              icon="id-badge"
+              title="Nenhuma conta no vault"
+              body={
+                <p>
+                  Salve a sessão logada ou uma API key em Config → Providers.
+                </p>
+              }
+              action={
+                <ActionCard
+                  icon="key"
+                  title="Abrir Providers"
+                  subtitle="chaves · CLIs"
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    setOpen(false);
+                    openDrawer('providers');
+                  }}
+                />
+              }
+            />
           ) : (
             grouped.map(([adapterId, list]) => (
               <div key={adapterId} className="account-switcher__group" role="group" aria-label={adapterId}>

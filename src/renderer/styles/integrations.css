@@ -151,12 +151,13 @@
   appearance: none;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  background: transparent;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  padding: 8px 10px;
+  min-height: 44px;
+  padding: 10px 14px;
   cursor: pointer;
 }
 
@@ -165,6 +166,18 @@
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
+}
+
+.int-panel__field input {
+  min-height: 40px;
+  font-size: 13px;
+  padding: 9px 12px;
+}
+
+.int-panel__sec h4 {
+  font-size: 13px;
+  font-weight: 650;
+  margin: 0 0 10px;
 }
 
 .diff-panel__btn:disabled,

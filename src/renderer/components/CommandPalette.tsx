@@ -12,6 +12,7 @@ import { listPanes } from '../lib/split-tree';
 import { filterPaletteActions } from '../lib/command-palette-filter';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
+import { ActionCard, EmptyState } from './ActionCard';
 
 /**
  * ⌘K — command palette: um teclado de distância de qualquer pane, missão ou
@@ -221,7 +222,46 @@ export function CommandPalette() {
         </div>
         <ul className="palette__list" ref={listRef} role="listbox">
           {filtered.length === 0 && (
-            <li className="palette__empty">Nada com esse nome por aqui.</li>
+            <li className="palette__empty">
+              <EmptyState
+                className="palette__empty-state"
+                icon="search"
+                title="Nada com esse nome"
+                body={<p>Tente uma ação rápida:</p>}
+                action={
+                  <>
+                    <ActionCard
+                      icon="mission"
+                      title="Nova missão"
+                      variant="primary"
+                      size="sm"
+                      onClick={() => {
+                        close();
+                        useMissionWizardStore.getState().openForMission();
+                      }}
+                    />
+                    <ActionCard
+                      icon="key"
+                      title="Providers"
+                      size="sm"
+                      onClick={() => {
+                        close();
+                        useSettingsStore.getState().openDrawer('providers');
+                      }}
+                    />
+                    <ActionCard
+                      icon="star"
+                      title="Ranking LLMs"
+                      size="sm"
+                      onClick={() => {
+                        close();
+                        useSettingsStore.getState().openDrawer('ranking');
+                      }}
+                    />
+                  </>
+                }
+              />
+            </li>
           )}
           {filtered.map((action, index) => {
             const showGroup = action.group !== lastGroup;

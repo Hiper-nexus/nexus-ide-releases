@@ -3,12 +3,13 @@ import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import {
   PET_CHANNELS,
+  isPetUrgentEvent,
   sanitizePetPrefsPatch,
   type PetEvent,
   type PetPrefs,
 } from '../../shared/pet-types';
 import { RENDERER_PROTOCOL_ENTRY_URL } from '../renderer-protocol';
-import { tapSessionState } from '../pty/pty-manager';
+import { getAgentSessionInfo, tapSessionState } from '../pty/pty-manager';
 import { tapMissionsBroadcast, tapMissionsSeed } from '../orch/orch-ipc';
 import { loadPetPrefs, savePetPrefs } from './pet-prefs';
 import { clampToWorkArea, snapToCorner } from './pet-geometry';
@@ -17,6 +18,13 @@ import {
   AgentTransitionTracker,
   MissionTransitionTracker,
 } from './pet-events';
+import {
+  DIGEST_WINDOW_MS,
+  admitPetEvent,
+  createAttentionPolicyState,
+  type AttentionDecision,
+  type AttentionPolicyState,
+} from './pet-attention-policy';
 import { tapAgentHookStatus } from '../agent-hooks/hook-ingest';
 import { computeLookDir } from './pet-look';
 import { copyHatchImage } from './pet-hatch-image';
@@ -56,10 +64,17 @@ let lookTimer: NodeJS.Timeout | null = null;
 let lookLastSent: number | null = null;
 let lookLastCursor = { x: 0, y: 0 };
 let lookLastMoveAt = 0;
+/** Renderer do pet pronto para receber IPC de evento (did-finish-load). */
+let petReady = false;
+/** Eventos enfileirados até o pet carregar — evita balão perdido no boot. */
+const pendingPetEvents: PetEvent[] = [];
+const PENDING_PET_EVENT_LIMIT = 12;
 
 const agentTracker = new AgentTransitionTracker();
 const attentionTracker = new AgentAttentionTracker();
 const missionTracker = new MissionTransitionTracker();
+let attentionPolicy: AttentionPolicyState = createAttentionPolicyState();
+let digestTimer: NodeJS.Timeout | null = null;
 
 function userDataDir(): string {
   return app.getPath('userData');
@@ -121,16 +136,91 @@ function broadcastPrefs(): void {
   }
 }
 
-function sendPetEvent(event: PetEvent): void {
-  const current = getPrefs();
-  if (current.sleeping) return;
-  if (
-    petWindow &&
-    !petWindow.isDestroyed() &&
-    !petWindow.webContents.isCrashed()
-  ) {
-    petWindow.webContents.send(PET_CHANNELS.event, event);
+function broadcastAttentionToMain(event: PetEvent): void {
+  for (const win of mainAppWindows()) {
+    if (!win.isDestroyed() && !win.webContents.isCrashed()) {
+      win.webContents.send(PET_CHANNELS.attention, event);
+    }
   }
+}
+
+function deliverToPetWindow(event: PetEvent): void {
+  if (!petWindow || petWindow.isDestroyed() || petWindow.webContents.isCrashed()) {
+    return;
+  }
+  if (isPetUrgentEvent(event.kind)) {
+    // Traz o companion à frente sem roubar o foco do terminal (focusable:false).
+    petWindow.moveTop();
+    petWindow.showInactive();
+  }
+  petWindow.webContents.send(PET_CHANNELS.event, event);
+}
+
+function flushPendingPetEvents(): void {
+  if (!petReady || !petWindow || petWindow.isDestroyed()) return;
+  const batch = pendingPetEvents.splice(0, pendingPetEvents.length);
+  for (const event of batch) deliverToPetWindow(event);
+}
+
+function enqueuePendingPetEvent(event: PetEvent): void {
+  pendingPetEvents.push(event);
+  while (pendingPetEvents.length > PENDING_PET_EVENT_LIMIT) {
+    pendingPetEvents.shift();
+  }
+}
+
+function applyAttentionDecision(decision: AttentionDecision): void {
+  const current = getPrefs();
+  const urgent = isPetUrgentEvent(decision.event.kind);
+  // Dormindo: só interrompe para intervenção humana.
+  if (current.sleeping && !urgent) return;
+
+  if (decision.mirrorMain) {
+    broadcastAttentionToMain(decision.event);
+  }
+
+  if (!decision.deliverPet) return;
+  // Pet desligado: toast (se mirrorMain) basta — presença é opt-in.
+  if (!current.enabled) return;
+
+  if (!petWindow || petWindow.isDestroyed()) {
+    if (mainAppWindows().length === 0) return;
+    createPetWindow();
+  }
+  if (!petReady || !petWindow || petWindow.isDestroyed()) {
+    enqueuePendingPetEvent(decision.event);
+    return;
+  }
+  deliverToPetWindow(decision.event);
+}
+
+function scheduleDigestFlush(): void {
+  if (digestTimer) return;
+  digestTimer = setTimeout(() => {
+    digestTimer = null;
+    const result = admitPetEvent(
+      attentionPolicy,
+      { kind: 'agent-idle', title: '', at: Date.now() },
+      Date.now(),
+      { flushDigest: true },
+    );
+    attentionPolicy = result.state;
+    for (const decision of result.flushed) applyAttentionDecision(decision);
+  }, DIGEST_WINDOW_MS);
+}
+
+/**
+ * Porta única de saída para o companion: trackers emitem transições; a política
+ * de atenção decide se vira balão, toast, digest ou silêncio (anti-spam em
+ * frota grande).
+ */
+function sendPetEvent(event: PetEvent): void {
+  const now = Date.now();
+  const result = admitPetEvent(attentionPolicy, event, now);
+  attentionPolicy = result.state;
+  if (result.scheduleDigest) scheduleDigestFlush();
+  if (result.immediate) applyAttentionDecision(result.immediate);
+  for (const decision of result.flushed) applyAttentionDecision(decision);
 }
 
 function stopDrag(): void {
@@ -249,6 +339,7 @@ function createPetWindow(): void {
     },
   });
   petWindow = win;
+  petReady = false;
   creatingPetWindow = false;
 
   // Mesma postura de segurança da janela principal.
@@ -260,9 +351,15 @@ function createPetWindow(): void {
   // Click-through até o renderer marcar uma área interativa sob o cursor.
   win.setIgnoreMouseEvents(true, { forward: true });
 
+  win.webContents.once('did-finish-load', () => {
+    petReady = true;
+    flushPendingPetEvents();
+  });
+
   win.on('closed', () => {
     stopDrag();
     stopLookLoop();
+    petReady = false;
     petWindow = null;
   });
 
@@ -275,6 +372,8 @@ function createPetWindow(): void {
 function destroyPetWindow(): void {
   stopDrag();
   stopLookLoop();
+  petReady = false;
+  pendingPetEvents.length = 0;
   if (petWindow && !petWindow.isDestroyed()) petWindow.destroy();
   petWindow = null;
 }
@@ -540,6 +639,11 @@ function registerPetIpc(): void {
     if (!fromPetWindow(event)) return;
     focusMainWindow()?.webContents.send(PET_CHANNELS.openSettings);
   });
+
+  ipcMain.on(PET_CHANNELS.requestOpenOps, (event) => {
+    if (!fromPetWindow(event)) return;
+    focusMainWindow()?.webContents.send(PET_CHANNELS.openOps);
+  });
 }
 
 function wireOperationalEvents(): void {
@@ -554,8 +658,15 @@ function wireOperationalEvents(): void {
   // Hooks explícitos do provider: waiting/blocked = "um agente precisa de
   // você" — o aviso operacional nº 1 do pet.
   tapAgentHookStatus((sessionId, state) => {
-    const event = attentionTracker.ingest(sessionId, state, Date.now());
-    if (event) sendPetEvent(event);
+    const raw = attentionTracker.ingest(sessionId, state, Date.now());
+    if (!raw) return;
+    const info = getAgentSessionInfo(sessionId);
+    const label =
+      info?.agentName ||
+      (info?.missionId ? `missão ${info.missionId.slice(0, 8)}` : null) ||
+      info?.adapterId ||
+      'agente';
+    sendPetEvent({ ...raw, title: label });
   });
   // Semeia o tracker na abertura de cada escopo: a primeira transição real
   // (ex.: missão que estava rodando no boot termina) NÃO é engolida como seed.

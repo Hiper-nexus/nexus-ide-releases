@@ -382,6 +382,18 @@ const api: NexusApi = {
       return () =>
         ipcRenderer.removeListener(PET_CHANNELS.openSettings, listener);
     },
+    onOpenOps: (cb: () => void) => {
+      const listener = () => cb();
+      ipcRenderer.on(PET_CHANNELS.openOps, listener);
+      return () => ipcRenderer.removeListener(PET_CHANNELS.openOps, listener);
+    },
+    onAttention: (cb: (event: import('../shared/pet-types').PetEvent) => void) => {
+      const listener = (_e: unknown, event: import('../shared/pet-types').PetEvent) =>
+        cb(event);
+      ipcRenderer.on(PET_CHANNELS.attention, listener);
+      return () =>
+        ipcRenderer.removeListener(PET_CHANNELS.attention, listener);
+    },
     galleryImport: (slugOrUrl: string) =>
       ipcRenderer.invoke(PET_CHANNELS.galleryImport, slugOrUrl),
     galleryList: () => ipcRenderer.invoke(PET_CHANNELS.galleryList),

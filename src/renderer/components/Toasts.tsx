@@ -1,8 +1,14 @@
-import { useToastStore } from '../state/toast-store';
-import { PixelIcon } from './PixelIcon';
+import { useToastStore, type ToastKind } from '../state/toast-store';
+import { PixelIcon, type PixelIconName } from './PixelIcon';
 
-/** Stacked transient notifications, bottom-right. Severity reads from a small
- * status dot — not a side-tab accent border, which is a tell of AI-generated UI. */
+const TOAST_ICON: Record<ToastKind, PixelIconName> = {
+  success: 'star',
+  info: 'sparkle',
+  warn: 'warn',
+  error: 'close',
+};
+
+/** Stacked transient notifications, bottom-right. Severity reads from icon + tone. */
 export function Toasts() {
   const toasts = useToastStore((s) => s.toasts);
   const dismiss = useToastStore((s) => s.dismiss);
@@ -11,7 +17,9 @@ export function Toasts() {
     <div className="toasts" role="status" aria-live="polite">
       {toasts.map((t) => (
         <div key={t.id} className={`toast toast--${t.kind}`}>
-          <span className="toast__dot" aria-hidden="true" />
+          <span className="toast__icon" aria-hidden="true">
+            <PixelIcon name={TOAST_ICON[t.kind] ?? 'sparkle'} size={14} />
+          </span>
           <div className="toast__body">
             <span className="toast__title">{t.title}</span>
             {t.detail && <span className="toast__detail">{t.detail}</span>}

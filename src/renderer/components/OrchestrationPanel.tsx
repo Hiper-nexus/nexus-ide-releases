@@ -9,6 +9,8 @@ import type {
 import { useOrchStore, type OrchPanelTab } from '../state/orch-store';
 import { askConfirm } from '../state/confirm-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
+import { useMissionWizardStore } from '../state/mission-wizard-store';
+import { EmptyState, ActionCard } from './ActionCard';
 
 /**
  * Orchestration drawer — the mission control surface (docs/ARCHITECTURE.md
@@ -309,10 +311,28 @@ export function OrchestrationPanel() {
           <>
             {notice && <p className="orch-panel__notice">{notice}</p>}
             {missions.length === 0 ? (
-              <p className="orch-panel__empty">
-                Nenhuma missão ainda. Inicie um squad na barra de missões — o
-                orquestrador abre a missão e começa a delegar aos workers.
-              </p>
+              <EmptyState
+                className="orch-panel__empty-state"
+                icon="mission"
+                title="Nenhuma missão ainda"
+                body={
+                  <p>
+                    Inicie um squad ou missão — o orquestrador delega aos workers.
+                  </p>
+                }
+                action={
+                  <ActionCard
+                    icon="mission"
+                    title="Lançar missão"
+                    subtitle="Wizard de squad / objetivo"
+                    variant="primary"
+                    size="sm"
+                    onClick={() =>
+                      useMissionWizardStore.getState().openForMission()
+                    }
+                  />
+                }
+              />
             ) : (
               <ul className="orch-list">
                 {missions.map((m) => (
@@ -331,10 +351,16 @@ export function OrchestrationPanel() {
 
         {tab === 'handoffs' &&
           (handoffs.length === 0 ? (
-            <p className="orch-panel__empty">
-              Nenhuma entrega ainda. Cada worker publica aqui o resultado assim
-              que conclui a tarefa que recebeu.
-            </p>
+            <EmptyState
+              icon="agent"
+              title="Nenhuma entrega ainda"
+              body={
+                <p>
+                  Cada worker publica aqui o resultado assim que conclui a
+                  tarefa.
+                </p>
+              }
+            />
           ) : (
             <ul className="orch-list">
               {[...handoffs].reverse().map((h) => (
@@ -345,10 +371,16 @@ export function OrchestrationPanel() {
 
         {tab === 'todos' &&
           (visibleTodoLists.length === 0 ? (
-            <p className="orch-panel__empty">
-              Sem tarefas publicadas. Elas aparecem aqui conforme o orquestrador
-              divide a missão em passos.
-            </p>
+            <EmptyState
+              icon="board"
+              title="Sem tarefas publicadas"
+              body={
+                <p>
+                  Elas aparecem aqui conforme o orquestrador divide a missão em
+                  passos.
+                </p>
+              }
+            />
           ) : (
             <ul className="orch-list">
               {visibleTodoLists.map((list) => (
@@ -373,10 +405,28 @@ export function OrchestrationPanel() {
             </div>
             {notice && <p className="orch-panel__notice">{notice}</p>}
             {squads.length === 0 ? (
-              <p className="orch-panel__empty">
-                Nenhum squad salvo. Importe um arquivo de squads ou monte um
-                pela barra de missões.
-              </p>
+              <EmptyState
+                icon="users"
+                title="Nenhum squad salvo"
+                body={
+                  <p>
+                    Importe um arquivo de squads ou monte um pela barra de
+                    missões.
+                  </p>
+                }
+                action={
+                  <ActionCard
+                    icon="mission"
+                    title="Nova missão"
+                    subtitle="Montar squad no wizard"
+                    variant="primary"
+                    size="sm"
+                    onClick={() =>
+                      useMissionWizardStore.getState().openForMission()
+                    }
+                  />
+                }
+              />
             ) : (
               <ul className="orch-list">
                 {squads.map((s) => (

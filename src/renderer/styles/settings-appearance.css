@@ -289,27 +289,25 @@
 }
 
 .settings-pet-import {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.settings-pet-import__btn {
-  appearance: none;
-  padding: 7px 12px;
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 14px 16px 16px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
+  background: color-mix(in srgb, var(--bg) 40%, transparent);
 }
 
-.settings-pet-import__btn:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+.settings-pet-import__lead {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.settings-pet-import__actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -319,15 +317,27 @@
 }
 
 .settings-pet-gallery {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg) 40%, transparent);
+}
+
+.settings-pet-gallery__row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
 }
 
 .settings-pet-gallery__input {
-  flex: 1 1 220px;
-  min-width: 180px;
+  flex: 1 1 240px;
+  min-width: 200px;
+  min-height: 44px;
+  font-size: 13px;
 }
 
 /* Filtro da galeria fica em coluna — NÃO reutilizar flex 1 1 220px (vira

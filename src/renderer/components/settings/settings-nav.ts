@@ -81,6 +81,7 @@ export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
       {
         id: 'shortcuts',
         icon: 'CMD',
+        pixelIcon: 'config',
         title: 'Atalhos',
         subtitle: 'teclado',
         aliases: ['shortcuts', 'hotkeys', 'keyboard'],
@@ -104,13 +105,14 @@ export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
         pixelIcon: 'key',
         title: 'Providers',
         subtitle: 'chaves · modelos',
-        aliases: ['keys', 'models'],
+        aliases: ['keys', 'models', 'cli', 'clis'],
       },
       {
         id: 'ranking',
         icon: 'RNK',
+        pixelIcon: 'star',
         title: 'Ranking LLMs',
-        subtitle: 'eval · leaderboard',
+        subtitle: 'motor · radar · missões',
         aliases: [
           'ranking',
           'leaderboard',
@@ -118,6 +120,8 @@ export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
           'eval',
           'qualidade',
           'quality',
+          'radar',
+          'roteador',
         ],
       },
       {
@@ -131,9 +135,40 @@ export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
       {
         id: 'diagnostics',
         icon: 'DIA',
+        pixelIcon: 'warn',
         title: 'Diagnóstico',
         subtitle: 'mic · permissões',
         aliases: ['diagnostics', 'health', 'permissions'],
+      },
+    ],
+  },
+  {
+    // First-class like Overclock/Orca — not buried under "Mais configurações".
+    label: 'Arsenal',
+    items: [
+      {
+        id: 'mcps',
+        icon: 'MCP',
+        pixelIcon: 'bolt',
+        title: 'MCPs',
+        subtitle: 'servidor · status',
+        aliases: ['mcp', 'servers', 'model context protocol'],
+      },
+      {
+        id: 'tools',
+        icon: 'TLS',
+        pixelIcon: 'sparkle',
+        title: 'Tools',
+        subtitle: 'nativas do MCP',
+        aliases: ['tools', 'tooling', 'ferramentas', 'nexus_'],
+      },
+      {
+        id: 'media',
+        icon: 'IMG',
+        pixelIcon: 'vision',
+        title: 'Mídia',
+        subtitle: 'imagem · vídeo · voz',
+        aliases: ['media', 'image', 'video', 'audio', 'seedream', 'seedance'],
       },
     ],
   },
@@ -144,7 +179,13 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
   {
     label: 'Sistema e segurança',
     items: [
-      { id: 'system', icon: 'i', title: 'Sistema', subtitle: 'versão · changelog' },
+      {
+        id: 'system',
+        icon: 'i',
+        pixelIcon: 'update',
+        title: 'Sistema',
+        subtitle: 'versão · changelog',
+      },
       {
         id: 'vision',
         icon: 'VIS',
@@ -156,6 +197,7 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
       {
         id: 'audit',
         icon: 'AUD',
+        pixelIcon: 'files',
         title: 'Auditoria',
         subtitle: 'ações · confirmações',
         aliases: ['audit', 'confirmations'],
@@ -163,6 +205,7 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
       {
         id: 'remote',
         icon: 'SSH',
+        pixelIcon: 'split-right',
         title: 'Remote',
         subtitle: 'bridge · ssh',
         aliases: ['ssh', 'remote'],
@@ -173,15 +216,9 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
     label: 'Integrações',
     items: [
       {
-        id: 'media',
-        icon: 'IMG',
-        title: 'Mídia',
-        subtitle: 'chaves de geração',
-        aliases: ['media', 'image', 'video'],
-      },
-      {
         id: 'marketplace',
         icon: 'MKT',
+        pixelIcon: 'star',
         title: 'Marketplace',
         subtitle: 'catálogo · 1 clique',
         aliases: ['marketplace', 'catalog'],
@@ -189,6 +226,7 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
       {
         id: 'design-systems',
         icon: 'DS',
+        pixelIcon: 'grid',
         title: 'Design Systems',
         subtitle: 'designmd.ai · DESIGN.md',
         aliases: ['design systems', 'designmd', 'design'],
@@ -196,11 +234,12 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'Arsenal',
+    label: 'Catálogo',
     items: [
       {
         id: 'agents',
         icon: 'AGT',
+        pixelIcon: 'agent',
         title: 'Agents',
         subtitle: 'AI subagents',
         aliases: ['subagents'],
@@ -208,6 +247,7 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
       {
         id: 'skills',
         icon: 'SKL',
+        pixelIcon: 'sparkle',
         title: 'Skills',
         subtitle: 'skills cache',
         aliases: ['skills'],
@@ -215,30 +255,18 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
       {
         id: 'llms',
         icon: 'LLM',
+        pixelIcon: 'terminal',
         title: 'CLIs · modelos',
         subtitle: 'arsenal instalado',
         aliases: ['llms', 'models'],
       },
       {
-        id: 'mcps',
-        icon: 'MCP',
-        title: 'MCPs',
-        subtitle: 'servers cache',
-        aliases: ['mcp', 'servers'],
-      },
-      {
-        id: 'tools',
-        icon: 'TLS',
-        title: 'Tools',
-        subtitle: 'native tools',
-        aliases: ['tools'],
-      },
-      {
         id: 'media-catalog',
         icon: 'GEN',
+        pixelIcon: 'vision',
         title: 'Modelos',
         subtitle: 'geração · whitelist',
-        aliases: ['generation', 'models'],
+        aliases: ['generation', 'models', 'whitelist'],
       },
     ],
   },
@@ -248,6 +276,7 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
       {
         id: 'recipes',
         icon: 'RCP',
+        pixelIcon: 'board',
         title: 'Recipes',
         subtitle: 'lint · stacks',
         aliases: ['recipes'],
@@ -255,6 +284,7 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
       {
         id: 'plugins',
         icon: 'PLG',
+        pixelIcon: 'plus',
         title: 'Plugins',
         subtitle: 'plugin bundles',
         aliases: ['plugins'],
@@ -262,6 +292,7 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
       {
         id: 'hooks',
         icon: 'HK',
+        pixelIcon: 'restart',
         title: 'Hooks',
         subtitle: 'lifecycle scripts',
         aliases: ['hooks'],
@@ -269,6 +300,7 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
       {
         id: 'rules',
         icon: 'SEC',
+        pixelIcon: 'key',
         title: 'Rules',
         subtitle: 'permissions',
         aliases: ['rules', 'permissions'],

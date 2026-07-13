@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PetPrefs } from '../../shared/pet-types';
+import { isPetUrgentEvent } from '../../shared/pet-types';
 import { OperatorSprite, type OperatorMood } from '../components/OperatorSprite';
 import { CustomPetSprite } from './CustomPetSprite';
 import { SheetPetSprite, type SheetAnim } from './SheetPetSprite';
@@ -15,6 +16,11 @@ import {
  * Janela do pet: sprite arrastável + balões de evento + menu de contexto.
  * A janela é click-through por padrão; marcar interatividade sob o cursor é
  * responsabilidade daqui (mouseenter/leave → nexusPet.setInteractive).
+ *
+ * Interatividade operacional:
+ * - balão com CTA → Ops Board / main
+ * - clique no sprite com aviso de intervenção → mesma ação
+ * - menu "Ver missões"
  */
 
 /** Sprite grandão (paridade Codex): legível a distância no desktop. */
@@ -36,6 +42,11 @@ function spriteSkinFor(preset: PetPrefs['preset']): string | null {
   return preset === 'operator' || preset === 'custom' ? null : preset;
 }
 
+function runBalloonAction(action: 'focus-main' | 'open-ops'): void {
+  if (action === 'open-ops') window.nexusPet.openOps();
+  else window.nexusPet.focusMain();
+}
+
 export function PetApp() {
   const [prefs, setPrefs] = useState<PetPrefs | null>(null);
   const [balloons, setBalloons] = useState<BalloonQueueState>(
@@ -44,6 +55,7 @@ export function PetApp() {
   // Reação transitória a eventos: comemora (wave), lamenta (failed) ou pede
   // atenção (waiting — intervenção humana). O spritesheet Codex tem linha
   // própria para cada; o OperatorSprite usa o mood celebrating só no feliz.
+  // Intervenção NÃO expira por timer: fica até o balão ser dispensado.
   const [reaction, setReaction] = useState<'wave' | 'failed' | 'waiting' | null>(
     null,
   );
@@ -65,18 +77,23 @@ export function PetApp() {
     const offPrefs = window.nexusPet.onPrefsChanged(setPrefs);
     const offEvents = window.nexusPet.onEvent((event) => {
       setBalloons((state) => enqueueBalloon(state, event));
-      setReaction(
+      const nextReaction =
         event.kind === 'mission-failed' || event.kind === 'agent-exited'
           ? 'failed'
           : event.kind === 'mission-blocked' || event.kind === 'agent-waiting'
             ? 'waiting'
-            : 'wave',
-      );
+            : event.kind === 'agent-idle'
+              ? 'wave'
+              : 'wave';
+      setReaction(nextReaction);
       if (celebrateTimer.current) window.clearTimeout(celebrateTimer.current);
-      celebrateTimer.current = window.setTimeout(
-        () => setReaction(null),
-        CELEBRATE_MS,
-      );
+      // Intervenção fica no mood waiting enquanto o balão existir.
+      if (!isPetUrgentEvent(event.kind)) {
+        celebrateTimer.current = window.setTimeout(
+          () => setReaction(null),
+          CELEBRATE_MS,
+        );
+      }
     });
     const offLook = window.nexusPet.onLook(setLookDir);
     return () => {
@@ -91,19 +108,32 @@ export function PetApp() {
   // Balão atual expira sozinho e promove o próximo da fila. A expiração pode
   // acontecer com o cursor sobre o balão (nenhum mouseleave dispara): solta o
   // click-through explicitamente para a janela não engolir cliques do desktop.
-  const currentBalloonId = balloons.current?.id ?? null;
+  const currentBalloon = balloons.current;
+  const currentBalloonId = currentBalloon?.id ?? null;
+  const balloonDuration =
+    currentBalloon?.durationMs ?? BALLOON_DURATION_MS;
+
   useEffect(() => {
     if (currentBalloonId === null) return undefined;
     const timer = window.setTimeout(() => {
       setBalloons(dismissBalloon);
       window.nexusPet.setInteractive(false);
-    }, BALLOON_DURATION_MS);
+      setReaction((r) => (r === 'waiting' ? null : r));
+    }, balloonDuration);
     return () => window.clearTimeout(timer);
-  }, [currentBalloonId]);
+  }, [currentBalloonId, balloonDuration]);
 
   const markInteractive = useCallback((interactive: boolean) => {
     window.nexusPet.setInteractive(interactive);
   }, []);
+
+  const dismissAndAct = useCallback((action: 'focus-main' | 'open-ops') => {
+    runBalloonAction(action);
+    setBalloons(dismissBalloon);
+    setReaction(null);
+    markInteractive(false);
+    setMenuOpen(false);
+  }, [markInteractive]);
 
   // Drag manual com desambiguação clique×arrasto (limiar de movimento).
   // Pointer capture prende move/up ao elemento mesmo se o cursor escapar da
@@ -135,8 +165,23 @@ export function PetApp() {
       el.removeEventListener('pointercancel', onCancel);
       window.removeEventListener('blur', onBlur);
       if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
-      if (state?.dragging || asDrag) window.nexusPet.dragEnd();
-      else if (state) setMenuOpen((open) => !open);
+      if (state?.dragging || asDrag) {
+        window.nexusPet.dragEnd();
+      } else if (state) {
+        // Clique sem arrasto: se há intervenção, age; senão abre o menu.
+        setBalloons((queue) => {
+          const balloon = queue.current;
+          if (balloon?.urgent || balloon?.action === 'open-ops') {
+            runBalloonAction(balloon.action);
+            markInteractive(false);
+            setReaction(null);
+            setMenuOpen(false);
+            return dismissBalloon(queue);
+          }
+          setMenuOpen((open) => !open);
+          return queue;
+        });
+      }
     };
     const onMove = (move: PointerEvent) => {
       const state = drag.current;
@@ -185,44 +230,69 @@ export function PetApp() {
     el.addEventListener('pointerup', onUp);
     el.addEventListener('pointercancel', onCancel);
     window.addEventListener('blur', onBlur);
-  }, []);
+  }, [markInteractive]);
 
   if (!prefs) return null;
 
   const celebrating = reaction === 'wave' && runDir === null;
-  const mood: OperatorMood = prefs.sleeping
+  const needingYou = reaction === 'waiting' && runDir === null;
+  const mood: OperatorMood = prefs.sleeping && !currentBalloon?.urgent
     ? 'sleeping'
     : celebrating
       ? 'celebrating'
-      : 'idle';
+      : needingYou
+        ? 'idle'
+        : 'idle';
   // Prioridade: dormir > correr (arrasto) > reação > idle/olhar.
-  const sheetAnim: SheetAnim = prefs.sleeping
-    ? 'sleep'
-    : runDir !== null
-      ? (`run-${runDir}` as SheetAnim)
-      : (reaction ?? 'idle');
+  // Intervenção urgente sobrescreve o visual de sleep no sprite.
+  const sheetAnim: SheetAnim =
+    prefs.sleeping && !currentBalloon?.urgent
+      ? 'sleep'
+      : runDir !== null
+        ? (`run-${runDir}` as SheetAnim)
+        : (reaction ?? 'idle');
 
   const balloon = balloons.current;
+  const showAsAwake = !prefs.sleeping || Boolean(balloon?.urgent);
 
   return (
-    <div className={`pet ${prefs.solidBackground ? 'pet--solid' : ''}`}>
-      {balloon && !prefs.sleeping && (
-        <button
-          type="button"
-          className={`pet__balloon pet__balloon--${balloon.kind}`}
+    <div
+      className={`pet ${prefs.solidBackground ? 'pet--solid' : ''} ${
+        needingYou || balloon?.urgent ? 'pet--attention' : ''
+      }`}
+    >
+      {balloon && showAsAwake && (
+        <div
+          className={`pet__balloon pet__balloon--${balloon.kind} ${
+            balloon.urgent ? 'pet__balloon--urgent' : ''
+          }`}
           onMouseEnter={() => markInteractive(true)}
           onMouseLeave={() => markInteractive(false)}
-          onClick={() => {
-            window.nexusPet.focusMain();
-            setBalloons(dismissBalloon);
-            // O balão some sob o cursor sem mouseleave — devolve o click-through.
-            markInteractive(false);
-          }}
-          title="Abrir o NexusIDE"
         >
           <strong className="pet__balloon-title">{balloon.title}</strong>
           <span className="pet__balloon-text">{balloon.text}</span>
-        </button>
+          <div className="pet__balloon-actions">
+            <button
+              type="button"
+              className="pet__balloon-cta"
+              onClick={() => dismissAndAct(balloon.action)}
+            >
+              {balloon.cta}
+            </button>
+            <button
+              type="button"
+              className="pet__balloon-dismiss"
+              onClick={() => {
+                setBalloons(dismissBalloon);
+                setReaction(null);
+                markInteractive(false);
+              }}
+              title="Dispensar"
+            >
+              Depois
+            </button>
+          </div>
+        </div>
       )}
 
       {menuOpen && (
@@ -237,9 +307,18 @@ export function PetApp() {
             role="menuitem"
             className="pet__menu-item"
             onClick={() => {
+              dismissAndAct('open-ops');
+            }}
+          >
+            Ver missões
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="pet__menu-item"
+            onClick={() => {
               void window.nexusPet.setPrefs({ sleeping: !prefs.sleeping });
               setMenuOpen(false);
-              // Menu some sob o cursor sem mouseleave — devolve o click-through.
               markInteractive(false);
             }}
           >
@@ -276,9 +355,11 @@ export function PetApp() {
           prefs.preset === 'sheet' && prefs.sheet
             ? 'pet__hit--sheet'
             : 'pet__hit--pixel'
-        } ${prefs.sleeping ? 'pet__hit--sleeping' : ''} ${
+        } ${prefs.sleeping && !balloon?.urgent ? 'pet__hit--sleeping' : ''} ${
           celebrating ? 'pet__hit--celebrating' : ''
-        } ${runDir !== null ? 'pet__hit--dragging' : ''}`}
+        } ${needingYou || balloon?.urgent ? 'pet__hit--waiting' : ''} ${
+          runDir !== null ? 'pet__hit--dragging' : ''
+        }`}
         onMouseEnter={() => markInteractive(true)}
         onMouseLeave={() => {
           // Durante o arrasto a janela PRECISA continuar interativa, senão o
@@ -286,7 +367,13 @@ export function PetApp() {
           if (!drag.current?.dragging) markInteractive(false);
         }}
         onPointerDown={onSpritePointerDown}
-        title={prefs.sleeping ? 'Pet dormindo — clique para o menu' : 'NexusIDE Pet'}
+        title={
+          balloon?.urgent
+            ? `${balloon.title} — clique para intervir`
+            : prefs.sleeping
+              ? 'Pet dormindo — clique para o menu'
+              : 'NexusIDE Pet — clique para menu · arraste para mover'
+        }
       >
         {prefs.preset === 'sheet' && prefs.sheet ? (
           <SheetPetSprite
@@ -306,9 +393,14 @@ export function PetApp() {
             mood={mood}
           />
         )}
-        {prefs.sleeping && (
+        {prefs.sleeping && !balloon?.urgent && (
           <span className="pet__zzz" aria-hidden="true">
             z z z
+          </span>
+        )}
+        {(needingYou || balloon?.urgent) && (
+          <span className="pet__alert" aria-hidden="true">
+            !
           </span>
         )}
       </div>

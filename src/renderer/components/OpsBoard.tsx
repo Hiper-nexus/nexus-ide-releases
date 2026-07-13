@@ -140,9 +140,22 @@ export function OpsBoard() {
           <p className="ops-board__empty-sub">
             Toda missão criada aparece aqui — na fila, rodando, travada, concluída.
           </p>
-          <button className="ops-board__new" onClick={openWizard}>
-            <PixelIcon name="mission" />
-            Iniciar a primeira missão
+          <button
+            type="button"
+            className="action-card action-card--primary ops-board__new-cta"
+            onClick={openWizard}
+          >
+            <span className="action-card__icon" aria-hidden>
+              <PixelIcon name="mission" size={18} />
+            </span>
+            <span className="action-card__copy">
+              <strong className="action-card__title">
+                Iniciar a primeira missão
+              </strong>
+              <small className="action-card__sub">
+                Abre o wizard de squad / objetivo
+              </small>
+            </span>
           </button>
         </div>
       ) : (

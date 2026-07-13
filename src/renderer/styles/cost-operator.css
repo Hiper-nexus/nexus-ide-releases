@@ -143,6 +143,20 @@
   transition: border-color 160ms var(--ease-out-quart),
     color 160ms var(--ease-out-quart);
 }
+
+.operator-hud--sober {
+  gap: 10px;
+}
+
+.operator-hud__sober-label {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.operator-hud--compact {
+  min-height: 40px;
+}
 .operator-hud__level {
   display: inline-flex;
   align-items: center;
@@ -256,17 +270,18 @@
   display: none;
 }
 
-@media (min-width: 1281px) {
-  .operator-hud__level {
-    display: none;
-  }
+/* Level chip stays visible in the mission-rail footer; only hide on the
+   (legacy) workspace-bar compact chrome if reintroduced there. */
+.workspace-bar--compact .operator-hud__level {
+  display: none;
 }
 
 /* ---- Perfil de Operador (overlay) ---- */
 .operator-profile__backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  /* Acima do Settings (z-index 41) — perfil abre a partir do HUD em Config. */
+  z-index: 70;
   display: grid;
   place-items: center;
   background: color-mix(in srgb, var(--bg) 62%, transparent);

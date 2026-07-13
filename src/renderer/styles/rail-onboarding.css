@@ -415,6 +415,9 @@
   border-top: 1px solid var(--border);
   padding: 8px;
   background: color-mix(in srgb, var(--bg) 55%, transparent);
+  /* Fica colado no fundo do rail mesmo com lista longa. */
+  position: relative;
+  z-index: 2;
 }
 
 .mission-rail__pin {
@@ -1211,4 +1214,14 @@
 .activity-rail__footer .operator-hud {
   width: 100%;
   justify-content: flex-start;
+  min-height: 42px;
+  padding: 6px 10px 8px;
+}
+
+/* No rail, o tier fica sempre legível (não só no hover). */
+.activity-rail__footer .operator-hud__detail {
+  display: inline-flex;
+  max-width: 7.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

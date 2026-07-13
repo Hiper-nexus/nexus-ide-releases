@@ -37,6 +37,7 @@ const api: NexusPetApi = {
   dragEnd: () => ipcRenderer.send(PET_CHANNELS.dragEnd),
   focusMain: () => ipcRenderer.send(PET_CHANNELS.focusMain),
   openSettings: () => ipcRenderer.send(PET_CHANNELS.requestSettings),
+  openOps: () => ipcRenderer.send(PET_CHANNELS.requestOpenOps),
 };
 
 contextBridge.exposeInMainWorld('nexusPet', api);

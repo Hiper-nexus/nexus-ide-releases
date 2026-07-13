@@ -1,22 +1,29 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type {
+  MediaKind,
   MediaProviderInfo,
   MediaUsageTotals,
 } from '../../../shared/media-types';
 import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { openExternalFromAnchor } from '../../lib/open-external';
+import { ActionCard } from '../ActionCard';
 
 /**
  * Settings → Mídia: providers de geração (imagem/vídeo/voz) que viram MCP
  * tools para os agentes (nexus_image_generate, nexus_video_generate,
- * nexus_audio_generate). A key fica no Keychain do processo principal — o
- * agente só dispara a tool e recebe o caminho do arquivo gerado no workspace.
+ * nexus_audio_generate). Keys no Keychain do main process.
  */
 
-const TOOL_BY_KIND: Record<string, string> = {
+const TOOL_BY_KIND: Record<MediaKind, string> = {
   image: 'nexus_image_generate',
   video: 'nexus_video_generate',
   audio: 'nexus_audio_generate',
+};
+
+const KIND_LABEL: Record<MediaKind, string> = {
+  image: 'imagem',
+  video: 'vídeo',
+  audio: 'voz',
 };
 
 function formatUsd(usd: number): string {
@@ -87,21 +94,27 @@ function MediaKeyField({
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && draft && void save()}
         />
-        <button
-          className="settings-btn"
+      </div>
+      <div className="action-card-row">
+        <ActionCard
+          icon="key"
+          title="Salvar key"
+          subtitle="Keychain seguro"
+          variant="primary"
+          size="sm"
           onClick={() => void save()}
           disabled={busy || !draft}
-        >
-          Salvar
-        </button>
+        />
         {provider.hasKey && (
-          <button
-            className="settings-btn settings-btn--danger"
+          <ActionCard
+            icon="close"
+            title="Limpar"
+            subtitle="Remove a key"
+            variant="danger"
+            size="sm"
             onClick={() => void clear()}
             disabled={busy}
-          >
-            Limpar
-          </button>
+          />
         )}
       </div>
       {status && <p className="prov__status">{status}</p>}
@@ -115,6 +128,7 @@ export function MediaSection() {
     generations: 0,
     costUsd: 0,
   });
+  const [loading, setLoading] = useState(true);
 
   async function refresh() {
     const [list, usage] = await Promise.all([
@@ -123,51 +137,115 @@ export function MediaSection() {
     ]);
     setProviders(list);
     setTotals(usage);
+    setLoading(false);
   }
 
   useEffect(() => {
     void refresh();
   }, []);
 
+  const withKey = providers.filter((p) => p.hasKey).length;
+  const byKind = useMemo(() => {
+    const order: MediaKind[] = ['image', 'video', 'audio'];
+    return order
+      .map((kind) => ({
+        kind,
+        items: providers.filter((p) => p.kind === kind),
+      }))
+      .filter((g) => g.items.length > 0);
+  }, [providers]);
+
   return (
-    <section className="settings-section" aria-label="Mídia">
-      <h2 className="settings-section__title">MÍDIA · GERAÇÃO</h2>
-      <p className="settings-section__hint">
-        Providers de imagem, vídeo e voz que viram MCP tools pros agentes. A
-        key fica no processo principal (Keychain) — o agente só dispara a tool
-        e recebe o caminho do arquivo gerado no workspace. Imagem flagship:
-        Seedream 5.0 Pro (ByteDance, alias seedream / seedream-5-pro). Vídeo:
-        Seedance 2.0, Veo 3.1, Kling, Sora… Aliases: seedream, seedance, veo…
-      </p>
-      {totals.generations > 0 && (
-        <p className="settings-section__hint">
-          Custo acumulado de mídia: <strong>{formatUsd(totals.costUsd)}</strong>{' '}
-          · {totals.generations}{' '}
-          {totals.generations === 1 ? 'geração' : 'gerações'}
+    <section className="arsenal-section" aria-label="Mídia">
+      <header className="arsenal-section__intro">
+        <h3 className="settings-detail__title">Mídia</h3>
+        <p className="settings-detail__hint">
+          Providers de imagem, vídeo e voz que viram MCP tools para os agentes.
+          A key fica no Keychain; o agente só recebe o caminho do arquivo
+          gerado no workspace.
+        </p>
+      </header>
+
+      <div className="arsenal-fleet" role="status">
+        <span className="arsenal-fleet__stat">
+          <strong>{loading ? '…' : providers.length}</strong> providers
+        </span>
+        <span className="arsenal-fleet__sep" aria-hidden="true">
+          ·
+        </span>
+        <span className="arsenal-fleet__stat">
+          <strong>{withKey}</strong> com key
+        </span>
+        {totals.generations > 0 && (
+          <>
+            <span className="arsenal-fleet__sep" aria-hidden="true">
+              ·
+            </span>
+            <span className="arsenal-fleet__stat">
+              {totals.generations}{' '}
+              {totals.generations === 1 ? 'geração' : 'gerações'} ·{' '}
+              {formatUsd(totals.costUsd)}
+            </span>
+          </>
+        )}
+      </div>
+
+      {loading && (
+        <p className="settings-detail__hint" role="status">
+          Carregando providers de mídia…
         </p>
       )}
-      {providers.map((provider) => (
-        <div key={provider.id} className="settings-card">
-          <div className="prov__key-row">
-            <span className="prov__key-label">
-              {provider.label}{' '}
-              <code className="prov__env">{TOOL_BY_KIND[provider.kind]}</code>
-            </span>
-            <span
-              className={`settings-chip ${provider.hasKey ? 'settings-chip--ok' : 'settings-chip--warn'}`}
-            >
-              {provider.hasKey ? provider.maskedKey ?? 'ok' : 'sem key'}
-            </span>
+
+      {!loading && providers.length === 0 && (
+        <p className="arsenal-empty">
+          Nenhum provider de mídia no inventário.
+        </p>
+      )}
+
+      {byKind.map(({ kind, items }) => (
+        <div key={kind} className="arsenal-band">
+          <h4 className="arsenal-band__label">
+            {KIND_LABEL[kind]}{' '}
+            <span className="arsenal-band__count">{items.length}</span>
+          </h4>
+          <div className="arsenal-media-grid">
+            {items.map((provider) => (
+              <article key={provider.id} className="arsenal-media-card">
+                <div className="arsenal-media-card__head">
+                  <div className="arsenal-media-card__titles">
+                    <span className="arsenal-media-card__name">
+                      {provider.label}
+                    </span>
+                    <code className="arsenal-media-card__tool">
+                      {TOOL_BY_KIND[provider.kind]}
+                    </code>
+                  </div>
+                  <span
+                    className={`prov__badge ${provider.hasKey ? 'prov__badge--ok' : 'prov__badge--warn'}`}
+                  >
+                    {provider.hasKey ? provider.maskedKey ?? 'ok' : 'sem key'}
+                  </span>
+                </div>
+                <p className="arsenal-media-card__meta">
+                  default: <code>{provider.defaultModel}</code>
+                </p>
+                <p className="arsenal-media-card__meta">
+                  modelos: {provider.models.join(' · ')}
+                </p>
+                <MediaKeyField
+                  provider={provider}
+                  onSaved={() => void refresh()}
+                />
+              </article>
+            ))}
           </div>
-          <p className="settings-section__hint">
-            default: <code>{provider.defaultModel}</code>
-          </p>
-          <p className="settings-section__hint">
-            modelos: {provider.models.join(' · ')}
-          </p>
-          <MediaKeyField provider={provider} onSaved={() => void refresh()} />
         </div>
       ))}
+
+      <p className="settings-detail__hint arsenal-section__foot">
+        Imagem flagship: Seedream 5.0 Pro. Vídeo: Seedance, Veo, Kling, Sora…
+        Aliases: seedream, seedance, veo…
+      </p>
     </section>
   );
 }

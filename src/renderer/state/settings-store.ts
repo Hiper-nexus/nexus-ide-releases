@@ -128,9 +128,15 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     set({ audio });
   },
 
-  toggleDrawer: () => set((s) => ({ drawerOpen: !s.drawerOpen })),
-  openDrawer: (section) => set({ drawerOpen: true, drawerSection: section ?? null }),
-  closeDrawer: () => set({ drawerOpen: false }),
+  toggleDrawer: () =>
+    set((s) => ({
+      drawerOpen: !s.drawerOpen,
+      // Closing via toggle clears the targeted section so the next open is fresh.
+      drawerSection: s.drawerOpen ? null : s.drawerSection,
+    })),
+  openDrawer: (section) =>
+    set({ drawerOpen: true, drawerSection: section ?? null }),
+  closeDrawer: () => set({ drawerOpen: false, drawerSection: null }),
 }));
 
 /** Boot hook: hydrate once and follow main-process broadcasts. */

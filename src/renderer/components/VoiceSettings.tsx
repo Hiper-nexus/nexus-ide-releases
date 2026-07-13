@@ -11,6 +11,7 @@ import type { JarvisLiveTransport } from '../../shared/voice-config';
 import { credentialLinkForEnv } from '../../shared/credential-links';
 import { openExternalFromAnchor } from '../lib/open-external';
 import { CloseButton } from './CloseButton';
+import { PixelIcon } from './PixelIcon';
 import { playSpeakResult } from '../voice/voice-playback';
 import type { JarvisRequest } from '../../shared/voice-ipc';
 import {
@@ -31,14 +32,19 @@ type VoiceSettingsTab =
   | 'persona'
   | 'credenciais';
 
-const VOICE_TABS: Array<{ id: VoiceSettingsTab; label: string; hint: string }> = [
-  { id: 'canal', label: 'Canal', hint: 'Estado e rota' },
-  { id: 'live', label: 'Live', hint: 'Wake e realtime' },
-  { id: 'voz', label: 'Voz', hint: 'Timbre e fallbacks' },
-  { id: 'atendimento', label: 'Atendimento', hint: 'Fala e atalho' },
-  { id: 'fallback', label: 'Fallback', hint: 'STT · TTS · cérebro' },
-  { id: 'persona', label: 'Persona', hint: 'Nome e estilo' },
-  { id: 'credenciais', label: 'Credenciais', hint: 'Chaves no cofre' },
+const VOICE_TABS: Array<{
+  id: VoiceSettingsTab;
+  label: string;
+  hint: string;
+  icon: 'mic' | 'bolt' | 'sparkle' | 'users' | 'restart' | 'id-badge' | 'key';
+}> = [
+  { id: 'canal', label: 'Canal', hint: 'Estado e rota', icon: 'mic' },
+  { id: 'live', label: 'Live', hint: 'Wake e realtime', icon: 'bolt' },
+  { id: 'voz', label: 'Voz', hint: 'Timbre e fallbacks', icon: 'sparkle' },
+  { id: 'atendimento', label: 'Atendimento', hint: 'Fala e atalho', icon: 'users' },
+  { id: 'fallback', label: 'Fallback', hint: 'STT · TTS · cérebro', icon: 'restart' },
+  { id: 'persona', label: 'Persona', hint: 'Nome e estilo', icon: 'id-badge' },
+  { id: 'credenciais', label: 'Credenciais', hint: 'Chaves no cofre', icon: 'key' },
 ];
 
 /**
@@ -536,6 +542,9 @@ return (
                     aria-current={activeTab === tab.id ? 'page' : undefined}
                     onClick={() => setActiveTab(tab.id)}
                   >
+                    <span className="voice-settings__nav-icon" aria-hidden>
+                      <PixelIcon name={tab.icon} size={14} />
+                    </span>
                     <strong>{tab.label}</strong>
                     <span>{tab.hint}</span>
                   </button>

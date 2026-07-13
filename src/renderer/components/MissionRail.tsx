@@ -25,6 +25,7 @@ import {
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useLayoutStore } from '../state/layout-store';
 import { PixelIcon } from './PixelIcon';
+import { ActionCard, EmptyState } from './ActionCard';
 import { AccountSwitcher } from './AccountSwitcher';
 import { OperatorHud } from './OperatorHud';
 import { askConfirm } from '../state/confirm-store';
@@ -393,19 +394,27 @@ export function MissionRail() {
         )}
 
         {missions.length === 0 ? (
-          <div className="activity-rail__empty">
-            <p className="activity-rail__empty-title">Nenhuma missão</p>
-            <p className="activity-rail__empty-copy">
-              Nova missão ou squad aparece aqui com status e retomar em um clique.
-            </p>
-            <button
-              type="button"
-              className="activity-rail__empty-cta"
-              onClick={openMissionWizard}
-            >
-              <PixelIcon name="mission" size={12} /> Nova missão
-            </button>
-          </div>
+          <EmptyState
+            className="activity-rail__empty"
+            icon="mission"
+            title="Nenhuma missão"
+            body={
+              <p>
+                Nova missão ou squad aparece aqui com status e retomar em um
+                clique.
+              </p>
+            }
+            action={
+              <ActionCard
+                icon="mission"
+                title="Nova missão"
+                subtitle="squad · objetivo"
+                variant="primary"
+                size="sm"
+                onClick={openMissionWizard}
+              />
+            }
+          />
         ) : (
           <div className="activity-rail__missions">
             {sections.map((section) => {

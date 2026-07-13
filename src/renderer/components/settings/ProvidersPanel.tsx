@@ -4,6 +4,7 @@ import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { useAccountStore } from '../../state/account-store';
 import { useProviderStore } from '../../state/provider-store';
 import { openExternalFromAnchor } from '../../lib/open-external';
+import { ActionCard } from '../ActionCard';
 import { AccountsManager } from './AccountsManager';
 
 /**
@@ -106,28 +107,35 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && draft && void save()}
         />
-        <button
-          className="settings-btn"
+      </div>
+      <div className="action-card-row prov__key-actions">
+        <ActionCard
+          icon="key"
+          title="Salvar key"
+          subtitle="Keychain seguro"
+          variant="primary"
+          size="sm"
           onClick={() => void save()}
           disabled={busy || !draft}
-        >
-          Salvar
-        </button>
-        <button
-          className="settings-btn"
+        />
+        <ActionCard
+          icon="bolt"
+          title="Testar"
+          subtitle="Probe de conexão"
+          size="sm"
           onClick={() => void test()}
           disabled={busy}
-        >
-          Testar
-        </button>
+        />
         {provider.hasKey && (
-          <button
-            className="settings-btn settings-btn--danger"
+          <ActionCard
+            icon="close"
+            title="Limpar"
+            subtitle="Remove a key"
+            variant="danger"
+            size="sm"
             onClick={() => void clear()}
             disabled={busy}
-          >
-            Limpar
-          </button>
+          />
         )}
       </div>
       {!provider.secureStorageAvailable && (

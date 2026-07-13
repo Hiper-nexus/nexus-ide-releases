@@ -11,6 +11,7 @@
 @import './settings.css';
 @import './settings-controls.css';
 @import './settings-appearance.css';
+@import './ui-actions.css';
 @import './launch.css';
 @import './launch-wizard.css';
 @import './panels.css';

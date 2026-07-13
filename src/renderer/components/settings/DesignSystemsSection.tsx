@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { EmptyState } from '../ActionCard';
 
 type Kit = {
   slug: string;
@@ -156,7 +157,16 @@ export function DesignSystemsSection() {
         })}
       </ul>
       {!loading && filtered.length === 0 && !error && (
-        <p className="settings-detail__hint">Nenhum kit encontrado.</p>
+        <EmptyState
+          icon="grid"
+          title="Nenhum kit encontrado"
+          body={
+            <p>
+              Ajuste o filtro ou adicione um DESIGN.md / kit designmd no
+              projeto.
+            </p>
+          }
+        />
       )}
     </section>
   );

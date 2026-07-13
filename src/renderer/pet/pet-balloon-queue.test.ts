@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   BALLOON_QUEUE_LIMIT,
+  BALLOON_URGENT_DURATION_MS,
   EMPTY_BALLOON_QUEUE,
+  balloonDurationFor,
   balloonTextFor,
   dismissBalloon,
   enqueueBalloon,
@@ -25,7 +27,9 @@ describe('balloonTextFor', () => {
   });
 
   it('mission-blocked pede intervenção com o nome da missão', () => {
-    expect(balloonTextFor(ev('mission-blocked'))).toBe('Preciso de você: Deploy');
+    const text = balloonTextFor(ev('mission-blocked'));
+    expect(text).toContain('Preciso de você');
+    expect(text).toContain('Deploy');
   });
 });
 
@@ -33,6 +37,8 @@ describe('enqueueBalloon / dismissBalloon', () => {
   it('mostra direto quando não há balão atual', () => {
     const s = enqueueBalloon(EMPTY_BALLOON_QUEUE, ev('mission-done'));
     expect(s.current?.text).toContain('Deploy');
+    expect(s.current?.action).toBe('open-ops');
+    expect(s.current?.cta).toContain('Ops');
     expect(s.queued).toEqual([]);
   });
 
@@ -45,6 +51,15 @@ describe('enqueueBalloon / dismissBalloon', () => {
     expect(s.current?.text).toContain('B');
     s = dismissBalloon(s);
     expect(s.current).toBeNull();
+  });
+
+  it('urgente sobe na frente de celebração', () => {
+    let s = enqueueBalloon(EMPTY_BALLOON_QUEUE, ev('mission-done', 'Done'));
+    s = enqueueBalloon(s, ev('mission-blocked', 'NeedYou'));
+    expect(s.current?.kind).toBe('mission-blocked');
+    expect(s.current?.urgent).toBe(true);
+    expect(s.current?.durationMs).toBe(BALLOON_URGENT_DURATION_MS);
+    expect(s.queued[0]?.kind).toBe('mission-done');
   });
 
   it('fila estoura descartando os mais antigos', () => {
@@ -66,5 +81,11 @@ describe('enqueueBalloon / dismissBalloon', () => {
     s = enqueueBalloon(s, ev('mission-done', 'B'));
     const ids = [s.current!.id, ...s.queued.map((b) => b.id)];
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('balloonDurationFor is longer for intervention', () => {
+    expect(balloonDurationFor('mission-blocked')).toBeGreaterThan(
+      balloonDurationFor('mission-done'),
+    );
   });
 });
