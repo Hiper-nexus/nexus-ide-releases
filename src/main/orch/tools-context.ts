@@ -25,12 +25,14 @@ import { CliContextDraftReviewer } from '../context/cli-context-draft-reviewer';
 import { inspectConfiguredNexusReadiness } from '../runtime/nexus-doctor';
 import {
   autopilotActionFor,
+  canAutopilotAdvanceTo,
   missionPlanIntegrated,
 } from '../context/prevc-autopilot-policy';
 import {
   runContextBootstrapAutopilot,
   type ContextBootstrapAutopilotResult,
 } from '../context/context-bootstrap-autopilot';
+import { publishFinalValidationHandoff } from './final-validation-handoff';
 
 // Doctor is an idempotent project operation, not a fan-out primitive. Several
 // model retries used to launch independent reviewers for the same drafts.
@@ -221,10 +223,12 @@ async function drivePrevcAutopilot(
 ) {
   const service = getContextWorkflowService(ctx.scope);
   const transitions: string[] = [];
+  let validatedEvidenceIds: readonly string[] = [];
   for (let guard = 0; guard < 8; guard += 1) {
     const mission = service.getMissionWorkflow(missionId);
     if (!mission.contract || !mission.workflow) throw new Error('mission has no frozen workflow');
     const { stage, route } = mission.workflow;
+    const workflowRevision = mission.workflow.revision;
     const tasks = getProjectDomainStores(ctx.scope).tasks.list(missionId);
     const worktrees = requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId);
     const planIntegrated = missionPlanIntegrated(tasks.map((task) => task.id), worktrees);
@@ -233,38 +237,60 @@ async function drivePrevcAutopilot(
     if (action === 'wait-execution') {
       return { state: 'execution', transitions, reason: 'planned tasks are not all integrated' };
     }
-    if (stage === 'execution') {
-      const next = nextWorkflowStage(route, stage);
-      service.advance(missionId, workflowStageSchema.parse(next));
+    const advanceCurrentStage = () => {
+      const next = workflowStageSchema.parse(nextWorkflowStage(route, stage));
+      if (!canAutopilotAdvanceTo(next)) return null;
+      service.advance(missionId, next);
       transitions.push(`${stage}->${next}`);
+      return next;
+    };
+    const awaitingFinalReceipt = () => ({
+      state: stage,
+      transitions,
+      reason: 'final PREVC transition awaits the atomic mission-step receipt',
+    });
+    const publishFinalReceiptEvidence = () => {
+      publishFinalValidationHandoff(
+        {
+          missionId,
+          workflowRevision,
+          evidenceIds: validatedEvidenceIds,
+        },
+        getProjectDomainStores(ctx.scope).handoffs,
+      );
+    };
+    if (stage === 'execution') {
+      if (!advanceCurrentStage()) return awaitingFinalReceipt();
       continue;
     }
     if (stage === 'planning') {
-      const next = nextWorkflowStage(route, stage);
-      service.advance(missionId, workflowStageSchema.parse(next));
-      transitions.push(`${stage}->${next}`);
+      if (!advanceCurrentStage()) return awaitingFinalReceipt();
       continue;
     }
     if (action === 'review') {
       const review = await runCouncilReview(ctx, missionId);
       if (!review.ready) return { state: stage, transitions, reason: review.gate.reason };
-      const next = nextWorkflowStage(route, stage);
-      service.advance(missionId, workflowStageSchema.parse(next));
-      transitions.push(`${stage}->${next}`);
+      if (!advanceCurrentStage()) return awaitingFinalReceipt();
       continue;
     }
     if (action === 'validate') {
       const validation = await runFinalValidation(ctx, missionId);
       if (!validation.ready) return { state: stage, transitions, reason: validation.reason };
-      const next = nextWorkflowStage(route, stage);
-      service.advance(missionId, workflowStageSchema.parse(next));
-      transitions.push(`${stage}->${next}`);
+      validatedEvidenceIds = [
+        ...validation.sensorEvidence.map((evidence) => evidence.id),
+        ...(validation.review?.evidenceIds ?? []),
+      ];
+      if (!advanceCurrentStage()) {
+        publishFinalReceiptEvidence();
+        return awaitingFinalReceipt();
+      }
       continue;
     }
     if (stage === 'confirmation') {
-      const next = nextWorkflowStage(route, stage);
-      service.advance(missionId, workflowStageSchema.parse(next));
-      transitions.push(`${stage}->${next}`);
+      if (!advanceCurrentStage()) {
+        publishFinalReceiptEvidence();
+        return awaitingFinalReceipt();
+      }
       continue;
     }
     return { state: stage, transitions, reason: 'stage requires explicit operator action' };

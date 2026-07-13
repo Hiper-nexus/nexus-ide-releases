@@ -8,6 +8,7 @@ export const ORCH_CHANNELS = {
   // Renderer → main
   panesSync: 'orch:panes.sync',
   paneSpawnResult: 'orch:pane.spawnResult',
+  paneRecoveryResult: 'orch:pane.recoveryResult',
   browserOpenResult: 'orch:browser.openResult',
   missionsList: 'orch:missions.list',
   missionPanesList: 'orch:missions.panes',
@@ -42,6 +43,7 @@ export const ORCH_CHANNELS = {
 
   // Main → renderer
   paneSpawnRequest: 'orch:pane.spawnRequest',
+  paneRecoveryRequest: 'orch:pane.recoveryRequest',
   browserOpenRequest: 'orch:browser.openRequest',
   paneCloseRequest: 'orch:pane.closeRequest',
   missionsChanged: 'orch:missions.changed',

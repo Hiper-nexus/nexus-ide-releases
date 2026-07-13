@@ -16,21 +16,20 @@ import type { ProjectExecutionScope } from '../../shared/types';
 
 export interface PrevcAdvancePort {
   /**
-   * Advance the mission's PREVC workflow one stage when present.
-   * No-op when no workflow is frozen for the mission.
-   * Must use advanceWorkflow (or ContextWorkflowService.advance which does).
+   * Atomically advance PREVC and complete a mission milestone with trusted
+   * evidence. Rejects without a frozen workflow or immutable receipt.
    */
-  advanceWorkflowStage(
+  advanceMissionStep(
     missionId: string,
     scope: ProjectExecutionScope,
+    stepId: string,
+    evidenceIds: readonly string[],
   ): void | Promise<void>;
-  /**
-   * True when PREVC workflow is absent OR already at stage `complete`.
-   * Complete of the mission requires this (or a successful advance to complete).
-   */
-  isWorkflowCompleteOrAbsent(
+  /** True only when PREVC is complete and every step has a valid receipt. */
+  isMissionComplete(
     missionId: string,
     scope: ProjectExecutionScope,
+    stepIds: readonly string[],
   ): boolean;
 }
 
@@ -66,35 +65,40 @@ export function createProductionPrevcPort(
     getMissionWorkflow(missionId: string): {
       workflow: WorkflowState | null;
     };
-    advance(missionId: string, next: WorkflowStage): WorkflowState;
+    advanceMissionStep(
+      missionId: string,
+      stepId: string,
+      evidenceIds: readonly string[],
+    ): unknown;
+    isMissionDriverComplete(
+      missionId: string,
+      stepIds: readonly string[],
+    ): boolean;
   },
 ): PrevcAdvancePort {
   return {
-    advanceWorkflowStage(missionId, scope) {
-      let service: ReturnType<typeof getService>;
-      try {
-        service = getService(scope);
-      } catch {
-        // Registry not initialized — mission-only step path; no PREVC work.
-        return;
-      }
+    advanceMissionStep(missionId, scope, stepId, evidenceIds) {
+      const service = getService(scope);
       const { workflow } = service.getMissionWorkflow(missionId);
-      if (!workflow || workflow.stage === 'complete') return;
-      const next = nextWorkflowStage(workflow);
-      if (!next) return;
-      // Real PREVC path — service.advance builds WorkflowEvidence and calls
-      // store.advance → advanceWorkflow under the hood. Callers may soft-fail.
-      service.advance(missionId, next);
-    },
-    isWorkflowCompleteOrAbsent(missionId, scope) {
-      try {
-        const { workflow } = getService(scope).getMissionWorkflow(missionId);
-        if (!workflow) return true;
-        return workflow.stage === 'complete';
-      } catch {
-        // Registry not initialized → treat as absent (mission-only steps).
-        return true;
+      if (!workflow) {
+        throw new Error(`PREVC workflow missing for mission ${missionId}`);
       }
+      if (workflow.stage === 'complete') {
+        throw new Error(`PREVC workflow already complete for mission ${missionId}`);
+      }
+      const next = nextWorkflowStage(workflow);
+      if (!next) {
+        throw new Error(`PREVC workflow has no valid next stage for mission ${missionId}`);
+      }
+      service.advanceMissionStep(missionId, stepId, evidenceIds);
+    },
+    isMissionComplete(missionId, scope, stepIds) {
+      const service = getService(scope);
+      const { workflow } = service.getMissionWorkflow(missionId);
+      return (
+        workflow?.stage === 'complete' &&
+        service.isMissionDriverComplete(missionId, stepIds)
+      );
     },
   };
 }

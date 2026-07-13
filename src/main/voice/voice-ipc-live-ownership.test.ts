@@ -74,7 +74,6 @@ const domainDeps = vi.hoisted(() => {
             : [],
         ),
       },
-      // Phase D voice→mission bridge uses missions on wake detection.
       missions: {
         list: missionList,
         create: missionCreate,
@@ -991,7 +990,7 @@ describe("Voice PTT and wake multi-window isolation", () => {
     expect(wakeEngineDeps.instances[0]!.feed).toHaveBeenCalledTimes(1);
   });
 
-  it("starts a mission in active scope on trusted WakeEngine detection", () => {
+  it("wakes Jarvis without mutating missions", () => {
     voiceConfig.wakeWord.enabled = true;
     domainDeps.missionList.mockReturnValue([]);
     domainDeps.missionCreate.mockClear();
@@ -1009,16 +1008,12 @@ describe("Voice PTT and wake multi-window isolation", () => {
     onDetected?.();
 
     expect(windowA.send).toHaveBeenCalledWith(VOICE_CHANNELS.wakeDetected);
-    // Phase D: detection path invokes start-or-resume once.
-    expect(domainDeps.missionList).toHaveBeenCalled();
-    expect(domainDeps.missionCreate).toHaveBeenCalledTimes(1);
-    expect(domainDeps.missionSetStatus).toHaveBeenCalledWith(
-      "mission-voice-new",
-      "running",
-    );
+    expect(domainDeps.missionList).not.toHaveBeenCalled();
+    expect(domainDeps.missionCreate).not.toHaveBeenCalled();
+    expect(domainDeps.missionSetStatus).not.toHaveBeenCalled();
   });
 
-  it("resumes an existing running mission on wake detection (no create)", () => {
+  it("does not resume an existing mission until transcript intent is understood", () => {
     voiceConfig.wakeWord.enabled = true;
     domainDeps.missionList.mockReturnValue([
       {
@@ -1040,6 +1035,7 @@ describe("Voice PTT and wake multi-window isolation", () => {
     wakeEngineDeps.lastOnDetected?.();
 
     expect(windowA.send).toHaveBeenCalledWith(VOICE_CHANNELS.wakeDetected);
+    expect(domainDeps.missionList).not.toHaveBeenCalled();
     expect(domainDeps.missionCreate).not.toHaveBeenCalled();
     expect(domainDeps.missionSetStatus).not.toHaveBeenCalled();
   });

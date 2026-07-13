@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JarvisContext, JarvisReply } from '../../shared/voice-ipc';
 
 const {
+  confirmCommand,
   invokeMcpWithConfirm,
   layoutState,
   missionWizardState,
@@ -11,6 +12,7 @@ const {
   waitForSession,
   writeToPane,
 } = vi.hoisted(() => ({
+  confirmCommand: vi.fn(),
   invokeMcpWithConfirm: vi.fn(),
   resolveSendToPaneTarget: vi.fn(),
   setPendingDelegation: vi.fn(),
@@ -107,7 +109,35 @@ describe('Jarvis MCP result propagation', () => {
     layoutState.focusedPaneId = null;
     layoutState.panes = [];
     vi.stubGlobal('window', {
-      nexus: { voice: { logVoice: vi.fn() } },
+      nexus: { voice: { confirmCommand, logVoice: vi.fn() } },
+    });
+  });
+
+  it('reroutes natural-language prose mislabeled as run_command to agent delegation', async () => {
+    resolveSendToPaneTarget.mockReturnValue({
+      kind: 'delegation',
+      orchestratorPaneId: 'pane-orq',
+    });
+    waitForSession.mockResolvedValue('session-orq');
+    submitPromptToPane.mockReturnValue(true);
+
+    const execution = await executeJarvisAction(
+      {
+        say: '',
+        action: { type: 'run_command', command: 'análise completa de UX' },
+      },
+      context,
+    );
+
+    expect(confirmCommand).not.toHaveBeenCalled();
+    expect(writeToPane).not.toHaveBeenCalled();
+    expect(submitPromptToPane).toHaveBeenCalledWith(
+      'pane-orq',
+      expect.stringContaining('Objective: análise completa de UX'),
+    );
+    expect(execution.toolResult).toMatchObject({
+      tool: 'send_to_pane',
+      ok: true,
     });
   });
 

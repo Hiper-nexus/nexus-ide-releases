@@ -396,6 +396,41 @@ export const orchPaneSpawnResultSchema = z.object({
 });
 export type OrchPaneSpawnResult = z.infer<typeof orchPaneSpawnResultSchema>;
 
+/** Main → renderer: restart one stable mission pane with a fresh context. */
+export interface MissionPaneRecoveryRequest {
+  requestId: string;
+  missionId: string;
+  paneId: string;
+  role: 'orchestrator' | 'worker';
+  /** Last known PTY. Missing workers may no longer have a session mirror. */
+  expectedSessionId?: string;
+  /** Main-owned persisted spec used only to recreate a missing stable pane. */
+  pane: Pick<
+    MissionPaneSpec,
+    | 'adapterId'
+    | 'model'
+    | 'accountId'
+    | 'effort'
+    | 'cwd'
+    | 'title'
+    | 'agentName'
+    | 'role'
+  >;
+  recap: string;
+}
+
+/** Renderer → main: acknowledged fresh session for the same stable pane. */
+export const missionPaneRecoveryResultSchema = z.object({
+  requestId: z.string().min(1).max(128),
+  ok: z.boolean(),
+  paneId: z.string().min(1).max(128),
+  sessionId: z.string().min(1).max(128).optional(),
+  error: z.string().max(1024).optional(),
+});
+export type MissionPaneRecoveryResult = z.infer<
+  typeof missionPaneRecoveryResultSchema
+>;
+
 /** Main → renderer: open a browser pane in the user's layout. */
 export interface BrowserPaneOpenRequest {
   requestId: string;

@@ -94,6 +94,7 @@ vi.mock('./pane-registry', () => ({
   initPaneRegistry: vi.fn(),
   registerOrchRenderer: vi.fn(),
   resolveBrowserOpen: vi.fn(),
+  resolveMissionPaneRecovery: vi.fn(),
   resolvePaneSpawn: vi.fn(),
   syncPanes: vi.fn(),
   unregisterOrchRenderer: vi.fn(),

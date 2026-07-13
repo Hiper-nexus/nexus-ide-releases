@@ -60,6 +60,8 @@ import type {
   Mission,
   MissionPaneSpec,
   MissionPatch,
+  MissionPaneRecoveryRequest,
+  MissionPaneRecoveryResult,
   OrchPaneSpawnRequest,
   OrchPaneSpawnResult,
   PaneRegistryEntry,
@@ -500,6 +502,12 @@ export interface SpawnRequest {
   /** Skip a stale captured id and use the adapter's latest-session fallback. */
   resumeLatestOnly?: boolean;
   /**
+   * Start a new provider conversation while restoring the main-owned authority
+   * of this exact persisted mission pane. The main process still resolves the
+   * pane spec by owner + workspace + paneId; the renderer cannot invent it.
+   */
+  restorePersistedAuthority?: boolean;
+  /**
    * Pane dono do spawn (estável entre boots — vem do layout persistido).
    * Com ele + resume, o main retoma a sessão de provider CAPTURADA daquele
    * pane (`--resume <id>`) em vez do genérico `--continue`, que faria todos
@@ -634,6 +642,7 @@ export interface NexusApi {
   pty: {
     spawn(req: SpawnRequest): Promise<SpawnResult>;
     write(sessionId: string, data: string): void;
+    writeConfirmed(sessionId: string, data: string): Promise<boolean>;
     resize(sessionId: string, cols: number, rows: number): void;
     kill(sessionId: string): void;
     onData(sessionId: string, cb: (data: string) => void): Unsubscribe;
@@ -787,6 +796,10 @@ export interface NexusApi {
     syncPanes(entries: PaneRegistryEntry[]): void;
     sendPaneSpawnResult(result: OrchPaneSpawnResult): void;
     onPaneSpawnRequest(cb: (req: OrchPaneSpawnRequest) => void): Unsubscribe;
+    sendPaneRecoveryResult(result: MissionPaneRecoveryResult): void;
+    onPaneRecoveryRequest(
+      cb: (req: MissionPaneRecoveryRequest) => void,
+    ): Unsubscribe;
     sendBrowserOpenResult(result: BrowserPaneOpenResult): void;
     onBrowserOpenRequest(cb: (req: BrowserPaneOpenRequest) => void): Unsubscribe;
     onPaneCloseRequest(cb: (paneId: string) => void): Unsubscribe;

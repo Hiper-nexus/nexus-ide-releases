@@ -19,6 +19,7 @@ const ptyDeps = vi.hoisted(() => ({
   spawnSession: vi.fn(() => ({ sessionId: "shell-created" })),
   setPtyHost: vi.fn(),
   killSession: vi.fn(),
+  writeSession: vi.fn(() => true),
 }));
 
 const authorityDeps = vi.hoisted(() => {
@@ -38,6 +39,7 @@ const authorityDeps = vi.hoisted(() => {
       (_requestId: string, _owner: unknown): unknown => null,
     ),
     bindPendingSpawnSession: vi.fn(() => true),
+    attachOrchMeta: vi.fn(),
     attachSessionScope: vi.fn(),
     findMissionPaneByPaneId: vi.fn((_paneId: string): unknown => null),
     createScopedMissionPaneStore: vi.fn(),
@@ -67,7 +69,7 @@ vi.mock("./pty-manager", () => ({
   setPtyHost: ptyDeps.setPtyHost,
   spawnAgentSession: ptyDeps.spawnAgentSession,
   spawnSession: ptyDeps.spawnSession,
-  writeSession: vi.fn(),
+  writeSession: ptyDeps.writeSession,
 }));
 
 vi.mock("./pty-host-client", () => ({
@@ -85,6 +87,7 @@ vi.mock("../orch/workspace-path", () => ({
 vi.mock("../orch/pane-registry", () => ({
   claimPendingSpawnMeta: authorityDeps.claimPendingSpawnMeta,
   bindPendingSpawnSession: authorityDeps.bindPendingSpawnSession,
+  attachOrchMeta: authorityDeps.attachOrchMeta,
   attachSessionScope: authorityDeps.attachSessionScope,
 }));
 
@@ -158,6 +161,7 @@ describe("registerPtyIpc account fail-fast", () => {
       findByPaneId: authorityDeps.findMissionPaneByPaneId,
     });
     authorityDeps.listSquads.mockReturnValue([]);
+    ptyDeps.writeSession.mockReturnValue(true);
     configurePtyProjectRuntimeManager({} as never);
     registerPtyIpc();
   });
@@ -428,6 +432,68 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(authorityDeps.requireRendererWorkspaceScope).toHaveBeenCalledWith({
       id: 7,
     });
+    expect(authorityDeps.attachOrchMeta).toHaveBeenCalledWith(
+      { id: 7 },
+      "pane-a",
+      expect.objectContaining({ missionId: "mission-a", role: "orchestrator" }),
+    );
+  });
+
+  it("starts a fresh conversation with the exact persisted mission authority", () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
+    const persisted = {
+      id: "mpane-worker",
+      missionId: "mission-a",
+      adapterId: "claude",
+      title: "Worker",
+      role: "worker" as const,
+      paneId: "pane-worker",
+      cwd: "/workspace/a/trusted-cwd",
+      scope: authorityDeps.scope,
+      createdAt: 1,
+    };
+    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    const sender = { id: 7 };
+
+    const result = handler?.(
+      { sender },
+      {
+        kind: "cli-agent",
+        adapterId: "claude",
+        paneId: "pane-worker",
+        resume: false,
+        restorePersistedAuthority: true,
+        cols: 100,
+        rows: 30,
+      },
+    );
+
+    expect(result).toEqual({ ok: true, sessionId: "pty-created" });
+    expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
+      sender,
+      expect.objectContaining({
+        paneId: "pane-worker",
+        resume: false,
+        restorePersistedAuthority: true,
+        cwd: persisted.cwd,
+      }),
+      expect.objectContaining({ id: "claude" }),
+      {},
+      expect.objectContaining({
+        source: "persisted-pane",
+        context: expect.objectContaining({
+          missionId: "mission-a",
+          role: "worker",
+        }),
+      }),
+    );
+    expect(authorityDeps.attachOrchMeta).toHaveBeenCalledWith(
+      sender,
+      "pane-worker",
+      expect.objectContaining({ missionId: "mission-a", role: "worker" }),
+    );
   });
 
   it("rejects a resumed mission pane when the renderer substitutes its adapter", () => {
@@ -556,5 +622,27 @@ describe("registerPtyIpc account fail-fast", () => {
       error: expect.stringMatching(/shell does not match/i),
     });
     expect(ptyDeps.spawnSession).not.toHaveBeenCalled();
+  });
+
+  it("confirms a PTY write only when the main process accepts the owned session", () => {
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.writeConfirmed);
+    const sender = { id: 7 };
+
+    expect(handler?.(
+      { sender },
+      { sessionId: "session-owned", data: "continue\r" },
+    )).toBe(true);
+    expect(ptyDeps.writeSession).toHaveBeenCalledWith(
+      sender,
+      "session-owned",
+      "continue\r",
+    );
+
+    ptyDeps.writeSession.mockReturnValueOnce(false);
+    expect(handler?.(
+      { sender },
+      { sessionId: "session-missing", data: "continue\r" },
+    )).toBe(false);
+    expect(handler?.({ sender }, { sessionId: "bad" })).toBe(false);
   });
 });

@@ -303,6 +303,10 @@ function bootstrap(): void {
   // MUST run before the adapter registry probes for installed CLIs: a
   // Finder/dmg launch has a minimal PATH that hides claude/codex/kimi/grok.
   resolveUserPath();
+  // Loads ~/.nexus/settings.json before any runtime reads orchestration flags.
+  // The previous order configured Ralph in shadow on every restart regardless
+  // of the persisted missionDriverActiveMode value.
+  registerSettingsIpc();
   initAdapterRegistry();
   projectRuntimeManager = new ProjectRuntimeManager({
     baseDir: path.join(app.getPath("userData"), "project-runtime"),
@@ -367,7 +371,6 @@ function bootstrap(): void {
   createMainWindow();
   registerVisionIpc();
   registerOrchIpc();
-  registerSettingsIpc();
   registerAuthProbeIpc();
   registerWorkspaceIpc();
   registerOrientationIpc();

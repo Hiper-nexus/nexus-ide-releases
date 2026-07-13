@@ -7,6 +7,7 @@ import {
   missionPatchSchema,
   browserPaneOpenResultSchema,
   orchPaneSpawnResultSchema,
+  missionPaneRecoveryResultSchema,
   panesSyncSchema,
   squadSchema,
   type Mission,
@@ -39,6 +40,7 @@ import {
   registerOrchRenderer,
   resolveBrowserOpen,
   resolvePaneSpawn,
+  resolveMissionPaneRecovery,
   syncPanes,
   unregisterOrchRenderer,
 } from "./pane-registry";
@@ -321,6 +323,11 @@ export function registerOrchIpc(): void {
   ipcMain.on(ORCH_CHANNELS.paneSpawnResult, (event, raw) => {
     const parsed = orchPaneSpawnResultSchema.safeParse(raw);
     if (parsed.success) resolvePaneSpawn(parsed.data, event.sender);
+  });
+
+  ipcMain.on(ORCH_CHANNELS.paneRecoveryResult, (event, raw) => {
+    const parsed = missionPaneRecoveryResultSchema.safeParse(raw);
+    if (parsed.success) resolveMissionPaneRecovery(parsed.data, event.sender);
   });
 
   ipcMain.on(ORCH_CHANNELS.browserOpenResult, (event, raw) => {

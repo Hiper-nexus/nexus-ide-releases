@@ -182,7 +182,7 @@ describe('LiveTransportController', () => {
     vi.doUnmock('./voice-secrets');
     vi.doUnmock('./jarvis-memory');
     vi.doUnmock('../jarvis/realtime/factory');
-  });
+  }, 10_000);
 
   it('falls back from a failed OpenAI realtime provider to Gemini Live', async () => {
     vi.resetModules();

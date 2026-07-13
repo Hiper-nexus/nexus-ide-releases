@@ -54,43 +54,67 @@ describe('mission-driver PREVC bridge', () => {
     expect(advanced.completedStages).toContain('planning');
   });
 
-  it('createProductionPrevcPort calls service.advance with next stage', () => {
+  it('createProductionPrevcPort calls the atomic mission-step service', () => {
     const scope = testProjectScope();
     const state = createWorkflowState('medium', BINDING);
-    const advance = vi.fn(() => ({
-      ...state,
-      stage: nextWorkflowStage(state)!,
-      revision: state.revision + 1,
-    }));
+    const advanceMissionStep = vi.fn();
     const port = createProductionPrevcPort(() => ({
       getMissionWorkflow: () => ({ workflow: state }),
-      advance,
+      advanceMissionStep,
+      isMissionDriverComplete: () => false,
     }));
-    port.advanceWorkflowStage('mission-a', scope);
-    expect(advance).toHaveBeenCalledWith('mission-a', 'execution');
+    port.advanceMissionStep('mission-a', scope, 'step-a', ['evidence-a']);
+    expect(advanceMissionStep).toHaveBeenCalledWith(
+      'mission-a',
+      'step-a',
+      ['evidence-a'],
+    );
   });
 
-  it('createProductionPrevcPort no-ops when workflow absent or complete', () => {
+  it('createProductionPrevcPort fails closed when workflow is absent', () => {
     const scope = testProjectScope();
-    const advance = vi.fn();
+    const advanceMissionStep = vi.fn();
     const absent = createProductionPrevcPort(() => ({
       getMissionWorkflow: () => ({ workflow: null }),
-      advance,
+      advanceMissionStep,
+      isMissionDriverComplete: () => false,
     }));
-    absent.advanceWorkflowStage('mission-a', scope);
-    expect(advance).not.toHaveBeenCalled();
-    expect(absent.isWorkflowCompleteOrAbsent('mission-a', scope)).toBe(true);
+    expect(() =>
+      absent.advanceMissionStep('mission-a', scope, 'step-a', ['evidence-a']),
+    ).toThrow(/workflow missing/);
+    expect(advanceMissionStep).not.toHaveBeenCalled();
+    expect(absent.isMissionComplete('mission-a', scope, ['step-a'])).toBe(false);
+  });
 
+  it('recognizes complete but refuses to advance it again', () => {
+    const scope = testProjectScope();
+    const advanceMissionStep = vi.fn();
     const completeState = {
       ...createWorkflowState('medium', BINDING),
       stage: 'complete' as const,
     };
     const done = createProductionPrevcPort(() => ({
       getMissionWorkflow: () => ({ workflow: completeState }),
-      advance,
+      advanceMissionStep,
+      isMissionDriverComplete: () => true,
     }));
-    done.advanceWorkflowStage('mission-a', scope);
-    expect(advance).not.toHaveBeenCalled();
-    expect(done.isWorkflowCompleteOrAbsent('mission-a', scope)).toBe(true);
+    expect(() =>
+      done.advanceMissionStep('mission-a', scope, 'step-a', ['evidence-a']),
+    ).toThrow(/already complete/);
+    expect(advanceMissionStep).not.toHaveBeenCalled();
+    expect(done.isMissionComplete('mission-a', scope, ['step-a'])).toBe(true);
+  });
+
+  it('propagates registry failures instead of treating them as absence', () => {
+    const scope = testProjectScope();
+    const port = createProductionPrevcPort(() => {
+      throw new Error('registry unavailable');
+    });
+    expect(() =>
+      port.advanceMissionStep('mission-a', scope, 'step-a', ['evidence-a']),
+    ).toThrow(/registry unavailable/);
+    expect(() =>
+      port.isMissionComplete('mission-a', scope, ['step-a']),
+    ).toThrow(/registry unavailable/);
   });
 });

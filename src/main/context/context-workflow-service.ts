@@ -1,9 +1,23 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type Database from 'better-sqlite3';
+import { z } from 'zod';
+import type {
+  HandoffEvidenceBinding,
+  MissionMilestone,
+} from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
-import { createScopedMissionStore } from '../orch/mission-store';
+import {
+  createScopedMissionStore,
+  type ScopedMission,
+} from '../orch/mission-store';
+import {
+  createScopedHandoffStore,
+  type ScopedHandoff,
+} from '../orch/handoff-store';
 import {
   compileMissionContract,
+  workflowStageSchema,
   type AcceptanceCriterion,
   type MissionContract,
   type WorkflowStage,
@@ -42,6 +56,40 @@ import {
 import { tryGetProjectOrientationService } from './orientation/orientation-service';
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+const HASH = /^[a-f0-9]{64}$/;
+const COMMIT = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+
+const receiptEvidenceIdsSchema = z
+  .array(z.string().regex(IDENTIFIER))
+  .min(1)
+  .max(256)
+  .refine((ids) => new Set(ids).size === ids.length);
+
+const receiptEvidenceBindingSchema = z
+  .object({
+    missionId: z.string().regex(IDENTIFIER),
+    contextRevision: z.string().regex(HASH),
+    contractHash: z.string().regex(HASH),
+    baseSha: z.string().regex(COMMIT),
+    headSha: z.string().regex(COMMIT),
+    diffHash: z.string().regex(HASH),
+    workflowRevision: z.number().int().positive(),
+  })
+  .strict();
+
+const missionStepReceiptRowSchema = z
+  .object({
+    step_id: z.string().regex(IDENTIFIER),
+    from_stage: workflowStageSchema,
+    to_stage: workflowStageSchema,
+    workflow_revision_before: z.number().int().positive(),
+    workflow_revision_after: z.number().int().positive(),
+    evidence_ids_json: z.string().max(4 * 1024 * 1024),
+    evidence_binding_json: z.string().max(4 * 1024 * 1024),
+  })
+  .strict();
+
+type MissionStepReceiptRow = z.infer<typeof missionStepReceiptRowSchema>;
 
 export interface MissionContractDraft {
   readonly missionId: string;
@@ -97,6 +145,27 @@ export interface SubmitReviewResult {
   readonly gate: ReviewGateResult;
 }
 
+export interface MissionStepAdvanceResult {
+  readonly missionId: string;
+  readonly stepId: string;
+  readonly fromStage: WorkflowStage;
+  readonly toStage: WorkflowStage;
+  readonly workflowRevisionBefore: number;
+  readonly workflowRevisionAfter: number;
+  readonly evidenceIds: readonly string[];
+}
+
+interface MissionStepContext {
+  readonly mission: ScopedMission;
+  readonly workflow: WorkflowState;
+  readonly evidenceBinding: HandoffEvidenceBinding;
+  readonly isFinalMilestone: boolean;
+}
+
+interface MissionStepReceiptInput extends MissionStepAdvanceResult {
+  readonly evidenceBinding: HandoffEvidenceBinding;
+}
+
 export class ContextReadinessError extends Error {
   readonly report: ContextReadinessReport;
 
@@ -150,6 +219,7 @@ export class ContextWorkflowService {
   readonly #runtimeManager: ProjectRuntimeManager;
   readonly #store: ReturnType<typeof createContextWorkflowStore>;
   readonly #missions: ReturnType<typeof createScopedMissionStore>;
+  readonly #handoffs: ReturnType<typeof createScopedHandoffStore>;
   readonly #ledger: EventLedger;
   readonly #dependencies: ContextWorkflowServiceDependencies;
 
@@ -165,6 +235,9 @@ export class ContextWorkflowService {
       now: dependencies.now,
     });
     this.#missions = createScopedMissionStore(runtimeManager, this.scope, {
+      now: dependencies.now,
+    });
+    this.#handoffs = createScopedHandoffStore(runtimeManager, this.scope, {
       now: dependencies.now,
     });
     this.#dependencies = dependencies;
@@ -332,6 +405,362 @@ export class ContextWorkflowService {
       contract: this.#store.getContract(missionId),
       workflow: this.#store.getWorkflow(missionId),
     });
+  }
+
+  /**
+   * Atomically couples one Ralph milestone to PREVC advancement. The trusted
+   * handoff binding is revalidated inside the same SQLite transaction, then an
+   * immutable receipt is inserted before the milestone can become done.
+   */
+  advanceMissionStep(
+    missionId: string,
+    stepId: string,
+    rawEvidenceIds: readonly string[],
+  ): MissionStepAdvanceResult {
+    const evidenceIds = receiptEvidenceIdsSchema.parse(
+      [...new Set(rawEvidenceIds.map((id) => id.trim()))],
+    );
+    if (!IDENTIFIER.test(stepId)) throw new Error('invalid mission step id');
+    const db = this.#runtimeManager.open(this.scope).db;
+    return db.transaction(() => {
+      const context = this.#loadMissionStepContext(
+        db,
+        missionId,
+        stepId,
+        evidenceIds,
+      );
+      const next = this.#advanceWorkflowForStep(
+        missionId,
+        context.workflow,
+        context.isFinalMilestone,
+      );
+      this.#insertMissionStepReceipt(db, {
+        missionId,
+        stepId,
+        fromStage: context.workflow.stage,
+        toStage: next.stage,
+        workflowRevisionBefore: context.workflow.revision,
+        workflowRevisionAfter: next.revision,
+        evidenceIds,
+        evidenceBinding: context.evidenceBinding,
+      });
+      this.#completeMissionMilestone(
+        context.mission,
+        stepId,
+        evidenceIds,
+      );
+
+      return Object.freeze({
+        missionId,
+        stepId,
+        fromStage: context.workflow.stage,
+        toStage: next.stage,
+        workflowRevisionBefore: context.workflow.revision,
+        workflowRevisionAfter: next.revision,
+        evidenceIds: Object.freeze([...evidenceIds]),
+      });
+    }).immediate();
+  }
+
+  #loadMissionStepContext(
+    db: Database.Database,
+    missionId: string,
+    stepId: string,
+    evidenceIds: readonly string[],
+  ): MissionStepContext {
+    const mission = this.#missions.get(missionId);
+    const workflow = this.#store.getWorkflow(missionId);
+    if (!mission || !workflow) {
+      throw new Error('mission step requires a frozen PREVC workflow');
+    }
+    if (workflow.stage === 'complete') {
+      throw new Error('mission PREVC workflow is already complete');
+    }
+    if (this.#hasMissionStepReceipt(db, missionId, stepId)) {
+      throw new Error(`mission step ${stepId} already has a PREVC receipt`);
+    }
+    const currentStep = mission.milestones.find(
+      (milestone) => milestone.status !== 'done',
+    );
+    if (!currentStep || currentStep.id !== stepId) {
+      throw new Error(`mission step ${stepId} is not the current milestone`);
+    }
+    return Object.freeze({
+      mission,
+      workflow,
+      evidenceBinding: this.#resolveTrustedEvidenceBinding(
+        missionId,
+        workflow,
+        evidenceIds,
+      ),
+      isFinalMilestone: mission.milestones.every(
+        (milestone) => milestone.id === stepId || milestone.status === 'done',
+      ),
+    });
+  }
+
+  #hasMissionStepReceipt(
+    db: Database.Database,
+    missionId: string,
+    stepId: string,
+  ): boolean {
+    return Boolean(
+      db.prepare(
+        'SELECT 1 FROM mission_step_receipts WHERE mission_id = ? AND step_id = ?',
+      ).get(missionId, stepId),
+    );
+  }
+
+  #resolveTrustedEvidenceBinding(
+    missionId: string,
+    workflow: WorkflowState,
+    evidenceIds: readonly string[],
+  ): HandoffEvidenceBinding {
+    const relevant = this.#handoffs
+      .list({ missionId, includeDelivered: true })
+      .filter(
+        (handoff) =>
+          handoff.evidenceTrust === 'nexus-trusted' &&
+          evidenceIds.some((id) => handoff.evidenceIds.includes(id)),
+      );
+    const trustedIds = new Set(relevant.flatMap((handoff) => handoff.evidenceIds));
+    if (!evidenceIds.every((id) => trustedIds.has(id))) {
+      throw new Error('mission step evidence is not nexus-trusted');
+    }
+    const binding = relevant[0]?.evidenceBinding;
+    if (
+      !binding ||
+      relevant.some(
+        (handoff) =>
+          !handoff.evidenceBinding ||
+          !this.#isCurrentHandoffBinding(handoff, workflow),
+      )
+    ) {
+      throw new Error('mission step evidence binding is stale');
+    }
+    return Object.freeze({ ...binding });
+  }
+
+  #isCurrentHandoffBinding(
+    handoff: ScopedHandoff,
+    workflow: WorkflowState,
+  ): boolean {
+    const binding = handoff.evidenceBinding;
+    return Boolean(
+      binding &&
+        binding.missionId === workflow.binding.missionId &&
+        binding.workflowRevision === workflow.revision &&
+        binding.contextRevision === workflow.binding.contextHash &&
+        binding.contractHash === workflow.binding.contractHash &&
+        binding.baseSha === workflow.binding.baseSha &&
+        binding.headSha === workflow.binding.headSha &&
+        binding.diffHash === workflow.binding.diffHash,
+    );
+  }
+
+  #advanceWorkflowForStep(
+    missionId: string,
+    workflow: WorkflowState,
+    isFinalMilestone: boolean,
+  ): WorkflowState {
+    const requestedNext =
+      workflow.route[workflow.route.indexOf(workflow.stage) + 1] ?? 'complete';
+    // More milestones than route transitions is valid. Once PREVC reaches its
+    // last gate, non-final milestones receive immutable checkpoint receipts at
+    // the current revision; only the final milestone may cross to complete.
+    if (requestedNext === 'complete' && !isFinalMilestone) return workflow;
+    let next = this.advance(missionId, requestedNext);
+    while (isFinalMilestone && next.stage !== 'complete') {
+      const index = next.route.indexOf(next.stage);
+      next = this.advance(missionId, next.route[index + 1] ?? 'complete');
+    }
+    return next;
+  }
+
+  #insertMissionStepReceipt(
+    db: Database.Database,
+    receipt: MissionStepReceiptInput,
+  ): void {
+    db.prepare(
+      `INSERT INTO mission_step_receipts
+         (mission_id, step_id, from_stage, to_stage,
+          workflow_revision_before, workflow_revision_after,
+          evidence_ids_json, evidence_binding_json, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      receipt.missionId,
+      receipt.stepId,
+      receipt.fromStage,
+      receipt.toStage,
+      receipt.workflowRevisionBefore,
+      receipt.workflowRevisionAfter,
+      JSON.stringify(receipt.evidenceIds),
+      JSON.stringify(receipt.evidenceBinding),
+      this.#dependencies.now?.() ?? Date.now(),
+    );
+  }
+
+  #completeMissionMilestone(
+    mission: ScopedMission,
+    stepId: string,
+    evidenceIds: readonly string[],
+  ): void {
+    const milestones = mission.milestones.map((milestone) =>
+      milestone.id === stepId
+        ? { ...milestone, status: 'done' as const, evidenceIds: [...evidenceIds] }
+        : { ...milestone, evidenceIds: [...milestone.evidenceIds] },
+    );
+    const updated = this.#missions.update(mission.id, {
+      milestones,
+    });
+    if (!updated) throw new Error('mission milestone update failed');
+  }
+
+  isMissionDriverComplete(
+    missionId: string,
+    rawStepIds: readonly string[],
+  ): boolean {
+    const workflow = this.#store.getWorkflow(missionId);
+    const mission = this.#missions.get(missionId);
+    if (
+      !workflow ||
+      workflow.stage !== 'complete' ||
+      !mission
+    ) {
+      return false;
+    }
+    const stepIds = [...new Set(rawStepIds)];
+    if (
+      stepIds.length === 0 ||
+      stepIds.length !== mission.milestones.length ||
+      !mission.milestones.every((milestone, index) =>
+          milestone.status === 'done' &&
+          milestone.evidenceIds.length > 0 &&
+          stepIds[index] === milestone.id,
+      )
+    ) {
+      return false;
+    }
+    const rows = this.#loadMissionStepReceipts(missionId);
+    return (
+      rows !== null &&
+      this.#areMissionStepReceiptsValid(rows, mission.milestones, workflow)
+    );
+  }
+
+  #loadMissionStepReceipts(missionId: string): MissionStepReceiptRow[] | null {
+    const rawRows = this.#runtimeManager.open(this.scope).db
+      .prepare(
+        `SELECT step_id, from_stage, to_stage,
+                workflow_revision_before, workflow_revision_after,
+                evidence_ids_json, evidence_binding_json
+         FROM mission_step_receipts
+         WHERE mission_id = ?`,
+      )
+      .all(missionId);
+    try {
+      return z.array(missionStepReceiptRowSchema).max(256).parse(rawRows);
+    } catch {
+      return null;
+    }
+  }
+
+  #areMissionStepReceiptsValid(
+    rows: readonly MissionStepReceiptRow[],
+    milestones: readonly MissionMilestone[],
+    workflow: WorkflowState,
+  ): boolean {
+    if (rows.length !== milestones.length) return false;
+    const byStepId = new Map(rows.map((row) => [row.step_id, row]));
+    if (byStepId.size !== rows.length) return false;
+    const ordered = milestones.map((milestone) => byStepId.get(milestone.id));
+    if (ordered.some((row) => !row)) return false;
+    const orderedRows = ordered as MissionStepReceiptRow[];
+    const last = orderedRows.at(-1);
+    if (
+      !last ||
+      last.to_stage !== 'complete' ||
+      last.workflow_revision_after !== workflow.revision
+    ) {
+      return false;
+    }
+    try {
+      return orderedRows.every((row, index) => {
+        const previous = orderedRows[index - 1];
+        return (
+          (!previous ||
+            previous.workflow_revision_after === row.workflow_revision_before) &&
+          this.#isMissionStepReceiptValid(
+            row,
+            milestones[index]!,
+            workflow,
+          )
+        );
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  #isMissionStepReceiptValid(
+    row: MissionStepReceiptRow,
+    milestone: MissionMilestone,
+    workflow: WorkflowState,
+  ): boolean {
+    const evidenceIds = receiptEvidenceIdsSchema.parse(
+      JSON.parse(row.evidence_ids_json) as unknown,
+    );
+    const binding = receiptEvidenceBindingSchema.parse(
+      JSON.parse(row.evidence_binding_json) as unknown,
+    );
+    const fromIndex = workflow.route.indexOf(row.from_stage);
+    const toIndex =
+      row.to_stage === 'complete'
+        ? workflow.route.length
+        : workflow.route.indexOf(row.to_stage);
+    const isCheckpoint =
+      row.workflow_revision_before === row.workflow_revision_after &&
+      row.from_stage === row.to_stage;
+    const isForwardTransition =
+      row.workflow_revision_before < row.workflow_revision_after &&
+      toIndex > fromIndex;
+    return (
+      row.step_id === milestone.id &&
+      (isCheckpoint || isForwardTransition) &&
+      row.workflow_revision_after <= workflow.revision &&
+      fromIndex >= 0 &&
+      evidenceIds.length === milestone.evidenceIds.length &&
+      evidenceIds.every((id) => milestone.evidenceIds.includes(id)) &&
+      this.#isReceiptBindingCurrent(binding, row, workflow)
+    );
+  }
+
+  #isReceiptBindingCurrent(
+    binding: HandoffEvidenceBinding,
+    row: MissionStepReceiptRow,
+    workflow: WorkflowState,
+  ): boolean {
+    const stableBindingMatches =
+      binding.missionId === workflow.binding.missionId &&
+      binding.workflowRevision === row.workflow_revision_before &&
+      binding.contextRevision === workflow.binding.contextHash &&
+      binding.contractHash === workflow.binding.contractHash &&
+      binding.baseSha === workflow.binding.baseSha;
+    if (!stableBindingMatches) return false;
+    // Every receipt through the transition that leaves execution is bound to
+    // the frozen pre-integration HEAD/diff. Higher-risk routes also produce
+    // planning/review receipts before execution, so all of those historical
+    // receipts remain valid after the trusted integration replaces HEAD/diff.
+    // Receipts produced after execution must match the final binding exactly.
+    const executionIndex = workflow.route.indexOf('execution');
+    const receiptIndex = workflow.route.indexOf(row.from_stage);
+    const isPreIntegrationReceipt =
+      executionIndex >= 0 && receiptIndex >= 0 && receiptIndex <= executionIndex;
+    return (
+      isPreIntegrationReceipt ||
+      (binding.headSha === workflow.binding.headSha &&
+        binding.diffHash === workflow.binding.diffHash)
+    );
   }
 
   compileMissionSnapshot(missionId: string): ContextSnapshot {
@@ -690,7 +1119,6 @@ export class ContextWorkflowService {
       requestedNext,
     );
     if (next.stage === 'execution') this.#missions.setStatus(missionId, 'running');
-    if (next.stage === 'complete') this.#missions.setStatus(missionId, 'done');
     this.#ledger.append({
       projectId: this.scope.projectId,
       checkoutId: this.scope.checkoutId,

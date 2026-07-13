@@ -629,6 +629,49 @@ const MISSION_LEARNINGS_SCHEMA = `
 ALTER TABLE missions ADD COLUMN learnings TEXT NOT NULL DEFAULT '';
 `;
 
+/** Durable Ralph-loop budget plus immutable PREVC step receipts. */
+const MISSION_DRIVER_RUNTIME_SCHEMA = `
+CREATE TABLE mission_drive_state (
+  mission_id            TEXT PRIMARY KEY,
+  revision              INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+  run_started_at        INTEGER NOT NULL CHECK (run_started_at >= 0),
+  attempt_count         INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  last_attempt_at       INTEGER CHECK (last_attempt_at IS NULL OR last_attempt_at >= 0),
+  last_success_at       INTEGER CHECK (last_success_at IS NULL OR last_success_at >= 0),
+  last_signal_at        INTEGER CHECK (last_signal_at IS NULL OR last_signal_at >= 0),
+  last_action_kind      TEXT,
+  last_outcome          TEXT CHECK (last_outcome IS NULL OR last_outcome IN ('reserved', 'success', 'failed')),
+  last_error            TEXT,
+  updated_at            INTEGER NOT NULL CHECK (updated_at >= 0),
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE mission_step_receipts (
+  mission_id               TEXT NOT NULL,
+  step_id                  TEXT NOT NULL,
+  from_stage               TEXT NOT NULL,
+  to_stage                 TEXT NOT NULL,
+  workflow_revision_before INTEGER NOT NULL CHECK (workflow_revision_before >= 1),
+  workflow_revision_after  INTEGER NOT NULL CHECK (workflow_revision_after >= 1),
+  evidence_ids_json        TEXT NOT NULL,
+  evidence_binding_json    TEXT NOT NULL,
+  completed_at             INTEGER NOT NULL CHECK (completed_at >= 0),
+  PRIMARY KEY (mission_id, step_id),
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_mission_drive_attempt
+  ON mission_drive_state(last_attempt_at, attempt_count);
+CREATE INDEX idx_mission_step_receipt_revision
+  ON mission_step_receipts(mission_id, workflow_revision_after);
+
+CREATE TRIGGER mission_step_receipts_immutable
+BEFORE UPDATE ON mission_step_receipts
+BEGIN
+  SELECT RAISE(ABORT, 'mission step receipts are immutable');
+END;
+`;
+
 export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
   validateProjectMigrations([
     createProjectMigration({
@@ -696,5 +739,11 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       schemaVersion: 11,
       appVersion: '0.15.2',
       sql: MISSION_LEARNINGS_SCHEMA,
+    }),
+    createProjectMigration({
+      id: '012-mission-driver-runtime',
+      schemaVersion: 12,
+      appVersion: '0.15.3',
+      sql: MISSION_DRIVER_RUNTIME_SCHEMA,
     }),
   ]);

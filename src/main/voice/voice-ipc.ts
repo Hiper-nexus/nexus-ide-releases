@@ -64,10 +64,6 @@ import {
 } from "./live-transport-controller";
 import { getProjectDomainStores } from "../orch/project-domain-store-registry";
 import {
-  createVoiceMissionPorts,
-  startOrResumeMissionFromVoice,
-} from "../orch/mission-voice-bridge";
-import {
   getRendererWorkspaceScope,
   requireRendererWorkspaceScope,
 } from "../persistence/renderer-workspace-scope";
@@ -374,32 +370,6 @@ function acceptWakeFrame(sender: WebContents): WakeOwnership | null {
   return ownership;
 }
 
-/**
- * Phase D bridge: on trusted wake detection, start or resume a mission in the
- * active project scope. Failures are logged only — never touch wake ownership.
- */
-function tryStartOrResumeMissionFromWake(scope: ProjectExecutionScope): void {
-  try {
-    const ports = createVoiceMissionPorts(scope, getProjectDomainStores);
-    const intent = startOrResumeMissionFromVoice(ports);
-    logVoice("info", "wake.mission", "voice→mission bridge", {
-      kind: intent.kind,
-      ...(intent.kind === "noop"
-        ? { reason: intent.reason }
-        : { missionId: intent.missionId }),
-      ...(intent.kind === "resumed" ? { fromStatus: intent.fromStatus } : {}),
-      projectId: scope.projectId,
-      checkoutId: scope.checkoutId,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logVoice("warn", "wake.missionFail", message, {
-      projectId: scope.projectId,
-      checkoutId: scope.checkoutId,
-    });
-  }
-}
-
 function emitWakeDetected(generation: number, owner: WebContents, scope: ProjectExecutionScope): void {
   const ownership = wakeOwnership;
   if (!ownership) return;
@@ -408,9 +378,6 @@ function emitWakeDetected(generation: number, owner: WebContents, scope: Project
   if (!isTrustedWakeOwner(ownership)) return;
   if (!sameProjectScope(ownership.scope, scope)) return;
   ownership.owner.send(VOICE_CHANNELS.wakeDetected);
-  // Phase D: optional voice→mission start/resume in the active project scope.
-  // Isolated from wake ownership/dispose — failures never release the engine.
-  tryStartOrResumeMissionFromWake(scope);
 }
 
 const liveSession = new JarvisLiveSession(
