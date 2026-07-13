@@ -81,6 +81,10 @@ export const orchSettingsSchema = z.object({
   /** Modo sóbrio: oculta HUD/celebrações/narração da gamificação (o XP
    *  continua acumulando em silêncio). */
   soberMode: z.boolean().default(false),
+  /** Mission driver ativo (Fase C): aplica efeitos autônomos (advance/complete/
+   *  signal-stall/respawn) com budget. Default false = SHADOW (só observa/loga).
+   *  Ative só após validação runtime; exige restart para aplicar. */
+  missionDriverActiveMode: z.boolean().default(false),
   /** CLI provider used by the next squad orchestrator. */
   defaultAdapterId: z.string().max(64).default('claude'),
   /** Empty means the selected provider's configured default model. */
