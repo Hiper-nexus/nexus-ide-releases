@@ -243,4 +243,44 @@ describe('native context knowledge MCP tools', () => {
     });
     await doctorCall;
   });
+
+  it('keeps concurrent Doctor flights isolated by mission', async () => {
+    const pending: Array<(value: unknown) => void> = [];
+    doctorMocks.run.mockImplementation(() => new Promise((resolve) => {
+      pending.push(resolve);
+    }));
+
+    const missionA = tool('nexus_context_doctor').handler({}, {
+      ...context('codex', 'doctor-a'),
+      missionId: 'mission-a',
+    });
+    const missionB = tool('nexus_context_doctor').handler({}, {
+      ...context('codex', 'doctor-b'),
+      missionId: 'mission-b',
+    });
+
+    await vi.waitFor(() => expect(doctorMocks.run).toHaveBeenCalledTimes(2));
+    expect(doctorMocks.run).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      missionId: 'mission-a',
+    }));
+    expect(doctorMocks.run).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      missionId: 'mission-b',
+    }));
+
+    const result = {
+      phase: 'ready',
+      readiness: { ready: true, blockers: [], warnings: [], sensorIds: [] },
+      orientation: null,
+      bootstrapProposals: [],
+      proposedDraftIds: [],
+      draftOutcomes: [],
+      appliedDraftIds: [],
+      rejectedDraftIds: [],
+      commitSha: null,
+      quorumAvailable: true,
+      autopilotHint: 'ready',
+    };
+    pending.forEach((resolve) => resolve(result));
+    await Promise.all([missionA, missionB]);
+  });
 });

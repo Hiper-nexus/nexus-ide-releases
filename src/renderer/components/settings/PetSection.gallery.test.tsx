@@ -126,6 +126,8 @@ describe('PetSection — galeria com preview', () => {
       sheet: { dataUrl: SHEET_DATA_URL, cols: 8, rows: 9 },
       preset: 'sheet',
     });
+    expect(host.textContent).not.toContain('Pré-visualização');
+    expect(host.textContent).not.toContain('Importar este pet');
   });
 
   it('reduz um asset remoto grande mantendo a malha petdex', async () => {

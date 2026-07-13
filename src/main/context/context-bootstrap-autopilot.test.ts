@@ -132,7 +132,7 @@ function draft(id: string, status: ContextDraftRecord['status']): ContextDraftRe
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mocks.proposals = [];
   mocks.list.mockReturnValue([]);
   mocks.readDraft.mockReturnValue(null);
@@ -210,9 +210,6 @@ describe('runContextBootstrapAutopilot', () => {
       waitMs: 8_000,
       force: true,
     });
-    mocks.list.mockReturnValue([]);
-    mocks.propose.mockClear();
-    mocks.reviewerRun.mockClear();
   });
   it('replaces a rejected stale placeholder and reviews the current source-bound proposal', async () => {
     mocks.inspectReadiness.mockReturnValue(mocks.readiness);
@@ -252,10 +249,6 @@ describe('runContextBootstrapAutopilot', () => {
     expect(mocks.reviewerRun).toHaveBeenNthCalledWith(1, { scope, draftId: 'draft-stale' });
     expect(mocks.reviewerRun).toHaveBeenNthCalledWith(2, { scope, draftId: 'draft-replacement' });
     expect(result.appliedDraftIds).toContain('draft-replacement');
-    mocks.list.mockReturnValue([]);
-    mocks.readDraft.mockReset();
-    mocks.reviewerRun.mockReset();
-    mocks.propose.mockReset();
   });
 
   it('reviews one draft per Doctor pass and directs the orchestrator to continue safely', async () => {
@@ -298,8 +291,6 @@ describe('runContextBootstrapAutopilot', () => {
     ]));
     expect(result.autopilotHint).toMatch(/nexus_context_doctor again/i);
     expect(result.autopilotHint).toMatch(/do not fan out nexus_context_draft_review_run/i);
-    mocks.propose.mockReset();
-    mocks.reviewerRun.mockReset();
   });
 
   it('policy-rejects a contaminated durable draft before reviewing its clean replacement', async () => {
@@ -350,10 +341,6 @@ describe('runContextBootstrapAutopilot', () => {
     }));
     expect(mocks.reviewerRun).toHaveBeenCalledWith({ scope, draftId: 'draft-clean' });
     expect(result.appliedDraftIds).toContain('draft-clean');
-    mocks.list.mockReturnValue([]);
-    mocks.review.mockReset();
-    mocks.propose.mockReset();
-    mocks.reviewerRun.mockReset();
   });
   it('proposes drafts and skips review when quorum is missing', async () => {
     mocks.inspectReadiness.mockReturnValue(mocks.readiness);

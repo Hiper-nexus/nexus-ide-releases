@@ -45,6 +45,7 @@ function contextDoctorScopeKey(ctx: AgentGateContext): string {
     ctx.scope.projectId,
     ctx.scope.checkoutId,
     ctx.scope.rootRealPath,
+    ctx.missionId ?? '',
   ].join('\0');
 }
 
