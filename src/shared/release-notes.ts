@@ -13,53 +13,53 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.15.1',
+  version: '0.15.2',
   date: '2026-07-13',
-  codename: 'Supervision Handoff',
+  codename: 'Squad Continuity',
   summary:
-    'Doctor sem falsos travamentos, handoff recuperável entre panes, Jarvis em tempo real e wake PT-BR garantido em todo pacote de produção.',
+    'Squads continuam operando com WIP local, a Jarvis entende a tela e confirma delegações sem perder o turno, e a supervisão reage a evidência real.',
   highlights: [
     {
-      title: 'Orquestração recuperável',
+      title: 'Delegação sem deadlock',
       detail:
-        'Panes preservam sessões recuperáveis, revisores não duplicam e o Doctor limita cada passagem para devolver o controle sem encerrar trabalho saudável.',
+        'O orquestrador mantém uma rota limitada para workers antes do freeze, preserva o checkout atual e serializa escritores quando a tarefa depende do WIP.',
     },
     {
-      title: 'Jarvis acompanha a operação',
+      title: 'Jarvis orientada pela tela',
       detail:
-        'A voz recebe a tela e os squads atuais continuamente, pergunta qual squad abrir quando falta o nome e mantém o follow-up ativo por um minuto.',
+        '“Abrir modo squad” mostra os squads salvos, nomes visíveis entram no contexto e comandos de wake validados seguem sem uma segunda captura vazia.',
     },
     {
-      title: 'Providers prontos para produção',
+      title: 'Confirmação confiável',
       detail:
-        'O novo hub separa CLIs, modelos e remotos, atualiza o catálogo detectado e preserva navegação completa por teclado.',
+        'A resposta “sim” resolve a delegação pendente exatamente uma vez, inclusive em sessão Live quente, sem ser descartada pelo filtro passivo.',
     },
   ],
   fixes: [
     {
-      title: 'Cancelamento não é falha',
+      title: 'Doctor fala a verdade',
       detail:
-        'Interrupções normais do Jarvis deixam de gerar incidente, toast do Doctor ou anúncio incorreto de supervisão travada.',
+        'Falha de commit ou binding Git retorna bloqueio explícito e ativa a rota same_checkout, sem pedir stash, reset ou troca de branch ao usuário.',
     },
     {
-      title: 'Wake PT-BR sempre presente',
+      title: 'Supervisão baseada em panes vivos',
       detail:
-        'O modelo treinado ei-jarvis-ptbr.onnx é o padrão, tem hash versionado e o build falha se ele ou o manifesto estiverem ausentes ou divergentes.',
+        'O supervisor ignora panes históricos, respeita o orquestrador ocupado e só anuncia bloqueio final; a primeira recuperação é silenciosa e não terminal.',
+    },
+    {
+      title: 'Wake PT-BR preservado',
+      detail:
+        'O pacote mantém ei-jarvis-ptbr.onnx como padrão obrigatório, com manifesto e hash verificados no build de produção.',
+    },
+    {
+      title: 'Home Deck alinhado',
+      detail:
+        'Colunas de squads, ações e chips de frota, cota e custo mantêm alinhamento e leitura em uma única linha.',
     },
     {
       title: 'Versões alinhadas',
       detail:
         'Aplicativo, servidor, lockfile, changelog e notas internas avançam juntos para impedir releases mistos.',
-    },
-    {
-      title: 'Galeria de pets utilizável',
-      detail:
-        'Pets da comunidade exibem preview antes da aplicação, aceitam os contratos 8×9 e 8×11 e compactam arquivos grandes mantendo a grade.',
-    },
-    {
-      title: 'Missões antigas continuam operando',
-      detail:
-        'O runtime converte critérios e rótulos legados, arquiva drafts substituídos sem perder auditoria e retoma o commit de contexto numa árvore Git limpa.',
     },
   ],
 };

@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.15.2 — Squad Continuity
+
+Data: 2026-07-13
+
+### Orquestração e Doctor
+- O orquestrador conserva uma autoridade estreita de delegação antes do
+  contrato congelado. Quando a missão depende do WIP atual, workers operam no
+  modo `same_checkout`, sem stash/reset/troca de branch e com apenas um escritor
+  ativo por checkout.
+- Missões de squad entram em `running` ao serem materializadas. Bloqueio e
+  recuperação continuam disponíveis quando o Git impede o freeze, sem liberar
+  shell ou edição direta ao coordenador.
+- O Context Doctor deixa de esconder falha de commit/binding e retorna a causa
+  estruturada. O supervisor conta panes vivos, respeita atividade do
+  orquestrador e só classifica o segundo incidente como travamento.
+- A primeira recuperação de delegação é não terminal e silenciosa; a Jarvis não
+  anuncia mais que o agente sintético de supervisão está travado.
+
+### Jarvis e squads
+- “Abrir modo squad” abre o seletor de squads existentes. O passo visível do
+  wizard e os nomes salvos entram no contexto de tela para a Jarvis perguntar e
+  agir sobre opções reais, sem confundir seleção com criação de squad.
+- Comandos já reconhecidos pelo wake/STT seguem direto para o turno Live ou para
+  o fallback Classic, eliminando a segunda captura vazia e a resposta tardia.
+- Transcrições duplicadas entre realtime e wake passivo são descartadas. Uma
+  confirmação pendente ganha autoridade imediata, portanto “sim” e “não” são
+  roteados ao gate correto e não somem no filtro acústico genérico.
+
+### Interface e release
+- Home Deck alinha títulos, ações e linhas de squad; os chips de frota, cota e
+  custo compartilham altura e permanecem em uma única linha.
+- O modelo treinado `ei-jarvis-ptbr.onnx` permanece obrigatório e padrão no
+  pacote, com manifesto e SHA-256 verificados pelo smoke de produção.
+- App, servidor, lockfile, changelog e notas internas avançam juntos para
+  `0.15.2`.
+
 ## 0.15.1 — Supervision Handoff
 
 Data: 2026-07-13
