@@ -103,3 +103,15 @@ describe('parseGeminiOauthCredsJson', () => {
     });
   });
 });
+
+describe('windowsFromAgyTier', () => {
+  it('labels free-tier without inventing usedRatio', async () => {
+    const { windowsFromAgyTier } = await import('./agy-usage');
+    const w = windowsFromAgyTier({
+      currentTier: { id: 'free-tier', name: 'Antigravity' },
+    });
+    expect(w).toHaveLength(2);
+    expect(w.every((x) => x.usedRatio === null)).toBe(true);
+    expect(w[0]?.remainingLabel).toMatch(/free-tier/);
+  });
+});

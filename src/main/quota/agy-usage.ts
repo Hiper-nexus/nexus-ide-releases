@@ -9,7 +9,7 @@
  */
 
 import type { QuotaWindow } from '../../shared/quota-types';
-import { knownWindow } from './quota-normalize';
+import { knownWindow, unknownWindow } from './quota-normalize';
 import type { FetchLike } from './claude-oauth-usage';
 
 /** Public OAuth client embedded in @google/gemini-cli (same pattern as CLI). */
@@ -218,11 +218,11 @@ export async function fetchAgyUsageWindows(
       // fall through
     }
 
-    // 2) Free Antigravity often 403s on retrieveUserQuota. loadCodeAssist
-    //    still authenticates; it only returns tier metadata (no used%), so
-    //    we stay honest null — do not invent 0% from free-tier name alone.
+      // 2) Free / unlinked accounts: retrieveUserQuota → 403. loadCodeAssist
+    //    still returns currentTier (free-tier vs paid). Surface tier as a
+    //    remainingLabel on unknown windows — never invent used%.
     try {
-      await post(
+      const res = await post(
         AGY_LOAD_CODE_ASSIST_URL,
         JSON.stringify({
           metadata: {
@@ -231,6 +231,11 @@ export async function fetchAgyUsageWindows(
           },
         }),
       );
+      if (res.ok) {
+        const body = await res.json();
+        const tierWindows = windowsFromAgyTier(body);
+        if (tierWindows.length > 0) return tierWindows;
+      }
     } catch {
       // ignore
     }
@@ -240,4 +245,37 @@ export async function fetchAgyUsageWindows(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * When Google withholds used%, still show which tier Antigravity reports for
+ * this OAuth account (helps debug “I have Pro but API says free”).
+ */
+export function windowsFromAgyTier(body: unknown): QuotaWindow[] {
+  if (!body || typeof body !== 'object') return [];
+  const root = body as {
+    currentTier?: { id?: unknown; name?: unknown; upgradeSubscriptionText?: unknown };
+  };
+  const tier = root.currentTier;
+  if (!tier || typeof tier !== 'object') return [];
+  const id = typeof tier.id === 'string' ? tier.id : '';
+  const name = typeof tier.name === 'string' ? tier.name : 'AGY';
+  if (!id && !name) return [];
+
+  // remainingLabel is shown next to "—" — never a fake percentage.
+  let note = name;
+  if (id === 'free-tier') {
+    note = 'Google: free-tier (sem used%)';
+  } else if (id.includes('ultra')) {
+    note = `Google: ${name}`;
+  } else if (id) {
+    note = `Google: ${id}`;
+  }
+
+  const hours = unknownWindow('hours', '5 Horas');
+  const weekly = unknownWindow('weekly', 'Semanal');
+  return [
+    { ...hours, remainingLabel: note },
+    { ...weekly, remainingLabel: note },
+  ];
 }
