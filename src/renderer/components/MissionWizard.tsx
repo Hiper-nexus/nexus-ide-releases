@@ -398,7 +398,7 @@ export function MissionWizard() {
             new Promise<never>((_, reject) => {
               timeout = setTimeout(
                 () => reject(new Error('O arquiteto demorou demais. Tente novamente.')),
-                150_000,
+                10_000,
               );
             }),
           ]);

@@ -263,7 +263,14 @@ export async function designSquadFromIntent(
 ): Promise<ArchitectResult> {
   const clean = intent.trim();
   if (!clean) return { ok: false, error: 'descreva o objetivo da missão' };
-  return designSquad({ workspacePath, intent: clean.slice(0, 4_000) });
+  // Interactive UX must not wait for a remote model/Doctor. The deterministic
+  // router already uses live installed adapters and mission capabilities; the
+  // user can review/edit the roster on the next screen immediately.
+  return deterministicSquadFallback(
+    workspacePath,
+    clean.slice(0, 4_000),
+    'Time montado localmente',
+  );
 }
 
 async function designSquad(opts: {
