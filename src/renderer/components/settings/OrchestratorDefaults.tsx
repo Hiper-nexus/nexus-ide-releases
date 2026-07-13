@@ -3,6 +3,7 @@ import type { AccountInfo } from '../../../shared/account-types';
 import type { OrchSettings } from '../../../shared/settings-types';
 import type { AdapterInfo } from '../../../shared/types';
 import { isOrchestratorCapableAdapter } from '../../orch/orchestrator-runtime';
+import { ProviderLogo } from '../ProviderLogo';
 
 type OrchestratorDefaultsValue = Pick<
   OrchSettings,
@@ -119,11 +120,21 @@ export function OrchestratorDefaults() {
   return (
     <div className="settings-orchestrator" aria-busy={loading || saving}>
       <div className="settings-orchestrator__head">
-        <div>
-          <h4 className="settings-orchestrator__title">Orquestrador agêntico</h4>
-          <p className="settings-orchestrator__summary">
-            Escolha o CLI que coordena o squad, seu modelo e sua conta.
-          </p>
+        <div className="settings-orchestrator__provider">
+          {selectedAdapter && (
+            <ProviderLogo
+              adapterId={selectedAdapter.id}
+              label={selectedAdapter.label}
+              fallback={selectedAdapter.icon}
+              size="sm"
+            />
+          )}
+          <div>
+            <h4 className="settings-orchestrator__title">Orquestrador agêntico</h4>
+            <p className="settings-orchestrator__summary">
+              Escolha o CLI que coordena o squad, seu modelo e sua conta.
+            </p>
+          </div>
         </div>
         <span
           className={`settings-chip ${providerUnavailable ? 'settings-chip--warn' : 'settings-chip--ok'}`}

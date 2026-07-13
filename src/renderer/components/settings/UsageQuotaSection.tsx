@@ -3,6 +3,7 @@ import { useQuotaStore } from '../../state/quota-store';
 import { useSettingsStore } from '../../state/settings-store';
 import { windowDisplay } from '../../lib/quota-display';
 import type { ProviderQuotaEntry } from '../../../shared/quota-types';
+import { ProviderLogo } from '../ProviderLogo';
 
 /**
  * Settings → Uso e cotas: fleet list of provider quota windows.
@@ -16,6 +17,7 @@ function EntryCard({ entry }: { entry: ProviderQuotaEntry }) {
       data-adapter={entry.adapterId}
     >
       <div className="quota-entry__head">
+        <ProviderLogo adapterId={entry.adapterId} label={entry.label} size="sm" />
         <span
           className={`quota-entry__led ${
             entry.onCooldown

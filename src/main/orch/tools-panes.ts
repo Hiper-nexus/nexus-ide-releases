@@ -24,7 +24,7 @@ import { getContextWorkflowService } from '../context/context-workflow-registry'
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 
-/** The 10 pane tools of the embedded MCP server (tool group 1). */
+/** The 11 pane tools of the embedded MCP server (tool group 1). */
 
 export function childMissionId(
   ctx: AgentGateContext,
@@ -192,6 +192,34 @@ const paneList: McpToolDef = {
     '(spawning|busy|idle|exited), adapter, model and mission binding.',
   inputSchema: { type: 'object', properties: {} },
   handler: async (_args, ctx) => listVisiblePaneSnapshots(ctx),
+};
+
+const paneWhoami: McpToolDef = {
+  name: 'nexus_pane_whoami',
+  description:
+    'Describe the calling pane and its effective authority: role, mission, ' +
+    'agent/provider identity, project scope and tool/skill grants. Never returns ' +
+    'the bearer token.',
+  inputSchema: { type: 'object', properties: {} },
+  handler: async (_args, ctx) => ({
+    label: ctx.label,
+    role: ctx.role,
+    sessionId: ctx.sessionId,
+    missionId: ctx.missionId,
+    contextRevision: ctx.contextRevision,
+    agentName: ctx.agentName,
+    providerId: ctx.providerId,
+    readOnly: ctx.readOnly === true,
+    scope: {
+      installationId: ctx.scope.installationId,
+      projectId: ctx.scope.projectId,
+      checkoutId: ctx.scope.checkoutId,
+      rootRealPath: ctx.scope.rootRealPath,
+    },
+    executionRoot: ctx.executionScope?.rootRealPath ?? ctx.scope.rootRealPath,
+    allowedTools: ctx.allowedTools,
+    allowedSkills: ctx.allowedSkills,
+  }),
 };
 
 const paneListProviders: McpToolDef = {
@@ -427,6 +455,7 @@ export function buildPaneTools(): McpToolDef[] {
   return [
     paneSpawn,
     paneList,
+    paneWhoami,
     paneListProviders,
     paneRead,
     paneReadMany,

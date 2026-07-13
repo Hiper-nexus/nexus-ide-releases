@@ -4,7 +4,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Squad } from "../../shared/orch-types";
 import { testProjectScope } from "./__tests__/scope-fixture";
-import { bindSpawnAuthority, resolveSpawnAuthority } from "./spawn-authority";
+import {
+  bindSpawnAuthority,
+  isKnownLegacySquadSpawnRequest,
+  resolveSpawnAuthority,
+} from "./spawn-authority";
 
 const tempDirs: string[] = [];
 
@@ -41,6 +45,18 @@ const squad: Squad = {
 };
 
 describe("spawn authority resolution", () => {
+  it("reconhece somente ids de squad persistidos no main", () => {
+    expect(
+      isKnownLegacySquadSpawnRequest("squad-nexus-review-abc123", [squad]),
+    ).toBe(true);
+    expect(
+      isKnownLegacySquadSpawnRequest("squad-inventado-abc123", [squad]),
+    ).toBe(false);
+    expect(
+      isKnownLegacySquadSpawnRequest("squad-nexus-review-!!!", [squad]),
+    ).toBe(false);
+  });
+
   it("keeps a trusted pending binding unchanged", () => {
     const pending = {
       missionId: "mission-a",

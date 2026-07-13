@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 /**
  * Imagens escolhidas via Fototeca/iCloud chegam como caminhos temporários
@@ -31,7 +32,14 @@ export async function copyHatchImage(
 ): Promise<string> {
   const dir = path.join(userDataDir, 'pet-hatch');
   await fs.mkdir(dir, { recursive: true });
-  const name = stableHatchImageName(path.basename(sourcePath), Date.now());
+  const digest = createHash('sha256')
+    .update(await fs.readFile(sourcePath))
+    .digest('hex')
+    .slice(0, 16);
+  const name = stableHatchImageName(
+    path.basename(sourcePath),
+    Number.parseInt(digest.slice(0, 12), 16),
+  );
   const dest = path.join(dir, name);
   await fs.copyFile(sourcePath, dest);
   return dest;

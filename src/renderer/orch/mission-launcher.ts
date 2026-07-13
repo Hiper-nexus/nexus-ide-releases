@@ -1,5 +1,6 @@
 import type { AdapterInfo, PaneModel } from "../../shared/types";
 import type { Squad, SquadAgent } from "../../shared/orch-types";
+import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import { QUOTA_HIGH_USAGE_THRESHOLD } from "../../shared/quota-types";
 import { useLayoutStore } from "../state/layout-store";
 import { useHomeStore } from "../state/home-store";
@@ -102,7 +103,23 @@ export function buildMissionKickoffPrompt(
   squad: Squad,
   missionId?: string,
   orientationMarkdown?: string | null,
+  profile: SquadLaunchProfile = 'standard',
 ): string {
+  if (profile === 'pet-studio') {
+    return [
+      squad.orchestratorInstructions.trim(),
+      '## Execução direta\n' +
+        'Esta é uma missão visual dedicada e já está registrada e em execução. ' +
+        'Permaneça nesta sessão, não delegue e não envie comandos de continuação. ' +
+        'Use a skill hatch-pet diretamente; ela contém o contrato e o QA completos. ' +
+        'Depois que o pacote validado existir, chame nexus_handoff_submit uma única vez ' +
+        'com status success e artifacts contendo os caminhos absolutos de ' +
+        'spritesheet.webp e pet.json. A resposta confirma a conclusão ou informa ' +
+        'exatamente o que corrigir.',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  }
   const parts: string[] = [];
   if (squad.orchestratorInstructions.trim()) {
     parts.push(squad.orchestratorInstructions.trim());
@@ -207,6 +224,58 @@ export interface SquadLaunchResult {
   error?: string;
 }
 
+export type SquadLaunchProfile = 'standard' | 'pet-studio';
+
+export interface SquadLaunchOptions {
+  /** Lightweight profiles can bypass the repository orchestration playbook. */
+  profile?: SquadLaunchProfile;
+  /** Dedicated squads may require a specific provider regardless of defaults. */
+  adapterId?: string;
+}
+
+interface MissionMaterializationInput {
+  paneId: string;
+  title: string;
+  squadId: string;
+  orchestratorPane: {
+    paneId: string;
+    adapterId: string;
+    model?: string;
+    accountId?: string;
+    cwd?: string;
+    title?: string;
+    agentName?: string;
+  };
+}
+
+interface MissionMaterializationDeps {
+  waitForSession(paneId: string): Promise<string | null>;
+  createMission(
+    input: Omit<MissionMaterializationInput, 'paneId'>,
+  ): ReturnType<typeof window.nexus.orch.createMission>;
+}
+
+/** Autoridade só existe quando o PTY concreto e o registro persistido existem. */
+export async function materializeSquadMission(
+  input: MissionMaterializationInput,
+  deps: MissionMaterializationDeps = {
+    waitForSession,
+    createMission: (missionInput) =>
+      window.nexus.orch.createMission(missionInput),
+  },
+) {
+  const sessionId = await deps.waitForSession(input.paneId);
+  if (!sessionId) {
+    throw new Error('O terminal do orquestrador não iniciou em 20 segundos.');
+  }
+  const mission = await deps.createMission({
+    title: input.title,
+    squadId: input.squadId,
+    orchestratorPane: input.orchestratorPane,
+  });
+  return { sessionId, mission };
+}
+
 /**
  * A freshly hydrated workspace contains one placeholder shell. Starting a
  * squad replaces placeholder-only layouts instead of leaving an unexplained
@@ -234,7 +303,11 @@ const squadLaunchesInFlight = new Map<string, string>();
 export async function launchSquadMission(
   squad: Squad,
   adapters: AdapterInfo[],
+  options: SquadLaunchOptions = {},
 ): Promise<SquadLaunchResult> {
+  const profile: SquadLaunchProfile =
+    options.profile ??
+    (squad.id === PET_STUDIO_SQUAD_ID ? 'pet-studio' : 'standard');
   const orchestrator =
     squad.agents.find((a) => a.category === "orchestrator") ?? squad.agents[0];
   if (!orchestrator) {
@@ -247,7 +320,10 @@ export async function launchSquadMission(
     window.nexus.quota?.snapshot?.().catch(() => null) ?? Promise.resolve(null),
   ]);
   const configuredAdapterId =
-    orchDefaults.defaultAdapterId || FALLBACK_ORCHESTRATOR_ADAPTER_ID;
+    options.adapterId ||
+    (profile === 'pet-studio' ? 'codex' : undefined) ||
+    orchDefaults.defaultAdapterId ||
+    FALLBACK_ORCHESTRATOR_ADAPTER_ID;
   const selectedAdapter = adapters.find(
     (adapter) => adapter.id === configuredAdapterId,
   );
@@ -376,46 +452,68 @@ export async function launchSquadMission(
     panesAfterSquadLaunch(existing, killedIds, orchPane),
   );
 
-  // Kickoff injection runs async — the wizard closes immediately, the
-  // instructions land as soon as the CLI is booted and idle.
+  // Só confirma sucesso depois que PTY e missão existem. Antes este trecho
+  // inteiro rodava em background: timeout/IPC falhava silenciosamente, o
+  // wizard fechava e sobrava apenas um squad órfão no banco.
+  let sessionId: string | null = null;
+  let mission: Awaited<ReturnType<typeof window.nexus.orch.createMission>>;
+  try {
+    for (const missionId of displaced) {
+      await window.nexus.orch
+        .updateMission(missionId, { status: "blocked" })
+        .catch(() => {}); // missão já removida — nada a marcar
+    }
+    const materialized = await materializeSquadMission({
+      paneId: orchPane.id,
+      title: squad.name,
+      squadId: squad.id,
+      orchestratorPane: {
+        paneId: orchPane.id,
+        adapterId: cli,
+        model,
+        accountId,
+        cwd,
+        title: orchPane.title,
+        agentName: orchestrator.agentName,
+      },
+    });
+    sessionId = materialized.sessionId;
+    mission = materialized.mission;
+    useOrchStore.getState().bindPaneMission(orchPane.id, mission.id);
+    if (profile === 'pet-studio') {
+      await window.nexus.orch.updateMission(mission.id, { status: 'running' });
+    }
+  } catch (cause) {
+    if (sessionId) window.nexus.pty.kill(sessionId);
+    useLayoutStore.getState().setPanes(
+      listPanes(useLayoutStore.getState().root).filter(
+        (pane) => pane.id !== orchPane.id,
+      ),
+    );
+    squadLaunchesInFlight.delete(launchKey);
+    return {
+      ok: false,
+      error:
+        cause instanceof Error
+          ? `A missão não foi iniciada: ${cause.message}`
+          : 'A missão não foi iniciada.',
+    };
+  }
+
+  // Com a autoridade persistida, só a espera pelo idle e a injeção do kickoff
+  // continuam em background.
   void (async () => {
     try {
-      for (const missionId of displaced) {
-        await window.nexus.orch
-          .updateMission(missionId, { status: "blocked" })
-          .catch(() => {}); // missão já removida — nada a marcar
-      }
-      // Mission creation is an authority transition. Wait until the main
-      // process owns the concrete PTY session and the pane mirror has received
-      // its sessionId; payload-only panes are intentionally rejected.
-      const sessionId = await waitForSession(orchPane.id);
-      if (!sessionId) return;
-      const mission = await window.nexus.orch
-        .createMission({
-          title: squad.name,
-          squadId: squad.id,
-          orchestratorPane: {
-            paneId: orchPane.id,
-            adapterId: cli,
-            model,
-            accountId,
-            cwd,
-            title: orchPane.title,
-            agentName: orchestrator.agentName,
-          },
-        })
-        .catch(() => null);
-      if (mission) {
-        useOrchStore.getState().bindPaneMission(orchPane.id, mission.id);
-      }
       await waitFirstIdle(sessionId);
-      const orientation = await window.nexus.orientation
-        .ensure()
-        .catch(() => null);
+      const orientation =
+        profile === 'pet-studio'
+          ? null
+          : await window.nexus.orientation.ensure().catch(() => null);
       const prompt = buildMissionKickoffPrompt(
         squad,
-        mission?.id,
+        mission.id,
         orientation?.orientationMarkdown ?? null,
+        profile,
       );
       // Bracketed paste keeps multi-line playbooks from submitting line-by-line.
       window.nexus.pty.write(sessionId, `\x1b[200~${prompt}\x1b[201~`);

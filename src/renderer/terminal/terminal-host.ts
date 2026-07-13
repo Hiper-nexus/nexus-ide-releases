@@ -46,6 +46,8 @@ interface Host {
   spawnStarted: boolean;
   hibernated: boolean;
   disposed: boolean;
+  /** True while the viewport should keep following parsed PTY output. */
+  followOutput: boolean;
   cleanups: Array<() => void>;
   /** Devolve o slot de WebGL ao pool quando o host morre. */
   webglRelease?: () => void;
@@ -342,6 +344,11 @@ function startSpawn(
           writeTerminalOutput(host.term, data, {
             foreground: focused,
             latencySensitive: focused,
+            onParsed: () => {
+              if (!host.disposed && host.followOutput) {
+                host.term.scrollToBottom();
+              }
+            },
           });
         }),
       );
@@ -496,6 +503,7 @@ function createShellHost(pane: PaneModel): Host {
     spawnStarted: false,
     hibernated: false,
     disposed: false,
+    followOutput: true,
     cleanups: [],
   };
 
@@ -505,6 +513,9 @@ function createShellHost(pane: PaneModel): Host {
   term.onTitleChange((title) =>
     useLayoutStore.getState().setTitle(pane.id, title),
   );
+  term.onScroll((viewportY) => {
+    host.followOutput = viewportY >= host.term.buffer.active.baseY;
+  });
   element.addEventListener('mousedown', () =>
     useLayoutStore.getState().focus(pane.id),
   );
@@ -532,6 +543,7 @@ function createCliAgentHost(pane: PaneModel): Host {
     spawnStarted: false,
     hibernated: false,
     disposed: false,
+    followOutput: true,
     cleanups: [],
   };
 
@@ -541,6 +553,9 @@ function createCliAgentHost(pane: PaneModel): Host {
   term.onTitleChange((title) =>
     useLayoutStore.getState().setTitle(pane.id, title),
   );
+  term.onScroll((viewportY) => {
+    host.followOutput = viewportY >= host.term.buffer.active.baseY;
+  });
   element.addEventListener('mousedown', () =>
     useLayoutStore.getState().focus(pane.id),
   );
@@ -682,7 +697,16 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
   if (!host.opened) {
     host.term.open(host.element);
     if (pane.terminalScrollback) {
-      host.term.write(pane.terminalScrollback);
+      host.followOutput = true;
+      host.term.write(pane.terminalScrollback, () => {
+        if (host.disposed || !host.followOutput) return;
+        host.term.scrollToBottom();
+        try {
+          host.term.refresh(0, Math.max(0, host.term.rows - 1));
+        } catch {
+          // The next PTY write will paint after an early restore race.
+        }
+      });
     }
     if (webglInUse < WEBGL_MAX) {
       try {

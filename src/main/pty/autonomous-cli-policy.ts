@@ -78,9 +78,34 @@ function appendOnce(args: string[], sequence: readonly string[]): void {
   if (!alreadyPresent) args.push(...sequence);
 }
 
+function requestedFullAutoSequence(
+  adapter: CliPtyAdapter,
+  args: readonly string[],
+): readonly string[] {
+  const permission = adapter.control?.permission;
+  if (!permission) return [];
+  if (
+    permission.yolo.length > 0 &&
+    permission.yolo.every((arg) => args.includes(arg))
+  ) {
+    return permission.yolo;
+  }
+  if (!permission.arg) return [];
+  for (const mode of ['yolo', 'bypass'] as const) {
+    const value = permission.modes[mode];
+    if (!value) continue;
+    const index = args.findIndex(
+      (arg, offset) => arg === permission.arg && args[offset + 1] === value,
+    );
+    if (index >= 0) return [permission.arg, value];
+  }
+  return [];
+}
+
 /**
- * Apply provider permission flags while preserving an explicit full-auto
- * choice for writable panes. Explicit read-only authority always wins.
+ * Apply provider permission flags without silently downgrading an explicit
+ * full-auto choice. Squad role/read-only metadata scopes Nexus MCP authority;
+ * it must not override the permission mode the user selected for the CLI.
  */
 export function secureAutonomousCliArgs(
   adapter: CliPtyAdapter,
@@ -90,9 +115,12 @@ export function secureAutonomousCliArgs(
   const permission = adapter.control?.permission;
   const usesNexusOnlyTools = adapter.quirks.mcpAutoload;
   const safeArgs = permission?.safe ?? [];
-  const requestedYolo = (permission?.yolo ?? []).length > 0 &&
-    (permission?.yolo ?? []).every((arg) => currentArgs.includes(arg));
-  if (!usesNexusOnlyTools && safeArgs.length === 0 && (!requestedYolo || readOnly)) {
+  const requestedFullAuto = requestedFullAutoSequence(adapter, currentArgs);
+  if (
+    !usesNexusOnlyTools &&
+    safeArgs.length === 0 &&
+    (requestedFullAuto.length === 0 || readOnly)
+  ) {
     throw new Error(
       `adapter ${adapter.id} does not declare enforceable autonomous confinement`,
     );
@@ -104,14 +132,16 @@ export function secureAutonomousCliArgs(
   }
   appendOnce(args, safeArgs);
 
-  // Preserve the user's full-auto choice for writable panes/workers. Explicit
-  // read-only authority remains stronger than a provider preference.
-  if (requestedYolo && !readOnly) {
+  // Full-auto is a product/user setting, not a squad-role setting. Keep it for
+  // workers, coordinators and reviewers alike. Previously Codex reviewers
+  // lost --dangerously-bypass-approvals-and-sandbox here and stopped on every
+  // MCP call even though the provider was configured as YOLO.
+  if (requestedFullAuto.length > 0) {
     args = removeSequence(args, safeArgs);
-    appendOnce(args, permission?.yolo ?? []);
+    appendOnce(args, requestedFullAuto);
   }
 
-  if (readOnly && !usesNexusOnlyTools) {
+  if (readOnly && !usesNexusOnlyTools && requestedFullAuto.length === 0) {
     const declaresReadOnly = safeArgs.some((arg) =>
       /read[-_ ]?only/i.test(arg),
     );
@@ -122,11 +152,7 @@ export function secureAutonomousCliArgs(
     }
     if (adapter.id === 'codex') {
       args = removeSequence(args, ['--sandbox', 'workspace-write']);
-      args = removeSequence(args, ['--ask-for-approval', 'on-request']);
-      args = removeSequence(args, ['--ask-for-approval', 'untrusted']);
-      args = removeSequence(args, ['--ask-for-approval', 'on-failure']);
       appendOnce(args, ['--sandbox', 'read-only']);
-      appendOnce(args, ['--ask-for-approval', 'never']);
     }
   }
 

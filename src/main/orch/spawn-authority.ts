@@ -63,6 +63,14 @@ function legacySquadAuthority(
   };
 }
 
+/** Mantém apenas ids legados que o main consegue ligar a um squad real. */
+export function isKnownLegacySquadSpawnRequest(
+  requestId: string,
+  squads: readonly Squad[],
+): boolean {
+  return legacySquadAuthority(requestId, squads) !== null;
+}
+
 /**
  * Resolve only main-side spawn authority. A renderer may carry an opaque
  * request id, but it never gets to invent a role or allowlist. Legacy squad

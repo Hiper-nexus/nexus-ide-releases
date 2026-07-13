@@ -1,5 +1,14 @@
-import { describe, expect, it } from 'vitest';
-import { stableHatchImageName } from './pet-hatch-image';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { copyHatchImage, stableHatchImageName } from './pet-hatch-image';
+
+const dirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true })));
+});
 
 describe('stableHatchImageName', () => {
   it('limpa querystring/acentos do nome da Fototeca e normaliza a extensão', () => {
@@ -18,5 +27,22 @@ describe('stableHatchImageName', () => {
 
   it('cai para "pet" quando o stem não sobra', () => {
     expect(stableHatchImageName('!!!.webp', 1)).toBe('pet-1.webp');
+  });
+});
+
+describe('copyHatchImage', () => {
+  it('reutiliza o mesmo destino para conteúdo idêntico', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'nexus-pet-hatch-'));
+    dirs.push(root);
+    const a = path.join(root, 'Meu Gato.jpg');
+    const b = path.join(root, 'Outra Cópia.jpg');
+    await writeFile(a, 'same-image-bytes');
+    await writeFile(b, 'same-image-bytes');
+
+    const first = await copyHatchImage(a, root);
+    const again = await copyHatchImage(a, root);
+
+    expect(again).toBe(first);
+    expect(await readFile(first, 'utf8')).toBe('same-image-bytes');
   });
 });

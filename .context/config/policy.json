@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "mode": "enforce",
+  "protectedPaths": [
+    ".context"
+  ],
+  "evidence": {
+    "trustedProducer": "nexus",
+    "bind": [
+      "projectId",
+      "checkoutId",
+      "missionId",
+      "baseSha",
+      "headSha",
+      "diffHash",
+      "contractHash",
+      "contextHash",
+      "sensorConfigHash"
+    ],
+    "blockOnSeverities": [
+      "critical",
+      "high"
+    ]
+  },
+  "review": {
+    "requireIndependentAuthor": true,
+    "requireDifferentProviderFor": [
+      "high",
+      "critical"
+    ],
+    "minimumReviewers": {
+      "high": 1,
+      "critical": 2
+    }
+  }
+}

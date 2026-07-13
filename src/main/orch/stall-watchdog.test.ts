@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shouldFlagStall, shouldRecoverStall, STALL_MS, STALL_RECOVERY_MS } from './stall-watchdog';
+import { shouldFlagStall, STALL_MS } from './stall-watchdog';
 
 const NOW = 10_000_000;
 
@@ -7,7 +7,7 @@ function candidate(overrides: Partial<Parameters<typeof shouldFlagStall>[0]> = {
   return {
     role: 'worker' as const,
     state: 'busy',
-    lastDataAt: NOW - STALL_MS - 1,
+    lastActivityAt: NOW - STALL_MS - 1,
     alreadyFlagged: false,
     ...overrides,
   };
@@ -19,7 +19,7 @@ describe('shouldFlagStall', () => {
   });
 
   it('não flagra silêncio abaixo do limite', () => {
-    expect(shouldFlagStall(candidate({ lastDataAt: NOW - STALL_MS + 5_000 }), NOW)).toBe(
+    expect(shouldFlagStall(candidate({ lastActivityAt: NOW - STALL_MS + 5_000 }), NOW)).toBe(
       false,
     );
   });
@@ -36,16 +36,5 @@ describe('shouldFlagStall', () => {
 
   it('não re-alerta sessão já sinalizada (anti-spam)', () => {
     expect(shouldFlagStall(candidate({ alreadyFlagged: true }), NOW)).toBe(false);
-  });
-
-  it('só recupera worker já alertado após o segundo limite', () => {
-    expect(shouldRecoverStall(candidate({
-      alreadyFlagged: true,
-      lastDataAt: NOW - STALL_RECOVERY_MS - 1,
-    }), NOW)).toBe(true);
-    expect(shouldRecoverStall(candidate({
-      alreadyFlagged: false,
-      lastDataAt: NOW - STALL_RECOVERY_MS - 1,
-    }), NOW)).toBe(false);
   });
 });

@@ -35,6 +35,7 @@ const READ_ONLY_TOOLS = new Set([
   'mission_get',
   'mission_list',
   'pane_list',
+  'pane_whoami',
   'pane_list_providers',
   'pane_read',
   'pane_read_many',

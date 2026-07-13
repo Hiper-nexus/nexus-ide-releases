@@ -45,6 +45,130 @@
   }
 }
 
+/* Capability Harness — one operational surface for arsenal + executable recipes. */
+.harness-hub {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.harness-hub__intro {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.harness-hub__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.harness-hub__metric {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft, var(--surface));
+}
+
+.harness-hub__metric span,
+.harness-hub__origin {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.harness-hub__metric strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 18px;
+}
+
+.harness-hub__tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.harness-hub__tabs button {
+  padding: 8px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.harness-hub__tabs button.is-active {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.harness-hub__filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.harness-hub__search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: min(100%, 320px);
+  flex: 1;
+}
+
+.harness-hub__search > svg {
+  position: absolute;
+  left: 10px;
+  z-index: 1;
+  color: var(--text-dim);
+}
+
+.harness-hub__search .settings-input {
+  width: 100%;
+  padding-left: 30px;
+}
+
+.harness-hub__origin {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.harness-hub__inventory {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.harness-hub__inventory .settings-list__detail strong {
+  color: var(--text);
+}
+
+.harness-hub__foot {
+  text-align: right;
+}
+
+@media (max-width: 760px) {
+  .harness-hub__intro {
+    flex-direction: column;
+  }
+
+  .harness-hub__metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .settings-nav {
   flex: 0 0 244px;
   display: flex;
@@ -1528,6 +1652,12 @@
   outline-offset: 2px;
 }
 
+.rank-missions__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
 .rank-missions__kind {
   font-size: 10px;
   font-weight: 700;
@@ -1615,7 +1745,7 @@
 
 .rank-race__row {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1.1fr) minmax(80px, 1.6fr) 52px;
+  grid-template-columns: 28px 24px minmax(0, 1.1fr) minmax(80px, 1.6fr) 52px;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -1824,6 +1954,19 @@
   color: var(--text-dim);
 }
 
+.rank-radar__identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.rank-radar__identity-copy {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+
 .rank-radar__caption strong {
   color: var(--text);
   font-family: var(--font-mono);
@@ -1849,8 +1992,15 @@
 .rank-ops__detail-head {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 8px 12px;
+}
+
+.rank-ops__detail-identity {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .rank-ops__detail-name {
@@ -1914,7 +2064,7 @@
   }
 
   .rank-race__row {
-    grid-template-columns: 28px minmax(0, 1fr) 48px;
+    grid-template-columns: 28px 24px minmax(0, 1fr) 48px;
   }
 
   .rank-race__track {

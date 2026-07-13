@@ -121,6 +121,29 @@ describe('handoff MCP stop receipt', () => {
     expect(mocks.markHandoffSubmitted).toHaveBeenCalledWith(ctx);
   });
 
+  it('returns the dedicated Pet Studio package validation result to the maker', async () => {
+    const submitted = handoff('unverified');
+    mocks.submit.mockReturnValue(submitted);
+    mocks.onHandoffSubmitted.mockReturnValue({
+      handled: true,
+      completed: false,
+      error: 'inclua o caminho absoluto de pet.json',
+    });
+
+    const result = await submitTool().handler(
+      { status: 'success', summary: submitted.summary },
+      context(),
+    );
+
+    expect(result).toMatchObject({
+      petStudioCompletion: {
+        handled: true,
+        completed: false,
+        error: 'inclua o caminho absoluto de pet.json',
+      },
+    });
+  });
+
   it('does not mark or deliver a rejected evidence claim', async () => {
     mocks.submit.mockImplementation(() => {
       throw new Error('trusted evidence "missing" not found');

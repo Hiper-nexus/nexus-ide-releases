@@ -61,4 +61,41 @@ describe('mission kickoff context/PREVC contract', () => {
     expect(prompt).toContain('piloto automático');
     expect(prompt).toContain('blast radius');
   });
+
+  it('keeps Pet Studio in one Codex session without repository pipeline', () => {
+    const petSquad: Squad = {
+      ...squad,
+      id: 'nexus-pet-studio',
+      name: 'Pet Studio',
+      orchestratorInstructions:
+        '# Pet Studio\nCrie o pet de `/tmp/cat.png` com hatch-pet.',
+      agents: [
+        {
+          id: 'pet-maker',
+          agentName: 'Pet Maker',
+          category: 'orchestrator',
+          cli: 'codex',
+        },
+      ],
+    };
+    const prompt = buildMissionKickoffPrompt(
+      petSquad,
+      'mission-pet',
+      '# must not be injected',
+      'pet-studio',
+    );
+
+    expect(prompt).toContain('/tmp/cat.png');
+    expect(prompt).toContain('hatch-pet');
+    expect(prompt).toContain('Permaneça nesta sessão');
+    expect(prompt).toContain('nexus_handoff_submit uma única vez');
+    expect(prompt).toContain('spritesheet.webp e pet.json');
+    expect(prompt).not.toContain('must not be injected');
+    expect(prompt).not.toContain('nexus_context_doctor');
+    expect(prompt).not.toContain('nexus_context_draft');
+    expect(prompt).not.toContain('nexus_pane_spawn');
+    expect(prompt).not.toContain('nexus_worktree_create');
+    expect(prompt).not.toContain('nexus_merge_task');
+    expect(prompt).not.toContain('PREVC');
+  });
 });

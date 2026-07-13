@@ -13,6 +13,7 @@ import { listPanes } from '../lib/split-tree';
 import { VoiceButton } from './VoiceButton';
 import { VisionIndicator } from './VisionIndicator';
 import { NexusMark } from './NexusMark';
+import { ProviderLogo } from './ProviderLogo';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { ActionCard, EmptyState } from './ActionCard';
 import { UpdateModal, UpdateStatusButton, useUpdateState } from './UpdateModal';
@@ -611,17 +612,27 @@ export function WorkspaceBar({
               <>
                 <label className="agent-picker__label">
                   Adaptador
-                  <select
-                    className="agent-picker__select"
-                    value={selectedAdapter?.id ?? ''}
-                    onChange={(e) => handleAdapterChange(e.target.value)}
-                  >
-                    {installedAdapters.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.icon} {a.label}
-                      </option>
-                    ))}
-                  </select>
+                  <span className="agent-picker__select-row">
+                    {selectedAdapter && (
+                      <ProviderLogo
+                        adapterId={selectedAdapter.id}
+                        label={selectedAdapter.label}
+                        fallback={selectedAdapter.icon}
+                        size="sm"
+                      />
+                    )}
+                    <select
+                      className="agent-picker__select"
+                      value={selectedAdapter?.id ?? ''}
+                      onChange={(e) => handleAdapterChange(e.target.value)}
+                    >
+                      {installedAdapters.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.label}
+                        </option>
+                      ))}
+                    </select>
+                  </span>
                 </label>
 
                 {selectedAdapter && selectedAdapter.models.list.length > 0 && (

@@ -75,6 +75,8 @@ describe('ProvidersPanel disclosure', () => {
     const disclosures = [...host.querySelectorAll<HTMLButtonElement>('.prov__disclosure')];
 
     expect(disclosures).toHaveLength(2);
+    expect(host.querySelectorAll('.provider-logo img')).toHaveLength(2);
+    expect(host.querySelectorAll('.prov__status-cluster')).toHaveLength(2);
     expect(disclosures[0].getAttribute('aria-expanded')).toBe('false');
     expect(host.textContent).not.toContain('Binário (vazio');
 

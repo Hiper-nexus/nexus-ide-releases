@@ -1,0 +1,48 @@
+/* Identidade compartilhada de providers. A moldura pertence ao Nexus; a marca
+   interna permanece com a geometria e as cores fornecidas pelo asset. */
+.provider-logo {
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-elevated) 78%, var(--bg));
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.provider-logo--sm {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+}
+.provider-logo--xs {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-xs);
+  box-shadow: none;
+  background: transparent;
+}
+.provider-logo img {
+  display: block;
+  width: 68%;
+  height: 68%;
+  object-fit: contain;
+}
+.provider-logo--xs img {
+  width: 82%;
+  height: 82%;
+}
+.provider-logo--mono img {
+  filter: brightness(0) invert(1);
+  opacity: 0.9;
+}
+.provider-logo__fallback {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+.provider-logo--xs .provider-logo__fallback {
+  font-size: 9px;
+}

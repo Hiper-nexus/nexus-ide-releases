@@ -1,12 +1,17 @@
 import type { Squad, SquadAgent } from '../../shared/orch-types';
+import {
+  PET_STUDIO_SQUAD,
+  PET_STUDIO_SQUAD_ID,
+} from '../../shared/pet-studio';
 
 /**
  * NEXUS ORIGINALS — squads embutidos, semeados no primeiro run (marcados
  * `builtin`) para que o Modo Squad funcione out-of-the-box, sem depender de
- * migração ou criação manual. O orquestrador roda SEMPRE no Claude (único CLI
- * que dirige o servidor MCP do Nexus de forma confiável); os workers podem ser
- * trocados no passo de revisão do wizard. Ids estáveis para não duplicar entre
- * versões; `createdAt` fixo para não churnar.
+ * migração ou criação manual. Squads de desenvolvimento usam Claude como
+ * orquestrador; o Pet Studio é a exceção visual deliberada, com um único Codex
+ * e sem pipeline de repositório. Os workers podem ser trocados no passo de
+ * revisão do wizard. Ids estáveis para não duplicar entre versões; `createdAt`
+ * fixo para não churnar.
  */
 
 const SEED_TS = '1704067200000'; // 2024-01-01, estável
@@ -19,7 +24,8 @@ const SPEAK_HUMAN =
 
 /**
  * Allowlist mínima e explícita por papel (SEC#5 — antes `null` = irrestrito em
- * todos). O orquestrador é o dono da missão e usa o toolset completo; todo
+ * todos). Em squads gerais o orquestrador é o dono da missão e usa o toolset
+ * completo; o Pet Studio declara `[]` explicitamente. Todo
  * worker é uma folha que só precisa entregar o handoff (nexus_handoff_submit é
  * sempre permitido), então seu `allowedTools` é `[]` — sem pane cross-access,
  * sem spawnar panes, sem controlar a missão. `allowedSkills` fica aberto de
@@ -48,6 +54,7 @@ export function withAllowlists(agents: SquadAgent[]): SquadAgent[] {
 }
 
 const RAW_SQUADS: Squad[] = [
+  PET_STUDIO_SQUAD,
   {
     id: 'nexus-fullstack',
     name: 'Full-Stack',
@@ -118,6 +125,9 @@ const RAW_SQUADS: Squad[] = [
 /** Built-in squads with the per-role tool allowlists applied (SEC#5). */
 export const BUILTIN_SQUADS: Squad[] = RAW_SQUADS.map((squad) => ({
   ...squad,
-  orchestratorInstructions: `${squad.orchestratorInstructions}${SPEAK_HUMAN}`,
+  orchestratorInstructions:
+    squad.id === PET_STUDIO_SQUAD_ID
+      ? squad.orchestratorInstructions
+      : `${squad.orchestratorInstructions}${SPEAK_HUMAN}`,
   agents: withAllowlists(squad.agents),
 }));

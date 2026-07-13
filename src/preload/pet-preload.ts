@@ -3,6 +3,7 @@ import {
   PET_CHANNELS,
   type NexusPetApi,
   type PetEvent,
+  type PetPlacement,
   type PetPrefs,
 } from '../shared/pet-types';
 
@@ -30,6 +31,11 @@ const api: NexusPetApi = {
     const listener = (_e: unknown, dir: number | null) => cb(dir);
     ipcRenderer.on(PET_CHANNELS.look, listener);
     return () => ipcRenderer.removeListener(PET_CHANNELS.look, listener);
+  },
+  onPlacement: (cb) => {
+    const listener = (_e: unknown, placement: PetPlacement) => cb(placement);
+    ipcRenderer.on(PET_CHANNELS.placement, listener);
+    return () => ipcRenderer.removeListener(PET_CHANNELS.placement, listener);
   },
   setInteractive: (interactive) =>
     ipcRenderer.send(PET_CHANNELS.setInteractive, interactive === true),

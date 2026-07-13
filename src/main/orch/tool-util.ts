@@ -106,7 +106,14 @@ export async function injectPrompt(
   prompt: string,
 ): Promise<void> {
   const safePrompt = assertSafePtyPrompt(prompt);
-  if (!orchWriteSession(sessionId, safePrompt)) {
+  // Agent briefs routinely contain Markdown and many newlines. Sending those
+  // bytes as ordinary keypresses makes interactive TUIs execute/repaint each
+  // line independently, producing the mashed, apparently frozen terminal.
+  // Bracketed paste makes the entire brief one editor transaction.
+  const input = safePrompt.includes('\n')
+    ? `\x1b[200~${safePrompt}\x1b[201~`
+    : safePrompt;
+  if (!orchWriteSession(sessionId, input)) {
     throw new Error('session is gone');
   }
   await delay(PROMPT_SETTLE_MS);

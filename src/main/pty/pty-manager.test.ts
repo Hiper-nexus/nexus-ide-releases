@@ -378,6 +378,50 @@ describe("cli-agent spawn argv hardening", () => {
     expect(h.specFor(worker.sessionId).args).not.toContain("read-only");
   });
 
+  it("keeps the configured Codex bypass on a read-only squad reviewer", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const base = makeAdapter({
+      static: {},
+      passthrough: [],
+      ephemeralHome: false,
+    });
+    const codex: CliPtyAdapter = {
+      ...base,
+      id: "codex",
+      control: {
+        permission: {
+          safe: ["--sandbox", "workspace-write", "--ask-for-approval", "on-request"],
+          yolo: ["--dangerously-bypass-approvals-and-sandbox"],
+          modes: { auto: "never" },
+          default: "",
+        },
+      },
+    };
+    const worker = revisionBoundWorker();
+    const reviewer: BoundSpawnAuthority = {
+      ...worker,
+      context: {
+        ...worker.context!,
+        readOnly: true,
+      },
+    };
+
+    const spawned = spawnAgentSession(
+      fakeWc(),
+      { kind: "cli-agent", cols: 80, rows: 24 },
+      codex,
+      { extraArgs: ["--dangerously-bypass-approvals-and-sandbox"] },
+      reviewer,
+    );
+
+    expect(h.specFor(spawned.sessionId).args).toContain(
+      "--dangerously-bypass-approvals-and-sandbox",
+    );
+    expect(h.specFor(spawned.sessionId).args).not.toContain("on-request");
+    expect(h.specFor(spawned.sessionId).args).not.toContain("read-only");
+  });
+
   it("reports every scoped agent session even when the provider chooses its id", () => {
     const h = fakeHost();
     setPtyHost(h.host);

@@ -4,6 +4,8 @@ import {
   requiresReadOnlyNativeAuthority,
   secureAutonomousCliArgs,
 } from './autonomous-cli-policy';
+import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
+import { adapterSchema } from '../../shared/adapter-types';
 
 function adapter(
   patch: Partial<CliPtyAdapter> & Pick<CliPtyAdapter, 'id'>,
@@ -69,7 +71,7 @@ describe('secureAutonomousCliArgs', () => {
     })).toBe(false);
   });
 
-  it('forces Codex reviewer panes into read-only/no-approval mode', () => {
+  it('keeps Codex reviewer panes safe when the user disables full-auto', () => {
     const codex = adapter({
       id: 'codex',
       quirks: {
@@ -90,9 +92,36 @@ describe('secureAutonomousCliArgs', () => {
 
     const args = secureAutonomousCliArgs(codex, [], true);
     expect(args).toContain('read-only');
-    expect(args).toContain('never');
+    expect(args).toContain('on-request');
     expect(args).not.toContain('workspace-write');
-    expect(args).not.toContain('on-request');
+    expect(args).not.toContain('never');
+    expect(args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+  });
+
+  it('preserves Codex YOLO for reviewers instead of prompting on MCP calls', () => {
+    const codex = adapter({
+      id: 'codex',
+      quirks: {
+        altScreen: false,
+        requiresNoAutoUpdate: false,
+        mcpAutoload: false,
+        nexusMcp: 'codex',
+      },
+      control: {
+        permission: {
+          safe: ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request'],
+          yolo: ['--dangerously-bypass-approvals-and-sandbox'],
+          modes: { auto: 'never' },
+          default: '',
+        },
+      },
+    });
+
+    expect(secureAutonomousCliArgs(
+      codex,
+      ['--dangerously-bypass-approvals-and-sandbox'],
+      true,
+    )).toEqual(['--dangerously-bypass-approvals-and-sandbox']);
   });
 
   it('rejects reviewer providers without enforceable read-only confinement', () => {
@@ -141,11 +170,50 @@ describe('secureAutonomousCliArgs', () => {
     expect(args).toContain('mcp__nexus');
     expect(args).not.toContain('--disallowedTools');
 
-    const coordinatorArgs = secureAutonomousCliArgs(claude, [], true);
+    const coordinatorArgs = secureAutonomousCliArgs(claude, [
+      '--dangerously-skip-permissions',
+    ], true);
+    expect(coordinatorArgs).toContain('--dangerously-skip-permissions');
+    expect(coordinatorArgs).not.toContain('manual');
     expect(coordinatorArgs).toContain('--disallowedTools');
     for (const tool of ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'Task']) {
       expect(coordinatorArgs).toContain(tool);
     }
+  });
+
+  it('keeps Claude bypass mode non-interactive for Nexus-only coordinators', () => {
+    const claude = adapter({
+      id: 'claude',
+      quirks: {
+        altScreen: true,
+        requiresNoAutoUpdate: false,
+        mcpAutoload: true,
+        nexusMcp: 'autoload',
+      },
+      control: {
+        permission: {
+          arg: '--permission-mode',
+          modes: { bypass: 'bypassPermissions' },
+          yolo: ['--dangerously-skip-permissions'],
+          safe: ['--permission-mode', 'manual'],
+          default: '',
+        },
+      },
+    });
+
+    const args = secureAutonomousCliArgs(claude, [
+      '--permission-mode',
+      'bypassPermissions',
+    ], true);
+
+    expect(args).toEqual(expect.arrayContaining([
+      '--permission-mode',
+      'bypassPermissions',
+      '--allowedTools',
+      'mcp__nexus',
+      '--disallowedTools',
+    ]));
+    expect(args).not.toContain('manual');
   });
 
   it('preserves Codex bypass for writable panes', () => {
@@ -181,5 +249,21 @@ describe('secureAutonomousCliArgs', () => {
       control: { permission: { modes: {}, yolo: ['--yolo'], default: '' } },
     });
     expect(secureAutonomousCliArgs(kimi, ['--yolo'])).toEqual(['--yolo']);
+  });
+
+  it('preserves each built-in provider native yolo flag for writable workers', () => {
+    const cliAdapters = BUILTIN_ADAPTERS
+      .map((raw) => adapterSchema.parse(raw))
+      .filter((item): item is CliPtyAdapter => item.kind === 'cli-pty');
+
+    for (const item of cliAdapters) {
+      const yolo = item.control.permission?.yolo ?? [];
+      if (yolo.length === 0) continue;
+      const args = secureAutonomousCliArgs(item, yolo, false);
+      for (const flag of yolo) expect(args, item.id).toContain(flag);
+      for (const safe of item.control.permission?.safe ?? []) {
+        expect(args, item.id).not.toContain(safe);
+      }
+    }
   });
 });

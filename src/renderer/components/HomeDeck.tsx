@@ -12,6 +12,7 @@ import { listPanes } from '../lib/split-tree';
 import { isMissingModelKeyError } from '../lib/credential-errors';
 import { NexusMark } from './NexusMark';
 import { PixelIcon } from './PixelIcon';
+import { AgentAvatar } from './AgentAvatar';
 
 /**
  * Home deck — the ops-deck empty state rendered over the pane area when a
@@ -223,6 +224,21 @@ export function HomeDeck() {
                     className="home-deck__squad"
                     onClick={() => openForSquad(s.id)}
                   >
+                    <span
+                      className="agent-avatar-group home-deck__squad-avatars"
+                      aria-label="Agentes do squad"
+                    >
+                      {s.agents.slice(0, 5).map((agent) => (
+                        <AgentAvatar
+                          key={agent.id}
+                          category={agent.category}
+                          state="offline"
+                          size="card"
+                          label={agent.agentName}
+                          className="home-deck__squad-avatar"
+                        />
+                      ))}
+                    </span>
                     <span className="home-deck__squad-name">{s.name}</span>
                     <span className="home-deck__squad-meta">{workerCount(s)}</span>
                     <span className="home-deck__squad-go" aria-hidden="true">

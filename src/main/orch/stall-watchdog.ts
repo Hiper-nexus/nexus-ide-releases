@@ -1,5 +1,9 @@
 import type { ProjectExecutionScope } from '../../shared/types';
-import { tapSessionData, tapSessionExit } from '../pty/pty-manager';
+import {
+  tapSessionData,
+  tapSessionExit,
+  tapSessionState,
+} from '../pty/pty-manager';
 import {
   getRendererWorkspaceScope,
   onRendererWorkspaceScopeChange,
@@ -12,7 +16,6 @@ import {
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { onHandoffSubmitted } from './idle-delivery';
 import { sameProjectScope } from './project-scoped-broadcast';
-import { requestSessionRecovery } from './failover';
 
 /**
  * Watchdog de stall (benchmark §4.4): um worker que fica BUSY em silêncio por
@@ -22,30 +25,22 @@ import { requestSessionRecovery } from './failover';
  * submete um handoff sintético `stalled` que acorda o orquestrador pela mesma
  * via de entrega dos handoffs reais (idle-delivery).
  *
- * Ação deliberadamente NÃO destrutiva: o watchdog nunca mata o worker (um
- * build longo é silêncio legítimo) — ele informa, e o orquestrador decide
- * (ler o pane, esperar mais, fechar). Um flag por sessão evita spam: só
- * re-alerta se o worker voltar a produzir output e travar DE NOVO.
+ * Ação deliberadamente NÃO destrutiva: o watchdog nunca mata nem reinicia o
+ * worker (um build longo é silêncio legítimo) — ele informa, e o orquestrador
+ * decide (ler o pane, esperar mais, fechar). Reiniciar automaticamente e
+ * injetar "Continue" pode repetir efeitos que a sessão anterior já executou.
+ * Um flag por sessão evita spam: só re-alerta se o worker voltar a produzir
+ * output/atividade e travar DE NOVO.
  */
 
 export const STALL_SCAN_MS = 30_000;
 export const STALL_MS = 10 * 60_000;
-export const STALL_RECOVERY_MS = 20 * 60_000;
 
 export interface StallCandidate {
   role?: 'orchestrator' | 'worker';
   state: string;
-  lastDataAt: number;
+  lastActivityAt: number;
   alreadyFlagged: boolean;
-}
-
-export function shouldRecoverStall(
-  c: StallCandidate,
-  now: number,
-  recoveryMs: number = STALL_RECOVERY_MS,
-): boolean {
-  return c.role === 'worker' && c.state === 'busy' && c.alreadyFlagged &&
-    now - c.lastDataAt >= recoveryMs;
 }
 
 /** Decisão pura (unit-testável): este worker deve ser sinalizado agora? */
@@ -57,7 +52,7 @@ export function shouldFlagStall(
   if (c.role !== 'worker') return false;
   if (c.state !== 'busy') return false;
   if (c.alreadyFlagged) return false;
-  return now - c.lastDataAt >= stallMs;
+  return now - c.lastActivityAt >= stallMs;
 }
 
 interface WatchAuthority {
@@ -70,9 +65,8 @@ interface WatchAuthority {
 
 interface WatchState {
   readonly authority: WatchAuthority;
-  lastDataAt: number;
+  lastActivityAt: number;
   isFlagged: boolean;
-  recoveryRequested: boolean;
 }
 
 const watches = new Map<string, WatchState>();
@@ -80,6 +74,7 @@ const ownerKeys = new WeakMap<OwnedPaneAuthzInfo['owner'], number>();
 let nextOwnerKey = 1;
 let scanTimer: ReturnType<typeof setInterval> | null = null;
 let untapData: (() => void) | null = null;
+let untapState: (() => void) | null = null;
 let untapExit: (() => void) | null = null;
 let unsubscribeScopeChanges: (() => void) | null = null;
 
@@ -138,7 +133,7 @@ function scan(now: number = Date.now(), stallMs: number = STALL_MS): void {
     liveKeys.add(key);
     let watch = watches.get(key);
     if (!watch) {
-      watch = { authority, lastDataAt: now, isFlagged: false, recoveryRequested: false };
+      watch = { authority, lastActivityAt: now, isFlagged: false };
       watches.set(key, watch);
     }
     const candidate: StallCandidate = {
@@ -146,26 +141,13 @@ function scan(now: number = Date.now(), stallMs: number = STALL_MS): void {
       state: pane.state,
       // Sessão que nunca emitiu output desde o boot do watchdog conta a partir
       // de agora (semeia no primeiro scan) — nunca flagra no arranque.
-      lastDataAt: watch.lastDataAt,
+      lastActivityAt: watch.lastActivityAt,
       alreadyFlagged: watch.isFlagged,
     };
-    if (
-      !watch.recoveryRequested &&
-      shouldRecoverStall(candidate, now)
-    ) {
-      watch.recoveryRequested = requestSessionRecovery(
-        authority.sessionId,
-        `worker sem output há ${Math.round((now - candidate.lastDataAt) / 60_000)} min; recuperação automática segura`,
-      );
-      if (watch.recoveryRequested) {
-        console.warn(`[watchdog] recovery requested: ${pane.paneId}`);
-      }
-      continue;
-    }
     if (!shouldFlagStall(candidate, now, stallMs)) continue;
 
     watch.isFlagged = true;
-    const minutes = Math.round((now - candidate.lastDataAt) / 60_000);
+    const minutes = Math.round((now - candidate.lastActivityAt) / 60_000);
     const handoff = getProjectDomainStores(authority.scope).handoffs.submit({
       status: 'stalled',
       summary:
@@ -185,19 +167,27 @@ function scan(now: number = Date.now(), stallMs: number = STALL_MS): void {
   }
 }
 
+function recordActivity(sessionId: string, now: number = Date.now()): void {
+  const authority = resolveAuthority(sessionId);
+  if (!authority) return;
+  watches.set(watchKey(authority), {
+    authority,
+    lastActivityAt: now,
+    isFlagged: false,
+  });
+}
+
 export function initStallWatchdog(): void {
   if (scanTimer) return;
   untapData = tapSessionData((sessionId) => {
-    const authority = resolveAuthority(sessionId);
-    if (!authority) return;
-    const key = watchKey(authority);
-    watches.set(key, {
-      authority,
-      lastDataAt: Date.now(),
-      isFlagged: false,
-      recoveryRequested: false,
-    });
+    recordActivity(sessionId);
     // Voltou a falar: re-arma o alerta para um eventual novo travamento.
+  });
+  // Provider hooks publish busy/idle/waiting heartbeats while a tool is active,
+  // even when its TUI emits no new printable bytes. Ignoring those heartbeats
+  // made the Doctor call a visibly coding agent "travado".
+  untapState = tapSessionState((sessionId, state) => {
+    if (state !== 'exited') recordActivity(sessionId);
   });
   untapExit = tapSessionExit((sessionId) => {
     for (const [key, watch] of [...watches]) {
@@ -232,6 +222,8 @@ export function shutdownStallWatchdog(): void {
   scanTimer = null;
   untapData?.();
   untapData = null;
+  untapState?.();
+  untapState = null;
   untapExit?.();
   untapExit = null;
   unsubscribeScopeChanges?.();

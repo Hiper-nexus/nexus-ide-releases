@@ -1,6 +1,8 @@
 import type { AdapterInfo } from '../../shared/types';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
+import { AgentAvatar } from './AgentAvatar';
+import { ProviderLogo } from './ProviderLogo';
 
 /**
  * Etapa REVISAR do Mission Wizard — roster editável (CLI/modelo/effort +
@@ -95,46 +97,60 @@ export function MissionWizardReview({
             >
               <div className="wizard__agent-main">
                 <div className="wizard__agent-identity">
+                  <AgentAvatar
+                    category={a.category}
+                    state="offline"
+                    size="card"
+                    label={a.agentName}
+                  />
                   <span className="wizard__roster-role">{a.category}</span>
                   <span className="wizard__roster-name" title={a.agentName}>
                     {a.agentName}
                   </span>
                 </div>
                 <div className="wizard__agent-controls">
-                  {isOrchestrator ? (
-                    <span
-                      className="wizard__mini-select wizard__mini-select--locked"
-                      title={
-                        orchestratorProviderReady
-                          ? 'Provider padrão do orquestrador. Altere em Configurações › Squads.'
-                          : 'Provider indisponível para orquestração Nexus MCP. Altere em Configurações › Squads.'
-                      }
-                    >
-                      {cliAdapter?.icon ?? '◆'} {cliAdapter?.label ?? a.cli}
-                      {orchestratorProviderReady ? '' : ' ⚠'}
-                    </span>
-                  ) : (
-                    <select
-                      className="wizard__mini-select"
-                      value={a.cli}
-                      onChange={(e) =>
-                        onUpdateAgent(a.id, {
-                          cli: e.target.value,
-                          model: undefined,
-                        })
-                      }
-                    >
-                      {adapters.map((x) => (
-                        <option key={x.id} value={x.id}>
-                          {x.icon} {x.label}
-                          {x.installed ? '' : ' ⚠'}
-                        </option>
-                      ))}
-                      {!adapters.some((x) => x.id === a.cli) && (
-                        <option value={a.cli}>{a.cli}</option>
-                      )}
-                    </select>
-                  )}
+                  <span className="wizard__provider-select">
+                    <ProviderLogo
+                      adapterId={a.cli}
+                      label={cliAdapter?.label ?? a.cli}
+                      fallback={cliAdapter?.icon}
+                      size="xs"
+                    />
+                    {isOrchestrator ? (
+                      <span
+                        className="wizard__mini-select wizard__mini-select--locked"
+                        title={
+                          orchestratorProviderReady
+                            ? 'Provider padrão do orquestrador. Altere em Configurações › Squads.'
+                            : 'Provider indisponível para orquestração Nexus MCP. Altere em Configurações › Squads.'
+                        }
+                      >
+                        {cliAdapter?.label ?? a.cli}
+                        {orchestratorProviderReady ? '' : ' ⚠'}
+                      </span>
+                    ) : (
+                      <select
+                        className="wizard__mini-select"
+                        value={a.cli}
+                        onChange={(e) =>
+                          onUpdateAgent(a.id, {
+                            cli: e.target.value,
+                            model: undefined,
+                          })
+                        }
+                      >
+                        {adapters.map((x) => (
+                          <option key={x.id} value={x.id}>
+                            {x.label}
+                            {x.installed ? '' : ' ⚠'}
+                          </option>
+                        ))}
+                        {!adapters.some((x) => x.id === a.cli) && (
+                          <option value={a.cli}>{a.cli}</option>
+                        )}
+                      </select>
+                    )}
+                  </span>
                 <select
                   className="wizard__mini-select"
                   value={a.model ?? cliAdapter?.models.default ?? ''}

@@ -12,6 +12,7 @@ export type SettingsSection =
   | 'usage-quota'
   | 'ranking'
   | 'squads'
+  | 'harness'
   | 'marketplace'
   | 'design-systems'
   | 'remote'
@@ -162,6 +163,14 @@ export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
     // First-class like Overclock/Orca — not buried under "Mais configurações".
     label: 'Arsenal',
     items: [
+      {
+        id: 'harness',
+        icon: 'HRN',
+        pixelIcon: 'board',
+        title: 'Harness',
+        subtitle: 'arsenal · recipes',
+        aliases: ['capabilities', 'enricher', 'enriquecedor', 'receitas'],
+      },
       {
         id: 'mcps',
         icon: 'MCP',

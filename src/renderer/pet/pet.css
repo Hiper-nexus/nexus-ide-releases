@@ -43,6 +43,25 @@ body,
   padding-bottom: 8px;
 }
 
+/*
+ * Canto visual sem overhang nativo: desloca somente o conteúdo opaco dentro
+ * dos 380×360 px transparentes. Assim o mascote toca o canto e o WindowServer
+ * nunca recebe pixels fora do display.
+ */
+.pet--left {
+  align-items: flex-start;
+}
+
+.pet--right {
+  align-items: flex-end;
+}
+
+.pet--top {
+  justify-content: flex-start;
+  padding-top: 8px;
+  padding-bottom: 0;
+}
+
 /* Fallback de compositor (Linux) ou preferência: cartão sólido arredondado. */
 .pet--solid .pet__hit {
   background: var(--pet-bg);
@@ -57,34 +76,27 @@ body,
   display: grid;
   place-items: center;
   cursor: grab;
-  /* Sem transform no hitbox: bob no visual evita mouseenter/leave no limiar
-     (cada toggle de setIgnoreMouseEvents recompõe a janela transparente). */
+  /* Hitbox fixa: bob/celebrate só no .pet__visual (não mexe no hit-test). */
 }
 
 .pet__hit:active {
   cursor: grabbing;
 }
 
-/* Camada visual: bob/celebrate NÃO movem a hitbox.
-   SEM will-change e SEM bob no modo transparente: transform contínuo em
-   janela transparent+alwaysOnTop pisca no compositor macOS (pior nos cantos). */
+/* Camada visual: bob leve (presença viva). */
 .pet__visual {
   position: relative;
   display: grid;
   place-items: center;
-}
-
-/* Bob só com fundo sólido (sem compositor transparente) ou se o user pedir. */
-.pet--solid .pet__visual {
   animation: pet-bob 3.2s ease-in-out infinite;
 }
 
 .pet__hit--sleeping .pet__visual {
   animation: none;
-  opacity: 0.78;
+  filter: saturate(0.55) brightness(0.8);
 }
 
-.pet--solid .pet__hit--celebrating .pet__visual {
+.pet__hit--celebrating .pet__visual {
   animation: pet-celebrate 0.5s ease-in-out infinite;
 }
 
@@ -93,16 +105,21 @@ body,
   animation: none;
 }
 
-/* O operador pixel (16×16 ampliado) precisa de punch sobre wallpaper.
-   SEM filter CSS: filter+transparent+alwaysOnTop pisca no compositor macOS. */
+/* Operador pixel: punch sobre wallpaper. */
 .pet__hit--pixel canvas {
   image-rendering: pixelated;
+  filter: saturate(1.3) brightness(1.18) contrast(1.06)
+    drop-shadow(0 3px 8px rgba(0, 0, 0, 0.55))
+    drop-shadow(0 0 12px color-mix(in srgb, var(--pet-accent) 35%, transparent));
 }
 
-/* Pets de spritesheet: nearest, sem drop-shadow (mesma razão). */
+/*
+ * Spritesheet full-res (notebook 3D): NÃO usar filter:drop-shadow no canvas.
+ * O drop-shadow do Chromium desenha a silhueta alpha do notebook outra vez
+ * deslocada → “dois notebooks a sair de lado”. Sombra só no pixel-art.
+ */
 .pet__hit--sheet canvas {
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
+  filter: none;
 }
 
 @keyframes pet-bob {
@@ -385,7 +402,7 @@ body,
   }
 }
 
-/* Attention pulse só com fundo sólido — transform em transparente pisca. */
-.pet--solid.pet--attention .pet__hit--waiting .pet__visual {
+/* Attention pulse no visual. */
+.pet--attention .pet__hit--waiting .pet__visual {
   animation: pet-attention 0.9s ease-in-out infinite;
 }

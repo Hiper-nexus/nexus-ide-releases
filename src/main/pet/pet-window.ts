@@ -6,6 +6,7 @@ import {
   isPetUrgentEvent,
   sanitizePetPrefsPatch,
   type PetEvent,
+  type PetPlacement,
   type PetPrefs,
 } from '../../shared/pet-types';
 import { RENDERER_PROTOCOL_ENTRY_URL } from '../renderer-protocol';
@@ -19,7 +20,7 @@ import {
   EDGE_OVERHANG_DRAG,
   EDGE_OVERHANG_SETTLE,
   isWithinPetOverhang,
-  petCoversMainSidebar,
+  snapPetToCursorEdges,
   windowIntersectsOffDisplay,
   type Rect,
 } from './pet-geometry';
@@ -53,17 +54,22 @@ import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace
  */
 
 /**
- * Janela do companion: sheet ~260px + balão + margem de arrasto.
- * (2×/416 era grande demais no desktop.)
+ * Janela do companion: largura só suficiente para sprite recortado + balão.
+ * 380px deixava uma grande superfície invisível entre o corpo e as laterais.
  */
-export const PET_WINDOW_SIZE = { width: 380, height: 360 } as const;
+export const PET_WINDOW_SIZE = { width: 300, height: 360 } as const;
 /**
  * Motor de arrasto. Log no boot: se não aparecer, o main é código velho.
- * free-v4 = arrasto livre no desktop virtual; settle assenta num display.
+ * compositor-v10 = janela normal pequena, canvas recortado/persistente e
+ * bounds físicos forçados depois do load (sem coordenadas divergentes de panel).
  */
-export const PET_DRAG_ENGINE = 'free-v4';
-/** Cadência do arrasto (ms). */
-const DRAG_TICK_MS = 16;
+export const PET_DRAG_ENGINE = 'compositor-v10';
+/**
+ * Cadência do arrasto (ms). 8 ms acompanha 120 Hz; o WindowServer faz o
+ * coalescing natural em monitores de 60/75 Hz. Como o caminho quente usa só
+ * setPosition, não há resize/repaint da superfície a cada amostra.
+ */
+const DRAG_TICK_MS = 8;
 /** Teto de um arrasto: além disso o watchdog assenta a janela sozinho. */
 const DRAG_MAX_MS = 30_000;
 /** Cadência do look (cursor → direção do olhar). 16 passos não pedem 60fps. */
@@ -207,8 +213,8 @@ function restoredPosition(): { x: number; y: number } {
   ) {
     return defaultPosition();
   }
-  // O display salvo pode ter sido desconectado: clampa para a workArea do
-  // display mais próximo (settle overhang — preserva cantos).
+  // O display salvo pode ter sido desconectado: clampa para os bounds físicos
+  // do display mais próximo. O utilizador pode escolher qualquer canto real.
   const display = screen.getDisplayMatching({
     x: Math.round(saved.x),
     y: Math.round(saved.y),
@@ -218,16 +224,11 @@ function restoredPosition(): { x: number; y: number } {
   const clamped = clampPetDrag(
     { x: Math.round(saved.x), y: Math.round(saved.y) },
     PET_WINDOW_SIZE,
-    display.workArea,
+    display.bounds,
     EDGE_OVERHANG_SETTLE,
   );
-  // Posição legada / arrasto acidental sobre o explorer: re-estaciona no canto
-  // livre em vez de tapar a árvore de ficheiros (clique + legibilidade).
-  // Só no restore/boot — o settle do arrasto respeita a intenção do user.
-  const mains = mainWindowObstacles();
-  if (mains.some((m) => petCoversMainSidebar(clamped, PET_WINDOW_SIZE, m))) {
-    return bestPetParkPosition(PET_WINDOW_SIZE, display.workArea, mains);
-  }
+  // Uma posição já salva é escolha explícita do utilizador. Não re-estacionar
+  // por cima dela no boot, mesmo que fique sobre a lateral do IDE.
   return clamped;
 }
 
@@ -409,19 +410,31 @@ function stopRaiseWatch(): void {
   }
 }
 
-/** setBounds idempotente — setBounds redundante em transparente pisca no macOS. */
-function setPetBounds(pos: { x: number; y: number }): void {
+/**
+ * Move sem redimensionar a superfície transparente.
+ *
+ * `setBounds` no caminho quente do drag fazia o WindowServer recompor a
+ * textura inteira a cada tick. Na costura entre monitores (especialmente com
+ * DPI/Hz diferentes) isso aparecia como pet duplicado, piscando e atrasado.
+ * `setPosition` preserva a mesma superfície GPU e deixa o compositor apenas
+ * deslocá-la. `setBounds` fica restrito à recuperação rara de tamanho.
+ */
+function setPetBounds(
+  pos: { x: number; y: number },
+  exact = false,
+): void {
   if (!petWindow || petWindow.isDestroyed()) return;
   const [cx, cy] = petWindow.getPosition();
   const [cw, ch] = petWindow.getSize();
-  if (
-    cx === pos.x &&
-    cy === pos.y &&
-    cw === PET_WINDOW_SIZE.width &&
-    ch === PET_WINDOW_SIZE.height
-  ) {
+  const sizeIsCorrect =
+    cw === PET_WINDOW_SIZE.width && ch === PET_WINDOW_SIZE.height;
+  if (!exact && cx === pos.x && cy === pos.y && sizeIsCorrect) return;
+
+  if (!exact && sizeIsCorrect) {
+    petWindow.setPosition(pos.x, pos.y, false);
     return;
   }
+
   petWindow.setBounds({
     x: pos.x,
     y: pos.y,
@@ -527,6 +540,39 @@ function persistPosition(pos: { x: number; y: number }): void {
 }
 
 /**
+ * Encosta o sprite ao canto DENTRO da janela. A janela permanece 100% no
+ * display; só os ~50–100 px transparentes mudam para o lado de dentro.
+ */
+function sendPetPlacement(pos?: { x: number; y: number }): void {
+  if (!petWindow || petWindow.isDestroyed() || !petReady) return;
+  const [wx, wy] = petWindow.getPosition();
+  const current = pos ?? { x: wx, y: wy };
+  const display = screen.getDisplayMatching({
+    x: current.x,
+    y: current.y,
+    width: PET_WINDOW_SIZE.width,
+    height: PET_WINDOW_SIZE.height,
+  });
+  const area = display.bounds;
+  const leftGap = Math.abs(current.x - area.x);
+  const rightGap = Math.abs(
+    area.x + area.width - (current.x + PET_WINDOW_SIZE.width),
+  );
+  const topGap = Math.abs(current.y - area.y);
+  const edgePx = 4;
+  const placement: PetPlacement = {
+    horizontal:
+      leftGap <= edgePx
+        ? 'left'
+        : rightGap <= edgePx
+          ? 'right'
+          : 'center',
+    vertical: topGap <= edgePx ? 'top' : 'bottom',
+  };
+  petWindow.webContents.send(PET_CHANNELS.placement, placement);
+}
+
+/**
  * Guard de reentrância da criação: o Electron emite 'browser-window-created'
  * SINCRONAMENTE dentro do construtor do BrowserWindow — antes de
  * `petWindow = win` ser atribuído. Sem este flag, o handler global re-entra
@@ -547,7 +593,7 @@ function ensurePetWindowSize(win: BrowserWindow): void {
 
 /**
  * Arrasto livre: desktop virtual (união de monitores). Sem parede na costura.
- * Settle usa workArea do display sob o centro da janela.
+ * Settle usa os bounds físicos do display sob o centro da janela.
  */
 function clampDragFree(pos: { x: number; y: number }): { x: number; y: number } {
   const bounds = screen.getAllDisplays().map((d) => d.bounds);
@@ -569,48 +615,19 @@ function reclampPetToVisibleDisplay(): void {
     width: PET_WINDOW_SIZE.width,
     height: PET_WINDOW_SIZE.height,
   });
-  // Já no envelope de settle — não setBounds (setBounds em transparente pisca).
-  if (isWithinPetOverhang({ x, y }, PET_WINDOW_SIZE, display.workArea)) return;
+  // Já totalmente dentro do display físico — não recompor a janela.
+  if (isWithinPetOverhang({ x, y }, PET_WINDOW_SIZE, display.bounds)) return;
 
   const settled = clampPetDrag(
     { x, y },
     PET_WINDOW_SIZE,
-    display.workArea,
+    display.bounds,
     EDGE_OVERHANG_SETTLE,
   );
   if (x === settled.x && y === settled.y) return;
-  setPetBounds(settled);
+  setPetBounds(settled, true);
   persistPosition(settled);
-}
-
-/**
- * Re-estaciona se o pet tapa o explorer. Só para caminhos automáticos
- * (boot, race com bounds do main, nova janela) — NÃO no settle de arrasto,
- * senão o user solta à esquerda e a janela “salta” sozinha.
- */
-function reparkIfCoveringSidebar(): void {
-  if (!petWindow || petWindow.isDestroyed() || dragTimer) return;
-  const [x, y] = petWindow.getPosition();
-  const pos = { x, y };
-  const mains = mainWindowObstacles();
-  if (!mains.some((m) => petCoversMainSidebar(pos, PET_WINDOW_SIZE, m))) {
-    return;
-  }
-  const display = screen.getDisplayMatching({
-    x,
-    y,
-    width: PET_WINDOW_SIZE.width,
-    height: PET_WINDOW_SIZE.height,
-  });
-  const parked = bestPetParkPosition(
-    PET_WINDOW_SIZE,
-    display.workArea,
-    mains,
-  );
-  if (parked.x === x && parked.y === y) return;
-  setPetBounds(parked);
-  persistPosition(parked);
-  applyIgnoreMouseEvents(true);
+  sendPetPlacement(settled);
 }
 
 function scheduleReclampPet(): void {
@@ -653,7 +670,7 @@ function createPetWindow(): void {
   const bootPos = clampPetDrag(
     position,
     PET_WINDOW_SIZE,
-    bootDisplay.workArea,
+    bootDisplay.bounds,
     EDGE_OVERHANG_SETTLE,
   );
   // Persistir se re-park/clamp divergiu da prefs (senão o restore re-aplica
@@ -677,7 +694,7 @@ function createPetWindow(): void {
     frame: false,
     transparent: true,
     resizable: false,
-    movable: false, // movimento é nosso (drag manual + clamp na workArea)
+    movable: false, // movimento é nosso (drag manual + clamp no display)
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
@@ -686,8 +703,10 @@ function createPetWindow(): void {
     // Nunca rouba o foco do terminal do usuário: pet é presença, não janela.
     focusable: false,
     alwaysOnTop: true,
-    // macOS: NSPanel sobe melhor sobre outras apps / Spaces.
-    ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),
+    // Permite posicionar a janela frameless na borda física, não só dentro da
+    // workArea do AppKit. Evita o NSPanel, que diverge as coordenadas entre
+    // Electron e WindowServer quando os monitores têm origens negativas.
+    enableLargerThanScreen: true,
     title: 'NexusIDE Pet',
     backgroundColor: '#00000000',
     // Evita re-raster agressivo da superfície transparente no macOS.
@@ -698,6 +717,9 @@ function createPetWindow(): void {
       nodeIntegration: false,
       sandbox: true,
       webviewTag: false,
+      // O pet nunca recebe foco; não reduzir RAF/timers enquanto ele está
+      // visível, senão a animação parece travar durante o arrasto.
+      backgroundThrottling: false,
     },
   });
   petWindow = win;
@@ -716,14 +738,16 @@ function createPetWindow(): void {
 
   win.webContents.once('did-finish-load', () => {
     petReady = true;
+    // O AppKit pode ajustar a posição durante a criação. Reaplicar uma vez
+    // depois da surface existir mantém getBounds e WindowServer sincronizados.
+    setPetBounds(bootPos, true);
     // Click-through garantido após load (renderer ainda não enviou leave).
     applyIgnoreMouseEvents(true);
     raisePetAboveAll(true);
     flushPendingPetEvents();
+    sendPetPlacement(bootPos);
     // Corrige posição suja legada sem esperar plug de monitor.
     reclampPetToVisibleDisplay();
-    // Se ainda estiver sobre o explorer (race com bounds do main), re-parqueia.
-    reparkIfCoveringSidebar();
   });
 
   win.on('closed', () => {
@@ -959,23 +983,29 @@ function registerPetIpc(): void {
     const [gx, gy] = petWindow.getPosition();
     const raw = lastDragPos ?? { x: gx, y: gy };
     stopDrag();
-    // Centro da janela (não o canto TL): na costura Mac↔LG o TL ainda está no
-    // Mac e o getDisplayMatching errava o workArea do settle → salto.
-    const display = screen.getDisplayNearestPoint({
-      x: raw.x + Math.floor(PET_WINDOW_SIZE.width / 2),
-      y: raw.y + Math.floor(PET_WINDOW_SIZE.height / 2),
-    });
-    // Settle num display (workArea + overhang moderado para cantos).
-    const settled = clampPetDrag(
-      raw,
+    // O cursor representa a intenção do utilizador. Usar o centro da grande
+    // janela transparente escolhia a tela errada perto da costura e puxava o
+    // pet para dentro ao soltar.
+    const cursor = screen.getCursorScreenPoint();
+    const display = screen.getDisplayNearestPoint(cursor);
+    // Settle 100% dentro dos bounds físicos: canto real, sem pixels off-screen.
+    const settled = snapPetToCursorEdges(
+      clampPetDrag(
+        raw,
+        PET_WINDOW_SIZE,
+        display.bounds,
+        EDGE_OVERHANG_SETTLE,
+      ),
       PET_WINDOW_SIZE,
-      display.workArea,
-      EDGE_OVERHANG_SETTLE,
+      display.bounds,
+      cursor,
     );
     if (gx !== settled.x || gy !== settled.y) {
-      setPetBounds(settled);
+      // Um único setBounds no fim garante a coordenada exata persistida.
+      setPetBounds(settled, true);
     }
     persistPosition(settled);
+    sendPetPlacement(settled);
     lastDragPos = null;
     // Soltar o click-through residual pós-drag.
     applyIgnoreMouseEvents(true);
@@ -1023,7 +1053,7 @@ function registerPetIpc(): void {
       lastDragPos = clamped;
       if (clamped.x === lastApplied.x && clamped.y === lastApplied.y) return;
       lastApplied = clamped;
-      // setBounds (setPosition falhava em panel transparente em alguns builds).
+      // Movimento posicional: preserva a superfície transparente entre telas.
       setPetBounds(clamped);
     }, DRAG_TICK_MS);
   });
@@ -1120,8 +1150,6 @@ export function initDesktopPet(): void {
     syncWindowToPrefs();
     // Nova janela do app: re-pin só se o pet tiver sido demovido.
     raisePetAboveAll(false);
-    // Bounds do main só existem agora — evita pet a nascer sobre o explorer.
-    reparkIfCoveringSidebar();
   });
 
   // NÃO escutar browser-window-focus: dispara em rajada e recompõe o pet

@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "spriteVersionNumber": 2,
+  "run_dir": "/Users/cleofaspereirarocha/nexus-ide/.nexus/pet-hatch/2e9cd7ac-dabd-4130-9bc5-782986aea0ed",
+  "spritesheet": "/Users/cleofaspereirarocha/nexus-ide/.nexus/pet-hatch/2e9cd7ac-dabd-4130-9bc5-782986aea0ed/final/spritesheet-extended.webp",
+  "validation": "/Users/cleofaspereirarocha/nexus-ide/.nexus/pet-hatch/2e9cd7ac-dabd-4130-9bc5-782986aea0ed/final/validation-extended.json",
+  "chroma_despill": "/Users/cleofaspereirarocha/nexus-ide/.nexus/pet-hatch/2e9cd7ac-dabd-4130-9bc5-782986aea0ed/qa/chroma-despill-extended.json",
+  "contact_sheet": "/Users/cleofaspereirarocha/nexus-ide/.nexus/pet-hatch/2e9cd7ac-dabd-4130-9bc5-782986aea0ed/qa/contact-sheet-extended.png",
+  "direction_sheet": "/Users/cleofaspereirarocha/nexus-ide/.nexus/pet-hatch/2e9cd7ac-dabd-4130-9bc5-782986aea0ed/qa/look-directions.png",
+  "direction_semantics": "/Users/cleofaspereirarocha/nexus-ide/.nexus/pet-hatch/2e9cd7ac-dabd-4130-9bc5-782986aea0ed/qa/direction-semantics.json",
+  "blind_direction_validation": "/Users/cleofaspereirarocha/nexus-ide/.nexus/pet-hatch/2e9cd7ac-dabd-4130-9bc5-782986aea0ed/qa/direction-blind-validation.json",
+  "continuity": "/Users/cleofaspereirarocha/nexus-ide/.nexus/pet-hatch/2e9cd7ac-dabd-4130-9bc5-782986aea0ed/qa/look-continuity.json",
+  "review": "/Users/cleofaspereirarocha/nexus-ide/.nexus/pet-hatch/2e9cd7ac-dabd-4130-9bc5-782986aea0ed/qa/review.json",
+  "visual_review": "/Users/cleofaspereirarocha/nexus-ide/.nexus/pet-hatch/2e9cd7ac-dabd-4130-9bc5-782986aea0ed/qa/final-visual-review.json",
+  "package": "/Users/cleofaspereirarocha/.codex/pets/2e9cd7ac-dabd-4130-9bc5-782986aea0ed"
+}

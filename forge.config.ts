@@ -337,7 +337,9 @@ const config: ForgeConfig = {
         }
       : {}),
   },
-  rebuildConfig: {},
+  // macOS: rebuild paralelo faz módulos nativos compartilharem/removerem
+  // `build/node_gyp_bins`, causando ENOENT intermitente no start do Dev.
+  rebuildConfig: { mode: 'sequential' },
   makers: [
     // .dmg is the installable macOS artifact; ZIP doubles as the
     // Squirrel.Mac auto-update payload.

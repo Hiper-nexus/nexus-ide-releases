@@ -4,6 +4,10 @@ import path from 'node:path';
 import type { Db } from '../persistence/db';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { squadSchema, squadsFileSchema } from '../../shared/orch-types';
+import {
+  PET_STUDIO_SQUAD,
+  PET_STUDIO_SQUAD_ID,
+} from '../../shared/pet-studio';
 import { BUILTIN_SQUADS, withAllowlists } from './builtin-squads';
 import { ChangeHub, parseJsonColumn } from './store-util';
 import {
@@ -174,12 +178,14 @@ export function initSquadStore(database: Db | null): void {
       };
       const parsed = squadSchema.safeParse(candidate);
       if (!parsed.success) continue;
-      const healed: Squad = {
-        ...parsed.data,
-        agents: withAllowlists(parsed.data.agents),
-      };
+      const healed: Squad = parsed.data.id === PET_STUDIO_SQUAD_ID
+        ? PET_STUDIO_SQUAD
+        : {
+            ...parsed.data,
+            agents: withAllowlists(parsed.data.agents),
+          };
       hydrated.set(healed.id, healed);
-      if (JSON.stringify(healed.agents) !== JSON.stringify(parsed.data.agents)) {
+      if (JSON.stringify(healed) !== JSON.stringify(parsed.data)) {
         repairs.push(healed);
       }
     }
@@ -213,7 +219,11 @@ function syncBuiltins(): void {
     const parsed = squadSchema.safeParse(squad);
     if (!parsed.success) continue;
     const existing = squads.get(parsed.data.id);
-    if (!existing || existing.builtin) {
+    if (
+      squad.id === PET_STUDIO_SQUAD_ID ||
+      !existing ||
+      existing.builtin
+    ) {
       persist(parsed.data, 'built-in sync');
       squads.set(parsed.data.id, parsed.data);
       refreshed += 1;
@@ -225,7 +235,10 @@ function syncBuiltins(): void {
 function ensureBuiltinsReadable(): void {
   for (const squad of BUILTIN_SQUADS) {
     const parsed = squadSchema.safeParse(squad);
-    if (parsed.success && !squads.has(parsed.data.id)) {
+    if (
+      parsed.success &&
+      (parsed.data.id === PET_STUDIO_SQUAD_ID || !squads.has(parsed.data.id))
+    ) {
       squads.set(parsed.data.id, parsed.data);
     }
   }
@@ -276,7 +289,9 @@ export function saveSquad(raw: unknown): Squad {
   // use (withAllowlists): every persisted worker gets a non-null `allowedTools`
   // so it passes the wizard's fire-gate (validateWorkerToolScopes). Custom and
   // architect-generated squads (designSquad → saveSquad) both funnel here.
-  const squad: Squad = { ...parsed, agents: withAllowlists(parsed.agents) };
+  const squad: Squad = parsed.id === PET_STUDIO_SQUAD_ID
+    ? PET_STUDIO_SQUAD
+    : { ...parsed, agents: withAllowlists(parsed.agents) };
   persist(squad, 'save');
   squads.set(squad.id, squad);
   hub.emit();
@@ -284,6 +299,7 @@ export function saveSquad(raw: unknown): Squad {
 }
 
 export function deleteSquad(id: string): boolean {
+  if (id === PET_STUDIO_SQUAD_ID) return false;
   if (!squads.has(id)) return false;
   const database = requireWritableDb();
   try {
@@ -339,10 +355,13 @@ export function exportSquadsJson(): string {
 export function importSquadsJson(json: string): number {
   const parsed = squadsFileSchema.parse(JSON.parse(json));
   const importedSquads = parsed.squads.map(
-    (squad): Squad => ({
-      ...squad,
-      agents: withAllowlists(squad.agents),
-    }),
+    (squad): Squad =>
+      squad.id === PET_STUDIO_SQUAD_ID
+        ? PET_STUDIO_SQUAD
+        : {
+            ...squad,
+            agents: withAllowlists(squad.agents),
+          },
   );
   if (importedSquads.length === 0) return 0;
 

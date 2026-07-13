@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PetPrefs } from '../../shared/pet-types';
+import type { PetPlacement, PetPrefs } from '../../shared/pet-types';
 import { isPetUrgentEvent } from '../../shared/pet-types';
 import { OperatorSprite, type OperatorMood } from '../components/OperatorSprite';
 import { CustomPetSprite } from './CustomPetSprite';
@@ -29,9 +29,14 @@ const SPRITE_SIZE = 200;
  * Altura-alvo do sheet (~1,25× da célula 208). 2× (416) era grande demais
  * no desktop; 1× (208) fica pequeno — meio-termo legível e estável.
  */
-const SHEET_SIZE = 260;
+/** Altura do sheet no desktop — legível; full-res usa smooth scale. */
+const SHEET_SIZE = 280;
 /** Limiar baixo: o utilizador reportava ter de “forçar” o rato para arrastar. */
 const DRAG_THRESHOLD_PX = 2;
+/** Histerese de direção da corrida — micro-dx no arrasto não vira o pet. */
+const RUN_DIR_HYSTERESIS_PX = 14;
+/** Tempo mínimo numa direção antes de poder inverter (evita piscar L↔R). */
+const RUN_DIR_MIN_MS = 90;
 const CELEBRATE_MS = 3_000;
 
 /** Preset → props do OperatorSprite (skins já existentes da gamificação). */
@@ -56,12 +61,20 @@ export function PetApp() {
   const [reaction, setReaction] = useState<'wave' | 'failed' | 'waiting' | null>(
     null,
   );
-  // Look DESLIGADO na UI: idle↔look (notebook ao lado ↔ peito) + ghost de
-  // canvas = “dois notebooks”. Manter estado só se reativarmos no futuro.
-  const [lookDir] = useState<number | null>(null);
-  // Arrasto: sem anim de corrida (frames L/R com notebook lateral = “duplica”).
-  const [dragging, setDragging] = useState(false);
+  /**
+   * Look desligado de propósito neste pet full-res:
+   * frames look (peito) + idle (notebook ao lado) alternam e, com residual
+   * de compositor, parecem “dois notebooks”. Corrida idle mantém-se.
+   * lookDir fixo null; onLook não actualiza UI.
+   */
+  const lookDir: number | null = null;
+  // Arrastando: corre L/R (linhas 1/2 do contrato) — pernas a mexer.
+  const [runDir, setRunDir] = useState<'left' | 'right' | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [placement, setPlacement] = useState<PetPlacement>({
+    horizontal: 'center',
+    vertical: 'bottom',
+  });
   const celebrateTimer = useRef<number | null>(null);
   const drag = useRef<{ startX: number; startY: number; dragging: boolean } | null>(
     null,
@@ -119,6 +132,7 @@ export function PetApp() {
       if (!cancelled) setPrefs(loaded);
     });
     const offPrefs = window.nexusPet.onPrefsChanged(setPrefs);
+    const offPlacement = window.nexusPet.onPlacement(setPlacement);
     const offEvents = window.nexusPet.onEvent((event) => {
       setBalloons((state) => enqueueBalloon(state, event));
       const nextReaction: 'wave' | 'failed' | 'waiting' =
@@ -137,17 +151,16 @@ export function PetApp() {
         );
       }
     });
-    // onLook ignorado de propósito (ver lookDir acima).
     return () => {
       cancelled = true;
       offPrefs();
+      offPlacement();
       offEvents();
       if (celebrateTimer.current) window.clearTimeout(celebrateTimer.current);
       if (leaveTimerRef.current !== null) {
         window.clearTimeout(leaveTimerRef.current);
         leaveTimerRef.current = null;
       }
-      // Unmount: largar hit-test para o desktop não ficar “preso”.
       interactiveRef.current = false;
       try {
         window.nexusPet.setInteractive(false);
@@ -203,10 +216,15 @@ export function PetApp() {
       dragging: false,
     };
 
+    let lastScreenX = e.screenX;
+    let runDirLocked: 'left' | 'right' | null = null;
+    let runDirSince = 0;
+    let dxAccum = 0;
+
     const finish = (asDrag: boolean) => {
       const state = drag.current;
       drag.current = null;
-      setDragging(false);
+      setRunDir(null);
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerup', onUp);
       el.removeEventListener('pointercancel', onCancel);
@@ -245,14 +263,32 @@ export function PetApp() {
         );
         if (dist < DRAG_THRESHOLD_PX) return;
         state.dragging = true;
-        setDragging(true);
         markInteractive(true);
         window.nexusPet.dragBegin({ x: move.clientX, y: move.clientY });
       }
+      // Corrida L/R pelo screenX (clientX fica parado com a janela a seguir).
+      const dx = move.screenX - lastScreenX;
+      lastScreenX = move.screenX;
+      dxAccum += dx;
+      const now = performance.now();
+      const want: 'left' | 'right' | null =
+        dxAccum > RUN_DIR_HYSTERESIS_PX
+          ? 'right'
+          : dxAccum < -RUN_DIR_HYSTERESIS_PX
+            ? 'left'
+            : null;
+      if (want === null) return;
+      dxAccum = 0;
+      if (want === runDirLocked) return;
+      if (runDirLocked !== null && now - runDirSince < RUN_DIR_MIN_MS) {
+        return;
+      }
+      runDirLocked = want;
+      runDirSince = now;
+      setRunDir(want);
     };
     const onUp = () => finish(false);
-    // NÃO terminar no blur da janela — ao arrastar o panel pode “blur” e
-    // matava o drag a meio do ecrã (utilizador “forçava” o rato).
+    // NÃO terminar no blur — matava o drag a meio do ecrã.
     const onCancel = () => finish(true);
     el.addEventListener('pointermove', onMove);
     el.addEventListener('pointerup', onUp);
@@ -261,21 +297,20 @@ export function PetApp() {
 
   if (!prefs) return null;
 
-  const celebrating = reaction === 'wave' && !dragging;
-  const needingYou = reaction === 'waiting' && !dragging;
+  const celebrating = reaction === 'wave' && runDir === null;
+  const needingYou = reaction === 'waiting' && runDir === null;
   const mood: OperatorMood =
     prefs.sleeping && !currentBalloon?.urgent
       ? 'sleeping'
       : celebrating
         ? 'celebrating'
         : 'idle';
-  // Prioridade: dormir > arrasto (idle estático) > reação > idle.
-  // Sem run L/R: frames de corrida com notebook lateral “duplicavam” o braço.
+  // Prioridade: dormir > correr (arrasto, pernas) > reação > idle.
   const sheetAnim: SheetAnim =
     prefs.sleeping && !currentBalloon?.urgent
       ? 'sleep'
-      : dragging
-        ? 'idle'
+      : runDir !== null
+        ? (`run-${runDir}` as SheetAnim)
         : (reaction ?? 'idle');
 
   const balloon = balloons.current;
@@ -283,7 +318,9 @@ export function PetApp() {
 
   return (
     <div
-      className={`pet ${prefs.solidBackground ? 'pet--solid' : ''} ${
+      className={`pet pet--${placement.horizontal} pet--${placement.vertical} ${
+        prefs.solidBackground ? 'pet--solid' : ''
+      } ${
         needingYou || balloon?.urgent ? 'pet--attention' : ''
       }`}
     >
@@ -384,7 +421,7 @@ export function PetApp() {
         } ${prefs.sleeping && !balloon?.urgent ? 'pet__hit--sleeping' : ''} ${
           celebrating ? 'pet__hit--celebrating' : ''
         } ${needingYou || balloon?.urgent ? 'pet__hit--waiting' : ''} ${
-          dragging ? 'pet__hit--dragging' : ''
+          runDir !== null ? 'pet__hit--dragging' : ''
         }`}
         onMouseEnter={() => markInteractive(true)}
         onMouseLeave={() => {

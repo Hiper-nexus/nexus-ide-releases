@@ -102,4 +102,18 @@ describe('pet-attention-policy', () => {
     }
     expect(emitted).toBe(NOISE_KIND_LIMIT);
   });
+
+  it('entrega mission-done ao pet e espelha a conclusao na janela principal', () => {
+    const result = admitPetEvent(
+      createAttentionPolicyState(),
+      ev('mission-done', 'Pet Studio'),
+      300_000,
+    );
+
+    expect(result.immediate).toMatchObject({
+      deliverPet: true,
+      mirrorMain: true,
+      event: { kind: 'mission-done', title: 'Pet Studio' },
+    });
+  });
 });

@@ -7,6 +7,7 @@ const stubs = vi.hoisted(() => ({
     paneId: 'pane-1',
     sessionId: 'session-1',
   })),
+  writeSession: vi.fn(() => true),
 }));
 
 vi.mock('./workspace-path', () => ({ resolveCwdForScope: stubs.resolveCwdForScope }));
@@ -16,7 +17,7 @@ vi.mock('./pane-registry', () => ({
   waitForIdle: vi.fn(),
 }));
 vi.mock('./pane-authz', () => ({ authorizePaneAccess: vi.fn() }));
-vi.mock('../pty/pty-manager', () => ({ orchWriteSession: vi.fn(() => true) }));
+vi.mock('../pty/pty-manager', () => ({ orchWriteSession: stubs.writeSession }));
 vi.mock('../adapters/adapter-registry', () => ({
   getAdapter: vi.fn(() => ({ id: 'codex', quirks: {} })),
 }));
@@ -29,7 +30,7 @@ vi.mock('../persistence/settings-store', () => ({
   getOrchSettings: vi.fn(() => ({ leanCode: false, seniorMode: false, designPro: false })),
 }));
 
-import { spawnPaneAndMaybePrompt, withHandoffContract } from './tool-util';
+import { injectPrompt, spawnPaneAndMaybePrompt, withHandoffContract } from './tool-util';
 import { testProjectScope } from './__tests__/scope-fixture';
 
 const scope = testProjectScope();
@@ -79,5 +80,20 @@ describe('worker handoff capability contract', () => {
     });
     expect(prompt).toContain('marker');
     expect(prompt).not.toContain('nexus_handoff_submit');
+  });
+});
+
+describe('agent prompt injection', () => {
+  it('submits multiline briefs as one bracketed-paste transaction', async () => {
+    const pending = injectPrompt('session-1', 'line one\nline two');
+    await new Promise((resolve) => setTimeout(resolve, 170));
+    await pending;
+
+    expect(stubs.writeSession).toHaveBeenNthCalledWith(
+      1,
+      'session-1',
+      '\x1b[200~line one\nline two\x1b[201~',
+    );
+    expect(stubs.writeSession).toHaveBeenNthCalledWith(2, 'session-1', '\r');
   });
 });

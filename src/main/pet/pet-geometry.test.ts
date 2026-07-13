@@ -9,6 +9,7 @@ import {
   petCoversMainSidebar,
   petParkCornerCandidates,
   petWindowOverlapRatio,
+  snapPetToCursorEdges,
   snapToCorner,
   unionRects,
   windowIntersectsOffDisplay,
@@ -86,14 +87,13 @@ describe('snapToCorner', () => {
 });
 
 describe('clampPetDrag', () => {
-  it('settle deixa o sprite chegar perto do canto (overhang moderado)', () => {
+  it('settle mantém toda a superfície transparente dentro do ecrã', () => {
     const loose = clampPetDrag({ x: -40, y: 100 }, SIZE, AREA, EDGE_OVERHANG);
-    expect(loose.x).toBe(-40);
+    expect(loose.x).toBe(AREA.x);
     expect(loose.y).toBe(100);
   });
 
-  it('ainda impede overhang extremo que piscava o compositor', () => {
-    // Posição legada tipo x=-65 y=-86 com oh=120; com settle cap, puxa.
+  it('remove overhang extremo que piscava o compositor', () => {
     const far = clampPetDrag({ x: -5000, y: -5000 }, SIZE, AREA, EDGE_OVERHANG);
     const oh = Math.min(
       EDGE_OVERHANG,
@@ -102,7 +102,7 @@ describe('clampPetDrag', () => {
     );
     expect(far.x).toBe(AREA.x - oh);
     expect(far.y).toBe(AREA.y - oh);
-    expect(oh).toBeLessThanOrEqual(40);
+    expect(oh).toBe(0);
   });
 
   it('windowIntersectsOffDisplay deteta overhang físico', () => {
@@ -163,6 +163,33 @@ describe('clampPetDrag', () => {
     expect(
       windowStraddlesDisplays({ x: 100, y: 100 }, SIZE, [mac, lg]),
     ).toBe(false);
+  });
+});
+
+describe('snapPetToCursorEdges', () => {
+  const display = { x: -75, y: -1080, width: 1920, height: 1080 };
+  const pet = { width: 380, height: 360 };
+
+  it('encaixa exatamente no canto físico indicado pelo cursor', () => {
+    expect(
+      snapPetToCursorEdges(
+        { x: 1200, y: -700 },
+        pet,
+        display,
+        { x: 1844, y: -1 },
+      ),
+    ).toEqual({ x: 1465, y: -360 });
+  });
+
+  it('preserva uma posição interior quando o cursor está longe das bordas', () => {
+    expect(
+      snapPetToCursorEdges(
+        { x: 600, y: -700 },
+        pet,
+        display,
+        { x: 900, y: -500 },
+      ),
+    ).toEqual({ x: 600, y: -700 });
   });
 });
 

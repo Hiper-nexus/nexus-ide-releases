@@ -26,19 +26,20 @@ export const SNAP_THRESHOLD = 48;
 /** Respiro entre a janela do pet e a borda da workArea após o snap. */
 export const SNAP_MARGIN = 12;
 /**
- * Overhang no settle (px). A janela é maior que o sprite (~70px de padding
- * lateral): 40 deixa o mascote perto do canto sem mandar pixels transparentes
- * grandes para fora do ecrã (causa nº1 de piscar no compositor macOS).
- * Valores ≥100 (legado) piscavam forte em multi-monitor.
+ * Overhang no settle (px). ZERO é intencional: mesmo pixels transparentes fora
+ * do display fazem a superfície always-on-top oscilar no WindowServer do macOS,
+ * sobretudo no canto e em monitores com DPI/Hz diferentes.
  */
-export const EDGE_OVERHANG_SETTLE = 40;
+export const EDGE_OVERHANG_SETTLE = 0;
 /**
- * Overhang no arrasto: folga para atravessar bordas e a costura entre monitores
- * sem “bater” no clamp a cada tick. Settle volta a SETTLE.
+ * Overhang no arrasto também é zero nas bordas externas. A travessia entre
+ * monitores continua livre porque o clamp usa a união do desktop virtual.
  */
-export const EDGE_OVERHANG_DRAG = 96;
+export const EDGE_OVERHANG_DRAG = 0;
 /** Alias histórico (= settle) — testes e callers antigos. */
 export const EDGE_OVERHANG = EDGE_OVERHANG_SETTLE;
+/** Cursor dentro desta faixa encaixa a janela exatamente na borda física. */
+export const PHYSICAL_EDGE_SNAP_THRESHOLD = 64;
 
 /**
  * Clampa a posição para que a janela fique inteiramente dentro da workArea.
@@ -75,6 +76,36 @@ export function clampPetDrag(
     x: Math.round(Math.min(Math.max(pos.x, minX), Math.max(minX, maxX))),
     y: Math.round(Math.min(Math.max(pos.y, minY), Math.max(minY, maxY))),
   };
+}
+
+/**
+ * Encaixa nos eixos físicos que o cursor realmente alcançou. A decisão pelo
+ * cursor evita que a área transparente da janela selecione o monitor vizinho
+ * ou faça o pet voltar para o meio ao soltar numa costura multi-monitor.
+ */
+export function snapPetToCursorEdges(
+  pos: Point,
+  size: Size,
+  displayBounds: Rect,
+  cursor: Point,
+  threshold = PHYSICAL_EDGE_SNAP_THRESHOLD,
+): Point {
+  const t = Math.max(0, threshold);
+  const left = displayBounds.x;
+  const top = displayBounds.y;
+  const right = displayBounds.x + displayBounds.width;
+  const bottom = displayBounds.y + displayBounds.height;
+  const maxX = Math.max(left, right - size.width);
+  const maxY = Math.max(top, bottom - size.height);
+  const next = { ...pos };
+
+  if (cursor.x <= left + t) next.x = left;
+  else if (cursor.x >= right - 1 - t) next.x = maxX;
+
+  if (cursor.y <= top + t) next.y = top;
+  else if (cursor.y >= bottom - 1 - t) next.y = maxY;
+
+  return clampPetDrag(next, size, displayBounds, 0);
 }
 
 /** True se a posição já está dentro do envelope de settle (não precisa setBounds). */

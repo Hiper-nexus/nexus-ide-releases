@@ -4,6 +4,8 @@
    vence quem) continua idêntica. Vite inline-a os @import no build. */
 
 @import './base.css';
+@import './agent-avatar.css';
+@import './provider-logo.css';
 @import './overlays.css';
 @import './canvas-cockpit.css';
 @import './canvas-voice.css';

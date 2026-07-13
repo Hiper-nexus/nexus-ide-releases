@@ -1,0 +1,19 @@
+{
+  "visual_qa": "pass",
+  "reviewed_by": "parent",
+  "review_mode": "direct contact-sheet, direction-sheet, and preview review; delegation disabled by user instruction",
+  "qa_note": "The same compact 3D toy identity, beard silhouette, side-swept hair, white shirt, navy pants, white shoes, and silver watch are preserved through all standard states and the full clockwise look loop.",
+  "standard_rows": {
+    "idle": "pass — calm blink and small body motion",
+    "running-right": "pass — right-facing alternating stride",
+    "running-left": "pass — left-facing framewise mirror preserving cadence",
+    "waving": "pass — hand gesture only, no motion marks",
+    "jumping": "pass — vertical body motion only, no ground cue",
+    "failed": "pass — readable concerned reset with no detached effects",
+    "waiting": "pass — distinct expectant open-palm request",
+    "running": "pass — focused working gesture with planted feet",
+    "review": "pass — restrained attentive head/hand focus"
+  },
+  "look_loop": "pass — cardinals are clear; the measured 157.5→180 and 337.5→000 pixel-difference warnings were visually reviewed with no visible scale pop, clipped silhouette, identity drift, or direction reversal.",
+  "repair_rows": []
+}

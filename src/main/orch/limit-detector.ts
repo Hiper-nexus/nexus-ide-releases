@@ -49,9 +49,9 @@ const PATTERNS: Pattern[] = [
   },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /limite (?:do )?plano (?:atingido|excedido)|assinatura (?:esgotada|excedida)/i },
   // Rate / usage limit — resets within a window (not weekly — see quota above).
-  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /usage limit reached/i },
-  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /reached your (?:usage|5-hour|daily) limit/i },
-  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /hit your (?:usage|rate|token) limit/i },
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^(?:claude|error:?)?\s*usage limit reached(?:[.!\s]|$)/im },
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^(?:claude|error:?)?\s*(?:you(?:'ve| have) )?reached your (?:usage|5-hour|daily) limit(?:[.!\s]|$)/im },
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /^(?:claude|error:?)?\s*(?:you(?:'ve| have) )?hit your (?:usage|rate|token) limit(?:[.!\s]|$)/im },
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /5[-\s]?hour (?:usage )?limit (?:reached|exceeded|hit)/i },
   // PT: limite de uso / 5 horas (error-shaped).
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /limite de (?:uso|utiliza[cç][aã]o) (?:atingido|excedido|alcan[cç]ado)/i },
@@ -69,7 +69,7 @@ const PATTERNS: Pattern[] = [
     // A prosa nua "rate limit" continua fora (ver comentário acima).
     re: /rate[_\s]?limit(?:ed|_error)|rate[_\s]?limit[_\s]+(?:exceeded|reached|hit)|ratelimiterror|rate[_\s]?limit.{0,24}\btry again\b|(?:error|failed|failure)\b.{0,40}\brate[_\s]?limit/i,
   },
-  { kind: 'rate-limit', cooldownMs: HOUR, re: /\b429\b|too many requests/i },
+  { kind: 'rate-limit', cooldownMs: HOUR, re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*[:=]?\s*|error\s*[:=]?\s*)429\b|too many requests/i },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /resource[_\s]?exhausted/i },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /(?:tokens? per min(?:ute)?|tpm) (?:limit|exceeded)/i },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /(?:requests? per min(?:ute)?|rpm) (?:limit|exceeded)/i },

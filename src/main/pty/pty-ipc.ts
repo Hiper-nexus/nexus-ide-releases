@@ -32,7 +32,10 @@ import {
 } from "../orch/pane-registry";
 import { createScopedMissionPaneStore } from "../orch/mission-pane-store";
 import { listSquads } from "../orch/squad-store";
-import { bindSpawnAuthority } from "../orch/spawn-authority";
+import {
+  bindSpawnAuthority,
+  isKnownLegacySquadSpawnRequest,
+} from "../orch/spawn-authority";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 
@@ -126,8 +129,16 @@ export function registerPtyIpc(): void {
         // leaf still exists and the user hits Reiniciar. Re-throwing
         // "unknown or expired" leaves a dead pane forever. Drop the id and
         // bind as a direct user spawn (scope from workspace / persisted).
+        const squads = listSquads();
+        const knownLegacySquadRequest = Boolean(
+          req.orchRequestId &&
+            isKnownLegacySquadSpawnRequest(req.orchRequestId, squads),
+        );
         const orchRequestId =
-          req.orchRequestId && !pending && !persistedPane
+          req.orchRequestId &&
+          !pending &&
+          !persistedPane &&
+          !knownLegacySquadRequest
             ? undefined
             : req.orchRequestId;
         const needsActiveScope = !pending?.scope && !persistedPane?.scope;
@@ -137,7 +148,7 @@ export function registerPtyIpc(): void {
         const authority = bindSpawnAuthority({
           requestId: orchRequestId,
           pending,
-          squads: listSquads(),
+          squads,
           persistedPane,
           trustedUserScope,
           requestedCwd: req.cwd,

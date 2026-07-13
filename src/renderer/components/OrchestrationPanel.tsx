@@ -11,6 +11,15 @@ import { askConfirm } from '../state/confirm-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { EmptyState, ActionCard } from './ActionCard';
+import { useLayoutStore } from '../state/layout-store';
+import { useSessionStateStore } from '../state/session-state-store';
+import { listPanes } from '../lib/split-tree';
+import {
+  AgentAvatar,
+  agentVisualStateLabel,
+  type AgentVisualState,
+} from './AgentAvatar';
+import { ProviderLogo } from './ProviderLogo';
 
 /**
  * Orchestration drawer — the mission control surface (docs/ARCHITECTURE.md
@@ -177,6 +186,10 @@ function SquadRow({
   squad: Squad;
   onDelete: (id: string) => void;
 }) {
+  const root = useLayoutStore((s) => s.root);
+  const paneStates = useSessionStateStore((s) => s.paneStates);
+  const panes = listPanes(root);
+
   return (
     <li className="orch-item">
       <div className="orch-item__head">
@@ -189,12 +202,34 @@ function SquadRow({
           Remover
         </button>
       </div>
-      <p className="orch-item__detail">
-        {squad.agents.length} agente{squad.agents.length === 1 ? '' : 's'}:{' '}
-        {squad.agents
-          .map((a) => `${a.agentName} (${a.category}/${a.cli})`)
-          .join(', ') || '—'}
-      </p>
+      <ul className="orch-agent-roster" aria-label={`${squad.agents.length} agentes`}>
+        {squad.agents.map((agent) => {
+          const pane = panes.find((candidate) => candidate.agentName === agent.agentName);
+          const state: AgentVisualState = pane
+            ? (paneStates.get(pane.id) ?? 'spawning')
+            : 'offline';
+          return (
+            <li className="orch-agent-roster__item" key={agent.id}>
+              <AgentAvatar
+                category={agent.category}
+                state={state}
+                size="card"
+                label={agent.agentName}
+              />
+              <span className="orch-agent-roster__identity">
+                <strong>{agent.agentName}</strong>
+                <small>
+                  <ProviderLogo adapterId={agent.cli} label={agent.cli} size="xs" />
+                  <span>{agent.category} · {agent.cli}</span>
+                </small>
+              </span>
+              <span className={`orch-agent-roster__state orch-agent-roster__state--${state}`}>
+                {agentVisualStateLabel(state)}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
     </li>
   );
 }

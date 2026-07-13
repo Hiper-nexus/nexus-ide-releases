@@ -186,4 +186,21 @@ describe('buildControlArgs', () => {
         .toContain('--dangerously-skip-permissions');
     }
   });
+
+  it('defaults every writable built-in CLI with a native auto flag to full-auto', () => {
+    const cliAdapters = BUILTIN_ADAPTERS
+      .map((raw) => adapterSchema.parse(raw))
+      .filter((item): item is CliPtyAdapter => item.kind === 'cli-pty');
+
+    for (const item of cliAdapters) {
+      const yolo = item.control.permission?.yolo ?? [];
+      if (yolo.length === 0) continue;
+      expect(defaultPermissionMode(item), item.id).toBe('yolo');
+      const args = buildControlArgs(item, { permissionMode: 'yolo' });
+      for (const flag of yolo) expect(args, item.id).toContain(flag);
+      for (const safe of item.control.permission?.safe ?? []) {
+        expect(args, item.id).not.toContain(safe);
+      }
+    }
+  });
 });

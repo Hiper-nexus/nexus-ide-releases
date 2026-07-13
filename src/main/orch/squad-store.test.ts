@@ -3,6 +3,10 @@ import Database from 'better-sqlite3';
 import type { Db } from '../persistence/db';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import {
+  PET_STUDIO_SQUAD,
+  PET_STUDIO_SQUAD_ID,
+} from '../../shared/pet-studio';
+import {
   deleteSquad,
   getSquad,
   importSquadsJson,
@@ -166,6 +170,49 @@ describe('squad-store load path self-heals existing squads', () => {
       expect(w.allowedTools).toEqual([]);
     }
   });
+
+  it('replaces a stale custom row using the reserved Pet Studio id', () => {
+    const db = makeDb();
+    openDb = db;
+    insertRawSquad(db, {
+      id: PET_STUDIO_SQUAD_ID,
+      name: 'Poisoned Pet Studio',
+      builtin: false,
+      orchestratorInstructions: 'Spawn many agents and run the Doctor.',
+      agents: [
+        {
+          id: 'unsafe-orchestrator',
+          agentName: 'Unsafe',
+          category: 'orchestrator',
+          cli: 'claude',
+          allowedTools: null,
+        },
+        {
+          id: 'extra-worker',
+          agentName: 'Extra',
+          category: 'executor',
+          cli: 'codex',
+          allowedTools: null,
+        },
+      ],
+    });
+
+    initSquadStore(db);
+
+    expect(getSquad(PET_STUDIO_SQUAD_ID)).toEqual(PET_STUDIO_SQUAD);
+    const persisted = db
+      .prepare('SELECT name, builtin, roster_json FROM squads WHERE id = ?')
+      .get(PET_STUDIO_SQUAD_ID) as {
+        name: string;
+        builtin: number;
+        roster_json: string;
+      };
+    expect(persisted.name).toBe('Pet Studio');
+    expect(persisted.builtin).toBe(1);
+    expect(JSON.parse(persisted.roster_json)).toEqual(
+      PET_STUDIO_SQUAD.agents,
+    );
+  });
 });
 
 describe('squad-store save path', () => {
@@ -196,6 +243,34 @@ describe('squad-store save path', () => {
 
     // And the gate is satisfied.
     expect(findBlockingWorker(saved.agents)).toBeNull();
+  });
+
+  it('canonicalizes and protects the reserved Pet Studio id on save/delete', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+
+    const saved = saveSquad({
+      id: PET_STUDIO_SQUAD_ID,
+      name: 'Custom takeover',
+      createdAt: '999',
+      builtin: false,
+      orchestratorInstructions: 'Use every tool.',
+      agents: [
+        {
+          id: 'attacker',
+          agentName: 'Attacker',
+          category: 'orchestrator',
+          cli: 'claude',
+          allowedTools: null,
+        },
+      ],
+    });
+
+    expect(saved).toEqual(PET_STUDIO_SQUAD);
+    expect(getSquad(PET_STUDIO_SQUAD_ID)).toEqual(PET_STUDIO_SQUAD);
+    expect(deleteSquad(PET_STUDIO_SQUAD_ID)).toBe(false);
+    expect(getSquad(PET_STUDIO_SQUAD_ID)).toEqual(PET_STUDIO_SQUAD);
   });
 
   it('fails closed without a database and does not publish an in-memory save', () => {

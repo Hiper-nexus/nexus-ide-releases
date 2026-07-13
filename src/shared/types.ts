@@ -569,8 +569,9 @@ export interface NexusApi {
      */
     onOpenOps(cb: () => void): Unsubscribe;
     /**
-     * Main avisa intervenção (missão blocked / agent waiting). Sempre chega
-     * mesmo com pet desligado — a UI mostra toast e pode abrir o Ops Board.
+     * Main avisa intervenção (missão blocked / agent waiting) e conclusão.
+     * Sempre chega mesmo com pet desligado — a UI mostra toast e pode abrir o
+     * Ops Board.
      */
     onAttention(cb: (event: import('./pet-types').PetEvent) => void): Unsubscribe;
     /** Baixa um pet da galeria petdex por slug/URL (fetch no main). */

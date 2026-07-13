@@ -19,12 +19,13 @@ describe('SETTINGS_GROUPS', () => {
     expect(ids).toContain('shortcuts');
   });
 
-  test('primary nav surfaces arsenal (MCP, tools, mídia) without advanced dig', () => {
+  test('primary nav surfaces harness, MCP, tools and mídia without advanced dig', () => {
     const primaryIds = SETTINGS_PRIMARY_GROUPS.flatMap((g) => g.items.map((i) => i.id));
-    expect(primaryIds).toHaveLength(13);
+    expect(primaryIds).toHaveLength(14);
     expect(primaryIds).toContain('appearance');
     expect(primaryIds).toContain('ranking');
     expect(primaryIds).toContain('usage-quota');
+    expect(primaryIds).toContain('harness');
     expect(primaryIds).toContain('mcps');
     expect(primaryIds).toContain('tools');
     expect(primaryIds).toContain('media');

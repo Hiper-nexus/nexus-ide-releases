@@ -54,6 +54,7 @@ import {
   ToolsSection,
 } from './CatalogSections';
 import { DesignSystemsSection } from './DesignSystemsSection';
+import { HarnessSection } from './HarnessSection';
 
 /**
  * Settings drawer — nav agrupada por intenção (CONTA · OPERAÇÃO · ARSENAL ·
@@ -407,6 +408,7 @@ export function SettingsDrawer() {
           {section === 'usage-quota' && <UsageQuotaSection />}
           {section === 'ranking' && <ModelRankingSection />}
           {section === 'squads' && <SquadsSection onNavigate={close} />}
+          {section === 'harness' && <HarnessSection />}
           {section === 'marketplace' && <MarketplaceSection />}
           {section === 'design-systems' && <DesignSystemsSection />}
           {section === 'remote' && <RemoteSection />}

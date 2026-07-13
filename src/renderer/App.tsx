@@ -289,14 +289,24 @@ export function App() {
         }),
       );
     }
-    // Intervenção: toast rate-limited no main (digest/cooldown). Um aviso
-    // agregado, não 20 toasts se 20 panes pedirem input ao mesmo tempo.
+    // Eventos espelhados pelo main: intervencoes urgentes e conclusoes. O
+    // companion continua mostrando seu balao; o toast garante confirmacao
+    // visivel quando ele estiver desativado ou escondido atras de uma janela.
     if (petApi.onAttention) {
       offs.push(
         petApi.onAttention((event) => {
           const isBlock = event.kind === 'mission-blocked';
           const isWait = event.kind === 'agent-waiting';
-          if (!isBlock && !isWait) return;
+          const isDone = event.kind === 'mission-done';
+          if (!isBlock && !isWait && !isDone) return;
+          if (isDone) {
+            useToastStore.getState().push(
+              'success',
+              'Missão concluída',
+              `${event.title} — o resultado final foi validado.`,
+            );
+            return;
+          }
           const multi = /·|\d+\s+(missões|agentes)/i.test(event.title);
           useToastStore.getState().push(
             'warn',

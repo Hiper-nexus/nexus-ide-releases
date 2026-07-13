@@ -16,6 +16,10 @@ import {
   type OwnedPaneAuthzInfo,
 } from './pane-registry';
 import { sameProjectScope } from './project-scoped-broadcast';
+import {
+  completePetStudioHandoff,
+  type PetStudioCompletionResult,
+} from './pet-studio-completion';
 
 /**
  * Automatic handoff delivery: when a worker submits a
@@ -303,17 +307,22 @@ function targetAuthority(
 export function onHandoffSubmitted(
   handoff: Handoff,
   scope: ProjectExecutionScope,
-): void {
+): PetStudioCompletionResult | null {
+  const petCompletion = completePetStudioHandoff(handoff, scope);
+  // Pet Studio has no worker/orchestrator loop: its sole Codex session submits
+  // its own validated result. Never queue that message back into the same PTY.
+  if (petCompletion) return petCompletion;
   const authority = targetAuthority(handoff, scope);
-  if (!authority) return; // No trusted orchestrator — stays listed as pending.
+  if (!authority) return null; // No trusted orchestrator — stays listed as pending.
   if (getSessionState(authority.sessionId) === 'idle') {
     deliverNow(authority, handoff);
-    return;
+    return null;
   }
   const key = authorityKey(authority);
   const queue = queues.get(key) ?? [];
   queue.push({ handoff, authority });
   queues.set(key, queue);
+  return null;
 }
 
 /**

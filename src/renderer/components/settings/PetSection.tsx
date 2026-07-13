@@ -16,7 +16,12 @@ import { CustomPetSprite } from '../../pet/CustomPetSprite';
 import { SheetPetSprite } from '../../pet/SheetPetSprite';
 import { filterPaletteActions } from '../../lib/command-palette-filter';
 import { useSettingsStore } from '../../state/settings-store';
-import { useMissionWizardStore } from '../../state/mission-wizard-store';
+import {
+  hatchPetIntent,
+  launchPetHatchMission,
+  petSlugFromImagePath,
+} from '../../pet/pet-hatch-flow';
+import { useToastStore } from '../../state/toast-store';
 
 /**
  * Settings → Aparência → Pet de mesa: liga/desliga o companion, escolhe o
@@ -72,38 +77,7 @@ type PetSectionApi = {
 };
 
 /** Slug de pet a partir do nome do arquivo-base (ex.: "Meu Gato.png" → meu-gato). */
-export function petSlugFromImagePath(imagePath: string): string {
-  const base = imagePath.split(/[\\/]/).pop() ?? 'pet';
-  const stem = base.replace(/\.[^.]+$/, '');
-  const slug = stem
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return slug || 'pet';
-}
-
-/**
- * Missão agentic no padrão do "hatch" do Codex: o agente usa a skill
- * hatch-pet para gerar o spritesheet 8×11 completo (contrato v2) a partir
- * da imagem-base — processo lento e caprichado, igual ao Codex.
- */
-export function hatchPetIntent(imagePath: string): string {
-  const slug = petSlugFromImagePath(imagePath);
-  return [
-    `Gere um desktop pet completo no contrato Codex v2 a partir da imagem-base anexada em ${imagePath}.`,
-    'Antes de executar, comprove que o arquivo existe e é legível; se não estiver, pare com erro explícito.',
-    'Use a skill hatch-pet (~/.claude/skills/hatch-pet/SKILL.md) e siga o processo dela por inteiro:',
-    'crie o modelo em todas as posições do contrato — spritesheet 8×11 com idle (6 frames + neutro na coluna 6),',
-    'running-right (8), running-left (8), waving (4), jumping (5), failed (8), waiting (6), running (6), review (6)',
-    'e as 16 direções de look nas linhas 9–10 (ângulos em sentido horário a partir de cima).',
-    `Monte e valide com os scripts da skill (QA visual frame a frame) e salve em ~/.codex/pets/${slug}/`,
-    '(spritesheet.webp ≤ 2,5 MB + pet.json com spriteVersionNumber 2).',
-    'Ao terminar, informe o caminho final — vou importar no NexusIDE em Configurações → Aparência → Pet de mesa',
-    'com "Importar spritesheet do Codex…".',
-  ].join(' ');
-}
+export { hatchPetIntent, petSlugFromImagePath };
 
 /** Card da biblioteca com preview do frame idle (lazy load do sheet). */
 function LibraryPetCard({
@@ -213,6 +187,7 @@ export function PetSection() {
   const [library, setLibrary] = useState<PetLibraryEntry[] | null>(null);
   const [libraryBusyId, setLibraryBusyId] = useState<string | null>(null);
   const [libraryActiveId, setLibraryActiveId] = useState<string | null>(null);
+  const [hatchBusy, setHatchBusy] = useState(false);
   const sheetRef = useRef<HTMLInputElement | null>(null);
 
   const filteredCatalog = useMemo(() => {
@@ -391,22 +366,36 @@ export function PetSection() {
   };
 
   /**
-   * "Gerar pet com IA": escolhe a imagem-base e abre o Mission Wizard com a
-   * missão hatch-pet pré-preenchida — o agente gera o sheet 8×11 completo.
+   * "Gerar pet com IA": escolhe a imagem-base e inicia o Pet Studio fixo —
+   * um único Codex executa a skill hatch-pet sem abrir reviewers/worktrees.
    */
   const onHatchPet = async () => {
-    if (!petApi.pickImage) return;
-    const picked = await petApi.pickImage();
-    if (picked.canceled) return;
-    if (!picked.ok || !picked.path) {
-      setImportNote(picked.error ?? 'Não consegui usar essa imagem.');
-      return;
+    if (!petApi.pickImage || hatchBusy) return;
+    setHatchBusy(true);
+    try {
+      const picked = await petApi.pickImage();
+      if (picked.canceled) return;
+      if (!picked.ok || !picked.path) {
+        setImportNote(picked.error ?? 'Não consegui usar essa imagem.');
+        return;
+      }
+      setImportNote('Montando o executor visual e iniciando a missão…');
+      const launched = await launchPetHatchMission(picked.path);
+      if (!launched.ok) {
+        const message = launched.error ?? 'Não consegui iniciar a criação do pet.';
+        setImportNote(message);
+        useToastStore.getState().push('error', 'Pet não iniciado', message);
+        return;
+      }
+      useSettingsStore.getState().closeDrawer();
+      useToastStore.getState().push(
+        'success',
+        'Criação do pet iniciada',
+        'A missão já existe e o executor visual recebeu a imagem-base.',
+      );
+    } finally {
+      setHatchBusy(false);
     }
-    setImportNote(
-      'Missão de geração aberta — acompanhe o agente; ao final, importe o sheet gerado.',
-    );
-    useSettingsStore.getState().closeDrawer();
-    useMissionWizardStore.getState().openForAgentic(hatchPetIntent(picked.path));
   };
 
   /** Remove o conteúdo de um pet criado/importado (volta para o Operador). */
@@ -585,9 +574,10 @@ export function PetSection() {
               {petApi.pickImage && (
                 <ActionCard
                   icon="sparkle"
-                  title="Criar pet com IA"
-                  subtitle="Foto → poses (missão Codex)"
+                  title={hatchBusy ? 'Iniciando criação…' : 'Criar pet com IA'}
+                  subtitle="Foto → pet v2 completo"
                   variant="primary"
+                  disabled={hatchBusy}
                   onClick={() => void onHatchPet()}
                 />
               )}
@@ -602,7 +592,8 @@ export function PetSection() {
               Criar com IA abre uma missão que desenha seu pet em todas as
               poses a partir de uma foto (processo lento, padrão Codex).
               Spritesheets no contrato v2 (8×11) importam direto — inclusive
-              os de ~/.codex/pets. Tudo local; nada é enviado.
+              os de ~/.codex/pets. Os arquivos finais ficam locais; a geração
+              usa o provider Codex configurado.
             </p>
             <input
               ref={sheetRef}

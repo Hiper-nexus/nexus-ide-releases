@@ -1,11 +1,23 @@
 /** @vitest-environment jsdom */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PetPrefs } from '../../../shared/pet-types';
 import { PetSection } from './PetSection';
 import { useMissionWizardStore } from '../../state/mission-wizard-store';
 import { useSettingsStore } from '../../state/settings-store';
+
+const { launchPetHatchMission } = vi.hoisted(() => ({
+  launchPetHatchMission: vi.fn(async () => ({
+    ok: true,
+    paneId: 'pane-pet-hatch',
+  })),
+}));
+
+vi.mock('../../pet/pet-hatch-flow', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../pet/pet-hatch-flow')>()),
+  launchPetHatchMission,
+}));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -39,6 +51,7 @@ describe('PetSection — Criar pet com IA (hatch)', () => {
   let root: Root;
 
   beforeEach(() => {
+    launchPetHatchMission.mockClear();
     installPetApi();
     host = document.createElement('div');
     document.body.appendChild(host);
@@ -51,7 +64,7 @@ describe('PetSection — Criar pet com IA (hatch)', () => {
     delete (window as { nexus?: unknown }).nexus;
   });
 
-  it('clicar no botão fecha o drawer e abre o wizard com a missão hatch', async () => {
+  it('clicar inicia a missão diretamente e fecha o drawer', async () => {
     useSettingsStore.setState({ drawerOpen: true });
     useMissionWizardStore.setState({ open: false, agenticIntent: null });
 
@@ -68,11 +81,8 @@ describe('PetSection — Criar pet com IA (hatch)', () => {
       button!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    const wizard = useMissionWizardStore.getState();
-    expect(wizard.open).toBe(true);
-    expect(wizard.agenticIntent).toContain(IMAGE_PATH);
-    expect(wizard.agenticIntent).toContain('hatch-pet');
-    expect(wizard.agenticIntent).toContain('~/.codex/pets/meu-gato/');
+    expect(launchPetHatchMission).toHaveBeenCalledWith(IMAGE_PATH);
+    expect(useMissionWizardStore.getState().open).toBe(false);
     expect(useSettingsStore.getState().drawerOpen).toBe(false);
   });
 });

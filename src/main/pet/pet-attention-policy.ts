@@ -210,7 +210,11 @@ function toDecision(
   _unused: boolean,
 ): AttentionDecision {
   const urgent = isPetUrgentEvent(event.kind);
-  let mirrorMain = urgent;
+  // A conclusao precisa ser observavel mesmo se o companion estiver
+  // desativado: o pet recebe o balao quando ligado e a janela principal
+  // recebe o toast de sucesso como fallback. O teto de ruido acima continua
+  // impedindo uma frota de inundar a UI.
+  let mirrorMain = urgent || event.kind === 'mission-done';
   if (urgent) {
     if (now - state.lastAttentionToastAt < ATTENTION_TOAST_COOLDOWN_MS) {
       mirrorMain = false;

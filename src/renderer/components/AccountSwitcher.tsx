@@ -15,6 +15,7 @@ import {
   restartPanesForPendingAccount,
 } from '../orch/account-restart-controller';
 import { PixelIcon } from './PixelIcon';
+import { ProviderLogo } from './ProviderLogo';
 
 const MENU_WIDTH = 300;
 const MENU_GAP = 6;
@@ -221,6 +222,7 @@ export function AccountSwitcher({
     : visible.length > 0
       ? 'idle'
       : 'off';
+  const logoAdapterId = active?.adapterId ?? adapterFilter;
 
   const menu =
     open && menuPos
@@ -314,7 +316,8 @@ export function AccountSwitcher({
                       className="account-switcher__group-label"
                       id={`acct-group-${adapterId}`}
                     >
-                      {adapterId}
+                      <ProviderLogo adapterId={adapterId} label={adapterId} size="xs" />
+                      <span>{adapterId}</span>
                     </p>
                   )}
                   {list.map((a) => {
@@ -461,6 +464,9 @@ export function AccountSwitcher({
         onKeyDown={onTriggerKeyDown}
       >
         <span className="account-switcher__dot" data-state={triggerState} />
+        {logoAdapterId && (
+          <ProviderLogo adapterId={logoAdapterId} label={logoAdapterId} size="xs" />
+        )}
         <span className="account-switcher__text">
           <span className="account-switcher__label">{label}</span>
           {!compact && <span className="account-switcher__sub">{sub}</span>}

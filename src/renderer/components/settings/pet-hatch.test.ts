@@ -18,15 +18,25 @@ describe('petSlugFromImagePath', () => {
   it('cai para "pet" quando nada sobra', () => {
     expect(petSlugFromImagePath('/tmp/---.png')).toBe('pet');
   });
+
+  it('remove o sufixo técnico content-addressed do anexo', () => {
+    expect(petSlugFromImagePath('/tmp/Meu Gato-264746742184270.jpg')).toBe(
+      'meu-gato',
+    );
+  });
 });
 
 describe('hatchPetIntent', () => {
-  it('inclui imagem-base, skill hatch-pet, malha 8×11 e destino do slug', () => {
+  it('produz um briefing visual curto com referência, skill e destino', () => {
     const intent = hatchPetIntent('/Users/x/Pictures/Meu Gato.png');
     expect(intent).toContain('/Users/x/Pictures/Meu Gato.png');
     expect(intent).toContain('hatch-pet');
-    expect(intent).toContain('8×11');
+    expect(intent).toContain('3D toy premium');
+    expect(intent).toContain('#FF00FF');
     expect(intent).toContain('~/.codex/pets/meu-gato/');
-    expect(intent).toContain('spriteVersionNumber 2');
+    expect(intent).toContain('Codex v2');
+    expect(intent).not.toContain('nexus_context_doctor');
+    expect(intent).not.toContain('reviewer');
+    expect(intent).not.toContain('~/.claude/skills');
   });
 });

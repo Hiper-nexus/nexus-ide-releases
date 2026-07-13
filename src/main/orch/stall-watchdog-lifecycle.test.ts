@@ -4,6 +4,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 
 const ptyMocks = vi.hoisted(() => ({
   dataTaps: [] as Array<(sessionId: string, data: string) => void>,
+  stateTaps: [] as Array<(sessionId: string, state: string) => void>,
   exitTaps: [] as Array<(sessionId: string) => void>,
 }));
 
@@ -27,18 +28,19 @@ const handoffMocks = vi.hoisted(() => ({
   submitted: [] as Array<{ scope: ProjectExecutionScope; input: unknown }>,
   delivered: vi.fn(),
 }));
-const recoveryMocks = vi.hoisted(() => ({ request: vi.fn(() => true) }));
-
-vi.mock('./failover', () => ({
-  requestSessionRecovery: recoveryMocks.request,
-}));
-
 vi.mock('../pty/pty-manager', () => ({
   tapSessionData: vi.fn((tap: (sessionId: string, data: string) => void) => {
     ptyMocks.dataTaps.push(tap);
     return () => {
       const index = ptyMocks.dataTaps.indexOf(tap);
       if (index >= 0) ptyMocks.dataTaps.splice(index, 1);
+    };
+  }),
+  tapSessionState: vi.fn((tap: (sessionId: string, state: string) => void) => {
+    ptyMocks.stateTaps.push(tap);
+    return () => {
+      const index = ptyMocks.stateTaps.indexOf(tap);
+      if (index >= 0) ptyMocks.stateTaps.splice(index, 1);
     };
   }),
   tapSessionExit: vi.fn((tap: (sessionId: string) => void) => {
@@ -131,6 +133,7 @@ beforeEach(() => {
   vi.setSystemTime(0);
   vi.resetModules();
   ptyMocks.dataTaps.length = 0;
+  ptyMocks.stateTaps.length = 0;
   ptyMocks.exitTaps.length = 0;
   paneMocks.panes.length = 0;
   paneMocks.authorities.clear();
@@ -138,7 +141,6 @@ beforeEach(() => {
   scopeMocks.listeners.length = 0;
   handoffMocks.submitted.length = 0;
   handoffMocks.delivered.mockClear();
-  recoveryMocks.request.mockClear();
 });
 
 afterEach(() => {
@@ -147,21 +149,35 @@ afterEach(() => {
 });
 
 describe('stall watchdog scoped lifecycle', () => {
-  it('requests one resume recovery after the second silence threshold', async () => {
+  it('never restarts or resends work after prolonged silence', async () => {
     const watchdog = await import('./stall-watchdog');
     const scope = testProjectScope();
     addWorker({ ownerId: 99, paneId: 'recover-pane', sessionId: 'recover-session', missionId: 'mission-r', scope });
     watchdog.initStallWatchdog();
 
     await vi.advanceTimersByTimeAsync(
-      watchdog.STALL_SCAN_MS + watchdog.STALL_RECOVERY_MS + watchdog.STALL_SCAN_MS,
+      watchdog.STALL_SCAN_MS + watchdog.STALL_MS * 3,
     );
 
-    expect(recoveryMocks.request).toHaveBeenCalledOnce();
-    expect(recoveryMocks.request).toHaveBeenCalledWith(
-      'recover-session',
-      expect.stringContaining('recuperação automática segura'),
+    expect(handoffMocks.submitted).toHaveLength(1);
+    expect(handoffMocks.submitted[0]?.input).toEqual(
+      expect.objectContaining({ status: 'stalled' }),
     );
+    watchdog.shutdownStallWatchdog();
+  });
+
+  it('treats provider hook state as activity even without PTY bytes', async () => {
+    const watchdog = await import('./stall-watchdog');
+    const scope = testProjectScope();
+    addWorker({ ownerId: 98, paneId: 'active-pane', sessionId: 'active-session', missionId: 'mission-a', scope });
+    watchdog.initStallWatchdog();
+
+    await vi.advanceTimersByTimeAsync(watchdog.STALL_SCAN_MS);
+    await vi.advanceTimersByTimeAsync(watchdog.STALL_MS - watchdog.STALL_SCAN_MS);
+    ptyMocks.stateTaps[0]?.('active-session', 'busy');
+    await vi.advanceTimersByTimeAsync(watchdog.STALL_MS - watchdog.STALL_SCAN_MS);
+
+    expect(handoffMocks.submitted).toEqual([]);
     watchdog.shutdownStallWatchdog();
   });
   it('isolates identical pane ids by owner, exact scope, mission and session', async () => {

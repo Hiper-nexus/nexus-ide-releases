@@ -21,6 +21,7 @@ import {
   sortEntries,
   sortEntriesWithQuota,
 } from './ranking-view';
+import { ProviderLogo } from '../ProviderLogo';
 
 /**
  * Per-adapter free capacity 0..1 for ranking blend. Uses freest account of each
@@ -96,6 +97,11 @@ function RaceChart({
             }
           >
             <span className="rank-race__place">#{index + 1}</span>
+            <ProviderLogo
+              adapterId={entry.adapterId}
+              label={entry.adapterId}
+              size="sm"
+            />
             <span className="rank-race__id">
               <strong>{entry.modelId}</strong>
               <span className="rank-race__adapter">
@@ -215,9 +221,14 @@ function RadarChart({
         <circle className="rank-radar__core" cx={cx} cy={cy} r={4} />
       </svg>
       <div className="rank-radar__caption">
-        <strong>{entry.modelId}</strong>
-        <span>
-          overall {entry.overall} · η{costEfficiency(entry)} · {costLabel(entry)}
+        <span className="rank-radar__identity">
+          <ProviderLogo adapterId={entry.adapterId} label={entry.adapterId} size="sm" />
+          <span className="rank-radar__identity-copy">
+            <strong>{entry.modelId}</strong>
+            <span>
+              overall {entry.overall} · η{costEfficiency(entry)} · {costLabel(entry)}
+            </span>
+          </span>
         </span>
         {ghostPts && ghost && (
           <span className="rank-radar__ghost-cap">
@@ -260,8 +271,15 @@ function MissionPicks({
             className="rank-missions__card"
             onClick={() => onSelect(m.pick!.id)}
           >
-            <span className="rank-missions__kind">
-              {m.key === 'value' ? 'Value' : SORT_LABELS[m.key]}
+            <span className="rank-missions__head">
+              <ProviderLogo
+                adapterId={m.pick.adapterId}
+                label={m.pick.adapterId}
+                size="sm"
+              />
+              <span className="rank-missions__kind">
+                {m.key === 'value' ? 'Value' : SORT_LABELS[m.key]}
+              </span>
             </span>
             <span className="rank-missions__model">{m.pick.modelId}</span>
             <span className="rank-missions__meta">
@@ -459,12 +477,19 @@ export function ModelRankingSection() {
           {selected && (
             <div className="rank-ops__detail" aria-live="polite">
               <div className="rank-ops__detail-head">
-                <span className="rank-ops__detail-name">{selected.modelId}</span>
-                <span className="rank-ops__detail-adapter">
-                  {selected.adapterId}
-                  {installed.has(selected.adapterId)
-                    ? ' · CLI pronta neste host'
-                    : ' · CLI não detectada / off'}
+                <ProviderLogo
+                  adapterId={selected.adapterId}
+                  label={selected.adapterId}
+                  size="sm"
+                />
+                <span className="rank-ops__detail-identity">
+                  <span className="rank-ops__detail-name">{selected.modelId}</span>
+                  <span className="rank-ops__detail-adapter">
+                    {selected.adapterId}
+                    {installed.has(selected.adapterId)
+                      ? ' · CLI pronta neste host'
+                      : ' · CLI não detectada / off'}
+                  </span>
                 </span>
               </div>
               <div className="rank-ops__dims">

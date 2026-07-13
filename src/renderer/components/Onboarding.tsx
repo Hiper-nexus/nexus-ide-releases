@@ -3,6 +3,7 @@ import type { AdapterInfo } from '../../shared/types';
 import { VICTORY_KEYS, type VictoryKey } from '../../shared/onboarding-types';
 import { useOnboardingStore } from '../state/onboarding-store';
 import { NexusMark } from './NexusMark';
+import { ProviderLogo } from './ProviderLogo';
 
 /**
  * Onboarding de primeira execução — a tela que PREPARA o sistema, no lugar de
@@ -116,7 +117,7 @@ export function Onboarding() {
             <ul className="onb__cli-row">
               {installed.map((a) => (
                 <li key={a.id} className="onb__cli onb__cli--ok" title={`${a.label} instalada`}>
-                  <span className="onb__cli-glyph" aria-hidden="true">{a.icon}</span>
+                  <ProviderLogo adapterId={a.id} label={a.label} fallback={a.icon} size="sm" />
                   {a.label}
                 </li>
               ))}
@@ -128,7 +129,7 @@ export function Onboarding() {
               <ul className="onb__install-list">
                 {missing.map((a) => (
                   <li key={a.id} className="onb__install">
-                    <span className="onb__cli-glyph" aria-hidden="true">{a.icon}</span>
+                    <ProviderLogo adapterId={a.id} label={a.label} fallback={a.icon} size="sm" />
                     <span className="onb__install-label">{a.label}</span>
                     <code className="onb__install-cmd">{a.installCommand}</code>
                     <CopyButton text={a.installCommand} />

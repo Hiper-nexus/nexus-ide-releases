@@ -55,12 +55,15 @@ const handoffSubmitTool: McpToolDef = {
     if (handoff.evidenceTrust === 'nexus-trusted') {
       markHandoffSubmitted(ctx);
     }
-    onHandoffSubmitted(handoff, ctx.scope);
+    const petStudioCompletion = onHandoffSubmitted(handoff, ctx.scope);
     return {
       ok: true,
       handoffId: handoff.id,
       evidenceTrust: handoff.evidenceTrust,
       stopGateSatisfied: handoff.evidenceTrust === 'nexus-trusted',
+      ...(petStudioCompletion
+        ? { petStudioCompletion }
+        : {}),
     };
   },
 };

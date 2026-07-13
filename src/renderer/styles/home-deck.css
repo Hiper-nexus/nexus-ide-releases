@@ -315,7 +315,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 46px;
+  min-height: 68px;
   background: transparent;
   border: 0;
   border-bottom: 1px solid var(--border);
@@ -326,6 +326,20 @@
   text-align: left;
   transition: border-color 120ms ease, background 120ms ease;
 }
+
+.home-deck__squad-avatars {
+  padding-left: 2px;
+  margin-right: 4px;
+}
+
+.home-deck__squad-avatars .home-deck__squad-avatar {
+  --agent-size: 48px;
+  border-radius: var(--radius-lg);
+}
+
+.home-deck__squad-avatars .agent-avatar + .agent-avatar {
+  margin-left: -11px;
+}
 .home-deck__squad:hover {
   background: var(--accent-soft);
 }
@@ -333,7 +347,11 @@
 .home-deck__squad-name {
   font-size: var(--text-md);
   font-weight: 600;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .home-deck__squad-meta {
@@ -364,6 +382,43 @@
   }
   .home-deck__cta:active {
     transform: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .home-deck__squad {
+    min-height: 58px;
+    gap: 9px;
+  }
+  .home-deck__squad-avatars .home-deck__squad-avatar {
+    --agent-size: 38px;
+  }
+  .home-deck__squad-avatars .agent-avatar + .agent-avatar {
+    margin-left: -9px;
+  }
+}
+
+@media (max-width: 620px) {
+  .home-deck__squad {
+    min-height: 54px;
+  }
+  .home-deck__squad-avatars .home-deck__squad-avatar {
+    --agent-size: 32px;
+  }
+  .home-deck__squad-avatars .agent-avatar + .agent-avatar {
+    margin-left: -8px;
+  }
+  .home-deck__squad-meta {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .home-deck__squad {
+    gap: 8px;
+  }
+  .home-deck__squad-avatars .home-deck__squad-avatar {
+    --agent-size: 30px;
   }
 }
 

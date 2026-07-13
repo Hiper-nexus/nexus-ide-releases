@@ -15,6 +15,8 @@ export const PET_CHANNELS = {
   event: 'pet:event',
   /** event: main → janela do pet. Direção de "look" (0..15) ou null. */
   look: 'pet:look',
+  /** event: main → janela do pet. Alinha o conteúdo ao canto sem overhang. */
+  placement: 'pet:placement',
   /** send: janela do pet → main. Cursor entrou/saiu de área interativa. */
   setInteractive: 'pet:setInteractive',
   /** send: janela do pet → main. Começa a arrastar (offset do cursor). */
@@ -33,8 +35,9 @@ export const PET_CHANNELS = {
   /** event: main → janela principal. Abrir Ops Board / pipeline de missões. */
   openOps: 'pet:openOps',
   /**
-   * event: main → janela principal. Intervenção (missão blocked / agent waiting).
-   * Espelhado em toast mesmo com pet off ou ainda a carregar.
+   * event: main → janela principal. Intervenção (missão blocked / agent waiting)
+   * e conclusão de missão. Espelhado em toast mesmo com pet off ou ainda a
+   * carregar.
    */
   attention: 'pet:attention',
   /** invoke: janela principal → main. Importa um pet da galeria petdex. */
@@ -185,6 +188,11 @@ export interface PetPosition {
   y: number;
 }
 
+export interface PetPlacement {
+  horizontal: 'left' | 'center' | 'right';
+  vertical: 'top' | 'bottom';
+}
+
 export interface PetPrefs {
   /** Desligado por padrão: o pet é opt-in (não afeta smoke/CI). */
   enabled: boolean;
@@ -316,6 +324,8 @@ export interface NexusPetApi {
   onEvent(cb: (event: PetEvent) => void): () => void;
   /** Direção do olhar (0..15, horário a partir de cima) ou null = idle. */
   onLook(cb: (dir: number | null) => void): () => void;
+  /** Ancoragem visual dentro da janela transparente segura. */
+  onPlacement(cb: (placement: PetPlacement) => void): () => void;
   setInteractive(interactive: boolean): void;
   dragBegin(offset: { x: number; y: number }): void;
   dragEnd(): void;

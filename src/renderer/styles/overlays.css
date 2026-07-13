@@ -71,6 +71,17 @@
   width: 100%;
 }
 
+.agent-picker__select-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.agent-picker__select-row .agent-picker__select {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .agent-picker__select:focus {
   border-color: var(--accent);
 }

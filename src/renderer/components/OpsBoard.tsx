@@ -14,6 +14,15 @@ import {
   formatAgo,
   groupMissionsIntoColumns,
 } from '../lib/ops-board';
+import { useLayoutStore } from '../state/layout-store';
+import { useSessionStateStore } from '../state/session-state-store';
+import { listPanes } from '../lib/split-tree';
+import {
+  AgentAvatar,
+  resolveAgentCategory,
+  summarizeAgentStates,
+  type AgentVisualState,
+} from './AgentAvatar';
 
 /**
  * Ops Board — o pipeline de missões como superfície espacial (war-room).
@@ -33,6 +42,9 @@ export function OpsBoard() {
   const missions = useOrchStore((s) => s.missions);
   const squads = useOrchStore((s) => s.squads);
   const paneMissions = useOrchStore((s) => s.paneMissions);
+  const layoutRoot = useLayoutStore((s) => s.root);
+  const focusPane = useLayoutStore((s) => s.focus);
+  const paneStates = useSessionStateStore((s) => s.paneStates);
   const openWizard = useMissionWizardStore((s) => s.openForMission);
   const snapshot = useGamificationStore((s) => s.snapshot);
 
@@ -55,6 +67,7 @@ export function OpsBoard() {
   const columns = groupMissionsIntoColumns(missions);
   const openMissionIds = new Set(Object.values(paneMissions));
   const squadNames = new Map(squads.map((s) => [s.id, s.name]));
+  const panes = listPanes(layoutRoot);
   const now = Date.now();
 
   async function dropOn(to: MissionStatus) {
@@ -203,6 +216,34 @@ export function OpsBoard() {
                   ) : (
                     col.missions.map((m) => {
                       const active = openMissionIds.has(m.id);
+                      const squad = m.squadId
+                        ? squads.find((candidate) => candidate.id === m.squadId)
+                        : undefined;
+                      const livePanes = panes.filter(
+                        (pane) =>
+                          pane.kind === 'cli-agent' && paneMissions[pane.id] === m.id,
+                      );
+                      const crew =
+                        livePanes.length > 0
+                          ? livePanes.slice(0, 4).map((pane) => ({
+                              key: pane.id,
+                              paneId: pane.id,
+                              label: pane.agentName ?? pane.title,
+                              category: resolveAgentCategory(
+                                squads,
+                                pane.agentName,
+                                pane.role,
+                              ),
+                              state: (paneStates.get(pane.id) ??
+                                'spawning') as AgentVisualState,
+                            }))
+                          : (squad?.agents.slice(0, 4).map((agent) => ({
+                              key: agent.id,
+                              paneId: undefined,
+                              label: agent.agentName,
+                              category: agent.category,
+                              state: 'offline' as AgentVisualState,
+                            })) ?? []);
                       return (
                         <article
                           key={m.id}
@@ -237,6 +278,48 @@ export function OpsBoard() {
                             )}
                           </div>
                           <h3 className="ops-board__card-title">{m.title}</h3>
+                          {crew.length > 0 && (
+                            <div className="ops-board__crew">
+                              <span className="agent-avatar-group" aria-label="Tripulação da missão">
+                                {crew.map((agent) =>
+                                  agent.paneId ? (
+                                    <button
+                                      type="button"
+                                      className="ops-board__agent-focus"
+                                      key={agent.key}
+                                      title={`Focar ${agent.label}`}
+                                      onMouseDown={(event) => event.stopPropagation()}
+                                      onDragStart={(event) => event.stopPropagation()}
+                                      onClick={() => {
+                                        focusPane(agent.paneId!);
+                                        closeBoard();
+                                      }}
+                                    >
+                                      <AgentAvatar
+                                        category={agent.category}
+                                        state={agent.state}
+                                        size="card"
+                                        label={agent.label}
+                                        className="ops-board__agent-avatar"
+                                      />
+                                    </button>
+                                  ) : (
+                                    <AgentAvatar
+                                      key={agent.key}
+                                      category={agent.category}
+                                      state={agent.state}
+                                      size="card"
+                                      label={agent.label}
+                                      className="ops-board__agent-avatar"
+                                    />
+                                  ),
+                                )}
+                              </span>
+                              <span className="ops-board__crew-state">
+                                {summarizeAgentStates(crew.map((agent) => agent.state))}
+                              </span>
+                            </div>
+                          )}
                           <div className="ops-board__card-meta">
                             <span>{formatAgo(now, m.updatedAt)}</span>
                             {m.milestones.length > 0 && (

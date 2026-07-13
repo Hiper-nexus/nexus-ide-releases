@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "sensors": [
+    {
+      "id": "typecheck",
+      "command": [
+        "npm",
+        "run",
+        "typecheck"
+      ],
+      "timeoutMs": 900000,
+      "network": false
+    },
+    {
+      "id": "unit",
+      "command": [
+        "npm",
+        "test",
+        "--",
+        "--run"
+      ],
+      "timeoutMs": 900000,
+      "network": false
+    },
+    {
+      "id": "design-system",
+      "command": [
+        "node",
+        ".context/nexus/sensors/design-system-sensor.mjs"
+      ],
+      "timeoutMs": 60000,
+      "network": false
+    }
+  ]
+}

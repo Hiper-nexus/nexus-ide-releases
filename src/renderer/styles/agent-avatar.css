@@ -1,0 +1,190 @@
+/* Nexlings: identidade dos agentes + telemetria visual. Cor forte comunica
+   estado; o movimento fica contido no avatar para não competir com o terminal. */
+.agent-avatar {
+  --agent-size: 30px;
+  --agent-state: var(--state-pending);
+  --agent-phase: 0ms;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: var(--agent-size);
+  height: var(--agent-size);
+  flex: 0 0 var(--agent-size);
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: #070b17;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--agent-state) 28%, var(--border));
+  isolation: isolate;
+}
+
+.agent-avatar--micro { --agent-size: 22px; border-radius: var(--radius-sm); }
+.agent-avatar--compact { --agent-size: 30px; }
+.agent-avatar--card { --agent-size: 38px; border-radius: var(--radius-lg); }
+
+.agent-avatar--busy,
+.agent-avatar--spawning { --agent-state: var(--state-running); }
+.agent-avatar--idle,
+.agent-avatar--done { --agent-state: var(--state-ready); }
+.agent-avatar--waiting { --agent-state: var(--state-blocked); }
+.agent-avatar--exited { --agent-state: var(--state-failed); }
+
+.agent-avatar > img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  image-rendering: auto;
+  transition: filter 180ms var(--ease-out-quart), opacity 180ms var(--ease-out-quart);
+}
+
+.agent-avatar__core {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: 58%;
+  width: 30%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0 12%, var(--agent-state) 28%, transparent 72%);
+  mix-blend-mode: screen;
+  opacity: 0.38;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.agent-avatar__sensor {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: 17%;
+  width: max(2px, 7%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 5px 1px var(--agent-state);
+  opacity: 0.34;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.agent-avatar--scout .agent-avatar__sensor {
+  left: 27%;
+  top: 37%;
+}
+.agent-avatar--executor .agent-avatar__sensor { top: 16%; }
+.agent-avatar--reviewer .agent-avatar__sensor { top: 15%; }
+.agent-avatar--architect .agent-avatar__sensor { top: 12%; }
+
+.agent-avatar__scan {
+  position: absolute;
+  z-index: 4;
+  inset: -20% 0 auto;
+  height: 28%;
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--agent-state) 50%, transparent), transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.agent-avatar--idle .agent-avatar__sensor {
+  animation: agent-sensor-blink 5.2s steps(1, end) var(--agent-phase) infinite;
+}
+.agent-avatar--idle .agent-avatar__core,
+.agent-avatar--busy .agent-avatar__core {
+  animation: agent-core-breathe 2.6s ease-in-out var(--agent-phase) infinite;
+}
+.agent-avatar--busy .agent-avatar__scan {
+  opacity: 0.72;
+  animation: agent-scan 1.7s linear var(--agent-phase) infinite;
+}
+.agent-avatar--busy > img {
+  animation: agent-work-shift 2.1s var(--ease-out-quart) var(--agent-phase) infinite alternate;
+}
+.agent-avatar--spawning {
+  animation: agent-boot 900ms ease-in-out var(--agent-phase) infinite alternate;
+}
+.agent-avatar--waiting .agent-avatar__sensor,
+.agent-avatar--waiting .agent-avatar__core {
+  animation: agent-attention 1.15s ease-in-out var(--agent-phase) infinite;
+}
+.agent-avatar--hibernated > img {
+  filter: saturate(0.2) brightness(0.55);
+  opacity: 0.72;
+}
+.agent-avatar--exited > img {
+  filter: saturate(0.35) sepia(0.25) hue-rotate(295deg) brightness(0.62);
+  opacity: 0.78;
+}
+.agent-avatar--exited .agent-avatar__core { opacity: 0.2; }
+
+@keyframes agent-sensor-blink {
+  0%, 44%, 47%, 81%, 84%, 100% { opacity: 0.36; }
+  45%, 46%, 82%, 83% { opacity: 1; }
+}
+@keyframes agent-core-breathe {
+  0%, 100% { opacity: 0.3; transform: translate(-50%, -50%) scale(0.82); }
+  50% { opacity: 0.82; transform: translate(-50%, -50%) scale(1.14); }
+}
+@keyframes agent-scan {
+  from { transform: translateY(-20%); }
+  to { transform: translateY(430%); }
+}
+@keyframes agent-work-shift {
+  from { transform: translateY(0); }
+  to { transform: translateY(-1px); }
+}
+@keyframes agent-boot {
+  from { opacity: 0.58; }
+  to { opacity: 1; }
+}
+@keyframes agent-attention {
+  0%, 100% { opacity: 0.35; }
+  45% { opacity: 1; }
+}
+
+.agent-avatar-group {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding-left: 4px;
+}
+.agent-avatar-group .agent-avatar + .agent-avatar {
+  margin-left: -7px;
+}
+.agent-avatar-group .agent-avatar {
+  box-shadow:
+    0 0 0 2px var(--bg-elevated),
+    inset 0 0 0 1px color-mix(in srgb, var(--agent-state) 28%, var(--border));
+}
+
+@container pane-toolbar (max-width: 340px) {
+  .toolbar__agent-avatar { --agent-size: 18px; }
+  .toolbar__agent-avatar .agent-avatar__scan { display: none; }
+}
+@container pane-toolbar (max-width: 245px) {
+  .toolbar__agent-avatar { display: none; }
+}
+
+@media (max-width: 760px) {
+  .wizard__agent-identity .agent-avatar { --agent-size: 30px; }
+  .home-deck__squad .agent-avatar-group .agent-avatar:nth-child(n + 5) { display: none; }
+}
+
+@media (max-width: 620px) {
+  .home-deck__squad .agent-avatar-group .agent-avatar:nth-child(n + 4) { display: none; }
+}
+
+@media (max-width: 480px) {
+  .home-deck__squad .agent-avatar-group .agent-avatar:nth-child(n + 3) { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-avatar,
+  .agent-avatar > img,
+  .agent-avatar__core,
+  .agent-avatar__sensor,
+  .agent-avatar__scan {
+    animation: none !important;
+    transition: none !important;
+  }
+  .agent-avatar--busy .agent-avatar__core,
+  .agent-avatar--waiting .agent-avatar__core { opacity: 0.72; }
+}

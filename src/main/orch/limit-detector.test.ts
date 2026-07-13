@@ -24,6 +24,9 @@ describe('detectLimit', () => {
       detectLimit('RATE LIMIT: em rate limit, re-roteie para outra CLI e siga.'),
     ).toBeNull();
     expect(detectLimit('Documente como tratar rate limit no provider.')).toBeNull();
+    expect(detectLimit('O exemplo de UI diz: usage limit reached')).toBeNull();
+    expect(detectLimit('src/file.ts:429: const retry = true')).toBeNull();
+    expect(detectLimit('mission-429 finished successfully')).toBeNull();
   });
 
   it('detects credit/quota exhaustion as quota (long cooldown)', () => {

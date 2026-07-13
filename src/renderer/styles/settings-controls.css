@@ -158,6 +158,13 @@
   margin-bottom: 12px;
 }
 
+.settings-orchestrator__provider {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+  gap: 10px;
+}
+
 .settings-orchestrator__title {
   margin: 0;
   color: var(--text);

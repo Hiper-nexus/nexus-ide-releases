@@ -8,7 +8,7 @@ const TOAST_ICON: Record<ToastKind, PixelIconName> = {
   error: 'close',
 };
 
-/** Stacked transient notifications, bottom-right. Severity reads from icon + tone. */
+/** Stacked transient notifications below the app bar, away from wizard actions. */
 export function Toasts() {
   const toasts = useToastStore((s) => s.toasts);
   const dismiss = useToastStore((s) => s.dismiss);

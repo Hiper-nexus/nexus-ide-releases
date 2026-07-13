@@ -725,6 +725,9 @@
 }
 
 .account-switcher__group-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 6px 8px 2px;
   font-size: 10px;
   text-transform: uppercase;
@@ -1145,7 +1148,6 @@
   background: var(--bg);
 }
 .onb__cli--ok { border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
-.onb__cli-glyph { color: var(--accent); }
 
 .onb__missing { margin-top: 12px; }
 .onb__missing > summary {
