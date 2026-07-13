@@ -574,11 +574,13 @@ export function PetSection() {
         sheet: galleryCandidate.sheet,
         preset: 'sheet',
       });
+      const wasApplied = applied.preset === 'sheet' && Boolean(applied.sheet);
       setImportNote(
-        applied.preset === 'sheet' && applied.sheet
+        wasApplied
           ? `"${galleryCandidate.name}" importado da galeria.`
           : 'Não consegui salvar esse pet no perfil local.',
       );
+      if (wasApplied) setGalleryCandidate(null);
     } catch (error) {
       setImportNote(
         `Falha ao importar (${error instanceof Error ? error.message : 'erro'}).`,

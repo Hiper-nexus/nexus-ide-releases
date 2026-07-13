@@ -364,12 +364,26 @@ export class ContextDraftStore {
     const id = idSchema.parse(rawId);
     const attestationId = z.string().regex(ATTESTATION_ID_PATTERN).parse(rawAttestationId);
     const now = this.#binding.now();
-    const result = this.#binding.writeDatabase().prepare(
-      `UPDATE context_drafts
-       SET status = 'applied', attestation_id = ?, applied_at = ?, updated_at = ?
-       WHERE id = ? AND status = 'approved'`,
-    ).run(attestationId, now, now, id);
-    if (result.changes !== 1) throw new Error('only an approved context draft can be applied');
+    const db = this.#binding.writeDatabase();
+    db.transaction(() => {
+      const result = db.prepare(
+        `UPDATE context_drafts
+         SET status = 'applied', attestation_id = ?, applied_at = ?, updated_at = ?
+         WHERE id = ? AND status = 'approved'`,
+      ).run(attestationId, now, now, id);
+      if (result.changes !== 1) {
+        throw new Error('only an approved context draft can be applied');
+      }
+      db.prepare(
+        `UPDATE context_drafts
+         SET status = 'superseded', attestation_id = NULL,
+             applied_commit = NULL, updated_at = ?
+         WHERE id <> ? AND status = 'applied' AND applied_commit IS NULL
+           AND target_path = (
+             SELECT target_path FROM context_drafts WHERE id = ?
+           )`,
+      ).run(now, id, id);
+    })();
     this.#binding.emitChange();
     return this.#required(id);
   }

@@ -5,6 +5,7 @@ import type { ProjectExecutionScope } from '../../../shared/types';
 import type { ProjectOrientationMap } from './orientation-types';
 
 const MAX_BOOTSTRAP_SOURCES = 4;
+const MAX_BOOTSTRAP_SOURCE_BYTES = 1_000_000;
 const NON_SEMANTIC_SOURCE_BASENAMES = new Set([
   'bun.lock',
   'bun.lockb',
@@ -45,7 +46,7 @@ function sha256File(root: string, relative: string): string | null {
   try {
     const absolute = path.join(root, relative);
     const stat = fs.lstatSync(absolute);
-    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 1024 * 1024) {
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_BOOTSTRAP_SOURCE_BYTES) {
       return null;
     }
     return createHash('sha256').update(fs.readFileSync(absolute)).digest('hex');
@@ -54,13 +55,18 @@ function sha256File(root: string, relative: string): string | null {
   }
 }
 
-function readSourceText(root: string, relative: string): string | null {
+function readCompleteSourceText(root: string, relative: string): string | null {
   try {
     const absolute = path.join(root, relative);
     const stat = fs.lstatSync(absolute);
-    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 1024 * 1024) return null;
-    const content = fs.readFileSync(absolute, 'utf8').trim();
-    return content && !content.includes('\0') ? content.slice(0, 48_000) : null;
+    if (
+      stat.isSymbolicLink() ||
+      !stat.isFile() ||
+      stat.size > MAX_BOOTSTRAP_SOURCE_BYTES
+    ) return null;
+    const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+      .decode(fs.readFileSync(absolute));
+    return content.trim() && !content.includes('\0') ? content : null;
   } catch {
     return null;
   }
@@ -68,7 +74,7 @@ function readSourceText(root: string, relative: string): string | null {
 
 function findProductSource(root: string): { file: string; content: string } | null {
   for (const file of ['PRODUCT.md', 'README.md']) {
-    const content = readSourceText(root, file);
+    const content = readCompleteSourceText(root, file);
     if (content) return { file, content };
   }
   return null;
@@ -203,6 +209,7 @@ export function buildContextBootstrapProposals(
       .map(([k, v]) => `- \`${k}\`: \`${v}\``)
       .join('\n');
     const sources = collectSources(root, map.inventory.manifests);
+    const isPackageJsonBound = sources.some((source) => source.locator === 'package.json');
     const content = [
       '# Testing',
       '',
@@ -214,8 +221,9 @@ export function buildContextBootstrapProposals(
       '',
       '## Selected verification scripts from the root `package.json`',
       '',
-      testScripts ||
-        '- No test/typecheck scripts were selected from the root `package.json`. Document how to verify changes.',
+      isPackageJsonBound
+        ? (testScripts || '- No test/typecheck scripts were selected from the root `package.json`.')
+        : '- No root `package.json` is bound, so no scripts are asserted. Document how to verify changes.',
       '',
       '## Minimum bar',
       '',

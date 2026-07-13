@@ -215,7 +215,10 @@ describe('native context knowledge MCP tools', () => {
     }));
     const doctorCall = tool('nexus_context_doctor').handler(
       {},
-      context('codex', 'doctor-session'),
+      {
+        ...context('codex', 'doctor-session'),
+        missionId: 'mission-a',
+      },
     );
     await vi.waitFor(() => expect(doctorMocks.run).toHaveBeenCalledOnce());
 
@@ -242,5 +245,51 @@ describe('native context knowledge MCP tools', () => {
       autopilotHint: 'continue',
     });
     await doctorCall;
+  });
+
+  it('keeps concurrent Doctor flights isolated by mission', async () => {
+    const pending: Array<(value: unknown) => void> = [];
+    doctorMocks.run.mockImplementation(() => new Promise((resolve) => {
+      pending.push(resolve);
+    }));
+
+    const missionA = tool('nexus_context_doctor').handler({}, {
+      ...context('codex', 'doctor-a'),
+      missionId: 'mission-a',
+    });
+    const missionB = tool('nexus_context_doctor').handler({}, {
+      ...context('codex', 'doctor-b'),
+      missionId: 'mission-b',
+    });
+
+    await vi.waitFor(() => expect(doctorMocks.run).toHaveBeenCalledTimes(2));
+    expect(doctorMocks.run).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      missionId: 'mission-a',
+    }));
+    expect(doctorMocks.run).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      missionId: 'mission-b',
+    }));
+    await expect(tool('nexus_context_draft_review_run').handler({
+      draftId: 'draft-unscoped-retry',
+    }, context('codex', 'manual-unscoped'))).resolves.toMatchObject({
+      pending: true,
+      reason: expect.stringMatching(/no duplicate review was queued/i),
+    });
+
+    const result = {
+      phase: 'ready',
+      readiness: { ready: true, blockers: [], warnings: [], sensorIds: [] },
+      orientation: null,
+      bootstrapProposals: [],
+      proposedDraftIds: [],
+      draftOutcomes: [],
+      appliedDraftIds: [],
+      rejectedDraftIds: [],
+      commitSha: null,
+      quorumAvailable: true,
+      autopilotHint: 'ready',
+    };
+    pending.forEach((resolve) => resolve(result));
+    await Promise.all([missionA, missionB]);
   });
 });

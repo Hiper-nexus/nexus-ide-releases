@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -163,5 +164,59 @@ describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => 
       proposal.targetPath.endsWith('package-scripts.json'));
     expect(scripts?.content).toContain('Selected operational scripts from package.json');
     expect(scripts?.content).toContain('"claimKey": "package.scripts.selected"');
+  });
+
+  it('keeps complete product evidence bound to the full source hash', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-product-')));
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-product-cache-'));
+    roots.push(root, cacheRoot);
+    const marker = 'END-OF-SOURCE-EVIDENCE';
+    const product = `\uFEFF# Product\n\n${'x'.repeat(52_000)}\n${marker}\n`;
+    write(root, 'package.json', JSON.stringify({ name: 'product-app' }));
+    write(root, 'PRODUCT.md', product);
+    write(root, 'src/main.ts', 'export const main = true;\n');
+
+    const map = await new ProjectOrientationService({
+      cacheRoot,
+      includeContextSummary: false,
+    }).ensure(scopeFor(root), { reason: 'mcp' });
+    const proposals = buildContextBootstrapProposals(scopeFor(root), map);
+    const overview = proposals.find((proposal) =>
+      proposal.targetPath.endsWith('project-overview.md'));
+
+    expect(overview?.content).toContain(product);
+    expect(overview?.content).toContain(marker);
+    expect(overview?.sources.find((source) => source.locator === 'PRODUCT.md')?.sourceHash)
+      .toBe(createHash('sha256').update(product).digest('hex'));
+  });
+
+  it('does not assert root package scripts when package.json is not a bound manifest', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-testing-')));
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-testing-cache-'));
+    roots.push(root, cacheRoot);
+    write(root, 'package.json', JSON.stringify({
+      name: 'testing-app',
+      scripts: { test: 'vitest --run' },
+    }));
+    write(root, 'pyproject.toml', '[project]\nname = "testing-app"\n');
+    write(root, 'src/main.ts', 'export const main = true;\n');
+
+    const discovered = await new ProjectOrientationService({
+      cacheRoot,
+      includeContextSummary: false,
+    }).ensure(scopeFor(root), { reason: 'mcp' });
+    const map = Object.freeze({
+      ...discovered,
+      inventory: Object.freeze({
+        ...discovered.inventory,
+        manifests: Object.freeze(['pyproject.toml']),
+      }),
+    });
+    const testing = buildContextBootstrapProposals(scopeFor(root), map).find((proposal) =>
+      proposal.targetPath.endsWith('testing.md'));
+
+    expect(testing?.sources.map((source) => source.locator)).toEqual(['pyproject.toml']);
+    expect(testing?.content).toContain('No root `package.json` is bound');
+    expect(testing?.content).not.toContain('`test`: `vitest --run`');
   });
 });

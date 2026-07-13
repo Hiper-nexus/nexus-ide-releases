@@ -135,4 +135,18 @@ describe('missionRailResumeCopy', () => {
       title: 'Missão aberta no grid — clique para focar',
     });
   });
+
+  it('labels a blocked mission for retry', () => {
+    expect(missionRailResumeCopy('blocked', false)).toEqual({
+      meta: null,
+      title: 'Missão travada — clique para retomar',
+    });
+  });
+
+  it('falls back to generic resume copy for completed missions', () => {
+    expect(missionRailResumeCopy('done', false)).toEqual({
+      meta: null,
+      title: 'Retomar esta missão',
+    });
+  });
 });

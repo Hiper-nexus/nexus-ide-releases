@@ -283,15 +283,6 @@ export class ContextKnowledgeService {
     });
     const attestationPath = writeContextAttestation(this.scope, attestation);
     const applied = this.#store.markApplied(id, attestation.id);
-    for (const previous of this.#store.list({ status: 'applied' })) {
-      if (
-        previous.id !== applied.id &&
-        previous.targetPath === applied.targetPath &&
-        previous.appliedCommit === null
-      ) {
-        this.#store.markSuperseded(previous.id);
-      }
-    }
     return Object.freeze({
       draft: applied,
       attestation,
