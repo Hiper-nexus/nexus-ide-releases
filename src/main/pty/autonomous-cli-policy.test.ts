@@ -109,7 +109,7 @@ describe('secureAutonomousCliArgs', () => {
     }), [], true))
       .toThrow(/read-only review confinement/i);
   });
-  it('forces Claude-like agents onto explicitly allowed Nexus MCP tools', () => {
+  it('keeps writable Claude workers able to code while loading Nexus MCP', () => {
     const claude = adapter({
       id: 'claude',
       quirks: {
@@ -139,9 +139,12 @@ describe('secureAutonomousCliArgs', () => {
     expect(args).not.toContain('manual');
     expect(args).toContain('--allowedTools');
     expect(args).toContain('mcp__nexus');
-    expect(args).toContain('--disallowedTools');
+    expect(args).not.toContain('--disallowedTools');
+
+    const coordinatorArgs = secureAutonomousCliArgs(claude, [], true);
+    expect(coordinatorArgs).toContain('--disallowedTools');
     for (const tool of ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'Task']) {
-      expect(args).toContain(tool);
+      expect(coordinatorArgs).toContain(tool);
     }
   });
 

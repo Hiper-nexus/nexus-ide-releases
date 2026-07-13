@@ -58,7 +58,7 @@ function missionCtx() {
   resetGateForTests();
   return mintToken({
     label: 'test',
-    role: 'orchestrator',
+    role: 'worker',
     missionId: TEST_MISSION_ID,
     contextRevision: TEST_CONTEXT_REVISION,
     scope: auditScope,

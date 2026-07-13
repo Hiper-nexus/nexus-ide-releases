@@ -62,6 +62,17 @@ const REQUIRES_EXPLICIT_ALLOW = new Set([
   "agent_spec_write",
 ]);
 
+const ORCHESTRATOR_DENIED_TOOLS = new Set([
+  "file_write", "editor_insert", "editor_replace_selection",
+  "terminal_run", "terminal_kill", "git_add", "git_commit", "git_push",
+  "git_pull", "git_branch_create", "git_branch_switch",
+  "image_generate", "video_generate", "audio_generate",
+]);
+
+const ORCHESTRATOR_DENIED_NATIVE_TOOLS = new Set([
+  "task", "bash", "edit", "write", "notebookedit",
+]);
+
 const NAMESPACE_PREFIXES = ["nexus_"];
 
 /** Normalize a tool name to its namespace-free canonical form. */
@@ -94,6 +105,20 @@ export function isToolAllowed(
   );
 }
 
+/** Role boundary applied after the squad allowlist. A coordinator may inspect,
+ * plan, delegate, validate and merge, but cannot become the implementation pane. */
+export function isToolAllowedForRole(
+  role: GateRole,
+  allowedTools: string[] | null,
+  toolName: string,
+): boolean {
+  if (
+    role === "orchestrator" &&
+    ORCHESTRATOR_DENIED_TOOLS.has(canonicalToolName(toolName))
+  ) return false;
+  return isToolAllowed(allowedTools, toolName);
+}
+
 /**
  * Claude hooks also observe native Read/Edit/Bash calls. Nexus MCP allowlists
  * must not be mistaken for a native-tool allowlist: native tools remain under
@@ -103,13 +128,17 @@ export function isToolAllowed(
 export function isHookToolAllowed(
   allowedTools: string[] | null,
   hookToolName: string,
+  role: GateRole = "worker",
 ): boolean {
   const lower = hookToolName.trim().toLowerCase();
   const mcpPrefix = "mcp__nexus__";
   if (lower.startsWith(mcpPrefix)) {
-    return isToolAllowed(allowedTools, lower.slice(mcpPrefix.length));
+    return isToolAllowedForRole(role, allowedTools, lower.slice(mcpPrefix.length));
   }
-  if (lower.startsWith("nexus_")) return isToolAllowed(allowedTools, lower);
+  if (lower.startsWith("nexus_")) return isToolAllowedForRole(role, allowedTools, lower);
+  if (role === "orchestrator" && ORCHESTRATOR_DENIED_NATIVE_TOOLS.has(lower)) {
+    return false;
+  }
   return true;
 }
 

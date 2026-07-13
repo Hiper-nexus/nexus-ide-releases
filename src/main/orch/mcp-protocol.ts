@@ -1,5 +1,5 @@
 import type { AgentGateContext } from './gate';
-import { canonicalToolName, isToolAllowed } from './gate';
+import { canonicalToolName, isToolAllowedForRole } from './gate';
 import {
   dispatchToolCall,
   type McpDispatchOptions,
@@ -140,7 +140,9 @@ export async function handleMcpMessage(
 
     case 'tools/list': {
       const tools = registry.tools
-        .filter((tool) => isToolAllowed(ctx.allowedTools, tool.name))
+        .filter((tool) =>
+          isToolAllowedForRole(ctx.role, ctx.allowedTools, tool.name),
+        )
         .map((tool) => ({
           name: tool.name,
           description: tool.description,

@@ -45,7 +45,7 @@ function missionContext(contextRevision?: string) {
   resetGateForTests();
   return mintToken({
     label: 'security-test',
-    role: 'orchestrator',
+    role: 'worker',
     missionId: TEST_MISSION_ID,
     contextRevision,
     scope: auditScope,

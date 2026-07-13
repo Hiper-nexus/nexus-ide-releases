@@ -111,4 +111,30 @@ describe('jarvis-narrator scoped baseline', () => {
       expect.objectContaining({ projectId: 'project-a', text: expect.stringContaining('builder') }),
     ]);
   });
+
+  it('never speaks technical failure payloads, ids, paths, or code', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(5_000);
+    const source = new FakeSource();
+    const spoken: string[] = [];
+    initJarvisNarrator(
+      (_scope, _channel, payload) =>
+        spoken.push((payload as { text: string }).text),
+      source,
+    );
+
+    vi.setSystemTime(12_000);
+    source.submit({
+      status: 'failed',
+      fromAgent: 'QA',
+      summary:
+        'ERR_DLOPEN_FAILED at /Users/customer/project/main.ts:42 ' +
+        'mission-b692cb98-f98b-4d5b-93c6-a1ce0b155f50 {"code":500}',
+    });
+    vi.advanceTimersByTime(2_000);
+
+    expect(spoken).toEqual([
+      'QA falhou na tarefa. Veja o diagnóstico no terminal.',
+    ]);
+  });
 });

@@ -17,6 +17,20 @@ describe('CLI hook gate policy', () => {
     ).toBe(true);
   });
 
+  it('keeps an orchestrator in coordination-only authority', () => {
+    expect(isHookToolAllowed(null, 'Read', 'orchestrator')).toBe(true);
+    expect(isHookToolAllowed(null, 'Bash', 'orchestrator')).toBe(false);
+    expect(isHookToolAllowed(null, 'Edit', 'orchestrator')).toBe(false);
+    expect(isHookToolAllowed(null, 'Write', 'orchestrator')).toBe(false);
+    expect(
+      isHookToolAllowed(null, 'mcp__nexus__nexus_image_generate', 'orchestrator'),
+    ).toBe(false);
+    expect(
+      isHookToolAllowed(null, 'mcp__nexus__nexus_pane_spawn', 'orchestrator'),
+    ).toBe(true);
+    expect(isHookToolAllowed(null, 'Bash', 'worker')).toBe(true);
+  });
+
   it('fails closed when the gate or hook input is unavailable', () => {
     expect(HOOK_SCRIPT).toContain('gate credentials unavailable — blocking');
     expect(HOOK_SCRIPT).toContain('gate unreachable — blocking tool call');

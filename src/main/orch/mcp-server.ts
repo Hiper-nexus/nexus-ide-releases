@@ -269,7 +269,7 @@ async function handleGateRequest(
         });
         return;
       }
-      const allow = isHookToolAllowed(ctx.allowedTools, toolName);
+      const allow = isHookToolAllowed(ctx.allowedTools, toolName, ctx.role);
       sendJson(res, 200, {
         allow,
         reason: allow

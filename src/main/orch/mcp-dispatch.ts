@@ -16,7 +16,7 @@ import {
 import {
   bindContextRevision,
   canonicalToolName,
-  isToolAllowed,
+  isToolAllowedForRole,
   type AgentGateContext,
 } from './gate';
 import {
@@ -272,7 +272,7 @@ export async function dispatchToolCall(
     return { ok: false, tool: tool.name, error: `invalid arguments: ${detail}` };
   }
 
-  if (!isToolAllowed(ctx.allowedTools, tool.name)) {
+  if (!isToolAllowedForRole(ctx.role, ctx.allowedTools, tool.name)) {
     const reason =
       `tool "${tool.name}" is outside this agent's allowlist ` +
       `(agent: ${ctx.label})`;

@@ -132,7 +132,7 @@ export function secureAutonomousCliArgs(
 
   if (usesNexusOnlyTools) {
     args.push('--allowedTools', 'mcp__nexus');
-    args.push('--disallowedTools', ...CLAUDE_NATIVE_TOOLS);
+    if (readOnly) args.push('--disallowedTools', ...CLAUDE_NATIVE_TOOLS);
   }
   return args;
 }

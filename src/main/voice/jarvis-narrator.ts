@@ -56,11 +56,11 @@ function phraseFor(handoff: Handoff): string {
   const short = toSpeakable(handoff.summary, 'summary').slice(0, MAX_SPOKEN_SUMMARY);
   switch (handoff.status) {
     case 'stalled':
-      return `Atenção: ${from} parece travado. ${short}`;
+      return `Atenção: ${from} parece travado. Veja o diagnóstico no terminal.`;
     case 'failed':
-      return `${from} falhou na tarefa. ${short}`;
+      return `${from} falhou na tarefa. Veja o diagnóstico no terminal.`;
     case 'blocked':
-      return `${from} está bloqueado e precisa de você. ${short}`;
+      return `${from} está bloqueado e precisa de atenção. Veja o diagnóstico no terminal.`;
     case 'partial':
       return `${from} entregou parcialmente: ${short}`;
     default:
