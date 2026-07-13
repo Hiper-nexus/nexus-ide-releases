@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.15.3 — Reliable Orchestration
+
+Data: 2026-07-13
+
+### Ralph Loop, Doctor e panes
+- O Mission Driver persiste orçamento, tentativas e receipts PREVC; uma missão
+  só termina quando todos os marcos possuem evidência Nexus atual e confiável.
+- Sensores e revisão final do autopilot viram handoff idempotente na revisão
+  correta. Cada marco consome uma evidência própria, sem reutilização circular.
+- Panes mortos são recuperados por identidade estável e CAS. O recap é entregue
+  e confirmado na sessão nova antes do rebind, sem matar uma sessão vencedora.
+- O Doctor deixa de anunciar travamento por silêncio normal e não encerra panes
+  vivos. Timeouts de renderer e main são finitos e auditáveis.
+
+### Jarvis em tempo real
+- Wake, seleção de squad e respostas a perguntas de agentes enviam briefing com
+  Enter real ao pane correto. Texto natural não é mais tratado como shell.
+- O socket Live quente é reconstruído no wake para evitar o estado zumbi visto
+  nos logs; áudio pendente atravessa a reconexão e o fallback permanece finito.
+- Gemini 3.1 fixa fala em pt-BR e a janela de evidência de áudio acompanha o
+  tamanho da resposta antes de recorrer ao TTS Classic.
+- Confirmação nativa fica restrita a ações destrutivas ou de publicação; trabalho
+  rotineiro dentro do projeto segue diretamente para o squad autorizado.
+
+### Wake PT-BR, pets e release
+- `ei-jarvis-ptbr.onnx` segue embutido e agora também é instalado como
+  `~/.nexus/models/wake/custom.onnx` para todo cliente, com SHA-256 e escrita
+  atômica; um modelo customizado pelo usuário é preservado.
+- A release inclui as correções já integradas de preview/compactação da galeria,
+  Pet Studio com dependências disponíveis e o alinhamento final do Home Deck.
+- App, servidor, lockfile, changelog e notas internas avançam juntos para
+  `0.15.3`.
+
 ## 0.15.2 — Squad Continuity
 
 Data: 2026-07-13
