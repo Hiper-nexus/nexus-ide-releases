@@ -16,12 +16,16 @@ import { CLAUDE_OAUTH_USAGE_URL } from './claude-oauth-usage';
 const HIT_AT = 1_000_000;
 const COOLDOWN_MS = 60_000;
 
-function provider(adapterId: string, label = adapterId): ProviderSettingsInfo {
+function provider(
+  adapterId: string,
+  label = adapterId,
+  opts?: { installed?: boolean; enabled?: boolean },
+): ProviderSettingsInfo {
   return {
     adapterId,
     label,
-    installed: true,
-    enabled: true,
+    installed: opts?.installed ?? true,
+    enabled: opts?.enabled ?? true,
   } as ProviderSettingsInfo;
 }
 
@@ -401,8 +405,23 @@ describe('QuotaService live Claude OAuth usage', () => {
     );
     expect(glm?.windows.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.08);
     expect(glm?.windows.find((w) => w.kind === 'weekly')?.usedRatio).toBe(0.12);
-    // Grok has no public used% API — honest unknown, not fake 0
+    // Grok mock has no billing response — honest unknown, not fake 0
     expect(grok?.windows.every((w) => w.usedRatio === null)).toBe(true);
+    svc.stop();
+  });
+
+  it('skips unused adapters that are not installed (e.g. OpenCode)', async () => {
+    const svc = new QuotaService({
+      listProviders: () => [
+        provider('claude', 'Claude', { installed: true }),
+        provider('opencode', 'OpenCode', { installed: false }),
+        provider('aider', 'Aider', { installed: false, enabled: false }),
+      ],
+      listAccounts: () => [] as AccountInfo[],
+    });
+    const snap = await svc.snapshot(HIT_AT);
+    expect(snap.entries.map((e) => e.adapterId)).toEqual(['claude']);
+    expect(snap.entries.some((e) => e.adapterId === 'opencode')).toBe(false);
     svc.stop();
   });
 });

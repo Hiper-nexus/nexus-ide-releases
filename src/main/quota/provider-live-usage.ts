@@ -302,19 +302,19 @@ async function fetchOpenCodeFleetWindows(
   now: number,
 ): Promise<QuotaWindow[] | null> {
   const keys: string[] = [];
-  // 1) OpenCode auth.json (all providers the user connected)
+  // ONLY keys the user actually connected inside OpenCode auth.json —
+  // never steal glm/kimi/claude keys from the launcher and paint them as
+  // "OpenCode" when the user never installed/used OpenCode.
   for (const e of loadOpenCodeAuthKeys()) {
     if (!keys.includes(e.key)) keys.push(e.key);
   }
-  // 2) Vault / launcher / env for opencode + common upstreams
+  // Optional: vault key stored under adapter id "opencode" itself.
   if (deps.resolveGenericApiKeyCandidates) {
-    for (const id of ['opencode', 'anthropic', 'openai', 'glm', 'kimi', 'grok']) {
-      const list = await Promise.resolve(
-        deps.resolveGenericApiKeyCandidates(id, accountId),
-      );
-      for (const k of list ?? []) {
-        if (k?.trim() && !keys.includes(k.trim())) keys.push(k.trim());
-      }
+    const list = await Promise.resolve(
+      deps.resolveGenericApiKeyCandidates('opencode', accountId),
+    );
+    for (const k of list ?? []) {
+      if (k?.trim() && !keys.includes(k.trim())) keys.push(k.trim());
     }
   }
   if (keys.length === 0) return null;

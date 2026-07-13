@@ -122,10 +122,11 @@ export function UsageQuotaSection() {
           Uso e cotas
         </h3>
         <p className="settings-detail__hint">
-          Janelas padrão da frota: <strong>5 Horas</strong> (janela rolante) e{' '}
-          <strong>Semanal</strong> — o mesmo modelo da maioria das LLMs (Claude,
-          Codex, GLM, Kimi, Grok, AGY, LongCat, OpenCode, Aider…). % só com
-          fonte real; sem telemetria mostra &quot;—&quot;, nunca 0% inventado.
+          Só CLIs instaladas/ativas ou com conta no vault. Janelas padrão:{' '}
+          <strong>5 Horas</strong> + <strong>Semanal</strong> (Grok também{' '}
+          <strong>Mensal</strong> via billing). % só com fonte real; sem
+          telemetria mostra &quot;—&quot;, nunca 0% inventado. OpenCode só
+          aparece se estiver instalado.
         </p>
       </header>
 

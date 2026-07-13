@@ -239,7 +239,17 @@ export class QuotaService {
       tokens?: { inputTokens: number; outputTokens: number; costUsd: number };
     }> = [];
 
-    const fleet = providers.length > 0 ? providers : [];
+    // Only CLIs the user actually has reason to care about:
+    // enabled + (installed on PATH, vault account, or local token spend).
+    // Never invent rows for unused adapters (e.g. OpenCode never installed).
+    const fleet = providers.filter((p) => {
+      if (p.enabled === false) return false;
+      if (p.installed) return true;
+      if (accounts.some((a) => a.adapterId === p.adapterId)) return true;
+      const tok = tokens[p.adapterId];
+      if (tok && tok.inputTokens + tok.outputTokens > 0) return true;
+      return false;
+    });
 
     for (const p of fleet) {
       const vault = accounts.filter((a) => a.adapterId === p.adapterId);
@@ -253,8 +263,7 @@ export class QuotaService {
         });
         continue;
       }
-      // Always keep a bare system/CLI row so native login / launcher keys
-      // still show % even when vault accounts exist with stale blobs.
+      // Bare system/CLI row so native login still shows % next to vault rows.
       draft.push({
         adapterId: p.adapterId,
         label: `${p.label} · CLI nativo`,
