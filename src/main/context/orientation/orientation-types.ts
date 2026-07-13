@@ -157,6 +157,8 @@ export const SKIP_DIRECTORIES = Object.freeze(
   new Set([
     '.git',
     '.nexus',
+    '.dev-user-data',
+    '.dev-electron',
     'node_modules',
     'vendor',
     'dist',

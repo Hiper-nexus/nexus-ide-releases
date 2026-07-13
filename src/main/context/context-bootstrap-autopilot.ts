@@ -195,7 +195,35 @@ export async function runContextBootstrapAutopilot(
   const outcomes: BootstrapDraftOutcome[] = [];
   const autoReviewQueue: string[] = [];
 
+  // A previous Doctor run may have proposed drafts and then lost its CLI
+  // session before review. Those records are durable authority, so resume them
+  // instead of trying to re-propose the same target and returning only UNIQUE
+  // constraint errors with no actionable draft IDs.
+  const proposalsByTarget = new Map(proposals.map((item) => [item.targetPath, item]));
+  const resumableDrafts = knowledge
+    .list({ status: 'proposed' })
+    .filter(
+      (draft) =>
+        (draft.missionId === null || draft.missionId === (options.missionId ?? null)) &&
+        proposalsByTarget.has(draft.targetPath),
+    );
+  const resumableTargets = new Set<string>();
+  for (const draft of resumableDrafts) {
+    const proposal = proposalsByTarget.get(draft.targetPath)!;
+    const autoReviewable = isAutoReviewableBootstrapProposal(proposal);
+    resumableTargets.add(draft.targetPath);
+    proposedDraftIds.push(draft.id);
+    outcomes.push({
+      draftId: draft.id,
+      targetPath: draft.targetPath,
+      status: draft.status,
+      autoReviewable,
+    });
+    if (autoReviewable) autoReviewQueue.push(draft.id);
+  }
+
   for (const proposal of proposals) {
+    if (resumableTargets.has(proposal.targetPath)) continue;
     const autoReviewable = isAutoReviewableBootstrapProposal(proposal);
     try {
       const draft = knowledge.propose(

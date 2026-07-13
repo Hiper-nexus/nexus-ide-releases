@@ -350,6 +350,43 @@ const contextDraftGetTool: McpToolDef = {
   },
 };
 
+const contextDraftListTool: McpToolDef = {
+  name: 'nexus_context_draft_list',
+  description:
+    'List durable context drafts and their IDs/status so an interrupted Doctor run can resume deterministically.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      status: {
+        type: 'string',
+        enum: ['proposed', 'approved', 'applied', 'rejected'],
+      },
+    },
+  },
+  handler: async (args, ctx) => {
+    const input = z.object({
+      status: z.enum(['proposed', 'approved', 'applied', 'rejected']).optional(),
+    }).strict().parse(args ?? {});
+    return getContextKnowledgeService(ctx.scope)
+      .list(input)
+      .filter(
+        (draft) =>
+          draft.missionId === null ||
+          ctx.missionId === undefined ||
+          draft.missionId === ctx.missionId,
+      )
+      .map((draft) => ({
+        id: draft.id,
+        missionId: draft.missionId,
+        targetPath: draft.targetPath,
+        status: draft.status,
+        authorProvider: draft.author.provider,
+        reviewerProvider: draft.reviewer?.provider ?? null,
+        updatedAt: draft.updatedAt,
+      }));
+  },
+};
+
 const contextDraftReviewTool: McpToolDef = {
   name: 'nexus_context_draft_review',
   description:
@@ -916,6 +953,7 @@ export function buildContextTools(): McpToolDef[] {
     systemDoctorTool,
     scaffoldTool,
     contextDraftProposeTool,
+    contextDraftListTool,
     contextDraftGetTool,
     contextDraftReviewTool,
     contextDraftApplyTool,

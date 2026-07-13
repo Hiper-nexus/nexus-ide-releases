@@ -90,6 +90,10 @@ vi.mock('./project-domain-store-registry', () => ({
       get: (id: string) =>
         storeMocks.handoffs.get(id) ?? handoff({ id }),
       markDelivered: (id: string) => storeMocks.delivered.push({ scope, id }),
+      list: ({ missionId }: { missionId?: string }) =>
+        [...storeMocks.handoffs.values()].filter(
+          (item) => !item.delivered && (!missionId || item.missionId === missionId),
+        ),
     },
   })),
 }));
@@ -214,7 +218,43 @@ describe('idle delivery authority and lifecycle', () => {
       'orchestrator-session',
       '\r',
     );
+    expect(storeMocks.delivered).toEqual([]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('marks delivered only after Enter reaches the current orchestrator', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    expect(storeMocks.delivered).toEqual([]);
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(ptyMocks.writes).toHaveBeenLastCalledWith('orchestrator-session', '\r');
     expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('replays durable pending handoffs after the orchestrator is rebound', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    const pending = handoff({ id: 'handoff-persisted' });
+    storeMocks.handoffs.set(pending.id, pending);
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    expect(delivery.redeliverPendingHandoffs(scope, 'mission-a')).toBe(1);
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(ptyMocks.writes).toHaveBeenCalledWith(
+      'orchestrator-session',
+      expect.stringContaining('completed the requested work'),
+    );
+    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-persisted' }]);
     delivery.shutdownIdleDelivery();
   });
 

@@ -51,7 +51,7 @@ import {
   type ProjectDomainStoreName,
 } from "./project-domain-store-registry";
 import { broadcastToProject } from "./project-scoped-broadcast";
-import { initIdleDelivery } from "./idle-delivery";
+import { initIdleDelivery, redeliverPendingHandoffs } from "./idle-delivery";
 import { initStallWatchdog, shutdownStallWatchdog } from "./stall-watchdog";
 import { stopAllPreviews } from "./preview-server";
 import { stopRemoteBridge } from "../remote/remote-bridge";
@@ -359,6 +359,10 @@ export function registerOrchIpc(): void {
       parsed.data.missionId,
       parsed.data.sessionId,
     );
+    if (mission) {
+      const scope = requireRendererWorkspaceScope(event.sender);
+      redeliverPendingHandoffs(scope, mission.id);
+    }
     return { ok: mission !== null };
   });
 

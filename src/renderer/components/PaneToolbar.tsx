@@ -138,6 +138,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const [draft, setDraft] = useState(pane.title);
   const [density, setDensity] = useState<Density>('full');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [copiedId, setCopiedId] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -338,6 +339,21 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
           {pane.title}
         </span>
       )}
+      <button
+        type="button"
+        className="toolbar__badge toolbar__pane-id nodrag"
+        aria-label={`Copiar identificador do pane ${pane.id}`}
+        data-tip={copiedId ? 'ID copiado' : `Copiar ID do pane: ${pane.id}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          void navigator.clipboard.writeText(pane.id).then(() => {
+            setCopiedId(true);
+            window.setTimeout(() => setCopiedId(false), 1_500);
+          });
+        }}
+      >
+        {copiedId ? 'copiado' : `#${pane.id.slice(-6)}`}
+      </button>
       {pane.role === 'orchestrator' && (
         <span
           className="toolbar__badge toolbar__badge--orch"

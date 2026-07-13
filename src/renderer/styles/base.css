@@ -822,6 +822,18 @@ body {
   padding: 1px 5px;
 }
 
+.toolbar__pane-id {
+  background: transparent;
+  cursor: copy;
+  line-height: inherit;
+}
+
+.toolbar__pane-id:hover,
+.toolbar__pane-id:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
 .toolbar__spacer {
   flex: 1 1 auto;
   min-width: 8px;

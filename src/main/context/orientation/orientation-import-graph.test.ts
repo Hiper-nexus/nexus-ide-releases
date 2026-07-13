@@ -45,9 +45,13 @@ describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => 
     write(root, 'src/a.ts', "import { b } from './b';\nexport const a = b;\n");
     write(root, 'src/b.ts', "import { c } from './c';\nexport const b = c;\n");
     write(root, 'src/c.ts', 'export const c = 1;\n');
+    write(root, '.dev-user-data/cache/generated.ts', 'export const noise = 1;\n');
+    write(root, '.dev-electron/dist/generated.js', 'module.exports = {};\n');
 
     const scope = scopeFor(root);
     const walk = walkOrientationTree(scope, DEFAULT_ORIENTATION_LIMITS);
+    expect(walk.files.some((file) => file.relativePath.includes('.dev-user-data'))).toBe(false);
+    expect(walk.files.some((file) => file.relativePath.includes('.dev-electron'))).toBe(false);
     const graph = buildOrientationImportGraph(scope, walk, DEFAULT_ORIENTATION_LIMITS);
     expect(graph.graph.edgeCount).toBeGreaterThanOrEqual(2);
     expect(graph.graph.mode).toBe('imports');

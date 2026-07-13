@@ -40,6 +40,7 @@ interface DeliveryAuthority {
 
 interface PendingEnter {
   readonly authority: DeliveryAuthority;
+  readonly handoffId: string;
   readonly timer: ReturnType<typeof setTimeout>;
 }
 
@@ -140,15 +141,20 @@ function isCurrentAuthority(authority: DeliveryAuthority): boolean {
   );
 }
 
-function scheduleEnter(authority: DeliveryAuthority): void {
+function scheduleEnter(authority: DeliveryAuthority, handoffId: string): void {
   let pending: PendingEnter;
   const timer = setTimeout(() => {
     pendingEnters.delete(pending);
     if (isCurrentAuthority(authority)) {
-      orchWriteSession(authority.sessionId, '\r');
+      const submitted = orchWriteSession(authority.sessionId, '\r');
+      if (submitted) {
+        // `delivered` means the complete prompt was submitted to the live TUI,
+        // not merely painted into its input buffer.
+        getProjectDomainStores(authority.scope).handoffs.markDelivered(handoffId);
+      }
     }
   }, 150);
-  pending = { authority, timer };
+  pending = { authority, handoffId, timer };
   pendingEnters.add(pending);
 }
 
@@ -160,8 +166,7 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
   const ok = orchWriteSession(authority.sessionId, formatDelivery(current));
   if (!ok) return false;
   // Enter arrives as a separate write so TUIs treat it as a submit keypress.
-  scheduleEnter(authority);
-  stores.handoffs.markDelivered(current.id);
+  scheduleEnter(authority, current.id);
   return true;
 }
 
@@ -288,4 +293,22 @@ export function onHandoffSubmitted(
   const queue = queues.get(key) ?? [];
   queue.push({ handoff, authority });
   queues.set(key, queue);
+}
+
+/**
+ * Replays durable, still-undelivered handoffs after an orchestrator session is
+ * rebound. The in-memory queue is an optimization only; SQLite is the source
+ * of truth across renderer/main/PTY restarts.
+ */
+export function redeliverPendingHandoffs(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): number {
+  const stores = getProjectDomainStores(scope);
+  const pending = stores.handoffs.list({
+    missionId,
+    includeDelivered: false,
+  });
+  for (const handoff of pending) onHandoffSubmitted(handoff, scope);
+  return pending.length;
 }

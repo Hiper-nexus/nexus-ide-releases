@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   toSnapshot: vi.fn(),
   selectQuorum: vi.fn(),
   reviewerRun: vi.fn(),
+  list: vi.fn(() => [] as ContextDraftRecord[]),
 }));
 
 vi.mock('./context-workflow-registry', () => ({
@@ -41,6 +42,7 @@ vi.mock('./context-workflow-registry', () => ({
     scaffold: mocks.scaffold,
   }),
   getContextKnowledgeService: () => ({
+    list: mocks.list,
     propose: mocks.propose,
     apply: mocks.apply,
     commitApplied: mocks.commitApplied,
@@ -126,6 +128,43 @@ function draft(id: string, status: ContextDraftRecord['status']): ContextDraftRe
 }
 
 describe('runContextBootstrapAutopilot', () => {
+  it('resumes and reviews durable drafts left by a previous Doctor session', async () => {
+    mocks.inspectReadiness.mockReturnValue(mocks.readiness);
+    mocks.proposals = [{
+      targetPath: '.context/docs/architecture.md',
+      content: '# Architecture\nObserved layout.\n',
+      sources: [{ type: 'file', locator: 'package.json', sourceHash: 'b'.repeat(64) }],
+      rationale: 'arch',
+    }];
+    mocks.list.mockReturnValue([draft('draft-existing', 'proposed')]);
+    mocks.reviewerRun.mockResolvedValue(draft('draft-existing', 'approved'));
+    mocks.apply.mockReturnValue({
+      draft: draft('draft-existing', 'applied'),
+      attestation: {},
+      attestationPath: '.context/nexus/attestations/x.json',
+      replacedAttestationPaths: [],
+    });
+    mocks.selectQuorum.mockReturnValue({ adapterId: 'claude' });
+    mocks.ensure.mockResolvedValue({
+      docs: { hasContextScaffold: true },
+      mapHash: 'c'.repeat(64),
+      status: 'ready',
+    });
+
+    const result = await runContextBootstrapAutopilot({
+      scope,
+      author,
+      autoCommit: false,
+      createReviewer: () => ({ run: mocks.reviewerRun }),
+    });
+
+    expect(mocks.propose).not.toHaveBeenCalled();
+    expect(mocks.reviewerRun).toHaveBeenCalledWith({ scope, draftId: 'draft-existing' });
+    expect(result.appliedDraftIds).toEqual(['draft-existing']);
+    mocks.list.mockReturnValue([]);
+    mocks.propose.mockClear();
+    mocks.reviewerRun.mockClear();
+  });
   it('proposes drafts and skips review when quorum is missing', async () => {
     mocks.inspectReadiness.mockReturnValue(mocks.readiness);
     mocks.proposals = [
