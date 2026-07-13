@@ -262,24 +262,46 @@ function extractKimiToken(blob: string): string | null {
 }
 
 export function resolveGeminiAccessToken(accountId?: string): string | null {
+  return resolveGeminiOauthCreds(accountId)?.accessToken ?? null;
+}
+
+export interface GeminiOauthCredsResolved {
+  accessToken?: string;
+  refreshToken?: string;
+  expiryDate?: number;
+}
+
+/** Full OAuth blob for AGY/Gemini quota (access + refresh). */
+export function resolveGeminiOauthCreds(
+  accountId?: string,
+): GeminiOauthCredsResolved | null {
   if (accountId) {
     const blob = safeGetSecret(CRED_PREFIX + accountId);
     if (blob) {
-      const t = extractGeminiToken(blob);
-      if (t) return t;
+      const c = parseGeminiCredsBlob(blob);
+      if (c) return c;
     }
   }
   const blob = readText(path.join(os.homedir(), '.gemini', 'oauth_creds.json'));
-  if (blob) return extractGeminiToken(blob);
+  if (blob) return parseGeminiCredsBlob(blob);
   return null;
 }
 
-function extractGeminiToken(blob: string): string | null {
+function parseGeminiCredsBlob(blob: string): GeminiOauthCredsResolved | null {
   try {
-    const parsed = JSON.parse(blob) as { access_token?: unknown };
-    return typeof parsed.access_token === 'string' && parsed.access_token
-      ? parsed.access_token
-      : null;
+    const parsed = JSON.parse(blob) as {
+      access_token?: unknown;
+      refresh_token?: unknown;
+      expiry_date?: unknown;
+    };
+    const accessToken =
+      typeof parsed.access_token === 'string' ? parsed.access_token : undefined;
+    const refreshToken =
+      typeof parsed.refresh_token === 'string' ? parsed.refresh_token : undefined;
+    const expiryDate =
+      typeof parsed.expiry_date === 'number' ? parsed.expiry_date : undefined;
+    if (!accessToken && !refreshToken) return null;
+    return { accessToken, refreshToken, expiryDate };
   } catch {
     return null;
   }

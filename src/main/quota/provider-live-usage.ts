@@ -17,6 +17,8 @@ import {
 } from './codex-usage';
 import { fetchGlmUsageWindows } from './glm-usage';
 import { fetchGrokUsageWindows } from './grok-usage';
+import { fetchAgyUsageWindows, type GeminiOauthCreds } from './agy-usage';
+import { fetchKimiCodingUsageWindows } from './kimi-usage';
 import { knownWindow } from './quota-normalize';
 
 export interface LiveUsageAuthResolvers {
@@ -51,6 +53,10 @@ export interface LiveUsageAuthResolvers {
   resolveGeminiToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
+  /** Full Gemini/AGY OAuth (access + refresh) for live quota. */
+  resolveGeminiOauthCreds?: (
+    accountId?: string,
+  ) => GeminiOauthCreds | null | Promise<GeminiOauthCreds | null>;
   resolveLongcatApiKey?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
@@ -161,16 +167,28 @@ export async function fetchLiveProviderWindows(
         accountId,
       );
       for (const token of tokens) {
+        // Coding Plan API key (sk-kimi-…) first — authoritative usages.
+        const coding = await fetchKimiCodingUsageWindows(token, {
+          fetchImpl,
+          now,
+        });
+        if (coding && coding.length > 0) return coding;
+        // OAuth / alternate shapes
         const windows = await fetchKimiUsageWindows(token, { fetchImpl, now });
         if (windows && windows.length > 0) return windows;
       }
       return null;
     }
     case 'agy': {
-      if (deps.resolveGeminiToken) {
-        await Promise.resolve(deps.resolveGeminiToken(accountId));
+      let creds: GeminiOauthCreds | null = null;
+      if (deps.resolveGeminiOauthCreds) {
+        creds = await Promise.resolve(deps.resolveGeminiOauthCreds(accountId));
+      } else if (deps.resolveGeminiToken) {
+        const access = await Promise.resolve(deps.resolveGeminiToken(accountId));
+        if (access) creds = { accessToken: access };
       }
-      return null;
+      if (!creds) return null;
+      return fetchAgyUsageWindows(creds, { fetchImpl, now });
     }
     default:
       return null;

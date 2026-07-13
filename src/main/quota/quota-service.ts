@@ -85,6 +85,16 @@ export interface QuotaServiceDeps {
   resolveGeminiToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
+  resolveGeminiOauthCreds?: (
+    accountId?: string,
+  ) =>
+    | { accessToken?: string; refreshToken?: string; expiryDate?: number }
+    | null
+    | Promise<{
+        accessToken?: string;
+        refreshToken?: string;
+        expiryDate?: number;
+      } | null>;
   resolveLongcatApiKey?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
@@ -298,6 +308,7 @@ export class QuotaService {
       resolveKimiToken: this.#deps.resolveKimiToken,
       resolveKimiTokenCandidates: this.#deps.resolveKimiTokenCandidates,
       resolveGeminiToken: this.#deps.resolveGeminiToken,
+      resolveGeminiOauthCreds: this.#deps.resolveGeminiOauthCreds,
       resolveLongcatApiKey: this.#deps.resolveLongcatApiKey,
       resolveLongcatApiKeyCandidates: this.#deps.resolveLongcatApiKeyCandidates,
       fetchImpl: this.#deps.fetchImpl,

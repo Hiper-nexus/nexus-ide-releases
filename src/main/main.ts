@@ -140,7 +140,7 @@ import { listAccountInfos } from "./persistence/account-store";
 import {
   resolveClaudeToken,
   resolveCodexAuthCandidates,
-  resolveGeminiAccessToken,
+  resolveGeminiOauthCreds,
   resolveGrokAccessTokenCandidates,
   resolveKimiAccessTokenCandidates,
   resolveProviderApiKeyCandidates,
@@ -375,9 +375,14 @@ function bootstrap(): void {
       resolveProviderApiKeyCandidates("glm", accountId),
     resolveGrokTokenCandidates: (accountId) =>
       resolveGrokAccessTokenCandidates(accountId),
-    resolveKimiTokenCandidates: (accountId) =>
-      resolveKimiAccessTokenCandidates(accountId),
-    resolveGeminiToken: (accountId) => resolveGeminiAccessToken(accountId),
+    resolveKimiTokenCandidates: (accountId) => {
+      // Coding Plan API key (vault/launcher) + OAuth tokens from CLI login.
+      const keys = resolveProviderApiKeyCandidates("kimi", accountId);
+      const oauth = resolveKimiAccessTokenCandidates(accountId);
+      return [...keys, ...oauth.filter((t) => !keys.includes(t))];
+    },
+    resolveGeminiOauthCreds: (accountId) =>
+      resolveGeminiOauthCreds(accountId),
     resolveLongcatApiKeyCandidates: (accountId) =>
       resolveProviderApiKeyCandidates("longcat", accountId),
   });
