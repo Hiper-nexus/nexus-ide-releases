@@ -85,25 +85,25 @@ export class QuotaService {
   /**
    * Active recorded hit for a key, or null if missing/expired.
    * Drops expired entries so they cannot re-exhaust forever.
+   *
+   * Per-account rows never fall back to bare adapterId hits — that would
+   * mark every vault account exhausted from a single unpinned signal.
    */
   #activeRecordedHit(
     adapterId: string,
     accountId: string | undefined,
     now: number,
   ): RecordedLimitHit | null {
-    const keys = accountId
-      ? [entryId({ adapterId, accountId }), adapterId]
-      : [adapterId];
-    for (const key of keys) {
-      const rec = this.#limitByKey.get(key);
-      if (!rec) continue;
-      if (now >= rec.at + rec.hit.cooldownMs) {
-        this.#limitByKey.delete(key);
-        continue;
-      }
-      return rec;
+    const key = accountId
+      ? entryId({ adapterId, accountId })
+      : adapterId;
+    const rec = this.#limitByKey.get(key);
+    if (!rec) return null;
+    if (now >= rec.at + rec.hit.cooldownMs) {
+      this.#limitByKey.delete(key);
+      return null;
     }
-    return null;
+    return rec;
   }
 
   async snapshot(now = Date.now()): Promise<QuotaFleetSnapshot> {

@@ -113,7 +113,10 @@ type StateCb = (state: PaneSessionState) => void;
 type AdapterChangedCb = (adapters: AdapterInfo[]) => void;
 
 const dataSubs = new Map<string, Set<DataCb>>();
+/** Contiguous high-water: only advances for in-order sequences. */
 const lastPtySequence = new Map<string, number>();
+/** Out-of-order chunks waiting for the gap to fill (seq → data). */
+const pendingPtyChunks = new Map<string, Map<number, string>>();
 const exitSubs = new Map<string, Set<ExitCb>>();
 const stateSubs = new Map<string, Set<StateCb>>();
 const browserStateListeners = new Set<(state: BrowserPaneState) => void>();
@@ -128,24 +131,64 @@ ipcRenderer.on(
     deepOpenListeners.forEach((cb) => cb(payload)),
 );
 
+function clearPtySequenceState(sessionId: string): void {
+  lastPtySequence.delete(sessionId);
+  pendingPtyChunks.delete(sessionId);
+}
+
+function emitContiguousPtyData(sessionId: string, sequence: number, data: string): void {
+  lastPtySequence.set(sessionId, sequence);
+  dataSubs.get(sessionId)?.forEach((cb) => cb(data));
+  ipcRenderer.send(PTY_CHANNELS.acknowledge, { sessionId, sequence });
+}
+
+/**
+ * Deliver PTY data only in contiguous sequence order. Gaps are buffered and
+ * recovered; reordered chunks are never permanently dropped by advancing the
+ * high-water mark past a hole.
+ */
 function deliverPtyData(payload: PtyDataEvent): void {
-  const previous = lastPtySequence.get(payload.sessionId) ?? 0;
-  if (payload.sequence <= previous) return;
-  lastPtySequence.set(payload.sessionId, payload.sequence);
-  dataSubs.get(payload.sessionId)?.forEach((cb) => cb(payload.data));
-  ipcRenderer.send(PTY_CHANNELS.acknowledge, {
-    sessionId: payload.sessionId,
-    sequence: payload.sequence,
-  });
+  const sessionId = payload.sessionId;
+  const previous = lastPtySequence.get(sessionId) ?? 0;
+  const expected = previous + 1;
+  if (payload.sequence <= previous) return; // duplicate / already acked
+  if (payload.sequence > expected) {
+    let pending = pendingPtyChunks.get(sessionId);
+    if (!pending) {
+      pending = new Map();
+      pendingPtyChunks.set(sessionId, pending);
+    }
+    pending.set(payload.sequence, payload.data);
+    // Pull the gap immediately (quiet cadence is a backstop only).
+    void ipcRenderer
+      .invoke(PTY_CHANNELS.recover, {
+        sessionId,
+        afterSequence: previous,
+      })
+      .then((events: PtyDataEvent[]) => events.forEach(deliverPtyData))
+      .catch(() => {});
+    return;
+  }
+  // Contiguous: emit this chunk then any buffered successors.
+  emitContiguousPtyData(sessionId, payload.sequence, payload.data);
+  const pending = pendingPtyChunks.get(sessionId);
+  if (!pending || pending.size === 0) return;
+  let next = payload.sequence + 1;
+  while (pending.has(next)) {
+    const chunk = pending.get(next)!;
+    pending.delete(next);
+    emitContiguousPtyData(sessionId, next, chunk);
+    next += 1;
+  }
+  if (pending.size === 0) pendingPtyChunks.delete(sessionId);
 }
 
 ipcRenderer.on(PTY_CHANNELS.data, (_event, payload: PtyDataEvent) => {
   deliverPtyData(payload);
 });
 
-// Invoke remains operational in the Electron failure mode where main→renderer
-// push delivery wedges. Pull missing sequenced chunks on a quiet cadence; the
-// sequence dedupe makes recovery safe if a delayed push arrives afterward.
+// Invoke remains operational when main→renderer push wedges. Pull from the
+// contiguous high-water so recover never skips a hole.
 setInterval(() => {
   for (const sessionId of dataSubs.keys()) {
     const afterSequence = lastPtySequence.get(sessionId) ?? 0;
@@ -157,6 +200,7 @@ setInterval(() => {
 }, 15_000);
 
 ipcRenderer.on(PTY_CHANNELS.exit, (_event, payload: PtyExitEvent) => {
+  clearPtySequenceState(payload.sessionId);
   exitSubs.get(payload.sessionId)?.forEach((cb) =>
     cb({ exitCode: payload.exitCode, signal: payload.signal }),
   );
@@ -454,7 +498,13 @@ const api: NexusApi = {
     resize: (sessionId, cols, rows) =>
       ipcRenderer.send(PTY_CHANNELS.resize, { sessionId, cols, rows }),
     kill: (sessionId) => ipcRenderer.send(PTY_CHANNELS.kill, { sessionId }),
-    onData: (sessionId, cb) => subscribe(dataSubs, sessionId, cb),
+    onData: (sessionId, cb) => {
+      const unsub = subscribe(dataSubs, sessionId, cb);
+      return () => {
+        unsub();
+        if (!dataSubs.has(sessionId)) clearPtySequenceState(sessionId);
+      };
+    },
     onExit: (sessionId, cb) => subscribe(exitSubs, sessionId, cb),
     onStateChange: (sessionId, cb) => subscribe(stateSubs, sessionId, cb),
   },

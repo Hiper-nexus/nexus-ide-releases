@@ -245,37 +245,60 @@ function handleChunk(sessionId: string, data: string, now: number): void {
     ) {
       next = reused;
       coalesced = true;
+    } else {
+      // Stale/bad coalesce entry — drop so we re-pick.
+      coalesceByFrom.delete(coalesceKey);
     }
   }
 
-  if (!next) {
-    // Prefer freer cota among eligible accounts when fleet snapshot exists.
-    let quotaScores: Map<string, number> | undefined;
-    try {
-      const snap = requireQuotaService().lastSnapshot();
-      if (snap) {
-        quotaScores = new Map();
-        for (const e of snap.entries) {
-          if (e.adapterId === adapterId && e.accountId) {
-            quotaScores.set(e.accountId, quotaAvailabilityScore(e));
-          }
+  // Prefer freer cota among eligible accounts when fleet snapshot exists.
+  let quotaScores: Map<string, number> | undefined;
+  try {
+    const snap = requireQuotaService().lastSnapshot();
+    if (snap) {
+      quotaScores = new Map();
+      for (const e of snap.entries) {
+        if (e.adapterId === adapterId && e.accountId) {
+          quotaScores.set(e.accountId, quotaAvailabilityScore(e));
         }
       }
-    } catch {
-      /* quota service optional at boot race */
     }
+  } catch {
+    /* quota service optional at boot race */
+  }
+
+  if (!next) {
     next = pickAvailable(
       adapterId,
       current?.id ?? null,
       now,
       quotaScores,
     );
-    if (next) {
-      coalesceByFrom.set(coalesceKey, {
-        toAccountId: next.id,
-        toLabel: next.label,
-        expiresAt: now + COALESCE_MS,
-      });
+  }
+
+  // Pin-only prepare; never record coalesce until a target is spawnable.
+  // On prepare failure, drop poisoned coalesce and try one alternate.
+  let prepareError: string | undefined;
+  if (next) {
+    let prepared = prepareAccountForSpawn(adapterId, next.id, now);
+    if (!prepared.ok) {
+      prepareError = prepared.error;
+      console.warn('[failover] next account not spawnable:', prepared.error);
+      coalesceByFrom.delete(coalesceKey);
+      coalesced = false;
+      const failedId = next.id;
+      next = pickAvailable(adapterId, failedId, now, quotaScores);
+      if (next) {
+        prepared = prepareAccountForSpawn(adapterId, next.id, now);
+        if (!prepared.ok) {
+          prepareError = prepared.error;
+          next = null;
+        } else {
+          prepareError = undefined;
+        }
+      } else {
+        next = null;
+      }
     }
   }
 
@@ -289,34 +312,30 @@ function handleChunk(sessionId: string, data: string, now: number): void {
         toAccountId: null,
         reason: hit.reason,
         switched: false,
+        prepareError: prepareError ?? null,
       }),
     );
     emitFailover(authority, {
       paneId: pane.paneId,
       fromAccountLabel: fromLabel,
       toAccountLabel: '',
-      reason: hit.reason,
+      reason: prepareError
+        ? `${hit.reason} (falha na conta: ${prepareError})`
+        : hit.reason,
       switched: false,
       fromAccountId,
+      missionId: authority.missionId,
     });
     return;
   }
 
-  // Pin-only: materialize/validate credentials for the next account WITHOUT
-  // flipping global active (avoids thrash when many panes failover together).
-  // Spawn uses prepareAccountForSpawn via pane.accountId pin.
-  const prepared = prepareAccountForSpawn(adapterId, next.id, now);
-  if (!prepared.ok) {
-    console.warn('[failover] next account not spawnable:', prepared.error);
-    emitFailover(authority, {
-      paneId: pane.paneId,
-      fromAccountLabel: fromLabel,
-      toAccountLabel: '',
-      reason: `${hit.reason} (falha na conta "${next.label}": ${prepared.error})`,
-      switched: false,
-      fromAccountId,
+  // Only after successful prepare: share this A→B decision with concurrent panes.
+  if (!coalesced) {
+    coalesceByFrom.set(coalesceKey, {
+      toAccountId: next.id,
+      toLabel: next.label,
+      expiresAt: now + COALESCE_MS,
     });
-    return;
   }
 
   const crossAccount = Boolean(
@@ -334,6 +353,7 @@ function handleChunk(sessionId: string, data: string, now: number): void {
       switched: true,
       crossAccount,
       coalesced,
+      missionId: authority.missionId ?? null,
     }),
   );
 
@@ -347,6 +367,7 @@ function handleChunk(sessionId: string, data: string, now: number): void {
     fromAccountId,
     crossAccount,
     coalesced,
+    missionId: authority.missionId,
   });
 }
 
@@ -402,6 +423,7 @@ export function requestSessionRecovery(sessionId: string, reason: string): boole
     reason,
     switched: true,
     crossAccount: false,
+    missionId: authority.missionId,
     ...(account?.id
       ? { toAccountId: account.id, fromAccountId: account.id }
       : {}),

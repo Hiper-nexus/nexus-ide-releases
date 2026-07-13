@@ -114,4 +114,44 @@ describe('QuotaService limit-hit expiry', () => {
 
     svc.stop();
   });
+
+  it('adapter-level hit does not exhaust per-account vault rows', async () => {
+    const accounts: AccountInfo[] = [
+      {
+        id: 'acc-a',
+        adapterId: 'claude',
+        label: 'A',
+        mode: 'subscription',
+        active: true,
+        hasCredential: true,
+        onCooldown: false,
+      } as AccountInfo,
+      {
+        id: 'acc-b',
+        adapterId: 'claude',
+        label: 'B',
+        mode: 'subscription',
+        active: false,
+        hasCredential: true,
+        onCooldown: false,
+      } as AccountInfo,
+    ];
+    const svc = new QuotaService({
+      listProviders: () => [provider('claude', 'Claude')],
+      listAccounts: () => accounts,
+    });
+    // Unpinned / bare adapter hit — must not paint every account at 100%.
+    svc.noteLimitHit(
+      'claude',
+      { kind: 'rate-limit', reason: 'x', cooldownMs: COOLDOWN_MS },
+      undefined,
+      HIT_AT,
+    );
+    const snap = await svc.snapshot(HIT_AT + 1);
+    const a = snap.entries.find((e) => e.accountId === 'acc-a');
+    const b = snap.entries.find((e) => e.accountId === 'acc-b');
+    expect(a?.windows.every((w) => w.usedRatio === null)).toBe(true);
+    expect(b?.windows.every((w) => w.usedRatio === null)).toBe(true);
+    svc.stop();
+  });
 });

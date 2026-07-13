@@ -275,16 +275,69 @@ describe('account failover authority and lifecycle', () => {
         toAccountId: 'account-b',
         coalesced: false,
         crossAccount: true,
+        missionId: 'm1',
       }),
     );
     expect(sends[1]![1]).toEqual(
       expect.objectContaining({
         toAccountId: 'account-b',
         coalesced: true,
+        missionId: 'm2',
       }),
     );
     // Cooldown once per pane path still marks exhausted account; target not re-picked.
     expect(accountMocks.setCooldown).toHaveBeenCalled();
+  });
+
+  it('does not poison coalesce when prepare fails; retries alternate account', async () => {
+    const { prepareAccountForSpawn, pickAvailable } = await import(
+      '../persistence/account-store'
+    );
+    const scope = testProjectScope();
+    const owner = renderer(707);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({
+      owner,
+      paneId: 'pane-prep',
+      sessionId: 'sess-prep',
+      missionId: 'm-prep',
+      scope,
+    });
+
+    accountMocks.next = {
+      id: 'account-b',
+      adapterId: 'claude',
+      label: 'Account B',
+    };
+    const accountC = {
+      id: 'account-c',
+      adapterId: 'claude',
+      label: 'Account C',
+    };
+    vi.mocked(prepareAccountForSpawn)
+      .mockImplementationOnce(() => ({ ok: false as const, error: 'no key' }))
+      .mockImplementationOnce(() => ({
+        ok: true as const,
+        account: accountC,
+        apiKey: null,
+        authEnv: {},
+      }));
+    vi.mocked(pickAvailable)
+      .mockImplementationOnce(() => accountMocks.next)
+      .mockImplementationOnce(() => accountC);
+
+    ptyMocks.dataTaps[0]!('sess-prep', 'LIMIT');
+
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        switched: true,
+        toAccountId: 'account-c',
+        coalesced: false,
+      }),
+    );
   });
 
   it('fails closed before account mutation for ambiguous, unscoped or ownerless panes', () => {

@@ -4,9 +4,11 @@ import { useToastStore } from '../state/toast-store';
 import { useOrchStore } from '../state/orch-store';
 import { listPanes } from '../lib/split-tree';
 import { respawnWithResume, getScrollbackExcerpt } from '../terminal/terminal-host';
+import { buildContinuityPack } from './failover-continuity';
 import {
-  buildContinuityPack,
-} from './failover-continuity';
+  isSameAccountFailover,
+  resolveContinuityMission,
+} from './failover-decision';
 
 /**
  * Reacts to main-process failover events.
@@ -36,9 +38,7 @@ export function useFailoverController(): void {
           (candidate) => candidate.id === pane.id,
         );
         if (updated) {
-          const sameAccount =
-            event.crossAccount === false ||
-            event.fromAccountLabel === event.toAccountLabel;
+          const sameAccount = isSameAccountFailover(event);
           if (sameAccount) {
             respawnWithResume(
               updated,
@@ -46,20 +46,20 @@ export function useFailoverController(): void {
               { mode: 'same-account-resume' },
             );
           } else {
-            const missions = useOrchStore.getState().missions;
-            const openMissions = missions
-              .filter((m) => m.status === 'running' || m.status === 'blocked')
-              .slice(0, 3);
-            const open = openMissions
-              .map((m) => `${m.id}${m.title ? `: ${m.title}` : ''}`)
-              .join('; ');
+            const orch = useOrchStore.getState();
+            const mission = resolveContinuityMission({
+              paneId: updated.id,
+              paneMissions: orch.paneMissions,
+              missions: orch.missions,
+              eventMissionId: event.missionId,
+            });
             const continuityPack = buildContinuityPack({
               fromAccountLabel: event.fromAccountLabel,
               toAccountLabel: event.toAccountLabel,
               reason: event.reason,
               role: updated.role,
-              missionId: openMissions[0]?.id,
-              openWorkHint: open || undefined,
+              missionId: mission.missionId,
+              openWorkHint: mission.openWorkHint,
               scrollbackExcerpt: getScrollbackExcerpt(updated.id),
             });
             respawnWithResume(
@@ -73,10 +73,7 @@ export function useFailoverController(): void {
           }
         }
       }
-      if (
-        event.crossAccount === false ||
-        event.fromAccountLabel === event.toAccountLabel
-      ) {
+      if (isSameAccountFailover(event)) {
         push('success', 'Sessão recuperada automaticamente', event.reason);
         return;
       }

@@ -33,15 +33,26 @@ const PATTERNS: Pattern[] = [
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /billing[_\s]?hard[_\s]?limit/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /you['’]ve used all of your (?:credits|quota|plan)/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /(?:plan|subscription) limit (?:reached|exceeded)/i },
-  // PT: cota / créditos esgotados (error-shaped only).
-  { kind: 'quota', cooldownMs: 12 * HOUR, re: /cota (?:esgotada|excedida)|sem cr[eé]ditos?|cr[eé]ditos? insuficientes/i },
+  // Weekly / plan exhaustion → long cooldown + weekly UI window (kind quota).
+  { kind: 'quota', cooldownMs: 12 * HOUR, re: /weekly (?:usage )?limit (?:reached|exceeded|hit)/i },
+  { kind: 'quota', cooldownMs: 12 * HOUR, re: /reached your weekly limit/i },
+  // PT: cota / créditos — require error/limit/outcome context (no bare prose).
+  {
+    kind: 'quota',
+    cooldownMs: 12 * HOUR,
+    re: /(?:erro|error|failed|falha|limite|limit)[:\s].{0,60}(?:cota (?:esgotada|excedida)|cr[eé]ditos? insuficientes|sem cr[eé]ditos?)/i,
+  },
+  {
+    kind: 'quota',
+    cooldownMs: 12 * HOUR,
+    re: /(?:cota (?:esgotada|excedida)|cr[eé]ditos? insuficientes).{0,40}(?:erro|failed|upgrade|plano|limit|limite)/i,
+  },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /limite (?:do )?plano (?:atingido|excedido)|assinatura (?:esgotada|excedida)/i },
-  // Rate / usage limit — resets within a window.
+  // Rate / usage limit — resets within a window (not weekly — see quota above).
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /usage limit reached/i },
-  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /reached your (?:usage|5-hour|weekly|daily) limit/i },
+  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /reached your (?:usage|5-hour|daily) limit/i },
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /hit your (?:usage|rate|token) limit/i },
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /5[-\s]?hour (?:usage )?limit (?:reached|exceeded|hit)/i },
-  { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /weekly (?:usage )?limit (?:reached|exceeded|hit)/i },
   // PT: limite de uso / 5 horas (error-shaped).
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /limite de (?:uso|utiliza[cç][aã]o) (?:atingido|excedido|alcan[cç]ado)/i },
   { kind: 'rate-limit', cooldownMs: 5 * HOUR, re: /limite de 5\s*horas? (?:atingido|excedido)/i },

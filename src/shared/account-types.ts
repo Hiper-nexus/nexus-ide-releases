@@ -76,6 +76,8 @@ export interface FailoverEvent {
   crossAccount?: boolean;
   /** True when this pane re-used a recent switch decision for the same from-account. */
   coalesced?: boolean;
+  /** Mission bound to the failing pane when known (continuity pack). */
+  missionId?: string;
 }
 
 /** Main → renderer: user activated an account; panes may need restart. */

@@ -76,15 +76,25 @@ describe('detectLimit', () => {
     expect(hit?.kind).toBe('quota');
   });
 
-  it('detects 5-hour / weekly and Portuguese limit signatures', () => {
+  it('detects 5-hour as rate-limit and weekly as quota (long window)', () => {
     expect(detectLimit('Error: 5-hour usage limit reached')?.kind).toBe(
       'rate-limit',
     );
-    expect(detectLimit('weekly usage limit exceeded')?.kind).toBe('rate-limit');
+    const weekly = detectLimit('weekly usage limit exceeded');
+    expect(weekly?.kind).toBe('quota');
+    expect(weekly!.cooldownMs).toBeGreaterThan(6 * 60 * 60 * 1000);
     expect(
       detectLimit('Erro: limite de uso atingido para esta conta')?.kind,
     ).toBe('rate-limit');
     expect(detectLimit('limite de 5 horas excedido')?.kind).toBe('rate-limit');
     expect(detectLimit('cota esgotada — upgrade o plano')?.kind).toBe('quota');
+    expect(detectLimit('Erro: cota esgotada nesta conta')?.kind).toBe('quota');
+  });
+
+  it('ignores bare Portuguese cota/créditos prose without error shape', () => {
+    expect(
+      detectLimit('Documente como tratar cota esgotada no provider.'),
+    ).toBeNull();
+    expect(detectLimit('O time usa créditos insuficientes como métrica.')).toBeNull();
   });
 });

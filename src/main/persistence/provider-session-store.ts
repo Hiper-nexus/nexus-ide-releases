@@ -16,6 +16,8 @@ function valid(value: string, max = ID_MAX): string {
  * Persist the provider-owned conversation identity under immutable project +
  * pane authority. Optional `accountId` binds the session to the vault account
  * that created it so exact resume cannot leak across multi-account failover.
+ *
+ * Ownership is sticky: a save without accountId never clears a prior owner.
  */
 export function saveProviderPaneSession(
   scope: Readonly<ProjectExecutionScope>,
@@ -44,7 +46,7 @@ export function saveProviderPaneSession(
                    session_id = excluded.session_id,
                    transcript_path = excluded.transcript_path,
                    updated_at = excluded.updated_at,
-                   account_id = excluded.account_id`,
+                   account_id = COALESCE(excluded.account_id, provider_pane_sessions.account_id)`,
   ).run(
     scope.installationId,
     scope.projectId,
@@ -61,10 +63,11 @@ export function saveProviderPaneSession(
 }
 
 /**
- * Load a captured session for exact resume. When `accountId` is provided,
- * only returns a row owned by that account (or a legacy row with NULL
- * account_id that we treat as untrusted for cross-account: still allow only
- * when request has no accountId). Hard rule: never return another account's id.
+ * Load a captured session for exact resume.
+ * Fail-closed:
+ *  - owned row (account_id set) requires a matching pin
+ *  - pin without matching owner → null
+ *  - legacy unowned row only when caller also has no pin
  */
 export function getProviderPaneSession(
   scope: Readonly<ProjectExecutionScope>,
@@ -103,9 +106,8 @@ export function getProviderPaneSession(
   const wantAccount =
     accountId && accountId.trim() ? accountId.trim() : null;
 
-  // Cross-account guard: exact resume only when ownership matches.
-  if (wantAccount) {
-    if (!storedAccount || storedAccount !== wantAccount) return null;
+  if (!sessionBelongsToAccount(storedAccount, wantAccount)) {
+    return null;
   }
 
   const id = valid(row.session_id);
@@ -118,13 +120,19 @@ export function getProviderPaneSession(
     : { key: row.session_key, id };
 }
 
-/** Pure helper for unit tests / call sites without SQLite. */
+/**
+ * Exact-resume ownership guard (pure).
+ * Owned rows require a matching pin; pins require a matching owner.
+ * Legacy both-null remains allowed for old rows without account_id.
+ */
 export function sessionBelongsToAccount(
   storedAccountId: string | null | undefined,
   wantAccountId: string | null | undefined,
 ): boolean {
-  const want = wantAccountId?.trim() || null;
-  if (!want) return true; // no pin → legacy allow
   const stored = storedAccountId?.trim() || null;
-  return Boolean(stored && stored === want);
+  const want = wantAccountId?.trim() || null;
+  if (stored && !want) return false;
+  if (want && !stored) return false;
+  if (stored && want) return stored === want;
+  return true;
 }
