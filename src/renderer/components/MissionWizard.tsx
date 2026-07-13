@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AdapterInfo } from '../../shared/types';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { DEFAULT_ORCH_SETTINGS } from '../../shared/settings-types';
@@ -82,7 +82,6 @@ export function MissionWizard() {
   const close = useMissionWizardStore((s) => s.close);
   const squads = useOrchStore((s) => s.squads);
   const providers = useProviderStore((s) => s.providers);
-  const currentWorkspace = useWorkspaceStore((s) => s.current);
   const recents = useWorkspaceStore((s) => s.recents);
   const openWorkspace = useWorkspaceStore((s) => s.open);
 
@@ -93,6 +92,9 @@ export function MissionWizard() {
     DEFAULT_ORCH_SETTINGS.defaultAdapterId,
   );
   const [step, setStep] = useState<Step>('mode');
+  const stepRef = useRef<Step>('mode');
+  stepRef.current = step;
+  const handledAgenticLaunchRef = useRef(0);
   const [mode, setMode] = useState<Mode | null>(null);
   const [wsPath, setWsPath] = useState('');
   const [count, setCount] = useState(2);
@@ -107,6 +109,8 @@ export function MissionWizard() {
   const [roster, setRoster] = useState<SquadAgent[]>([]);
   const [rosterSaved, setRosterSaved] = useState(false);
   const [highlightedAgentId, setHighlightedAgentId] = useState<string | null>(null);
+  const designRequestRef = useRef(0);
+  const designInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
@@ -145,7 +149,11 @@ export function MissionWizard() {
       });
     // Voice may target Modo Agêntico directly. The nonce matters when this
     // wizard was already open on another mode or with a previous objective.
-    if (agenticLaunchNonce > 0) {
+    if (
+      agenticLaunchNonce > handledAgenticLaunchRef.current &&
+      stepRef.current !== 'squad-review'
+    ) {
+      handledAgenticLaunchRef.current = agenticLaunchNonce;
       setMode('agentic');
       setSquadId('');
       setIntent(agenticIntent ?? '');
@@ -162,7 +170,12 @@ export function MissionWizard() {
       setSquadId('');
       setIntent('');
     }
-    setWsPath(hasNewWsStep ? currentWorkspace?.path ?? recents[0]?.path ?? '' : '');
+    const workspaceState = useWorkspaceStore.getState();
+    setWsPath(
+      hasNewWsStep
+        ? workspaceState.current?.path ?? workspaceState.recents[0]?.path ?? ''
+        : '',
+    );
     setCount(2);
     setSlots([]);
     setError(null);
@@ -171,6 +184,7 @@ export function MissionWizard() {
     setDesigning(false);
     return () => {
       cancelled = true;
+      designRequestRef.current += 1;
     };
   }, [
     open,
@@ -178,8 +192,6 @@ export function MissionWizard() {
     presetSquadId,
     agenticIntent,
     agenticLaunchNonce,
-    currentWorkspace?.path,
-    recents,
   ]);
 
   useEffect(() => {
@@ -362,7 +374,12 @@ export function MissionWizard() {
 
   /** Modo Agêntico: intenção → arquiteto monta o time → revisão do roster. */
   async function handleDesignFromIntent() {
-    if (designing || !intent.trim()) return;
+    if (designInFlightRef.current || designing || !intent.trim()) return;
+    designInFlightRef.current = true;
+    const requestId = ++designRequestRef.current;
+    const isCurrentRequest = () =>
+      designRequestRef.current === requestId &&
+      useMissionWizardStore.getState().open;
     setDesigning(true);
     setError(null);
     try {
@@ -373,29 +390,24 @@ export function MissionWizard() {
         setError('Abra (ou informe) um workspace antes de montar o time.');
         return;
       }
-      const designOnce = () => Promise.race([
-          window.nexus.orch.designSquad(workspacePath, intent.trim()),
-          new Promise<never>((_, reject) => {
-            setTimeout(
-              () => reject(new Error('O arquiteto demorou demais. Tente novamente.')),
-              30_000,
-            );
-          }),
-        ]);
-      let res = await designOnce();
-      // Runtime Doctor recipe: malformed/temporary model output proves no
-      // squad was saved, so one deterministic retry is safe. Never loop.
-      if (
-        (!res.ok || !res.squad) &&
-        /json|modelo|timeout|demorou|temporar/i.test(res.error ?? '')
-      ) {
-        useToastStore.getState().push(
-          'warn',
-          'O Doctor está tentando recuperar o arquiteto',
-          res.error ?? 'Resposta inválida do modelo.',
-        );
-        res = await designOnce();
-      }
+      const designOnce = async () => {
+        let timeout: ReturnType<typeof setTimeout> | null = null;
+        try {
+          return await Promise.race([
+            window.nexus.orch.designSquad(workspacePath, intent.trim()),
+            new Promise<never>((_, reject) => {
+              timeout = setTimeout(
+                () => reject(new Error('O arquiteto demorou demais. Tente novamente.')),
+                30_000,
+              );
+            }),
+          ]);
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+      };
+      const res = await designOnce();
+      if (!isCurrentRequest()) return;
       if (!res.ok || !res.squad) {
         const message = res.error ?? 'Não consegui montar o time.';
         if (isMissingModelKeyError(message)) {
@@ -412,12 +424,17 @@ export function MissionWizard() {
       // O squad já foi salvo no main — garantir que a lista local o contém
       // antes de renderizar a revisão.
       await useOrchStore.getState().hydrate(workspacePath);
+      if (!isCurrentRequest()) return;
+      if (!useOrchStore.getState().squads.some((squad) => squad.id === res.squad!.id)) {
+        throw new Error('O time foi criado, mas não apareceu no catálogo local.');
+      }
       setSquadId(res.squad.id);
       setStep('squad-review');
     } catch (cause) {
       const message = cause instanceof Error
         ? cause.message
         : 'Não consegui montar o time. Tente novamente.';
+      if (!isCurrentRequest()) return;
       setError(message);
       useToastStore.getState().push(
         'error',
@@ -425,7 +442,8 @@ export function MissionWizard() {
         message,
       );
     } finally {
-      setDesigning(false);
+      designInFlightRef.current = false;
+      if (isCurrentRequest()) setDesigning(false);
     }
   }
 

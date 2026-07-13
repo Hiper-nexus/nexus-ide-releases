@@ -285,6 +285,10 @@ describe('ProjectRuntimeManager physical isolation', () => {
       ).map((column) => column.name),
     );
     expect(handoffColumns).toContain('delivered');
+    expect(handoffColumns).toContain('delivery_state');
+    expect(handoffColumns).toContain('submitted_at');
+    expect(handoffColumns).toContain('acknowledged_at');
+    expect(handoffColumns).toContain('consumed_at');
     expect(handoffColumns).not.toContain('delivered_at');
     runtime.db
       .prepare(

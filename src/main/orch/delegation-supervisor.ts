@@ -31,9 +31,13 @@ export function delegationRecoveryStage(
   if (progress.expectedWorkers === 0) return 0;
   if (!['pending', 'running'].includes(progress.mission.status)) return 0;
   if (progress.workerPanes > 0 || progress.tasks > 0) return 0;
-  if (progress.recoveries.length >= 2) return 0;
+  if (progress.recoveries.some((item) => item.deliveryState === 'queued')) return 0;
+  const deliveredRecoveries = progress.recoveries.filter(
+    (item) => item.deliveryState !== 'queued',
+  );
+  if (deliveredRecoveries.length >= 2) return 0;
 
-  const lastRecovery = progress.recoveries.at(-1);
+  const lastRecovery = deliveredRecoveries.at(-1);
   const since = lastRecovery?.createdAt ?? progress.mission.createdAt;
   const threshold = lastRecovery ? DELEGATION_RETRY_MS : DELEGATION_SLA_MS;
   if (now - since < threshold) return 0;

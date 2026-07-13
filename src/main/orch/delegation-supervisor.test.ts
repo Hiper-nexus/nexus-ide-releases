@@ -28,6 +28,7 @@ function recovery(createdAt: number): Handoff {
     evidenceIds: [],
     evidenceTrust: 'unverified',
     delivered: true,
+    deliveryState: 'submitted',
     createdAt,
   };
 }

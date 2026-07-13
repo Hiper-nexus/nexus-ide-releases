@@ -19,6 +19,7 @@ const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const AGENT_BOOT_TIMEOUT_MS = 20_000;
 const MAX_REVIEW_TIMEOUT_MS = 30 * 60_000;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
+const reviewFlights = new Map<string, Promise<ContextDraftRecord>>();
 
 const draftIdSchema = z
   .string()
@@ -310,6 +311,25 @@ export class CliContextDraftReviewer {
   }
 
   async run(input: RunCliContextDraftReviewInput): Promise<ContextDraftRecord> {
+    const scope = projectExecutionScopeSchema.parse({ ...input.scope });
+    const draftId = draftIdSchema.parse(input.draftId);
+    const key = [
+      scope.installationId,
+      scope.projectId,
+      scope.checkoutId,
+      scope.rootRealPath,
+      draftId,
+    ].join('\0');
+    const existing = reviewFlights.get(key);
+    if (existing) return existing;
+    const flight = this.#execute({ scope, draftId }).finally(() => {
+      if (reviewFlights.get(key) === flight) reviewFlights.delete(key);
+    });
+    reviewFlights.set(key, flight);
+    return flight;
+  }
+
+  async #execute(input: RunCliContextDraftReviewInput): Promise<ContextDraftRecord> {
     const scope = Object.freeze(projectExecutionScopeSchema.parse({ ...input.scope }));
     const draftId = draftIdSchema.parse(input.draftId);
     const initial = await this.#readDraft(scope, draftId);

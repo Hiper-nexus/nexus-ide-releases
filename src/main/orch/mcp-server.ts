@@ -208,6 +208,13 @@ async function handleMcpRequest(
   const responses = [];
   for (const message of messages) {
     if (!isJsonRpcRequest(message)) continue;
+    if (
+      message.method === 'tools/call' &&
+      ctx.role === 'orchestrator' &&
+      ctx.missionId
+    ) {
+      getProjectDomainStores(ctx.scope).handoffs.acknowledgeMission(ctx.missionId);
+    }
     const response = await handleMcpMessage(registry!, ctx, message, {
       confirm: confirmHttpMcpTool,
     });

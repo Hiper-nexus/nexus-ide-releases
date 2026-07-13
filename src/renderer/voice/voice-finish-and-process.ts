@@ -539,7 +539,10 @@ export async function finishAndProcess(
         if (!claimed && turnExecution.owner === 'realtime-tool') {
           releaseAfterRealtimeTool();
         } else {
-          const rearmAudioOnly = claimed && shouldRearmAfterAudioOnly(activeCaptureReason);
+          const rearmAudioOnly = claimed && (
+            shouldRearmAfterAudioOnly(activeCaptureReason) ||
+            (activeCaptureReason === 'reply' && localSpeechUsable)
+          );
           releaseAfterLiveProviderAnswer({
             busy,
             capture,

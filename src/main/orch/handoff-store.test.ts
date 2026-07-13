@@ -142,6 +142,7 @@ describe('scoped handoff store', () => {
     expect(submitted).toMatchObject({
       id: 'handoff-a',
       delivered: false,
+      deliveryState: 'queued',
       claimTrust: 'untrusted',
       evidenceTrust: 'unverified',
       evidenceIds: [],
@@ -155,7 +156,16 @@ describe('scoped handoff store', () => {
     expect(handoffs.markDelivered('handoff-a')).toBe(true);
     expect(handoffs.markDelivered('handoff-a')).toBe(false);
     expect(handoffs.list()).toEqual([]);
-    expect(handoffs.list({ includeDelivered: true })[0].delivered).toBe(true);
+    expect(handoffs.list({ includeDelivered: true })[0]).toMatchObject({
+      delivered: true,
+      deliveryState: 'submitted',
+      submittedAt: 55,
+    });
+    expect(handoffs.acknowledgeMission('mission-a')).toBe(1);
+    expect(handoffs.list({ includeDelivered: true })[0].deliveryState).toBe('acknowledged');
+    expect(handoffs.markConsumed('handoff-a', 'mission-a')).toBe(true);
+    expect(handoffs.markConsumed('handoff-a', 'mission-a')).toBe(false);
+    expect(handoffs.list({ includeDelivered: true })[0].deliveryState).toBe('consumed');
 
     runtimeManager.close(scope);
     expect(

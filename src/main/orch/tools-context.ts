@@ -26,12 +26,25 @@ import {
   autopilotActionFor,
   missionPlanIntegrated,
 } from '../context/prevc-autopilot-policy';
+import {
+  runContextBootstrapAutopilot,
+  type ContextBootstrapAutopilotResult,
+} from '../context/context-bootstrap-autopilot';
+
+// Doctor is an idempotent project operation, not a fan-out primitive. Several
+// model retries used to launch independent reviewers for the same drafts.
+const contextDoctorFlights = new Map<
+  string,
+  Promise<ContextBootstrapAutopilotResult>
+>();
 
 const identifier = z.string().trim().min(1).max(160)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const criterionSchema = z
   .object({
-    id: identifier,
+    // Models frequently provide a valid checklist but omit bookkeeping ids.
+    // The id is not business authority, so Nexus may derive it deterministically.
+    id: identifier.optional(),
     statement: z.string().trim().min(1).max(4_096),
     requiredSensorIds: z.array(identifier).max(64).default([]),
     invariantRefs: z.array(identifier).max(64).default([]),
@@ -256,16 +269,29 @@ const doctorTool: McpToolDef = {
       });
     }
 
-    const { runContextBootstrapAutopilot } = await import(
-      '../context/context-bootstrap-autopilot'
-    );
-    const result = await runContextBootstrapAutopilot({
-      scope: ctx.scope,
-      author: missionIdentity(ctx),
-      missionId: ctx.missionId ?? null,
-      autoReview: input.autoReview,
-      autoCommit: input.autoCommit,
-    });
+    const key = [
+      ctx.scope.installationId,
+      ctx.scope.projectId,
+      ctx.scope.checkoutId,
+      ctx.scope.rootRealPath,
+      ctx.missionId ?? '',
+    ].join('\0');
+    let flight = contextDoctorFlights.get(key);
+    if (!flight) {
+      flight = runContextBootstrapAutopilot({
+        scope: ctx.scope,
+        author: missionIdentity(ctx),
+        missionId: ctx.missionId ?? null,
+        autoReview: input.autoReview,
+        autoCommit: input.autoCommit,
+      }).finally(() => {
+        if (contextDoctorFlights.get(key) === flight) {
+          contextDoctorFlights.delete(key);
+        }
+      });
+      contextDoctorFlights.set(key, flight);
+    }
+    const result = await flight;
     return Object.freeze({
       ...result.readiness,
       phase: result.phase,
@@ -500,7 +526,14 @@ const freezeTool: McpToolDef = {
   },
   handler: async (args, ctx) => {
     if (ctx.role === 'worker') throw new Error('only an orchestrator can freeze a contract');
-    const input = freezeSchema.parse(args);
+    const parsed = freezeSchema.parse(args);
+    const input = {
+      ...parsed,
+      acceptanceCriteria: parsed.acceptanceCriteria.map((criterion, index) => ({
+        ...criterion,
+        id: criterion.id ?? `criterion-${index + 1}`,
+      })),
+    };
     assertMission(ctx, input.missionId);
     const service = getContextWorkflowService(ctx.scope);
     // Auto-pilot: fill empty impact lists from structural blast radius.

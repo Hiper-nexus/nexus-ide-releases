@@ -44,6 +44,7 @@ class FakeSource implements NarratorHandoffSource {
       evidenceIds: [],
       evidenceTrust: 'unverified',
       delivered: false,
+      deliveryState: 'queued',
       createdAt: Date.now(),
     });
     this.listener?.(scope);

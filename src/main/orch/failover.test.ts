@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WebContents } from 'electron';
 import type { ProjectExecutionScope } from '../../shared/types';
-import { ACCOUNT_CHANNELS } from '../../shared/account-types';
+import { ACCOUNT_CHANNELS, type Account } from '../../shared/account-types';
 import { testProjectScope } from './__tests__/scope-fixture';
 
 const ptyMocks = vi.hoisted(() => ({
@@ -21,12 +21,18 @@ const accountMocks = vi.hoisted(() => ({
     id: 'account-a',
     adapterId: 'claude',
     label: 'Account A',
+    mode: 'subscription' as const,
+    upstream: 'anthropic',
+    createdAt: 0,
   },
   next: {
     id: 'account-b',
     adapterId: 'claude',
     label: 'Account B',
-  } as { id: string; adapterId: string; label: string } | null,
+    mode: 'subscription' as const,
+    upstream: 'anthropic',
+    createdAt: 1,
+  } as Account | null,
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -162,6 +168,9 @@ beforeEach(() => {
     id: 'account-b',
     adapterId: 'claude',
     label: 'Account B',
+    mode: 'subscription',
+    upstream: 'anthropic',
+    createdAt: 1,
   };
   initFailover();
 });
@@ -310,11 +319,17 @@ describe('account failover authority and lifecycle', () => {
       id: 'account-b',
       adapterId: 'claude',
       label: 'Account B',
+      mode: 'subscription',
+      upstream: 'anthropic',
+      createdAt: 1,
     };
     const accountC = {
       id: 'account-c',
       adapterId: 'claude',
       label: 'Account C',
+      mode: 'subscription' as const,
+      upstream: 'anthropic',
+      createdAt: 2,
     };
     vi.mocked(prepareAccountForSpawn)
       .mockImplementationOnce(() => ({ ok: false as const, error: 'no key' }))

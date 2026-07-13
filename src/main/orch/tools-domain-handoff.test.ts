@@ -61,6 +61,7 @@ function handoff(
       evidenceTrust === 'nexus-trusted' ? ['evidence-a'] : [],
     evidenceTrust,
     delivered: false,
+    deliveryState: 'queued',
     createdAt: 1,
   };
 }

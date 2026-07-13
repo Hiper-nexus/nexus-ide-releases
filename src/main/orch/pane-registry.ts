@@ -33,7 +33,10 @@ import {
  */
 
 const RING_BUFFER_CAP = 262_144; // 256 KB of raw output per session.
-const SPAWN_TIMEOUT_MS = 30_000;
+// CLI cold starts can legitimately include login/profile discovery and MCP
+// bootstrap. Thirty seconds was shorter than real Claude/GLM startup on a
+// busy machine and turned a healthy late spawn into a retry storm.
+const SPAWN_TIMEOUT_MS = 90_000;
 
 interface RingBuffer {
   chunks: string[];

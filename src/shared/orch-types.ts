@@ -128,6 +128,14 @@ export type HandoffEvidenceTrust = z.infer<
   typeof handoffEvidenceTrustSchema
 >;
 
+export const handoffDeliveryStateSchema = z.enum([
+  'queued',
+  'submitted',
+  'acknowledged',
+  'consumed',
+]);
+export type HandoffDeliveryState = z.infer<typeof handoffDeliveryStateSchema>;
+
 export interface HandoffEvidenceBinding {
   readonly missionId: string;
   readonly contextRevision: string;
@@ -156,6 +164,10 @@ export interface Handoff {
   /** Immutable Nexus-derived binding, present only for trusted evidence IDs. */
   evidenceBinding?: HandoffEvidenceBinding;
   delivered: boolean;
+  deliveryState: HandoffDeliveryState;
+  submittedAt?: number;
+  acknowledgedAt?: number;
+  consumedAt?: number;
   createdAt: number;
 }
 

@@ -100,6 +100,7 @@ function formatDelivery(handoff: Handoff): string {
         : 'unverified';
   return (
     `[nexus handoff delivery_metadata] from=${from} ` +
+    `handoff_id=${handoff.id} consume_with=nexus_handoff_ack ` +
     `reported_status=${handoff.status} claim_trust=untrusted ` +
     `evidence=${evidence} does_not_complete_mission=true ` +
     `summary: ${summary}${artifacts}`
@@ -150,7 +151,7 @@ function scheduleEnter(authority: DeliveryAuthority, handoffId: string): void {
       if (submitted) {
         // `delivered` means the complete prompt was submitted to the live TUI,
         // not merely painted into its input buffer.
-        getProjectDomainStores(authority.scope).handoffs.markDelivered(handoffId);
+        getProjectDomainStores(authority.scope).handoffs.markSubmitted(handoffId);
         // Some interactive CLIs consume the first CR while leaving the pasted
         // prompt in their editor (notably after resume/modal transitions). A
         // bounded second CR is safe only while the exact session is still

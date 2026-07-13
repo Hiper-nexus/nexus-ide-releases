@@ -7,7 +7,7 @@ import {
 } from './pane-registry';
 import { orchWriteSession } from '../pty/pty-manager';
 import { listAdapterInfos } from '../adapters/adapter-registry';
-import { findAgent } from './squad-store';
+import { findAgentInSquad } from './squad-store';
 import {
   authorizePaneRef,
   authorizedSessionIdOf,
@@ -22,6 +22,7 @@ import {
 import { canonicalToolName, type AgentGateContext } from './gate';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
+import { getProjectDomainStores } from './project-domain-store-registry';
 
 /** The 10 pane tools of the embedded MCP server (tool group 1). */
 
@@ -89,14 +90,20 @@ const paneSpawn: McpToolDef = {
     const agentRef = str(args, 'agentName');
     let options: SpawnToolOptions;
     if (agentRef) {
-      const found = findAgent(agentRef);
+      const requestedMissionId = childMissionId(ctx, str(args, 'missionId'));
+      const mission = requestedMissionId
+        ? getProjectDomainStores(ctx.scope).missions.get(requestedMissionId)
+        : null;
+      if (!mission?.squadId) {
+        throw new Error('squad agent spawn requires a mission bound to a squad');
+      }
+      const found = findAgentInSquad(mission.squadId, agentRef);
       if (!found) throw new Error(`unknown squad agent: ${agentRef}`);
       const { agent } = found;
       const role = agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
       if (ctx.role === 'worker' && role === 'orchestrator') {
         throw new Error('not authorized: workers cannot create orchestrators');
       }
-      const requestedMissionId = str(args, 'missionId');
       options = {
         // Roteamento de custo: o adapterId vindo do route_task vence o
         // default do roster — senão o squad inteiro cai num modelo só.
@@ -105,7 +112,7 @@ const paneSpawn: McpToolDef = {
         effort: str(args, 'effort') ?? agent.effort,
         cwd: str(args, 'cwd'),
         title: str(args, 'title') ?? agent.agentName,
-        missionId: childMissionId(ctx, requestedMissionId),
+        missionId: requestedMissionId,
         contextRevision: ctx.contextRevision,
         agentName: agent.agentName,
         allowedTools: attenuateTools(

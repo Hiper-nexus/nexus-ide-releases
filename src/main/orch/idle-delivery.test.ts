@@ -89,7 +89,7 @@ vi.mock('./project-domain-store-registry', () => ({
     handoffs: {
       get: (id: string) =>
         storeMocks.handoffs.get(id) ?? handoff({ id }),
-      markDelivered: (id: string) => storeMocks.delivered.push({ scope, id }),
+      markSubmitted: (id: string) => storeMocks.delivered.push({ scope, id }),
       list: ({ missionId }: { missionId?: string }) =>
         [...storeMocks.handoffs.values()].filter(
           (item) => !item.delivered && (!missionId || item.missionId === missionId),
@@ -111,6 +111,7 @@ function handoff(overrides: Partial<Handoff> = {}): Handoff {
     evidenceIds: [],
     evidenceTrust: 'unverified',
     delivered: false,
+    deliveryState: 'queued',
     createdAt: 1,
     ...overrides,
   };

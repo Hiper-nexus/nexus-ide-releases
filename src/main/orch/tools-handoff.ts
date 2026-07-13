@@ -84,6 +84,30 @@ const handoffListTool: McpToolDef = {
     }),
 };
 
+const handoffAcknowledgeTool: McpToolDef = {
+  name: 'nexus_handoff_ack',
+  description:
+    'Mark one delivered handoff as consumed after you actually processed its result. ' +
+    'Orchestrator-only; this is a transport receipt and never completes a mission.',
+  inputSchema: {
+    type: 'object',
+    properties: { handoffId: { type: 'string' } },
+    required: ['handoffId'],
+  },
+  handler: async (args, ctx) => {
+    if (ctx.role !== 'orchestrator' || !ctx.missionId) {
+      throw new Error('handoff acknowledgement requires a mission orchestrator');
+    }
+    const handoffId = requireStr(args, 'handoffId');
+    const consumed = getProjectDomainStores(ctx.scope).handoffs.markConsumed(
+      handoffId,
+      ctx.missionId,
+    );
+    if (!consumed) throw new Error('handoff is not awaiting consumption in this mission');
+    return { ok: true, handoffId, deliveryState: 'consumed' };
+  },
+};
+
 export function buildHandoffTools(): McpToolDef[] {
-  return [handoffSubmitTool, handoffListTool];
+  return [handoffSubmitTool, handoffListTool, handoffAcknowledgeTool];
 }

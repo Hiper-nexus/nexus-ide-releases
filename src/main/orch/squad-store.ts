@@ -310,6 +310,18 @@ export function findAgent(
   return null;
 }
 
+export function findAgentInSquad(
+  squadId: string,
+  ref: string,
+): { squad: Squad; agent: SquadAgent } | null {
+  const squad = getSquad(squadId);
+  if (!squad) return null;
+  const matches = squad.agents.filter(
+    (agent) => agent.id === ref || agent.agentName === ref,
+  );
+  return matches.length === 1 ? { squad, agent: matches[0] } : null;
+}
+
 export function listAgents(): Array<SquadAgent & { squadId: string }> {
   const out: Array<SquadAgent & { squadId: string }> = [];
   for (const squad of squads.values()) {

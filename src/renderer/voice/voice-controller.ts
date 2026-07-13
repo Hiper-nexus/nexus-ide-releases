@@ -650,20 +650,6 @@ export function useVoiceController(): void {
           return;
         }
 
-        // TV speech was repeatedly hallucinated as "Jarvis + frase" while the
-        // acoustic PT head stayed far below threshold. A passive transcript
-        // containing any command therefore has no wake authority by itself.
-        if (match.command.trim()) {
-          logVoiceEvent(
-            'info',
-            'wake.passiveEmbeddedCommandRejected',
-            'STT passivo com frase não recebeu autoridade acústica para acordar',
-            { latencyMs, provider: result.provider, commandWords: match.command.split(/\s+/).length },
-          );
-          passiveWakeAdmission.reject(Date.now());
-          return;
-        }
-
         passiveWakeAdmission.accept();
 
         logVoiceEvent('info', 'wake.passiveDetected', 'wake textual confirmado', {
@@ -891,7 +877,12 @@ export function useVoiceController(): void {
 
     const narrationQueue = new NarrationQueue({
       canPlay: () =>
-        useVoiceStore.getState().status === 'idle' && !isListening(capture.current),
+        useVoiceStore.getState().status === 'idle' &&
+        !isListening(capture.current) &&
+        !realtimeTurnActive &&
+        (livePlayer?.remainingMs() ?? 0) === 0 &&
+        pendingRealtimeAudioOut.length === 0 &&
+        !isLocalAudioAudible(Date.now()),
       play: async (text) => {
         if (isResponseMuted()) return;
         const storeNarrate = useVoiceStore.getState();

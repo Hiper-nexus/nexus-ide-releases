@@ -81,7 +81,7 @@ const WORKFLOW_AUTHORITY_TOOLS = new Set([
   'worktree_create',
 ]);
 
-const HANDOFF_AUTHORITY_TOOLS = new Set(['handoff_submit']);
+const HANDOFF_AUTHORITY_TOOLS = new Set(['handoff_submit', 'handoff_ack']);
 
 /** Bounded local controls that do not change workspace or external data. */
 const MISSION_CONTROL_TOOLS = new Set([

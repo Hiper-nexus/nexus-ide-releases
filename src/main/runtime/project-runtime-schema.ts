@@ -562,6 +562,20 @@ BEGIN
 END;
 `;
 
+const HANDOFF_DELIVERY_RECEIPTS_SCHEMA = `
+ALTER TABLE handoffs
+  ADD COLUMN delivery_state TEXT NOT NULL DEFAULT 'queued'
+    CHECK (delivery_state IN ('queued', 'submitted', 'acknowledged', 'consumed'));
+ALTER TABLE handoffs ADD COLUMN submitted_at INTEGER;
+ALTER TABLE handoffs ADD COLUMN acknowledged_at INTEGER;
+ALTER TABLE handoffs ADD COLUMN consumed_at INTEGER;
+UPDATE handoffs
+SET delivery_state = CASE WHEN delivered = 1 THEN 'submitted' ELSE 'queued' END,
+    submitted_at = CASE WHEN delivered = 1 THEN created_at ELSE NULL END;
+CREATE INDEX idx_handoffs_delivery_state
+  ON handoffs(mission_id, delivery_state, created_at);
+`;
+
 export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
   validateProjectMigrations([
     createProjectMigration({
@@ -611,5 +625,11 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       schemaVersion: 8,
       appVersion: '0.12.0',
       sql: TRUSTED_HANDOFF_EVIDENCE_SCHEMA,
+    }),
+    createProjectMigration({
+      id: '009-handoff-delivery-receipts',
+      schemaVersion: 9,
+      appVersion: '0.14.4',
+      sql: HANDOFF_DELIVERY_RECEIPTS_SCHEMA,
     }),
   ]);

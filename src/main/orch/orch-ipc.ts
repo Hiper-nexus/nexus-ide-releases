@@ -93,6 +93,8 @@ import { z } from "zod";
  */
 
 const listeners = new Set<WebContents>();
+const squadDesignFlights = new Map<string, Promise<unknown>>();
+const squadDesignCache = new Map<string, { at: number; value: unknown }>();
 let rendererMissionAuthority: RendererMissionAuthority | null = null;
 let projectDomainStores: ProjectDomainStoreRegistry | null = null;
 
@@ -441,10 +443,25 @@ export function registerOrchIpc(): void {
         intent = obj.intent.slice(0, 4_000);
       }
     }
+    const designKey = `${wsPath}\0${intent?.trim().toLowerCase() ?? ''}`;
+    const cached = squadDesignCache.get(designKey);
+    if (cached && Date.now() - cached.at < 60_000) return cached.value;
+    const existing = squadDesignFlights.get(designKey);
+    if (existing) return existing;
+    const flight = (async () => {
+      try {
+        const value = intent
+          ? await designSquadFromIntent(intent, wsPath)
+          : await designSquadForWorkspace(wsPath);
+        squadDesignCache.set(designKey, { at: Date.now(), value });
+        return value;
+      } finally {
+        squadDesignFlights.delete(designKey);
+      }
+    })();
+    squadDesignFlights.set(designKey, flight);
     try {
-      return intent
-        ? await designSquadFromIntent(intent, wsPath)
-        : await designSquadForWorkspace(wsPath);
+      return await flight;
     } catch (err) {
       return {
         ok: false,

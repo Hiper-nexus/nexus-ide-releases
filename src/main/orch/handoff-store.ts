@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { z } from 'zod';
 import {
   handoffStatusSchema,
+  handoffDeliveryStateSchema,
   type Handoff,
   type HandoffEvidenceBinding,
 } from '../../shared/orch-types';
@@ -70,6 +71,10 @@ const handoffRowSchema = z
     diff_hash: nullableHashSchema,
     workflow_revision: z.number().int().positive().nullable(),
     delivered: z.union([z.literal(0), z.literal(1)]),
+    delivery_state: handoffDeliveryStateSchema,
+    submitted_at: z.number().int().nonnegative().nullable(),
+    acknowledged_at: z.number().int().nonnegative().nullable(),
+    consumed_at: z.number().int().nonnegative().nullable(),
     created_at: z.number().int().nonnegative(),
   })
   .strict();
@@ -98,7 +103,8 @@ const HANDOFF_SELECT = `
   SELECT id, mission_id, session_id, from_agent, status, summary,
          artifacts_json, evidence_ids_json, evidence_trusted,
          context_revision, contract_hash, base_sha, head_sha, diff_hash,
-         workflow_revision, delivered, created_at
+         workflow_revision, delivered, delivery_state, submitted_at,
+         acknowledged_at, consumed_at, created_at
   FROM handoffs`;
 
 export type ScopedHandoff = ScopedEntity<Handoff>;
@@ -262,6 +268,7 @@ export class ScopedHandoffStore {
         evidenceTrust: resolved.binding ? 'nexus-trusted' : 'unverified',
         evidenceBinding: resolved.binding,
         delivered: false,
+        deliveryState: 'queued',
         createdAt,
         ...this.#binding.coordinates,
       };
@@ -270,8 +277,8 @@ export class ScopedHandoffStore {
            (id, mission_id, session_id, from_agent, status, summary,
             artifacts_json, evidence_ids_json, evidence_trusted,
             context_revision, contract_hash, base_sha, head_sha, diff_hash,
-            workflow_revision, delivered, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+            workflow_revision, delivered, delivery_state, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?)`,
       ).run(
         handoff.id,
         handoff.missionId ?? null,
@@ -332,13 +339,46 @@ export class ScopedHandoffStore {
   }
 
   markDelivered(rawId: string): boolean {
+    return this.markSubmitted(rawId);
+  }
+
+  markSubmitted(rawId: string): boolean {
     const id = identifierSchema.parse(rawId);
+    const now = this.#binding.now();
     const result = this.#binding
       .writeDatabase()
       .prepare(
-        'UPDATE handoffs SET delivered = 1 WHERE id = ? AND delivered = 0',
+        `UPDATE handoffs
+         SET delivered = 1, delivery_state = 'submitted', submitted_at = ?
+         WHERE id = ? AND delivery_state = 'queued'`,
       )
-      .run(id);
+      .run(now, id);
+    if (result.changes === 0) return false;
+    this.#binding.emitChange();
+    return true;
+  }
+
+  acknowledgeMission(rawMissionId: string): number {
+    const missionId = identifierSchema.parse(rawMissionId);
+    const result = this.#binding.writeDatabase().prepare(
+      `UPDATE handoffs
+       SET delivery_state = 'acknowledged', acknowledged_at = ?
+       WHERE mission_id = ? AND delivery_state = 'submitted'`,
+    ).run(this.#binding.now(), missionId);
+    if (result.changes > 0) this.#binding.emitChange();
+    return result.changes;
+  }
+
+  markConsumed(rawId: string, rawMissionId: string): boolean {
+    const id = identifierSchema.parse(rawId);
+    const missionId = identifierSchema.parse(rawMissionId);
+    const result = this.#binding.writeDatabase().prepare(
+      `UPDATE handoffs
+       SET delivery_state = 'consumed',
+           acknowledged_at = COALESCE(acknowledged_at, ?), consumed_at = ?
+       WHERE id = ? AND mission_id = ?
+         AND delivery_state IN ('submitted', 'acknowledged')`,
+    ).run(this.#binding.now(), this.#binding.now(), id, missionId);
     if (result.changes === 0) return false;
     this.#binding.emitChange();
     return true;
@@ -546,6 +586,10 @@ export class ScopedHandoffStore {
           : 'stale',
       evidenceBinding,
       delivered: row.delivered === 1,
+      deliveryState: row.delivery_state,
+      submittedAt: row.submitted_at ?? undefined,
+      acknowledgedAt: row.acknowledged_at ?? undefined,
+      consumedAt: row.consumed_at ?? undefined,
       createdAt: row.created_at,
       ...this.#binding.coordinates,
     };

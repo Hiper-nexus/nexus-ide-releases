@@ -3,19 +3,26 @@ import { describe, expect, it, vi } from "vitest";
 import type { WebContents } from "electron";
 import {
   agentEnv,
+  acknowledgeSessionOutput,
   bindOwnedAgentSessionMission,
   configureAgentHookEndpointPath,
   consumeMissionOrchestratorGrant,
   getOwnedAgentSessionInfo,
   getSessionState,
   killSession,
+  recoverSessionOutput,
   setPtyHost,
   setSessionDictationHook,
   spawnAgentSession,
   spawnSession,
   writeSession,
 } from "./pty-manager";
-import type { PtyHost, PtyProcHandle, PtySpawnSpec } from "./pty-host-core";
+import type {
+  PtyHost,
+  PtyProcHandle,
+  PtySessionHandlers,
+  PtySpawnSpec,
+} from "./pty-host-core";
 import type { CliPtyAdapter } from "../../shared/adapter-types";
 import type { BoundSpawnAuthority } from "../orch/spawn-authority";
 
@@ -225,6 +232,45 @@ function fakeHost(): {
 }
 
 describe("PTY session ownership (renderer capability boundary)", () => {
+  it('sequences output and recovers missed push chunks through the owner-only pull lane', () => {
+    let handlers: PtySessionHandlers | null = null;
+    const proc: PtyProcHandle = { write: vi.fn(), resize: vi.fn(), kill: vi.fn() };
+    setPtyHost({
+      spawn(_spec, nextHandlers) {
+        handlers = nextHandlers;
+        return proc;
+      },
+    });
+    const send = vi.fn();
+    const owner = {
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send,
+    } as unknown as WebContents;
+    const attacker = fakeWc();
+    const trusted = trustedSpawn();
+    const { sessionId } = spawnSession(
+      owner,
+      { kind: 'shell', cols: 80, rows: 24 },
+      { scope: trusted.scope, cwd: trusted.cwd, shell: '/bin/zsh' },
+    );
+
+    (handlers as PtySessionHandlers | null)?.onData('one');
+    (handlers as PtySessionHandlers | null)?.onData('two');
+    expect(send).toHaveBeenNthCalledWith(1, 'pty:data', {
+      sessionId,
+      data: 'one',
+      sequence: 1,
+    });
+    expect(recoverSessionOutput(owner, sessionId, 0)).toHaveLength(2);
+    acknowledgeSessionOutput(owner, sessionId, 1);
+    expect(recoverSessionOutput(owner, sessionId, 1)).toEqual([
+      { sessionId, data: 'two', sequence: 2 },
+    ]);
+    expect(recoverSessionOutput(attacker, sessionId, 0)).toEqual([]);
+    killSession(owner, sessionId);
+  });
+
   it("only the owning WebContents can write to / kill a session", () => {
     const h = fakeHost();
     setPtyHost(h.host);
