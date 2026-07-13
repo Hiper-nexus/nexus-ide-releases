@@ -1,4 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import type { ProviderSettingsInfo } from '../../../shared/provider-settings-types';
 import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { useAccountStore } from '../../state/account-store';
@@ -8,12 +13,14 @@ import { ActionCard } from '../ActionCard';
 import { AccountsManager } from './AccountsManager';
 import { ProviderLogo } from '../ProviderLogo';
 import {
-  countDetectedClis,
   filterProvidersForTab,
   isLocalCliProvider,
   modelCountLabel,
   pickDefaultSelection,
+  PROVIDERS_HUB_TABS,
   providerStatusLabel,
+  selectModelValue,
+  tabDetectedLabel,
   type ProvidersHubTab,
 } from './providers-panel-view';
 
@@ -55,25 +62,42 @@ function KeyField({ provider }: { provider: ProviderSettingsInfo }) {
 
   async function save() {
     setBusy(true);
-    const result = await setKey(provider.adapterId, draft);
-    setBusy(false);
-    setDraft('');
-    setStatus(result.ok ? 'key salva no Keychain' : result.error ?? 'falhou');
+    setStatus(null);
+    try {
+      const result = await setKey(provider.adapterId, draft);
+      setDraft('');
+      setStatus(result.ok ? 'key salva no Keychain' : result.error ?? 'falhou');
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : 'falhou ao salvar key');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function clear() {
     setBusy(true);
-    await setKey(provider.adapterId, '');
-    setBusy(false);
-    setStatus('key removida');
+    setStatus(null);
+    try {
+      await setKey(provider.adapterId, '');
+      setStatus('key removida');
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : 'falhou ao limpar key');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function test() {
     setBusy(true);
     setStatus('testando…');
-    const result = await testKey(provider.adapterId);
-    setBusy(false);
-    setStatus(`${result.ok ? '✓' : '✗'} ${result.detail}`);
+    try {
+      const result = await testKey(provider.adapterId);
+      setStatus(`${result.ok ? '✓' : '✗'} ${result.detail}`);
+    } catch (err) {
+      setStatus(err instanceof Error ? `✗ ${err.message}` : '✗ teste falhou');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -312,9 +336,11 @@ function ProviderTile({
   return (
     <button
       type="button"
+      role="listitem"
       className={`prov-tile ${selected ? 'prov-tile--selected' : ''} ${provider.enabled ? '' : 'prov-tile--off'}`}
       onClick={onSelect}
       aria-pressed={selected}
+      aria-label={`${provider.label}, ${status.label}, modelos ${models}`}
       data-adapter={provider.adapterId}
     >
       <ProviderLogo
@@ -347,13 +373,19 @@ function ProviderDetail({ provider }: { provider: ProviderSettingsInfo }) {
   const [argsDraft, setArgsDraft] = useState(provider.extraArgs.join(' '));
   const riskWarning = providerRiskWarning(provider);
 
+  const extraArgsKey = provider.extraArgs.join('\0');
   useEffect(() => {
     setBinDraft(provider.binPath);
     setArgsDraft(provider.extraArgs.join(' '));
-  }, [provider.adapterId, provider.binPath, provider.extraArgs]);
+  }, [provider.adapterId, provider.binPath, extraArgsKey, provider.extraArgs]);
 
-  const patch = (p: Partial<Parameters<typeof setConfig>[0]>) =>
-    void setConfig({ adapterId: provider.adapterId, ...p });
+  const patch = (p: Partial<Parameters<typeof setConfig>[0]>) => {
+    void setConfig({ adapterId: provider.adapterId, ...p }).catch((err) => {
+      console.warn('[providers] setConfig failed:', err);
+    });
+  };
+
+  const modelValue = selectModelValue(provider);
 
   return (
     <div className="prov-detail" data-adapter={provider.adapterId}>
@@ -376,6 +408,7 @@ function ProviderDetail({ provider }: { provider: ProviderSettingsInfo }) {
             type="checkbox"
             checked={provider.enabled}
             onChange={(e) => patch({ enabled: e.target.checked })}
+            aria-label={`${provider.enabled ? 'Desabilitar' : 'Habilitar'} ${provider.label}`}
           />
           <span className="prov__switch" aria-hidden="true">
             <span className="prov__switch-thumb" />
@@ -391,14 +424,22 @@ function ProviderDetail({ provider }: { provider: ProviderSettingsInfo }) {
         <label className="prov__field prov__field--wide">
           <select
             className="settings-input"
-            value={provider.defaultModel}
-            onChange={(e) => patch({ defaultModel: e.target.value })}
+            value={modelValue}
+            disabled={provider.models.length === 0}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (next) patch({ defaultModel: next });
+            }}
           >
-            {provider.models.map((m) => (
-              <option key={m} value={m}>
-                {modelLabel(provider, m)}
-              </option>
-            ))}
+            {provider.models.length === 0 ? (
+              <option value="">Nenhum modelo listado</option>
+            ) : (
+              provider.models.map((m) => (
+                <option key={m} value={m}>
+                  {modelLabel(provider, m)}
+                </option>
+              ))
+            )}
           </select>
           {provider.modelInfo?.[provider.defaultModel]?.warning && (
             <span className="prov__hint">
@@ -518,7 +559,6 @@ export function ProvidersPanel() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const detected = useMemo(() => countDetectedClis(providers), [providers]);
   const visible = useMemo(
     () => filterProvidersForTab(providers, tab, { showAbsent }),
     [providers, tab, showAbsent],
@@ -541,12 +581,38 @@ export function ProvidersPanel() {
     return map;
   }, [accounts]);
 
-  async function refresh() {
+  const detectedLabel = useMemo(
+    () => tabDetectedLabel(tab, providers, visible.length),
+    [tab, providers, visible.length],
+  );
+
+  async function refreshCatalog() {
     setRefreshing(true);
     try {
       await hydrate();
+    } catch (err) {
+      console.warn('[providers] refresh failed:', err);
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  function onTabKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const order = PROVIDERS_HUB_TABS;
+    const idx = order.indexOf(tab);
+    if (idx < 0) return;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      setTab(order[(idx + 1) % order.length]!);
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      setTab(order[(idx - 1 + order.length) % order.length]!);
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      setTab(order[0]!);
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      setTab(order[order.length - 1]!);
     }
   }
 
@@ -561,13 +627,21 @@ export function ProvidersPanel() {
         </div>
       </header>
 
-      <div className="prov-hub__tabs" role="tablist" aria-label="Tipo de provider">
-        {(Object.keys(TAB_LABELS) as ProvidersHubTab[]).map((id) => (
+      <div
+        className="prov-hub__tabs"
+        role="tablist"
+        aria-label="Tipo de provider"
+        onKeyDown={onTabKeyDown}
+      >
+        {PROVIDERS_HUB_TABS.map((id) => (
           <button
             key={id}
             type="button"
             role="tab"
+            id={`prov-tab-${id}`}
+            aria-controls={`prov-tabpanel-${id}`}
             aria-selected={tab === id}
+            tabIndex={tab === id ? 0 : -1}
             className={`prov-hub__tab ${tab === id ? 'prov-hub__tab--on' : ''}`}
             onClick={() => setTab(id)}
           >
@@ -576,81 +650,80 @@ export function ProvidersPanel() {
         ))}
       </div>
 
-      <div className="prov-hub__toolbar">
-        <span className="prov-hub__detected" data-testid="prov-detected-count">
-          {tab === 'remote'
-            ? `${visible.length} remoto${visible.length === 1 ? '' : 's'}`
-            : `${detected} detectado${detected === 1 ? '' : 's'}`}
-        </span>
-        {tab !== 'remote' && (
-          <label className="prov-hub__show-absent">
-            <input
-              type="checkbox"
-              checked={showAbsent}
-              onChange={(e) => setShowAbsent(e.target.checked)}
-            />
-            Mostrar ausentes
-          </label>
-        )}
-        <div className="prov-hub__actions">
-          <button
-            type="button"
-            className="settings-btn"
-            disabled={refreshing}
-            onClick={() => void refresh()}
-          >
-            {refreshing ? 'Atualizando…' : 'Atualizar'}
-          </button>
-          <button
-            type="button"
-            className="settings-btn settings-btn--primary"
-            disabled={refreshing}
-            onClick={() => void refresh()}
-            title="Re-lê CLIs no PATH e o catálogo de modelos"
-          >
-            Atualizar modelos
-          </button>
-        </div>
-      </div>
-
-      {visible.length === 0 ? (
-        <div className="prov-hub__empty" data-testid="prov-empty">
-          {tab === 'clis' && detected === 0 ? (
-            <>
-              <p>
-                Nenhuma CLI detectada no PATH. Instale Claude, Codex, Gemini ou
-                outra e clique em <strong>Atualizar</strong>.
-              </p>
-              <p className="prov-hub__empty-hint">
-                Dica: o Nexus procura em PATH + ~/.local/bin após o boot.
-              </p>
-            </>
-          ) : tab === 'remote' ? (
-            <p>Nenhum provider remoto/API configurado neste build.</p>
-          ) : (
-            <p>
-              Nenhuma CLI de login externo nesta lista.
-              {showAbsent ? '' : ' Ative “Mostrar ausentes” para ver as instaláveis.'}
-            </p>
+      <div
+        className="prov-hub__panel"
+        role="tabpanel"
+        id={`prov-tabpanel-${tab}`}
+        aria-labelledby={`prov-tab-${tab}`}
+      >
+        <div className="prov-hub__toolbar">
+          <span className="prov-hub__detected" data-testid="prov-detected-count">
+            {detectedLabel}
+          </span>
+          {tab !== 'remote' && (
+            <label className="prov-hub__show-absent">
+              <input
+                type="checkbox"
+                checked={showAbsent}
+                onChange={(e) => setShowAbsent(e.target.checked)}
+              />
+              Mostrar ausentes
+            </label>
           )}
+          <div className="prov-hub__actions">
+            <button
+              type="button"
+              className="settings-btn settings-btn--primary"
+              disabled={refreshing}
+              onClick={() => void refreshCatalog()}
+              title="Re-lê CLIs no PATH, auth e catálogo de modelos"
+            >
+              {refreshing ? 'Atualizando…' : 'Atualizar modelos'}
+            </button>
+          </div>
         </div>
-      ) : (
-        <div className="prov-tile-grid" role="list" data-testid="prov-tile-grid">
-          {visible.map((p) => (
-            <ProviderTile
-              key={p.adapterId}
-              provider={p}
-              selected={p.adapterId === selectedId}
-              accountCount={accountCountByAdapter.get(p.adapterId) ?? 0}
-              onSelect={() => setSelectedId(p.adapterId)}
-            />
-          ))}
-        </div>
-      )}
 
-      {selected && (
-        <ProviderDetail key={selected.adapterId} provider={selected} />
-      )}
+        {visible.length === 0 ? (
+          <div className="prov-hub__empty" data-testid="prov-empty">
+            {tab === 'clis' ? (
+              <>
+                <p>
+                  Nenhuma CLI detectada no PATH. Instale Claude, Codex, Gemini ou
+                  outra e clique em <strong>Atualizar modelos</strong>.
+                </p>
+                <p className="prov-hub__empty-hint">
+                  Dica: o Nexus procura em PATH + ~/.local/bin após o boot.
+                </p>
+              </>
+            ) : tab === 'remote' ? (
+              <p>Nenhum provider remoto/API configurado neste build.</p>
+            ) : (
+              <p>
+                Nenhuma CLI de login externo (assinatura/OAuth) nesta lista.
+                {showAbsent
+                  ? ''
+                  : ' Ative “Mostrar ausentes” para ver as instaláveis.'}
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="prov-tile-grid" role="list" data-testid="prov-tile-grid">
+            {visible.map((p) => (
+              <ProviderTile
+                key={p.adapterId}
+                provider={p}
+                selected={p.adapterId === selectedId}
+                accountCount={accountCountByAdapter.get(p.adapterId) ?? 0}
+                onSelect={() => setSelectedId(p.adapterId)}
+              />
+            ))}
+          </div>
+        )}
+
+        {selected && (
+          <ProviderDetail key={selected.adapterId} provider={selected} />
+        )}
+      </div>
     </section>
   );
 }

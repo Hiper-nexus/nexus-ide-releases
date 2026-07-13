@@ -439,7 +439,7 @@
 }
 
 .prov-tile__status--ok {
-  color: #1a9b5c;
+  color: var(--ok, #1a9b5c);
 }
 
 .prov-tile__status--warn {
