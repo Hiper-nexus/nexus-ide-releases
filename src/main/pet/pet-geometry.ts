@@ -25,6 +25,12 @@ export interface Size {
 export const SNAP_THRESHOLD = 48;
 /** Respiro entre a janela do pet e a borda da workArea após o snap. */
 export const SNAP_MARGIN = 12;
+/**
+ * Quanto da janela (padding transparente) pode ficar fora da workArea.
+ * A janela do pet é maior que o sprite — sem overhang o clamp "puxa" o
+ * mascote para longe das bordas e parece que a posição não é respeitada.
+ */
+export const EDGE_OVERHANG = 120;
 
 /**
  * Clampa a posição para que a janela fique inteiramente dentro da workArea.
@@ -36,6 +42,23 @@ export function clampToWorkArea(pos: Point, size: Size, workArea: Rect): Point {
   return {
     x: Math.round(Math.min(Math.max(pos.x, workArea.x), Math.max(workArea.x, maxX))),
     y: Math.round(Math.min(Math.max(pos.y, workArea.y), Math.max(workArea.y, maxY))),
+  };
+}
+
+/**
+ * Clamp livre para o pet: permite overhang de padding transparente para o
+ * sprite chegar perto dos cantos do ecrã. Mantém pelo menos (size - 2*overhang)
+ * de janela na workArea.
+ */
+export function clampPetDrag(pos: Point, size: Size, workArea: Rect, overhang = EDGE_OVERHANG): Point {
+  const oh = Math.max(0, Math.min(overhang, Math.floor(size.width / 3), Math.floor(size.height / 3)));
+  const minX = workArea.x - oh;
+  const minY = workArea.y - oh;
+  const maxX = workArea.x + workArea.width - size.width + oh;
+  const maxY = workArea.y + workArea.height - size.height + oh;
+  return {
+    x: Math.round(Math.min(Math.max(pos.x, minX), Math.max(minX, maxX))),
+    y: Math.round(Math.min(Math.max(pos.y, minY), Math.max(minY, maxY))),
   };
 }
 

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  clampPetDrag,
   clampToWorkArea,
   snapToCorner,
+  EDGE_OVERHANG,
   SNAP_MARGIN,
   SNAP_THRESHOLD,
 } from './pet-geometry';
@@ -68,6 +70,30 @@ describe('snapToCorner', () => {
     expect(snapToCorner(pos, SIZE, AREA)).toEqual({
       x: AREA.x + SNAP_MARGIN,
       y: 400,
+    });
+  });
+});
+
+describe('clampPetDrag', () => {
+  it('permite overhang perto da borda (sprite pode chegar ao canto)', () => {
+    // Ligeiramente fora à esquerda — strict clamp puxava a 0; loose mantém.
+    const loose = clampPetDrag({ x: -40, y: 100 }, SIZE, AREA);
+    expect(loose.x).toBe(-40);
+    expect(loose.y).toBe(100);
+  });
+
+  it('ainda impede o pet de desaparecer completamente fora do ecrã', () => {
+    const loose = clampPetDrag({ x: -5000, y: -5000 }, SIZE, AREA);
+    // overhang capped at size/3 for this fixture
+    const oh = Math.min(EDGE_OVERHANG, Math.floor(SIZE.width / 3), Math.floor(SIZE.height / 3));
+    expect(loose.x).toBe(AREA.x - oh);
+    expect(loose.y).toBe(AREA.y - oh);
+  });
+
+  it('mantém posição interior intacta', () => {
+    expect(clampPetDrag({ x: 400, y: 300 }, SIZE, AREA)).toEqual({
+      x: 400,
+      y: 300,
     });
   });
 });

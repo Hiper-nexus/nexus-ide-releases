@@ -12,7 +12,7 @@ import { RENDERER_PROTOCOL_ENTRY_URL } from '../renderer-protocol';
 import { getAgentSessionInfo, tapSessionState } from '../pty/pty-manager';
 import { tapMissionsBroadcast, tapMissionsSeed } from '../orch/orch-ipc';
 import { loadPetPrefs, savePetPrefs } from './pet-prefs';
-import { clampToWorkArea } from './pet-geometry';
+import { clampPetDrag, clampToWorkArea } from './pet-geometry';
 import {
   AgentAttentionTracker,
   AgentTransitionTracker,
@@ -58,7 +58,15 @@ const LOOK_CURSOR_IDLE_MAX_MS = 4_000;
 let petWindow: BrowserWindow | null = null;
 let prefs: PetPrefs | null = null;
 let dragTimer: NodeJS.Timeout | null = null;
-let dragOffset = { x: 0, y: 0 };
+/** Origem do arrasto em coordenadas de ecrã (delta fiável, sem clientX). */
+let dragOrigin: {
+  winX: number;
+  winY: number;
+  cursorX: number;
+  cursorY: number;
+} | null = null;
+/** Última posição aplicada durante o arrasto — settle usa isto, não getPosition. */
+let lastDragPos: { x: number; y: number } | null = null;
 let initialized = false;
 let lookTimer: NodeJS.Timeout | null = null;
 let lookLastSent: number | null = null;
@@ -228,6 +236,7 @@ function stopDrag(): void {
     clearInterval(dragTimer);
     dragTimer = null;
   }
+  dragOrigin = null;
 }
 
 function stopLookLoop(): void {
@@ -566,46 +575,55 @@ function registerPetIpc(): void {
     petWindow.setIgnoreMouseEvents(interactive !== true, { forward: true });
   });
 
-  // Assenta a janela ONDE o utilizador soltou (só clampa na workArea —
-  // sem snap de canto). Snap automático roubava a posição perto das bordas
-  // e "devolvia" o pet a cantos fixos. Usado pelo dragEnd e pelo watchdog.
+  /**
+   * Assenta ONDE o utilizador soltou. Usa lastDragPos (delta de ecrã), não
+   * getPosition() — em janelas transparentes macOS o getPosition pode
+   * desfasar do que setPosition aplicou. Sem snap de canto.
+   */
   const settleDrag = (): void => {
+    if (!petWindow || petWindow.isDestroyed()) {
+      stopDrag();
+      lastDragPos = null;
+      return;
+    }
+    const [gx, gy] = petWindow.getPosition();
+    const raw = lastDragPos ?? { x: gx, y: gy };
     stopDrag();
-    if (!petWindow || petWindow.isDestroyed()) return;
-    const [x, y] = petWindow.getPosition();
     const display = screen.getDisplayMatching({
-      x,
-      y,
+      x: raw.x,
+      y: raw.y,
       width: PET_WINDOW_SIZE.width,
       height: PET_WINDOW_SIZE.height,
     });
-    const settled = clampToWorkArea(
-      { x, y },
-      PET_WINDOW_SIZE,
-      display.workArea,
-    );
-    petWindow.setPosition(settled.x, settled.y);
+    const settled = clampPetDrag(raw, PET_WINDOW_SIZE, display.workArea);
+    petWindow.setBounds({
+      x: settled.x,
+      y: settled.y,
+      width: PET_WINDOW_SIZE.width,
+      height: PET_WINDOW_SIZE.height,
+    });
     persistPosition(settled);
+    lastDragPos = null;
   };
 
-  ipcMain.on(PET_CHANNELS.dragBegin, (event, rawOffset: unknown) => {
+  ipcMain.on(PET_CHANNELS.dragBegin, (event, _rawOffset: unknown) => {
     if (!fromPetWindow(event) || !petWindow) return;
-    const offset = (rawOffset ?? {}) as Record<string, unknown>;
-    const clamp = (value: unknown, max: number): number =>
-      typeof value === 'number' && Number.isFinite(value)
-        ? Math.min(Math.max(value, 0), max)
-        : 0;
-    dragOffset = {
-      x: clamp(offset.x, PET_WINDOW_SIZE.width),
-      y: clamp(offset.y, PET_WINDOW_SIZE.height),
-    };
     stopDrag();
-    // Watchdog: se o dragEnd do renderer se perder (janela virou
-    // click-through no instante errado, renderer morreu), o pet NÃO fica
-    // grudado no cursor para sempre — assenta sozinho.
+    lastDragPos = null;
+    // Delta de ecrã: ignora clientX do renderer (falha com DPI / click-through).
+    const cursor = screen.getCursorScreenPoint();
+    const [winX, winY] = petWindow.getPosition();
+    dragOrigin = {
+      winX,
+      winY,
+      cursorX: cursor.x,
+      cursorY: cursor.y,
+    };
+    lastDragPos = { x: winX, y: winY };
+    // Watchdog: se o dragEnd do renderer se perder, assenta sozinho.
     const startedAt = Date.now();
     dragTimer = setInterval(() => {
-      if (!petWindow || petWindow.isDestroyed()) {
+      if (!petWindow || petWindow.isDestroyed() || !dragOrigin) {
         stopDrag();
         return;
       }
@@ -613,11 +631,19 @@ function registerPetIpc(): void {
         settleDrag();
         return;
       }
-      const cursor = screen.getCursorScreenPoint();
-      petWindow.setPosition(
-        Math.round(cursor.x - dragOffset.x),
-        Math.round(cursor.y - dragOffset.y),
-      );
+      const c = screen.getCursorScreenPoint();
+      const next = {
+        x: Math.round(dragOrigin.winX + (c.x - dragOrigin.cursorX)),
+        y: Math.round(dragOrigin.winY + (c.y - dragOrigin.cursorY)),
+      };
+      lastDragPos = next;
+      // Durante o arrasto não clampa — o settle faz o clamp solto no release.
+      petWindow.setBounds({
+        x: next.x,
+        y: next.y,
+        width: PET_WINDOW_SIZE.width,
+        height: PET_WINDOW_SIZE.height,
+      });
     }, DRAG_TICK_MS);
   });
 
