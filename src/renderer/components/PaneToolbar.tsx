@@ -19,6 +19,9 @@ import { DevServerChip } from './DevServerChip';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { requestPaneClose } from '../terminal/pane-close-guard';
 import { askConfirm } from '../state/confirm-store';
+import { useOrchStore } from '../state/orch-store';
+import { AgentAvatar, resolveAgentCategory } from './AgentAvatar';
+import { ProviderLogo } from './ProviderLogo';
 
 interface Props {
   pane: PaneModel;
@@ -134,6 +137,9 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const split = useLayoutStore((s) => s.split);
   const renameTitle = useLayoutStore((s) => s.renameTitle);
   const paneState = useSessionStateStore((s) => s.paneStates.get(pane.id));
+  const agentCategory = useOrchStore((s) =>
+    resolveAgentCategory(s.squads, pane.agentName, pane.role),
+  );
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(pane.title);
   const [density, setDensity] = useState<Density>('full');
@@ -151,9 +157,11 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     const el = rootRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver((entries) => {
+      // Thresholds altos: com 3+ panes na grelha a toolbar morre cedo e o
+      // Fechar era empurrado para fora (overflow do .pane). Compact cedo.
       const w = entries[0]?.contentRect.width ?? 500;
-      if (w < 280) setDensity('compact');
-      else if (w < 420) setDensity('icons');
+      if (w < 360) setDensity('compact');
+      else if (w < 520) setDensity('icons');
       else setDensity('full');
     });
     ro.observe(el);
@@ -250,13 +258,14 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     }
 
     if (!isCanvas) {
+      // Splits NÃO são primary: em pane estreito empurravam o Fechar para fora
+      // da toolbar e o utilizador ficava sem forma de fechar a janela.
       list.push({
         id: 'split-right',
         label: 'À direita',
         detail: 'Cria um novo pane ao lado (não copia o terminal)',
         shortcut: '⌘D',
         icon: 'split-right',
-        primary: true,
         run: () => split(pane.id, 'row'),
       });
       list.push({
@@ -265,36 +274,43 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         detail: 'Cria um novo pane abaixo (não copia o terminal)',
         shortcut: '⌘⇧D',
         icon: 'split-down',
-        primary: true,
         run: () => split(pane.id, 'column'),
       });
     }
 
-    list.push({
-      id: 'close',
-      label: 'Fechar',
-      detail: 'Fecha este pane',
-      shortcut: '⌘W',
-      icon: 'close',
-      danger: true,
-      primary: true,
-      run: () => requestPaneClose(pane.id),
-    });
-
     return list;
   }, [pane, isCanvas, isHibernated, paneState, split]);
 
+  const closeAction: ToolbarAction = {
+    id: 'close',
+    label: 'Fechar',
+    detail: 'Fecha este pane (⌘W)',
+    shortcut: '⌘W',
+    icon: 'close',
+    danger: true,
+    primary: true,
+    run: () => void requestPaneClose(pane.id),
+  };
+
+  // Compact: só Reiniciar (se agent) + menu ⋯; Fechar é sempre pinado à direita.
+  // Icons/full: sessão + layout; Fechar pinado.
   const overflow =
-    density === 'compact' ? actions.filter((a) => !a.primary) : [];
-  const visible =
-    density === 'compact' ? actions.filter((a) => a.primary) : actions;
+    density === 'compact'
+      ? actions.filter((a) => a.id !== 'restart')
+      : density === 'icons'
+        ? actions.filter((a) => a.id === 'split-right' || a.id === 'split-down')
+        : [];
+  const sessionVisible = actions.filter((a) =>
+    density === 'compact'
+      ? a.id === 'restart'
+      : a.id === 'scroll-end' || a.id === 'hibernate' || a.id === 'restart',
+  );
+  const layoutVisible =
+    density === 'full'
+      ? actions.filter((a) => a.id === 'split-right' || a.id === 'split-down')
+      : [];
 
-  // Group for visual clusters when not compact
-  const sessionIds = new Set(['scroll-end', 'hibernate', 'restart']);
-  const layoutIds = new Set(['split-right', 'split-down']);
-
-  function renderGroup(ids: Set<string>, aria: string) {
-    const items = visible.filter((a) => ids.has(a.id));
+  function renderGroup(items: ToolbarAction[], aria: string) {
     if (items.length === 0) return null;
     return (
       <div className="toolbar__group" role="group" aria-label={aria}>
@@ -312,146 +328,152 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       data-density={density}
       ref={rootRef}
     >
-      <span className={`toolbar__dot ${isFocused ? 'toolbar__dot--on' : ''}`} />
-      {editing ? (
-        <input
-          className="toolbar__rename nodrag"
-          value={draft}
-          autoFocus
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commit();
-            if (e.key === 'Escape') setEditing(false);
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-        />
-      ) : (
-        <span
-          className="toolbar__title"
-          data-tip="Duplo-clique para renomear"
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            setDraft(pane.title);
-            setEditing(true);
+      {/* Meta shrinks first — never steal space from the close pin. */}
+      <div className="toolbar__meta">
+        <span className={`toolbar__dot ${isFocused ? 'toolbar__dot--on' : ''}`} />
+        {pane.kind === 'cli-agent' && (
+          <AgentAvatar
+            category={agentCategory}
+            state={paneState ?? 'spawning'}
+            size="micro"
+            label={pane.agentName ?? pane.title}
+            className="toolbar__agent-avatar"
+          />
+        )}
+        {editing ? (
+          <input
+            className="toolbar__rename nodrag"
+            value={draft}
+            autoFocus
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commit();
+              if (e.key === 'Escape') setEditing(false);
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span
+            className="toolbar__title"
+            data-tip="Duplo-clique para renomear"
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              setDraft(pane.title);
+              setEditing(true);
+            }}
+          >
+            {pane.title}
+          </span>
+        )}
+        <button
+          type="button"
+          className="toolbar__badge toolbar__pane-id nodrag"
+          aria-label={`Copiar identificador do pane ${pane.id}`}
+          data-tip={copiedId ? 'ID copiado' : `Copiar ID do pane: ${pane.id}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            void navigator.clipboard.writeText(pane.id).then(() => {
+              setCopiedId(true);
+              window.setTimeout(() => setCopiedId(false), 1_500);
+            });
           }}
         >
-          {pane.title}
-        </span>
-      )}
+          {copiedId ? 'copiado' : `#${pane.id.slice(-6)}`}
+        </button>
+        {pane.role === 'orchestrator' && (
+          <span
+            className="toolbar__badge toolbar__badge--orch"
+            data-tip="Orquestrador — coordena e delega para os workers"
+          >
+            orq
+          </span>
+        )}
+        {pane.role === 'worker' && pane.agentName && (
+          <span
+            className="toolbar__badge toolbar__badge--worker"
+            data-tip={`Worker do squad: ${pane.agentName}`}
+          >
+            {pane.agentName}
+          </span>
+        )}
+        {adapterLabel ? (
+          <span
+            className="toolbar__badge toolbar__badge--agent"
+            data-tip={`CLI/modelo neste pane: ${adapterLabel}`}
+          >
+            <ProviderLogo
+              adapterId={pane.adapterId!}
+              label={pane.adapterId!}
+              size="xs"
+            />
+            <span className="toolbar__badge-text">{adapterLabel}</span>
+          </span>
+        ) : (
+          <span className="toolbar__badge">{pane.kind}</span>
+        )}
+        {pane.kind === 'cli-agent' && <StateIndicator paneId={pane.id} />}
+        {pane.kind === 'cli-agent' && <CostBadge paneId={pane.id} />}
+        <DevServerChip pane={pane} />
+      </div>
+
+      <div className="toolbar__actions">
+        {renderGroup(sessionVisible, 'Sessão')}
+        {renderGroup(layoutVisible, 'Layout')}
+        {overflow.length > 0 && (
+          <div className="toolbar__more" ref={menuRef}>
+            <button
+              type="button"
+              className={`toolbar__btn nodrag${menuOpen ? ' toolbar__btn--active' : ''}`}
+              aria-label="Mais ações do pane"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              data-tip="Mais ações (dormir, dividir, fim…)"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen((v) => !v);
+              }}
+            >
+              <PixelIcon name="more" size={11} />
+            </button>
+            {menuOpen && (
+              <div className="toolbar__menu" role="menu">
+                <p className="toolbar__menu-head">Ações do pane</p>
+                {overflow.map((a) => (
+                  <ToolbarBtn
+                    key={a.id}
+                    action={{
+                      ...a,
+                      run: () => {
+                        setMenuOpen(false);
+                        a.run();
+                      },
+                    }}
+                    density="full"
+                    menu
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Close pin: always last, never inside overflow, never clipped by meta. */}
       <button
         type="button"
-        className="toolbar__badge toolbar__pane-id nodrag"
-        aria-label={`Copiar identificador do pane ${pane.id}`}
-        data-tip={copiedId ? 'ID copiado' : `Copiar ID do pane: ${pane.id}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          void navigator.clipboard.writeText(pane.id).then(() => {
-            setCopiedId(true);
-            window.setTimeout(() => setCopiedId(false), 1_500);
-          });
+        className="toolbar__close nodrag"
+        aria-label="Fechar este pane"
+        data-tip={closeAction.detail}
+        title="Fechar pane (⌘W)"
+        onClick={(e) => {
+          e.stopPropagation();
+          closeAction.run();
         }}
       >
-        {copiedId ? 'copiado' : `#${pane.id.slice(-6)}`}
+        <PixelIcon name="close" size={12} />
+        <span className="toolbar__close-label">Fechar</span>
       </button>
-      {pane.role === 'orchestrator' && (
-        <span
-          className="toolbar__badge toolbar__badge--orch"
-          data-tip="Orquestrador — coordena e delega para os workers"
-        >
-          orq
-        </span>
-      )}
-      {pane.role === 'worker' && pane.agentName && (
-        <span
-          className="toolbar__badge toolbar__badge--worker"
-          data-tip={`Worker do squad: ${pane.agentName}`}
-        >
-          {pane.agentName}
-        </span>
-      )}
-      {adapterLabel ? (
-        <span
-          className="toolbar__badge toolbar__badge--agent"
-          data-tip={`CLI/modelo neste pane: ${adapterLabel}`}
-        >
-          {adapterLabel}
-        </span>
-      ) : (
-        <span className="toolbar__badge">{pane.kind}</span>
-      )}
-      {pane.kind === 'cli-agent' && <StateIndicator paneId={pane.id} />}
-      {pane.kind === 'cli-agent' && <CostBadge paneId={pane.id} />}
-      <DevServerChip pane={pane} />
-
-      <div className="toolbar__spacer" />
-
-      {density === 'compact' ? (
-        <>
-          <div className="toolbar__group" role="group" aria-label="Ações">
-            {visible
-              .filter((a) => a.id !== 'close')
-              .map((a) => (
-                <ToolbarBtn key={a.id} action={a} density={density} />
-              ))}
-          </div>
-          {overflow.length > 0 && (
-            <div className="toolbar__more" ref={menuRef}>
-              <button
-                type="button"
-                className={`toolbar__btn nodrag${menuOpen ? ' toolbar__btn--active' : ''}`}
-                aria-label="Mais ações do pane"
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-                data-tip="Mais ações (dormir, fim do terminal…)"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMenuOpen((v) => !v);
-                }}
-              >
-                <PixelIcon name="more" size={11} />
-              </button>
-              {menuOpen && (
-                <div className="toolbar__menu" role="menu">
-                  <p className="toolbar__menu-head">Ações do pane</p>
-                  {overflow.map((a) => (
-                    <ToolbarBtn
-                      key={a.id}
-                      action={{
-                        ...a,
-                        run: () => {
-                          setMenuOpen(false);
-                          a.run();
-                        },
-                      }}
-                      density="full"
-                      menu
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          {visible
-            .filter((a) => a.id === 'close')
-            .map((a) => (
-              <div
-                key={a.id}
-                className="toolbar__group toolbar__group--danger"
-                role="group"
-                aria-label="Fechar"
-              >
-                <ToolbarBtn action={a} density={density} />
-              </div>
-            ))}
-        </>
-      ) : (
-        <>
-          {renderGroup(sessionIds, 'Sessão')}
-          {renderGroup(layoutIds, 'Layout')}
-          {renderGroup(new Set(['close']), 'Fechar')}
-        </>
-      )}
     </div>
   );
 }

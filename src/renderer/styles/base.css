@@ -742,15 +742,104 @@ body {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 6px 0 8px;
+  gap: 4px;
+  padding: 0 4px 0 8px;
   background: var(--bg-bar);
   border-bottom: 1px solid var(--border);
   font-size: 11px;
   user-select: none;
   min-height: 28px;
+  min-width: 0;
+  width: 100%;
   container-type: inline-size;
   container-name: pane-toolbar;
+  /* meta encolhe; close pin fica sempre visível */
+  overflow: hidden;
+}
+
+/* Identidade do pane: encolhe primeiro (title/badges), nunca o botão Fechar. */
+.toolbar__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.toolbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+}
+
+/* Pin de fechar — sempre no canto direito, legível mesmo em pane estreito. */
+.toolbar__close {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 28px;
+  min-height: 24px;
+  margin-left: 2px;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--danger, #ff7a90) 35%, var(--border-strong));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger, #ff7a90) 8%, transparent);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-ui, inherit);
+  line-height: 1;
+  z-index: 3;
+}
+
+.toolbar__close:hover,
+.toolbar__close:focus-visible {
+  color: var(--danger, #ff7a90);
+  border-color: var(--danger, #ff7a90);
+  background: color-mix(in srgb, var(--danger, #ff7a90) 18%, transparent);
+  outline: none;
+}
+
+.toolbar__close-label {
+  letter-spacing: 0.02em;
+}
+
+.toolbar[data-density='icons'] .toolbar__close-label,
+.toolbar[data-density='compact'] .toolbar__close-label {
+  display: none;
+}
+
+.toolbar[data-density='compact'] .toolbar__close {
+  min-width: 26px;
+  padding: 3px 6px;
+}
+
+/* Badges longos somem cedo — o Fechar precisa do sítio. */
+@container pane-toolbar (max-width: 420px) {
+  .toolbar__badge--agent .toolbar__badge-text,
+  .toolbar__pane-id {
+    display: none;
+  }
+}
+
+@container pane-toolbar (max-width: 300px) {
+  .toolbar__badge--agent,
+  .toolbar__badge--worker,
+  .toolbar__badge:not(.toolbar__badge--orch) {
+    display: none;
+  }
+  .toolbar__title {
+    max-width: 55%;
+  }
 }
 
 .toolbar__dot {
@@ -817,7 +906,9 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 40%;
+  max-width: min(40%, 180px);
+  flex: 0 1 auto;
+  min-width: 48px;
   cursor: default;
 }
 
@@ -833,6 +924,22 @@ body {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 1px 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolbar__badge-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .toolbar__pane-id {
@@ -847,12 +954,7 @@ body {
   border-color: var(--accent);
 }
 
-.toolbar__spacer {
-  flex: 1 1 auto;
-  min-width: 8px;
-}
-
-/* Grouped action clusters: sessão | layout | fechar */
+/* Grouped action clusters: sessão | layout (Fechar é pin separado) */
 .toolbar__group {
   display: inline-flex;
   align-items: center;
@@ -862,11 +964,6 @@ body {
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--border, #333) 35%, transparent);
   border: 1px solid color-mix(in srgb, var(--border-strong, #444) 55%, transparent);
-}
-
-.toolbar__group--danger {
-  background: transparent;
-  border-color: transparent;
 }
 
 .toolbar__btn {
@@ -959,10 +1056,42 @@ body {
   transform: translateX(-50%) translateY(0);
 }
 
-/* Avoid clipping inside pane; allow tooltip to paint over terminal */
+/* Tooltips: paint above terminal; close pin stays in layout (not clipped away). */
 .toolbar {
-  overflow: visible;
   z-index: 2;
+}
+
+.toolbar__close[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  right: 0;
+  left: auto;
+  top: calc(100% + 6px);
+  transform: translateY(2px);
+  z-index: 40;
+  max-width: 220px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-elevated, #1a1b22) 96%, #000);
+  border: 1px solid var(--border-strong, #3a3b45);
+  color: var(--text, #e8e8ee);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: normal;
+  text-align: right;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 100ms ease, transform 100ms ease, visibility 100ms;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.toolbar__close[data-tip]:hover::after,
+.toolbar__close[data-tip]:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
 }
 
 .toolbar__more {
@@ -1387,6 +1516,9 @@ body {
 
 /* ---- Toolbar agent extensions ---- */
 .toolbar__badge--agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--accent);
   border-color: var(--accent);
   opacity: 0.8;

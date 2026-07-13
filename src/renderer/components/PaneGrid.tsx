@@ -21,13 +21,15 @@ function renderNode(node: LayoutNode): React.ReactNode {
   const orientation = node.direction === 'row' ? 'horizontal' : 'vertical';
   const [a, b] = node.children;
 
+  // minSize baixo: com 6–12 panes a grelha binária ainda encolhe sem
+  // "engolir" um leaf (12% tornava 3+ splits na mesma dimensão ilegíveis).
   return (
     <Group orientation={orientation} className="panel-group">
-      <Panel className="panel" minSize="12%" defaultSize="50%">
+      <Panel className="panel" minSize="6%" defaultSize="50%">
         {renderNode(a)}
       </Panel>
       <Separator className={`resize-handle resize-handle--${orientation}`} />
-      <Panel className="panel" minSize="12%" defaultSize="50%">
+      <Panel className="panel" minSize="6%" defaultSize="50%">
         {renderNode(b)}
       </Panel>
     </Group>
