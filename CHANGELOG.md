@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.15.5 — Direct Operations & Voice Reliability
+## 0.15.6 — Direct Operations, Voice & Pet Reliability
 
 Data: 2026-07-13
 
@@ -32,6 +32,15 @@ Data: 2026-07-13
   agentes MCP continuam sujeitos à autoridade de missão.
 - Metadados de release e o teste de roteamento da Jarvis foram alinhados com o
   comportamento atual para impedir uma distribuição com testes divergentes.
+
+### Pets
+- Avisos do pet não desaparecem mais por tempo: permanecem até uma ação
+  explícita no balão ou no próprio pet, e a fila preserva os avisos seguintes.
+- Os pets locais aprovados `Nexo` e `Nico Code` agora acompanham a biblioteca
+  offline do artefato de release; os pacotes em `~/.codex/pets` continuam
+  persistentes entre atualizações.
+- Pets criados em spritesheet v2 ganham escala de desktop 20% maior, preservando
+  a margem segura do atlas sem ocupar a tela em excesso.
 
 ## 0.15.4 — Jarvis Wake Safety
 

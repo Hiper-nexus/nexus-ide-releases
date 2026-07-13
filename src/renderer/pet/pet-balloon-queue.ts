@@ -23,8 +23,6 @@ export interface Balloon {
   action: PetOpenAction;
   /** CTA legível no botão do balão. */
   cta: string;
-  /** Tempo de exibição (ms). Intervenção fica mais tempo na tela. */
-  durationMs: number;
   urgent: boolean;
 }
 
@@ -35,9 +33,6 @@ export interface BalloonQueueState {
 }
 
 export const BALLOON_QUEUE_LIMIT = 3;
-export const BALLOON_DURATION_MS = 6_000;
-export const BALLOON_DONE_DURATION_MS = 10_000;
-export const BALLOON_URGENT_DURATION_MS = 14_000;
 
 export const EMPTY_BALLOON_QUEUE: BalloonQueueState = {
   current: null,
@@ -96,12 +91,6 @@ export function balloonContentFor(
   }
 }
 
-export function balloonDurationFor(kind: PetEventKind): number {
-  if (isPetUrgentEvent(kind)) return BALLOON_URGENT_DURATION_MS;
-  if (kind === 'mission-done') return BALLOON_DONE_DURATION_MS;
-  return BALLOON_DURATION_MS;
-}
-
 /** Compat: texto único (título: detalhe) para quem só precisa da string. */
 export function balloonTextFor(event: PetEvent): string | null {
   const content = balloonContentFor(event);
@@ -122,7 +111,6 @@ export function enqueueBalloon(
     text: content.text,
     cta: content.cta,
     action: petOpenActionFor(event.kind),
-    durationMs: balloonDurationFor(event.kind),
     urgent: isPetUrgentEvent(event.kind),
   };
   // Urgente sobe na frente do balão atual (intervenção > celebração).

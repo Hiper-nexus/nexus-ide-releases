@@ -148,5 +148,25 @@
     "bytes": 2040858,
     "cols": 8,
     "rows": 9
+  },
+  {
+    "id": "nexo",
+    "slug": "nexo",
+    "label": "Nexo",
+    "note": "quati brasileiro / explorador criativo",
+    "file": "sheets/nexo.webp",
+    "bytes": 2603262,
+    "cols": 8,
+    "rows": 11
+  },
+  {
+    "id": "nico-code",
+    "slug": "nico-code",
+    "label": "Nico Code",
+    "note": "criador Codex / tecnologia",
+    "file": "sheets/nico-code.webp",
+    "bytes": 1900728,
+    "cols": 8,
+    "rows": 11
   }
 ]

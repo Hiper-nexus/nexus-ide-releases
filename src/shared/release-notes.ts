@@ -13,11 +13,11 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.15.5',
+  version: '0.15.6',
   date: '2026-07-13',
-  codename: 'Direct Operations & Voice Reliability',
+  codename: 'Direct Operations, Voice & Pet Reliability',
   summary:
-    'Jarvis separa operações diretas de missões e fecha falhas de voz do app empacotado e de handoff realtime.',
+    'Jarvis separa operações diretas de missões, fecha falhas de voz do app empacotado e torna os avisos dos pets acionáveis até o clique.',
   highlights: [
     {
       title: 'Sincronização Git direta',
@@ -43,6 +43,11 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Realtime coerente entre provedores',
       detail:
         'A rota OpenAI recebe as mesmas ferramentas curtas de consultar e ler usadas pela rota Gemini.',
+    },
+    {
+      title: 'Avisos de pet persistentes',
+      detail:
+        'Balões de missão ficam visíveis até uma ação explícita; pets v2 ficam 20% maiores e Nexo/Nico Code acompanham a biblioteca offline.',
     },
   ],
   fixes: [

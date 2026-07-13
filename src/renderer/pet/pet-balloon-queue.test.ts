@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BALLOON_QUEUE_LIMIT,
-  BALLOON_DONE_DURATION_MS,
-  BALLOON_URGENT_DURATION_MS,
   EMPTY_BALLOON_QUEUE,
-  balloonDurationFor,
   balloonTextFor,
   dismissBalloon,
   enqueueBalloon,
@@ -71,7 +68,6 @@ describe('enqueueBalloon / dismissBalloon', () => {
     s = enqueueBalloon(s, ev('mission-blocked', 'NeedYou'));
     expect(s.current?.kind).toBe('mission-blocked');
     expect(s.current?.urgent).toBe(true);
-    expect(s.current?.durationMs).toBe(BALLOON_URGENT_DURATION_MS);
     expect(s.queued[0]?.kind).toBe('mission-done');
   });
 
@@ -96,14 +92,14 @@ describe('enqueueBalloon / dismissBalloon', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('balloonDurationFor is longer for intervention', () => {
-    expect(balloonDurationFor('mission-blocked')).toBeGreaterThan(
-      balloonDurationFor('mission-done'),
-    );
-  });
+  it('mantém o aviso atual até uma dispensa explícita', () => {
+    let s = enqueueBalloon(EMPTY_BALLOON_QUEUE, ev('mission-done', 'A'));
+    s = enqueueBalloon(s, ev('mission-failed', 'B'));
 
-  it('mantém a conclusão visível por tempo suficiente para ser percebida', () => {
-    expect(balloonDurationFor('mission-done')).toBe(BALLOON_DONE_DURATION_MS);
-    expect(BALLOON_DONE_DURATION_MS).toBeGreaterThanOrEqual(10_000);
+    // A fila não tem relógio: apenas uma ação explícita promove o próximo.
+    expect(s.current?.text).toContain('A');
+    expect(s.queued).toHaveLength(1);
+    s = dismissBalloon(s);
+    expect(s.current?.text).toContain('B');
   });
 });
