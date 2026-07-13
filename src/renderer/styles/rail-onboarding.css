@@ -547,27 +547,24 @@
 }
 
 .account-switcher__menu {
-  position: absolute;
-  /* Wider than the narrow chip so empty-state / long labels are readable */
-  left: auto;
-  right: 0;
-  bottom: calc(100% + 6px);
-  z-index: 80;
-  width: max(100%, min(320px, 92vw));
-  min-width: min(280px, 92vw);
-  max-width: min(360px, 94vw);
-  max-height: min(420px, 70vh);
+  z-index: 10050;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 6px;
+  padding: 8px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--bg-elevated, var(--bg-bar));
-  box-shadow: var(--shadow-2, 0 10px 28px rgba(0, 0, 0, 0.4));
+  box-shadow: var(--shadow-2, 0 10px 28px rgba(0, 0, 0, 0.45));
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   box-sizing: border-box;
+}
+
+/* Portaled to body — escapes mission-rail overflow:hidden */
+.account-switcher__menu--fixed {
+  position: fixed;
+  margin: 0;
 }
 
 .account-switcher__item {
@@ -645,29 +642,25 @@
   font-weight: 600;
 }
 
-/* Compact empty vault panel — full width of wide menu, no clipping */
+/* Compact empty vault — short copy, no nested step box, no clip */
 .account-switcher__empty-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   min-width: 0;
-  padding: 10px 10px 12px;
+  padding: 4px 2px 6px;
   box-sizing: border-box;
-  border: 1px dashed color-mix(in srgb, var(--border-strong, #444) 90%, transparent);
-  border-radius: var(--radius-md, 8px);
-  background: color-mix(in srgb, var(--bg, #111) 55%, transparent);
 }
 
 .account-switcher__empty-title {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 650;
-  line-height: 1.3;
+  line-height: 1.25;
   color: var(--text);
   white-space: normal;
   overflow: visible;
-  text-overflow: unset;
 }
 
 .account-switcher__empty-body {
@@ -677,31 +670,14 @@
   color: var(--text-dim);
   white-space: normal;
   overflow: visible;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
-
-.account-switcher__empty-body strong {
-  color: var(--text);
-  font-weight: 650;
-}
-
-.account-switcher__empty-step {
-  margin: 0;
-  padding: 8px 10px;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--text);
-  white-space: normal;
-  overflow: visible;
-  border-radius: var(--radius-sm, 6px);
-  border: 1px dashed color-mix(in srgb, var(--accent, #4db8ff) 45%, transparent);
-  background: color-mix(in srgb, var(--accent, #4db8ff) 10%, transparent);
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 .account-switcher__empty-cta {
   width: 100%;
   box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .account-switcher__empty-cta .action-card__copy {

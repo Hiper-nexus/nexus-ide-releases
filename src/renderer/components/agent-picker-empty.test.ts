@@ -21,15 +21,16 @@ describe('agent-picker / empty CTA contracts', () => {
     expect(src).toContain('Abrir Providers');
   });
 
-  it('AccountSwitcher empty vault opens providers and explains native ≠ vault', () => {
+  it('AccountSwitcher empty vault opens providers and escapes rail clip', () => {
     const src = readFileSync(
       path.join(ROOT, 'renderer/components/AccountSwitcher.tsx'),
       'utf8',
     );
     expect(src).toContain('account-switcher__empty-panel');
     expect(src).toContain("openDrawer('providers')");
-    expect(src).toContain('Vault multi-conta vazio');
-    expect(src).toContain('Salvar sessão logada');
+    expect(src).toContain('Vault vazio');
+    expect(src).toContain('createPortal');
+    expect(src).toContain('account-switcher__menu--fixed');
     expect(src).toContain('Abrir Providers');
   });
 
