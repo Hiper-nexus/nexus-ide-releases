@@ -66,22 +66,28 @@ export interface DriveDeps {
   ): void;
   /** Budget: current iteration count for mission. */
   getIteration(missionId: string, scope: ProjectExecutionScope): number;
-  /** Budget: bump iteration after a non-wait decision is applied (or decided in active). */
-  recordIteration(
+  /**
+   * Durably reserve one active attempt before any side effect. Failed applies
+   * consume budget too, so a crashing action cannot retry forever.
+   */
+  reserveAttempt(
     missionId: string,
     scope: ProjectExecutionScope,
-    next: number,
+    actionKind: DriveAction['kind'],
+    at: number,
   ): void;
   /** ms of last non-wait apply (exponential backoff input). */
   getLastActionAt(
     missionId: string,
     scope: ProjectExecutionScope,
   ): number | undefined;
-  /** Record last non-wait apply timestamp for backoff enforcement. */
-  recordLastActionAt(
+  /** Finish the previously reserved attempt. */
+  finishAttempt(
     missionId: string,
     scope: ProjectExecutionScope,
+    outcome: 'success' | 'failed',
     at: number,
+    error?: string,
   ): void;
   /**
    * Active-mode apply ports. Required when config.mode === 'active' for
@@ -202,20 +208,43 @@ export async function runDriveTick(
           continue;
         }
         try {
+          deps.reserveAttempt(mission.id, scope, action.kind, now);
+        } catch (error) {
+          applyErrors += 1;
+          console.error(
+            `[mission-driver] não reservou tentativa para ${mission.id}:`,
+            error,
+          );
+          continue;
+        }
+        try {
           const result = await applyDriveAction(snapshot, ports);
           if (result.applied) {
             applied += 1;
-            const nextIteration = effectiveState.iteration + 1;
-            deps.recordIteration(mission.id, scope, nextIteration);
-            deps.recordLastActionAt(mission.id, scope, now);
-            // Debounce only after a successful apply — failed apply must not
-            // burn the stall re-signal window.
+            deps.finishAttempt(mission.id, scope, 'success', now);
             if (action.kind === 'signal-stall') {
               deps.recordDriveSignal(mission.id, scope, now);
             }
+          } else {
+            deps.finishAttempt(
+              mission.id,
+              scope,
+              'failed',
+              now,
+              `action ${action.kind} returned not-applied`,
+            );
           }
         } catch (error) {
           applyErrors += 1;
+          const message = error instanceof Error ? error.message : String(error);
+          try {
+            deps.finishAttempt(mission.id, scope, 'failed', now, message);
+          } catch (finishError) {
+            console.error(
+              `[mission-driver] não finalizou tentativa de ${mission.id}:`,
+              finishError,
+            );
+          }
           console.warn(
             `[mission-driver] applyAction falhou para ${mission.id}:`,
             error,

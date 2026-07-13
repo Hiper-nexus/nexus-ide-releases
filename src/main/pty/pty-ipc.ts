@@ -26,6 +26,7 @@ import { prepareProviderSpawn } from "../persistence/provider-config-store";
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import {
+  attachOrchMeta,
   attachSessionScope,
   bindPendingSpawnSession,
   claimPendingSpawnMeta,
@@ -117,7 +118,7 @@ export function registerPtyIpc(): void {
           ? claimPendingSpawnMeta(req.orchRequestId, event.sender)
           : null;
         const persistedPane =
-          req.resume && req.paneId
+          (req.resume || req.restorePersistedAuthority) && req.paneId
             ? findPersistedPane(event.sender, req.paneId)
             : null;
         if (persistedPane && persistedPane.adapterId !== adapter.id) {
@@ -179,6 +180,17 @@ export function registerPtyIpc(): void {
           );
         }
         attachSessionScope(sessionId, authority.scope);
+        if (persistedPane && req.paneId) {
+          attachOrchMeta(event.sender, req.paneId, {
+            missionId: persistedPane.missionId,
+            agentName: persistedPane.agentName,
+            role: persistedPane.role,
+            scope: persistedPane.scope,
+            executionScope: persistedPane.executionScope,
+            allowedTools: persistedPane.allowedTools,
+            allowedSkills: persistedPane.allowedSkills,
+          });
+        }
         return {
           ok: true,
           sessionId,
@@ -218,6 +230,12 @@ export function registerPtyIpc(): void {
     if (parsed.success) {
       writeSession(event.sender, parsed.data.sessionId, parsed.data.data);
     }
+  });
+
+  ipcMain.handle(PTY_CHANNELS.writeConfirmed, (event, raw): boolean => {
+    const parsed = writeSchema.safeParse(raw);
+    if (!parsed.success) return false;
+    return writeSession(event.sender, parsed.data.sessionId, parsed.data.data);
   });
 
   ipcMain.on(PTY_CHANNELS.resize, (event, raw) => {

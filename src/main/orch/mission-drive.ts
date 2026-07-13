@@ -78,6 +78,8 @@ export interface DriveState {
   readonly trustedEvidenceReadyForCurrent: boolean;
   /** All steps present and status=done (PREVC path complete). */
   readonly allStepsDone: boolean;
+  /** Complete workflow plus an immutable, ordered receipt for every step. */
+  readonly completionVerified: boolean;
   /** Context-rot signal (fresh-context recovery). */
   readonly contextRot: boolean;
   /** Dead pane signal. */
@@ -139,6 +141,20 @@ export function decideDriveAction(
     return { kind: 'wait', reason: `mission is ${state.missionStatus}` };
   }
 
+  // A fully receipted PREVC outcome is terminal and cannot consume another
+  // recovery attempt. In particular, the last allowed advance may finish all
+  // steps exactly at the iteration or wall-clock boundary.
+  if (state.completionVerified) {
+    return { kind: 'complete', reason: 'all steps done via PREVC' };
+  }
+
+  if (state.allStepsDone) {
+    return {
+      kind: 'block-human',
+      reason: 'all steps are marked done but PREVC receipts are incomplete',
+    };
+  }
+
   if (state.iteration >= config.maxIterations) {
     return {
       kind: 'block-human',
@@ -153,10 +169,6 @@ export function decideDriveAction(
     };
   }
 
-  // Terminal / escape outcomes bypass exponential backoff.
-  if (state.steps.length > 0 && state.allStepsDone) {
-    return { kind: 'complete', reason: 'all steps done via PREVC' };
-  }
   const silentForMs = now - state.lastProgressAt;
   const silentOk =
     Number.isFinite(silentForMs) && silentForMs >= 0;
@@ -263,6 +275,7 @@ export interface DriveStateSignals {
   readonly startedAt?: number;
   readonly stallSignalCount?: number;
   readonly lastActionAt?: number;
+  readonly completionVerified?: boolean;
 }
 
 export interface DriveStateInputs {
@@ -403,6 +416,7 @@ export function deriveDriveState(input: DriveStateInputs): DriveState {
     ...(current ? { currentStepId: current.id } : {}),
     trustedEvidenceReadyForCurrent: current?.trustedEvidenceReady === true,
     allStepsDone,
+    completionVerified: signals?.completionVerified === true,
     contextRot: signals?.contextRot === true,
     paneDead: signals?.paneDead === true,
     accountFailed: signals?.accountFailed === true,

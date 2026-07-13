@@ -6,17 +6,22 @@ import type {
   BrowserPaneOpenRequest,
   BrowserPaneOpenResult,
   PaneRegistryEntry,
+  MissionPaneRecoveryRequest,
+  MissionPaneRecoveryResult,
+  MissionPaneSpec,
   PaneSnapshot,
 } from "../../shared/orch-types";
 import { ORCH_CHANNELS } from "../../shared/orch-channels";
 import { DEV_SERVER_CHANNELS } from "../../shared/channels";
 import {
   getSessionState,
+  getOwnedAgentSessionInfo,
   isSessionOwnedBy,
   tapSessionData,
   tapSessionExit,
   tapSessionState,
 } from "../pty/pty-manager";
+import { requireLiveRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import { canListPane, type CallerCtx, type PaneAuthzInfo } from "./pane-authz";
 import { makeId } from "./store-util";
 import type { ProjectExecutionScope } from "../../shared/types";
@@ -37,6 +42,7 @@ const RING_BUFFER_CAP = 262_144; // 256 KB of raw output per session.
 // bootstrap. Thirty seconds was shorter than real Claude/GLM startup on a
 // busy machine and turned a healthy late spawn into a retry storm.
 const SPAWN_TIMEOUT_MS = 90_000;
+const RECOVERY_TIMEOUT_MS = 90_000;
 
 interface RingBuffer {
   chunks: string[];
@@ -119,6 +125,14 @@ interface PendingBrowserOpen {
 }
 const pendingBrowserOpens = new Map<string, PendingBrowserOpen>();
 
+interface PendingPaneRecovery {
+  resolve: (result: MissionPaneRecoveryResult) => void;
+  timer: ReturnType<typeof setTimeout>;
+  owner: WebContents;
+  request: MissionPaneRecoveryRequest;
+}
+const pendingPaneRecoveries = new Map<string, PendingPaneRecovery>();
+
 let orchRenderer: WebContents | null = null;
 
 function liveOwnerForSession(sessionId: string): WebContents | null {
@@ -182,6 +196,17 @@ export function unregisterOrchRenderer(wc: WebContents): void {
       requestId,
       ok: false,
       error: "renderer window closed during browser open",
+    });
+  }
+  for (const [requestId, pending] of [...pendingPaneRecoveries]) {
+    if (pending.owner !== wc) continue;
+    clearTimeout(pending.timer);
+    pendingPaneRecoveries.delete(requestId);
+    pending.resolve({
+      requestId,
+      ok: false,
+      paneId: pending.request.paneId,
+      error: "renderer window closed during pane recovery",
     });
   }
 }
@@ -739,6 +764,128 @@ export function resolveBrowserOpen(
   if (result.ok && result.paneId) {
     attachOrchMeta(owner, result.paneId, pending.meta);
   }
+  pending.resolve(result);
+  return true;
+}
+
+export function requestMissionPaneRecovery(options: {
+  missionId: string;
+  paneId: string;
+  role: "orchestrator" | "worker";
+  expectedSessionId?: string;
+  pane: MissionPaneSpec;
+  scope: ProjectExecutionScope;
+  recap: string;
+}): Promise<MissionPaneRecoveryResult> {
+  const matches = panes.filter((registered) => {
+    const meta = orchMetaByPane.get(
+      paneMetaKey(registered.owner, registered.entry.paneId),
+    );
+    return (
+      registered.entry.paneId === options.paneId &&
+      registered.entry.kind === "cli-agent" &&
+      (!registered.entry.sessionId ||
+        registered.entry.sessionId === options.expectedSessionId) &&
+      meta?.missionId === options.missionId &&
+      meta.role === options.role &&
+      !registered.owner.isDestroyed() &&
+      !registered.owner.isCrashed()
+    );
+  });
+  if (matches.length > 1) {
+    return Promise.resolve({
+      requestId: "",
+      ok: false,
+      paneId: options.paneId,
+      error: "mission pane recovery owner is ambiguous",
+    });
+  }
+  const owner = matches[0]?.owner ?? rendererForMission(options.missionId);
+  if (!owner) {
+    return Promise.resolve({
+      requestId: "",
+      ok: false,
+      paneId: options.paneId,
+      error: "mission pane renderer is unavailable",
+    });
+  }
+  try {
+    requireLiveRendererWorkspaceScope(owner, options.scope);
+  } catch {
+    return Promise.resolve({
+      requestId: "",
+      ok: false,
+      paneId: options.paneId,
+      error: "mission pane renderer scope changed",
+    });
+  }
+  const requestId = makeId("panerecovery");
+  const request: MissionPaneRecoveryRequest = {
+    requestId,
+    missionId: options.missionId,
+    paneId: options.paneId,
+    role: options.role,
+    expectedSessionId: options.expectedSessionId,
+    pane: {
+      adapterId: options.pane.adapterId,
+      model: options.pane.model,
+      accountId: options.pane.accountId,
+      effort: options.pane.effort,
+      cwd: options.pane.cwd,
+      title: options.pane.title,
+      agentName: options.pane.agentName,
+      role: options.pane.role,
+    },
+    recap: options.recap.slice(0, 65_536),
+  };
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      pendingPaneRecoveries.delete(requestId);
+      resolve({
+        requestId,
+        ok: false,
+        paneId: request.paneId,
+        error: "pane recovery timed out",
+      });
+    }, RECOVERY_TIMEOUT_MS);
+    pendingPaneRecoveries.set(requestId, { resolve, timer, owner, request });
+    owner.send(ORCH_CHANNELS.paneRecoveryRequest, request);
+  });
+}
+
+export function resolveMissionPaneRecovery(
+  result: MissionPaneRecoveryResult,
+  owner: WebContents,
+): boolean {
+  const pending = pendingPaneRecoveries.get(result.requestId);
+  if (!pending || pending.owner !== owner) return false;
+  if (result.paneId !== pending.request.paneId) return false;
+  if (result.ok) {
+    const previousSessionId = pending.request.expectedSessionId;
+    if (
+      !result.sessionId ||
+      (previousSessionId && result.sessionId === previousSessionId) ||
+      !isSessionOwnedBy(owner, result.sessionId)
+    ) {
+      return false;
+    }
+    const pane = findPaneOwnedBy(owner, result.paneId);
+    if (pane?.sessionId !== result.sessionId) return false;
+    const meta = orchMetaByPane.get(paneMetaKey(owner, result.paneId));
+    const agent = getOwnedAgentSessionInfo(owner, result.sessionId);
+    if (
+      meta?.missionId !== pending.request.missionId ||
+      meta.role !== pending.request.role ||
+      agent?.source !== "persisted-pane" ||
+      agent.missionId !== pending.request.missionId ||
+      agent.role !== pending.request.role ||
+      agent.paneId !== pending.request.paneId
+    ) {
+      return false;
+    }
+  }
+  clearTimeout(pending.timer);
+  pendingPaneRecoveries.delete(result.requestId);
   pending.resolve(result);
   return true;
 }

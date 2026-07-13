@@ -51,9 +51,41 @@ const milestoneJsonSchema = z.array(missionMilestoneInputSchema).max(256);
 const entityIdSchema = z.string().min(1).max(256);
 const sessionIdSchema = z.string().min(1).max(256);
 const stepIdSchema = z.string().min(1).max(128);
+const driverActionSchema = z.string().min(1).max(64);
+const timestampSchema = z.number().int().nonnegative();
+
+const missionDriveStateRowSchema = z
+  .object({
+    mission_id: entityIdSchema,
+    revision: z.number().int().positive(),
+    run_started_at: timestampSchema,
+    attempt_count: z.number().int().nonnegative(),
+    last_attempt_at: timestampSchema.nullable(),
+    last_success_at: timestampSchema.nullable(),
+    last_signal_at: timestampSchema.nullable(),
+    last_action_kind: z.string().min(1).max(64).nullable(),
+    last_outcome: z.enum(['reserved', 'success', 'failed']).nullable(),
+    last_error: z.string().max(4096).nullable(),
+    updated_at: timestampSchema,
+  })
+  .strict();
 
 export type ScopedMission = ScopedEntity<Mission>;
 export type CreateMissionInput = z.input<typeof createMissionInputSchema>;
+
+export interface MissionDriveRuntimeState {
+  readonly missionId: string;
+  readonly revision: number;
+  readonly runStartedAt: number;
+  readonly attemptCount: number;
+  readonly lastAttemptAt?: number;
+  readonly lastSuccessAt?: number;
+  readonly lastSignalAt?: number;
+  readonly lastActionKind?: string;
+  readonly lastOutcome?: 'reserved' | 'success' | 'failed';
+  readonly lastError?: string;
+  readonly updatedAt: number;
+}
 
 interface MissionRow extends z.infer<typeof missionRowSchema> {}
 
@@ -99,6 +131,139 @@ export class ScopedMissionStore {
 
   onChange(listener: ScopedStoreChangeListener): () => void {
     return this.#binding.onChange(listener);
+  }
+
+  getDriveRuntimeState(rawId: string): MissionDriveRuntimeState | null {
+    const id = entityIdSchema.parse(rawId);
+    const raw = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT mission_id, revision, run_started_at, attempt_count,
+                last_attempt_at, last_success_at, last_signal_at,
+                last_action_kind, last_outcome, last_error, updated_at
+         FROM mission_drive_state WHERE mission_id = ?`,
+      )
+      .get(id);
+    if (!raw) return null;
+    try {
+      const row = missionDriveStateRowSchema.parse(raw);
+      return Object.freeze({
+        missionId: row.mission_id,
+        revision: row.revision,
+        runStartedAt: row.run_started_at,
+        attemptCount: row.attempt_count,
+        ...(row.last_attempt_at === null
+          ? {}
+          : { lastAttemptAt: row.last_attempt_at }),
+        ...(row.last_success_at === null
+          ? {}
+          : { lastSuccessAt: row.last_success_at }),
+        ...(row.last_signal_at === null
+          ? {}
+          : { lastSignalAt: row.last_signal_at }),
+        ...(row.last_action_kind === null
+          ? {}
+          : { lastActionKind: row.last_action_kind }),
+        ...(row.last_outcome === null
+          ? {}
+          : { lastOutcome: row.last_outcome }),
+        ...(row.last_error === null ? {} : { lastError: row.last_error }),
+        updatedAt: row.updated_at,
+      });
+    } catch (error) {
+      throw new ScopedStoreCorruptionError('mission drive state', {
+        cause: error,
+      });
+    }
+  }
+
+  ensureDriveRuntimeState(
+    rawId: string,
+    rawStartedAt: number,
+  ): MissionDriveRuntimeState {
+    const id = entityIdSchema.parse(rawId);
+    const startedAt = timestampSchema.parse(rawStartedAt);
+    const db = this.#binding.writeDatabase();
+    db.prepare(
+      `INSERT OR IGNORE INTO mission_drive_state
+         (mission_id, revision, run_started_at, attempt_count, updated_at)
+       SELECT id, 1, ?, 0, ? FROM missions WHERE id = ?`,
+    ).run(startedAt, startedAt, id);
+    const state = this.getDriveRuntimeState(id);
+    if (!state) throw new Error(`mission drive state requires mission ${id}`);
+    return state;
+  }
+
+  reserveDriveAttempt(
+    rawId: string,
+    rawActionKind: string,
+    rawAt: number,
+  ): MissionDriveRuntimeState {
+    const id = entityIdSchema.parse(rawId);
+    const actionKind = driverActionSchema.parse(rawActionKind);
+    const at = timestampSchema.parse(rawAt);
+    const db = this.#binding.writeDatabase();
+    db.transaction(() => {
+      db.prepare(
+        `INSERT OR IGNORE INTO mission_drive_state
+           (mission_id, revision, run_started_at, attempt_count, updated_at)
+         SELECT id, 1, ?, 0, ? FROM missions WHERE id = ?`,
+      ).run(at, at, id);
+      const result = db.prepare(
+        `UPDATE mission_drive_state
+         SET revision = revision + 1,
+             attempt_count = attempt_count + 1,
+             last_attempt_at = ?, last_action_kind = ?,
+             last_outcome = 'reserved', last_error = NULL, updated_at = ?
+         WHERE mission_id = ?`,
+      ).run(at, actionKind, at, id);
+      if (result.changes !== 1) {
+        throw new Error(`mission drive attempt reservation failed for ${id}`);
+      }
+    })();
+    return this.getDriveRuntimeState(id)!;
+  }
+
+  finishDriveAttempt(
+    rawId: string,
+    outcome: 'success' | 'failed',
+    rawAt: number,
+    rawError?: string,
+  ): MissionDriveRuntimeState {
+    const id = entityIdSchema.parse(rawId);
+    const at = timestampSchema.parse(rawAt);
+    const error = rawError?.slice(0, 4096) ?? null;
+    const result = this.#binding
+      .writeDatabase()
+      .prepare(
+        `UPDATE mission_drive_state
+         SET revision = revision + 1,
+             last_success_at = CASE WHEN ? = 'success' THEN ? ELSE last_success_at END,
+             last_outcome = ?, last_error = ?, updated_at = ?
+         WHERE mission_id = ? AND last_outcome = 'reserved'`,
+      )
+      .run(outcome, at, outcome, error, at, id);
+    if (result.changes !== 1) {
+      throw new Error(`mission drive attempt is not reserved for ${id}`);
+    }
+    return this.getDriveRuntimeState(id)!;
+  }
+
+  recordDriveSignal(rawId: string, rawAt: number): MissionDriveRuntimeState {
+    const id = entityIdSchema.parse(rawId);
+    const at = timestampSchema.parse(rawAt);
+    const result = this.#binding
+      .writeDatabase()
+      .prepare(
+        `UPDATE mission_drive_state
+         SET revision = revision + 1, last_signal_at = ?, updated_at = ?
+         WHERE mission_id = ?`,
+      )
+      .run(at, at, id);
+    if (result.changes !== 1) {
+      throw new Error(`mission drive state missing for ${id}`);
+    }
+    return this.getDriveRuntimeState(id)!;
   }
 
   create(rawInput: CreateMissionInput): ScopedMission {
@@ -240,6 +405,15 @@ export class ScopedMissionStore {
           next.updatedAt,
           id,
         );
+      if (
+        result.changes === 1 &&
+        next.status === 'running' &&
+        existing.status !== 'running'
+      ) {
+        db.prepare(
+          'DELETE FROM mission_drive_state WHERE mission_id = ?',
+        ).run(id);
+      }
       return result.changes === 1 ? next : null;
     })();
     if (!updated) return null;
@@ -335,10 +509,26 @@ export class ScopedMissionStore {
   setStatus(rawId: string, rawStatus: MissionStatus): ScopedMission | null {
     const id = entityIdSchema.parse(rawId);
     const status = missionStatusSchema.parse(rawStatus);
-    const result = this.#binding
-      .writeDatabase()
-      .prepare('UPDATE missions SET status = ?, updated_at = ? WHERE id = ?')
-      .run(status, this.#binding.now(), id);
+    const db = this.#binding.writeDatabase();
+    const result = db.transaction(() => {
+      const existing = db
+        .prepare('SELECT status FROM missions WHERE id = ?')
+        .get(id) as { status: string } | undefined;
+      if (!existing) return { changes: 0 };
+      const update = db
+        .prepare('UPDATE missions SET status = ?, updated_at = ? WHERE id = ?')
+        .run(status, this.#binding.now(), id);
+      if (
+        update.changes === 1 &&
+        status === 'running' &&
+        existing.status !== 'running'
+      ) {
+        db.prepare(
+          'DELETE FROM mission_drive_state WHERE mission_id = ?',
+        ).run(id);
+      }
+      return update;
+    })();
     if (result.changes === 0) return null;
     this.#binding.emitChange();
     return this.get(id);

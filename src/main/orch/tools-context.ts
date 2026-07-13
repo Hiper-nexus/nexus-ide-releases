@@ -25,12 +25,16 @@ import { CliContextDraftReviewer } from '../context/cli-context-draft-reviewer';
 import { inspectConfiguredNexusReadiness } from '../runtime/nexus-doctor';
 import {
   autopilotActionFor,
+  canAutopilotAdvanceTo,
   missionPlanIntegrated,
 } from '../context/prevc-autopilot-policy';
 import {
   runContextBootstrapAutopilot,
   type ContextBootstrapAutopilotResult,
 } from '../context/context-bootstrap-autopilot';
+import { publishFinalValidationHandoff } from './final-validation-handoff';
+import { finalizeIntegratedTask } from './merge-task-finalizer';
+import type { MergeQueueResult } from '../runtime/merge-queue';
 
 // Doctor is an idempotent project operation, not a fan-out primitive. Several
 // model retries used to launch independent reviewers for the same drafts.
@@ -221,10 +225,12 @@ async function drivePrevcAutopilot(
 ) {
   const service = getContextWorkflowService(ctx.scope);
   const transitions: string[] = [];
+  let validatedEvidenceIds: readonly string[] = [];
   for (let guard = 0; guard < 8; guard += 1) {
     const mission = service.getMissionWorkflow(missionId);
     if (!mission.contract || !mission.workflow) throw new Error('mission has no frozen workflow');
     const { stage, route } = mission.workflow;
+    const workflowRevision = mission.workflow.revision;
     const tasks = getProjectDomainStores(ctx.scope).tasks.list(missionId);
     const worktrees = requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId);
     const planIntegrated = missionPlanIntegrated(tasks.map((task) => task.id), worktrees);
@@ -233,43 +239,98 @@ async function drivePrevcAutopilot(
     if (action === 'wait-execution') {
       return { state: 'execution', transitions, reason: 'planned tasks are not all integrated' };
     }
-    if (stage === 'execution') {
-      const next = nextWorkflowStage(route, stage);
-      service.advance(missionId, workflowStageSchema.parse(next));
+    const advanceCurrentStage = () => {
+      const next = workflowStageSchema.parse(nextWorkflowStage(route, stage));
+      if (!canAutopilotAdvanceTo(next)) return null;
+      service.advance(missionId, next);
       transitions.push(`${stage}->${next}`);
+      return next;
+    };
+    const awaitingFinalReceipt = () => ({
+      state: stage,
+      transitions,
+      reason: 'final PREVC transition awaits the atomic mission-step receipt',
+    });
+    const publishFinalReceiptEvidence = () => {
+      const currentEvidenceIds = service.listCurrentPersistedEvidenceIds(missionId);
+      const recoveredAttestations = currentEvidenceIds.filter((id) =>
+        id.startsWith('milestone:'));
+      const evidenceIds = validatedEvidenceIds.length > 0
+        ? validatedEvidenceIds
+        : recoveredAttestations.length > 0
+          ? recoveredAttestations
+          : currentEvidenceIds;
+      publishFinalValidationHandoff(
+        {
+          missionId,
+          workflowRevision,
+          evidenceIds,
+        },
+        getProjectDomainStores(ctx.scope).handoffs,
+      );
+    };
+    if (stage === 'execution') {
+      if (!advanceCurrentStage()) return awaitingFinalReceipt();
       continue;
     }
     if (stage === 'planning') {
-      const next = nextWorkflowStage(route, stage);
-      service.advance(missionId, workflowStageSchema.parse(next));
-      transitions.push(`${stage}->${next}`);
+      if (!advanceCurrentStage()) return awaitingFinalReceipt();
       continue;
     }
     if (action === 'review') {
       const review = await runCouncilReview(ctx, missionId);
       if (!review.ready) return { state: stage, transitions, reason: review.gate.reason };
-      const next = nextWorkflowStage(route, stage);
-      service.advance(missionId, workflowStageSchema.parse(next));
-      transitions.push(`${stage}->${next}`);
+      if (!advanceCurrentStage()) return awaitingFinalReceipt();
       continue;
     }
     if (action === 'validate') {
       const validation = await runFinalValidation(ctx, missionId);
       if (!validation.ready) return { state: stage, transitions, reason: validation.reason };
-      const next = nextWorkflowStage(route, stage);
-      service.advance(missionId, workflowStageSchema.parse(next));
-      transitions.push(`${stage}->${next}`);
+      validatedEvidenceIds = [
+        ...validation.sensorEvidence.map((evidence) => evidence.id),
+        ...(validation.review?.evidenceIds ?? []),
+      ];
+      validatedEvidenceIds = service.recordMilestoneValidationEvidence(
+        missionId,
+        validatedEvidenceIds,
+      );
+      if (!advanceCurrentStage()) {
+        publishFinalReceiptEvidence();
+        return awaitingFinalReceipt();
+      }
       continue;
     }
     if (stage === 'confirmation') {
-      const next = nextWorkflowStage(route, stage);
-      service.advance(missionId, workflowStageSchema.parse(next));
-      transitions.push(`${stage}->${next}`);
+      if (!advanceCurrentStage()) {
+        publishFinalReceiptEvidence();
+        return awaitingFinalReceipt();
+      }
       continue;
     }
     return { state: stage, transitions, reason: 'stage requires explicit operator action' };
   }
   throw new Error('PREVC autopilot transition guard exceeded');
+}
+
+function finalizeMergeResult(
+  ctx: AgentGateContext,
+  missionId: string,
+  taskId: string,
+  result: MergeQueueResult,
+) {
+  return finalizeIntegratedTask(missionId, taskId, result, {
+    markTaskDone: (_missionId, integratedTaskId) => {
+      const updated = getProjectDomainStores(ctx.scope).tasks.update(
+        integratedTaskId,
+        { status: 'done' },
+      );
+      if (!updated) {
+        throw new Error(`integrated task ${integratedTaskId} disappeared`);
+      }
+    },
+    driveMission: (integratedMissionId) =>
+      drivePrevcAutopilot(ctx, integratedMissionId, true),
+  });
 }
 
 const doctorTool: McpToolDef = {
@@ -859,15 +920,23 @@ const mergeTaskTool: McpToolDef = {
     const service = getContextWorkflowService(ctx.scope);
     service.assertMutationAllowed(input.missionId, 'nexus_merge_task', {});
     const validator = new MergeValidationCoordinator(service);
-    const result = await requireWorktreeRuntimeRegistry().enqueue({
+    let finalized: Awaited<ReturnType<typeof finalizeMergeResult>> | null = null;
+    await requireWorktreeRuntimeRegistry().enqueue({
       scope: ctx.scope,
       missionId: input.missionId,
       taskId: input.taskId,
       validate: (validationContext) => validator.validate(validationContext),
+      finalize: async (result) => {
+        finalized = await finalizeMergeResult(
+          ctx,
+          input.missionId,
+          input.taskId,
+          result,
+        );
+      },
     });
-    getProjectDomainStores(ctx.scope).tasks.update(input.taskId, { status: 'done' });
-    const autopilot = await drivePrevcAutopilot(ctx, input.missionId, true);
-    return { ...result, autopilot };
+    if (!finalized) throw new Error('merge finalizer did not produce a result');
+    return finalized;
   },
 };
 
@@ -923,9 +992,12 @@ const mergeRetryTool: McpToolDef = {
     }).strict().parse(args);
     assertMission(ctx, input.missionId);
     const service = getContextWorkflowService(ctx.scope);
-    service.assertMutationAllowed(input.missionId, 'nexus_merge_retry', {});
+    // Retry owns a narrower gate than ordinary workflow mutation: the durable
+    // queue CAS below proves the exact blocked task/attempt. This must remain
+    // available after a crash where finalization already advanced PREVC.
     const validator = new MergeValidationCoordinator(service);
-    return requireWorktreeRuntimeRegistry().retry({
+    let finalized: Awaited<ReturnType<typeof finalizeMergeResult>> | null = null;
+    await requireWorktreeRuntimeRegistry().retry({
       scope: ctx.scope,
       missionId: input.missionId,
       taskId: input.taskId,
@@ -934,7 +1006,17 @@ const mergeRetryTool: McpToolDef = {
         evidenceIds: service.listPersistedEvidenceIds(input.missionId),
       },
       validate: (validationContext) => validator.validate(validationContext),
+      finalize: async (result) => {
+        finalized = await finalizeMergeResult(
+          ctx,
+          input.missionId,
+          input.taskId,
+          result,
+        );
+      },
     });
+    if (!finalized) throw new Error('merge finalizer did not produce a result');
+    return finalized;
   },
 };
 

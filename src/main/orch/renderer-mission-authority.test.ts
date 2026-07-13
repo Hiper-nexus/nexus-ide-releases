@@ -152,6 +152,75 @@ describe("renderer mission authority", () => {
     });
   });
 
+  it("rejects renderer-forged milestone completion and evidence", () => {
+    expect(() =>
+      authority.updateMissionFromRenderer(owner, "mission-a", {
+        milestones: [
+          {
+            id: "step-a",
+            label: "Forged",
+            status: "done",
+            evidenceIds: ["evidence-forged"],
+          },
+        ],
+      }),
+    ).toThrow(/milestone completion.*Nexus/i);
+
+    expect(() =>
+      authority.updateMissionFromRenderer(owner, "mission-a", {
+        milestones: [
+          {
+            id: "step-a",
+            label: "Forged",
+            status: "in-progress",
+            evidenceIds: ["evidence-forged"],
+          },
+        ],
+      }),
+    ).toThrow(/milestone completion.*Nexus/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate milestone ids and any mutation after completion", () => {
+    expect(() =>
+      authority.updateMissionFromRenderer(owner, "mission-a", {
+        milestones: [
+          { id: "same", label: "One" },
+          { id: "same", label: "Two" },
+        ],
+      }),
+    ).toThrow(/ids must be unique/i);
+
+    deps.getMission.mockReturnValueOnce({ ...mission, status: "done" });
+    expect(() =>
+      authority.updateMissionFromRenderer(owner, "mission-a", {
+        status: "blocked",
+      }),
+    ).toThrow(/completed missions are immutable/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
+  it("does not let renderer replacement erase a completed milestone", () => {
+    deps.getMission.mockReturnValueOnce({
+      ...mission,
+      status: "running",
+      milestones: [
+        {
+          id: "step-a",
+          label: "Verified",
+          status: "done",
+          evidenceIds: ["evidence-a"],
+        },
+      ],
+    });
+    expect(() =>
+      authority.updateMissionFromRenderer(owner, "mission-a", {
+        milestones: [{ id: "step-b", label: "Replacement" }],
+      }),
+    ).toThrow(/completed mission milestones are immutable/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
   it("creates from main-owned session metadata and ignores forged pane fields", () => {
     const result = authority.createMissionFromRenderer(owner, {
       title: "Review",

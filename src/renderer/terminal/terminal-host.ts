@@ -21,7 +21,10 @@ import {
   flushTerminalOutput,
   writeTerminalOutput,
 } from './terminal-output-scheduler';
-import { submitPromptToPane as submitPanePrompt } from './pane-submit';
+import {
+  submitPromptToPane as submitPanePrompt,
+  submitPromptToPaneConfirmed as submitPanePromptConfirmed,
+} from './pane-submit';
 
 /**
  * Persistent terminal manager.
@@ -43,6 +46,8 @@ interface Host {
   serialize: SerializeAddon;
   ro: ResizeObserver;
   sessionId: string | null;
+  /** Invalidates a late async spawn after recovery timeout/replacement. */
+  spawnGeneration: number;
   opened: boolean;
   spawnStarted: boolean;
   hibernated: boolean;
@@ -211,7 +216,9 @@ function buildTerminal(): {
   return { term, fit, search, serialize };
 }
 
-export type RespawnMode = 'same-account-resume' | 'cross-account-continuity';
+export type RespawnMode =
+  | 'same-account-resume'
+  | 'cross-account-continuity';
 
 /**
  * Strip ANSI CSI/OSC sequences for continuity pack excerpts (best-effort).
@@ -266,13 +273,17 @@ function startSpawn(
   resume = false,
   resumeLatestOnly = false,
   continuityPack?: string,
-): void {
+  restorePersistedAuthority = false,
+): Promise<string | null> {
+  const generation = host.spawnGeneration + 1;
+  host.spawnGeneration = generation;
   host.spawnStarted = true;
   host.hibernated = false;
   useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
-  void (async () => {
+  return (async (): Promise<string | null> => {
     try {
       const accountId = await ensurePaneAccountPin(pane);
+      if (host.disposed || host.spawnGeneration !== generation) return null;
       const spawnKind = pane.kind === 'cli-agent' ? 'cli-agent' : 'shell';
       const res = await window.nexus.pty.spawn({
         // Panes always live inside the active workspace: restored panes from
@@ -288,6 +299,7 @@ function startSpawn(
         kind: spawnKind,
         resume,
         resumeLatestOnly,
+        restorePersistedAuthority,
         // paneId estável (layout persistido): com resume, o main retoma a
         // sessão de provider CAPTURADA deste pane (`--resume <id>`).
         paneId: pane.id,
@@ -297,9 +309,9 @@ function startSpawn(
         effort: pane.effort,
         orchRequestId: pane.orchRequestId,
       });
-      if (host.disposed) {
+      if (host.disposed || host.spawnGeneration !== generation) {
         if (res.ok) window.nexus.pty.kill(res.sessionId);
-        return;
+        return null;
       }
       if (!res.ok) {
         host.term.writeln(
@@ -316,7 +328,7 @@ function startSpawn(
           );
         }
         useSessionStateStore.getState().setPaneState(pane.id, 'exited');
-        return;
+        return null;
       }
       setHostSession(host, pane.id, res.sessionId);
       const spawnedAt = Date.now();
@@ -382,7 +394,7 @@ function startSpawn(
               host.term.writeln(
                 '\r\n\x1b[33m[nexus] ID exato expirou — tentando a conversa mais recente…\x1b[0m',
               );
-              startSpawn(pane, host, true, true);
+              void startSpawn(pane, host, true, true);
             }, 0);
             return;
           }
@@ -425,20 +437,21 @@ function startSpawn(
             continuityPack ??
             (`Continue the current mission from exactly where you stopped as the ${role}. ` +
               'Preserve existing context and execute the next pending step now.');
-          window.nexus.pty.write(resumedSessionId, continuation);
-          // Agent TUIs receive Enter as CR from xterm. LF only paints a new
-          // line in Claude/Codex/Grok and leaves the prompt waiting. Split
-          // paste and submit so async input handlers finish first.
-          const submitTimer = setTimeout(() => {
-            if (host.disposed || host.sessionId !== resumedSessionId) return;
-            window.nexus.pty.write(resumedSessionId, '\r');
+          if (
+            submitPanePrompt(pane.id, continuation, {
+              getSessionId: getPaneSessionId,
+              write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
+              writeConfirmed: (sessionId, data) =>
+                window.nexus.pty.writeConfirmed(sessionId, data),
+              schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+            })
+          ) {
             host.term.writeln(
               continuityPack
                 ? '\r\n\x1b[36m[nexus] handoff multi-conta submetido (sessão nova nesta conta).\x1b[0m'
                 : '\r\n\x1b[36m[nexus] continuidade submetida automaticamente ao agente.\x1b[0m',
             );
-          }, 80);
-          host.cleanups.push(() => clearTimeout(submitTimer));
+          }
         }, 1_800);
         host.cleanups.push(() => clearTimeout(continuationTimer));
       }
@@ -446,13 +459,15 @@ function startSpawn(
         if (host.sessionId) window.nexus.pty.write(host.sessionId, data);
       });
       host.cleanups.push(() => input.dispose());
+      return res.sessionId;
     } catch (err) {
-      if (host.disposed) return;
+      if (host.disposed || host.spawnGeneration !== generation) return null;
       const message = err instanceof Error ? err.message : String(err);
       host.term.writeln(
         `\r\n\x1b[31m[nexus] failed to start: ${message}\x1b[0m`,
       );
       useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+      return null;
     }
   })();
 }
@@ -500,6 +515,7 @@ function createShellHost(pane: PaneModel): Host {
     serialize,
     ro: null as unknown as ResizeObserver,
     sessionId: null,
+    spawnGeneration: 0,
     opened: false,
     spawnStarted: false,
     hibernated: false,
@@ -540,6 +556,7 @@ function createCliAgentHost(pane: PaneModel): Host {
     serialize,
     ro: null as unknown as ResizeObserver,
     sessionId: null,
+    spawnGeneration: 0,
     opened: false,
     spawnStarted: false,
     hibernated: false,
@@ -739,7 +756,14 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
   }
 
   if (!host.spawnStarted && !host.hibernated) {
-    startSpawn(pane, host, resumeOnFirstSpawn.delete(pane.id));
+    void startSpawn(
+      pane,
+      host,
+      resumeOnFirstSpawn.delete(pane.id),
+      false,
+      undefined,
+      restoreAuthorityOnFirstSpawn.delete(pane.id),
+    );
   }
 }
 
@@ -751,9 +775,15 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
  * previous conversation.
  */
 const resumeOnFirstSpawn = new Set<string>();
+const restoreAuthorityOnFirstSpawn = new Set<string>();
 
 export function markResumeOnSpawn(paneId: string): void {
   resumeOnFirstSpawn.add(paneId);
+}
+
+/** Mark a missing mission pane to start fresh with its persisted authority. */
+export function markPersistedAuthorityOnSpawn(paneId: string): void {
+  restoreAuthorityOnFirstSpawn.add(paneId);
 }
 
 setRestoredPanesHandler((panes) => {
@@ -837,8 +867,7 @@ export function respawnWithResume(
         })()
       : pane;
   const cross = options?.mode === 'cross-account-continuity';
-  // Cross-account: do not pass resume=true (would try wrong-account session id).
-  startSpawn(
+  void startSpawn(
     spawnPane,
     host,
     !cross,
@@ -852,6 +881,7 @@ export function hibernateHost(paneId: string): boolean {
   if (!host || host.disposed) return false;
   host.cleanups.forEach((fn) => fn());
   host.cleanups = [];
+  host.spawnGeneration += 1;
   if (host.sessionId) window.nexus.pty.kill(host.sessionId);
   host.spawnStarted = false;
   host.hibernated = true;
@@ -880,7 +910,7 @@ export function wakeHost(pane: PaneModel): boolean {
     // Terminal may not be open yet.
   }
   useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
-  startSpawn(pane, host, pane.kind === 'cli-agent');
+  void startSpawn(pane, host, pane.kind === 'cli-agent');
   return true;
 }
 
@@ -919,6 +949,155 @@ export function waitForSession(
   });
 }
 
+function paneState(paneId: string) {
+  return useSessionStateStore.getState().paneStates.get(paneId);
+}
+
+/** Wait until a specific replacement PTY is alive and has reached first idle. */
+export function waitForHealthyPaneSession(
+  paneId: string,
+  expectedPreviousSessionId?: string,
+  timeoutMs = 75_000,
+): Promise<string | null> {
+  const current = getPaneSessionId(paneId);
+  if (
+    current &&
+    current !== expectedPreviousSessionId &&
+    paneState(paneId) === 'idle'
+  ) {
+    return Promise.resolve(current);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (sessionId: string | null): void => {
+      if (settled) return;
+      settled = true;
+      unsubscribeSession();
+      unsubscribeState();
+      clearTimeout(timer);
+      resolve(sessionId);
+    };
+    const inspect = (): void => {
+      const sessionId = getPaneSessionId(paneId);
+      const state = paneState(paneId);
+      if (!sessionId || sessionId === expectedPreviousSessionId) return;
+      if (state === 'exited') {
+        finish(null);
+        return;
+      }
+      if (state === 'idle') finish(sessionId);
+    };
+    const unsubscribeSession = onPaneSessionChange((id) => {
+      if (id === paneId) inspect();
+    });
+    const unsubscribeState = useSessionStateStore.subscribe(inspect);
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    inspect();
+  });
+}
+
+/** Session identity + renderer lifecycle check used immediately before ACK. */
+export function isPaneSessionHealthy(
+  paneId: string,
+  sessionId: string,
+): boolean {
+  const state = paneState(paneId);
+  return (
+    getPaneSessionId(paneId) === sessionId &&
+    state !== 'exited' &&
+    state !== 'hibernated' &&
+    state !== 'spawning'
+  );
+}
+
+/** Cancel the current recovery generation and kill only its replacement PTY. */
+export function cancelPaneRecovery(
+  paneId: string,
+  sessionId?: string,
+): void {
+  const host = hosts.get(paneId);
+  if (!host || host.disposed) return;
+  if (sessionId && host.sessionId && host.sessionId !== sessionId) return;
+  host.spawnGeneration += 1;
+  host.cleanups.forEach((cleanup) => cleanup());
+  host.cleanups = [];
+  const current = host.sessionId;
+  if (current && (!sessionId || current === sessionId)) {
+    window.nexus.pty.kill(current);
+    setHostSession(host, paneId, null);
+  }
+  host.spawnStarted = false;
+  useSessionStateStore.getState().setPaneState(paneId, 'exited');
+}
+
+/**
+ * Replace one existing mission pane with a fresh provider conversation while
+ * preserving stable pane identity and persisted main-process authority.
+ */
+export async function respawnMissionPaneFresh(
+  pane: PaneModel,
+  expectedSessionId?: string,
+  timeoutMs = 75_000,
+): Promise<string> {
+  const host = hosts.get(pane.id);
+  if (!host || host.disposed) throw new Error('mission pane host is unavailable');
+  const current = host.sessionId;
+  if (
+    (expectedSessionId && current && current !== expectedSessionId) ||
+    (!expectedSessionId && current)
+  ) {
+    throw new Error('mission pane session changed before recovery');
+  }
+
+  host.cleanups.forEach((cleanup) => cleanup());
+  host.cleanups = [];
+  if (current) window.nexus.pty.kill(current);
+  setHostSession(host, pane.id, null);
+  host.spawnStarted = false;
+  host.hibernated = false;
+  host.term.writeln(
+    '\r\n\x1b[33m[nexus] contexto degradado — iniciando uma sessão limpa…\x1b[0m',
+  );
+  const spawnPane = pane.orchRequestId
+    ? (() => {
+        useLayoutStore.getState().clearOrchRequestId(pane.id);
+        const { orchRequestId: _drop, ...rest } = pane;
+        return rest as PaneModel;
+      })()
+    : pane;
+  const startedAt = Date.now();
+  const spawnPromise = startSpawn(
+    spawnPane,
+    host,
+    false,
+    false,
+    undefined,
+    true,
+  );
+  const spawned = await new Promise<string | null>((resolve) => {
+    const timer = setTimeout(() => resolve(null), timeoutMs);
+    void spawnPromise.then((sessionId) => {
+      clearTimeout(timer);
+      resolve(sessionId);
+    });
+  });
+  if (!spawned) {
+    cancelPaneRecovery(pane.id);
+    throw new Error('fresh pane spawn timed out or failed');
+  }
+  const remaining = Math.max(1, timeoutMs - (Date.now() - startedAt));
+  const healthy = await waitForHealthyPaneSession(
+    pane.id,
+    expectedSessionId,
+    remaining,
+  );
+  if (!healthy || healthy !== spawned) {
+    cancelPaneRecovery(pane.id, spawned);
+    throw new Error('fresh pane session did not become healthy');
+  }
+  return healthy;
+}
+
 /**
  * Write text into a pane's PTY as if the user typed it — the exact same path as
  * keyboard input. Used by voice routing to inject the transcribed prompt into
@@ -940,6 +1119,23 @@ export function submitPromptToPane(paneId: string, text: string): boolean {
   return submitPanePrompt(paneId, text, {
     getSessionId: getPaneSessionId,
     write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
+    writeConfirmed: (sessionId, data) =>
+      window.nexus.pty.writeConfirmed(sessionId, data),
+    schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+  });
+}
+
+/** Strong submission contract used by recovery before it acknowledges. */
+export function submitPromptToPaneConfirmed(
+  paneId: string,
+  text: string,
+  expectedSessionId: string,
+): Promise<boolean> {
+  return submitPanePromptConfirmed(paneId, text, expectedSessionId, {
+    getSessionId: getPaneSessionId,
+    write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
+    writeConfirmed: (sessionId, data) =>
+      window.nexus.pty.writeConfirmed(sessionId, data),
     schedule: (callback, delayMs) => setTimeout(callback, delayMs),
   });
 }

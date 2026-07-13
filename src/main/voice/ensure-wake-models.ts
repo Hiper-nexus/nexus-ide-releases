@@ -8,20 +8,16 @@ import {
   EI_JARVIS_PTBR_ONNX_SHA256,
 } from './wake-models-ptbr';
 
-/**
- * SpeechKit `hey_jarvis` head (Apache-2.0) — same bytes as the embedded EN
- * detector. Optional on-disk second vote beside the in-memory base model.
- */
+/** SpeechKit `hey_jarvis` head, installed as an optional second detector. */
 export const DEFAULT_WAKE_MODEL_SHA256 =
   '7256019a18029c7bea33abc3344f7a3d0e07655cf4a5f18e65c9b6329eac3fb6';
-
 export const DEFAULT_WAKE_MODEL_FILE = 'speechkit-hey-jarvis.onnx';
 
 /** PT-BR trained head installed as custom.onnx for every client by default. */
 export const DEFAULT_PTBR_WAKE_MODEL_FILE = 'custom.onnx';
 export const DEFAULT_PTBR_WAKE_MODEL_SHA256 = EI_JARVIS_PTBR_ONNX_SHA256;
 
-function defaultWakeDirectory(): string {
+export function resolveWakeModelDirectory(): string {
   const configuredRoot = process.env.NEXUS_USER_DATA_DIR?.trim();
   const nexusRoot = configuredRoot
     ? path.resolve(configuredRoot)
@@ -49,9 +45,7 @@ function installModelFile(
   label: string,
 ): string | null {
   const target = path.join(targetDirectory, fileName);
-  if (hasExpectedHash(target, expectedSha)) {
-    return target;
-  }
+  if (hasExpectedHash(target, expectedSha)) return target;
   if (sha256(bytes) !== expectedSha) {
     console.warn(`[wake] ${label} checksum mismatch — skip disk install`);
     return null;
@@ -68,8 +62,6 @@ function installModelFile(
       try {
         fs.renameSync(temporary, target);
       } catch {
-        // User may have a custom override with different hash — only replace
-        // when the existing file is missing or corrupt (wrong hash already).
         fs.rmSync(target, { force: true });
         fs.renameSync(temporary, target);
       }
@@ -90,11 +82,8 @@ function installModelFile(
   }
 }
 
-/**
- * Install SpeechKit EN head on disk (optional parallel detector).
- */
 export function ensureDefaultWakeModelInstalled(
-  targetDirectory = defaultWakeDirectory(),
+  targetDirectory = resolveWakeModelDirectory(),
 ): string | null {
   return installModelFile(
     targetDirectory,
@@ -105,16 +94,15 @@ export function ensureDefaultWakeModelInstalled(
   );
 }
 
-/**
- * Install PT-BR trained head as custom.onnx for every client by default.
- * Skips when the user already has a non-default custom.onnx (different hash).
- */
 export function ensureDefaultPtbrWakeModelInstalled(
-  targetDirectory = defaultWakeDirectory(),
+  targetDirectory = resolveWakeModelDirectory(),
 ): string | null {
   const target = path.join(targetDirectory, DEFAULT_PTBR_WAKE_MODEL_FILE);
-  // Preserve a user-trained override that is not our stock PT-BR head.
-  if (fs.existsSync(target) && !hasExpectedHash(target, DEFAULT_PTBR_WAKE_MODEL_SHA256)) {
+  // A local retraining is an explicit user override and must survive upgrades.
+  if (
+    fs.existsSync(target) &&
+    !hasExpectedHash(target, DEFAULT_PTBR_WAKE_MODEL_SHA256)
+  ) {
     console.log(`[wake] custom.onnx do usuário preservado: ${target}`);
     return target;
   }
@@ -127,11 +115,8 @@ export function ensureDefaultPtbrWakeModelInstalled(
   );
 }
 
-/**
- * Idempotent default install for all clients: EN SpeechKit + PT-BR head.
- */
 export function ensureAllDefaultWakeModelsInstalled(
-  targetDirectory = defaultWakeDirectory(),
+  targetDirectory = resolveWakeModelDirectory(),
 ): { readonly en: string | null; readonly ptbr: string | null } {
   return Object.freeze({
     en: ensureDefaultWakeModelInstalled(targetDirectory),

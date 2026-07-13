@@ -753,6 +753,131 @@ describe('MergeQueue', () => {
     )?.status).toBe('integrated');
   });
 
+  it('keeps an integrated candidate blocked until durable mission finalization succeeds', async () => {
+    commitTask(
+      'mission-finalizer-retry',
+      'task-finalizer-retry',
+      'worker-finalizer-retry',
+      'finalizer-retry.txt',
+      'integrated but not finalized\n',
+    );
+    const failedFinalizer = vi.fn(async () => {
+      throw new Error('simulated crash during mission finalization');
+    });
+
+    await expect(queue.enqueue({
+      scope,
+      missionId: 'mission-finalizer-retry',
+      taskId: 'task-finalizer-retry',
+      validate: approved,
+      finalize: failedFinalizer,
+    })).rejects.toThrow('simulated crash during mission finalization');
+
+    const blocked = queue.snapshot(scope);
+    expect(failedFinalizer).toHaveBeenCalledOnce();
+    expect(blocked).toMatchObject({
+      activeTaskKey: null,
+      blocked: { errorName: 'Error' },
+      entries: [{ status: 'blocked', integratedSha: expect.any(String) }],
+    });
+
+    const restarted = new MergeQueue({
+      runtimeRoot,
+      stateStore: queueState,
+      worktreeManager: worktrees,
+      gitRunner,
+    });
+    const recoveredFinalizer = vi.fn(async () => {});
+    const validationAfterFinalization = vi.fn(() => {
+      throw new Error('finalization recovery must not rerun execution validation');
+    });
+    await restarted.retry({
+      scope,
+      missionId: 'mission-finalizer-retry',
+      taskId: 'task-finalizer-retry',
+      expectedStateRevision: blocked.revision,
+      acknowledgement: {},
+      validate: validationAfterFinalization,
+      finalize: recoveredFinalizer,
+    });
+
+    expect(validationAfterFinalization).not.toHaveBeenCalled();
+    expect(recoveredFinalizer).toHaveBeenCalledOnce();
+    expect(restarted.snapshot(scope)).toMatchObject({
+      activeTaskKey: null,
+      blocked: null,
+      entries: [{ status: 'integrated', attempt: 2 }],
+    });
+  });
+
+  it('reconciles a process crash during finalization without rerunning execution validation', async () => {
+    commitTask(
+      'mission-finalizer-crash',
+      'task-finalizer-crash',
+      'worker-finalizer-crash',
+      'finalizer-crash.txt',
+      'validated before crash\n',
+    );
+    const finalizerStarted = createSignal('finalizer-started');
+    const releaseInterruptedProcess = createSignal('release-interrupted-finalizer');
+    const interrupted = queue.enqueue({
+      scope,
+      missionId: 'mission-finalizer-crash',
+      taskId: 'task-finalizer-crash',
+      validate: approved,
+      finalize: async () => {
+        finalizerStarted.notify();
+        await releaseInterruptedProcess.wait();
+      },
+    });
+    const interruptedResult = interrupted.catch((error: unknown) => error);
+    await finalizerStarted.wait();
+    expect(queue.snapshot(scope).entries[0]).toMatchObject({
+      status: 'finalizing',
+      integratedSha: expect.any(String),
+      evidenceIds: expect.arrayContaining([
+        expect.stringContaining('evidence-candidate-'),
+        expect.stringContaining('evidence-post-integration-'),
+      ]),
+    });
+
+    const restarted = new MergeQueue({
+      runtimeRoot,
+      stateStore: queueState,
+      worktreeManager: worktrees,
+      gitRunner,
+    });
+    expect(restarted.reconcile(scope)).toMatchObject({
+      action: 'blocked-interrupted',
+      fromStatus: 'finalizing',
+      integrationState: 'candidate-integrated',
+    });
+    const blocked = restarted.snapshot(scope);
+    const validationAfterCrash = vi.fn(() => {
+      throw new Error('execution validation is invalid after PREVC advanced');
+    });
+    const recoveredFinalizer = vi.fn(async () => {});
+    await restarted.retry({
+      scope,
+      missionId: 'mission-finalizer-crash',
+      taskId: 'task-finalizer-crash',
+      expectedStateRevision: blocked.revision,
+      acknowledgement: {},
+      validate: validationAfterCrash,
+      finalize: recoveredFinalizer,
+    });
+
+    releaseInterruptedProcess.notify();
+    await interruptedResult;
+    expect(validationAfterCrash).not.toHaveBeenCalled();
+    expect(recoveredFinalizer).toHaveBeenCalledOnce();
+    expect(restarted.snapshot(scope)).toMatchObject({
+      activeTaskKey: null,
+      blocked: null,
+      entries: [{ status: 'integrated', attempt: 2 }],
+    });
+  });
+
   it('blocks on a real merge conflict even when overlap had an explicit dependency', async () => {
     const first = commitTask(
       'mission-a',

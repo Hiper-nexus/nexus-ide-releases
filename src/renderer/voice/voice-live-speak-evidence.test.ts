@@ -38,7 +38,7 @@ describe('Live speak evidence', () => {
     expect(sleeps).toEqual([25, 25, 25, 15]);
   });
 
-  it('uses a longer bounded liveSay evidence window for Gemini before Classic TTS', () => {
+  it('uses a bounded evidence window before falling back to Classic TTS', () => {
     expect(liveSpeakEvidenceTimeoutMs('ok')).toBe(2_400);
     expect(liveSpeakEvidenceTimeoutMs('x'.repeat(200))).toBe(3_600);
     expect(liveSpeakEvidenceTimeoutMs('x'.repeat(1_000))).toBe(6_500);

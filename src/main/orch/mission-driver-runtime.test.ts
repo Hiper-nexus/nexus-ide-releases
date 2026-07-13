@@ -21,6 +21,7 @@ function baseState(overrides: Partial<DriveState> = {}): DriveState {
     steps: [],
     trustedEvidenceReadyForCurrent: false,
     allStepsDone: false,
+    completionVerified: false,
     contextRot: false,
     paneDead: false,
     accountFailed: false,
@@ -52,6 +53,11 @@ interface DepsOpts {
   lastActionById?: Map<string, number>;
   onDecision?: (s: DriveSnapshot) => void;
   onRecordSignal?: (missionId: string, at: number) => void;
+  onFinishAttempt?: (
+    missionId: string,
+    outcome: 'success' | 'failed',
+    error?: string,
+  ) => void;
   applyPorts?: ApplyActionPorts;
   mode?: 'shadow' | 'active';
 }
@@ -88,12 +94,13 @@ function makeDeps(opts: DepsOpts = {}): DriveDeps {
       opts.onRecordSignal?.(id, at);
     },
     getIteration: (id) => iterationMemory.get(id) ?? 0,
-    recordIteration: (id, _scope, next) => {
-      iterationMemory.set(id, next);
+    reserveAttempt: (id, _scope, _actionKind, at) => {
+      iterationMemory.set(id, (iterationMemory.get(id) ?? 0) + 1);
+      lastActionMemory.set(id, at);
     },
     getLastActionAt: (id) => lastActionMemory.get(id),
-    recordLastActionAt: (id, _scope, at) => {
-      lastActionMemory.set(id, at);
+    finishAttempt: (id, _scope, outcome, _at, error) => {
+      opts.onFinishAttempt?.(id, outcome, error);
     },
     ...(opts.applyPorts ? { applyPorts: opts.applyPorts } : {}),
   };
@@ -395,7 +402,7 @@ describe('runDriveTick', () => {
     expect(shadowLog).toEqual([]);
   });
 
-  it('active mode: advance aplica ports.advanceStep e incrementa iteration', async () => {
+  it('active mode: reserva budget antes de aplicar advance', async () => {
     const log: string[] = [];
     const iterationById = new Map<string, number>();
     const deps = makeDeps({
@@ -462,6 +469,7 @@ describe('runDriveTick', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const log: string[] = [];
     const ports = fakePorts(log);
+    const outcomes: Array<{ id: string; outcome: string; error?: string }> = [];
     ports.advanceStep = async () => {
       throw new Error('untrusted');
     };
@@ -485,6 +493,7 @@ describe('runDriveTick', () => {
             missionId: 'm-ok',
             lastProgressAt: NOW - 1_000,
             allStepsDone: true,
+            completionVerified: true,
             steps: [
               {
                 id: 's1',
@@ -498,6 +507,8 @@ describe('runDriveTick', () => {
         ],
       ]),
       applyPorts: ports,
+      onFinishAttempt: (id, outcome, error) =>
+        outcomes.push({ id, outcome, ...(error ? { error } : {}) }),
     });
     const result = await runDriveTick(deps, {
       ...defaultDriveConfig,
@@ -506,6 +517,11 @@ describe('runDriveTick', () => {
     expect(result.applyErrors).toBe(1);
     expect(result.applied).toBe(1);
     expect(log).toContain('complete:m-ok');
+    expect(outcomes).toContainEqual({
+      id: 'm-bad',
+      outcome: 'failed',
+      error: 'untrusted',
+    });
     warn.mockRestore();
   });
 
@@ -548,7 +564,7 @@ describe('runDriveTick', () => {
     expect(log).toEqual([]);
   });
 
-  it('active mode: records lastActionAt after successful apply', async () => {
+  it('active mode: records lastActionAt when reserving the attempt', async () => {
     const log: string[] = [];
     const lastActionById = new Map<string, number>();
     const deps = makeDeps({
@@ -560,6 +576,30 @@ describe('runDriveTick', () => {
     await runDriveTick(deps, { ...defaultDriveConfig, mode: 'active' });
     expect(log).toContain('stall:m-stalled');
     expect(lastActionById.get('m-stalled')).toBe(NOW);
+  });
+
+  it('active mode: failed apply still consumes one iteration of budget', async () => {
+    const iterationById = new Map<string, number>();
+    const ports = fakePorts([]);
+    ports.submitStalledHandoff = async () => {
+      throw new Error('delivery failed');
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const deps = makeDeps({
+      missionsByScope: new Map([['p1', [{ id: 'm-stalled' }]]]),
+      statesById: new Map([['m-stalled', STALLED]]),
+      iterationById,
+      applyPorts: ports,
+    });
+
+    const result = await runDriveTick(deps, {
+      ...defaultDriveConfig,
+      mode: 'active',
+    });
+
+    expect(result.applyErrors).toBe(1);
+    expect(iterationById.get('m-stalled')).toBe(1);
+    warn.mockRestore();
   });
 });
 

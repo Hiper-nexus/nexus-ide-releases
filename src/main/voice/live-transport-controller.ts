@@ -91,6 +91,8 @@ interface RealtimeStartOptions {
   greeting?: string;
   /** ClockVoice parity: connect without creating audible/user activity. */
   prewarm?: boolean;
+  /** A renderer-proven new wake/PTT turn must not reuse a stale Live socket. */
+  freshTurn?: boolean;
 }
 
 interface PendingRendererAudioDelivery {
@@ -299,13 +301,10 @@ export class LiveTransportController {
       return Promise.resolve();
     }
 
-    // Overclock F-138 parity: a locally-open Gemini Live socket can be a
-    // server-side zombie. The symptom in Nexus logs was exactly the Overclock
-    // finding: “reuso quente” + hundreds of mic frames sent + zero
-    // transcript/audio, followed by Classic fallback and a mute Jarvis. Prewarm
-    // may keep an idle socket, but an actual user wake/click must start from a
-    // fresh provider and rely on pendingMic to bridge setup latency.
-    if (this._provider?.isReady && !options.prewarm) {
+    // A locally-open Live socket can already be a server-side zombie. Actual
+    // wake/click turns reconnect and pendingMic bridges the setup latency;
+    // prewarm may still keep its idle socket.
+    if (this._provider?.isReady && options.freshTurn) {
       logVoice('warn', 'live.hotReuseDisabled', 'descartando socket quente antes do wake', {
         inGrace: this._inGrace,
       });

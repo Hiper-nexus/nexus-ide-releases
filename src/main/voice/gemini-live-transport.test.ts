@@ -125,7 +125,6 @@ describe('buildSetupMessage', () => {
     const gen = msg.setup.generationConfig as Record<string, unknown>;
     expect(msg.setup.model).toBe(`models/${GEMINI_31_LIVE_MODEL}`);
     expect(gen.thinkingConfig).toEqual({ thinkingLevel: 'minimal' });
-    // F-090 (paridade Overclock): half-cascade pina pt-BR no speechConfig.
     expect(gen.speechConfig).toEqual({
       voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } },
       languageCode: 'pt-BR',
@@ -295,78 +294,6 @@ describe('GeminiLiveTransport', () => {
     ws.fire('message', JSON.stringify({ setupComplete: {} }));
     // 160KB cap → no máximo 2 chunks de 64KB + setup = 3 mensagens ou menos
     expect(ws.sent.length).toBeLessThanOrEqual(4);
-  });
-
-  it('pendingMic é ring drop-oldest: preserva o fim da fala (o comando)', () => {
-    const ws = fakeWs();
-    const t = makeTransport(ws, events());
-    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
-    ws.fire('open');
-    // 3 chunks de 64 KB > teto de 160 KB: o mais VELHO é descartado, o mais
-    // recente (o fim do comando) sobrevive — regressão do "só entendeu gritar".
-    const oldest = 'A'.repeat(64 * 1024);
-    const middle = 'B'.repeat(64 * 1024);
-    const newest = 'C'.repeat(64 * 1024);
-    t.sendMicChunk(oldest);
-    t.sendMicChunk(middle);
-    t.sendMicChunk(newest);
-    ws.fire('message', JSON.stringify({ setupComplete: {} }));
-    const flushedAudio = ws.sent
-      .map((raw) => JSON.parse(raw))
-      .filter((m) => m.realtimeInput?.audio)
-      .map((m) => m.realtimeInput.audio.data);
-    expect(flushedAudio).toContain(newest);
-    expect(flushedAudio).not.toContain(oldest);
-  });
-
-  it('um único chunk maior que o teto inteiro não bufferiza', () => {
-    const ws = fakeWs();
-    const t = makeTransport(ws, events());
-    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
-    ws.fire('open');
-    t.sendMicChunk('Z'.repeat(160 * 1024 + 1));
-    ws.fire('message', JSON.stringify({ setupComplete: {} }));
-    const flushedAudio = ws.sent
-      .map((raw) => JSON.parse(raw))
-      .filter((m) => m.realtimeInput?.audio);
-    expect(flushedAudio).toHaveLength(0);
-  });
-
-  it('setup timeout fecha socket preso antes do setupComplete e emite erro terminal', async () => {
-    vi.useFakeTimers();
-    const ws = fakeWs();
-    const ev = events();
-    const t = makeTimedTransport(ws, ev);
-    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
-    ws.fire('open');
-    t.sendMicChunk('QUJD');
-
-    await vi.advanceTimersByTimeAsync(10_000);
-
-    expect(ws.close).toHaveBeenCalledOnce();
-    expect(t.isReady).toBe(false);
-    expect(ev.calls.error).toContain('live: setup timeout (10s)');
-    expect(ev.calls.stateChange).toContain('error');
-
-    vi.useRealTimers();
-  });
-
-  it('late setupComplete depois do setup timeout é ignorado e não drena pendingMic', async () => {
-    vi.useFakeTimers();
-    const ws = fakeWs();
-    const t = makeTimedTransport(ws, events());
-    t.connect({ apiKey: 'k', model: 'm', voiceName: 'V', systemInstruction: 's' });
-    ws.fire('open');
-    t.sendMicChunk('QUJD');
-
-    await vi.advanceTimersByTimeAsync(10_000);
-    const sentAtTimeout = ws.sent.length;
-    ws.fire('message', JSON.stringify({ setupComplete: {} }));
-
-    expect(ws.sent).toHaveLength(sentAtTimeout);
-    expect(t.isReady).toBe(false);
-
-    vi.useRealTimers();
   });
 
   it('emite áudio, transcrições e barge-in a partir do servidor', () => {

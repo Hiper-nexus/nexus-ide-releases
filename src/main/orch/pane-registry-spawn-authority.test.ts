@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WebContents } from "electron";
 import type { OrchPaneSpawnRequest } from "../../shared/orch-types";
+import type { MissionPaneRecoveryRequest } from "../../shared/orch-types";
+import {
+  bindResolvedRendererWorkspaceScope,
+  clearRendererWorkspaceScope,
+} from "../persistence/renderer-workspace-scope";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import {
   attachOrchMeta,
@@ -13,6 +18,8 @@ import {
   getPaneAuthzInfoOwnedByPane,
   registerOrchRenderer,
   requestPaneSpawn,
+  requestMissionPaneRecovery,
+  resolveMissionPaneRecovery,
   resolvePaneSpawn,
   syncPanes,
   unregisterOrchRenderer,
@@ -288,5 +295,92 @@ describe("pending pane spawn authority", () => {
       paneId: "pane-a",
       sessionId: "pty-a",
     });
+  });
+
+  it("requests recovery when the stable mission pane has already lost its session", async () => {
+    const owner = renderer();
+    const scope = testProjectScope();
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    syncPanes(
+      [{
+        paneId: "pane-dead", sessionId: null, title: "Worker",
+        kind: "cli-agent", state: "exited",
+      }],
+      owner,
+    );
+    attachOrchMeta(owner, "pane-dead", {
+      missionId: "mission-a",
+      role: "worker",
+      scope,
+    });
+    const promise = requestMissionPaneRecovery({
+      missionId: "mission-a",
+      paneId: "pane-dead",
+      role: "worker",
+      pane: {
+        id: "spec-worker",
+        missionId: "mission-a",
+        paneId: "pane-dead",
+        adapterId: "claude",
+        title: "Worker",
+        role: "worker",
+        scope,
+        createdAt: 1,
+      },
+      scope,
+      recap: "Continue the worker task.",
+    });
+    const request = owner.send.mock.calls[0]?.[1] as MissionPaneRecoveryRequest;
+    expect(request).toMatchObject({
+      missionId: "mission-a",
+      paneId: "pane-dead",
+      role: "worker",
+      expectedSessionId: undefined,
+    });
+    expect(resolveMissionPaneRecovery({
+      requestId: request.requestId,
+      ok: false,
+      paneId: request.paneId,
+      error: "test cleanup",
+    }, owner)).toBe(true);
+    await expect(promise).resolves.toMatchObject({ ok: false });
+    syncPanes([], owner);
+    clearRendererWorkspaceScope(owner);
+  });
+
+  it("routes a completely missing persisted pane to the live renderer in the same scope", async () => {
+    const owner = renderer();
+    const scope = testProjectScope();
+    registered = owner;
+    registerOrchRenderer(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    const promise = requestMissionPaneRecovery({
+      missionId: "mission-missing",
+      paneId: "pane-missing",
+      role: "orchestrator",
+      expectedSessionId: "old-session",
+      pane: {
+        id: "spec-orch",
+        missionId: "mission-missing",
+        paneId: "pane-missing",
+        adapterId: "codex",
+        title: "Orchestrator",
+        role: "orchestrator",
+        scope,
+        createdAt: 1,
+      },
+      scope,
+      recap: "Continue the mission.",
+    });
+    const request = owner.send.mock.calls[0]?.[1] as MissionPaneRecoveryRequest;
+    expect(request.paneId).toBe("pane-missing");
+    resolveMissionPaneRecovery({
+      requestId: request.requestId,
+      ok: false,
+      paneId: request.paneId,
+      error: "test cleanup",
+    }, owner);
+    await expect(promise).resolves.toMatchObject({ ok: false });
+    clearRendererWorkspaceScope(owner);
   });
 });

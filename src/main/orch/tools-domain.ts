@@ -220,19 +220,24 @@ const missionSetStatusTool: McpToolDef = {
     const missionId = requireStr(args, 'missionId');
     const status = missionStatusSchema.parse(args.status);
     assertOrchestratorMission(ctx, missionId);
+    const stores = getProjectDomainStores(ctx.scope);
+    const current = stores.missions.get(missionId);
+    if (!current) throw new Error('mission not found');
+    if (current.status === 'done' && status !== 'done') {
+      throw new Error('completed mission status is immutable');
+    }
     if (status === 'done') {
-      const workflow = getContextWorkflowService(ctx.scope)
-        .getMissionWorkflow(missionId).workflow;
-      if (workflow?.stage !== 'complete') {
+      const workflow = getContextWorkflowService(ctx.scope);
+      if (!workflow.isMissionDriverComplete(
+        missionId,
+        current.milestones.map((milestone) => milestone.id),
+      )) {
         throw new Error(
-          'mission done is computed by nexus_workflow_advance after PREVC; direct done is forbidden',
+          'mission done requires complete PREVC workflow and immutable step receipts',
         );
       }
     }
-    const mission = getProjectDomainStores(ctx.scope).missions.setStatus(
-      missionId,
-      status,
-    );
+    const mission = stores.missions.setStatus(missionId, status);
     if (!mission) throw new Error('mission not found');
     return mission;
   },

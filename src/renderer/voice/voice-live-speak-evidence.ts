@@ -35,6 +35,16 @@ export function detectLiveSpeakEvidence(
   return 'none';
 }
 
+export function liveSpeakEvidenceTimeoutMs(text: string): number {
+  return Math.min(
+    LIVE_SPEAK_EVIDENCE_MAX_TIMEOUT_MS,
+    Math.max(
+      LIVE_SPEAK_EVIDENCE_MIN_TIMEOUT_MS,
+      text.trim().length * LIVE_SPEAK_EVIDENCE_MS_PER_CHAR,
+    ),
+  );
+}
+
 export async function waitForLiveSpeakEvidence({
   baseline,
   read,

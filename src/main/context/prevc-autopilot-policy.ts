@@ -33,3 +33,8 @@ export function autopilotActionFor(
   }
   return 'advance';
 }
+
+/** The final PREVC edge belongs to the atomic mission-step receipt path. */
+export function canAutopilotAdvanceTo(stage: WorkflowStage): boolean {
+  return stage !== 'complete';
+}

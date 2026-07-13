@@ -14,6 +14,7 @@ const ENTRY_STATUSES = new Set<MergeQueueEntryStatus>([
   'candidate-validating',
   'integrating',
   'post-validating',
+  'finalizing',
   'integrated',
   'blocked',
 ]);
@@ -22,6 +23,7 @@ const ACTIVE_ENTRY_STATUSES = new Set<MergeQueueEntryStatus>([
   'candidate-validating',
   'integrating',
   'post-validating',
+  'finalizing',
 ]);
 const EVENT_TYPES = new Set<MergeQueueEventType>([
   'blocked',
@@ -115,7 +117,11 @@ function hasValidStatusFields(entry: MergeQueueEntry): boolean {
       entry.failureReason === undefined
     );
   }
-  if (entry.status === 'post-validating' || entry.status === 'integrated') {
+  if (
+    entry.status === 'post-validating' ||
+    entry.status === 'finalizing' ||
+    entry.status === 'integrated'
+  ) {
     return (
       !!entry.taskHeadSha &&
       !!entry.integrationBaseSha &&

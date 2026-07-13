@@ -13,48 +13,48 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.15.2',
+  version: '0.15.3',
   date: '2026-07-13',
-  codename: 'Squad Continuity',
+  codename: 'Reliable Orchestration',
   summary:
-    'Squads continuam operando com WIP local, a Jarvis entende a tela e confirma delegações sem perder o turno, e a supervisão reage a evidência real.',
+    'Ralph Loop, Doctor, panes e Jarvis agora compartilham autoridade durável, evidência verificável e recuperação em tempo real.',
   highlights: [
     {
-      title: 'Delegação sem deadlock',
+      title: 'Ralph Loop verificável',
       detail:
-        'O orquestrador mantém uma rota limitada para workers antes do freeze, preserva o checkout atual e serializa escritores quando a tarefa depende do WIP.',
+        'O Mission Driver persiste tentativas e só conclui marcos por receipts PREVC ligados a evidência Nexus atual e confiável.',
     },
     {
-      title: 'Jarvis orientada pela tela',
+      title: 'Recuperação atômica de panes',
       detail:
-        '“Abrir modo squad” mostra os squads salvos, nomes visíveis entram no contexto e comandos de wake validados seguem sem uma segunda captura vazia.',
+        'Panes mortos renascem na mesma identidade; recap e Enter são confirmados na nova sessão antes de o orquestrador ser religado.',
     },
     {
-      title: 'Confirmação confiável',
+      title: 'Jarvis realmente realtime',
       detail:
-        'A resposta “sim” resolve a delegação pendente exatamente uma vez, inclusive em sessão Live quente, sem ser descartada pelo filtro passivo.',
+        'Wake descarta sockets Live zumbis, preserva áudio pendente e transforma fala natural em briefing executável para o squad correto.',
     },
   ],
   fixes: [
     {
-      title: 'Doctor fala a verdade',
+      title: 'Autopilot com evidência',
       detail:
-        'Falha de commit ou binding Git retorna bloqueio explícito e ativa a rota same_checkout, sem pedir stash, reset ou troca de branch ao usuário.',
+        'Sensores e revisão final publicam um handoff idempotente, e cada marco recebe apenas sua própria evidência antes de avançar.',
     },
     {
-      title: 'Supervisão baseada em panes vivos',
+      title: 'Supervisão sem falsos travamentos',
       detail:
-        'O supervisor ignora panes históricos, respeita o orquestrador ocupado e só anuncia bloqueio final; a primeira recuperação é silenciosa e não terminal.',
+        'O Doctor respeita panes vivos e atividade real, com timeouts finitos e sem fechar ou duplicar trabalho que continua operando.',
     },
     {
-      title: 'Wake PT-BR preservado',
+      title: 'Wake PT-BR instalado',
       detail:
-        'O pacote mantém ei-jarvis-ptbr.onnx como padrão obrigatório, com manifesto e hash verificados no build de produção.',
+        'O pacote treinado é verificado e instalado por padrão como custom.onnx; modelos treinados localmente pelo usuário permanecem intactos.',
     },
     {
-      title: 'Home Deck alinhado',
+      title: 'Squads e pets operacionais',
       detail:
-        'Colunas de squads, ações e chips de frota, cota e custo mantêm alinhamento e leitura em uma única linha.',
+        'Seleção de squads usa nomes reais e fuzzy matching; galeria de pets mantém preview, compactação e Pet Studio com dependências disponíveis.',
     },
     {
       title: 'Versões alinhadas',

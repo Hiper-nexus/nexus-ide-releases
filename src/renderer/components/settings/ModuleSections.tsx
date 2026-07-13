@@ -7,6 +7,7 @@ import { CURRENT_RELEASE } from '../../../shared/release-notes';
 import { UpdateReadinessPanel } from './ObservabilitySections';
 import { AudioDeviceControls } from './AudioDeviceControls';
 import { OrchestratorDefaults } from './OrchestratorDefaults';
+import { MissionDriverSettings } from './MissionDriverSettings';
 
 /** MÓDULOS sections: Terminal, Voice, Providers, Squads, Marketplace. */
 
@@ -216,6 +217,8 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
       </p>
 
       <OrchestratorDefaults />
+
+      <MissionDriverSettings />
 
       <h4 className="settings-section-heading">Padrões de execução</h4>
       <div className="settings-toggle-list">

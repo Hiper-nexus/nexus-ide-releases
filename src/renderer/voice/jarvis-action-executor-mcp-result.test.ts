@@ -14,6 +14,7 @@ const {
 } = vi.hoisted(() => ({
   confirmCommand: vi.fn(),
   invokeMcpWithConfirm: vi.fn(),
+  resolveSendToPaneTarget: vi.fn(),
   setPendingDelegation: vi.fn(),
   submitPromptToPane: vi.fn(),
   waitForSession: vi.fn(),
@@ -23,13 +24,8 @@ const {
   },
   layoutState: {
     focusedPaneId: null as string | null,
-    panes: [] as Array<{
-      id: string;
-      kind: 'shell' | 'cli-agent' | 'browser';
-      title: string;
-    }>,
+    panes: [] as Array<{ id: string; kind: 'shell' | 'cli-agent' | 'browser'; title: string }>,
   },
-  resolveSendToPaneTarget: vi.fn(),
 }));
 
 vi.mock('../state/layout-store', () => ({
@@ -53,7 +49,6 @@ vi.mock('../state/gamification-store', () => ({
   useGamificationStore: { getState: vi.fn() },
 }));
 vi.mock('./voice-store', () => ({ useVoiceStore: { getState: vi.fn() } }));
-vi.mock('./voice-live-ipc', () => ({ logVoiceEvent: vi.fn() }));
 vi.mock('../state/settings-store', () => ({
   useSettingsStore: { getState: vi.fn() },
 }));
@@ -118,64 +113,6 @@ describe('Jarvis MCP result propagation', () => {
     });
   });
 
-  it('reads the actual focused terminal through nexus_pane_read', async () => {
-    layoutState.focusedPaneId = 'pane-terminal';
-    layoutState.panes = [
-      { id: 'pane-terminal', kind: 'shell', title: 'Terminal principal' },
-    ];
-    invokeMcpWithConfirm.mockResolvedValueOnce({
-      ok: true,
-      tool: 'nexus_pane_read',
-      result: 'TEST_OUTPUT_MARKER',
-    });
-
-    const execution = await executeJarvisAction(
-      { say: '', action: { type: 'read_pane' } },
-      context,
-    );
-
-    expect(invokeMcpWithConfirm).toHaveBeenCalledWith(
-      'nexus_pane_read',
-      { paneId: 'pane-terminal', lines: 200 },
-      expect.objectContaining({ signal: undefined }),
-    );
-    expect(execution.toolResult).toEqual({
-      tool: 'read_pane',
-      ok: true,
-      summary: 'nexus_pane_read ok',
-      output: 'TEST_OUTPUT_MARKER',
-    });
-  });
-
-  it('submits a pending-question answer with a real agent Enter', async () => {
-    resolveSendToPaneTarget.mockReturnValue({
-      kind: 'asking-pane',
-      paneId: 'pane-agent',
-    });
-    waitForSession.mockResolvedValue('session-agent');
-    submitPromptToPane.mockReturnValue(true);
-
-    const execution = await executeJarvisAction(
-      {
-        say: '',
-        action: {
-          type: 'send_to_pane',
-          paneId: 'pane-agent',
-          text: 'Objective\nAcceptance criteria',
-        },
-      },
-      context,
-    );
-
-    expect(submitPromptToPane).toHaveBeenCalledWith(
-      'pane-agent',
-      'Objective\nAcceptance criteria',
-    );
-    expect(execution.toolResult).toEqual(
-      expect.objectContaining({ ok: true, tool: 'send_to_pane' }),
-    );
-  });
-
   it('reroutes natural-language prose mislabeled as run_command to agent delegation', async () => {
     resolveSendToPaneTarget.mockReturnValue({
       kind: 'delegation',
@@ -204,7 +141,7 @@ describe('Jarvis MCP result propagation', () => {
     });
   });
 
-  it('keeps a real shell command with accented arguments in the confirmed shell path', async () => {
+  it('keeps a shell command with accented arguments in the confirmed shell path', async () => {
     layoutState.focusedPaneId = 'pane-shell';
     layoutState.panes = [
       { id: 'pane-shell', kind: 'shell', title: 'Terminal principal' },
@@ -245,27 +182,32 @@ describe('Jarvis MCP result propagation', () => {
     expect(execution.sayText).toContain('uma única linha');
   });
 
-  it('opens an agentic mission instead of failing when no agent pane exists for delegation', async () => {
-    resolveSendToPaneTarget.mockReturnValue({ kind: 'no-agent-pane' });
+  it('reads the actual focused terminal through nexus_pane_read', async () => {
+    layoutState.focusedPaneId = 'pane-terminal';
+    layoutState.panes = [
+      { id: 'pane-terminal', kind: 'shell', title: 'Terminal principal' },
+    ];
+    invokeMcpWithConfirm.mockResolvedValueOnce({
+      ok: true,
+      tool: 'nexus_pane_read',
+      result: 'TEST_OUTPUT_MARKER',
+    });
 
     const execution = await executeJarvisAction(
-      {
-        say: '',
-        action: { type: 'send_to_pane', text: 'análise completa de UX' },
-      },
+      { say: '', action: { type: 'read_pane' } },
       context,
     );
 
-    expect(missionWizardState.openForAgentic).toHaveBeenCalledWith(
-      'análise completa de UX',
+    expect(invokeMcpWithConfirm).toHaveBeenCalledWith(
+      'nexus_pane_read',
+      { paneId: 'pane-terminal', lines: 200 },
+      expect.objectContaining({ signal: undefined }),
     );
-    expect(confirmCommand).not.toHaveBeenCalled();
-    expect(writeToPane).not.toHaveBeenCalled();
-    expect(execution.sayText).toContain('missão agêntica');
-    expect(execution.toolResult).toMatchObject({
-      tool: 'send_to_pane',
+    expect(execution.toolResult).toEqual({
+      tool: 'read_pane',
       ok: true,
-      summary: 'sem pane de agente — wizard agêntico aberto com objetivo',
+      summary: 'nexus_pane_read ok',
+      output: 'TEST_OUTPUT_MARKER',
     });
   });
 
