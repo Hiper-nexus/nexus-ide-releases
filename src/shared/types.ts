@@ -735,7 +735,7 @@ export interface NexusApi {
     openSoundSettings(): void;
     onWakeDetected(cb: () => void): Unsubscribe;
     jarvis(req: JarvisRequest): Promise<JarvisReply>;
-    /** Native confirmation before a voice-issued shell command runs (SEC#6). */
+    /** Main-owned risk gate; prompts only for destructive/deploy commands. */
     confirmCommand(command: string): Promise<boolean>;
     /** macOS: tccutil reset Microphone <bundleId> + relaunch (grant TCC fantasma). */
     resetMicPermission(): Promise<{ ok: boolean; error?: string }>;

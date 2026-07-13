@@ -18,7 +18,6 @@ import { launchSquadMission } from '../orch/mission-launcher';
 import { isMissingModelKeyError } from '../lib/credential-errors';
 import { invokeMcpWithConfirm, mapActionToTool } from '../services/mcp-bridge';
 import { reopenMission } from '../orch/mission-reopen';
-import { delegationConfirmPrompt, setPendingDelegation } from './delegation-confirm';
 import { isOrchestratorPane, resolveSendToPaneTarget } from './send-to-pane-target';
 import { requestPaneClose } from '../terminal/pane-close-guard';
 import { sanitizeMcpResultOutput } from './mcp-result-output';
@@ -26,8 +25,10 @@ import { currentViewNarration, currentViewToolOutput } from './current-view-read
 import { waitForActionEvidence } from './action-evidence';
 import { resolveWorkspaceByVoiceName } from './workspace-name-resolver';
 import { logVoiceEvent } from './voice-live-ipc';
-import { followUpAuthority } from './follow-up-authority';
-import { prepareDelegationPrompt } from './delegation-prompt';
+import {
+  isExecutionReadyDelegationPrompt,
+  prepareDelegationPrompt,
+} from './delegation-prompt';
 
 export interface JarvisExecutionResult {
   sayText: string;
@@ -234,7 +235,11 @@ export async function executeJarvisAction(
   checkpoint(control);
   let sayText = reply.say;
   let expectReply = reply.expectReply;
-  const action = reply.action;
+  const action: JarvisAction =
+    reply.action.type === 'run_command' &&
+    isExecutionReadyDelegationPrompt(reply.action.command)
+      ? { type: 'send_to_pane', text: reply.action.command }
+      : reply.action;
 
   if (action.type !== 'none') {
     // run_command must reach the focused shell branch below. The mission MCP
@@ -747,9 +752,8 @@ export async function executeJarvisAction(
     const { root, focusedPaneId } = useLayoutStore.getState();
     // NEW-B + C3 (follow-ups 2/4b): resposta roteada de pergunta pendente
     // (paneId presente) escreve de volta SÓ em pane de agente/orquestrador
-    // vivo; pane sumido/inválido AVISA e re-pergunta — nunca vira "Confirmo?"
-    // da resposta nem escrita em shell. Delegação (sem paneId) segue no gate
-    // de confirmação por voz; o fallback silencioso pro pane focado fica morto.
+    // vivo; pane sumido/inválido AVISA e re-pergunta — nunca vira comando em
+    // shell. Delegação rotineira segue direto; só destrutivo/deploy confirma.
     const target = resolveSendToPaneTarget(action.paneId, listPanes(root), focusedPaneId);
     if (target.kind === 'asking-pane') {
       const commandId = crypto.randomUUID();
@@ -798,72 +802,51 @@ export async function executeJarvisAction(
         summary: 'nome de pane ambíguo — envio bloqueado',
       };
     } else if (target.kind === 'no-agent-pane') {
-      // Gemini occasionally emits send_to_pane immediately after open_terminal
-      // for “digite/mande este comando”. Recover deterministically only when a
-      // shell is focused, and retain the same native human confirmation as
-      // run_command. Nothing is written silently.
-      const focused = focusedPaneId
-        ? listPanes(root).find((pane) => pane.id === focusedPaneId)
-        : undefined;
-      if (focused?.kind === 'shell') {
-        const sessionId = await waitForSession(focused.id, 5_000);
-        checkpoint(control);
-        const approved = Boolean(sessionId) &&
-          await window.nexus.voice.confirmCommand(action.text);
-        checkpoint(control);
-        const ok = approved && writeToPane(focused.id, `${action.text}\n`);
-        if (ok) markEffect(control);
-        sayText = ok
-          ? 'Comando enviado ao terminal.'
-          : approved
-            ? 'Não consegui escrever no terminal.'
-            : 'Cancelei, não escrevi no terminal.';
-        toolResult = {
-          tool: 'run_command',
-          ok,
-          summary: ok
-            ? 'send_to_pane recuperado como comando confirmado no terminal focado'
-            : approved
-              ? 'falha ao escrever no terminal focado'
-              : 'comando recusado ou terminal sem sessão',
-          output: { recoveredFrom: 'send_to_pane', paneId: focused.id },
-        };
-      } else {
-        sayText =
-          'Não achei um pane de agente pra receber a missão — abre o orquestrador primeiro.';
-        toolResult = {
-          tool: action.type,
-          ok: false,
-          summary: 'sem pane de agente válido (fallback silencioso bloqueado)',
-        };
-      }
+      // send_to_pane is natural-language delegation only. Never reinterpret it
+      // as shell input: that produced a misleading native command dialog for
+      // ordinary mission objectives. Explicit shell requests still use the
+      // dedicated run_command branch and retain its confirmation guardrail.
+      sayText =
+        'Não achei um pane de agente pra receber a missão — abre o orquestrador primeiro.';
+      toolResult = {
+        tool: action.type,
+        ok: false,
+        summary: 'sem pane de agente válido (delegação não virou comando de shell)',
+      };
     } else {
-      // C3: delegação NÃO dispara direto — arma a pendência e pergunta.
       const missionPrompt = prepareDelegationPrompt(action.text);
-      setPendingDelegation({
-        targetPaneId: target.orchestratorPaneId,
-        text: missionPrompt,
-        createdAt: Date.now(),
-        ...(control.originCallId ? { originCallId: control.originCallId } : {}),
-      });
-      const confirmationDeadline = followUpAuthority.arm();
+      const commandId = crypto.randomUUID();
+      const sessionId = await waitForSession(target.orchestratorPaneId, 750);
+      checkpoint(control);
+      const ok = Boolean(sessionId) &&
+        writeToPane(target.orchestratorPaneId, `${missionPrompt}\n`);
+      if (ok) markEffect(control);
       logVoiceEvent(
-        'info',
-        'jarvis.delegationAuthorityArmed',
-        'confirmação de delegação autorizada',
+        ok ? 'info' : 'warn',
+        ok ? 'pane.delegationSubmitted' : 'pane.delegationFailed',
+        ok ? 'missão submetida ao orquestrador' : 'sessão do orquestrador indisponível',
         {
-          durationMs: Math.round(followUpAuthority.remainingMs()),
-          deadlineMonotonicMs: Math.round(confirmationDeadline),
+          commandId,
+          paneId: target.orchestratorPaneId,
+          sessionReady: Boolean(sessionId),
           sourceChars: action.text.length,
           promptChars: missionPrompt.length,
         },
       );
-      sayText = delegationConfirmPrompt(action.text);
-      expectReply = true;
+      sayText = ok
+        ? 'Missão enviada ao squad.'
+        : 'Não consegui enviar a missão ao orquestrador.';
       toolResult = {
         tool: action.type,
-        ok: true,
-        summary: 'missão aguardando confirmação por voz',
+        ok,
+        summary: ok
+          ? `missão submetida ao pane (${commandId})`
+          : 'falha ao escrever no orquestrador',
+        output: {
+          commandId,
+          paneId: target.orchestratorPaneId,
+          sessionReady: Boolean(sessionId),
+        },
       };
     }
   } else if (action.type === 'run_command') {

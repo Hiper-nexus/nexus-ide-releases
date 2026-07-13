@@ -18,7 +18,7 @@ const REQUIREMENTS_HEADING_RE =
 const ACCEPTANCE_HEADING_RE =
   /(?:^|\n)\s*(?:acceptance criteria|crit[eé]rios de aceita[cç][aã]o|aceite)\s*:/i;
 
-function isExecutionReady(text: string): boolean {
+export function isExecutionReadyDelegationPrompt(text: string): boolean {
   return (
     OBJECTIVE_HEADING_RE.test(text) &&
     REQUIREMENTS_HEADING_RE.test(text) &&
@@ -32,7 +32,7 @@ function isExecutionReady(text: string): boolean {
  */
 export function prepareDelegationPrompt(text: string): string {
   const trimmed = text.trim();
-  if (isExecutionReady(trimmed)) {
+  if (isExecutionReadyDelegationPrompt(trimmed)) {
     return trimmed.slice(0, DELEGATION_PROMPT_MAX_CHARS);
   }
 

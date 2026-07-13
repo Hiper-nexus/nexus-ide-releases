@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DELEGATION_PROMPT_MAX_CHARS,
+  isExecutionReadyDelegationPrompt,
   prepareDelegationPrompt,
 } from './delegation-prompt';
 
@@ -13,6 +14,17 @@ describe('prepareDelegationPrompt', () => {
     expect(prompt).toContain('Acceptance criteria:');
     expect(prompt).toContain('Inspect the existing implementation');
     expect(prompt).toContain('Run the relevant focused checks');
+  });
+
+  it('recognizes a structured mission even when a provider mislabeled it as a command', () => {
+    expect(isExecutionReadyDelegationPrompt([
+      'Objective: Investigate the scheduling bug.',
+      'Execution requirements:',
+      '- Inspect logs and source code.',
+      'Acceptance criteria:',
+      '- Identify the trigger.',
+    ].join('\n'))).toBe(true);
+    expect(isExecutionReadyDelegationPrompt('npm run test\nnpm run typecheck')).toBe(false);
   });
 
   it('preserves a provider-authored structured briefing without duplicating it', () => {

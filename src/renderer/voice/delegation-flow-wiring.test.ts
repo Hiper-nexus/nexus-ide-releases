@@ -103,16 +103,12 @@ describe('tool nativa do Live consome a pendência (review final, item 3)', () =
   });
 });
 
-describe('confirmação de delegação possui o próximo sim/não', () => {
-  it('arma autoridade quando cria a pendência e resolve o fallback passivo no Classic', () => {
-    const pendingIdx = executorSource.indexOf('setPendingDelegation({');
-    const authorityIdx = executorSource.indexOf('followUpAuthority.arm()', pendingIdx);
-    expect(pendingIdx).toBeGreaterThanOrEqual(0);
-    expect(authorityIdx).toBeGreaterThan(pendingIdx);
-    expect(executorSource).toContain('jarvis.delegationAuthorityArmed');
-    expect(controllerSource).toContain('isPendingDelegationConfirmation(text, Date.now())');
-    expect(controllerSource).toContain("via: 'pending-delegation-reply'");
-    expect(controllerSource).toContain('utterance.rawMaxRms < HOT_COMMAND_MIN_PEAK_RMS');
+describe('delegação rotineira segue direto para o orquestrador', () => {
+  it('não cria uma segunda rodada de confirmação por voz', () => {
+    expect(executorSource).not.toContain('setPendingDelegation({');
+    expect(executorSource).not.toContain('jarvis.delegationAuthorityArmed');
+    expect(executorSource).not.toContain('delegationConfirmPrompt(action.text)');
+    expect(executorSource).toContain('pane.delegationSubmitted');
   });
 
   it('prepara briefing executável só para missão nova, preservando respostas roteadas', () => {
@@ -125,7 +121,7 @@ describe('confirmação de delegação possui o próximo sim/não', () => {
       '`${action.text}\\n`',
     );
     expect(executorSource.slice(delegationIdx, delegationIdx + 400)).toContain(
-      'text: missionPrompt',
+      '`${missionPrompt}\\n`',
     );
   });
 });
@@ -156,6 +152,17 @@ describe('continuidade pós-tool do Gemini Live', () => {
     );
     expect(completionBlock).toContain('isListening(capture.current)');
     expect(completionBlock).toContain('finishAndProcessFacade(capture.current, busy)');
+  });
+
+  it('reabre continuidade quando uma tool local termina sem captura ativa', () => {
+    const completionIdx = controllerSource.indexOf(
+      'onLiveToolTurnComplete((event) =>',
+    );
+    const completionBlock = controllerSource.slice(completionIdx, completionIdx + 3_500);
+
+    expect(completionBlock).toContain('releaseAfterLiveToolAnswer({');
+    expect(completionBlock).toContain('audioAlreadyDrained: usedLocalNarration');
+    expect(completionBlock).toContain('if (!busy.current && capture.current)');
   });
 
   it('libera uma tool já concluída antes de esperar transcript ou timeout', () => {

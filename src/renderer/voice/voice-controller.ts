@@ -96,6 +96,7 @@ import { finishAndProcess, type FinishAndProcessDeps } from './voice-finish-and-
 import {
   cancelLiveFollowUp,
   notifyLiveToolTurnComplete,
+  releaseAfterLiveToolAnswer,
 } from './live-followup';
 import {
   markLiveMicFrameOffered,
@@ -981,6 +982,7 @@ export function useVoiceController(): void {
         return;
       }
       void (async () => {
+        let usedLocalNarration = false;
         try {
           // IPC completion can overtake WebAudio scheduling by a few frames.
           // Give the first real PCM chunk a short chance to prove narration
@@ -1002,6 +1004,7 @@ export function useVoiceController(): void {
               { callId: event.callId, chars: silentNarration.length },
             );
             await speakRealtimeToolResult(silentNarration);
+            usedLocalNarration = true;
           }
         } catch (error) {
           logVoiceEvent('error', 'jarvis.liveToolNarrationFallbackFailed', errMsg(error), {
@@ -1009,20 +1012,30 @@ export function useVoiceController(): void {
           });
         } finally {
           notifyLiveToolTurnComplete(event);
-          if (
-            !isCorrelated() ||
-            !capture.current ||
-            !isListening(capture.current)
-          ) {
+          if (!isCorrelated()) return;
+          if (capture.current && isListening(capture.current)) {
+            logVoiceEvent(
+              'info',
+              'jarvis.liveToolCaptureFinalized',
+              'captura anterior encerrada no completion da ferramenta',
+              { turnId: event.turnId, callId: event.callId },
+            );
+            void finishAndProcessFacade(capture.current, busy);
             return;
           }
-          logVoiceEvent(
-            'info',
-            'jarvis.liveToolCaptureFinalized',
-            'captura anterior encerrada no completion da ferramenta',
-            { turnId: event.turnId, callId: event.callId },
-          );
-          void finishAndProcessFacade(capture.current, busy);
+          if (!busy.current && capture.current) {
+            releaseAfterLiveToolAnswer({
+              busy,
+              capture: capture.current,
+              beginListening,
+              wakeAutoStop,
+              sessionId: event.sessionId,
+              turnId: event.turnId,
+              callId: event.callId,
+              canReopen: isCorrelated,
+              audioAlreadyDrained: usedLocalNarration,
+            });
+          }
         }
       })();
     });

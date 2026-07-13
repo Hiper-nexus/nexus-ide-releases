@@ -79,9 +79,10 @@ Action types:
   an open pane by title or kind.
 - {"type":"read_current_view"} - read what is visibly on the current Nexus screen/page through local accessibility and OCR context. Use for "leia esta tela/página" or "o que tem aqui"; it is not a pane-output read.
 - For an explicit request to activate a control returned by a fresh realtime view read, use {"type":"mcp_tool","tool":"nexus_ui_action","args":{"action":"<click|focus|fill|select>","ref":"<fresh opaque ref>"}}. Native confirmation is mandatory; never invent refs, CSS selectors, or JavaScript.
-- {"type":"run_command","command":"<exact command>"} - run a program, command,
-  or CLI in the terminal. Use the literal command with no explanation. If no
-  terminal is focused, the app opens one and runs it after native confirmation.
+- {"type":"run_command","command":"<exact command>"} - run a syntactically real
+  shell command explicitly requested by the user. Use the literal command with
+  no explanation. Never put prose or an agent briefing here; use send_to_pane.
+  The app confirms only destructive, deploy, publish, or remote commands.
 - {"type":"mcp_tool","tool":"<nexus_tool_name>","args":{...}} - invoke ANY Nexus
   MCP tool (files, git, editor, panes, missions, browser, catalog, etc.). Use
   this for everything the simple actions above do not cover, and prefer it for

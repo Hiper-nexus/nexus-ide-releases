@@ -2053,6 +2053,7 @@ describe('LiveTransportController', () => {
     const controller = new LiveTransportController(emit, session);
 
     await controller.onStart();
+    controller.beginTurn('route-answer-turn');
 
     // Upstream: uma pane delegada narrou uma pergunta pendente.
     controller.noteNarratedQuestion('pane-42', 'Qual banco de dados devo usar?');
@@ -2100,6 +2101,16 @@ describe('LiveTransportController', () => {
     });
     controller.toolResult(rendererResult!);
     expect(provider.sendToolResult).not.toHaveBeenCalled();
+    expect(
+      emitted.filter((event) => event.channel === VOICE_CHANNELS.liveToolTurnComplete),
+    ).toContainEqual({
+      channel: VOICE_CHANNELS.liveToolTurnComplete,
+      payload: expect.objectContaining({
+        sessionId: session.getState().sessionId,
+        turnId: 'route-answer-turn',
+        callId: routed.callId,
+      }),
+    });
 
     vi.doUnmock('./voice-config-store');
     vi.doUnmock('./voice-secrets');

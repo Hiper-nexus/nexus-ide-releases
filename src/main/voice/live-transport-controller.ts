@@ -616,6 +616,33 @@ export class LiveTransportController {
     const status = event.ok ? 'ok' : 'failed';
     const summary = event.summary.trim() || status;
     this.recordToolResultContext(event.tool, status, summary);
+    if (event.callId && isLocalToolCallId(event.callId)) {
+      this.emitLocalToolTurnComplete(event);
+    }
+  }
+
+  private emitLocalToolTurnComplete(event: JarvisLiveToolResultEvent): void {
+    const sessionId = this._fsm.getState().sessionId;
+    const turnId = this.activeTurnId;
+    if (!sessionId || !turnId || sessionId !== event.sessionId || !event.callId) {
+      logVoice(
+        'warn',
+        'live.localToolTurnUncorrelated',
+        'tool local terminou sem sessão/turno para continuidade',
+        { callId: event.callId },
+      );
+      return;
+    }
+    this.emit(VOICE_CHANNELS.liveToolTurnComplete, {
+      sessionId,
+      turnId,
+      callId: event.callId,
+      at: this.now(),
+    });
+    logVoice('info', 'live.localToolTurnComplete', 'tool local concluída no renderer', {
+      callId: event.callId,
+      turnId,
+    });
   }
 
   private recordToolResultContext(
