@@ -8,7 +8,11 @@ import { useHomeStore } from '../state/home-store';
 import { useGamificationStore } from '../state/gamification-store';
 import { useVoiceStore } from './voice-store';
 import { useSettingsStore } from '../state/settings-store';
-import { waitForSession, writeToPane } from '../terminal/terminal-host';
+import {
+  submitPromptToPane,
+  waitForSession,
+  writeToPane,
+} from '../terminal/terminal-host';
 import {
   assessTerminalVisibility,
   readUiVisibilityState,
@@ -764,7 +768,7 @@ export async function executeJarvisAction(
       });
       const sessionId = await waitForSession(target.paneId, 750);
       checkpoint(control);
-      const ok = Boolean(sessionId) && writeToPane(target.paneId, `${action.text}\n`);
+      const ok = Boolean(sessionId) && submitPromptToPane(target.paneId, action.text);
       logVoiceEvent(ok ? 'info' : 'warn', ok ? 'pane.deliverySubmitted' : 'pane.deliveryFailed', ok ? 'texto submetido ao PTY' : 'sessão do pane indisponível', {
         commandId,
         paneId: target.paneId,
@@ -819,7 +823,7 @@ export async function executeJarvisAction(
       const sessionId = await waitForSession(target.orchestratorPaneId, 750);
       checkpoint(control);
       const ok = Boolean(sessionId) &&
-        writeToPane(target.orchestratorPaneId, `${missionPrompt}\n`);
+        submitPromptToPane(target.orchestratorPaneId, missionPrompt);
       if (ok) markEffect(control);
       logVoiceEvent(
         ok ? 'info' : 'warn',

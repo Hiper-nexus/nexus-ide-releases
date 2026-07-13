@@ -7,12 +7,14 @@ const {
   missionWizardState,
   resolveSendToPaneTarget,
   setPendingDelegation,
+  submitPromptToPane,
   waitForSession,
   writeToPane,
 } = vi.hoisted(() => ({
   invokeMcpWithConfirm: vi.fn(),
   resolveSendToPaneTarget: vi.fn(),
   setPendingDelegation: vi.fn(),
+  submitPromptToPane: vi.fn(),
   waitForSession: vi.fn(),
   writeToPane: vi.fn(),
   missionWizardState: {
@@ -49,6 +51,7 @@ vi.mock('../state/settings-store', () => ({
   useSettingsStore: { getState: vi.fn() },
 }));
 vi.mock('../terminal/terminal-host', () => ({
+  submitPromptToPane,
   waitForSession,
   writeToPane,
 }));
@@ -215,14 +218,14 @@ describe('Jarvis MCP result propagation', () => {
       orchestratorPaneId: 'pane-orq',
     });
     waitForSession.mockResolvedValueOnce('session-orq');
-    writeToPane.mockReturnValueOnce(true);
+    submitPromptToPane.mockReturnValueOnce(true);
 
     const execution = await executeJarvisAction(
       { say: '', action: { type: 'send_to_pane', text: 'corrigir o login' } },
       context,
     );
 
-    expect(writeToPane).toHaveBeenCalledWith(
+    expect(submitPromptToPane).toHaveBeenCalledWith(
       'pane-orq',
       expect.stringContaining('Objective: corrigir o login'),
     );
@@ -241,7 +244,7 @@ describe('Jarvis MCP result propagation', () => {
       orchestratorPaneId: 'pane-orq',
     });
     waitForSession.mockResolvedValueOnce('session-orq');
-    writeToPane.mockReturnValueOnce(true);
+    submitPromptToPane.mockReturnValueOnce(true);
     const mission = [
       'Objective: Investigate the scheduling bug.',
       'Execution requirements:',
@@ -255,7 +258,7 @@ describe('Jarvis MCP result propagation', () => {
       context,
     );
 
-    expect(writeToPane).toHaveBeenCalledWith('pane-orq', `${mission}\n`);
+    expect(submitPromptToPane).toHaveBeenCalledWith('pane-orq', mission);
     expect(execution.toolResult).toMatchObject({ tool: 'send_to_pane', ok: true });
   });
 

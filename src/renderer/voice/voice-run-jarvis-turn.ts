@@ -7,7 +7,10 @@
 import type React from 'react';
 import { useVoiceStore } from './voice-store';
 import { useGamificationStore } from '../state/gamification-store';
-import { getPaneSessionId, writeToPane } from '../terminal/terminal-host';
+import {
+  getPaneSessionId,
+  submitPromptToPane,
+} from '../terminal/terminal-host';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { buildJarvisContext, findOrchestratorPane } from './jarvis-screen-context';
@@ -103,9 +106,9 @@ export async function runJarvisTurn(
   } else if (delegationReply.kind !== 'none') {
     let say = 'Cancelei a missão.';
     if (delegationReply.kind === 'dispatch') {
-      const ok = writeToPane(
+      const ok = submitPromptToPane(
         delegationReply.delegation.targetPaneId,
-        `${delegationReply.delegation.text}\n`,
+        delegationReply.delegation.text,
       );
       say = ok
         ? 'Missão confirmada e enviada ao squad.'
@@ -307,7 +310,7 @@ export function routePrompt(text: string): string | null {
       ? findOrchestratorPane(root) ?? focusedPaneId
       : focusedPaneId;
   if (!targetPaneId) return null;
-  const ok = writeToPane(targetPaneId, `${text}\n`);
+  const ok = submitPromptToPane(targetPaneId, text);
   return ok ? targetPaneId : null;
 }
 

@@ -118,10 +118,10 @@ describe('delegação rotineira segue direto para o orquestrador', () => {
     expect(directReplyIdx).toBeGreaterThanOrEqual(0);
     expect(delegationIdx).toBeGreaterThan(directReplyIdx);
     expect(executorSource.slice(directReplyIdx, delegationIdx)).toContain(
-      '`${action.text}\\n`',
+      'submitPromptToPane(target.paneId, action.text)',
     );
     expect(executorSource.slice(delegationIdx, delegationIdx + 400)).toContain(
-      '`${missionPrompt}\\n`',
+      'submitPromptToPane(target.orchestratorPaneId, missionPrompt)',
     );
   });
 });

@@ -24,9 +24,9 @@ vi.mock('./voice-store', () => ({
 vi.mock('../state/gamification-store', () => ({
   useGamificationStore: { getState: () => ({ receive: vi.fn() }) },
 }));
-const writeToPane = vi.fn(() => true);
+const submitPromptToPane = vi.fn(() => true);
 vi.mock('../terminal/terminal-host', () => ({
-  writeToPane: (...a: unknown[]) => writeToPane(...(a as [])),
+  submitPromptToPane: (...a: unknown[]) => submitPromptToPane(...(a as [])),
   getPaneSessionId: vi.fn(() => null),
 }));
 vi.mock('../state/layout-store', () => ({
@@ -140,7 +140,7 @@ describe('interceptação C3 em runJarvisTurn (follow-up 3i)', () => {
   it('"sim" com pendência → escreve no pane alvo e NUNCA chama o cérebro', async () => {
     pending();
     await turn('sim');
-    expect(writeToPane).toHaveBeenCalledWith('pane-orq', 'Fix login bug\n');
+    expect(submitPromptToPane).toHaveBeenCalledWith('pane-orq', 'Fix login bug');
     expect(brain).not.toHaveBeenCalled();
     expect(peekPendingDelegation(Date.now())).toBeNull();
   });
@@ -148,7 +148,7 @@ describe('interceptação C3 em runJarvisTurn (follow-up 3i)', () => {
   it('"não, cancela" com pendência → não escreve, não chama o cérebro', async () => {
     pending();
     await turn('não, cancela');
-    expect(writeToPane).not.toHaveBeenCalled();
+    expect(submitPromptToPane).not.toHaveBeenCalled();
     expect(brain).not.toHaveBeenCalled();
     expect(logVoiceEvent).toHaveBeenCalledWith(
       'info',
@@ -161,7 +161,7 @@ describe('interceptação C3 em runJarvisTurn (follow-up 3i)', () => {
   it('outro assunto com pendência → drop AVISADO no HUD e o turno segue pro cérebro', async () => {
     pending();
     await turn('abre o navegador pra mim');
-    expect(writeToPane).not.toHaveBeenCalled();
+    expect(submitPromptToPane).not.toHaveBeenCalled();
     expect(setNote).toHaveBeenCalledWith(expect.stringContaining('descartada'));
     expect(logVoiceEvent).toHaveBeenCalledWith(
       'info',
@@ -190,6 +190,6 @@ describe('interceptação C3 em runJarvisTurn (follow-up 3i)', () => {
   it('sem pendência, "sim" é turno normal → cérebro chamado', async () => {
     await turn('sim');
     expect(brain).toHaveBeenCalledTimes(1);
-    expect(writeToPane).not.toHaveBeenCalled();
+    expect(submitPromptToPane).not.toHaveBeenCalled();
   });
 });

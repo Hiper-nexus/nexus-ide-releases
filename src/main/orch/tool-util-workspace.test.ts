@@ -85,15 +85,22 @@ describe('worker handoff capability contract', () => {
 
 describe('agent prompt injection', () => {
   it('submits multiline briefs as one bracketed-paste transaction', async () => {
-    const pending = injectPrompt('session-1', 'line one\nline two');
-    await new Promise((resolve) => setTimeout(resolve, 170));
-    await pending;
+    vi.useFakeTimers();
+    try {
+      const pending = injectPrompt('session-1', 'line one\nline two');
+      await vi.advanceTimersByTimeAsync(249);
+      expect(stubs.writeSession).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(1);
+      await pending;
 
-    expect(stubs.writeSession).toHaveBeenNthCalledWith(
-      1,
-      'session-1',
-      '\x1b[200~line one\nline two\x1b[201~',
-    );
-    expect(stubs.writeSession).toHaveBeenNthCalledWith(2, 'session-1', '\r');
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(
+        1,
+        'session-1',
+        '\x1b[200~line one\nline two\x1b[201~',
+      );
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(2, 'session-1', '\r');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
