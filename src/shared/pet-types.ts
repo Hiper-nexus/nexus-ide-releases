@@ -13,6 +13,8 @@ export const PET_CHANNELS = {
   prefsChanged: 'pet:prefsChanged',
   /** event: main → janela do pet. Evento operacional para o balão/mood. */
   event: 'pet:event',
+  /** send: pet → main. React já assinou eventos; agora a fila pode ser solta. */
+  rendererReady: 'pet:rendererReady',
   /** event: main → janela do pet. Direção de "look" (0..15) ou null. */
   look: 'pet:look',
   /** event: main → janela do pet. Alinha o conteúdo ao canto sem overhang. */
@@ -50,6 +52,14 @@ export const PET_CHANNELS = {
   libraryApply: 'pet:libraryApply',
   /** invoke: janela principal → main. Sheet (data URL) para preview na UI. */
   libraryPreview: 'pet:libraryPreview',
+  /** invoke: janela principal → main. Lista pacotes em ~/.codex/pets. */
+  installedList: 'pet:installedList',
+  /** invoke: janela principal → main. Aplica um pacote local instalado. */
+  installedApply: 'pet:installedApply',
+  /** invoke: janela principal → main. Preview de pacote local instalado. */
+  installedPreview: 'pet:installedPreview',
+  /** invoke: janela principal → main. Apaga pacote em ~/.codex/pets/<id>. */
+  installedDelete: 'pet:installedDelete',
   /** invoke: janela principal → main. Dialog nativo já em ~/.codex/pets. */
   pickSheet: 'pet:pickSheet',
   /** invoke: janela principal → main. Escolhe a imagem-base (só o PATH). */
@@ -261,6 +271,40 @@ export interface PetLibraryPreviewResult {
   error?: string;
 }
 
+/** Pet local criado pelo Pet Studio / Codex em ~/.codex/pets/<id>. */
+export interface PetInstalledEntry {
+  id: string;
+  slug: string;
+  label: string;
+  note?: string;
+}
+
+export interface PetInstalledListResult {
+  ok: boolean;
+  items?: PetInstalledEntry[];
+  error?: string;
+}
+
+export interface PetInstalledApplyResult {
+  ok: boolean;
+  name?: string;
+  prefs?: PetPrefs;
+  error?: string;
+}
+
+export interface PetInstalledPreviewResult {
+  ok: boolean;
+  name?: string;
+  sheet?: PetSheet;
+  error?: string;
+}
+
+export interface PetInstalledDeleteResult {
+  ok: boolean;
+  name?: string;
+  error?: string;
+}
+
 /** Resultado do dialog nativo de spritesheet (abre em ~/.codex/pets). */
 export interface PetPickSheetResult {
   ok: boolean;
@@ -322,6 +366,8 @@ export interface NexusPetApi {
   setPrefs(patch: Partial<PetPrefs>): Promise<PetPrefs>;
   onPrefsChanged(cb: (prefs: PetPrefs) => void): () => void;
   onEvent(cb: (event: PetEvent) => void): () => void;
+  /** Handshake após registrar onEvent; impede perder avisos durante o boot. */
+  ready(): void;
   /** Direção do olhar (0..15, horário a partir de cima) ou null = idle. */
   onLook(cb: (dir: number | null) => void): () => void;
   /** Ancoragem visual dentro da janela transparente segura. */

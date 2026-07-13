@@ -5,6 +5,7 @@ import {
   PET_PRESETS,
   SHEET_DATA_URL_MAX,
   type PetGalleryEntry,
+  type PetInstalledEntry,
   type PetLibraryEntry,
   type PetPrefs,
   type PetPreset,
@@ -22,6 +23,7 @@ import {
   petSlugFromImagePath,
 } from '../../pet/pet-hatch-flow';
 import { useToastStore } from '../../state/toast-store';
+import { askConfirm } from '../../state/confirm-store';
 
 /**
  * Settings → Aparência → Pet de mesa: liga/desliga o companion, escolhe o
@@ -62,6 +64,28 @@ type PetSectionApi = {
     sheet?: PetSheet;
     error?: string;
   }>;
+  installedList?(): Promise<{
+    ok: boolean;
+    items?: PetInstalledEntry[];
+    error?: string;
+  }>;
+  installedApply?(id: string): Promise<{
+    ok: boolean;
+    name?: string;
+    prefs?: PetPrefs;
+    error?: string;
+  }>;
+  installedPreview?(id: string): Promise<{
+    ok: boolean;
+    name?: string;
+    sheet?: PetSheet;
+    error?: string;
+  }>;
+  installedDelete?(id: string): Promise<{
+    ok: boolean;
+    name?: string;
+    error?: string;
+  }>;
   pickSheet?(): Promise<{
     ok: boolean;
     canceled?: boolean;
@@ -79,18 +103,21 @@ type PetSectionApi = {
 /** Slug de pet a partir do nome do arquivo-base (ex.: "Meu Gato.png" → meu-gato). */
 export { hatchPetIntent, petSlugFromImagePath };
 
-/** Card da biblioteca com preview do frame idle (lazy load do sheet). */
+/** Card da biblioteca / meus pets com preview idle (lazy). */
 function LibraryPetCard({
   entry,
   busy,
   active,
   onPick,
+  onDelete,
   loadPreview,
 }: {
-  entry: PetLibraryEntry;
+  entry: PetLibraryEntry | PetInstalledEntry;
   busy: boolean;
   active: boolean;
   onPick: () => void;
+  /** Só pets do utilizador (~/.codex/pets) — biblioteca inclusa não apaga. */
+  onDelete?: () => void;
   loadPreview?: (id: string) => Promise<{
     ok: boolean;
     sheet?: PetSheet;
@@ -113,30 +140,66 @@ function LibraryPetCard({
   }, [entry.id, loadPreview, sheet, failed]);
 
   return (
-    <button
-      type="button"
+    <div
       role="listitem"
-      className={`settings-pet-library__card${active ? ' settings-pet-library__card--active' : ''}`}
-      disabled={busy}
-      title={entry.note ? `${entry.label} — ${entry.note}` : entry.label}
-      onClick={onPick}
+      className={[
+        'settings-pet-library__card',
+        active ? 'settings-pet-library__card--active' : '',
+        onDelete ? 'settings-pet-library__card--mine' : '',
+        busy ? 'settings-pet-library__card--busy' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
     >
-      <span className="settings-pet-library__preview" aria-hidden>
-        {sheet ? (
-          <SheetPetSprite sheet={sheet} anim="idle" size={56} />
-        ) : (
-          <span className="settings-pet-library__preview-placeholder">
-            {failed ? '?' : '…'}
-          </span>
-        )}
-      </span>
-      <span className="settings-pet-library__name">
-        {busy ? '…' : entry.label}
-      </span>
-      {entry.note && (
-        <span className="settings-pet-library__note">{entry.note}</span>
+      {active && (
+        <span className="settings-pet-library__badge" aria-label="Pet em uso">
+          Em uso
+        </span>
       )}
-    </button>
+      {onDelete && (
+        <button
+          type="button"
+          className="settings-pet-library__delete nodrag"
+          disabled={busy}
+          aria-label={`Apagar pet ${entry.label}`}
+          title="Apagar de ~/.codex/pets"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onDelete();
+          }}
+        >
+          ×
+        </button>
+      )}
+      <button
+        type="button"
+        className="settings-pet-library__pick"
+        disabled={busy}
+        title={
+          entry.note
+            ? `${entry.label} — ${entry.note}`
+            : `Usar ${entry.label}`
+        }
+        onClick={onPick}
+      >
+        <span className="settings-pet-library__preview" aria-hidden>
+          {sheet ? (
+            <SheetPetSprite sheet={sheet} anim="idle" size={64} />
+          ) : (
+            <span className="settings-pet-library__preview-placeholder">
+              {failed ? '?' : '…'}
+            </span>
+          )}
+        </span>
+        <span className="settings-pet-library__name">
+          {busy ? '…' : entry.label}
+        </span>
+        {entry.note && (
+          <span className="settings-pet-library__note">{entry.note}</span>
+        )}
+      </button>
+    </div>
   );
 }
 
@@ -187,6 +250,9 @@ export function PetSection() {
   const [library, setLibrary] = useState<PetLibraryEntry[] | null>(null);
   const [libraryBusyId, setLibraryBusyId] = useState<string | null>(null);
   const [libraryActiveId, setLibraryActiveId] = useState<string | null>(null);
+  const [installed, setInstalled] = useState<PetInstalledEntry[] | null>(null);
+  const [installedBusyId, setInstalledBusyId] = useState<string | null>(null);
+  const [installedActiveId, setInstalledActiveId] = useState<string | null>(null);
   const [hatchBusy, setHatchBusy] = useState(false);
   const sheetRef = useRef<HTMLInputElement | null>(null);
 
@@ -226,6 +292,17 @@ export function PetSection() {
         }
       });
     }
+    if (petApi.installedList) {
+      void petApi.installedList().then((result) => {
+        if (cancelled) return;
+        if (result.ok && result.items) {
+          setInstalled(result.items);
+          return;
+        }
+        setInstalled([]);
+        if (result.error) setImportNote(result.error);
+      });
+    }
     return () => {
       cancelled = true;
       off();
@@ -246,6 +323,7 @@ export function PetSection() {
       }
       if (result.prefs) setPrefs(result.prefs);
       setLibraryActiveId(id);
+      setInstalledActiveId(null);
       setImportNote(
         `"${result.name ?? id}" da biblioteca aplicado — pet ligado.`,
       );
@@ -255,6 +333,71 @@ export function PetSection() {
       );
     } finally {
       setLibraryBusyId(null);
+    }
+  };
+
+  const onApplyInstalledPet = async (id: string) => {
+    if (!petApi?.installedApply || installedBusyId) return;
+    setInstalledBusyId(id);
+    setImportNote('Aplicando pet criado…');
+    try {
+      const result = await petApi.installedApply(id);
+      if (!result.ok) {
+        setImportNote(result.error ?? 'Não consegui aplicar esse pet.');
+        return;
+      }
+      if (result.prefs) setPrefs(result.prefs);
+      setInstalledActiveId(id);
+      setLibraryActiveId(null);
+      setImportNote(`"${result.name ?? id}" aplicado — pet ligado.`);
+    } catch (err) {
+      setImportNote(
+        `Falha ao aplicar pet (${err instanceof Error ? err.message : 'erro'}).`,
+      );
+    } finally {
+      setInstalledBusyId(null);
+    }
+  };
+
+  const refreshInstalled = async () => {
+    if (!petApi?.installedList) return;
+    const result = await petApi.installedList();
+    if (result.ok && result.items) setInstalled(result.items);
+    else setInstalled([]);
+  };
+
+  const onDeleteInstalledPet = async (entry: PetInstalledEntry) => {
+    if (!petApi?.installedDelete || installedBusyId) return;
+    const ok = await askConfirm({
+      title: `Apagar “${entry.label}”?`,
+      body: `Remove o pacote de ~/.codex/pets/${entry.id}. Não dá para desfazer. A biblioteca inclusa do app não é afectada.`,
+      confirmLabel: 'Apagar pet',
+      danger: true,
+    });
+    if (!ok) return;
+    setInstalledBusyId(entry.id);
+    setImportNote(`A apagar “${entry.label}”…`);
+    try {
+      const result = await petApi.installedDelete(entry.id);
+      if (!result.ok) {
+        setImportNote(result.error ?? 'Não consegui apagar esse pet.');
+        return;
+      }
+      if (installedActiveId === entry.id) {
+        setInstalledActiveId(null);
+        // Se era o pet activo no companion, volta ao operador (evita sheet órfão).
+        if (prefs?.preset === 'sheet') {
+          void petApi.setPrefs({ preset: 'operator' });
+        }
+      }
+      await refreshInstalled();
+      setImportNote(`“${result.name ?? entry.label}” apagado de ~/.codex/pets.`);
+    } catch (err) {
+      setImportNote(
+        `Falha ao apagar (${err instanceof Error ? err.message : 'erro'}).`,
+      );
+    } finally {
+      setInstalledBusyId(null);
     }
   };
 
@@ -533,6 +676,46 @@ export function PetSection() {
               );
             })}
           </div>
+
+          {installed && installed.length > 0 && (
+            <div className="settings-pet-library settings-pet-library--mine">
+              <div className="settings-pet-library__head">
+                <p className="settings-appearance__label">
+                  Meus pets ({installed.length})
+                </p>
+                <span className="settings-pet-library__path" title="Pasta local">
+                  ~/.codex/pets
+                </span>
+              </div>
+              <p className="settings-field__note">
+                Criados no Pet Studio. Clique para usar · × para apagar do
+                disco. O companion só muda quando você escolher.
+              </p>
+              <div className="settings-pet-library__grid" role="list">
+                {installed.map((entry) => (
+                  <LibraryPetCard
+                    key={entry.id}
+                    entry={entry}
+                    busy={installedBusyId === entry.id}
+                    active={
+                      installedActiveId === entry.id && prefs.preset === 'sheet'
+                    }
+                    onPick={() => void onApplyInstalledPet(entry.id)}
+                    onDelete={
+                      petApi.installedDelete
+                        ? () => void onDeleteInstalledPet(entry)
+                        : undefined
+                    }
+                    loadPreview={
+                      petApi.installedPreview
+                        ? (id) => petApi.installedPreview!(id)
+                        : undefined
+                    }
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
           {library && library.length > 0 && (
             <div className="settings-pet-library">

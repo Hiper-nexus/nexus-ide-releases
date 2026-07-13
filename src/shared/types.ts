@@ -10,6 +10,10 @@ import type { OnboardingState, OnboardingPatch } from './onboarding-types';
 import type {
   PetGalleryImportResult,
   PetGalleryListResult,
+  PetInstalledApplyResult,
+  PetInstalledDeleteResult,
+  PetInstalledListResult,
+  PetInstalledPreviewResult,
   PetLibraryApplyResult,
   PetLibraryListResult,
   PetLibraryPreviewResult,
@@ -584,6 +588,14 @@ export interface NexusApi {
     libraryApply(id: string): Promise<PetLibraryApplyResult>;
     /** Sheet para preview na Settings (sem aplicar). */
     libraryPreview(id: string): Promise<PetLibraryPreviewResult>;
+    /** Pacotes locais criados pelo Pet Studio/Codex em ~/.codex/pets. */
+    installedList(): Promise<PetInstalledListResult>;
+    /** Seleciona um pacote local como pet atual. */
+    installedApply(id: string): Promise<PetInstalledApplyResult>;
+    /** Sheet local para preview na Settings (sem aplicar). */
+    installedPreview(id: string): Promise<PetInstalledPreviewResult>;
+    /** Apaga um pacote em ~/.codex/pets/<id> (só pets do utilizador). */
+    installedDelete(id: string): Promise<PetInstalledDeleteResult>;
     /** Dialog nativo de spritesheet, aberto direto em ~/.codex/pets. */
     pickSheet(): Promise<PetPickSheetResult>;
     /** Picker da imagem-base para geração de pet (devolve só o path). */

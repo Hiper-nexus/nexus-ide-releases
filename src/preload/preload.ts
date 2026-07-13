@@ -477,6 +477,13 @@ const api: NexusApi = {
       ipcRenderer.invoke(PET_CHANNELS.libraryApply, id),
     libraryPreview: (id: string) =>
       ipcRenderer.invoke(PET_CHANNELS.libraryPreview, id),
+    installedList: () => ipcRenderer.invoke(PET_CHANNELS.installedList),
+    installedApply: (id: string) =>
+      ipcRenderer.invoke(PET_CHANNELS.installedApply, id),
+    installedPreview: (id: string) =>
+      ipcRenderer.invoke(PET_CHANNELS.installedPreview, id),
+    installedDelete: (id: string) =>
+      ipcRenderer.invoke(PET_CHANNELS.installedDelete, id),
     pickSheet: () => ipcRenderer.invoke(PET_CHANNELS.pickSheet),
     pickImage: () => ipcRenderer.invoke(PET_CHANNELS.pickImage),
   },

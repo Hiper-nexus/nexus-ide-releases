@@ -831,15 +831,15 @@ function createPetWindow(): void {
   });
 
   win.webContents.once('did-finish-load', () => {
-    petReady = true;
+    // did-finish-load ainda é cedo demais: React useEffect pode não ter
+    // registrado onEvent. O renderer envia rendererReady após assinar a fila.
+    petReady = false;
     // O AppKit pode ajustar a posição durante a criação. Reaplicar uma vez
     // depois da surface existir mantém getBounds e WindowServer sincronizados.
     setPetBounds(bootPos, true);
     // Click-through garantido após load (renderer ainda não enviou leave).
     applyIgnoreMouseEvents(true);
     assertPetVisible(true);
-    flushPendingPetEvents();
-    sendPetPlacement(bootPos);
     // Corrige posição suja legada sem esperar plug de monitor.
     reclampPetToVisibleDisplay();
     scheduleBootReassert();
@@ -1119,6 +1119,13 @@ function registerPetIpc(): void {
     // Idempotent no cache; force=false evita spam de recompose no macOS.
     // O renderer re-sincroniza em mousemove (corrige ignore perdido após drag).
     applyIgnoreMouseEvents(interactive !== true, false);
+  });
+
+  ipcMain.on(PET_CHANNELS.rendererReady, (event) => {
+    if (!fromPetWindow(event) || !petWindow) return;
+    petReady = true;
+    flushPendingPetEvents();
+    sendPetPlacement();
   });
 
   /**
