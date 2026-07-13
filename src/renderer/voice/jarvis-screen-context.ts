@@ -31,6 +31,29 @@ export function findOrchestratorPane(
   return pane?.id ?? null;
 }
 
+function wizardVisibleActions(
+  step: ReturnType<typeof useMissionWizardStore.getState>['visibleStep'],
+  squadNames: string[],
+): string[] {
+  switch (step) {
+    case 'new-ws':
+      return ['Escolher pasta', 'Continuar'];
+    case 'mode':
+    case null:
+      return ['Modo Livre', 'Modo Squad', 'Modo Agêntico'];
+    case 'libre-count':
+      return ['1 pane', '2 panes', '3 panes', '4 panes', '6 panes'];
+    case 'libre-slots':
+      return ['Iniciar missão livre', 'Voltar'];
+    case 'squad-select':
+      return [...squadNames.slice(0, 6), 'Voltar'];
+    case 'agentic-intent':
+      return ['Montar time', 'Voltar'];
+    case 'squad-review':
+      return ['Iniciar Squad', 'Salvar', 'Voltar'];
+  }
+}
+
 export function currentScreenSnapshot(): ScreenSnapshot {
   const workspace = useWorkspaceStore.getState().current;
   const { root, focusedPaneId, viewKind } = useLayoutStore.getState();
@@ -91,9 +114,9 @@ export function currentScreenSnapshot(): ScreenSnapshot {
     });
   }
   if (wizard.open) {
-    const mode = wizard.presetSquadId
+    const mode = wizard.presetSquadId || wizard.visibleStep === 'squad-review'
       ? 'revisão de squad pronto — diga sim / inicia para confirmar e disparar'
-      : wizard.agenticLaunchNonce > 0
+      : wizard.visibleStep === 'agentic-intent'
         ? `nova missão no modo agêntico${
             wizard.agenticIntent ? ` — objetivo: ${wizard.agenticIntent.slice(0, 240)}` : ''
           }`
@@ -102,7 +125,13 @@ export function currentScreenSnapshot(): ScreenSnapshot {
         : 'nova missão';
     return buildScreenSnapshot({
       ...baseScreenInput,
-      surface: { kind: 'wizard', mode },
+      surface: {
+        kind: 'wizard',
+        mode,
+        step: wizard.visibleStep ?? 'mode',
+        visibleActions: wizardVisibleActions(wizard.visibleStep, orch.squads.map((s) => s.name)),
+        readySquads: orch.squads.slice(0, 6).map((s) => s.name),
+      },
     });
   }
   if (homeVisible) {

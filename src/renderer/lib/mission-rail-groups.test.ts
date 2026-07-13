@@ -13,8 +13,9 @@ function mission(
     description: '',
     milestones: [],
     createdAt: 1,
-    updatedAt: partial.updatedAt ?? 1,
     ...partial,
+    learnings: partial.learnings ?? '',
+    updatedAt: partial.updatedAt ?? 1,
   };
 }
 

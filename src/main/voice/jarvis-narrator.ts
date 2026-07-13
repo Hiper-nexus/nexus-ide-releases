@@ -10,6 +10,7 @@ import { toSpeakable } from './speakable';
 const BURST_MS = 1_500;
 const MAX_SPOKEN_SUMMARY = 140;
 const BOOT_GRACE_MS = 6_000;
+const DELEGATION_SUPERVISOR_AGENT = 'nexus-delegation-supervisor';
 
 export type ScopedNarrationBroadcast = (
   scope: ProjectExecutionScope,
@@ -52,6 +53,15 @@ function handoffKey(scope: ProjectExecutionScope, handoff: Handoff): string {
 }
 
 function phraseFor(handoff: Handoff): string {
+  if (
+    handoff.fromAgent === DELEGATION_SUPERVISOR_AGENT &&
+    handoff.status === 'stalled'
+  ) {
+    return (
+      'A missão ainda não conseguiu colocar os especialistas para trabalhar. ' +
+      'Veja o diagnóstico no terminal.'
+    );
+  }
   const from = (handoff.fromAgent ?? 'um worker').slice(0, 60);
   const short = toSpeakable(handoff.summary, 'summary').slice(0, MAX_SPOKEN_SUMMARY);
   switch (handoff.status) {
@@ -117,6 +127,10 @@ function onChange(
     if (seen.has(key)) continue;
     seen.add(key);
     if (!jarvis || withinBootGrace || handoff.createdAt <= startedAt) continue;
+    if (
+      handoff.fromAgent === DELEGATION_SUPERVISOR_AGENT &&
+      handoff.status !== 'stalled'
+    ) continue;
     pending.push({ handoff, scope: Object.freeze({ ...scope }) });
   }
   if (pending.length > 0 && !burstTimer) {

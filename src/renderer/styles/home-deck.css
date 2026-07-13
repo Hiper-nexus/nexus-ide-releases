@@ -25,7 +25,10 @@
 /* ---- Home deck (in-workspace empty state) ---- */
 .home-deck {
   position: absolute;
-  inset: 8px; /* anchored to .app__body (position: relative), inside its padding */
+  inset: var(--app-body-inset);
+  /* The mission rail stays interactive above Home, so the Home surface must
+     begin after it instead of being centered underneath it. */
+  left: calc(var(--app-body-inset) + var(--mission-rail-width) + var(--app-body-inset));
   z-index: 30; /* above panes, below the side columns + wizard/drawers */
   display: grid;
   place-items: center;
@@ -56,7 +59,10 @@
 }
 
 .home-deck__panel {
-  width: min(780px, calc(100% - 48px));
+  /* Width/max-height are the final frame dimensions. Without border-box,
+     padding was added on top and erased the intended 24px centered gutter. */
+  box-sizing: border-box;
+  width: min(820px, calc(100% - 48px));
   max-height: calc(100% - 48px);
   overflow-y: auto;
   /* Luz vinda de cima: um sopro de acento no topo dá dimensão sem virar
@@ -93,14 +99,17 @@
 }
 
 .home-deck__head {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
   gap: var(--space-3);
 }
 
+.home-deck__title-wrap {
+  min-width: 0;
+}
+
 .home-deck__close {
-  margin-left: auto;
-  align-self: flex-start;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -185,16 +194,19 @@
 
 .home-deck__next {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
-  align-items: center;
-  gap: var(--space-6);
+  grid-template-columns: minmax(0, 1fr) minmax(248px, 268px);
+  align-items: start;
+  column-gap: var(--space-6);
+  row-gap: var(--space-4);
   padding: var(--space-5) 0;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
 
 .home-deck__next-copy {
+  min-width: 0;
   max-width: 52ch;
+  padding-top: 2px;
 }
 
 .home-deck__next-label {
@@ -227,11 +239,16 @@
 .home-deck__actions {
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
 }
 
 .home-deck__cta,
 .home-deck__btn {
+  width: 100%;
+  box-sizing: border-box;
   min-height: 40px;
   display: inline-flex;
   align-items: center;
@@ -242,11 +259,22 @@
   font-size: var(--text-md);
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
   transition:
     background-color 160ms var(--ease-out-quart),
     border-color 160ms var(--ease-out-quart),
     color 160ms var(--ease-out-quart),
     opacity 160ms var(--ease-out-quart);
+}
+
+/* Ícone em calha fixa — labels dos 3 botões começam na mesma coluna. */
+.home-deck__cta > :first-child,
+.home-deck__btn > :first-child {
+  flex: 0 0 16px;
+  width: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .home-deck__cta {
@@ -312,9 +340,11 @@
 
 .home-deck__squad {
   width: 100%;
-  display: flex;
+  display: grid;
+  /* avatares | nome (flex) | meta (coluna fixa) | chevron */
+  grid-template-columns: auto minmax(0, 1fr) max-content 18px;
   align-items: center;
-  gap: 12px;
+  column-gap: 14px;
   min-height: 68px;
   background: transparent;
   border: 0;
@@ -329,7 +359,6 @@
 
 .home-deck__squad-avatars {
   padding-left: 2px;
-  margin-right: 4px;
 }
 
 .home-deck__squad-avatars .home-deck__squad-avatar {
@@ -347,7 +376,6 @@
 .home-deck__squad-name {
   font-size: var(--text-md);
   font-weight: 600;
-  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -358,19 +386,25 @@
   color: var(--text-dim);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  flex: 1 1 auto;
+  white-space: nowrap;
+  text-align: right;
+  justify-self: end;
+  font-variant-numeric: tabular-nums;
 }
 
 .home-deck__squad-go {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 18px;
   color: var(--text-dim);
-  font-size: 15px;
+  opacity: 0.85;
   transition: transform 150ms var(--ease-out-quart), color 150ms var(--ease-out-quart);
 }
 .home-deck__squad:hover .home-deck__squad-go {
   color: var(--accent);
-  transform: translateX(3px);
+  opacity: 1;
+  transform: translateX(2px);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -388,7 +422,7 @@
 @media (max-width: 900px) {
   .home-deck__squad {
     min-height: 58px;
-    gap: 9px;
+    column-gap: 10px;
   }
   .home-deck__squad-avatars .home-deck__squad-avatar {
     --agent-size: 38px;
@@ -401,6 +435,8 @@
 @media (max-width: 620px) {
   .home-deck__squad {
     min-height: 54px;
+    /* Sem meta: avatares | nome | chevron */
+    grid-template-columns: auto minmax(0, 1fr) 18px;
   }
   .home-deck__squad-avatars .home-deck__squad-avatar {
     --agent-size: 32px;
@@ -415,7 +451,7 @@
 
 @media (max-width: 480px) {
   .home-deck__squad {
-    gap: 8px;
+    column-gap: 8px;
   }
   .home-deck__squad-avatars .home-deck__squad-avatar {
     --agent-size: 30px;
@@ -423,9 +459,9 @@
 }
 
 .home-deck__foot {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   margin-top: var(--space-5);
   padding-top: var(--space-4);
@@ -471,12 +507,15 @@
 
   .home-deck__next {
     grid-template-columns: 1fr;
-    gap: var(--space-4);
+    column-gap: 0;
+    row-gap: var(--space-4);
   }
 
   .home-deck__actions {
-    display: grid;
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: none;
   }
 
   .home-deck__keys {

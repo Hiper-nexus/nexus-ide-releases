@@ -46,6 +46,11 @@ export class TurnExecutionOwner {
     return this.claimed;
   }
 
+  /** True only while `path` still owns the exact conversational turn. */
+  isOwnedBy(path: TurnExecutionPath, token: number): boolean {
+    return token === this.token && this.claimed === path;
+  }
+
   /**
    * Attempt to become the single execution owner of `token`. Returns true only
    * for the FIRST caller of a still-open, unclaimed turn; every later caller (or

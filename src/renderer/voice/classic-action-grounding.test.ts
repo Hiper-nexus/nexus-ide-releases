@@ -13,6 +13,14 @@ describe('isClassicActionGrounded', () => {
     expect(isClassicActionGrounded('Jarvis abra um terminal', { type: 'open_terminal' })).toBe(true);
   });
 
+  it('allows opening the saved-squad picker from an explicit squad choice', () => {
+    expect(
+      isClassicActionGrounded('quero escolher um squad', {
+        type: 'open_squad_picker',
+      }),
+    ).toBe(true);
+  });
+
   it('blocks a mismatched model-selected target', () => {
     expect(isClassicActionGrounded('abra as configurações', { type: 'open_terminal' })).toBe(false);
   });

@@ -22,7 +22,7 @@ import { canUseNexusMcp } from './cli-mcp-inject';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
-const PROMPT_SETTLE_MS = 150;
+const PROMPT_SETTLE_MS = 250;
 const AGENT_BOOT_TIMEOUT_MS = 20_000;
 const UNSAFE_TERMINAL_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u;
 

@@ -8,7 +8,11 @@ import { useHomeStore } from '../state/home-store';
 import { useGamificationStore } from '../state/gamification-store';
 import { useVoiceStore } from './voice-store';
 import { useSettingsStore } from '../state/settings-store';
-import { waitForSession, writeToPane } from '../terminal/terminal-host';
+import {
+  submitPromptToPane,
+  waitForSession,
+  writeToPane,
+} from '../terminal/terminal-host';
 import {
   assessTerminalVisibility,
   readUiVisibilityState,
@@ -18,7 +22,6 @@ import { launchSquadMission } from '../orch/mission-launcher';
 import { isMissingModelKeyError } from '../lib/credential-errors';
 import { invokeMcpWithConfirm, mapActionToTool } from '../services/mcp-bridge';
 import { reopenMission } from '../orch/mission-reopen';
-import { delegationConfirmPrompt, setPendingDelegation } from './delegation-confirm';
 import { isOrchestratorPane, resolveSendToPaneTarget } from './send-to-pane-target';
 import { requestPaneClose } from '../terminal/pane-close-guard';
 import { sanitizeMcpResultOutput } from './mcp-result-output';
@@ -26,6 +29,10 @@ import { currentViewNarration, currentViewToolOutput } from './current-view-read
 import { waitForActionEvidence } from './action-evidence';
 import { resolveWorkspaceByVoiceName } from './workspace-name-resolver';
 import { logVoiceEvent } from './voice-live-ipc';
+import {
+  isExecutionReadyDelegationPrompt,
+  prepareDelegationPrompt,
+} from './delegation-prompt';
 
 export interface JarvisExecutionResult {
   sayText: string;
@@ -41,6 +48,8 @@ export interface JarvisExecutionResult {
 export interface JarvisExecutionControl {
   signal?: AbortSignal;
   onEffectMayHaveCommitted?: () => void;
+  /** Correlates state created by a native realtime tool with its completion. */
+  originCallId?: string;
 }
 
 function checkpoint(control: JarvisExecutionControl): void {
@@ -230,7 +239,11 @@ export async function executeJarvisAction(
   checkpoint(control);
   let sayText = reply.say;
   let expectReply = reply.expectReply;
-  const action = reply.action;
+  const action: JarvisAction =
+    reply.action.type === 'run_command' &&
+    isExecutionReadyDelegationPrompt(reply.action.command)
+      ? { type: 'send_to_pane', text: reply.action.command }
+      : reply.action;
 
   if (action.type !== 'none') {
     // run_command must reach the focused shell branch below. The mission MCP
@@ -342,6 +355,36 @@ export async function executeJarvisAction(
         ? { ...read.toolResult, tool: 'read_pane' }
         : null,
     };
+  } else if (action.type === 'open_squad_picker') {
+    const workspace = useWorkspaceStore.getState().current;
+    const squads = useOrchStore.getState().squads;
+    if (!workspace) {
+      sayText = 'Antes eu preciso de um projeto aberto. Quer abrir um dos recentes?';
+      expectReply = true;
+      toolResult = { tool: action.type, ok: false, summary: 'sem workspace aberto' };
+    } else if (squads.length === 0) {
+      sayText = 'Este projeto ainda não tem squads salvos. Quer criar um novo?';
+      expectReply = true;
+      toolResult = { tool: action.type, ok: false, summary: 'nenhum squad salvo' };
+    } else {
+      useMissionWizardStore.getState().openSquadPicker();
+      markEffect(control);
+      const confirmed = await confirmUiState(
+        () => useMissionWizardStore.getState(),
+        (wizard) => wizard.open && wizard.visibleStep === 'squad-select',
+        control,
+      );
+      sayText = confirmed
+        ? 'Abrindo seus squads salvos. Qual você quer usar?'
+        : 'Tentei abrir a lista de squads, mas ainda não confirmei a tela.';
+      toolResult = {
+        tool: action.type,
+        ok: confirmed,
+        summary: confirmed
+          ? 'seletor de squads salvos aberto e confirmado'
+          : 'seletor de squads sem pós-condição confirmada',
+      };
+    }
   } else if (action.type === 'open_squad') {
     const wanted = action.squadName.toLowerCase();
     const squads = useOrchStore.getState().squads;
@@ -364,7 +407,11 @@ export async function executeJarvisAction(
       const adapters = await window.nexus.adapters.list();
       checkpoint(control);
       const res = await launchSquadMission(match, adapters);
-      if (res.ok) markEffect(control);
+      if (res.ok) {
+        markEffect(control);
+        useMissionWizardStore.getState().close();
+        sayText = `Squad ${match.name} iniciado.`;
+      }
       checkpoint(control);
       console.log(`[voice] launch squad "${match.name}" → ${res.ok ? 'NO AR' : `falhou: ${res.error}`}`);
       if (!res.ok) sayText = res.error ?? 'Não consegui subir o squad.';
@@ -709,9 +756,8 @@ export async function executeJarvisAction(
     const { root, focusedPaneId } = useLayoutStore.getState();
     // NEW-B + C3 (follow-ups 2/4b): resposta roteada de pergunta pendente
     // (paneId presente) escreve de volta SÓ em pane de agente/orquestrador
-    // vivo; pane sumido/inválido AVISA e re-pergunta — nunca vira "Confirmo?"
-    // da resposta nem escrita em shell. Delegação (sem paneId) segue no gate
-    // de confirmação por voz; o fallback silencioso pro pane focado fica morto.
+    // vivo; pane sumido/inválido AVISA e re-pergunta — nunca vira comando em
+    // shell. Delegação rotineira segue direto; só destrutivo/deploy confirma.
     const target = resolveSendToPaneTarget(action.paneId, listPanes(root), focusedPaneId);
     if (target.kind === 'asking-pane') {
       const commandId = crypto.randomUUID();
@@ -722,7 +768,7 @@ export async function executeJarvisAction(
       });
       const sessionId = await waitForSession(target.paneId, 750);
       checkpoint(control);
-      const ok = Boolean(sessionId) && writeToPane(target.paneId, `${action.text}\n`);
+      const ok = Boolean(sessionId) && submitPromptToPane(target.paneId, action.text);
       logVoiceEvent(ok ? 'info' : 'warn', ok ? 'pane.deliverySubmitted' : 'pane.deliveryFailed', ok ? 'texto submetido ao PTY' : 'sessão do pane indisponível', {
         commandId,
         paneId: target.paneId,
@@ -760,58 +806,51 @@ export async function executeJarvisAction(
         summary: 'nome de pane ambíguo — envio bloqueado',
       };
     } else if (target.kind === 'no-agent-pane') {
-      // Gemini occasionally emits send_to_pane immediately after open_terminal
-      // for “digite/mande este comando”. Recover deterministically only when a
-      // shell is focused, and retain the same native human confirmation as
-      // run_command. Nothing is written silently.
-      const focused = focusedPaneId
-        ? listPanes(root).find((pane) => pane.id === focusedPaneId)
-        : undefined;
-      if (focused?.kind === 'shell') {
-        const sessionId = await waitForSession(focused.id, 5_000);
-        checkpoint(control);
-        const approved = Boolean(sessionId) &&
-          await window.nexus.voice.confirmCommand(action.text);
-        checkpoint(control);
-        const ok = approved && writeToPane(focused.id, `${action.text}\n`);
-        if (ok) markEffect(control);
-        sayText = ok
-          ? 'Comando enviado ao terminal.'
-          : approved
-            ? 'Não consegui escrever no terminal.'
-            : 'Cancelei, não escrevi no terminal.';
-        toolResult = {
-          tool: 'run_command',
-          ok,
-          summary: ok
-            ? 'send_to_pane recuperado como comando confirmado no terminal focado'
-            : approved
-              ? 'falha ao escrever no terminal focado'
-              : 'comando recusado ou terminal sem sessão',
-          output: { recoveredFrom: 'send_to_pane', paneId: focused.id },
-        };
-      } else {
-        sayText =
-          'Não achei um pane de agente pra receber a missão — abre o orquestrador primeiro.';
-        toolResult = {
-          tool: action.type,
-          ok: false,
-          summary: 'sem pane de agente válido (fallback silencioso bloqueado)',
-        };
-      }
-    } else {
-      // C3: delegação NÃO dispara direto — arma a pendência e pergunta.
-      setPendingDelegation({
-        targetPaneId: target.orchestratorPaneId,
-        text: action.text,
-        createdAt: Date.now(),
-      });
-      sayText = delegationConfirmPrompt(action.text);
-      expectReply = true;
+      // send_to_pane is natural-language delegation only. Never reinterpret it
+      // as shell input: that produced a misleading native command dialog for
+      // ordinary mission objectives. Explicit shell requests still use the
+      // dedicated run_command branch and retain its confirmation guardrail.
+      sayText =
+        'Não achei um pane de agente pra receber a missão — abre o orquestrador primeiro.';
       toolResult = {
         tool: action.type,
-        ok: true,
-        summary: 'missão aguardando confirmação por voz',
+        ok: false,
+        summary: 'sem pane de agente válido (delegação não virou comando de shell)',
+      };
+    } else {
+      const missionPrompt = prepareDelegationPrompt(action.text);
+      const commandId = crypto.randomUUID();
+      const sessionId = await waitForSession(target.orchestratorPaneId, 750);
+      checkpoint(control);
+      const ok = Boolean(sessionId) &&
+        submitPromptToPane(target.orchestratorPaneId, missionPrompt);
+      if (ok) markEffect(control);
+      logVoiceEvent(
+        ok ? 'info' : 'warn',
+        ok ? 'pane.delegationSubmitted' : 'pane.delegationFailed',
+        ok ? 'missão submetida ao orquestrador' : 'sessão do orquestrador indisponível',
+        {
+          commandId,
+          paneId: target.orchestratorPaneId,
+          sessionReady: Boolean(sessionId),
+          sourceChars: action.text.length,
+          promptChars: missionPrompt.length,
+        },
+      );
+      sayText = ok
+        ? 'Missão enviada ao squad.'
+        : 'Não consegui enviar a missão ao orquestrador.';
+      toolResult = {
+        tool: action.type,
+        ok,
+        summary: ok
+          ? `missão submetida ao pane (${commandId})`
+          : 'falha ao escrever no orquestrador',
+        output: {
+          commandId,
+          paneId: target.orchestratorPaneId,
+          sessionReady: Boolean(sessionId),
+        },
       };
     }
   } else if (action.type === 'run_command') {

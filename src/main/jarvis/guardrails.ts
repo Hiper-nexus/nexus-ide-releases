@@ -46,6 +46,38 @@ export function isDestructive(command: string): boolean {
   return DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(command));
 }
 
+const REMOTE_OR_DEPLOY_PATTERNS: RegExp[] = [
+  /(?:^|[;&|]\s*)git\s+push\b/i,
+  /(?:^|[;&|]\s*)(?:npm|pnpm|yarn)\s+(?:publish|unpublish)\b/i,
+  /(?:^|[;&|]\s*)(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:deploy|release|publish)\b/i,
+  /(?:^|[;&|]\s*)gh\s+release\s+create\b/i,
+  /(?:^|[;&|]\s*)docker\s+push\b/i,
+  /(?:^|[;&|]\s*)kubectl\s+(?:apply|create|delete|patch|replace|rollout|scale)\b/i,
+  /(?:^|[;&|]\s*)helm\s+(?:install|upgrade|uninstall|rollback)\b/i,
+  /(?:^|[;&|]\s*)(?:terraform|tofu)\s+(?:apply|destroy|import)\b/i,
+  /(?:^|[;&|]\s*)pulumi\s+(?:up|destroy|import)\b/i,
+  /(?:^|[;&|]\s*)(?:vercel|netlify|firebase|wrangler|fly|flyctl|railway|render)\s+(?:deploy|publish|up)\b/i,
+  /(?:^|[;&|]\s*)(?:aws|gcloud|az)\b[^\n]*(?:deploy|publish|push|apply|delete|destroy)\b/i,
+  /(?:^|[;&|]\s*)ssh\b/i,
+  /(?:^|[;&|]\s*)(?:scp|sftp)\b/i,
+  /(?:^|[;&|]\s*)rsync\b[^\n]*\b[^\s:]+:/i,
+  /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:sh|bash|zsh)\b/i,
+];
+
+/**
+ * Voice may execute routine local development work without interrupting the
+ * user. Only destructive or externally-publishing commands retain the native
+ * confirmation boundary.
+ */
+export function requiresVoiceCommandConfirmation(command: string): boolean {
+  const normalized = command.trim();
+  if (!normalized) return true;
+  return (
+    isDestructive(normalized) ||
+    REMOTE_OR_DEPLOY_PATTERNS.some((pattern) => pattern.test(normalized))
+  );
+}
+
 /**
  * Determines whether a given MCP tool invocation requires user confirmation.
  *

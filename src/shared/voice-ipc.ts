@@ -273,6 +273,8 @@ export interface JarvisTurn {
 export type JarvisAction =
   | { type: 'none' }
   | { type: 'open_squad'; squadName: string }
+  /** Opens the saved-squad selection step without creating or launching one. */
+  | { type: 'open_squad_picker' }
   | { type: 'open_workspace'; workspaceName: string }
   | { type: 'design_squad' }
   | { type: 'confirm_squad' }
@@ -582,6 +584,7 @@ export const jarvisLiveToolResultInputSchema = z.object({
   tool: z.enum([
     'none',
     'open_squad',
+    'open_squad_picker',
     'open_workspace',
     'design_squad',
     'confirm_squad',

@@ -117,6 +117,7 @@ describe('geminiInstructions', () => {
     expect(prompt).toContain('never use `open_voice_settings`');
     expect(prompt).toContain('scope `view`');
     expect(prompt).toContain('nexus_ui_action');
+    expect(prompt).toContain('Objective, Execution requirements, and Acceptance criteria');
     for (const tool of COARSE_VOICE_TOOLS) {
       expect(prompt).toContain(`\`${tool.name}\``);
     }

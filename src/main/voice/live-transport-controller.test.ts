@@ -37,7 +37,7 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
   fireRoleTranscript(line: { role: 'user' | 'assistant'; text: string; final: boolean }): void;
   fireAudioOut(samples?: Int16Array): void;
   fireResponseDone(): void;
-  setSynchronousToolResponseDone(): void;
+  setSynchronousToolResponseDone(enabled?: boolean): void;
   fireError(err: Error): void;
 } {
   let ready = false;
@@ -128,8 +128,8 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
     fireResponseDone() {
       for (const cb of responseDoneCallbacks) cb();
     },
-    setSynchronousToolResponseDone() {
-      respondDoneDuringToolResult = true;
+    setSynchronousToolResponseDone(enabled = true) {
+      respondDoneDuringToolResult = enabled;
     },
     fireError(err) {
       for (const cb of errorCallbacks) cb(err);
@@ -1025,6 +1025,7 @@ describe('LiveTransportController', () => {
   });
 
   it('bridges native realtime tool calls to the renderer and returns function output', async () => {
+    vi.useFakeTimers();
     vi.resetModules();
     const provider = fakeProvider(async () => {});
     const candidates: RealtimeProviderCandidate[] = [{ id: 'openai', provider }];
@@ -1054,7 +1055,10 @@ describe('LiveTransportController', () => {
     }));
 
     const { VOICE_CHANNELS } = await import('../../shared/voice-channels');
-    const { LiveTransportController } = await import('./live-transport-controller');
+    const {
+      LiveTransportController,
+      TOOL_FOLLOW_UP_COMPLETION_DEADLINE_MS,
+    } = await import('./live-transport-controller');
     const session = new JarvisLiveSession(
       (channel, payload) => events.push({ channel, payload }),
       () => 1000,
@@ -1140,6 +1144,48 @@ describe('LiveTransportController', () => {
       turnId: 'tool-turn-1',
       callId: 'call_1',
     });
+
+    // Gemini sometimes accepts the result but never emits responseDone. A
+    // bounded local deadline must release the renderer instead of leaving the
+    // capture open for 20-60 seconds.
+    controller.beginTurn('tool-turn-deadline');
+    provider.setSynchronousToolResponseDone(false);
+    provider.fireToolCall({ callId: 'call_deadline' });
+    controller.toolResult({
+      sessionId: session.getState().sessionId ?? 'session',
+      at: 1002,
+      source: 'realtime',
+      callId: 'call_deadline',
+      name: 'nexus_action',
+      tool: 'open_terminal',
+      ok: true,
+      summary: 'terminal aberto sem responseDone',
+    });
+
+    expect(TOOL_FOLLOW_UP_COMPLETION_DEADLINE_MS).toBe(3_000);
+    await vi.advanceTimersByTimeAsync(TOOL_FOLLOW_UP_COMPLETION_DEADLINE_MS - 1);
+    expect(
+      events.filter((event) => event.channel === VOICE_CHANNELS.liveToolTurnComplete),
+    ).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    const deadlineCompletions = events.filter(
+      (event) => event.channel === VOICE_CHANNELS.liveToolTurnComplete,
+    );
+    expect(deadlineCompletions).toHaveLength(3);
+    expect(deadlineCompletions[2]?.payload).toMatchObject({
+      turnId: 'tool-turn-deadline',
+      callId: 'call_deadline',
+    });
+    expect(provider.interrupt).toHaveBeenCalledOnce();
+
+    // A late provider callback is harmless and must not emit twice.
+    provider.fireResponseDone();
+    expect(
+      events.filter((event) => event.channel === VOICE_CHANNELS.liveToolTurnComplete),
+    ).toHaveLength(3);
+
+    controller.hardStop();
+    vi.useRealTimers();
 
     vi.doUnmock('./voice-config-store');
     vi.doUnmock('./voice-secrets');
@@ -2007,6 +2053,7 @@ describe('LiveTransportController', () => {
     const controller = new LiveTransportController(emit, session);
 
     await controller.onStart();
+    controller.beginTurn('route-answer-turn');
 
     // Upstream: uma pane delegada narrou uma pergunta pendente.
     controller.noteNarratedQuestion('pane-42', 'Qual banco de dados devo usar?');
@@ -2054,6 +2101,16 @@ describe('LiveTransportController', () => {
     });
     controller.toolResult(rendererResult!);
     expect(provider.sendToolResult).not.toHaveBeenCalled();
+    expect(
+      emitted.filter((event) => event.channel === VOICE_CHANNELS.liveToolTurnComplete),
+    ).toContainEqual({
+      channel: VOICE_CHANNELS.liveToolTurnComplete,
+      payload: expect.objectContaining({
+        sessionId: session.getState().sessionId,
+        turnId: 'route-answer-turn',
+        callId: routed.callId,
+      }),
+    });
 
     vi.doUnmock('./voice-config-store');
     vi.doUnmock('./voice-secrets');

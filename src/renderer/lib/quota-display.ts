@@ -23,17 +23,25 @@ export function windowDisplay(w: QuotaWindow): {
   return { percentLabel: `${pct}%`, tone, barRatio: w.usedRatio };
 }
 
-export function chipLabel(snapshot: QuotaFleetSnapshot): string | null {
+/** Structured chip copy for a single-line bar pill (never multi-line). */
+export function chipParts(
+  snapshot: QuotaFleetSnapshot,
+): { value: string } | null {
   if (snapshot.entries.length === 0) return null;
   if (snapshot.worstUsedRatio === null) {
-    if (snapshot.unknownCount > 0) return 'cota · —';
+    if (snapshot.unknownCount > 0) return { value: '—' };
     return null;
   }
-  const pct = Math.round(snapshot.worstUsedRatio * 100);
   if (snapshot.highUsageCount > 1) {
-    return `cota · ${snapshot.highUsageCount} no limite`;
+    return { value: `${snapshot.highUsageCount} no limite` };
   }
-  return `cota · ${pct}%`;
+  return { value: `${Math.round(snapshot.worstUsedRatio * 100)}%` };
+}
+
+export function chipLabel(snapshot: QuotaFleetSnapshot): string | null {
+  const parts = chipParts(snapshot);
+  if (!parts) return null;
+  return `cota · ${parts.value}`;
 }
 
 export function chipTone(

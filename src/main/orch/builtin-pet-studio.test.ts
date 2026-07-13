@@ -14,7 +14,7 @@ describe('built-in Pet Studio squad', () => {
         id: 'pet-maker',
         category: 'orchestrator',
         cli: 'codex',
-        allowedTools: [],
+        allowedTools: ['load_workspace_dependencies'],
         allowedSkills: ['hatch-pet'],
       }),
     ]);

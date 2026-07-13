@@ -18,6 +18,18 @@ describe('TurnExecutionOwner', () => {
     expect(owner.owner).toBe('realtime-tool');
   });
 
+  it('keeps realtime-tool ownership attributable to its exact turn after the action finished', () => {
+    const owner = new TurnExecutionOwner();
+    const toolTurn = owner.beginTurn();
+
+    expect(owner.claimRealtimeTool(toolTurn)).toBe(true);
+    expect(owner.isOwnedBy('realtime-tool', toolTurn)).toBe(true);
+
+    const nextTurn = owner.beginTurn();
+    expect(owner.isOwnedBy('realtime-tool', toolTurn)).toBe(false);
+    expect(owner.isOwnedBy('realtime-tool', nextTurn)).toBe(false);
+  });
+
   it('rejects a stale claim carrying a previous turn token', () => {
     const owner = new TurnExecutionOwner();
     const stale = owner.beginTurn();

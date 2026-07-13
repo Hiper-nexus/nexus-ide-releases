@@ -93,6 +93,14 @@ describe('parseReply — DEFECT 3: a brace must never reach TTS', () => {
     ).toEqual({ type: 'new_agentic_mission' });
   });
 
+  it('parses saved-squad selection without turning it into squad creation', () => {
+    expect(
+      parseReply(
+        '{"say":"Abrindo seus squads salvos.","action":{"type":"open_squad_picker"}}',
+      ).action,
+    ).toEqual({ type: 'open_squad_picker' });
+  });
+
   it('parses a current-view read action from brain JSON', () => {
     expect(
       parseReply(

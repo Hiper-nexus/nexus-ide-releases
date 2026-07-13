@@ -85,6 +85,7 @@ const LIVE_SAY_MAX_CHARS = 1_000;
 const ACCEPTED_RESCUE_TURN_IDS_MAX = 32;
 const PENDING_RENDERER_AUDIO_MAX = 256;
 const PENDING_RENDERER_AUDIO_TTL_MS = 30_000;
+export const TOOL_FOLLOW_UP_COMPLETION_DEADLINE_MS = 3_000;
 
 interface RealtimeStartOptions {
   greeting?: string;
@@ -156,6 +157,7 @@ export class LiveTransportController {
   private activeSmokeOwnerWebContentsId: number | undefined;
   /** Tool result sent to Gemini; completion reopens the renderer reply mic. */
   private pendingToolFollowUp: PendingToolFollowUp | null = null;
+  private toolFollowUpCompletionTimer: ReturnType<typeof setTimeout> | null = null;
   /** Captures a tool's originating user turn before the renderer action can outlive it. */
   private readonly toolTurnOrigins = new Map<string, ToolTurnOrigin>();
 
@@ -241,7 +243,7 @@ export class LiveTransportController {
     if (this.activeTurnId !== normalized) this.pendingWorkDelegation = null;
     this.activeTurnId = normalized;
     if (this.pendingToolFollowUp?.turnId !== normalized) {
-      this.pendingToolFollowUp = null;
+      this.discardPendingToolFollowUp();
     }
     this._provider?.beginUserTurn?.(normalized);
   }
@@ -614,6 +616,33 @@ export class LiveTransportController {
     const status = event.ok ? 'ok' : 'failed';
     const summary = event.summary.trim() || status;
     this.recordToolResultContext(event.tool, status, summary);
+    if (event.callId && isLocalToolCallId(event.callId)) {
+      this.emitLocalToolTurnComplete(event);
+    }
+  }
+
+  private emitLocalToolTurnComplete(event: JarvisLiveToolResultEvent): void {
+    const sessionId = this._fsm.getState().sessionId;
+    const turnId = this.activeTurnId;
+    if (!sessionId || !turnId || sessionId !== event.sessionId || !event.callId) {
+      logVoice(
+        'warn',
+        'live.localToolTurnUncorrelated',
+        'tool local terminou sem sessão/turno para continuidade',
+        { callId: event.callId },
+      );
+      return;
+    }
+    this.emit(VOICE_CHANNELS.liveToolTurnComplete, {
+      sessionId,
+      turnId,
+      callId: event.callId,
+      at: this.now(),
+    });
+    logVoice('info', 'live.localToolTurnComplete', 'tool local concluída no renderer', {
+      callId: event.callId,
+      turnId,
+    });
   }
 
   private recordToolResultContext(
@@ -647,7 +676,7 @@ export class LiveTransportController {
     const sessionId = this._fsm.getState().sessionId;
     if (sessionId) jarvisLatencyTracker.discard(sessionId, this.activeTurnId);
     this.providerSpeaking = false;
-    this.pendingToolFollowUp = null;
+    this.discardPendingToolFollowUp();
     this.pendingWorkDelegation = null;
     this.toolTurnOrigins.clear();
     return this._fsm.interrupt(reason);
@@ -662,7 +691,7 @@ export class LiveTransportController {
   onStop(): void {
     this.smokeProbe.settleFailure('session_closed');
     this.clearPendingRendererAudio();
-    this.pendingToolFollowUp = null;
+    this.discardPendingToolFollowUp();
     this.pendingWorkDelegation = null;
     this.toolTurnOrigins.clear();
     logVoice('info', 'live.flowSummary', 'resumo do fluxo de áudio da sessão', {
@@ -699,7 +728,7 @@ export class LiveTransportController {
     this.aec?.reset();
     this.smokeProbe.settleFailure('session_closed');
     this.clearPendingRendererAudio();
-    this.pendingToolFollowUp = null;
+    this.discardPendingToolFollowUp();
     this.pendingWorkDelegation = null;
     this.toolTurnOrigins.clear();
     this.clearReconnectTimer();
@@ -756,7 +785,7 @@ export class LiveTransportController {
   enterDormant(): void {
     this.smokeProbe.settleFailure('session_closed');
     this.clearPendingRendererAudio();
-    this.pendingToolFollowUp = null;
+    this.discardPendingToolFollowUp();
     this.pendingWorkDelegation = null;
     this.toolTurnOrigins.clear();
     this.clearIdleTimer();
@@ -877,12 +906,12 @@ export class LiveTransportController {
       // Session still hot but turn id drifted (wake/reopen race). Keep follow-up
       // arm so the user can continue without re-saying Jarvis (Overclock).
       if (sessionId && sessionId === event.sessionId && event.callId) {
-        this.pendingToolFollowUp = {
+        this.armPendingToolFollowUp({
           sessionId,
           turnId: turnId || event.sessionId,
           callId: event.callId,
           sentAt: this.now(),
-        };
+        });
         logVoice(
           'info',
           'live.toolFollowUpStaleTurnRecovered',
@@ -896,12 +925,38 @@ export class LiveTransportController {
       });
       return;
     }
-    this.pendingToolFollowUp = {
+    this.armPendingToolFollowUp({
       sessionId,
       turnId,
       callId: event.callId,
       sentAt: this.now(),
-    };
+    });
+  }
+
+  private armPendingToolFollowUp(pending: PendingToolFollowUp): void {
+    this.discardPendingToolFollowUp();
+    this.pendingToolFollowUp = pending;
+    this.toolFollowUpCompletionTimer = setTimeout(() => {
+      this.toolFollowUpCompletionTimer = null;
+      if (this.pendingToolFollowUp !== pending) return;
+      logVoice(
+        'warn',
+        'live.toolTurnCompletionDeadline',
+        'provider não concluiu a tool; liberando follow-up pelo prazo local',
+        { callId: pending.callId, turnId: pending.turnId },
+      );
+      // Do not let a late provider narration overlap the deterministic local
+      // fallback that begins after this completion event.
+      this._provider?.interrupt();
+      this.emitToolTurnComplete('deadline');
+    }, TOOL_FOLLOW_UP_COMPLETION_DEADLINE_MS);
+  }
+
+  private discardPendingToolFollowUp(): void {
+    this.pendingToolFollowUp = null;
+    if (!this.toolFollowUpCompletionTimer) return;
+    clearTimeout(this.toolFollowUpCompletionTimer);
+    this.toolFollowUpCompletionTimer = null;
   }
 
   private clearPendingToolFollowUp(event: JarvisLiveToolResultEvent): void {
@@ -911,17 +966,17 @@ export class LiveTransportController {
       pending.sessionId === event.sessionId &&
       pending.callId === event.callId
     ) {
-      this.pendingToolFollowUp = null;
+      this.discardPendingToolFollowUp();
     }
     if (event.callId) {
       this.toolTurnOrigins.delete(this.toolTurnKey(event.sessionId, event.callId));
     }
   }
 
-  private emitToolTurnComplete(): void {
+  private emitToolTurnComplete(source: 'provider' | 'deadline' = 'provider'): void {
     const pending = this.pendingToolFollowUp;
     if (!pending) return;
-    this.pendingToolFollowUp = null;
+    this.discardPendingToolFollowUp();
     this.toolTurnOrigins.delete(this.toolTurnKey(pending.sessionId, pending.callId));
     const sessionId = this._fsm.getState().sessionId;
     if (sessionId !== pending.sessionId || this.activeTurnId !== pending.turnId) return;
@@ -931,9 +986,10 @@ export class LiveTransportController {
       callId: pending.callId,
       at: this.now(),
     });
-    logVoice('info', 'live.toolTurnComplete', 'resposta Gemini após ferramenta concluída', {
+    logVoice('info', 'live.toolTurnComplete', 'turno de ferramenta concluído', {
       callId: pending.callId,
       turnId: pending.turnId,
+      source,
       waitedMs: Math.max(0, this.now() - pending.sentAt),
     });
   }
@@ -1079,7 +1135,7 @@ export class LiveTransportController {
   private scheduleReconnect(): void {
     // A responseDone from a new socket must never release a mic arm belonging
     // to a tool result sent over the disconnected socket.
-    this.pendingToolFollowUp = null;
+    this.discardPendingToolFollowUp();
     this.toolTurnOrigins.clear();
     const state = this._fsm.getState();
     if (!state.enabled || !state.sessionId) return;

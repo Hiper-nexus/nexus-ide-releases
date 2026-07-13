@@ -218,6 +218,9 @@ export const handoffStatusSchema = z.enum([
   'partial',
   'blocked',
   'failed',
+  // Sintético e não terminal: o supervisor reengajou o coordenador, mas ainda
+  // não há evidência suficiente para declarar a missão travada ao operador.
+  'progress',
   // Sintético (nexus-watchdog): worker busy em silêncio prolongado sem
   // handoff — o orquestrador é acordado para diagnosticar o pane.
   'stalled',
@@ -363,6 +366,9 @@ export interface PaneSnapshot extends PaneRegistryEntry {
   state: PaneRuntimeState;
   missionId?: string;
   agentName?: string;
+  role?: 'orchestrator' | 'worker';
+  scope?: Readonly<ProjectExecutionScope>;
+  executionScope?: Readonly<ProjectExecutionScope>;
 }
 
 /** Main → renderer: please create a pane and spawn its session. */

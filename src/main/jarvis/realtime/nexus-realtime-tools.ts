@@ -19,7 +19,7 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
       type: 'function',
       name: NEXUS_REALTIME_ACTION_TOOL,
       description:
-        'Operate Nexus IDE through the audited action executor. Opening an existing project always means open_workspace; new_workspace is only for an explicit request to create a new workspace. Opening squad mode without a name requires asking which saved squad first; do not call a tool. Use open_squad only with a saved name from current context, and design_squad only for an explicit new/create/design request. Use read_current_view for the visible screen. send_to_pane is ONLY for delegating an engineering task to an AI agent/orchestrator and NEVER writes to a terminal. When the user asks to type, send, execute, or run a shell/terminal command, use run_command with the exact command; it will request native confirmation. Use mcp_tool for Nexus MCP tools. Never claim success before the tool result.',
+        'Operate Nexus IDE through the audited action executor. Opening an existing project always means open_workspace; new_workspace is only for an explicit request to create a new workspace. To open or choose squad mode without a squad name, call open_squad_picker: it opens the saved-squad screen and never creates or launches one. Use open_squad only with a saved name from current context, and design_squad only for an explicit new/create/design request. Use read_current_view for the visible screen. send_to_pane is ONLY for delegating an engineering task to an AI agent/orchestrator, dispatches routine work immediately, and NEVER writes to a terminal. Use run_command only for a syntactically real shell command explicitly requested by the user; NEVER put prose, an Objective, execution requirements, acceptance criteria, or an engineering briefing in command. Destructive, deploy, publish, and remote commands retain native confirmation. Use mcp_tool for Nexus MCP tools. Never claim success before the tool result.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -28,7 +28,7 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
             type: 'string',
             enum: SAFE_REALTIME_ACTIONS,
             description:
-              'The safe Nexus IDE action to execute. read_current_view reads the current visible view; read_pane reads a specific pane.',
+              'The safe Nexus IDE action to execute. open_squad_picker opens saved squad choices; read_current_view reads the current visible view; read_pane reads a specific pane.',
           },
           url: {
             type: 'string',
@@ -61,12 +61,12 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
           text: {
             type: 'string',
             description:
-              'Required for send_to_pane agent delegation only. Never put shell commands here.',
+              'Required for send_to_pane agent delegation only. Write an execution-ready engineering prompt in English with Objective, Execution requirements, and Acceptance criteria. Preserve user constraints and relevant current Nexus context; infer only necessary implementation/testing details and never invent scope, stack, provider, account, target, or destructive actions. Never put shell commands here.',
           },
           command: {
             type: 'string',
             description:
-              'Required for run_command. Exact shell/terminal command requested by the user, including requests phrased as type/send this command.',
+              'Required for run_command. Exact syntactically valid shell/terminal command explicitly requested by the user. Never pass natural-language tasks, objectives, execution requirements, acceptance criteria, or agent briefings.',
           },
           tool: {
             type: 'string',

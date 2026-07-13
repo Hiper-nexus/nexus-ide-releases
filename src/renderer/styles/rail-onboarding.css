@@ -4,8 +4,8 @@
 
 /* ── Activity Rail (trabalho lateral — estilo ops moderno) ───────────── */
 .mission-rail {
-  width: 248px;
-  flex: 0 0 248px;
+  width: var(--mission-rail-width);
+  flex: 0 0 var(--mission-rail-width);
   align-self: stretch;
   min-height: 0;
   display: flex;
@@ -1030,11 +1030,6 @@
 }
 
 @media (max-width: 1120px) {
-  .mission-rail {
-    width: 210px;
-    flex-basis: 210px;
-  }
-
   .mission-rail__new {
     width: 30px;
     padding: 0;

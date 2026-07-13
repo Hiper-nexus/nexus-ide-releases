@@ -1,8 +1,9 @@
-import type { Handoff, Mission } from '../../shared/orch-types';
+import type { Handoff, Mission, PaneRuntimeState } from '../../shared/orch-types';
 import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
 import { requireProjectDomainStoreRegistry } from './project-domain-store-registry';
 import { onHandoffSubmitted } from './idle-delivery';
 import { getSquad } from './squad-store';
+import { listPaneSnapshots } from './pane-registry';
 
 /**
  * The worker stall watchdog cannot see the more fundamental failure where an
@@ -22,6 +23,7 @@ export interface DelegationProgress {
   readonly workerPanes: number;
   readonly tasks: number;
   readonly recoveries: readonly Handoff[];
+  readonly orchestratorState?: PaneRuntimeState;
 }
 
 export function delegationRecoveryStage(
@@ -30,6 +32,10 @@ export function delegationRecoveryStage(
 ): 0 | 1 | 2 {
   if (progress.expectedWorkers === 0) return 0;
   if (!['pending', 'running'].includes(progress.mission.status)) return 0;
+  if (
+    progress.orchestratorState === 'busy' ||
+    progress.orchestratorState === 'spawning'
+  ) return 0;
   if (progress.workerPanes > 0 || progress.tasks > 0) return 0;
   if (progress.recoveries.some((item) => item.deliveryState === 'queued')) return 0;
   const deliveredRecoveries = progress.recoveries.filter(
@@ -65,12 +71,17 @@ function recoverySummary(missionId: string, stage: 1 | 2): string {
 }
 
 function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
+  const liveStates = new Set<PaneRuntimeState>([
+    'spawning', 'busy', 'idle', 'unknown',
+  ]);
   for (const mission of suite.missions.list()) {
     const squad = mission.squadId ? getSquad(mission.squadId) : null;
     const expectedWorkers = squad?.agents.filter(
       (agent) => agent.category !== 'orchestrator',
     ).length ?? 0;
-    const panes = suite.missionPanes.list(mission.id);
+    const panes = listPaneSnapshots().filter(
+      (pane) => pane.missionId === mission.id && liveStates.has(pane.state),
+    );
     const recoveries = suite.handoffs
       .list({ missionId: mission.id, includeDelivered: true })
       .filter((handoff) => handoff.fromAgent === DELEGATION_SUPERVISOR_AGENT)
@@ -81,13 +92,14 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
       workerPanes: panes.filter((pane) => pane.role === 'worker').length,
       tasks: suite.tasks.list(mission.id).length,
       recoveries,
+      orchestratorState: panes.find((pane) => pane.role === 'orchestrator')?.state,
     }, now);
     if (stage === 0) continue;
 
     if (mission.status === 'pending') suite.missions.setStatus(mission.id, 'running');
     const handoff = suite.handoffs.submit({
       missionId: mission.id,
-      status: 'stalled',
+      status: stage === 1 ? 'progress' : 'stalled',
       summary: recoverySummary(mission.id, stage),
       fromAgent: DELEGATION_SUPERVISOR_AGENT,
     });

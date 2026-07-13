@@ -144,9 +144,9 @@ export function buildMissionKickoffPrompt(
     `## Seu squad (${squad.name})\n${rosterBlock(squad.agents) || "(sem workers definidos)"}`,
   );
   const missionLine = missionId
-    ? `a missão JÁ ESTÁ registrada (missionId=${missionId}) — NÃO chame ` +
-      "nexus_mission_create; use nexus_mission_set_status para movê-la " +
-      '(running ao começar; "done" será calculado pelo PREVC, nunca declarado por você)'
+    ? `a missão JÁ ESTÁ registrada e já está em \`running\` (missionId=${missionId}) — ` +
+      'NÃO chame nexus_mission_create nem tente alterar o status antes de congelar o contrato; ' +
+      '"done" será calculado pelo PREVC, nunca declarado por você'
     : "nexus_mission_create para abrir a missão";
   parts.push(
     "## Missão e autoridade\n" +
@@ -155,14 +155,23 @@ export function buildMissionKickoffPrompt(
       "Não edite o checkout principal nem declare a missão done manualmente.",
   );
   const step1 = missionId
-    ? 'nexus_mission_set_status {missionId acima, status: "running"}'
-    : "nexus_mission_create";
+    ? '**nexus_context_doctor**'
+    : 'nexus_mission_create e **nexus_context_doctor**';
   parts.push(
     "## Pipeline obrigatório (PILOTO AUTOMÁTICO — o usuário NÃO precisa saber as tools)\n" +
       "Você opera o motor Nexus de ponta a ponta. Nunca diga ao usuário para " +
       '"rodar o doctor" ou "mapear o repo" — faça você. Multi-projeto e multi-PC ' +
       "já estão no scope/checkout do token.\n" +
-      `1. ${step1} e **nexus_context_doctor**. O doctor É o piloto de bootstrap: ` +
+      "### Rota de WIP — não bloqueie em checkout sujo\n" +
+      "Se Doctor/freeze informar checkout sujo ou `clean committed checkout`, " +
+      "NUNCA peça `git stash`, reset, checkout ou limpeza ao usuário. Use a rota " +
+      "de delegação pré-contrato: nexus_route_task e nexus_pane_spawn/" +
+      "nexus_agent_invoke no modo `same_checkout`. O host preserva o WIP e permite " +
+      "um worker escritor por vez; dê escopo de arquivos claro e aguarde o handoff " +
+      "antes do próximo. Depois do worker, tente Doctor→freeze mais uma vez se o " +
+      "checkout ficou limpo. Se ainda não puder congelar, marque `blocked` com a causa " +
+      "exata — sem executar o trabalho no coordenador e sem fingir conclusão.\n" +
+      `1. ${step1}. O doctor É o piloto de bootstrap: ` +
       "aquece o mapa, scaffold, propõe drafts com hashes reais e, se houver quorum " +
       "de outro provider, roda review→apply→commit sozinho (sem auto-aprovação). " +
       "Leia phase/autopilotHint/appliedDraftIds. Se restarem drafts propostos, " +
@@ -254,6 +263,10 @@ interface MissionMaterializationDeps {
   createMission(
     input: Omit<MissionMaterializationInput, 'paneId'>,
   ): ReturnType<typeof window.nexus.orch.createMission>;
+  updateMission(
+    missionId: string,
+    patch: { status: 'running' },
+  ): ReturnType<typeof window.nexus.orch.updateMission>;
 }
 
 /** Autoridade só existe quando o PTY concreto e o registro persistido existem. */
@@ -263,6 +276,8 @@ export async function materializeSquadMission(
     waitForSession,
     createMission: (missionInput) =>
       window.nexus.orch.createMission(missionInput),
+    updateMission: (missionId, patch) =>
+      window.nexus.orch.updateMission(missionId, patch),
   },
 ) {
   const sessionId = await deps.waitForSession(input.paneId);
@@ -274,6 +289,7 @@ export async function materializeSquadMission(
     squadId: input.squadId,
     orchestratorPane: input.orchestratorPane,
   });
+  await deps.updateMission(mission.id, { status: 'running' });
   return { sessionId, mission };
 }
 
@@ -481,9 +497,6 @@ export async function launchSquadMission(
     sessionId = materialized.sessionId;
     mission = materialized.mission;
     useOrchStore.getState().bindPaneMission(orchPane.id, mission.id);
-    if (profile === 'pet-studio') {
-      await window.nexus.orch.updateMission(mission.id, { status: 'running' });
-    }
   } catch (cause) {
     if (sessionId) window.nexus.pty.kill(sessionId);
     useLayoutStore.getState().setPanes(

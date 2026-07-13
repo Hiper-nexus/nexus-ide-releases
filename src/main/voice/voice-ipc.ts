@@ -86,6 +86,7 @@ import {
   isLiveTransportCredential,
   liveRuntimeFingerprint,
 } from "./live-runtime-config";
+import { requiresVoiceCommandConfirmation } from "../jarvis/guardrails";
 
 /**
  * Wires the voice pipeline into IPC. Every renderer payload is zod-validated
@@ -1031,24 +1032,28 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     stopSystemSpeech();
   });
 
-  // SEC#6: a shell command produced by the (LLM) Jarvis brain must never run
-  // without an explicit, un-spoofable human OK. A poisoned transcript /
-  // prompt-injection can emit run_command; this native dialog — which the
-  // renderer cannot fake — shows the exact command and defaults to Cancel.
+  // Routine local development commands stay hands-free. Destructive or remote
+  // publication/deployment commands retain an un-spoofable main-owned prompt.
   ipcMain.handle(
     VOICE_CHANNELS.confirmCommand,
     async (_event, raw): Promise<boolean> => {
       if (typeof raw !== "string" || raw.trim() === "" || raw.length > 4096) {
         return false;
       }
+      if (!requiresVoiceCommandConfirmation(raw)) {
+        logVoice("info", "jarvis.commandAutoApproved", "comando local de baixo risco", {
+          chars: raw.length,
+        });
+        return true;
+      }
       const opts = {
         type: "warning" as const,
         buttons: ["Cancelar", "Executar"],
         defaultId: 0,
         cancelId: 0,
-        title: "Rodar comando por voz?",
-        message: "A JARVIS quer executar este comando no terminal:",
-        detail: `${raw}\n\nExecute apenas se você reconhece este comando.`,
+        title: "Confirmar ação de alto impacto?",
+        message: "A JARVIS detectou um comando destrutivo ou de publicação:",
+        detail: `${raw}\n\nConfirme apenas se deseja esse efeito externo ou irreversível.`,
         noLink: true,
       };
       const win = BrowserWindow.getFocusedWindow();

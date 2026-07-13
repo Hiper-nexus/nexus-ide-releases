@@ -21,6 +21,7 @@ import {
   flushTerminalOutput,
   writeTerminalOutput,
 } from './terminal-output-scheduler';
+import { submitPromptToPane as submitPanePrompt } from './pane-submit';
 
 /**
  * Persistent terminal manager.
@@ -928,6 +929,19 @@ export function writeToPane(paneId: string, data: string): boolean {
   if (!sessionId) return false;
   window.nexus.pty.write(sessionId, data);
   return true;
+}
+
+/**
+ * Submit a complete prompt to an agent TUI. Newlines stay inside a bracketed
+ * paste; a delayed CR performs the actual Enter instead of leaving text in the
+ * multiline composer.
+ */
+export function submitPromptToPane(paneId: string, text: string): boolean {
+  return submitPanePrompt(paneId, text, {
+    getSessionId: getPaneSessionId,
+    write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
+    schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+  });
 }
 
 function disposeHost(host: Host, paneId: string): void {

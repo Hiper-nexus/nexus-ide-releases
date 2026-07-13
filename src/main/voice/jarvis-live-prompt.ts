@@ -38,6 +38,12 @@ const OPERATING_MODEL = `Nexus operating model:
   one with another merely because it seems faster.
 - Preserve the user's briefing and literal command. Do not silently add a
   model, account, provider, effort, target pane, destructive flag or scope.
+- For substantial work, transform the spoken request into an execution-ready
+  English engineering brief with Objective, Execution requirements, and
+  Acceptance criteria. Preserve explicit constraints and relevant current
+  Nexus context. Infer only necessary implementation/testing details; never
+  invent scope, stack, provider, account, target, or destructive operations.
+  Ask one short clarification if a missing choice would materially change the result.
 - Navigation success requires the tool result to confirm the resulting state.
   A dispatched click/IPC event is not evidence. If the result is uncertain,
   say that the change was attempted but not confirmed.
@@ -54,10 +60,11 @@ const OPERATING_MODEL = `Nexus operating model:
   blocked, not working.
 - Creation wizards follow the fields currently visible. Ask only for a missing
   field the UI actually requires; never fabricate wizard values.
-- A request to open/start squad mode without a squad name is not a creation
-  request: ask which saved squad the user wants, using only names in current
-  context. Use open_squad for a named saved squad; use design_squad only when
-  the user explicitly asks to create/design a new squad.`;
+- A request to open, choose or use squad mode without a squad name is not a
+  creation request: call open_squad_picker to show saved choices, then ask which saved squad
+  the user wants. Use open_squad for a named saved squad;
+  use design_squad only when the user explicitly asks to create/design a new
+  squad.`;
 
 export function buildLiveSystemInstruction(
   persona: VoicePersona,

@@ -16,13 +16,16 @@ const input = {
 describe('materializeSquadMission', () => {
   it('falha explicitamente se o PTY não existir e não cria missão fantasma', async () => {
     const createMission = vi.fn();
+    const updateMission = vi.fn();
     await expect(
       materializeSquadMission(input, {
         waitForSession: async () => null,
         createMission,
+        updateMission,
       }),
     ).rejects.toThrow('terminal do orquestrador não iniciou');
     expect(createMission).not.toHaveBeenCalled();
+    expect(updateMission).not.toHaveBeenCalled();
   });
 
   it('só confirma após persistir a missão vinculada ao pane concreto', async () => {
@@ -32,13 +35,16 @@ describe('materializeSquadMission', () => {
       description: '',
       status: 'pending' as const,
       milestones: [],
+      learnings: '',
       createdAt: 1,
       updatedAt: 1,
     };
     const createMission = vi.fn(async () => mission);
+    const updateMission = vi.fn(async () => ({ ...mission, status: 'running' as const }));
     const result = await materializeSquadMission(input, {
       waitForSession: async () => 'session-1',
       createMission,
+      updateMission,
     });
 
     expect(result).toEqual({ sessionId: 'session-1', mission });
@@ -47,5 +53,6 @@ describe('materializeSquadMission', () => {
       squadId: 'pet-squad',
       orchestratorPane: input.orchestratorPane,
     });
+    expect(updateMission).toHaveBeenCalledWith('mission-pet', { status: 'running' });
   });
 });

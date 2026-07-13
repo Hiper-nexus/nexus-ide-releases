@@ -29,7 +29,7 @@ describe('mission kickoff context/PREVC contract', () => {
     ];
     let previous = -1;
     for (const tool of orderedTools) {
-      const index = prompt.indexOf(tool);
+      const index = prompt.indexOf(tool, previous + 1);
       expect(index, `${tool} missing from kickoff`).toBeGreaterThan(previous);
       previous = index;
     }
@@ -51,6 +51,20 @@ describe('mission kickoff context/PREVC contract', () => {
     expect(prompt).not.toContain('Só claude/glm/longcat');
     expect(prompt).not.toContain('gpt-5.4-mini');
     expect(prompt).not.toContain('gpt-5.5');
+    expect(prompt).toContain('same_checkout');
+    expect(prompt).toContain('NUNCA peça `git stash`');
+    expect(prompt).toContain('nexus_pane_spawn');
+    expect(prompt).toContain('um worker escritor por vez');
+  });
+
+  it('does not ask an already-running mission to change status before its contract exists', () => {
+    const prompt = buildMissionKickoffPrompt(squad, 'mission-a');
+
+    expect(prompt).toContain('já está em `running`');
+    expect(prompt).not.toContain('nexus_mission_set_status');
+    expect(prompt.indexOf('nexus_context_doctor')).toBeLessThan(
+      prompt.indexOf('nexus_mission_freeze_contract'),
+    );
   });
 
   it('injects provided orientation markdown as auto-pilot L1 block', () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { QuotaFleetSnapshot, ProviderQuotaEntry } from '../../shared/quota-types';
 import {
   chipLabel,
+  chipParts,
   chipTone,
   shortWindowsLine,
   windowDisplay,
@@ -30,11 +31,13 @@ describe('quota-display', () => {
       unknownCount: 0,
     };
     expect(chipLabel(snap)).toBe('cota · 54%');
+    expect(chipParts(snap)).toEqual({ value: '54%' });
     expect(chipTone(snap)).toBe('warn');
 
     snap.highUsageCount = 3;
     snap.worstUsedRatio = 0.9;
     expect(chipLabel(snap)).toMatch(/3 no limite/);
+    expect(chipParts(snap)).toEqual({ value: '3 no limite' });
     expect(chipTone(snap)).toBe('danger');
   });
 
@@ -47,6 +50,7 @@ describe('quota-display', () => {
       unknownCount: 2,
     };
     expect(chipLabel(snap)).toBe('cota · —');
+    expect(chipParts(snap)).toEqual({ value: '—' });
     expect(chipTone(snap)).toBe('unknown');
   });
 

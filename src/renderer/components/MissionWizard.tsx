@@ -4,7 +4,10 @@ import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { DEFAULT_ORCH_SETTINGS } from '../../shared/settings-types';
 import { useOrchStore } from '../state/orch-store';
 import { useWorkspaceStore } from '../state/workspace-store';
-import { useMissionWizardStore } from '../state/mission-wizard-store';
+import {
+  useMissionWizardStore,
+  type MissionWizardStep,
+} from '../state/mission-wizard-store';
 import { useProviderStore } from '../state/provider-store';
 import { switchWorkspaceLayout } from '../state/layout-store';
 import { useToastStore } from '../state/toast-store';
@@ -28,14 +31,7 @@ import { PixelIcon } from './PixelIcon';
  */
 
 type Mode = 'libre' | 'squad' | 'agentic';
-type Step =
-  | 'new-ws'
-  | 'mode'
-  | 'libre-count'
-  | 'libre-slots'
-  | 'squad-select'
-  | 'agentic-intent'
-  | 'squad-review';
+type Step = MissionWizardStep;
 
 const PANE_COUNTS = [1, 2, 3, 4, 6];
 
@@ -78,6 +74,7 @@ export function MissionWizard() {
   const presetSquadId = useMissionWizardStore((s) => s.presetSquadId);
   const agenticIntent = useMissionWizardStore((s) => s.agenticIntent);
   const agenticLaunchNonce = useMissionWizardStore((s) => s.agenticLaunchNonce);
+  const squadPickerNonce = useMissionWizardStore((s) => s.squadPickerNonce);
   const voiceLaunchNonce = useMissionWizardStore((s) => s.voiceLaunchNonce);
   const close = useMissionWizardStore((s) => s.close);
   const squads = useOrchStore((s) => s.squads);
@@ -95,6 +92,7 @@ export function MissionWizard() {
   const stepRef = useRef<Step>('mode');
   stepRef.current = step;
   const handledAgenticLaunchRef = useRef(0);
+  const handledSquadPickerRef = useRef(0);
   const [mode, setMode] = useState<Mode | null>(null);
   const [wsPath, setWsPath] = useState('');
   const [count, setCount] = useState(2);
@@ -158,6 +156,14 @@ export function MissionWizard() {
       setSquadId('');
       setIntent(agenticIntent ?? '');
       setStep('agentic-intent');
+    // Selecting an existing squad is a distinct intent from designing one.
+    // A monotonic nonce also switches an already-open wizard reliably.
+    } else if (squadPickerNonce > handledSquadPickerRef.current) {
+      handledSquadPickerRef.current = squadPickerNonce;
+      setMode('squad');
+      setSquadId('');
+      setIntent('');
+      setStep('squad-select');
     // A preset squad (Home deck shortcut) skips MODO/SQUAD straight to review.
     } else if (presetSquadId) {
       setMode('squad');
@@ -192,7 +198,13 @@ export function MissionWizard() {
     presetSquadId,
     agenticIntent,
     agenticLaunchNonce,
+    squadPickerNonce,
   ]);
+
+  useEffect(() => {
+    if (!open) return;
+    useMissionWizardStore.getState().setVisibleStep(step);
+  }, [open, step]);
 
   useEffect(() => {
     if (!open) return;

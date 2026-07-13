@@ -304,20 +304,41 @@ export function jarvisActionFastPath(
     };
   }
 
-  if (
-    /\b(?:abre|abra|abrir|sobe|suba|inicia|inicie|iniciar|liga|ligue|roda|rode)\b(?:\s+o)?\s+(?:um\s+)?(?:modo\s+)?squad\s*$/.test(
+  const requestsSquadPicker =
+    /\b(?:abre|abra|abrir|sobe|suba|inicia|inicie|iniciar|liga|ligue|roda|rode|escolhe|escolha|escolher|seleciona|selecione|selecionar|usa|use|usar)\b.*\b(?:modo\s+)?squads?(?:\s+(?:salvo|salvos|existente|existentes|pronto|prontos))?\s*$/.test(
       t,
-    )
-  ) {
+    ) || /^(?:o\s+)?modo\s+squad$/.test(t);
+  if (requestsSquadPicker) {
     const available = ctx.squads.slice(0, 4);
-    const choices = available.length > 0
-      ? ` Os disponíveis são: ${available.join(', ')}.`
-      : ' Ainda não há um squad salvo neste projeto.';
+    if (available.length > 0) {
+      return {
+        say: say(ctx, 'Abrindo seus squads salvos. Qual você quer usar?'),
+        expectReply: true,
+        action: { type: 'open_squad_picker' },
+      };
+    }
     return {
-      say: say(ctx, `Qual squad você quer iniciar?${choices}`),
+      say: say(ctx, 'Ainda não há squads salvos neste projeto. Quer criar um novo?'),
       expectReply: true,
       action: { type: 'none' },
     };
+  }
+
+  const squadPickerVisible = /visible step:\s*squad-select\b/.test(
+    norm(ctx.screen ?? ''),
+  );
+  if (squadPickerVisible) {
+    const selected = ctx.squads.find((squadName) => {
+      const candidate = norm(squadName);
+      return t === candidate || t === `o ${candidate}` || t.endsWith(` ${candidate}`);
+    });
+    if (selected) {
+      return {
+        say: say(ctx, `Iniciando o squad ${selected}.`),
+        expectReply: false,
+        action: { type: 'open_squad', squadName: selected },
+      };
+    }
   }
 
   // Overclock wizard-fire: user confirms the open squad review ("sim", "inicia", …).

@@ -3,6 +3,7 @@ import { canonicalToolName } from './gate';
 export type McpEffectPolicy =
   | 'read-only'
   | 'bootstrap-authority'
+  | 'delegation-authority'
   | 'workflow-authority'
   | 'handoff-authority'
   | 'mission-control'
@@ -11,6 +12,7 @@ export type McpEffectPolicy =
   | 'execution-effect';
 
 const READ_ONLY_TOOLS = new Set([
+  'load_workspace_dependencies',
   'agent_get',
   'agent_list',
   'browser_inspect',
@@ -66,6 +68,18 @@ const BOOTSTRAP_AUTHORITY_TOOLS = new Set([
   'code_map_refresh',
   'mission_create',
   'mission_freeze_contract',
+  'mission_set_status',
+]);
+
+/**
+ * A coordinator must always retain one bounded path to a real worker. These
+ * handlers bind the child to the same mission/squad and attenuate its tools;
+ * they do not grant native write/shell authority to the coordinator itself.
+ */
+const DELEGATION_AUTHORITY_TOOLS = new Set([
+  'agent_invoke',
+  'mission_spawn_pane',
+  'pane_spawn',
 ]);
 
 /** PREVC state transitions whose handlers enforce mission/stage authority. */
@@ -73,7 +87,6 @@ const WORKFLOW_AUTHORITY_TOOLS = new Set([
   'merge_review_submit',
   'merge_retry',
   'merge_task',
-  'mission_set_status',
   'plan_review_run',
   'review_submit',
   'sensor_run',
@@ -127,6 +140,7 @@ export function effectPolicyForTool(toolName: string): McpEffectPolicy {
   const canonical = canonicalToolName(toolName);
   if (READ_ONLY_TOOLS.has(canonical)) return 'read-only';
   if (BOOTSTRAP_AUTHORITY_TOOLS.has(canonical)) return 'bootstrap-authority';
+  if (DELEGATION_AUTHORITY_TOOLS.has(canonical)) return 'delegation-authority';
   if (WORKFLOW_AUTHORITY_TOOLS.has(canonical)) return 'workflow-authority';
   if (HANDOFF_AUTHORITY_TOOLS.has(canonical)) return 'handoff-authority';
   if (MISSION_CONTROL_TOOLS.has(canonical)) return 'mission-control';

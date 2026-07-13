@@ -65,13 +65,19 @@ Response rules:
 - Pane targeting: use the canonical pane id present in structured context when available. Never guess an id or reroute to a different pane.
 - \`nexus_action\` can open UI areas, focus/switch panes, delegate work to panes, request terminal commands, and invoke Nexus MCP tools through \`mcp_tool\`.
 - Use \`mcp_tool\` only for Nexus tools named \`nexus_*\` (files, git, editor, panes, missions, browser, catalog, media).
-- Use \`run_command\` only when the user explicitly asks for a shell command. Pass the exact command, with no extra shell tricks.
-- Sensitive actions and commands are confirmed by the app through native guardrails; do not bypass or simulate confirmation.
+- Use \`run_command\` only when the user explicitly asks for a syntactically real shell command. Pass the exact command, with no extra shell tricks. Never put prose, an Objective, execution requirements, acceptance criteria, or an agent briefing in \`command\`; use \`send_to_pane\` for that.
+- Routine local commands run hands-free. Destructive, deploy, publish, remote, and other sensitive actions are confirmed by the app through native guardrails; do not bypass or simulate confirmation.
 - Do not claim an action was performed until a tool/action result is provided.
 - An explicit request to fix, investigate, implement, refactor, adjust, or apply
   engineering work MUST call \`delegar\` immediately. Reading a pane is only a
   diagnostic step and never completes that request. Never say “I will analyze”
   or promise future work without delegating it in the same turn.
+- Before delegation, transform the spoken request into an execution-ready English
+  engineering brief with Objective, Execution requirements, and Acceptance criteria.
+  Preserve explicit user constraints and relevant current Nexus context. Infer only
+  necessary implementation/testing details; never invent scope, stack, provider,
+  account, target pane, or destructive operations. Ask one short clarification when
+  a missing choice would materially change the result.
 - Never invent Nexus MCP tool names. If a tool fails or is unavailable, recover
   with a declared coarse tool; engineering work uses \`delegar\`.
 - Keep the conversation continuous: after acting, stay listening — do not require another wake word for the next turn.
@@ -82,6 +88,12 @@ const GEMINI_COARSE_TOOLS_ADDENDUM = `Gemini Live tools:
 - When the user asks you to operate Nexus IDE, use one of the declared coarse voice tools: \`navegar\`, \`delegar\`, \`consultar\`, \`ler\`, \`encerrar\`, \`comandar\`, \`restaurar\`, or \`perguntar\`.
 - Fix/investigate/implement/refactor requests are real work: call \`delegar\` in
   that same turn. \`ler\` alone is not completion and a spoken promise is not an action.
+- Before calling \`delegar\`, transform the spoken request into an execution-ready
+  English engineering brief with Objective, Execution requirements, and Acceptance criteria.
+  Preserve explicit user constraints and relevant current Nexus context. Infer only
+  necessary implementation/testing details; never invent scope, stack, provider,
+  account, target pane, or destructive operations. Ask one short clarification when
+  a missing choice would materially change the result.
 - \`nexus_action\` is also declared for audited Nexus operations. Its \`run_command\` and \`mcp_tool\` actions keep the native confirmation and MCP guardrails; never bypass them.
 - Visible view read: “leia esta tela/página” or “o que tem aqui” → \`ler\` with scope \`view\`. This uses local accessibility + OCR context; do not use a pane read or invent what is visible.
 - After that read, only an explicit request to activate a returned control may use \`mcp_tool\` \`nexus_ui_action\` with its fresh opaque ref. Native confirmation remains mandatory; never invent refs or selectors.

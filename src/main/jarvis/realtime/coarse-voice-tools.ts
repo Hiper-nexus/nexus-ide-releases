@@ -55,7 +55,8 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
       properties: {
         briefing: {
           type: 'STRING',
-          description: 'Descrição completa e fiel da tarefa a delegar.',
+          description:
+            'Write an execution-ready engineering prompt in English with explicit sections: Objective, Execution requirements, and Acceptance criteria. Preserve every user constraint and relevant current Nexus context. Infer only necessary implementation and verification details; do not invent product scope, stack, provider, account, target pane, or destructive action. If a missing choice would materially change the result, ask the user instead of calling this tool.',
         },
       },
       required: ['briefing'],
@@ -99,14 +100,14 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
   {
     name: 'navegar',
     description:
-      'Navega a UI do Nexus: abre/foca workspace, squad, pane, terminal, browser ou tela (grid/board/settings/canvas/voz). Também dirige o wizard: "mission-new" abre Nova Missão; "mission-agentic" abre Nova Missão diretamente no Modo Agêntico (query recebe o objetivo se o usuário já o disse); "workspace-new" abre o assistente de NOVO workspace (pasta + setup — NÃO confundir com abrir um projeto existente); "design-squad" monta um squad do projeto e abre a revisão; "wizard-fire" confirma/inicia o squad na revisão (como o botão Iniciar Squad). Para iniciar/criar missão no modo agêntico, use mission-agentic — NUNCA use voz/settings nem design-squad. Use SEMPRE que o usuário pedir para abrir/mostrar/ir/focar/criar missão/novo workspace/confirmar. NÃO delegue navegação.',
+      'Navega a UI do Nexus: abre/foca workspace, squad, pane, terminal, browser ou tela (grid/board/settings/canvas/voz). Também dirige o wizard: "mission-new" abre Nova Missão; "squad-picker" abre a lista de squads salvos sem criar nem iniciar um; "mission-agentic" abre Nova Missão diretamente no Modo Agêntico (query recebe o objetivo se o usuário já o disse); "workspace-new" abre o assistente de NOVO workspace (pasta + setup — NÃO confundir com abrir um projeto existente); "design-squad" cria um squad novo e abre a revisão; "wizard-fire" confirma/inicia o squad na revisão (como o botão Iniciar Squad). Para iniciar/criar missão no modo agêntico, use mission-agentic — NUNCA use voz/settings nem design-squad. Use SEMPRE que o usuário pedir para abrir/mostrar/ir/focar/criar missão/novo workspace/confirmar. NÃO delegue navegação.',
     parameters: {
       type: 'OBJECT',
       properties: {
         target: {
           type: 'STRING',
           description:
-            "O que navegar: 'workspace', 'workspace-new', 'squad', 'pane', 'terminal', 'browser', 'screen', 'mission-new', 'mission-agentic', 'design-squad' ou 'wizard-fire'.",
+            "O que navegar: 'workspace', 'workspace-new', 'squad', 'squad-picker', 'pane', 'terminal', 'browser', 'screen', 'mission-new', 'mission-agentic', 'design-squad' ou 'wizard-fire'.",
         },
         query: {
           type: 'STRING',
@@ -264,7 +265,13 @@ function navegarToAction(target: string, query: string): NexusRealtimeActionArgs
       if (isNewWorkspaceAlias(query)) return { action: 'new_workspace' };
       return { action: 'open_workspace', workspaceName: query };
     case 'squad':
-      return { action: 'open_squad', squadName: query };
+      return query
+        ? { action: 'open_squad', squadName: query }
+        : { action: 'open_squad_picker' };
+    case 'squad-picker':
+    case 'squad-select':
+    case 'modo-squad':
+      return { action: 'open_squad_picker' };
     case 'pane':
       return { action: 'focus_pane', paneName: query };
     case 'terminal':

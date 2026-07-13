@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACCEPT_DEFAULT_PROMPT_RESPONSE,
+  ACCEPT_SECOND_PROMPT_RESPONSE,
   BUILTIN_PROMPT_SIGNATURES,
   CliPromptAutoResponder,
   matchesPromptSignature,
@@ -28,6 +29,21 @@ Grok Build may run or modify contents in this directory, posing security risks.
   No, exit
 `;
 
+const CLAUDE_BYPASS_PROMPT = `
+WARNING: Claude Code running in Bypass Permissions mode
+
+In Bypass Permissions mode, Claude Code will not ask for your approval before
+running potentially dangerous commands.
+
+By proceeding, you accept all responsibility for actions taken while running
+in Bypass Permissions mode.
+
+› 1. No, exit
+  2. Yes, I accept
+
+Enter to confirm · Esc to cancel
+`;
+
 function signature(name: string) {
   const found = BUILTIN_PROMPT_SIGNATURES.find((item) => item.name === name);
   if (!found) throw new Error(`missing signature ${name}`);
@@ -45,6 +61,22 @@ describe('CLI prompt autoresponder', () => {
     expect(
       matchesPromptSignature(GROK_TRUST_PROMPT, signature('grok-folder-trust')),
     ).toBe(true);
+  });
+
+  it('recognizes and accepts the Claude bypass acknowledgement', () => {
+    expect(
+      matchesPromptSignature(
+        CLAUDE_BYPASS_PROMPT,
+        signature('claude-bypass-acknowledgement'),
+      ),
+    ).toBe(true);
+
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-claude', 'claude');
+    expect(responder.observe('session-claude', CLAUDE_BYPASS_PROMPT)).toBe(
+      ACCEPT_SECOND_PROMPT_RESPONSE,
+    );
+    expect(responder.observe('session-claude', CLAUDE_BYPASS_PROMPT)).toBeNull();
   });
 
   it('does not treat generic trust text as a supported CLI prompt', () => {

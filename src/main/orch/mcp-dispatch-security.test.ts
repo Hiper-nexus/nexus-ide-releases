@@ -52,6 +52,16 @@ function missionContext(contextRevision?: string) {
   });
 }
 
+function orchestratorMissionContext() {
+  resetGateForTests();
+  return mintToken({
+    label: 'security-test-orchestrator',
+    role: 'orchestrator',
+    missionId: TEST_MISSION_ID,
+    scope: auditScope,
+  });
+}
+
 function workflowOptions(
   options: Pick<McpDispatchOptions, 'confirm'> = {},
 ): McpDispatchOptions {
@@ -246,6 +256,68 @@ describe('MCP dispatch effect safety', () => {
 
     expect(result.ok).toBe(true);
     expect(confirm).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('lets a mission orchestrator delegate before a contract exists', async () => {
+    const handler = vi.fn(async () => ({ paneId: 'pane-worker' }));
+    const confirm = vi.fn(async () => true);
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_pane_spawn',
+        description: 'handler-owned bounded delegation',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_pane_spawn',
+      { agentName: 'worker-a', prompt: 'Inspect the dirty checkout.' },
+      orchestratorMissionContext(),
+      { confirm },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('rejects pre-contract delegation from an unbound user or worker', async () => {
+    const handler = vi.fn(async () => ({ paneId: 'must-not-spawn' }));
+    const registry = registryWith({
+      name: 'nexus_pane_spawn',
+      description: 'bounded delegation',
+      inputSchema: { type: 'object', properties: {} },
+      handler,
+    });
+
+    const fromUser = await dispatchToolCall(
+      'http-mcp', registry, 'nexus_pane_spawn', {}, userContext(),
+    );
+    const fromWorker = await dispatchToolCall(
+      'http-mcp', registry, 'nexus_pane_spawn', {}, missionContext(),
+    );
+
+    expect(fromUser).toMatchObject({ ok: false, denied: true });
+    expect(fromWorker).toMatchObject({ ok: false, denied: true });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('lets the exact orchestrator block a mission when bootstrap cannot freeze', async () => {
+    const handler = vi.fn(async () => ({ status: 'blocked' }));
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_mission_set_status',
+        description: 'mission status guarded by its handler',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_mission_set_status',
+      { missionId: TEST_MISSION_ID, status: 'blocked' },
+      orchestratorMissionContext(),
+    );
+
+    expect(result.ok).toBe(true);
     expect(handler).toHaveBeenCalledOnce();
   });
 

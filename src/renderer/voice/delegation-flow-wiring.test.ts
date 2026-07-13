@@ -12,6 +12,10 @@ const finishSource = fs.readFileSync(
   'utf-8',
 );
 const controllerSource = fs.readFileSync(path.join(__dirname, 'voice-controller.ts'), 'utf-8');
+const executorSource = fs.readFileSync(
+  path.join(__dirname, 'jarvis-action-executor.ts'),
+  'utf-8',
+);
 
 describe('guard Live-force-to-Classic (C3)', () => {
   it('a primeira fala pós-"Confirmo?" NUNCA vai pro provider Live', () => {
@@ -69,21 +73,56 @@ describe('re-wake com pendência viva confirma em vez de morrer no stripper (C3 
 });
 
 describe('tool nativa do Live consome a pendência (review final, item 3)', () => {
-  it('o early-return de tool nativa descarta a pendência ANTES de liberar o turno', () => {
-    const branchIdx = finishSource.indexOf('if (hasRealtimeNativeToolSince(tRealtime))');
+  it('descarta apenas a pendência que já existia, preservando a criada pela tool atual', () => {
+    const helperIdx = finishSource.indexOf('const finishRealtimeToolTurn = ()');
+    const waitIdx = finishSource.indexOf('realtimeTranscriptWaiter.wait(');
+    const branchIdx = finishSource.indexOf(
+      "turnExecution.isOwnedBy('realtime-tool', turnToken)",
+      waitIdx,
+    );
+    expect(helperIdx).toBeGreaterThanOrEqual(0);
     expect(branchIdx).toBeGreaterThanOrEqual(0);
-    const clearIdx = finishSource.indexOf('clearPendingDelegation()', branchIdx);
-    const dropLogIdx = finishSource.indexOf("'jarvis.delegationDropped'", branchIdx);
-    const releaseIdx = finishSource.indexOf('releaseAfterRealtimeTool();', branchIdx);
-    expect(clearIdx).toBeGreaterThan(branchIdx);
-    expect(dropLogIdx).toBeGreaterThan(branchIdx);
+    expect(finishSource.slice(branchIdx, branchIdx + 220)).toContain(
+      'hasRealtimeNativeToolSince(tRealtime)',
+    );
+    const clearIdx = finishSource.indexOf('clearPendingDelegation()', helperIdx);
+    const dropLogIdx = finishSource.indexOf("'jarvis.delegationDropped'", helperIdx);
+    const releaseIdx = finishSource.indexOf('releaseAfterRealtimeTool();', helperIdx);
+    expect(clearIdx).toBeGreaterThan(helperIdx);
+    expect(dropLogIdx).toBeGreaterThan(helperIdx);
+    expect(finishSource.slice(helperIdx, clearIdx)).toContain(
+      'shouldDiscardPendingDelegationAfterUnrelatedTool',
+    );
     // Descarte (clear + log) acontece antes do release que encerra o turno.
     expect(releaseIdx).toBeGreaterThan(clearIdx);
     expect(releaseIdx).toBeGreaterThan(dropLogIdx);
     const toolBranch = finishSource.slice(branchIdx, finishSource.indexOf('if (liveTranscript)', branchIdx));
-    // Ferramentas podem narrar áudio depois do resultado; a reabertura agora
-    // espera o completion correlacionado em vez de abrir cedo ou dormir.
-    expect(toolBranch).toContain('releaseAfterRealtimeTool();');
+    // Ferramentas podem narrar áudio depois do resultado; a reabertura passa
+    // pelo helper único que espera o completion correlacionado.
+    expect(toolBranch).toContain('finishRealtimeToolTurn();');
+  });
+});
+
+describe('delegação rotineira segue direto para o orquestrador', () => {
+  it('não cria uma segunda rodada de confirmação por voz', () => {
+    expect(executorSource).not.toContain('setPendingDelegation({');
+    expect(executorSource).not.toContain('jarvis.delegationAuthorityArmed');
+    expect(executorSource).not.toContain('delegationConfirmPrompt(action.text)');
+    expect(executorSource).toContain('pane.delegationSubmitted');
+  });
+
+  it('prepara briefing executável só para missão nova, preservando respostas roteadas', () => {
+    const directReplyIdx = executorSource.indexOf("if (target.kind === 'asking-pane')");
+    const delegationIdx = executorSource.indexOf('const missionPrompt = prepareDelegationPrompt');
+
+    expect(directReplyIdx).toBeGreaterThanOrEqual(0);
+    expect(delegationIdx).toBeGreaterThan(directReplyIdx);
+    expect(executorSource.slice(directReplyIdx, delegationIdx)).toContain(
+      'submitPromptToPane(target.paneId, action.text)',
+    );
+    expect(executorSource.slice(delegationIdx, delegationIdx + 400)).toContain(
+      'submitPromptToPane(target.orchestratorPaneId, missionPrompt)',
+    );
   });
 });
 
@@ -98,6 +137,43 @@ describe('continuidade pós-tool do Gemini Live', () => {
     expect(finishSource).toContain("turnExecution.owner === 'realtime-tool'");
     expect(finishSource).toContain('releaseAfterLiveToolAnswer({');
     expect(finishSource).toContain('callId,');
+  });
+
+  it('encerra a captura ativa assim que a tool correlacionada termina', () => {
+    const completionIdx = controllerSource.indexOf(
+      'onLiveToolTurnComplete((event) =>',
+    );
+    const completionBlock = controllerSource.slice(completionIdx, completionIdx + 2_200);
+
+    expect(completionIdx).toBeGreaterThanOrEqual(0);
+    expect(completionBlock).toContain('lastRealtimeNativeToolCallId === event.callId');
+    expect(completionBlock).toContain(
+      "turnExecution.isOwnedBy('realtime-tool', turnToken)",
+    );
+    expect(completionBlock).toContain('isListening(capture.current)');
+    expect(completionBlock).toContain('finishAndProcessFacade(capture.current, busy)');
+  });
+
+  it('reabre continuidade quando uma tool local termina sem captura ativa', () => {
+    const completionIdx = controllerSource.indexOf(
+      'onLiveToolTurnComplete((event) =>',
+    );
+    const completionBlock = controllerSource.slice(completionIdx, completionIdx + 3_500);
+
+    expect(completionBlock).toContain('releaseAfterLiveToolAnswer({');
+    expect(completionBlock).toContain('audioAlreadyDrained: usedLocalNarration');
+    expect(completionBlock).toContain('if (!busy.current && capture.current)');
+  });
+
+  it('libera uma tool já concluída antes de esperar transcript ou timeout', () => {
+    const earlyOwnerIdx = finishSource.indexOf(
+      "turnExecution.isOwnedBy('realtime-tool', turnToken)",
+    );
+    const transcriptWaitIdx = finishSource.indexOf('realtimeTranscriptWaiter.wait(');
+
+    expect(earlyOwnerIdx).toBeGreaterThanOrEqual(0);
+    expect(transcriptWaitIdx).toBeGreaterThanOrEqual(0);
+    expect(earlyOwnerIdx).toBeLessThan(transcriptWaitIdx);
   });
 });
 

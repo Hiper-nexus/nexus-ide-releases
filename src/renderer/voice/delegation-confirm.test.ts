@@ -4,11 +4,13 @@ import {
   clearPendingDelegation,
   DELEGATION_CONFIRM_TTL_MS,
   delegationConfirmPrompt,
+  isPendingDelegationConfirmation,
   peekPendingDelegation,
   PENDING_REASK_PROMPT,
   refreshPendingDelegation,
   resolveDelegationReply,
   setPendingDelegation,
+  shouldDiscardPendingDelegationAfterUnrelatedTool,
 } from './delegation-confirm';
 import { wakeGreetingText } from './voice-wake-ack';
 
@@ -118,6 +120,42 @@ describe('pending delegation lifecycle', () => {
 
   it('sem pendência → none', () => {
     expect(resolveDelegationReply('sim', T0)).toEqual({ kind: 'none' });
+  });
+
+  it('dá posse explícita ao sim/não isolado enquanto a confirmação está pendente', () => {
+    setPendingDelegation(delegation);
+    expect(isPendingDelegationConfirmation('sim', T0 + 1_000)).toBe(true);
+    expect(isPendingDelegationConfirmation('não', T0 + 1_000)).toBe(true);
+    expect(isPendingDelegationConfirmation('abrir o terminal', T0 + 1_000)).toBe(false);
+  });
+
+  it('preserva a confirmação criada pela própria tool no turno atual', () => {
+    const replacement = { ...delegation, text: 'Nova missão', createdAt: T0 + 2_000 };
+    expect(shouldDiscardPendingDelegationAfterUnrelatedTool(delegation, delegation)).toBe(true);
+    expect(shouldDiscardPendingDelegationAfterUnrelatedTool(delegation, replacement)).toBe(false);
+    expect(shouldDiscardPendingDelegationAfterUnrelatedTool(null, replacement)).toBe(false);
+  });
+
+  it('não apaga a confirmação criada pelo callId da tool que está terminando', () => {
+    const createdByCurrentTool = {
+      ...delegation,
+      originCallId: 'call-current',
+    };
+
+    expect(
+      shouldDiscardPendingDelegationAfterUnrelatedTool(
+        createdByCurrentTool,
+        createdByCurrentTool,
+        'call-current',
+      ),
+    ).toBe(false);
+    expect(
+      shouldDiscardPendingDelegationAfterUnrelatedTool(
+        createdByCurrentTool,
+        createdByCurrentTool,
+        'call-other',
+      ),
+    ).toBe(true);
   });
 });
 

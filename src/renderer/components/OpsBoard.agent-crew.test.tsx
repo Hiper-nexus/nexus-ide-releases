@@ -54,6 +54,7 @@ describe('OpsBoard live agent crew', () => {
           status: 'running',
           squadId: 'squad-1',
           milestones: [],
+          learnings: '',
           createdAt: 1,
           updatedAt: 1,
         },

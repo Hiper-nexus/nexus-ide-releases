@@ -32,6 +32,8 @@ export interface LiveFollowUpOptions {
   ) => import('./voice-capture').AutoStopOptions;
   /** Confirms this exact turn is still owned by the expected Live path. */
   canReopen?: () => boolean;
+  /** Local TTS already finished, so there is no provider audio queue to drain. */
+  audioAlreadyDrained?: boolean;
 }
 
 interface ToolFollowUpRequest extends LiveFollowUpOptions {
@@ -103,25 +105,34 @@ export type BeginListeningFn = (
  * listening with reason `reply` while the Live session stays engaged.
  */
 export async function reopenLiveFollowUpListening(opts: LiveFollowUpOptions): Promise<void> {
-  const { capture, busy, beginListening, wakeAutoStop, canReopen } = opts;
+  const {
+    capture,
+    busy,
+    beginListening,
+    wakeAutoStop,
+    canReopen,
+    audioAlreadyDrained,
+  } = opts;
   const armedAt = followUpGeneration;
 
-  // Chunks often arrive a beat AFTER liveProviderAnswer. Wait briefly for the
-  // playback queue to fill before treating remainingMs===0 as "done speaking".
-  const audioStartDeadline = Date.now() + 3_000;
-  while (Date.now() < audioStartDeadline) {
-    if (!shouldContinueLiveFollowUp(armedAt, canReopen)) return;
-    if ((livePlayer?.remainingMs() ?? 0) > 80) break;
-    await delay(50);
-  }
+  if (!audioAlreadyDrained) {
+    // Chunks often arrive a beat AFTER liveProviderAnswer. Wait briefly for the
+    // playback queue to fill before treating remainingMs===0 as "done speaking".
+    const audioStartDeadline = Date.now() + 3_000;
+    while (Date.now() < audioStartDeadline) {
+      if (!shouldContinueLiveFollowUp(armedAt, canReopen)) return;
+      if ((livePlayer?.remainingMs() ?? 0) > 80) break;
+      await delay(50);
+    }
 
-  const started = Date.now();
-  const maxWaitMs = 45_000;
-  while (Date.now() - started < maxWaitMs) {
-    if (!shouldContinueLiveFollowUp(armedAt, canReopen)) return;
-    const remaining = livePlayer?.remainingMs() ?? 0;
-    if (remaining <= 80) break;
-    await delay(Math.min(250, remaining));
+    const started = Date.now();
+    const maxWaitMs = 45_000;
+    while (Date.now() - started < maxWaitMs) {
+      if (!shouldContinueLiveFollowUp(armedAt, canReopen)) return;
+      const remaining = livePlayer?.remainingMs() ?? 0;
+      if (remaining <= 80) break;
+      await delay(Math.min(250, remaining));
+    }
   }
   await delay(450);
 

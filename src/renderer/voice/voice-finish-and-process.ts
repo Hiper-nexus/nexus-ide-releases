@@ -55,7 +55,11 @@ import {
 } from './voice-session-state';
 import { openLiveAudioGate } from './voice-live-audio-out';
 import { shouldOpenGateOnTurnExit } from './turn-gate';
-import { clearPendingDelegation, peekPendingDelegation } from './delegation-confirm';
+import {
+  clearPendingDelegation,
+  peekPendingDelegation,
+  shouldDiscardPendingDelegationAfterUnrelatedTool,
+} from './delegation-confirm';
 import { reaskPendingDelegation } from './delegation-reask';
 import {
   canAttemptRealtime,
@@ -126,6 +130,7 @@ export async function finishAndProcess(
   const store = useVoiceStore.getState();
   busy.current = true;
   const turnToken = turnExecution.currentToken;
+  const pendingDelegationAtTurnStart = peekPendingDelegation(Date.now());
   const canReopenLiveFollowUp = (): boolean =>
     turnExecution.currentToken === turnToken && turnExecution.owner === 'realtime-audio';
   const canReopenLiveToolFollowUp = (): boolean =>
@@ -164,6 +169,32 @@ export async function finishAndProcess(
       followUpSkipReason: 'realtime-tool',
     });
   };
+  const finishRealtimeToolTurn = (): void => {
+    openLiveAudioGate();
+    resetLiveMuteRescues();
+    store.setStatus('idle');
+    console.log('[voice] realtime tool-call resolveu o turno; Classic pulado');
+    // C3: a primeira fala consome a pendência mesmo quando o turno é
+    // resolvido por tool nativa do Live — senão um "sim" isolado depois,
+    // dentro do TTL, despacharia uma missão obsoleta.
+    if (
+      shouldDiscardPendingDelegationAfterUnrelatedTool(
+        pendingDelegationAtTurnStart,
+        peekPendingDelegation(Date.now()),
+        lastRealtimeNativeToolCallId ?? undefined,
+      )
+    ) {
+      clearPendingDelegation();
+      store.setNote('Missão pro squad descartada — o turno virou outra ação.');
+      logVoiceEvent(
+        'info',
+        'jarvis.delegationDropped',
+        'pendência descartada — turno resolvido por tool nativa',
+        {},
+      );
+    }
+    releaseAfterRealtimeTool();
+  };
   let realtimeMuteDegrade = false;
   let quiesceLiveBeforeClassic = false;
   let realtimeStartedAt = 0;
@@ -186,6 +217,13 @@ export async function finishAndProcess(
     // A paused stream must emit audioStreamEnd promptly; otherwise Gemini can
     // retain cached PCM while this pipeline waits for its transcript.
     if (shouldTryRealtimeTranscript) liveEndUserAudio();
+    // A conclusão correlacionada de uma tool pode chegar enquanto a captura de
+    // reply continua aberta. Não espere o VAD/max-timeout: a ação já possui o
+    // turno e o completion do provider já é a autoridade para liberar a fala.
+    if (turnExecution.isOwnedBy('realtime-tool', turnToken)) {
+      finishRealtimeToolTurn();
+      return;
+    }
     const transcribeCapture = async (): Promise<TranscribeResult> => {
       const startedAt = Date.now();
       const transcribed = await withTimeout(
@@ -297,27 +335,11 @@ export async function finishAndProcess(
         return;
       }
       const liveTranscript = wait.text;
-      if (hasRealtimeNativeToolSince(tRealtime)) {
-        // Tool already owns narration — keep Live audio open, don't mute.
-        openLiveAudioGate();
-        resetLiveMuteRescues();
-        store.setStatus('idle');
-        console.log('[voice] realtime tool-call resolveu o turno; Classic pulado');
-        // C3: a primeira fala consome a pendência mesmo quando o turno é
-        // resolvido por tool nativa do Live — senão um "sim" isolado depois,
-        // dentro do TTL, despacharia a missão obsoleta respondendo outra
-        // pergunta que não tem nada a ver com a delegação.
-        if (peekPendingDelegation(Date.now()) !== null) {
-          clearPendingDelegation();
-          store.setNote('Missão pro squad descartada — o turno virou outra ação.');
-          logVoiceEvent(
-            'info',
-            'jarvis.delegationDropped',
-            'pendência descartada — turno resolvido por tool nativa',
-            {},
-          );
-        }
-        releaseAfterRealtimeTool();
+      if (
+        turnExecution.isOwnedBy('realtime-tool', turnToken) ||
+        hasRealtimeNativeToolSince(tRealtime)
+      ) {
+        finishRealtimeToolTurn();
         return;
       }
       if (liveTranscript) {

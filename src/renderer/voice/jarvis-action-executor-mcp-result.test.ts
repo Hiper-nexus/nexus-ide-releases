@@ -1,8 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JarvisContext, JarvisReply } from '../../shared/voice-ipc';
 
-const { invokeMcpWithConfirm, layoutState, missionWizardState } = vi.hoisted(() => ({
+const {
+  invokeMcpWithConfirm,
+  layoutState,
+  missionWizardState,
+  resolveSendToPaneTarget,
+  setPendingDelegation,
+  submitPromptToPane,
+  waitForSession,
+  writeToPane,
+} = vi.hoisted(() => ({
   invokeMcpWithConfirm: vi.fn(),
+  resolveSendToPaneTarget: vi.fn(),
+  setPendingDelegation: vi.fn(),
+  submitPromptToPane: vi.fn(),
+  waitForSession: vi.fn(),
+  writeToPane: vi.fn(),
   missionWizardState: {
     openForAgentic: vi.fn(),
   },
@@ -37,8 +51,9 @@ vi.mock('../state/settings-store', () => ({
   useSettingsStore: { getState: vi.fn() },
 }));
 vi.mock('../terminal/terminal-host', () => ({
-  waitForSession: vi.fn(),
-  writeToPane: vi.fn(),
+  submitPromptToPane,
+  waitForSession,
+  writeToPane,
 }));
 vi.mock('../browser/browser-host', () => ({ waitForBrowserPaneCreated: vi.fn() }));
 vi.mock('../orch/mission-launcher', () => ({ launchSquadMission: vi.fn() }));
@@ -58,11 +73,11 @@ vi.mock('../orch/mission-reopen', () => ({
 }));
 vi.mock('./delegation-confirm', () => ({
   delegationConfirmPrompt: vi.fn(),
-  setPendingDelegation: vi.fn(),
+  setPendingDelegation,
 }));
 vi.mock('./send-to-pane-target', () => ({
   isOrchestratorPane: () => false,
-  resolveSendToPaneTarget: vi.fn(),
+  resolveSendToPaneTarget,
 }));
 vi.mock('../terminal/pane-close-guard', () => ({ requestPaneClose: vi.fn() }));
 
@@ -91,6 +106,9 @@ describe('Jarvis MCP result propagation', () => {
     vi.unstubAllGlobals();
     layoutState.focusedPaneId = null;
     layoutState.panes = [];
+    vi.stubGlobal('window', {
+      nexus: { voice: { logVoice: vi.fn() } },
+    });
   });
 
   it('reads the actual focused terminal through nexus_pane_read', async () => {
@@ -192,6 +210,56 @@ describe('Jarvis MCP result propagation', () => {
       tool: 'new_agentic_mission',
       ok: true,
     });
+  });
+
+  it('dispatches a routine delegation immediately without a confirmation round trip', async () => {
+    resolveSendToPaneTarget.mockReturnValueOnce({
+      kind: 'delegation',
+      orchestratorPaneId: 'pane-orq',
+    });
+    waitForSession.mockResolvedValueOnce('session-orq');
+    submitPromptToPane.mockReturnValueOnce(true);
+
+    const execution = await executeJarvisAction(
+      { say: '', action: { type: 'send_to_pane', text: 'corrigir o login' } },
+      context,
+    );
+
+    expect(submitPromptToPane).toHaveBeenCalledWith(
+      'pane-orq',
+      expect.stringContaining('Objective: corrigir o login'),
+    );
+    expect(setPendingDelegation).not.toHaveBeenCalled();
+    expect(execution.expectReply).not.toBe(true);
+    expect(execution.toolResult).toMatchObject({
+      tool: 'send_to_pane',
+      ok: true,
+      summary: expect.stringContaining('submetida ao pane'),
+    });
+  });
+
+  it('reroutes a structured mission mislabeled as run_command to the orchestrator', async () => {
+    resolveSendToPaneTarget.mockReturnValueOnce({
+      kind: 'delegation',
+      orchestratorPaneId: 'pane-orq',
+    });
+    waitForSession.mockResolvedValueOnce('session-orq');
+    submitPromptToPane.mockReturnValueOnce(true);
+    const mission = [
+      'Objective: Investigate the scheduling bug.',
+      'Execution requirements:',
+      '- Inspect logs and source code.',
+      'Acceptance criteria:',
+      '- Identify the trigger.',
+    ].join('\n');
+
+    const execution = await executeJarvisAction(
+      { say: '', action: { type: 'run_command', command: mission } },
+      context,
+    );
+
+    expect(submitPromptToPane).toHaveBeenCalledWith('pane-orq', mission);
+    expect(execution.toolResult).toMatchObject({ tool: 'send_to_pane', ok: true });
   });
 
   it('reads the actual focused browser page through nexus_browser_read', async () => {

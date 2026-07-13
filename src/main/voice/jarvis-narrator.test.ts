@@ -137,4 +137,35 @@ describe('jarvis-narrator scoped baseline', () => {
       'QA falhou na tarefa. Veja o diagnóstico no terminal.',
     ]);
   });
+
+  it('silences the first synthetic recovery and never calls the supervisor stalled', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(5_000);
+    const source = new FakeSource();
+    const spoken: string[] = [];
+    initJarvisNarrator(
+      (_scope, _channel, payload) =>
+        spoken.push((payload as { text: string }).text),
+      source,
+    );
+
+    vi.setSystemTime(12_000);
+    source.submit({
+      status: 'progress',
+      fromAgent: 'nexus-delegation-supervisor',
+      summary: 'primeira recuperação automática',
+    });
+    vi.advanceTimersByTime(2_000);
+    expect(spoken).toEqual([]);
+
+    source.submit({
+      status: 'stalled',
+      fromAgent: 'nexus-delegation-supervisor',
+      summary: 'recuperação final',
+    });
+    vi.advanceTimersByTime(2_000);
+    expect(spoken).toEqual([
+      'A missão ainda não conseguiu colocar os especialistas para trabalhar. Veja o diagnóstico no terminal.',
+    ]);
+  });
 });
