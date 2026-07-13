@@ -61,7 +61,7 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
           text: {
             type: 'string',
             description:
-              'Required for send_to_pane agent delegation only. Never put shell commands here.',
+              'Required for send_to_pane agent delegation only. Write an execution-ready engineering prompt in English with Objective, Execution requirements, and Acceptance criteria. Preserve user constraints and relevant current Nexus context; infer only necessary implementation/testing details and never invent scope, stack, provider, account, target, or destructive actions. Never put shell commands here.',
           },
           command: {
             type: 'string',

@@ -27,6 +27,7 @@ import { waitForActionEvidence } from './action-evidence';
 import { resolveWorkspaceByVoiceName } from './workspace-name-resolver';
 import { logVoiceEvent } from './voice-live-ipc';
 import { followUpAuthority } from './follow-up-authority';
+import { prepareDelegationPrompt } from './delegation-prompt';
 
 export interface JarvisExecutionResult {
   sayText: string;
@@ -832,9 +833,10 @@ export async function executeJarvisAction(
       }
     } else {
       // C3: delegação NÃO dispara direto — arma a pendência e pergunta.
+      const missionPrompt = prepareDelegationPrompt(action.text);
       setPendingDelegation({
         targetPaneId: target.orchestratorPaneId,
-        text: action.text,
+        text: missionPrompt,
         createdAt: Date.now(),
       });
       const confirmationDeadline = followUpAuthority.arm();
@@ -845,6 +847,8 @@ export async function executeJarvisAction(
         {
           durationMs: Math.round(followUpAuthority.remainingMs()),
           deadlineMonotonicMs: Math.round(confirmationDeadline),
+          sourceChars: action.text.length,
+          promptChars: missionPrompt.length,
         },
       );
       sayText = delegationConfirmPrompt(action.text);

@@ -28,6 +28,16 @@ describe('COARSE_VOICE_TOOLS declarations', () => {
     expect(byName.perguntar.parameters.required).toEqual(['pergunta']);
   });
 
+  it('requires delegar to author an execution-ready engineering prompt', () => {
+    const delegar = COARSE_VOICE_TOOLS.find((tool) => tool.name === 'delegar');
+    const description = String(delegar?.parameters.properties.briefing?.description ?? '');
+
+    expect(description).toContain('Objective');
+    expect(description).toContain('Execution requirements');
+    expect(description).toContain('Acceptance criteria');
+    expect(description).toMatch(/do not invent/i);
+  });
+
   it('COARSE_VOICE_TOOL_NAMES matches the declarations', () => {
     expect([...COARSE_VOICE_TOOL_NAMES]).toEqual(COARSE_VOICE_TOOLS.map((t) => t.name));
   });

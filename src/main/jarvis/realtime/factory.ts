@@ -72,6 +72,12 @@ Response rules:
   engineering work MUST call \`delegar\` immediately. Reading a pane is only a
   diagnostic step and never completes that request. Never say “I will analyze”
   or promise future work without delegating it in the same turn.
+- Before delegation, transform the spoken request into an execution-ready English
+  engineering brief with Objective, Execution requirements, and Acceptance criteria.
+  Preserve explicit user constraints and relevant current Nexus context. Infer only
+  necessary implementation/testing details; never invent scope, stack, provider,
+  account, target pane, or destructive operations. Ask one short clarification when
+  a missing choice would materially change the result.
 - Never invent Nexus MCP tool names. If a tool fails or is unavailable, recover
   with a declared coarse tool; engineering work uses \`delegar\`.
 - Keep the conversation continuous: after acting, stay listening — do not require another wake word for the next turn.
@@ -82,6 +88,12 @@ const GEMINI_COARSE_TOOLS_ADDENDUM = `Gemini Live tools:
 - When the user asks you to operate Nexus IDE, use one of the declared coarse voice tools: \`navegar\`, \`delegar\`, \`consultar\`, \`ler\`, \`encerrar\`, \`comandar\`, \`restaurar\`, or \`perguntar\`.
 - Fix/investigate/implement/refactor requests are real work: call \`delegar\` in
   that same turn. \`ler\` alone is not completion and a spoken promise is not an action.
+- Before calling \`delegar\`, transform the spoken request into an execution-ready
+  English engineering brief with Objective, Execution requirements, and Acceptance criteria.
+  Preserve explicit user constraints and relevant current Nexus context. Infer only
+  necessary implementation/testing details; never invent scope, stack, provider,
+  account, target pane, or destructive operations. Ask one short clarification when
+  a missing choice would materially change the result.
 - \`nexus_action\` is also declared for audited Nexus operations. Its \`run_command\` and \`mcp_tool\` actions keep the native confirmation and MCP guardrails; never bypass them.
 - Visible view read: “leia esta tela/página” or “o que tem aqui” → \`ler\` with scope \`view\`. This uses local accessibility + OCR context; do not use a pane read or invent what is visible.
 - After that read, only an explicit request to activate a returned control may use \`mcp_tool\` \`nexus_ui_action\` with its fresh opaque ref. Native confirmation remains mandatory; never invent refs or selectors.

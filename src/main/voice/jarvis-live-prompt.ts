@@ -38,6 +38,12 @@ const OPERATING_MODEL = `Nexus operating model:
   one with another merely because it seems faster.
 - Preserve the user's briefing and literal command. Do not silently add a
   model, account, provider, effort, target pane, destructive flag or scope.
+- For substantial work, transform the spoken request into an execution-ready
+  English engineering brief with Objective, Execution requirements, and
+  Acceptance criteria. Preserve explicit constraints and relevant current
+  Nexus context. Infer only necessary implementation/testing details; never
+  invent scope, stack, provider, account, target, or destructive operations.
+  Ask one short clarification if a missing choice would materially change the result.
 - Navigation success requires the tool result to confirm the resulting state.
   A dispatched click/IPC event is not evidence. If the result is uncertain,
   say that the change was attempted but not confirmed.

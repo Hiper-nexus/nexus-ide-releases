@@ -110,6 +110,20 @@ describe('confirmação de delegação possui o próximo sim/não', () => {
     expect(controllerSource).toContain("via: 'pending-delegation-reply'");
     expect(controllerSource).toContain('utterance.rawMaxRms < HOT_COMMAND_MIN_PEAK_RMS');
   });
+
+  it('prepara briefing executável só para missão nova, preservando respostas roteadas', () => {
+    const directReplyIdx = executorSource.indexOf("if (target.kind === 'asking-pane')");
+    const delegationIdx = executorSource.indexOf('const missionPrompt = prepareDelegationPrompt');
+
+    expect(directReplyIdx).toBeGreaterThanOrEqual(0);
+    expect(delegationIdx).toBeGreaterThan(directReplyIdx);
+    expect(executorSource.slice(directReplyIdx, delegationIdx)).toContain(
+      '`${action.text}\\n`',
+    );
+    expect(executorSource.slice(delegationIdx, delegationIdx + 400)).toContain(
+      'text: missionPrompt',
+    );
+  });
 });
 
 describe('continuidade pós-tool do Gemini Live', () => {

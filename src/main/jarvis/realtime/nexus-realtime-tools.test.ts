@@ -9,7 +9,7 @@ describe('nexus realtime tools', () => {
   it('exposes app-wide audited actions to the realtime model', () => {
     const [tool] = createNexusRealtimeTools();
     const params = tool.parameters as {
-      properties: { action: { enum: string[] } };
+      properties: { action: { enum: string[] }; text: { description: string } };
     };
 
     expect(params.properties.action.enum).toEqual(
@@ -25,6 +25,8 @@ describe('nexus realtime tools', () => {
         'new_agentic_mission',
       ]),
     );
+    expect(params.properties.text.description).toContain('Objective');
+    expect(params.properties.text.description).toContain('Acceptance criteria');
   });
 
   it('maps MCP tool calls into the shared Jarvis action executor contract', () => {

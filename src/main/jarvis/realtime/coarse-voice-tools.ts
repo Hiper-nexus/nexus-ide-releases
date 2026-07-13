@@ -55,7 +55,8 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
       properties: {
         briefing: {
           type: 'STRING',
-          description: 'Descrição completa e fiel da tarefa a delegar.',
+          description:
+            'Write an execution-ready engineering prompt in English with explicit sections: Objective, Execution requirements, and Acceptance criteria. Preserve every user constraint and relevant current Nexus context. Infer only necessary implementation and verification details; do not invent product scope, stack, provider, account, target pane, or destructive action. If a missing choice would materially change the result, ask the user instead of calling this tool.',
         },
       },
       required: ['briefing'],
