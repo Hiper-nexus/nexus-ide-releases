@@ -64,7 +64,7 @@ function readCompleteSourceText(root: string, relative: string): string | null {
       !stat.isFile() ||
       stat.size > MAX_BOOTSTRAP_SOURCE_BYTES
     ) return null;
-    const content = new TextDecoder('utf-8', { fatal: true })
+    const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
       .decode(fs.readFileSync(absolute));
     return content.trim() && !content.includes('\0') ? content : null;
   } catch {

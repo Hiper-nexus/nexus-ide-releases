@@ -39,14 +39,22 @@ const contextDoctorFlights = new Map<
   Promise<ContextBootstrapAutopilotResult>
 >();
 
-function contextDoctorScopeKey(ctx: AgentGateContext): string {
+function contextDoctorCheckoutKey(ctx: AgentGateContext): string {
   return [
     ctx.scope.installationId,
     ctx.scope.projectId,
     ctx.scope.checkoutId,
     ctx.scope.rootRealPath,
-    ctx.missionId ?? '',
   ].join('\0');
+}
+
+function contextDoctorScopeKey(ctx: AgentGateContext): string {
+  return `${contextDoctorCheckoutKey(ctx)}\0${ctx.missionId ?? ''}`;
+}
+
+function hasContextDoctorFlightForCheckout(ctx: AgentGateContext): boolean {
+  const prefix = `${contextDoctorCheckoutKey(ctx)}\0`;
+  return [...contextDoctorFlights.keys()].some((key) => key.startsWith(prefix));
 }
 
 const identifier = z.string().trim().min(1).max(160)
@@ -512,7 +520,7 @@ const contextDraftReviewRunTool: McpToolDef = {
     if (ctx.role === 'worker') {
       throw new Error('only an orchestrator can launch autonomous context review');
     }
-    if (contextDoctorFlights.has(contextDoctorScopeKey(ctx))) {
+    if (hasContextDoctorFlightForCheckout(ctx)) {
       return Object.freeze({
         reviewed: null,
         applied: null,

@@ -215,7 +215,10 @@ describe('native context knowledge MCP tools', () => {
     }));
     const doctorCall = tool('nexus_context_doctor').handler(
       {},
-      context('codex', 'doctor-session'),
+      {
+        ...context('codex', 'doctor-session'),
+        missionId: 'mission-a',
+      },
     );
     await vi.waitFor(() => expect(doctorMocks.run).toHaveBeenCalledOnce());
 
@@ -266,6 +269,12 @@ describe('native context knowledge MCP tools', () => {
     expect(doctorMocks.run).toHaveBeenNthCalledWith(2, expect.objectContaining({
       missionId: 'mission-b',
     }));
+    await expect(tool('nexus_context_draft_review_run').handler({
+      draftId: 'draft-unscoped-retry',
+    }, context('codex', 'manual-unscoped'))).resolves.toMatchObject({
+      pending: true,
+      reason: expect.stringMatching(/no duplicate review was queued/i),
+    });
 
     const result = {
       phase: 'ready',

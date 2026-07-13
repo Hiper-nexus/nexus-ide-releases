@@ -171,7 +171,7 @@ describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => 
     const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-product-cache-'));
     roots.push(root, cacheRoot);
     const marker = 'END-OF-SOURCE-EVIDENCE';
-    const product = `# Product\n\n${'x'.repeat(52_000)}\n${marker}\n`;
+    const product = `\uFEFF# Product\n\n${'x'.repeat(52_000)}\n${marker}\n`;
     write(root, 'package.json', JSON.stringify({ name: 'product-app' }));
     write(root, 'PRODUCT.md', product);
     write(root, 'src/main.ts', 'export const main = true;\n');
