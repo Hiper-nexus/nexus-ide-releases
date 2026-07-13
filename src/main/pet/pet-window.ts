@@ -59,10 +59,10 @@ import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace
  */
 
 /**
- * Janela do companion: largura só suficiente para sprite recortado + balão.
- * 380px deixava uma grande superfície invisível entre o corpo e as laterais.
+ * Janela do companion: sprite compacto (~120px) + balão de texto curto.
+ * Valores anteriores (300×360 / sheet 280) faziam o pet parecer gigante.
  */
-export const PET_WINDOW_SIZE = { width: 300, height: 360 } as const;
+export const PET_WINDOW_SIZE = { width: 180, height: 220 } as const;
 /**
  * Motor de arrasto. Log no boot: se não aparecer, o main é código velho.
  * compositor-v10 = janela normal pequena, canvas recortado/persistente e
