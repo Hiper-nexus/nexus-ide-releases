@@ -97,7 +97,15 @@ export function defaultUnknownWindows(
       unknownWindow('hours', '5 Horas'),
     ];
   }
-  // Claude, Codex, GLM, Kimi, Grok, AGY, LongCat, OpenCode, Aider, custom…
+  // Claude, Codex, GLM, Kimi, AGY, LongCat, OpenCode, Aider, custom…
+  // Grok CLI OAuth exposes monthly billing (not 5h/weekly) — keep Mensal slot.
+  if (adapterId === 'grok') {
+    return [
+      unknownWindow('hours', '5 Horas'),
+      unknownWindow('weekly', 'Semanal'),
+      unknownWindow('monthly', 'Mensal'),
+    ];
+  }
   return [
     unknownWindow('hours', '5 Horas'),
     unknownWindow('weekly', 'Semanal'),

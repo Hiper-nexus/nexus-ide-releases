@@ -65,7 +65,6 @@ describe('quota-normalize', () => {
       'codex',
       'glm',
       'kimi',
-      'grok',
       'agy',
       'longcat',
       'opencode',
@@ -76,5 +75,9 @@ describe('quota-normalize', () => {
       expect(w.map((x) => x.label)).toEqual(['5 Horas', 'Semanal']);
       expect(w.every((x) => x.usedRatio === null)).toBe(true);
     }
+    // Grok CLI OAuth billing is monthly (not 5h/weekly SuperGrok chat).
+    const grok = defaultUnknownWindows('grok');
+    expect(grok.map((x) => x.kind)).toEqual(['hours', 'weekly', 'monthly']);
+    expect(grok.find((x) => x.kind === 'monthly')?.label).toBe('Mensal');
   });
 });
