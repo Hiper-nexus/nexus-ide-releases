@@ -97,6 +97,15 @@ describe('wake score gate', () => {
     ).toBeNull();
   });
 
+  it('rejects loud-room PT head scores seen in ambient false positives', () => {
+    expect(
+      resolveWakeDetection(
+        { embedded: 0.003, custom: 0.099 },
+        { peakRms: 0.446, preferCustom: true },
+      ),
+    ).toBeNull();
+  });
+
   it('rejects embedded wake when RMS is below the speech floor', () => {
     expect(
       resolveWakeDetection(

@@ -1,8 +1,9 @@
 /** Authorization for speech without repeating the wake word. */
-// A natural pause after a spoken/tool response often exceeds eight seconds.
-// Keep the already-open Gemini mic authoritative long enough for a real
-// conversational follow-up without forcing the user to repeat "Jarvis".
-export const FOLLOW_UP_AUTHORITY_MS = 60_000;
+// Keep hot follow-up short. A one-minute authority window made the room/TV own
+// the Gemini mic after every narration; logs showed ambient phrases ("Yes.",
+// "obrigado por assistir") becoming tool calls/new missions. Real follow-up is
+// still supported, but after this window the user must say the wake word again.
+export const FOLLOW_UP_AUTHORITY_MS = 12_000;
 
 export class FollowUpAuthority {
   private deadline = 0;

@@ -20,10 +20,11 @@ export const EMBEDDED_WAKE_MIN_RMS = 0.18;
  * (2026-07) satura score≈1 em silêncio; por isso o gate também exige RMS
  * mínimo e (no engine) pode desativar o head se o probe de ruído falhar.
  */
-// v4 recalibrado no mic real (2026-07-12): chamadas do usuário 0,052–0,069;
-// TV/ambiente observado ≤0,045. No corte 0,05: 100% das 50 gravações reais
-// e 0,12 falso/h em 16,7 h públicas. O piso RMS continua obrigatório.
-export const CUSTOM_WAKE_SCORE_THRESHOLD = 0.05;
+// v5 recalibrado após logs reais (2026-07-13): ambiente/TV no Fifine disparou
+// o head PT em 0.066–0.099 com RMS alto (~0.45) e abriu missões sozinho. Em
+// sala alta, só aceitamos score bem acima desse teto; a recuperação quiet
+// abaixo continua restrita a RMS baixo/near-field.
+export const CUSTOM_WAKE_SCORE_THRESHOLD = 0.1;
 
 /**
  * Quiet-near-field recovery band. Real calls in the current MacBook session

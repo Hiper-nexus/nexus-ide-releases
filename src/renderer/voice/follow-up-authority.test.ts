@@ -5,8 +5,8 @@ import {
 } from './follow-up-authority';
 
 describe('FollowUpAuthority', () => {
-  it('keeps a realtime conversational turn open for one minute', () => {
-    expect(FOLLOW_UP_AUTHORITY_MS).toBe(60_000);
+  it('keeps a short realtime conversational turn open without owning room audio for a minute', () => {
+    expect(FOLLOW_UP_AUTHORITY_MS).toBe(12_000);
   });
 
   it('autoriza somente dentro do deadline monotônico', () => {
