@@ -69,19 +69,26 @@ export function balloonContentFor(
     case 'mission-blocked':
       return {
         title: 'Preciso de você',
-        text: `${event.title} — a missão parou esperando uma decisão.`,
+        // Texto completo; a UI do balão faz wrap (sem line-clamp).
+        text: event.title.trim()
+          ? `${event.title.trim()} — a missão parou esperando uma decisão.`
+          : 'A missão parou esperando uma decisão sua.',
         cta: 'Intervir agora',
       };
     case 'agent-waiting':
       return {
         title: 'Agente pediu input',
-        text: 'Permissão ou resposta pendente no terminal.',
+        text: event.title.trim()
+          ? `${event.title.trim()} — permissão ou resposta pendente no terminal.`
+          : 'Permissão ou resposta pendente no terminal.',
         cta: 'Abrir e responder',
       };
     case 'agent-exited':
       return {
         title: 'Agente saiu',
-        text: 'Um pane encerrou — confira o grid e o pipeline.',
+        text: event.title.trim()
+          ? `${event.title.trim()} encerrou — confira o grid e o pipeline.`
+          : 'Um pane encerrou — confira o grid e o pipeline.',
         cta: 'Abrir Ops Board',
       };
     case 'agent-idle':

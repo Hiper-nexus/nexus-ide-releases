@@ -27,10 +27,22 @@ describe('balloonTextFor', () => {
     expect(balloonTextFor(ev('agent-idle'))).toBeNull();
   });
 
-  it('mission-blocked pede intervenção com o nome da missão', () => {
-    const text = balloonTextFor(ev('mission-blocked'));
+  it('mission-blocked pede intervenção com o nome da missão completo', () => {
+    const text = balloonTextFor(
+      ev('mission-blocked', 'Execução + QA'),
+    );
     expect(text).toContain('Preciso de você');
-    expect(text).toContain('Deploy');
+    expect(text).toContain('Execução + QA');
+    expect(text).toContain('esperando uma decisão');
+    // Não pode sair truncado no conteúdo (ellipsis era só CSS; string é integral).
+    expect(text).not.toContain('…');
+    expect(text).not.toMatch(/uma\.\.\.$/);
+  });
+
+  it('agent-waiting inclui o contexto do agente quando há título', () => {
+    const text = balloonTextFor(ev('agent-waiting', 'Claude worker'));
+    expect(text).toContain('Claude worker');
+    expect(text).toContain('pendente');
   });
 });
 

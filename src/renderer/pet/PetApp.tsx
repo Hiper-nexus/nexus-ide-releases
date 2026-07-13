@@ -372,12 +372,15 @@ export function PetApp() {
           onMouseLeave={() => markInteractive(false)}
         >
           <strong className="pet__balloon-title">{balloon.title}</strong>
-          <span className="pet__balloon-text">{balloon.text}</span>
+          <span className="pet__balloon-text" title={balloon.text}>
+            {balloon.text}
+          </span>
           <div className="pet__balloon-actions">
             <button
               type="button"
               className="pet__balloon-cta"
               onClick={() => dismissAndAct(balloon.action)}
+              title={balloon.cta}
             >
               {balloon.cta}
             </button>
@@ -389,7 +392,7 @@ export function PetApp() {
                 setReaction(null);
                 releaseInteractiveAfterOverlay();
               }}
-              title="Dispensar"
+              title="Dispensar por agora"
             >
               Depois
             </button>
