@@ -444,6 +444,30 @@ export function hasCurrentApprovedDispatchContract(mission: {
 }
 
 /**
+ * Full launch/effect authority for one mission revision. Approval alone is not
+ * enough while the mission is still compiling or waiting for the user.
+ */
+export function hasCurrentDispatchAuthority(
+  mission: InferIntentMission & {
+    readonly intentVersion?: number | null;
+  },
+  context: {
+    readonly taskCount?: number;
+    readonly workerPaneCount?: number;
+  } = {},
+): boolean {
+  const intentState = resolveEffectiveIntentState({
+    mission,
+    taskCount: context.taskCount ?? 0,
+    workerPaneCount: context.workerPaneCount ?? 0,
+  });
+  return (
+    canDispatchWorkers(intentState) &&
+    hasCurrentApprovedDispatchContract(mission)
+  );
+}
+
+/**
  * Approved contract for legacy/pet immediate-execution shells (forceLegacy /
  * pet-studio). Gives the gate a real dispatch authorization without inventing
  * a user-composed goal flow.
@@ -611,7 +635,7 @@ export function estimateEffectfulToolTokens(toolName: string): number {
 export function applyEffectfulSpend(
   contract: MissionIntentContract,
   toolName: string,
-): MissionIntentContract {
+): MissionIntentContract & { readonly spentSteps: number; readonly spentTokens: number } {
   const tokenDelta = estimateEffectfulToolTokens(toolName);
   return {
     ...contract,

@@ -10,6 +10,8 @@ import {
   ptyRecoverSchema,
 } from "../../shared/ipc";
 import type { SpawnResult } from "../../shared/types";
+import { hasCurrentDispatchAuthority } from "../../shared/mission-intent";
+import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
 import {
   spawnSession,
   spawnAgentSession,
@@ -32,8 +34,10 @@ import {
   claimPendingSpawnMeta,
 } from "../orch/pane-registry";
 import { createScopedMissionPaneStore } from "../orch/mission-pane-store";
+import { createScopedMissionStore } from "../orch/mission-store";
 import { listSquads } from "../orch/squad-store";
 import {
+  type BoundSpawnAuthority,
   bindSpawnAuthority,
   isKnownLegacySquadSpawnRequest,
 } from "../orch/spawn-authority";
@@ -57,13 +61,75 @@ function findPersistedPane(owner: WebContents, paneId: string) {
   ).findByPaneId(paneId);
 }
 import { resolveCwdForScope } from "../orch/workspace-path";
-import { getTerminalSettings } from "../persistence/settings-store";
+import {
+  getOrchSettings,
+  getTerminalSettings,
+} from "../persistence/settings-store";
 import {
   listAvailableShells,
   resolveConfiguredShell,
 } from "../persistence/shell-catalog";
 import { getCommandBlockTracker } from "../terminal/command-block-tracker";
 import { registerCommandBlockScope } from "../terminal/command-block-scope-registry";
+
+function bindMissionLaunchAuthority(
+  authority: BoundSpawnAuthority,
+  requestedMissionId: string | undefined,
+): BoundSpawnAuthority {
+  const boundMissionId = authority.context?.missionId;
+  if (
+    requestedMissionId &&
+    boundMissionId &&
+    requestedMissionId !== boundMissionId
+  ) {
+    throw new Error("spawn mission does not match main-owned authority");
+  }
+  const missionId = requestedMissionId ?? boundMissionId;
+  if (missionId) {
+    if (authority.source === "direct-user" || !authority.context) {
+      throw new Error("mission agent spawn requires main-owned role authority");
+    }
+    if (!projectRuntimeManager) {
+      throw new Error("project-scoped PTY runtime is not initialized");
+    }
+    const coordinationScope = authority.coordinationScope ?? authority.scope;
+    const mission = createScopedMissionStore(
+      projectRuntimeManager,
+      coordinationScope,
+    ).get(missionId);
+    if (!mission) {
+      throw new Error("mission not found for spawn authority");
+    }
+    if (
+      authority.context.squadId &&
+      mission.squadId !== authority.context.squadId
+    ) {
+      throw new Error("mission squad does not match spawn authority");
+    }
+    if (!hasCurrentDispatchAuthority(mission)) {
+      throw new Error(
+        "approval_required: mission current intent is not authorized for agent spawn",
+      );
+    }
+    return Object.freeze({
+      ...authority,
+      context: Object.freeze({ ...authority.context, missionId }),
+    });
+  }
+
+  if (authority.source === "legacy-squad") {
+    const squadId = authority.context?.squadId;
+    const isImmediateException =
+      squadId === PET_STUDIO_SQUAD_ID ||
+      getOrchSettings().intentFirstMissionRuntimeV1 === false;
+    if (!isImmediateException) {
+      throw new Error(
+        "intent-first: immediate squad spawn is not authorized",
+      );
+    }
+  }
+  return authority;
+}
 
 /**
  * Registers the PTY IPC surface. Every handler validates its payload with zod
@@ -148,14 +214,17 @@ export function registerPtyIpc(): void {
         const trustedUserScope = needsActiveScope
           ? requireRendererWorkspaceScope(event.sender)
           : null;
-        const authority = bindSpawnAuthority({
-          requestId: orchRequestId,
-          pending,
-          squads,
-          persistedPane,
-          trustedUserScope,
-          requestedCwd: req.cwd,
-        });
+        const authority = bindMissionLaunchAuthority(
+          bindSpawnAuthority({
+            requestId: orchRequestId,
+            pending,
+            squads,
+            persistedPane,
+            trustedUserScope,
+            requestedCwd: req.cwd,
+          }),
+          req.missionId,
+        );
         // Downstream code receives the canonical value as defense in depth;
         // spawnAgentSession independently ignores renderer cwd and consumes
         // authority.cwd as the actual PTY working directory.
@@ -200,7 +269,7 @@ export function registerPtyIpc(): void {
           shell: adapter.id,
           cwd: authority.cwd,
           projectRoot: authority.scope.rootRealPath,
-          missionId: persistedPane?.missionId,
+          missionId: authority.context?.missionId,
         });
         return {
           ok: true,

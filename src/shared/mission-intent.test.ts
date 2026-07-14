@@ -13,6 +13,7 @@ import {
   compileIntentContract,
   estimateEffectfulToolTokens,
   hasApprovedDispatchContract,
+  hasCurrentDispatchAuthority,
   isHumanWaitIntentState,
   isRecoveryEligibleIntentState,
   resolveDispatchAuthorizedAt,
@@ -79,6 +80,45 @@ describe('mission intent transitions', () => {
     ).toBe(false);
     expect(
       transitionIntentState({ from: 'executing', event: 'submit_goal' }).ok,
+    ).toBe(false);
+  });
+});
+
+describe('mission dispatch authority', () => {
+  it('requires both a current approval and a dispatch-capable state', () => {
+    const contract = {
+      ...compileIntentContract({ goal: 'Ship safely', intentVersion: 2 }),
+      approvedAt: 100,
+      dispatchedAt: 100,
+    };
+    expect(
+      hasCurrentDispatchAuthority(
+        baseMission({
+          intentState: 'ready_to_start',
+          intentVersion: 2,
+          intentContract: contract,
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasCurrentDispatchAuthority(
+        baseMission({
+          status: 'running',
+          intentState: 'dispatched',
+          intentVersion: 2,
+          intentContract: contract,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasCurrentDispatchAuthority(
+        baseMission({
+          status: 'running',
+          intentState: 'dispatched',
+          intentVersion: 3,
+          intentContract: contract,
+        }),
+      ),
     ).toBe(false);
   });
 });

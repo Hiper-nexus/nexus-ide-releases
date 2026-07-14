@@ -311,6 +311,7 @@ function startSpawn(
         accountId: accountId ?? pane.accountId,
         effort: pane.effort,
         orchRequestId: pane.orchRequestId,
+        missionId: pane.missionId,
       });
       if (host.disposed || host.spawnGeneration !== generation) {
         if (res.ok) window.nexus.pty.kill(res.sessionId);

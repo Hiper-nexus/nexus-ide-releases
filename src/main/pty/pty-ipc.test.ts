@@ -43,9 +43,15 @@ const authorityDeps = vi.hoisted(() => {
     attachSessionScope: vi.fn(),
     findMissionPaneByPaneId: vi.fn((_paneId: string): unknown => null),
     createScopedMissionPaneStore: vi.fn(),
-    listSquads: vi.fn(() => []),
+    getMission: vi.fn((_missionId: string): unknown => null),
+    createScopedMissionStore: vi.fn(),
+    listSquads: vi.fn((): unknown[] => []),
   };
 });
+
+const settingsDeps = vi.hoisted(() => ({
+  getOrchSettings: vi.fn(() => ({ intentFirstMissionRuntimeV1: true })),
+}));
 
 const providerDeps = vi.hoisted(() => ({
   prepareProviderSpawn: vi.fn(),
@@ -95,6 +101,10 @@ vi.mock("../orch/mission-pane-store", () => ({
   createScopedMissionPaneStore: authorityDeps.createScopedMissionPaneStore,
 }));
 
+vi.mock("../orch/mission-store", () => ({
+  createScopedMissionStore: authorityDeps.createScopedMissionStore,
+}));
+
 vi.mock("../orch/squad-store", () => ({
   listSquads: authorityDeps.listSquads,
 }));
@@ -121,6 +131,7 @@ vi.mock("../persistence/provider-config-store", () => ({
 
 vi.mock("../persistence/settings-store", () => ({
   getTerminalSettings: () => ({ shell: "/bin/zsh" }),
+  getOrchSettings: settingsDeps.getOrchSettings,
 }));
 
 vi.mock("../persistence/shell-catalog", () => ({
@@ -146,6 +157,39 @@ vi.mock("../persistence/account-store", () => ({
 
 import { configurePtyProjectRuntimeManager, registerPtyIpc } from "./pty-ipc";
 
+function approvedMissionForSpawn() {
+  return {
+    id: "mission-a",
+    title: "Review",
+    description: "Review",
+    status: "running",
+    squadId: "review-squad",
+    milestones: [],
+    learnings: "",
+    intentState: "dispatched",
+    intentVersion: 1,
+    intentContract: {
+      version: 1,
+      source: "typed",
+      goal: "Review",
+      acceptanceCriteria: ["Done"],
+      risk: "normal",
+      executionMode: "assisted",
+      contextPolicy: "on-demand",
+      intentVersion: 1,
+      approvedAt: 100,
+      dispatchedAt: 100,
+      budgets: {
+        planningTokens: 1_200,
+        executionTokens: 8_000,
+        maxWorkers: 2,
+      },
+    },
+    createdAt: 1,
+    updatedAt: 1,
+  };
+}
+
 describe("registerPtyIpc account fail-fast", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -160,7 +204,14 @@ describe("registerPtyIpc account fail-fast", () => {
     authorityDeps.createScopedMissionPaneStore.mockReturnValue({
       findByPaneId: authorityDeps.findMissionPaneByPaneId,
     });
+    authorityDeps.getMission.mockReturnValue(null);
+    authorityDeps.createScopedMissionStore.mockReturnValue({
+      get: authorityDeps.getMission,
+    });
     authorityDeps.listSquads.mockReturnValue([]);
+    settingsDeps.getOrchSettings.mockReturnValue({
+      intentFirstMissionRuntimeV1: true,
+    });
     ptyDeps.writeSession.mockReturnValue(true);
     configurePtyProjectRuntimeManager({} as never);
     registerPtyIpc();
@@ -309,6 +360,7 @@ describe("registerPtyIpc account fail-fast", () => {
       requestedCwd: "/workspace/a/packages/api",
     };
     authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
+    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce(
       "/workspace/a/packages/api",
     );
@@ -391,6 +443,168 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(authorityDeps.attachSessionScope).not.toHaveBeenCalled();
   });
 
+  it("rejects a renderer-forged legacy squad spawn while intent-first is enabled", () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
+    authorityDeps.listSquads.mockReturnValueOnce([
+      {
+        id: "review-squad",
+        name: "Review",
+        description: "Review",
+        agents: [
+          {
+            id: "maestro",
+            agentName: "Maestro",
+            category: "orchestrator",
+            cli: "claude",
+          },
+        ],
+      },
+    ]);
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+
+    const result = handler?.(
+      { sender: { id: 7 } },
+      {
+        kind: "cli-agent",
+        adapterId: "claude",
+        orchRequestId: "squad-review-squad-forged",
+        cols: 100,
+        rows: 30,
+      },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: expect.stringMatching(/intent-first|immediate.*not authorized/i),
+    });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { squadId: "review-squad", intentFirst: false },
+    { squadId: "nexus-pet-studio", intentFirst: true },
+  ])(
+    "preserves the main-owned immediate launch exception for $squadId",
+    ({ squadId, intentFirst }) => {
+      providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
+      settingsDeps.getOrchSettings.mockReturnValueOnce({
+        intentFirstMissionRuntimeV1: intentFirst,
+      });
+      authorityDeps.listSquads.mockReturnValueOnce([
+        {
+          id: squadId,
+          name: "Immediate",
+          description: "Immediate",
+          agents: [
+            {
+              id: "maestro",
+              agentName: "Maestro",
+              category: "orchestrator",
+              cli: "claude",
+            },
+          ],
+        },
+      ]);
+      const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+
+      expect(
+        handler?.(
+          { sender: { id: 7 } },
+          {
+            kind: "cli-agent",
+            adapterId: "claude",
+            orchRequestId: `squad-${squadId}-approvedexception`,
+            cols: 100,
+            rows: 30,
+          },
+        ),
+      ).toEqual({ ok: true, sessionId: "pty-created" });
+    },
+  );
+
+  it("allows an approved current mission spawn and rejects a stale intent revision", () => {
+    const squad = {
+      id: "review-squad",
+      name: "Review",
+      description: "Review",
+      agents: [
+        {
+          id: "maestro",
+          agentName: "Maestro",
+          category: "orchestrator",
+          cli: "claude",
+        },
+      ],
+    };
+    const approved = {
+      id: "mission-a",
+      title: "Review",
+      description: "Review",
+      status: "running",
+      squadId: "review-squad",
+      milestones: [],
+      learnings: "",
+      intentState: "dispatched",
+      intentVersion: 1,
+      intentContract: {
+        version: 1,
+        source: "typed",
+        goal: "Review",
+        acceptanceCriteria: ["Done"],
+        risk: "normal",
+        executionMode: "assisted",
+        contextPolicy: "on-demand",
+        intentVersion: 1,
+        approvedAt: 100,
+        dispatchedAt: 100,
+        budgets: {
+          planningTokens: 1_200,
+          executionTokens: 8_000,
+          maxWorkers: 2,
+        },
+      },
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    authorityDeps.listSquads.mockReturnValue([squad]);
+    authorityDeps.getMission.mockReturnValueOnce(approved).mockReturnValueOnce({
+      ...approved,
+      intentVersion: 2,
+    });
+    providerDeps.prepareProviderSpawn.mockReturnValue({ ok: true, overrides: {} });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    const request = {
+      kind: "cli-agent",
+      adapterId: "claude",
+      missionId: "mission-a",
+      orchRequestId: "squad-review-squad-approved",
+      cols: 100,
+      rows: 30,
+    };
+
+    expect(handler?.({ sender: { id: 7 } }, request)).toEqual({
+      ok: true,
+      sessionId: "pty-created",
+    });
+    expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
+      { id: 7 },
+      expect.objectContaining({ missionId: "mission-a" }),
+      expect.objectContaining({ id: "claude" }),
+      {},
+      expect.objectContaining({
+        source: "legacy-squad",
+        context: expect.objectContaining({ missionId: "mission-a" }),
+      }),
+    );
+
+    ptyDeps.spawnAgentSession.mockClear();
+    expect(handler?.({ sender: { id: 7 } }, request)).toEqual({
+      ok: false,
+      error: expect.stringMatching(/approval|required|current intent/i),
+    });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+  });
+
   it("pins a resumed mission pane to its persisted adapter, scope and cwd", () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true,
@@ -408,6 +622,7 @@ describe("registerPtyIpc account fail-fast", () => {
       createdAt: 1,
     };
     authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
@@ -453,6 +668,7 @@ describe("registerPtyIpc account fail-fast", () => {
       createdAt: 1,
     };
     authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
     const sender = { id: 7 };
@@ -494,6 +710,44 @@ describe("registerPtyIpc account fail-fast", () => {
       "pane-worker",
       expect.objectContaining({ missionId: "mission-a", role: "worker" }),
     );
+  });
+
+  it("rejects persisted pane restore after the mission intent version changes", () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
+    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce({
+      id: "mpane-worker",
+      missionId: "mission-a",
+      adapterId: "claude",
+      title: "Worker",
+      role: "worker",
+      paneId: "pane-worker",
+      cwd: "/workspace/a/trusted-cwd",
+      scope: authorityDeps.scope,
+      createdAt: 1,
+    });
+    authorityDeps.getMission.mockReturnValueOnce({
+      ...approvedMissionForSpawn(),
+      intentVersion: 2,
+    });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+
+    expect(
+      handler?.(
+        { sender: { id: 7 } },
+        {
+          kind: "cli-agent",
+          adapterId: "claude",
+          paneId: "pane-worker",
+          restorePersistedAuthority: true,
+          cols: 100,
+          rows: 30,
+        },
+      ),
+    ).toEqual({
+      ok: false,
+      error: expect.stringMatching(/approval_required|current intent/i),
+    });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
   it("rejects a resumed mission pane when the renderer substitutes its adapter", () => {

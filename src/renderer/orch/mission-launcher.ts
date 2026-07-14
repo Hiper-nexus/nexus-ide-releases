@@ -603,6 +603,7 @@ export async function launchSquadMission(
     accountId,
     title: `${squad.name} · orq`,
     orchRequestId: `squad-${squad.id}-${Date.now().toString(36)}`,
+    missionId: options.existingMissionId,
     role: "orchestrator" as const,
     agentName: orchestrator.agentName,
   };

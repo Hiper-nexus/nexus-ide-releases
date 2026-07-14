@@ -85,12 +85,39 @@ const session = {
   allowedTools: ["nexus_pane_spawn"],
   allowedSkills: ["review"],
 };
-const authority = new RendererMissionAuthority({
-  forScope: deps.forScope,
-} as never, () => "context-revision-a");
+const approvedMission = {
+  ...mission,
+  status: "running" as const,
+  intentState: "dispatched" as const,
+  intentVersion: 1,
+  intentContract: {
+    version: 1 as const,
+    source: "typed" as const,
+    goal: "Review",
+    acceptanceCriteria: ["Done"],
+    risk: "normal" as const,
+    executionMode: "assisted" as const,
+    contextPolicy: "on-demand" as const,
+    intentVersion: 1,
+    approvedAt: 100,
+    dispatchedAt: 100,
+    budgets: {
+      planningTokens: 1_200,
+      executionTokens: 8_000,
+      maxWorkers: 2,
+    },
+  },
+};
+const authority = new RendererMissionAuthority(
+  { forScope: deps.forScope } as never,
+  () => "context-revision-a",
+  () => true,
+);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  deps.getMission.mockReset();
+  deps.setMissionOrchestratorSession.mockReset();
   deps.findPaneOwnedBy.mockReturnValue({
     paneId: "pane-a",
     sessionId: "pty-a",
@@ -499,6 +526,40 @@ describe("renderer mission authority", () => {
     );
   });
 
+  it("rejects immediate creation when main policy did not grant the exception", () => {
+    const strictAuthority = new RendererMissionAuthority(
+      { forScope: deps.forScope } as never,
+      () => "context-revision-a",
+      () => false,
+    );
+
+    expect(() =>
+      strictAuthority.createMissionFromRenderer(owner, {
+        title: "Review",
+        squadId: "review-squad",
+        orchestratorPane: { paneId: "pane-a" },
+      }),
+    ).toThrow(/immediate.*not authorized|intent-first/i);
+    expect(deps.createMission).not.toHaveBeenCalled();
+  });
+
+  it("binds only with approval for the exact mission intent version", () => {
+    deps.getMission.mockReturnValueOnce({
+      ...approvedMission,
+      intentVersion: 2,
+    });
+
+    expect(() =>
+      authority.bindOrchestratorToMissionFromRenderer(owner, {
+        missionId: "mission-a",
+        title: "Review",
+        squadId: "review-squad",
+        orchestratorPane: { paneId: "pane-a" },
+      }),
+    ).toThrow(/approval_required|current intent/i);
+    expect(deps.recordMissionPane).not.toHaveBeenCalled();
+  });
+
   it("fails closed before creating when pane ownership or promotion is absent", () => {
     deps.findPaneOwnedBy.mockReturnValueOnce(null);
     expect(() =>
@@ -544,6 +605,7 @@ describe("renderer mission authority", () => {
   });
 
   it("restores only the owned persisted pane with the same scope and runtime metadata", () => {
+    deps.getMission.mockReturnValue(approvedMission);
     deps.getContextBySession.mockReturnValue({
       role: "orchestrator",
       missionId: "mission-a",
@@ -554,7 +616,7 @@ describe("renderer mission authority", () => {
       source: "persisted-pane",
       missionId: "mission-a",
     });
-    deps.findMissionPaneByPaneId.mockReturnValueOnce({
+    deps.findMissionPaneByPaneId.mockReturnValue({
       id: "mpane-a",
       missionId: "mission-a",
       paneId: "pane-a",
@@ -590,11 +652,23 @@ describe("renderer mission authority", () => {
     expect(authority.restorePersistedPaneAuthority(owner, "pane-a")).toBe(
       false,
     );
+
+    deps.getOwnedAgentSessionInfo.mockReturnValueOnce({
+      ...session,
+      source: "persisted-pane",
+      missionId: "mission-a",
+    });
+    deps.getMission.mockReturnValueOnce({
+      ...approvedMission,
+      intentVersion: 2,
+    });
+    expect(authority.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
+    expect(deps.restoreSessionAuthority).toHaveBeenCalledTimes(1);
   });
 
   it("rebinds only an owned restored orchestrator session for that mission", () => {
     deps.getMission.mockReturnValue({
-      ...mission,
+      ...approvedMission,
       orchestratorSessionId: "pty-old",
     });
     deps.getContextBySession.mockReturnValue({

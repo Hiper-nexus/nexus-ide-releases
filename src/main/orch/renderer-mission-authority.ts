@@ -2,7 +2,7 @@ import type { WebContents } from "electron";
 import {
   classifyGoalRisk,
   compileIntentContract,
-  hasApprovedDispatchContract,
+  hasCurrentDispatchAuthority,
   isPrepareProjectPlaceholderGoal,
   missionStatusForIntent,
   PREPARE_PROJECT_PLACEHOLDER_GOAL,
@@ -10,6 +10,7 @@ import {
   transitionIntentState,
   type MissionIntentSource,
 } from "../../shared/mission-intent";
+import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
 import {
   bumpMissionPromptIntent,
   completeMissionPrompt,
@@ -41,6 +42,7 @@ import { attachOrchMeta, findPaneOwnedBy } from "./pane-registry";
 import type { ProjectDomainStoreRegistry } from "./project-domain-store-registry";
 import { getContextWorkflowService } from "../context/context-workflow-registry";
 import { emitMissionIntentEvent } from "./mission-intent-events";
+import { getOrchSettings } from "../persistence/settings-store";
 
 export interface RendererMissionCreateInput {
   title: string;
@@ -151,6 +153,7 @@ export class RendererMissionAuthority {
     scope: ProjectExecutionScope,
     missionId: string,
   ) => string | undefined;
+  readonly #allowImmediateDispatch: (squadId: string) => boolean;
 
   constructor(
     stores: ProjectDomainStoreRegistry,
@@ -160,9 +163,13 @@ export class RendererMissionAuthority {
     ): string | undefined =>
       getContextWorkflowService(scope).getMissionWorkflow(missionId)
         .contract?.contract.contextRevision,
+    allowImmediateDispatch = (squadId: string): boolean =>
+      squadId === PET_STUDIO_SQUAD_ID ||
+      getOrchSettings().intentFirstMissionRuntimeV1 === false,
   ) {
     this.#stores = stores;
     this.#resolveContextRevision = resolveContextRevision;
+    this.#allowImmediateDispatch = allowImmediateDispatch;
   }
 
   updateMissionFromRenderer(
@@ -541,26 +548,9 @@ export class RendererMissionAuthority {
     // A ready_to_start mission is bindable only after durable approval. Main
     // promotes it to dispatched while binding this already-live owned pane.
     const intentState = existing.intentState ?? "legacy";
-    const hasApprovedContract = hasApprovedDispatchContract(
-      existing.intentContract,
-    );
-    const bindable =
-      (intentState === "ready_to_start" && hasApprovedContract) ||
-      intentState === "dispatched" ||
-      intentState === "executing" ||
-      intentState === "validating" ||
-      (intentState === "legacy" && existing.status === "running");
-    if (!bindable) {
+    if (!hasCurrentDispatchAuthority(existing)) {
       throw new Error(
-        `dispatch_required: cannot bind orchestrator in state ${intentState}`,
-      );
-    }
-    if (
-      intentState !== "legacy" &&
-      !hasApprovedContract
-    ) {
-      throw new Error(
-        "approval_required: approve the plan before binding an orchestrator",
+        `approval_required: current intent must be approved and dispatched before binding (state=${intentState})`,
       );
     }
 
@@ -695,6 +685,11 @@ export class RendererMissionAuthority {
     owner: WebContents,
     input: RendererMissionCreateInput,
   ): Mission {
+    if (!this.#allowImmediateDispatch(input.squadId)) {
+      throw new Error(
+        "intent-first: immediate mission creation is not authorized for this squad",
+      );
+    }
     const owned = ownedPaneSession(owner, input.orchestratorPane.paneId);
     if (
       owned.info.source !== "legacy-squad" ||
@@ -800,10 +795,14 @@ export class RendererMissionAuthority {
     } catch {
       return false;
     }
-    const paneStore = this.#stores.forScope(owned.info.scope).missionPanes;
+    const suite = this.#stores.forScope(owned.info.scope);
+    const paneStore = suite.missionPanes;
     const spec = paneStore.findByPaneId(owned.paneId);
+    const mission = spec ? suite.missions.get(spec.missionId) : null;
     if (
       !spec ||
+      !mission ||
+      !hasCurrentDispatchAuthority(mission) ||
       !matchesPersistedRuntime(owned.info, spec) ||
       !hasMatchingGateContext(owned.sessionId, owned.info, spec.missionId)
     ) {
@@ -847,7 +846,13 @@ export class RendererMissionAuthority {
     const missionStore = suite.missions;
     const paneStore = suite.missionPanes;
     const mission = missionStore.get(missionId);
-    if (!mission || mission.id !== missionId) return null;
+    if (
+      !mission ||
+      mission.id !== missionId ||
+      !hasCurrentDispatchAuthority(mission)
+    ) {
+      return null;
+    }
 
     let owned: ReturnType<typeof ownedPaneSession>;
     try {

@@ -444,6 +444,8 @@ export interface PaneModel {
    * context minted for that request.
    */
   orchRequestId?: string;
+  /** Mission selector for a main-verified post-approval orchestrator spawn. */
+  missionId?: string;
   /** Bounded ANSI snapshot used only to repaint scrollback after a cold restart. */
   terminalScrollback?: string;
 }
@@ -497,6 +499,8 @@ export interface SpawnRequest {
   accountId?: string;
   /** Correlates an orchestration-requested spawn with its gate context. */
   orchRequestId?: string;
+  /** Main verifies this mission has a current approved dispatch contract. */
+  missionId?: string;
   /** Re-spawn continuing the previous conversation (adapter resumeArgs). */
   resume?: boolean;
   /** Skip a stale captured id and use the adapter's latest-session fallback. */
