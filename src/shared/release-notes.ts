@@ -55,6 +55,21 @@ export const CURRENT_RELEASE: AppRelease = {
         'Issues do GitHub/Linear viram missões com source imported-issue no contrato; objetivos por voz registram source voice.',
     },
     {
+      title: 'Source Control no contexto',
+      detail:
+        'O painel Git contextual executa operações reais no workspace, valida o estado do repositório e mantém o resultado auditável no mesmo cockpit.',
+    },
+    {
+      title: 'Presença e onboarding mais claros',
+      detail:
+        'Boot, home e lançamento mostram pet, progresso e CTA com estado explícito (online, calibrando ou ação necessária), sem animação invasiva.',
+    },
+    {
+      title: 'Notificações saltam para o pane certo',
+      detail:
+        'A inbox de agentes preserva avisos acionáveis e leva o operador diretamente ao pane que requer atenção, inclusive entre sessões.',
+    },
+    {
       title: 'Missão enxuta (0.15.14)',
       detail:
         'Kickoff sem duplicação, cartas de worker por papel/tarefa, começo em um clique para risco normal e wizard sem jargão.',

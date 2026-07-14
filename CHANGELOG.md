@@ -17,6 +17,11 @@ Data: 2026-07-14
 - Pet Nico incluído no catálogo embutido; spritesheet validado abaixo de 2,5 MB.
 - Pipeline reproduzível de treino de wake PT-BR, testes e documentação de
   arquitetura de voz versionados sem substituir o modelo ativo.
+- Painel Source Control contextual com operações Git reais, smoke de workspace
+  e scrollbars legíveis; a caixa de notificações permite saltar diretamente ao
+  pane que precisa de atenção.
+- Onboarding de workspace e presença visual do pet foram polidos com progresso
+  explícito, CTA primário e estados online/calibrando, respeitando reduced motion.
 - Smoke de release corrigido para os artefatos reais do `node-pty` no Linux e
   para o filtro de caminhos Windows do Forge, evitando pacotes sem o bundle
   principal.
