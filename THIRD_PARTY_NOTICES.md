@@ -205,3 +205,11 @@ Remote SSH transport (`src/main/integrations/ssh2-transport.ts`) depends on the
 Copyright Brian White / mscdex and contributors), used for production SSH
 sessions, remote worktree create, and SFTP. Optional native helpers may be
 built by `cpu-features` on install.
+
+## Impeccable (pbakaus/impeccable) — frontend visual audit skill
+
+NexusIDE bundles the complete `impeccable` design and visual audit skill, copied from [`pbakaus/impeccable`](https://github.com/pbakaus/impeccable) at commit `8259c28209b92792005cec14dad573df39f68eaf`. Copyright remains with the Impeccable contributors. The skill files are distributed under the Apache License 2.0.
+
+The Apache License 2.0 text and original third-party notices are included at `assets/skills/impeccable/LICENSE` and `assets/skills/impeccable/NOTICE.md`, and are mirrored to the client's local runtime skill folder upon bootstrap.
+
+The Apache License 2.0 text is also included at `third_party/licenses/Apache-2.0.txt`.
