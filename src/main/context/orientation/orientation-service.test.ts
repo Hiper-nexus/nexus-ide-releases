@@ -142,4 +142,20 @@ describe('ProjectOrientationService P0', () => {
     expect(cached!.symbols.symbols.size).toBeGreaterThan(0);
     expect(cached!.symbols.symbols.has('AuthService')).toBe(true);
   });
+
+  it('fails fast on cancellation without publishing a failed map or cache', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-orient-')));
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-orient-cache-'));
+    roots.push(root, cacheRoot);
+    write(root, 'src/index.ts', 'export const boot = true;\n');
+    const service = new ProjectOrientationService({ cacheRoot, includeContextSummary: false });
+    const scope = scopeFor(root);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(service.ensure(scope, {
+      reason: 'pre-kickoff', signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(service.get(scope)).toBeNull();
+    expect(readOrientationCache(cacheRoot, scope)).toBeNull();
+  });
 });

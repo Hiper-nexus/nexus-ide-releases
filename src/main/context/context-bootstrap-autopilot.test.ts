@@ -153,6 +153,17 @@ beforeEach(() => {
 });
 
 describe('runContextBootstrapAutopilot', () => {
+  it('does not mutate context when bootstrap was already preempted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(runContextBootstrapAutopilot({
+      scope, author, signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(mocks.ensure).not.toHaveBeenCalled();
+    expect(mocks.scaffold).not.toHaveBeenCalled();
+    expect(mocks.propose).not.toHaveBeenCalled();
+  });
+
   it('reports dirty workflow binding as blocked and routes to same-checkout delegation', async () => {
     const ready: ContextReadinessReport = Object.freeze({
       ready: true,

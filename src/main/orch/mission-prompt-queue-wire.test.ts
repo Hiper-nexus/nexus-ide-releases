@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   completeMissionPrompt,
+  getMissionPromptAbortSignal,
   enqueueMissionPrompt,
   getMissionPromptQueue,
   peekMissionPromptQueue,
@@ -65,6 +66,21 @@ describe('mission prompt queue production wire', () => {
     expect(peekMissionPromptQueue(missionId).queued.map((i) => i.id)).toContain(
       'goal-2',
     );
+    expect(getMissionPromptAbortSignal(missionId, 'old-boot')?.aborted).toBe(true);
+  });
+
+  it('aborts an executing preflight and releases its controller on reset', () => {
+    const missionId = 'm-abort';
+    enqueueMissionPrompt({
+      missionId, kind: 'preflight', body: 'warm orientation',
+      intentVersion: 1, source: 'system', id: 'preflight-1',
+    });
+    startMissionPrompt(missionId, 'preflight-1');
+    const signal = getMissionPromptAbortSignal(missionId, 'preflight-1');
+    expect(signal?.aborted).toBe(false);
+    resetMissionPromptQueues();
+    expect(signal?.aborted).toBe(true);
+    expect(getMissionPromptAbortSignal(missionId, 'preflight-1')).toBeUndefined();
   });
 
   it('preflight prepare-project path starts and completes', () => {

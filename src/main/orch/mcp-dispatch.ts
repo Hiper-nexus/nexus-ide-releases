@@ -32,8 +32,10 @@ import type { McpRegistry, McpToolDef } from './mcp-protocol';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { assertMissionIntentAllowsTool } from './mission-intent-gate';
 import {
+  cancelMissionPrompt,
   completeMissionPrompt,
   enqueueMissionPrompt,
+  getMissionPromptAbortSignal,
   getMissionPromptQueue,
   startMissionPrompt,
 } from './mission-prompt-queue-registry';
@@ -679,15 +681,14 @@ export async function dispatchToolCall(
   // Track only warm/bootstrap tools on the prompt queue (not mission_create /
   // set_status). Newer intentVersion preempts in-flight doctor/map work.
   let queuePromptId: string | null = null;
+  let queueSignal: AbortSignal | undefined;
   const warmBootstrap =
     /context_doctor|code_map_refresh|context_scaffold|context_draft|mission_freeze/i.test(
       tool.name,
     );
   if (ctx.missionId && warmBootstrap) {
     try {
-      const suite = getProjectDomainStores(ctx.scope);
-      const mission = suite.missions?.get(ctx.missionId);
-      const intentVersion = mission?.intentVersion ?? 1;
+      const intentVersion = finalIntent.resolved?.mission.intentVersion ?? 1;
       const enq = enqueueMissionPrompt({
         missionId: ctx.missionId,
         kind: 'bootstrap',
@@ -698,7 +699,20 @@ export async function dispatchToolCall(
       const item = enq.state.items.at(-1);
       if (item && item.status === 'queued') {
         queuePromptId = item.id;
-        startMissionPrompt(ctx.missionId, item.id);
+        const started = startMissionPrompt(ctx.missionId, item.id);
+        const executing = started.state.items.find(
+          (entry) => entry.id === item.id && entry.status === 'executing',
+        );
+        if (!executing) {
+          cancelMissionPrompt(ctx.missionId, item.id);
+          return {
+            ok: false,
+            tool: tool.name,
+            denied: true,
+            error: 'prompt_queue_busy',
+          };
+        }
+        queueSignal = getMissionPromptAbortSignal(ctx.missionId, item.id);
       } else if (item?.status === 'cancelled') {
         return {
           ok: false,
@@ -707,8 +721,14 @@ export async function dispatchToolCall(
           error: 'intent_preempted: bootstrap cancelled by newer user intent',
         };
       }
-    } catch {
-      // Queue is best-effort relative to the tool itself.
+    } catch (err) {
+      console.warn('[mcp-dispatch] prompt queue unavailable (deny):', err);
+      return {
+        ok: false,
+        tool: tool.name,
+        denied: true,
+        error: 'prompt_queue_unavailable',
+      };
     }
   }
 
@@ -728,7 +748,10 @@ export async function dispatchToolCall(
       }
     }
 
-    const result = await tool.handler(args, ctx);
+    const result = await tool.handler(args, ctx, { signal: queueSignal });
+    if (queueSignal?.aborted) {
+      throw new Error('intent_preempted: bootstrap cancelled by newer user intent');
+    }
     if (queuePromptId && ctx.missionId) {
       completeMissionPrompt(ctx.missionId, queuePromptId, true);
     }
@@ -758,7 +781,11 @@ export async function dispatchToolCall(
     if (queuePromptId && ctx.missionId) {
       completeMissionPrompt(ctx.missionId, queuePromptId, false);
     }
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorMsg = queueSignal?.aborted
+      ? 'intent_preempted: bootstrap cancelled by newer user intent'
+      : err instanceof Error
+        ? err.message
+        : String(err);
     const auditFailure = writeAudit(
       () =>
         auditError(

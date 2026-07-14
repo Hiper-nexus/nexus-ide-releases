@@ -73,6 +73,45 @@ function scopeKey(scope: ProjectExecutionScope): string {
   return `${scope.projectId}\0${scope.checkoutId}`;
 }
 
+function orientationAbortError(): Error {
+  const error = new Error('orientation build aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw orientationAbortError();
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+function awaitWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  throwIfAborted(signal);
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(orientationAbortError());
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
+}
+
+function yieldToEventLoop(signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    const immediate = setImmediate(() => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    });
+    const abort = () => {
+      clearImmediate(immediate);
+      reject(orientationAbortError());
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+}
+
 export class ProjectOrientationService {
   readonly #cacheRoot: string;
   readonly #limits: OrientationLimits;
@@ -107,6 +146,7 @@ export class ProjectOrientationService {
     scope: ProjectExecutionScope,
     options: OrientationEnsureOptions,
   ): Promise<ProjectOrientationMap> {
+    throwIfAborted(options.signal);
     const key = scopeKey(scope);
     if (!options.force) {
       const existing = this.get(scope);
@@ -127,24 +167,26 @@ export class ProjectOrientationService {
         return this.get(scope) ?? this.#buildingStub(scope);
       }
       if (options.waitMs && options.waitMs > 0) {
-        return Promise.race([
+        return awaitWithSignal(Promise.race([
           inflight,
           sleep(options.waitMs).then(() => this.get(scope) ?? this.#buildingStub(scope)),
-        ]);
+        ]), options.signal);
       }
-      return inflight;
+      return awaitWithSignal(inflight, options.signal);
     }
     // Force rebuild: wait for any in-flight build so we never double-write cache.
     if (inflight && options.force) {
       try {
-        await inflight;
-      } catch {
+        await awaitWithSignal(inflight, options.signal);
+      } catch (error) {
+        if (isAbortError(error)) throw error;
         // previous build failed; continue with forced rebuild
       }
     }
 
-    const buildPromise = this.#build(scope)
+    const buildPromise = this.#build(scope, options.signal)
       .then((map) => {
+        throwIfAborted(options.signal);
         this.#memory.set(key, map);
         try {
           writeOrientationCache(this.#cacheRoot, scope, map);
@@ -163,16 +205,19 @@ export class ProjectOrientationService {
       return this.get(scope) ?? this.#buildingStub(scope);
     }
     if (options.waitMs && options.waitMs > 0) {
-      return Promise.race([
+      return awaitWithSignal(Promise.race([
         buildPromise,
         sleep(options.waitMs).then(() => this.get(scope) ?? this.#buildingStub(scope)),
-      ]);
+      ]), options.signal);
     }
-    return buildPromise;
+    return awaitWithSignal(buildPromise, options.signal);
   }
 
-  async refresh(scope: ProjectExecutionScope): Promise<ProjectOrientationMap> {
-    return this.ensure(scope, { reason: 'refresh', force: true });
+  async refresh(
+    scope: ProjectExecutionScope,
+    signal?: AbortSignal,
+  ): Promise<ProjectOrientationMap> {
+    return this.ensure(scope, { reason: 'refresh', force: true, signal });
   }
 
   toSnapshot(map: ProjectOrientationMap): OrientationSnapshot {
@@ -192,15 +237,22 @@ export class ProjectOrientationService {
     });
   }
 
-  async #build(scope: ProjectExecutionScope): Promise<ProjectOrientationMap> {
+  async #build(
+    scope: ProjectExecutionScope,
+    signal?: AbortSignal,
+  ): Promise<ProjectOrientationMap> {
     const started = this.#now();
     try {
+      throwIfAborted(signal);
       const root = fs.realpathSync(scope.rootRealPath);
       if (root !== scope.rootRealPath) throw new Error('project root identity changed');
 
       const walk = walkOrientationTree(scope, this.#limits);
+      await yieldToEventLoop(signal);
       const inventory = buildOrientationInventory(scope, walk);
+      throwIfAborted(signal);
       const symbolSummary = buildOrientationSymbols(scope, walk, this.#limits);
+      await yieldToEventLoop(signal);
       const importGraph = buildOrientationImportGraph(scope, walk, this.#limits);
       const mergedHubs = mergeHubs(
         symbolSummary.hubs,
@@ -230,6 +282,7 @@ export class ProjectOrientationService {
       if (graphWarning) {
         graph = Object.freeze({ ...graph, warning: graphWarning });
       }
+      await yieldToEventLoop(signal);
 
       const headSha = resolveHeadSha(root, this.#git);
       const treeFingerprint = sha256(walk.treeFingerprintParts.join('\n'));
@@ -274,6 +327,7 @@ export class ProjectOrientationService {
           });
         }
       }
+      throwIfAborted(signal);
 
       const status = walk.truncated ? 'partial' : 'ready';
       const duration = Math.max(0, this.#now() - started);
@@ -304,6 +358,7 @@ export class ProjectOrientationService {
       };
 
       const orientationMarkdown = renderOrientationMarkdown(base, this.#limits.markdownMaxChars);
+      throwIfAborted(signal);
       const mapHash = sha256(
         canonicalJson({
           projectId: base.projectId,
@@ -336,6 +391,7 @@ export class ProjectOrientationService {
         mapHash,
       });
     } catch (error) {
+      if (isAbortError(error)) throw error;
       const message = error instanceof Error ? error.message : String(error);
       const failedBase = {
         schemaVersion: 1 as const,

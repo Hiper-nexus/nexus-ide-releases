@@ -125,6 +125,7 @@ export interface OrientationEnsureOptions {
   readonly reason: OrientationEnsureReason;
   readonly waitMs?: number;
   readonly force?: boolean;
+  readonly signal?: AbortSignal;
 }
 
 /** Serializable map without the in-memory symbol Set. */

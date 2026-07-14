@@ -68,6 +68,7 @@ export interface ContextBootstrapAutopilotOptions {
   /** When true (default), commit applied drafts if readiness becomes green. */
   readonly autoCommit?: boolean;
   readonly maxAutoReviews?: number;
+  readonly signal?: AbortSignal;
   readonly orientation?: ProjectOrientationService | null;
   readonly createReviewer?: () => {
     run(input: {
@@ -84,6 +85,25 @@ const BOOTSTRAP_SOURCE_POLICY_REVIEWER = Object.freeze({
   sessionId: 'source-policy-v1',
   provider: 'nexus-policy',
 });
+
+function bootstrapAbortError(): Error {
+  const error = new Error('context bootstrap aborted by newer mission intent');
+  error.name = 'AbortError';
+  return error;
+}
+
+function throwIfBootstrapAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw bootstrapAbortError();
+}
+
+function rethrowIfBootstrapAborted(
+  signal: AbortSignal | undefined,
+  error: unknown,
+): void {
+  if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+    throw bootstrapAbortError();
+  }
+}
 
 function freezeOutcomes(
   outcomes: readonly BootstrapDraftOutcome[],
@@ -158,6 +178,7 @@ function workflowBindingError(scope: ProjectExecutionScope): string | null {
 export async function runContextBootstrapAutopilot(
   options: ContextBootstrapAutopilotOptions,
 ): Promise<ContextBootstrapAutopilotResult> {
+  throwIfBootstrapAborted(options.signal);
   const autoReview = options.autoReview !== false;
   const autoCommit = options.autoCommit !== false;
   const maxAutoReviews = Math.min(
@@ -179,21 +200,27 @@ export async function runContextBootstrapAutopilot(
         reason: 'mcp',
         waitMs: 8_000,
         force: true,
+        signal: options.signal,
       });
+      throwIfBootstrapAborted(options.signal);
       orientationSnapshot = orientationService.toSnapshot(map);
-    } catch {
+    } catch (error) {
+      rethrowIfBootstrapAborted(options.signal, error);
       // orientation is advisory; readiness still runs
     }
   }
   // Scaffold is cheap and required before proposals; always attempt when not ready later.
   try {
+    throwIfBootstrapAborted(options.signal);
     if (!map?.docs.hasContextScaffold) {
       workflow.scaffold();
     }
-  } catch {
+  } catch (error) {
+    rethrowIfBootstrapAborted(options.signal, error);
     // scaffold may fail if scope root is read-only; propose path will surface blockers
   }
 
+  throwIfBootstrapAborted(options.signal);
   let readiness = workflow.inspectReadiness();
   if (readiness.ready) {
     const durableApplied = knowledge.list({ status: 'applied' })
@@ -202,8 +229,10 @@ export async function runContextBootstrapAutopilot(
     let blockingError: string | null = null;
     if (autoCommit && durableApplied.length > 0) {
       try {
+        throwIfBootstrapAborted(options.signal);
         recoveredCommitSha = knowledge.commitApplied().commitSha;
       } catch (error) {
+        rethrowIfBootstrapAborted(options.signal, error);
         blockingError = error instanceof Error ? error.message : String(error);
       }
     }
@@ -264,6 +293,7 @@ export async function runContextBootstrapAutopilot(
     );
   const resumableTargets = new Set<string>();
   for (const draft of resumableDrafts) {
+    throwIfBootstrapAborted(options.signal);
     const proposal = proposalsByTarget.get(draft.targetPath)!;
     const autoReviewable = isAutoReviewableBootstrapProposal(proposal);
     const unsafeSource = draft.sources.find(
@@ -298,6 +328,7 @@ export async function runContextBootstrapAutopilot(
   }
 
   for (const proposal of proposals) {
+    throwIfBootstrapAborted(options.signal);
     if (resumableTargets.has(proposal.targetPath)) continue;
     const autoReviewable = isAutoReviewableBootstrapProposal(proposal);
     try {
@@ -320,6 +351,7 @@ export async function runContextBootstrapAutopilot(
       });
       if (autoReviewable) autoReviewQueue.push(draft.id);
     } catch (error) {
+      rethrowIfBootstrapAborted(options.signal, error);
       outcomes.push({
         draftId: '',
         targetPath: proposal.targetPath,
@@ -341,10 +373,12 @@ export async function runContextBootstrapAutopilot(
     const reviewer = createReviewer();
     for (const draftId of autoReviewQueue.slice(0, maxAutoReviews)) {
       try {
+        throwIfBootstrapAborted(options.signal);
         const reviewed = await reviewer.run({
           scope: options.scope,
           draftId,
         });
+        throwIfBootstrapAborted(options.signal);
         if (reviewed.status === 'approved' || reviewed.status === 'applied') {
           const applied =
             reviewed.status === 'applied'
@@ -377,6 +411,7 @@ export async function runContextBootstrapAutopilot(
           }
         }
       } catch (error) {
+        rethrowIfBootstrapAborted(options.signal, error);
         const idx = outcomes.findIndex((item) => item.draftId === draftId);
         if (idx >= 0) {
           outcomes[idx] = {
@@ -393,6 +428,7 @@ export async function runContextBootstrapAutopilot(
     // different and source-bound, replace and review it in this same Doctor
     // pass instead of forcing the orchestrator into another discovery loop.
     for (const rejectedId of [...rejectedDraftIds]) {
+      throwIfBootstrapAborted(options.signal);
       if (appliedDraftIds.length + rejectedDraftIds.length >= maxAutoReviews) break;
       const rejected = knowledge.get(rejectedId);
       const replacement = rejected
@@ -425,6 +461,7 @@ export async function runContextBootstrapAutopilot(
           autoReviewable: true,
         });
         const reviewed = await reviewer.run({ scope: options.scope, draftId: next.id });
+        throwIfBootstrapAborted(options.signal);
         if (reviewed.status === 'approved' || reviewed.status === 'applied') {
           const applied = reviewed.status === 'applied'
             ? { draft: reviewed }
@@ -438,6 +475,7 @@ export async function runContextBootstrapAutopilot(
           if (index >= 0) outcomes[index] = { ...outcomes[index], status: 'rejected' };
         }
       } catch (error) {
+        rethrowIfBootstrapAborted(options.signal, error);
         outcomes.push({
           draftId: '',
           targetPath: replacement.targetPath,
@@ -449,14 +487,17 @@ export async function runContextBootstrapAutopilot(
     }
   }
 
+  throwIfBootstrapAborted(options.signal);
   readiness = workflow.inspectReadiness();
   let commitSha: string | null = null;
   let blockingError: string | null = null;
   if (autoCommit && readiness.ready && appliedDraftIds.length > 0) {
     try {
+      throwIfBootstrapAborted(options.signal);
       const committed = knowledge.commitApplied();
       commitSha = committed.commitSha;
     } catch (error) {
+      rethrowIfBootstrapAborted(options.signal, error);
       blockingError = error instanceof Error ? error.message : String(error);
     }
   }

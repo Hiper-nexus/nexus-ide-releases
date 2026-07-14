@@ -126,4 +126,69 @@ describe('MissionPromptQueue', () => {
     expect(q.executingId).toBeNull();
     expect(q.items[0]!.status).toBe('delivered');
   });
+
+  it('cancels work that arrives after a newer intent was already observed', () => {
+    let q = createEmptyPromptQueue('m-stale');
+    q = reducePromptQueue(q, { type: 'bump_intent', intentVersion: 3 }).state;
+    const stale = reducePromptQueue(q, {
+      type: 'enqueue',
+      kind: 'bootstrap',
+      body: 'late bootstrap',
+      intentVersion: 2,
+      source: 'system',
+      id: 'late-boot',
+    });
+    expect(stale.cancelledIds).toContain('late-boot');
+    expect(stale.state.items.at(-1)?.status).toBe('cancelled');
+    expect(nextDeliverablePrompt(stale.state)).toBeNull();
+  });
+
+  it('does not overwrite an active execution slot', () => {
+    let q = createEmptyPromptQueue('m-serial');
+    for (const id of ['one', 'two']) {
+      q = reducePromptQueue(q, {
+        type: 'enqueue', kind: 'user_message', body: id,
+        intentVersion: 1, source: 'typed', id,
+      }).state;
+    }
+    q = reducePromptQueue(q, { type: 'start', id: 'one' }).state;
+    q = reducePromptQueue(q, { type: 'start', id: 'two' }).state;
+    expect(q.executingId).toBe('one');
+    expect(q.items.find((item) => item.id === 'two')?.status).toBe('queued');
+  });
+
+  it('only completes the item that is currently executing', () => {
+    let q = createEmptyPromptQueue('m-complete');
+    q = reducePromptQueue(q, {
+      type: 'enqueue', kind: 'user_message', body: 'queued',
+      intentVersion: 1, source: 'typed', id: 'queued',
+    }).state;
+    q = reducePromptQueue(q, { type: 'complete', id: 'queued', ok: true }).state;
+    expect(q.items[0]?.status).toBe('queued');
+  });
+
+  it('treats an identical duplicate id as an idempotent enqueue', () => {
+    let q = createEmptyPromptQueue('m-duplicate');
+    const event = {
+      type: 'enqueue' as const, kind: 'system' as const, body: 'same work',
+      intentVersion: 1, source: 'system' as const, id: 'stable-id', now: 10,
+    };
+    q = reducePromptQueue(q, event).state;
+    const duplicate = reducePromptQueue(q, event);
+    expect(duplicate.state).toBe(q);
+    expect(duplicate.state.items).toHaveLength(1);
+    expect(duplicate.state.nextSeq).toBe(2);
+  });
+
+  it('rejects a conflicting duplicate id', () => {
+    let q = createEmptyPromptQueue('m-conflict');
+    q = reducePromptQueue(q, {
+      type: 'enqueue', kind: 'system', body: 'first',
+      intentVersion: 1, source: 'system', id: 'same-id',
+    }).state;
+    expect(() => reducePromptQueue(q, {
+      type: 'enqueue', kind: 'system', body: 'different',
+      intentVersion: 1, source: 'system', id: 'same-id',
+    })).toThrow(/duplicate prompt id/i);
+  });
 });

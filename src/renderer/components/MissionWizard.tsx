@@ -614,6 +614,9 @@ export function MissionWizard() {
 
   async function handleSubmitMissionGoal() {
     if (spawning || !armedMissionId || !missionGoal.trim()) return;
+    if (prepareStatus === 'running') {
+      prepareGenerationRef.current += 1;
+    }
     setSpawning(true);
     setError(null);
     try {
@@ -641,8 +644,8 @@ export function MissionWizard() {
     setError(null);
     try {
       await window.nexus.orch.prepareMissionProject({ missionId: armedMissionId });
-      // Local structural map only — no agent, no automatic draft review.
-      const map = await window.nexus.orientation.ensure().catch(() => null);
+      // Main owns the cancellable warm; renderer only reads the completed snapshot.
+      const map = await window.nexus.orientation.get().catch(() => null);
       if (generation !== prepareGenerationRef.current) return;
       const queue = await window.nexus.orch
         .getMissionPromptQueue?.({ missionId: armedMissionId })
@@ -671,12 +674,15 @@ export function MissionWizard() {
     }
   }
 
-  function handleHidePrepareProgress() {
+  function handleCancelPrepare() {
     prepareGenerationRef.current += 1;
     setPrepareStatus('cancelled');
-    setPrepareDetail(
-      'Acompanhamento ocultado. O aquecimento local pode terminar em segundo plano; a missão continua aguardando objetivo.',
-    );
+    setPrepareDetail('Preparação cancelada. A missão continua aguardando objetivo.');
+    if (armedMissionId) {
+      void window.nexus.orch
+        .cancelMissionPreparation({ missionId: armedMissionId })
+        .catch(() => undefined);
+    }
   }
 
   function handleOpenEmptyTerminal() {
@@ -1133,9 +1139,9 @@ export function MissionWizard() {
                     <button
                       type="button"
                       className="wizard__btn wizard__btn--ghost"
-                      onClick={handleHidePrepareProgress}
+                      onClick={handleCancelPrepare}
                     >
-                      Ocultar andamento
+                      Cancelar preparação
                     </button>
                   )}
                   <button

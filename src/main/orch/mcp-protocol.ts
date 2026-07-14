@@ -48,7 +48,13 @@ export interface McpToolDef {
   handler: (
     args: Record<string, unknown>,
     ctx: AgentGateContext,
+    invocation?: McpToolInvocation,
   ) => Promise<unknown>;
+}
+
+export interface McpToolInvocation {
+  /** Aborted when a newer mission intent preempts bootstrap/preflight work. */
+  readonly signal?: AbortSignal;
 }
 
 export interface McpRegistry {

@@ -16,11 +16,14 @@ const getTool: McpToolDef = {
   description:
     'Read the structural Project Orientation Map for this checkout (inventory, hubs, import graph, docs presence, context readiness). The Nexus pilot warms this automatically on workspace open and before freeze — agents rarely need to call this unless debugging. Orientation only — not business authority.',
   inputSchema: { type: 'object', properties: {} },
-  handler: async (_args, ctx) => {
+  handler: async (_args, ctx, invocation) => {
     const service = requireService();
     let map = service.get(ctx.scope);
     if (!map) {
-      map = await service.ensure(ctx.scope, { reason: 'mcp' });
+      map = await service.ensure(ctx.scope, {
+        reason: 'mcp',
+        signal: invocation?.signal,
+      });
     }
     return service.toSnapshot(map);
   },
@@ -58,12 +61,12 @@ const refreshTool: McpToolDef = {
   description:
     'Force a rebuild of the structural Project Orientation Map for this checkout. Orchestrators may refresh after large refactors; workers should prefer nexus_code_map_get.',
   inputSchema: { type: 'object', properties: {} },
-  handler: async (_args, ctx) => {
+  handler: async (_args, ctx, invocation) => {
     if (ctx.role === 'worker') {
       throw new Error('only an orchestrator or user may force orientation refresh');
     }
     const service = requireService();
-    const map = await service.refresh(ctx.scope);
+    const map = await service.refresh(ctx.scope, invocation?.signal);
     return service.toSnapshot(map);
   },
 };
@@ -82,7 +85,7 @@ const queryTool: McpToolDef = {
     },
     required: ['q'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const input = z
       .object({
         q: z.string().trim().min(1).max(256),
@@ -93,7 +96,10 @@ const queryTool: McpToolDef = {
     const service = requireService();
     let map = service.get(ctx.scope);
     if (!map) {
-      map = await service.ensure(ctx.scope, { reason: 'mcp' });
+      map = await service.ensure(ctx.scope, {
+        reason: 'mcp',
+        signal: invocation?.signal,
+      });
     }
 
     // Async local index — fire-and-forget rebuild when map hash changes.
@@ -102,7 +108,7 @@ const queryTool: McpToolDef = {
     );
     const index = getOrientationLocalIndex(map.mapHash);
     if (!index.snapshot.ready || index.snapshot.mapHash !== map.mapHash) {
-      void index.build(map).catch(() => {
+      void index.build(map, { signal: invocation?.signal }).catch(() => {
         /* index is optional */
       });
     }

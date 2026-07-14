@@ -13,6 +13,20 @@ import {
 } from '../../shared/mission-prompt-queue';
 
 const queues = new Map<string, MissionPromptQueueState>();
+const promptAbortControllers = new Map<string, AbortController>();
+
+function controllerKey(missionId: string, promptId: string): string {
+  return `${missionId}\0${promptId}`;
+}
+
+function abortCancelledPrompts(
+  missionId: string,
+  cancelledIds: readonly string[],
+): void {
+  for (const id of cancelledIds) {
+    promptAbortControllers.get(controllerKey(missionId, id))?.abort();
+  }
+}
 
 export function getMissionPromptQueue(
   missionId: string,
@@ -45,6 +59,7 @@ export function enqueueMissionPrompt(input: {
     id: input.id,
   });
   queues.set(input.missionId, result.state);
+  abortCancelledPrompts(input.missionId, result.cancelledIds);
   return result;
 }
 
@@ -57,6 +72,15 @@ export function startMissionPrompt(
     id,
   });
   queues.set(missionId, result.state);
+  const started = result.state.items.find(
+    (item) => item.id === id && item.status === 'executing',
+  );
+  if (started) {
+    const key = controllerKey(missionId, id);
+    if (!promptAbortControllers.has(key)) {
+      promptAbortControllers.set(key, new AbortController());
+    }
+  }
   return result;
 }
 
@@ -71,6 +95,20 @@ export function completeMissionPrompt(
     ok,
   });
   queues.set(missionId, result.state);
+  promptAbortControllers.delete(controllerKey(missionId, id));
+  return result;
+}
+
+export function cancelMissionPrompt(
+  missionId: string,
+  id: string,
+): PromptQueueReduceResult {
+  const result = reducePromptQueue(getMissionPromptQueue(missionId), {
+    type: 'cancel',
+    id,
+  });
+  queues.set(missionId, result.state);
+  abortCancelledPrompts(missionId, result.cancelledIds);
   return result;
 }
 
@@ -83,7 +121,15 @@ export function bumpMissionPromptIntent(
     intentVersion,
   });
   queues.set(missionId, result.state);
+  abortCancelledPrompts(missionId, result.cancelledIds);
   return result;
+}
+
+export function getMissionPromptAbortSignal(
+  missionId: string,
+  id: string,
+): AbortSignal | undefined {
+  return promptAbortControllers.get(controllerKey(missionId, id))?.signal;
 }
 
 export function peekMissionPromptQueue(missionId: string) {
@@ -97,5 +143,9 @@ export function takeNextMissionPrompt(missionId: string) {
 
 /** Test / shutdown helper. */
 export function resetMissionPromptQueues(): void {
+  for (const controller of promptAbortControllers.values()) {
+    controller.abort();
+  }
+  promptAbortControllers.clear();
   queues.clear();
 }

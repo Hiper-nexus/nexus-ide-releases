@@ -16,6 +16,10 @@ import type { IntentGateMissionResolver } from './mcp-dispatch';
 import type { McpRegistry, McpToolDef } from './mcp-protocol';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import {
+  bumpMissionPromptIntent,
+  resetMissionPromptQueues,
+} from './mission-prompt-queue-registry';
 
 const testDir = path.join(os.tmpdir(), 'nexus-mcp-dispatch-security');
 const auditScope = testProjectScope({ rootRealPath: testDir });
@@ -140,6 +144,7 @@ describe('MCP dispatch effect safety', () => {
        VALUES (?, ?, '', 'running', '[]', ?, ?)`,
     ).run(TEST_MISSION_ID, 'Security test mission', Date.now(), Date.now());
     clearAllPermissions();
+    resetMissionPromptQueues();
   });
 
   afterAll(() => {
@@ -712,6 +717,54 @@ describe('MCP dispatch effect safety', () => {
       ok: false,
       error: 'sensor receipt transport failed',
       userAuthorized: false,
+      effectMayHaveCommitted: true,
+    });
+  });
+
+  it('aborts an executing bootstrap handler when a newer intent preempts it', async () => {
+    let releaseStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      releaseStarted = resolve;
+    });
+    let receivedSignal: AbortSignal | undefined;
+    const handler = vi.fn(async (
+      _args: Record<string, unknown>,
+      _ctx: unknown,
+      invocation?: { signal?: AbortSignal },
+    ) => {
+      receivedSignal = invocation?.signal;
+      releaseStarted();
+      await new Promise<void>((_resolve, reject) => {
+        if (invocation?.signal?.aborted) {
+          reject(new Error('aborted'));
+          return;
+        }
+        invocation?.signal?.addEventListener(
+          'abort', () => reject(new Error('aborted')), { once: true },
+        );
+      });
+      return { refreshed: true };
+    });
+    const pending = dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_code_map_refresh',
+        description: 'warm orientation',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_code_map_refresh',
+      {},
+      orchestratorMissionContext(),
+      workflowOptions(),
+    );
+    await started;
+    bumpMissionPromptIntent(TEST_MISSION_ID, 2);
+    const result = await pending;
+    expect(receivedSignal?.aborted).toBe(true);
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('intent_preempted'),
       effectMayHaveCommitted: true,
     });
   });

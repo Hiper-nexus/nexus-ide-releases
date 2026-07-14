@@ -13,8 +13,11 @@ import {
 import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
 import {
   bumpMissionPromptIntent,
+  cancelMissionPrompt,
   completeMissionPrompt,
   enqueueMissionPrompt,
+  getMissionPromptAbortSignal,
+  peekMissionPromptQueue,
   startMissionPrompt,
 } from "./mission-prompt-queue-registry";
 import {
@@ -43,6 +46,7 @@ import type { ProjectDomainStoreRegistry } from "./project-domain-store-registry
 import { getContextWorkflowService } from "../context/context-workflow-registry";
 import { emitMissionIntentEvent } from "./mission-intent-events";
 import { getOrchSettings } from "../persistence/settings-store";
+import { tryGetProjectOrientationService } from "../context/orientation/orientation-service";
 
 export interface RendererMissionCreateInput {
   title: string;
@@ -352,10 +356,10 @@ export class RendererMissionAuthority {
    * contextPolicy=prepare-project so bounded bootstrap tools are allowed.
    * Does not dispatch workers or mark the mission running.
    */
-  prepareProjectFromRenderer(
+  async prepareProjectFromRenderer(
     owner: WebContents,
     input: { missionId: string },
-  ): Mission {
+  ): Promise<Mission> {
     const scope = requireRendererWorkspaceScope(owner);
     const missions = this.#stores.forScope(scope).missions;
     const current = missions.get(input.missionId);
@@ -397,6 +401,15 @@ export class RendererMissionAuthority {
     });
     if (!updated) throw new Error("mission not found");
 
+    emitMissionIntentEvent({
+      name: "prepare_project",
+      missionId: updated.id,
+      squadId: updated.squadId,
+      intentState: "awaiting_goal",
+      intentVersion: nextVersion,
+      reason: "user_prepare_project",
+    });
+
     // Production queue: preflight/bootstrap under prepare-project is trackable
     // and cancelled if the user submits a newer intentVersion.
     const queued = enqueueMissionPrompt({
@@ -407,22 +420,65 @@ export class RendererMissionAuthority {
       source: "system",
     });
     const item = queued.state.items.at(-1);
-    if (item) {
-      startMissionPrompt(updated.id, item.id);
-      // Map warm is driven by the UI after this returns; mark delivered so the
-      // queue exposes executing→delivered rather than a stuck executing slot.
-      completeMissionPrompt(updated.id, item.id, true);
+    if (!item || item.status !== "queued") {
+      throw new Error("project preparation was preempted by a newer intent");
+    }
+    const started = startMissionPrompt(updated.id, item.id);
+    const isExecuting = started.state.items.some(
+      (entry) => entry.id === item.id && entry.status === "executing",
+    );
+    if (!isExecuting) {
+      cancelMissionPrompt(updated.id, item.id);
+      throw new Error("project preparation queue is busy");
     }
 
-    emitMissionIntentEvent({
-      name: "prepare_project",
-      missionId: updated.id,
-      squadId: updated.squadId,
-      intentState: "awaiting_goal",
-      intentVersion: nextVersion,
-      reason: "user_prepare_project",
-    });
+    const signal = getMissionPromptAbortSignal(updated.id, item.id);
+    const orientation = tryGetProjectOrientationService();
+    if (!orientation) {
+      completeMissionPrompt(updated.id, item.id, false);
+      throw new Error("project preparation is unavailable");
+    }
+    try {
+      await orientation.ensure(scope, {
+        reason: "pre-kickoff",
+        force: true,
+        signal,
+      });
+      if (signal?.aborted) throw new Error("intent_preempted");
+      completeMissionPrompt(updated.id, item.id, true);
+    } catch (error) {
+      completeMissionPrompt(updated.id, item.id, false);
+      if (signal?.aborted) {
+        throw new Error("project preparation was cancelled by a newer intent");
+      }
+      console.warn("[mission-authority] project preparation failed:", error);
+      throw new Error("project preparation failed");
+    }
     return updated;
+  }
+
+  cancelPreparationFromRenderer(
+    owner: WebContents,
+    input: { missionId: string },
+  ): { cancelled: boolean } {
+    const scope = requireRendererWorkspaceScope(owner);
+    const mission = this.#stores.forScope(scope).missions.get(input.missionId);
+    if (!mission) throw new Error("mission not found");
+    const queue = peekMissionPromptQueue(input.missionId);
+    const preparation = [queue.executing, ...queue.queued].find(
+      (item) =>
+        item?.kind === "preflight" && item.body.startsWith("prepare-project:"),
+    );
+    if (!preparation) return { cancelled: false };
+    const result = cancelMissionPrompt(input.missionId, preparation.id);
+    return { cancelled: result.cancelledIds.includes(preparation.id) };
+  }
+
+  getPromptQueueFromRenderer(owner: WebContents, input: { missionId: string }) {
+    const scope = requireRendererWorkspaceScope(owner);
+    const mission = this.#stores.forScope(scope).missions.get(input.missionId);
+    if (!mission) throw new Error("mission not found");
+    return peekMissionPromptQueue(input.missionId);
   }
 
   approveIntentFromRenderer(

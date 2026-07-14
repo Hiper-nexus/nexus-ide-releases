@@ -350,7 +350,7 @@ const doctorTool: McpToolDef = {
       },
     },
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const input = z
       .object({
         autoReview: z.boolean().optional(),
@@ -388,6 +388,7 @@ const doctorTool: McpToolDef = {
         missionId: ctx.missionId ?? null,
         autoReview: input.autoReview,
         autoCommit: input.autoCommit,
+        signal: invocation?.signal,
       }).finally(() => {
         if (contextDoctorFlights.get(key) === flight) {
           contextDoctorFlights.delete(key);

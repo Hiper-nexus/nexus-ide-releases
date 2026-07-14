@@ -35,7 +35,6 @@ import {
   loadEnrichedCatalog,
   runHarnessEnrichWithBrain,
 } from "./harness-enrich";
-import { peekMissionPromptQueue } from "./mission-prompt-queue-registry";
 import {
   initPaneRegistry,
   registerOrchRenderer,
@@ -439,13 +438,25 @@ export function registerOrchIpc(): void {
     );
   });
 
+  ipcMain.handle(ORCH_CHANNELS.missionCancelPreparation, (event, raw) => {
+    const parsed = missionPrepareProjectSchema.safeParse(raw);
+    if (!parsed.success) throw new Error("invalid mission cancellation payload");
+    return requireMissionAuthority().cancelPreparationFromRenderer(
+      event.sender,
+      parsed.data,
+    );
+  });
+
   const missionPromptQueueSchema = z.object({
     missionId: z.string().min(1).max(128),
   });
-  ipcMain.handle(ORCH_CHANNELS.missionPromptQueue, (_event, raw) => {
+  ipcMain.handle(ORCH_CHANNELS.missionPromptQueue, (event, raw) => {
     const parsed = missionPromptQueueSchema.safeParse(raw);
     if (!parsed.success) throw new Error("invalid mission prompt queue payload");
-    const snap = peekMissionPromptQueue(parsed.data.missionId);
+    const snap = requireMissionAuthority().getPromptQueueFromRenderer(
+      event.sender,
+      parsed.data,
+    );
     return {
       executing: snap.executing
         ? {

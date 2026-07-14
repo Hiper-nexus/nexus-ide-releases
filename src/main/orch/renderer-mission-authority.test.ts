@@ -24,6 +24,7 @@ const deps = vi.hoisted(() => ({
   findMissionPaneByPaneId: vi.fn(),
   listMissionPanes: vi.fn(),
   forScope: vi.fn(),
+  orientationEnsure: vi.fn(),
 }));
 
 vi.mock("./pane-registry", () => ({
@@ -49,7 +50,15 @@ vi.mock("./gate", () => ({
   rollbackSessionAuthorityMission: deps.rollbackSessionAuthorityMission,
 }));
 
+vi.mock("../context/orientation/orientation-service", () => ({
+  tryGetProjectOrientationService: () => ({ ensure: deps.orientationEnsure }),
+}));
+
 import { RendererMissionAuthority } from "./renderer-mission-authority";
+import {
+  peekMissionPromptQueue,
+  resetMissionPromptQueues,
+} from "./mission-prompt-queue-registry";
 
 const owner = { id: 7 } as WebContents;
 const scope = testProjectScope({
@@ -116,6 +125,7 @@ const authority = new RendererMissionAuthority(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetMissionPromptQueues();
   deps.getMission.mockReset();
   deps.setMissionOrchestratorSession.mockReset();
   deps.findPaneOwnedBy.mockReturnValue({
@@ -146,6 +156,7 @@ beforeEach(() => {
     missionId: "mission-a",
     paneId: "pane-a",
   });
+  deps.orientationEnsure.mockResolvedValue({ status: "ready" });
   deps.forScope.mockReturnValue({
     missions: {
       create: deps.createMission,
@@ -191,6 +202,72 @@ describe("renderer mission authority", () => {
         ],
       }),
     );
+  });
+
+  it("keeps prepare-project executing until the main-owned warm completes", async () => {
+    const preparedMission = {
+      ...mission,
+      intentState: "awaiting_goal" as const,
+      intentVersion: 1,
+    };
+    deps.getMission.mockReturnValue(preparedMission);
+    deps.updateMission.mockReturnValue(preparedMission);
+    const result = await authority.prepareProjectFromRenderer(owner, {
+      missionId: mission.id,
+    });
+    expect(result).toBe(preparedMission);
+    expect(deps.orientationEnsure).toHaveBeenCalledWith(
+      scope,
+      expect.objectContaining({
+        reason: "pre-kickoff",
+        force: true,
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(peekMissionPromptQueue(mission.id).executing).toBeNull();
+  });
+
+  it("aborts the real prepare-project warm when renderer cancels", async () => {
+    const preparedMission = {
+      ...mission,
+      intentState: "awaiting_goal" as const,
+      intentVersion: 1,
+    };
+    deps.getMission.mockReturnValue(preparedMission);
+    deps.updateMission.mockReturnValue(preparedMission);
+    let observedSignal: AbortSignal | undefined;
+    deps.orientationEnsure.mockImplementationOnce(
+      async (_scope: unknown, options: { signal?: AbortSignal }) => {
+        observedSignal = options.signal;
+        await new Promise<void>((_resolve, reject) => {
+          options.signal?.addEventListener(
+            "abort",
+            () => reject(new Error("aborted")),
+            { once: true },
+          );
+        });
+        return { status: "ready" };
+      },
+    );
+    const pending = authority.prepareProjectFromRenderer(owner, {
+      missionId: mission.id,
+    });
+    await vi.waitFor(() => {
+      expect(peekMissionPromptQueue(mission.id).executing?.kind).toBe("preflight");
+    });
+    expect(authority.cancelPreparationFromRenderer(owner, {
+      missionId: mission.id,
+    })).toEqual({ cancelled: true });
+    await expect(pending).rejects.toThrow(/cancelled by a newer intent/i);
+    expect(observedSignal?.aborted).toBe(true);
+    expect(peekMissionPromptQueue(mission.id).cancelled).toHaveLength(1);
+  });
+
+  it("does not expose another workspace mission prompt queue", () => {
+    deps.getMission.mockReturnValueOnce(null);
+    expect(() => authority.getPromptQueueFromRenderer(owner, {
+      missionId: "mission-b",
+    })).toThrow(/mission not found/i);
   });
 
   it("never accepts renderer-authored done and scopes other edits", () => {

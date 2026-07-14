@@ -842,6 +842,9 @@ export interface NexusApi {
     approveMissionIntent(input: { missionId: string }): Promise<Mission>;
     /** Explicit prepare-project while still awaiting a real goal. */
     prepareMissionProject(input: { missionId: string }): Promise<Mission>;
+    cancelMissionPreparation(input: {
+      missionId: string;
+    }): Promise<{ cancelled: boolean }>;
     /** Runtime surface for prompt queue: executing / queued / cancelled. */
     getMissionPromptQueue(input: { missionId: string }): Promise<{
       executing: {

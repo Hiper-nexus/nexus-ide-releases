@@ -71,6 +71,7 @@ export type PromptQueueEvent =
       readonly id?: string;
     }
   | { readonly type: 'start'; readonly id: string }
+  | { readonly type: 'cancel'; readonly id: string }
   | { readonly type: 'complete'; readonly id: string; readonly ok: boolean }
   | { readonly type: 'bump_intent'; readonly intentVersion: number };
 
@@ -128,6 +129,19 @@ export function reducePromptQueue(
 
   if (event.type === 'enqueue') {
     const intentVersion = event.intentVersion;
+    const id = event.id ?? `pq-${state.missionId}-${state.nextSeq}`;
+    const duplicate = state.items.find((item) => item.id === id);
+    if (duplicate) {
+      const isSamePrompt =
+        duplicate.kind === event.kind &&
+        duplicate.body === event.body &&
+        duplicate.intentVersion === intentVersion &&
+        duplicate.source === event.source;
+      if (!isSamePrompt) {
+        throw new Error(`duplicate prompt id conflicts with existing work: ${id}`);
+      }
+      return { state, cancelledIds: [] };
+    }
     let working: MissionPromptQueueState = state;
     let cancelledIds: string[] = [];
 
@@ -175,7 +189,7 @@ export function reducePromptQueue(
       }
     }
 
-    const id = event.id ?? `pq-${working.missionId}-${working.nextSeq}`;
+    const isStale = intentVersion < working.currentIntentVersion;
     const item: MissionPromptItem = {
       id,
       missionId: working.missionId,
@@ -183,7 +197,7 @@ export function reducePromptQueue(
       intentVersion,
       kind: event.kind,
       body: event.body,
-      status: 'queued',
+      status: isStale ? 'cancelled' : 'queued',
       createdAt: event.now ?? Date.now(),
       source: event.source,
     };
@@ -195,13 +209,13 @@ export function reducePromptQueue(
         currentIntentVersion: Math.max(working.currentIntentVersion, intentVersion),
         items: [...working.items, item],
       },
-      cancelledIds,
+      cancelledIds: isStale ? [...cancelledIds, id] : cancelledIds,
     };
   }
 
   if (event.type === 'start') {
     const item = state.items.find((entry) => entry.id === event.id);
-    if (!item || item.status === 'cancelled' || item.status === 'delivered') {
+    if (!item || item.status !== 'queued' || state.executingId) {
       return { state, cancelledIds: [] };
     }
     return {
@@ -211,6 +225,21 @@ export function reducePromptQueue(
         items: replaceItem(state.items, event.id, { status: 'executing' }),
       },
       cancelledIds: [],
+    };
+  }
+
+  if (event.type === 'cancel') {
+    const item = state.items.find((entry) => entry.id === event.id);
+    if (!item || (item.status !== 'queued' && item.status !== 'executing')) {
+      return { state, cancelledIds: [] };
+    }
+    return {
+      state: {
+        ...state,
+        executingId: state.executingId === event.id ? null : state.executingId,
+        items: replaceItem(state.items, event.id, { status: 'cancelled' }),
+      },
+      cancelledIds: [event.id],
     };
   }
 
@@ -225,6 +254,9 @@ export function reducePromptQueue(
       },
       cancelledIds: [],
     };
+  }
+  if (item.status !== 'executing' || state.executingId !== event.id) {
+    return { state, cancelledIds: [] };
   }
   return {
     state: {

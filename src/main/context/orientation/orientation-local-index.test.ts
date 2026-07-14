@@ -56,4 +56,42 @@ describe('orientation local index', () => {
     await building;
     expect(index.search('mission').length).toBe(0);
   });
+
+  it('rejects a non-positive chunk size instead of looping forever', async () => {
+    const index = new OrientationLocalIndex();
+    await expect(index.build(sampleMap, { chunkSize: 0 })).rejects.toThrow(/chunkSize/i);
+  });
+
+  it('does not let a superseded build clobber a newer completed index', async () => {
+    const index = new OrientationLocalIndex();
+    const oldBuild = index.build(sampleMap, { chunkSize: 1 });
+    const emptyMap = {
+      mapHash: 'hash-new',
+      symbols: { hubs: [] },
+      inventory: { entrypoints: [], manifests: [], topDirs: [] },
+      docs: { rootDocs: [] },
+    };
+    const latest = await index.build(emptyMap);
+    await oldBuild;
+    expect(latest).toMatchObject({ mapHash: 'hash-new', ready: true });
+    expect(index.snapshot).toMatchObject({
+      mapHash: 'hash-new', ready: true, cancelled: false,
+    });
+  });
+
+  it('normalizes ranked scores against the actual highest score', async () => {
+    const index = new OrientationLocalIndex();
+    await index.build({
+      mapHash: 'hash-ranking',
+      symbols: { hubs: [
+        { name: 'Mission', samplePaths: ['src/one.ts'] },
+        { name: 'MissionIntent', samplePaths: ['src/mission-intent/mission.ts'] },
+      ] },
+      inventory: { entrypoints: [], manifests: [], topDirs: [] },
+      docs: { rootDocs: [] },
+    });
+    const hits = index.search('mission intent');
+    expect(hits[0]?.score).toBe(1);
+    expect(hits[1]?.score).toBeLessThan(1);
+  });
 });

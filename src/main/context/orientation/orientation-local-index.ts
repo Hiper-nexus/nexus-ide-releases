@@ -147,12 +147,18 @@ export class OrientationLocalIndex {
     this.#cancelled = false;
     this.#ready = false;
     const chunkSize = options.chunkSize ?? 64;
+    if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
+      throw new RangeError('orientation index chunkSize must be a positive integer');
+    }
     const documents = documentsFromOrientationMap(map);
     const docs = new Map<string, OrientationIndexDocument>();
     const inverted: Inverted = new Map();
 
     for (let i = 0; i < documents.length; i += chunkSize) {
-      if (options.signal?.aborted || generation !== this.#buildGeneration) {
+      if (generation !== this.#buildGeneration) {
+        return this.snapshot;
+      }
+      if (options.signal?.aborted) {
         this.#cancelled = true;
         this.#ready = false;
         return this.snapshot;
@@ -178,7 +184,6 @@ export class OrientationLocalIndex {
     }
 
     if (generation !== this.#buildGeneration) {
-      this.#cancelled = true;
       return this.snapshot;
     }
 
@@ -213,12 +218,12 @@ export class OrientationLocalIndex {
       }
     }
 
+    const maxScore = Math.max(0, ...scores.values());
     return [...scores.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, Math.min(64, Math.max(1, limit)))
       .map(([id, score]) => {
         const doc = this.#docs.get(id)!;
-        const maxScore = scores.values().next().value ?? score;
         return {
           id: doc.id,
           title: doc.title,
