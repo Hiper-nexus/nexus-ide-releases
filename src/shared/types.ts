@@ -1,11 +1,13 @@
-import { z } from 'zod';
 /**
  * Shared, transport-safe types used across main / preload / renderer.
  * Everything here must be JSON-serializable (it crosses the IPC boundary).
+ *
+ * Domain payloads live in surface-payload-types.ts; project identity in
+ * project-identity-types.ts; product IPC in product-api.ts — re-exported
+ * here for a stable public import path.
  */
 
 import type { AdapterInfo } from './adapter-types';
-import type { BrowserDesignEvent } from './browser-design';
 import type { OnboardingState, OnboardingPatch } from './onboarding-types';
 import type {
   PetGalleryImportResult,
@@ -124,6 +126,45 @@ import type {
   AuditLogSnapshot,
   ReleaseReadinessSnapshot,
 } from './ops-ipc';
+import type {
+  CheckoutRequest,
+  InviteInfo,
+  LicenseState,
+  PlanId,
+  TeamInfo,
+} from './billing-types';
+import type { IntegrationsApi } from './integrations-api';
+import type { ProductApi } from './product-api';
+import type {
+  AgentSpecWriteRequest,
+  BrowserDesignEventPayload,
+  BrowserDesignSendPayload,
+  BrowserDesignSendResult,
+  BrowserPaneBounds,
+  BrowserPaneState,
+  CatalogIndexResult,
+  CatalogInstallResult,
+  CatalogOverlayPatch,
+  CatalogOverlayState,
+  DesignActionResultPayload,
+  DesignMissionBindingPayload,
+  DesignSystemImportRequest,
+  DesignSystemImportResult,
+  DesignWritebackActionPayload,
+  DesignWritebackStatusPayload,
+  DevServerDetectedPayload,
+  EnrichedCatalogInfo,
+  InstalledItemInfo,
+  NativeToolInfo,
+  PaneSessionState,
+  PerfSnapshot,
+  RecipeOverlayResult,
+  RecipeSuggestion,
+  SpawnRequest,
+  SpawnResult,
+  Unsubscribe,
+  WorkspaceLayout,
+} from './surface-payload-types';
 
 export type { AdapterInfo };
 export type {
@@ -135,443 +176,28 @@ export type {
   RemoteTmuxSession,
 } from './remote-types';
 
-/** One locally installed catalog component / plugin file / hook home. */
-export interface InstalledItemInfo {
-  kind: string;
-  name: string;
-  file: string;
-  size: number;
-  modifiedAt: number;
-}
+export type * from './surface-payload-types';
 
-/** Arsenal enriquecido (harness-enrich): tier + blurb por item instalado. */
-export type HarnessTier = 'scout' | 'builder' | 'reviewer';
+export {
+  PROJECT_IDENTITY_VERSION,
+  PROJECT_MANIFEST_VERSION,
+  ProjectIdentityQuarantineError,
+  gitRepositoryLineageSchema,
+  legacyProjectManifestSchema,
+  projectExecutionScopeSchema,
+  projectManifestFileSchema,
+  projectManifestSchema,
+  quarantineProjectIdentity,
+} from './project-identity-types';
+export type * from './project-identity-types';
 
-export interface EnrichedCatalogItem {
-  name: string;
-  kind: 'agent' | 'skill';
-  tier: HarnessTier;
-  blurb: string;
-  whenToUse?: string;
-}
-
-export interface EnrichedCatalogInfo {
-  version: 1;
-  updatedAt: number;
-  items: EnrichedCatalogItem[];
-}
-
-/** One browsable aitmpl catalog component. */
-export interface CatalogEntryInfo {
-  kind: 'agent' | 'skill';
-  slug: string;
-  name: string;
-  category: string;
-}
-
-export interface CatalogIndexResult {
-  ok: boolean;
-  index?: {
-    fetchedAt: number;
-    agents: CatalogEntryInfo[];
-    skills: CatalogEntryInfo[];
-  };
-  error?: string;
-}
-
-/** Contract for the catalog-install tool (skip-if-exists). */
-export interface CatalogInstallResult {
-  ok: boolean;
-  skipped?: boolean;
-  installed?: { name: string; path: string };
-  error?: string;
-}
-
-export interface DesignSystemImportRequest {
-  identifier: string;
-  targetPath?: string;
-}
-
-export type DesignSystemImportResult =
-  | {
-      ok: true;
-      draftId: string;
-      targetPath: string;
-      status: string;
-      evidencePath: string;
-    }
-  | { ok: false; error: string };
-
-export interface NativeToolInfo {
-  name: string;
-  description: string;
-}
-
-export interface BrowserPaneBounds {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  visible?: boolean;
-}
-
-export interface BrowserPaneState {
-  paneId: string;
-  url: string;
-  title: string;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  loading: boolean;
-  error?: string;
-}
-
-export interface BrowserScreenshotResult {
-  artifactId: string;
-  projectId: string;
-  checkoutId: string;
-  paneId: string;
-  path: string;
-  storageKey: string;
-  sha256: string;
-  width: number;
-  height: number;
-  url: string;
-  title: string;
-  capturedAt: number;
-}
-
-/** Dev server announced by a PTY pane's output (VISUAL-EDIT-001, F1.5). */
-export interface DevServerDetectedPayload {
-  paneId: string | null;
-  sessionId: string;
-  url: string;
-  urls: string[];
-  detectedAt: number;
-}
-
-/** Deterministic write-back status (VISUAL-EDIT-001, F3). */
-export interface DesignWritebackStatusPayload {
-  enabled: boolean;
-  active: boolean;
-  styleMode: 'tailwind' | 'inline';
-  canUndo: boolean;
-  canRedo: boolean;
-  /** Main-verified mission/PREVC authority for direct filesystem effects. */
-  authorityReady: boolean;
-  authorityError?: string;
-}
-
-export interface DesignMissionBindingPayload {
-  browserPaneId: string;
-  paneId: string;
-  missionId: string;
-}
-
-export type DesignWritebackActionPayload =
-  | { kind: 'style'; nexusId: string; styles: Record<string, string> }
-  | { kind: 'text'; nexusId: string; text: string }
-  | { kind: 'move'; nexusId: string; direction: 'up' | 'down' }
-  | {
-      kind: 'reorder';
-      parentNexusId: string;
-      fromIndex: number;
-      toIndex: number;
-    }
-  | { kind: 'delete'; nexusId: string }
-  | { kind: 'duplicate'; nexusId: string };
-
-export interface DesignActionResultPayload {
-  ok: true;
-  file: string;
-  kind: string;
-}
-
-export interface BrowserDesignEventPayload {
-  paneId: string;
-  event: BrowserDesignEvent;
-}
-
-export interface BrowserDesignSendPayload {
-  targetPaneId: string;
-  instruction?: string;
-  dir?: string;
-  styleDiff?: Record<string, { from: string; to: string }>;
-  intent?: 'context' | 'clone';
-  /** Prepare the prompt without injecting into the target PTY (for clipboard copy). */
-  dryRun?: boolean;
-}
-
-export interface BrowserDesignSendResult {
-  ok: true;
-  targetPaneId: string;
-  targetSessionId: string;
-  promptChars: number;
-  screenshotPath?: string;
-  /** Present only when dryRun=true: the formatted prompt, for clipboard copy. */
-  prompt?: string;
-  /** True when a workspace DESIGN.md was attached as design-system context. */
-  designSystemAttached?: boolean;
-}
-
-export interface PerfSnapshot {
-  capturedAt: number;
-  process: {
-    pid: number;
-    platform: NodeJS.Platform;
-    arch: string;
-    uptimeSec: number;
-    rssBytes: number;
-    heapUsedBytes: number;
-    heapTotalBytes: number;
-    externalBytes: number;
-  };
-  appMetrics: Array<{
-    pid: number;
-    type: string;
-    memory: {
-      workingSetSize: number;
-      peakWorkingSetSize: number;
-      privateBytes: number;
-      sharedBytes: number;
-    };
-    cpu: {
-      percentCPUUsage: number;
-      idleWakeupsPerSecond: number;
-    };
-  }>;
-  panes: {
-    livePtySessions: number;
-    browserViews: number;
-  };
-}
-
-export interface RecipeLintIssue {
-  severity: 'error' | 'warning';
-  squadId: string;
-  squadName: string;
-  agentId?: string;
-  agentName?: string;
-  field: 'allowedTools' | 'allowedSkills';
-  ref: string;
-  message: string;
-}
-
-export interface RecipeOverlayResult {
-  ok: boolean;
-  checkedAt: number;
-  stacks: string[];
-  overlay?: CatalogOverlayState;
-  suggestions?: RecipeSuggestion[];
-  categories: Record<string, number>;
-  issues: RecipeLintIssue[];
-}
-
-export interface CatalogOverlayState {
-  workspacePath?: string;
-  stacks: string[];
-  disabled: string[];
-  tombstones: string[];
-  categories: Record<string, string>;
-  updatedAt: number;
-}
-
-export interface CatalogOverlayPatch {
-  workspacePath?: string;
-  stacks?: string[];
-  disabled?: string[];
-  tombstones?: string[];
-  categories?: Record<string, string>;
-}
-
-export interface RecipeSuggestion {
-  id: string;
-  title: string;
-  stacks: string[];
-  agents: string[];
-  tools: string[];
-  gaps: string[];
-}
-
-export interface AgentSpecWriteRequest {
-  name: string;
-  tools?: string[];
-  skills?: string[];
-  model?: string;
-  effort?: string;
-  category?: string;
-  systemPrompt?: string;
-}
-
-/**
- * The kind of process backing a pane. `shell` uses the user's default shell;
- * `cli-agent` spawns an AI CLI via a declarative adapter JSON; `browser`
- * is a main-process WebContentsView, never a PTY session.
- */
-export type PaneKind = 'shell' | 'cli-agent' | 'browser';
-export type SessionKind = 'shell' | 'cli-agent';
-
-export type SplitDirection = 'row' | 'column';
-
-/** A single terminal pane (a leaf in the layout tree). */
-export interface PaneModel {
-  id: string;
-  kind: PaneKind;
-  title: string;
-  cwd?: string;
-  /** Initial/current URL for browser panes. */
-  browserUrl?: string;
-  /** Set for cli-agent panes — identifies which adapter backs this pane. */
-  adapterId?: string;
-  /** The model selected for this agent pane (e.g. "claude-sonnet-4-5"). */
-  model?: string;
-  /** Account pinned to this pane; absent means the provider's active/default. */
-  accountId?: string;
-  /** Papel na missão (orquestração) — vira o badge de identidade do pane. */
-  role?: 'orchestrator' | 'worker';
-  /** Agente do squad operando este pane (ex.: "Frontend"). */
-  agentName?: string;
-  /**
-   * Per-pane reasoning effort override (task-router decision). Falls back to
-   * the provider's configured effort when absent; silently ignored by CLIs
-   * whose adapter declares no effort levels.
-   */
-  effort?: string;
-  /** User renamed this pane → ignore the shell's OSC title escapes. */
-  titlePinned?: boolean;
-  /**
-   * Present when the pane was requested by the orchestration layer (MCP
-   * pane_spawn). Correlates the eventual PTY spawn with the pending skill-gate
-   * context minted for that request.
-   */
-  orchRequestId?: string;
-  /** Mission selector for a main-verified post-approval orchestrator spawn. */
-  missionId?: string;
-  /** Bounded ANSI snapshot used only to repaint scrollback after a cold restart. */
-  terminalScrollback?: string;
-}
-
-/**
- * Recursive binary layout tree. A leaf hosts one pane; a split holds exactly
- * two children arranged along a direction. Splitting a pane replaces its leaf
- * with a split node; closing a pane collapses the split back to its sibling.
- */
-export type LayoutNode =
-  | { kind: 'leaf'; id: string; pane: PaneModel }
-  | {
-      kind: 'split';
-      id: string;
-      direction: SplitDirection;
-      children: [LayoutNode, LayoutNode];
-    };
-
-export type ViewKind = 'grid' | 'canvas';
-
-/** Position/size of one pane in the infinite canvas. */
-export interface CanvasNodeLayout {
-  position: { x: number; y: number };
-  size: { width: number; height: number };
-  z: number;
-}
-
-export interface WorkspaceLayout {
-  root: LayoutNode;
-  focusedPaneId: string | null;
-  /** Active view: grid (default) or infinite canvas. */
-  viewKind?: ViewKind;
-  /** Per-pane canvas position+size, keyed by paneId. */
-  canvasNodeLayouts?: Record<string, CanvasNodeLayout>;
-  /** Last canvas viewport (x, y, zoom) for restore. */
-  canvasViewport?: { x: number; y: number; zoom: number };
-}
-
-/** Payload to open a PTY session for a pane. */
-export interface SpawnRequest {
-  cwd?: string;
-  shell?: string;
-  cols: number;
-  rows: number;
-  kind: SessionKind;
-  /** Present when kind === 'cli-agent'. */
-  adapterId?: string;
-  /** Present when kind === 'cli-agent'. Falls back to adapter's default model. */
-  model?: string;
-  /** Optional per-pane account; validated against adapter ownership in main. */
-  accountId?: string;
-  /** Correlates an orchestration-requested spawn with its gate context. */
-  orchRequestId?: string;
-  /** Main verifies this mission has a current approved dispatch contract. */
-  missionId?: string;
-  /** Re-spawn continuing the previous conversation (adapter resumeArgs). */
-  resume?: boolean;
-  /** Skip a stale captured id and use the adapter's latest-session fallback. */
-  resumeLatestOnly?: boolean;
-  /**
-   * Start a new provider conversation while restoring the main-owned authority
-   * of this exact persisted mission pane. The main process still resolves the
-   * pane spec by owner + workspace + paneId; the renderer cannot invent it.
-   */
-  restorePersistedAuthority?: boolean;
-  /**
-   * Pane dono do spawn (estável entre boots — vem do layout persistido).
-   * Com ele + resume, o main retoma a sessão de provider CAPTURADA daquele
-   * pane (`--resume <id>`) em vez do genérico `--continue`, que faria todos
-   * os panes do workspace retomarem a MESMA última conversa.
-   */
-  paneId?: string;
-  /** Per-spawn reasoning effort override (wins over the provider setting). */
-  effort?: string;
-}
-
-export type SpawnResult =
-  | {
-      ok: true;
-      sessionId: string;
-      resumeMode?: 'exact' | 'latest' | 'unsupported';
-    }
-  | { ok: false; error: string };
-
-export interface PtyDataEvent {
-  sessionId: string;
-  data: string;
-  sequence: number;
-}
-
-export interface PtyExitEvent {
-  sessionId: string;
-  exitCode: number;
-  signal?: number;
-}
-
-// 'exited'/'hibernated' são setados pelo renderer — o agente morreu/dormiu e o
-// usuário precisa VER isso no toolbar, não descobrir pelo terminal mudo.
-export type PaneSessionState =
-  | 'spawning'
-  | 'busy'
-  | 'idle'
-  | 'exited'
-  | 'hibernated';
-
-export interface PtyStateChangeEvent {
-  sessionId: string;
-  state: PaneSessionState;
-}
-
-/** Unsubscribe handle returned by the event subscription helpers. */
-export type Unsubscribe = () => void;
+export type { ProductApi } from './product-api';
+export type { McpHubSyncApplyInput, McpHubSyncExportToolId } from './mcp-hub-sync-api';
 
 /**
  * The typed surface exposed on `window.nexus` by the preload script.
  * The renderer NEVER sees raw ipcRenderer — only this contract.
  */
-import type {
-  CheckoutRequest,
-  InviteInfo,
-  LicenseState,
-  PlanId,
-  TeamInfo,
-} from './billing-types';
-
-import type { IntegrationsApi } from './integrations-api';
 export interface NexusApi {
   /** Desktop pet (companion flutuante): prefs + pedido de abrir Settings. */
   pet: {
@@ -1066,43 +692,7 @@ export interface NexusApi {
    * Default off; a persisted override may enable each surface and the kill
    * switch remains authoritative.
    */
-  product: {
-    flagsList(): Promise<
-      Array<{
-        id: string;
-        enabled: boolean;
-        reason: string;
-        definition: unknown;
-      }>
-    >;
-    memoryList(): Promise<unknown[]>;
-    memoryRemember(input: {
-      title: string;
-      body: string;
-      kind?: 'decision' | 'mission' | 'agent' | 'note';
-      missionId?: string;
-    }): Promise<unknown>;
-    memorySearch(query: string): Promise<unknown[]>;
-    memoryBacklinks(title: string): Promise<unknown[]>;
-    memoryComplete(prefix: string): Promise<string[]>;
-    skillsList(): Promise<unknown[]>;
-    skillsLockRead(): Promise<unknown>;
-    skillsLockWrite(lock: unknown): Promise<{ ok: boolean; path?: string }>;
-    mcpHubLoad(): Promise<unknown>;
-    mcpHubSave(input: { config: unknown; dryRun?: boolean }): Promise<unknown>;
-    mcpHubDrift(observed: unknown): Promise<unknown>;
-    mcpHubHealth(): Promise<unknown[]>;
-    mcpHubRollback(input: { backupPath: string }): Promise<unknown>;
-    autonomyDecide(input: unknown): Promise<unknown>;
-    searchQuery(input: { text: string; limit?: number }): Promise<unknown>;
-    editorOpen(relativePath: string): Promise<unknown>;
-    editorApply(input: {
-      path: string;
-      content: string;
-      write?: boolean;
-      expectedContentHash?: string;
-    }): Promise<unknown>;
-  };
+  product: ProductApi;
   /** GitHub / Linear / git SCM / SSH (see integrations-api.ts). */
   integrations: IntegrationsApi;
   accounts: {
@@ -1198,121 +788,3 @@ export interface NexusApi {
   platform: NodeJS.Platform;
 }
 
-// Portable project identity v2 -------------------------------------------------
-export const PROJECT_IDENTITY_VERSION = 1 as const;
-export const PROJECT_MANIFEST_VERSION = 2 as const;
-
-const originHashSchema = z.string().regex(/^origin-sha256-[a-f0-9]{64}$/);
-const gitObjectIdSchema = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
-
-export const gitRepositoryLineageSchema = z
-  .object({
-    vcs: z.literal('git'),
-    originHashes: z.array(originHashSchema).max(16),
-    rootCommits: z.array(gitObjectIdSchema).max(64),
-    anchorCommits: z.array(gitObjectIdSchema).max(8),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    if (value.originHashes.length === 0 && value.anchorCommits.length === 0) {
-      context.addIssue({
-        code: 'custom',
-        message: 'repository lineage requires an origin hash or anchor commit',
-      });
-    }
-    for (const [field, values] of [
-      ['originHashes', value.originHashes],
-      ['rootCommits', value.rootCommits],
-      ['anchorCommits', value.anchorCommits],
-    ] as const) {
-      if (new Set(values).size !== values.length) {
-        context.addIssue({
-          code: 'custom',
-          path: [field],
-          message: `${field} must not contain duplicates`,
-        });
-      }
-    }
-  });
-
-export const projectManifestSchema = z
-  .object({
-    schemaVersion: z.literal(PROJECT_MANIFEST_VERSION),
-    projectId: z.string().uuid(),
-    name: z.string().trim().min(1).max(160).optional(),
-    repository: gitRepositoryLineageSchema,
-  })
-  .strict();
-
-export const legacyProjectManifestSchema = z
-  .object({
-    schemaVersion: z.literal(PROJECT_IDENTITY_VERSION),
-    projectId: z.string().uuid(),
-    name: z.string().trim().min(1).max(160).optional(),
-  })
-  .strict();
-
-export const projectManifestFileSchema = z.union([
-  projectManifestSchema,
-  legacyProjectManifestSchema,
-]);
-
-export type ProjectManifest = z.infer<typeof projectManifestSchema>;
-export type LegacyProjectManifest = z.infer<typeof legacyProjectManifestSchema>;
-export type GitRepositoryLineage = z.infer<typeof gitRepositoryLineageSchema>;
-export type ProjectIdentitySource = 'manifest' | 'provisional';
-
-export type ProjectIdentityQuarantineCode =
-  | 'legacy-manifest-unverified'
-  | 'repository-lineage-mismatch'
-  | 'repository-lineage-unverifiable'
-  | 'unsafe-git-administration'
-  | 'checkout-registry-required'
-  | 'checkout-token-mismatch'
-  | 'duplicate-checkout-token';
-
-export class ProjectIdentityQuarantineError extends Error {
-  readonly code: ProjectIdentityQuarantineCode;
-  readonly remediation: string;
-
-  constructor(
-    code: ProjectIdentityQuarantineCode,
-    message: string,
-    remediation: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = 'ProjectIdentityQuarantineError';
-    this.code = code;
-    this.remediation = remediation;
-  }
-}
-
-export function quarantineProjectIdentity(
-  code: ProjectIdentityQuarantineCode,
-  message: string,
-  remediation: string,
-  cause?: unknown,
-): never {
-  throw new ProjectIdentityQuarantineError(code, message, remediation, {
-    ...(cause === undefined ? {} : { cause }),
-  });
-}
-
-export const projectExecutionScopeSchema = z.object({
-  version: z.literal(PROJECT_IDENTITY_VERSION),
-  installationId: z.string().min(1).max(128),
-  projectId: z.string().min(1).max(128),
-  checkoutId: z.string().min(1).max(128),
-  rootRealPath: z.string().min(1).max(4096),
-  identitySource: z.enum(['manifest', 'provisional']),
-}).strict();
-
-/**
- * Immutable authority attached to a session when it is created. Paths are
- * always resolved from this scope; the workspace currently visible in the UI
- * is intentionally absent from the authorization decision.
- */
-export type ProjectExecutionScope = Readonly<
-  z.infer<typeof projectExecutionScopeSchema>
->;
