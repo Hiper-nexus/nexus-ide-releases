@@ -263,7 +263,7 @@ describe('mission-scheduler-runtime P3 fail-closed merge', () => {
 });
 
 describe('mission-scheduler-runtime P4 flag registration + adaptive', () => {
-  it('registers orch.parallelScheduler fail-closed default off', () => {
+  it('registers orch.parallelScheduler on by default (internal dogfood)', () => {
     // Built-in registry uses FEATURE_FLAG_IDS; also assert runtime constant.
     expect(PARALLEL_SCHEDULER_FLAG_ID).toBe('orch.parallelScheduler');
     expect(FEATURE_FLAG_IDS.parallelScheduler).toBe('orch.parallelScheduler');
@@ -273,14 +273,15 @@ describe('mission-scheduler-runtime P4 flag registration + adaptive', () => {
     );
     expect(def).toBeDefined();
     expect(() => featureFlagDefinitionSchema.parse(def)).not.toThrow();
-    expect(def!.defaultEnabled).toBe(false);
+    expect(def!.defaultEnabled).toBe(true);
     expect(def!.killSwitch).toBe(false);
 
     const resolved = resolveFeatureFlag(def, { runtimeChannel: 'dev' });
-    expect(resolved.enabled).toBe(false);
+    expect(resolved.enabled).toBe(true);
     expect(resolved.reason).toBe('default');
 
-    // Override can enable; kill switch would still win if set.
+    // An explicit override still wins over the default (a kill switch would too):
+    // an install can force it back on, and — for debugging — off.
     expect(
       resolveFeatureFlag(def, { runtimeChannel: 'dev', override: true })
         .enabled,
