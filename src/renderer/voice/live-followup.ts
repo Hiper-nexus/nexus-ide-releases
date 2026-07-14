@@ -208,12 +208,29 @@ export function releaseAfterLiveToolAnswer(opts: ToolFollowUpRequest): void {
   const store = useVoiceStore.getState();
   if (store.status !== 'speaking') store.setStatus('idle');
   opts.busy.current = false;
-  const ready = toolFollowUpGate.arm(
-    { sessionId: opts.sessionId, turnId: opts.turnId, callId: opts.callId },
-    opts,
-  );
+  const key = {
+    sessionId: opts.sessionId,
+    turnId: opts.turnId,
+    callId: opts.callId,
+  };
+  if (toolFollowUpGate.isReleased(key)) {
+    logVoiceEvent('info', 'jarvis.liveToolFollowUpAlreadyReleased', 'continuidade já iniciada — arm ignorado', {
+      turnId: opts.turnId,
+      callId: opts.callId,
+    });
+    return;
+  }
+  const alreadyWaiting = toolFollowUpGate.isArmed(key);
+  const ready = toolFollowUpGate.arm(key, opts);
   if (ready) {
     startToolFollowUp(ready, 'cached-complete');
+    return;
+  }
+  if (alreadyWaiting) {
+    logVoiceEvent('info', 'jarvis.liveToolFollowUpPendingRefresh', 'continuidade já armada — payload atualizado', {
+      turnId: opts.turnId,
+      callId: opts.callId,
+    });
     return;
   }
   logVoiceEvent('info', 'jarvis.liveToolFollowUpPending', 'aguardando fim da narração da ferramenta', {
@@ -223,16 +240,23 @@ export function releaseAfterLiveToolAnswer(opts: ToolFollowUpRequest): void {
 
 /** Called only for a provider completion that follows a realtime tool result. */
 export function notifyLiveToolTurnComplete(event: JarvisLiveToolTurnCompleteEvent): void {
-  const ready = toolFollowUpGate.complete({
+  const key = {
     sessionId: event.sessionId,
     turnId: event.turnId,
     callId: event.callId,
-  });
+  };
+  if (toolFollowUpGate.isReleased(key)) return;
+  const ready = toolFollowUpGate.complete(key);
   if (!ready) return;
   startToolFollowUp(ready, event.callId);
 }
 
 function startToolFollowUp(request: ToolFollowUpRequest, source: string): void {
+  toolFollowUpGate.markReleased({
+    sessionId: request.sessionId,
+    turnId: request.turnId,
+    callId: request.callId,
+  });
   logVoiceEvent('info', 'jarvis.liveToolFollowUpReady', 'narração concluída — reabrindo continuidade', {
     turnId: request.turnId,
     source,

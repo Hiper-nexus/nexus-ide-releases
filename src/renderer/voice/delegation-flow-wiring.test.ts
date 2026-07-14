@@ -143,7 +143,7 @@ describe('continuidade pós-tool do Gemini Live', () => {
     const completionIdx = controllerSource.indexOf(
       'onLiveToolTurnComplete((event) =>',
     );
-    const completionBlock = controllerSource.slice(completionIdx, completionIdx + 2_200);
+    const completionBlock = controllerSource.slice(completionIdx, completionIdx + 6_000);
 
     expect(completionIdx).toBeGreaterThanOrEqual(0);
     expect(completionBlock).toContain('lastRealtimeNativeToolCallId === event.callId');
@@ -152,13 +152,15 @@ describe('continuidade pós-tool do Gemini Live', () => {
     );
     expect(completionBlock).toContain('isListening(capture.current)');
     expect(completionBlock).toContain('finishAndProcessFacade(capture.current, busy)');
+    expect(completionBlock).toContain('waitForToolNarrationAudio');
+    expect(completionBlock).toContain('local-tool-narration-fallback');
   });
 
   it('reabre continuidade quando uma tool local termina sem captura ativa', () => {
     const completionIdx = controllerSource.indexOf(
       'onLiveToolTurnComplete((event) =>',
     );
-    const completionBlock = controllerSource.slice(completionIdx, completionIdx + 3_500);
+    const completionBlock = controllerSource.slice(completionIdx, completionIdx + 6_000);
 
     expect(completionBlock).toContain('releaseAfterLiveToolAnswer({');
     expect(completionBlock).toContain('audioAlreadyDrained: usedLocalNarration');

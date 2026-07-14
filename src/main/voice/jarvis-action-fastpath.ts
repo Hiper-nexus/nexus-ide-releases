@@ -208,6 +208,56 @@ export function jarvisActionFastPath(
     };
   }
 
+  // Repo sync via AI CLI pane (product default — not nexus_git_* / terminal).
+  // Keep browser "atualiza a página" above this block.
+  if (
+    !/\b(?:pagina|site|browser|navegador|page)\b/.test(t) &&
+    (
+      /\b(?:git\s+status|status\s+do\s+git|status\s+do\s+repositorio|status\s+do\s+repo)\b/.test(t) ||
+      (/\b(?:status|checa|checar|verifica|verificar)\b/.test(t) &&
+        /\b(?:git|repositorio|repo)\b/.test(t))
+    )
+  ) {
+    return {
+      say: say(ctx, 'Vou pedir pro agente checar o status do repositório.'),
+      expectReply: false,
+      action: { type: 'sync_repo_via_pane', mode: 'status' },
+    };
+  }
+
+  if (
+    !/\b(?:pagina|site|browser|navegador|page)\b/.test(t) &&
+    (
+      /\b(?:git\s+push|faz(?:er)?\s+push|manda\s+pro\s+(?:remote|origin|github|gitlab))\b/.test(t) ||
+      (/\b(?:push|envia|enviar|sobe|subir)\b/.test(t) &&
+        /\b(?:git|repositorio|repo|remote|origin|branch)\b/.test(t))
+    )
+  ) {
+    return {
+      say: say(ctx, 'Vou pedir pro agente enviar o repositório.'),
+      expectReply: false,
+      action: { type: 'sync_repo_via_pane', mode: 'push' },
+    };
+  }
+
+  if (
+    !/\b(?:pagina|site|browser|navegador|page)\b/.test(t) &&
+    (
+      /\b(?:git\s+pull|pull\s+do\s+git|puxa\s+as\s+mudancas|puxar\s+as\s+mudancas)\b/.test(t) ||
+      // Prefer explicit VCS words — bare "atualiza o projeto" is too broad for product UI.
+      (/\b(?:atualiza|atualize|atualizar|sincroniza|sincronize|sincronizar|puxa|puxar|fetch)\b/.test(t) &&
+        /\b(?:git|repositorio|repo|codigo)\b/.test(t)) ||
+      (/\b(?:atualiza|atualize|atualizar|sincroniza|sincronize|sincronizar)\b/.test(t) &&
+        /\b(?:branch|main|master)\b/.test(t))
+    )
+  ) {
+    return {
+      say: say(ctx, 'Vou pedir pro agente atualizar o repositório.'),
+      expectReply: false,
+      action: { type: 'sync_repo_via_pane', mode: 'pull' },
+    };
+  }
+
   if (
     (/\b(?:proximo|proxima|next)\b.*\b(?:pane|painel|aba|terminal)\b/.test(t) ||
       /\b(?:muda|troca|vai)\b.*\b(?:pane|painel|aba)\b/.test(t)) &&
@@ -280,9 +330,10 @@ export function jarvisActionFastPath(
     !/\b(?:push|publique|publica|deploy|release)\b/.test(t);
   if (requestsRepositorySync) {
     return {
-      say: '',
+      say: say(ctx, 'Vou pedir pro agente atualizar o repositório.'),
       expectReply: false,
-      action: { type: 'sync_repository' },
+      // Prefer pane path; legacy type sync_repository is rewritten by executor.
+      action: { type: 'sync_repo_via_pane', mode: 'pull' },
     };
   }
 

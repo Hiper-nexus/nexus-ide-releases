@@ -68,7 +68,15 @@ export function mapActionToTool(
       // gate reachable even if this action is ever re-added to `mcpFirst`.
       return null;
     case 'sync_repository':
-      return { tool: 'nexus_git_sync', args: {} };
+      // Legacy alias: do not use nexus_git_sync (fails on executable local git
+      // config). Executor rewrites this to sync_repo_via_pane.
+      return null;
+    case 'sync_repo_via_pane':
+      // Product default: repo sync goes through an AI CLI pane, never nexus_git_*.
+      return null;
+    case 'ask_pane':
+    case 'restore_mission_panes':
+      return null;
     case 'run_command':
       return { tool: 'nexus_terminal_run', args: { command: action.command } };
     default:

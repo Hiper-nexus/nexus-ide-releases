@@ -48,6 +48,11 @@ subscribeAudioDevicePreferences((next, previous) => {
 
 export let realtimeTurnActive = false;
 export let suppressRealtimeAudioOut = false;
+/**
+ * After local TTS fallback for a tool, drop Live PCM instead of queueing it.
+ * Cleared only by openLiveAudioGate so a later flush cannot replay stale speech.
+ */
+export let dropRealtimeAudioOut = false;
 export const realtimeTranscriptWaiter = new RealtimeTranscriptWaiter();
 export let pendingLiveStartSettle: Promise<void> | null = null;
 export let finishRealtimeCapture: (() => void) | null = null;
@@ -67,6 +72,9 @@ export function setRealtimeTurnActive(v: boolean): void {
 }
 export function setSuppressRealtimeAudioOut(v: boolean): void {
   suppressRealtimeAudioOut = v;
+}
+export function setDropRealtimeAudioOut(v: boolean): void {
+  dropRealtimeAudioOut = v;
 }
 export function setPendingLiveStartSettle(p: Promise<void> | null): void {
   pendingLiveStartSettle = p;

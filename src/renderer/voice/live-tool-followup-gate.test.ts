@@ -44,4 +44,24 @@ describe('LiveToolFollowUpGate', () => {
     gate.clear();
     expect(gate.arm(turn, 'follow-up')).toBeNull();
   });
+
+  it('re-arm of the same callId stays pending without forking a second wait', () => {
+    const gate = new LiveToolFollowUpGate<string>();
+    expect(gate.arm(turn, 'first')).toBeNull();
+    expect(gate.isArmed(turn)).toBe(true);
+    expect(gate.arm(turn, 'second')).toBeNull();
+    expect(gate.isArmed(turn)).toBe(true);
+    expect(gate.complete(turn)).toBe('second');
+  });
+
+  it('markReleased blocks a second arm after follow-up already started', () => {
+    const gate = new LiveToolFollowUpGate<string>();
+    expect(gate.arm(turn, 'first')).toBeNull();
+    expect(gate.complete(turn)).toBe('first');
+    gate.markReleased(turn);
+    expect(gate.isReleased(turn)).toBe(true);
+    expect(gate.arm(turn, 'again')).toBeNull();
+    expect(gate.isArmed(turn)).toBe(false);
+    expect(gate.complete(turn)).toBeNull();
+  });
 });
