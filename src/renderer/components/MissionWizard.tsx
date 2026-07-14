@@ -671,10 +671,12 @@ export function MissionWizard() {
     }
   }
 
-  function handleCancelPrepareProject() {
+  function handleHidePrepareProgress() {
     prepareGenerationRef.current += 1;
     setPrepareStatus('cancelled');
-    setPrepareDetail('Preparação cancelada. A missão continua aguardando objetivo.');
+    setPrepareDetail(
+      'Acompanhamento ocultado. O aquecimento local pode terminar em segundo plano; a missão continua aguardando objetivo.',
+    );
   }
 
   function handleOpenEmptyTerminal() {
@@ -687,12 +689,9 @@ export function MissionWizard() {
     setSpawning(true);
     setError(null);
     try {
-      const approved = await window.nexus.orch.approveMissionIntent({
-        missionId: plannedMission.id,
-      });
-      const contract = approved.intentContract;
+      const contract = plannedMission.intentContract;
       if (!contract?.goal) {
-        setError('Contrato de intenção ausente após aprovação.');
+        setError('Contrato de intenção ausente antes do despacho.');
         return;
       }
       const effectiveSquad: Squad = { ...selectedSquad, agents: roster };
@@ -700,12 +699,12 @@ export function MissionWizard() {
         '../../shared/mission-context-compact'
       );
       const compact = compactMissionContext({
-        mission: approved,
+        mission: plannedMission,
         handoffs: [],
       });
       const goalPrompt = buildIntentDispatchKickoffPrompt({
         squad: effectiveSquad,
-        missionId: approved.id,
+        missionId: plannedMission.id,
         goal: contract.goal,
         acceptanceCriteria: contract.acceptanceCriteria,
         risk: contract.risk,
@@ -713,8 +712,19 @@ export function MissionWizard() {
         compactMemoryMarkdown: renderMissionCompact(compact),
       });
       const result = await launchSquadMission(effectiveSquad, adapters, {
-        existingMissionId: approved.id,
+        existingMissionId: plannedMission.id,
         goalPrompt,
+        authorizeDispatch: async () => {
+          const approved = await window.nexus.orch.approveMissionIntent({
+            missionId: plannedMission.id,
+          });
+          if (
+            approved.intentVersion !== plannedMission.intentVersion ||
+            approved.intentContract?.goal !== contract.goal
+          ) {
+            throw new Error('O objetivo mudou durante o preflight; revise o plano novamente.');
+          }
+        },
       });
       if (!result.ok) {
         setError(result.error ?? 'Falha ao despachar a missão.');
@@ -1103,8 +1113,8 @@ export function MissionWizard() {
               >
                 <p style={{ marginBottom: 6 }}>
                   <strong>Preparar projeto</strong> (opcional): aquece o mapa local
-                  do repositório. Não abre agentes nem inventa tarefas. Pode
-                  cancelar a qualquer momento.
+                  do repositório. Não abre agentes nem inventa tarefas. Você pode
+                  ocultar o andamento; o aquecimento local pode terminar em segundo plano.
                 </p>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <button
@@ -1123,9 +1133,9 @@ export function MissionWizard() {
                     <button
                       type="button"
                       className="wizard__btn wizard__btn--ghost"
-                      onClick={handleCancelPrepareProject}
+                      onClick={handleHidePrepareProgress}
                     >
-                      Cancelar preparação
+                      Ocultar andamento
                     </button>
                   )}
                   <button

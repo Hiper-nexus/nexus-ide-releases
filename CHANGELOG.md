@@ -1,22 +1,36 @@
 # Changelog
 
-## Unreleased — Warp/BridgeMind clean-room foundations
+## Unreleased — Full product enablement (not production-gated)
 
 Data: 2026-07-13
 
-### Domain contracts (feature-flagged, default off)
-- **CommandBlock** semantic model + OSC 133 scanner + redaction + SQLite store
-  (`command_blocks`, project migration 014).
-- **Mission event journal** append/replay/cursor/ACK (`mission_events` +
-  `mission_event_cursors`) without replacing `event_ledger` or budgets.
-- **SearchMixer** multi-source cancel/generation/ranking core.
-- **Typed feature flags** with channel policy, kill switch, and override file.
-- Optional shell integration snippets for zsh/bash/fish under
-  `resources/shell-integration/`.
+### Product flags default ON
+- All product-wave flags (`commandBlocks`, `eventJournal`, `searchMixer`,
+  `progressiveOnboarding`, `contextualPanel`, `codemirrorEditor`, `mcpHub`,
+  `skillsCatalog`, `nexusMemory`, `autonomyProfiles`) ship with
+  `channel=dev` + `defaultEnabled=true` so every runtime channel has them on.
+- Kill switch + override file still force-off when needed.
+
+### Wired end-to-end
+- `registerProductWaveIpc` — memory / skills / MCP hub / autonomy / editor / flags.
+- Preload + `window.nexus.product` surface.
+- App shell: **ModeLauncher** + **ContextualPanel** with Search / Skills /
+  Memory / Editor / MCP bodies.
+- SearchMixer: ripgrep + skills + mission notes + shallow workspace providers.
+- Shell OSC 133 env + bootstrap inject on shell spawn when commandBlocks on.
+- Mission driver journal emit with stable logical-tick idempotency.
+- Terminal CommandBlock actions IPC + spawn session bind meta.
+
+### Domain contracts
+- **CommandBlock** semantic model + OSC 133 scanner + redaction + SQLite store.
+- **Mission event journal** append/replay/cursor/ACK.
+- **SearchMixer** multi-source cancel/generation/ranking.
+- Optional shell integration snippets under `resources/shell-integration/`.
 
 ### Docs
 - `docs/analysis/2026-07-13-warp-bridgemind-phase0-diagnosis.md`
 - `docs/TERMINAL-BLOCKS.md`, `docs/MISSION-EVENTS.md`, `docs/SEARCH-MIXER.md`
+- SECURITY, OPERATIONS, MCP-HUB, SKILLS, MEMORY, EDITOR.
 
 ### Non-goals this wave
 - Full UI onboarding/launcher, CodeMirror editor, MCP Hub, skills catalog,

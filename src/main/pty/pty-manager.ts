@@ -18,6 +18,10 @@ import type {
   PtySessionHandlers,
   PtySpawnSpec,
 } from "./pty-host-core";
+import {
+  applyShellIntegrationEnv,
+  shellIntegrationBootstrapCommand,
+} from "../terminal/shell-integration-env";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -511,6 +515,18 @@ export function spawnSession(
   const shell = trusted.shell;
   const cwd = trusted.cwd;
   const sessionId = makeSessionId();
+  const shellEnv = applyShellIntegrationEnv(cleanEnv(baseChildEnv()), shell);
+  const bootstrap = shellIntegrationBootstrapCommand(shell);
+  if (bootstrap) {
+    // Defer until the interactive shell is ready for input.
+    setTimeout(() => {
+      try {
+        writeSession(wc, sessionId, bootstrap);
+      } catch {
+        /* session may have exited */
+      }
+    }, 350);
+  }
   const spec: PtySpawnSpec = {
     sessionId,
     file: shell,
@@ -518,7 +534,7 @@ export function spawnSession(
     cwd,
     cols: req.cols,
     rows: req.rows,
-    env: cleanEnv(baseChildEnv()),
+    env: shellEnv,
   };
   let session!: Session;
   const proc = requireHost().spawn(

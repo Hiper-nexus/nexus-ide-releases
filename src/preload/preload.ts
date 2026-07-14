@@ -10,6 +10,9 @@ import {
   ADAPTER_CHANNELS,
   WINDOW_CHANNELS,
   TEAM_CHANNELS,
+  TERMINAL_BLOCK_CHANNELS,
+  SEARCH_MIXER_CHANNELS,
+  PRODUCT_WAVE_CHANNELS,
 } from '../shared/channels';
 import { OPS_CHANNELS } from '../shared/ops-ipc';
 import { PET_CHANNELS } from '../shared/pet-types';
@@ -850,6 +853,45 @@ const api: NexusApi = {
         return '';
       }
     },
+  },
+  terminalBlock: {
+    action: (req: unknown) =>
+      ipcRenderer.invoke(TERMINAL_BLOCK_CHANNELS.action, req),
+  },
+  searchMixer: {
+    search: (query: unknown) =>
+      ipcRenderer.invoke(SEARCH_MIXER_CHANNELS.search, query),
+  },
+  product: {
+    flagsList: () => ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.flagsList),
+    memoryList: () => ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.memoryList),
+    memoryRemember: (input) =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.memoryRemember, input),
+    memorySearch: (query: string) =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.memorySearch, { query }),
+    memoryBacklinks: (title: string) =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.memoryBacklinks, { title }),
+    memoryComplete: (prefix: string) =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.memoryComplete, { prefix }),
+    skillsList: () => ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.skillsList),
+    skillsLockRead: () =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.skillsLockRead),
+    skillsLockWrite: (lock: unknown) =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.skillsLockWrite, lock),
+    mcpHubLoad: () => ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.mcpHubLoad),
+    mcpHubSave: (input) =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.mcpHubSave, input),
+    mcpHubDrift: (observed: unknown) =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.mcpHubDrift, { observed }),
+    mcpHubHealth: () => ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.mcpHubHealth),
+    autonomyDecide: (input: unknown) =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.autonomyDecide, input),
+    searchQuery: (input) =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.searchQuery, input),
+    editorOpen: (relativePath: string) =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.editorOpen, { relativePath }),
+    editorApply: (input) =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.editorApply, input),
   },
   integrations: {
     hasGithubToken: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.hasGithubToken),

@@ -43,9 +43,10 @@ describe('feature flags', () => {
     ).toMatchObject({ enabled: false, reason: 'unknown-flag' });
   });
 
-  it('defaults are off for learning-wave flags', () => {
+  it('product-wave flags default ON (full product, not production-gated)', () => {
     for (const flag of BUILTIN_FEATURE_FLAGS) {
-      expect(flag.defaultEnabled).toBe(false);
+      expect(flag.defaultEnabled).toBe(true);
+      expect(flag.channel).toBe('dev');
     }
   });
 });

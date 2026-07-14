@@ -133,6 +133,10 @@ import {
 } from "./terminal/command-block-tracker";
 import { createCommandBlockPersister } from "./terminal/command-block-persist";
 import { configureMissionEventEmit } from "./orch/mission-event-emit";
+import { registerTerminalBlockActionsIpc } from "./terminal/terminal-block-actions-ipc";
+import { registerSearchMixerIpc } from "./search/search-mixer-ipc";
+import { getSearchMixer } from "./search/search-mixer-bootstrap";
+import { registerProductWaveIpc } from "./product-wave-ipc";
 import {
   initUsageTelemetry,
   shutdownUsageTelemetry,
@@ -375,6 +379,11 @@ function bootstrap(): void {
   );
   ensureCommandBlockTracking();
   configureMissionEventEmit(projectRuntimeManager);
+  // Product paths: CommandBlock actions, SearchMixer, full product-wave IPC.
+  registerTerminalBlockActionsIpc();
+  getSearchMixer(); // ensure ripgrep + multi-source providers on the live mixer
+  registerSearchMixerIpc();
+  registerProductWaveIpc();
   registerBrowserIpc(projectRuntimeManager);
   registerDesignWritebackIpc({ allowSourceMutation: !app.isPackaged });
   registerPerfIpc();

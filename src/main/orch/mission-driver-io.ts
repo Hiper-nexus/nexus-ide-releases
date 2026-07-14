@@ -394,12 +394,16 @@ export function createDefaultDriveDeps(options: {
       try {
         const { emitDriverDecision } = await import('./mission-event-emit');
         if (snapshot.action.kind !== 'wait') {
+          // Stable tick: iteration + lastStallSignalAt so retries dedupe.
+          const logicalTick =
+            `${snapshot.state.iteration}:${snapshot.state.lastStallSignalAt ?? 0}:${snapshot.action.kind}`;
           emitDriverDecision(
             snapshot.scope,
             snapshot.missionId,
             snapshot.action.kind,
             snapshot.action.reason,
             config.mode,
+            logicalTick,
           );
         }
       } catch {

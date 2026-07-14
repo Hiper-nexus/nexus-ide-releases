@@ -245,19 +245,28 @@ export class CommandBlockStore {
    * Never deletes status=running.
    */
   prune(keepLatest = 5_000): number {
-    const keep = Math.max(100, keepLatest);
+    const keep = Math.max(1, keepLatest);
     const db = this.#binding.writeDatabase();
+    // SQLite forbids deleting from a table while selecting the same table in
+    // a correlated NOT IN without materializing — use an explicit id list.
+    const keepIds = (
+      db
+        .prepare(
+          `SELECT id FROM command_blocks
+           ORDER BY started_at DESC
+           LIMIT ?`,
+        )
+        .all(keep) as Array<{ id: string }>
+    ).map((row) => row.id);
+    if (keepIds.length === 0) return 0;
+    const placeholders = keepIds.map(() => '?').join(', ');
     const info = db
       .prepare(
         `DELETE FROM command_blocks
          WHERE status != 'running'
-           AND id NOT IN (
-             SELECT id FROM command_blocks
-             ORDER BY started_at DESC
-             LIMIT ?
-           )`,
+           AND id NOT IN (${placeholders})`,
       )
-      .run(keep) as { changes?: number };
+      .run(...keepIds) as { changes?: number };
     return info.changes ?? 0;
   }
 
@@ -266,7 +275,7 @@ export class CommandBlockStore {
    * finished rows until under budget (or only running remain).
    */
   enforceSizeBudget(maxBytes = 32 * 1024 * 1024): number {
-    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1024) {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 256) {
       throw new Error('invalid command history size budget');
     }
     const db = this.#binding.writeDatabase();

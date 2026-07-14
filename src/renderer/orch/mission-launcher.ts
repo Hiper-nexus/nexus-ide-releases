@@ -256,6 +256,12 @@ export interface SquadLaunchOptions {
   existingMissionId?: string;
   /** Goal text for post-intent dispatch kickoff. */
   goalPrompt?: string;
+  /**
+   * Runs only after provider/account preflight succeeds and immediately before
+   * creating the orchestrator pane. Used to make intent dispatch fail closed
+   * without leaving a mission authorized when no provider can launch.
+   */
+  authorizeDispatch?: () => Promise<void>;
 }
 
 export function initialGoalForArmedMission(input: {
@@ -561,6 +567,20 @@ export async function launchSquadMission(
     accounts,
   });
   const { model, accountId } = runtime;
+
+  if (options.authorizeDispatch) {
+    try {
+      await options.authorizeDispatch();
+    } catch (cause) {
+      return {
+        ok: false,
+        error:
+          cause instanceof Error
+            ? `A missão não foi autorizada: ${cause.message}`
+            : 'A missão não foi autorizada.',
+      };
+    }
+  }
 
   // Squad opens with orchestrator pane. Workers are added via MCP as it
   // delegates. Multi-mission: when the new orch does not share exclusive

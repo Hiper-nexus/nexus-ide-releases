@@ -41,25 +41,33 @@ export function emitMissionEvent(
   }
 }
 
+/**
+ * Emit a driver decision. `logicalTick` must be stable across retries of the
+ * same decision (attemptCount, lastSignalAt, or similar) so journal
+ * idempotency dedupes — never embed wall-clock uniqueness.
+ */
 export function emitDriverDecision(
   scope: ProjectExecutionScope,
   missionId: string,
   actionKind: string,
   reason: string,
   mode: 'shadow' | 'active',
+  logicalTick: number | string = 0,
 ): boolean {
-  const type: MissionEventType =
-    actionKind === 'wait' ? 'driver.tick' : 'driver.tick';
+  const type: MissionEventType = 'driver.tick';
+  const tick = String(logicalTick);
+  const reasonKey = reason.slice(0, 48).replace(/[^A-Za-z0-9._:-]+/g, '_');
   return emitMissionEvent(scope, {
     missionId,
     runId: `drive-${missionId}`,
     type,
     origin: 'driver',
-    idempotencyKey: `drive:${missionId}:${actionKind}:${reason.slice(0, 48)}:${Date.now()}`,
+    idempotencyKey: `drive:${missionId}:${actionKind}:${reasonKey}:${tick}`,
     payload: {
       actionKind,
       reason: reason.slice(0, 512),
       mode,
+      logicalTick: tick,
     },
   });
 }

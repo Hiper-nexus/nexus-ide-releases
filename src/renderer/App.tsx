@@ -67,6 +67,17 @@ import { useVoiceStore } from './voice/voice-store';
 import { UpdateNotifier } from './components/UpdateModal';
 import { requestPaneClose } from './terminal/pane-close-guard';
 import { NexusMark } from './components/NexusMark';
+import { ModeLauncher } from './components/ModeLauncher';
+import { ContextualPanel } from './components/ContextualPanel';
+import {
+  EditorPanelBody,
+  McpHubPanelBody,
+  MemoryPanelBody,
+  SearchPanelBody,
+  SkillsPanelBody,
+} from './components/product/ProductPanelBodies';
+import type { LAUNCHER_MODES } from '../shared/progressive-onboarding';
+import type { ContextualTab } from '../shared/contextual-panel';
 
 /** Primeiro frame do cockpit: marca pulsando enquanto os instrumentos ligam. */
 function BootScreen() {
@@ -103,6 +114,9 @@ export function App() {
   const paletteOpen = useCommandPaletteStore((s) => s.open);
   const confirmOpen = useConfirmStore((s) => s.pending !== null);
   const cheatsheetOpen = useCheatsheetStore((s) => s.open);
+  const [launcherMode, setLauncherMode] = useState<
+    (typeof LAUNCHER_MODES)[number]['id']
+  >('terminal');
   const suppressBrowserPanes =
     settingsDrawerOpen ||
     missionWizardOpen ||
@@ -361,18 +375,64 @@ export function App() {
     return <BootScreen />;
   }
 
+  const ctxTabForMode = (
+    id: (typeof LAUNCHER_MODES)[number]['id'],
+  ): ContextualTab => {
+    if (id === 'skills') return 'skills';
+    if (id === 'memory') return 'handoff'; // memory body mounted on handoff slot
+    if (id === 'missions' || id === 'swarm') return 'mission';
+    return 'editor';
+  };
+
+  const onModeSelect = (id: (typeof LAUNCHER_MODES)[number]['id']) => {
+    setLauncherMode(id);
+    if (id === 'missions') {
+      useMissionWizardStore.getState().openForMission();
+      return;
+    }
+    if (id === 'board') {
+      const orch = useOrchStore.getState();
+      if (!orch.boardOpen) orch.toggleBoard();
+      return;
+    }
+    if (id === 'swarm') {
+      useOrchStore.getState().openPanel('missions');
+    }
+  };
+
   return (
     <div className="app">
       <WorkspaceBar
         onOpenDiff={() => setDiffOpen(true)}
         onOpenIntegrations={() => setIntegrationsOpen(true)}
       />
-      <main className="app__body">
-        <MissionRail />
-        <FilesPanel />
-        {viewKind === 'canvas' ? <CanvasView /> : <PaneGrid />}
-        <HomeDeck />
-        <OrchestrationPanel />
+      <ModeLauncher activeId={launcherMode} onSelect={onModeSelect} />
+      <main className="app__body app__body--with-ctx">
+        <div className="app__main-col">
+          <div className="app__body-inner" style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+            <MissionRail />
+            <FilesPanel />
+            {viewKind === 'canvas' ? <CanvasView /> : <PaneGrid />}
+            <HomeDeck />
+            <OrchestrationPanel />
+          </div>
+        </div>
+        <ContextualPanel
+          key={`ctx-${launcherMode}`}
+          flagEnabled
+          workspaceId={currentWorkspace?.path}
+          initial={{
+            activeTab: ctxTabForMode(launcherMode),
+            visible: true,
+          }}
+          children={{
+            search: <SearchPanelBody />,
+            skills: <SkillsPanelBody />,
+            editor: <EditorPanelBody />,
+            browser: <McpHubPanelBody />,
+            handoff: <MemoryPanelBody />,
+          }}
+        />
       </main>
       <OpsBoard />
       <DiffAnnotatePanel open={diffOpen} onClose={() => setDiffOpen(false)} />

@@ -1000,6 +1000,71 @@ export interface NexusApi {
     /** Resolve a dragged File to its absolute filesystem path (webUtils). */
     pathForFile(file: File): string;
   };
+  /**
+   * CommandBlock contextual actions (re-run goes through writeSession policy).
+   * Flag: feature.terminal.commandBlocks.
+   */
+  terminalBlock: {
+    action(req: unknown): Promise<{
+      ok: boolean;
+      action: string;
+      payload?: Record<string, unknown>;
+      error?: string;
+      clipboardText?: string;
+    }>;
+  };
+  /** Unified SearchMixer (flag: feature.search.mixer). */
+  searchMixer: {
+    search(query: unknown): Promise<{
+      generation: number;
+      query: string;
+      hits: unknown[];
+      partial: boolean;
+      completedSources: string[];
+      cancelled: boolean;
+      elapsedMs: number;
+      error?: string;
+    }>;
+  };
+  /**
+   * Product-wave surface (flags, memory, skills, MCP hub, autonomy, editor).
+   * All default ON; kill switch / overrides still apply.
+   */
+  product: {
+    flagsList(): Promise<
+      Array<{
+        id: string;
+        enabled: boolean;
+        reason: string;
+        definition: unknown;
+      }>
+    >;
+    memoryList(): Promise<unknown[]>;
+    memoryRemember(input: {
+      title: string;
+      body: string;
+      kind?: 'decision' | 'mission' | 'agent' | 'note';
+      missionId?: string;
+    }): Promise<unknown>;
+    memorySearch(query: string): Promise<unknown[]>;
+    memoryBacklinks(title: string): Promise<unknown[]>;
+    memoryComplete(prefix: string): Promise<string[]>;
+    skillsList(): Promise<unknown[]>;
+    skillsLockRead(): Promise<unknown>;
+    skillsLockWrite(lock: unknown): Promise<{ ok: boolean; path?: string }>;
+    mcpHubLoad(): Promise<unknown>;
+    mcpHubSave(input: { config: unknown; dryRun?: boolean }): Promise<unknown>;
+    mcpHubDrift(observed: unknown): Promise<unknown>;
+    mcpHubHealth(): Promise<unknown[]>;
+    autonomyDecide(input: unknown): Promise<unknown>;
+    searchQuery(input: { text: string; limit?: number }): Promise<unknown>;
+    editorOpen(relativePath: string): Promise<unknown>;
+    editorApply(input: {
+      path: string;
+      content: string;
+      write?: boolean;
+    }): Promise<unknown>;
+  };
   /** GitHub / Linear / diff / SSH port-forward integrations (Sprint A–C). */
   integrations: {
     hasGithubToken(): Promise<boolean>;

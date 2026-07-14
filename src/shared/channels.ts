@@ -60,6 +60,40 @@ export const PERF_CHANNELS = {
   snapshot: 'perf:snapshot',
 } as const;
 
+/** Terminal CommandBlock contextual actions (re-run / copy / handoff / …). */
+export const TERMINAL_BLOCK_CHANNELS = {
+  action: 'terminal-block:action',
+} as const;
+
+/** Unified SearchMixer IPC. */
+export const SEARCH_MIXER_CHANNELS = {
+  search: 'search-mixer:search',
+} as const;
+
+/**
+ * Product-wave IPC (memory, skills, MCP hub, autonomy, editor, flags).
+ * Mirrors PRODUCT_WAVE_CHANNELS in main/product-wave-ipc.ts — keep in sync.
+ */
+export const PRODUCT_WAVE_CHANNELS = {
+  flagsList: 'product:flags.list',
+  memoryList: 'product:memory.list',
+  memoryRemember: 'product:memory.remember',
+  memorySearch: 'product:memory.search',
+  memoryBacklinks: 'product:memory.backlinks',
+  memoryComplete: 'product:memory.complete',
+  skillsList: 'product:skills.list',
+  skillsLockRead: 'product:skills.lockRead',
+  skillsLockWrite: 'product:skills.lockWrite',
+  mcpHubLoad: 'product:mcpHub.load',
+  mcpHubSave: 'product:mcpHub.save',
+  mcpHubDrift: 'product:mcpHub.drift',
+  mcpHubHealth: 'product:mcpHub.health',
+  autonomyDecide: 'product:autonomy.decide',
+  searchQuery: 'product:search.query',
+  editorOpen: 'product:editor.open',
+  editorApply: 'product:editor.apply',
+} as const;
+
 export const MCP_CHANNELS = {
   invoke: 'mcp:invoke',
   confirm: 'mcp:confirm',

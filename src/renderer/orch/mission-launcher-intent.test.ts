@@ -165,4 +165,29 @@ describe('intent-first arming dependencies', () => {
     expect(accountsList).not.toHaveBeenCalled();
     expect(quotaSnapshot).not.toHaveBeenCalled();
   });
+
+  it('preflights the provider before authorizing dispatch', async () => {
+    const authorizeDispatch = vi.fn(async () => undefined);
+    vi.stubGlobal('window', {
+      nexus: {
+        settings: {
+          orchGet: vi.fn(async () => ({
+            intentFirstMissionRuntimeV1: true,
+            defaultAdapterId: 'missing-provider',
+          })),
+        },
+        accounts: { list: vi.fn(async () => []) },
+        quota: { snapshot: vi.fn(async () => null) },
+      },
+    });
+
+    await expect(
+      launchSquadMission(squad, [], {
+        existingMissionId: 'mission-approved-later',
+        goalPrompt: 'goal',
+        authorizeDispatch,
+      }),
+    ).resolves.toMatchObject({ ok: false });
+    expect(authorizeDispatch).not.toHaveBeenCalled();
+  });
 });

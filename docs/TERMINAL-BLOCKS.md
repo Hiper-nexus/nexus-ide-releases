@@ -29,7 +29,7 @@ The byte stream remains the visual source of truth (xterm + scheduler).
 
 ## Feature flag
 
-- `feature.terminal.commandBlocks` (channel: `dev`, **default off**, kill switch supported)
+- `feature.terminal.commandBlocks` (channel: `dev`, **default on**, kill switch supported)
 
 ## Error flow
 

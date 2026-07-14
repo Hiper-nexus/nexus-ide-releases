@@ -130,6 +130,35 @@ beforeEach(() => {
 });
 
 describe("renderer mission authority", () => {
+  it("turns the approved intent criteria into durable PREVC milestones", () => {
+    authority.submitIntentFromRenderer(owner, {
+      missionId: "mission-a",
+      goal: "Implementar e revisar a correção",
+      acceptanceCriteria: ["Implementação concluída", "QA sem regressões"],
+    });
+
+    expect(deps.updateMission).toHaveBeenCalledWith(
+      "mission-a",
+      expect.objectContaining({
+        intentContract: expect.objectContaining({ executionMode: "autopilot" }),
+        milestones: [
+          {
+            id: "step-1",
+            label: "Implementação concluída",
+            status: "pending",
+            evidenceIds: [],
+          },
+          {
+            id: "step-2",
+            label: "QA sem regressões",
+            status: "pending",
+            evidenceIds: [],
+          },
+        ],
+      }),
+    );
+  });
+
   it("never accepts renderer-authored done and scopes other edits", () => {
     expect(() =>
       authority.updateMissionFromRenderer(owner, "mission-a", {

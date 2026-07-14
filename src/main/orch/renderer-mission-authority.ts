@@ -293,12 +293,22 @@ export class RendererMissionAuthority {
 
     const intentState = compiled.to;
     const status = missionStatusForIntent(intentState) ?? current.status;
+    const canReplacePlannedMilestones =
+      from === "legacy" ||
+      from === "draft" ||
+      from === "awaiting_goal" ||
+      from === "intent_compiling" ||
+      from === "ready_to_start" ||
+      from === "awaiting_approval";
     const updated = missions.update(input.missionId, {
       description: contract.goal,
       status,
       intentState,
       intentContract: contract,
       intentVersion: nextVersion,
+      ...(canReplacePlannedMilestones
+        ? { milestones: normalizeMilestones(contract.acceptanceCriteria) }
+        : {}),
     });
     if (!updated) throw new Error("mission not found");
 

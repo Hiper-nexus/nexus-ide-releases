@@ -22,15 +22,20 @@ describe('FeatureFlagRegistry', () => {
     );
   });
 
-  it('keeps learning-wave flags off by default on stable (channel allows, default false)', () => {
-    const registry = new FeatureFlagRegistry({ runtimeChannel: 'stable' });
-    // channel=dev means available from dev upward; defaultEnabled remains false.
-    expect(registry.isEnabled(FEATURE_FLAG_IDS.terminalCommandBlocks)).toBe(
-      false,
-    );
-    expect(
-      registry.resolve(FEATURE_FLAG_IDS.terminalCommandBlocks).reason,
-    ).toBe('default');
+  it('enables product-wave flags by default on every channel (full product)', () => {
+    for (const channel of ['dev', 'dogfood', 'preview', 'stable'] as const) {
+      const registry = new FeatureFlagRegistry({ runtimeChannel: channel });
+      expect(registry.isEnabled(FEATURE_FLAG_IDS.terminalCommandBlocks)).toBe(
+        true,
+      );
+      expect(
+        registry.resolve(FEATURE_FLAG_IDS.terminalCommandBlocks).reason,
+      ).toBe('default');
+      expect(registry.isEnabled(FEATURE_FLAG_IDS.searchMixer)).toBe(true);
+      expect(registry.isEnabled(FEATURE_FLAG_IDS.missionEventJournal)).toBe(
+        true,
+      );
+    }
   });
 
   it('blocks dogfood runtime from preview-channel flags', () => {
@@ -78,8 +83,9 @@ describe('FeatureFlagRegistry', () => {
       runtimeChannel: 'dev',
       overridesPath,
     });
+    // Corrupt overrides are ignored — product defaults stay ON.
     expect(registry.isEnabled(FEATURE_FLAG_IDS.missionEventJournal)).toBe(
-      false,
+      true,
     );
   });
 

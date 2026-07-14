@@ -19,6 +19,7 @@ import {
   resolveEffectiveIntentState,
   synthesizeImmediateDispatchContract,
   transitionIntentState,
+  type MissionIntentContract,
 } from './mission-intent';
 import type { Mission } from './orch-types';
 
@@ -276,13 +277,15 @@ describe('budget and parent/child ceilings', () => {
   it('tracks spentTokens and denies when executionTokens ceiling hit', () => {
     const base = compileIntentContract({ goal: 'x', intentVersion: 1 });
     expect(estimateEffectfulToolTokens('nexus_file_write')).toBeGreaterThan(0);
-    let contract = {
-      ...base,
-      budgets: { ...base.budgets, executionTokens: 150 },
-      spentTokens: 0,
-      spentSteps: 0,
-    };
-    contract = applyEffectfulSpend(contract, 'nexus_file_write');
+    const contract = applyEffectfulSpend(
+      {
+        ...base,
+        budgets: { ...base.budgets, executionTokens: 150 },
+        spentTokens: 0,
+        spentSteps: 0,
+      } satisfies MissionIntentContract,
+      'nexus_file_write',
+    );
     expect(contract.spentSteps).toBe(1);
     expect(contract.spentTokens).toBeGreaterThan(0);
     // Force near ceiling then next spend should fail budget check.

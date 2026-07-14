@@ -892,14 +892,15 @@ export async function executeJarvisAction(
     } else if (target.kind === 'no-agent-pane') {
       // send_to_pane is natural-language delegation only. Never reinterpret it
       // as shell input: that produced a misleading native command dialog for
-      // ordinary mission objectives. Explicit shell requests still use the
+      // ordinary mission objectives. Preserve the objective by opening the
+      // intent-first mission flow; explicit shell requests still use the
       // dedicated run_command branch and retain its confirmation guardrail.
-      sayText =
-        'Não achei um pane de agente pra receber a missão — abre o orquestrador primeiro.';
+      useMissionWizardStore.getState().openForAgentic(action.text);
+      sayText = 'Não havia um agente aberto, então preparei a missão para você revisar e iniciar.';
       toolResult = {
         tool: action.type,
-        ok: false,
-        summary: 'sem pane de agente válido (delegação não virou comando de shell)',
+        ok: true,
+        summary: 'missão preservada no fluxo agêntico (sem executar como shell)',
       };
     } else {
       const missionPrompt = prepareDelegationPrompt(action.text);
