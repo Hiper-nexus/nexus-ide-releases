@@ -73,4 +73,15 @@ describe('resolveReviewTargetPaneId', () => {
       }),
     ).toBeNull();
   });
+
+  it('does not select an exited orchestrator when live state is available', () => {
+    expect(
+      resolveReviewTargetPaneId({
+        panes: [orch, worker],
+        focusedPaneId: 'p-worker',
+        paneMissions: { 'p-orch': 'm1', 'p-worker': 'm1' },
+        isPaneLive: (paneId) => paneId === 'p-worker',
+      }),
+    ).toBe('p-worker');
+  });
 });

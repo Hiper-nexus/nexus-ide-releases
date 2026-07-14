@@ -108,6 +108,13 @@ export function railStatusDisplay(
   intentState?: Mission['intentState'],
 ): { label: string; tone: RailStatusTone } {
   if (liveInGrid) return { label: 'Ao vivo', tone: 'live' };
+  // Terminal outcomes are authoritative. A stale intent snapshot must never
+  // make a failed or completed mission look ready for dispatch again.
+  // Persisted legacy rows may still carry terminal labels even though the
+  // current domain union models them through the separate rail section.
+  const terminalStatus = status as string;
+  if (terminalStatus === 'done') return { label: 'Concluída', tone: 'done' };
+  if (terminalStatus === 'failed') return { label: 'Falhou', tone: 'failed' };
   // Espera humana merece pill própria: "Na fila" esconde que a missão está
   // parada esperando VOCÊ (aprovar, dar objetivo, retomar) — o glance mais
   // importante do rail é exatamente esse.

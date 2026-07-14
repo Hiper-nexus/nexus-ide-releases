@@ -151,6 +151,15 @@ describe('railStatusDisplay', () => {
       'Travada',
     );
   });
+
+  it('keeps terminal outcomes authoritative over stale intent state', () => {
+    expect(railStatusDisplay('failed', false, 'ready_to_start').label).toBe(
+      'Falhou',
+    );
+    expect(railStatusDisplay('done', false, 'awaiting_approval').label).toBe(
+      'Concluída',
+    );
+  });
 });
 
 describe('missionRailResumeCopy', () => {

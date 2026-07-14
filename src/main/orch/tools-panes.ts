@@ -331,8 +331,14 @@ const paneSpawn: McpToolDef = {
           };
         }
       }
-      const spawned = await spawnPaneAndMaybePrompt(options);
-      spawnedWorkerPaneId = spawned.paneId;
+      const spawned = await spawnPaneAndMaybePrompt(options, {
+        // Capture the PTY identity before missionPanes.record(). If that
+        // durable write fails, the finally block must retain the reservation
+        // instead of treating the spawn as if it never happened.
+        onPaneCreated: (paneId) => {
+          spawnedWorkerPaneId = paneId;
+        },
+      });
       return {
         ...spawned,
         ...(executionMode ? { executionMode } : {}),

@@ -161,6 +161,15 @@ export interface SpawnToolOptions {
 }
 
 /**
+ * Lifecycle hooks for the host-side spawn transaction. The pane-created hook
+ * fires immediately after the PTY exists and before mission composition is
+ * persisted, so budget callers can retain a reservation if persistence fails.
+ */
+export interface SpawnPaneHooks {
+  readonly onPaneCreated?: (paneId: string, sessionId: string) => void;
+}
+
+/**
  * UI-shaped work, detected on the task brief + pane title/agent name. Biased
  * generous (false positive = status quo ante: charter included); superset of
  * the contract-compiler UI_SIGNAL so design guidance never misses real UI.
@@ -236,6 +245,7 @@ export function withHandoffContract(
 
 export async function spawnPaneAndMaybePrompt(
   options: SpawnToolOptions,
+  hooks: SpawnPaneHooks = {},
 ): Promise<{ paneId: string; sessionId: string }> {
   const adapter = getAdapter(options.adapterId);
   if (!adapter) throw new Error(`unknown adapter: ${options.adapterId}`);
@@ -251,6 +261,7 @@ export async function spawnPaneAndMaybePrompt(
   if (!result.ok || !result.paneId || !result.sessionId) {
     throw new Error(result.error ?? 'pane spawn failed');
   }
+  hooks.onPaneCreated?.(result.paneId, result.sessionId);
   // Remember the mission's composition so it can be reopened from history.
   if (options.missionId) {
     getProjectDomainStores(options.scope).missionPanes.record({

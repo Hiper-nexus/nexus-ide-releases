@@ -5,7 +5,11 @@ import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { listPanes } from './split-tree';
-import { submitPromptToPane, writeToPane } from '../terminal/terminal-host';
+import {
+  getPaneSessionId,
+  submitPromptToPaneConfirmed,
+  writeToPane,
+} from '../terminal/terminal-host';
 
 function shellQuote(p: string): string {
   if (/^[A-Za-z0-9_./:@+-]+$/.test(p)) return p;
@@ -46,12 +50,16 @@ export function resolveReviewTargetPaneId(input: {
   readonly panes: readonly Pick<PaneModel, 'id' | 'kind' | 'role'>[];
   readonly focusedPaneId: string | null;
   readonly paneMissions: Readonly<Record<string, string>>;
+  /** Defaults to true for pure callers; the live wrapper supplies PTY state. */
+  readonly isPaneLive?: (paneId: string) => boolean;
 }): string | null {
+  const isPaneLive = input.isPaneLive ?? (() => true);
   const orchestrators = input.panes.filter(
     (pane) =>
       pane.kind === 'cli-agent' &&
       pane.role === 'orchestrator' &&
-      input.paneMissions[pane.id],
+      input.paneMissions[pane.id] &&
+      isPaneLive(pane.id),
   );
   if (orchestrators.length > 0) {
     const focusedMission = input.focusedPaneId
@@ -66,9 +74,13 @@ export function resolveReviewTargetPaneId(input: {
   }
   if (input.focusedPaneId) {
     const focused = input.panes.find((pane) => pane.id === input.focusedPaneId);
-    if (focused?.kind === 'cli-agent') return focused.id;
+    if (focused?.kind === 'cli-agent' && isPaneLive(focused.id)) return focused.id;
   }
-  return input.panes.find((pane) => pane.kind === 'cli-agent')?.id ?? null;
+  return (
+    input.panes.find(
+      (pane) => pane.kind === 'cli-agent' && isPaneLive(pane.id),
+    )?.id ?? null
+  );
 }
 
 /** Live resolver over the stores (thin wrapper around the pure function). */
@@ -78,6 +90,7 @@ export function reviewTargetPaneId(): string | null {
     panes: listPanes(root),
     focusedPaneId,
     paneMissions: useOrchStore.getState().paneMissions,
+    isPaneLive: (paneId) => Boolean(getPaneSessionId(paneId)),
   });
 }
 
@@ -142,13 +155,15 @@ export function annotationsToAgentPrompt(
  * when no mission is live) as ONE submitted prompt — bracketed paste + Enter,
  * not text left unsent in the composer.
  */
-export function sendAnnotationsToAgent(
+export async function sendAnnotationsToAgent(
   annotations: Array<{ path: string; line: number; body: string }>,
   paneId?: string,
-): boolean {
+): Promise<boolean> {
   const text = annotationsToAgentPrompt(annotations);
   if (!text) return false;
   const target = paneId ?? reviewTargetPaneId();
   if (!target) return false;
-  return submitPromptToPane(target, text);
+  const sessionId = getPaneSessionId(target);
+  if (!sessionId) return false;
+  return submitPromptToPaneConfirmed(target, text, sessionId);
 }

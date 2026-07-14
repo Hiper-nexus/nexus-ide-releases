@@ -56,12 +56,21 @@ export function MissionRail() {
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  // Re-render the elapsed mission label even when no store event arrives.
+  const [, setElapsedTick] = useState(0);
   const [pinnedIds, setPinnedIds] = useState<string[]>(() =>
     loadPinnedMissionIds(workspacePath),
   );
   const [collapsed, setCollapsed] = useState<RailSectionId[]>(() =>
     loadCollapsedSections(),
   );
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setElapsedTick((tick) => tick + 1);
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // Pins e lista só deste path — ao trocar workspace, recarrega pins locais.
   useEffect(() => {

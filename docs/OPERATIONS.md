@@ -42,8 +42,9 @@ ativo, recovery, auto-merge, journal ACK, novos gates):
    Ativação é decisão de runtime/settings, nunca constante de módulo.
 2. **O default é pinado por teste.** Se o default mudar, um teste falha e a
    mudança vira decisão revisada (ex.: `mission-drive.test.ts` trava shadow;
-   `feature-flags.test.ts` trava default-off; `settings-types.test.ts` trava
-   os defaults de produto das orch settings).
+   `src/shared/feature-flags.test.ts` trava default-off;
+   `src/shared/settings-types.test.ts` trava os defaults de produto das orch
+   settings).
 3. **Um ciclo de soak entre merge e default-on.** Feature nova roda ≥1 ciclo
    de dogfood em shadow/flag-off com journal/telemetria ligados antes do flip.
    O flip de default é um commit próprio, pequeno, com changelog.
