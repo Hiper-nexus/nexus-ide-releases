@@ -133,6 +133,10 @@ export class CommandBlockTracker {
     return this.#sessions.get(sessionId)?.blocks ?? [];
   }
 
+  findBlock(sessionId: string, blockId: string): CommandBlock | null {
+    return this.listBlocks(sessionId).find((b) => b.id === blockId) ?? null;
+  }
+
   #applyEvent(
     sessionId: string,
     session: LiveSession,

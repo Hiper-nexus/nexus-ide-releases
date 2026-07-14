@@ -9,6 +9,7 @@ export const CONTEXTUAL_TABS = [
   'editor',
   'git',
   'skills',
+  'memory',
   'mission',
   'handoff',
   'search',
@@ -55,6 +56,11 @@ export const CONTEXTUAL_TAB_COPY: Record<
     title: 'Skills',
     empty: 'No skills in catalog. Import or create under project skills.',
     loading: 'Loading skills…',
+  },
+  memory: {
+    title: 'Memory',
+    empty: 'No memory notes yet. Capture decisions under .nexus-memory/.',
+    loading: 'Loading memory…',
   },
   mission: {
     title: 'Mission',

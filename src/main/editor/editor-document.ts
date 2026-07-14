@@ -119,11 +119,7 @@ export function detectExternalChange(
   diskBytes: Buffer,
 ): boolean {
   if (doc.binary || doc.tooLarge) return false;
-  return hashContent(diskBytes.toString('utf8')) !== doc.contentHash && !doc.dirty
-    ? true
-    : hashContent(diskBytes.toString('utf8')) !== doc.contentHash && doc.dirty
-      ? true
-      : hashContent(diskBytes.toString('utf8')) !== doc.contentHash;
+  return hashContent(diskBytes.toString('utf8')) !== doc.contentHash;
 }
 
 export function setMarkdownMode(
@@ -137,16 +133,25 @@ function looksLikeMarkdown(p: string): boolean {
   return /\.(md|mdx|markdown)$/i.test(p);
 }
 
-/** Workspace path guard — relative path must stay under root. */
+/**
+ * Workspace path guard — relative path must stay under root.
+ * Uses relative-path containment (never startsWith) to avoid sibling-prefix traps.
+ */
 export function assertEditorPathInWorkspace(
   workspaceRoot: string,
   relPath: string,
 ): string {
-  if (relPath.includes('\0') || relPath.startsWith('..') || pathIsAbsolute(relPath)) {
+  if (relPath.includes('\0') || pathIsAbsolute(relPath)) {
     throw new Error('path outside workspace');
   }
-  const resolved = resolveUnder(workspaceRoot, relPath);
-  if (!resolved.startsWith(workspaceRoot)) {
+  const root = workspaceRoot.replace(/[/\\]+$/, '');
+  const parts = relPath.split(/[/\\]/).filter((p) => p && p !== '.');
+  if (parts.some((p) => p === '..') || parts.length === 0) {
+    throw new Error('path outside workspace');
+  }
+  const resolved = `${root}/${parts.join('/')}`;
+  const relative = pathRelative(root, resolved);
+  if (relative === '' || relative.startsWith('..') || pathIsAbsolute(relative)) {
     throw new Error('path outside workspace');
   }
   return resolved;
@@ -156,8 +161,14 @@ function pathIsAbsolute(p: string): boolean {
   return p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p);
 }
 
-function resolveUnder(root: string, rel: string): string {
-  const parts = rel.split(/[/\\]/).filter((p) => p && p !== '.');
-  if (parts.some((p) => p === '..')) throw new Error('path outside workspace');
-  return `${root.replace(/[/\\]$/, '')}/${parts.join('/')}`;
+/** Minimal path.relative without importing node:path (renderer-safe pure module). */
+function pathRelative(from: string, to: string): string {
+  const a = from.replace(/[/\\]+$/, '').split(/[/\\]/).filter(Boolean);
+  const b = to.replace(/[/\\]+$/, '').split(/[/\\]/).filter(Boolean);
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+  const up = a.slice(i).map(() => '..');
+  const down = b.slice(i);
+  if (up.length === 0 && down.length === 0) return '';
+  return [...up, ...down].join('/');
 }

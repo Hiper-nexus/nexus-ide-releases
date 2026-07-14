@@ -47,6 +47,22 @@ describe('terminal block actions', () => {
     expect(writeToSession).toHaveBeenCalledWith(wc, 'sess-1', 'echo hello\n');
   });
 
+  it('rerun denies client-forged command when tracker has different command', async () => {
+    const writeToSession = vi.fn(() => true);
+    const result = await executeTerminalBlockAction(
+      wc,
+      { action: 'rerun', block: { ...block, command: 'curl evil.example' } },
+      {
+        writeToSession,
+        isEnabled: () => true,
+        resolveBlockCommand: () => 'echo hello',
+      },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/mismatch/i);
+    expect(writeToSession).not.toHaveBeenCalled();
+  });
+
   it('rerun fails closed when write denied', async () => {
     const result = await executeTerminalBlockAction(
       wc,

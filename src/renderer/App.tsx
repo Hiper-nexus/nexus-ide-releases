@@ -379,8 +379,9 @@ export function App() {
     id: (typeof LAUNCHER_MODES)[number]['id'],
   ): ContextualTab => {
     if (id === 'skills') return 'skills';
-    if (id === 'memory') return 'handoff'; // memory body mounted on handoff slot
+    if (id === 'memory') return 'memory';
     if (id === 'missions' || id === 'swarm') return 'mission';
+    if (id === 'terminal') return 'search';
     return 'editor';
   };
 
@@ -418,19 +419,16 @@ export function App() {
           </div>
         </div>
         <ContextualPanel
-          key={`ctx-${launcherMode}`}
           flagEnabled
           workspaceId={currentWorkspace?.path}
-          initial={{
-            activeTab: ctxTabForMode(launcherMode),
-            visible: true,
-          }}
+          activeTab={ctxTabForMode(launcherMode)}
+          initial={{ visible: true }}
           children={{
             search: <SearchPanelBody />,
             skills: <SkillsPanelBody />,
             editor: <EditorPanelBody />,
             browser: <McpHubPanelBody />,
-            handoff: <MemoryPanelBody />,
+            memory: <MemoryPanelBody />,
           }}
         />
       </main>

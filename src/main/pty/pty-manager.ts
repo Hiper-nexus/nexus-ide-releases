@@ -20,7 +20,8 @@ import type {
 } from "./pty-host-core";
 import {
   applyShellIntegrationEnv,
-  shellIntegrationBootstrapCommand,
+  cleanupShellIntegrationPaths,
+  shellIntegrationSpawnArgs,
 } from "../terminal/shell-integration-env";
 
 /**
@@ -49,6 +50,8 @@ interface Session {
   outputSequence: number;
   acknowledgedSequence: number;
   replay: Array<{ sequence: number; data: string }>;
+  /** Temp ZDOTDIR/bashrc dirs for OSC 133 — cleaned on session end. */
+  shellIntegrationCleanup: string[];
 }
 
 export interface OwnedAgentSessionInfo {
@@ -494,6 +497,9 @@ function finalizeSession(
   if (!s) return;
   sessions.delete(sessionId);
   if (s.idleTimer) clearTimeout(s.idleTimer);
+  if (s.shellIntegrationCleanup.length > 0) {
+    cleanupShellIntegrationPaths(s.shellIntegrationCleanup);
+  }
   if (canSend(s.wc)) {
     s.wc.send(PTY_CHANNELS.exit, { sessionId, exitCode, signal });
   }
@@ -515,47 +521,47 @@ export function spawnSession(
   const shell = trusted.shell;
   const cwd = trusted.cwd;
   const sessionId = makeSessionId();
-  const shellEnv = applyShellIntegrationEnv(cleanEnv(baseChildEnv()), shell);
-  const bootstrap = shellIntegrationBootstrapCommand(shell);
-  if (bootstrap) {
-    // Defer until the interactive shell is ready for input.
-    setTimeout(() => {
-      try {
-        writeSession(wc, sessionId, bootstrap);
-      } catch {
-        /* session may have exited */
-      }
-    }, 350);
-  }
+  const baseEnv = cleanEnv(baseChildEnv());
+  const { env: shellEnv, cleanupPaths } = applyShellIntegrationEnv(
+    baseEnv,
+    shell,
+  );
+  const shellArgs = shellIntegrationSpawnArgs(shell, shellEnv);
   const spec: PtySpawnSpec = {
     sessionId,
     file: shell,
-    args: [],
+    args: shellArgs,
     cwd,
     cols: req.cols,
     rows: req.rows,
     env: shellEnv,
   };
   let session!: Session;
-  const proc = requireHost().spawn(
-    spec,
-    sessionHandlers(sessionId, () => session),
-  );
-  session = {
-    proc,
-    wc,
-    idleTimer: null,
-    idleTimeoutMs: 0,
-    state: "spawning",
-    cwd,
-    agent: null,
-    missionOrchestratorGrantAvailable: false,
-    outputSequence: 0,
-    acknowledgedSequence: 0,
-    replay: [],
-  };
-  sessions.set(sessionId, session);
-  return { sessionId };
+  try {
+    const proc = requireHost().spawn(
+      spec,
+      sessionHandlers(sessionId, () => session),
+    );
+    session = {
+      proc,
+      wc,
+      idleTimer: null,
+      idleTimeoutMs: 0,
+      state: "spawning",
+      cwd,
+      agent: null,
+      missionOrchestratorGrantAvailable: false,
+      outputSequence: 0,
+      acknowledgedSequence: 0,
+      replay: [],
+      shellIntegrationCleanup: [...cleanupPaths],
+    };
+    sessions.set(sessionId, session);
+    return { sessionId };
+  } catch (err) {
+    cleanupShellIntegrationPaths(cleanupPaths);
+    throw err;
+  }
 }
 
 /** User overrides from the provider settings hub, applied at spawn time. */
@@ -781,6 +787,7 @@ export function spawnAgentSession(
     outputSequence: 0,
     acknowledgedSequence: 0,
     replay: [],
+    shellIntegrationCleanup: [],
   };
   sessions.set(sessionId, session);
   emitStateChange(wc, sessionId, "spawning");

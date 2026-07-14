@@ -7,6 +7,7 @@ import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import {
   backlinks,
   extractWikilinks,
+  listMemoryNotes,
   rememberMarkdown,
   resolveMemoryRoot,
   searchMemory,
@@ -61,5 +62,11 @@ describe('nexus memory', () => {
       true,
     );
     expect(wikilinkCompletions(root, 'Dec')).toContain('Decision Auth');
+
+    // Frontmatter kind must round-trip (mission search depends on it).
+    const listed = listMemoryNotes(root);
+    expect(listed.find((n) => n.title === 'Mission Alpha')?.kind).toBe('mission');
+    expect(listed.find((n) => n.title === 'Decision Auth')?.kind).toBe('decision');
+    expect(listed.filter((n) => n.kind === 'mission')).toHaveLength(1);
   });
 });

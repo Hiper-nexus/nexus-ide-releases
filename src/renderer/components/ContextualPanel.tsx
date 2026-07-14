@@ -12,12 +12,14 @@ export interface ContextualPanelProps {
   readonly flagEnabled?: boolean;
   readonly workspaceId?: string;
   readonly initial?: Partial<ContextualPanelState>;
+  /** Controlled active tab (ModeLauncher); undefined = internal state only. */
+  readonly activeTab?: ContextualTab;
   readonly onStateChange?: (state: ContextualPanelState) => void;
   readonly children?: Partial<Record<ContextualTab, React.ReactNode>>;
 }
 
 /**
- * Unified right panel: Browser / Editor / Git / Skills / Mission / Handoff / Search.
+ * Unified right panel: Browser / Editor / Git / Skills / Memory / Mission / Handoff / Search.
  * Splitter width via CSS resize; hide/show with Alt+].
  * Opening a tab never implies extra permissions.
  */
@@ -25,6 +27,7 @@ export function ContextualPanel({
   flagEnabled = true,
   workspaceId,
   initial,
+  activeTab: controlledTab,
   onStateChange,
   children,
 }: ContextualPanelProps) {
@@ -32,6 +35,7 @@ export function ContextualPanel({
     contextualPanelStateSchema.parse({
       ...initial,
       workspaceId,
+      ...(controlledTab ? { activeTab: controlledTab } : {}),
     }),
   );
 
@@ -45,6 +49,14 @@ export function ContextualPanel({
     },
     [onStateChange],
   );
+
+  useEffect(() => {
+    if (controlledTab && controlledTab !== state.activeTab) {
+      update({ activeTab: controlledTab, visible: true });
+    }
+    // Only re-sync when parent drives tab changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional controlled prop
+  }, [controlledTab]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

@@ -42,6 +42,13 @@ describe('editor document', () => {
     expect(() =>
       assertEditorPathInWorkspace('/ws', '../etc/passwd'),
     ).toThrow(/outside/);
+    // Sibling-prefix trap: /workspace-evil must not pass for root /workspace
+    expect(() =>
+      assertEditorPathInWorkspace('/workspace', '../workspace-evil/x'),
+    ).toThrow(/outside/);
+    expect(assertEditorPathInWorkspace('/workspace', 'src/a.ts')).toBe(
+      '/workspace/src/a.ts',
+    );
     const md = openEditorDocument({
       path: 'README.md',
       bytes: Buffer.from('# Hi\n'),

@@ -4,6 +4,7 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import type { WebContents } from 'electron';
 import { writeSession } from '../pty/pty-manager';
+import { getCommandBlockTracker } from './command-block-tracker';
 
 /**
  * Contextual actions on CommandBlocks. Re-run always goes through writeSession
@@ -60,6 +61,14 @@ export interface TerminalBlockActionDeps {
     sessionId: string,
     data: string,
   ) => boolean;
+  /**
+   * Prefer server-side command for re-run (fail-closed against client
+   * forging a different command on the same block id).
+   */
+  readonly resolveBlockCommand?: (
+    sessionId: string,
+    blockId: string,
+  ) => string | null;
   readonly createWorktree?: (input: {
     readonly missionId: string;
     readonly cwd: string;
@@ -158,8 +167,20 @@ export async function executeTerminalBlockAction(
       return { ok: true, action, payload: { path: result.path } };
     }
     case 'rerun': {
+      // Prefer tracker/store command over client payload when available.
+      const authoritative =
+        deps.resolveBlockCommand?.(block.sessionId, block.id) ?? null;
+      const command = authoritative ?? block.command;
+      if (authoritative !== null && authoritative !== block.command) {
+        // Client tried to forge a different command for this block id.
+        return {
+          ok: false,
+          action,
+          error: 'block command mismatch — re-run denied',
+        };
+      }
       try {
-        assertRerunAllowed(block.command);
+        assertRerunAllowed(command);
       } catch (err) {
         return {
           ok: false,
@@ -168,7 +189,7 @@ export async function executeTerminalBlockAction(
         };
       }
       // Same path as live keyboard input: ownership enforced in writeSession.
-      const data = `${block.command}\n`;
+      const data = `${command}\n`;
       const written = deps.writeToSession(wc, block.sessionId, data);
       if (!written) {
         return {
@@ -184,10 +205,14 @@ export async function executeTerminalBlockAction(
   }
 }
 
-/** Default deps bound to pty-manager.writeSession. */
+/** Default deps bound to pty-manager.writeSession + in-memory tracker. */
 export function defaultTerminalBlockActionDeps(): TerminalBlockActionDeps {
   return {
     writeToSession: writeSession,
+    resolveBlockCommand: (sessionId, blockId) => {
+      const tracker = getCommandBlockTracker();
+      return tracker?.findBlock(sessionId, blockId)?.command ?? null;
+    },
   };
 }
 

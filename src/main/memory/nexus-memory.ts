@@ -102,6 +102,30 @@ export function rememberMarkdown(
   });
 }
 
+const MEMORY_KINDS = new Set(['decision', 'mission', 'agent', 'note']);
+
+function parseFrontmatter(raw: string): {
+  kind: MemoryNote['kind'];
+  missionId?: string;
+  idFromFm?: string;
+} {
+  const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
+  if (!fm) return { kind: 'note' };
+  const block = fm[1];
+  const kindRaw = /^kind:\s*(\S+)/m.exec(block)?.[1]?.trim();
+  const kind =
+    kindRaw && MEMORY_KINDS.has(kindRaw)
+      ? (kindRaw as MemoryNote['kind'])
+      : 'note';
+  const missionId = /^missionId:\s*(.+)$/m.exec(block)?.[1]?.trim() || undefined;
+  const idFromFm = /^id:\s*(\S+)/m.exec(block)?.[1]?.trim();
+  return {
+    kind,
+    missionId: missionId || undefined,
+    idFromFm,
+  };
+}
+
 export function listMemoryNotes(
   projectRoot: string,
   dirname = DEFAULT_MEMORY_DIR,
@@ -114,17 +138,19 @@ export function listMemoryNotes(
     const filePath = path.join(root, name);
     try {
       const raw = fs.readFileSync(filePath, 'utf8');
+      const fm = parseFrontmatter(raw);
       const title =
         /^#\s+(.+)$/m.exec(raw)?.[1]?.trim() ?? name.replace(/\.md$/, '');
-      const id = name.replace(/\.md$/, '');
+      const id = fm.idFromFm ?? name.replace(/\.md$/, '');
       const body = raw.replace(/^---[\s\S]*?---\s*/, '');
       notes.push(
         memoryNoteSchema.parse({
           id,
           title,
-          kind: 'note',
+          kind: fm.kind,
           body: body.slice(0, 64_000),
           wikilinks: extractWikilinks(body),
+          missionId: fm.missionId,
           path: filePath,
           updatedAt: Math.floor(fs.statSync(filePath).mtimeMs),
         }),

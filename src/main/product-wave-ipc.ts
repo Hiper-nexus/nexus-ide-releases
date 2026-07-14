@@ -41,12 +41,10 @@ import {
   markSaved,
   MAX_EDITOR_CHARS,
 } from './editor/editor-document';
-import { SearchMixer } from './search/search-mixer';
-import type { SearchSourceProvider, SearchHit } from '../shared/search-mixer-types';
+import { runSearchMixerQuery } from './search/search-mixer-bootstrap';
 import {
   requireScopedRoot,
   resolveScopedPath,
-  resolveScopedPathCandidate,
 } from './security/scoped-workspace-fs';
 
 export { PRODUCT_WAVE_CHANNELS };
@@ -72,109 +70,15 @@ function loadMcpHub(root: string): McpHubConfig {
   if (!fs.existsSync(file)) {
     return mcpHubConfigSchema.parse({ schemaVersion: 1, servers: [] });
   }
-  return mcpHubConfigSchema.parse(
-    JSON.parse(fs.readFileSync(file, 'utf8') as string),
-  );
+  try {
+    return mcpHubConfigSchema.parse(
+      JSON.parse(fs.readFileSync(file, 'utf8') as string),
+    );
+  } catch {
+    // Fail-closed: corrupt config does not take down IPC.
+    return mcpHubConfigSchema.parse({ schemaVersion: 1, servers: [] });
+  }
 }
-
-function buildSearchMixer(root: string): SearchMixer {
-  const mixer = new SearchMixer({ debounceMs: 0 });
-  const missionsProvider: SearchSourceProvider = {
-    source: 'missions',
-    async search(query, signal) {
-      if (signal.aborted) return [];
-      // Lightweight path scan of mission titles from memory notes kind=mission
-      const notes = listMemoryNotes(root).filter((n) => n.kind === 'mission');
-      const q = query.text.toLowerCase();
-      return notes
-        .filter((n) => n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q))
-        .slice(0, query.limit)
-        .map(
-          (n): SearchHit => ({
-            id: `mission-note:${n.id}`,
-            source: 'missions',
-            title: n.title,
-            subtitle: n.kind,
-            score: 0.8,
-            snippet: n.body.slice(0, 160),
-            path: n.path,
-          }),
-        );
-    },
-  };
-  const skillsProvider: SearchSourceProvider = {
-    source: 'skills',
-    async search(query, signal) {
-      if (signal.aborted) return [];
-      const q = query.text.toLowerCase();
-      const skills = skillsDirs(root).flatMap((d) => scanSkillsDirectory(d));
-      return skills
-        .filter(
-          (s) =>
-            s.name.toLowerCase().includes(q) ||
-            s.description.toLowerCase().includes(q),
-        )
-        .slice(0, query.limit)
-        .map(
-          (s): SearchHit => ({
-            id: `skill:${s.id}`,
-            source: 'skills',
-            title: s.name,
-            subtitle: s.category,
-            score: 0.75,
-            snippet: s.description.slice(0, 160),
-            path: s.path,
-          }),
-        );
-    },
-  };
-  const filesProvider: SearchSourceProvider = {
-    source: 'files',
-    async search(query, signal) {
-      if (signal.aborted) return [];
-      // Shallow walk (non-recursive heavy) — top-level + common src
-      const hits: SearchHit[] = [];
-      const q = query.text.toLowerCase();
-      const walk = (dir: string, depth: number) => {
-        if (depth > 3 || hits.length >= query.limit) return;
-        let names: string[] = [];
-        try {
-          names = fs.readdirSync(dir);
-        } catch {
-          return;
-        }
-        for (const name of names) {
-          if (name === 'node_modules' || name === '.git' || name.startsWith('.'))
-            continue;
-          const full = path.join(dir, name);
-          if (name.toLowerCase().includes(q)) {
-            hits.push({
-              id: `file:${full}`,
-              source: 'files',
-              title: name,
-              score: 0.6,
-              path: full,
-            });
-          }
-          try {
-            if (fs.statSync(full).isDirectory()) walk(full, depth + 1);
-          } catch {
-            /* skip */
-          }
-          if (hits.length >= query.limit) return;
-        }
-      };
-      walk(root, 0);
-      return hits;
-    },
-  };
-  mixer.register(missionsProvider);
-  mixer.register(skillsProvider);
-  mixer.register(filesProvider);
-  return mixer;
-}
-
-let searchMixer: SearchMixer | null = null;
 
 export function registerProductWaveIpc(): void {
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.flagsList, () => {
@@ -234,9 +138,13 @@ export function registerProductWaveIpc(): void {
     if (!fs.existsSync(lockPath)) {
       return skillsLockSchema.parse({ schemaVersion: 1, skills: [] });
     }
-    return skillsLockSchema.parse(
-      JSON.parse(fs.readFileSync(lockPath, 'utf8')),
-    );
+    try {
+      return skillsLockSchema.parse(
+        JSON.parse(fs.readFileSync(lockPath, 'utf8')),
+      );
+    } catch {
+      return skillsLockSchema.parse({ schemaVersion: 1, skills: [] });
+    }
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.skillsLockWrite, (event, raw) => {
@@ -307,10 +215,8 @@ export function registerProductWaveIpc(): void {
     return decideAutonomy(input);
   });
 
-  ipcMain.handle(PRODUCT_WAVE_CHANNELS.searchQuery, (event, raw) => {
-    if (!getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.searchMixer)) {
-      return { generation: 0, query: '', hits: [], partial: false, completedSources: [], cancelled: false, elapsedMs: 0 };
-    }
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.searchQuery, async (event, raw) => {
+    // Single SearchMixer path (same as search-mixer:search) — always bind root.
     const root = workspaceRoot(event.sender);
     const input = z
       .object({
@@ -318,10 +224,7 @@ export function registerProductWaveIpc(): void {
         limit: z.number().int().min(1).max(100).optional(),
       })
       .parse(raw);
-    searchMixer ??= buildSearchMixer(root);
-    // Rebuild mixer root when workspace changes — simple: always rebuild for correctness
-    searchMixer = buildSearchMixer(root);
-    return searchMixer.searchNow({
+    return runSearchMixerQuery({
       text: input.text,
       limit: input.limit ?? 30,
       projectRoot: root,
@@ -335,8 +238,10 @@ export function registerProductWaveIpc(): void {
     const { relativePath } = z
       .object({ relativePath: z.string().min(1).max(4096) })
       .parse(raw);
-    // Containment via shared adapter — never path.resolve + startsWith.
-    const full = resolveScopedPathCandidate(event.sender, relativePath);
+    // Open/read must realpath the leaf (resolveScopedPath). Lexical-only
+    // resolveScopedPathCandidate would accept a workspace symlink to a
+    // sibling/outside path and leak file contents.
+    const full = resolveScopedPath(event.sender, relativePath);
     try {
       const st = fs.statSync(full);
       const bytes = fs.readFileSync(full);
@@ -345,7 +250,12 @@ export function registerProductWaveIpc(): void {
         bytes,
         mtimeMs: st.mtimeMs,
       });
-    } catch {
+    } catch (err) {
+      // If path escaped (symlink out), resolveScopedPath already threw.
+      // Missing file after a valid in-scope path → empty document.
+      if (err instanceof Error && /escapes workspace/i.test(err.message)) {
+        throw err;
+      }
       return openEditorDocument({
         path: full,
         bytes: Buffer.from(''),
@@ -375,6 +285,9 @@ export function registerProductWaveIpc(): void {
     const doc = openEditorDocument({ path: full, bytes });
     const next = applyEdit(doc, input.content);
     if (input.write && !next.binary && !next.tooLarge) {
+      // Parent must already be under workspace (resolveScopedPath). Create only
+      // intermediate dirs under that containment.
+      fs.mkdirSync(path.dirname(full), { recursive: true, mode: 0o700 });
       fs.writeFileSync(full, next.content, { mode: 0o600 });
       return markSaved(next);
     }
