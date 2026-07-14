@@ -8,6 +8,10 @@ import path from 'node:path';
 import { z } from 'zod';
 import { PRODUCT_WAVE_CHANNELS } from '../shared/channels';
 import { FEATURE_FLAG_IDS } from '../shared/feature-flags';
+import {
+  MCP_HUB_SYNC_EXPORT_TOOL_ENUM,
+  MCP_HUB_SYNC_EXPORT_TOOLS,
+} from '../shared/mcp-hub-sync-api';
 import { getFeatureFlagRegistry } from './feature-flags/feature-flag-registry';
 import {
   decideAutonomy,
@@ -37,6 +41,8 @@ import {
   healthForServer,
   type McpHubConfig,
 } from './mcp-hub/mcp-hub-core';
+import { observeAcrossTools } from './mcp-hub/mcp-hub-observers';
+import { applyMcpSync, planMcpSync } from './mcp-hub/mcp-hub-sync';
 import { isInsidePath } from './orch/workspace-path';
 import {
   openEditorDocument,
@@ -300,6 +306,50 @@ export function registerProductWaveIpc(): void {
         servers: config.servers.map(maskServerForUi),
       },
     };
+  });
+
+  /**
+   * Read-only Across Tools matrix. No write-back; no feature-flag gate —
+   * discovery of on-disk MCP configs must work even when hub sync is off.
+   */
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.mcpHubObserve, (event) => {
+    let root: string | null = null;
+    let hubServerIds: string[] = [];
+    try {
+      root = workspaceRoot(event.sender);
+      hubServerIds = loadMcpHub(root).servers.map((server) => server.id);
+    } catch {
+      // No workspace bound — still probe Cursor/Claude/Codex/….
+    }
+    return observeAcrossTools({ hubServerIds, workspaceRoot: root });
+  });
+
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.mcpHubSyncPlan, (event) => {
+    requireFlag(FEATURE_FLAG_IDS.mcpHub, 'feature.mcp.hub');
+    const root = workspaceRoot(event.sender);
+    return planMcpSync({ hub: loadMcpHub(root) });
+  });
+
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.mcpHubSyncApply, (event, raw) => {
+    requireFlag(FEATURE_FLAG_IDS.mcpHub, 'feature.mcp.hub');
+    const root = workspaceRoot(event.sender);
+    const input = z
+      .object({
+        dryRun: z.boolean().optional(),
+        mode: z.enum(['both', 'import', 'export']).optional(),
+        exportTools: z
+          .array(z.enum(MCP_HUB_SYNC_EXPORT_TOOL_ENUM))
+          .max(MCP_HUB_SYNC_EXPORT_TOOLS.length)
+          .optional(),
+      })
+      .parse(raw ?? {});
+    return applyMcpSync({
+      hub: loadMcpHub(root),
+      hubPath: mcpHubPath(root),
+      dryRun: input.dryRun,
+      mode: input.mode,
+      exportTools: input.exportTools,
+    });
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.autonomyDecide, (event, raw) => {

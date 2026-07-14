@@ -158,13 +158,15 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
   {
     id: FEATURE_FLAG_IDS.mcpHub,
     owner: 'mcp',
-    description: 'Local MCP Hub: multi-transport client + config sync/drift.',
+    description:
+      'Local MCP Hub: multi-transport config, Across Tools observe, fill-gaps sync.',
     channel: 'dev',
     createdAt: '2026-07-13',
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
-    defaultEnabled: false,
+    // On: Sync / hub writes are product surface for vibe multi-CLI.
+    defaultEnabled: true,
   },
   {
     id: FEATURE_FLAG_IDS.skillsCatalog,

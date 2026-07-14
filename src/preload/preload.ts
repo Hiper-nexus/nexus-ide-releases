@@ -899,6 +899,12 @@ const api: NexusApi = {
     mcpHubHealth: () => ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.mcpHubHealth),
     mcpHubRollback: (input: { backupPath: string }) =>
       ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.mcpHubRollback, input),
+    mcpHubObserve: () =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.mcpHubObserve),
+    mcpHubSyncPlan: () =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.mcpHubSyncPlan),
+    mcpHubSyncApply: (input) =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.mcpHubSyncApply, input ?? {}),
     autonomyDecide: (input: unknown) =>
       ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.autonomyDecide, input),
     searchQuery: (input) =>
