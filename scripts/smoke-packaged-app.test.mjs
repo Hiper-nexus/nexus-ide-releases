@@ -179,7 +179,7 @@ describe('resolvePackagedTarget / packagedBinaryForApp', () => {
 describe('isolation args and environment', () => {
   it('launches with positional sentinel and Chromium user-data switch', () => {
     const userData = '/tmp/nexus-packaged-smoke';
-    expect(packagedSmokeArgs(userData)).toEqual([
+    expect(packagedSmokeArgs(userData, 'darwin')).toEqual([
       'nexus-smoke-test',
       '--user-data-dir=/tmp/nexus-packaged-smoke',
     ]);

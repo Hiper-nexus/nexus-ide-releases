@@ -169,7 +169,7 @@ describe('operational Home and Launch surfaces', () => {
     const { host, root } = mount(<HomeDeck />);
     await act(async () => {});
 
-    expect(host.textContent).toContain('Base operacional pronta');
+    expect(host.textContent).toContain('Você está online');
     expect(host.textContent).toContain('7 CLIs prontas');
     expect(host.textContent).toContain('MCP online · 71 ferramentas');
     expect(host.textContent).toContain('Próxima ação');
@@ -196,7 +196,7 @@ describe('operational Home and Launch surfaces', () => {
     const { host, root } = mount(<HomeDeck />);
     await act(async () => {});
 
-    expect(host.textContent).toContain('Conecte uma CLI para operar');
+    expect(host.textContent).toContain('Conecte uma CLI e o deck acende');
     const configure = [...host.querySelectorAll('button')].find((button) =>
       button.textContent?.includes('Configurar provider'),
     );
