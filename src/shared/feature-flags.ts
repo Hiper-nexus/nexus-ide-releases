@@ -206,17 +206,15 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     id: FEATURE_FLAG_IDS.parallelScheduler,
     owner: 'orch',
     description:
-      'Deterministic parallel task scheduler: ready+disjoint waves via worktrees, serial MergeQueue, fail-closed ownership enforcement. On by default for internal dogfooding; sequential is the safe degenerate case.',
+      'Deterministic parallel task scheduler: ready+disjoint waves via worktrees, serial MergeQueue, fail-closed ownership enforcement. Default off; enable only for independent-subset missions after P3.',
     channel: 'dev',
     createdAt: '2026-07-14',
     removeAfter: '2027-06-30',
     killSwitch: false,
     telemetry: true,
-    // Enabled by default: internal-only build (no external clients yet) — dogfood
-    // the scheduler live. The disjoint-ownership gate + fail-closed enforcement
-    // keep sequential the safe fallback, so turning it on can only fan out tasks
-    // that provably do not overlap.
-    defaultEnabled: true,
+    // Fail-closed: stays off until independent-subset policy is trusted (P3).
+    // Override enables for missions that declare disjoint ownership.
+    defaultEnabled: false,
   },
 ] as const;
 

@@ -43,13 +43,9 @@ describe('feature flags', () => {
     ).toMatchObject({ enabled: false, reason: 'unknown-flag' });
   });
 
-  it('keeps every deferred product-wave flag default off (except the dogfooded scheduler)', () => {
+  it('keeps every deferred product-wave flag default off', () => {
     for (const flag of BUILTIN_FEATURE_FLAGS) {
-      // parallelScheduler is intentionally on by default in this internal-only
-      // build to dogfood it live; every other flag stays fail-closed default-off,
-      // so this guardrail still catches any accidental default-on elsewhere.
-      const expectedDefault = flag.id === 'orch.parallelScheduler';
-      expect(flag.defaultEnabled).toBe(expectedDefault);
+      expect(flag.defaultEnabled).toBe(false);
       expect(flag.channel).toBe('dev');
     }
   });
