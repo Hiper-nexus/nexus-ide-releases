@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { clearOcrCache, ocrImage } from './ocr';
 
 const OCR_INTEGRATION_TIMEOUT_MS = 60_000;
+const previousOcrTimeout = process.env.VISION_OCR_TIMEOUT_MS;
 
 let runtimeRoot = '';
 let previousRuntimeRoot: string | undefined;
@@ -14,6 +15,10 @@ beforeAll(async () => {
   previousRuntimeRoot = process.env.NEXUS_USER_DATA_DIR;
   runtimeRoot = await mkdtemp(path.join(os.tmpdir(), 'nexus-ocr-offline-'));
   process.env.NEXUS_USER_DATA_DIR = runtimeRoot;
+  // Shared CI runners can take longer to initialize tesseract than a local
+  // desktop. Keep production's 30s fail-fast default; widen only this real
+  // vendored-data integration probe.
+  process.env.VISION_OCR_TIMEOUT_MS = '90000';
 });
 
 afterAll(async () => {
@@ -22,6 +27,11 @@ afterAll(async () => {
     Reflect.deleteProperty(process.env, 'NEXUS_USER_DATA_DIR');
   } else {
     process.env.NEXUS_USER_DATA_DIR = previousRuntimeRoot;
+  }
+  if (previousOcrTimeout === undefined) {
+    Reflect.deleteProperty(process.env, 'VISION_OCR_TIMEOUT_MS');
+  } else {
+    process.env.VISION_OCR_TIMEOUT_MS = previousOcrTimeout;
   }
   await rm(runtimeRoot, { recursive: true, force: true });
 });

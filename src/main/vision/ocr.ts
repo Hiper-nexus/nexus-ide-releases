@@ -28,7 +28,8 @@ interface OcrWorker {
 const cache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 30_000;
 const CACHE_MAX_SIZE = 20;
-const OCR_TIMEOUT_MS = 30_000;
+const DEFAULT_OCR_TIMEOUT_MS = 30_000;
+const MAX_OCR_TIMEOUT_MS = 120_000;
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -51,6 +52,12 @@ function hashBuffer(buffer: Buffer): string {
 function maxOcrBytes(): number {
   const parsed = Number.parseInt(process.env.VISION_OCR_MAX_BYTES ?? '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_BYTES;
+}
+
+function ocrTimeoutMs(): number {
+  const parsed = Number.parseInt(process.env.VISION_OCR_TIMEOUT_MS ?? '', 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_OCR_TIMEOUT_MS;
+  return Math.min(parsed, MAX_OCR_TIMEOUT_MS);
 }
 
 function isPng(buffer: Buffer): boolean {
@@ -149,7 +156,7 @@ export async function ocrImage(
 
     const {
       data: { text, confidence },
-    } = await withTimeout(worker.recognize(buffer), OCR_TIMEOUT_MS);
+    } = await withTimeout(worker.recognize(buffer), ocrTimeoutMs());
 
     const result: OcrResult = {
       text: text.trim(),
