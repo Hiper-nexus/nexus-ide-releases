@@ -207,12 +207,19 @@ export function packagedBinaryForApp(appPath, platform = process.platform) {
  * sees process.argv. Use a positional sentinel for the app mode and a native
  * Chromium profile switch as a second isolation barrier.
  */
-export function packagedSmokeArgs(userData) {
+export function packagedSmokeArgs(userData, platform = process.platform) {
   const isolatedUserData = path.resolve(userData);
-  return [
+  const args = [
     PACKAGED_SMOKE_ARGUMENT,
     `--user-data-dir=${isolatedUserData}`,
   ];
+  // GitHub-hosted Linux runners do not grant the user namespace required by
+  // Chromium's setuid sandbox. This flag is scoped to the packaged smoke
+  // harness; normal Linux launches remain sandboxed and unchanged.
+  if (platform === 'linux') {
+    args.unshift('--no-sandbox');
+  }
+  return args;
 }
 
 /** Keep every filesystem default scoped to the temporary smoke directory. */
@@ -646,7 +653,7 @@ export async function runPackagedSmoke(
     const code = await new Promise((resolve, reject) => {
       const child = spawnImpl(
         target.binary,
-        packagedSmokeArgs(userData),
+        packagedSmokeArgs(userData, platform),
         packagedSmokeSpawnOptions(userData, env, platform),
       );
       runtimeExecuted = true;

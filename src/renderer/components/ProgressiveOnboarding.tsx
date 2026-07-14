@@ -11,13 +11,21 @@ import {
   type WorkMode,
 } from '../../shared/progressive-onboarding';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
+import {
+  ENDORPHIN_STEP_LABELS,
+  launchGreeting,
+} from '../../shared/endorphin';
+import { EndorphinPresence } from './EndorphinPresence';
 
 /**
  * Progressive onboarding: Início → Layout → Agentes → Lançar.
  * Flag-gated; abrir sem IA é o caminho primário.
+ * Endorfina: presença do pet + progresso de steps + CTA acento.
  */
 
 type Step = 'mode' | 'layout' | 'agents' | 'preview';
+
+const STEP_ORDER: Step[] = ['mode', 'layout', 'agents', 'preview'];
 
 const AGENT_DIST_LABELS: Record<
   Exclude<AgentDistribution, 'none'>,
@@ -62,6 +70,8 @@ export function ProgressiveOnboarding({
       }),
     [mode, paneCount, agentDistribution, openWithoutAi, recentPath],
   );
+  const greet = useMemo(() => launchGreeting(), []);
+  const stepIndex = STEP_ORDER.indexOf(step);
 
   if (!flagEnabled) {
     return (
@@ -76,16 +86,37 @@ export function ProgressiveOnboarding({
 
   return (
     <div className="prog-onb prog-onb--launch" data-testid="progressive-onboarding">
+      <EndorphinPresence
+        className="prog-onb__presence"
+        kicker={greet.kicker}
+        mood="idle"
+        size={56}
+      />
       <header className="prog-onb__header">
-        <h1 className="prog-onb__title">Início</h1>
+        <h1 className="prog-onb__title">{greet.title}</h1>
         <button type="button" className="prog-onb__escape" onClick={onSkip}>
           Pular · avançado
         </button>
       </header>
+      {greet.line ? <p className="prog-onb__subtitle">{greet.line}</p> : null}
+
+      <ol className="prog-onb__steps" aria-label="Progresso do lançamento">
+        {STEP_ORDER.map((id, i) => (
+          <li
+            key={id}
+            className={`prog-onb__step-dot${
+              i < stepIndex ? ' is-done' : ''
+            }${i === stepIndex ? ' is-active' : ''}`}
+            title={ENDORPHIN_STEP_LABELS[id]}
+            aria-label={ENDORPHIN_STEP_LABELS[id]}
+            aria-current={i === stepIndex ? 'step' : undefined}
+          />
+        ))}
+      </ol>
 
       {step === 'mode' && (
         <section className="prog-onb__step" aria-label="Modo de trabalho">
-          <h2>Como você quer trabalhar?</h2>
+          <h2>Escolhe o ritmo</h2>
           <div className="prog-onb__grid">
             {LAUNCHER_MODES.map((m) => (
               <button
@@ -187,7 +218,7 @@ export function ProgressiveOnboarding({
 
       {step === 'preview' && (
         <section className="prog-onb__step" aria-label="Prévia">
-          <h2>Prévia do lançamento</h2>
+          <h2>Tudo certo — vamos</h2>
           <p className="prog-onb__summary" data-testid="launch-preview">
             {previewLaunchSummary(plan)}
           </p>
@@ -201,7 +232,7 @@ export function ProgressiveOnboarding({
               data-testid="launch-primary"
               onClick={() => onLaunch(plan)}
             >
-              {openWithoutAi ? 'Abrir terminal' : 'Lançar'}
+              {openWithoutAi ? 'Abrir e sentir o fluxo' : 'Lançar a sessão'}
             </button>
           </div>
         </section>

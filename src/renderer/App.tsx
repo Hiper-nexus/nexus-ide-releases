@@ -83,14 +83,18 @@ import type { ContextualTab } from '../shared/contextual-panel';
 import { applyProgressiveLaunchIfPending } from './lib/progressive-launch';
 import { useProductFlags } from './lib/use-product-flags';
 import { FEATURE_FLAG_IDS } from '../shared/feature-flags';
+import { bootGreeting } from '../shared/endorphin';
 
-/** Primeiro frame do cockpit: marca pulsando enquanto os instrumentos ligam. */
+/** Primeiro hit de endorfina: marca + cumprimento vivo enquanto os sistemas ligam. */
 function BootScreen() {
   return (
-    <div className="boot">
+    <div className="boot" role="status" aria-live="polite">
       <div className="boot__inner">
-        <NexusMark size={30} className="boot__mark" />
-        <span className="boot__label">Iniciando o NexusIDE</span>
+        <div className="boot__ring" aria-hidden="true">
+          <NexusMark size={30} className="boot__mark" />
+        </div>
+        <span className="boot__greet">{bootGreeting()}</span>
+        <span className="boot__label">Ligando instrumentos</span>
       </div>
     </div>
   );

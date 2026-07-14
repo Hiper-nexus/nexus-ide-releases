@@ -185,6 +185,14 @@ describe('isolation args and environment', () => {
     ]);
   });
 
+  it('disables Chromium sandbox only for the Linux CI smoke harness', () => {
+    expect(packagedSmokeArgs('/tmp/nexus-packaged-smoke', 'linux')).toEqual([
+      '--no-sandbox',
+      'nexus-smoke-test',
+      '--user-data-dir=/tmp/nexus-packaged-smoke',
+    ]);
+  });
+
   it('isolates filesystem defaults and strips secrets/injection variables', () => {
     const userData = '/tmp/nexus-packaged-smoke';
     const env = packagedSmokeEnvironment(

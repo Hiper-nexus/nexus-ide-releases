@@ -10,9 +10,14 @@ import { useVoiceStore } from '../voice/voice-store';
 import { useSettingsStore } from '../state/settings-store';
 import { listPanes } from '../lib/split-tree';
 import { isMissingModelKeyError } from '../lib/credential-errors';
-import { NexusMark } from './NexusMark';
 import { PixelIcon } from './PixelIcon';
 import { AgentAvatar } from './AgentAvatar';
+import { EndorphinPresence } from './EndorphinPresence';
+import {
+  homeCliBeat,
+  homeReadyBeat,
+  homeWarmingBeat,
+} from '../../shared/endorphin';
 
 /**
  * Home deck — the ops-deck empty state rendered over the pane area when a
@@ -94,26 +99,42 @@ export function HomeDeck() {
     [squads],
   );
   const needsCli = adaptersLoaded && installed.length === 0;
-  const isReady = adaptersLoaded && installed.length > 0 && mcpInfo?.running;
+  const isReady = adaptersLoaded && installed.length > 0 && Boolean(mcpInfo?.running);
+  const beat = isReady
+    ? homeReadyBeat(installed.length, mcpInfo?.toolCount ?? 0)
+    : needsCli
+      ? homeCliBeat()
+      : homeWarmingBeat();
 
   if (!visible) return null;
 
   return (
-    <div className="home-deck" role="region" aria-label="Início do workspace">
+    <div
+      className={`home-deck${isReady ? ' home-deck--armed' : ''}`}
+      role="region"
+      aria-label="Início do workspace"
+    >
       <div className="home-deck__panel">
         <header className="home-deck__head">
-          <NexusMark size={26} className="home-deck__logo" />
+          <EndorphinPresence
+            className="home-deck__presence endorphin-presence--row"
+            mood={isReady ? 'celebrating' : needsCli ? 'idle' : 'idle'}
+            size={48}
+          />
           <div className="home-deck__title-wrap">
-            <h1 className="home-deck__title">
-              {isReady
-                ? 'Base operacional pronta'
-                : needsCli
-                  ? 'Conecte uma CLI para operar'
-                  : 'Preparando base operacional'}
-            </h1>
+            {beat.kicker ? (
+              <span className="home-deck__kicker">{beat.kicker}</span>
+            ) : null}
+            <h1 className="home-deck__title">{beat.title}</h1>
             <p className="home-deck__ws" title={workspace?.path}>
               {workspace?.name ?? 'workspace'}
             </p>
+            {isReady ? (
+              <span className="home-deck__ready-chip" role="status">
+                <i className="home-deck__dot" aria-hidden="true" />
+                Online
+              </span>
+            ) : null}
           </div>
           <button
             className="home-deck__close"
@@ -149,9 +170,10 @@ export function HomeDeck() {
               {needsCli ? 'Configurar uma CLI de IA' : 'Iniciar uma missão'}
             </h2>
             <p>
-              {needsCli
-                ? 'Ative pelo menos um provider para abrir agentes e squads neste workspace.'
-                : 'Defina o objetivo e escolha um squad, ou deixe o Nexus montar a equipe a partir deste projeto.'}
+              {beat.line ??
+                (needsCli
+                  ? 'Ative pelo menos um provider para abrir agentes e squads neste workspace.'
+                  : 'Defina o objetivo e escolha um squad, ou deixe o Nexus montar a equipe a partir deste projeto.')}
             </p>
           </div>
           <div className="home-deck__actions">

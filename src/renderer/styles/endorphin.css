@@ -1,0 +1,258 @@
+/* Endorphin Distribution — micro-presença e batidas no caminho feliz.
+   Motion curto (180–320ms), easings do sistema, sem bounce. */
+
+.endorphin-presence {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.endorphin-presence--row {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.endorphin-presence__pet {
+  flex: 0 0 auto;
+  filter: drop-shadow(0 0 10px var(--accent-glow));
+}
+
+.endorphin-presence__kicker {
+  font-family: var(--font-pixel);
+  font-size: var(--text-sm);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* Boot: primeiro hit — anel + cumprimento */
+.boot {
+  position: relative;
+  overflow: hidden;
+}
+
+.boot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse 55% 40% at 50% 42%,
+      color-mix(in srgb, var(--accent) 12%, transparent),
+      transparent 70%
+    );
+  pointer-events: none;
+}
+
+.boot__inner {
+  position: relative;
+  z-index: 1;
+  gap: var(--space-4);
+}
+
+.boot__ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 88px;
+  height: 88px;
+}
+
+.boot__ring::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-round);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  animation: boot-ring 2.2s var(--ease-out-quint) infinite;
+}
+
+.boot__greet {
+  color: var(--text);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.boot__label {
+  margin-top: calc(var(--space-1) * -1);
+}
+
+@keyframes boot-ring {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot__ring::before {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* Progressive onboarding — ritual de steps */
+.prog-onb__presence {
+  margin-bottom: var(--space-4);
+}
+
+.prog-onb__steps {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 var(--space-4);
+  list-style: none;
+  padding: 0;
+}
+
+.prog-onb__step-dot {
+  flex: 1;
+  height: 3px;
+  border-radius: var(--radius-round);
+  background: var(--border);
+  overflow: hidden;
+}
+
+.prog-onb__step-dot.is-done,
+.prog-onb__step-dot.is-active {
+  background: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.prog-onb__step-dot.is-active {
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.prog-onb__subtitle {
+  margin: 0 0 var(--space-4);
+  color: var(--text-dim);
+  font-size: var(--text-md);
+  line-height: 1.45;
+}
+
+.prog-onb__step {
+  animation: endorphin-step-in 200ms var(--ease-out-expo);
+}
+
+.prog-onb__card.is-active,
+.prog-onb__pane.is-active {
+  animation: endorphin-select-pop 180ms var(--ease-out-quart);
+}
+
+@keyframes endorphin-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes endorphin-select-pop {
+  from {
+    transform: scale(0.98);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prog-onb__step,
+  .prog-onb__card.is-active,
+  .prog-onb__pane.is-active {
+    animation: none;
+  }
+}
+
+/* CTA primário no fluxo de launch: acento Nexus, não branco genérico */
+.prog-onb__primary {
+  background: var(--accent) !important;
+  color: var(--accent-ink) !important;
+  font-weight: 600;
+  min-height: 40px;
+  padding: 10px 16px !important;
+  border-radius: var(--radius-md) !important;
+}
+
+.prog-onb__primary:hover {
+  background: var(--accent-hover) !important;
+}
+
+.prog-onb__title {
+  font-size: var(--text-2xl) !important;
+  letter-spacing: -0.02em;
+}
+
+/* Home deck — armado = pulse suave no CTA + pet */
+.home-deck__presence {
+  flex: 0 0 auto;
+}
+
+.home-deck__head {
+  align-items: center;
+}
+
+.home-deck__kicker {
+  display: block;
+  margin-bottom: 4px;
+  font-family: var(--font-pixel);
+  font-size: var(--text-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.home-deck--armed .home-deck__panel {
+  border-color: color-mix(in srgb, var(--live) 35%, var(--border-strong));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    0 0 0 1px color-mix(in srgb, var(--live) 18%, transparent),
+    var(--shadow-3);
+}
+
+.home-deck--armed .home-deck__cta {
+  animation: home-cta-glow 2.4s var(--ease-out-quart) 1;
+}
+
+.home-deck__ready-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 3px 8px;
+  border-radius: var(--radius-round);
+  background: color-mix(in srgb, var(--live) 14%, transparent);
+  color: var(--live);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+@keyframes home-cta-glow {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+  35% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-deck--armed .home-deck__cta {
+    animation: none;
+  }
+}
