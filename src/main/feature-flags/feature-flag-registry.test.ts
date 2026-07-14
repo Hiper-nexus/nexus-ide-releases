@@ -28,18 +28,18 @@ describe('FeatureFlagRegistry', () => {
     );
   });
 
-  it('enables product-wave flags by default on every channel (full product)', () => {
+  it('keeps product-wave flags off by default on every channel', () => {
     for (const channel of ['dev', 'dogfood', 'preview', 'stable'] as const) {
       const registry = new FeatureFlagRegistry({ runtimeChannel: channel });
       expect(registry.isEnabled(FEATURE_FLAG_IDS.terminalCommandBlocks)).toBe(
-        true,
+        false,
       );
       expect(
         registry.resolve(FEATURE_FLAG_IDS.terminalCommandBlocks).reason,
       ).toBe('default');
-      expect(registry.isEnabled(FEATURE_FLAG_IDS.searchMixer)).toBe(true);
+      expect(registry.isEnabled(FEATURE_FLAG_IDS.searchMixer)).toBe(false);
       expect(registry.isEnabled(FEATURE_FLAG_IDS.missionEventJournal)).toBe(
-        true,
+        false,
       );
     }
   });
@@ -89,9 +89,9 @@ describe('FeatureFlagRegistry', () => {
       runtimeChannel: 'dev',
       overridesPath,
     });
-    // Corrupt overrides are ignored — product defaults stay ON.
+    // Corrupt overrides are ignored — product defaults stay fail-closed.
     expect(registry.isEnabled(FEATURE_FLAG_IDS.missionEventJournal)).toBe(
-      true,
+      false,
     );
   });
 

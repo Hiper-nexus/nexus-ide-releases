@@ -80,9 +80,9 @@ export type FeatureFlagId =
   (typeof FEATURE_FLAG_IDS)[keyof typeof FEATURE_FLAG_IDS];
 
 /**
- * Built-in product flags. Full product mode: available from `dev` upward and
- * defaultEnabled=true so dogfood/dev/preview/stable all ship with features ON.
- * Kill switch / overrides still work for emergency off.
+ * Deferred product foundations. Every built-in remains default-off on every
+ * channel until an explicit persisted override enables it. Kill switches keep
+ * final authority over those overrides.
  */
 export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
   {
@@ -95,7 +95,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
-    defaultEnabled: true,
+    defaultEnabled: false,
   },
   {
     id: FEATURE_FLAG_IDS.missionEventJournal,
@@ -107,7 +107,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
-    defaultEnabled: true,
+    defaultEnabled: false,
   },
   {
     id: FEATURE_FLAG_IDS.searchMixer,
@@ -119,7 +119,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
-    defaultEnabled: true,
+    defaultEnabled: false,
   },
   {
     id: FEATURE_FLAG_IDS.progressiveOnboarding,
@@ -130,7 +130,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
-    defaultEnabled: true,
+    defaultEnabled: false,
   },
   {
     id: FEATURE_FLAG_IDS.contextualPanel,
@@ -141,7 +141,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
-    defaultEnabled: true,
+    defaultEnabled: false,
   },
   {
     id: FEATURE_FLAG_IDS.codemirrorEditor,
@@ -153,7 +153,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
-    defaultEnabled: true,
+    defaultEnabled: false,
   },
   {
     id: FEATURE_FLAG_IDS.mcpHub,
@@ -164,7 +164,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
-    defaultEnabled: true,
+    defaultEnabled: false,
   },
   {
     id: FEATURE_FLAG_IDS.skillsCatalog,
@@ -175,7 +175,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
-    defaultEnabled: true,
+    defaultEnabled: false,
   },
   {
     id: FEATURE_FLAG_IDS.nexusMemory,
@@ -186,7 +186,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
-    defaultEnabled: true,
+    defaultEnabled: false,
   },
   {
     id: FEATURE_FLAG_IDS.autonomyProfiles,
@@ -197,7 +197,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
-    defaultEnabled: true,
+    defaultEnabled: false,
   },
 ] as const;
 

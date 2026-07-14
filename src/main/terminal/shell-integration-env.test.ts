@@ -18,11 +18,15 @@ afterEach(() => {
 });
 
 describe('shell integration env', () => {
-  it('is enabled by default with product flags ON', () => {
-    expect(isShellIntegrationEnabled()).toBe(true);
+  it('is disabled by default', () => {
+    expect(isShellIntegrationEnabled()).toBe(false);
   });
 
   it('injects NEXUS_SHELL_INTEGRATION and ZDOTDIR for zsh without PTY write', () => {
+    getFeatureFlagRegistry().setOverride(
+      FEATURE_FLAG_IDS.terminalCommandBlocks,
+      true,
+    );
     const { env, cleanupPaths } = applyShellIntegrationEnv(
       { PATH: '/usr/bin' },
       '/bin/zsh',
@@ -40,6 +44,10 @@ describe('shell integration env', () => {
   });
 
   it('uses --rcfile for bash composite rc', () => {
+    getFeatureFlagRegistry().setOverride(
+      FEATURE_FLAG_IDS.terminalCommandBlocks,
+      true,
+    );
     const { env, cleanupPaths } = applyShellIntegrationEnv({}, '/bin/bash');
     const args = shellIntegrationSpawnArgs('/bin/bash', env);
     if (env.NEXUS_BASHRC) {

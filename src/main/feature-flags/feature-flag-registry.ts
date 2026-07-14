@@ -162,14 +162,6 @@ export function configureFeatureFlagRegistry(
   singletonOptions = options;
 }
 
-/** Configure the process registry before feature-owned services start. */
-export function configureFeatureFlagRegistry(
-  options: FeatureFlagRegistryOptions,
-): FeatureFlagRegistry {
-  singleton = new FeatureFlagRegistry(options);
-  return singleton;
-}
-
 export function getFeatureFlagRegistry(): FeatureFlagRegistry {
   if (!singleton) {
     singleton = new FeatureFlagRegistry({
@@ -181,8 +173,8 @@ export function getFeatureFlagRegistry(): FeatureFlagRegistry {
 }
 
 /**
- * Enable every built-in product flag for local/unpackaged testing.
- * Called from main bootstrap when `!app.isPackaged` or NEXUS_FORCE_ALL_FLAGS=1.
+ * Enable every built-in product flag for an explicit test run.
+ * Normal dev and packaged launches retain fail-closed defaults.
  */
 export function enableAllProductFlagsForTesting(): void {
   getFeatureFlagRegistry().forceEnableAll();

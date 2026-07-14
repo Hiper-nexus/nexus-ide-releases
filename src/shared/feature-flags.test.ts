@@ -43,9 +43,9 @@ describe('feature flags', () => {
     ).toMatchObject({ enabled: false, reason: 'unknown-flag' });
   });
 
-  it('product-wave flags default ON (full product, not production-gated)', () => {
+  it('keeps every deferred product-wave flag default off', () => {
     for (const flag of BUILTIN_FEATURE_FLAGS) {
-      expect(flag.defaultEnabled).toBe(true);
+      expect(flag.defaultEnabled).toBe(false);
       expect(flag.channel).toBe('dev');
     }
   });

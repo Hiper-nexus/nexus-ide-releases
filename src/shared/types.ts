@@ -1060,7 +1060,8 @@ export interface NexusApi {
   };
   /**
    * Product-wave surface (flags, memory, skills, MCP hub, autonomy, editor).
-   * All default ON; kill switch / overrides still apply.
+   * Default off; a persisted override may enable each surface and the kill
+   * switch remains authoritative.
    */
   product: {
     flagsList(): Promise<

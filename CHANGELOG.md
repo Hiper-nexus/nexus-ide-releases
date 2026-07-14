@@ -32,16 +32,16 @@ Data: 2026-07-13
 - Unified scoped-workspace-fs; no startsWith(path.resolve) containment gate.
 
 
-## Unreleased — Full product enablement (not production-gated)
+## Unreleased — Deferred product foundations
 
 Data: 2026-07-13
 
-### Product flags default ON
+### Product flags remain default OFF
 - All product-wave flags (`commandBlocks`, `eventJournal`, `searchMixer`,
   `progressiveOnboarding`, `contextualPanel`, `codemirrorEditor`, `mcpHub`,
   `skillsCatalog`, `nexusMemory`, `autonomyProfiles`) ship with
-  `channel=dev` + `defaultEnabled=true` so every runtime channel has them on.
-- Kill switch + override file still force-off when needed.
+  `channel=dev` + `defaultEnabled=false` on every runtime channel.
+- Explicit persisted overrides may opt in; kill switches still force off.
 
 ### Wired end-to-end
 - `registerProductWaveIpc` — memory / skills / MCP hub / autonomy / editor / flags.

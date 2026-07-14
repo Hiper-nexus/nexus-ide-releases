@@ -1,6 +1,6 @@
 /**
  * Product-wave IPC: memory, skills, MCP hub, autonomy, search, feature flags,
- * editor document model. All paths respect feature flags (now default ON).
+ * editor document model. All paths respect fail-closed, default-off flags.
  */
 import { ipcMain } from 'electron';
 import fs from 'node:fs';
