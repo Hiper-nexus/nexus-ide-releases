@@ -27,4 +27,4 @@ Do instead:
 - UI copy: verb+object buttons, no marketing buzzwords, no em dashes.
 
 Tooling:
-- If the "impeccable" skill or CLI is available (try \`impeccable detect <file-or-dir>\`), RUN it on your delivery and fix what it flags before handing off. Mention the result in the handoff.`;
+- The bans above are distilled from the "impeccable" design skill (impeccable.style). If that skill is installed in your environment, invoke it on your delivery and fix what it flags; if not, apply this charter yourself. Never shell out to an \`impeccable\` command — it is a skill, not a CLI. Mention the result in the handoff.`;
