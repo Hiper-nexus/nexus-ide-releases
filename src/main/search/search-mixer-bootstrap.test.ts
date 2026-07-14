@@ -25,6 +25,13 @@ describe('search mixer bootstrap', () => {
     expect(new Set(sources).size).toBe(sources.length);
   });
 
+  it('isolates mixers per workspace root (no cross-cancel)', () => {
+    const a = getSearchMixer('/ws-a');
+    const b = getSearchMixer('/ws-b');
+    expect(a).not.toBe(b);
+    expect(getSearchMixer('/ws-a')).toBe(a);
+  });
+
   it('returns empty when flag off; runs when flag on', async () => {
     getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.searchMixer, false);
     const off = await runSearchMixerQuery({ text: 'x', limit: 5 });

@@ -19,11 +19,12 @@ import { createRipgrepSearchProvider } from './ripgrep-fallback';
 import { SearchMixer } from './search-mixer';
 
 /**
- * Live SearchMixer singleton. Registers ripgrep + skills + missions/memory
- * providers when the feature flag is on. Fail-closed when disabled.
+ * Live SearchMixer instances, one per workspace root. searchNow() cancels the
+ * previous in-flight query on its own mixer, so a process-global instance let
+ * one window cancel another workspace's search. Fail-closed when disabled.
  */
 
-let mixer: SearchMixer | null = null;
+const mixers = new Map<string, SearchMixer>();
 
 /** Workspace-scoped only — never $HOME. */
 function skillsDirs(root: string): string[] {
@@ -162,14 +163,23 @@ function createShallowFilenameProvider(): SearchSourceProvider {
   };
 }
 
-export function getSearchMixer(): SearchMixer {
+function createMixer(): SearchMixer {
+  const mixer = new SearchMixer({ debounceMs: 80, defaultLimit: 30 });
+  // Order: ripgrep owns `files`; shallow walk is `workspaces` (never same key).
+  mixer.register(createRipgrepSearchProvider());
+  mixer.register(createMissionsProvider());
+  mixer.register(createSkillsProvider());
+  mixer.register(createShallowFilenameProvider());
+  return mixer;
+}
+
+/** Mixer scoped to a workspace root ('' = default/warm-up instance). */
+export function getSearchMixer(projectRoot?: string): SearchMixer {
+  const key = projectRoot ?? '';
+  let mixer = mixers.get(key);
   if (!mixer) {
-    mixer = new SearchMixer({ debounceMs: 80, defaultLimit: 30 });
-    // Order: ripgrep owns `files`; shallow walk is `workspaces` (never same key).
-    mixer.register(createRipgrepSearchProvider());
-    mixer.register(createMissionsProvider());
-    mixer.register(createSkillsProvider());
-    mixer.register(createShallowFilenameProvider());
+    mixer = createMixer();
+    mixers.set(key, mixer);
   }
   return mixer;
 }
@@ -194,11 +204,11 @@ export async function runSearchMixerQuery(
     };
   }
   const query = searchQuerySchema.parse(raw) as SearchQuery;
-  return getSearchMixer().searchNow(query);
+  return getSearchMixer(query.projectRoot).searchNow(query);
 }
 
 /** Test-only. */
 export function resetSearchMixerForTests(): void {
-  mixer?.cancel();
-  mixer = null;
+  for (const mixer of mixers.values()) mixer.cancel();
+  mixers.clear();
 }
