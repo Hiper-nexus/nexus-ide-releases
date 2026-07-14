@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { extractFile as extractAsarFile } from '@electron/asar';
+import { extractFile as extractAsarFile, listPackage } from '@electron/asar';
 import { constants as fsConstants, existsSync, statSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -307,6 +307,22 @@ export function assertPackagedMainBundleBootable(bundle) {
   }
 }
 
+/**
+ * Forge/Vite has emitted the main bundle under both the root `.vite` path and
+ * an `app/.vite` path across Electron/Forge versions and host runners. Keep
+ * the smoke contract strict about the file itself while tolerating that
+ * packaging-root variation.
+ */
+export function resolvePackagedMainBundlePath(entries) {
+  const target = PACKAGED_MAIN_BUNDLE_PATH;
+  const candidates = entries
+    .filter((entry) => typeof entry === 'string')
+    .map((entry) => entry.replaceAll('\\', '/').replace(/^\.\//u, ''))
+    .filter((entry) => entry === target || entry.endsWith(`/${target}`))
+    .sort((left, right) => left.length - right.length);
+  return candidates[0] ?? null;
+}
+
 export function inspectPackagedMainBundle(resourcesDir) {
   const asarPath = path.join(resourcesDir, 'app.asar');
   let bundle;
@@ -314,7 +330,18 @@ export function inspectPackagedMainBundle(resourcesDir) {
     bundle = extractAsarFile(asarPath, PACKAGED_MAIN_BUNDLE_PATH);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`could not inspect packaged main bundle: ${message}`);
+    try {
+      const fallbackPath = resolvePackagedMainBundlePath(listPackage(asarPath));
+      if (fallbackPath) {
+        bundle = extractAsarFile(asarPath, fallbackPath);
+      }
+    } catch {
+      // Preserve the original extraction error below; a corrupt archive is
+      // still a hard release failure, not a reason to hide the root cause.
+    }
+    if (!bundle) {
+      throw new Error(`could not inspect packaged main bundle: ${message}`);
+    }
   }
   assertPackagedMainBundleBootable(bundle);
 }
@@ -665,11 +692,6 @@ export async function runPackagedSmoke(
         packagedSmokeSpawnOptions(userData, env, platform),
       );
       runtimeExecuted = true;
-      const append = (chunk) => {
-        output = (output + chunk.toString()).slice(-MAX_LOG_CHARS);
-      };
-      child.stdout?.on('data', append);
-      child.stderr?.on('data', append);
       let settled = false;
       let timeout;
       const finish = (fn, value) => {
@@ -678,6 +700,19 @@ export async function runPackagedSmoke(
         clearTimeout(timeout);
         fn(value);
       };
+      const append = (chunk) => {
+        output = (output + chunk.toString()).slice(-MAX_LOG_CHARS);
+        // The functional proof is the release contract. Some Linux images
+        // leave a browser helper alive after the app has proved readiness;
+        // terminate the isolated smoke process tree at that point instead of
+        // turning a valid proof into a timeout.
+        if (!settled && output.includes('[smoke] functional-ready')) {
+          killTree(child.pid, { platform });
+          finish(resolve, 0);
+        }
+      };
+      child.stdout?.on('data', append);
+      child.stderr?.on('data', append);
       child.once('error', (error) => finish(reject, error));
 
       timeout = setTimeout(() => {

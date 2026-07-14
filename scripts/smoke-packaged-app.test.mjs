@@ -26,6 +26,7 @@ import {
   packagedSmokeValidationMatrix,
   requiredNativeArtifactGlobs,
   resolveAppArgument,
+  resolvePackagedMainBundlePath,
   resolvePackagedTarget,
   runPackagedSmoke,
 } from './smoke-packaged-app.mjs';
@@ -303,6 +304,19 @@ describe('proofs: renderer, functional, marker, natives', () => {
     );
 
     expect(() => assertPackagedMainBundleBootable(healthy)).not.toThrow();
+  });
+
+  it('resolves the main bundle when Forge nests the Vite output under app', () => {
+    expect(
+      resolvePackagedMainBundlePath([
+        'resources/app/.vite/build/main.js',
+        'resources/app/.vite/build/preload.js',
+      ]),
+    ).toBe('resources/app/.vite/build/main.js');
+    expect(resolvePackagedMainBundlePath(['.vite/build/main.js'])).toBe(
+      '.vite/build/main.js',
+    );
+    expect(resolvePackagedMainBundlePath(['resources/app/main.js'])).toBeNull();
   });
 
   it('requires notices plus Apache and OFL texts inside app.asar', async () => {
@@ -747,5 +761,38 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
     );
 
     expect(killTree).toHaveBeenCalledWith(777, { platform: 'linux' });
+  });
+
+  it('stops the isolated process once functional readiness is proven', async () => {
+    const { targetPath } = fixturePackage({ platform: 'linux', arch: 'x64' });
+    const killTree = vi.fn();
+    const child = new EventEmitter();
+    child.pid = 778;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+
+    const result = await runPackagedSmoke(targetPath, {
+      platform: 'linux',
+      arch: 'x64',
+      killTree,
+      spawnImpl: (_binary, _args, opts) => {
+        queueMicrotask(() => {
+          const marker = packagedSmokeMarkerPath(opts.env.NEXUS_USER_DATA_DIR);
+          // The real runner writes this marker before emitting functional-ready.
+          fs.mkdirSync(path.dirname(marker), { recursive: true });
+          fs.writeFileSync(marker, FUNCTIONAL_SMOKE_MARKER_CONTENT);
+          child.stdout.emit(
+            'data',
+            Buffer.from('[smoke] renderer-mounted\n[smoke] functional-ready: 20 probes\n'),
+          );
+        });
+        return child;
+      },
+      inspectMainBundle: () => {},
+      inspectLegalArtifacts: () => {},
+    });
+
+    expect(result.code).toBe(0);
+    expect(killTree).toHaveBeenCalledWith(778, { platform: 'linux' });
   });
 });
