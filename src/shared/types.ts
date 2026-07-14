@@ -1012,6 +1012,11 @@ export interface NexusApi {
       error?: string;
       clipboardText?: string;
     }>;
+    list(req: {
+      sessionId?: string;
+      paneId?: string;
+      limit?: number;
+    }): Promise<{ blocks: unknown[]; error?: string }>;
   };
   /** Unified SearchMixer (flag: feature.search.mixer). */
   searchMixer: {

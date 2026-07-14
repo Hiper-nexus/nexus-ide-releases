@@ -22,6 +22,7 @@ import { askConfirm } from '../state/confirm-store';
 import { useOrchStore } from '../state/orch-store';
 import { AgentAvatar, resolveAgentCategory } from './AgentAvatar';
 import { ProviderLogo } from './ProviderLogo';
+import { CommandBlockMenu } from './CommandBlockMenu';
 
 interface Props {
   pane: PaneModel;
@@ -419,6 +420,11 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
 
       <div className="toolbar__actions">
         {renderGroup(sessionVisible, 'Sessão')}
+        {pane.kind !== 'browser' && (
+          <div className="toolbar__group" role="group" aria-label="Command blocks">
+            <CommandBlockMenu paneId={pane.id} density={density} />
+          </div>
+        )}
         {renderGroup(layoutVisible, 'Layout')}
         {overflow.length > 0 && (
           <div className="toolbar__more" ref={menuRef}>

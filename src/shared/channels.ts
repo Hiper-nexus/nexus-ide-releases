@@ -63,6 +63,8 @@ export const PERF_CHANNELS = {
 /** Terminal CommandBlock contextual actions (re-run / copy / handoff / …). */
 export const TERMINAL_BLOCK_CHANNELS = {
   action: 'terminal-block:action',
+  /** invoke: list recent blocks for a pane/session (in-memory tracker). */
+  list: 'terminal-block:list',
 } as const;
 
 /** Unified SearchMixer IPC. */

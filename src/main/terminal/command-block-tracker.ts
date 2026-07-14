@@ -137,6 +137,17 @@ export class CommandBlockTracker {
     return this.listBlocks(sessionId).find((b) => b.id === blockId) ?? null;
   }
 
+  /** All tracked blocks for a pane (newest last in each session). */
+  listByPane(paneId: string): readonly CommandBlock[] {
+    const out: CommandBlock[] = [];
+    for (const session of this.#sessions.values()) {
+      if (session.meta.paneId === paneId) {
+        out.push(...session.blocks);
+      }
+    }
+    return out;
+  }
+
   #applyEvent(
     sessionId: string,
     session: LiveSession,

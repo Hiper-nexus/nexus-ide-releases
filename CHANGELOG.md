@@ -40,9 +40,14 @@ Data: 2026-07-13
   falls back to classic LaunchScreen; plan applies pane count / mode after
   layout hydrate.
 
+### CommandBlock terminal UI
+- Pane toolbar **Cmds** menu lists recent OSC 133 blocks (in-memory tracker).
+- Actions: copy command, copy cwd, re-run (via `writeSession` policy).
+- IPC `terminal-block:list` + preload `nexus.terminalBlock.list`.
+
 ### Deferred (honest)
 - CodeMirror 6 package install; MCP OAuth/SSE live clients; autonomy enforce
-  in mcp-dispatch; CommandBlock terminal UI; journal consumer UI.
+  in mcp-dispatch; journal consumer UI; worktree provider on block actions.
 
 ## 0.15.4 — Jarvis Wake Safety
 

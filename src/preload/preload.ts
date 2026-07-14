@@ -857,6 +857,7 @@ const api: NexusApi = {
   terminalBlock: {
     action: (req: unknown) =>
       ipcRenderer.invoke(TERMINAL_BLOCK_CHANNELS.action, req),
+    list: (req) => ipcRenderer.invoke(TERMINAL_BLOCK_CHANNELS.list, req),
   },
   searchMixer: {
     search: (query: unknown) =>

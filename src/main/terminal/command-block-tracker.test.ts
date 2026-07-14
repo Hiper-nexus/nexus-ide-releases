@@ -90,4 +90,36 @@ describe('CommandBlockTracker', () => {
     );
     expect(tracker.listBlocks('s')).toEqual([]);
   });
+
+  it('lists blocks by pane across sessions', () => {
+    const tracker = new CommandBlockTracker({
+      isEnabled: () => true,
+      now: () => 100,
+    });
+    tracker.bindSession('s1', {
+      paneId: 'pane-a',
+      workspaceId: 'w',
+      shell: 'zsh',
+      cwd: '/tmp',
+    });
+    tracker.bindSession('s2', {
+      paneId: 'pane-b',
+      workspaceId: 'w',
+      shell: 'zsh',
+      cwd: '/tmp',
+    });
+    tracker.handleData(
+      's1',
+      '\x1b]133;E;echo a\x07\x1b]133;C\x07\x1b]133;D;0\x07',
+    );
+    tracker.handleData(
+      's2',
+      '\x1b]133;E;echo b\x07\x1b]133;C\x07\x1b]133;D;0\x07',
+    );
+    expect(tracker.listByPane('pane-a').map((b) => b.command)).toEqual([
+      'echo a',
+    ]);
+    expect(tracker.listByPane('pane-b')).toHaveLength(1);
+    expect(tracker.listByPane('missing')).toEqual([]);
+  });
 });

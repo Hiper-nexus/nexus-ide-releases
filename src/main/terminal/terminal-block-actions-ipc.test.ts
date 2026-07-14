@@ -38,7 +38,7 @@ describe('registerTerminalBlockActionsIpc', () => {
     execute.mockClear();
   });
 
-  it('registers TERMINAL_BLOCK_CHANNELS.action with zod-validated product path', async () => {
+  it('registers action + list channels', async () => {
     const { registerTerminalBlockActionsIpc } = await import(
       './terminal-block-actions-ipc'
     );
@@ -46,12 +46,14 @@ describe('registerTerminalBlockActionsIpc', () => {
 
     registerTerminalBlockActionsIpc();
 
-    expect(handle).toHaveBeenCalledWith(
-      TERMINAL_BLOCK_CHANNELS.action,
-      expect.any(Function),
-    );
+    const channels = handle.mock.calls.map((c) => c[0]);
+    expect(channels).toContain(TERMINAL_BLOCK_CHANNELS.action);
+    expect(channels).toContain(TERMINAL_BLOCK_CHANNELS.list);
 
-    const handler = handle.mock.calls[0]?.[1] as (
+    const actionCall = handle.mock.calls.find(
+      (c) => c[0] === TERMINAL_BLOCK_CHANNELS.action,
+    );
+    const handler = actionCall?.[1] as (
       event: { sender: unknown },
       raw: unknown,
     ) => Promise<unknown>;
