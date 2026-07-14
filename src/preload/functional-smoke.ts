@@ -9,14 +9,17 @@
  */
 
 import {
+  FUNCTIONAL_SMOKE_ARM_SQUAD_ID,
   FUNCTIONAL_SMOKE_FILE_CONTENT,
   FUNCTIONAL_SMOKE_MIN_ADAPTERS,
   FUNCTIONAL_SMOKE_MIN_TOOLS,
   type FunctionalSmokeProbe,
   type FunctionalSmokeResult,
 } from '../shared/smoke-types';
+import { FEATURE_FLAG_IDS } from '../shared/feature-flags';
 
 export {
+  FUNCTIONAL_SMOKE_ARM_SQUAD_ID,
   FUNCTIONAL_SMOKE_FILE_CONTENT,
   FUNCTIONAL_SMOKE_MIN_ADAPTERS,
   FUNCTIONAL_SMOKE_MIN_TOOLS,
@@ -72,6 +75,12 @@ export interface FunctionalSmokeApi {
     getMcpInfo(): Promise<McpInfo>;
     listMissions(): Promise<unknown[]>;
     listSquads(): Promise<unknown[]>;
+    listMissionPanes?(missionId: string): Promise<unknown[]>;
+    /** Intent-first arm: awaiting_goal shell without orchestrator pane. */
+    armMission(input: {
+      title: string;
+      squadId: string;
+    }): Promise<unknown>;
   };
   mcp: {
     invoke(tool: string, args?: Record<string, unknown>): Promise<McpResult>;
@@ -84,6 +93,20 @@ export interface FunctionalSmokeApi {
   };
   update: {
     getState(): Promise<unknown>;
+  };
+  product: {
+    flagsList(): Promise<
+      Array<{
+        id: string;
+        enabled: boolean;
+        reason: string;
+        definition: unknown;
+      }>
+    >;
+    searchQuery(input: {
+      text: string;
+      limit?: number;
+    }): Promise<unknown>;
   };
 }
 
@@ -221,6 +244,94 @@ export async function runFunctionalSmokeProbes(
     ))
   ) {
     return { ok: false, probes, failedProbe: 'settings-ipc' };
+  }
+
+  // Intent-first must be the default product path (explicit false = legacy kickoff).
+  if (
+    !(await probe(
+      'intent-first-settings',
+      () => api.settings.orchGet(),
+      (value) =>
+        isRecord(value) && value.intentFirstMissionRuntimeV1 !== false,
+    ))
+  ) {
+    return { ok: false, probes, failedProbe: 'intent-first-settings' };
+  }
+
+  // Arm creates awaiting_goal without binding an orchestrator session or panes.
+  if (
+    !(await probe(
+      'intent-arm',
+      async () => {
+        const mission = await api.orch.armMission({
+          title: 'Smoke intent arm',
+          squadId: FUNCTIONAL_SMOKE_ARM_SQUAD_ID,
+        });
+        if (!isRecord(mission) || typeof mission.id !== 'string') {
+          return { ok: false };
+        }
+        const panes =
+          typeof api.orch.listMissionPanes === 'function'
+            ? await api.orch.listMissionPanes(mission.id)
+            : [];
+        return { mission, panes };
+      },
+      (value) =>
+        isRecord(value) &&
+        isRecord(value.mission) &&
+        value.mission.intentState === 'awaiting_goal' &&
+        value.mission.orchestratorSessionId == null &&
+        value.mission.status !== 'running' &&
+        Array.isArray(value.panes) &&
+        value.panes.length === 0,
+    ))
+  ) {
+    return { ok: false, probes, failedProbe: 'intent-arm' };
+  }
+
+  // Product flags are enumerable and each definition exposes killSwitch authority.
+  if (
+    !(await probe(
+      'product-flags',
+      () => api.product.flagsList(),
+      (value) => {
+        if (!Array.isArray(value) || value.length < 5) return false;
+        const required = new Set<string>([
+          FEATURE_FLAG_IDS.searchMixer,
+          FEATURE_FLAG_IDS.missionEventJournal,
+          FEATURE_FLAG_IDS.mcpHub,
+          FEATURE_FLAG_IDS.nexusMemory,
+          FEATURE_FLAG_IDS.skillsCatalog,
+        ]);
+        let found = 0;
+        for (const entry of value) {
+          if (!isRecord(entry) || typeof entry.id !== 'string') return false;
+          if (!isRecord(entry.definition)) return false;
+          if (typeof entry.definition.killSwitch !== 'boolean') return false;
+          if (typeof entry.enabled !== 'boolean') return false;
+          if (required.has(entry.id)) found += 1;
+        }
+        return found === required.size;
+      },
+    ))
+  ) {
+    return { ok: false, probes, failedProbe: 'product-flags' };
+  }
+
+  // SearchMixer IPC returns a bounded envelope (empty hits OK; shape is the contract).
+  if (
+    !(await probe(
+      'search-mixer-ipc',
+      () => api.product.searchQuery({ text: 'smoke', limit: 5 }),
+      (value) =>
+        isRecord(value) &&
+        typeof value.generation === 'number' &&
+        Number.isFinite(value.generation) &&
+        Array.isArray(value.hits) &&
+        typeof value.partial === 'boolean',
+    ))
+  ) {
+    return { ok: false, probes, failedProbe: 'search-mixer-ipc' };
   }
 
   const readOnlyProbes: Array<

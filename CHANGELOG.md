@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — Production confidence (smoke + multi-window isolation)
+
+Data: 2026-07-13
+
+### Packaged functional smoke
+- Probes: `intent-first-settings`, `intent-arm` (awaiting_goal, 0 panes),
+  `product-flags` (killSwitch authority visible), `search-mixer-ipc`.
+- Checklist: `docs/analysis/2026-07-13-production-confidence-checklist.md`.
+
+### Multi-workspace isolation tests
+- Unit gate for SearchMixer-per-root and pane recovery scope filtering
+  (stand-in until Playwright multi-window E2E).
+
 ## Unreleased — Waves 3→final product shell
 
 Data: 2026-07-13

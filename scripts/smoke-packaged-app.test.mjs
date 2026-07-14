@@ -348,7 +348,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
     expect(() =>
       assertPackagedSmokeProof(
         0,
-        '[smoke] renderer-mounted\n[smoke] functional-ready: 16 probes, 71 tools, 9 adapters\n',
+        '[smoke] renderer-mounted\n[smoke] functional-ready: 20 probes, 71 tools, 9 adapters\n',
       ),
     ).not.toThrow();
     expect(() => assertPackagedSmokeProof(0, '[smoke] renderer-mounted\n')).toThrow(
@@ -652,7 +652,7 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
         'data',
         Buffer.from(
           stdoutText ??
-            '[smoke] renderer-mounted\n[smoke] functional-ready: 16 probes\n',
+            '[smoke] renderer-mounted\n[smoke] functional-ready: 20 probes\n',
         ),
       );
       child.emit('close', exitCode);

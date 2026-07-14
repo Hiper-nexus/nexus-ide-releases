@@ -23,7 +23,7 @@ function successfulApi(): FunctionalSmokeApi {
     },
     settings: {
       get: vi.fn(async () => ({})),
-      orchGet: vi.fn(async () => ({})),
+      orchGet: vi.fn(async () => ({ intentFirstMissionRuntimeV1: true })),
       audioGet: vi.fn(async () => ({})),
       uiGet: vi.fn(async () => ({})),
       listShells: vi.fn(async () => ['/bin/zsh']),
@@ -38,6 +38,15 @@ function successfulApi(): FunctionalSmokeApi {
       })),
       listMissions: vi.fn(async () => []),
       listSquads: vi.fn(async () => []),
+      listMissionPanes: vi.fn(async () => []),
+      armMission: vi.fn(async () => ({
+        id: 'mission-smoke-1',
+        title: 'Smoke intent arm',
+        status: 'pending',
+        intentState: 'awaiting_goal',
+        intentVersion: 0,
+        orchestratorSessionId: undefined,
+      })),
     },
     mcp: {
       invoke: vi.fn(async (tool: string) => {
@@ -60,6 +69,49 @@ function successfulApi(): FunctionalSmokeApi {
     media: { listProviders: vi.fn(async () => []) },
     perf: { snapshot: vi.fn(async () => ({ at: 1 })) },
     update: { getState: vi.fn(async () => ({ phase: 'idle' })) },
+    product: {
+      flagsList: vi.fn(async () => [
+        {
+          id: 'feature.search.mixer',
+          enabled: true,
+          reason: 'default',
+          definition: { id: 'feature.search.mixer', killSwitch: false },
+        },
+        {
+          id: 'feature.mission.eventJournal',
+          enabled: true,
+          reason: 'default',
+          definition: { id: 'feature.mission.eventJournal', killSwitch: false },
+        },
+        {
+          id: 'feature.mcp.hub',
+          enabled: true,
+          reason: 'default',
+          definition: { id: 'feature.mcp.hub', killSwitch: false },
+        },
+        {
+          id: 'feature.memory.nexusMemory',
+          enabled: true,
+          reason: 'default',
+          definition: { id: 'feature.memory.nexusMemory', killSwitch: false },
+        },
+        {
+          id: 'feature.skills.catalog',
+          enabled: true,
+          reason: 'default',
+          definition: { id: 'feature.skills.catalog', killSwitch: false },
+        },
+      ]),
+      searchQuery: vi.fn(async () => ({
+        generation: 1,
+        query: 'smoke',
+        hits: [],
+        partial: false,
+        completedSources: [],
+        cancelled: false,
+        elapsedMs: 1,
+      })),
+    },
   };
 }
 
@@ -76,11 +128,52 @@ describe('runFunctionalSmokeProbes', () => {
     if (!result.ok) throw new Error(`unexpected failure: ${result.failedProbe}`);
     expect(result.toolCount).toBe(FUNCTIONAL_SMOKE_MIN_TOOLS);
     expect(result.adapterCount).toBe(FUNCTIONAL_SMOKE_MIN_ADAPTERS);
+    expect(result.probes).toContain('intent-first-settings');
+    expect(result.probes).toContain('intent-arm');
+    expect(result.probes).toContain('product-flags');
+    expect(result.probes).toContain('search-mixer-ipc');
     expect(result.probes).toContain('mcp-ui-read');
     expect(result.probes).toContain('mcp-file-read');
     expect(result.probes).toContain('mcp-write-guard');
     expect(api.workspace.open).toHaveBeenCalledWith('/tmp/nexus-smoke-workspace');
+    expect(api.orch.armMission).toHaveBeenCalled();
+    expect(api.product.flagsList).toHaveBeenCalled();
     expect(api.mcp.invoke).toHaveBeenCalledWith('nexus_file_read', { path: 'smoke.txt' });
+  });
+
+  it('fails when intent-first is explicitly disabled', async () => {
+    const api = successfulApi();
+    vi.mocked(api.settings.orchGet).mockResolvedValue({
+      intentFirstMissionRuntimeV1: false,
+    });
+
+    const result = await runFunctionalSmokeProbes(api, '/tmp/workspace', {
+      delay: async () => {},
+      probeTimeoutMs: 100,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected intent-first probe to fail');
+    expect(result.failedProbe).toBe('intent-first-settings');
+  });
+
+  it('fails when arm binds an orchestrator or creates panes', async () => {
+    const api = successfulApi();
+    vi.mocked(api.orch.armMission).mockResolvedValue({
+      id: 'mission-bad',
+      status: 'running',
+      intentState: 'awaiting_goal',
+      orchestratorSessionId: 'sess-1',
+    });
+
+    const result = await runFunctionalSmokeProbes(api, '/tmp/workspace', {
+      delay: async () => {},
+      probeTimeoutMs: 100,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected intent-arm probe to fail');
+    expect(result.failedProbe).toBe('intent-arm');
   });
 
   it('waits for the embedded MCP server instead of racing app bootstrap', async () => {
