@@ -203,19 +203,6 @@ export class MissionEventJournal {
           `ack sequence ${upToSequence} exceeds last persisted sequence ${maxSequence}`,
         );
       }
-      // Reject an ACK past durable history. Clamping hides caller bugs and can
-      // make a consumer believe it acknowledged an event that never existed.
-      const { maxSequence } = db
-        .prepare(
-          `SELECT COALESCE(MAX(sequence), 0) AS maxSequence
-           FROM mission_events WHERE mission_id = ?`,
-        )
-        .get(missionId) as { maxSequence: number };
-      if (upToSequence > maxSequence) {
-        throw new Error(
-          `ack sequence ${upToSequence} exceeds last persisted sequence ${maxSequence}`,
-        );
-      }
       const current = this.getCursor(consumerId, missionId);
       const nextSeq = Math.max(current.lastSequence, upToSequence);
 
