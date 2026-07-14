@@ -241,6 +241,8 @@ describe("renderer mission authority", () => {
       title: "Review",
       squadId: "review-squad",
       orchestratorSessionId: "pty-a",
+      intentState: "dispatched",
+      intentVersion: 0,
     });
     expect(deps.recordMissionPane).toHaveBeenCalledWith({
       missionId: "mission-a",

@@ -72,12 +72,14 @@ describe('OrchestratorDefaults', () => {
       designPro: true,
       soberMode: false,
       missionDriverActiveMode: false,
+      agentRestorePolicy: 'ask',
       defaultAdapterId: 'codex',
       defaultModel: 'gpt-5.4',
       defaultAccountId: 'codex-work',
       doctorAdapterId: 'auto',
       doctorModel: '',
       doctorEffort: 'auto',
+      intentFirstMissionRuntimeV1: true,
     };
     const orchSet = vi.fn(async (patch: Partial<OrchSettings>) => {
       saved = { ...saved, ...patch };
@@ -168,12 +170,14 @@ describe('OrchestratorDefaults', () => {
       designPro: true,
       soberMode: false,
       missionDriverActiveMode: false,
+      agentRestorePolicy: 'ask',
       defaultAdapterId: 'claude',
       defaultModel: '',
       defaultAccountId: '',
       doctorAdapterId: 'auto',
       doctorModel: '',
       doctorEffort: 'auto',
+      intentFirstMissionRuntimeV1: true,
     };
     Object.defineProperty(window, 'nexus', {
       configurable: true,

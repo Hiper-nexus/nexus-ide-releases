@@ -106,6 +106,12 @@ export const orchSettingsSchema = z.object({
   doctorModel: z.string().max(128).default(''),
   /** Highest supported effort is resolved per adapter when set to `max`. */
   doctorEffort: z.enum(['auto', 'low', 'medium', 'high', 'xhigh', 'max']).default('auto'),
+  /**
+   * Intent-first mission runtime (v1): selecting a squad arms a mission shell
+   * (`awaiting_goal`) without spawning an orchestrator pane or burning tokens.
+   * Set false to restore the legacy zero-click kickoff path (rollback).
+   */
+  intentFirstMissionRuntimeV1: z.boolean().default(true),
 });
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});

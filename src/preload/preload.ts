@@ -693,6 +693,33 @@ const api: NexusApi = {
         agentName?: string;
       };
     }) => ipcRenderer.invoke(ORCH_CHANNELS.missionCreate, input),
+    armMission: (input: { title: string; squadId: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionArm, input),
+    submitMissionIntent: (input: {
+      missionId: string;
+      goal: string;
+      source?: 'typed' | 'voice' | 'imported-issue' | 'automation';
+      contextPolicy?: 'none' | 'minimal' | 'on-demand' | 'prepare-project';
+      acceptanceCriteria?: string[];
+    }) => ipcRenderer.invoke(ORCH_CHANNELS.missionSubmitIntent, input),
+    approveMissionIntent: (input: { missionId: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionApproveIntent, input),
+    prepareMissionProject: (input: { missionId: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionPrepareProject, input),
+    bindMissionOrchestrator: (input: {
+      missionId: string;
+      title: string;
+      squadId: string;
+      orchestratorPane: {
+        paneId: string;
+        adapterId?: string;
+        model?: string;
+        accountId?: string;
+        cwd?: string;
+        title?: string;
+        agentName?: string;
+      };
+    }) => ipcRenderer.invoke(ORCH_CHANNELS.missionBindOrchestrator, input),
     rebindMissionOrchestrator: (missionId: string, sessionId: string) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionRebind, { missionId, sessionId }),
     updateMission: (missionId: string, patch: MissionPatch) =>

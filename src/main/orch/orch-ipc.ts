@@ -374,6 +374,77 @@ export function registerOrchIpc(): void {
     );
   });
 
+  const missionArmSchema = z.object({
+    title: z.string().min(1).max(512),
+    squadId: z.string().min(1).max(128),
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionArm, (event, raw) => {
+    const parsed = missionArmSchema.safeParse(raw);
+    if (!parsed.success) throw new Error("invalid mission arm payload");
+    return requireMissionAuthority().armMissionFromRenderer(
+      event.sender,
+      parsed.data,
+    );
+  });
+
+  const missionSubmitIntentSchema = z.object({
+    missionId: z.string().min(1).max(128),
+    goal: z.string().min(1).max(16_384),
+    source: z
+      .enum(["typed", "voice", "imported-issue", "automation"])
+      .optional(),
+    contextPolicy: z
+      .enum(["none", "minimal", "on-demand", "prepare-project"])
+      .optional(),
+    acceptanceCriteria: z.array(z.string().min(1).max(2_048)).max(32).optional(),
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionSubmitIntent, (event, raw) => {
+    const parsed = missionSubmitIntentSchema.safeParse(raw);
+    if (!parsed.success) throw new Error("invalid mission submit intent payload");
+    return requireMissionAuthority().submitIntentFromRenderer(
+      event.sender,
+      parsed.data,
+    );
+  });
+
+  const missionApproveIntentSchema = z.object({
+    missionId: z.string().min(1).max(128),
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionApproveIntent, (event, raw) => {
+    const parsed = missionApproveIntentSchema.safeParse(raw);
+    if (!parsed.success) throw new Error("invalid mission approve intent payload");
+    return requireMissionAuthority().approveIntentFromRenderer(
+      event.sender,
+      parsed.data,
+    );
+  });
+
+  const missionPrepareProjectSchema = z.object({
+    missionId: z.string().min(1).max(128),
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionPrepareProject, (event, raw) => {
+    const parsed = missionPrepareProjectSchema.safeParse(raw);
+    if (!parsed.success) throw new Error("invalid mission prepare project payload");
+    return requireMissionAuthority().prepareProjectFromRenderer(
+      event.sender,
+      parsed.data,
+    );
+  });
+
+  const missionBindOrchestratorSchema = missionCreateSchema.extend({
+    missionId: z.string().min(1).max(128),
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionBindOrchestrator, (event, raw) => {
+    const parsed = missionBindOrchestratorSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error("invalid mission bind orchestrator payload");
+    }
+    return requireMissionAuthority().bindOrchestratorToMissionFromRenderer(
+      event.sender,
+      parsed.data,
+    );
+  });
+
   const missionRebindSchema = z.object({
     missionId: z.string().min(1).max(128),
     sessionId: z.string().min(1).max(128),
