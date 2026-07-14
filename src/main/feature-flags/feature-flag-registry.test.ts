@@ -3,11 +3,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
-import { FeatureFlagRegistry } from './feature-flag-registry';
+import {
+  configureFeatureFlagRegistry,
+  FeatureFlagRegistry,
+  getFeatureFlagRegistry,
+  resetFeatureFlagRegistryForTests,
+} from './feature-flag-registry';
 
 const tempDirs: string[] = [];
 
 afterEach(() => {
+  resetFeatureFlagRegistryForTests();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -129,5 +135,25 @@ describe('FeatureFlagRegistry', () => {
     expect(registry.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(true);
     registry.engageKillSwitch(FEATURE_FLAG_IDS.mcpHub);
     expect(registry.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(false);
+  });
+
+  it('uses the configured override file in the process singleton', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ff-'));
+    tempDirs.push(dir);
+    const overridesPath = path.join(dir, 'feature-flags.json');
+    fs.writeFileSync(
+      overridesPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        overrides: [{ id: FEATURE_FLAG_IDS.searchMixer, enabled: true }],
+      }),
+      'utf8',
+    );
+
+    configureFeatureFlagRegistry({ runtimeChannel: 'dev', overridesPath });
+
+    expect(getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.searchMixer)).toBe(
+      true,
+    );
   });
 });

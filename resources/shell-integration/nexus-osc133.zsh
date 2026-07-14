@@ -12,9 +12,20 @@ __nexus_osc() {
   printf '\033]%s\007' "$1"
 }
 
+__nexus_osc_escape() {
+  local value=$1
+  value=${value//'%'/'%25'}
+  value=${value//';'/'%3B'}
+  value=${value//$'\033'/'%1B'}
+  value=${value//$'\007'/'%07'}
+  value=${value//$'\n'/'%0A'}
+  value=${value//$'\r'/'%0D'}
+  printf '%s' "$value"
+}
+
 __nexus_preexec() {
   __nexus_osc "133;B"
-  __nexus_osc "133;E;${1//$'\n'/ }"
+  __nexus_osc "133;E;$(__nexus_osc_escape "$1")"
   __nexus_osc "133;C"
 }
 
@@ -23,7 +34,7 @@ __nexus_precmd() {
   __nexus_osc "133;D;${code}"
   __nexus_osc "133;A"
   if [[ -n "$PWD" ]]; then
-    __nexus_osc "133;P;cwd=${PWD}"
+    __nexus_osc "133;P;cwd=$(__nexus_osc_escape "$PWD")"
   fi
 }
 

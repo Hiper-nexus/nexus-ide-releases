@@ -38,7 +38,9 @@ export function redactCommandLine(
 ): CommandRedactionResult {
   const maxLength = options.maxLength ?? 16_384;
   const denylist = options.denylist ?? DEFAULT_COMMAND_DENYLIST;
-  const input = raw.length > maxLength ? raw.slice(0, maxLength) : raw;
+  const truncated = raw.length > maxLength ? raw.slice(0, maxLength) : raw;
+  const hasControlCharacters = /[\x00-\x1f\x7f]/.test(truncated);
+  const input = truncated.replace(/[\x00-\x1f\x7f]+/g, ' ');
 
   for (const pattern of denylist) {
     if (pattern.test(input)) {
@@ -69,7 +71,7 @@ export function redactCommandLine(
 
   return {
     command,
-    redacted: secretHits > 0,
+    redacted: secretHits > 0 || hasControlCharacters,
     denylisted: false,
     secretHits,
   };

@@ -7,6 +7,18 @@ import type { ProjectExecutionScope } from '../../shared/types';
 const bySession = new Map<string, ProjectExecutionScope>();
 const byWorkspace = new Map<string, ProjectExecutionScope>();
 
+function isSameScope(
+  left: ProjectExecutionScope,
+  right: ProjectExecutionScope,
+): boolean {
+  return (
+    left.installationId === right.installationId &&
+    left.projectId === right.projectId &&
+    left.checkoutId === right.checkoutId &&
+    left.rootRealPath === right.rootRealPath
+  );
+}
+
 export function registerCommandBlockScope(
   sessionId: string,
   scope: ProjectExecutionScope,
@@ -27,7 +39,21 @@ export function resolveCommandBlockScope(
 }
 
 export function clearCommandBlockScope(sessionId: string): void {
+  const scope = bySession.get(sessionId);
   bySession.delete(sessionId);
+  if (!scope) return;
+  const isStillReferenced = [...bySession.values()].some((candidate) =>
+    isSameScope(candidate, scope),
+  );
+  if (isStillReferenced) return;
+  const checkoutScope = byWorkspace.get(scope.checkoutId);
+  if (checkoutScope && isSameScope(checkoutScope, scope)) {
+    byWorkspace.delete(scope.checkoutId);
+  }
+  const projectScope = byWorkspace.get(scope.projectId);
+  if (projectScope && isSameScope(projectScope, scope)) {
+    byWorkspace.delete(scope.projectId);
+  }
 }
 
 /** Test-only. */

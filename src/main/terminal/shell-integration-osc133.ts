@@ -122,8 +122,12 @@ function parseOscBody(body: string): Osc133Event | null {
         }
         return null;
       }
-      case 'E':
-        return { kind: 'command_line', command: decodeOscPath(arg) };
+      case 'E': {
+        const command = decodeOscPath(arg);
+        return /[\x00-\x1f\x7f]/.test(command)
+          ? null
+          : { kind: 'command_line', command };
+      }
       default:
         return null;
     }
@@ -167,7 +171,7 @@ function parseFileUrlPath(url: string): string | null {
 /** Validate cwd from OSC before trusting it for persistence. */
 export function isSafeOscCwd(path: string): boolean {
   if (!path || path.length > 4096) return false;
-  if (path.includes('\0')) return false;
+  if (/[\x00-\x1f\x7f]/.test(path)) return false;
   // Absolute only — reject relative and home-tilde for fail-closed.
   if (!(path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path))) return false;
   return true;

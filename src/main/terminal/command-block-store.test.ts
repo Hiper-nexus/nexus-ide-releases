@@ -103,6 +103,23 @@ describe('CommandBlockStore', () => {
     expect(store.search({ cwd: '/tmp' })).toHaveLength(1);
   });
 
+  it('rejects conflicting reuse of an idempotency key', () => {
+    const store = makeStore();
+    const key = 'b'.repeat(64);
+    const base = {
+      sessionId: 's', paneId: 'p', workspaceId: 'w', cwd: '/tmp', shell: 'zsh',
+      startedAt: 1, status: 'success' as const,
+      redaction: { redacted: false, denylisted: false, secretHits: 0 },
+      idempotencyKey: key,
+    };
+    store.insert(createCommandBlock({ ...base, id: 'cb-a', command: 'echo one' }));
+    expect(() => store.insert(createCommandBlock({
+      ...base,
+      id: 'cb-b',
+      command: 'echo two',
+    }))).toThrow(/idempotency.*conflict/i);
+  });
+
   it('computes success stats and searches by branch', () => {
     const store = makeStore();
     const redaction = { redacted: false, denylisted: false, secretHits: 0 };

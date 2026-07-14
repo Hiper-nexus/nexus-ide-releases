@@ -324,12 +324,12 @@ function bootstrap(): void {
   configureFeatureFlagRegistry({
     overridesPath: path.join(app.getPath("userData"), "feature-flags.json"),
   });
-  // Pre-production: keep all product-wave flags ON for local testing.
-  // Kill switches are never cleared by the force — emergency-off still works.
-  if (!app.isPackaged || process.env.NEXUS_FORCE_ALL_FLAGS === '1') {
+  // Explicit test-only opt-in. Normal dev and packaged launches retain the
+  // fail-closed built-in defaults; kill switches remain authoritative.
+  if (process.env.NEXUS_FORCE_ALL_FLAGS === '1') {
     enableAllProductFlagsForTesting();
     console.info(
-      '[main] product feature flags: forced ON (dogfood; kill switches still win)',
+      '[main] product feature flags: forced ON by explicit test override',
     );
   }
   // Loads ~/.nexus/settings.json before any runtime reads orchestration flags.

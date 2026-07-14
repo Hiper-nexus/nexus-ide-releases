@@ -9,6 +9,7 @@ import { tapSessionData, tapSessionExit } from '../pty/pty-manager';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { computeCommandBlockIdempotencyKey } from './command-block-id';
 import { redactCommandLine } from './command-redaction';
+import { clearCommandBlockScope } from './command-block-scope-registry';
 import {
   isSafeOscCwd,
   Osc133Scanner,
@@ -70,7 +71,7 @@ export class CommandBlockTracker {
       this.handleData(sessionId, data);
     });
     this.#untapExit = tapSessionExit((sessionId) => {
-      this.#sessions.delete(sessionId);
+      this.handleExit(sessionId);
     });
   }
 
@@ -146,6 +147,20 @@ export class CommandBlockTracker {
       }
     }
     return out;
+  }
+
+  /** Persist an unterminated command as unknown before dropping PTY state. */
+  handleExit(sessionId: string): void {
+    const session = this.#sessions.get(sessionId);
+    if (session?.running) {
+      const done = completeCommandBlock(session.running, {
+        endedAt: this.#now(),
+        status: 'unknown',
+      });
+      this.#onBlock?.(done);
+    }
+    this.#sessions.delete(sessionId);
+    clearCommandBlockScope(sessionId);
   }
 
   #applyEvent(

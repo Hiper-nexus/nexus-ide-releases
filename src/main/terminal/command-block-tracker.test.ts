@@ -3,9 +3,16 @@ import {
   CommandBlockTracker,
   resetCommandBlockTrackingForTests,
 } from './command-block-tracker';
+import {
+  registerCommandBlockScope,
+  resolveCommandBlockScope,
+  resetCommandBlockScopeRegistryForTests,
+} from './command-block-scope-registry';
+import { testProjectScope } from '../orch/__tests__/scope-fixture';
 
 afterEach(() => {
   resetCommandBlockTrackingForTests();
+  resetCommandBlockScopeRegistryForTests();
 });
 
 describe('CommandBlockTracker', () => {
@@ -121,5 +128,28 @@ describe('CommandBlockTracker', () => {
     ]);
     expect(tracker.listByPane('pane-b')).toHaveLength(1);
     expect(tracker.listByPane('missing')).toEqual([]);
+  });
+
+  it('persists an unterminated running block as unknown on PTY exit', () => {
+    const finished: Array<{ command: string; status: string }> = [];
+    const tracker = new CommandBlockTracker({
+      isEnabled: () => true,
+      now: () => 50,
+      onBlock: (block) => finished.push({
+        command: block.command,
+        status: block.status,
+      }),
+    });
+    tracker.bindSession('s', {
+      paneId: 'p', workspaceId: 'w', shell: 'zsh', cwd: '/tmp',
+    });
+    const scope = testProjectScope();
+    registerCommandBlockScope('s', scope);
+    tracker.handleData('s', '\x1b]133;E;npm test\x07\x1b]133;C\x07');
+    tracker.handleExit('s');
+    expect(finished).toEqual([{ command: 'npm test', status: 'unknown' }]);
+    expect(tracker.listBlocks('s')).toEqual([]);
+    expect(resolveCommandBlockScope('s')).toBeNull();
+    expect(resolveCommandBlockScope('missing', scope.projectId)).toBeNull();
   });
 });

@@ -35,4 +35,10 @@ describe('redactCommandLine', () => {
       secretHits: 0,
     });
   });
+
+  it('removes terminal control characters before persistence', () => {
+    const result = redactCommandLine('echo safe\x1b]133;D;0\x07');
+    expect(result.command).not.toMatch(/[\x00-\x1f\x7f]/);
+    expect(result.redacted).toBe(true);
+  });
 });

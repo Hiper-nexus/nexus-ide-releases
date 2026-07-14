@@ -26,6 +26,8 @@ Sources: files, commands, symbols, panes, missions, agents, settings, skills, mc
 - Invalid query → zod throw at boundary.
 - Source failure → skip source, continue others.
 - Cancel / newer generation → `cancelled: true`, no stale listener delivery.
+- File fallback requires a canonical `allowedRoots` match; missing authority or
+  a symlink/absolute path outside those roots returns no hits.
 
 ## Limits
 
@@ -40,5 +42,7 @@ Flag off; do not register providers. No schema.
 ## How to test
 
 ```bash
-npx vitest run src/main/search/search-mixer.test.ts
+npx vitest run \
+  src/main/search/search-mixer.test.ts \
+  src/main/search/ripgrep-fallback.test.ts
 ```

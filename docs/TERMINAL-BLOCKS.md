@@ -34,7 +34,7 @@ The byte stream remains the visual source of truth (xterm + scheduler).
 ## Error flow
 
 - Shells without integration → no events, terminal unchanged.
-- Corrupt OSC → ignored; partial sequences buffered ≤ 4 KiB.
+- Corrupt/control-bearing OSC → ignored; partial sequences buffered ≤ 4 KiB.
 - Unsafe cwd from OSC → rejected (`isSafeOscCwd`).
 - Secret-like input → redacted or `[DENYLISTED]` before store.
 
@@ -52,6 +52,8 @@ Additive only. Rollback: leave table empty + flag off (no destructive drop in pr
 ## Security
 
 - Never log raw command lines with secrets.
+- Shell emitters percent-escape OSC delimiters/control bytes before emission;
+  the main scanner rejects decoded control-bearing command/cwd payloads.
 - Denylist: `history`, `env`, `printenv`, export of secret env names.
 - Re-execution (future) must reuse the same PTY write policy / ownership.
 

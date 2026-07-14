@@ -179,11 +179,17 @@ export class OrientationLocalIndex {
           posting.set(doc.id, count);
         }
       }
-      // Cooperative yield
-      await Promise.resolve();
+      // Yield to the event loop (not just the microtask queue) so IPC aborts
+      // and newer builds can preempt a large local map in production.
+      await new Promise<void>((resolve) => setImmediate(resolve));
     }
 
     if (generation !== this.#buildGeneration) {
+      return this.snapshot;
+    }
+    if (options.signal?.aborted) {
+      this.#cancelled = true;
+      this.#ready = false;
       return this.snapshot;
     }
 

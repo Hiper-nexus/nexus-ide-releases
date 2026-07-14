@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import type { SearchHit, SearchQuery } from '../../shared/search-mixer-types';
 import { redactCommandLine } from '../terminal/command-redaction';
@@ -11,10 +12,38 @@ import { redactCommandLine } from '../terminal/command-redaction';
 const MAX_HITS = 30;
 const TIMEOUT_MS = 2_000;
 const MAX_LINE = 400;
+const MAX_OUTPUT_CHARS = 2_000_000;
 
 export interface RipgrepFallbackOptions {
   readonly rgPath?: string;
   readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+  /** Canonical project roots this provider may search. Missing = deny. */
+  readonly allowedRoots?: readonly string[];
+}
+
+function authorizedProjectRoot(
+  requestedRoot: string,
+  allowedRoots: readonly string[] | undefined,
+): string | null {
+  if (
+    !allowedRoots?.length ||
+    requestedRoot.includes('\0') ||
+    !path.isAbsolute(requestedRoot)
+  ) {
+    return null;
+  }
+  try {
+    const requested = fs.realpathSync(requestedRoot);
+    const isAllowed = allowedRoots.some((allowedRoot) => {
+      const allowed = fs.realpathSync(allowedRoot);
+      const relative = path.relative(allowed, requested);
+      return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+    });
+    return isAllowed ? requested : null;
+  } catch {
+    return null;
+  }
 }
 
 function redactSnippet(text: string): string {
@@ -29,12 +58,15 @@ export async function searchWithRipgrep(
   options: RipgrepFallbackOptions = {},
 ): Promise<readonly SearchHit[]> {
   const needle = query.text.trim();
-  const root = query.projectRoot;
-  if (!needle || !root) return [];
-  if (root.includes('\0') || !path.isAbsolute(root)) return [];
+  const requestedRoot = query.projectRoot;
+  if (!needle || !requestedRoot) return [];
+  const root = authorizedProjectRoot(requestedRoot, options.allowedRoots);
+  if (!root) return [];
 
   const rg = options.rgPath ?? 'rg';
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
+  const signal = options.signal;
+  if (signal?.aborted) return [];
 
   return new Promise((resolve) => {
     const args = [
@@ -61,6 +93,19 @@ export async function searchWithRipgrep(
     });
 
     let stdout = '';
+    let settled = false;
+    let fallbackStarted = false;
+    const finish = (hits: readonly SearchHit[]) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', abort);
+      resolve(hits);
+    };
+    const abort = () => {
+      child.kill('SIGTERM');
+      finish([]);
+    };
+    signal?.addEventListener('abort', abort, { once: true });
     const timer = setTimeout(() => {
       child.kill('SIGTERM');
     }, timeoutMs);
@@ -68,17 +113,23 @@ export async function searchWithRipgrep(
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
       stdout += chunk;
-      if (stdout.length > 2_000_000) child.kill('SIGTERM');
+      if (stdout.length > MAX_OUTPUT_CHARS) {
+        stdout = stdout.slice(0, MAX_OUTPUT_CHARS);
+        child.kill('SIGTERM');
+      }
     });
 
     child.on('error', () => {
       clearTimeout(timer);
+      if (settled || signal?.aborted) return;
       // Fallback to grep if rg missing.
-      void searchWithGrep(needle, root, timeoutMs).then(resolve);
+      fallbackStarted = true;
+      void searchWithGrep(needle, root, timeoutMs, signal).then(finish);
     });
 
     child.on('close', () => {
       clearTimeout(timer);
+      if (settled || fallbackStarted) return;
       const hits: SearchHit[] = [];
       for (const line of stdout.split('\n')) {
         if (!line.trim() || hits.length >= MAX_HITS) break;
@@ -108,7 +159,7 @@ export async function searchWithRipgrep(
           // skip bad lines
         }
       }
-      resolve(hits);
+      finish(hits);
     });
   });
 }
@@ -117,6 +168,7 @@ async function searchWithGrep(
   needle: string,
   root: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<readonly SearchHit[]> {
   return new Promise((resolve) => {
     const child = spawn(
@@ -125,14 +177,34 @@ async function searchWithGrep(
       { stdio: ['ignore', 'pipe', 'ignore'] },
     );
     let stdout = '';
+    let settled = false;
+    const finish = (hits: readonly SearchHit[]) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', abort);
+      resolve(hits);
+    };
+    const abort = () => {
+      child.kill('SIGTERM');
+      finish([]);
+    };
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    signal?.addEventListener('abort', abort, { once: true });
     const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (c: string) => {
       stdout += c;
+      if (stdout.length > MAX_OUTPUT_CHARS) {
+        stdout = stdout.slice(0, MAX_OUTPUT_CHARS);
+        child.kill('SIGTERM');
+      }
     });
     child.on('error', () => {
       clearTimeout(timer);
-      resolve([]);
+      finish([]);
     });
     child.on('close', () => {
       clearTimeout(timer);
@@ -152,7 +224,7 @@ async function searchWithGrep(
           meta: { line: Number(m[2]), via: 'grep' },
         });
       }
-      resolve(hits);
+      finish(hits);
     });
   });
 }
@@ -170,7 +242,7 @@ export function createRipgrepSearchProvider(
     source: 'files',
     async search(query, signal) {
       if (signal.aborted) return [];
-      const hits = await searchWithRipgrep(query, options);
+      const hits = await searchWithRipgrep(query, { ...options, signal });
       if (signal.aborted) return [];
       return hits;
     },

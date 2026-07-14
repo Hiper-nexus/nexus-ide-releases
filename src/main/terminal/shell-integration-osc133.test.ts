@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   isSafeOscCwd,
   Osc133Scanner,
@@ -41,6 +43,14 @@ describe('Osc133Scanner', () => {
     ]);
   });
 
+  it('decodes escaped delimiters and rejects control-bearing OSC payloads', () => {
+    const scanner = new Osc133Scanner();
+    expect(scanner.push('\x1b]133;P;cwd=/tmp/a%3Bb\x07')).toEqual([
+      { kind: 'cwd', path: '/tmp/a;b' },
+    ]);
+    expect(scanner.push('\x1b]133;E;echo%07injected\x07')).toEqual([]);
+  });
+
   it('does not throw on garbage or missing integration', () => {
     const scanner = new Osc133Scanner();
     expect(scanner.push('just normal shell output\n')).toEqual([]);
@@ -53,5 +63,16 @@ describe('Osc133Scanner', () => {
     expect(isSafeOscCwd('relative')).toBe(false);
     expect(isSafeOscCwd('~/home')).toBe(false);
     expect(isSafeOscCwd('a\0b')).toBe(false);
+    expect(isSafeOscCwd('/tmp/a\x1b]133;D;0')).toBe(false);
+  });
+
+  it('does not exit an interactive fish shell when sourced twice', () => {
+    const script = fs.readFileSync(
+      path.join(process.cwd(), 'resources/shell-integration/nexus-osc133.fish'),
+      'utf8',
+    );
+    expect(script).toContain('return 0');
+    expect(script).toContain('string escape --style=url');
+    expect(script).not.toMatch(/\bexit 0\b/);
   });
 });

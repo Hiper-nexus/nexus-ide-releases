@@ -105,7 +105,18 @@ export class CommandBlockStore {
     const existing = db
       .prepare(`SELECT * FROM command_blocks WHERE idempotency_key = ?`)
       .get(block.idempotencyKey);
-    if (existing) return rowToBlock(existing);
+    if (existing) {
+      const stored = rowToBlock(existing);
+      if (
+        stored.sessionId !== block.sessionId ||
+        stored.startedAt !== block.startedAt ||
+        stored.command !== block.command ||
+        stored.cwd !== block.cwd
+      ) {
+        throw new Error('command block idempotency conflict');
+      }
+      return stored;
+    }
 
     db.prepare(
       `INSERT INTO command_blocks (

@@ -162,6 +162,14 @@ export function configureFeatureFlagRegistry(
   singletonOptions = options;
 }
 
+/** Configure the process registry before feature-owned services start. */
+export function configureFeatureFlagRegistry(
+  options: FeatureFlagRegistryOptions,
+): FeatureFlagRegistry {
+  singleton = new FeatureFlagRegistry(options);
+  return singleton;
+}
+
 export function getFeatureFlagRegistry(): FeatureFlagRegistry {
   if (!singleton) {
     singleton = new FeatureFlagRegistry({

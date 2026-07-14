@@ -57,6 +57,30 @@ describe('orientation local index', () => {
     expect(index.search('mission').length).toBe(0);
   });
 
+  it('processes an event-loop cancellation before publishing a large build', async () => {
+    const index = new OrientationLocalIndex();
+    const controller = new AbortController();
+    const largeMap = {
+      ...sampleMap,
+      mapHash: 'hash-large',
+      inventory: {
+        ...sampleMap.inventory,
+        topDirs: Array.from({ length: 1_000 }, (_, i) => ({
+          path: `src/generated-${i}`,
+        })),
+      },
+    };
+    setImmediate(() => controller.abort());
+
+    const snapshot = await index.build(largeMap, {
+      chunkSize: 1,
+      signal: controller.signal,
+    });
+
+    expect(snapshot).toMatchObject({ ready: false, cancelled: true });
+    expect(index.search('generated')).toEqual([]);
+  });
+
   it('rejects a non-positive chunk size instead of looping forever', async () => {
     const index = new OrientationLocalIndex();
     await expect(index.build(sampleMap, { chunkSize: 0 })).rejects.toThrow(/chunkSize/i);
