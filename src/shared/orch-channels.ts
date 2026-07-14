@@ -31,6 +31,11 @@ export const ORCH_CHANNELS = {
   missionRebind: 'orch:missions.rebind',
   missionUpdate: 'orch:missions.update',
   missionRemove: 'orch:missions.remove',
+  /** Mission event journal consumer (flag: feature.mission.eventJournal). */
+  missionEventsRecent: 'orch:missionEvents.recent',
+  missionEventsReplay: 'orch:missionEvents.replay',
+  missionEventsAck: 'orch:missionEvents.ack',
+  missionEventsCursor: 'orch:missionEvents.cursor',
   handoffsList: 'orch:handoffs.list',
   todosGet: 'orch:todos.get',
   todoSetStatus: 'orch:todos.setStatus',

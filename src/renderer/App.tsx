@@ -76,6 +76,7 @@ import {
   SearchPanelBody,
   SkillsPanelBody,
 } from './components/product/ProductPanelBodies';
+import { MissionJournalPanel } from './components/product/MissionJournalPanel';
 import type { LAUNCHER_MODES } from '../shared/progressive-onboarding';
 import type { ContextualTab } from '../shared/contextual-panel';
 import { applyProgressiveLaunchIfPending } from './lib/progressive-launch';
@@ -437,6 +438,7 @@ export function App() {
             editor: <EditorPanelBody />,
             browser: <McpHubPanelBody />,
             memory: <MemoryPanelBody />,
+            mission: <MissionJournalPanel />,
           }}
         />
       </main>

@@ -137,6 +137,7 @@ import { registerTerminalBlockActionsIpc } from "./terminal/terminal-block-actio
 import { registerSearchMixerIpc } from "./search/search-mixer-ipc";
 import { getSearchMixer } from "./search/search-mixer-bootstrap";
 import { registerProductWaveIpc } from "./product-wave-ipc";
+import { registerMissionEventIpc } from "./orch/mission-event-ipc";
 import { startAgentLifecycleService } from "./agents/agent-lifecycle-service";
 import { enableAllProductFlagsForTesting } from "./feature-flags/feature-flag-registry";
 import {
@@ -388,6 +389,7 @@ function bootstrap(): void {
   );
   ensureCommandBlockTracking();
   configureMissionEventEmit(projectRuntimeManager);
+  registerMissionEventIpc();
   // Product paths: CommandBlock actions, SearchMixer, full product-wave IPC.
   registerTerminalBlockActionsIpc();
   getSearchMixer(); // ensure ripgrep + multi-source providers on the live mixer

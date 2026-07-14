@@ -21,6 +21,11 @@ export function configureMissionEventEmit(
   runtimeManager = manager;
 }
 
+/** For consumer IPC / diagnostics — null when not bootstrapped. */
+export function getMissionEventRuntimeManager(): ProjectRuntimeManager | null {
+  return runtimeManager;
+}
+
 export function emitMissionEvent(
   scope: ProjectExecutionScope,
   input: MissionEventAppendInput,

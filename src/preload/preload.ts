@@ -712,6 +712,14 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.missionPrepareProject, input),
     getMissionPromptQueue: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPromptQueue, input),
+    missionEventsRecent: (input) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionEventsRecent, input),
+    missionEventsReplay: (input) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionEventsReplay, input),
+    missionEventsAck: (input) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionEventsAck, input),
+    missionEventsCursor: (input) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionEventsCursor, input),
     bindMissionOrchestrator: (input: {
       missionId: string;
       title: string;

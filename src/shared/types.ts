@@ -862,6 +862,26 @@ export interface NexusApi {
         body: string;
       }>;
     }>;
+    /** Mission event journal — recent projection (flag feature.mission.eventJournal). */
+    missionEventsRecent(input: {
+      missionId: string;
+      limit?: number;
+    }): Promise<{ events: unknown[]; enabled?: boolean; error?: string }>;
+    missionEventsReplay(input: {
+      missionId: string;
+      afterSequence?: number;
+      limit?: number;
+      runId?: string;
+    }): Promise<{ events: unknown[]; enabled?: boolean; error?: string }>;
+    missionEventsAck(input: {
+      missionId: string;
+      upToSequence: number;
+      consumerId?: string;
+    }): Promise<{ ok: boolean; cursor?: unknown; error?: string }>;
+    missionEventsCursor(input: {
+      missionId: string;
+      consumerId?: string;
+    }): Promise<{ cursor: unknown; enabled?: boolean; error?: string }>;
     bindMissionOrchestrator(input: {
       missionId: string;
       title: string;

@@ -64,9 +64,13 @@ Data: 2026-07-13
 - Actions: copy command, copy cwd, re-run (via `writeSession` policy).
 - IPC `terminal-block:list` + preload `nexus.terminalBlock.list`.
 
+### Mission journal consumer
+- IPC `orch:missionEvents.{recent,replay,ack,cursor}` + preload/orch API.
+- ContextualPanel **Mission** tab: select mission, list events, ACK cursor.
+
 ### Deferred (honest)
 - CodeMirror 6 package install; MCP OAuth/SSE live clients; autonomy enforce
-  in mcp-dispatch; journal consumer UI; worktree provider on block actions.
+  in mcp-dispatch; worktree provider on block actions.
 
 ## 0.15.4 — Jarvis Wake Safety
 

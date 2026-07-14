@@ -625,3 +625,23 @@
 .cmd-blocks__actions button:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.1);
 }
+
+/* Mission journal (contextual panel) */
+.mission-journal__list {
+  max-height: min(50vh, 420px);
+}
+
+.mission-journal__item--unread {
+  border-color: color-mix(in srgb, var(--accent, #93c5fd) 40%, transparent);
+}
+
+.mission-journal__type {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
+}
+
+.product-pane select.product-pane__input {
+  max-width: 100%;
+}
