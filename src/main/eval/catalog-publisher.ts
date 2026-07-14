@@ -7,6 +7,11 @@ import type {
   ModelCostTier,
 } from '../../shared/adapter-types';
 import type { ModelCatalog } from '../adapters/model-catalog';
+import {
+  verifyBenchmarkJournal,
+  type BenchmarkJournalEntry,
+  type BenchmarkRunManifest,
+} from './benchmark-contract';
 import { toModelQualityEvaluation } from './ranker';
 import type { ModelRankResult } from './suite-types';
 
@@ -91,4 +96,16 @@ export function applyRanksToCatalog(
     updatedAt: overlay.updatedAt ?? base.updatedAt,
     adapters,
   };
+}
+
+/** Publish only a run whose manifest and complete journal replay successfully. */
+export function applyVerifiedBenchmarkRunToCatalog(
+  base: ModelCatalog,
+  manifest: BenchmarkRunManifest,
+  entries: readonly BenchmarkJournalEntry[],
+  ranks: readonly ModelRankResult[],
+): ModelCatalog {
+  if (entries.length === 0) throw new Error('cannot publish an empty benchmark journal');
+  verifyBenchmarkJournal(entries, manifest);
+  return applyRanksToCatalog(base, ranks);
 }

@@ -96,3 +96,20 @@ describe('Nexus UI MCP argument validation', () => {
     ).toThrow(/text is required/);
   });
 });
+
+describe('BridgeMind audit MCP argument validation', () => {
+  it('requires exactly one bounded audit target', () => {
+    expect(
+      validateToolArgs('nexus_content_audit', {
+        content: 'external text',
+        provenance: 'repo-untrusted',
+      }),
+    ).toEqual({ content: 'external text', provenance: 'repo-untrusted' });
+    expect(() =>
+      validateToolArgs('nexus_security_audit', { path: 'src/index.ts', content: 'also' }),
+    ).toThrow(/exactly one/);
+    expect(() =>
+      validateToolArgs('nexus_content_audit', { provenance: 'repo-untrusted' }),
+    ).toThrow(/exactly one/);
+  });
+});

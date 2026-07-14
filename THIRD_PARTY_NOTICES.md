@@ -184,6 +184,20 @@ As the upstream repository notes, the extracted tokens represent publicly visibl
 CSS values and no site's visual identity is claimed; the decision to apply a
 specific brand's design language remains with the user, in their own project.
 
+## BridgeMind clean-room security patterns
+
+NexusIDE includes clean-room, compact skills and audit patterns distilled from
+the MIT-licensed [`BridgeWard`](https://github.com/bridge-mind/BridgeWard),
+[`BridgeSecurity`](https://github.com/bridge-mind/BridgeSecurity), and
+[`BridgeBench`](https://github.com/bridge-mind/bridgebench) projects by
+BridgeMind. NexusIDE does not vendor their runtime source, assets, or text.
+
+The integration is implemented in `src/main/security/` and
+`src/main/eval/`: read-only content/source audits, provenance labels,
+fail-closed tool validation, an immutable benchmark manifest/journal contract,
+and an injected head-to-head runner. The original MIT notices remain with the
+upstream projects; no upstream file was copied into the Nexus runtime.
+
 ## ssh2
 
 Remote SSH transport (`src/main/integrations/ssh2-transport.ts`) depends on the

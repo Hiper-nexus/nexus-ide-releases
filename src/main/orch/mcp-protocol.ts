@@ -10,7 +10,7 @@ import {
  * handling for initialize / ping / tools-list / tools-call over the
  * streamable-HTTP transport. Implemented directly (no SDK) so the main-process
  * bundle stays lean and free of zod-version coupling; the subset below is what
- * CLI agents (Claude Code, Codex, …) need to call the 24 nexus_* tools.
+ * CLI agents (Claude Code, Codex, …) need to call the native nexus_* tools.
  *
  * This module is transport-agnostic and pure — the HTTP wiring lives in
  * mcp-server.ts and unit tests drive it directly.

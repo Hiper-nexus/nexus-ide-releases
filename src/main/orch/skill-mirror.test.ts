@@ -43,6 +43,12 @@ describe('ensureSkillsForCli', () => {
     expect(
       fs.existsSync(path.join(home, '.codex', 'skills', 'ponytail', 'SKILL.md')),
     ).toBe(true);
+    expect(
+      fs.existsSync(path.join(home, '.codex', 'skills', 'bridgeward', 'SKILL.md')),
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(home, '.codex', 'skills', 'bridgesecurity', 'SKILL.md')),
+    ).toBe(true);
   });
 
   it('discovers a skill installed only in the Gemini namespace', () => {

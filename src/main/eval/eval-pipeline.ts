@@ -1,6 +1,6 @@
 /**
- * Offline eval pipeline entry — fixtures → ranks → catalog quality → public DTO.
- * Live multi-provider runs can plug in later; this path is the CI/gating bar.
+ * Eval entrypoints — deterministic fixtures for CI plus the injected live
+ * benchmark runner for provider-backed runs.
  */
 
 import type { ModelCatalog } from '../adapters/model-catalog';
@@ -17,6 +17,23 @@ import {
 import { rankAllModels } from './ranker';
 import type { ModelRankResult } from './suite-types';
 import type { PublicModelRankingSnapshot } from '../../shared/eval-ranking-types';
+
+export { runBenchmarkSuite } from './benchmark-runner';
+export {
+  createCliBenchmarkExecutor,
+  createRegisteredCliBenchmarkExecutor,
+} from './cli-benchmark-executor';
+export { applyVerifiedBenchmarkRunToCatalog } from './catalog-publisher';
+export type {
+  BenchmarkCaseInput,
+  BenchmarkExecution,
+  BenchmarkJudge,
+  BenchmarkJudgeDecision,
+  BenchmarkJudgeInput,
+  BenchmarkRunOptions,
+  BenchmarkRunResult,
+} from './benchmark-runner';
+export type { CliBenchmarkExecutorOptions } from './cli-benchmark-executor';
 
 export interface OfflineEvalResult {
   ranks: ModelRankResult[];

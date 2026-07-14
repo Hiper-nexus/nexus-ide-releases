@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PONYTAIL_RULES } from './ponytail';
+import { BUILTIN_BRIDGEMIND_SKILLS } from './bridge-mind-skills';
 
 const GENERATED_PONYTAIL_SKILL = `---
 name: ponytail
@@ -52,6 +53,11 @@ function writeGeneratedSkills(root: string): string {
   const dir = path.join(root, 'ponytail');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'SKILL.md'), GENERATED_PONYTAIL_SKILL);
+  for (const skill of BUILTIN_BRIDGEMIND_SKILLS) {
+    const skillDir = path.join(root, skill.name);
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skill.body);
+  }
   return root;
 }
 

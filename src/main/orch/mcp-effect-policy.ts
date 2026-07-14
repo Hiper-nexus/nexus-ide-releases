@@ -51,6 +51,8 @@ const READ_ONLY_TOOLS = new Set([
   'ui_read',
   'workflow_get',
   'worktree_get',
+  'content_audit',
+  'security_audit',
 ]);
 
 /**

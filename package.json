@@ -30,6 +30,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "eval:export-ranking": "node --import tsx scripts/export-public-ranking.mjs",
+    "eval:benchmark:verify": "node --import tsx scripts/verify-nexus-benchmark.mjs",
     "start:forge": "electron-forge start"
   },
   "engines": {

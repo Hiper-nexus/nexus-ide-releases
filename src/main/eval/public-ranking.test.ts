@@ -6,7 +6,8 @@ import {
   mergeModelCatalogs,
   PUBLISHED_MODEL_CATALOG,
 } from '../adapters/model-catalog';
-import { applyRanksToCatalog } from './catalog-publisher';
+import { applyRanksToCatalog, applyVerifiedBenchmarkRunToCatalog } from './catalog-publisher';
+import { benchmarkManifestHash, benchmarkRunId, evidenceHash, type BenchmarkRunManifest } from './benchmark-contract';
 import { runOfflineEvalV1 } from './eval-pipeline';
 import {
   buildPublicRankingFromCatalog,
@@ -116,6 +117,46 @@ describe('public ranking', () => {
     const ids = (merged.adapters?.claude?.models ?? []).map((m) => m.id);
     expect(ids).toContain('claude-sonnet-5');
     expect(ids).toContain('claude-opus-4-8');
+  });
+
+  it('does not publish an empty or tampered benchmark journal', () => {
+    const manifest: BenchmarkRunManifest = {
+      version: 1,
+      methodology: 'nexus-bench-v1',
+      suiteId: 'publish-smoke',
+      suiteRevision: 'v1',
+      seed: 'seed',
+      promptPolicyHash: 'a'.repeat(64),
+      subjects: [
+        { id: 'opus', adapterId: 'claude', modelId: 'opus' },
+        { id: 'codex', adapterId: 'codex', modelId: 'gpt' },
+      ],
+      cases: [{
+        id: 'case-1',
+        dimension: 'security',
+        revision: '1',
+        publicHash: 'b'.repeat(64),
+        privateHash: null,
+      }],
+    };
+    const entry = {
+      version: 1 as const,
+      runId: benchmarkRunId(manifest),
+      manifestHash: benchmarkManifestHash(manifest),
+      sequence: 1,
+      matchId: 'match-1',
+      caseId: 'case-1',
+      subjectA: 'opus',
+      subjectB: 'codex',
+      outcome: 'no-contest' as const,
+      winnerId: null,
+      evidenceHash: evidenceHash({ answerA: 'a', answerB: 'b' }),
+      timestamp: '2026-07-14T12:00:00.000Z',
+    };
+
+    expect(() => applyVerifiedBenchmarkRunToCatalog({}, manifest, [], [])).toThrow(/empty/);
+    expect(() => applyVerifiedBenchmarkRunToCatalog({}, manifest, [{ ...entry, winnerId: 'codex' }], [])).toThrow();
+    expect(applyVerifiedBenchmarkRunToCatalog({}, manifest, [entry], []).version).toBe(1);
   });
 });
 

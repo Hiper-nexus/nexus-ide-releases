@@ -9,6 +9,8 @@ describe('MCP effect policy', () => {
     expect(effectPolicyForTool('file_read')).toBe('read-only');
     expect(effectPolicyForTool('nexus_code_map_get')).toBe('read-only');
     expect(effectPolicyForTool('nexus_code_map_blast_radius')).toBe('read-only');
+    expect(effectPolicyForTool('nexus_content_audit')).toBe('read-only');
+    expect(effectPolicyForTool('nexus_security_audit')).toBe('read-only');
   });
 
   it('allows only the context and mission bootstrap chain pre-contract', () => {

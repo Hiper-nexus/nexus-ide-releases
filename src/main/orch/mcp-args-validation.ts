@@ -67,6 +67,34 @@ const browserWaitSchema = z
     }
   });
 
+const auditSourceSchema = z
+  .object({
+    path: pathText.optional(),
+    content: z.string().min(1).max(MAX_MCP_PAYLOAD_BYTES).optional(),
+    source: z.string().min(1).max(512).optional(),
+    provenance: z
+      .enum([
+        'unknown',
+        'user',
+        'repo-trusted',
+        'repo-untrusted',
+        'web-page',
+        'mcp-tool-result',
+        'mcp-tool-description',
+        'file-external',
+      ])
+      .optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if ((value.path === undefined) === (value.content === undefined)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'provide exactly one of path or content',
+      });
+    }
+  });
+
 const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
   ['load_workspace_dependencies', z.object({}).strict()],
   [
@@ -221,6 +249,8 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
   ],
   ['browser_wait', browserWaitSchema],
   ['ui_action', uiActionSchema],
+  ['content_audit', auditSourceSchema],
+  ['security_audit', auditSourceSchema],
 ]);
 
 function assertArgsShape(value: unknown): asserts value is Record<string, unknown> {
