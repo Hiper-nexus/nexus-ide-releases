@@ -63,6 +63,15 @@ export function isAppleReleaseSigning(teamId: string | undefined): boolean {
  */
 export function shouldIgnoreMacSigningFile(filePath: string): boolean {
   const normalized = filePath.replaceAll('\\', '/');
+  // Electron also stores locale packs and other data beside its framework
+  // binaries, so the resource-root check alone is not sufficient.
+  if (
+    /\.(?:asar|bin|bmp|css|gif|html?|icns|jpe?g|js|json|map|md|mjs|onnx|pak|png|svg|txt|wasm|webp|woff2?|xml|zip)$/iu.test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
   if (!normalized.includes('/Contents/Resources/')) return false;
   return !(/\.(?:node|dylib)$/u.test(normalized) || /\/spawn-helper$/u.test(normalized));
 }

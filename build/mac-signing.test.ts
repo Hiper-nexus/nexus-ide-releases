@@ -86,6 +86,11 @@ describe('macOS signing modes', () => {
     ).toBe(true);
     expect(
       shouldIgnoreMacSigningFile(
+        '/tmp/NexusIDE.app/Contents/Frameworks/Electron Framework.framework/Resources/en.lproj/locale.pak',
+      ),
+    ).toBe(true);
+    expect(
+      shouldIgnoreMacSigningFile(
         '/tmp/NexusIDE.app/Contents/Resources/app.asar.unpacked/native.node',
       ),
     ).toBe(false);
