@@ -47,8 +47,20 @@ describe('pet-library', () => {
     configurePetsLibraryRoot(REPO_PETS);
     const listed = listPetLibrary();
     expect(listed.ok).toBe(true);
-    expect(listed.items?.length).toBeGreaterThanOrEqual(15);
+    expect(listed.items?.length).toBeGreaterThanOrEqual(17);
     expect(listed.items?.some((item) => item.id === 'navi')).toBe(true);
+    expect(listed.items?.some((item) => item.id === 'nexo')).toBe(true);
+    expect(listed.items?.some((item) => item.id === 'nico-code')).toBe(true);
+  });
+
+  it('carrega os pets locais promovidos para a release no contrato v2', () => {
+    configurePetsLibraryRoot(REPO_PETS);
+    for (const id of ['nexo', 'nico-code']) {
+      const loaded = loadLibrarySheet(id);
+      expect(loaded.ok).toBe(true);
+      expect(loaded.sheet?.cols).toBe(8);
+      expect(loaded.sheet?.rows).toBe(11);
+    }
   });
 
   it('carrega um sheet como data URL webp', () => {

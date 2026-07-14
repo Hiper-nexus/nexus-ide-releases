@@ -42,6 +42,18 @@ describe('jarvisActionFastPath', () => {
     expect(reply?.action).toEqual({ type: 'run_command', command: 'npm test' });
   });
 
+  it('sincroniza GitHub sem transformar a operação em missão ou squad', () => {
+    for (const text of [
+      'atualizar repositório local com GitHub',
+      'sincroniza o repositório com origin',
+      'puxa as atualizações do git',
+    ]) {
+      expect(jarvisActionFastPath(text, CTX)?.action).toEqual({
+        type: 'sync_repository',
+      });
+    }
+  });
+
   it('iniciar um novo workspace dispara new_workspace', () => {
     const reply = jarvisActionFastPath('iniciar um novo workspace', CTX);
     expect(reply?.action).toEqual({ type: 'new_workspace' });

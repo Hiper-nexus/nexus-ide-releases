@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased — Production confidence (smoke + multi-window isolation)
+## 0.15.7 — Intent-First Production
+
+Data: 2026-07-14
+
+Esta release reúne o runtime intent-first, as proteções de orçamento e handoff,
+o produto wave validado, e as correções de Jarvis, Git, pets e wake que já
+estavam na `main`.
 
 Data: 2026-07-13
 
@@ -13,7 +19,7 @@ Data: 2026-07-13
 - Unit gate for SearchMixer-per-root and pane recovery scope filtering
   (stand-in until Playwright multi-window E2E).
 
-## Unreleased — Waves 3→final product shell
+### Product wave — shipped behind explicit flags
 
 Data: 2026-07-13
 
@@ -32,7 +38,7 @@ Data: 2026-07-13
 - Unified scoped-workspace-fs; no startsWith(path.resolve) containment gate.
 
 
-## Unreleased — Deferred product foundations
+### Product foundations — shipped behind explicit flags
 
 Data: 2026-07-13
 
@@ -84,6 +90,48 @@ Data: 2026-07-13
 ### Deferred (honest)
 - CodeMirror 6 package install; MCP OAuth/SSE live clients; autonomy enforce
   in mcp-dispatch; worktree provider on block actions.
+
+## 0.15.6 — Direct Operations, Voice & Pet Reliability
+
+Data: 2026-07-13
+
+### Jarvis e Git
+- “Atualizar/sincronizar/puxar o repositório local com GitHub/origin” agora é
+  uma operação direta, sem Doctor, contrato de missão, squad, pane ou terminal.
+- A operação valida branch/upstream e arquivos rastreados, faz `fetch --prune`
+  e somente aplica `merge --ff-only` quando o checkout pode avançar sem risco.
+- Histórico divergente, commits locais, alterações rastreadas, upstream ausente
+  ou possível colisão local bloqueiam com recibo claro, sem stage, commit,
+  rebase, push ou sobrescrita.
+- Missões, preferências do rail e restauração de panes agora são estritamente
+  delimitadas pelo workspace atual; uma sessão de outro projeto não volta à tela
+  ativa por engano.
+
+### Voz em produção
+- O processador PCM de wake e captura passa a ser carregado por `blob:`
+  compatível com a CSP do app empacotado. Isso elimina a queda silenciosa para
+  ScriptProcessor causada pelo `data:` URL do Vite e registra qualquer fallback
+  real no log de voz.
+- OpenAI Realtime recebe as mesmas ferramentas curtas de consulta/leitura da
+  rota Gemini, para responder estado da tela sem inventar uma ação de UI.
+- Quando uma chamada realtime chega durante handoff/encerramento da sessão, a
+  Jarvis devolve um resultado explícito ao modelo em vez de deixá-lo esperando
+  indefinidamente.
+
+### Integridade
+- A rota direta só está disponível à ação iniciada pelo usuário no renderer;
+  agentes MCP continuam sujeitos à autoridade de missão.
+- Metadados de release e o teste de roteamento da Jarvis foram alinhados com o
+  comportamento atual para impedir uma distribuição com testes divergentes.
+
+### Pets
+- Avisos do pet não desaparecem mais por tempo: permanecem até uma ação
+  explícita no balão ou no próprio pet, e a fila preserva os avisos seguintes.
+- Os pets locais aprovados `Nexo` e `Nico Code` agora acompanham a biblioteca
+  offline do artefato de release; os pacotes em `~/.codex/pets` continuam
+  persistentes entre atualizações.
+- Pets criados em spritesheet v2 ganham escala de desktop 20% maior, preservando
+  a margem segura do atlas sem ocupar a tela em excesso.
 
 ## 0.15.4 — Jarvis Wake Safety
 

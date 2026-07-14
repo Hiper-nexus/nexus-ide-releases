@@ -277,6 +277,14 @@ function bindEffectAuthority(
     }
     return ctx.contextRevision;
   }
+  if (policy === 'routine-local-operation') {
+    if (source !== 'ipc-renderer' || ctx.role !== 'user') {
+      throw new Error(
+        'routine local operation requires renderer user authority',
+      );
+    }
+    return ctx.contextRevision;
+  }
   if (!ctx.missionId) {
     throw new Error(
       'mission effect blocked: projectId, checkoutId, missionId and contextRevision are required',
@@ -391,7 +399,8 @@ export async function dispatchToolCall(
   const permitsUnboundEffect =
     canonical === 'mission_create' ||
     effectPolicy === 'mission-control' ||
-    effectPolicy === 'renderer-authorized-effect';
+    effectPolicy === 'renderer-authorized-effect' ||
+    effectPolicy === 'routine-local-operation';
   if (isEffectfulTool(tool.name) && !ctx.missionId && !permitsUnboundEffect) {
     const error =
       'mission effect blocked: projectId, checkoutId, missionId and contextRevision are required';

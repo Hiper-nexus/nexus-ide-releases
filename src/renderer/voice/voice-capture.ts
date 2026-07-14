@@ -1,4 +1,4 @@
-import pcmWorkletUrl from './pcm-processor.js?url';
+import { PCM_WORKLET_NODE_NAME, pcmWorkletBlobUrl } from './pcm-worklet';
 import { rmsToLevel } from './voice-level';
 import { preferredInputConstraints } from './audio-device-preferences';
 
@@ -111,16 +111,23 @@ export class VoiceCapture {
     };
 
     try {
-      await this.ctx.audioWorklet.addModule(pcmWorkletUrl);
-      const node = new AudioWorkletNode(this.ctx, 'nexus-pcm-processor');
+      await this.ctx.audioWorklet.addModule(pcmWorkletBlobUrl());
+      const node = new AudioWorkletNode(this.ctx, PCM_WORKLET_NODE_NAME);
       node.port.onmessage = (e: MessageEvent<Float32Array>) => onFrame(e.data);
       this.source.connect(node);
       // Keep the graph pulling without routing mic to speakers.
       node.connect(this.ctx.destination);
       this.worklet = node;
-    } catch {
-      // AudioWorklet unavailable (older runtime / CSP): fall back to the
-      // deprecated ScriptProcessorNode, which needs no external module.
+    } catch (err) {
+      // This fallback adds large main-thread frames. Log the real packaged-app
+      // failure instead of making microphone regressions invisible.
+      const error = err instanceof Error ? err.message : String(err);
+      window.nexus.voice.logVoice({
+        level: 'warn',
+        event: 'capture.workletFallback',
+        msg: 'AudioWorklet falhou — ScriptProcessor(4096)',
+        data: { error },
+      });
       const node = this.ctx.createScriptProcessor(4096, 1, 1);
       node.onaudioprocess = (e) => onFrame(e.inputBuffer.getChannelData(0).slice(0));
       this.source.connect(node);

@@ -21,6 +21,18 @@ describe('isClassicActionGrounded', () => {
     ).toBe(true);
   });
 
+  it('grounds repository sync in an explicit Git request', () => {
+    expect(
+      isClassicActionGrounded(
+        'atualiza o repositório local com GitHub',
+        { type: 'sync_repository' },
+      ),
+    ).toBe(true);
+    expect(
+      isClassicActionGrounded('vamos ao vivo', { type: 'sync_repository' }),
+    ).toBe(false);
+  });
+
   it('blocks a mismatched model-selected target', () => {
     expect(isClassicActionGrounded('abra as configurações', { type: 'open_terminal' })).toBe(false);
   });

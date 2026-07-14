@@ -302,6 +302,8 @@ export type JarvisAction =
   // NEW-B: paneId targets the ASKING pane for routed pending-question answers.
   // Absent for model-emitted delegation (falls back to orchestrator/focused pane).
   | { type: 'send_to_pane'; text: string; paneId?: string }
+  /** Safely fast-forward the current branch from origin without creating a mission. */
+  | { type: 'sync_repository' }
   | { type: 'run_command'; command: string }
   | { type: 'mcp_tool'; tool: string; args: Record<string, unknown> }
   | { type: 'restore_mission_panes'; alvo?: string }

@@ -14,6 +14,7 @@ import {
   type NexusRealtimeActionArgs,
   summarizeNexusRealtimeAction,
 } from '../../../shared/voice-realtime-actions';
+import type { RealtimeToolDefinition } from './provider';
 
 export interface GeminiFunctionDeclaration {
   name: string;
@@ -184,6 +185,32 @@ export const COARSE_VOICE_TOOLS: GeminiFunctionDeclaration[] = [
     },
   },
 ];
+
+/**
+ * OpenAI Realtime uses lowercase JSON-schema tokens, unlike Gemini Live. Keep
+ * the same bounded eight-tool voice surface on both transports so an OpenAI
+ * fallback can consult/read state rather than guessing a UI action.
+ */
+export function coarseVoiceToolsAsRealtimeDefinitions(): RealtimeToolDefinition[] {
+  return COARSE_VOICE_TOOLS.map((tool) => ({
+    type: 'function',
+    name: tool.name,
+    description: tool.description,
+    parameters: {
+      type: 'object',
+      properties: Object.fromEntries(
+        Object.entries(tool.parameters.properties).map(([key, prop]) => [
+          key,
+          {
+            ...prop,
+            type: typeof prop.type === 'string' ? prop.type.toLowerCase() : 'string',
+          },
+        ]),
+      ),
+      ...(tool.parameters.required?.length ? { required: tool.parameters.required } : {}),
+    },
+  }));
+}
 
 export interface CoarseToolArgs {
   briefing?: string;

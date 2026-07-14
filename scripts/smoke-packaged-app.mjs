@@ -232,6 +232,10 @@ export function packagedSmokeEnvironment(baseEnv, userData) {
     TMP: tmp,
     TMPDIR: tmp,
     NEXUS_USER_DATA_DIR: isolatedUserData,
+    // The packaged functional probe covers the product-wave IPC surface too.
+    // Keep this test-only override explicit; normal packaged launches remain
+    // fail-closed and use the persisted feature-flag policy.
+    NEXUS_FORCE_ALL_FLAGS: '1',
   };
 }
 

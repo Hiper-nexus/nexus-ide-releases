@@ -99,6 +99,25 @@ function mcpSummary(result: { ok: boolean; tool: string; error?: string }): stri
   return result.error ?? `${result.tool} falhou`;
 }
 
+function repositorySyncNarration(result: {
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+}): string | null {
+  if (!result.ok) return null;
+  const value = result.result;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const sync = value as Record<string, unknown>;
+  const status = sync.status;
+  const branch = typeof sync.branch === 'string' ? sync.branch : 'a branch atual';
+  if (status === 'updated') return `Repositório atualizado em ${branch}.`;
+  if (status === 'up_to_date') return `O repositório já está atualizado em ${branch}.`;
+  if (status === 'blocked' && typeof sync.reason === 'string') {
+    return `Não alterei nada: ${sync.reason}`;
+  }
+  return null;
+}
+
 /** Fecha overlays que cobrem a área de panes (perfil, home, settings…). */
 function dismissBlockingOverlays(): void {
   useGamificationStore.getState().closeProfile();
@@ -239,7 +258,7 @@ async function executeViaMcp(
   );
   return {
     sayText: result.ok
-      ? sayText || 'Feito.'
+      ? ((repositorySyncNarration(result) ?? sayText) || 'Feito.')
       : result.error?.includes('user_denied')
         ? 'Cancelei, não executei.'
         : `Não consegui: ${result.error ?? 'erro'}.`,
@@ -279,6 +298,7 @@ export async function executeJarvisAction(
     // workspace terminals before the native confirmation dialog appeared.
     const mcpFirst = new Set<JarvisAction['type']>([
       'mcp_tool',
+      'sync_repository',
     ]);
     if (mcpFirst.has(action.type)) {
       const mcp = await executeViaMcp(action, sayText, control);

@@ -215,4 +215,25 @@ describe('createRealtimeProvider', () => {
     ).toEqual(['openai', 'gemini']);
     vi.doUnmock('../../voice/voice-secrets');
   });
+
+  it('registers coarse state tools alongside nexus_action for OpenAI Realtime', async () => {
+    vi.resetModules();
+    vi.doMock('../../voice/voice-secrets', () => ({
+      resolveVoiceApiKey: (envVar: string) =>
+        envVar === 'OPENAI_API_KEY' ? 'openai-key' : undefined,
+    }));
+    const { createRealtimeProviderCandidates } = await import('./factory');
+    const candidates = createRealtimeProviderCandidates({
+      config: {
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: { ...DEFAULT_VOICE_CONFIG.jarvisLive, transport: 'openai-realtime' },
+      },
+      instructions: 'You are Jarvis.',
+    });
+    const tools = (candidates[0].provider as unknown as { tools: Array<{ name: string }> }).tools;
+    expect(tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(['consultar', 'ler', 'delegar', 'nexus_action']),
+    );
+    vi.doUnmock('../../voice/voice-secrets');
+  });
 });

@@ -16,6 +16,9 @@ const LAWS = `Non-negotiable operating rules (Overclock-aligned):
 3. For a request to start or create a mission in Agentic mode, call
    nexus_action with action "new_agentic_mission" and optional intent. Never
    substitute voice settings, design_squad, or auto-launch a squad.
+3a. For “sync/update/pull the local repository with GitHub/origin”, call
+    nexus_action with action "sync_repository". This is a bounded direct
+    operation, never a mission, squad, terminal, pane, Doctor, or delegation.
 4. Screen context is structured metadata only — never invent page contents.
    Read terminal/agent output via tools. "read this screen" → read_current_view.
 5. Never speak code, JSON, tool names, MCP names, long paths, or internal IDs.

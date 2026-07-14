@@ -38,6 +38,17 @@ describe('tools-git', () => {
     expect((result as { output: string }).output).toContain('main');
   });
 
+  it('nexus_git_sync refuses to mutate a branch without an upstream', async () => {
+    const sync = buildGitTools().find((tool) => tool.name === 'nexus_git_sync')!;
+    const result = await sync.handler({}, fakeCtx()) as {
+      status: string;
+      branch: string;
+      reason?: string;
+    };
+    expect(result).toMatchObject({ status: 'blocked', branch: 'main' });
+    expect(result.reason).toMatch(/não rastreia um remoto/i);
+  });
+
   it('nexus_git_log returns commits', async () => {
     const tools = buildGitTools();
     const log = tools.find((t) => t.name === 'nexus_git_log')!;

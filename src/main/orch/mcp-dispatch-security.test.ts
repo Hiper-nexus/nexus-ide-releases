@@ -635,6 +635,27 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it('permits repository sync only from the renderer-owned user path', async () => {
+    const handler = vi.fn(async () => ({ status: 'up_to_date' }));
+    const registry = registryWith({
+      name: 'nexus_git_sync',
+      description: 'narrow local fast-forward',
+      inputSchema: { type: 'object', properties: {} },
+      handler,
+    });
+
+    const fromRenderer = await dispatchToolCall(
+      'ipc-renderer', registry, 'nexus_git_sync', {}, userContext(),
+    );
+    const fromAgent = await dispatchToolCall(
+      'http-mcp', registry, 'nexus_git_sync', {}, missionContext(),
+    );
+
+    expect(fromRenderer).toMatchObject({ ok: true });
+    expect(fromAgent).toMatchObject({ ok: false, denied: true });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
   it('lets the exact orchestrator block a mission when bootstrap cannot freeze', async () => {
     const handler = vi.fn(async () => ({ status: 'blocked' }));
     // Fail-safe demotion to blocked is allowed even before intent dispatch.

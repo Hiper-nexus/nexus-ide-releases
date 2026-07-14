@@ -13,4 +13,13 @@ describe('voice realtime squad selection actions', () => {
       summarizeNexusRealtimeAction({ action: 'open_squad_picker' }),
     ).toBe('abrir seletor de squads salvos');
   });
+
+  it('keeps repository sync as a direct operation instead of a mission action', () => {
+    expect(realtimeArgsToJarvisAction({ action: 'sync_repository' })).toEqual({
+      type: 'sync_repository',
+    });
+    expect(summarizeNexusRealtimeAction({ action: 'sync_repository' })).toBe(
+      'sincronizar repositório local com origin',
+    );
+  });
 });

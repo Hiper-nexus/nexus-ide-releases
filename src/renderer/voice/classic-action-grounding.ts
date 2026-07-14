@@ -23,6 +23,7 @@ const TARGETS: Partial<Record<JarvisAction['type'], RegExp>> = {
   focus_previous_pane: /\b(pane|painel|aba|terminal)\b/,
   read_pane: /\b(pane|painel|terminal|agente|agent)\b/,
   read_current_view: /\b(tela|pagina|page|visao|view|aqui)\b/,
+  sync_repository: /\b(sincroniz\w*|atualiz\w*|pux\w*|pull|repositorio|repo|github|origin|git)\b/,
   restore_mission_panes: /\b(restaur|reabr|pane|missao|mission)\w*\b/,
 };
 

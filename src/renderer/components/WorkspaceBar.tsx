@@ -414,52 +414,64 @@ export function WorkspaceBar({
       <div className="workspace-bar__brand">
         <NexusMark size={15} className="workspace-bar__logo" />
         {workspace ? (
-          <div className="workspace-bar__ws" ref={wsMenuRef}>
+          <>
+            <div className="workspace-bar__ws" ref={wsMenuRef}>
+              <button
+                type="button"
+                className="workspace-bar__name-btn"
+                title={workspace.path}
+                aria-haspopup="menu"
+                aria-expanded={wsMenuOpen}
+                onClick={() => {
+                  setWsMenuOpen((o) => !o);
+                  setMoreOpen(false);
+                }}
+              >
+                <span className="workspace-bar__name">{workspace.name}</span>
+                <span className="workspace-bar__name-caret" aria-hidden="true">
+                  ▾
+                </span>
+              </button>
+              {wsMenuOpen && (
+                <div className="workspace-bar__menu" role="menu">
+                  <button
+                    type="button"
+                    className="workspace-bar__menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      openNewWorkspace();
+                      setWsMenuOpen(false);
+                    }}
+                  >
+                    <PixelIcon name="plus" size={12} />
+                    <span>Novo workspace</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="workspace-bar__menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      askCloseWorkspace();
+                      setWsMenuOpen(false);
+                    }}
+                  >
+                    <PixelIcon name="close" size={12} />
+                    <span>Fechar workspace</span>
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               type="button"
-              className="workspace-bar__name-btn"
-              title={workspace.path}
-              aria-haspopup="menu"
-              aria-expanded={wsMenuOpen}
-              onClick={() => {
-                setWsMenuOpen((o) => !o);
-                setMoreOpen(false);
-              }}
+              className="workspace-bar__new-workspace"
+              title="Criar e abrir um novo workspace"
+              aria-label="Novo workspace"
+              onClick={openNewWorkspace}
             >
-              <span className="workspace-bar__name">{workspace.name}</span>
-              <span className="workspace-bar__name-caret" aria-hidden="true">
-                ▾
-              </span>
+              <PixelIcon name="plus" size={12} />
+              <span>Novo workspace</span>
             </button>
-            {wsMenuOpen && (
-              <div className="workspace-bar__menu" role="menu">
-                <button
-                  type="button"
-                  className="workspace-bar__menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    openNewWorkspace();
-                    setWsMenuOpen(false);
-                  }}
-                >
-                  <PixelIcon name="plus" size={12} />
-                  <span>Novo workspace</span>
-                </button>
-                <button
-                  type="button"
-                  className="workspace-bar__menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    askCloseWorkspace();
-                    setWsMenuOpen(false);
-                  }}
-                >
-                  <PixelIcon name="close" size={12} />
-                  <span>Fechar workspace</span>
-                </button>
-              </div>
-            )}
-          </div>
+          </>
         ) : (
           <span className="workspace-bar__name">NexusIDE</span>
         )}

@@ -951,12 +951,14 @@ export class LiveTransportController {
       logVoice(
         'warn',
         'live.toolTurnCompletionDeadline',
-        'provider não concluiu a tool; liberando follow-up pelo prazo local',
+        'provider não concluiu a tool; liberando follow-up local sem cortar a narração',
         { callId: pending.callId, turnId: pending.turnId },
       );
-      // Do not let a late provider narration overlap the deterministic local
-      // fallback that begins after this completion event.
-      this._provider?.interrupt();
+      // This deadline is a renderer-unblock fallback, not a cancellation.
+      // Gemini can legitimately narrate after accepting the tool result. The
+      // old interrupt() cut that narration and made a successful action look
+      // like a silent/stuck Jarvis. Delivery ids and turn correlation already
+      // protect the renderer from stale audio, so keep the provider alive.
       this.emitToolTurnComplete('deadline');
     }, TOOL_FOLLOW_UP_COMPLETION_DEADLINE_MS);
   }

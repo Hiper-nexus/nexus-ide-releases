@@ -29,6 +29,17 @@ describe('follow-up authority wiring', () => {
     expect(controller).toContain('followUpAuthority.isAuthorized()');
   });
 
+  it('keeps passive STT out of an active reply even after its short bridge expires', () => {
+    expect(controller).toContain("activeCaptureReason === 'reply'");
+    expect(controller).toContain("voiceStatus === 'transcribing'");
+    expect(controller).toContain('wake.passiveOwnedByLive');
+  });
+
+  it('permits local recovery for the reply capture itself, not for passive audio', () => {
+    expect(finish).toContain("followUpAuthorized: activeCaptureReason === 'reply'");
+    expect(finish).toContain('The capture is already the authorization boundary');
+  });
+
   it('does not stream automatic reply audio before local validation', () => {
     expect(controller).toContain("!followUpAuthority.isAuthorized()");
   });

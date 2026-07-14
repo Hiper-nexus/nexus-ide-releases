@@ -80,6 +80,11 @@ describe('MCP effect policy', () => {
     expect(effectPolicyForTool('nexus_terminal_kill')).toBe('mission-control');
   });
 
+  it('permits only the narrow renderer-owned repository sync before a mission', () => {
+    expect(effectPolicyForTool('nexus_git_sync')).toBe('routine-local-operation');
+    expect(requiresHumanConfirmationForTool('nexus_git_sync')).toBe(false);
+  });
+
   it('treats every unclassified or newly added tool as a mission effect', () => {
     expect(effectPolicyForTool('nexus_future_unknown_tool')).toBe('mission-effect');
   });

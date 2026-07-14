@@ -5,7 +5,6 @@ import { OperatorSprite, type OperatorMood } from '../components/OperatorSprite'
 import { CustomPetSprite } from './CustomPetSprite';
 import { SheetPetSprite, type SheetAnim } from './SheetPetSprite';
 import {
-  BALLOON_DURATION_MS,
   EMPTY_BALLOON_QUEUE,
   dismissBalloon,
   enqueueBalloon,
@@ -26,8 +25,11 @@ import { PET_INTERACTIVE_SELECTOR } from './pet-hit-test';
 
 /** Sprite compacto no desktop (evita o pet “gigante” em monitores 1x/2x). */
 const SPRITE_SIZE = 96;
-/** Altura do sheet no desktop — compacta; full-res usa smooth scale. */
-const SHEET_SIZE = 120;
+/**
+ * Altura do sheet no desktop. 144px dá presença aos pets v2 cujo personagem
+ * usa margem segura no atlas, sem invadir a área de trabalho.
+ */
+const SHEET_SIZE = 144;
 /** Limiar baixo: o utilizador reportava ter de “forçar” o rato para arrastar. */
 const DRAG_THRESHOLD_PX = 2;
 /** Re-sync IPC no máximo a cada N ms enquanto o cursor está sobre o hit. */
@@ -194,33 +196,23 @@ export function PetApp() {
     };
   }, [markInteractive]);
 
-  // Balão atual expira sozinho e promove o próximo da fila. A expiração pode
-  // acontecer com o cursor sobre o balão (nenhum mouseleave dispara): solta o
-  // click-through sem matar o hit se o rato ainda está no sprite.
+  // Um aviso é uma pendência, não um toast: permanece até o usuário clicar
+  // em sua ação, em "Depois" ou no próprio pet. Isso evita perder um alerta
+  // enquanto o usuário muda de tela ou lê o contexto da missão.
   const currentBalloon = balloons.current;
   const currentBalloonId = currentBalloon?.id ?? null;
-  const balloonDuration =
-    currentBalloon?.durationMs ?? BALLOON_DURATION_MS;
 
   useEffect(() => {
     if (currentBalloonId === null) return undefined;
     const shownFrame = window.requestAnimationFrame(() => {
       if (currentBalloon) window.nexusPet.eventShown(currentBalloon.kind);
     });
-    const timer = window.setTimeout(() => {
-      setBalloons(dismissBalloon);
-      releaseInteractiveAfterOverlay();
-      setReaction((r) => (r === 'waiting' ? null : r));
-    }, balloonDuration);
     return () => {
       window.cancelAnimationFrame(shownFrame);
-      window.clearTimeout(timer);
     };
   }, [
     currentBalloon,
     currentBalloonId,
-    balloonDuration,
-    releaseInteractiveAfterOverlay,
   ]);
 
   const dismissAndAct = useCallback((action: 'focus-main' | 'open-ops') => {

@@ -1,4 +1,4 @@
-import pcmWorkletUrl from './pcm-processor.js?url';
+import { PCM_WORKLET_NODE_NAME, pcmWorkletBlobUrl } from './pcm-worklet';
 import {
   mergeChunks,
   downsample,
@@ -624,15 +624,15 @@ export class WakeMic {
     };
 
     try {
-      await this.ctx.audioWorklet.addModule(pcmWorkletUrl);
-      const node = new AudioWorkletNode(this.ctx, 'nexus-pcm-processor');
+      await this.ctx.audioWorklet.addModule(pcmWorkletBlobUrl());
+      const node = new AudioWorkletNode(this.ctx, PCM_WORKLET_NODE_NAME);
       node.port.onmessage = (e: MessageEvent<Float32Array>) => onFrame(e.data);
       this.source.connect(node);
       node.connect(this.ctx.destination);
       this.worklet = node;
       this.log('info', 'mic.processor', 'audio-worklet ativo');
     } catch (err) {
-      this.log('warn', 'mic.processorFallback', 'AudioWorklet falhou; usando ScriptProcessor', {
+      this.log('warn', 'mic.workletFallback', 'AudioWorklet falhou; usando ScriptProcessor', {
         error: err instanceof Error ? err.message : String(err),
       });
       const node = this.ctx.createScriptProcessor(4096, 2, 1);

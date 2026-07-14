@@ -1238,7 +1238,10 @@ describe('LiveTransportController', () => {
       turnId: 'tool-turn-deadline',
       callId: 'call_deadline',
     });
-    expect(provider.interrupt).toHaveBeenCalledOnce();
+    // The local completion is only a renderer-unblock fallback. It must not
+    // interrupt Gemini: a late narration is still valid audio and cutting it
+    // here was the source of "action happened, then Jarvis went silent".
+    expect(provider.interrupt).not.toHaveBeenCalled();
 
     // A late provider callback is harmless and must not emit twice.
     provider.fireResponseDone();
