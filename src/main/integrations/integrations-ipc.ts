@@ -2,9 +2,14 @@
  * Integrations IPC — forge PR, GitHub/Linear issues, git diff, port forward, remote worktree.
  */
 import { ipcMain, dialog, BrowserWindow } from 'electron';
+import { porcelainZToLf } from '../../shared/git-scm';
 import {
   INTEGRATIONS_CHANNELS,
   createPrSchema,
+  gitCommitSchema,
+  gitFileDiffSchema,
+  gitLogSchema,
+  gitPathsSchema,
   listIssuesSchema,
   portForwardSchema,
   remoteWorktreeSchema,
@@ -21,10 +26,15 @@ import {
 } from './github-api';
 import { listLinearIssues } from './linear-api';
 import {
+  gitCommitMessage,
   gitCurrentBranch,
   gitDiff,
+  gitFileDiff,
+  gitLogOneline,
   gitRemoteOrigin,
-  gitStatusShort,
+  gitScmStatus,
+  gitStage,
+  gitUnstage,
   parseGithubRepo,
 } from './git-workspace';
 import {
@@ -84,12 +94,66 @@ export function registerIntegrationsIpc(): void {
   ipcMain.handle(INTEGRATIONS_CHANNELS.gitStatus, (event) => {
     try {
       const cwd = workspaceCwd(event);
+      const scm = gitScmStatus(cwd);
+      if (!scm.ok) return scm;
+      // Legacy callers expect a printable LF `status` string.
       return {
-        ok: true as const,
-        status: gitStatusShort(cwd),
-        branch: gitCurrentBranch(cwd),
-        remote: gitRemoteOrigin(cwd),
+        ...scm,
+        status: porcelainZToLf(scm.raw),
       };
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitStage, (event, raw) => {
+    const parsed = gitPathsSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false as const, error: 'invalid paths' };
+    try {
+      return gitStage(workspaceCwd(event), parsed.data.paths);
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitUnstage, (event, raw) => {
+    const parsed = gitPathsSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false as const, error: 'invalid paths' };
+    try {
+      return gitUnstage(workspaceCwd(event), parsed.data.paths);
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitCommit, (event, raw) => {
+    const parsed = gitCommitSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false as const, error: 'invalid commit message' };
+    try {
+      return gitCommitMessage(workspaceCwd(event), parsed.data.message);
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitLog, (event, raw) => {
+    const parsed = gitLogSchema.safeParse(raw ?? {});
+    if (!parsed.success) return { ok: false as const, error: 'invalid log request' };
+    try {
+      return gitLogOneline(workspaceCwd(event), parsed.data.count);
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitFileDiff, (event, raw) => {
+    const parsed = gitFileDiffSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false as const, error: 'invalid diff request' };
+    try {
+      return gitFileDiff(workspaceCwd(event), parsed.data.path, {
+        staged: parsed.data.staged,
+        untracked: parsed.data.untracked,
+      });
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
     }

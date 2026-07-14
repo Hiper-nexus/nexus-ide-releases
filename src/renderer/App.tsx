@@ -77,6 +77,7 @@ import {
   SkillsPanelBody,
 } from './components/product/ProductPanelBodies';
 import { MissionJournalPanel } from './components/product/MissionJournalPanel';
+import { GitPanelBody } from './components/GitPanelBody';
 import type { LAUNCHER_MODES } from '../shared/progressive-onboarding';
 import type { ContextualTab } from '../shared/contextual-panel';
 import { applyProgressiveLaunchIfPending } from './lib/progressive-launch';
@@ -442,6 +443,7 @@ export function App() {
             browser: <McpHubPanelBody />,
             memory: <MemoryPanelBody />,
             mission: <MissionJournalPanel />,
+            git: <GitPanelBody />,
           }}
         />
       </main>

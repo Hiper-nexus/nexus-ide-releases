@@ -49,7 +49,7 @@ export const CONTEXTUAL_TAB_COPY: Record<
   },
   git: {
     title: 'Git',
-    empty: 'Sem status do repositório ainda.',
+    empty: 'Sem status do repositório ainda. Abra um workspace com git.',
     loading: 'Lendo git status…',
   },
   skills: {

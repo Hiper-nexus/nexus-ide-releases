@@ -571,6 +571,7 @@ import type {
   TeamInfo,
 } from './billing-types';
 
+import type { IntegrationsApi } from './integrations-api';
 export interface NexusApi {
   /** Desktop pet (companion flutuante): prefs + pedido de abrir Settings. */
   pet: {
@@ -1102,64 +1103,8 @@ export interface NexusApi {
       expectedContentHash?: string;
     }): Promise<unknown>;
   };
-  /** GitHub / Linear / diff / SSH port-forward integrations (Sprint A–C). */
-  integrations: {
-    hasGithubToken(): Promise<boolean>;
-    hasLinearKey(): Promise<boolean>;
-    setGithubToken(token: string): Promise<{ ok: boolean; error?: string }>;
-    setLinearKey(token: string): Promise<{ ok: boolean; error?: string }>;
-    gitDiff(): Promise<
-      | { ok: true; diff: string; branch: string | null; remote: string | null }
-      | { ok: false; error: string }
-    >;
-    gitStatus(): Promise<
-      | { ok: true; status: string; branch: string | null; remote: string | null }
-      | { ok: false; error: string }
-    >;
-    createPr(req: {
-      title: string;
-      body?: string;
-      sourceBranch?: string;
-      targetBranch?: string;
-      draft?: boolean;
-    }): Promise<{ ok: true; url: string; number: number } | { ok: false; error: string }>;
-    listPrs(): Promise<
-      | { ok: true; prs: Array<{ number: number; title: string; url: string; state: string; sourceBranch: string; targetBranch: string }> }
-      | { ok: false; error: string }
-    >;
-    listGithubIssues(opts?: {
-      limit?: number;
-      state?: 'open' | 'closed' | 'all';
-    }): Promise<
-      | { ok: true; issues: Array<{ id: string; provider: 'github' | 'linear'; number?: number; title: string; url: string; state: string; labels: string[] }> }
-      | { ok: false; error: string }
-    >;
-    listLinearIssues(opts?: {
-      limit?: number;
-    }): Promise<
-      | { ok: true; issues: Array<{ id: string; provider: 'github' | 'linear'; number?: number; title: string; url: string; state: string; labels: string[] }> }
-      | { ok: false; error: string }
-    >;
-    startPortForward(req: {
-      localPort: number;
-      remoteHost?: string;
-      remotePort: number;
-      label?: string;
-    }): Promise<
-      | { ok: true; info: { id: string; localPort: number; remoteHost: string; remotePort: number; label?: string; localUrl: string } }
-      | { ok: false; error: string }
-    >;
-    listPortForwards(): Promise<
-      Array<{ id: string; localPort: number; remoteHost: string; remotePort: number; label?: string; localUrl: string }>
-    >;
-    closePortForward(id: string): Promise<{ ok: boolean }>;
-    remoteWorktreeCreate(req: {
-      host: string;
-      username: string;
-      remotePath: string;
-      branch?: string;
-    }): Promise<{ ok: true; path: string } | { ok: false; error: string }>;
-  };
+  /** GitHub / Linear / git SCM / SSH (see integrations-api.ts). */
+  integrations: IntegrationsApi;
   accounts: {
     list(): Promise<AccountInfo[]>;
     quota(): Promise<AccountQuotaInfo[]>;

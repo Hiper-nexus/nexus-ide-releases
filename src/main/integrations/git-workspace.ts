@@ -1,5 +1,6 @@
 /**
- * Pure helpers: git status / diff / branch / remote for the active workspace.
+ * Pure helpers: git status / diff / branch / remote / stage / commit for the
+ * active workspace (Source Control UI + integrations).
  *
  * The workspace path is trusted, but the repository CONTENTS are not: a cloned
  * repo can carry executable local config (`core.fsmonitor`, a `.gitattributes`
@@ -9,10 +10,23 @@
  * and the untrusted status/diff reads additionally refuse a repo whose local
  * config is executable.
  */
+import {
+  assertSafeGitPathspec,
+  parseGitLogOneline,
+  parsePorcelainV1,
+  truncateDiff,
+  type GitCommitResult,
+  type GitFileDiffResult,
+  type GitLogResult,
+  type GitMutateResult,
+  type GitStatusResult,
+} from '../../shared/git-scm';
 import { parseHostedRemote } from '../git/hosted-remote-url';
 import { ProcessGitRunner, assertSafeLocalGitConfig } from '../runtime/git-command';
 
 const runner = new ProcessGitRunner();
+const MAX_COMMIT_MESSAGE = 4096;
+const MAX_PATHS = 500;
 
 function git(
   cwd: string,
@@ -31,6 +45,30 @@ function git(
   }
 }
 
+function refuseUnsafeConfig(cwd: string): string | null {
+  try {
+    assertSafeLocalGitConfig(runner, cwd);
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : 'unsafe repository';
+  }
+}
+
+function normalizePaths(paths: string[]): string[] | { error: string } {
+  if (!Array.isArray(paths) || paths.length === 0) {
+    return { error: 'paths required' };
+  }
+  if (paths.length > MAX_PATHS) {
+    return { error: `too many paths (max ${MAX_PATHS})` };
+  }
+  try {
+    for (const p of paths) assertSafeGitPathspec(p);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+  return paths;
+}
+
 export function gitCurrentBranch(cwd: string): string | null {
   const r = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
   if (!r.ok) return null;
@@ -45,11 +83,8 @@ export function gitRemoteOrigin(cwd: string): string | null {
 }
 
 export function gitDiff(cwd: string, staged = false): { ok: true; diff: string } | { ok: false; error: string } {
-  try {
-    assertSafeLocalGitConfig(runner, cwd);
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'unsafe repository' };
-  }
+  const unsafe = refuseUnsafeConfig(cwd);
+  if (unsafe) return { ok: false, error: unsafe };
   // --no-ext-diff blocks a repo-supplied external diff driver from running.
   const args = staged
     ? ['diff', '--no-ext-diff', '--cached']
@@ -62,14 +97,103 @@ export function gitDiff(cwd: string, staged = false): { ok: true; diff: string }
   return { ok: true, diff: r.stdout };
 }
 
-export function gitStatusShort(cwd: string): string {
-  try {
-    assertSafeLocalGitConfig(runner, cwd);
-  } catch (err) {
-    return err instanceof Error ? err.message : 'unsafe repository';
+/** Structured status for the Source Control panel. */
+export function gitScmStatus(cwd: string): GitStatusResult {
+  const unsafe = refuseUnsafeConfig(cwd);
+  if (unsafe) return { ok: false, error: unsafe };
+  // -z: NUL-terminated paths (no C-quoting) — required for spaces/unicode.
+  const r = git(cwd, [
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=normal',
+  ]);
+  if (!r.ok) {
+    return { ok: false, error: r.stderr.trim() || `git status exit ${r.code}` };
   }
-  const r = git(cwd, ['status', '--short']);
-  return r.ok ? r.stdout : r.stderr;
+  const parsed = parsePorcelainV1(r.stdout);
+  return {
+    ok: true,
+    branch: gitCurrentBranch(cwd),
+    remote: gitRemoteOrigin(cwd),
+    ...parsed,
+  };
+}
+
+export function gitStage(cwd: string, paths: string[]): GitMutateResult {
+  const unsafe = refuseUnsafeConfig(cwd);
+  if (unsafe) return { ok: false, error: unsafe };
+  const normalized = normalizePaths(paths);
+  if ('error' in normalized) return { ok: false, error: normalized.error };
+  const r = git(cwd, ['add', '--', ...normalized]);
+  if (!r.ok) return { ok: false, error: r.stderr.trim() || `git add exit ${r.code}` };
+  return { ok: true };
+}
+
+export function gitUnstage(cwd: string, paths: string[]): GitMutateResult {
+  const unsafe = refuseUnsafeConfig(cwd);
+  if (unsafe) return { ok: false, error: unsafe };
+  const normalized = normalizePaths(paths);
+  if ('error' in normalized) return { ok: false, error: normalized.error };
+  const r = git(cwd, ['restore', '--staged', '--', ...normalized]);
+  if (!r.ok) {
+    return {
+      ok: false,
+      error: r.stderr.trim() || `git restore --staged exit ${r.code}`,
+    };
+  }
+  return { ok: true };
+}
+
+export function gitCommitMessage(cwd: string, message: string): GitCommitResult {
+  const unsafe = refuseUnsafeConfig(cwd);
+  if (unsafe) return { ok: false, error: unsafe };
+  const msg = message.trim();
+  if (!msg) return { ok: false, error: 'commit message required' };
+  if (msg.length > MAX_COMMIT_MESSAGE) {
+    return { ok: false, error: `commit message too long (max ${MAX_COMMIT_MESSAGE})` };
+  }
+  if (/[\0]/.test(msg)) return { ok: false, error: 'commit message contains NUL' };
+  const r = git(cwd, ['commit', '-m', msg]);
+  if (!r.ok) {
+    return { ok: false, error: r.stderr.trim() || r.stdout.trim() || `git commit exit ${r.code}` };
+  }
+  return { ok: true, summary: r.stdout.trim() || 'committed' };
+}
+
+export function gitLogOneline(cwd: string, count = 20): GitLogResult {
+  const unsafe = refuseUnsafeConfig(cwd);
+  if (unsafe) return { ok: false, error: unsafe };
+  const n = Number.isInteger(count) && count > 0 ? Math.min(count, 100) : 20;
+  const r = git(cwd, ['log', '--oneline', '-n', String(n)]);
+  if (!r.ok) return { ok: false, error: r.stderr.trim() || `git log exit ${r.code}` };
+  return { ok: true, commits: parseGitLogOneline(r.stdout) };
+}
+
+export function gitFileDiff(
+  cwd: string,
+  path: string,
+  opts: { staged?: boolean; untracked?: boolean } = {},
+): GitFileDiffResult {
+  const unsafe = refuseUnsafeConfig(cwd);
+  if (unsafe) return { ok: false, error: unsafe };
+  try {
+    assertSafeGitPathspec(path);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  if (opts.untracked) {
+    return { ok: true, diff: '', untracked: true };
+  }
+  const args = opts.staged
+    ? ['diff', '--no-ext-diff', '--cached', '--', path]
+    : ['diff', '--no-ext-diff', 'HEAD', '--', path];
+  const r = git(cwd, args);
+  if (r.code !== 0 && r.code !== 1) {
+    return { ok: false, error: r.stderr.trim() || `git diff exit ${r.code}` };
+  }
+  const { diff, truncated } = truncateDiff(r.stdout);
+  return { ok: true, diff, truncated };
 }
 
 export function parseGithubRepo(

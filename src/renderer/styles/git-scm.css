@@ -1,0 +1,330 @@
+/* Source Control (ContextualPanel → Git) */
+
+.git-scm {
+  gap: 10px;
+}
+
+.git-scm__tabpanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  flex: 1;
+}
+
+.git-scm__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-scm__repo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.git-scm__repo-path {
+  font-size: 11px;
+  color: var(--text, #d7dfec);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-scm__branch {
+  font-size: 10px;
+  color: var(--accent, #45d7ff);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.git-scm__tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border, #1d2637);
+  padding-bottom: 6px;
+}
+
+.git-scm__tabs button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-dim, #8a94aa);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.git-scm__tabs button.is-active {
+  color: var(--text, #d7dfec);
+  background: color-mix(in srgb, var(--accent, #45d7ff) 14%, transparent);
+}
+
+.git-scm__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--text-secondary, #a1a1aa);
+}
+
+.git-scm__check {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  color: #4ade80;
+  background: color-mix(in srgb, #4ade80 16%, transparent);
+  margin-bottom: 4px;
+}
+
+.git-scm__empty h3 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text, #d7dfec);
+}
+
+.git-scm__empty p {
+  margin: 0;
+  font-size: 11px;
+}
+
+.git-scm__lists {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  flex: 0 1 auto;
+  max-height: 36%;
+}
+
+.git-scm__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.git-scm__section-head h4 {
+  margin: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim, #8a94aa);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.git-scm__count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #a1a1aa);
+}
+
+.git-scm__link {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--accent, #45d7ff);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.git-scm__files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.git-scm__file {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  border-radius: 6px;
+}
+
+.git-scm__file.is-selected {
+  background: color-mix(in srgb, var(--accent, #45d7ff) 12%, transparent);
+}
+
+.git-scm__file-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 6px;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.git-scm__file-main:hover {
+  background: color-mix(in srgb, var(--bg-elevated, #101623) 80%, transparent);
+}
+
+.git-scm__code {
+  grid-row: 1 / span 2;
+  align-self: center;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #fbbf24;
+}
+
+.git-scm__code[data-status='A'],
+.git-scm__code[data-status='?'] {
+  color: #4ade80;
+}
+
+.git-scm__code[data-status='D'] {
+  color: #f87171;
+}
+
+.git-scm__name {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-scm__path {
+  grid-column: 2;
+  font-size: 10px;
+  color: var(--text-dim, #8a94aa);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-scm__file-action {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-dim, #8a94aa);
+  width: 28px;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.git-scm__file-action:hover {
+  color: var(--accent, #45d7ff);
+  background: color-mix(in srgb, var(--accent, #45d7ff) 12%, transparent);
+}
+
+.git-scm__diff {
+  flex: 1;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border, #1d2637);
+  border-radius: var(--radius, 8px);
+  overflow: hidden;
+  background: color-mix(in srgb, var(--bg, #0a0e15) 80%, #000);
+}
+
+.git-scm__diff-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border, #1d2637);
+}
+
+.git-scm__diff-head h4 {
+  margin: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim, #8a94aa);
+}
+
+.git-scm__diff-path {
+  font-size: 10px;
+  color: var(--text-secondary, #a1a1aa);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-scm__diff-body {
+  margin: 0;
+  padding: 8px;
+  flex: 1;
+  overflow: auto;
+  font-size: 10px;
+  line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre;
+  color: var(--text, #d7dfec);
+}
+
+.git-scm__diff-placeholder {
+  margin: auto;
+  padding: 16px;
+  font-size: 11px;
+  color: var(--text-dim, #8a94aa);
+  text-align: center;
+}
+
+.git-scm__commit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.git-scm__message {
+  min-height: 64px;
+  resize: vertical;
+}
+
+.git-scm__commit-btn {
+  background: color-mix(in srgb, #22c55e 28%, transparent);
+  border-color: color-mix(in srgb, #22c55e 45%, var(--border-strong, #2c3a55));
+  color: #bbf7d0;
+  font-weight: 600;
+}
+
+.git-scm__commit-btn:hover:not(:disabled) {
+  color: #dcfce7;
+  border-color: #4ade80;
+}
+
+.git-scm__history {
+  overflow: auto;
+}
+
+.git-scm__commit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.git-scm__hash {
+  font-size: 10px;
+  color: var(--accent, #45d7ff);
+}

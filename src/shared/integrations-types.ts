@@ -3,6 +3,29 @@
  * Secret-free types only — tokens never cross to the renderer.
  */
 import { z } from 'zod';
+import { assertSafeGitPathspec } from './git-scm';
+
+export type {
+  GitCommitResult,
+  GitFileChange,
+  GitFileDiffResult,
+  GitLogEntry,
+  GitLogResult,
+  GitMutateResult,
+  GitScmSnapshot,
+  GitStatusResult,
+} from './git-scm';
+
+function safePathspec(value: string, ctx: z.RefinementCtx): void {
+  try {
+    assertSafeGitPathspec(value);
+  } catch (err) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: err instanceof Error ? err.message : 'invalid pathspec',
+    });
+  }
+}
 
 export const INTEGRATIONS_CHANNELS = {
   forgeCreatePr: 'integrations:forge.createPr',
@@ -12,6 +35,11 @@ export const INTEGRATIONS_CHANNELS = {
   linearSetKey: 'integrations:linear.setKey',
   gitDiff: 'integrations:git.diff',
   gitStatus: 'integrations:git.status',
+  gitStage: 'integrations:git.stage',
+  gitUnstage: 'integrations:git.unstage',
+  gitCommit: 'integrations:git.commit',
+  gitLog: 'integrations:git.log',
+  gitFileDiff: 'integrations:git.fileDiff',
   setGithubToken: 'integrations:github.setToken',
   hasGithubToken: 'integrations:github.hasToken',
   hasLinearKey: 'integrations:linear.hasKey',
@@ -115,4 +143,25 @@ export const remoteWorktreeSchema = z.object({
   username: z.string().min(1).max(128),
   remotePath: z.string().min(1).max(4096),
   branch: z.string().max(256).optional(),
+});
+
+export const gitPathsSchema = z.object({
+  paths: z
+    .array(z.string().min(1).max(4096).superRefine(safePathspec))
+    .min(1)
+    .max(500),
+});
+
+export const gitCommitSchema = z.object({
+  message: z.string().min(1).max(4096),
+});
+
+export const gitLogSchema = z.object({
+  count: z.number().int().min(1).max(100).default(20),
+});
+
+export const gitFileDiffSchema = z.object({
+  path: z.string().min(1).max(4096).superRefine(safePathspec),
+  staged: z.boolean().optional(),
+  untracked: z.boolean().optional(),
 });

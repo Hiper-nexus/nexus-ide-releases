@@ -39,7 +39,7 @@ import type { OrientationSnapshot } from '../shared/orientation-types';
 import { PROVIDER_CHANNELS } from '../shared/provider-settings-types';
 import type { ProviderSettingsInfo } from '../shared/provider-settings-types';
 import { FILES_CHANNELS } from '../shared/files-types';
-import { INTEGRATIONS_CHANNELS } from '../shared/integrations-types';
+import { createIntegrationsBridge } from './integrations-bridge';
 import { ACCOUNT_CHANNELS } from '../shared/account-types';
 import type {
   AccountActivatedEvent,
@@ -908,29 +908,7 @@ const api: NexusApi = {
     editorApply: (input) =>
       ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.editorApply, input),
   },
-  integrations: {
-    hasGithubToken: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.hasGithubToken),
-    hasLinearKey: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.hasLinearKey),
-    setGithubToken: (token: string) =>
-      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.setGithubToken, { token }),
-    setLinearKey: (token: string) =>
-      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.linearSetKey, { token }),
-    gitDiff: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitDiff),
-    gitStatus: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitStatus),
-    createPr: (req) => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeCreatePr, req),
-    listPrs: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeListPrs),
-    listGithubIssues: (opts) =>
-      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.githubListIssues, opts ?? {}),
-    listLinearIssues: (opts) =>
-      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.linearListIssues, opts ?? {}),
-    startPortForward: (req) =>
-      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.sshPortForward, req),
-    listPortForwards: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.sshPortForwardList),
-    closePortForward: (id: string) =>
-      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.sshPortForwardClose, id),
-    remoteWorktreeCreate: (req) =>
-      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.remoteWorktreeCreate, req),
-  },
+  integrations: createIntegrationsBridge(ipcRenderer),
   accounts: {
     list: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.list),
     quota: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.quota) as Promise<AccountQuotaInfo[]>,
