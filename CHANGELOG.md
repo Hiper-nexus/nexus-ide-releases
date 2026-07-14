@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.15.14 — Missão Enxuta: Prompt Proporcional e Start em Um Clique
+
+Data: 2026-07-14
+
+- Kickoff intent-first sem duplicação: a memória compacta só entra quando a
+  missão tem progresso real, e o critério auto-derivado deixa de reencenar o
+  objetivo — missão curta deixa de repetir o goal até 3× no mesmo prompt.
+- Cartas de worker em camadas por papel/tarefa: scout/architect não pagam
+  cartas de build (~8 KB), reviewer dispensa a escada de diff e a carta de
+  design só acompanha tarefas com sinal de UI. Toggles de Configurações
+  continuam sendo o gate externo; PREVC, budgets e gates intactos.
+- Missão de risco normal inicia em um clique: "Começar missão" compila e
+  despacha direto de `ready_to_start`; "Revisar plano" preserva a revisão em
+  duas etapas e aprovação sensível/destrutiva permanece obrigatória.
+- Wizard fala humano: o estado da fila vira "Processando o objetivo…" em vez
+  de `exec=goal_compile:running`, e some quando não há nada em andamento.
+- Kickoff legado não trava mais em mapa frio: o warm de orientação tem teto de
+  4 s e cai no fallback "mapa aquecendo" (doctor recupera sob demanda).
+- Playbook com proporcionalidade explícita: missão pequena é UMA tarefa e UM
+  especialista.
+
 ## 0.15.13 — Dock-First Keychain-Safe Launch
 
 Data: 2026-07-14

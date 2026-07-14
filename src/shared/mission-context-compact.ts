@@ -212,6 +212,24 @@ export function compactMissionContext(input: {
   return { ...compact, charCount: rendered.length };
 }
 
+/**
+ * True when the compact carries memory beyond goal/criteria (progress,
+ * learnings, decisions, files). A freshly dispatched mission has none — its
+ * goal and criteria already live in the kickoff, so rendering the compact
+ * there would only duplicate them.
+ */
+export function missionCompactHasProgress(compact: MissionCompact): boolean {
+  return (
+    compact.completed.length > 0 ||
+    compact.inProgress.length > 0 ||
+    compact.blocked.length > 0 ||
+    compact.learnings.length > 0 ||
+    compact.decisions.length > 0 ||
+    compact.nextSteps.length > 0 ||
+    compact.files.length > 0
+  );
+}
+
 /** Markdown packing for prompts (layers: invariants stay elsewhere). */
 export function renderMissionCompact(compact: MissionCompact): string {
   const lines: string[] = [

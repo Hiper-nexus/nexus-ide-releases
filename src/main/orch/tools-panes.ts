@@ -200,6 +200,7 @@ const paneSpawn: McpToolDef = {
         missionId: requestedMissionId,
         contextRevision: ctx.contextRevision,
         agentName: agent.agentName,
+        agentCategory: agent.category,
         allowedTools: attenuateTools(
           ctx.allowedTools,
           agent.allowedTools ?? (role === 'orchestrator' ? null : []),

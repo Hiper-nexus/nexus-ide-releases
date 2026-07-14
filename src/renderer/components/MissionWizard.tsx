@@ -76,6 +76,23 @@ function workerCount(squad: Squad): string {
   return hasOrch ? `orq + ${workers} worker${workers === 1 ? '' : 's'}` : `${workers} agentes`;
 }
 
+/** FALE HUMANO also applies to the wizard: never leak queue jargon in the UI. */
+function humanPromptQueueActivity(kind: string): string {
+  switch (kind) {
+    case 'user_goal':
+    case 'voice_goal':
+      return 'Processando o objetivo';
+    case 'user_message':
+    case 'voice_message':
+      return 'Processando sua mensagem';
+    case 'preflight':
+    case 'bootstrap':
+      return 'Preparando o projeto';
+    default:
+      return 'Trabalhando em segundo plano';
+  }
+}
+
 export function MissionWizard() {
   const open = useMissionWizardStore((s) => s.open);
   const variant = useMissionWizardStore((s) => s.variant);
@@ -122,9 +139,12 @@ export function MissionWizard() {
     'idle' | 'running' | 'ready' | 'cancelled' | 'error'
   >('idle');
   const [prepareDetail, setPrepareDetail] = useState<string | null>(null);
-  /** Intent prompt queue surface: executing / queued / cancelled counts. */
+  /** Human summary of the mission prompt queue (null while idle). */
   const [promptQueueHint, setPromptQueueHint] = useState<string | null>(null);
   const prepareGenerationRef = useRef(0);
+  // Suppress the broadcast-driven jump to the plan step while this wizard is
+  // already dispatching the freshly compiled goal (one-click start).
+  const autoDispatchingRef = useRef(false);
   // Modo Agêntico: intenção em linguagem natural + estado do arquiteto.
   const [intent, setIntent] = useState('');
   const [designing, setDesigning] = useState(false);
@@ -147,6 +167,7 @@ export function MissionWizard() {
       snapshot?.intentContract?.intentVersion === snapshot?.intentVersion;
     if (
       !open ||
+      autoDispatchingRef.current ||
       !snapshot ||
       !isReviewable ||
       !isCurrent ||
@@ -164,7 +185,8 @@ export function MissionWizard() {
     plannedMission?.intentVersion,
   ]);
 
-  // Surface prompt-queue state (executing / queued / cancelled) while composing.
+  // Surface prompt-queue state while composing — human copy only, and only
+  // when something is actually happening (idle queues render nothing).
   useEffect(() => {
     if (!open || step !== 'intent-compose' || !armedMissionId) {
       setPromptQueueHint(null);
@@ -176,12 +198,18 @@ export function MissionWizard() {
         .getMissionPromptQueue?.({ missionId: armedMissionId })
         .then((snap) => {
           if (cancelled || !snap) return;
-          const exec = snap.executing
-            ? `${snap.executing.kind}:${snap.executing.status}`
-            : '—';
-          setPromptQueueHint(
-            `Fila da missão · exec=${exec} · queued=${snap.queued.length} · cancelled=${snap.cancelled.length}`,
-          );
+          const parts: string[] = [];
+          if (snap.executing) {
+            parts.push(`${humanPromptQueueActivity(snap.executing.kind)}…`);
+          }
+          if (snap.queued.length > 0) {
+            parts.push(
+              snap.queued.length === 1
+                ? '1 pedido aguardando'
+                : `${snap.queued.length} pedidos aguardando`,
+            );
+          }
+          setPromptQueueHint(parts.length > 0 ? parts.join(' · ') : null);
         })
         .catch(() => {
           /* optional API */
@@ -650,7 +678,14 @@ export function MissionWizard() {
     }
   }
 
-  async function handleSubmitMissionGoal() {
+  /**
+   * Compile the goal and, for missions that land ready_to_start (risco
+   * normal), dispatch in the same click — a short mission should cost one
+   * action, not two screens. Sensitive/destructive goals still stop at the
+   * plan step for explicit approval, and "Revisar plano" keeps the two-step
+   * flow available for anyone who wants to inspect the contract first.
+   */
+  async function handleSubmitMissionGoal(options?: { reviewPlan?: boolean }) {
     if (spawning || !armedMissionId || !missionGoal.trim()) return;
     if (prepareStatus === 'running') {
       prepareGenerationRef.current += 1;
@@ -664,6 +699,15 @@ export function MissionWizard() {
         source: 'typed',
       });
       setPlannedMission(planned);
+      if (!options?.reviewPlan && planned.intentState === 'ready_to_start') {
+        autoDispatchingRef.current = true;
+        try {
+          const dispatched = await dispatchPlannedMission(planned);
+          if (dispatched) return;
+        } finally {
+          autoDispatchingRef.current = false;
+        }
+      }
       setStep('intent-plan');
     } catch (cause) {
       const message =
@@ -728,56 +772,70 @@ export function MissionWizard() {
     close();
   }
 
+  /** Shared dispatch core (plan step and one-click start). True = launched. */
+  async function dispatchPlannedMission(planned: Mission): Promise<boolean> {
+    if (!selectedSquad || !planned.id) return false;
+    const contract = planned.intentContract;
+    if (!contract?.goal) {
+      setError('Contrato de intenção ausente antes do despacho.');
+      return false;
+    }
+    const effectiveSquad: Squad = { ...selectedSquad, agents: roster };
+    const {
+      compactMissionContext,
+      missionCompactHasProgress,
+      renderMissionCompact,
+    } = await import('../../shared/mission-context-compact');
+    const compact = compactMissionContext({
+      mission: planned,
+      handoffs: [],
+    });
+    const goalPrompt = buildIntentDispatchKickoffPrompt({
+      squad: effectiveSquad,
+      missionId: planned.id,
+      goal: contract.goal,
+      acceptanceCriteria: contract.acceptanceCriteria,
+      risk: contract.risk,
+      maxWorkers: contract.budgets.maxWorkers,
+      // First dispatch has no progress yet — the compact would only restate
+      // goal/criteria that the kickoff already carries. Include it only when
+      // it adds durable memory (resumes, learnings, files).
+      compactMemoryMarkdown: missionCompactHasProgress(compact)
+        ? renderMissionCompact(compact)
+        : null,
+    });
+    const result = await launchSquadMission(effectiveSquad, adapters, {
+      existingMissionId: planned.id,
+      goalPrompt,
+      authorizeDispatch: async () => {
+        const approved = await window.nexus.orch.approveMissionIntent({
+          missionId: planned.id,
+        });
+        if (
+          approved.intentVersion !== planned.intentVersion ||
+          approved.intentContract?.goal !== contract.goal
+        ) {
+          throw new Error('O objetivo mudou durante o preflight; revise o plano novamente.');
+        }
+      },
+    });
+    if (!result.ok) {
+      setError(result.error ?? 'Falha ao despachar a missão.');
+      useToastStore
+        .getState()
+        .push('error', 'Não deu pra iniciar a execução', result.error);
+      return false;
+    }
+    close();
+    return true;
+  }
+
   async function handleStartFromIntentPlan() {
     if (spawning || !selectedSquad || !plannedMission?.id) return;
     setSpawning(true);
     setError(null);
     try {
-      const contract = plannedMission.intentContract;
-      if (!contract?.goal) {
-        setError('Contrato de intenção ausente antes do despacho.');
-        return;
-      }
-      const effectiveSquad: Squad = { ...selectedSquad, agents: roster };
-      const { compactMissionContext, renderMissionCompact } = await import(
-        '../../shared/mission-context-compact'
-      );
-      const compact = compactMissionContext({
-        mission: plannedMission,
-        handoffs: [],
-      });
-      const goalPrompt = buildIntentDispatchKickoffPrompt({
-        squad: effectiveSquad,
-        missionId: plannedMission.id,
-        goal: contract.goal,
-        acceptanceCriteria: contract.acceptanceCriteria,
-        risk: contract.risk,
-        maxWorkers: contract.budgets.maxWorkers,
-        compactMemoryMarkdown: renderMissionCompact(compact),
-      });
-      const result = await launchSquadMission(effectiveSquad, adapters, {
-        existingMissionId: plannedMission.id,
-        goalPrompt,
-        authorizeDispatch: async () => {
-          const approved = await window.nexus.orch.approveMissionIntent({
-            missionId: plannedMission.id,
-          });
-          if (
-            approved.intentVersion !== plannedMission.intentVersion ||
-            approved.intentContract?.goal !== contract.goal
-          ) {
-            throw new Error('O objetivo mudou durante o preflight; revise o plano novamente.');
-          }
-        },
-      });
-      if (!result.ok) {
-        setError(result.error ?? 'Falha ao despachar a missão.');
-        useToastStore
-          .getState()
-          .push('error', 'Não deu pra iniciar a execução', result.error);
-        return;
-      }
-      close();
+      await dispatchPlannedMission(plannedMission);
     } catch (cause) {
       const message =
         cause instanceof Error ? cause.message : 'Falha ao iniciar a execução.';
@@ -1209,11 +1267,18 @@ export function MissionWizard() {
                     Cancelar
                   </button>
                   <button
+                    className="wizard__btn wizard__btn--ghost"
+                    disabled={spawning || !missionGoal.trim()}
+                    onClick={() => void handleSubmitMissionGoal({ reviewPlan: true })}
+                  >
+                    Revisar plano ›
+                  </button>
+                  <button
                     className="wizard__btn wizard__btn--primary"
                     disabled={spawning || !missionGoal.trim()}
                     onClick={() => void handleSubmitMissionGoal()}
                   >
-                    {spawning ? 'Compilando…' : 'Continuar ›'}
+                    {spawning ? 'Iniciando…' : 'Começar missão'}
                   </button>
                 </div>
               </div>

@@ -13,53 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.15.13',
+  version: '0.15.14',
   date: '2026-07-14',
-  codename: 'Dock-First Keychain-Safe Launch',
+  codename: 'Missão Enxuta',
   summary:
-    'Nexus cria e mostra explicitamente a janela nativa e não consulta o Keychain de forma síncrona durante o boot do macOS.',
+    'Missão curta paga prompt curto: kickoff sem duplicação, cartas de worker proporcionais ao papel/tarefa e início em um clique para risco normal — PREVC, budgets e aprovações sensíveis intactos.',
   highlights: [
     {
-      title: 'Intenção antes de orquestração',
+      title: 'Kickoff sem duplicação',
       detail:
-        'Selecionar um squad arma apenas a missão; objetivo, plano e aprovação vêm antes de panes, workers ou gasto de modelo.',
+        'A memória compacta só entra quando há progresso real e o critério auto-derivado deixa de reencenar o objetivo — o goal aparece uma vez, não três.',
     },
     {
-      title: 'Fila e orçamento de missão',
+      title: 'Cartas proporcionais ao papel',
       detail:
-        'Prompt queue, intentVersion, preempção de preparação obsoleta e limites de workers/passos evitam que a Jarvis fique monopolizada por ciclos antigos.',
+        'Scout/architect não pagam cartas de build, reviewer dispensa a escada de diff e a carta de design só acompanha tarefas com sinal de UI.',
     },
     {
-      title: 'Operação direta e voz confiável',
+      title: 'Começar em um clique',
       detail:
-        'Sincronização Git usa fast-forward seguro; realtime mantém ferramentas curtas, socket e follow-up coerentes entre provedores.',
+        'Risco normal compila e despacha direto do composer; "Revisar plano" mantém as duas etapas e superfícies sensíveis seguem exigindo aprovação.',
     },
     {
-      title: 'Pets e wake PT-BR no pacote',
+      title: 'Wizard fala humano',
       detail:
-        'Avisos dos pets aguardam clique, Nexo/Nico Code acompanham a biblioteca offline e o modelo ei-jarvis-ptbr.onnx é instalado como padrão.',
+        'O estado da fila vira "Processando o objetivo…" em vez de jargão interno, e some quando não há nada em andamento.',
     },
   ],
   fixes: [
     {
-      title: 'Dock e janela resilientes',
+      title: 'Kickoff legado sem trava de mapa frio',
       detail:
-        'A janela principal é criada antes de integrações opcionais e de todo o bootstrap síncrono; consultas Keychain bloqueantes ficam fora do caminho de inicialização.',
+        'O warm de orientação tem teto de 4 s antes do paste; o fallback "mapa aquecendo" e o doctor sob demanda cobrem o resto.',
     },
     {
-      title: 'Autoridade fail-closed',
+      title: 'Proporcionalidade explícita no playbook',
       detail:
-        'Descrição solta não autoriza execução; gates no processo principal bloqueiam bootstrap, delegação, handoff sem origem e orçamento excedido.',
-    },
-    {
-      title: 'Supervisor silencioso na espera humana',
-      detail:
-        'Missões awaiting_goal/approval não são classificadas como stall; recovery exige despacho e heartbeat reais.',
-    },
-    {
-      title: 'Sem regressão silenciosa',
-      detail:
-        'App, servidor, lockfile, changelog e notas internas avançam juntos; operação Git bloqueia divergência sem stage, commit ou push implícito.',
+        'Missão pequena é UMA tarefa e UM especialista — o orquestrador não cria cerimônia além do necessário.',
     },
   ],
 };

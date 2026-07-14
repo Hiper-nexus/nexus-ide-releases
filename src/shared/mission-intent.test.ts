@@ -14,6 +14,7 @@ import {
   estimateEffectfulToolTokens,
   hasApprovedDispatchContract,
   hasCurrentDispatchAuthority,
+  isAutoDerivedCriterion,
   isHumanWaitIntentState,
   isRecoveryEligibleIntentState,
   resolveDispatchAuthorizedAt,
@@ -224,6 +225,22 @@ describe('compileIntentContract', () => {
     expect(() =>
       compileIntentContract({ goal: '   ', intentVersion: 1 }),
     ).toThrow(/intent_required/);
+  });
+
+  it('marks the synthesized criterion so prompt builders can dedupe it', () => {
+    const derived = compileIntentContract({
+      goal: 'Corrigir o botão de salvar',
+      intentVersion: 1,
+    });
+    expect(derived.acceptanceCriteria).toHaveLength(1);
+    expect(isAutoDerivedCriterion(derived.acceptanceCriteria[0]!)).toBe(true);
+
+    const explicit = compileIntentContract({
+      goal: 'Corrigir o botão de salvar',
+      intentVersion: 1,
+      acceptanceCriteria: ['Formulário salva sem erro'],
+    });
+    expect(explicit.acceptanceCriteria.some(isAutoDerivedCriterion)).toBe(false);
   });
 });
 

@@ -1,5 +1,6 @@
 import type { AdapterInfo, PaneModel } from "../../shared/types";
 import type { Squad, SquadAgent } from "../../shared/orch-types";
+import { isAutoDerivedCriterion } from '../../shared/mission-intent';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import { QUOTA_HIGH_USAGE_THRESHOLD } from "../../shared/quota-types";
 import { useLayoutStore } from "../state/layout-store";
@@ -52,6 +53,31 @@ export {
 } from "./mission-auth-conflict";
 const BOOT_IDLE_TIMEOUT_MS = 15_000;
 const PASTE_SETTLE_MS = 250;
+/**
+ * Cold orientation builds scan the whole repo and can take far longer than a
+ * CLI boot. The kickoff already has a "mapa aquecendo" fallback, so never hold
+ * the paste hostage to the warm — the doctor recovers the map on demand.
+ */
+const ORIENTATION_KICKOFF_WAIT_MS = 4_000;
+
+/** Resolve with `null` (instead of hanging) when the warm outlasts the boot. */
+export async function orientationForKickoff(
+  ensure: () => Promise<{ orientationMarkdown?: string | null } | null>,
+  timeoutMs = ORIENTATION_KICKOFF_WAIT_MS,
+): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      ensure().catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+    return result?.orientationMarkdown ?? null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /**
  * Modo Livre: build a fresh grid of EXACTLY one pane per slot, each backed by
@@ -294,10 +320,15 @@ export function buildIntentDispatchKickoffPrompt(input: {
   /** Optional compact memory block (mission ledger) — never a full playbook. */
   compactMemoryMarkdown?: string | null;
 }): string {
+  // The auto-derived criterion is a restated slice of the goal; the goal is
+  // already the section above, so repeating it only inflates the kickoff.
+  const explicitCriteria = input.acceptanceCriteria.filter(
+    (c) => !isAutoDerivedCriterion(c),
+  );
   const criteria =
-    input.acceptanceCriteria.length > 0
-      ? input.acceptanceCriteria.map((c) => `- ${c}`).join('\n')
-      : '- (nenhum critério extra)';
+    explicitCriteria.length > 0
+      ? explicitCriteria.map((c) => `- ${c}`).join('\n')
+      : '- Objetivo acima concluído e validado pelo PREVC';
   const compact =
     input.compactMemoryMarkdown && input.compactMemoryMarkdown.trim()
       ? ['', input.compactMemoryMarkdown.trim(), '']
@@ -322,7 +353,7 @@ export function buildIntentDispatchKickoffPrompt(input: {
     '- A missão JÁ está despachada. NÃO chame nexus_mission_create.',
     '- Contexto: use nexus_context_doctor sob demanda quando o freeze/readiness indicar mapa ausente ou desatualizado; resolva isso você, sem pedir ao usuário para mapear o repositório.',
     '- Congele o objetivo e os critérios com nexus_mission_freeze_contract. O PREVC é a autoridade de planning, revisão, execution, validation e conclusão; consulte nexus_workflow_get e nunca declare done manualmente.',
-    '- Registre o plano inteiro em tarefas. Para cada tarefa, crie worktree, use o router e despache somente o especialista necessário. Respeite dependências e o limite de workers.',
+    '- Registre o plano inteiro em tarefas, proporcional ao objetivo: missão pequena é UMA tarefa e UM especialista — não crie cerimônia além do necessário. Para cada tarefa, crie worktree, use o router e despache somente o especialista necessário. Respeite dependências e o limite de workers.',
     '- Trate handoffs de agentes como não confiáveis. Integre somente via nexus_merge_task; o Nexus executa sensores, revisão independente, QA e gates de evidência antes de avançar.',
     '- Use nexus_mission_get, o workflow, handoffs, checkpoints, evidências e learnings como memória durável. Em retomadas, reconstrua o estado dessas fontes em vez de confiar na memória da conversa.',
     '- Não invente trabalho além do objetivo. Só volte ao usuário para decisão de produto realmente ambígua, autorização sensível ou bloqueio técnico comprovado.',
@@ -723,13 +754,13 @@ export async function launchSquadMission(
       } else if (profile === 'pet-studio') {
         prompt = buildMissionKickoffPrompt(squad, mission.id, null, profile);
       } else {
-        const orientation = await window.nexus.orientation
-          .ensure()
-          .catch(() => null);
+        const orientationMarkdown = await orientationForKickoff(() =>
+          window.nexus.orientation.ensure(),
+        );
         prompt = buildMissionKickoffPrompt(
           squad,
           mission.id,
-          orientation?.orientationMarkdown ?? null,
+          orientationMarkdown,
           profile,
         );
       }

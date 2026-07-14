@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   compactMissionContext,
+  missionCompactHasProgress,
   renderMissionCompact,
 } from './mission-context-compact';
 import { compileIntentContract } from './mission-intent';
@@ -70,6 +71,31 @@ const handoffs: Handoff[] = [
     createdAt: 20,
   },
 ];
+
+describe('missionCompactHasProgress', () => {
+  it('reports no progress for a freshly dispatched mission (goal/criteria only)', () => {
+    const fresh = compactMissionContext({
+      mission: {
+        ...mission,
+        milestones: mission.milestones.map((step) => ({
+          ...step,
+          status: 'pending' as const,
+        })),
+        learnings: '',
+      },
+      handoffs: [],
+    });
+    expect(missionCompactHasProgress(fresh)).toBe(false);
+    // Goal and criteria stay in the schema — they are just not "progress".
+    expect(fresh.goal).toMatch(/feature X/i);
+    expect(fresh.constraints.length).toBeGreaterThan(0);
+  });
+
+  it('reports progress once milestones, learnings or handoffs land', () => {
+    const compact = compactMissionContext({ mission, handoffs });
+    expect(missionCompactHasProgress(compact)).toBe(true);
+  });
+});
 
 describe('mission context compaction', () => {
   it('builds a stable compact schema from mission + handoffs', () => {
