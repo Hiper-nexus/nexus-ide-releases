@@ -81,7 +81,15 @@ function sanitizeForTerminal(text: string): string {
   return text.replace(/[\r\n]+/g, ' ').replace(CONTROL_CHARS, '').trim();
 }
 
-function formatDelivery(handoff: Handoff): string {
+/** System recovery agent — not a worker; delivery must not look adversarial. */
+export const SYSTEM_HANDOFF_AGENTS = new Set(['nexus-delegation-supervisor']);
+
+/**
+ * Format a handoff for orchestrator PTY injection. Worker handoffs stay
+ * untrusted; system supervisor handoffs are labeled so the orchestrator does
+ * not treat recovery as injection/spam.
+ */
+export function formatDelivery(handoff: Handoff): string {
   const from = sanitizeForTerminal(handoff.fromAgent ?? 'worker').slice(0, 128);
   const summary = sanitizeForTerminal(handoff.summary).slice(
     0,
@@ -102,11 +110,14 @@ function formatDelivery(handoff: Handoff): string {
       : handoff.evidenceTrust === 'stale'
         ? `stale evidence_ids=${evidenceIds}`
         : 'unverified';
+  const isSystem = SYSTEM_HANDOFF_AGENTS.has(handoff.fromAgent ?? '');
+  const claimTrust = isSystem ? 'system' : 'untrusted';
+  const evidenceLabel = isSystem ? 'nexus_system' : evidence;
   return (
     `[nexus handoff delivery_metadata] from=${from} ` +
     `handoff_id=${handoff.id} consume_with=nexus_handoff_ack ` +
-    `reported_status=${handoff.status} claim_trust=untrusted ` +
-    `evidence=${evidence} does_not_complete_mission=true ` +
+    `reported_status=${handoff.status} claim_trust=${claimTrust} ` +
+    `evidence=${evidenceLabel} does_not_complete_mission=true ` +
     `summary: ${summary}${artifacts}`
   );
 }
