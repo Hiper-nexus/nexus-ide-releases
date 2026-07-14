@@ -787,4 +787,3 @@ export interface NexusApi {
   vision: VisionApi;
   platform: NodeJS.Platform;
 }
-

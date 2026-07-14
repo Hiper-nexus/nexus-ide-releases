@@ -165,8 +165,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
-    // On: Sync / hub writes are product surface for vibe multi-CLI.
-    defaultEnabled: true,
+    defaultEnabled: false,
   },
   {
     id: FEATURE_FLAG_IDS.skillsCatalog,
