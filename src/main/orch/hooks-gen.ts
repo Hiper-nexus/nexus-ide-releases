@@ -162,6 +162,42 @@ export function prepareEphemeralHome(
 }
 
 /**
+ * Persistent, isolated $HOME for a Claude-family adapter that authenticates
+ * against a THIRD-PARTY endpoint (GLM/LongCat: injected ANTHROPIC_AUTH_TOKEN +
+ * foreign ANTHROPIC_BASE_URL). Sharing the real ~/.claude lets the Claude
+ * binary rewrite the native subscription's OAuth state and log the user out
+ * (/login), so these adapters get a private home under ~/.nexus/homes/<id>.
+ * Persistent so the adapter keeps its own session/history; auth is injected via
+ * env and is never sourced from this home.
+ */
+export function prepareThirdPartyClaudeHome(adapterId: string): string {
+  // Containment: the id becomes a path segment; reject traversal from a
+  // hand-authored plugin adapter id.
+  if (
+    !adapterId ||
+    adapterId.includes('..') ||
+    adapterId.includes('/') ||
+    adapterId.includes('\\') ||
+    adapterId.includes('\0')
+  ) {
+    throw new Error(`invalid adapter id for isolated home: ${adapterId}`);
+  }
+  const dir = path.join(os.homedir(), '.nexus', 'homes', adapterId);
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true, mode: 0o700 });
+  // Skip first-run onboarding on the first spawn; never clobber state the CLI
+  // has since written on later runs.
+  const onboardingMarker = path.join(dir, '.claude.json');
+  if (!fs.existsSync(onboardingMarker)) {
+    fs.writeFileSync(
+      onboardingMarker,
+      JSON.stringify({ hasCompletedOnboarding: true }),
+      { mode: 0o600 },
+    );
+  }
+  return dir;
+}
+
+/**
  * Write only the MCP config file (ungated agents keep the real HOME but still
  * get the embedded server wired in via --mcp-config).
  */

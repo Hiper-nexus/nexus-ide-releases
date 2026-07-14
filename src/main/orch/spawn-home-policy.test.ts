@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
-import { shouldUseEphemeralHome } from './spawn-home-policy';
+import {
+  isThirdPartyClaudeFamily,
+  shouldUseEphemeralHome,
+} from './spawn-home-policy';
 
 function adapter(
   mcpAutoload: boolean,
   ephemeralHome = false,
+  staticEnv: Record<string, string> = {},
 ): Pick<CliPtyAdapter, 'env' | 'quirks'> {
   return {
-    env: { static: {}, passthrough: [], ephemeralHome },
+    env: { static: staticEnv, passthrough: [], ephemeralHome },
     quirks: {
       altScreen: false,
       requiresNoAutoUpdate: false,
@@ -29,5 +33,37 @@ describe('shouldUseEphemeralHome', () => {
   it('honra ephemeralHome apenas em adapters que carregam MCP por arquivo', () => {
     expect(shouldUseEphemeralHome(adapter(true, true), false)).toBe(true);
     expect(shouldUseEphemeralHome(adapter(false, true), false)).toBe(false);
+  });
+});
+
+describe('isThirdPartyClaudeFamily', () => {
+  const GLM_BASE_URL = 'https://api.z.ai/api/anthropic';
+  const LONGCAT_BASE_URL = 'https://api.longcat.chat/anthropic';
+
+  it('isola Claude-family apontado para endpoint de terceiro (GLM/LongCat)', () => {
+    expect(
+      isThirdPartyClaudeFamily(adapter(true, false, { ANTHROPIC_BASE_URL: GLM_BASE_URL })),
+    ).toBe(true);
+    expect(
+      isThirdPartyClaudeFamily(
+        adapter(true, false, { ANTHROPIC_BASE_URL: LONGCAT_BASE_URL }),
+      ),
+    ).toBe(true);
+  });
+
+  it('NÃO isola o Claude de assinatura (sem base URL estático)', () => {
+    expect(isThirdPartyClaudeFamily(adapter(true, false, {}))).toBe(false);
+  });
+
+  it('NÃO isola CLIs não-Claude mesmo que carreguem um base URL', () => {
+    expect(
+      isThirdPartyClaudeFamily(adapter(false, false, { ANTHROPIC_BASE_URL: GLM_BASE_URL })),
+    ).toBe(false);
+  });
+
+  it('ignora base URL vazio', () => {
+    expect(
+      isThirdPartyClaudeFamily(adapter(true, false, { ANTHROPIC_BASE_URL: '' })),
+    ).toBe(false);
   });
 });

@@ -46,6 +46,7 @@ import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import {
   cleanupSessionArtifacts,
   prepareEphemeralHome,
+  prepareThirdPartyClaudeHome,
   writeClaudeFamilyZeroClickSettings,
   writeMcpConfigFile,
 } from './hooks-gen';
@@ -64,7 +65,10 @@ import {
   purgeStaleCliMcpSessions,
 } from './cli-mcp-session-config';
 import { ensureSkillsForCli } from './skill-mirror';
-import { shouldUseEphemeralHome } from './spawn-home-policy';
+import {
+  isThirdPartyClaudeFamily,
+  shouldUseEphemeralHome,
+} from './spawn-home-policy';
 
 /**
  * Embedded MCP server (docs/ARCHITECTURE.md §E.2): a localhost HTTP endpoint
@@ -357,6 +361,22 @@ function installSpawnHook(): void {
         env.HOME = home.dir;
         ephemeralHomeDir = home.dir;
         extraArgs.push('--mcp-config', home.mcpConfigPath);
+      } else if (isThirdPartyClaudeFamily(adapter)) {
+        // GLM/LongCat run the `claude` binary against a third-party endpoint via
+        // an injected token. Sharing the native ~/.claude lets the binary
+        // rewrite the subscription's OAuth session → the native Claude
+        // orchestrator gets logged out (/login). Isolate them in a persistent
+        // private HOME; MCP + zero-click settings still arrive via flags, and
+        // skills mirror into the isolated home.
+        const isolatedHome = prepareThirdPartyClaudeHome(adapter.id);
+        env.HOME = isolatedHome;
+        ephemeralHomeDir = isolatedHome;
+        extraArgs.push(
+          '--mcp-config',
+          writeMcpConfigFile(ctx.token, mcpConfig),
+          '--settings',
+          writeClaudeFamilyZeroClickSettings(ctx.token),
+        );
       } else if (adapter.quirks.mcpAutoload) {
         // Real HOME: still force zero-click via flag settings (system default).
         extraArgs.push(

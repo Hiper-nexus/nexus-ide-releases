@@ -13,3 +13,21 @@ export function shouldUseEphemeralHome(
 ): boolean {
   return adapter.quirks.mcpAutoload && (gated || adapter.env.ephemeralHome);
 }
+
+/**
+ * Um adapter Claude-family (roda o binário `claude`, mcpAutoload) que aponta
+ * para um endpoint DE TERCEIRO via override estático de ANTHROPIC_BASE_URL —
+ * GLM, LongCat. Ele autentica por ANTHROPIC_AUTH_TOKEN injetado, então nunca
+ * precisa (e nunca pode tocar) o ~/.claude da assinatura nativa. Reutilizar o
+ * home real deixaria o binário do Claude reescrever o estado OAuth da
+ * assinatura e deslogar o usuário (/login); esses adapters recebem um HOME
+ * isolado.
+ */
+export function isThirdPartyClaudeFamily(adapter: SpawnHomeAdapter): boolean {
+  const baseUrl = adapter.env.static?.ANTHROPIC_BASE_URL;
+  return (
+    adapter.quirks.mcpAutoload &&
+    typeof baseUrl === 'string' &&
+    baseUrl.length > 0
+  );
+}
