@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
-  applyEffectfulSpend,
-  hasCurrentApprovedDispatchContract,
+  hasCurrentDispatchAuthority,
+  reserveEffectfulSpend,
 } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { requiresConfirmation, confirmationReason } from '../jarvis/guardrails';
@@ -92,7 +92,16 @@ export interface McpDispatchOptions {
    * domain stores. Missing mission always fails closed for effectful tools.
    */
   resolveMissionForIntentGate?: IntentGateMissionResolver;
+  /** Internal seam; production reserves synchronously in the scoped store. */
+  reserveMissionBudget?: MissionBudgetReserver;
 }
+
+export type MissionBudgetReserver = (
+  scope: ProjectExecutionScope,
+  missionId: string,
+  toolName: string,
+  expectedIntentVersion: number,
+) => void;
 
 export interface WorkflowEffectAuthority {
   readonly contextRevision: string;
@@ -154,13 +163,54 @@ function auditUnavailableResult(
   err: unknown,
   effectMayHaveCommitted = false,
 ): ToolDispatchResult {
-  const detail = err instanceof Error ? err.message : String(err);
+  console.warn('[mcp-dispatch] audit persistence unavailable:', err);
   return {
     ok: false,
     tool,
-    error: `audit_unavailable: ${detail}`,
+    error: 'audit_unavailable',
     effectMayHaveCommitted,
   };
+}
+
+function resolveProductionMissionForIntentGate(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): ReturnType<IntentGateMissionResolver> {
+  const suite = getProjectDomainStores(scope);
+  const mission = suite.missions.get(missionId);
+  if (!mission) return null;
+  return {
+    mission,
+    taskCount: suite.tasks.list(mission.id).length,
+    workerPaneCount: suite.missionPanes
+      .list(mission.id)
+      .filter((pane) => pane.role === 'worker').length,
+  };
+}
+
+function reserveProductionMissionBudget(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  toolName: string,
+  expectedIntentVersion: number,
+): void {
+  const suite = getProjectDomainStores(scope);
+  const mission = suite.missions.get(missionId);
+  if (
+    !mission?.intentContract ||
+    mission.intentVersion !== expectedIntentVersion ||
+    !hasCurrentDispatchAuthority(mission)
+  ) {
+    throw new Error('approval_required: mission intent changed before budget reservation');
+  }
+  const reserved = reserveEffectfulSpend(mission.intentContract, toolName);
+  if (!reserved.ok) throw new Error(reserved.error);
+  const updated = suite.missions.update(missionId, {
+    intentContract: reserved.contract,
+  });
+  if (!updated) {
+    throw new Error('mission budget reservation could not be persisted');
+  }
 }
 
 function writeAudit(
@@ -360,43 +410,22 @@ export async function dispatchToolCall(
     return { ok: false, tool: tool.name, denied: true, error };
   }
 
-  // Intent-first gate: bootstrap/delegation cannot invent work without a goal.
-  // Fail closed for effectful tools — a store miss must not bypass authority.
-  if (ctx.missionId && isEffectfulTool(tool.name)) {
+  const resolveMission =
+    options.resolveMissionForIntentGate ?? resolveProductionMissionForIntentGate;
+  type IntentCheck =
+    | { readonly ok: true; readonly resolved: ReturnType<IntentGateMissionResolver> }
+    | { readonly ok: false; readonly error: string };
+  const checkMissionIntent = (): IntentCheck => {
+    if (!ctx.missionId || !isEffectfulTool(tool.name)) {
+      return { ok: true, resolved: null };
+    }
     try {
-      const resolveMission =
-        options.resolveMissionForIntentGate ??
-        ((scope, missionId) => {
-          const suite = getProjectDomainStores(scope);
-          const mission = suite.missions.get(missionId);
-          if (!mission) return null;
-          return {
-            mission,
-            taskCount: suite.tasks.list(mission.id).length,
-            workerPaneCount: suite.missionPanes
-              .list(mission.id)
-              .filter((pane) => pane.role === 'worker').length,
-          };
-        });
       const resolved = resolveMission(ctx.scope, ctx.missionId);
       if (!resolved) {
-        const error =
-          'intent_required: mission not found for intent authority check';
-        const auditFailure = writeAudit(
-          () =>
-            auditDenied(
-              auditContext,
-              sessionId,
-              tool.name,
-              args,
-              Date.now() - startMs,
-              error,
-              source,
-            ),
-          tool.name,
-        );
-        if (auditFailure) return auditFailure;
-        return { ok: false, tool: tool.name, denied: true, error };
+        return {
+          ok: false,
+          error: 'intent_required: mission not found for intent authority check',
+        };
       }
       const gate = assertMissionIntentAllowsTool(
         tool.name,
@@ -409,49 +438,34 @@ export async function dispatchToolCall(
         },
         args,
       );
-      if (!gate.ok) {
-        const auditFailure = writeAudit(
-          () =>
-            auditDenied(
-              auditContext,
-              sessionId,
-              tool.name,
-              args,
-              Date.now() - startMs,
-              gate.error,
-              source,
-            ),
-          tool.name,
-        );
-        if (auditFailure) return auditFailure;
-        return {
-          ok: false,
-          tool: tool.name,
-          denied: true,
-          error: gate.error,
-        };
-      }
+      return gate.ok ? { ok: true, resolved } : { ok: false, error: gate.error };
     } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      const error = `intent_gate_unavailable: ${detail}`;
       console.warn('[mcp-dispatch] intent gate lookup failed (deny):', err);
-      const auditFailure = writeAudit(
-        () =>
-          auditDenied(
-            auditContext,
-            sessionId,
-            tool.name,
-            args,
-            Date.now() - startMs,
-            error,
-            source,
-          ),
-        tool.name,
-      );
-      if (auditFailure) return auditFailure;
-      return { ok: false, tool: tool.name, denied: true, error };
+      return { ok: false, error: 'intent_gate_unavailable' };
     }
-  }
+  };
+  const denyIntentCheck = (error: string): ToolDispatchResult => {
+    const auditFailure = writeAudit(
+      () =>
+        auditDenied(
+          auditContext,
+          sessionId,
+          tool.name,
+          args,
+          Date.now() - startMs,
+          error,
+          source,
+        ),
+      tool.name,
+    );
+    return (
+      auditFailure ?? { ok: false, tool: tool.name, denied: true, error }
+    );
+  };
+
+  // First check avoids asking for confirmation when authority is already stale.
+  const initialIntent = checkMissionIntent();
+  if (!initialIntent.ok) return denyIntentCheck(initialIntent.error);
 
   try {
     const contextRevision = bindEffectAuthority(
@@ -513,7 +527,7 @@ export async function dispatchToolCall(
           });
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
-          const error = `confirmation_failed: ${detail}`;
+          const error = 'confirmation_failed';
           const auditFailure = writeAudit(
             () =>
               auditDenied(
@@ -522,7 +536,7 @@ export async function dispatchToolCall(
                 tool.name,
                 args,
                 Date.now() - startMs,
-                `${error}: ${reason}`,
+                `${error}: ${detail}: ${reason}`,
                 source,
               ),
             tool.name,
@@ -594,6 +608,52 @@ export async function dispatchToolCall(
           error,
         };
       }
+    }
+  }
+
+  // Confirmation can outlive the intent or frozen workflow revision. Rebind
+  // both authorities immediately before reserving budget and starting effects.
+  try {
+    const contextRevision = bindEffectAuthority(
+      source,
+      ctx,
+      tool.name,
+      args,
+      options.resolveWorkflowAuthority ?? resolveProductionWorkflowAuthority,
+    );
+    auditContext = {
+      scope: ctx.scope,
+      missionId: ctx.missionId,
+      contextRevision,
+    };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return denyIntentCheck(reason);
+  }
+
+  const finalIntent = checkMissionIntent();
+  if (!finalIntent.ok) return denyIntentCheck(finalIntent.error);
+
+  if (
+    effectful &&
+    ctx.missionId &&
+    finalIntent.resolved &&
+    hasCurrentDispatchAuthority(finalIntent.resolved.mission)
+  ) {
+    try {
+      (options.reserveMissionBudget ?? reserveProductionMissionBudget)(
+        ctx.scope,
+        ctx.missionId,
+        tool.name,
+        finalIntent.resolved.mission.intentVersion ?? 0,
+      );
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.warn('[mcp-dispatch] mission budget reservation failed (deny):', err);
+      const error = /^(budget_exhausted|approval_required):/.test(detail)
+        ? detail
+        : 'budget_reservation_unavailable';
+      return denyIntentCheck(error);
     }
   }
 
@@ -671,28 +731,6 @@ export async function dispatchToolCall(
     const result = await tool.handler(args, ctx);
     if (queuePromptId && ctx.missionId) {
       completeMissionPrompt(ctx.missionId, queuePromptId, true);
-    }
-    // Count steps+tokens only under a current approved dispatch contract —
-    // never burn budget on prepare-project / pre-goal warm tools.
-    if (effectful && ctx.missionId) {
-      try {
-        const suite = getProjectDomainStores(ctx.scope);
-        const mission = suite.missions?.get(ctx.missionId);
-        if (
-          mission?.intentContract &&
-          hasCurrentApprovedDispatchContract(mission)
-        ) {
-          suite.missions.update(ctx.missionId, {
-            intentContract: applyEffectfulSpend(
-              mission.intentContract,
-              tool.name,
-            ),
-          });
-        }
-      } catch {
-        // Domain stores may be absent in unit tests / early boot — budget is
-        // still enforced when contract is present at the gate.
-      }
     }
     const auditFailure = writeAudit(
       () =>

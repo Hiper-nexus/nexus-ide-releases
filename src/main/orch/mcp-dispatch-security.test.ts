@@ -12,6 +12,7 @@ import { clearAll as clearAllPermissions } from '../jarvis/permissions';
 import { mintToken, resetGateForTests } from './gate';
 import { dispatchToolCall } from './mcp-dispatch';
 import type { McpDispatchOptions } from './mcp-dispatch';
+import type { IntentGateMissionResolver } from './mcp-dispatch';
 import type { McpRegistry, McpToolDef } from './mcp-protocol';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
@@ -62,7 +63,9 @@ function orchestratorMissionContext() {
   });
 }
 
-function dispatchedMissionFixture() {
+function dispatchedMissionFixture(): NonNullable<
+  ReturnType<IntentGateMissionResolver>
+> {
   return {
     mission: {
       id: TEST_MISSION_ID,
@@ -114,6 +117,7 @@ function workflowOptions(
       if (missionId !== TEST_MISSION_ID) return null;
       return dispatchedMissionFixture();
     },
+    reserveMissionBudget: () => undefined,
   };
 }
 
@@ -388,6 +392,208 @@ describe('MCP dispatch effect safety', () => {
     expect(result.ok).toBe(true);
     expect(confirm).not.toHaveBeenCalled();
     expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('revalidates the exact intent after asynchronous confirmation', async () => {
+    const handler = vi.fn(async () => ({ bytes: 1 }));
+    let current = dispatchedMissionFixture();
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_file_write',
+        description: 'write',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_file_write',
+      { path: 'src/a.ts', content: 'x' },
+      missionContext(),
+      {
+        ...workflowOptions(),
+        confirm: async () => {
+          current = {
+            ...current,
+            mission: {
+              ...current.mission,
+              status: 'pending',
+              intentState: 'ready_to_start',
+              intentVersion: 2,
+              intentContract: {
+                ...current.mission.intentContract!,
+                intentVersion: 2,
+                approvedAt: undefined,
+              },
+            },
+          };
+          return true;
+        },
+        resolveMissionForIntentGate: () => current,
+      },
+    );
+
+    expect(result).toMatchObject({ ok: false, denied: true });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('revalidates the frozen workflow revision after confirmation', async () => {
+    const handler = vi.fn(async () => ({ exitCode: 0 }));
+    let revision = TEST_CONTEXT_REVISION;
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_terminal_run',
+        description: 'terminal',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_terminal_run',
+      { command: 'npm test' },
+      missionContext(TEST_CONTEXT_REVISION),
+      {
+        ...workflowOptions(),
+        confirm: async () => {
+          revision = 'new-context-revision';
+          return true;
+        },
+        resolveWorkflowAuthority: () => ({
+          contextRevision: revision,
+          assertExecutionEffectAllowed: () => undefined,
+        }),
+      },
+    );
+
+    expect(result).toMatchObject({ ok: false, denied: true });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without leaking store details when budget reservation fails', async () => {
+    const handler = vi.fn(async () => ({ bytes: 1 }));
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_file_write',
+        description: 'write',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_file_write',
+      { path: 'src/a.ts', content: 'x' },
+      missionContext(),
+      {
+        ...workflowOptions({ confirm: async () => true }),
+        reserveMissionBudget: () => {
+          throw new Error('sqlite failed at /private/secret/runtime.sqlite3');
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      denied: true,
+      error: 'budget_reservation_unavailable',
+    });
+    expect(result.error).not.toContain('/private/secret');
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('reserves budget before the handler and keeps the charge when the handler fails', async () => {
+    const order: string[] = [];
+    const handler = vi.fn(async () => {
+      order.push('handler');
+      throw new Error('effect failed');
+    });
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_pane_spawn',
+        description: 'spawn',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_pane_spawn',
+      { agentName: 'worker-a' },
+      orchestratorMissionContext(),
+      {
+        ...workflowOptions(),
+        reserveMissionBudget: () => {
+          order.push('reserve');
+        },
+      },
+    );
+
+    expect(result).toMatchObject({ ok: false, effectMayHaveCommitted: true });
+    expect(order).toEqual(['reserve', 'handler']);
+  });
+
+  it('serializes concurrent reservations at maxSteps', async () => {
+    let releaseFirst!: () => void;
+    const firstHandler = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let state = dispatchedMissionFixture();
+    state = {
+      ...state,
+      mission: {
+        ...state.mission,
+        intentContract: {
+          ...state.mission.intentContract!,
+          spentSteps: 0,
+          spentTokens: 0,
+          budgets: { ...state.mission.intentContract!.budgets, maxSteps: 1 },
+        },
+      },
+    };
+    let handlerCalls = 0;
+    const handler = vi.fn(async () => {
+      handlerCalls += 1;
+      if (handlerCalls === 1) await firstHandler;
+      return { paneId: 'worker' };
+    });
+    const options: McpDispatchOptions = {
+      ...workflowOptions(),
+      resolveMissionForIntentGate: () => state,
+      reserveMissionBudget: () => {
+        const contract = state.mission.intentContract!;
+        if ((contract.spentSteps ?? 0) >= (contract.budgets.maxSteps ?? 500)) {
+          throw new Error('budget_exhausted');
+        }
+        state = {
+          ...state,
+          mission: {
+            ...state.mission,
+            intentContract: {
+              ...contract,
+              spentSteps: (contract.spentSteps ?? 0) + 1,
+              spentTokens: (contract.spentTokens ?? 0) + 100,
+            },
+          },
+        };
+      },
+    };
+    const registry = registryWith({
+      name: 'nexus_pane_spawn',
+      description: 'spawn',
+      inputSchema: { type: 'object', properties: {} },
+      handler,
+    });
+
+    const first = dispatchToolCall(
+      'http-mcp', registry, 'nexus_pane_spawn', {}, orchestratorMissionContext(), options,
+    );
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    const second = await dispatchToolCall(
+      'http-mcp', registry, 'nexus_pane_spawn', {}, orchestratorMissionContext(), options,
+    );
+    releaseFirst();
+    const firstResult = await first;
+
+    expect(firstResult.ok).toBe(true);
+    expect(second).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining('budget_exhausted'),
+    });
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
   it('rejects pre-contract delegation from an unbound user or worker', async () => {

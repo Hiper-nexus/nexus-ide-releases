@@ -647,6 +647,43 @@ export function applyEffectfulSpend(
   };
 }
 
+export type EffectfulSpendReservation =
+  | {
+      readonly ok: true;
+      readonly contract: MissionIntentContract & {
+        readonly spentSteps: number;
+        readonly spentTokens: number;
+      };
+    }
+  | { readonly ok: false; readonly code: string; readonly error: string };
+
+/** Reserve the next effect without allowing its estimated cost to overshoot. */
+export function reserveEffectfulSpend(
+  contract: MissionIntentContract,
+  toolName: string,
+): EffectfulSpendReservation {
+  const current = assertStepAndTokenBudget(contract);
+  if (!current.ok) return current;
+  const next = applyEffectfulSpend(contract, toolName);
+  const maxSteps = contract.budgets.maxSteps ?? 500;
+  if (next.spentSteps > maxSteps) {
+    return {
+      ok: false,
+      code: 'budget_exhausted',
+      error: `budget_exhausted: maxSteps=${maxSteps} would be exceeded`,
+    };
+  }
+  const maxTokens = contract.budgets.executionTokens;
+  if (maxTokens > 0 && next.spentTokens > maxTokens) {
+    return {
+      ok: false,
+      code: 'budget_exhausted',
+      error: `budget_exhausted: executionTokens=${maxTokens} would be exceeded`,
+    };
+  }
+  return { ok: true, contract: next };
+}
+
 /**
  * Pure spawn-side policy: maxWorkers + parent deny attenuation on allowlist.
  */

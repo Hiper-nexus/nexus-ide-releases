@@ -106,6 +106,7 @@ function workflowOptions(
       contextRevision: TEST_CONTEXT_REVISION,
       assertExecutionEffectAllowed: () => undefined,
     }),
+    reserveMissionBudget: () => undefined,
   };
 }
 

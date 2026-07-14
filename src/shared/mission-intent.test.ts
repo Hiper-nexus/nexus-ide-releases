@@ -18,6 +18,7 @@ import {
   isRecoveryEligibleIntentState,
   resolveDispatchAuthorizedAt,
   resolveEffectiveIntentState,
+  reserveEffectfulSpend,
   synthesizeImmediateDispatchContract,
   transitionIntentState,
   type MissionIntentContract,
@@ -337,6 +338,28 @@ describe('budget and parent/child ceilings', () => {
       spentTokens: 150,
     };
     expect(assertStepAndTokenBudget(nearCap).ok).toBe(false);
+  });
+
+  it('refuses a reservation that would cross the step or token ceiling', () => {
+    const base = compileIntentContract({ goal: 'x', intentVersion: 1 });
+    const atLastStep = {
+      ...base,
+      budgets: { ...base.budgets, maxSteps: 1 },
+      spentSteps: 1,
+    };
+    expect(reserveEffectfulSpend(atLastStep, 'nexus_file_write')).toMatchObject({
+      ok: false,
+      code: 'budget_exhausted',
+    });
+
+    const nearTokenCap = {
+      ...base,
+      budgets: { ...base.budgets, executionTokens: 150 },
+      spentTokens: 100,
+    };
+    expect(
+      reserveEffectfulSpend(nearTokenCap, 'nexus_file_write'),
+    ).toMatchObject({ ok: false, code: 'budget_exhausted' });
   });
 
   it('denies second worker at maxWorkers and strips denied tools on spawn policy', () => {
