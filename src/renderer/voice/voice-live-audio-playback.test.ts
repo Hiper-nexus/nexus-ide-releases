@@ -25,12 +25,14 @@ vi.mock('./live-mute-rescue', () => ({
 }));
 
 vi.mock('./voice-session-state', () => ({
+  dropRealtimeAudioOut: false,
   ensureLivePlayer: () => ({ play: mocks.play }),
   pushPendingRealtimeAudioOut: vi.fn(),
   realtimeAudioPlayedCounter: { tick: mocks.playedTick },
   realtimeAudioSuppressedCounter: { tick: mocks.suppressedTick },
   realtimeTurnActive: true,
   resetPendingRealtimeAudioOut: vi.fn(),
+  setDropRealtimeAudioOut: vi.fn(),
   setSuppressRealtimeAudioOut: vi.fn(),
   suppressRealtimeAudioOut: false,
   takePendingRealtimeAudioOut: () => [],

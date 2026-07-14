@@ -85,6 +85,8 @@ vi.mock('../adapters/custom-models', () => ({
 
 vi.mock('./secrets-store', () => ({
   getKey: spawnDeps.runtimeKey,
+  hasCachedSecret: () => false,
+  hasSecret: () => false,
   isSecureStorageAvailable: () => true,
   maskedKey: () => null,
   setKey: vi.fn(),

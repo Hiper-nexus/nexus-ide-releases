@@ -6,6 +6,7 @@ const { secrets } = vi.hoisted(() => ({
 
 vi.mock('../persistence/secrets-store', () => ({
   getSecret: (key: string) => secrets.get(key) ?? null,
+  hasCachedSecret: (key: string) => secrets.has(key),
   hasSecret: (key: string) => secrets.has(key),
   setSecret: (key: string, value: string) => {
     if (value) secrets.set(key, value);
