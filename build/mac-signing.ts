@@ -54,6 +54,19 @@ export function isAppleReleaseSigning(teamId: string | undefined): boolean {
   return APPLE_TEAM_ID_PATTERN.test(teamId?.trim() ?? '');
 }
 
+/**
+ * Resources such as the asar, locale packs, sprites and wake models are
+ * opaque data, not Mach-O code. osx-sign walks every binary-looking resource
+ * and otherwise invokes codesign on them; with a Developer ID identity that
+ * makes the release stall/retry on harmless .webp/.pak files. Native modules
+ * and the PTY helper remain signable and are deliberately kept in the walk.
+ */
+export function shouldIgnoreMacSigningFile(filePath: string): boolean {
+  const normalized = filePath.replaceAll('\\', '/');
+  if (!normalized.includes('/Contents/Resources/')) return false;
+  return !(/\.(?:node|dylib)$/u.test(normalized) || /\/spawn-helper$/u.test(normalized));
+}
+
 export function createMacSignOptions(teamId: string | undefined) {
   if (teamId !== undefined && !isAppleReleaseSigning(teamId)) {
     throw new Error('Apple Team ID must contain exactly 10 uppercase letters or digits.');
@@ -68,6 +81,7 @@ export function createMacSignOptions(teamId: string | undefined) {
       ? `${EXPECTED_DEVELOPER_ID_IDENTITY} (${normalizedTeamId})`
       : '-',
     ...(isRelease ? {} : { identityValidation: false }),
+    ignore: shouldIgnoreMacSigningFile,
     optionsForFile: (filePath: string) => ({
       entitlements: entitlementProfileForMacTarget(filePath),
       hardenedRuntime: isRelease,

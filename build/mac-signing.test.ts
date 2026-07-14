@@ -7,6 +7,7 @@ import {
   entitlementProfileForMacTarget,
   EXPECTED_DEVELOPER_ID_IDENTITY,
   isAppleReleaseSigning,
+  shouldIgnoreMacSigningFile,
 } from './mac-signing';
 import {
   createMacDmgMakerConfig,
@@ -75,6 +76,24 @@ describe('macOS signing modes', () => {
     });
     expect(options.optionsForFile('/tmp/NexusIDE').timestamp).toBeUndefined();
     expect(options.identityValidation).toBeUndefined();
+  });
+
+  it('does not send packaged data resources through codesign', () => {
+    expect(
+      shouldIgnoreMacSigningFile(
+        '/tmp/NexusIDE.app/Contents/Resources/pets/sheets/nexo.webp',
+      ),
+    ).toBe(true);
+    expect(
+      shouldIgnoreMacSigningFile(
+        '/tmp/NexusIDE.app/Contents/Resources/app.asar.unpacked/native.node',
+      ),
+    ).toBe(false);
+    expect(
+      createMacSignOptions('35P5XL3JN6').ignore(
+        '/tmp/NexusIDE.app/Contents/Resources/wake/custom.onnx',
+      ),
+    ).toBe(true);
   });
 
   it('rejects malformed non-empty Team IDs instead of downgrading the build', () => {
