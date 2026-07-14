@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.16.0 — Scheduler Paralelo (dormente), Impeccable Nativa e Auth Portável
+
+Data: 2026-07-14
+
+- Scheduler de tasks paralelo determinístico (ondas prontas+disjuntas por
+  worktree, MergeQueue serial, enforcement de ownership fail-closed) entra no
+  código atrás da flag `orch.parallelScheduler`, que permanece
+  `defaultEnabled=false`: o runtime de fan-out ainda não é acionado e o gate de
+  disjunção/DAG tem lacunas conhecidas a fechar antes de ligar.
+- Skill Impeccable passa a ser distribuída por padrão — a árvore completa é
+  bundlada como asset gerado e espelhada em toda CLI, então agentes têm a skill
+  de design em qualquer máquina, sem instalação manual (Apache-2.0,
+  pbakaus/impeccable).
+- A Design Charter deixa de mandar rodar `impeccable detect` (Impeccable é skill,
+  não CLI): invoca a skill se instalada, senão aplica a carta destilada.
+- GLM e LongCat rodam o binário do Claude num HOME isolado (`~/.nexus/homes`),
+  parando de corromper a sessão OAuth da assinatura Claude (que pedia /login do
+  nada).
+- Login de kimi/grok/agy feito dentro do pane agora persiste: o overlay efêmero
+  faz sync-back das credenciais novas pro HOME real antes de ser purgado.
+- Detecção de conta gerenciada do AGY via `GEMINI_CLI_HOME`; homes custom de
+  Codex, Grok, Kimi e OpenCode; e PATH de login-shell com segmentos vazios
+  filtrados — Nexus enxerga CLIs instaladas out-of-the-box em Macs variados.
+- Status do pane não pisca mais entre Pronto/Trabalho (watchdog do hook busy) e o
+  botão Instalar espera a sessão PTY viva antes de escrever o comando.
+- AGY passa a usar `gemini-3.5-flash-high` e Grok `grok-4.5` como modelo padrão.
+- Suíte completa validada: 656 arquivos de teste e 4585 testes passando.
+
 ## 0.15.17 — Across Tools e Cockpit Vivo
 
 Data: 2026-07-14
