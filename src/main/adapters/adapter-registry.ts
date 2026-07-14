@@ -128,7 +128,7 @@ function resolveLoginShellPath(): string {
     // Heavy profiles timing out won't lock out standard installations.
   }
 
-  const paths = resolved.split(path.delimiter);
+  const paths = resolved.split(path.delimiter).filter(Boolean);
   for (const p of COMMON_MAC_LINUX_PATHS) {
     if (!paths.includes(p)) {
       paths.push(p);

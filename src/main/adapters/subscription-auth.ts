@@ -94,7 +94,7 @@ export function claudeOauthEmail(home = os.homedir()): string | null {
 
 function existsInEnv(envVar: string, ...segments: string[]): boolean {
   const customHome = process.env[envVar];
-  if (customHome) {
+  if (customHome && customHome.trim()) {
     try {
       fs.statSync(path.join(customHome, ...segments));
       return true;
