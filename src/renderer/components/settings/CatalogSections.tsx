@@ -16,6 +16,8 @@ import {
   catalogInstallableEmptyMessage,
 } from '../empty-cta-policy';
 import { useSettingsStore } from '../../state/settings-store';
+import { useLayoutStore } from '../../state/layout-store';
+import { writeToPane } from '../../terminal/terminal-host';
 
 /**
  * CATALOG sections: locally installed components (agents/skills), the
@@ -378,9 +380,44 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
         </ul>
       )}
       {absent.length > 0 && (
-        <p className="settings-detail__hint">
-          não instalados: {absent.map((a) => a.label).join(', ')}
-        </p>
+        <div style={{ marginTop: '1.5rem' }}>
+          <h4 className="settings-detail__title" style={{ fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
+            Disponíveis para Instalação
+          </h4>
+          <ul className="settings-list">
+            {absent.map((a) => (
+              <li key={a.id} className="settings-list__item" style={{ opacity: 0.85 }}>
+                <div className="settings-list__head" style={{ alignItems: 'center' }}>
+                  <span className="settings-list__title">{a.label}</span>
+                  {a.installCommand ? (
+                    <button
+                      className="settings-btn"
+                      style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem', gap: '4px' }}
+                      onClick={() => {
+                        const paneId = useLayoutStore.getState().addShellPane();
+                        useLayoutStore.getState().focus(paneId);
+                        useSettingsStore.getState().closeDrawer();
+                        setTimeout(() => {
+                          writeToPane(paneId, a.installCommand + '\n');
+                        }, 800);
+                      }}
+                      title={`Executar comando: ${a.installCommand}`}
+                    >
+                      <PixelIcon name="terminal" size={10} /> Instalar
+                    </button>
+                  ) : (
+                    <span className="settings-chip">manual</span>
+                  )}
+                </div>
+                {a.installCommand && (
+                  <p className="settings-list__detail">
+                    Comando: <code>{a.installCommand}</code>
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </section>
   );

@@ -756,6 +756,23 @@ body {
   width: 100%;
 }
 
+.grid--pane-maximized {
+  padding: 1px;
+  border-radius: var(--radius);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 16%, transparent),
+      transparent 34%
+    );
+}
+
+.grid--pane-maximized .pane {
+  box-shadow:
+    0 0 0 1px var(--accent-soft),
+    0 14px 42px rgba(0, 0, 0, 0.42);
+}
+
 /* Filhos no fluxo do body ocupam o restante da linha; min-width: 0 permite
    encolher abaixo do conteúdo do terminal. */
 .app__body > .grid,

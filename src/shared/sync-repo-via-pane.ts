@@ -91,12 +91,12 @@ export function syncRepoViaPaneMissionIntent(mode: SyncRepoViaPaneMode): string 
 
 export function syncRepoViaPaneNoAgentSay(mode: SyncRepoViaPaneMode): string {
   if (mode === 'status') {
-    return 'Não tem agente aberto — abri uma missão agêntica pra checar o status do repositório.';
+    return 'Não tinha agente livre — abri um agente único pra checar o status do repositório.';
   }
   if (mode === 'push') {
-    return 'Não tem agente aberto — abri uma missão agêntica pra enviar o repositório.';
+    return 'Não tinha agente livre — abri um agente único pra enviar o repositório.';
   }
-  return 'Não tem agente aberto — abri uma missão agêntica pra atualizar o repositório.';
+  return 'Não tinha agente livre — abri um agente único pra atualizar o repositório.';
 }
 
 /** Pane runtime states that must not receive a sync prompt mid-turn. */

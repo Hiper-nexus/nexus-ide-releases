@@ -31,6 +31,7 @@ export type PixelIconName =
   | 'status-spawning'
   | 'scroll-bottom'
   | 'restart'
+  | 'maximize'
   | 'split-right'
   | 'split-down'
   | 'more'
@@ -323,6 +324,17 @@ const ICONS: Record<PixelIconName, Rect[]> = {
     [3, 8, 5, 1],
     [3, 5, 1, 3],
     [4, 6, 1, 1],
+  ],
+  // cantos expandindo para tela cheia
+  maximize: [
+    [1, 1, 4, 1],
+    [1, 1, 1, 4],
+    [6, 1, 4, 1],
+    [9, 1, 1, 4],
+    [1, 6, 1, 4],
+    [1, 9, 4, 1],
+    [9, 6, 1, 4],
+    [6, 9, 4, 1],
   ],
   // dois painéis lado a lado (split horizontal / à direita)
   'split-right': [

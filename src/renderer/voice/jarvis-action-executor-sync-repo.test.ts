@@ -30,8 +30,21 @@ const {
       id: string;
       kind: 'shell' | 'cli-agent' | 'browser';
       title: string;
+      adapterId?: string;
+      model?: string;
     }>,
     focus: vi.fn(),
+    spawnAgent: vi.fn((adapterId: string, model: string) => {
+      const pane = {
+        id: `pane-spawned-${layoutState.panes.length + 1}`,
+        kind: 'cli-agent' as const,
+        title: adapterId,
+        adapterId,
+        model,
+      };
+      layoutState.panes.push(pane);
+      layoutState.focusedPaneId = pane.id;
+    }),
     toggleView: vi.fn(),
   },
 }));
@@ -43,6 +56,7 @@ vi.mock('../state/layout-store', () => ({
       focusedPaneId: layoutState.focusedPaneId,
       viewKind: layoutState.viewKind,
       focus: layoutState.focus,
+      spawnAgent: layoutState.spawnAgent,
       toggleView: layoutState.toggleView,
     }),
   },
@@ -136,6 +150,17 @@ describe('sync_repo_via_pane executor', () => {
     confirmCommand.mockResolvedValue(true);
     vi.stubGlobal('window', {
       nexus: {
+        adapters: {
+          list: vi.fn(async () => [
+            {
+              id: 'codex',
+              label: 'Codex',
+              installed: true,
+              enabled: true,
+              models: { default: 'gpt-5.5', list: ['gpt-5.5'] },
+            },
+          ]),
+        },
         voice: { confirmCommand, logVoice: vi.fn() },
       },
     });
@@ -198,16 +223,24 @@ describe('sync_repo_via_pane executor', () => {
     expect(approved.toolResult?.ok).toBe(true);
   });
 
-  it('opens agentic mission when no agent pane exists', async () => {
+  it('opens one plain agent pane when no agent pane exists, never a mission', async () => {
     resolveSyncRepoViaPaneTarget.mockReturnValueOnce({ kind: 'no-agent-pane' });
+    layoutState.panes = [{ id: 'pane-shell', kind: 'shell', title: 'shell' }];
+    layoutState.focusedPaneId = 'pane-shell';
     const execution = await executeJarvisAction(
       { say: '', action: { type: 'sync_repo_via_pane', mode: 'status' } },
       context,
     );
-    expect(missionWizardState.openForAgentic).toHaveBeenCalled();
+    expect(missionWizardState.openForAgentic).not.toHaveBeenCalled();
+    expect(layoutState.spawnAgent).toHaveBeenCalledWith('codex', 'gpt-5.5');
+    expect(submitPromptToPaneConfirmed).toHaveBeenCalledWith(
+      'pane-spawned-2',
+      buildSyncRepoViaPanePrompt('status'),
+      'session-1',
+    );
     expect(submitPromptToPane).not.toHaveBeenCalled();
     expect(execution.toolResult).toMatchObject({ ok: true });
-    expect(execution.sayText).toMatch(/missão agêntica/i);
+    expect(execution.sayText).toMatch(/agente único/i);
     expect(execution.sayText).toMatch(/status/i);
   });
 });

@@ -46,7 +46,6 @@ import {
   normalizeSyncRepoViaPaneMode,
   syncRepoViaPaneBusySay,
   syncRepoViaPaneDeliveryFailedSay,
-  syncRepoViaPaneMissionIntent,
   syncRepoViaPaneNoAgentSay,
   syncRepoViaPaneSay,
 } from '../../shared/sync-repo-via-pane';
@@ -151,6 +150,30 @@ function revealPaneForUser(paneId: string): void {
   const layout = useLayoutStore.getState();
   if (layout.viewKind !== 'grid') layout.toggleView();
   layout.focus(paneId);
+}
+
+async function openSingleAgentPaneForSync(): Promise<{
+  paneId: string;
+  paneTitle: string;
+} | null> {
+  const before = listPanes(useLayoutStore.getState().root);
+  const beforeIds = new Set(before.map((pane) => pane.id));
+  const adapters = await window.nexus.adapters.list().catch(() => []);
+  const adapter = adapters.find((candidate) => candidate.installed);
+  if (!adapter) return null;
+  useLayoutStore
+    .getState()
+    .spawnAgent(adapter.id, adapter.models.default || '');
+  const afterState = useLayoutStore.getState();
+  const after = listPanes(afterState.root);
+  const spawned =
+    after.find((pane) => pane.kind === 'cli-agent' && !beforeIds.has(pane.id)) ??
+    after.find(
+      (pane) =>
+        pane.kind === 'cli-agent' && pane.id === afterState.focusedPaneId,
+    );
+  if (!spawned) return null;
+  return { paneId: spawned.id, paneTitle: spawned.title };
 }
 
 function focusedOrFirstBrowserPane(): { id: string; title: string } | null {
@@ -1190,16 +1213,59 @@ export async function executeJarvisAction(
         summary: 'pane ambíguo',
       };
     } else if (target.kind === 'no-agent-pane') {
-      const intent = syncRepoViaPaneMissionIntent(mode);
-      useMissionWizardStore.getState().openForAgentic(intent);
-      markEffect(control);
-      sayText = syncRepoViaPaneNoAgentSay(mode);
-      toolResult = {
-        tool: action.type,
-        ok: true,
-        summary: 'sem pane; objetivo encaminhado ao fluxo intent-first',
-        output: { mode, intent },
-      };
+      const created = await openSingleAgentPaneForSync();
+      checkpoint(control);
+      if (!created) {
+        sayText =
+          'Não achei agente aberto e não consegui abrir um agente novo pra sincronizar.';
+        toolResult = {
+          tool: action.type,
+          ok: false,
+          summary: 'sem agente disponível para sync',
+          output: { mode },
+        };
+      } else {
+        markEffect(control);
+        const commandId = crypto.randomUUID();
+        const sessionId = await waitForSession(created.paneId, 15_000);
+        checkpoint(control);
+        const ok = sessionId
+          ? await submitPromptToPaneConfirmed(created.paneId, prompt, sessionId)
+          : false;
+        checkpoint(control);
+        if (ok) revealPaneForUser(created.paneId);
+        logVoiceEvent(
+          ok ? 'info' : 'warn',
+          ok ? 'pane.syncRepoSpawnedAndSubmitted' : 'pane.syncRepoSpawnedButFailed',
+          ok
+            ? 'sync de repositório abriu um agente único e confirmou entrega'
+            : 'agente único abriu, mas a entrega do sync não foi confirmada',
+          {
+            commandId,
+            paneId: created.paneId,
+            mode,
+            sessionReady: Boolean(sessionId),
+            deliveryConfirmed: ok,
+          },
+        );
+        sayText = ok
+          ? syncRepoViaPaneNoAgentSay(mode)
+          : syncRepoViaPaneDeliveryFailedSay();
+        toolResult = {
+          tool: action.type,
+          ok,
+          summary: ok
+            ? `sync ${mode} abriu um agente único e foi confirmado (${commandId})`
+            : 'agente único abriu, mas entrega não confirmou',
+          output: {
+            commandId,
+            paneId: created.paneId,
+            mode,
+            sessionReady: Boolean(sessionId),
+            deliveryConfirmed: ok,
+          },
+        };
+      }
     } else {
       const paneId =
         target.kind === 'asking-pane'

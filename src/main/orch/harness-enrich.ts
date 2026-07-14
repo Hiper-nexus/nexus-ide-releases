@@ -235,13 +235,40 @@ export function enrichedFilePath(): string {
 
 export function loadEnrichedCatalog(): EnrichedCatalog | null {
   try {
-    const parsed = JSON.parse(
-      fs.readFileSync(enrichedFilePath(), 'utf8'),
-    ) as EnrichedCatalog;
-    return parsed && parsed.version === 1 && Array.isArray(parsed.items)
-      ? parsed
-      : null;
+    if (fs.existsSync(enrichedFilePath())) {
+      const parsed = JSON.parse(
+        fs.readFileSync(enrichedFilePath(), 'utf8'),
+      ) as EnrichedCatalog;
+      if (parsed && parsed.version === 1 && Array.isArray(parsed.items)) {
+        return parsed;
+      }
+    }
   } catch {
+    // If corrupt, fall through to fallback generation
+  }
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { listInstalledCatalogItems } = require('./catalog') as typeof import('./catalog');
+    const rawItems = listInstalledCatalogItems().filter(
+      (i) => i.kind === 'agent' || i.kind === 'skill',
+    );
+    const uniqueItems = [
+      ...new Map(rawItems.map((i) => [`${i.kind}:${i.name}`, i])).values(),
+    ];
+    const items = uniqueItems.map((i) =>
+      fallbackEnrichedItem({ name: i.name, kind: i.kind as 'agent' | 'skill' }),
+    );
+
+    const catalog: EnrichedCatalog = {
+      version: 1,
+      updatedAt: Date.now(),
+      items,
+    };
+    saveEnrichedCatalog(catalog);
+    return catalog;
+  } catch (err) {
+    console.warn('[harness] failed to bootstrap fallback catalog:', err);
     return null;
   }
 }

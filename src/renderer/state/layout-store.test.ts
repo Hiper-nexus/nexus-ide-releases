@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { PaneModel } from '../../shared/types';
 import { defaultCanvasLayout } from '../lib/canvas-layout';
-import { buildGridTree } from '../lib/split-tree';
+import { buildGridTree, listPanes } from '../lib/split-tree';
 import { useLayoutStore } from './layout-store';
 
 const basePane: PaneModel = {
@@ -34,5 +34,47 @@ describe('layout-store canvas placement', () => {
       y: focusedLayout.position.y,
     });
     expect(layouts[paneId].size).toEqual(focusedLayout.size);
+  });
+});
+
+describe('layout-store pane maximize', () => {
+  beforeEach(() => {
+    const panes: PaneModel[] = [
+      { id: 'pane-a', kind: 'shell', title: 'A' },
+      { id: 'pane-b', kind: 'shell', title: 'B' },
+    ];
+    useLayoutStore.setState({
+      root: buildGridTree(panes),
+      focusedPaneId: 'pane-a',
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+  });
+
+  it('toggles one maximized pane without removing the others', () => {
+    const beforeIds = listPanes(useLayoutStore.getState().root).map((pane) => pane.id);
+
+    useLayoutStore.getState().toggleMaximizePane('pane-b');
+
+    expect(useLayoutStore.getState().focusedPaneId).toBe('pane-b');
+    expect(useLayoutStore.getState().maximizedPaneId).toBe('pane-b');
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id)).toEqual(beforeIds);
+
+    useLayoutStore.getState().toggleMaximizePane('pane-b');
+
+    expect(useLayoutStore.getState().maximizedPaneId).toBeNull();
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id)).toEqual(beforeIds);
+  });
+
+  it('clears maximized state when that pane closes', () => {
+    useLayoutStore.getState().toggleMaximizePane('pane-b');
+
+    useLayoutStore.getState().close('pane-b', 'test');
+
+    expect(useLayoutStore.getState().maximizedPaneId).toBeNull();
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id)).toEqual(['pane-a']);
   });
 });

@@ -42,6 +42,7 @@ interface Session {
   idleTimer: ReturnType<typeof setTimeout> | null;
   idleTimeoutMs: number;
   state: PaneSessionState;
+  hookState?: PaneSessionState;
   /** Spawn cwd — workspace attribution (media output, telemetry). */
   cwd: string;
   /** Main-owned identity for cli-agent panes; never sourced from pane sync. */
@@ -429,6 +430,7 @@ function armIdleTimer(sessionId: string, session: Session): void {
   session.idleTimer = setTimeout(() => {
     session.idleTimer = null;
     if (!sessions.has(sessionId)) return;
+    if (session.hookState === "busy") return;
     session.state = "idle";
     emitStateChange(session.wc, sessionId, "idle");
   }, session.idleTimeoutMs);
@@ -1068,6 +1070,7 @@ export function publishSessionActivityState(
     fireTaps(stateTaps, sessionId, state);
     return false;
   }
+  session.hookState = state;
   session.state = state;
   emitStateChange(session.wc, sessionId, state);
   return true;

@@ -15,6 +15,7 @@ import {
   setSessionDictationHook,
   spawnAgentSession,
   spawnSession,
+  publishSessionActivityState,
   writeSession,
 } from "./pty-manager";
 import type {
@@ -734,5 +735,61 @@ describe("cli-agent spawn argv hardening", () => {
     );
 
     killSession(owner, sessionId);
+  });
+
+  it("keeps state as busy when hookState is busy, ignoring the idle timeout", async () => {
+    vi.useFakeTimers();
+    let handlers: PtySessionHandlers | null = null;
+    const proc: PtyProcHandle = { write: vi.fn(), resize: vi.fn(), kill: vi.fn() };
+    setPtyHost({
+      spawn(_spec, nextHandlers) {
+        handlers = nextHandlers;
+        return proc;
+      },
+    });
+
+    const owner = fakeWc();
+    const trusted = trustedSpawn();
+    const adapter = makeAdapter({
+      static: {},
+      passthrough: [],
+      ephemeralHome: false,
+    });
+
+    const { sessionId } = spawnAgentSession(
+      owner,
+      {
+        kind: "cli-agent",
+        cols: 80,
+        rows: 24,
+      },
+      adapter,
+      {},
+      trusted,
+    );
+
+    const activeHandlers = handlers as PtySessionHandlers | null;
+    if (!activeHandlers) throw new Error("PTY handlers were not registered");
+
+    // Initial state is spawning, transitions to busy on first data
+    activeHandlers.onData("hello");
+    expect(getSessionState(sessionId)).toBe("busy");
+
+    // Publish hook state as busy
+    publishSessionActivityState(sessionId, "busy");
+    expect(getSessionState(sessionId)).toBe("busy");
+
+    // Advance time by the idle timeout (adapter has 500ms)
+    await vi.advanceTimersByTimeAsync(1000);
+
+    // The state should still be busy, because hookState is busy!
+    expect(getSessionState(sessionId)).toBe("busy");
+
+    // Publish hook state as idle
+    publishSessionActivityState(sessionId, "idle");
+    expect(getSessionState(sessionId)).toBe("idle");
+
+    killSession(owner, sessionId);
+    vi.useRealTimers();
   });
 });

@@ -135,6 +135,8 @@ function ToolbarBtn({
  */
 export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const split = useLayoutStore((s) => s.split);
+  const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
+  const toggleMaximizePane = useLayoutStore((s) => s.toggleMaximizePane);
   const renameTitle = useLayoutStore((s) => s.renameTitle);
   const paneState = useSessionStateStore((s) => s.paneStates.get(pane.id));
   const agentCategory = useOrchStore((s) =>
@@ -152,6 +154,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     ? `${pane.adapterId}${pane.model ? ` · ${pane.model}` : ''}`
     : null;
   const isHibernated = paneState === 'hibernated';
+  const isMaximized = maximizedPaneId === pane.id;
 
   useEffect(() => {
     const el = rootRef.current;
@@ -258,6 +261,17 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     }
 
     if (!isCanvas) {
+      list.push({
+        id: 'maximize',
+        label: isMaximized ? 'Restaurar' : 'Ampliar',
+        detail: isMaximized
+          ? 'Restaura a grade com todos os panes'
+          : 'Amplia este pane sem fechar os outros',
+        icon: isMaximized ? 'grid' : 'maximize',
+        active: isMaximized,
+        primary: true,
+        run: () => toggleMaximizePane(pane.id),
+      });
       // Splits NÃO são primary: em pane estreito empurravam o Fechar para fora
       // da toolbar e o utilizador ficava sem forma de fechar a janela.
       list.push({
@@ -279,7 +293,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     }
 
     return list;
-  }, [pane, isCanvas, isHibernated, paneState, split]);
+  }, [pane, isCanvas, isHibernated, isMaximized, paneState, split, toggleMaximizePane]);
 
   const closeAction: ToolbarAction = {
     id: 'close',
@@ -296,7 +310,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   // Icons/full: sessão + layout; Fechar pinado.
   const overflow =
     density === 'compact'
-      ? actions.filter((a) => a.id !== 'restart')
+      ? actions.filter((a) => a.id !== 'restart' && a.id !== 'maximize')
       : density === 'icons'
         ? actions.filter((a) => a.id === 'split-right' || a.id === 'split-down')
         : [];
@@ -307,8 +321,12 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   );
   const layoutVisible =
     density === 'full'
-      ? actions.filter((a) => a.id === 'split-right' || a.id === 'split-down')
-      : [];
+      ? actions.filter((a) =>
+          a.id === 'maximize' || a.id === 'split-right' || a.id === 'split-down',
+        )
+      : density === 'compact'
+        ? actions.filter((a) => a.id === 'maximize')
+        : actions.filter((a) => a.id === 'maximize');
 
   function renderGroup(items: ToolbarAction[], aria: string) {
     if (items.length === 0) return null;

@@ -1,6 +1,7 @@
 const BRACKETED_PASTE_START = '\x1b[200~';
 const BRACKETED_PASTE_END = '\x1b[201~';
-const PASTE_SETTLE_MS = 250;
+const MIN_PASTE_SETTLE_MS = 750;
+const MAX_PASTE_SETTLE_MS = 2_500;
 
 export interface PaneSubmitPorts {
   getSessionId(paneId: string): string | null;
@@ -11,6 +12,13 @@ export interface PaneSubmitPorts {
 
 function isSafePrompt(text: string): boolean {
   return text.length > 0 && !/[\x00-\x08\x0b-\x1f\x7f]/u.test(text);
+}
+
+function pasteSettleMs(text: string): number {
+  return Math.min(
+    MAX_PASTE_SETTLE_MS,
+    Math.max(MIN_PASTE_SETTLE_MS, Math.ceil(text.length * 1.4)),
+  );
 }
 
 function pastePrompt(
@@ -39,7 +47,7 @@ export function submitPromptToPane(
   ports.schedule(() => {
     if (ports.getSessionId(paneId) !== sessionId) return;
     ports.write(sessionId, '\r');
-  }, PASTE_SETTLE_MS);
+  }, pasteSettleMs(text));
   return true;
 }
 
@@ -72,7 +80,7 @@ export function submitPromptToPaneConfirmed(
         }
         void ports.writeConfirmed(expectedSessionId, '\r')
           .then(resolve, () => resolve(false));
-      }, PASTE_SETTLE_MS);
+      }, pasteSettleMs(text));
     });
   });
 }

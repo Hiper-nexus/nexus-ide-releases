@@ -32,6 +32,7 @@ const DEFAULT_CANVAS_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 interface LayoutState {
   root: LayoutNode;
   focusedPaneId: string | null;
+  maximizedPaneId: string | null;
   hydrated: boolean;
   viewKind: ViewKind;
   canvasNodeLayouts: Record<string, CanvasNodeLayout>;
@@ -65,6 +66,8 @@ interface LayoutState {
    * panes disappear?) — never omit on automated paths.
    */
   close(paneId: string, reason?: string): void;
+  /** Temporarily show one pane full-size in the grid without mutating the tree. */
+  toggleMaximizePane(paneId: string): void;
   /** Drop a spent orchRequestId so Reiniciar does not reuse a dead token. */
   clearOrchRequestId(paneId: string): void;
   focus(paneId: string): void;
@@ -235,6 +238,7 @@ function firstPaneId(root: LayoutNode): string | null {
 export const useLayoutStore = create<LayoutState>((set, get) => ({
   root: initialTree(),
   focusedPaneId: null,
+  maximizedPaneId: null,
   hydrated: false,
   viewKind: 'grid',
   canvasNodeLayouts: {},
@@ -423,13 +427,22 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     }
     const focusedPaneId =
       get().focusedPaneId === paneId ? firstPaneId(root) : get().focusedPaneId;
+    const maximizedPaneId =
+      get().maximizedPaneId === paneId ? null : get().maximizedPaneId;
     bumpTreeVersion();
-    const s = { ...get(), root, focusedPaneId };
-    set({ root, focusedPaneId });
+    const s = { ...get(), root, focusedPaneId, maximizedPaneId };
+    set({ root, focusedPaneId, maximizedPaneId });
     persist(s);
     // Closing the LAST pane replaces it with a fresh shell — visually a no-op.
     // Surface the Home deck so the click has feedback and a next step.
     if (next === null) useHomeStore.getState().show();
+  },
+
+  toggleMaximizePane: (paneId) => {
+    const exists = listPanes(get().root).some((pane) => pane.id === paneId);
+    if (!exists) return;
+    const maximizedPaneId = get().maximizedPaneId === paneId ? null : paneId;
+    set({ maximizedPaneId, focusedPaneId: paneId });
   },
 
   clearOrchRequestId: (paneId) => {
@@ -517,6 +530,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       set({
         root,
         focusedPaneId: firstPaneId(root),
+        maximizedPaneId: null,
         hydrated: true,
         viewKind: 'grid',
         canvasNodeLayouts: {},
@@ -525,9 +539,16 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       return;
     }
     const focusedPaneId = layout.focusedPaneId ?? firstPaneId(layout.root);
+    const currentMaximized = get().maximizedPaneId;
+    const maximizedPaneId = listPanes(layout.root).some(
+      (pane) => pane.id === currentMaximized,
+    )
+      ? currentMaximized
+      : null;
     set({
       root: layout.root,
       focusedPaneId,
+      maximizedPaneId,
       hydrated: true,
       viewKind: layout.viewKind ?? 'grid',
       canvasNodeLayouts: layout.canvasNodeLayouts ?? {},

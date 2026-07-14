@@ -38,6 +38,9 @@ function renderNode(node: LayoutNode): React.ReactNode {
 
 export function PaneGrid() {
   const root = useLayoutStore((s) => s.root);
+  const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
+  const maximizedPane =
+    maximizedPaneId ? listPanes(root).find((pane) => pane.id === maximizedPaneId) : null;
 
   // Dispose terminals for panes that have left the tree (after close).
   useEffect(() => {
@@ -46,5 +49,9 @@ export function PaneGrid() {
     reconcileBrowserPanes(liveIds);
   }, [root]);
 
-  return <div className="grid">{renderNode(root)}</div>;
+  return (
+    <div className={`grid${maximizedPane ? ' grid--pane-maximized' : ''}`}>
+      {maximizedPane ? <PaneLeaf pane={maximizedPane} /> : renderNode(root)}
+    </div>
+  );
 }

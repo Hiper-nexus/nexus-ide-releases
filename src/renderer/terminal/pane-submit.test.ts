@@ -35,7 +35,7 @@ describe('pane prompt submission', () => {
         'session-1',
         '\x1b[200~Objective\nAcceptance\x1b[201~',
       );
-      vi.advanceTimersByTime(249);
+      vi.advanceTimersByTime(749);
       expect(write).toHaveBeenCalledOnce();
       vi.advanceTimersByTime(1);
       expect(write).toHaveBeenLastCalledWith('session-1', '\r');
@@ -55,7 +55,7 @@ describe('pane prompt submission', () => {
         ports,
       );
       await Promise.resolve();
-      vi.advanceTimersByTime(250);
+      vi.advanceTimersByTime(750);
       await expect(confirmed).resolves.toBe(true);
       expect(writeConfirmed).toHaveBeenNthCalledWith(
         1,
@@ -91,7 +91,7 @@ describe('pane prompt submission', () => {
       );
       await Promise.resolve();
       setSessionId('session-2');
-      vi.advanceTimersByTime(250);
+      vi.advanceTimersByTime(750);
       await expect(confirmed).resolves.toBe(false);
       expect(writeConfirmed).toHaveBeenCalledOnce();
     } finally {
@@ -138,8 +138,23 @@ describe('pane prompt submission', () => {
         ports,
       );
       await Promise.resolve();
-      vi.advanceTimersByTime(250);
+      vi.advanceTimersByTime(750);
       await expect(confirmed).resolves.toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits longer before Enter for large Claude-style prompts', () => {
+    vi.useFakeTimers();
+    try {
+      const { ports, write } = createPorts();
+      const longPrompt = 'x'.repeat(1_200);
+      expect(submitPromptToPane('pane-1', longPrompt, ports)).toBe(true);
+      vi.advanceTimersByTime(1_679);
+      expect(write).toHaveBeenCalledOnce();
+      vi.advanceTimersByTime(1);
+      expect(write).toHaveBeenLastCalledWith('session-1', '\r');
     } finally {
       vi.useRealTimers();
     }
