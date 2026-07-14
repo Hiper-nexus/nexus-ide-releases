@@ -138,10 +138,12 @@ describe('smoke isolation', () => {
     const hookSection = mainSource.indexOf('// Gap A:', readyStart);
     const createWindowAtReady = mainSource.indexOf('    createMainWindow();', readyStart);
     const bootstrapBeforeHooks = mainSource.indexOf('    bootstrap();', readyStart);
+    const awakeInit = mainSource.indexOf('    getAgentAwakeService();', readyStart);
 
     expect(readyStart).toBeGreaterThan(-1);
     expect(hookSection).toBeGreaterThan(readyStart);
     expect(createWindowAtReady).toBeGreaterThan(readyStart);
+    expect(createWindowAtReady).toBeLessThan(awakeInit);
     expect(createWindowAtReady).toBeLessThan(bootstrapBeforeHooks);
     expect(bootstrapBeforeHooks).toBeGreaterThan(readyStart);
     expect(bootstrapBeforeHooks).toBeLessThan(hookSection);

@@ -9,7 +9,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { getKey, getSecret } from '../persistence/secrets-store';
+import {
+  getKey,
+  getSecret,
+  hasCachedSecret,
+} from '../persistence/secrets-store';
 import { loadLauncherProviderKey } from '../adapters/launcher-provider-manager';
 import {
   claudeOAuthAccessToken,
@@ -34,6 +38,11 @@ function readText(filePath: string): string | null {
 }
 
 function safeGetKey(adapterId: string): string | null {
+  // Quota refreshes can run immediately after launch. A cold vault read would
+  // synchronously enter the macOS Keychain and stall Electron's main thread.
+  // Use only an already-decrypted cache entry here; a later provider spawn can
+  // resolve the durable secret on demand.
+  if (!hasCachedSecret(adapterId)) return null;
   try {
     return getKey(adapterId)?.trim() || null;
   } catch {
@@ -42,6 +51,7 @@ function safeGetKey(adapterId: string): string | null {
 }
 
 function safeGetSecret(key: string): string | null {
+  if (!hasCachedSecret(key)) return null;
   try {
     const v = getSecret(key);
     return typeof v === 'string' && v.trim() ? v.trim() : null;

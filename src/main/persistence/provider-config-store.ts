@@ -43,6 +43,8 @@ import {
 } from '../adapters/custom-models';
 import {
   getKey,
+  hasCachedSecret,
+  hasSecret,
   isSecureStorageAvailable,
   maskedKey,
   setKey,
@@ -283,7 +285,32 @@ function resolveApiKey(adapterId: string, upstream?: string): string | null {
 }
 
 function hasRuntimeKey(adapterId: string): boolean {
-  return resolveApiKey(adapterId) !== null;
+  // Provider readiness is queried during boot. Do not decrypt the vault here:
+  // on macOS that crosses into SecItemCopyMatching and can block Electron's
+  // main thread while the Keychain session is locked or stale. Presence in
+  // the encrypted index is enough for readiness; the actual key is resolved
+  // only when a provider is spawned.
+  if (hasSecret(adapterId)) return true;
+  return resolveApiKeyWithoutVault(adapterId) !== null;
+}
+
+function resolveApiKeyWithoutVault(adapterId: string): string | null {
+  const fromLauncher = loadLauncherProviderKey(adapterId);
+  if (fromLauncher) return fromLauncher;
+
+  const route = configFor(adapterId).upstream;
+  if (route && route !== 'anthropic' && route !== adapterId) {
+    const viaUpstream = loadLauncherProviderKey(route);
+    if (viaUpstream) return viaUpstream;
+  }
+
+  for (const name of keyEnvVarsOf(adapterId)) {
+    const value = process.env[name];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return null;
 }
 
 function maskToken(key: string): string {
@@ -569,15 +596,19 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
     // Prefer vault mask; if only the launcher has the key, mask that instead
     // so Settings doesn't look "empty" while readiness is already true.
     keyMasked: (() => {
-      const vault = maskedKey(adapterId);
+      // A cached value is safe to mask. For a cold boot, only inspect the
+      // encrypted index and return a generic mask; never decrypt Keychain data
+      // while constructing the provider snapshot.
+      const vault = hasCachedSecret(adapterId) ? maskedKey(adapterId) : null;
       if (vault) return vault;
-      const resolved = resolveApiKey(adapterId, cfg.upstream);
+      if (hasSecret(adapterId)) return '••••••';
+      const resolved = resolveApiKeyWithoutVault(adapterId);
       return resolved ? maskToken(resolved) : null;
     })(),
     authMethod: adapter.kind === 'cli-pty' ? adapter.auth.method : 'api_key',
     loginHint:
       adapter.kind === 'cli-pty' ? adapter.auth.loginHint : undefined,
-    secureStorageAvailable: isSecureStorageAvailable(),
+    secureStorageAvailable: isSecureStorageAvailable({ probe: false }),
     authStrategy: authDecision(adapterId).strategy,
     upstream: cfg.upstream || 'anthropic',
     routable: isRoutable(adapterId),

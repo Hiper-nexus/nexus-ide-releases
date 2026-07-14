@@ -3,7 +3,7 @@
  * Never written into project `.nexus/` trees.
  */
 import {
-  getVoiceApiKey,
+  hasStoredVoiceApiKey,
   resolveVoiceApiKey,
   setVoiceApiKey,
 } from '../voice/voice-secrets';
@@ -20,7 +20,9 @@ export function setGithubToken(token: string): { ok: boolean; error?: string } {
 }
 
 export function hasGithubToken(): boolean {
-  return Boolean(getGithubToken());
+  // Presence checks are used by renderer status/IPC during launch. Do not
+  // decrypt a cold Keychain item just to answer a boolean.
+  return hasStoredVoiceApiKey(GITHUB_ENV) || Boolean(process.env[GITHUB_ENV]?.trim());
 }
 
 export function getLinearKey(): string | null {
@@ -32,11 +34,12 @@ export function setLinearKey(key: string): { ok: boolean; error?: string } {
 }
 
 export function hasLinearKey(): boolean {
-  return Boolean(getLinearKey());
+  return hasStoredVoiceApiKey(LINEAR_ENV) || Boolean(process.env[LINEAR_ENV]?.trim());
 }
 
 export function maskedGithubToken(): string | null {
-  const key = getVoiceApiKey(GITHUB_ENV);
+  const key = process.env[GITHUB_ENV]?.trim() ||
+    (hasStoredVoiceApiKey(GITHUB_ENV) ? '••••••' : null);
   if (!key) return null;
   if (key.length <= 8) return '••••';
   return `${key.slice(0, 3)}…${key.slice(-4)}`;

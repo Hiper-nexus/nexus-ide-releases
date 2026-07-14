@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -60,6 +61,12 @@ function sanitizedChildEnvironment(): NodeJS.ProcessEnv {
 }
 
 describe('durable secret persistence', () => {
+  it('does not synchronously probe macOS Keychain for boot availability', () => {
+    const source = readFileSync(new URL('./secrets-store.ts', import.meta.url), 'utf8');
+    expect(source).toContain(
+      "if (process.platform === 'darwin' && options?.probe === false) return true;",
+    );
+  });
   beforeEach(() => {
     vi.restoreAllMocks();
     fs.rmSync(secretDeps.home, { recursive: true, force: true });

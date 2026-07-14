@@ -23,7 +23,13 @@ export function resolveVoiceApiKey(envVar: string): string | undefined {
 }
 
 export function hasVoiceCredential(envVar: string): boolean {
-  return resolveVoiceApiKey(envVar) !== undefined;
+  // This probe feeds the secret-free runtime snapshot and is called while the
+  // renderer asks for voice status. Presence in the encrypted vault is enough;
+  // decrypting here enters the macOS Keychain synchronously and can freeze the
+  // Electron main thread. The actual value is still resolved lazily by
+  // resolveVoiceApiKey when a voice turn starts.
+  if (hasStoredVoiceApiKey(envVar)) return true;
+  return Boolean(process.env[envVar]?.trim());
 }
 
 /** De onde a key resolveu — PRESENÇA apenas, nunca o valor. Mesma cadeia do
@@ -56,5 +62,7 @@ export function setVoiceApiKey(
 }
 
 export function isVoiceSecretStorageAvailable(): boolean {
-  return isSecureStorageAvailable();
+  // Voice config is loaded during boot; do not synchronously ask the Keychain
+  // here. Credential writes/reads still perform the strict probe on demand.
+  return isSecureStorageAvailable({ probe: false });
 }

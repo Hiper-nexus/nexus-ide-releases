@@ -4,6 +4,22 @@ import { describe, expect, it } from 'vitest';
 import { shouldCreateWindowOnActivate } from './app-lifecycle';
 
 describe('macOS activate lifecycle', () => {
+  it('constructs the native window before optional window integrations', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'window.ts'), 'utf-8');
+    const windowStart = source.indexOf('const win = new BrowserWindow({');
+    const integrationStart = source.indexOf('registerExternalLinkIpc();', windowStart);
+
+    expect(windowStart).toBeGreaterThanOrEqual(0);
+    expect(integrationStart).toBeGreaterThan(windowStart);
+  });
+
+  it('keeps the native window explicitly visible on launch', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'window.ts'), 'utf-8');
+    expect(source).toContain('show: true');
+    expect(source).toContain('win.show();');
+    expect(source).toContain("app.setActivationPolicy?.('regular')");
+  });
+
   it('creates a window only while the app runtime is live', () => {
     expect(
       shouldCreateWindowOnActivate({

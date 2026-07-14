@@ -40,8 +40,15 @@ export function isSecureStorageBackendAllowed(
   return platform !== 'linux' || readBackend() !== 'basic_text';
 }
 
-export function isSecureStorageAvailable(): boolean {
+export function isSecureStorageAvailable(options?: { probe?: boolean }): boolean {
   if (isCurrentProcessSmokeTest()) return false;
+  // Do not synchronously probe the macOS Keychain during app startup. On a
+  // locked/stale login session `safeStorage.isEncryptionAvailable()` enters
+  // SecItemCopyMatching and can block Electron's main thread indefinitely,
+  // preventing AppKit from presenting the already-created window. macOS
+  // safeStorage is the only supported backend here; actual encrypt/decrypt
+  // calls remain guarded and fail closed when the user uses the vault.
+  if (process.platform === 'darwin' && options?.probe === false) return true;
   try {
     return (
       safeStorage.isEncryptionAvailable() &&

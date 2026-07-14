@@ -507,6 +507,11 @@ if (!wireDeepLinks()) {
   app.quit();
 } else {
   app.whenReady().then(async () => {
+    // No service initialization belongs before this call. Some macOS APIs
+    // (notably Keychain-backed providers) can block the Electron main thread;
+    // the native window/Dock item must already exist before touching them.
+    createMainWindow();
+
     // Agent awake: prevent sleep while provider hooks report working.
     getAgentAwakeService();
     registerAgentHookIpc();
@@ -522,7 +527,6 @@ if (!wireDeepLinks()) {
     // is ready. Do not move it into bootstrap(): synchronous adapter, settings,
     // database, or keychain setup can otherwise classify the process as a
     // background UIElement before macOS has a window/Dock item to display.
-    createMainWindow();
     bootstrap();
 
     // Gap A: register Claude+Codex managed hook installers. Installing edits the

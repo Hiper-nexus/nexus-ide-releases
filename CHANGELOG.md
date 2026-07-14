@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.15.13 — Dock-First Keychain-Safe Launch
+
+Data: 2026-07-14
+
+- Remove a consulta síncrona ao macOS Keychain do caminho de boot.
+- `safeStorage` continua sendo usado e falha fechado para operações reais de
+  credencial, mas não pode mais congelar o thread principal antes de o Dock e
+  a janela aparecerem.
+
+## 0.15.12 — Dock-First Visible Launch
+
+Data: 2026-07-14
+
+- Define política de ativação regular no macOS, mostra o Dock e chama
+  `win.show()` explicitamente no lançamento.
+- A janela deixa de depender do estado de ativação herdado de helpers, deep
+  links ou locks de instância antigos.
+
+## 0.15.11 — Dock-First Zero-Block Launch
+
+Data: 2026-07-14
+
+- Move a criação da janela para a primeira operação do callback `app.whenReady`.
+- Nem o serviço de energia nem IPC de hooks podem bloquear o ícone do Dock ou a
+  janela principal durante o lançamento.
+
+## 0.15.10 — Dock-First Native Window Hardening
+
+Data: 2026-07-14
+
+- Instancia o `BrowserWindow` antes de registrar IPC externo e CSP.
+- Falhas de integrações opcionais agora são registradas e não impedem a
+  existência da janela nativa e do ícone do Dock.
+
 ## 0.15.9 — Dock-First Production Hardening
 
 Data: 2026-07-14

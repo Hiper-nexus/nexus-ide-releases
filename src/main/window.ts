@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 import type { IpcMainEvent, WebContents } from 'electron';
 import { WINDOW_CHANNELS } from '../shared/channels';
 import { killSessionsFor, liveSessionSummary } from './pty/pty-manager';
@@ -159,8 +159,6 @@ function registerCsp(devServerUrl: string | undefined): void {
 export function createMainWindow(): BrowserWindow {
   const devServerUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL;
   const rendererUrl = devServerUrl ?? RENDERER_PROTOCOL_ENTRY_URL;
-  registerExternalLinkIpc();
-  registerCsp(devServerUrl);
 
   const win = new BrowserWindow({
     width: 1280,
@@ -170,6 +168,7 @@ export function createMainWindow(): BrowserWindow {
     // Precisa casar com --bg (base.css) — cor de pré-paint da janela.
     backgroundColor: '#0a0e15',
     title: 'NexusIDE',
+    show: true,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -179,6 +178,31 @@ export function createMainWindow(): BrowserWindow {
       webviewTag: false,
     },
   });
+
+  // Electron can inherit an accessory/background activation policy when the
+  // app was launched by a helper, deep link, or a stale single-instance lock.
+  // Make the user-facing shell explicit: the Dock item and native window must
+  // be visible even while the renderer/protocol finishes loading.
+  if (process.platform === 'darwin') {
+    try {
+      app.setActivationPolicy?.('regular');
+      app.dock?.show();
+    } catch (error) {
+      console.warn('[window] macOS activation policy unavailable:', error);
+    }
+  }
+  win.show();
+
+  // The native window is the availability boundary: integrations must not be
+  // able to prevent the Dock item from existing. Register optional IPC/CSP
+  // surfaces after BrowserWindow construction and degrade visibly if one is
+  // unavailable during a damaged or partially migrated launch.
+  try {
+    registerExternalLinkIpc();
+    registerCsp(devServerUrl);
+  } catch (error) {
+    console.error('[window] optional window integrations failed:', error);
+  }
 
   // Block in-app navigation and new windows — the renderer only ever loads our
   // own bundle. Defense in depth against a compromised renderer.

@@ -1,5 +1,6 @@
 import {
   getSecret,
+  hasCachedSecret,
   hasSecret,
   setSecret,
 } from '../persistence/secrets-store';
@@ -53,7 +54,17 @@ export function resolveMediaKey(def: MediaProviderDef): string | undefined {
 }
 
 export function hasMediaKey(def: MediaProviderDef): boolean {
-  return resolveMediaKey(def) !== undefined;
+  // Provider/tool capability snapshots are queried during boot. Read only the
+  // encrypted index here; decrypting a cold value would synchronously enter
+  // the macOS Keychain and stall Electron's main thread.
+  const own = hasSecret(mediaSecretKey(def.id));
+  const shared = hasSecret(`${VOICE_SECRET_PREFIX}${def.envVar}`);
+  const paired =
+    (def.id === 'google-image' && hasSecret(mediaSecretKey('google-video'))) ||
+    (def.id === 'google-video' && hasSecret(mediaSecretKey('google-image'))) ||
+    (def.id === 'replicate-image' && hasSecret(mediaSecretKey('replicate-video'))) ||
+    (def.id === 'replicate-video' && hasSecret(mediaSecretKey('replicate-image')));
+  return own || shared || paired || Boolean(process.env[def.envVar]?.trim());
 }
 
 export function setMediaKey(
@@ -69,13 +80,28 @@ export function hasStoredMediaKey(providerId: MediaProviderId): boolean {
 
 export function maskedMediaKey(providerId: MediaProviderId): string | null {
   const def = findMediaProvider(providerId);
-  // Prefer the fully resolved key (shared google/replicate vault slots +
-  // voice-env + process env) so Settings shows a mask when the provider is
-  // actually usable, not only when its own mediakey: slot is filled.
+  // Prefer a cached value. On a cold boot, return a generic mask based on the
+  // encrypted index and never decrypt Keychain data for a status render.
+  const cached = (key: string): string | null =>
+    hasCachedSecret(key) ? getSecret(key)?.trim() || null : null;
   const key = def
-    ? resolveMediaKey(def)
-    : getSecret(mediaSecretKey(providerId))?.trim() || null;
-  if (!key) return null;
+    ? cached(mediaSecretKey(def.id)) ||
+      (def.id === 'google-video' && cached(mediaSecretKey('google-image'))) ||
+      (def.id === 'google-image' && cached(mediaSecretKey('google-video'))) ||
+      (def.id === 'replicate-image' && cached(mediaSecretKey('replicate-video'))) ||
+      (def.id === 'replicate-video' && cached(mediaSecretKey('replicate-image'))) ||
+      cached(`${VOICE_SECRET_PREFIX}${def.envVar}`) ||
+      (process.env[def.envVar]?.trim() ?? null)
+    : cached(mediaSecretKey(providerId));
+  if (!key) {
+    return def
+      ? hasMediaKey(def)
+        ? '••••'
+        : null
+      : hasSecret(mediaSecretKey(providerId))
+        ? '••••'
+        : null;
+  }
   if (key.length <= 8) return '••••';
   return `${key.slice(0, 3)}…${key.slice(-4)}`;
 }

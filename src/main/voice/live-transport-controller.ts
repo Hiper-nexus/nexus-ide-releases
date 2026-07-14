@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { getVoiceConfig } from './voice-config-store';
 import { resolveActiveJarvisBrain } from '../../shared/voice-config';
-import { resolveVoiceApiKey, voiceApiKeySource } from './voice-secrets';
+import {
+  voiceApiKeySource,
+} from './voice-secrets';
 import { logVoice } from './voice-log';
 import { VOICE_CHANNELS } from '../../shared/voice-channels';
 import {
@@ -231,7 +233,7 @@ export class LiveTransportController {
   isRealtimeConfigured(): boolean {
     return resolveRealtimeProviderIds(getVoiceConfig()).some((providerId) => {
       const envVar = providerId === 'openai' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY';
-      return resolveVoiceApiKey(envVar) !== undefined;
+      return voiceApiKeySource(envVar) !== 'missing';
     });
   }
 
@@ -262,8 +264,9 @@ export class LiveTransportController {
       transport: config.jarvisLive.transport,
       candidates,
     });
-    const brain = resolveActiveJarvisBrain(config.jarvisBrain, (envVar) =>
-      resolveVoiceApiKey(envVar) !== undefined,
+    const brain = resolveActiveJarvisBrain(
+      config.jarvisBrain,
+      (envVar) => voiceApiKeySource(envVar) !== 'missing',
     );
     const brainPart = brain ? `${brain.provider}:${brain.model}` : 'none';
     const line = `${decision.line} | brain=${brainPart}`;

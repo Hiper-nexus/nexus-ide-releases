@@ -13,11 +13,11 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.15.9',
+  version: '0.15.13',
   date: '2026-07-14',
-  codename: 'Dock-First Production Hardening',
+  codename: 'Dock-First Keychain-Safe Launch',
   summary:
-    'Nexus cria a janela principal como primeira operação após o ready do Electron, antes de hooks, adapters, banco, keychain ou qualquer inicialização pesada.',
+    'Nexus cria e mostra explicitamente a janela nativa e não consulta o Keychain de forma síncrona durante o boot do macOS.',
   highlights: [
     {
       title: 'Intenção antes de orquestração',
@@ -44,7 +44,7 @@ export const CURRENT_RELEASE: AppRelease = {
     {
       title: 'Dock e janela resilientes',
       detail:
-        'A janela principal é criada antes de hooks e de todo o bootstrap síncrono; atrasos, portas ocupadas, keychain ou processos auxiliares não deixam o Nexus preso como processo de fundo.',
+        'A janela principal é criada antes de integrações opcionais e de todo o bootstrap síncrono; consultas Keychain bloqueantes ficam fora do caminho de inicialização.',
     },
     {
       title: 'Autoridade fail-closed',
