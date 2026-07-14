@@ -6,14 +6,18 @@ const {
   confirmCommand,
   layoutState,
   missionWizardState,
+  paneStates,
   resolveSyncRepoViaPaneTarget,
   submitPromptToPane,
+  submitPromptToPaneConfirmed,
   waitForSession,
 } = vi.hoisted(() => ({
   confirmCommand: vi.fn(),
   resolveSyncRepoViaPaneTarget: vi.fn(),
   submitPromptToPane: vi.fn(),
+  submitPromptToPaneConfirmed: vi.fn(),
   waitForSession: vi.fn(),
+  paneStates: new Map<string, string>(),
   missionWizardState: {
     open: false,
     close: vi.fn(),
@@ -71,8 +75,14 @@ vi.mock('../state/settings-store', () => ({
 }));
 vi.mock('../terminal/terminal-host', () => ({
   submitPromptToPane,
+  submitPromptToPaneConfirmed,
   waitForSession,
   writeToPane: vi.fn(),
+}));
+vi.mock('../state/session-state-store', () => ({
+  useSessionStateStore: {
+    getState: () => ({ paneStates }),
+  },
 }));
 vi.mock('../browser/browser-host', () => ({ waitForBrowserPaneCreated: vi.fn() }));
 vi.mock('../orch/mission-launcher', () => ({ launchSquadMission: vi.fn() }));
@@ -121,6 +131,8 @@ describe('sync_repo_via_pane executor', () => {
     });
     waitForSession.mockResolvedValue('session-1');
     submitPromptToPane.mockReturnValue(true);
+    submitPromptToPaneConfirmed.mockResolvedValue(true);
+    paneStates.clear();
     confirmCommand.mockResolvedValue(true);
     vi.stubGlobal('window', {
       nexus: {
@@ -129,15 +141,16 @@ describe('sync_repo_via_pane executor', () => {
     });
   });
 
-  it('submits the product pull prompt to the agent pane', async () => {
+  it('submits the product pull prompt to the agent pane with delivery confirm', async () => {
     const execution = await executeJarvisAction(
       { say: '', action: { type: 'sync_repo_via_pane', mode: 'pull' } },
       context,
     );
 
-    expect(submitPromptToPane).toHaveBeenCalledWith(
+    expect(submitPromptToPaneConfirmed).toHaveBeenCalledWith(
       'pane-agent',
       buildSyncRepoViaPanePrompt('pull'),
+      'session-1',
     );
     expect(layoutState.focus).toHaveBeenCalledWith('pane-agent');
     expect(execution.toolResult).toMatchObject({
@@ -148,13 +161,27 @@ describe('sync_repo_via_pane executor', () => {
     expect(execution.sayText).toMatch(/atualizar o repositório/i);
   });
 
+  it('refuses sync when the agent pane is busy', async () => {
+    paneStates.set('pane-agent', 'busy');
+    const execution = await executeJarvisAction(
+      { say: '', action: { type: 'sync_repo_via_pane', mode: 'pull' } },
+      context,
+    );
+    expect(submitPromptToPaneConfirmed).not.toHaveBeenCalled();
+    expect(execution.toolResult).toMatchObject({
+      ok: false,
+      summary: expect.stringContaining('ocupado'),
+    });
+    expect(execution.sayText).toMatch(/ocupado/i);
+  });
+
   it('requires confirmation before push mode', async () => {
     confirmCommand.mockResolvedValueOnce(false);
     const denied = await executeJarvisAction(
       { say: '', action: { type: 'sync_repo_via_pane', mode: 'push' } },
       context,
     );
-    expect(submitPromptToPane).not.toHaveBeenCalled();
+    expect(submitPromptToPaneConfirmed).not.toHaveBeenCalled();
     expect(denied.toolResult).toMatchObject({ ok: false, summary: 'usuário recusou push' });
 
     confirmCommand.mockResolvedValueOnce(true);
@@ -163,9 +190,10 @@ describe('sync_repo_via_pane executor', () => {
       context,
     );
     expect(confirmCommand).toHaveBeenCalled();
-    expect(submitPromptToPane).toHaveBeenCalledWith(
+    expect(submitPromptToPaneConfirmed).toHaveBeenCalledWith(
       'pane-agent',
       buildSyncRepoViaPanePrompt('push'),
+      'session-1',
     );
     expect(approved.toolResult?.ok).toBe(true);
   });

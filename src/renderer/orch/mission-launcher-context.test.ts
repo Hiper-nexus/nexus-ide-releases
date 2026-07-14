@@ -35,7 +35,7 @@ describe('mission kickoff context/PREVC contract', () => {
     }
     expect(prompt).toContain('Nunca invente regra de negócio');
     expect(prompt).toContain('NÃO confiável');
-    expect(prompt).toContain('nem declare a missão done manualmente');
+    expect(prompt).toMatch(/Nunca declare done manualmente sem PREVC|declare a missão done manualmente/i);
     expect(prompt).toContain('PILOTO AUTOMÁTICO');
     expect(prompt).toContain('blast radius');
     expect(prompt).toContain('plano sela');
@@ -57,11 +57,13 @@ describe('mission kickoff context/PREVC contract', () => {
     expect(prompt).toContain('um worker escritor por vez');
   });
 
-  it('does not ask an already-running mission to change status before its contract exists', () => {
+  it('forbids done without PREVC while the mission is already running', () => {
     const prompt = buildMissionKickoffPrompt(squad, 'mission-a');
 
     expect(prompt).toContain('já está em `running`');
-    expect(prompt).not.toContain('nexus_mission_set_status');
+    // Explicit anti-pattern: tool may be named only to forbid premature done.
+    expect(prompt).toMatch(/NUNCA use nexus_mission_set_status done|nunca declare done/i);
+    expect(prompt).toMatch(/status=blocked|marque `blocked`/i);
     expect(prompt.indexOf('nexus_context_doctor')).toBeLessThan(
       prompt.indexOf('nexus_mission_freeze_contract'),
     );

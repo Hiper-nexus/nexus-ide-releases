@@ -24,7 +24,11 @@ import { useLayoutStore } from '../state/layout-store';
 import { PixelIcon } from './PixelIcon';
 import { ActionCard, EmptyState } from './ActionCard';
 import { OperatorHud } from './OperatorHud';
-import { askConfirm } from '../state/confirm-store';
+import {
+  appendBlockedMissionDescription,
+  askConfirm,
+  askConfirmWithReason,
+} from '../state/confirm-store';
 import { AgentDropZone } from './AgentDropZone';
 import type { ExternalIssue } from '../../shared/integrations-types';
 import { useMissionWizardStore as useWizard } from '../state/mission-wizard-store';
@@ -180,6 +184,50 @@ export function MissionRail() {
           cause instanceof Error ? cause.message : 'Falha ao remover a missão.',
         );
       });
+  }
+
+  /**
+   * Fail-safe demotion: work may have been delivered outside PREVC, but the
+   * mission must not stay "running" pretending green. Requires a durable reason.
+   */
+  async function blockMission(m: Mission) {
+    if (m.status === 'done' || m.status === 'failed' || m.status === 'blocked') {
+      return;
+    }
+    const decision = await askConfirmWithReason({
+      title: `Encerrar "${m.title}" como bloqueada?`,
+      body:
+        'Use quando o ambiente não está pronto ou o PREVC nunca começou. ' +
+        'Isto NÃO marca a missão como concluída (done) — evita green falso. ' +
+        'A justificativa fica registrada na descrição da missão.',
+      confirmLabel: 'Encerrar como bloqueada',
+      danger: true,
+      reasonLabel: 'Justificativa (obrigatória)',
+      reasonPlaceholder:
+        'Ex.: PREVC não iniciou; checkout sujo sem rota; credencial ausente…',
+      reasonMinLength: 8,
+    });
+    if (!decision.ok) return;
+    setBusy(m.id);
+    setNote(null);
+    try {
+      await window.nexus.orch.updateMission(m.id, {
+        status: 'blocked',
+        description: appendBlockedMissionDescription(
+          m.description,
+          decision.reason,
+        ),
+      });
+      setNote('Missão encerrada como bloqueada.');
+    } catch (cause) {
+      setNote(
+        cause instanceof Error
+          ? cause.message
+          : 'Falha ao encerrar a missão como bloqueada.',
+      );
+    } finally {
+      setBusy(null);
+    }
   }
 
   function missionMeta(mission: Mission, liveInGrid: boolean): string {
@@ -473,6 +521,22 @@ export function MissionRail() {
                                 </span>
                               </span>
                             </button>
+                            {(m.status === 'pending' ||
+                              m.status === 'running') && (
+                              <button
+                                type="button"
+                                className="mission-rail__block"
+                                disabled={busy !== null}
+                                title="Encerrar como bloqueada (com justificativa)"
+                                aria-label={`Encerrar missão ${m.title} como bloqueada`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void blockMission(m);
+                                }}
+                              >
+                                <PixelIcon name="warn" size={10} />
+                              </button>
+                            )}
                             <button
                               type="button"
                               className="mission-rail__pin"

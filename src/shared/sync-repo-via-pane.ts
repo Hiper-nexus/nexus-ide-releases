@@ -98,3 +98,20 @@ export function syncRepoViaPaneNoAgentSay(mode: SyncRepoViaPaneMode): string {
   }
   return 'Não tem agente aberto — abri uma missão agêntica pra atualizar o repositório.';
 }
+
+/** Pane runtime states that must not receive a sync prompt mid-turn. */
+export const SYNC_REPO_BUSY_PANE_STATES = ['busy', 'spawning'] as const;
+
+export function isSyncRepoPaneFree(state: string | undefined | null): boolean {
+  if (!state) return true; // unknown: allow; confirm path still validates session
+  return !(SYNC_REPO_BUSY_PANE_STATES as readonly string[]).includes(state);
+}
+
+export function syncRepoViaPaneBusySay(paneTitle?: string): string {
+  const where = paneTitle ? ` (${paneTitle})` : '';
+  return `O agente${where} ainda está ocupado. Espera ele terminar e pede o sync de novo.`;
+}
+
+export function syncRepoViaPaneDeliveryFailedSay(): string {
+  return 'Não confirmei a entrega do prompt no pane. Abre o agente e tenta de novo.';
+}

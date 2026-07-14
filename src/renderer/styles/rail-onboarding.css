@@ -440,14 +440,46 @@
   line-height: 1;
 }
 
+.mission-rail__block {
+  position: absolute;
+  top: 7px;
+  right: 50px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  opacity: 0;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+}
+
 .mission-rail__row:hover .mission-rail__pin,
-.mission-rail__pin:focus-visible {
+.mission-rail__pin:focus-visible,
+.mission-rail__row:hover .mission-rail__block,
+.mission-rail__block:focus-visible {
   opacity: 1;
 }
 
 .mission-rail__pin:hover {
   color: var(--gold, #e0af68);
   background: var(--accent-soft);
+}
+
+.mission-rail__block:hover {
+  color: var(--danger, #f7768e);
+  background: var(--accent-soft);
+}
+
+.mission-rail__block:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 /* Account switcher (rail footer / chrome) */

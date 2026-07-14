@@ -754,6 +754,7 @@ export function MissionWizard() {
         risk: contract.risk,
         maxWorkers: contract.budgets.maxWorkers,
         compactMemoryMarkdown: renderMissionCompact(compact),
+        lane: contract.lane ?? 'standard',
       });
       const result = await launchSquadMission(effectiveSquad, adapters, {
         existingMissionId: plannedMission.id,

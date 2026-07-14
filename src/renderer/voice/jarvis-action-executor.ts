@@ -10,9 +10,11 @@ import { useVoiceStore } from './voice-store';
 import { useSettingsStore } from '../state/settings-store';
 import {
   submitPromptToPane,
+  submitPromptToPaneConfirmed,
   waitForSession,
   writeToPane,
 } from '../terminal/terminal-host';
+import { useSessionStateStore } from '../state/session-state-store';
 import {
   assessTerminalVisibility,
   readUiVisibilityState,
@@ -40,7 +42,10 @@ import {
 } from './delegation-prompt';
 import {
   buildSyncRepoViaPanePrompt,
+  isSyncRepoPaneFree,
   normalizeSyncRepoViaPaneMode,
+  syncRepoViaPaneBusySay,
+  syncRepoViaPaneDeliveryFailedSay,
   syncRepoViaPaneMissionIntent,
   syncRepoViaPaneNoAgentSay,
   syncRepoViaPaneSay,
@@ -1203,40 +1208,62 @@ export async function executeJarvisAction(
       const paneTitle =
         panes.find((pane) => pane.id === paneId)?.title ?? 'agente';
       const commandId = crypto.randomUUID();
-      const sessionId = await waitForSession(paneId, 750);
-      checkpoint(control);
-      const ok = Boolean(sessionId) && submitPromptToPane(paneId, prompt);
-      if (ok) {
-        markEffect(control);
-        revealPaneForUser(paneId);
+      const paneState = useSessionStateStore.getState().paneStates.get(paneId);
+      if (!isSyncRepoPaneFree(paneState)) {
+        sayText = syncRepoViaPaneBusySay(paneTitle);
+        toolResult = {
+          tool: action.type,
+          ok: false,
+          summary: `pane ocupado (${paneState})`,
+          output: { commandId, paneId, mode, paneState },
+        };
+      } else {
+        const sessionId = await waitForSession(paneId, 750);
+        checkpoint(control);
+        // Prefer confirmed write so delivery is validated against the live PTY
+        // identity; fall back to fire-and-forget only if confirmed API missing.
+        let ok = false;
+        if (sessionId) {
+          ok = await submitPromptToPaneConfirmed(paneId, prompt, sessionId);
+          checkpoint(control);
+        }
+        if (ok) {
+          markEffect(control);
+          revealPaneForUser(paneId);
+        }
+        logVoiceEvent(
+          ok ? 'info' : 'warn',
+          ok ? 'pane.syncRepoSubmitted' : 'pane.syncRepoFailed',
+          ok
+            ? 'sync de repositório submetido e confirmado no pane'
+            : 'falha ao confirmar entrega no pane',
+          {
+            commandId,
+            paneId,
+            mode,
+            sessionReady: Boolean(sessionId),
+            deliveryConfirmed: ok,
+            paneState: paneState ?? 'unknown',
+          },
+        );
+        sayText = ok
+          ? syncRepoViaPaneSay(mode, paneTitle)
+          : syncRepoViaPaneDeliveryFailedSay();
+        toolResult = {
+          tool: action.type,
+          ok,
+          summary: ok
+            ? `sync ${mode} confirmado no pane (${commandId})`
+            : 'falha ao confirmar entrega no pane',
+          output: {
+            commandId,
+            paneId,
+            mode,
+            sessionReady: Boolean(sessionId),
+            deliveryConfirmed: ok,
+          },
+        };
       }
-      logVoiceEvent(
-        ok ? 'info' : 'warn',
-        ok ? 'pane.syncRepoSubmitted' : 'pane.syncRepoFailed',
-        ok ? 'sync de repositório submetido ao pane' : 'sessão do pane indisponível',
-        {
-          commandId,
-          paneId,
-          mode,
-          sessionReady: Boolean(sessionId),
-        },
-      );
-      sayText = ok
-        ? syncRepoViaPaneSay(mode, paneTitle)
-        : 'Não consegui escrever no pane do agente. Abre um agente e tenta de novo.';
-      toolResult = {
-        tool: action.type,
-        ok,
-        summary: ok
-          ? `sync ${mode} submetido ao pane (${commandId})`
-          : 'falha ao escrever no pane',
-        output: {
-          commandId,
-          paneId,
-          mode,
-          sessionReady: Boolean(sessionId),
-        },
-      };
     }
   }
 

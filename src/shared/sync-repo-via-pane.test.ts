@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSyncRepoViaPanePrompt,
+  isSyncRepoPaneFree,
   isSyncRepoViaPaneMode,
   normalizeSyncRepoViaPaneMode,
+  syncRepoViaPaneBusySay,
   syncRepoViaPaneMissionIntent,
   syncRepoViaPaneSay,
 } from './sync-repo-via-pane';
@@ -35,5 +37,13 @@ describe('sync-repo-via-pane', () => {
     expect(syncRepoViaPaneSay('status')).toContain('status do repositório');
     expect(syncRepoViaPaneSay('push')).toContain('enviar o repositório');
     expect(syncRepoViaPaneMissionIntent('pull')).toMatch(/ff-only/i);
+  });
+
+  it('treats busy/spawning panes as not free for sync', () => {
+    expect(isSyncRepoPaneFree(undefined)).toBe(true);
+    expect(isSyncRepoPaneFree('idle')).toBe(true);
+    expect(isSyncRepoPaneFree('busy')).toBe(false);
+    expect(isSyncRepoPaneFree('spawning')).toBe(false);
+    expect(syncRepoViaPaneBusySay('Claude')).toMatch(/ocupado/i);
   });
 });

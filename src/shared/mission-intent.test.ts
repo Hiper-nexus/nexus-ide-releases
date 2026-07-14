@@ -12,6 +12,7 @@ import {
   classifyGoalRisk,
   compileIntentContract,
   estimateEffectfulToolTokens,
+  isConsultLane,
   hasApprovedDispatchContract,
   hasCurrentDispatchAuthority,
   isHumanWaitIntentState,
@@ -224,6 +225,18 @@ describe('compileIntentContract', () => {
     expect(() =>
       compileIntentContract({ goal: '   ', intentVersion: 1 }),
     ).toThrow(/intent_required/);
+  });
+
+  it('builds a consult-lane contract with zero workers and explicit lane', () => {
+    const consult = compileIntentContract({
+      goal: 'Ler logs da Vercel e resumir erros',
+      intentVersion: 1,
+      lane: 'consult',
+    });
+    expect(consult.lane).toBe('consult');
+    expect(consult.budgets.maxWorkers).toBe(0);
+    expect(isConsultLane({ intentContract: consult })).toBe(true);
+    expect(isConsultLane({ intentContract: undefined })).toBe(false);
   });
 });
 

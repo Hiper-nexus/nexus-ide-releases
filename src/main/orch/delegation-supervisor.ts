@@ -47,6 +47,8 @@ export interface DelegationProgress {
  */
 export function isDelegationSupervisable(progress: DelegationProgress): boolean {
   if (progress.expectedWorkers === 0) return false;
+  // Consult lane is read-only investigation — no worker/worktree expectation.
+  if (progress.mission.intentContract?.lane === 'consult') return false;
   if (!['pending', 'running'].includes(progress.mission.status)) return false;
   if (progress.hasBoundOrchestrator === false) return false;
   const intentState = resolveEffectiveIntentState({
@@ -178,12 +180,15 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
     // untrusted stage-2 dumps as suspicious spam mid-conversation).
     if (stage === 2) {
       suite.missions.setStatus(mission.id, 'blocked');
-      suite.handoffs.submit({
+      // Audit-only handoff: mark submitted immediately so redeliverPendingHandoffs
+      // after restart cannot re-inject a stage-2 recovery into the PTY.
+      const stage2Handoff = suite.handoffs.submit({
         missionId: mission.id,
         status: 'stalled',
         summary: recoverySummary(mission.id, 2),
         fromAgent: DELEGATION_SUPERVISOR_AGENT,
       });
+      suite.handoffs.markSubmitted(stage2Handoff.id);
       emitMissionIntentEvent({
         name: 'automatic_recovery',
         missionId: mission.id,
@@ -195,10 +200,10 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
         }),
         intentVersion: mission.intentVersion,
         reason: 'delegation_supervisor_stage_2_blocked',
-        meta: { stage: 2, deliveredToPty: false },
+        meta: { stage: 2, deliveredToPty: false, deliveryState: 'submitted' },
       });
       console.warn(
-        `[delegation-supervisor] stage 2 — mission ${mission.id} blocked (no PTY inject)`,
+        `[delegation-supervisor] stage 2 — mission ${mission.id} blocked (no PTY inject, marked submitted)`,
       );
       continue;
     }

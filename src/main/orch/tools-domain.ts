@@ -204,7 +204,12 @@ const missionListTool: McpToolDef = {
 const missionSetStatusTool: McpToolDef = {
   name: 'nexus_mission_set_status',
   description:
-    'Update a mission status (pending|running|blocked|done|failed).',
+    'Update a mission status (pending|running|blocked|done|failed). ' +
+    'done is ONLY for full PREVC completion with immutable step receipts — never a shortcut. ' +
+    'Use blocked when the environment is not ready or PREVC never started (work may still ' +
+    'have been delivered outside the pipeline). Use failed when execution started and ended in error. ' +
+    'Optional note: required for durable blocked/failed justification; for lane=consult done, ' +
+    'note (or existing learnings) must be ≥40 chars (consult is not code PREVC green).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -213,12 +218,18 @@ const missionSetStatusTool: McpToolDef = {
         type: 'string',
         enum: ['pending', 'running', 'blocked', 'done', 'failed'],
       },
+      note: {
+        type: 'string',
+        description:
+          'Justification or consult learning note. Appended to mission learnings when provided.',
+      },
     },
     required: ['missionId', 'status'],
   },
   handler: async (args, ctx) => {
     const missionId = requireStr(args, 'missionId');
     const status = missionStatusSchema.parse(args.status);
+    const note = str(args, 'note')?.trim() ?? '';
     assertOrchestratorMission(ctx, missionId);
     const stores = getProjectDomainStores(ctx.scope);
     const current = stores.missions.get(missionId);
@@ -226,16 +237,51 @@ const missionSetStatusTool: McpToolDef = {
     if (current.status === 'done' && status !== 'done') {
       throw new Error('completed mission status is immutable');
     }
+    if (status === 'blocked' || status === 'failed') {
+      if (note.length < 8 && current.learnings.trim().length < 8) {
+        throw new Error(
+          `status=${status} requires a note (or existing learnings) explaining the cause — ` +
+            'this is a fail-safe demotion, not a silent close',
+        );
+      }
+    }
     if (status === 'done') {
       const workflow = getContextWorkflowService(ctx.scope);
       if (!workflow.isMissionDriverComplete(
         missionId,
         current.milestones.map((milestone) => milestone.id),
       )) {
-        throw new Error(
-          'mission done requires complete PREVC workflow and immutable step receipts',
-        );
+        const lane = current.intentContract?.lane ?? 'standard';
+        const learningsLen =
+          current.learnings.trim().length + (note.length > 0 ? note.length + 2 : 0);
+        if (lane === 'consult' && learningsLen >= 40) {
+          // Consult lane: allow done when a durable learning note exists —
+          // not a code-change PREVC green. Standard missions still hard-require PREVC.
+        } else if (lane === 'consult') {
+          throw new Error(
+            'consult-lane done requires a durable learning note (≥40 chars) via note=… ' +
+              'or existing learnings. This is not a code PREVC completion.',
+          );
+        } else {
+          throw new Error(
+            'mission done requires complete PREVC workflow and immutable step receipts. ' +
+              'If PREVC never started or the environment is not ready, use status=blocked ' +
+              '(not done). If execution started and failed, use status=failed. ' +
+              'blocked/failed are fail-safe demotions, not a green completion.',
+          );
+        }
       }
+    }
+    if (note.length > 0) {
+      const heading =
+        status === 'blocked'
+          ? '## Encerrada como bloqueada'
+          : status === 'failed'
+            ? '## Falha'
+            : status === 'done'
+              ? '## Consulta / conclusão'
+              : '## Nota de status';
+      stores.missions.appendLearning(missionId, `${heading}\n${note}`);
     }
     const mission = stores.missions.setStatus(missionId, status);
     if (!mission) throw new Error('mission not found');
