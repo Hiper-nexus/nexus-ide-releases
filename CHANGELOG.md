@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.15.8 — Dock-First Production Hotfix
+
+Data: 2026-07-14
+
+- Corrige o lançamento no macOS: a janela principal e o ícone do Dock são
+  criados antes do servidor opcional de hooks de agentes.
+- Atrasos, portas ocupadas ou processos auxiliares presos agora degradam em
+  segundo plano sem esconder o Nexus ou impedir o uso do aplicativo.
+
 ## 0.15.7 — Intent-First Production
 
 Data: 2026-07-14

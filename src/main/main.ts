@@ -512,6 +512,15 @@ if (!wireDeepLinks()) {
     getAgentAwakeService();
     registerAgentHookIpc();
 
+    // The desktop shell must be visible before any optional integration starts.
+    // In particular, starting the local agent-hook server may wait on a port or
+    // a stale child process. Awaiting it here used to leave Electron alive as a
+    // background/UIElement process with no BrowserWindow, so macOS hid Nexus
+    // from the Dock and the user saw no actionable error. Bootstrap the window
+    // first; integrations below are deliberately best-effort and may continue
+    // asynchronously after the UI is available.
+    bootstrap();
+
     // Gap A: register Claude+Codex managed hook installers. Installing edits the
     // user's GLOBAL ~/.claude & ~/.codex config (affects those tools even outside
     // Nexus), so we NEVER install on launch without consent — register only, then
@@ -592,7 +601,6 @@ if (!wireDeepLinks()) {
     if (process.platform === "darwin" && !isCurrentProcessSmokeTest()) {
       void systemPreferences.askForMediaAccess("microphone").catch(() => {});
     }
-    bootstrap();
   });
 }
 

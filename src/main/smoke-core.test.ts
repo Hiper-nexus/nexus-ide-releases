@@ -131,6 +131,18 @@ describe('smoke isolation', () => {
     expect(guardedBlock).toContain('await startAgentHookHttpServer');
     expect(guardedBlock).toContain('resolveManagedHookConsent');
   });
+
+  it('bootstraps the desktop window before optional hooks can delay launch', () => {
+    const mainSource = readFileSync(new URL('./main.ts', import.meta.url), 'utf8');
+    const readyStart = mainSource.indexOf('app.whenReady().then(async () => {');
+    const hookSection = mainSource.indexOf('// Gap A:', readyStart);
+    const bootstrapBeforeHooks = mainSource.indexOf('    bootstrap();', readyStart);
+
+    expect(readyStart).toBeGreaterThan(-1);
+    expect(hookSection).toBeGreaterThan(readyStart);
+    expect(bootstrapBeforeHooks).toBeGreaterThan(readyStart);
+    expect(bootstrapBeforeHooks).toBeLessThan(hookSection);
+  });
 });
 
 describe('createSmokeSettler', () => {

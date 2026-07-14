@@ -13,11 +13,11 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.15.7',
+  version: '0.15.8',
   date: '2026-07-14',
-  codename: 'Intent-First Production',
+  codename: 'Dock-First Production Hotfix',
   summary:
-    'Nexus separa seleção, intenção, aprovação e despacho; reduz trabalho automático e reúne as correções recentes de Jarvis, pets e operação local.',
+    'Nexus torna a janela principal prioritária no lançamento e mantém integrações opcionais em segundo plano, evitando que o app desapareça do Dock quando um hook demora.',
   highlights: [
     {
       title: 'Intenção antes de orquestração',
@@ -41,6 +41,11 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [
+    {
+      title: 'Dock e janela resilientes',
+      detail:
+        'A janela principal é criada antes do servidor de hooks de agentes; atrasos, portas ocupadas ou processos auxiliares não deixam o Nexus preso como processo de fundo.',
+    },
     {
       title: 'Autoridade fail-closed',
       detail:
