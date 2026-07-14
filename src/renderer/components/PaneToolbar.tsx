@@ -23,6 +23,7 @@ import { useOrchStore } from '../state/orch-store';
 import { AgentAvatar, resolveAgentCategory } from './AgentAvatar';
 import { ProviderLogo } from './ProviderLogo';
 import { CommandBlockMenu } from './CommandBlockMenu';
+import { paneSessionView } from '../../shared/pane-session-view';
 
 interface Props {
   pane: PaneModel;
@@ -46,40 +47,38 @@ interface ToolbarAction {
   run: () => void;
 }
 
-function StateIndicator({ paneId }: { paneId: string }) {
+const STATE_ICON: Record<
+  ReturnType<typeof paneSessionView>['mod'],
+  PixelIconName
+> = {
+  idle: 'status-idle',
+  busy: 'status-busy',
+  spawning: 'status-spawning',
+  exited: 'status-exited',
+  hibernated: 'status-hibernated',
+};
+
+function StateIndicator({
+  paneId,
+  compact,
+}: {
+  paneId: string;
+  /** Só ícone quando a toolbar está no modo mais apertado. */
+  compact: boolean;
+}) {
   const state = useSessionStateStore((s) => s.paneStates.get(paneId));
   if (!state) return null;
 
-  const view =
-    state === 'idle'
-      ? { icon: 'status-idle' as PixelIconName, mod: 'idle', label: 'pronto' }
-      : state === 'busy'
-        ? { icon: 'status-busy' as PixelIconName, mod: 'busy', label: 'trabalhando' }
-        : state === 'exited'
-          ? {
-              icon: 'status-exited' as PixelIconName,
-              mod: 'exited',
-              label: 'encerrado — use Reiniciar',
-            }
-          : state === 'hibernated'
-            ? {
-                icon: 'status-hibernated' as PixelIconName,
-                mod: 'hibernated',
-                label: 'dormindo — use Acordar',
-              }
-            : {
-                icon: 'status-spawning' as PixelIconName,
-                mod: 'spawning',
-                label: 'iniciando',
-              };
+  const view = paneSessionView(state);
 
   return (
     <span
-      className={`toolbar__state toolbar__state--${view.mod}`}
-      data-tip={`Agente: ${view.label}`}
-      aria-label={`estado do agente: ${view.label}`}
+      className={`toolbar__state toolbar__state--chip toolbar__state--${view.mod}`}
+      data-tip={view.tip}
+      aria-label={view.tip}
     >
-      <PixelIcon name={view.icon} size={10} />
+      <PixelIcon name={STATE_ICON[view.mod]} size={10} />
+      {!compact && <span className="toolbar__state-label">{view.chip}</span>}
     </span>
   );
 }
@@ -413,7 +412,9 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         ) : (
           <span className="toolbar__badge">{pane.kind}</span>
         )}
-        {pane.kind === 'cli-agent' && <StateIndicator paneId={pane.id} />}
+        {pane.kind === 'cli-agent' && (
+          <StateIndicator paneId={pane.id} compact={density === 'compact'} />
+        )}
         {pane.kind === 'cli-agent' && <CostBadge paneId={pane.id} />}
         <DevServerChip pane={pane} />
       </div>

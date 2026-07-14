@@ -10,6 +10,7 @@ import {
   isAdvancedSettingsSection,
   isSettingsGroupExpanded,
   toggleSettingsGroup,
+  settingsSectionPillar,
   type NavItem,
   type NavGroup,
   type SettingsSection,
@@ -57,9 +58,20 @@ import { DesignSystemsSection } from './DesignSystemsSection';
 import { HarnessSection } from './HarnessSection';
 
 /**
- * Settings drawer — nav agrupada por intenção (CONTA · OPERAÇÃO · ARSENAL ·
- * CATÁLOGO) com busca no topo. Grupos e filtro em settings-nav.ts (testados).
+ * Settings drawer — nav emocional Você · App · Agentes · Sistema (pilares
+ * endorphin) com busca no topo. Grupos e filtro em settings-nav.ts (testados).
  */
+
+function NavGroupHeading({ group }: { group: NavGroup }) {
+  return (
+    <div className="settings-nav__section-head">
+      <p className="settings-nav__section">{group.label}</p>
+      {group.story ? (
+        <p className="settings-nav__section-story">{group.story}</p>
+      ) : null}
+    </div>
+  );
+}
 
 export type { SettingsSection };
 
@@ -124,7 +136,12 @@ function AdvancedGroupNav({
         aria-expanded={expanded}
         aria-controls={groupId}
       >
-        <span>{group.label}</span>
+        <span className="settings-nav__group-toggle-copy">
+          <span>{group.label}</span>
+          {group.story ? (
+            <span className="settings-nav__section-story">{group.story}</span>
+          ) : null}
+        </span>
         <span className="settings-nav__group-count">{group.items.length}</span>
         <PixelIcon name="chevron-down" size={11} />
       </button>
@@ -252,6 +269,7 @@ export function SettingsDrawer() {
   const currentSectionTitle = SETTINGS_GROUPS
     .flatMap((group) => group.items)
     .find((item) => item.id === section)?.title;
+  const activePillar = settingsSectionPillar(section);
 
   return (
     <div
@@ -274,8 +292,11 @@ export function SettingsDrawer() {
                 NX
               </span>
               <span className="settings-nav__brand-copy">
+                <span className="settings-nav__brand-kicker">{activePillar.label}</span>
                 <span className="settings-nav__brand-title">Nexus config</span>
-                <span className="settings-nav__brand-subtitle">mission control</span>
+                <span className="settings-nav__brand-subtitle">
+                  {activePillar.story}
+                </span>
               </span>
               <span className="settings-nav__brand-signal" aria-hidden />
             </div>
@@ -299,7 +320,7 @@ export function SettingsDrawer() {
               ) : (
                 groups.map((group) => (
                   <div key={group.label}>
-                    <p className="settings-nav__section">{group.label}</p>
+                    <NavGroupHeading group={group} />
                     {group.items.map((item) => (
                       <NavRow
                         key={item.id}
@@ -316,7 +337,7 @@ export function SettingsDrawer() {
               <>
                 {primaryGroups.map((group) => (
                   <div key={group.label}>
-                    <p className="settings-nav__section">{group.label}</p>
+                    <NavGroupHeading group={group} />
                     {group.items.map((item) => (
                       <NavRow
                         key={item.id}
@@ -338,7 +359,7 @@ export function SettingsDrawer() {
                     Mais configurações
                   </span>
                   <span className="settings-nav__advanced-hint">
-                    sistema · arsenal · automação
+                    sistema · catálogo · automação
                   </span>
                   <PixelIcon name="chevron-down" size={12} />
                 </button>

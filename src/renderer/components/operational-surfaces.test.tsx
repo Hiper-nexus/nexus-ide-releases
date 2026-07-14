@@ -271,6 +271,9 @@ describe('MissionRail operational hierarchy', () => {
     expect(text).toContain('Retomar');
     // Live open mission shows as working, not only "na fila"
     expect(text).toMatch(/trabalhando|em progresso|rodando/i);
+    // Endorphin head: narrativa + CTA de peso
+    expect(text).toMatch(/Em curso|Na espera|Sala limpa/);
+    expect(text).toMatch(/Nova missão/);
 
     act(() => root.unmount());
     setActiveWorkspacePath(null);

@@ -13,7 +13,60 @@ export type EndorphinBeatId =
   | 'home-cli'
   | 'home-warming'
   | 'step-continue'
-  | 'launch-go';
+  | 'launch-go'
+  | 'mission-rail-empty'
+  | 'mission-rail-active'
+  | 'settings-nav'
+  | 'agent-picker-empty'
+  | 'orch-missions-empty'
+  | 'orch-handoffs-empty'
+  | 'orch-todos-empty';
+
+/** Settings — pilares emocionais (YOU / APP / AGENTS / SYSTEM). */
+export type SettingsNavPillarId = 'you' | 'app' | 'agents' | 'system';
+
+export interface SettingsNavPillar {
+  readonly id: SettingsNavPillarId;
+  /** Rótulo curto na nav (PT operacional). */
+  readonly label: string;
+  /** Uma história por grupo — não rótulo de engenharia. */
+  readonly story: string;
+}
+
+/**
+ * Agrupa Settings por quem sou / o cockpit / o que orquestro / saúde.
+ * Espelha YOU · APP · AGENTS · SYSTEM da auditoria vibe-coding.
+ */
+export const SETTINGS_NAV_PILLARS: readonly SettingsNavPillar[] = [
+  {
+    id: 'you',
+    label: 'Você',
+    story: 'Conta e voz — quem opera o cockpit',
+  },
+  {
+    id: 'app',
+    label: 'App',
+    story: 'Aparência, terminal e atalhos',
+  },
+  {
+    id: 'agents',
+    label: 'Agentes',
+    story: 'Providers, frota e arsenal',
+  },
+  {
+    id: 'system',
+    label: 'Sistema',
+    story: 'Diagnóstico e saúde do ambiente',
+  },
+] as const;
+
+export function settingsNavPillar(id: SettingsNavPillarId): SettingsNavPillar {
+  const pillar = SETTINGS_NAV_PILLARS.find((entry) => entry.id === id);
+  if (!pillar) {
+    throw new Error(`Unknown settings nav pillar: ${id}`);
+  }
+  return pillar;
+}
 
 export interface EndorphinBeat {
   readonly id: EndorphinBeatId;
@@ -115,3 +168,81 @@ export const ENDORPHIN_STEP_LABELS = {
   agents: 'Agentes',
   preview: 'Lançar',
 } as const;
+
+/** MissionRail vazio — uma história + CTA, não painel lateral morto. */
+export function missionRailEmptyBeat(workspaceName: string): EndorphinBeat {
+  const name = workspaceName.trim() || 'este workspace';
+  return {
+    id: 'mission-rail-empty',
+    kicker: 'Sala limpa',
+    title: 'Nenhuma missão aqui',
+    line: `Só o trabalho de ${name}. Um clique e a fila acende.`,
+  };
+}
+
+/** MissionRail com atividade — status narrativo no head. */
+export function missionRailActiveBeat(
+  activeCount: number,
+  totalCount: number,
+): EndorphinBeat {
+  if (activeCount <= 0) {
+    return {
+      id: 'mission-rail-active',
+      kicker: 'Na espera',
+      title: `${totalCount} na lista`,
+      line: 'Nada rodando agora — retome ou lance outra.',
+    };
+  }
+  return {
+    id: 'mission-rail-active',
+    kicker: 'Em curso',
+    title:
+      activeCount === 1
+        ? '1 missão ativa'
+        : `${activeCount} missões ativas`,
+    line:
+      totalCount === activeCount
+        ? 'Tudo que importa está no grid.'
+        : `${totalCount} no total · foque nas ativas.`,
+  };
+}
+
+/** Agent picker sem CLIs — hangar + CTA Providers. */
+export function agentPickerEmptyBeat(): EndorphinBeat {
+  return {
+    id: 'agent-picker-empty',
+    kicker: 'Hangar vazio',
+    title: 'Nenhuma CLI na mesa',
+    line: 'Conecte um provider e o picker acende — sem chave, sem agente.',
+  };
+}
+
+/** Orquestração · missões vazias. */
+export function orchMissionsEmptyBeat(): EndorphinBeat {
+  return {
+    id: 'orch-missions-empty',
+    kicker: 'Fila limpa',
+    title: 'Nenhuma missão no radar',
+    line: 'Lance um squad ou objetivo — o orquestrador despacha os workers.',
+  };
+}
+
+/** Orquestração · entregas vazias. */
+export function orchHandoffsEmptyBeat(): EndorphinBeat {
+  return {
+    id: 'orch-handoffs-empty',
+    kicker: 'Sem entregas',
+    title: 'Nada publicado ainda',
+    line: 'Cada worker reporta aqui assim que conclui a tarefa.',
+  };
+}
+
+/** Orquestração · tarefas vazias. */
+export function orchTodosEmptyBeat(): EndorphinBeat {
+  return {
+    id: 'orch-todos-empty',
+    kicker: 'Board quieto',
+    title: 'Sem tarefas no fluxo',
+    line: 'Aparecem conforme a missão vira passos no orquestrador.',
+  };
+}

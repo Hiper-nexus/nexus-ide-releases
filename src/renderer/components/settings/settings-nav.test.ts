@@ -7,6 +7,8 @@ import {
   isSettingsGroupExpanded,
   isAdvancedSettingsSection,
   toggleSettingsGroup,
+  settingsSectionPillar,
+  settingsPrimaryPillarOrder,
 } from './settings-nav';
 
 describe('SETTINGS_GROUPS', () => {
@@ -19,9 +21,20 @@ describe('SETTINGS_GROUPS', () => {
     expect(ids).toContain('shortcuts');
   });
 
-  test('primary nav surfaces harness, MCP, tools and mídia without advanced dig', () => {
-    const primaryIds = SETTINGS_PRIMARY_GROUPS.flatMap((g) => g.items.map((i) => i.id));
+  test('primary nav is Você · App · Agentes · Sistema with 14 day-to-day entries', () => {
+    const labels = SETTINGS_PRIMARY_GROUPS.map((g) => g.label);
+    expect(labels).toEqual(['Você', 'App', 'Agentes', 'Sistema']);
+    expect(settingsPrimaryPillarOrder()).toEqual([
+      'you',
+      'app',
+      'agents',
+      'system',
+    ]);
+    const primaryIds = SETTINGS_PRIMARY_GROUPS.flatMap((g) =>
+      g.items.map((i) => i.id),
+    );
     expect(primaryIds).toHaveLength(14);
+    expect(primaryIds).toContain('voice');
     expect(primaryIds).toContain('appearance');
     expect(primaryIds).toContain('ranking');
     expect(primaryIds).toContain('usage-quota');
@@ -29,10 +42,19 @@ describe('SETTINGS_GROUPS', () => {
     expect(primaryIds).toContain('mcps');
     expect(primaryIds).toContain('tools');
     expect(primaryIds).toContain('media');
+    expect(primaryIds).toContain('diagnostics');
     expect(primaryIds).not.toContain('agents');
     expect(isAdvancedSettingsSection('mcps')).toBe(false);
     expect(isAdvancedSettingsSection('tools')).toBe(false);
     expect(isAdvancedSettingsSection('media')).toBe(false);
+    expect(isAdvancedSettingsSection('voice')).toBe(false);
+  });
+
+  test('primary groups carry emotional story kickers', () => {
+    for (const group of SETTINGS_PRIMARY_GROUPS) {
+      expect(group.story?.length).toBeGreaterThan(8);
+      expect(group.pillarId).toBeTruthy();
+    }
   });
 
   test('advanced sections are flagged correctly', () => {
@@ -105,7 +127,9 @@ describe('SETTINGS_ADVANCED_GROUPS', () => {
     expect(ids).not.toContain('tools');
     expect(ids).not.toContain('media');
     expect(SETTINGS_ADVANCED_GROUPS).toHaveLength(4);
-    expect(Math.max(...SETTINGS_ADVANCED_GROUPS.map((g) => g.items.length))).toBeLessThanOrEqual(6);
+    expect(
+      Math.max(...SETTINGS_ADVANCED_GROUPS.map((g) => g.items.length)),
+    ).toBeLessThanOrEqual(6);
   });
 
   test('reveals only a selected or explicitly expanded group', () => {
@@ -117,5 +141,21 @@ describe('SETTINGS_ADVANCED_GROUPS', () => {
     expect(isSettingsGroupExpanded(catalog, 'agents', new Set())).toBe(true);
     expect(isSettingsGroupExpanded(system, 'agents', new Set())).toBe(false);
     expect(toggleSettingsGroup(expanded, integrations.label).size).toBe(0);
+  });
+});
+
+describe('settingsSectionPillar', () => {
+  test('maps every section to an endorphin pillar story', () => {
+    for (const id of SETTINGS_GROUPS.flatMap((g) => g.items.map((i) => i.id))) {
+      const pillar = settingsSectionPillar(id);
+      expect(pillar.story.length).toBeGreaterThan(8);
+    }
+  });
+
+  test('voice lives under Você; diagnostics under Sistema', () => {
+    expect(settingsSectionPillar('voice').id).toBe('you');
+    expect(settingsSectionPillar('account').id).toBe('you');
+    expect(settingsSectionPillar('diagnostics').id).toBe('system');
+    expect(settingsSectionPillar('providers').id).toBe('agents');
   });
 });

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLayoutStore } from '../state/layout-store';
-import { useSessionStateStore } from '../state/session-state-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useWorkspaceStore } from '../state/workspace-store';
@@ -16,8 +15,10 @@ import { NexusMark } from './NexusMark';
 import { ProviderLogo } from './ProviderLogo';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { ActionCard, EmptyState } from './ActionCard';
+import { EndorphinPresence } from './EndorphinPresence';
 import { UpdateModal, UpdateStatusButton, useUpdateState } from './UpdateModal';
 import type { AdapterInfo } from '../../shared/types';
+import { agentPickerEmptyBeat } from '../../shared/endorphin';
 import { setBrowserPaneSuppression } from '../browser/browser-host';
 import { AccountSwitcher } from './AccountSwitcher';
 import { useAccountStore } from '../state/account-store';
@@ -26,6 +27,9 @@ import {
 } from '../orch/account-restart-controller';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { statusLabel } from '../lib/mission-rail-groups';
+import { FleetChip } from './FleetChip';
+
+const AGENT_PICKER_EMPTY = agentPickerEmptyBeat();
 
 function adapterModelLabel(adapter: AdapterInfo, model: string): string {
   const info = adapter.models.info?.[model];
@@ -34,88 +38,6 @@ function adapterModelLabel(adapter: AdapterInfo, model: string): string {
     info?.costTier && info.costTier !== 'unknown' ? `cost:${info.costTier}` : null,
   ].filter(Boolean);
   return tags.length > 0 ? `${model} (${tags.join(', ')})` : model;
-}
-
-/**
- * Rollup da frota: "3 trabalhando · 2 prontos · 1 morto" num relance, sem
- * caçar pane por pane. Clique foca quem precisa de atenção — morto primeiro,
- * depois o próximo ocupado. Some quando não há sessões.
- */
-function FleetChip() {
-  const paneStates = useSessionStateStore((s) => s.paneStates);
-  const root = useLayoutStore((s) => s.root);
-  const focus = useLayoutStore((s) => s.focus);
-
-  let working = 0;
-  let ready = 0;
-  let sleeping = 0;
-  let down = 0;
-  let firstDown: string | null = null;
-  let firstWorking: string | null = null;
-  for (const pane of listPanes(root)) {
-    const st = paneStates.get(pane.id);
-    if (!st) continue;
-    if (st === 'busy' || st === 'spawning') {
-      working += 1;
-      firstWorking ??= pane.id;
-    } else if (st === 'exited') {
-      down += 1;
-      firstDown ??= pane.id;
-    } else if (st === 'hibernated') {
-      // Dormindo NÃO é pronto: sem processo vivo, não recebe trabalho.
-      sleeping += 1;
-    } else {
-      ready += 1;
-    }
-  }
-  if (working + ready + sleeping + down === 0) return null;
-
-  const target = firstDown ?? firstWorking;
-  const label = [
-    working > 0 ? `${working} trabalhando` : null,
-    ready > 0 ? `${ready} pronto${ready === 1 ? '' : 's'}` : null,
-    sleeping > 0 ? `${sleeping} dormindo` : null,
-    down > 0 ? `${down} morto${down === 1 ? '' : 's'}` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
-
-  return (
-    <button
-      type="button"
-      className="fleet-chip"
-      title={`Frota: ${label}${target ? ' — clique para focar quem precisa de atenção' : ''}`}
-      aria-label={`Frota: ${label}`}
-      onClick={() => {
-        if (target) focus(target);
-      }}
-    >
-      {working > 0 && (
-        <span className="fleet-chip__seg fleet-chip__seg--working">
-          <span className="fleet-chip__dot" aria-hidden="true" />
-          {working}
-        </span>
-      )}
-      {ready > 0 && (
-        <span className="fleet-chip__seg fleet-chip__seg--ready">
-          <span className="fleet-chip__dot" aria-hidden="true" />
-          {ready}
-        </span>
-      )}
-      {sleeping > 0 && (
-        <span className="fleet-chip__seg fleet-chip__seg--sleeping">
-          <span className="fleet-chip__dot" aria-hidden="true" />
-          {sleeping}
-        </span>
-      )}
-      {down > 0 && (
-        <span className="fleet-chip__seg fleet-chip__seg--down">
-          <span className="fleet-chip__dot" aria-hidden="true" />
-          {down}
-        </span>
-      )}
-    </button>
-  );
 }
 
 type BarDensity = 'full' | 'icons' | 'compact';
@@ -730,12 +652,18 @@ export function WorkspaceBar({
 
             {installedAdapters.length === 0 ? (
               <EmptyState
-                className="agent-picker__empty"
+                className="agent-picker__empty agent-picker__empty--story"
                 icon="key"
-                title="Nenhuma CLI encontrada"
+                title={AGENT_PICKER_EMPTY.title}
                 body={
                   <>
-                    <p>Instale e conecte um provider para abrir agentes.</p>
+                    <EndorphinPresence
+                      kicker={AGENT_PICKER_EMPTY.kicker}
+                      mood="idle"
+                      size={44}
+                      className="endorphin-presence--row agent-picker__empty-presence"
+                    />
+                    <p>{AGENT_PICKER_EMPTY.line}</p>
                     {adapters.length > 0 && (
                       <p>
                         Ex.: <code>{adapters[0].installCommand}</code>
@@ -749,7 +677,6 @@ export function WorkspaceBar({
                     title="Abrir Providers"
                     subtitle="chaves · CLIs"
                     variant="primary"
-                    size="sm"
                     onClick={() => {
                       closePicker();
                       useSettingsStore.getState().openDrawer('providers');

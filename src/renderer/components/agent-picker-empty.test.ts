@@ -16,9 +16,21 @@ describe('agent-picker / empty CTA contracts', () => {
       'utf8',
     );
     expect(src).toContain('EmptyState');
+    expect(src).toContain('EndorphinPresence');
+    expect(src).toContain('agentPickerEmptyBeat');
     expect(src).toContain("openDrawer('providers')");
-    expect(src).toContain('Nenhuma CLI encontrada');
     expect(src).toContain('Abrir Providers');
+  });
+
+  it('OrchestrationPanel mission empty uses EndorphinPresence + CTA', () => {
+    const src = readFileSync(
+      path.join(ROOT, 'renderer/components/OrchestrationPanel.tsx'),
+      'utf8',
+    );
+    expect(src).toContain('EndorphinPresence');
+    expect(src).toContain('orchMissionsEmptyBeat');
+    expect(src).toContain('Lançar missão');
+    expect(src).toContain('orch-panel__empty--story');
   });
 
   it('AccountSwitcher empty state opens providers without vault jargon', () => {

@@ -58,6 +58,7 @@ import { useQuotaSync } from './state/quota-store';
 import { useGamificationSync, useGamificationStore } from './state/gamification-store';
 import { OperatorProfile } from './components/OperatorProfile';
 import { OperatorFx } from './components/OperatorFx';
+import { MissionEndorphinFx } from './components/MissionEndorphinFx';
 import { useOnboardingStore, useOnboardingSync } from './state/onboarding-store';
 import { Onboarding } from './components/Onboarding';
 import { useFailoverController } from './orch/failover-controller';
@@ -463,6 +464,7 @@ export function App() {
       <MissionWizard />
       <OperatorProfile />
       <OperatorFx />
+      <MissionEndorphinFx />
       <CloseWorkspaceDialog />
       <Onboarding />
       <CommandPalette />

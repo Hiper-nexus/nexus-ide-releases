@@ -11,6 +11,12 @@ import { askConfirm } from '../state/confirm-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { EmptyState, ActionCard } from './ActionCard';
+import { EndorphinPresence } from './EndorphinPresence';
+import {
+  orchHandoffsEmptyBeat,
+  orchMissionsEmptyBeat,
+  orchTodosEmptyBeat,
+} from '../../shared/endorphin';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { listPanes } from '../lib/split-tree';
@@ -28,6 +34,10 @@ import { ProviderLogo } from './ProviderLogo';
  * to the orchestrator, whether the delivery is still pending, and its
  * artifacts. Todos and squad management round it out.
  */
+
+const ORCH_MISSIONS_EMPTY = orchMissionsEmptyBeat();
+const ORCH_HANDOFFS_EMPTY = orchHandoffsEmptyBeat();
+const ORCH_TODOS_EMPTY = orchTodosEmptyBeat();
 
 const TABS: Array<{ id: OrchPanelTab; label: string }> = [
   { id: 'missions', label: 'Missões' },
@@ -348,13 +358,19 @@ export function OrchestrationPanel() {
             {notice && <p className="orch-panel__notice">{notice}</p>}
             {missions.length === 0 ? (
               <EmptyState
-                className="orch-panel__empty-state"
+                className="orch-panel__empty-state orch-panel__empty--story"
                 icon="mission"
-                title="Nenhuma missão ainda"
+                title={ORCH_MISSIONS_EMPTY.title}
                 body={
-                  <p>
-                    Inicie um squad ou missão — o orquestrador delega aos workers.
-                  </p>
+                  <>
+                    <EndorphinPresence
+                      kicker={ORCH_MISSIONS_EMPTY.kicker}
+                      mood="idle"
+                      size={44}
+                      className="endorphin-presence--row orch-panel__empty-presence"
+                    />
+                    <p>{ORCH_MISSIONS_EMPTY.line}</p>
+                  </>
                 }
                 action={
                   <ActionCard
@@ -362,7 +378,6 @@ export function OrchestrationPanel() {
                     title="Lançar missão"
                     subtitle="Wizard de squad / objetivo"
                     variant="primary"
-                    size="sm"
                     onClick={() =>
                       useMissionWizardStore.getState().openForMission()
                     }
@@ -388,13 +403,19 @@ export function OrchestrationPanel() {
         {tab === 'handoffs' &&
           (handoffs.length === 0 ? (
             <EmptyState
+              className="orch-panel__empty--story"
               icon="agent"
-              title="Nenhuma entrega ainda"
+              title={ORCH_HANDOFFS_EMPTY.title}
               body={
-                <p>
-                  Cada worker publica aqui o resultado assim que conclui a
-                  tarefa.
-                </p>
+                <>
+                  <EndorphinPresence
+                    kicker={ORCH_HANDOFFS_EMPTY.kicker}
+                    mood="idle"
+                    size={40}
+                    className="endorphin-presence--row orch-panel__empty-presence"
+                  />
+                  <p>{ORCH_HANDOFFS_EMPTY.line}</p>
+                </>
               }
             />
           ) : (
@@ -408,13 +429,19 @@ export function OrchestrationPanel() {
         {tab === 'todos' &&
           (visibleTodoLists.length === 0 ? (
             <EmptyState
+              className="orch-panel__empty--story"
               icon="board"
-              title="Sem tarefas publicadas"
+              title={ORCH_TODOS_EMPTY.title}
               body={
-                <p>
-                  Elas aparecem aqui conforme o orquestrador divide a missão em
-                  passos.
-                </p>
+                <>
+                  <EndorphinPresence
+                    kicker={ORCH_TODOS_EMPTY.kicker}
+                    mood="idle"
+                    size={40}
+                    className="endorphin-presence--row orch-panel__empty-presence"
+                  />
+                  <p>{ORCH_TODOS_EMPTY.line}</p>
+                </>
               }
             />
           ) : (

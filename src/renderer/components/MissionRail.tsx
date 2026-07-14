@@ -35,6 +35,11 @@ import {
 } from '../../shared/mission-budget';
 import { humanElapsed } from '../../shared/mission-glance';
 import { resolveDispatchAuthorizedAt } from '../../shared/mission-intent';
+import {
+  missionRailActiveBeat,
+  missionRailEmptyBeat,
+} from '../../shared/endorphin';
+import { EndorphinPresence } from './EndorphinPresence';
 
 /**
  * Activity Rail — missões **deste workspace** apenas:
@@ -153,6 +158,18 @@ export function MissionRail() {
     () => summarizeWorkspaceMissionBudgets(localMissions),
     [localMissions],
   );
+
+  const railBeat = useMemo(() => {
+    if (!listReady || localMissions.length === 0) {
+      return missionRailEmptyBeat(workspace?.name ?? 'este workspace');
+    }
+    return missionRailActiveBeat(activeCount, localMissions.length);
+  }, [
+    listReady,
+    localMissions.length,
+    activeCount,
+    workspace?.name,
+  ]);
 
   function toggleSection(id: RailSectionId) {
     setCollapsed((prev) => {
@@ -284,8 +301,9 @@ export function MissionRail() {
 
   return (
     <aside className="mission-rail activity-rail" aria-label="Missões deste workspace">
-      <header className="mission-rail__head">
+      <header className="mission-rail__head mission-rail__head--endorphin">
         <div className="mission-rail__heading">
+          <span className="mission-rail__kicker">{railBeat.kicker}</span>
           <span className="mission-rail__title">Missões</span>
           <span
             className="mission-rail__workspace"
@@ -293,10 +311,13 @@ export function MissionRail() {
           >
             {workspace?.name ?? 'sem pasta'}
           </span>
-          <span className="mission-rail__summary">
-            {listReady
-              ? `${activeCount} ativas · ${localMissions.length} aqui`
-              : 'a carregar…'}
+          <span className="mission-rail__summary" aria-live="polite">
+            {!listReady
+              ? 'a carregar…'
+              : railBeat.title}
+            {listReady && localMissions.length > 0 ? (
+              <span className="mission-rail__summary-line">{railBeat.line}</span>
+            ) : null}
           </span>
           {listReady && workspaceBudget.activeCount > 0 && (
             <span
@@ -310,12 +331,12 @@ export function MissionRail() {
         <div className="mission-rail__head-actions">
           <button
             type="button"
-            className="mission-rail__new mission-rail__new--primary"
+            className="mission-rail__new mission-rail__new--primary mission-rail__new--story"
             title="Nova missão neste workspace (⌘N)"
             aria-label="Nova missão neste workspace"
             onClick={openMissionWizard}
           >
-            <PixelIcon name="plus" size={10} /> <span>Nova</span>
+            <PixelIcon name="plus" size={12} /> <span>Nova missão</span>
           </button>
           <button
             type="button"
@@ -394,14 +415,19 @@ export function MissionRail() {
           />
         ) : localMissions.length === 0 ? (
           <EmptyState
-            className="activity-rail__empty"
+            className="activity-rail__empty mission-rail__empty--story"
             icon="mission"
-            title="Nenhuma missão nesta pasta"
+            title={railBeat.title}
             body={
-              <p>
-                Só aparecem missões de <strong>{workspace?.name ?? 'este workspace'}</strong>.
-                Crie uma nova — a lista de outras pastas fica isolada.
-              </p>
+              <>
+                <EndorphinPresence
+                  kicker={railBeat.kicker}
+                  mood="idle"
+                  size={44}
+                  className="endorphin-presence--row mission-rail__empty-presence"
+                />
+                <p>{railBeat.line}</p>
+              </>
             }
             action={
               <ActionCard

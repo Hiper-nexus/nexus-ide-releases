@@ -1,6 +1,31 @@
 /* Endorphin Distribution — micro-presença e batidas no caminho feliz.
    Motion curto (180–320ms), easings do sistema, sem bounce. */
 
+/* Pane state chips (toolbar) — palavras > glifos */
+.toolbar__state--chip {
+  gap: 4px;
+  padding: 2px 6px 2px 4px;
+  border-radius: var(--radius-round);
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+
+.toolbar__state-label {
+  font-weight: 600;
+  text-transform: none;
+}
+
+.fleet-chip__word {
+  opacity: 0.72;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+}
+
 .endorphin-presence {
   display: flex;
   flex-direction: column;
@@ -255,4 +280,129 @@
   .home-deck--armed .home-deck__cta {
     animation: none;
   }
+}
+
+/* Mission Luz Verde / concluída */
+.mission-fx {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 16px 10px 10px;
+  border-radius: var(--radius-xl);
+  border: 1px solid color-mix(in srgb, var(--live) 40%, var(--border-strong));
+  background: color-mix(in srgb, var(--bg-elevated) 92%, var(--live));
+  box-shadow: var(--shadow-2);
+  pointer-events: none;
+  animation: mission-fx-in 220ms var(--ease-out-expo);
+}
+
+.mission-fx--done {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-strong));
+  background: color-mix(in srgb, var(--bg-elevated) 92%, var(--accent));
+}
+
+.mission-fx--failed {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border-strong));
+  background: color-mix(in srgb, var(--bg-elevated) 92%, var(--danger));
+}
+
+.mission-fx__kicker {
+  display: block;
+  font-family: var(--font-pixel);
+  font-size: var(--text-sm);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--live);
+}
+
+.mission-fx--done .mission-fx__kicker {
+  color: var(--accent);
+}
+
+.mission-fx--failed .mission-fx__kicker {
+  color: var(--danger);
+}
+
+.mission-fx__label {
+  display: block;
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 600;
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes mission-fx-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-fx,
+  .mission-fx--still {
+    animation: none;
+  }
+}
+
+/* MissionRail — narrativa + CTA de peso (não editar rail-onboarding.css) */
+.mission-rail__head--endorphin {
+  gap: 10px;
+}
+
+.mission-rail__kicker {
+  display: block;
+  font-family: var(--font-pixel);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 2px;
+}
+
+.mission-rail__head--endorphin
+  .mission-rail__summary:not(.mission-rail__summary--budget) {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text);
+  font-weight: 550;
+}
+
+.mission-rail__summary-line {
+  font-size: 11px;
+  font-weight: 450;
+  color: var(--text-dim);
+}
+
+.mission-rail__new--story {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 650;
+  gap: 6px;
+}
+
+.mission-rail__empty--story .empty-state__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mission-rail__empty-presence {
+  margin: 2px 0 4px;
 }
