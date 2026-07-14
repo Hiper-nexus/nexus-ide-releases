@@ -13,11 +13,11 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.15.8',
+  version: '0.15.9',
   date: '2026-07-14',
-  codename: 'Dock-First Production Hotfix',
+  codename: 'Dock-First Production Hardening',
   summary:
-    'Nexus torna a janela principal prioritária no lançamento e mantém integrações opcionais em segundo plano, evitando que o app desapareça do Dock quando um hook demora.',
+    'Nexus cria a janela principal como primeira operação após o ready do Electron, antes de hooks, adapters, banco, keychain ou qualquer inicialização pesada.',
   highlights: [
     {
       title: 'Intenção antes de orquestração',
@@ -44,7 +44,7 @@ export const CURRENT_RELEASE: AppRelease = {
     {
       title: 'Dock e janela resilientes',
       detail:
-        'A janela principal é criada antes do servidor de hooks de agentes; atrasos, portas ocupadas ou processos auxiliares não deixam o Nexus preso como processo de fundo.',
+        'A janela principal é criada antes de hooks e de todo o bootstrap síncrono; atrasos, portas ocupadas, keychain ou processos auxiliares não deixam o Nexus preso como processo de fundo.',
     },
     {
       title: 'Autoridade fail-closed',

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.9 — Dock-First Production Hardening
+
+Data: 2026-07-14
+
+- Endurece o hotfix do Dock: a janela principal é criada como primeira
+  operação após `app.whenReady()`, antes de hooks, adapters, banco, keychain ou
+  qualquer outra inicialização síncrona.
+- Evita que qualquer atraso de bootstrap classifique o app como UIElement sem
+  janela visível.
+
 ## 0.15.8 — Dock-First Production Hotfix
 
 Data: 2026-07-14

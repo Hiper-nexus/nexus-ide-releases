@@ -136,10 +136,13 @@ describe('smoke isolation', () => {
     const mainSource = readFileSync(new URL('./main.ts', import.meta.url), 'utf8');
     const readyStart = mainSource.indexOf('app.whenReady().then(async () => {');
     const hookSection = mainSource.indexOf('// Gap A:', readyStart);
+    const createWindowAtReady = mainSource.indexOf('    createMainWindow();', readyStart);
     const bootstrapBeforeHooks = mainSource.indexOf('    bootstrap();', readyStart);
 
     expect(readyStart).toBeGreaterThan(-1);
     expect(hookSection).toBeGreaterThan(readyStart);
+    expect(createWindowAtReady).toBeGreaterThan(readyStart);
+    expect(createWindowAtReady).toBeLessThan(bootstrapBeforeHooks);
     expect(bootstrapBeforeHooks).toBeGreaterThan(readyStart);
     expect(bootstrapBeforeHooks).toBeLessThan(hookSection);
   });

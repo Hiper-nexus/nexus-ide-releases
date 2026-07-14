@@ -413,10 +413,9 @@ function bootstrap(): void {
   registerLayoutIpc(projectRuntimeManager);
   registerAdapterIpc();
   registerVoiceIpc(projectRuntimeManager);
-  // Open the UI before account/secrets/billing. Agent launches (and macOS when
-  // Keychain needs unlock) used to hang forever in SecItemCopyMatching with
-  // 0 windows — the user only saw a dock icon. Voice needs the renderer up.
-  createMainWindow();
+  // The window is created by the app-ready handler before bootstrap starts.
+  // Keep the rest of registration below it so account/secrets/billing cannot
+  // delay the first visible UI.
   registerVisionIpc();
   registerOrchIpc();
   registerAuthProbeIpc();
@@ -519,6 +518,11 @@ if (!wireDeepLinks()) {
     // from the Dock and the user saw no actionable error. Bootstrap the window
     // first; integrations below are deliberately best-effort and may continue
     // asynchronously after the UI is available.
+    // This must remain the first potentially visible operation after Electron
+    // is ready. Do not move it into bootstrap(): synchronous adapter, settings,
+    // database, or keychain setup can otherwise classify the process as a
+    // background UIElement before macOS has a window/Dock item to display.
+    createMainWindow();
     bootstrap();
 
     // Gap A: register Claude+Codex managed hook installers. Installing edits the
