@@ -316,6 +316,9 @@ describe('proofs: renderer, functional, marker, natives', () => {
     expect(resolvePackagedMainBundlePath(['.vite/build/main.js'])).toBe(
       '.vite/build/main.js',
     );
+    expect(
+      resolvePackagedMainBundlePath(['build/main.js'], 'build/main.js'),
+    ).toBe('build/main.js');
     expect(resolvePackagedMainBundlePath(['resources/app/main.js'])).toBeNull();
   });
 

@@ -313,12 +313,20 @@ export function assertPackagedMainBundleBootable(bundle) {
  * the smoke contract strict about the file itself while tolerating that
  * packaging-root variation.
  */
-export function resolvePackagedMainBundlePath(entries) {
+export function resolvePackagedMainBundlePath(entries, declaredMain = null) {
   const target = PACKAGED_MAIN_BUNDLE_PATH;
+  const normalizedDeclared =
+    typeof declaredMain === 'string'
+      ? declaredMain.replaceAll('\\', '/').replace(/^\.\//u, '')
+      : null;
   const candidates = entries
     .filter((entry) => typeof entry === 'string')
     .map((entry) => entry.replaceAll('\\', '/').replace(/^\.\//u, ''))
-    .filter((entry) => entry === target || entry.endsWith(`/${target}`))
+    .filter((entry) =>
+      normalizedDeclared
+        ? entry === normalizedDeclared || entry.endsWith(`/${normalizedDeclared}`)
+        : entry === target || entry.endsWith(`/${target}`),
+    )
     .sort((left, right) => left.length - right.length);
   return candidates[0] ?? null;
 }
@@ -331,7 +339,18 @@ export function inspectPackagedMainBundle(resourcesDir) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     try {
-      const fallbackPath = resolvePackagedMainBundlePath(listPackage(asarPath));
+      const entries = listPackage(asarPath);
+      let declaredMain = null;
+      try {
+        const packageJson = JSON.parse(
+          extractAsarFile(asarPath, 'package.json').toString('utf8'),
+        );
+        declaredMain = packageJson?.main ?? null;
+      } catch {
+        // Fall back to the conventional Vite path when package metadata is
+        // unavailable; the original extraction error remains authoritative.
+      }
+      const fallbackPath = resolvePackagedMainBundlePath(entries, declaredMain);
       if (fallbackPath) {
         bundle = extractAsarFile(asarPath, fallbackPath);
       }
