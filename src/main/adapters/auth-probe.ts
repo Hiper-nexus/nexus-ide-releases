@@ -77,19 +77,15 @@ const OAUTH_PROBES: Record<
     }
     return { state: 'missing', detail: 'sem sessão — rode `codex login`' };
   },
-  agy: async () => {
-    if (
-      fileExists(path.join(HOME, '.gemini', 'antigravity')) ||
-      fileExists(path.join(HOME, '.gemini', 'antigravity-cli')) ||
-      fileExists(path.join(HOME, '.antigravity'))
-    ) {
-      return { state: 'ok', detail: 'sessão AGY local' };
-    }
-    return {
-      state: 'missing',
-      detail: 'sem sessão — rode `agy` e conclua o OAuth',
-    };
-  },
+  agy: async () =>
+    // Delegate to the shared detector (like grok/kimi) so a managed AGY account
+    // under $GEMINI_CLI_HOME is recognized, not just ~/.gemini in the real home.
+    hasSubscriptionAuth('agy')
+      ? { state: 'ok', detail: 'sessão AGY local' }
+      : {
+          state: 'missing',
+          detail: 'sem sessão — rode `agy` e conclua o OAuth',
+        },
   grok: async () =>
     hasSubscriptionAuth('grok')
       ? { state: 'ok', detail: 'sessão Grok OAuth local' }

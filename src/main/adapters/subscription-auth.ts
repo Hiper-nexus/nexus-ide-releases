@@ -137,7 +137,13 @@ export function detectSubscriptionAuth(
       // at the LongCat Anthropic-compatible endpoint. Never a subscription.
       return false;
     case 'agy':
+      // A managed AGY account lives under $GEMINI_CLI_HOME (see managed-credentials
+      // homeEnvVar/authCandidates); check it first so a custom-home login is not
+      // misread as "login-needed" (the gap that 1192cfc closed for codex/grok/kimi
+      // but skipped for agy).
       return (
+        existsInEnv('GEMINI_CLI_HOME', 'antigravity') ||
+        existsInEnv('GEMINI_CLI_HOME', 'antigravity-cli') ||
         exists('.gemini', 'antigravity') ||
         exists('.gemini', 'antigravity-cli') ||
         exists('.antigravity')

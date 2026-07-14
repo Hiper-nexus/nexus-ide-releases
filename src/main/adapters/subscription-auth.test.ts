@@ -139,6 +139,23 @@ describe('detectSubscriptionAuth', () => {
     expect(detectSubscriptionAuth('grok', home)).toBe(true);
   });
 
+  it('detects a managed AGY account via GEMINI_CLI_HOME (custom home)', () => {
+    const home = tempHome();
+    const geminiHome = tempHome();
+    const prev = process.env.GEMINI_CLI_HOME;
+    process.env.GEMINI_CLI_HOME = geminiHome;
+    try {
+      // Nothing in the real home nor the custom home yet.
+      expect(detectSubscriptionAuth('agy', home)).toBe(false);
+      // The managed account's auth artifact lands under $GEMINI_CLI_HOME.
+      touch(geminiHome, 'antigravity');
+      expect(detectSubscriptionAuth('agy', home)).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.GEMINI_CLI_HOME;
+      else process.env.GEMINI_CLI_HOME = prev;
+    }
+  });
+
   it('fails closed for a custom adapter without an auth detector', () => {
     expect(detectSubscriptionAuth('unknown-provider', tempHome())).toBe(false);
   });
