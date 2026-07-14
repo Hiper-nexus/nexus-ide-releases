@@ -2,7 +2,7 @@
  * Contextual-panel tab bodies for product wave: Search, Skills, Memory, Editor.
  * Uses window.nexus.product / searchMixer IPC. Fail-soft when API missing.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 type Hit = {
   id: string;
@@ -22,8 +22,11 @@ export function SearchPanelBody() {
   const [hits, setHits] = useState<Hit[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // IPC responses resolve out of order; only the latest request may render.
+  const requestSeq = useRef(0);
 
   const run = useCallback(async (text: string) => {
+    const requestId = ++requestSeq.current;
     if (!text.trim()) {
       setHits([]);
       return;
@@ -47,12 +50,14 @@ export function SearchPanelBody() {
               text,
               limit: 40,
             });
+      if (requestId !== requestSeq.current) return;
       if (result.error) setError(result.error);
       setHits((result.hits as Hit[]) ?? []);
     } catch (err) {
+      if (requestId !== requestSeq.current) return;
       setError(err instanceof Error ? err.message : 'search failed');
     } finally {
-      setBusy(false);
+      if (requestId === requestSeq.current) setBusy(false);
     }
   }, []);
 
