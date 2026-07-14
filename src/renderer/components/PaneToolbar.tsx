@@ -306,25 +306,25 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     run: () => void requestPaneClose(pane.id),
   };
 
-  // Compact: só Reiniciar (se agent) + menu ⋯; Fechar é sempre pinado à direita.
-  // Icons/full: sessão + layout; Fechar pinado.
+  // Layout actions (split-right, split-down, maximize) are critical controls
+  // and must always stay visible on the toolbar. Telemetry/session actions
+  // (scroll-end, hibernate) go to overflow in icons/compact density.
   const overflow =
     density === 'compact'
-      ? actions.filter((a) => a.id !== 'restart' && a.id !== 'maximize')
+      ? actions.filter((a) => a.id === 'scroll-end' || a.id === 'hibernate' || a.id === 'restart')
       : density === 'icons'
-        ? actions.filter((a) => a.id === 'split-right' || a.id === 'split-down')
+        ? actions.filter((a) => a.id === 'scroll-end' || a.id === 'hibernate')
         : [];
   const sessionVisible = actions.filter((a) =>
     density === 'compact'
-      ? a.id === 'restart'
-      : a.id === 'scroll-end' || a.id === 'hibernate' || a.id === 'restart',
+      ? false
+      : density === 'icons'
+        ? a.id === 'restart'
+        : a.id === 'scroll-end' || a.id === 'hibernate' || a.id === 'restart',
   );
-  const layoutVisible =
-    density === 'full'
-      ? actions.filter((a) =>
-          a.id === 'maximize' || a.id === 'split-right' || a.id === 'split-down',
-        )
-      : actions.filter((a) => a.id === 'maximize');
+  const layoutVisible = actions.filter(
+    (a) => a.id === 'maximize' || a.id === 'split-right' || a.id === 'split-down',
+  );
 
   function renderGroup(items: ToolbarAction[], aria: string) {
     if (items.length === 0) return null;
@@ -437,7 +437,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
 
       <div className="toolbar__actions">
         {renderGroup(sessionVisible, 'Sessão')}
-        {pane.kind !== 'browser' && (
+        {pane.kind !== 'browser' && density !== 'compact' && (
           <div className="toolbar__group" role="group" aria-label="Command blocks">
             <CommandBlockMenu paneId={pane.id} density={density} />
           </div>

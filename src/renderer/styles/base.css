@@ -988,21 +988,30 @@ body {
 }
 
 /* Badges longos somem cedo — o Fechar precisa do sítio. */
-@container pane-toolbar (max-width: 420px) {
-  .toolbar__badge--agent .toolbar__badge-text,
-  .toolbar__pane-id {
-    display: none;
+@container pane-toolbar (max-width: 460px) {
+  .toolbar__pane-id,
+  .cost-badge,
+  .devserver-chip,
+  .toolbar__badge--agent .toolbar__badge-text {
+    display: none !important;
+  }
+}
+
+@container pane-toolbar (max-width: 380px) {
+  .toolbar__badge--agent,
+  .toolbar__badge--worker,
+  .toolbar__badge:not(.toolbar__badge--orch),
+  .toolbar__agent-avatar {
+    display: none !important;
   }
 }
 
 @container pane-toolbar (max-width: 300px) {
-  .toolbar__badge--agent,
-  .toolbar__badge--worker,
-  .toolbar__badge:not(.toolbar__badge--orch) {
-    display: none;
+  .toolbar__badge--orch {
+    display: none !important;
   }
   .toolbar__title {
-    max-width: 55%;
+    max-width: 60px;
   }
 }
 
