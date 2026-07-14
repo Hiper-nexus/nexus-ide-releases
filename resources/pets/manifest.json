@@ -168,5 +168,15 @@
     "bytes": 1900728,
     "cols": 8,
     "rows": 11
+  },
+  {
+    "id": "nico",
+    "slug": "nico",
+    "label": "Nico",
+    "note": "mascote 3D premium criado no Pet Studio",
+    "file": "sheets/nico.webp",
+    "bytes": 1795290,
+    "cols": 8,
+    "rows": 11
   }
 ]
