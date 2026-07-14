@@ -56,7 +56,7 @@
       "grok-code-fast-1",
       "grok-3"
     ],
-    "default": "grok-build"
+    "default": "grok-4.5"
   },
   "promptInjection": {
     "method": "arg",
