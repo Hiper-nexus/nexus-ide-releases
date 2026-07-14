@@ -4,6 +4,45 @@
   gap: 10px;
 }
 
+/* Trilhos do painel Git — mesmo idioma da scrollbar global (base.css),
+   scoped aqui para não cair no scrollbar nativo branco do host/browser. */
+.git-scm,
+.git-scm * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb, rgba(124, 134, 158, 0.36))
+    var(--scrollbar-track, rgba(4, 6, 10, 0.44));
+}
+
+.git-scm::-webkit-scrollbar,
+.git-scm *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.git-scm::-webkit-scrollbar-track,
+.git-scm *::-webkit-scrollbar-track {
+  background: var(--scrollbar-track, rgba(4, 6, 10, 0.44));
+}
+
+.git-scm::-webkit-scrollbar-thumb,
+.git-scm *::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  border: 2px solid transparent;
+  border-radius: 0;
+  background-color: var(--border-strong, #2c3a55);
+  background-clip: content-box;
+}
+
+.git-scm::-webkit-scrollbar-thumb:hover,
+.git-scm *::-webkit-scrollbar-thumb:hover {
+  background-color: var(--accent, #45d7ff);
+}
+
+.git-scm::-webkit-scrollbar-corner,
+.git-scm *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 .git-scm__tabpanel {
   display: flex;
   flex-direction: column;
@@ -106,6 +145,8 @@
   overflow: auto;
   flex: 0 1 auto;
   max-height: 36%;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
 }
 
 .git-scm__section-head {
@@ -280,6 +321,7 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre;
   color: var(--text, #d7dfec);
+  scrollbar-gutter: stable;
 }
 
 .git-scm__diff-placeholder {
