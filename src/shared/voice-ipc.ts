@@ -305,7 +305,16 @@ export type JarvisAction =
   | { type: 'run_command'; command: string }
   | { type: 'mcp_tool'; tool: string; args: Record<string, unknown> }
   | { type: 'restore_mission_panes'; alvo?: string }
-  | { type: 'ask_pane'; pergunta: string; paneId?: string };
+  | { type: 'ask_pane'; pergunta: string; paneId?: string }
+  /**
+   * User-facing repo update via AI CLI pane (not ProcessGitRunner / nexus_git_*).
+   * mode defaults to pull when omitted by older callers.
+   */
+  | {
+      type: 'sync_repo_via_pane';
+      mode?: 'pull' | 'status' | 'push';
+      paneId?: string;
+    };
 
 export interface JarvisReply {
   say: string;
@@ -612,6 +621,7 @@ export const jarvisLiveToolResultInputSchema = z.object({
     'mcp_tool',
     'restore_mission_panes',
     'ask_pane',
+    'sync_repo_via_pane',
   ]),
   summary: z.string().max(1000),
   ok: z.boolean(),

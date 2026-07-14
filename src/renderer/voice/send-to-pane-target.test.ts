@@ -3,6 +3,7 @@ import {
   isAgentTargetPane,
   isOrchestratorPane,
   resolveSendToPaneTarget,
+  resolveSyncRepoViaPaneTarget,
 } from './send-to-pane-target';
 
 const shell = { id: 'p-shell', title: 'zsh', kind: 'shell' };
@@ -73,6 +74,29 @@ describe('resolveSendToPaneTarget (C3 follow-ups 2 + 4b)', () => {
     expect(resolveSendToPaneTarget(undefined, [shell, agent], 'p-agent')).toEqual({
       kind: 'delegation',
       orchestratorPaneId: 'p-agent',
+    });
+  });
+});
+
+describe('resolveSyncRepoViaPaneTarget', () => {
+  it('prefers focused cli-agent over orchestrator', () => {
+    expect(resolveSyncRepoViaPaneTarget(undefined, panes, 'p-agent')).toEqual({
+      kind: 'asking-pane',
+      paneId: 'p-agent',
+    });
+  });
+
+  it('prefers any cli-agent when focus is not an agent', () => {
+    expect(resolveSyncRepoViaPaneTarget(undefined, panes, 'p-shell')).toEqual({
+      kind: 'asking-pane',
+      paneId: 'p-agent',
+    });
+  });
+
+  it('falls back to orchestrator only when no cli-agent exists', () => {
+    expect(resolveSyncRepoViaPaneTarget(undefined, [shell, orch], null)).toEqual({
+      kind: 'delegation',
+      orchestratorPaneId: 'p-orq',
     });
   });
 });

@@ -33,6 +33,9 @@ const ACTION_DEADLINES_MS: Partial<Record<JarvisAction['type'], number>> = {
   restore_mission_panes: 20_000,
   ask_pane: 12_000,
   send_to_pane: 12_000,
+  // Push may wait on native confirm; submit itself is fast.
+  sync_repo_via_pane: 60_000,
+  run_command: 60_000,
 };
 
 // Signed-in-code recovery recipes. No downloaded prompt or model output can

@@ -19,7 +19,7 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
       type: 'function',
       name: NEXUS_REALTIME_ACTION_TOOL,
       description:
-        'Operate Nexus IDE through the audited action executor. Opening an existing project always means open_workspace; new_workspace is only for an explicit request to create a new workspace. To open or choose squad mode without a squad name, call open_squad_picker: it opens the saved-squad screen and never creates or launches one. Use open_squad only with a saved name from current context, and design_squad only for an explicit new/create/design request. Use read_current_view for the visible screen. send_to_pane is ONLY for delegating an engineering task to an AI agent/orchestrator, dispatches routine work immediately, and NEVER writes to a terminal. Use run_command only for a syntactically real shell command explicitly requested by the user; NEVER put prose, an Objective, execution requirements, acceptance criteria, or an engineering briefing in command. Destructive, deploy, publish, and remote commands retain native confirmation. Use mcp_tool for Nexus MCP tools. Never claim success before the tool result.',
+        'Operate Nexus IDE through the audited action executor. Opening an existing project always means open_workspace; new_workspace is only for an explicit request to create a new workspace. To open or choose squad mode without a squad name, call open_squad_picker: it opens the saved-squad screen and never creates or launches one. Use open_squad only with a saved name from current context, and design_squad only for an explicit new/create/design request. Use read_current_view for the visible screen. send_to_pane is ONLY for delegating an engineering task to an AI agent/orchestrator, dispatches routine work immediately, and NEVER writes to a terminal. For update/sync/pull/push/status of the git repository, use sync_repo_via_pane (NOT mcp_tool nexus_git_*, NOT run_command). Use run_command only for a syntactically real shell command explicitly requested by the user; NEVER put prose, an Objective, execution requirements, acceptance criteria, or an engineering briefing in command. Destructive, deploy, publish, and remote commands retain native confirmation. Use mcp_tool for Nexus MCP tools other than everyday git sync. Never claim success before the tool result.',
       parameters: {
         type: 'object',
         additionalProperties: false,
@@ -28,7 +28,13 @@ export function createNexusRealtimeTools(): RealtimeToolDefinition[] {
             type: 'string',
             enum: SAFE_REALTIME_ACTIONS,
             description:
-              'The safe Nexus IDE action to execute. open_squad_picker opens saved squad choices; read_current_view reads the current visible view; read_pane reads a specific pane.',
+              'The safe Nexus IDE action to execute. open_squad_picker opens saved squad choices; read_current_view reads the current visible view; read_pane reads a specific pane; sync_repo_via_pane updates the repo via an AI CLI pane.',
+          },
+          mode: {
+            type: 'string',
+            enum: ['pull', 'status', 'push'],
+            description:
+              'For sync_repo_via_pane only. pull = fetch + ff-only pull (default), status = read-only, push = git push (native confirm).',
           },
           url: {
             type: 'string',

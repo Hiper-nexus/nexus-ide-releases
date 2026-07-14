@@ -32,6 +32,40 @@ describe('jarvisActionFastPath', () => {
     expect(reply?.say).toContain('patrão');
   });
 
+  it('atualiza repositório via pane (não terminal / nexus_git)', () => {
+    for (const text of [
+      'Atualiza o repositório.',
+      'Puxa as mudanças.',
+      'git pull',
+      'Sincroniza o repo.',
+    ]) {
+      const reply = jarvisActionFastPath(text, CTX);
+      expect(reply?.action).toEqual({ type: 'sync_repo_via_pane', mode: 'pull' });
+    }
+  });
+
+  it('status do git e push usam modes distintos', () => {
+    expect(jarvisActionFastPath('Qual o status do git?', CTX)?.action).toEqual({
+      type: 'sync_repo_via_pane',
+      mode: 'status',
+    });
+    expect(jarvisActionFastPath('git push', CTX)?.action).toEqual({
+      type: 'sync_repo_via_pane',
+      mode: 'push',
+    });
+  });
+
+  it('atualiza a página continua sendo browser_reload', () => {
+    expect(jarvisActionFastPath('Atualiza a página.', CTX)?.action).toEqual({
+      type: 'browser_reload',
+    });
+  });
+
+  it('não trata "atualiza o projeto" genérico como git pull', () => {
+    expect(jarvisActionFastPath('Atualiza o projeto.', CTX)).toBeNull();
+  });
+
+
   it('abrir um comando ai dispara run_command', () => {
     const reply = jarvisActionFastPath('Abrir um comando AI.', CTX);
     expect(reply?.action).toEqual({ type: 'run_command', command: 'ai' });

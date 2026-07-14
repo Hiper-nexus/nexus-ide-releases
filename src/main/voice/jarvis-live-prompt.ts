@@ -64,7 +64,9 @@ const OPERATING_MODEL = `Nexus operating model:
   creation request: call open_squad_picker to show saved choices, then ask which saved squad
   the user wants. Use open_squad for a named saved squad;
   use design_squad only when the user explicitly asks to create/design a new
-  squad.`;
+  squad.
+- Everyday repository update/sync/pull/push/status must use sync_repo_via_pane
+  (AI CLI pane). Never use run_command or mcp_tool nexus_git_* for that intent.`;
 
 export function buildLiveSystemInstruction(
   persona: VoicePersona,

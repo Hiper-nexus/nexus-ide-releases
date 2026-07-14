@@ -67,6 +67,12 @@ export function mapActionToTool(
       // jarvis-action-executor's send_to_pane branch. Returning null keeps the
       // gate reachable even if this action is ever re-added to `mcpFirst`.
       return null;
+    case 'sync_repo_via_pane':
+      // Product default: repo sync goes through an AI CLI pane, never nexus_git_*.
+      return null;
+    case 'ask_pane':
+    case 'restore_mission_panes':
+      return null;
     case 'run_command':
       return { tool: 'nexus_terminal_run', args: { command: action.command } };
     default:

@@ -1,4 +1,5 @@
 import type { JarvisAction } from './voice-ipc';
+import { normalizeSyncRepoViaPaneMode } from './sync-repo-via-pane';
 
 export const NEXUS_REALTIME_ACTION_TOOL = 'nexus_action';
 
@@ -32,6 +33,7 @@ export const SAFE_REALTIME_ACTIONS = [
   'mcp_tool',
   'restore_mission_panes',
   'ask_pane',
+  'sync_repo_via_pane',
 ] as const;
 
 export type SafeRealtimeActionType = (typeof SAFE_REALTIME_ACTIONS)[number];
@@ -54,6 +56,8 @@ export interface NexusRealtimeActionArgs {
   alvo?: string;
   /** perguntar: pergunta de trabalho a enviar ao pane. */
   pergunta?: string;
+  /** sync_repo_via_pane: pull | status | push (default pull). */
+  mode?: 'pull' | 'status' | 'push';
 }
 
 export function summarizeNexusRealtimeAction(args: NexusRealtimeActionArgs): string {
@@ -120,6 +124,10 @@ export function summarizeNexusRealtimeAction(args: NexusRealtimeActionArgs): str
       return args.alvo ? `restaurar missão ${args.alvo}` : 'restaurar missão recente';
     case 'ask_pane':
       return 'perguntar ao pane';
+    case 'sync_repo_via_pane':
+      if (args.mode === 'status') return 'checar status do repositório via agente no pane';
+      if (args.mode === 'push') return 'enviar repositório via agente no pane';
+      return 'atualizar repositório via agente no pane';
     default:
       return 'ação realtime';
   }
@@ -187,6 +195,15 @@ export function realtimeArgsToJarvisAction(
     if (!pergunta) return null;
     const paneId = cleanText(args.paneId, 128) || undefined;
     return { type: 'ask_pane', pergunta, ...(paneId ? { paneId } : {}) };
+  }
+  if (args.action === 'sync_repo_via_pane') {
+    const mode = normalizeSyncRepoViaPaneMode(args.mode);
+    const paneId = cleanText(args.paneId, 128) || undefined;
+    return {
+      type: 'sync_repo_via_pane',
+      mode,
+      ...(paneId ? { paneId } : {}),
+    };
   }
   return { type: args.action };
 }

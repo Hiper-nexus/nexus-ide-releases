@@ -16,6 +16,7 @@ import type {
   JarvisTurn,
 } from '../../shared/voice-ipc';
 import type { JarvisBrainProvider, VoicePersona } from '../../shared/voice-config';
+import { normalizeSyncRepoViaPaneMode } from '../../shared/sync-repo-via-pane';
 
 /**
  * O cérebro da JARVIS — transforma a fala transcrita numa resposta CURTA em
@@ -83,10 +84,13 @@ Action types:
   shell command explicitly requested by the user. Use the literal command with
   no explanation. Never put prose or an agent briefing here; use send_to_pane.
   The app confirms only destructive, deploy, publish, or remote commands.
+- {"type":"sync_repo_via_pane","mode":"pull|status|push"} - DEFAULT for user
+  requests to update/sync/pull/push/status the repository. Sends a fixed product
+  prompt to an AI CLI pane (not nexus_git_*, not run_command, not terminal).
+  mode: pull (default), status, or push. Optional paneId if the user named a pane.
 - {"type":"mcp_tool","tool":"<nexus_tool_name>","args":{...}} - invoke ANY Nexus
-  MCP tool (files, git, editor, panes, missions, browser, catalog, etc.). Use
-  this for everything the simple actions above do not cover, and prefer it for
-  read/write files, git ops, mission management, browser, editor navigation.
+  MCP tool (files, editor, panes, missions, browser, catalog, etc.). Prefer
+  sync_repo_via_pane over nexus_git_pull/status/push for everyday repo updates.
 - {"type":"send_to_pane","text":"<engineering prompt in English>"} - send work
   to an AI agent pane or orchestrator. Do not translate literally: compose a
   professional English prompt with a clear objective, concrete inferred
@@ -143,7 +147,9 @@ You can execute things through actions. Never claim you cannot. Examples:
 - "abre o projeto saasbarbearia" -> {"say":"Abrindo o saasbarbearia.","action":{"type":"open_workspace","workspaceName":"saasbarbearia"}}
 - "pede pro agente corrigir o bug do login" -> use send_to_pane with an English prompt.
 - "le o arquivo package.json" -> {"say":"Lendo o package.json.","action":{"type":"mcp_tool","tool":"nexus_file_read","args":{"path":"package.json"}}}
-- "qual o status do git" -> {"say":"Checando o git.","action":{"type":"mcp_tool","tool":"nexus_git_status","args":{}}}
+- "qual o status do git" -> {"say":"Vou pedir pro agente checar o status do repositório.","action":{"type":"sync_repo_via_pane","mode":"status"}}
+- "atualiza o repositório" / "puxa as mudanças" / "git pull" -> {"say":"Vou pedir pro agente atualizar o repositório.","action":{"type":"sync_repo_via_pane","mode":"pull"}}
+- "faz push" / "git push" -> {"say":"Vou pedir pro agente enviar o repositório.","action":{"type":"sync_repo_via_pane","mode":"push"}}
 - "cria uma missão de refactor" -> {"say":"Criando a missão.","action":{"type":"mcp_tool","tool":"nexus_mission_create","args":{"title":"Refactor"}}}
 
 Pane labels in context: [shell] means a terminal, so use run_command; [agent]
@@ -422,6 +428,49 @@ export function parseReply(raw: string): JarvisReply {
           ? (obj.action.args as Record<string, unknown>)
           : {};
       return { say, expectReply, action: { type: 'mcp_tool', tool: obj.action.tool, args } };
+    }
+    if (type === 'sync_repo_via_pane') {
+      const rawMode =
+        obj.action && typeof obj.action === 'object' && 'mode' in obj.action
+          ? (obj.action as { mode?: unknown }).mode
+          : undefined;
+      const mode = normalizeSyncRepoViaPaneMode(rawMode);
+      const paneId =
+        obj.action &&
+        typeof obj.action === 'object' &&
+        'paneId' in obj.action &&
+        typeof (obj.action as { paneId?: unknown }).paneId === 'string'
+          ? (obj.action as { paneId: string }).paneId.trim().slice(0, 128)
+          : '';
+      return {
+        say,
+        expectReply,
+        action: {
+          type: 'sync_repo_via_pane',
+          mode,
+          ...(paneId ? { paneId } : {}),
+        },
+      };
+    }
+    if (type === 'ask_pane' && typeof (obj.action as { pergunta?: unknown })?.pergunta === 'string') {
+      const pergunta = String((obj.action as { pergunta: string }).pergunta).trim().slice(0, 4_000);
+      if (!pergunta) return { say, expectReply, action: { type: 'none' } };
+      const paneId =
+        obj.action &&
+        typeof obj.action === 'object' &&
+        'paneId' in obj.action &&
+        typeof (obj.action as { paneId?: unknown }).paneId === 'string'
+          ? (obj.action as { paneId: string }).paneId.trim().slice(0, 128)
+          : '';
+      return {
+        say,
+        expectReply,
+        action: {
+          type: 'ask_pane',
+          pergunta,
+          ...(paneId ? { paneId } : {}),
+        },
+      };
     }
     return { say, expectReply, action: { type: 'none' } };
   } catch {

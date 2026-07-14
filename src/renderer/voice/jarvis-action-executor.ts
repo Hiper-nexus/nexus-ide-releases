@@ -22,7 +22,11 @@ import { launchSquadMission } from '../orch/mission-launcher';
 import { isMissingModelKeyError } from '../lib/credential-errors';
 import { invokeMcpWithConfirm, mapActionToTool } from '../services/mcp-bridge';
 import { reopenMission } from '../orch/mission-reopen';
-import { isOrchestratorPane, resolveSendToPaneTarget } from './send-to-pane-target';
+import {
+  isOrchestratorPane,
+  resolveSendToPaneTarget,
+  resolveSyncRepoViaPaneTarget,
+} from './send-to-pane-target';
 import { requestPaneClose } from '../terminal/pane-close-guard';
 import { sanitizeMcpResultOutput } from './mcp-result-output';
 import { currentViewNarration, currentViewToolOutput } from './current-view-read';
@@ -34,6 +38,13 @@ import {
   isExecutionReadyDelegationPrompt,
   prepareDelegationPrompt,
 } from './delegation-prompt';
+import {
+  buildSyncRepoViaPanePrompt,
+  normalizeSyncRepoViaPaneMode,
+  syncRepoViaPaneMissionIntent,
+  syncRepoViaPaneNoAgentSay,
+  syncRepoViaPaneSay,
+} from '../../shared/sync-repo-via-pane';
 
 export interface JarvisExecutionResult {
   sayText: string;
@@ -1103,6 +1114,108 @@ export async function executeJarvisAction(
     } else {
       sayText = 'Não achei um pane de agente pra perguntar.';
       toolResult = { tool: action.type, ok: false, summary: 'sem pane de agente válido' };
+    }
+  } else if (action.type === 'sync_repo_via_pane') {
+    // Product default: everyday repo sync goes to an AI CLI pane with a fixed
+    // prompt — never ProcessGitRunner / nexus_git_* (multi-OS client git).
+    const mode = normalizeSyncRepoViaPaneMode(action.mode);
+    if (mode === 'push') {
+      checkpoint(control);
+      const approved = await window.nexus.voice.confirmCommand(
+        'Pedir ao agente no pane: git push (sem force)',
+      );
+      checkpoint(control);
+      if (!approved) {
+        sayText = 'Cancelei, não pedi o push.';
+        toolResult = {
+          tool: action.type,
+          ok: false,
+          summary: 'usuário recusou push',
+        };
+        return { sayText, expectReply, toolResult };
+      }
+    }
+
+    const prompt = buildSyncRepoViaPanePrompt(mode);
+    const { root, focusedPaneId } = useLayoutStore.getState();
+    const panes = listPanes(root);
+    const target = resolveSyncRepoViaPaneTarget(action.paneId, panes, focusedPaneId);
+
+    if (target.kind === 'asking-pane-gone') {
+      sayText = 'O pane que você citou já fechou. Abre um agente e pede de novo.';
+      toolResult = {
+        tool: action.type,
+        ok: false,
+        summary: 'pane alvo fechado',
+      };
+    } else if (target.kind === 'asking-pane-not-agent') {
+      sayText = 'Esse pane não é de agente — o sync vai só pra CLI de IA.';
+      toolResult = {
+        tool: action.type,
+        ok: false,
+        summary: `alvo não é pane de agente: ${target.title}`,
+      };
+    } else if (target.kind === 'asking-pane-ambiguous') {
+      sayText = `Achei mais de um pane: ${target.titles.join(', ')}. Qual deles?`;
+      expectReply = true;
+      toolResult = {
+        tool: action.type,
+        ok: false,
+        summary: 'pane ambíguo',
+      };
+    } else if (target.kind === 'no-agent-pane') {
+      const intent = syncRepoViaPaneMissionIntent(mode);
+      useMissionWizardStore.getState().openForAgentic(intent);
+      markEffect(control);
+      sayText = syncRepoViaPaneNoAgentSay(mode);
+      toolResult = {
+        tool: action.type,
+        ok: true,
+        summary: 'sem pane; objetivo encaminhado ao fluxo intent-first',
+        output: { mode, intent },
+      };
+    } else {
+      const paneId =
+        target.kind === 'asking-pane'
+          ? target.paneId
+          : target.orchestratorPaneId;
+      const paneTitle =
+        panes.find((pane) => pane.id === paneId)?.title ?? 'agente';
+      const commandId = crypto.randomUUID();
+      const sessionId = await waitForSession(paneId, 750);
+      checkpoint(control);
+      const ok = Boolean(sessionId) && submitPromptToPane(paneId, prompt);
+      if (ok) {
+        markEffect(control);
+        revealPaneForUser(paneId);
+      }
+      logVoiceEvent(
+        ok ? 'info' : 'warn',
+        ok ? 'pane.syncRepoSubmitted' : 'pane.syncRepoFailed',
+        ok ? 'sync de repositório submetido ao pane' : 'sessão do pane indisponível',
+        {
+          commandId,
+          paneId,
+          mode,
+          sessionReady: Boolean(sessionId),
+        },
+      );
+      sayText = ok
+        ? syncRepoViaPaneSay(mode, paneTitle)
+        : 'Não consegui escrever no pane do agente. Abre um agente e tenta de novo.';
+      toolResult = {
+        tool: action.type,
+        ok,
+        summary: ok
+          ? `sync ${mode} submetido ao pane (${commandId})`
+          : 'falha ao escrever no pane',
+        output: {
+          commandId,
+          paneId,
+          mode,
+          sessionReady: Boolean(sessionId),
+        },
+      };
     }
   }
 
