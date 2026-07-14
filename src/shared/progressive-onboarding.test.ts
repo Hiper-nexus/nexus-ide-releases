@@ -22,12 +22,12 @@ describe('progressive onboarding contracts', () => {
       mode: 'terminal-only',
     });
     const summary = previewLaunchSummary(plan);
-    expect(summary).toMatch(/without AI/);
+    expect(summary).toMatch(/sem IA/);
     expect(summary).toMatch(/4 pane/);
-    expect(summary).not.toMatch(/with agents/);
+    expect(summary).not.toMatch(/com agentes/);
   });
 
-  it('exposes all launcher modes for Terminal/Missions/Swarm/Board/Memory/Skills', () => {
+  it('exposes all launcher modes for Terminal/Missões/Enxame/Board/Memória/Skills', () => {
     const ids = LAUNCHER_MODES.map((m) => m.id);
     expect(ids).toEqual([
       'terminal',
@@ -36,6 +36,14 @@ describe('progressive onboarding contracts', () => {
       'board',
       'memory',
       'skills',
+    ]);
+    expect(LAUNCHER_MODES.map((m) => m.label)).toEqual([
+      'Terminal',
+      'Missões',
+      'Enxame',
+      'Board',
+      'Memória',
+      'Skills',
     ]);
   });
 

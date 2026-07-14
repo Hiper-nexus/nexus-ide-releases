@@ -45,9 +45,9 @@ function initialState(
 }
 
 /**
- * Unified right panel: Browser / Editor / Git / Skills / Memory / Mission / Handoff / Search.
- * Tab/width/visible persist per workspace via contextual-panel-persist helpers.
- * Opening a tab never implies extra permissions.
+ * Painel direito unificado: Browser / Editor / Git / Skills / Memória / Missão / Handoff / Busca.
+ * Tab/width/visible persistem por workspace via contextual-panel-persist.
+ * Abrir uma aba nunca concede permissões extras.
  */
 export function ContextualPanel({
   flagEnabled = true,
@@ -123,9 +123,9 @@ export function ContextualPanel({
         type="button"
         className="ctx-panel__show"
         onClick={() => update({ visible: true })}
-        title="Show panel (Alt+])"
+        title="Mostrar painel (Alt+])"
       >
-        Panel
+        Painel
       </button>
     );
   }
@@ -138,9 +138,9 @@ export function ContextualPanel({
       className="ctx-panel"
       data-testid="contextual-panel"
       style={{ width: state.widthPx }}
-      aria-label="Contextual panel"
+      aria-label="Painel contextual"
     >
-      <div className="ctx-panel__tabs" role="tablist">
+      <div className="ctx-panel__tabs" role="tablist" aria-label="Abas do painel">
         {CONTEXTUAL_TABS.map((tab) => (
           <button
             key={tab}
@@ -157,7 +157,8 @@ export function ContextualPanel({
           type="button"
           className="ctx-panel__hide"
           onClick={() => update({ visible: false })}
-          title="Hide (Alt+])"
+          title="Ocultar (Alt+])"
+          aria-label="Ocultar painel"
         >
           ×
         </button>

@@ -13,12 +13,20 @@ import {
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 
 /**
- * Progressive onboarding: Start → Layout → Agents → Launch.
- * Flag-gated; open-without-AI is the default primary path.
- * Linear-inspired density: near-black surfaces via existing CSS tokens.
+ * Progressive onboarding: Início → Layout → Agentes → Lançar.
+ * Flag-gated; abrir sem IA é o caminho primário.
  */
 
 type Step = 'mode' | 'layout' | 'agents' | 'preview';
+
+const AGENT_DIST_LABELS: Record<
+  Exclude<AgentDistribution, 'none'>,
+  string
+> = {
+  'enable-all': 'Ativar todos',
+  'one-of-each': 'Um de cada',
+  'split-evenly': 'Dividir igual',
+};
 
 export interface ProgressiveOnboardingProps {
   readonly flagEnabled?: boolean;
@@ -58,9 +66,9 @@ export function ProgressiveOnboarding({
   if (!flagEnabled) {
     return (
       <div className="prog-onb prog-onb--disabled" data-flag={FEATURE_FLAG_IDS.progressiveOnboarding}>
-        <p>Progressive onboarding is disabled.</p>
+        <p>Onboarding progressivo desligado.</p>
         <button type="button" className="prog-onb__primary" onClick={onOpenTerminalOnly}>
-          Open terminal
+          Abrir terminal
         </button>
       </div>
     );
@@ -69,15 +77,15 @@ export function ProgressiveOnboarding({
   return (
     <div className="prog-onb prog-onb--launch" data-testid="progressive-onboarding">
       <header className="prog-onb__header">
-        <h1 className="prog-onb__title">Start</h1>
+        <h1 className="prog-onb__title">Início</h1>
         <button type="button" className="prog-onb__escape" onClick={onSkip}>
-          Skip · advanced
+          Pular · avançado
         </button>
       </header>
 
       {step === 'mode' && (
-        <section className="prog-onb__step" aria-label="Work mode">
-          <h2>How do you want to work?</h2>
+        <section className="prog-onb__step" aria-label="Modo de trabalho">
+          <h2>Como você quer trabalhar?</h2>
           <div className="prog-onb__grid">
             {LAUNCHER_MODES.map((m) => (
               <button
@@ -93,7 +101,7 @@ export function ProgressiveOnboarding({
           </div>
           <div className="prog-onb__actions">
             <button type="button" className="prog-onb__primary" onClick={() => setStep('layout')}>
-              Continue
+              Continuar
             </button>
           </div>
         </section>
@@ -101,8 +109,8 @@ export function ProgressiveOnboarding({
 
       {step === 'layout' && (
         <section className="prog-onb__step" aria-label="Layout">
-          <h2>Terminal layout</h2>
-          <div className="prog-onb__pane-grid" role="listbox" aria-label="Pane count">
+          <h2>Layout do terminal</h2>
+          <div className="prog-onb__pane-grid" role="listbox" aria-label="Quantidade de panes">
             {LAYOUT_PANE_COUNTS.map((n) => (
               <button
                 key={n}
@@ -118,7 +126,7 @@ export function ProgressiveOnboarding({
           </div>
           {recents.length > 0 && (
             <div className="prog-onb__recents">
-              <h3>Recent workspaces</h3>
+              <h3>Workspaces recentes</h3>
               <ul>
                 {recents.slice(0, 5).map((r) => (
                   <li key={r.path}>
@@ -132,25 +140,25 @@ export function ProgressiveOnboarding({
           )}
           <div className="prog-onb__actions">
             <button type="button" onClick={() => setStep('mode')}>
-              Back
+              Voltar
             </button>
             <button type="button" className="prog-onb__primary" onClick={() => setStep('agents')}>
-              Continue
+              Continuar
             </button>
           </div>
         </section>
       )}
 
       {step === 'agents' && (
-        <section className="prog-onb__step" aria-label="Agents">
-          <h2>Agents (optional)</h2>
+        <section className="prog-onb__step" aria-label="Agentes">
+          <h2>Agentes (opcional)</h2>
           <label className="prog-onb__check">
             <input
               type="checkbox"
               checked={openWithoutAi}
               onChange={(e) => setOpenWithoutAi(e.target.checked)}
             />
-            Open without AI — terminal only, no agent/MCP/account required
+            Abrir sem IA — só terminal, sem agente/MCP/conta
           </label>
           {!openWithoutAi && (
             <div className="prog-onb__agent-ops">
@@ -161,31 +169,31 @@ export function ProgressiveOnboarding({
                   className={agentDistribution === d ? 'is-active' : ''}
                   onClick={() => setAgentDistribution(d)}
                 >
-                  {d}
+                  {AGENT_DIST_LABELS[d]}
                 </button>
               ))}
             </div>
           )}
           <div className="prog-onb__actions">
             <button type="button" onClick={() => setStep('layout')}>
-              Back
+              Voltar
             </button>
             <button type="button" className="prog-onb__primary" onClick={() => setStep('preview')}>
-              Preview
+              Prévia
             </button>
           </div>
         </section>
       )}
 
       {step === 'preview' && (
-        <section className="prog-onb__step" aria-label="Preview">
-          <h2>Launch preview</h2>
+        <section className="prog-onb__step" aria-label="Prévia">
+          <h2>Prévia do lançamento</h2>
           <p className="prog-onb__summary" data-testid="launch-preview">
             {previewLaunchSummary(plan)}
           </p>
           <div className="prog-onb__actions">
             <button type="button" onClick={() => setStep('agents')}>
-              Back
+              Voltar
             </button>
             <button
               type="button"
@@ -193,7 +201,7 @@ export function ProgressiveOnboarding({
               data-testid="launch-primary"
               onClick={() => onLaunch(plan)}
             >
-              {openWithoutAi ? 'Open terminal' : 'Launch'}
+              {openWithoutAi ? 'Abrir terminal' : 'Lançar'}
             </button>
           </div>
         </section>

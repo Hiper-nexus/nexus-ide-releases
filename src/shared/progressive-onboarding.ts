@@ -46,22 +46,46 @@ export const progressiveLaunchSchema = z
 export type ProgressiveLaunch = z.infer<typeof progressiveLaunchSchema>;
 
 export const LAUNCHER_MODES = [
-  { id: 'terminal' as const, label: 'Terminal', description: 'Open shell panes without AI' },
-  { id: 'missions' as const, label: 'Missions', description: 'Mission-driven work' },
-  { id: 'swarm' as const, label: 'Swarm', description: 'Multi-agent fleet' },
-  { id: 'board' as const, label: 'Board', description: 'Ops / kanban board' },
-  { id: 'memory' as const, label: 'Memory', description: 'Local project memory' },
-  { id: 'skills' as const, label: 'Skills', description: 'Skills catalog' },
+  {
+    id: 'terminal' as const,
+    label: 'Terminal',
+    description: 'Abrir panes de shell sem IA',
+  },
+  {
+    id: 'missions' as const,
+    label: 'Missões',
+    description: 'Trabalho guiado por missão',
+  },
+  {
+    id: 'swarm' as const,
+    label: 'Enxame',
+    description: 'Frota multi-agente',
+  },
+  {
+    id: 'board' as const,
+    label: 'Board',
+    description: 'Ops / quadro kanban',
+  },
+  {
+    id: 'memory' as const,
+    label: 'Memória',
+    description: 'Memória local do projeto',
+  },
+  {
+    id: 'skills' as const,
+    label: 'Skills',
+    description: 'Catálogo de skills',
+  },
 ];
 
 export function previewLaunchSummary(plan: ProgressiveLaunch): string {
   const parts = [
-    plan.openWithoutAi ? 'without AI' : 'with agents',
+    plan.openWithoutAi ? 'sem IA' : 'com agentes',
     `${plan.paneCount} pane(s)`,
-    `mode=${plan.mode}`,
-    `agents=${plan.agentDistribution}`,
+    `modo=${plan.mode}`,
+    `agentes=${plan.agentDistribution}`,
   ];
   if (plan.presetName) parts.push(`preset=${plan.presetName}`);
-  if (plan.recentWorkspacePath) parts.push('recent workspace');
+  if (plan.recentWorkspacePath) parts.push('workspace recente');
   return parts.join(' · ');
 }

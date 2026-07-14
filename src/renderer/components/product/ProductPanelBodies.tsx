@@ -36,7 +36,7 @@ export function SearchPanelBody() {
     try {
       const api = window.nexus?.searchMixer ?? productApi();
       if (!api) {
-        setError('Search API unavailable');
+        setError('API de busca indisponível');
         return;
       }
       const result =
@@ -72,10 +72,10 @@ export function SearchPanelBody() {
         className="product-pane__input"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search files, missions, skills…"
-        aria-label="Search"
+        placeholder="Buscar arquivos, missões, skills…"
+        aria-label="Busca"
       />
-      {busy && <p className="product-pane__meta">Searching…</p>}
+      {busy && <p className="product-pane__meta">Buscando…</p>}
       {error && <p className="product-pane__error">{error}</p>}
       <ul className="product-pane__list">
         {hits.map((h) => (
@@ -119,7 +119,7 @@ export function SkillsPanelBody() {
     <div className="product-pane" data-testid="product-skills">
       {error && <p className="product-pane__error">{error}</p>}
       {!error && skills.length === 0 && (
-        <p className="product-pane__meta">No skills found in catalog paths.</p>
+        <p className="product-pane__meta">Nenhuma skill nos caminhos do catálogo.</p>
       )}
       <ul className="product-pane__list">
         {skills.map((s) => (
@@ -184,19 +184,19 @@ export function MemoryPanelBody() {
           className="product-pane__input"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="Note title"
-          aria-label="Memory title"
+          placeholder="Título da nota"
+          aria-label="Título da memória"
         />
         <textarea
           className="product-pane__textarea"
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          placeholder="Body (supports [[wikilinks]])"
+          placeholder="Corpo (suporta [[wikilinks]])"
           rows={3}
-          aria-label="Memory body"
+          aria-label="Corpo da memória"
         />
         <button type="button" className="product-pane__btn" onClick={() => void remember()}>
-          Remember
+          Lembrar
         </button>
       </div>
       <ul className="product-pane__list">
@@ -233,20 +233,20 @@ export function EditorPanelBody() {
         contentHash?: string;
       };
       if (doc.binary) {
-        setStatus('Binary file — not editable');
+        setStatus('Arquivo binário — não editável');
         return;
       }
       if (doc.tooLarge) {
-        setStatus('File too large for editor model');
+        setStatus('Arquivo grande demais para o editor');
         return;
       }
       setPath(doc.path ?? null);
       setContent(doc.content ?? '');
       setContentHash(doc.contentHash ?? null);
       setDirty(false);
-      setStatus(`Opened ${doc.path ?? relPath}`);
+      setStatus(`Aberto ${doc.path ?? relPath}`);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : 'open failed');
+      setStatus(err instanceof Error ? err.message : 'falha ao abrir');
     }
   };
 
@@ -263,9 +263,9 @@ export function EditorPanelBody() {
       })) as { contentHash?: string };
       setContentHash(saved.contentHash ?? contentHash);
       setDirty(false);
-      setStatus('Saved');
+      setStatus('Salvo');
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : 'save failed');
+      setStatus(err instanceof Error ? err.message : 'falha ao salvar');
     }
   };
 
@@ -276,11 +276,11 @@ export function EditorPanelBody() {
           className="product-pane__input"
           value={relPath}
           onChange={(e) => setRelPath(e.target.value)}
-          placeholder="relative/path.ts"
-          aria-label="Relative path"
+          placeholder="caminho/relativo.ts"
+          aria-label="Caminho relativo"
         />
         <button type="button" className="product-pane__btn" onClick={() => void open()}>
-          Open
+          Abrir
         </button>
         <button
           type="button"
@@ -288,7 +288,7 @@ export function EditorPanelBody() {
           disabled={!path || !dirty}
           onClick={() => void save()}
         >
-          Save
+          Salvar
         </button>
       </div>
       {status && <p className="product-pane__meta">{status}</p>}
@@ -300,14 +300,14 @@ export function EditorPanelBody() {
           setDirty(true);
         }}
         spellCheck={false}
-        aria-label="Editor content"
+        aria-label="Conteúdo do editor"
       />
     </div>
   );
 }
 
 export function McpHubPanelBody() {
-  const [summary, setSummary] = useState<string>('Loading…');
+  const [summary, setSummary] = useState<string>('Carregando…');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -315,7 +315,7 @@ export function McpHubPanelBody() {
       try {
         const api = productApi();
         if (!api) {
-          setSummary('MCP Hub API unavailable');
+          setSummary('API do MCP Hub indisponível');
           return;
         }
         const loaded = (await api.mcpHubLoad()) as {
@@ -324,9 +324,9 @@ export function McpHubPanelBody() {
         };
         const n = loaded.config?.servers?.length ?? 0;
         const tools = Array.isArray(loaded.matrix) ? loaded.matrix.length : 0;
-        setSummary(`${n} server(s) · ${tools} tool matrix row(s)`);
+        setSummary(`${n} servidor(es) · ${tools} linha(s) na matriz de tools`);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'mcp hub load failed');
+        setError(err instanceof Error ? err.message : 'falha ao carregar MCP hub');
       }
     })();
   }, []);
@@ -336,7 +336,7 @@ export function McpHubPanelBody() {
       {error && <p className="product-pane__error">{error}</p>}
       <p className="product-pane__meta">{summary}</p>
       <p className="product-pane__snip">
-        Config lives at <code>.nexus/mcp-hub.json</code>. Secrets are masked in UI.
+        Config em <code>.nexus/mcp-hub.json</code>. Segredos mascarados na UI.
       </p>
     </div>
   );
