@@ -105,8 +105,26 @@ export type RailStatusTone =
 export function railStatusDisplay(
   status: MissionStatus,
   liveInGrid: boolean,
+  intentState?: Mission['intentState'],
 ): { label: string; tone: RailStatusTone } {
   if (liveInGrid) return { label: 'Ao vivo', tone: 'live' };
+  // Espera humana merece pill própria: "Na fila" esconde que a missão está
+  // parada esperando VOCÊ (aprovar, dar objetivo, retomar) — o glance mais
+  // importante do rail é exatamente esse.
+  switch (intentState) {
+    case 'awaiting_goal':
+      return { label: 'Sem objetivo', tone: 'pending' };
+    case 'intent_compiling':
+      return { label: 'Processando', tone: 'pending' };
+    case 'ready_to_start':
+      return { label: 'Pronta', tone: 'pending' };
+    case 'awaiting_approval':
+      return { label: 'Aguarda você', tone: 'blocked' };
+    case 'blocked_user':
+      return { label: 'Aguarda você', tone: 'blocked' };
+    default:
+      break;
+  }
   switch (status) {
     case 'running':
       return { label: 'Em curso', tone: 'running' };

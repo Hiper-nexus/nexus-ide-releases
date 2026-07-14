@@ -153,12 +153,12 @@ export function DiffAnnotatePanel({
               const ok = sendAnnotationsToAgent(annotations);
               setNote(
                 ok
-                  ? 'Anotações enviadas ao agent focado'
-                  : 'Falha — foque um pane de agent CLI',
+                  ? 'Revisão enviada — a missão vai endereçar os comentários'
+                  : 'Falha — abra uma missão ou um terminal de agente',
               );
             }}
           >
-            Enviar notas ao agent
+            Enviar revisão à missão
           </button>
           {note && <p className="diff-panel__status">{note}</p>}
         </aside>

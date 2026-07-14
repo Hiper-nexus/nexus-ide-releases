@@ -178,6 +178,7 @@ export function IntegrationsPanel({
                   onClick={() => {
                     openAgentic(
                       `GitHub #${i.number}: ${i.title}\n${i.url}\nLabels: ${i.labels.join(', ') || '—'}`,
+                      'imported-issue',
                     );
                     setNote(`Wizard aberto a partir de #${i.number}`);
                   }}
@@ -204,6 +205,7 @@ export function IntegrationsPanel({
                   onClick={() => {
                     openAgentic(
                       `Linear: ${i.title}\n${i.url}\nEstado: ${i.state}\nLabels: ${i.labels.join(', ') || '—'}`,
+                      'imported-issue',
                     );
                     setNote(`Wizard aberto a partir de Linear`);
                   }}

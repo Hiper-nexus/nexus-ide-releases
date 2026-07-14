@@ -657,7 +657,7 @@ export async function executeJarvisAction(
         };
       }
     } else {
-      useMissionWizardStore.getState().openForAgentic(action.intent);
+      useMissionWizardStore.getState().openForAgentic(action.intent, 'voice');
       sayText =
         sayText.trim() ||
         (action.intent
@@ -937,7 +937,7 @@ export async function executeJarvisAction(
       // ordinary mission objectives. Preserve the objective by opening the
       // intent-first mission flow; explicit shell requests still use the
       // dedicated run_command branch and retain its confirmation guardrail.
-      useMissionWizardStore.getState().openForAgentic(action.text);
+      useMissionWizardStore.getState().openForAgentic(action.text, 'voice');
       markEffect(control);
       sayText =
         'Abrindo uma missão agêntica com esse objetivo. Nenhum agente foi iniciado ainda.';

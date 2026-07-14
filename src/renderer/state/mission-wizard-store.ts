@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { MissionIntentSource } from '../../shared/mission-intent';
 
 /**
  * Open/close state for the workspace/mission wizard.
@@ -32,6 +33,12 @@ interface MissionWizardStore {
   /** Objective supplied by a voice request for Modo Agêntico. */
   agenticIntent: string | null;
   /**
+   * Provenance of the agentic objective (issue import, voice, typed). Flows
+   * into the intent contract's `source` so a missão nascida de uma issue é
+   * auditável como 'imported-issue', não como texto digitado.
+   */
+  agenticSource: MissionIntentSource;
+  /**
    * Bumped for each direct voice launch so an already-open wizard also
    * switches back to Modo Agêntico instead of retaining its previous step.
    */
@@ -48,7 +55,7 @@ interface MissionWizardStore {
   openForNewWorkspace(): void;
   openForMission(): void;
   /** Open Nova Missão already on Modo Agêntico, optionally with its objective. */
-  openForAgentic(intent?: string): void;
+  openForAgentic(intent?: string, source?: MissionIntentSource): void;
   /** Open Nova Missão directly on the existing saved-squad list. */
   openSquadPicker(): void;
   /** Open directly on a squad's review (used by the Home deck shortcuts). */
@@ -70,6 +77,7 @@ export const useMissionWizardStore = create<MissionWizardStore>((set) => ({
   presetSquadId: null,
   armedMissionId: null,
   agenticIntent: null,
+  agenticSource: 'typed',
   agenticLaunchNonce: 0,
   squadPickerNonce: 0,
   visibleStep: null,
@@ -94,13 +102,14 @@ export const useMissionWizardStore = create<MissionWizardStore>((set) => ({
       voiceLaunchNonce: 0,
       visibleStep: 'mode',
     }),
-  openForAgentic: (intent) =>
+  openForAgentic: (intent, source) =>
     set((state) => ({
       open: true,
       variant: 'mission',
       presetSquadId: null,
       armedMissionId: null,
       agenticIntent: intent?.trim() || null,
+      agenticSource: source ?? 'typed',
       agenticLaunchNonce: state.agenticLaunchNonce + 1,
       voiceLaunchNonce: 0,
       visibleStep: 'agentic-intent',
@@ -144,6 +153,7 @@ export const useMissionWizardStore = create<MissionWizardStore>((set) => ({
       presetSquadId: null,
       armedMissionId: null,
       agenticIntent: null,
+      agenticSource: 'typed',
       voiceLaunchNonce: 0,
       visibleStep: null,
     }),

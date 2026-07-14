@@ -3,6 +3,7 @@ import type { PaneSnapshot } from '../../shared/orch-types';
 import {
   activeSameCheckoutWorker,
   reserveWorkerSpawnSlot,
+  shouldReleaseWorkerReservation,
   withSameCheckoutWorkerContract,
 } from './tools-panes';
 import { testProjectScope } from './__tests__/scope-fixture';
@@ -86,5 +87,32 @@ describe('pre-contract same-checkout delegation', () => {
     });
     expect(afterRelease.ok).toBe(true);
     if (afterRelease.ok) afterRelease.release();
+  });
+
+  it('only drops the reservation once the spawned worker is durably counted', () => {
+    // Spawn failed — nothing to count, always release.
+    expect(
+      shouldReleaseWorkerReservation({
+        spawnedPaneId: undefined,
+        recordedPaneIds: [],
+      }),
+    ).toBe(true);
+
+    // Success + durable missionPanes row — safe to release.
+    expect(
+      shouldReleaseWorkerReservation({
+        spawnedPaneId: 'pane-9',
+        recordedPaneIds: ['pane-1', 'pane-9'],
+      }),
+    ).toBe(true);
+
+    // Success but the row is missing: releasing would reopen the maxWorkers
+    // TOCTOU (neither live count nor reservation covers the new worker).
+    expect(
+      shouldReleaseWorkerReservation({
+        spawnedPaneId: 'pane-9',
+        recordedPaneIds: ['pane-1'],
+      }),
+    ).toBe(false);
   });
 });

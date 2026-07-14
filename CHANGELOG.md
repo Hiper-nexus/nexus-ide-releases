@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.15.15 — Travas de Autonomia e Revisão Humana de Missão
+
+Data: 2026-07-14
+
+- Trava de autonomia pinada por teste: `defaultDriveConfig` nasce em shadow
+  (fail-safe sem settings), congelado e com budgets finitos; a ativação do
+  driver continua decisão de runtime via `missionDriverActiveMode`.
+- TOCTOU residual do orçamento de workers fechado: a reserva de slot só é
+  liberada depois que o worker está durável em `missionPanes` — caso contrário
+  permanece retida (fail-safe) com aviso.
+- Política "soak antes de default-on" codificada em `docs/OPERATIONS.md`,
+  destilada das classes de defeito da wave intent-first de 2026-07-13.
+- Rail glanceable: pill entende espera humana ("Aguarda você", "Sem objetivo",
+  "Pronta") em vez de esconder tudo como "Na fila"; meta fala "agentes"
+  em vez de "panes" e mostra há quanto tempo a missão roda.
+- Missão nascida de issue agora é auditável: cliques em issues (rail e painel
+  de integrações) fluem `source: 'imported-issue'` até o contrato de intenção;
+  objetivos por voz fluem `source: 'voice'`.
+- Revisão humana de diff vira entrada de orquestração: as anotações do
+  DiffAnnotatePanel são submetidas (paste + Enter) ao ORQUESTRADOR da missão
+  ativa — não mais escritas sem envio no worker focado.
+
 ## 0.15.14 — Missão Enxuta: Prompt Proporcional e Start em Um Clique
 
 Data: 2026-07-14

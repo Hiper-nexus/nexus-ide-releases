@@ -13,43 +13,48 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.15.14',
+  version: '0.15.15',
   date: '2026-07-14',
-  codename: 'Missão Enxuta',
+  codename: 'Autonomia Travada, Revisão Humana',
   summary:
-    'Missão curta paga prompt curto: kickoff sem duplicação, cartas de worker proporcionais ao papel/tarefa e início em um clique para risco normal — PREVC, budgets e aprovações sensíveis intactos.',
+    'Defaults de autonomia pinados por teste, orçamento de workers sem corrida, rail que mostra quando a missão espera VOCÊ, missão auditável desde a issue e revisão humana de diff entregue ao orquestrador.',
   highlights: [
     {
-      title: 'Kickoff sem duplicação',
+      title: 'Revisão humana chega ao orquestrador',
       detail:
-        'A memória compacta só entra quando há progresso real e o critério auto-derivado deixa de reencenar o objetivo — o goal aparece uma vez, não três.',
+        'As anotações de diff são submetidas como um prompt único ao orquestrador da missão ativa, que delega o retrabalho — revisar deixa de depender de qual pane está focado.',
     },
     {
-      title: 'Cartas proporcionais ao papel',
+      title: 'Rail mostra quando a missão espera você',
       detail:
-        'Scout/architect não pagam cartas de build, reviewer dispensa a escada de diff e a carta de design só acompanha tarefas com sinal de UI.',
+        'Pills "Aguarda você", "Sem objetivo" e "Pronta" substituem o genérico "Na fila"; a meta fala de agentes e de há quanto tempo a missão roda.',
     },
     {
-      title: 'Começar em um clique',
+      title: 'Missão auditável desde a issue',
       detail:
-        'Risco normal compila e despacha direto do composer; "Revisar plano" mantém as duas etapas e superfícies sensíveis seguem exigindo aprovação.',
+        'Issues do GitHub/Linear viram missões com source imported-issue no contrato; objetivos por voz registram source voice.',
     },
     {
-      title: 'Wizard fala humano',
+      title: 'Missão enxuta (0.15.14)',
       detail:
-        'O estado da fila vira "Processando o objetivo…" em vez de jargão interno, e some quando não há nada em andamento.',
+        'Kickoff sem duplicação, cartas de worker por papel/tarefa, começo em um clique para risco normal e wizard sem jargão.',
     },
   ],
   fixes: [
     {
-      title: 'Kickoff legado sem trava de mapa frio',
+      title: 'Autonomia pinada por teste',
       detail:
-        'O warm de orientação tem teto de 4 s antes do paste; o fallback "mapa aquecendo" e o doctor sob demanda cobrem o resto.',
+        'defaultDriveConfig nasce em shadow, congelado e com budgets finitos; trocar isso agora quebra um teste em vez de re-armar autonomia em silêncio.',
     },
     {
-      title: 'Proporcionalidade explícita no playbook',
+      title: 'Orçamento de workers sem corrida',
       detail:
-        'Missão pequena é UMA tarefa e UM especialista — o orquestrador não cria cerimônia além do necessário.',
+        'A reserva de slot só cai depois que o worker está durável em missionPanes; sem a linha, a reserva fica retida (fail-safe) com aviso.',
+    },
+    {
+      title: 'Soak antes de default-on',
+      detail:
+        'Política operacional codificada: capability autônoma nasce fail-safe, default pinado por teste, um ciclo de shadow antes do flip e inventário de todas as portas de efeito.',
     },
   ],
 };

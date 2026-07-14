@@ -99,6 +99,7 @@ export function MissionWizard() {
   const presetSquadId = useMissionWizardStore((s) => s.presetSquadId);
   const storeArmedMissionId = useMissionWizardStore((s) => s.armedMissionId);
   const agenticIntent = useMissionWizardStore((s) => s.agenticIntent);
+  const agenticSource = useMissionWizardStore((s) => s.agenticSource);
   const agenticLaunchNonce = useMissionWizardStore((s) => s.agenticLaunchNonce);
   const squadPickerNonce = useMissionWizardStore((s) => s.squadPickerNonce);
   const voiceLaunchNonce = useMissionWizardStore((s) => s.voiceLaunchNonce);
@@ -696,7 +697,9 @@ export function MissionWizard() {
       const planned = await window.nexus.orch.submitMissionIntent({
         missionId: armedMissionId,
         goal: missionGoal.trim(),
-        source: 'typed',
+        // Proveniência real do objetivo: issue importada e voz não são
+        // "digitado" — o contrato registra de onde a missão nasceu.
+        source: mode === 'agentic' ? agenticSource : 'typed',
       });
       setPlannedMission(planned);
       if (!options?.reviewPlan && planned.intentState === 'ready_to_start') {

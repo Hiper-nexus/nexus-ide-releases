@@ -609,3 +609,25 @@ describe('driveBackoffMs', () => {
     expect(driveBackoffMs(20, 1_000)).toBe(5 * 60_000);
   });
 });
+
+describe('defaultDriveConfig — trava de autonomia', () => {
+  // Decisão de produto: autonomia (active) só nasce da validação runtime em
+  // main.ts (missionDriverActiveMode). O default do MÓDULO é o fail-safe: se
+  // as settings não carregarem, o driver observa e nunca muta. Um refactor
+  // que troque este default re-arma autonomia silenciosamente — este teste
+  // existe para transformar isso em decisão explícita, não acidente.
+  it('nasce em shadow (fail-safe sem settings)', () => {
+    expect(defaultDriveConfig.mode).toBe('shadow');
+  });
+
+  it('é congelado — runtime não pode mutar o default compartilhado', () => {
+    expect(Object.isFrozen(defaultDriveConfig)).toBe(true);
+  });
+
+  it('tem budgets finitos (nunca loop infinito por default)', () => {
+    expect(defaultDriveConfig.maxIterations).toBeGreaterThan(0);
+    expect(defaultDriveConfig.maxIterations).toBeLessThanOrEqual(1_000);
+    expect(defaultDriveConfig.maxWallClockMs).toBeGreaterThan(0);
+    expect(defaultDriveConfig.maxWallClockMs).toBeLessThanOrEqual(24 * 60 * 60_000);
+  });
+});
