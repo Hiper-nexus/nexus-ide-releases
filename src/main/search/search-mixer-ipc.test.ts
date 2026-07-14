@@ -20,7 +20,7 @@ vi.mock('./search-mixer-bootstrap', () => ({
   runSearchMixerQuery: (q: unknown) => runQuery(q),
 }));
 
-const requireScopedRoot = vi.fn(() => ({
+const requireScopedRoot = vi.fn((_sender?: unknown) => ({
   scope: {
     version: 1 as const,
     installationId: 'i',

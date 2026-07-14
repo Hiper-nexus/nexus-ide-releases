@@ -3,6 +3,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
+
+const scopeState = vi.hoisted(() => ({
+  current: null as ProjectExecutionScope | null,
+}));
+
+vi.mock('../persistence/renderer-workspace-scope', () => ({
+  requireRendererWorkspaceScope: () => {
+    if (!scopeState.current) {
+      throw new Error('renderer has no authorized workspace scope');
+    }
+    return scopeState.current;
+  },
+}));
+
 import {
   assertPathInsideRoot,
   requireScopedRoot,
@@ -15,7 +29,7 @@ const dirs: string[] = [];
 
 afterEach(() => {
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
-  vi.restoreAllMocks();
+  scopeState.current = null;
 });
 
 function makeProject(): { project: string; sibling: string } {
@@ -45,7 +59,6 @@ describe('scoped-workspace-fs (single containment contract)', () => {
   it('table: sibling-prefix, absolute escape, and .. segments', () => {
     const { project, sibling } = makeProject();
 
-    // startsWith trap: /tmp/proj vs /tmp/proj2
     expect(() =>
       assertPathInsideRoot(project, path.join(sibling, 'secret.txt')),
     ).toThrow(/escapes/);
@@ -66,19 +79,11 @@ describe('scoped-workspace-fs (single containment contract)', () => {
     );
   });
 
-  it('requireScopedRoot + resolveScopedPath bind WebContents to workspace', async () => {
+  it('requireScopedRoot + resolveScopedPath bind WebContents to workspace', () => {
     const { project, sibling } = makeProject();
-    const scope = scopeFor(project);
-
-    vi.doMock('../persistence/renderer-workspace-scope', () => ({
-      requireRendererWorkspaceScope: () => scope,
-    }));
-    // Re-import after mock — use dynamic path through already-loaded module
-    // by stubbing requireRendererWorkspaceScope via the same module graph.
-    const scopeMod = await import('../persistence/renderer-workspace-scope');
-    vi.spyOn(scopeMod, 'requireRendererWorkspaceScope').mockReturnValue(scope);
-
+    scopeState.current = scopeFor(project);
     const sender = { id: 99 } as Electron.WebContents;
+
     const bound = requireScopedRoot(sender);
     expect(bound.root).toBe(project);
 
@@ -91,8 +96,8 @@ describe('scoped-workspace-fs (single containment contract)', () => {
     expect(() =>
       resolveScopedPathCandidate(sender, '../proj2/secret.txt'),
     ).toThrow(/escapes/);
-    expect(() => resolveScopedPath(sender, path.join(sibling, 'secret.txt'))).toThrow(
-      /escapes/,
-    );
+    expect(() =>
+      resolveScopedPath(sender, path.join(sibling, 'secret.txt')),
+    ).toThrow(/escapes/);
   });
 });
