@@ -43,8 +43,11 @@ export function focusedAgentPaneId(): string | null {
  * ORCHESTRATOR (who delegates the rework), not to whatever worker happens to
  * hold focus. Preference order:
  *  1. orchestrator of the focused pane's mission;
- *  2. any live mission orchestrator;
+ *  2. (only when focus is NOT mission-bound) any live mission orchestrator;
  *  3. focused/first cli-agent pane (solo layouts without a mission).
+ * A review NEVER crosses missions: if the focused pane belongs to mission A
+ * and A's orchestrator is down, falling back to mission B's orchestrator
+ * would deliver A's feedback to the wrong mission — prefer A's own panes.
  */
 export function resolveReviewTargetPaneId(input: {
   readonly panes: readonly Pick<PaneModel, 'id' | 'kind' | 'role'>[];
@@ -61,16 +64,17 @@ export function resolveReviewTargetPaneId(input: {
       input.paneMissions[pane.id] &&
       isPaneLive(pane.id),
   );
-  if (orchestrators.length > 0) {
-    const focusedMission = input.focusedPaneId
-      ? input.paneMissions[input.focusedPaneId]
-      : undefined;
-    const ofFocusedMission = focusedMission
-      ? orchestrators.find(
-          (pane) => input.paneMissions[pane.id] === focusedMission,
-        )
-      : undefined;
-    return (ofFocusedMission ?? orchestrators[0]!).id;
+  const focusedMission = input.focusedPaneId
+    ? input.paneMissions[input.focusedPaneId]
+    : undefined;
+  if (focusedMission) {
+    // Mission-bound focus: only that mission's orchestrator qualifies.
+    const ofFocusedMission = orchestrators.find(
+      (pane) => input.paneMissions[pane.id] === focusedMission,
+    );
+    if (ofFocusedMission) return ofFocusedMission.id;
+  } else if (orchestrators.length > 0) {
+    return orchestrators[0]!.id;
   }
   if (input.focusedPaneId) {
     const focused = input.panes.find((pane) => pane.id === input.focusedPaneId);
@@ -78,7 +82,12 @@ export function resolveReviewTargetPaneId(input: {
   }
   return (
     input.panes.find(
-      (pane) => pane.kind === 'cli-agent' && isPaneLive(pane.id),
+      (pane) =>
+        pane.kind === 'cli-agent' &&
+        isPaneLive(pane.id) &&
+        // Mission-bound focus never leaks the review into another mission's
+        // pane; unbound focus may take any live agent (solo layouts).
+        (!focusedMission || input.paneMissions[pane.id] === focusedMission),
     )?.id ?? null
   );
 }

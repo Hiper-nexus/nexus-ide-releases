@@ -84,4 +84,28 @@ describe('resolveReviewTargetPaneId', () => {
       }),
     ).toBe('p-worker');
   });
+
+  it('never crosses missions: A worker focused + only B orchestrator live → stays in A', () => {
+    // Codex P2 (PR #17): mission A's review must not land on B's orchestrator.
+    expect(
+      resolveReviewTargetPaneId({
+        panes: [orchB, worker],
+        focusedPaneId: 'p-worker',
+        paneMissions: { 'p-orch-b': 'm2', 'p-worker': 'm1' },
+      }),
+    ).toBe('p-worker');
+  });
+
+  it('never leaks a mission-bound review into an unrelated pane on the last fallback', () => {
+    const workerB = { id: 'p-worker-b', kind: 'cli-agent', role: 'worker' } as const;
+    expect(
+      resolveReviewTargetPaneId({
+        panes: [worker, workerB],
+        focusedPaneId: 'p-worker',
+        paneMissions: { 'p-worker': 'm1', 'p-worker-b': 'm2' },
+        // A's worker (focused) is dead; only B's worker is live.
+        isPaneLive: (paneId) => paneId === 'p-worker-b',
+      }),
+    ).toBeNull();
+  });
 });
