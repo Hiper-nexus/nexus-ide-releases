@@ -832,12 +832,36 @@ export interface NexusApi {
       missionId: string;
       goal: string;
       source?: 'typed' | 'voice' | 'imported-issue' | 'automation';
-      contextPolicy?: 'none' | 'minimal' | 'on-demand' | 'prepare-project';
+      contextPolicy?: 'none' | 'minimal' | 'on-demand';
       acceptanceCriteria?: string[];
     }): Promise<Mission>;
     approveMissionIntent(input: { missionId: string }): Promise<Mission>;
     /** Explicit prepare-project while still awaiting a real goal. */
     prepareMissionProject(input: { missionId: string }): Promise<Mission>;
+    /** Runtime surface for prompt queue: executing / queued / cancelled. */
+    getMissionPromptQueue(input: { missionId: string }): Promise<{
+      executing: {
+        id: string;
+        kind: string;
+        status: string;
+        intentVersion: number;
+        body: string;
+      } | null;
+      queued: Array<{
+        id: string;
+        kind: string;
+        status: string;
+        intentVersion: number;
+        body: string;
+      }>;
+      cancelled: Array<{
+        id: string;
+        kind: string;
+        status: string;
+        intentVersion: number;
+        body: string;
+      }>;
+    }>;
     bindMissionOrchestrator(input: {
       missionId: string;
       title: string;

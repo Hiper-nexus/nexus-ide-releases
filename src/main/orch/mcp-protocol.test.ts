@@ -70,6 +70,38 @@ function workflowOptions(
 ): McpDispatchOptions {
   return {
     confirm,
+    resolveMissionForIntentGate: () => ({
+      mission: {
+        id: TEST_MISSION_ID,
+        title: 'MCP protocol mission',
+        description: 'Exercise an approved MCP effect',
+        status: 'running',
+        milestones: [],
+        learnings: '',
+        intentState: 'dispatched',
+        intentVersion: 1,
+        intentContract: {
+          version: 1,
+          source: 'typed',
+          goal: 'Exercise an approved MCP effect',
+          acceptanceCriteria: ['Effect follows confirmation policy'],
+          risk: 'normal',
+          executionMode: 'assisted',
+          contextPolicy: 'on-demand',
+          approvedAt: 1,
+          intentVersion: 1,
+          budgets: {
+            planningTokens: 1_200,
+            executionTokens: 8_000,
+            maxWorkers: 1,
+          },
+        },
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      taskCount: 1,
+      workerPaneCount: 1,
+    }),
     resolveWorkflowAuthority: () => ({
       contextRevision: TEST_CONTEXT_REVISION,
       assertExecutionEffectAllowed: () => undefined,

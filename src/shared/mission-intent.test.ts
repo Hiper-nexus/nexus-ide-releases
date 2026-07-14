@@ -1,13 +1,23 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import {
+  applyEffectfulSpend,
+  applyWorkerSpawnPolicy,
+  assertStepAndTokenBudget,
+  assertWorkerBudget,
   canDispatchWorkers,
   canRunBootstrapEffects,
+  canSubmitMissionHandoff,
+  childRespectsParentDenials,
   classifyGoalRisk,
   compileIntentContract,
+  estimateEffectfulToolTokens,
+  hasApprovedDispatchContract,
   isHumanWaitIntentState,
   isRecoveryEligibleIntentState,
+  resolveDispatchAuthorizedAt,
   resolveEffectiveIntentState,
+  synthesizeImmediateDispatchContract,
   transitionIntentState,
 } from './mission-intent';
 import type { Mission } from './orch-types';
@@ -110,6 +120,20 @@ describe('resolveEffectiveIntentState (legacy inference)', () => {
     ).toBe('awaiting_goal');
   });
 
+  it('does NOT treat bare description as a real goal (NavalhaGO / legacy)', () => {
+    expect(
+      resolveEffectiveIntentState({
+        mission: baseMission({
+          status: 'running',
+          description: 'NavalhaGO squad notes only',
+          intentState: 'legacy',
+        }),
+        taskCount: 0,
+        workerPaneCount: 0,
+      }),
+    ).toBe('awaiting_goal');
+  });
+
   it('keeps active work as executing when tasks or workers exist', () => {
     expect(
       resolveEffectiveIntentState({
@@ -143,6 +167,7 @@ describe('compileIntentContract', () => {
     expect(normal.risk).toBe('normal');
     expect(normal.goal).toContain('botão');
     expect(normal.budgets.planningTokens).toBe(1_200);
+    expect(normal.executionMode).toBe('autopilot');
 
     expect(classifyGoalRisk('implementar pagamento com PIX')).toBe('sensitive');
     expect(classifyGoalRisk('apagar a tabela users em produção')).toBe(
@@ -167,7 +192,12 @@ describe('bootstrap gate', () => {
     executionMode: 'manual' as const,
     contextPolicy: 'prepare-project' as const,
     intentVersion: 1,
-    budgets: { planningTokens: 1, executionTokens: 1, maxWorkers: 1 },
+    budgets: {
+      planningTokens: 1,
+      executionTokens: 1,
+      maxWorkers: 1,
+      maxSteps: 10,
+    },
   };
 
   it('denies context_doctor before dispatch unless prepare-project', () => {
@@ -185,6 +215,141 @@ describe('bootstrap gate', () => {
     ).toBe(false);
     expect(
       canRunBootstrapEffects('awaiting_goal', prepareContract, 'nexus_context_draft_apply'),
+    ).toBe(false);
+  });
+});
+
+describe('dispatch SLA anchor', () => {
+  it('uses approvedAt/dispatchedAt and never invents arm time', () => {
+    expect(
+      resolveDispatchAuthorizedAt({
+        intentContract: undefined,
+      }),
+    ).toBeNull();
+    expect(
+      resolveDispatchAuthorizedAt({
+        intentContract: compileIntentContract({
+          goal: 'x',
+          intentVersion: 1,
+        }),
+      }),
+    ).toBeNull();
+    const withApprove = compileIntentContract({ goal: 'ship fix', intentVersion: 1 });
+    const approved = {
+      ...withApprove,
+      approvedAt: 1_000,
+      dispatchedAt: 1_100,
+    };
+    expect(resolveDispatchAuthorizedAt({ intentContract: approved })).toBe(1_100);
+  });
+});
+
+describe('budget and parent/child ceilings', () => {
+  it('denies workers beyond maxWorkers', () => {
+    const contract = compileIntentContract({
+      goal: 'small task',
+      intentVersion: 1,
+    });
+    // default maxWorkers for normal is 3
+    expect(assertWorkerBudget(contract, 2).ok).toBe(true);
+    expect(assertWorkerBudget(contract, 3).ok).toBe(false);
+    // No contract = no ceiling (legacy mid-migration).
+    expect(assertWorkerBudget(null, 99).ok).toBe(true);
+  });
+
+  it('synthesizes an approved contract for immediate legacy/pet shells', () => {
+    const c = synthesizeImmediateDispatchContract({ title: 'Pet hatch' });
+    expect(hasApprovedDispatchContract(c)).toBe(true);
+    expect(c.budgets.maxWorkers).toBeGreaterThan(0);
+    expect(c.dispatchedAt).toBeDefined();
+  });
+
+  it('denies when maxSteps spent', () => {
+    const base = compileIntentContract({ goal: 'x', intentVersion: 1 });
+    const spent = {
+      ...base,
+      spentSteps: base.budgets.maxSteps,
+    };
+    expect(assertStepAndTokenBudget(spent).ok).toBe(false);
+  });
+
+  it('tracks spentTokens and denies when executionTokens ceiling hit', () => {
+    const base = compileIntentContract({ goal: 'x', intentVersion: 1 });
+    expect(estimateEffectfulToolTokens('nexus_file_write')).toBeGreaterThan(0);
+    let contract = {
+      ...base,
+      budgets: { ...base.budgets, executionTokens: 150 },
+      spentTokens: 0,
+      spentSteps: 0,
+    };
+    contract = applyEffectfulSpend(contract, 'nexus_file_write');
+    expect(contract.spentSteps).toBe(1);
+    expect(contract.spentTokens).toBeGreaterThan(0);
+    // Force near ceiling then next spend should fail budget check.
+    const nearCap = {
+      ...contract,
+      spentTokens: 150,
+    };
+    expect(assertStepAndTokenBudget(nearCap).ok).toBe(false);
+  });
+
+  it('denies second worker at maxWorkers and strips denied tools on spawn policy', () => {
+    const contract = compileIntentContract({ goal: 'x', intentVersion: 1 });
+    const capped = {
+      ...contract,
+      budgets: { ...contract.budgets, maxWorkers: 1 },
+      deniedTools: ['terminal_run', 'file_write'],
+    };
+    expect(
+      applyWorkerSpawnPolicy({
+        contract: capped,
+        currentWorkerCount: 1,
+        allowedTools: ['file_read', 'terminal_run', 'grep'],
+      }).ok,
+    ).toBe(false);
+    const ok = applyWorkerSpawnPolicy({
+      contract: capped,
+      currentWorkerCount: 0,
+      allowedTools: ['file_read', 'terminal_run', 'grep'],
+    });
+    expect(ok.ok).toBe(true);
+    if (ok.ok && ok.allowedTools) {
+      expect(ok.allowedTools).toContain('file_read');
+      expect(ok.allowedTools).not.toContain('terminal_run');
+    }
+  });
+
+  it('requires child denials to respect parent', () => {
+    expect(childRespectsParentDenials(['terminal_run'], ['terminal_run', 'file_write'])).toBe(
+      true,
+    );
+    expect(childRespectsParentDenials(['terminal_run'], ['file_write'])).toBe(false);
+  });
+
+  it('requires handoff origin binding', () => {
+    expect(
+      canSubmitMissionHandoff({
+        role: 'worker',
+        missionId: 'm1',
+        sessionId: 's1',
+        intentState: 'dispatched',
+      }).ok,
+    ).toBe(true);
+    expect(
+      canSubmitMissionHandoff({
+        role: 'user',
+        missionId: 'm1',
+        sessionId: 's1',
+        intentState: 'dispatched',
+      }).ok,
+    ).toBe(false);
+    expect(
+      canSubmitMissionHandoff({
+        role: 'worker',
+        missionId: 'm1',
+        sessionId: 's1',
+        intentState: 'awaiting_goal',
+      }).ok,
     ).toBe(false);
   });
 });

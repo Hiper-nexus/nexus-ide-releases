@@ -205,6 +205,36 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it('denies unbound bootstrap and handoff effects at the dispatch boundary', async () => {
+    for (const toolName of [
+      'nexus_context_doctor',
+      'nexus_handoff_submit',
+    ]) {
+      const handler = vi.fn(async () => ({ ok: true }));
+      const result = await dispatchToolCall(
+        'http-mcp',
+        registryWith({
+          name: toolName,
+          description: 'mission-bound effect',
+          inputSchema: { type: 'object', properties: {} },
+          handler,
+        }),
+        toolName,
+        toolName === 'nexus_handoff_submit'
+          ? { status: 'partial', summary: 'A real handoff summary for the test.' }
+          : {},
+        userContext(),
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        denied: true,
+        error: expect.stringContaining('mission'),
+      });
+      expect(handler).not.toHaveBeenCalled();
+    }
+  });
+
   it('allows a confirmed renderer UI action without mission authority', async () => {
     const handler = vi.fn(async () => ({ ok: true }));
     const confirm = vi.fn(async () => true);
@@ -276,7 +306,7 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it('lets handoff submission use its own authority without mission or prompt', async () => {
+  it('keeps handoff submission prompt-free for a mission-bound worker', async () => {
     const handler = vi.fn(async () => ({ stopGateSatisfied: false }));
     const confirm = vi.fn(async () => true);
     const result = await dispatchToolCall(
@@ -290,8 +320,8 @@ describe('MCP dispatch effect safety', () => {
       }),
       'nexus_handoff_submit',
       { status: 'partial', summary: 'A bounded test handoff summary.' },
-      userContext(),
-      { confirm },
+      missionContext(),
+      workflowOptions({ confirm }),
     );
 
     expect(result.ok).toBe(true);

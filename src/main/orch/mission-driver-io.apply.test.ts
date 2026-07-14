@@ -435,7 +435,14 @@ describe('createProductionApplyPorts advance/complete', () => {
   });
 
   it('recovers a missing worker and records success only after renderer ACK', async () => {
-    const mission = makeMission([], { orchestratorSessionId: 'session-orch' });
+    const mission = makeMission(
+      [step({ id: 's1', label: 'API integrada', status: 'done' })],
+      {
+        orchestratorSessionId: 'session-orch',
+        description: 'Finalizar a integração sem regressões',
+        learnings: 'Use o adapter Codex para a revisão independente.',
+      },
+    );
     const persisted: MissionPaneSpec[] = [
       {
         id: 'spec-orch', missionId: mission.id, paneId: 'pane-orch',
@@ -459,6 +466,22 @@ describe('createProductionApplyPorts advance/complete', () => {
       () => ({
         missions: { get: () => mission, appendLearning },
         missionPanes: { list: () => persisted },
+        handoffs: {
+          list: () => [
+            {
+              id: 'handoff-1',
+              missionId: mission.id,
+              status: 'success',
+              summary: 'API integrada e testes unitários verdes.',
+              artifacts: [],
+              evidenceIds: [],
+              evidenceTrust: 'unverified',
+              delivered: true,
+              deliveryState: 'delivered',
+              createdAt: 10,
+            },
+          ],
+        },
       }) as never,
       recoverPane,
       () => [{
@@ -476,6 +499,7 @@ describe('createProductionApplyPorts advance/complete', () => {
       role: 'worker',
       expectedSessionId: undefined,
       pane: expect.objectContaining({ agentName: 'Builder' }),
+      recap: expect.stringMatching(/Memória compacta[\s\S]*Codex[\s\S]*API integrada/),
     }));
     expect(appendLearning).toHaveBeenCalledWith(
       mission.id,

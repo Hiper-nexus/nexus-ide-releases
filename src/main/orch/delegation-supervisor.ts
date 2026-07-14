@@ -1,6 +1,9 @@
 import type { Handoff, Mission, PaneRuntimeState } from '../../shared/orch-types';
 import {
+  hasCurrentApprovedDispatchContract,
   isRecoveryEligibleIntentState,
+  recoveryHandoffIdempotencyKey,
+  resolveDispatchAuthorizedAt,
   resolveEffectiveIntentState,
 } from '../../shared/mission-intent';
 import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
@@ -19,6 +22,7 @@ import { emitMissionIntentEvent } from './mission-intent-events';
  *
  * Intent-first: human-wait states (awaiting_goal, awaiting_approval, …) are
  * never stalls. Recovery only runs after work is actually dispatched.
+ * SLA clocks use approvedAt/dispatchedAt — never arm/createdAt.
  */
 export const DELEGATION_SLA_MS = 90_000;
 export const DELEGATION_RETRY_MS = 90_000;
@@ -32,21 +36,47 @@ export interface DelegationProgress {
   readonly tasks: number;
   readonly recoveries: readonly Handoff[];
   readonly orchestratorState?: PaneRuntimeState;
+  /** True when an orchestrator session is bound to the mission. */
+  readonly hasBoundOrchestrator?: boolean;
 }
 
 /**
  * Only missions with real dispatch authorization enter recovery. Empty squad
  * selection (no goal, no tasks, no workers) is a normal wait, not an incident.
+ * Requires a bound orchestrator — recovery cannot invent a pane.
  */
 export function isDelegationSupervisable(progress: DelegationProgress): boolean {
   if (progress.expectedWorkers === 0) return false;
   if (!['pending', 'running'].includes(progress.mission.status)) return false;
+  if (progress.hasBoundOrchestrator === false) return false;
   const intentState = resolveEffectiveIntentState({
     mission: progress.mission,
     taskCount: progress.tasks,
     workerPaneCount: progress.workerPanes,
   });
-  return isRecoveryEligibleIntentState(intentState);
+  if (!isRecoveryEligibleIntentState(intentState)) return false;
+  // Prefer approved contract; recovery-eligible state alone is not enough
+  // without authorization metadata when a contract exists.
+  if (
+    progress.mission.intentContract &&
+    !hasCurrentApprovedDispatchContract(progress.mission) &&
+    progress.mission.intentState !== 'legacy'
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * SLA anchor: last recovery time, else dispatch authorization time.
+ * Never mission.createdAt (arm time) — that caused instant stage-1 after start.
+ */
+export function resolveDelegationSlaAnchor(
+  progress: DelegationProgress,
+  lastRecoveryCreatedAt: number | undefined,
+): number | null {
+  if (lastRecoveryCreatedAt !== undefined) return lastRecoveryCreatedAt;
+  return resolveDispatchAuthorizedAt(progress.mission);
 }
 
 export function delegationRecoveryStage(
@@ -67,14 +97,28 @@ export function delegationRecoveryStage(
   );
   if (deliveredRecoveries.length >= 2) return 0;
 
+  // Idempotency: if stage key already present in summaries, do not re-fire.
+  const stage1Key = recoveryHandoffIdempotencyKey(progress.mission.id, 1);
+  const stage2Key = recoveryHandoffIdempotencyKey(progress.mission.id, 2);
+  const hasStage1 = deliveredRecoveries.some((h) =>
+    h.summary.includes(stage1Key),
+  );
+  const hasStage2 = deliveredRecoveries.some((h) =>
+    h.summary.includes(stage2Key),
+  );
+  if (hasStage2) return 0;
+
   const lastRecovery = deliveredRecoveries.at(-1);
-  const since = lastRecovery?.createdAt ?? progress.mission.createdAt;
-  const threshold = lastRecovery ? DELEGATION_RETRY_MS : DELEGATION_SLA_MS;
+  const since = resolveDelegationSlaAnchor(progress, lastRecovery?.createdAt);
+  if (since === null) return 0; // no dispatch anchor yet
+  const threshold = lastRecovery || hasStage1 ? DELEGATION_RETRY_MS : DELEGATION_SLA_MS;
   if (now - since < threshold) return 0;
-  return lastRecovery ? 2 : 1;
+  if (hasStage1 || lastRecovery) return 2;
+  return 1;
 }
 
 function recoverySummary(missionId: string, stage: 1 | 2): string {
+  const key = recoveryHandoffIdempotencyKey(missionId, stage);
   if (stage === 1) {
     return (
       `incidente de orquestração: a missão ${missionId} já foi despachada e ` +
@@ -82,7 +126,7 @@ function recoverySummary(missionId: string, stage: 1 | 2): string {
       'trabalhar. Retome o plano já aprovado: registre as tarefas pendentes e ' +
       'delegue as independentes. Só use nexus_context_doctor se o contrato ' +
       'permitir e o mapa estiver frio. Não invente objetivo novo, não contorne ' +
-      'PREVC e não execute o trabalho no orquestrador.'
+      `PREVC e não execute o trabalho no orquestrador. [${key}]`
     );
   }
   return (
@@ -90,7 +134,7 @@ function recoverySummary(missionId: string, stage: 1 | 2): string {
     'tarefas ou especialistas após a primeira recuperação. Leia o resultado ' +
     'estruturado do último tool call, tente somente o próximo passo determinístico ' +
     'uma vez e, se ainda falhar, preserve a missão e marque-a blocked com o erro ' +
-    'exato. Não peça ao usuário para liberar shell nem repita o ciclo.'
+    `exato. Não peça ao usuário para liberar shell nem repita o ciclo. [${key}]`
   );
 }
 
@@ -110,6 +154,10 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
       .list({ missionId: mission.id, includeDelivered: true })
       .filter((handoff) => handoff.fromAgent === DELEGATION_SUPERVISOR_AGENT)
       .sort((left, right) => left.createdAt - right.createdAt);
+    const hasBoundOrchestrator = Boolean(
+      mission.orchestratorSessionId ||
+        panes.some((pane) => pane.role === 'orchestrator'),
+    );
     const stage = delegationRecoveryStage({
       mission,
       expectedWorkers,
@@ -117,8 +165,13 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
       tasks: suite.tasks.list(mission.id).length,
       recoveries,
       orchestratorState: panes.find((pane) => pane.role === 'orchestrator')?.state,
+      hasBoundOrchestrator,
     }, now);
     if (stage === 0) continue;
+
+    // Idempotent: skip if this stage key already submitted.
+    const stageKey = recoveryHandoffIdempotencyKey(mission.id, stage);
+    if (recoveries.some((h) => h.summary.includes(stageKey))) continue;
 
     if (mission.status === 'pending') suite.missions.setStatus(mission.id, 'running');
     const handoff = suite.handoffs.submit({

@@ -8,6 +8,20 @@
 
 Este documento é **prescritivo e decisivo**. Onde há trade-off, a decisão está tomada e justificada.
 
+### Extensões 2026-07-13 (Warp/BridgeMind clean-room foundations)
+
+Contratos e infraestrutura **feature-flagged** (default **off**), clean-room — sem código AGPL:
+
+| Capacidade | Docs | Flag |
+|------------|------|------|
+| CommandBlock + OSC 133 | `docs/TERMINAL-BLOCKS.md` | `feature.terminal.commandBlocks` |
+| Mission event journal | `docs/MISSION-EVENTS.md` | `feature.mission.eventJournal` |
+| SearchMixer | `docs/SEARCH-MIXER.md` | `feature.search.mixer` |
+| Feature flags | `src/shared/feature-flags.ts` | (registry itself) |
+
+Diagnóstico: `docs/analysis/2026-07-13-warp-bridgemind-phase0-diagnosis.md`.  
+PTY stream, effect policy, budgets e `event_ledger` **permanecem**; as novas camadas são laterais.
+
 ---
 
 ## 0. Sumário Executivo das Decisões

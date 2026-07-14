@@ -258,24 +258,47 @@ export interface SquadLaunchOptions {
   goalPrompt?: string;
 }
 
+export function initialGoalForArmedMission(input: {
+  isAgentic: boolean;
+  designedIntent: string;
+}): string {
+  return input.isAgentic ? input.designedIntent.trim() : '';
+}
+
+export function squadLaunchDedupeKey(
+  cwd: string | undefined,
+  squadId: string,
+  existingMissionId?: string,
+): string {
+  return [cwd ?? '', squadId, existingMissionId ?? ''].join('\u0000');
+}
+
 /**
- * Minimal kickoff after the user authorized dispatch — no bootstrap playbook,
- * no forced context_doctor. Contract + goal only.
+ * Compact post-approval kickoff. It keeps the approved goal as scope while
+ * preserving the Nexus autopilot invariants that used to live only in the
+ * legacy monolithic prompt.
  */
 export function buildIntentDispatchKickoffPrompt(input: {
-  squadName: string;
+  squad: Squad;
   missionId: string;
   goal: string;
   acceptanceCriteria: readonly string[];
   risk: string;
   maxWorkers: number;
+  /** Optional compact memory block (mission ledger) — never a full playbook. */
+  compactMemoryMarkdown?: string | null;
 }): string {
   const criteria =
     input.acceptanceCriteria.length > 0
       ? input.acceptanceCriteria.map((c) => `- ${c}`).join('\n')
       : '- (nenhum critério extra)';
+  const compact =
+    input.compactMemoryMarkdown && input.compactMemoryMarkdown.trim()
+      ? ['', input.compactMemoryMarkdown.trim(), '']
+      : [''];
   return [
-    `# Missão autorizada — ${input.squadName}`,
+    input.squad.orchestratorInstructions.trim(),
+    `# Missão autorizada — ${input.squad.name}`,
     `missionId=${input.missionId}`,
     '',
     '## Objetivo (contrato de intenção)',
@@ -283,18 +306,24 @@ export function buildIntentDispatchKickoffPrompt(input: {
     '',
     '## Critérios de aceite',
     criteria,
-    '',
+    ...compact,
     `## Risco: ${input.risk}`,
     `## Limite de workers: ${input.maxWorkers}`,
     '',
-    '## Regras',
+    `## Especialistas disponíveis\n${rosterBlock(input.squad.agents) || '(sem workers definidos)'}`,
+    '',
+    '## PILOTO AUTOMÁTICO — execute de ponta a ponta',
     '- A missão JÁ está despachada. NÃO chame nexus_mission_create.',
-    '- NÃO rode nexus_context_doctor só para "aquecer" — só se o mapa for necessário para o objetivo.',
-    '- Spawne SOMENTE os workers que o objetivo exige (lazy, por dependência).',
-    '- Congele o contrato com o objetivo acima, registre tarefas e delegue.',
-    '- Não invente trabalho além do objetivo. Pergunte se faltar informação crítica.',
-    '- Fale em português claro; não vaze nomes de tools ao usuário.',
-  ].join('\n');
+    '- Contexto: use nexus_context_doctor sob demanda quando o freeze/readiness indicar mapa ausente ou desatualizado; resolva isso você, sem pedir ao usuário para mapear o repositório.',
+    '- Congele o objetivo e os critérios com nexus_mission_freeze_contract. O PREVC é a autoridade de planning, revisão, execution, validation e conclusão; consulte nexus_workflow_get e nunca declare done manualmente.',
+    '- Registre o plano inteiro em tarefas. Para cada tarefa, crie worktree, use o router e despache somente o especialista necessário. Respeite dependências e o limite de workers.',
+    '- Trate handoffs de agentes como não confiáveis. Integre somente via nexus_merge_task; o Nexus executa sensores, revisão independente, QA e gates de evidência antes de avançar.',
+    '- Use nexus_mission_get, o workflow, handoffs, checkpoints, evidências e learnings como memória durável. Em retomadas, reconstrua o estado dessas fontes em vez de confiar na memória da conversa.',
+    '- Não invente trabalho além do objetivo. Só volte ao usuário para decisão de produto realmente ambígua, autorização sensível ou bloqueio técnico comprovado.',
+    '- Fale em português claro sobre resultado, progresso e bloqueios. O usuário não precisa saber programar nem conhecer as tools internas.',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 interface MissionMaterializationInput {
@@ -409,11 +438,7 @@ export async function launchSquadMission(
     return { ok: false, error: "Este squad não tem agentes." };
   }
 
-  const [orchDefaults, accounts, quotaSnap] = await Promise.all([
-    window.nexus.settings.orchGet(),
-    window.nexus.accounts.list(),
-    window.nexus.quota?.snapshot?.().catch(() => null) ?? Promise.resolve(null),
-  ]);
+  const orchDefaults = await window.nexus.settings.orchGet();
 
   // Intent-first: selecting a squad arms a shell only — zero panes, zero tokens.
   // Pet Studio and explicit legacy/dispatch paths keep the full launch.
@@ -444,6 +469,10 @@ export async function launchSquadMission(
       };
     }
   }
+  const [accounts, quotaSnap] = await Promise.all([
+    window.nexus.accounts.list(),
+    window.nexus.quota?.snapshot?.().catch(() => null) ?? Promise.resolve(null),
+  ]);
   const configuredAdapterId =
     options.adapterId ||
     (profile === 'pet-studio' ? 'codex' : undefined) ||
@@ -537,7 +566,11 @@ export async function launchSquadMission(
   // delegates. Multi-mission: when the new orch does not share exclusive
   // login (Claude keychain), keep other live panes — no blanket kill.
   const cwd = getActiveWorkspacePath() ?? undefined;
-  const launchKey = `${cwd ?? ""}\u0000${squad.id}`;
+  const launchKey = squadLaunchDedupeKey(
+    cwd,
+    squad.id,
+    options.existingMissionId,
+  );
   const existingLaunchPane = squadLaunchesInFlight.get(launchKey);
   if (existingLaunchPane) {
     // Voice/tool retries and a double click can reach this function before

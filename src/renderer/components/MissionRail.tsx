@@ -28,6 +28,10 @@ import { askConfirm } from '../state/confirm-store';
 import { AgentDropZone } from './AgentDropZone';
 import type { ExternalIssue } from '../../shared/integrations-types';
 import { useMissionWizardStore as useWizard } from '../state/mission-wizard-store';
+import {
+  summarizeMissionBudget,
+  summarizeWorkspaceMissionBudgets,
+} from '../../shared/mission-budget';
 
 /**
  * Activity Rail — missões **deste workspace** apenas:
@@ -133,6 +137,11 @@ export function MissionRail() {
       m.status === 'blocked',
   ).length;
 
+  const workspaceBudget = useMemo(
+    () => summarizeWorkspaceMissionBudgets(localMissions),
+    [localMissions],
+  );
+
   function toggleSection(id: RailSectionId) {
     setCollapsed((prev) => {
       const next = prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id];
@@ -177,6 +186,11 @@ export function MissionRail() {
     const hands = handoffCountByMission.get(mission.id) ?? 0;
     const handBit =
       hands > 0 ? ` · ${hands} entrega${hands === 1 ? '' : 's'}` : '';
+    const budget = summarizeMissionBudget(mission);
+    const budgetBit =
+      budget.hasContract && budget.label !== '—'
+        ? ` · ${budget.label}`
+        : '';
     const started = new Intl.DateTimeFormat('pt-BR', {
       day: '2-digit',
       month: '2-digit',
@@ -184,9 +198,9 @@ export function MissionRail() {
       minute: '2-digit',
     }).format(mission.createdAt);
 
-    // Status já vai na pill — meta fica operacional (tempo / panes).
+    // Status já vai na pill — meta fica operacional (tempo / panes / budget).
     if (mission.status === 'pending' && !liveInGrid) {
-      return `Retomar · ${started}${handBit}`;
+      return `Retomar · ${started}${handBit}${budgetBit}`;
     }
 
     if (liveInGrid) {
@@ -202,26 +216,26 @@ export function MissionRail() {
         (paneId) => paneStates.get(paneId) === 'spawning',
       ).length;
       if (busyCount > 0) {
-        return `${busyCount} pane${busyCount === 1 ? '' : 's'} a trabalhar${handBit}`;
+        return `${busyCount} pane${busyCount === 1 ? '' : 's'} a trabalhar${handBit}${budgetBit}`;
       }
       if (spawningCount > 0) {
-        return `${spawningCount} pane${spawningCount === 1 ? '' : 's'} a iniciar${handBit}`;
+        return `${spawningCount} pane${spawningCount === 1 ? '' : 's'} a iniciar${handBit}${budgetBit}`;
       }
       if (ids.length > 0) {
-        return `${ids.length} pane${ids.length === 1 ? '' : 's'} no grid${handBit}`;
+        return `${ids.length} pane${ids.length === 1 ? '' : 's'} no grid${handBit}${budgetBit}`;
       }
     }
 
     if (mission.status === 'running') {
-      return `${missionRailResumeCopy(mission.status, liveInGrid).meta ?? 'Retomar'}${handBit}`;
+      return `${missionRailResumeCopy(mission.status, liveInGrid).meta ?? 'Retomar'}${handBit}${budgetBit}`;
     }
     if (mission.status === 'blocked') {
-      return `Precisa de ti${handBit}`;
+      return `Precisa de ti${handBit}${budgetBit}`;
     }
     if (mission.status === 'done' || mission.status === 'failed') {
-      return `${started}${handBit}`;
+      return `${started}${handBit}${budgetBit}`;
     }
-    return `${statusLabel(mission.status)} · ${started}${handBit}`;
+    return `${statusLabel(mission.status)} · ${started}${handBit}${budgetBit}`;
   }
 
   function selectMission(m: Mission) {
@@ -256,6 +270,14 @@ export function MissionRail() {
               ? `${activeCount} ativas · ${localMissions.length} aqui`
               : 'a carregar…'}
           </span>
+          {listReady && workspaceBudget.activeCount > 0 && (
+            <span
+              className="mission-rail__summary mission-rail__summary--budget"
+              title="Orçamento agregado (intent contract: tokens/steps estimados)"
+            >
+              {workspaceBudget.label}
+            </span>
+          )}
         </div>
         <div className="mission-rail__head-actions">
           <button

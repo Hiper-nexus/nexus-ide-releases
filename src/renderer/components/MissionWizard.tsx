@@ -15,6 +15,7 @@ import { useVoiceStore } from '../voice/voice-store';
 import { isMissingModelKeyError } from '../lib/credential-errors';
 import {
   buildIntentDispatchKickoffPrompt,
+  initialGoalForArmedMission,
   launchLibrePanes,
   launchSquadMission,
 } from '../orch/mission-launcher';
@@ -116,6 +117,8 @@ export function MissionWizard() {
     'idle' | 'running' | 'ready' | 'cancelled' | 'error'
   >('idle');
   const [prepareDetail, setPrepareDetail] = useState<string | null>(null);
+  /** Intent prompt queue surface: executing / queued / cancelled counts. */
+  const [promptQueueHint, setPromptQueueHint] = useState<string | null>(null);
   const prepareGenerationRef = useRef(0);
   // Modo Agêntico: intenção em linguagem natural + estado do arquiteto.
   const [intent, setIntent] = useState('');
@@ -126,6 +129,37 @@ export function MissionWizard() {
   const [highlightedAgentId, setHighlightedAgentId] = useState<string | null>(null);
   const designRequestRef = useRef(0);
   const designInFlightRef = useRef(false);
+
+  // Surface prompt-queue state (executing / queued / cancelled) while composing.
+  useEffect(() => {
+    if (!open || step !== 'intent-compose' || !armedMissionId) {
+      setPromptQueueHint(null);
+      return;
+    }
+    let cancelled = false;
+    const refresh = () => {
+      void window.nexus.orch
+        .getMissionPromptQueue?.({ missionId: armedMissionId })
+        .then((snap) => {
+          if (cancelled || !snap) return;
+          const exec = snap.executing
+            ? `${snap.executing.kind}:${snap.executing.status}`
+            : '—';
+          setPromptQueueHint(
+            `Fila da missão · exec=${exec} · queued=${snap.queued.length} · cancelled=${snap.cancelled.length}`,
+          );
+        })
+        .catch(() => {
+          /* optional API */
+        });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 2_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [open, step, armedMissionId, prepareStatus]);
 
   useEffect(() => {
     if (!open) return;
@@ -555,7 +589,12 @@ export function MissionWizard() {
       // Intent-first: squad is armed with zero agent panes / tokens.
       if (result.armed && result.missionId) {
         setArmedMissionId(result.missionId);
-        setMissionGoal('');
+        setMissionGoal(
+          initialGoalForArmedMission({
+            isAgentic: mode === 'agentic',
+            designedIntent: intent,
+          }),
+        );
         setPlannedMission(null);
         setStep('intent-compose');
         useToastStore
@@ -605,15 +644,21 @@ export function MissionWizard() {
       // Local structural map only — no agent, no automatic draft review.
       const map = await window.nexus.orientation.ensure().catch(() => null);
       if (generation !== prepareGenerationRef.current) return;
+      const queue = await window.nexus.orch
+        .getMissionPromptQueue?.({ missionId: armedMissionId })
+        .catch(() => null);
+      const queueHint = queue
+        ? ` Fila: exec=${queue.executing?.kind ?? '—'} · queued=${queue.queued.length} · cancelled=${queue.cancelled.length}.`
+        : '';
       if (map && (map.status === 'ready' || map.status === 'partial')) {
         setPrepareStatus('ready');
         setPrepareDetail(
-          `Mapa ${map.status} (hash ${map.mapHash?.slice(0, 8) ?? '—'}). Sem workers e sem gasto de execução.`,
+          `Mapa ${map.status} (hash ${map.mapHash?.slice(0, 8) ?? '—'}). Sem workers e sem gasto de execução.${queueHint}`,
         );
       } else {
         setPrepareStatus('ready');
         setPrepareDetail(
-          'Preparação autorizada. Mapa ainda aquecendo em background — pode descrever o objetivo.',
+          `Preparação autorizada. Mapa ainda aquecendo em background — pode descrever o objetivo.${queueHint}`,
         );
       }
     } catch (cause) {
@@ -651,13 +696,21 @@ export function MissionWizard() {
         return;
       }
       const effectiveSquad: Squad = { ...selectedSquad, agents: roster };
+      const { compactMissionContext, renderMissionCompact } = await import(
+        '../../shared/mission-context-compact'
+      );
+      const compact = compactMissionContext({
+        mission: approved,
+        handoffs: [],
+      });
       const goalPrompt = buildIntentDispatchKickoffPrompt({
-        squadName: selectedSquad.name,
+        squad: effectiveSquad,
         missionId: approved.id,
         goal: contract.goal,
         acceptanceCriteria: contract.acceptanceCriteria,
         risk: contract.risk,
         maxWorkers: contract.budgets.maxWorkers,
+        compactMemoryMarkdown: renderMissionCompact(compact),
       });
       const result = await launchSquadMission(effectiveSquad, adapters, {
         existingMissionId: approved.id,
@@ -1027,6 +1080,15 @@ export function MissionWizard() {
                 Aguardando seu objetivo. Nenhum especialista iniciado.{' '}
                 <strong>0 tokens de modelo usados.</strong>
               </p>
+              {promptQueueHint && (
+                <p
+                  className="wizard__mode-desc"
+                  style={{ marginBottom: 10, opacity: 0.85 }}
+                  aria-live="polite"
+                >
+                  {promptQueueHint}
+                </p>
+              )}
               <textarea
                 className="wizard__input"
                 style={{ minHeight: 120, resize: 'vertical' }}
@@ -1132,6 +1194,11 @@ export function MissionWizard() {
                   despachar especialistas.
                 </p>
               )}
+              <p className="wizard__mode-desc">
+                Depois de começar, o Nexus pilota implementação, revisão e QA
+                pelo PREVC. Ele só volta a você para uma decisão real, uma
+                autorização sensível ou um bloqueio comprovado.
+              </p>
               {error && <p className="wizard__error">{error}</p>}
               <div className="wizard__actions">
                 <button

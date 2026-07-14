@@ -7,6 +7,10 @@ import {
   type MissionPaneSpec,
   type PaneSnapshot,
 } from '../../shared/orch-types';
+import {
+  compactMissionContext,
+  renderMissionCompact,
+} from '../../shared/mission-context-compact';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { onHandoffSubmitted } from './idle-delivery';
@@ -216,11 +220,18 @@ export function createProductionApplyPorts(
         (target.role === 'orchestrator'
           ? mission.orchestratorSessionId
           : undefined);
+      const compactMemory = renderMissionCompact(
+        compactMissionContext({
+          mission,
+          handoffs: stores.handoffs.list({
+            missionId,
+            includeDelivered: true,
+          }),
+        }),
+      );
       const recap = [
-        `Mission: ${mission.title}`,
+        compactMemory,
         `Recovered role: ${target.role}${target.agentName ? ` (${target.agentName})` : ''}`,
-        mission.description ? `Objective: ${mission.description}` : '',
-        mission.learnings ? `Learnings:\n${mission.learnings}` : '',
         `Recovery reason: ${reason}`,
         'Continue this mission from a fresh context. Inspect current repository and pane state before changing files.',
       ]
@@ -373,8 +384,28 @@ export function createDefaultDriveDeps(options: {
     loadDriveState: (missionId, scope) =>
       loadDriveState(missionId, scope, { persistRuntime: isActive }),
     now: () => Date.now(),
-    onDecision:
-      config.mode === 'active' ? logDecisionActive : logDecisionShadow,
+    onDecision: async (snapshot) => {
+      if (config.mode === 'active') {
+        logDecisionActive(snapshot);
+      } else {
+        logDecisionShadow(snapshot);
+      }
+      // Lateral journal (flag fail-closed). Never replaces budgets/receipts.
+      try {
+        const { emitDriverDecision } = await import('./mission-event-emit');
+        if (snapshot.action.kind !== 'wait') {
+          emitDriverDecision(
+            snapshot.scope,
+            snapshot.missionId,
+            snapshot.action.kind,
+            snapshot.action.reason,
+            config.mode,
+          );
+        }
+      } catch {
+        // Journal is optional observability — driver must not fail closed here.
+      }
+    },
     getDriveSignalAt: (missionId, scope) =>
       isActive
         ? getProjectDomainStores(scope).missions.getDriveRuntimeState(missionId)

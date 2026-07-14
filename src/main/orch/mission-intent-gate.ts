@@ -1,7 +1,11 @@
 import {
+  assertStepAndTokenBudget,
   canDispatchWorkers,
   canRunBootstrapEffects,
-  hasApprovedDispatchContract,
+  canSubmitMissionHandoff,
+  hasCurrentApprovedDispatchContract,
+  isRecoveryEligibleIntentState,
+  isToolDeniedByContract,
   resolveEffectiveIntentState,
   type MissionIntentContract,
   type MissionIntentState,
@@ -14,7 +18,10 @@ import { emitMissionIntentEvent } from './mission-intent-events';
 export type IntentGateCode =
   | 'intent_required'
   | 'approval_required'
-  | 'dispatch_required';
+  | 'dispatch_required'
+  | 'budget_exhausted'
+  | 'handoff_origin'
+  | 'tool_denied';
 
 export interface IntentGateDenial {
   readonly ok: false;
@@ -46,6 +53,15 @@ export interface IntentGateContext {
   readonly workerPaneCount?: number;
   /** Explicit prepare-project action sets this on the contract. */
   readonly allowPrepareProject?: boolean;
+  /** Caller role for handoff origin checks. */
+  readonly role?: string | null;
+  /** Caller session id for handoff origin checks. */
+  readonly sessionId?: string | null;
+  /**
+   * When true, mission row was not found — effectful tools must fail closed
+   * (used by mcp-dispatch after a null lookup).
+   */
+  readonly missionMissing?: boolean;
 }
 
 function effectiveContract(
@@ -82,28 +98,83 @@ export function assertMissionIntentAllowsTool(
   args: Readonly<Record<string, unknown>> = {},
 ): IntentGateResult {
   const policy = effectPolicyForTool(toolName);
+  const intentVersion = ctx.mission.intentVersion ?? 0;
+
+  if (ctx.missionMissing) {
+    return deny(
+      'intent_required',
+      'intent_required: mission not found for intent authority check',
+      ctx,
+      'awaiting_goal',
+      intentVersion,
+      toolName,
+    );
+  }
+
   const intentState = resolveEffectiveIntentState({
     mission: ctx.mission,
     taskCount: ctx.taskCount ?? 0,
     workerPaneCount: ctx.workerPaneCount ?? 0,
   });
-  const intentVersion = ctx.mission.intentVersion ?? 0;
   const contract = effectiveContract(ctx.mission);
   const canonical = canonicalToolName(toolName);
+  const isCurrentContract =
+    intentVersion > 0 && contract?.intentVersion === intentVersion;
+  const isDispatchAuthorized =
+    hasCurrentApprovedDispatchContract(ctx.mission);
 
   if (policy === 'read-only' || policy === 'mission-control') {
     return { ok: true, intentState, intentVersion };
   }
 
-  if (policy === 'bootstrap-authority') {
-    const prepareContract =
-      ctx.allowPrepareProject || contract?.contextPolicy === 'prepare-project'
-        ? contract
-          ? { ...contract, contextPolicy: 'prepare-project' as const }
-          : contract
-        : contract;
+  // Parent deny list applies to every non-read tool.
+  if (isToolDeniedByContract(toolName, contract)) {
+    return deny(
+      'tool_denied',
+      `tool_denied: ${toolName} is denied by mission contract`,
+      ctx,
+      intentState,
+      intentVersion,
+      toolName,
+    );
+  }
 
-    if (canRunBootstrapEffects(intentState, prepareContract, toolName)) {
+  // Step/token budgets after dispatch.
+  if (isDispatchAuthorized) {
+    const budget = assertStepAndTokenBudget(contract);
+    if (!budget.ok) {
+      return deny(
+        'budget_exhausted',
+        budget.error,
+        ctx,
+        intentState,
+        intentVersion,
+        toolName,
+      );
+    }
+  }
+
+  if (policy === 'bootstrap-authority') {
+    // prepare-project only when stored by explicit prepare UX (or flag).
+    const prepareOk =
+      isCurrentContract &&
+      (ctx.allowPrepareProject || contract?.contextPolicy === 'prepare-project');
+    const prepareContract =
+      prepareOk && contract
+        ? { ...contract, contextPolicy: 'prepare-project' as const }
+        : prepareOk
+          ? contract
+          : null;
+
+    const canRunBootstrap = canRunBootstrapEffects(
+      intentState,
+      prepareContract,
+      toolName,
+    );
+    if (
+      canRunBootstrap &&
+      (!isRecoveryEligibleIntentState(intentState) || isDispatchAuthorized)
+    ) {
       return { ok: true, intentState, intentVersion };
     }
 
@@ -113,6 +184,7 @@ export function assertMissionIntentAllowsTool(
     }
 
     // set_status: post-dispatch, or fail-safe demotion to blocked/failed only.
+    // legacy no longer opens arbitrary status writes.
     if (canonical === 'mission_set_status') {
       const nextStatus =
         typeof args.status === 'string' ? args.status : undefined;
@@ -120,9 +192,7 @@ export function assertMissionIntentAllowsTool(
         nextStatus === 'blocked' || nextStatus === 'failed';
       if (
         failSafe ||
-        canDispatchWorkers(intentState) ||
-        intentState === 'legacy' ||
-        hasApprovedDispatchContract(contract)
+        (canDispatchWorkers(intentState) && isDispatchAuthorized)
       ) {
         return { ok: true, intentState, intentVersion };
       }
@@ -148,12 +218,24 @@ export function assertMissionIntentAllowsTool(
   }
 
   if (policy === 'delegation-authority' || policy === 'workflow-authority') {
-    if (canDispatchWorkers(intentState)) {
+    if (!canDispatchWorkers(intentState)) {
+      return deny(
+        'dispatch_required',
+        'dispatch_required: workers e worktrees só após início autorizado da missão',
+        ctx,
+        intentState,
+        intentVersion,
+        toolName,
+      );
+    }
+    // Intent-first and immediate legacy shells both carry a current approved
+    // contract. State alone is never dispatch authority.
+    if (isDispatchAuthorized) {
       return { ok: true, intentState, intentVersion };
     }
     return deny(
-      'dispatch_required',
-      'dispatch_required: workers e worktrees só após início autorizado da missão',
+      'approval_required',
+      'approval_required: contrato atual precisa de aprovação antes de despachar workers',
       ctx,
       intentState,
       intentVersion,
@@ -161,12 +243,52 @@ export function assertMissionIntentAllowsTool(
     );
   }
 
-  // Handoffs remain open so delivery receipts can complete.
+  // Handoff submit requires authenticated origin; ack is orchestrator-only in tool.
   if (policy === 'handoff-authority') {
+    if (canonical === 'handoff_ack') {
+      if (ctx.role === 'orchestrator' && ctx.mission.id) {
+        return { ok: true, intentState, intentVersion };
+      }
+      return deny(
+        'handoff_origin',
+        'handoff_origin: ack requires mission orchestrator',
+        ctx,
+        intentState,
+        intentVersion,
+        toolName,
+      );
+    }
+    const origin = canSubmitMissionHandoff({
+      role: ctx.role,
+      missionId: ctx.mission.id,
+      sessionId: ctx.sessionId,
+      intentState,
+    });
+    if (!origin.ok) {
+      return deny(
+        origin.code as IntentGateCode,
+        origin.error,
+        ctx,
+        intentState,
+        intentVersion,
+        toolName,
+      );
+    }
+    if (!isDispatchAuthorized) {
+      return deny(
+        'dispatch_required',
+        'dispatch_required: contrato atual aprovado é obrigatório para handoff',
+        ctx,
+        intentState,
+        intentVersion,
+        toolName,
+      );
+    }
     return { ok: true, intentState, intentVersion };
   }
 
-  if (!canDispatchWorkers(intentState) && intentState !== 'legacy') {
+  // legacy no longer bypasses execution — only real dispatch states.
+  if (!canDispatchWorkers(intentState) || !isDispatchAuthorized) {
     return deny(
       'dispatch_required',
       'dispatch_required: execução bloqueada até a missão ser despachada',

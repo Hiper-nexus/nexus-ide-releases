@@ -152,6 +152,34 @@ describe("renderer mission authority", () => {
     });
   });
 
+  it("refuses to approve a contract compiled for an older intent version", () => {
+    deps.getMission.mockReturnValueOnce({
+      ...mission,
+      intentState: "ready_to_start",
+      intentVersion: 2,
+      intentContract: {
+        version: 1,
+        source: "typed",
+        goal: "Current-looking but stale goal",
+        acceptanceCriteria: ["Done"],
+        risk: "normal",
+        executionMode: "assisted",
+        contextPolicy: "on-demand",
+        intentVersion: 1,
+        budgets: {
+          planningTokens: 1_200,
+          executionTokens: 8_000,
+          maxWorkers: 2,
+        },
+      },
+    });
+
+    expect(() =>
+      authority.approveIntentFromRenderer(owner, { missionId: "mission-a" }),
+    ).toThrow(/stale.*intent|intent.*version/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
   it("rejects renderer-forged milestone completion and evidence", () => {
     expect(() =>
       authority.updateMissionFromRenderer(owner, "mission-a", {
@@ -237,13 +265,21 @@ describe("renderer mission authority", () => {
     });
 
     expect(result).toBe(mission);
-    expect(deps.createMission).toHaveBeenCalledWith({
-      title: "Review",
-      squadId: "review-squad",
-      orchestratorSessionId: "pty-a",
-      intentState: "dispatched",
-      intentVersion: 0,
-    });
+    expect(deps.createMission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Review",
+        squadId: "review-squad",
+        orchestratorSessionId: "pty-a",
+        intentState: "dispatched",
+        intentVersion: 1,
+        intentContract: expect.objectContaining({
+          approvedAt: expect.any(Number),
+          dispatchedAt: expect.any(Number),
+          goal: expect.any(String),
+          budgets: expect.objectContaining({ maxWorkers: expect.any(Number) }),
+        }),
+      }),
+    );
     expect(deps.recordMissionPane).toHaveBeenCalledWith({
       missionId: "mission-a",
       paneId: "pane-a",

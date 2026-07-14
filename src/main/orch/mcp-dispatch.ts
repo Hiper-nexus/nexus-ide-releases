@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import {
+  applyEffectfulSpend,
+  hasCurrentApprovedDispatchContract,
+} from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { requiresConfirmation, confirmationReason } from '../jarvis/guardrails';
 import {
@@ -27,6 +31,12 @@ import { validateToolArgs } from './mcp-args-validation';
 import type { McpRegistry, McpToolDef } from './mcp-protocol';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { assertMissionIntentAllowsTool } from './mission-intent-gate';
+import {
+  completeMissionPrompt,
+  enqueueMissionPrompt,
+  getMissionPromptQueue,
+  startMissionPrompt,
+} from './mission-prompt-queue-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 
 export type McpDispatchSource = AuditSource;
@@ -324,6 +334,32 @@ export async function dispatchToolCall(
     };
   }
 
+  const effectPolicy = effectPolicyForTool(tool.name);
+  const canonical = canonicalToolName(tool.name);
+  const permitsUnboundEffect =
+    canonical === 'mission_create' ||
+    effectPolicy === 'mission-control' ||
+    effectPolicy === 'renderer-authorized-effect';
+  if (isEffectfulTool(tool.name) && !ctx.missionId && !permitsUnboundEffect) {
+    const error =
+      'mission effect blocked: projectId, checkoutId, missionId and contextRevision are required';
+    const auditFailure = writeAudit(
+      () =>
+        auditDenied(
+          auditContext,
+          sessionId,
+          tool.name,
+          args,
+          Date.now() - startMs,
+          error,
+          source,
+        ),
+      tool.name,
+    );
+    if (auditFailure) return auditFailure;
+    return { ok: false, tool: tool.name, denied: true, error };
+  }
+
   // Intent-first gate: bootstrap/delegation cannot invent work without a goal.
   // Fail closed for effectful tools — a store miss must not bypass authority.
   if (ctx.missionId && isEffectfulTool(tool.name)) {
@@ -368,6 +404,8 @@ export async function dispatchToolCall(
           mission: resolved.mission,
           taskCount: resolved.taskCount,
           workerPaneCount: resolved.workerPaneCount,
+          role: ctx.role,
+          sessionId,
         },
         args,
       );
@@ -578,8 +616,84 @@ export async function dispatchToolCall(
     if (auditFailure) return auditFailure;
   }
 
+  // Track only warm/bootstrap tools on the prompt queue (not mission_create /
+  // set_status). Newer intentVersion preempts in-flight doctor/map work.
+  let queuePromptId: string | null = null;
+  const warmBootstrap =
+    /context_doctor|code_map_refresh|context_scaffold|context_draft|mission_freeze/i.test(
+      tool.name,
+    );
+  if (ctx.missionId && warmBootstrap) {
+    try {
+      const suite = getProjectDomainStores(ctx.scope);
+      const mission = suite.missions?.get(ctx.missionId);
+      const intentVersion = mission?.intentVersion ?? 1;
+      const enq = enqueueMissionPrompt({
+        missionId: ctx.missionId,
+        kind: 'bootstrap',
+        body: tool.name,
+        intentVersion,
+        source: 'system',
+      });
+      const item = enq.state.items.at(-1);
+      if (item && item.status === 'queued') {
+        queuePromptId = item.id;
+        startMissionPrompt(ctx.missionId, item.id);
+      } else if (item?.status === 'cancelled') {
+        return {
+          ok: false,
+          tool: tool.name,
+          denied: true,
+          error: 'intent_preempted: bootstrap cancelled by newer user intent',
+        };
+      }
+    } catch {
+      // Queue is best-effort relative to the tool itself.
+    }
+  }
+
   try {
+    // If preempted after start (race with user submit), abort before handler.
+    if (queuePromptId && ctx.missionId) {
+      const current = getMissionPromptQueue(ctx.missionId).items.find(
+        (entry) => entry.id === queuePromptId,
+      );
+      if (current?.status === 'cancelled') {
+        return {
+          ok: false,
+          tool: tool.name,
+          denied: true,
+          error: 'intent_preempted: bootstrap cancelled by newer user intent',
+        };
+      }
+    }
+
     const result = await tool.handler(args, ctx);
+    if (queuePromptId && ctx.missionId) {
+      completeMissionPrompt(ctx.missionId, queuePromptId, true);
+    }
+    // Count steps+tokens only under a current approved dispatch contract —
+    // never burn budget on prepare-project / pre-goal warm tools.
+    if (effectful && ctx.missionId) {
+      try {
+        const suite = getProjectDomainStores(ctx.scope);
+        const mission = suite.missions?.get(ctx.missionId);
+        if (
+          mission?.intentContract &&
+          hasCurrentApprovedDispatchContract(mission)
+        ) {
+          suite.missions.update(ctx.missionId, {
+            intentContract: applyEffectfulSpend(
+              mission.intentContract,
+              tool.name,
+            ),
+          });
+        }
+      } catch {
+        // Domain stores may be absent in unit tests / early boot — budget is
+        // still enforced when contract is present at the gate.
+      }
+    }
     const auditFailure = writeAudit(
       () =>
         auditSuccess(
@@ -603,6 +717,9 @@ export async function dispatchToolCall(
       userAuthorized,
     };
   } catch (err) {
+    if (queuePromptId && ctx.missionId) {
+      completeMissionPrompt(ctx.missionId, queuePromptId, false);
+    }
     const errorMsg = err instanceof Error ? err.message : String(err);
     const auditFailure = writeAudit(
       () =>

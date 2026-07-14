@@ -71,11 +71,13 @@ const refreshTool: McpToolDef = {
 const queryTool: McpToolDef = {
   name: 'nexus_code_map_query',
   description:
-    'Deterministic filter over the orientation map: match hubs/paths by substring. No LLM and no vector search.',
+    'Search the Project Orientation Map. Uses a local ranked inverted index ' +
+    '(TF-style, no embeddings/LLM) when ready; falls back to substring match. ' +
+    'Never blocks squad arming — index builds async after map is available.',
   inputSchema: {
     type: 'object',
     properties: {
-      q: { type: 'string', description: 'Case-insensitive substring' },
+      q: { type: 'string', description: 'Search query (tokens or substring)' },
       limit: { type: 'number' },
     },
     required: ['q'],
@@ -93,6 +95,40 @@ const queryTool: McpToolDef = {
     if (!map) {
       map = await service.ensure(ctx.scope, { reason: 'mcp' });
     }
+
+    // Async local index — fire-and-forget rebuild when map hash changes.
+    const { getOrientationLocalIndex } = await import(
+      '../context/orientation/orientation-local-index'
+    );
+    const index = getOrientationLocalIndex(map.mapHash);
+    if (!index.snapshot.ready || index.snapshot.mapHash !== map.mapHash) {
+      void index.build(map).catch(() => {
+        /* index is optional */
+      });
+    }
+    const ranked = index.search(input.q, input.limit);
+    if (ranked.length > 0) {
+      return Object.freeze({
+        mapHash: map.mapHash,
+        status: map.status,
+        mode: 'local-index' as const,
+        index: index.snapshot,
+        hits: ranked,
+        // Back-compat fields for older callers.
+        hubs: ranked
+          .filter((hit) => hit.kind === 'hub')
+          .map((hit) => ({
+            name: hit.title,
+            samplePaths: hit.path ? [hit.path] : [],
+            score: hit.score,
+          })),
+        paths: ranked
+          .filter((hit) => hit.kind !== 'hub')
+          .map((hit) => hit.path ?? hit.title)
+          .slice(0, input.limit),
+      });
+    }
+
     const needle = input.q.toLowerCase();
     const hubs = map.symbols.hubs
       .filter(
@@ -112,6 +148,8 @@ const queryTool: McpToolDef = {
     return Object.freeze({
       mapHash: map.mapHash,
       status: map.status,
+      mode: 'substring' as const,
+      index: index.snapshot,
       hubs,
       paths,
     });

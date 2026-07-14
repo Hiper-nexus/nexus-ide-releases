@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — Warp/BridgeMind clean-room foundations
+
+Data: 2026-07-13
+
+### Domain contracts (feature-flagged, default off)
+- **CommandBlock** semantic model + OSC 133 scanner + redaction + SQLite store
+  (`command_blocks`, project migration 014).
+- **Mission event journal** append/replay/cursor/ACK (`mission_events` +
+  `mission_event_cursors`) without replacing `event_ledger` or budgets.
+- **SearchMixer** multi-source cancel/generation/ranking core.
+- **Typed feature flags** with channel policy, kill switch, and override file.
+- Optional shell integration snippets for zsh/bash/fish under
+  `resources/shell-integration/`.
+
+### Docs
+- `docs/analysis/2026-07-13-warp-bridgemind-phase0-diagnosis.md`
+- `docs/TERMINAL-BLOCKS.md`, `docs/MISSION-EVENTS.md`, `docs/SEARCH-MIXER.md`
+
+### Non-goals this wave
+- Full UI onboarding/launcher, CodeMirror editor, MCP Hub, skills catalog,
+  BridgeMemory MD, autonomy profiles (flagged for later waves).
+
 ## 0.15.4 — Jarvis Wake Safety
 
 Data: 2026-07-13

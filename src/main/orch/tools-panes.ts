@@ -22,6 +22,7 @@ import {
   type SpawnToolOptions,
 } from './tool-util';
 import { canonicalToolName, type AgentGateContext } from './gate';
+import { applyWorkerSpawnPolicy } from '../../shared/mission-intent';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -177,6 +178,25 @@ const paneSpawn: McpToolDef = {
     }
     if (options.role === 'worker' && options.missionId) {
       const missionId = options.missionId;
+      // Enforce maxWorkers + parent deny attenuation (intent contract teeth).
+      {
+        const suite = getProjectDomainStores(ctx.scope);
+        const missionRow = suite.missions.get(missionId);
+        const liveWorkers = suite.missionPanes
+          .list(missionId)
+          .filter((pane) => pane.role === 'worker').length;
+        const policy = applyWorkerSpawnPolicy({
+          contract: missionRow?.intentContract,
+          currentWorkerCount: liveWorkers,
+          allowedTools: options.allowedTools,
+        });
+        if (!policy.ok) {
+          throw new Error(policy.error);
+        }
+        if (policy.allowedTools) {
+          options = { ...options, allowedTools: policy.allowedTools };
+        }
+      }
       const workflowService = getContextWorkflowService(ctx.scope);
       const missionWorkflow = workflowService.getMissionWorkflow(missionId);
       if (missionWorkflow.contract) {

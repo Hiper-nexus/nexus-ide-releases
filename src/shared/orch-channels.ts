@@ -26,6 +26,8 @@ export const ORCH_CHANNELS = {
    * awaiting a real goal (does not dispatch workers).
    */
   missionPrepareProject: 'orch:missions.prepareProject',
+  /** Intent-first: prompt queue snapshot (executing / queued / cancelled). */
+  missionPromptQueue: 'orch:missions.promptQueue',
   missionRebind: 'orch:missions.rebind',
   missionUpdate: 'orch:missions.update',
   missionRemove: 'orch:missions.remove',

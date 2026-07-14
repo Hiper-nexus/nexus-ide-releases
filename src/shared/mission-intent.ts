@@ -60,6 +60,10 @@ export const missionIntentBudgetsSchema = z.object({
   planningTokens: z.number().int().nonnegative().max(1_000_000),
   executionTokens: z.number().int().nonnegative().max(10_000_000),
   maxWorkers: z.number().int().nonnegative().max(64),
+  /** Hard cap on tool/dispatch steps for the mission (parent + children). */
+  // Optional for persisted/legacy contracts; effect gates apply the runtime
+  // fallback of 500 when the field is absent.
+  maxSteps: z.number().int().positive().max(100_000).optional(),
 });
 
 export const missionIntentContractSchema = z.object({
@@ -71,8 +75,18 @@ export const missionIntentContractSchema = z.object({
   executionMode: missionExecutionModeSchema,
   contextPolicy: missionContextPolicySchema,
   approvedAt: z.number().int().nonnegative().optional(),
+  /** Wall-clock when execution was authorized (approve/start). SLA anchor. */
+  dispatchedAt: z.number().int().nonnegative().optional(),
   intentVersion: z.number().int().positive().max(1_000_000),
   budgets: missionIntentBudgetsSchema,
+  /** Tools the parent denies; children inherit and may only tighten. */
+  deniedTools: z.array(z.string().min(1).max(128)).max(256).optional(),
+  /** Parent task id when this contract is a child handoff attenuation. */
+  parentTaskId: z.string().min(1).max(128).optional(),
+  /** Steps already spent (parent + children); enforced at tool boundaries. */
+  spentSteps: z.number().int().nonnegative().max(100_000).optional(),
+  /** Approximate token spend tracked for budget ceilings. */
+  spentTokens: z.number().int().nonnegative().max(10_000_000).optional(),
 });
 export type MissionIntentContract = z.infer<typeof missionIntentContractSchema>;
 
@@ -280,6 +294,9 @@ export interface InferIntentContext {
 /**
  * Resolve effective intent state. Persisted non-legacy values win.
  * Legacy rows are inferred without inventing dispatch authorization.
+ *
+ * Bare `description` is NEVER a real goal — only a validated intentContract
+ * with a non-placeholder goal counts. Tasks/workers still imply real work.
  */
 export function resolveEffectiveIntentState(
   ctx: InferIntentContext,
@@ -291,18 +308,42 @@ export function resolveEffectiveIntentState(
   if (ctx.mission.status === 'failed') return 'blocked_technical';
   if (ctx.mission.status === 'blocked') return 'blocked_user';
 
+  // Real work already in flight — never invent a goal, but do not stall recovery
+  // for empty missions that only have free-text description.
   if (ctx.taskCount > 0 || ctx.workerPaneCount > 0) {
     return ctx.mission.status === 'running' ? 'executing' : 'dispatched';
   }
 
-  const hasGoal =
-    Boolean(ctx.mission.intentContract?.goal?.trim()) ||
-    ctx.mission.description.trim().length > 0;
-  if (hasGoal && ctx.mission.status === 'running') return 'executing';
-  if (hasGoal) return 'dispatched';
+  const contractGoal = ctx.mission.intentContract?.goal?.trim() ?? '';
+  const hasRealGoal =
+    contractGoal.length > 0 && !isPrepareProjectPlaceholderGoal(contractGoal);
 
-  // No goal, no tasks, no workers — waiting is normal, not a stall.
+  if (hasRealGoal && hasApprovedDispatchContract(ctx.mission.intentContract)) {
+    return ctx.mission.status === 'running' ? 'executing' : 'dispatched';
+  }
+
+  // Description-only or unapproved contract: human wait, not dispatched.
   return 'awaiting_goal';
+}
+
+/**
+ * Wall-clock anchor for recovery SLAs: prefer dispatchedAt / approvedAt from
+ * the contract; never mission.createdAt (arm time).
+ */
+export function resolveDispatchAuthorizedAt(
+  mission: Pick<InferIntentMission, 'intentContract'> & {
+    readonly updatedAt?: number;
+  },
+): number | null {
+  const contract = mission.intentContract;
+  if (!contract) return null;
+  if (typeof contract.dispatchedAt === 'number' && contract.dispatchedAt > 0) {
+    return contract.dispatchedAt;
+  }
+  if (typeof contract.approvedAt === 'number' && contract.approvedAt > 0) {
+    return contract.approvedAt;
+  }
+  return null;
 }
 
 /** Sensitive surface keywords that require plan approval. */
@@ -316,12 +357,27 @@ export function defaultBudgetsForRisk(
   risk: MissionIntentRisk,
 ): MissionIntentContract['budgets'] {
   if (risk === 'destructive') {
-    return { planningTokens: 1_200, executionTokens: 8_000, maxWorkers: 1 };
+    return {
+      planningTokens: 1_200,
+      executionTokens: 8_000,
+      maxWorkers: 1,
+      maxSteps: 80,
+    };
   }
   if (risk === 'sensitive') {
-    return { planningTokens: 1_200, executionTokens: 12_000, maxWorkers: 2 };
+    return {
+      planningTokens: 1_200,
+      executionTokens: 12_000,
+      maxWorkers: 2,
+      maxSteps: 200,
+    };
   }
-  return { planningTokens: 1_200, executionTokens: 20_000, maxWorkers: 3 };
+  return {
+    planningTokens: 1_200,
+    executionTokens: 20_000,
+    maxWorkers: 3,
+    maxSteps: 500,
+  };
 }
 
 export function classifyGoalRisk(goal: string): MissionIntentRisk {
@@ -353,7 +409,9 @@ export function compileIntentContract(input: {
     goal,
     acceptanceCriteria: criteria,
     risk,
-    executionMode: input.executionMode ?? 'assisted',
+    // Clicking Start authorizes the bounded Nexus autopilot. Sensitive work
+    // still requires approval, and every effect remains behind PREVC/budgets.
+    executionMode: input.executionMode ?? 'autopilot',
     contextPolicy: input.contextPolicy ?? 'on-demand',
     intentVersion: input.intentVersion,
     budgets: defaultBudgetsForRisk(risk),
@@ -367,6 +425,281 @@ export function hasApprovedDispatchContract(
   if (!contract?.goal?.trim()) return false;
   if (isPrepareProjectPlaceholderGoal(contract.goal)) return false;
   return typeof contract.approvedAt === 'number' && contract.approvedAt > 0;
+}
+
+/**
+ * Dispatch authority belongs to one exact intent revision. An approval from a
+ * previous user message must never authorize the current mission state.
+ */
+export function hasCurrentApprovedDispatchContract(mission: {
+  readonly intentContract?: MissionIntentContract | null;
+  readonly intentVersion?: number | null;
+}): boolean {
+  const contract = mission.intentContract;
+  const intentVersion = mission.intentVersion ?? 0;
+  return (
+    intentVersion > 0 &&
+    contract?.intentVersion === intentVersion &&
+    hasApprovedDispatchContract(contract)
+  );
+}
+
+/**
+ * Approved contract for legacy/pet immediate-execution shells (forceLegacy /
+ * pet-studio). Gives the gate a real dispatch authorization without inventing
+ * a user-composed goal flow.
+ */
+export function synthesizeImmediateDispatchContract(input: {
+  readonly title: string;
+  readonly intentVersion?: number;
+  readonly now?: number;
+}): MissionIntentContract {
+  const now = input.now ?? Date.now();
+  const goal =
+    input.title.trim() ||
+    'Execução imediata autorizada (legado / perfil dedicado)';
+  const base = compileIntentContract({
+    goal,
+    source: 'automation',
+    intentVersion: Math.max(1, input.intentVersion ?? 1),
+    executionMode: 'autopilot',
+    contextPolicy: 'on-demand',
+    acceptanceCriteria: [
+      'Missão legada/pet despachada com orquestrador ativo',
+      'Workers e bootstrap permitidos sob PREVC e effect policy',
+    ],
+  });
+  return {
+    ...base,
+    approvedAt: now,
+    dispatchedAt: now,
+  };
+}
+
+/** Normalize tool names for deny-list comparison. */
+export function canonicalDeniedToolName(toolName: string): string {
+  return toolName.replace(/^nexus_/, '').toLowerCase();
+}
+
+/**
+ * Child may only tighten parent denials — never remove a parent deny.
+ * Returns the effective denied set for the child.
+ */
+export function attenuateDeniedTools(
+  parentDenied: readonly string[] | undefined,
+  childDenied: readonly string[] | undefined,
+): string[] {
+  const set = new Set<string>();
+  for (const tool of parentDenied ?? []) {
+    set.add(canonicalDeniedToolName(tool));
+  }
+  for (const tool of childDenied ?? []) {
+    set.add(canonicalDeniedToolName(tool));
+  }
+  return [...set].sort();
+}
+
+/**
+ * True when childDenied is a superset of parentDenied (child more or equally
+ * restrictive). False if child would permit a tool the parent denied.
+ */
+export function childRespectsParentDenials(
+  parentDenied: readonly string[] | undefined,
+  childDenied: readonly string[] | undefined,
+): boolean {
+  const parent = new Set(
+    (parentDenied ?? []).map(canonicalDeniedToolName),
+  );
+  const child = new Set((childDenied ?? []).map(canonicalDeniedToolName));
+  for (const tool of parent) {
+    if (!child.has(tool)) return false;
+  }
+  return true;
+}
+
+export function isToolDeniedByContract(
+  toolName: string,
+  contract: MissionIntentContract | null | undefined,
+): boolean {
+  const denied = contract?.deniedTools ?? [];
+  if (denied.length === 0) return false;
+  const canonical = canonicalDeniedToolName(toolName);
+  return denied.some((item) => canonicalDeniedToolName(item) === canonical);
+}
+
+export type BudgetGateResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly code: string; readonly error: string };
+
+/** Deny spawning another worker when maxWorkers is already met. */
+export function assertWorkerBudget(
+  contract: MissionIntentContract | null | undefined,
+  currentWorkerCount: number,
+): BudgetGateResult {
+  // No contract → no intent budget ceiling (legacy mid-migration rows).
+  // Enforcement applies only when an intent contract is present.
+  if (!contract) return { ok: true };
+  const max = contract.budgets.maxWorkers;
+  if (max <= 0) {
+    return {
+      ok: false,
+      code: 'budget_exhausted',
+      error: 'budget_exhausted: maxWorkers is 0 — no workers may spawn',
+    };
+  }
+  if (currentWorkerCount >= max) {
+    return {
+      ok: false,
+      code: 'budget_exhausted',
+      error: `budget_exhausted: maxWorkers=${max} already reached (${currentWorkerCount})`,
+    };
+  }
+  return { ok: true };
+}
+
+/** Deny further effectful work when maxSteps or executionTokens are spent. */
+export function assertStepAndTokenBudget(
+  contract: MissionIntentContract | null | undefined,
+): BudgetGateResult {
+  if (!contract) return { ok: true };
+  const maxSteps = contract.budgets.maxSteps ?? 500;
+  const spentSteps = contract.spentSteps ?? 0;
+  if (spentSteps >= maxSteps) {
+    return {
+      ok: false,
+      code: 'budget_exhausted',
+      error: `budget_exhausted: maxSteps=${maxSteps} reached`,
+    };
+  }
+  const maxTokens = contract.budgets.executionTokens;
+  const spentTokens = contract.spentTokens ?? 0;
+  if (maxTokens > 0 && spentTokens >= maxTokens) {
+    return {
+      ok: false,
+      code: 'budget_exhausted',
+      error: `budget_exhausted: executionTokens=${maxTokens} reached`,
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * Conservative token charge per effectful tool (ledger hook — not a provider
+ * bill). Used so executionTokens ceilings have teeth without requiring a
+ * full usage telemetry pipeline.
+ */
+export function estimateEffectfulToolTokens(toolName: string): number {
+  const canonical = toolName.replace(/^nexus_/, '').toLowerCase();
+  if (
+    canonical.includes('context_doctor') ||
+    canonical.includes('code_map') ||
+    canonical.includes('draft')
+  ) {
+    return 400;
+  }
+  if (
+    canonical.includes('pane_spawn') ||
+    canonical.includes('agent_invoke') ||
+    canonical.includes('worktree')
+  ) {
+    return 200;
+  }
+  if (canonical.includes('handoff')) return 50;
+  return 100;
+}
+
+/** Apply one authorized effectful tool to contract spend counters. */
+export function applyEffectfulSpend(
+  contract: MissionIntentContract,
+  toolName: string,
+): MissionIntentContract {
+  const tokenDelta = estimateEffectfulToolTokens(toolName);
+  return {
+    ...contract,
+    spentSteps: (contract.spentSteps ?? 0) + 1,
+    spentTokens: (contract.spentTokens ?? 0) + tokenDelta,
+    acceptanceCriteria: [...contract.acceptanceCriteria],
+    budgets: { ...contract.budgets },
+    deniedTools: contract.deniedTools ? [...contract.deniedTools] : undefined,
+  };
+}
+
+/**
+ * Pure spawn-side policy: maxWorkers + parent deny attenuation on allowlist.
+ */
+export function applyWorkerSpawnPolicy(input: {
+  readonly contract: MissionIntentContract | null | undefined;
+  readonly currentWorkerCount: number;
+  readonly allowedTools: readonly string[] | null | undefined;
+}): BudgetGateResult & { readonly allowedTools?: string[] } {
+  const budget = assertWorkerBudget(input.contract, input.currentWorkerCount);
+  if (!budget.ok) return budget;
+  const denied = input.contract?.deniedTools;
+  if (!denied?.length || !input.allowedTools?.length) {
+    return { ok: true };
+  }
+  const effectiveDenied = new Set(attenuateDeniedTools(denied, []));
+  return {
+    ok: true,
+    allowedTools: input.allowedTools.filter(
+      (tool) => !effectiveDenied.has(canonicalDeniedToolName(tool)),
+    ),
+  };
+}
+
+/**
+ * Handoff submit is allowed only for authenticated mission-bound agents.
+ * System recovery uses a reserved fromAgent and is checked separately.
+ */
+export function canSubmitMissionHandoff(input: {
+  readonly role: string | undefined | null;
+  readonly missionId: string | undefined | null;
+  readonly sessionId: string | undefined | null;
+  readonly intentState: MissionIntentState | undefined | null;
+}): BudgetGateResult {
+  if (!input.missionId) {
+    return {
+      ok: false,
+      code: 'handoff_origin',
+      error: 'handoff_origin: mission binding required',
+    };
+  }
+  if (!input.sessionId) {
+    return {
+      ok: false,
+      code: 'handoff_origin',
+      error: 'handoff_origin: session binding required',
+    };
+  }
+  if (input.role !== 'worker' && input.role !== 'orchestrator') {
+    return {
+      ok: false,
+      code: 'handoff_origin',
+      error: 'handoff_origin: only worker/orchestrator roles may submit handoffs',
+    };
+  }
+  // Pre-dispatch: no agent handoffs (no work authorized).
+  if (
+    input.intentState &&
+    input.intentState !== 'legacy' &&
+    !canDispatchWorkers(input.intentState) &&
+    input.intentState !== 'blocked_technical'
+  ) {
+    return {
+      ok: false,
+      code: 'dispatch_required',
+      error: 'dispatch_required: handoffs only after mission dispatch',
+    };
+  }
+  return { ok: true };
+}
+
+/** Idempotency key for system recovery handoffs (stage-scoped). */
+export function recoveryHandoffIdempotencyKey(
+  missionId: string,
+  stage: 1 | 2,
+): string {
+  return `recovery:${missionId}:stage_${stage}`;
 }
 
 export type IntentMappedMissionStatus =

@@ -1,3 +1,7 @@
+import {
+  canSubmitMissionHandoff,
+  resolveEffectiveIntentState,
+} from '../../shared/mission-intent';
 import { handoffStatusSchema } from '../../shared/orch-types';
 import { markHandoffSubmitted } from './gate';
 import { onHandoffSubmitted } from './idle-delivery';
@@ -28,6 +32,35 @@ const handoffSubmitTool: McpToolDef = {
     required: ['status', 'summary'],
   },
   handler: async (args, ctx) => {
+    let intentState: ReturnType<typeof resolveEffectiveIntentState> | undefined;
+    try {
+      const suiteForIntent = getProjectDomainStores(ctx.scope);
+      const mission =
+        ctx.missionId && suiteForIntent.missions
+          ? suiteForIntent.missions.get(ctx.missionId)
+          : null;
+      if (mission) {
+        intentState = resolveEffectiveIntentState({
+          mission,
+          taskCount: suiteForIntent.tasks?.list(mission.id).length ?? 0,
+          workerPaneCount:
+            suiteForIntent.missionPanes
+              ?.list(mission.id)
+              .filter((p) => p.role === 'worker').length ?? 0,
+        });
+      }
+    } catch {
+      // Store not fully wired (tests / early boot) — origin still requires role+mission+session.
+    }
+    const origin = canSubmitMissionHandoff({
+      role: ctx.role,
+      missionId: ctx.missionId,
+      sessionId: ctx.sessionId,
+      intentState,
+    });
+    if (!origin.ok) {
+      throw new Error(origin.error);
+    }
     const summary = requireStr(args, 'summary').trim();
     if (summary.length < 20 || /^<.*>$/.test(summary)) {
       throw new Error(

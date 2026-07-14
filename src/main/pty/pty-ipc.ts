@@ -62,6 +62,8 @@ import {
   listAvailableShells,
   resolveConfiguredShell,
 } from "../persistence/shell-catalog";
+import { getCommandBlockTracker } from "../terminal/command-block-tracker";
+import { registerCommandBlockScope } from "../terminal/command-block-scope-registry";
 
 /**
  * Registers the PTY IPC surface. Every handler validates its payload with zod
@@ -191,6 +193,15 @@ export function registerPtyIpc(): void {
             allowedSkills: persistedPane.allowedSkills,
           });
         }
+        registerCommandBlockScope(sessionId, authority.scope);
+        getCommandBlockTracker()?.bindSession(sessionId, {
+          paneId: req.paneId ?? sessionId,
+          workspaceId: authority.scope.checkoutId,
+          shell: adapter.id,
+          cwd: authority.cwd,
+          projectRoot: authority.scope.rootRealPath,
+          missionId: persistedPane?.missionId,
+        });
         return {
           ok: true,
           sessionId,
@@ -217,6 +228,14 @@ export function registerPtyIpc(): void {
         { scope, cwd, shell },
       );
       attachSessionScope(sessionId, scope);
+      registerCommandBlockScope(sessionId, scope);
+      getCommandBlockTracker()?.bindSession(sessionId, {
+        paneId: req.paneId ?? sessionId,
+        workspaceId: scope.checkoutId,
+        shell,
+        cwd,
+        projectRoot: scope.rootRealPath,
+      });
       return { ok: true, sessionId };
     } catch (err) {
       const message =

@@ -19,13 +19,13 @@ const mission: Mission = {
   updatedAt: 1_000,
 };
 
-function recovery(createdAt: number): Handoff {
+function recovery(createdAt: number, summary = 'recover'): Handoff {
   return {
     id: `handoff-${createdAt}`,
     missionId: mission.id,
     status: 'stalled',
     claimTrust: 'untrusted',
-    summary: 'recover',
+    summary,
     artifacts: [],
     evidenceIds: [],
     evidenceTrust: 'unverified',
@@ -42,6 +42,7 @@ const dispatchedEmpty: Mission = {
   description: 'Implementar login com OAuth',
   intentState: 'dispatched',
   intentVersion: 1,
+  orchestratorSessionId: 'orch-session-1',
   intentContract: {
     version: 1,
     source: 'typed',
@@ -51,7 +52,14 @@ const dispatchedEmpty: Mission = {
     executionMode: 'assisted',
     contextPolicy: 'on-demand',
     intentVersion: 1,
-    budgets: { planningTokens: 1200, executionTokens: 8000, maxWorkers: 2 },
+    approvedAt: 1_000,
+    dispatchedAt: 1_000,
+    budgets: {
+      planningTokens: 1200,
+      executionTokens: 8000,
+      maxWorkers: 2,
+      maxSteps: 200,
+    },
   },
 };
 
@@ -67,6 +75,7 @@ describe('delegation supervisor policy', () => {
       workerPanes: 0,
       tasks: 0,
       recoveries: [] as Handoff[],
+      hasBoundOrchestrator: false,
     };
     expect(isDelegationSupervisable(awaiting)).toBe(false);
     expect(
@@ -79,11 +88,12 @@ describe('delegation supervisor policy', () => {
     expect(
       delegationRecoveryStage(
         {
-          mission: { ...mission, status: 'running' },
+          mission: { ...mission, status: 'running', description: 'stale notes' },
           expectedWorkers: 3,
           workerPanes: 0,
           tasks: 0,
           recoveries: [],
+          hasBoundOrchestrator: true,
         },
         mission.createdAt + DELEGATION_SLA_MS,
       ),
@@ -91,6 +101,7 @@ describe('delegation supervisor policy', () => {
   });
 
   it('flags a dispatched mission that never creates a task or worker', () => {
+    const dispatchAt = dispatchedEmpty.intentContract!.dispatchedAt!;
     expect(
       delegationRecoveryStage(
         {
@@ -99,10 +110,64 @@ describe('delegation supervisor policy', () => {
           workerPanes: 0,
           tasks: 0,
           recoveries: [],
+          hasBoundOrchestrator: true,
         },
-        dispatchedEmpty.createdAt + DELEGATION_SLA_MS,
+        dispatchAt + DELEGATION_SLA_MS,
       ),
     ).toBe(1);
+  });
+
+  it('does not fire stage-1 immediately after long arm + fresh dispatch', () => {
+    // Mission armed hours ago; dispatch authorized just now.
+    const armedLongAgo: Mission = {
+      ...dispatchedEmpty,
+      createdAt: 1,
+      updatedAt: 1,
+      intentContract: {
+        ...dispatchedEmpty.intentContract!,
+        approvedAt: 1_000_000,
+        dispatchedAt: 1_000_000,
+      },
+    };
+    expect(
+      delegationRecoveryStage(
+        {
+          mission: armedLongAgo,
+          expectedWorkers: 3,
+          workerPanes: 0,
+          tasks: 0,
+          recoveries: [],
+          hasBoundOrchestrator: true,
+        },
+        1_000_000 + DELEGATION_SLA_MS - 1,
+      ),
+    ).toBe(0);
+    expect(
+      delegationRecoveryStage(
+        {
+          mission: armedLongAgo,
+          expectedWorkers: 3,
+          workerPanes: 0,
+          tasks: 0,
+          recoveries: [],
+          hasBoundOrchestrator: true,
+        },
+        1_000_000 + DELEGATION_SLA_MS,
+      ),
+    ).toBe(1);
+  });
+
+  it('is not supervisable without a bound orchestrator', () => {
+    expect(
+      isDelegationSupervisable({
+        mission: dispatchedEmpty,
+        expectedWorkers: 3,
+        workerPanes: 0,
+        tasks: 0,
+        recoveries: [],
+        hasBoundOrchestrator: false,
+      }),
+    ).toBe(false);
   });
 
   it('stops observing as soon as real delegation progress exists', () => {
@@ -114,8 +179,9 @@ describe('delegation supervisor policy', () => {
           workerPanes: 0,
           tasks: 1,
           recoveries: [],
+          hasBoundOrchestrator: true,
         },
-        dispatchedEmpty.createdAt + DELEGATION_SLA_MS * 2,
+        dispatchedEmpty.intentContract!.dispatchedAt! + DELEGATION_SLA_MS * 2,
       ),
     ).toBe(0);
   });
@@ -130,29 +196,39 @@ describe('delegation supervisor policy', () => {
           tasks: 0,
           recoveries: [],
           orchestratorState: 'busy',
+          hasBoundOrchestrator: true,
         },
-        dispatchedEmpty.createdAt + DELEGATION_SLA_MS * 10,
+        dispatchedEmpty.intentContract!.dispatchedAt! + DELEGATION_SLA_MS * 10,
       ),
     ).toBe(0);
   });
 
   it('retries once and never loops', () => {
-    const first = recovery(dispatchedEmpty.createdAt + DELEGATION_SLA_MS);
+    const dispatchAt = dispatchedEmpty.intentContract!.dispatchedAt!;
+    const first = recovery(
+      dispatchAt + DELEGATION_SLA_MS,
+      `recover [recovery:${dispatchedEmpty.id}:stage_1]`,
+    );
     const atRetry = first.createdAt + DELEGATION_RETRY_MS;
     const progress = {
       mission: dispatchedEmpty,
       expectedWorkers: 3,
       workerPanes: 0,
       tasks: 0,
+      hasBoundOrchestrator: true as const,
     };
     expect(
       delegationRecoveryStage({ ...progress, recoveries: [first] }, atRetry),
     ).toBe(2);
+    const second = recovery(
+      atRetry,
+      `final [recovery:${dispatchedEmpty.id}:stage_2]`,
+    );
     expect(
       delegationRecoveryStage(
         {
           ...progress,
-          recoveries: [first, recovery(atRetry)],
+          recoveries: [first, second],
         },
         atRetry + DELEGATION_RETRY_MS * 10,
       ),
@@ -168,6 +244,7 @@ describe('delegation supervisor policy', () => {
           workerPanes: 0,
           tasks: 0,
           recoveries: [],
+          hasBoundOrchestrator: true,
         },
         Number.MAX_SAFE_INTEGER,
       ),
@@ -180,6 +257,7 @@ describe('delegation supervisor policy', () => {
           workerPanes: 0,
           tasks: 0,
           recoveries: [],
+          hasBoundOrchestrator: true,
         },
         Number.MAX_SAFE_INTEGER,
       ),
@@ -200,6 +278,7 @@ describe('delegation supervisor policy', () => {
             workerPanes: 0,
             tasks: 0,
             recoveries: [],
+            hasBoundOrchestrator: true,
           },
           Number.MAX_SAFE_INTEGER,
         ),

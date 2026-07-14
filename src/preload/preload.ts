@@ -699,13 +699,16 @@ const api: NexusApi = {
       missionId: string;
       goal: string;
       source?: 'typed' | 'voice' | 'imported-issue' | 'automation';
-      contextPolicy?: 'none' | 'minimal' | 'on-demand' | 'prepare-project';
+      /** prepare-project is NOT accepted — use prepareMissionProject. */
+      contextPolicy?: 'none' | 'minimal' | 'on-demand';
       acceptanceCriteria?: string[];
     }) => ipcRenderer.invoke(ORCH_CHANNELS.missionSubmitIntent, input),
     approveMissionIntent: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionApproveIntent, input),
     prepareMissionProject: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPrepareProject, input),
+    getMissionPromptQueue: (input: { missionId: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionPromptQueue, input),
     bindMissionOrchestrator: (input: {
       missionId: string;
       title: string;

@@ -578,20 +578,58 @@ export async function executeJarvisAction(
       toolResult = { tool: action.type, ok: true, summary: 'squad confirmado e iniciando' };
     }
   } else if (action.type === 'new_agentic_mission') {
-    useMissionWizardStore.getState().openForAgentic(action.intent);
-    sayText =
-      sayText.trim() ||
-      (action.intent
-        ? 'Abrindo a missão no modo agêntico com o objetivo preenchido.'
-        : 'Abrindo a missão no modo agêntico.');
-    toolResult = {
-      tool: action.type,
-      ok: true,
-      summary: action.intent
-        ? 'wizard de missão aberto no modo agêntico com objetivo'
-        : 'wizard de missão aberto no modo agêntico',
-      ...(action.intent ? { output: { intent: action.intent } } : {}),
-    };
+    const wizard = useMissionWizardStore.getState();
+    const voiceGoal = action.intent?.trim();
+    // Intent-first: if a squad is already armed, submit the goal via the same
+    // main-process intent path (prompt queue + intentVersion preemption).
+    if (wizard.armedMissionId && voiceGoal) {
+      try {
+        checkpoint(control);
+        const planned = await window.nexus.orch.submitMissionIntent({
+          missionId: wizard.armedMissionId,
+          goal: voiceGoal,
+          source: 'voice',
+        });
+        markEffect(control);
+        sayText =
+          sayText.trim() ||
+          `Objetivo registrado para a missão armada: ${voiceGoal.slice(0, 80)}.`;
+        toolResult = {
+          tool: action.type,
+          ok: true,
+          summary: 'objetivo de voz enviado à missão armada (intent queue)',
+          output: {
+            missionId: planned.id,
+            intentState: planned.intentState,
+            intentVersion: planned.intentVersion,
+          },
+        };
+      } catch (cause) {
+        const message =
+          cause instanceof Error ? cause.message : 'falha ao registrar objetivo';
+        sayText = `Não consegui registrar o objetivo: ${message}`;
+        toolResult = {
+          tool: action.type,
+          ok: false,
+          summary: message,
+        };
+      }
+    } else {
+      useMissionWizardStore.getState().openForAgentic(action.intent);
+      sayText =
+        sayText.trim() ||
+        (action.intent
+          ? 'Abrindo a missão no modo agêntico com o objetivo preenchido.'
+          : 'Abrindo a missão no modo agêntico.');
+      toolResult = {
+        tool: action.type,
+        ok: true,
+        summary: action.intent
+          ? 'wizard de missão aberto no modo agêntico com objetivo'
+          : 'wizard de missão aberto no modo agêntico',
+        ...(action.intent ? { output: { intent: action.intent } } : {}),
+      };
+    }
   } else if (action.type === 'new_mission') {
     useMissionWizardStore.getState().openForMission();
     toolResult = { tool: action.type, ok: true, summary: 'wizard de missão aberto' };

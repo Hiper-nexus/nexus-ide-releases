@@ -1,0 +1,305 @@
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import {
+  missionEventAppendInputSchema,
+  missionEventCursorSchema,
+  missionEventReplayQuerySchema,
+  missionEventSchema,
+  type MissionEvent,
+  type MissionEventAppendInput,
+  type MissionEventCursor,
+  type MissionEventReplayQuery,
+} from '../../shared/mission-events';
+import {
+  ScopedStoreBinding,
+  ScopedStoreCorruptionError,
+  type ScopedStoreOptions,
+} from './scoped-store';
+import type { ProjectExecutionScope } from '../../shared/types';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+
+/**
+ * Append-only mission event journal with consumer cursors and ACK.
+ * Does not replace event_ledger hash chain, budgets, or effectMayHaveCommitted.
+ */
+
+const rowSchema = z
+  .object({
+    sequence: z.number().int().positive(),
+    id: z.string().min(1).max(128),
+    mission_id: z.string().min(1).max(128),
+    run_id: z.string().min(1).max(128),
+    parent_run_id: z.string().min(1).max(128).nullable(),
+    event_type: z.string().min(1).max(64),
+    payload_json: z.string(),
+    idempotency_key: z.string().min(8).max(128),
+    occurred_at: z.number().int().nonnegative(),
+    origin: z.string().min(1).max(32),
+    delivery_status: z.string().min(1).max(32),
+  })
+  .strict();
+
+const cursorRowSchema = z
+  .object({
+    consumer_id: z.string().min(1).max(128),
+    mission_id: z.string().min(1).max(128),
+    last_sequence: z.number().int().nonnegative(),
+    updated_at: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const MAX_PAYLOAD_BYTES = 64 * 1024;
+
+export class MissionEventJournal {
+  readonly #binding: ScopedStoreBinding;
+
+  constructor(
+    runtimeManager: ProjectRuntimeManager,
+    scope: ProjectExecutionScope,
+    options: ScopedStoreOptions = {},
+  ) {
+    this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
+  }
+
+  /**
+   * Transactional append with idempotency. Returns existing event when key
+   * was already written (dedupe), never double-increments sequence.
+   */
+  append(raw: MissionEventAppendInput): MissionEvent {
+    const input = missionEventAppendInputSchema.parse(raw);
+    const payloadJson = JSON.stringify(input.payload ?? {});
+    if (Buffer.byteLength(payloadJson, 'utf8') > MAX_PAYLOAD_BYTES) {
+      throw new Error('mission event payload exceeds size limit');
+    }
+
+    const db = this.#binding.writeDatabase();
+    const existing = db
+      .prepare(
+        `SELECT * FROM mission_events
+         WHERE mission_id = ? AND idempotency_key = ?`,
+      )
+      .get(input.missionId, input.idempotencyKey);
+    if (existing) {
+      return rowToEvent(existing);
+    }
+
+    const occurredAt = input.occurredAt ?? this.#binding.now();
+    const insert = db.transaction(() => {
+      const next = db
+        .prepare(
+          `SELECT COALESCE(MAX(sequence), 0) + 1 AS next_seq
+           FROM mission_events WHERE mission_id = ?`,
+        )
+        .get(input.missionId) as { next_seq: number };
+
+      const id = this.#binding.makeId('mevt');
+      db.prepare(
+        `INSERT INTO mission_events (
+           sequence, id, mission_id, run_id, parent_run_id, event_type,
+           payload_json, idempotency_key, occurred_at, origin, delivery_status
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      ).run(
+        next.next_seq,
+        id,
+        input.missionId,
+        input.runId,
+        input.parentRunId ?? null,
+        input.type,
+        payloadJson,
+        input.idempotencyKey,
+        occurredAt,
+        input.origin,
+      );
+
+      return db
+        .prepare(
+          `SELECT * FROM mission_events WHERE mission_id = ? AND sequence = ?`,
+        )
+        .get(input.missionId, next.next_seq);
+    });
+
+    return rowToEvent(insert());
+  }
+
+  replay(raw: MissionEventReplayQuery): readonly MissionEvent[] {
+    const query = missionEventReplayQuerySchema.parse(raw);
+    const db = this.#binding.readDatabase();
+    const rows = query.runId
+      ? db
+          .prepare(
+            `SELECT * FROM mission_events
+             WHERE mission_id = ? AND sequence > ? AND run_id = ?
+             ORDER BY sequence ASC LIMIT ?`,
+          )
+          .all(query.missionId, query.afterSequence, query.runId, query.limit)
+      : db
+          .prepare(
+            `SELECT * FROM mission_events
+             WHERE mission_id = ? AND sequence > ?
+             ORDER BY sequence ASC LIMIT ?`,
+          )
+          .all(query.missionId, query.afterSequence, query.limit);
+
+    return rows.map((row) => rowToEvent(row));
+  }
+
+  getCursor(consumerId: string, missionId: string): MissionEventCursor {
+    const db = this.#binding.readDatabase();
+    const row = db
+      .prepare(
+        `SELECT * FROM mission_event_cursors
+         WHERE consumer_id = ? AND mission_id = ?`,
+      )
+      .get(consumerId, missionId);
+    if (!row) {
+      return missionEventCursorSchema.parse({
+        consumerId,
+        missionId,
+        lastSequence: 0,
+        updatedAt: 0,
+      });
+    }
+    return cursorRowToCursor(row);
+  }
+
+  /**
+   * Advance cursor only forward (monotonic). ACK marks delivered rows acked.
+   */
+  ack(
+    consumerId: string,
+    missionId: string,
+    upToSequence: number,
+  ): MissionEventCursor {
+    if (!Number.isSafeInteger(upToSequence) || upToSequence < 0) {
+      throw new Error('invalid ack sequence');
+    }
+    const db = this.#binding.writeDatabase();
+    const now = this.#binding.now();
+
+    const apply = db.transaction(() => {
+      const current = this.getCursor(consumerId, missionId);
+      const nextSeq = Math.max(current.lastSequence, upToSequence);
+
+      db.prepare(
+        `INSERT INTO mission_event_cursors
+           (consumer_id, mission_id, last_sequence, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(consumer_id, mission_id) DO UPDATE SET
+           last_sequence = excluded.last_sequence,
+           updated_at = excluded.updated_at
+         WHERE excluded.last_sequence >= mission_event_cursors.last_sequence`,
+      ).run(consumerId, missionId, nextSeq, now);
+
+      if (upToSequence > 0) {
+        db.prepare(
+          `UPDATE mission_events
+           SET delivery_status = 'acked'
+           WHERE mission_id = ?
+             AND sequence <= ?
+             AND delivery_status IN ('pending', 'delivered')`,
+        ).run(missionId, upToSequence);
+      }
+
+      return this.getCursor(consumerId, missionId);
+    });
+
+    return apply();
+  }
+
+  /** Mark pending events as delivered up to sequence (without ACK). */
+  markDelivered(missionId: string, upToSequence: number): number {
+    const db = this.#binding.writeDatabase();
+    const info = db
+      .prepare(
+        `UPDATE mission_events
+         SET delivery_status = 'delivered'
+         WHERE mission_id = ?
+           AND sequence <= ?
+           AND delivery_status = 'pending'`,
+      )
+      .run(missionId, upToSequence) as { changes?: number };
+    return info.changes ?? 0;
+  }
+
+  /** UI projection: last N events newest-first. */
+  projectRecent(missionId: string, limit = 50): readonly MissionEvent[] {
+    const capped = Math.min(Math.max(1, limit), 200);
+    const db = this.#binding.readDatabase();
+    const rows = db
+      .prepare(
+        `SELECT * FROM mission_events
+         WHERE mission_id = ?
+         ORDER BY sequence DESC LIMIT ?`,
+      )
+      .all(missionId, capped);
+    return rows.map((row) => rowToEvent(row)).reverse();
+  }
+}
+
+function rowToEvent(raw: unknown): MissionEvent {
+  let row: z.infer<typeof rowSchema>;
+  try {
+    row = rowSchema.parse(raw);
+  } catch (error) {
+    throw new ScopedStoreCorruptionError('mission event', { cause: error });
+  }
+  let payload: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(row.payload_json);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      payload = parsed as Record<string, unknown>;
+    }
+  } catch (error) {
+    throw new ScopedStoreCorruptionError('mission event payload', {
+      cause: error,
+    });
+  }
+
+  return missionEventSchema.parse({
+    sequence: row.sequence,
+    id: row.id,
+    missionId: row.mission_id,
+    runId: row.run_id,
+    parentRunId: row.parent_run_id ?? undefined,
+    type: row.event_type,
+    payload,
+    idempotencyKey: row.idempotency_key,
+    occurredAt: row.occurred_at,
+    origin: row.origin,
+    deliveryStatus: row.delivery_status,
+  });
+}
+
+function cursorRowToCursor(raw: unknown): MissionEventCursor {
+  let row: z.infer<typeof cursorRowSchema>;
+  try {
+    row = cursorRowSchema.parse(raw);
+  } catch (error) {
+    throw new ScopedStoreCorruptionError('mission event cursor', {
+      cause: error,
+    });
+  }
+  return missionEventCursorSchema.parse({
+    consumerId: row.consumer_id,
+    missionId: row.mission_id,
+    lastSequence: row.last_sequence,
+    updatedAt: row.updated_at,
+  });
+}
+
+/** Deterministic fixture helper for tests. */
+export function createMissionEventFixture(
+  overrides: Partial<MissionEventAppendInput> = {},
+): MissionEventAppendInput {
+  return missionEventAppendInputSchema.parse({
+    missionId: overrides.missionId ?? 'mission-fixture',
+    runId: overrides.runId ?? 'run-fixture',
+    parentRunId: overrides.parentRunId,
+    type: overrides.type ?? 'driver.tick',
+    payload: overrides.payload ?? { n: 1 },
+    idempotencyKey:
+      overrides.idempotencyKey ?? `idem-${randomUUID().slice(0, 12)}`,
+    origin: overrides.origin ?? 'system',
+    occurredAt: overrides.occurredAt,
+  });
+}

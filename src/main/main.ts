@@ -128,6 +128,12 @@ import {
 } from "./pty/pty-manager";
 import { shutdownPtyHost } from "./pty/pty-host-client";
 import {
+  ensureCommandBlockTracking,
+  setCommandBlockPersistHook,
+} from "./terminal/command-block-tracker";
+import { createCommandBlockPersister } from "./terminal/command-block-persist";
+import { configureMissionEventEmit } from "./orch/mission-event-emit";
+import {
   initUsageTelemetry,
   shutdownUsageTelemetry,
 } from "./usage/usage-service";
@@ -359,6 +365,16 @@ function bootstrap(): void {
     },
   });
   registerPtyIpc();
+  // Semantic CommandBlock layer (OSC 133). Fail-closed behind feature flag;
+  // never mutates the PTY byte stream — lateral tap only.
+  // Persist finished blocks into project runtime SQLite when flag + scope ok.
+  setCommandBlockPersistHook(
+    createCommandBlockPersister({
+      runtimeManager: projectRuntimeManager,
+    }),
+  );
+  ensureCommandBlockTracking();
+  configureMissionEventEmit(projectRuntimeManager);
   registerBrowserIpc(projectRuntimeManager);
   registerDesignWritebackIpc({ allowSourceMutation: !app.isPackaged });
   registerPerfIpc();

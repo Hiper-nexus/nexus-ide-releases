@@ -643,6 +643,89 @@ CREATE INDEX idx_missions_intent_state
   ON missions(intent_state, status, updated_at);
 `;
 
+/**
+ * Semantic terminal command blocks + mission event journal (consumer cursor/ACK).
+ * Complements event_ledger (hash chain) without replacing budgets or receipts.
+ * Append-only tables; never edit past migrations.
+ */
+const MISSION_EVENTS_COMMAND_BLOCKS_SCHEMA = `
+CREATE TABLE mission_events (
+  sequence         INTEGER NOT NULL CHECK (sequence > 0),
+  id               TEXT NOT NULL UNIQUE,
+  mission_id       TEXT NOT NULL,
+  run_id           TEXT NOT NULL,
+  parent_run_id    TEXT,
+  event_type       TEXT NOT NULL,
+  payload_json     TEXT NOT NULL DEFAULT '{}',
+  idempotency_key  TEXT NOT NULL,
+  occurred_at      INTEGER NOT NULL CHECK (occurred_at >= 0),
+  origin           TEXT NOT NULL,
+  delivery_status  TEXT NOT NULL DEFAULT 'pending'
+    CHECK (delivery_status IN ('pending', 'delivered', 'acked', 'failed')),
+  PRIMARY KEY (mission_id, sequence),
+  UNIQUE (mission_id, idempotency_key),
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE mission_event_cursors (
+  consumer_id    TEXT NOT NULL,
+  mission_id     TEXT NOT NULL,
+  last_sequence  INTEGER NOT NULL DEFAULT 0 CHECK (last_sequence >= 0),
+  updated_at     INTEGER NOT NULL CHECK (updated_at >= 0),
+  PRIMARY KEY (consumer_id, mission_id),
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE command_blocks (
+  id                TEXT PRIMARY KEY,
+  session_id        TEXT NOT NULL,
+  pane_id           TEXT NOT NULL,
+  workspace_id      TEXT NOT NULL,
+  mission_id        TEXT,
+  command           TEXT NOT NULL,
+  cwd               TEXT NOT NULL,
+  project_root      TEXT,
+  shell             TEXT NOT NULL,
+  git_branch        TEXT,
+  started_at        INTEGER NOT NULL CHECK (started_at >= 0),
+  ended_at          INTEGER CHECK (ended_at IS NULL OR ended_at >= 0),
+  duration_ms       INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
+  exit_code         INTEGER,
+  status            TEXT NOT NULL
+    CHECK (status IN ('running', 'success', 'failed', 'cancelled', 'unknown')),
+  output_start_seq  INTEGER CHECK (output_start_seq IS NULL OR output_start_seq >= 0),
+  output_end_seq    INTEGER CHECK (output_end_seq IS NULL OR output_end_seq >= 0),
+  redacted          INTEGER NOT NULL DEFAULT 0 CHECK (redacted IN (0, 1)),
+  denylisted        INTEGER NOT NULL DEFAULT 0 CHECK (denylisted IN (0, 1)),
+  secret_hits       INTEGER NOT NULL DEFAULT 0 CHECK (secret_hits >= 0),
+  idempotency_key   TEXT NOT NULL UNIQUE,
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE SET NULL
+);
+
+CREATE INDEX idx_mission_events_run_seq
+  ON mission_events(mission_id, run_id, sequence);
+CREATE INDEX idx_mission_events_delivery
+  ON mission_events(mission_id, delivery_status, sequence);
+CREATE INDEX idx_command_blocks_project_started
+  ON command_blocks(project_root, started_at DESC);
+CREATE INDEX idx_command_blocks_cwd_started
+  ON command_blocks(cwd, started_at DESC);
+CREATE INDEX idx_command_blocks_branch_started
+  ON command_blocks(git_branch, started_at DESC);
+CREATE INDEX idx_command_blocks_session
+  ON command_blocks(session_id, started_at DESC);
+
+-- delivery_status remains mutable for ACK; core columns are append-only.
+-- Deletes only via mission CASCADE (no direct app delete path).
+CREATE TRIGGER mission_events_immutable_update
+BEFORE UPDATE OF sequence, id, mission_id, run_id, parent_run_id, event_type,
+  payload_json, idempotency_key, occurred_at, origin
+ON mission_events
+BEGIN
+  SELECT RAISE(ABORT, 'mission events are append-only');
+END;
+`;
+
 /** Durable Ralph-loop budget plus immutable PREVC step receipts. */
 const MISSION_DRIVER_RUNTIME_SCHEMA = `
 CREATE TABLE mission_drive_state (
@@ -765,5 +848,11 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       schemaVersion: 13,
       appVersion: '0.15.5',
       sql: MISSION_INTENT_RUNTIME_SCHEMA,
+    }),
+    createProjectMigration({
+      id: '014-mission-events-command-blocks',
+      schemaVersion: 14,
+      appVersion: '0.15.5',
+      sql: MISSION_EVENTS_COMMAND_BLOCKS_SCHEMA,
     }),
   ]);

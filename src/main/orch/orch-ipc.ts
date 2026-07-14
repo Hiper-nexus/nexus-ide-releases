@@ -35,6 +35,7 @@ import {
   loadEnrichedCatalog,
   runHarnessEnrichWithBrain,
 } from "./harness-enrich";
+import { peekMissionPromptQueue } from "./mission-prompt-queue-registry";
 import {
   initPaneRegistry,
   registerOrchRenderer,
@@ -393,9 +394,8 @@ export function registerOrchIpc(): void {
     source: z
       .enum(["typed", "voice", "imported-issue", "automation"])
       .optional(),
-    contextPolicy: z
-      .enum(["none", "minimal", "on-demand", "prepare-project"])
-      .optional(),
+    // prepare-project is intentionally excluded — only prepareMissionProject IPC.
+    contextPolicy: z.enum(["none", "minimal", "on-demand"]).optional(),
     acceptanceCriteria: z.array(z.string().min(1).max(2_048)).max(32).optional(),
   });
   ipcMain.handle(ORCH_CHANNELS.missionSubmitIntent, (event, raw) => {
@@ -429,6 +429,40 @@ export function registerOrchIpc(): void {
       event.sender,
       parsed.data,
     );
+  });
+
+  const missionPromptQueueSchema = z.object({
+    missionId: z.string().min(1).max(128),
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionPromptQueue, (_event, raw) => {
+    const parsed = missionPromptQueueSchema.safeParse(raw);
+    if (!parsed.success) throw new Error("invalid mission prompt queue payload");
+    const snap = peekMissionPromptQueue(parsed.data.missionId);
+    return {
+      executing: snap.executing
+        ? {
+            id: snap.executing.id,
+            kind: snap.executing.kind,
+            status: snap.executing.status,
+            intentVersion: snap.executing.intentVersion,
+            body: snap.executing.body.slice(0, 256),
+          }
+        : null,
+      queued: snap.queued.map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        status: item.status,
+        intentVersion: item.intentVersion,
+        body: item.body.slice(0, 256),
+      })),
+      cancelled: snap.cancelled.slice(-8).map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        status: item.status,
+        intentVersion: item.intentVersion,
+        body: item.body.slice(0, 256),
+      })),
+    };
   });
 
   const missionBindOrchestratorSchema = missionCreateSchema.extend({

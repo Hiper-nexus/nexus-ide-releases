@@ -34,7 +34,12 @@ const dispatched: Mission = {
     contextPolicy: 'on-demand',
     intentVersion: 1,
     approvedAt: 100,
-    budgets: { planningTokens: 1200, executionTokens: 8000, maxWorkers: 2 },
+    budgets: {
+      planningTokens: 1200,
+      executionTokens: 8000,
+      maxWorkers: 2,
+      maxSteps: 200,
+    },
   },
 };
 
@@ -75,6 +80,8 @@ describe('mission intent gate', () => {
   it('allows prepare-project warm tools only while awaiting goal', () => {
     const prepare: Mission = {
       ...awaitingGoal,
+      // Must match contract.intentVersion for current-contract checks.
+      intentVersion: 1,
       intentContract: {
         version: 1,
         source: 'typed',
@@ -84,7 +91,12 @@ describe('mission intent gate', () => {
         executionMode: 'manual',
         contextPolicy: 'prepare-project',
         intentVersion: 1,
-        budgets: { planningTokens: 1200, executionTokens: 0, maxWorkers: 0 },
+        budgets: {
+          planningTokens: 1200,
+          executionTokens: 0,
+          maxWorkers: 0,
+          maxSteps: 10,
+        },
       },
     };
     expect(
@@ -128,5 +140,105 @@ describe('mission intent gate', () => {
         { status: 'blocked' },
       ).ok,
     ).toBe(true);
+  });
+
+  it('denies effectful tools when mission is missing (fail-closed)', () => {
+    const result = assertMissionIntentAllowsTool(
+      'nexus_context_doctor',
+      {
+        mission: awaitingGoal,
+        missionMissing: true,
+      },
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('does not open execution for legacy description-only shells', () => {
+    const legacy: Mission = {
+      ...awaitingGoal,
+      status: 'running',
+      description: 'old free text',
+      intentState: 'legacy',
+    };
+    expect(
+      assertMissionIntentAllowsTool('nexus_file_write', { mission: legacy }).ok,
+    ).toBe(false);
+    expect(
+      assertMissionIntentAllowsTool('nexus_pane_spawn', { mission: legacy }).ok,
+    ).toBe(false);
+  });
+
+  it('requires handoff origin (role + session)', () => {
+    expect(
+      assertMissionIntentAllowsTool('nexus_handoff_submit', {
+        mission: dispatched,
+        role: 'worker',
+        sessionId: 's1',
+      }).ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_handoff_submit', {
+        mission: dispatched,
+        role: 'user',
+        sessionId: 's1',
+      }).ok,
+    ).toBe(false);
+  });
+
+  it('denies when step budget is exhausted', () => {
+    const exhausted: Mission = {
+      ...dispatched,
+      intentContract: {
+        ...dispatched.intentContract!,
+        spentSteps: 200,
+        budgets: {
+          ...dispatched.intentContract!.budgets,
+          maxSteps: 200,
+        },
+      },
+    };
+    const result = assertMissionIntentAllowsTool('nexus_file_write', {
+      mission: exhausted,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('budget_exhausted');
+  });
+
+  it('denies execution when dispatched state has no approval', () => {
+    const unapproved: Mission = {
+      ...dispatched,
+      intentContract: {
+        ...dispatched.intentContract!,
+        approvedAt: undefined,
+      },
+    };
+
+    for (const tool of [
+      'nexus_context_doctor',
+      'nexus_pane_spawn',
+      'nexus_file_write',
+    ]) {
+      expect(
+        assertMissionIntentAllowsTool(tool, { mission: unapproved }).ok,
+      ).toBe(false);
+    }
+  });
+
+  it('denies a stale approved contract from an older intent version', () => {
+    const stale: Mission = {
+      ...dispatched,
+      intentVersion: 2,
+      intentContract: {
+        ...dispatched.intentContract!,
+        intentVersion: 1,
+      },
+    };
+
+    expect(
+      assertMissionIntentAllowsTool('nexus_pane_spawn', { mission: stale }).ok,
+    ).toBe(false);
+    expect(
+      assertMissionIntentAllowsTool('nexus_file_write', { mission: stale }).ok,
+    ).toBe(false);
   });
 });

@@ -6,9 +6,16 @@ import {
   isPrepareProjectPlaceholderGoal,
   missionStatusForIntent,
   PREPARE_PROJECT_PLACEHOLDER_GOAL,
+  synthesizeImmediateDispatchContract,
   transitionIntentState,
   type MissionIntentSource,
 } from "../../shared/mission-intent";
+import {
+  bumpMissionPromptIntent,
+  completeMissionPrompt,
+  enqueueMissionPrompt,
+  startMissionPrompt,
+} from "./mission-prompt-queue-registry";
 import {
   normalizeMilestones,
   type Mission,
@@ -60,7 +67,8 @@ export interface RendererMissionSubmitIntentInput {
   missionId: string;
   goal: string;
   source?: MissionIntentSource;
-  contextPolicy?: "none" | "minimal" | "on-demand" | "prepare-project";
+  /** prepare-project is NOT accepted here — use prepareProjectFromRenderer. */
+  contextPolicy?: "none" | "minimal" | "on-demand";
   acceptanceCriteria?: string[];
 }
 
@@ -261,11 +269,17 @@ export class RendererMissionAuthority {
     }
 
     const nextVersion = (current.intentVersion ?? 0) + 1;
+    // prepare-project is ONLY granted by prepareProjectFromRenderer — never via submit.
+    const rawPolicy = input.contextPolicy;
+    const contextPolicy =
+      rawPolicy === "none" || rawPolicy === "minimal" || rawPolicy === "on-demand"
+        ? rawPolicy
+        : "on-demand";
     const contract = compileIntentContract({
       goal: input.goal,
       source: input.source ?? "typed",
       intentVersion: nextVersion,
-      contextPolicy: input.contextPolicy ?? "on-demand",
+      contextPolicy,
       acceptanceCriteria: input.acceptanceCriteria,
     });
     const risk = classifyGoalRisk(contract.goal);
@@ -287,6 +301,16 @@ export class RendererMissionAuthority {
       intentVersion: nextVersion,
     });
     if (!updated) throw new Error("mission not found");
+
+    // Preempt obsolete preflight when the user submits a newer intent.
+    bumpMissionPromptIntent(updated.id, nextVersion);
+    enqueueMissionPrompt({
+      missionId: updated.id,
+      kind: input.source === "voice" ? "voice_goal" : "user_goal",
+      body: contract.goal,
+      intentVersion: nextVersion,
+      source: input.source === "voice" ? "voice" : "typed",
+    });
 
     emitMissionIntentEvent({
       name: "goal_submitted",
@@ -356,6 +380,23 @@ export class RendererMissionAuthority {
     });
     if (!updated) throw new Error("mission not found");
 
+    // Production queue: preflight/bootstrap under prepare-project is trackable
+    // and cancelled if the user submits a newer intentVersion.
+    const queued = enqueueMissionPrompt({
+      missionId: updated.id,
+      kind: "preflight",
+      body: "prepare-project: aquecer mapa local",
+      intentVersion: nextVersion,
+      source: "system",
+    });
+    const item = queued.state.items.at(-1);
+    if (item) {
+      startMissionPrompt(updated.id, item.id);
+      // Map warm is driven by the UI after this returns; mark delivered so the
+      // queue exposes executing→delivered rather than a stuck executing slot.
+      completeMissionPrompt(updated.id, item.id, true);
+    }
+
     emitMissionIntentEvent({
       name: "prepare_project",
       missionId: updated.id,
@@ -377,6 +418,14 @@ export class RendererMissionAuthority {
     if (!current) throw new Error("mission not found");
     if (current.status === "done") {
       throw new Error("completed missions are immutable");
+    }
+    if (
+      current.intentContract &&
+      current.intentContract.intentVersion !== current.intentVersion
+    ) {
+      throw new Error(
+        "stale_intent: contract intent version does not match the mission",
+      );
     }
 
     const from = current.intentState ?? "ready_to_start";
@@ -407,26 +456,47 @@ export class RendererMissionAuthority {
     }
 
     const approvedAt = Date.now();
+    // Keep contract.intentVersion locked to the mission revision being approved.
+    const contractVersion = Math.max(
+      1,
+      current.intentVersion ?? current.intentContract.intentVersion ?? 1,
+    );
     const contract = {
       ...current.intentContract,
+      intentVersion: contractVersion,
       approvedAt,
+      dispatchedAt: approvedAt,
       acceptanceCriteria: [...current.intentContract.acceptanceCriteria],
       budgets: { ...current.intentContract.budgets },
+      deniedTools: current.intentContract.deniedTools
+        ? [...current.intentContract.deniedTools]
+        : undefined,
     };
     const status = missionStatusForIntent(nextState) ?? "running";
     const updated = missions.update(input.missionId, {
       status,
       intentState: nextState,
+      intentVersion: contractVersion,
       intentContract: contract,
     });
     if (!updated) throw new Error("mission not found");
+
+    // Preempt any stale preflight/bootstrap queued for a prior intentVersion.
+    bumpMissionPromptIntent(updated.id, contractVersion);
+    enqueueMissionPrompt({
+      missionId: updated.id,
+      kind: "user_goal",
+      body: contract.goal,
+      intentVersion: contractVersion,
+      source: "typed",
+    });
 
     emitMissionIntentEvent({
       name: "plan_approved",
       missionId: updated.id,
       squadId: updated.squadId,
       intentState: nextState,
-      intentVersion: updated.intentVersion,
+      intentVersion: contractVersion,
       reason: "user_start",
     });
     return updated;
@@ -578,13 +648,22 @@ export class RendererMissionAuthority {
     let gateBound = false;
     let sessionBound = false;
     try {
+      // Immediate execution shell (forceLegacy / pet-studio): still dispatched,
+      // but with a real approved contract so the MCP gate can authorize workers.
+      const now = Date.now();
+      const legacyContract = synthesizeImmediateDispatchContract({
+        title: input.title,
+        intentVersion: 1,
+        now,
+      });
       mission = missionStore.create({
         title: input.title,
         squadId: granted.squadId,
         orchestratorSessionId: owned.sessionId,
-        // Legacy zero-click path still creates an immediate execution shell.
+        description: legacyContract.goal,
         intentState: "dispatched",
-        intentVersion: 0,
+        intentVersion: 1,
+        intentContract: legacyContract,
       });
       paneStore.record({
         missionId: mission.id,
