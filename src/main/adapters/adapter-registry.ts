@@ -101,6 +101,13 @@ export function mergeAdapters(
  * Cost: one synchronous shell spawn at first call (~50–300 ms), then zero —
  * the result is memoised for the process lifetime.
  */
+const COMMON_MAC_LINUX_PATHS = [
+  '/opt/homebrew/bin',
+  '/usr/local/bin',
+  path.join(os.homedir(), '.local', 'bin'),
+  path.join(os.homedir(), '.npm-global', 'bin'),
+];
+
 let _loginShellPath: string | null = null;
 function resolveLoginShellPath(): string {
   if (_loginShellPath !== null) return _loginShellPath;
@@ -109,16 +116,25 @@ function resolveLoginShellPath(): string {
     return _loginShellPath;
   }
   const shell = process.env.SHELL ?? '/bin/bash';
+  let resolved = process.env.PATH ?? '';
   try {
     const out = execFileSync(shell, ['-l', '-c', 'printf "%s" "$PATH"'], {
       stdio: 'pipe',
       encoding: 'utf-8',
       timeout: 5_000,
     });
-    _loginShellPath = out.trim() || (process.env.PATH ?? '');
+    resolved = out.trim() || resolved;
   } catch {
-    _loginShellPath = process.env.PATH ?? '';
+    // Heavy profiles timing out won't lock out standard installations.
   }
+
+  const paths = resolved.split(path.delimiter);
+  for (const p of COMMON_MAC_LINUX_PATHS) {
+    if (!paths.includes(p)) {
+      paths.push(p);
+    }
+  }
+  _loginShellPath = paths.join(path.delimiter);
   return _loginShellPath;
 }
 

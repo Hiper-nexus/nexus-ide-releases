@@ -91,8 +91,16 @@ export function claudeOauthEmail(home = os.homedir()): string | null {
   }
 }
 
-function claudeOauthAccount(home = os.homedir()): boolean {
-  return claudeOauthEmail(home) !== null;
+
+function existsInEnv(envVar: string, ...segments: string[]): boolean {
+  const customHome = process.env[envVar];
+  if (customHome) {
+    try {
+      fs.statSync(path.join(customHome, ...segments));
+      return true;
+    } catch {}
+  }
+  return false;
 }
 
 export function detectSubscriptionAuth(
@@ -106,16 +114,16 @@ export function detectSubscriptionAuth(
       // packaged Electron (TCC / no user keychain prompt) even when the
       // terminal CLI is fully logged in.
       return (
-        claudeOauthAccount(home) ||
+        claudeOauthEmail(home) !== null ||
         exists('.claude', '.credentials.json') ||
         claudeKeychainHas()
       );
     case 'codex':
       // ChatGPT session file (the launcher's xconta model swaps this file).
-      return exists('.codex', 'auth.json');
+      return existsInEnv('CODEX_HOME', 'auth.json') || exists('.codex', 'auth.json');
     case 'grok':
       // The install itself creates ~/.grok. Only auth.json proves login.
-      return exists('.grok', 'auth.json');
+      return existsInEnv('GROK_HOME', 'auth.json') || exists('.grok', 'auth.json');
     case 'glm':
       // GLM has no CLI-managed OAuth session — it authenticates purely with a
       // z.ai token injected as ANTHROPIC_AUTH_TOKEN. Force api-key strategy so
@@ -134,6 +142,8 @@ export function detectSubscriptionAuth(
       );
     case 'kimi':
       return (
+        existsInEnv('KIMI_CODE_HOME', 'oauth', 'kimi-code') ||
+        existsInEnv('KIMI_CODE_HOME', 'credentials', 'kimi-code.json') ||
         exists('.kimi-code', 'oauth', 'kimi-code') ||
         exists('.kimi-code', 'credentials', 'kimi-code.json') ||
         exists('.kimi', 'credentials', 'kimi-code.json') ||
@@ -143,6 +153,7 @@ export function detectSubscriptionAuth(
       // Official OpenCode docs use the XDG path. Keep the native macOS data
       // path as a compatibility probe for package-manager variants.
       return (
+        existsInEnv('OPENCODE_HOME', 'auth.json') ||
         exists('.local', 'share', 'opencode', 'auth.json') ||
         exists('Library', 'Application Support', 'opencode', 'auth.json')
       );
