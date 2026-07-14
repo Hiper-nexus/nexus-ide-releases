@@ -8,6 +8,7 @@ import {
   purgeOwnedSessionRoot,
   type ArtifactPurgeResult,
 } from './ephemeral-artifact-purge';
+import { syncBackOverlayAuth } from './overlay-auth-syncback';
 
 /**
  * Per-session MCP configuration for CLIs that do not accept Nexus' native
@@ -33,7 +34,15 @@ export interface CliMcpPurgeOptions {
   artifactRoot?: string;
 }
 
-const activeArtifactDirs = new Map<string, string>();
+interface ArtifactSession {
+  artifactDir: string;
+  /** Real provider home to persist a fresh in-pane login back into. */
+  providerHome: string;
+  /** Top-level overlay config file (token-bearing) — never synced back. */
+  configFile: string;
+}
+
+const activeArtifactDirs = new Map<string, ArtifactSession>();
 const MAX_GROK_CONFIG_BYTES = 1_048_576;
 const MAX_GROK_CONFIG_DEPTH = 64;
 
@@ -183,8 +192,8 @@ function prepareArtifactDir(
   return dir;
 }
 
-function activateArtifact(token: string, artifactDir: string): void {
-  activeArtifactDirs.set(token, artifactDir);
+function activateArtifact(token: string, session: ArtifactSession): void {
+  activeArtifactDirs.set(token, session);
 }
 
 export function purgeStaleCliMcpSessions(
@@ -194,7 +203,7 @@ export function purgeStaleCliMcpSessions(
   const artifactRoot = path.resolve(
     options.artifactRoot ?? path.join(home, '.nexus', 'ephemeral', 'mcp-clients'),
   );
-  const active = Array.from(activeArtifactDirs.values());
+  const active = Array.from(activeArtifactDirs.values(), (s) => s.artifactDir);
   const trustedBoundary = options.artifactRoot
     ? path.dirname(artifactRoot)
     : home;
@@ -281,7 +290,7 @@ export function prepareKimiMcpSession(
       path.join(artifactDir, 'mcp.json'),
       `${JSON.stringify(merged, null, 2)}\n`,
     );
-    activateArtifact(token, artifactDir);
+    activateArtifact(token, { artifactDir, providerHome, configFile: 'mcp.json' });
     return {
       env: { KIMI_CODE_HOME: artifactDir },
       extraArgs: [],
@@ -336,7 +345,7 @@ export function prepareGrokMcpSession(
       path.join(artifactDir, 'config.toml'),
       stringify(merged, { maxDepth: MAX_GROK_CONFIG_DEPTH }),
     );
-    activateArtifact(token, artifactDir);
+    activateArtifact(token, { artifactDir, providerHome, configFile: 'config.toml' });
     return {
       env: { GROK_HOME: artifactDir },
       extraArgs: [],
@@ -351,11 +360,23 @@ export function prepareGrokMcpSession(
 
 /** Remove only the private overlay minted for this session token. */
 export function cleanupCliMcpSession(token: string): void {
-  const artifactDir = activeArtifactDirs.get(token);
-  if (!artifactDir) return;
+  const session = activeArtifactDirs.get(token);
+  if (!session) return;
   activeArtifactDirs.delete(token);
+  // Persist a fresh in-pane login before the overlay is removed, otherwise the
+  // provider stays "login-needed" even though the user just authenticated in
+  // the pane (the overlay is ephemeral and would take the new auth with it).
   try {
-    fs.rmSync(artifactDir, { recursive: true, force: true });
+    syncBackOverlayAuth(
+      session.artifactDir,
+      session.providerHome,
+      new Set([session.configFile]),
+    );
+  } catch {
+    // Never let a sync-back failure block teardown.
+  }
+  try {
+    fs.rmSync(session.artifactDir, { recursive: true, force: true });
   } catch {
     // Best effort during process/session teardown.
   }
