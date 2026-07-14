@@ -93,12 +93,14 @@ export function claudeOauthEmail(home = os.homedir()): string | null {
 
 
 function existsInEnv(envVar: string, ...segments: string[]): boolean {
-  const customHome = process.env[envVar];
-  if (customHome && customHome.trim()) {
+  const customHome = process.env[envVar]?.trim();
+  if (customHome) {
     try {
       fs.statSync(path.join(customHome, ...segments));
       return true;
-    } catch {}
+    } catch {
+      // Missing/inaccessible custom home → not authenticated there.
+    }
   }
   return false;
 }

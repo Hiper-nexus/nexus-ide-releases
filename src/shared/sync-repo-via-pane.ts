@@ -79,16 +79,6 @@ export function syncRepoViaPaneSay(
   return `Mandei o agente atualizar o repositório${where}.`;
 }
 
-export function syncRepoViaPaneMissionIntent(mode: SyncRepoViaPaneMode): string {
-  if (mode === 'status') {
-    return 'Checar o status do repositório Git (somente leitura) e resumir em português.';
-  }
-  if (mode === 'push') {
-    return 'Fazer git push da branch atual sem force e resumir o resultado em português.';
-  }
-  return 'Atualizar o repositório com fetch e pull --ff-only, sem merge/rebase destrutivo, e resumir em português.';
-}
-
 export function syncRepoViaPaneNoAgentSay(mode: SyncRepoViaPaneMode): string {
   if (mode === 'status') {
     return 'Não tinha agente livre — abri um agente único pra checar o status do repositório.';

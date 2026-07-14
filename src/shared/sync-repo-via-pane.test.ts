@@ -5,7 +5,6 @@ import {
   isSyncRepoViaPaneMode,
   normalizeSyncRepoViaPaneMode,
   syncRepoViaPaneBusySay,
-  syncRepoViaPaneMissionIntent,
   syncRepoViaPaneSay,
 } from './sync-repo-via-pane';
 
@@ -36,7 +35,6 @@ describe('sync-repo-via-pane', () => {
     expect(syncRepoViaPaneSay('pull', 'Claude')).toContain('atualizar o repositório');
     expect(syncRepoViaPaneSay('status')).toContain('status do repositório');
     expect(syncRepoViaPaneSay('push')).toContain('enviar o repositório');
-    expect(syncRepoViaPaneMissionIntent('pull')).toMatch(/ff-only/i);
   });
 
   it('treats busy/spawning panes as not free for sync', () => {

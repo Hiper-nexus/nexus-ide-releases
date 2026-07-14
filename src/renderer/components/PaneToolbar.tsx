@@ -324,9 +324,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       ? actions.filter((a) =>
           a.id === 'maximize' || a.id === 'split-right' || a.id === 'split-down',
         )
-      : density === 'compact'
-        ? actions.filter((a) => a.id === 'maximize')
-        : actions.filter((a) => a.id === 'maximize');
+      : actions.filter((a) => a.id === 'maximize');
 
   function renderGroup(items: ToolbarAction[], aria: string) {
     if (items.length === 0) return null;
