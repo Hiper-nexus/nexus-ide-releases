@@ -287,7 +287,7 @@ body {
   gap: 8px;
   flex: 0 1 auto;
   min-width: 0;
-  max-width: min(220px, 28vw);
+  max-width: min(360px, 36vw);
   -webkit-app-region: no-drag;
 }
 
@@ -341,6 +341,45 @@ body {
   font-size: 9px;
   color: var(--text-dim);
   line-height: 1;
+}
+
+/* Criar workspace é uma decisão de navegação primária: não fica escondida
+   apenas no menu do nome do projeto. O acento suave preserva a hierarquia
+   abaixo de “Nova missão”, mas torna a ação reconhecível de imediato. */
+.workspace-bar__new-workspace {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 58%, var(--border-strong));
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+}
+
+.workspace-bar__new-workspace:hover {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-elevated));
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.workspace-bar__new-workspace:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.workspace-bar__new-workspace:active {
+  background: var(--accent-strong);
+  border-color: var(--accent);
+  color: var(--text);
 }
 
 /* (.workspace-bar__tag removida — classe morta: nenhum componente a renderiza.
@@ -593,7 +632,7 @@ body {
 }
 
 .workspace-bar--compact .workspace-bar__brand {
-  max-width: min(140px, 22vw);
+  max-width: min(230px, 34vw);
 }
 
 .workspace-bar__todo {
