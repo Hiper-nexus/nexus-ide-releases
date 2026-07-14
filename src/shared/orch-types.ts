@@ -1,5 +1,18 @@
 import { z } from 'zod';
 import type { ProjectExecutionScope } from './types';
+import {
+  missionIntentContractSchema,
+  missionIntentStateSchema,
+  type MissionIntentContract,
+  type MissionIntentState,
+} from './mission-intent';
+
+export {
+  missionIntentContractSchema,
+  missionIntentStateSchema,
+  type MissionIntentContract,
+  type MissionIntentState,
+} from './mission-intent';
 
 /**
  * Orchestration domain types shared across main / preload / renderer and the
@@ -198,6 +211,15 @@ export interface Mission {
    * contexto-fresco (Fase C). Ver spec 2026-07-13-mission-driver-design.md.
    */
   learnings: string;
+  /**
+   * Intent-first lifecycle (additive). `legacy` / absent means pre-migration
+   * rows — resolve via `resolveEffectiveIntentState`.
+   */
+  intentState?: MissionIntentState;
+  /** Validated goal contract; absent until the user submits an objective. */
+  intentContract?: MissionIntentContract;
+  /** Monotonic intent version; new user input preempts stale compile results. */
+  intentVersion?: number;
   /** Session that created the mission — receives handoffs when idle. */
   orchestratorSessionId?: string;
   createdAt: number;
@@ -210,6 +232,9 @@ export const missionPatchSchema = z.object({
   description: z.string().max(65_536).optional(),
   status: missionStatusSchema.optional(),
   milestones: z.array(missionMilestoneInputSchema).max(256).optional(),
+  intentState: missionIntentStateSchema.optional(),
+  intentContract: missionIntentContractSchema.nullable().optional(),
+  intentVersion: z.number().int().nonnegative().max(1_000_000).optional(),
 });
 export type MissionPatch = z.infer<typeof missionPatchSchema>;
 

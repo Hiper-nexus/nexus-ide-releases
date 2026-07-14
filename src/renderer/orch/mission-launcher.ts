@@ -231,6 +231,9 @@ export function buildMissionKickoffPrompt(
 export interface SquadLaunchResult {
   ok: boolean;
   paneId?: string;
+  /** Intent-first: mission armed without an agent pane. */
+  armed?: boolean;
+  missionId?: string;
   error?: string;
 }
 
@@ -241,12 +244,65 @@ export interface SquadLaunchOptions {
   profile?: SquadLaunchProfile;
   /** Dedicated squads may require a specific provider regardless of defaults. */
   adapterId?: string;
+  /**
+   * Force legacy zero-click kickoff (orchestrator pane + playbook).
+   * Default follows orch.intentFirstMissionRuntimeV1.
+   */
+  forceLegacyLaunch?: boolean;
+  /**
+   * When dispatching after intent approval, bind work to this mission and
+   * inject a goal-scoped kickoff instead of the bootstrap playbook.
+   */
+  existingMissionId?: string;
+  /** Goal text for post-intent dispatch kickoff. */
+  goalPrompt?: string;
+}
+
+/**
+ * Minimal kickoff after the user authorized dispatch — no bootstrap playbook,
+ * no forced context_doctor. Contract + goal only.
+ */
+export function buildIntentDispatchKickoffPrompt(input: {
+  squadName: string;
+  missionId: string;
+  goal: string;
+  acceptanceCriteria: readonly string[];
+  risk: string;
+  maxWorkers: number;
+}): string {
+  const criteria =
+    input.acceptanceCriteria.length > 0
+      ? input.acceptanceCriteria.map((c) => `- ${c}`).join('\n')
+      : '- (nenhum critério extra)';
+  return [
+    `# Missão autorizada — ${input.squadName}`,
+    `missionId=${input.missionId}`,
+    '',
+    '## Objetivo (contrato de intenção)',
+    input.goal.trim(),
+    '',
+    '## Critérios de aceite',
+    criteria,
+    '',
+    `## Risco: ${input.risk}`,
+    `## Limite de workers: ${input.maxWorkers}`,
+    '',
+    '## Regras',
+    '- A missão JÁ está despachada. NÃO chame nexus_mission_create.',
+    '- NÃO rode nexus_context_doctor só para "aquecer" — só se o mapa for necessário para o objetivo.',
+    '- Spawne SOMENTE os workers que o objetivo exige (lazy, por dependência).',
+    '- Congele o contrato com o objetivo acima, registre tarefas e delegue.',
+    '- Não invente trabalho além do objetivo. Pergunte se faltar informação crítica.',
+    '- Fale em português claro; não vaze nomes de tools ao usuário.',
+  ].join('\n');
 }
 
 interface MissionMaterializationInput {
   paneId: string;
   title: string;
   squadId: string;
+  /** When set, bind the live pane to this armed mission instead of creating one. */
+  existingMissionId?: string;
   orchestratorPane: {
     paneId: string;
     adapterId: string;
@@ -261,8 +317,16 @@ interface MissionMaterializationInput {
 interface MissionMaterializationDeps {
   waitForSession(paneId: string): Promise<string | null>;
   createMission(
-    input: Omit<MissionMaterializationInput, 'paneId'>,
+    input: Omit<MissionMaterializationInput, 'paneId' | 'existingMissionId'>,
   ): ReturnType<typeof window.nexus.orch.createMission>;
+  bindMission?(
+    input: {
+      missionId: string;
+      title: string;
+      squadId: string;
+      orchestratorPane: MissionMaterializationInput['orchestratorPane'];
+    },
+  ): ReturnType<typeof window.nexus.orch.bindMissionOrchestrator>;
   updateMission(
     missionId: string,
     patch: { status: 'running' },
@@ -276,6 +340,8 @@ export async function materializeSquadMission(
     waitForSession,
     createMission: (missionInput) =>
       window.nexus.orch.createMission(missionInput),
+    bindMission: (bindInput) =>
+      window.nexus.orch.bindMissionOrchestrator(bindInput),
     updateMission: (missionId, patch) =>
       window.nexus.orch.updateMission(missionId, patch),
   },
@@ -283,6 +349,18 @@ export async function materializeSquadMission(
   const sessionId = await deps.waitForSession(input.paneId);
   if (!sessionId) {
     throw new Error('O terminal do orquestrador não iniciou em 20 segundos.');
+  }
+  if (input.existingMissionId) {
+    if (!deps.bindMission) {
+      throw new Error('bindMission dependency required for existingMissionId');
+    }
+    const mission = await deps.bindMission({
+      missionId: input.existingMissionId,
+      title: input.title,
+      squadId: input.squadId,
+      orchestratorPane: input.orchestratorPane,
+    });
+    return { sessionId, mission };
   }
   const mission = await deps.createMission({
     title: input.title,
@@ -336,6 +414,36 @@ export async function launchSquadMission(
     window.nexus.accounts.list(),
     window.nexus.quota?.snapshot?.().catch(() => null) ?? Promise.resolve(null),
   ]);
+
+  // Intent-first: selecting a squad arms a shell only — zero panes, zero tokens.
+  // Pet Studio and explicit legacy/dispatch paths keep the full launch.
+  const intentFirst =
+    profile !== 'pet-studio' &&
+    !options.forceLegacyLaunch &&
+    !options.existingMissionId &&
+    orchDefaults.intentFirstMissionRuntimeV1 !== false;
+  if (intentFirst) {
+    try {
+      useHomeStore.getState().hide();
+      const mission = await window.nexus.orch.armMission({
+        title: squad.name,
+        squadId: squad.id,
+      });
+      return {
+        ok: true,
+        armed: true,
+        missionId: mission.id,
+      };
+    } catch (cause) {
+      return {
+        ok: false,
+        error:
+          cause instanceof Error
+            ? `A missão não foi armada: ${cause.message}`
+            : 'A missão não foi armada.',
+      };
+    }
+  }
   const configuredAdapterId =
     options.adapterId ||
     (profile === 'pet-studio' ? 'codex' : undefined) ||
@@ -484,6 +592,7 @@ export async function launchSquadMission(
       paneId: orchPane.id,
       title: squad.name,
       squadId: squad.id,
+      existingMissionId: options.existingMissionId,
       orchestratorPane: {
         paneId: orchPane.id,
         adapterId: cli,
@@ -519,16 +628,22 @@ export async function launchSquadMission(
   void (async () => {
     try {
       await waitFirstIdle(sessionId);
-      const orientation =
-        profile === 'pet-studio'
-          ? null
-          : await window.nexus.orientation.ensure().catch(() => null);
-      const prompt = buildMissionKickoffPrompt(
-        squad,
-        mission.id,
-        orientation?.orientationMarkdown ?? null,
-        profile,
-      );
+      let prompt: string;
+      if (options.goalPrompt && options.existingMissionId) {
+        prompt = options.goalPrompt;
+      } else if (profile === 'pet-studio') {
+        prompt = buildMissionKickoffPrompt(squad, mission.id, null, profile);
+      } else {
+        const orientation = await window.nexus.orientation
+          .ensure()
+          .catch(() => null);
+        prompt = buildMissionKickoffPrompt(
+          squad,
+          mission.id,
+          orientation?.orientationMarkdown ?? null,
+          profile,
+        );
+      }
       // Bracketed paste keeps multi-line playbooks from submitting line-by-line.
       window.nexus.pty.write(sessionId, `\x1b[200~${prompt}\x1b[201~`);
       setTimeout(() => window.nexus.pty.write(sessionId, "\r"), PASTE_SETTLE_MS);
@@ -537,5 +652,5 @@ export async function launchSquadMission(
     }
   })();
 
-  return { ok: true, paneId: orchPane.id };
+  return { ok: true, paneId: orchPane.id, missionId: mission.id };
 }

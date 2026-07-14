@@ -1,9 +1,14 @@
 import type { Handoff, Mission, PaneRuntimeState } from '../../shared/orch-types';
+import {
+  isRecoveryEligibleIntentState,
+  resolveEffectiveIntentState,
+} from '../../shared/mission-intent';
 import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
 import { requireProjectDomainStoreRegistry } from './project-domain-store-registry';
 import { onHandoffSubmitted } from './idle-delivery';
 import { getSquad } from './squad-store';
 import { listPaneSnapshots } from './pane-registry';
+import { emitMissionIntentEvent } from './mission-intent-events';
 
 /**
  * The worker stall watchdog cannot see the more fundamental failure where an
@@ -11,6 +16,9 @@ import { listPaneSnapshots } from './pane-registry';
  * that gap. It does not bypass PREVC or spawn a privileged worker itself: it
  * records a durable incident and submits one bounded recovery instruction to
  * the exact orchestrator session. A second incident is the only retry.
+ *
+ * Intent-first: human-wait states (awaiting_goal, awaiting_approval, …) are
+ * never stalls. Recovery only runs after work is actually dispatched.
  */
 export const DELEGATION_SLA_MS = 90_000;
 export const DELEGATION_RETRY_MS = 90_000;
@@ -26,16 +34,32 @@ export interface DelegationProgress {
   readonly orchestratorState?: PaneRuntimeState;
 }
 
+/**
+ * Only missions with real dispatch authorization enter recovery. Empty squad
+ * selection (no goal, no tasks, no workers) is a normal wait, not an incident.
+ */
+export function isDelegationSupervisable(progress: DelegationProgress): boolean {
+  if (progress.expectedWorkers === 0) return false;
+  if (!['pending', 'running'].includes(progress.mission.status)) return false;
+  const intentState = resolveEffectiveIntentState({
+    mission: progress.mission,
+    taskCount: progress.tasks,
+    workerPaneCount: progress.workerPanes,
+  });
+  return isRecoveryEligibleIntentState(intentState);
+}
+
 export function delegationRecoveryStage(
   progress: DelegationProgress,
   now: number,
 ): 0 | 1 | 2 {
-  if (progress.expectedWorkers === 0) return 0;
-  if (!['pending', 'running'].includes(progress.mission.status)) return 0;
+  if (!isDelegationSupervisable(progress)) return 0;
   if (
     progress.orchestratorState === 'busy' ||
     progress.orchestratorState === 'spawning'
   ) return 0;
+  // After dispatch authorization, zero tasks/workers for SLA is the signal.
+  // Pre-dispatch emptiness is already filtered by isDelegationSupervisable.
   if (progress.workerPanes > 0 || progress.tasks > 0) return 0;
   if (progress.recoveries.some((item) => item.deliveryState === 'queued')) return 0;
   const deliveredRecoveries = progress.recoveries.filter(
@@ -53,12 +77,12 @@ export function delegationRecoveryStage(
 function recoverySummary(missionId: string, stage: 1 | 2): string {
   if (stage === 1) {
     return (
-      `incidente de orquestração: a missão ${missionId} excedeu o prazo sem ` +
-      'registrar tarefas nem colocar especialistas para trabalhar. Retome agora ' +
-      'sem pedir ação ao usuário: rode nexus_context_doctor; se houver drafts ' +
-      'propostos, use nexus_context_draft_list e prossiga com review/commit; ' +
-      'congele o contrato, registre as tarefas e delegue as independentes em ' +
-      'paralelo. Não contorne PREVC e não execute o trabalho no orquestrador.'
+      `incidente de orquestração: a missão ${missionId} já foi despachada e ` +
+      'excedeu o prazo sem registrar tarefas nem colocar especialistas para ' +
+      'trabalhar. Retome o plano já aprovado: registre as tarefas pendentes e ' +
+      'delegue as independentes. Só use nexus_context_doctor se o contrato ' +
+      'permitir e o mapa estiver frio. Não invente objetivo novo, não contorne ' +
+      'PREVC e não execute o trabalho no orquestrador.'
     );
   }
   return (
@@ -104,6 +128,19 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
       fromAgent: DELEGATION_SUPERVISOR_AGENT,
     });
     onHandoffSubmitted(handoff, suite.scope);
+    emitMissionIntentEvent({
+      name: 'automatic_recovery',
+      missionId: mission.id,
+      squadId: mission.squadId,
+      intentState: resolveEffectiveIntentState({
+        mission,
+        taskCount: suite.tasks.list(mission.id).length,
+        workerPaneCount: panes.filter((pane) => pane.role === 'worker').length,
+      }),
+      intentVersion: mission.intentVersion,
+      reason: `delegation_supervisor_stage_${stage}`,
+      meta: { stage },
+    });
     console.warn(
       `[delegation-supervisor] recovery ${stage}/2 submitted for ${mission.id}`,
     );

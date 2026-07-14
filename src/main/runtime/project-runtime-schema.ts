@@ -629,6 +629,20 @@ const MISSION_LEARNINGS_SCHEMA = `
 ALTER TABLE missions ADD COLUMN learnings TEXT NOT NULL DEFAULT '';
 `;
 
+/**
+ * Intent-first mission runtime: additive intent state + contract columns.
+ * Default `legacy` preserves pre-migration behavior until inference/rewrite.
+ * Never edit INITIAL_PROJECT_SCHEMA — append ALTER migrations only.
+ */
+const MISSION_INTENT_RUNTIME_SCHEMA = `
+ALTER TABLE missions ADD COLUMN intent_state TEXT NOT NULL DEFAULT 'legacy';
+ALTER TABLE missions ADD COLUMN intent_contract_json TEXT;
+ALTER TABLE missions ADD COLUMN intent_version INTEGER NOT NULL DEFAULT 0
+  CHECK (intent_version >= 0);
+CREATE INDEX idx_missions_intent_state
+  ON missions(intent_state, status, updated_at);
+`;
+
 /** Durable Ralph-loop budget plus immutable PREVC step receipts. */
 const MISSION_DRIVER_RUNTIME_SCHEMA = `
 CREATE TABLE mission_drive_state (
@@ -745,5 +759,11 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       schemaVersion: 12,
       appVersion: '0.15.3',
       sql: MISSION_DRIVER_RUNTIME_SCHEMA,
+    }),
+    createProjectMigration({
+      id: '013-mission-intent-runtime',
+      schemaVersion: 13,
+      appVersion: '0.15.5',
+      sql: MISSION_INTENT_RUNTIME_SCHEMA,
     }),
   ]);

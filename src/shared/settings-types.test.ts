@@ -87,6 +87,8 @@ describe('orchSettingsSchema', () => {
     expect(DEFAULT_ORCH_SETTINGS.defaultAccountId).toBe('');
     // Multi-OS safe default: never silent-resume agents on layout restore.
     expect(DEFAULT_ORCH_SETTINGS.agentRestorePolicy).toBe('ask');
+    // Intent-first is on by default: squad select does not burn tokens.
+    expect(DEFAULT_ORCH_SETTINGS.intentFirstMissionRuntimeV1).toBe(true);
   });
 
   it('accepts agent restore policies used on every platform', () => {

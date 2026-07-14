@@ -62,6 +62,41 @@ function orchestratorMissionContext() {
   });
 }
 
+function dispatchedMissionFixture() {
+  return {
+    mission: {
+      id: TEST_MISSION_ID,
+      title: 'Security test mission',
+      description: 'dispatched for security tests',
+      status: 'running' as const,
+      milestones: [],
+      learnings: '',
+      intentState: 'dispatched' as const,
+      intentVersion: 1,
+      intentContract: {
+        version: 1 as const,
+        source: 'typed' as const,
+        goal: 'security test goal',
+        acceptanceCriteria: ['ok'],
+        risk: 'normal' as const,
+        executionMode: 'assisted' as const,
+        contextPolicy: 'on-demand' as const,
+        intentVersion: 1,
+        approvedAt: Date.now(),
+        budgets: {
+          planningTokens: 1200,
+          executionTokens: 8000,
+          maxWorkers: 2,
+        },
+      },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    taskCount: 1,
+    workerPaneCount: 0,
+  };
+}
+
 function workflowOptions(
   options: Pick<McpDispatchOptions, 'confirm'> = {},
 ): McpDispatchOptions {
@@ -73,6 +108,11 @@ function workflowOptions(
         contextRevision: TEST_CONTEXT_REVISION,
         assertExecutionEffectAllowed: () => undefined,
       };
+    },
+    // Tests do not boot the full domain registry — inject a dispatched mission.
+    resolveMissionForIntentGate: (_scope, missionId) => {
+      if (missionId !== TEST_MISSION_ID) return null;
+      return dispatchedMissionFixture();
     },
   };
 }
@@ -259,7 +299,46 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it('lets a mission orchestrator delegate before a contract exists', async () => {
+  it('denies orchestrator delegation before intent dispatch (intent-first)', async () => {
+    const handler = vi.fn(async () => ({ paneId: 'pane-worker' }));
+    const confirm = vi.fn(async () => true);
+    // Pre-dispatch mission: no approved contract — must not spawn workers.
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_pane_spawn',
+        description: 'handler-owned bounded delegation',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_pane_spawn',
+      { agentName: 'worker-a', prompt: 'Inspect the dirty checkout.' },
+      orchestratorMissionContext(),
+      {
+        confirm,
+        resolveMissionForIntentGate: () => ({
+          mission: {
+            ...dispatchedMissionFixture().mission,
+            status: 'pending',
+            intentState: 'awaiting_goal',
+            intentContract: undefined,
+            description: '',
+          },
+          taskCount: 0,
+          workerPaneCount: 0,
+        }),
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining('dispatch_required'),
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('lets a mission orchestrator delegate only after intent dispatch', async () => {
     const handler = vi.fn(async () => ({ paneId: 'pane-worker' }));
     const confirm = vi.fn(async () => true);
     const result = await dispatchToolCall(
@@ -273,7 +352,7 @@ describe('MCP dispatch effect safety', () => {
       'nexus_pane_spawn',
       { agentName: 'worker-a', prompt: 'Inspect the dirty checkout.' },
       orchestratorMissionContext(),
-      { confirm },
+      { confirm, ...workflowOptions() },
     );
 
     expect(result.ok).toBe(true);
@@ -289,12 +368,25 @@ describe('MCP dispatch effect safety', () => {
       inputSchema: { type: 'object', properties: {} },
       handler,
     });
+    const awaitingOpts: McpDispatchOptions = {
+      resolveMissionForIntentGate: () => ({
+        mission: {
+          ...dispatchedMissionFixture().mission,
+          status: 'pending',
+          intentState: 'awaiting_goal',
+          intentContract: undefined,
+          description: '',
+        },
+        taskCount: 0,
+        workerPaneCount: 0,
+      }),
+    };
 
     const fromUser = await dispatchToolCall(
-      'http-mcp', registry, 'nexus_pane_spawn', {}, userContext(),
+      'http-mcp', registry, 'nexus_pane_spawn', {}, userContext(), awaitingOpts,
     );
     const fromWorker = await dispatchToolCall(
-      'http-mcp', registry, 'nexus_pane_spawn', {}, missionContext(),
+      'http-mcp', registry, 'nexus_pane_spawn', {}, missionContext(), awaitingOpts,
     );
 
     expect(fromUser).toMatchObject({ ok: false, denied: true });
@@ -325,6 +417,7 @@ describe('MCP dispatch effect safety', () => {
 
   it('lets the exact orchestrator block a mission when bootstrap cannot freeze', async () => {
     const handler = vi.fn(async () => ({ status: 'blocked' }));
+    // Fail-safe demotion to blocked is allowed even before intent dispatch.
     const result = await dispatchToolCall(
       'http-mcp',
       registryWith({
@@ -336,6 +429,19 @@ describe('MCP dispatch effect safety', () => {
       'nexus_mission_set_status',
       { missionId: TEST_MISSION_ID, status: 'blocked' },
       orchestratorMissionContext(),
+      {
+        resolveMissionForIntentGate: () => ({
+          mission: {
+            ...dispatchedMissionFixture().mission,
+            status: 'pending',
+            intentState: 'awaiting_goal',
+            intentContract: undefined,
+            description: '',
+          },
+          taskCount: 0,
+          workerPaneCount: 0,
+        }),
+      },
     );
 
     expect(result.ok).toBe(true);

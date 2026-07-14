@@ -79,6 +79,7 @@ describe('OrchestratorDefaults', () => {
       doctorAdapterId: 'auto',
       doctorModel: '',
       doctorEffort: 'auto',
+      intentFirstMissionRuntimeV1: true,
     };
     const orchSet = vi.fn(async (patch: Partial<OrchSettings>) => {
       saved = { ...saved, ...patch };
@@ -176,6 +177,7 @@ describe('OrchestratorDefaults', () => {
       doctorAdapterId: 'auto',
       doctorModel: '',
       doctorEffort: 'auto',
+      intentFirstMissionRuntimeV1: true,
     };
     Object.defineProperty(window, 'nexus', {
       configurable: true,

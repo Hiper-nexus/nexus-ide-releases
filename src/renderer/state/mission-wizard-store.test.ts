@@ -7,11 +7,25 @@ describe('mission-wizard-store voice launches', () => {
       open: false,
       variant: 'mission',
       presetSquadId: null,
+      armedMissionId: null,
       voiceLaunchNonce: 0,
       agenticIntent: null,
       agenticLaunchNonce: 0,
       squadPickerNonce: 0,
       visibleStep: null,
+    });
+  });
+
+  it('opens an armed mission on the goal composer without launching agents', () => {
+    useMissionWizardStore
+      .getState()
+      .openForArmedMission('navalha', 'mission-armed-1');
+
+    expect(useMissionWizardStore.getState()).toMatchObject({
+      open: true,
+      presetSquadId: 'navalha',
+      armedMissionId: 'mission-armed-1',
+      visibleStep: 'intent-compose',
     });
   });
 

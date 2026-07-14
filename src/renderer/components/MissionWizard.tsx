@@ -13,11 +13,16 @@ import { switchWorkspaceLayout } from '../state/layout-store';
 import { useToastStore } from '../state/toast-store';
 import { useVoiceStore } from '../voice/voice-store';
 import { isMissingModelKeyError } from '../lib/credential-errors';
-import { launchLibrePanes, launchSquadMission } from '../orch/mission-launcher';
+import {
+  buildIntentDispatchKickoffPrompt,
+  launchLibrePanes,
+  launchSquadMission,
+} from '../orch/mission-launcher';
 import { balanceSquadRosterCli } from '../orch/squad-roster';
 import { CloseButton } from './CloseButton';
 import { MissionWizardReview } from './MissionWizardReview';
 import { PixelIcon } from './PixelIcon';
+import type { Mission } from '../../shared/orch-types';
 
 /**
  * "Novo workspace" / "Nova Missão" wizard — the full flow:
@@ -43,6 +48,8 @@ const STEP_LABELS: Record<Step, string> = {
   'squad-select': 'Squad',
   'agentic-intent': 'Objetivo',
   'squad-review': 'Revisar',
+  'intent-compose': 'Objetivo',
+  'intent-plan': 'Plano',
 };
 
 function StepsBar({ steps, current }: { steps: Step[]; current: Step }) {
@@ -72,6 +79,7 @@ export function MissionWizard() {
   const open = useMissionWizardStore((s) => s.open);
   const variant = useMissionWizardStore((s) => s.variant);
   const presetSquadId = useMissionWizardStore((s) => s.presetSquadId);
+  const storeArmedMissionId = useMissionWizardStore((s) => s.armedMissionId);
   const agenticIntent = useMissionWizardStore((s) => s.agenticIntent);
   const agenticLaunchNonce = useMissionWizardStore((s) => s.agenticLaunchNonce);
   const squadPickerNonce = useMissionWizardStore((s) => s.squadPickerNonce);
@@ -100,6 +108,15 @@ export function MissionWizard() {
   const [squadId, setSquadId] = useState('');
   const [spawning, setSpawning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Intent-first: armed mission shell awaiting an explicit goal (0 tokens).
+  const [armedMissionId, setArmedMissionId] = useState<string | null>(null);
+  const [missionGoal, setMissionGoal] = useState('');
+  const [plannedMission, setPlannedMission] = useState<Mission | null>(null);
+  const [prepareStatus, setPrepareStatus] = useState<
+    'idle' | 'running' | 'ready' | 'cancelled' | 'error'
+  >('idle');
+  const [prepareDetail, setPrepareDetail] = useState<string | null>(null);
+  const prepareGenerationRef = useRef(0);
   // Modo Agêntico: intenção em linguagem natural + estado do arquiteto.
   const [intent, setIntent] = useState('');
   const [designing, setDesigning] = useState(false);
@@ -164,16 +181,27 @@ export function MissionWizard() {
       setSquadId('');
       setIntent('');
       setStep('squad-select');
+    // Intent-first: already-armed mission jumps to the goal composer.
+    } else if (presetSquadId && storeArmedMissionId) {
+      setMode('squad');
+      setSquadId(presetSquadId);
+      setArmedMissionId(storeArmedMissionId);
+      setMissionGoal('');
+      setPlannedMission(null);
+      setIntent('');
+      setStep('intent-compose');
     // A preset squad (Home deck shortcut) skips MODO/SQUAD straight to review.
     } else if (presetSquadId) {
       setMode('squad');
       setSquadId(presetSquadId);
+      setArmedMissionId(null);
       setIntent('');
       setStep('squad-review');
     } else {
       setStep(hasNewWsStep ? 'new-ws' : 'mode');
       setMode(null);
       setSquadId('');
+      setArmedMissionId(null);
       setIntent('');
     }
     const workspaceState = useWorkspaceStore.getState();
@@ -196,6 +224,7 @@ export function MissionWizard() {
     open,
     hasNewWsStep,
     presetSquadId,
+    storeArmedMissionId,
     agenticIntent,
     agenticLaunchNonce,
     squadPickerNonce,
@@ -226,11 +255,18 @@ export function MissionWizard() {
 
   const steps: Step[] = useMemo(() => {
     const prefix: Step[] = hasNewWsStep ? ['new-ws'] : [];
-    if (mode === 'squad') return [...prefix, 'mode', 'squad-select', 'squad-review'];
+    if (mode === 'squad') {
+      const base: Step[] = [...prefix, 'mode', 'squad-select', 'squad-review'];
+      // Only surface intent steps once a mission shell is actually armed.
+      if (armedMissionId || step === 'intent-compose' || step === 'intent-plan') {
+        return [...base, 'intent-compose', 'intent-plan'];
+      }
+      return base;
+    }
     if (mode === 'agentic') return [...prefix, 'mode', 'agentic-intent', 'squad-review'];
     if (mode === 'libre') return [...prefix, 'mode', 'libre-count', 'libre-slots'];
     return [...prefix, 'mode'];
-  }, [mode, hasNewWsStep]);
+  }, [mode, hasNewWsStep, armedMissionId, step]);
 
   const originals = squads.filter((s) => s.builtin);
   const userSquads = squads.filter((s) => !s.builtin);
@@ -516,7 +552,129 @@ export function MissionWizard() {
           .push('error', 'Não deu pra iniciar o squad', result.error);
         return;
       }
+      // Intent-first: squad is armed with zero agent panes / tokens.
+      if (result.armed && result.missionId) {
+        setArmedMissionId(result.missionId);
+        setMissionGoal('');
+        setPlannedMission(null);
+        setStep('intent-compose');
+        useToastStore
+          .getState()
+          .push(
+            'info',
+            `${selectedSquad.name} pronto`,
+            'Aguardando seu objetivo. Nenhum especialista iniciado. 0 tokens usados.',
+          );
+        return;
+      }
       close();
+    } finally {
+      setSpawning(false);
+    }
+  }
+
+  async function handleSubmitMissionGoal() {
+    if (spawning || !armedMissionId || !missionGoal.trim()) return;
+    setSpawning(true);
+    setError(null);
+    try {
+      const planned = await window.nexus.orch.submitMissionIntent({
+        missionId: armedMissionId,
+        goal: missionGoal.trim(),
+        source: 'typed',
+      });
+      setPlannedMission(planned);
+      setStep('intent-plan');
+    } catch (cause) {
+      const message =
+        cause instanceof Error ? cause.message : 'Falha ao compilar o objetivo.';
+      setError(message);
+    } finally {
+      setSpawning(false);
+    }
+  }
+
+  async function handlePrepareProject() {
+    if (!armedMissionId || prepareStatus === 'running') return;
+    const generation = ++prepareGenerationRef.current;
+    setPrepareStatus('running');
+    setPrepareDetail('Autorizando preparação e aquecendo o mapa local…');
+    setError(null);
+    try {
+      await window.nexus.orch.prepareMissionProject({ missionId: armedMissionId });
+      // Local structural map only — no agent, no automatic draft review.
+      const map = await window.nexus.orientation.ensure().catch(() => null);
+      if (generation !== prepareGenerationRef.current) return;
+      if (map && (map.status === 'ready' || map.status === 'partial')) {
+        setPrepareStatus('ready');
+        setPrepareDetail(
+          `Mapa ${map.status} (hash ${map.mapHash?.slice(0, 8) ?? '—'}). Sem workers e sem gasto de execução.`,
+        );
+      } else {
+        setPrepareStatus('ready');
+        setPrepareDetail(
+          'Preparação autorizada. Mapa ainda aquecendo em background — pode descrever o objetivo.',
+        );
+      }
+    } catch (cause) {
+      if (generation !== prepareGenerationRef.current) return;
+      setPrepareStatus('error');
+      const message =
+        cause instanceof Error ? cause.message : 'Falha ao preparar o projeto.';
+      setPrepareDetail(message);
+      setError(message);
+    }
+  }
+
+  function handleCancelPrepareProject() {
+    prepareGenerationRef.current += 1;
+    setPrepareStatus('cancelled');
+    setPrepareDetail('Preparação cancelada. A missão continua aguardando objetivo.');
+  }
+
+  function handleOpenEmptyTerminal() {
+    launchLibrePanes(['shell'], adapters);
+    close();
+  }
+
+  async function handleStartFromIntentPlan() {
+    if (spawning || !selectedSquad || !plannedMission?.id) return;
+    setSpawning(true);
+    setError(null);
+    try {
+      const approved = await window.nexus.orch.approveMissionIntent({
+        missionId: plannedMission.id,
+      });
+      const contract = approved.intentContract;
+      if (!contract?.goal) {
+        setError('Contrato de intenção ausente após aprovação.');
+        return;
+      }
+      const effectiveSquad: Squad = { ...selectedSquad, agents: roster };
+      const goalPrompt = buildIntentDispatchKickoffPrompt({
+        squadName: selectedSquad.name,
+        missionId: approved.id,
+        goal: contract.goal,
+        acceptanceCriteria: contract.acceptanceCriteria,
+        risk: contract.risk,
+        maxWorkers: contract.budgets.maxWorkers,
+      });
+      const result = await launchSquadMission(effectiveSquad, adapters, {
+        existingMissionId: approved.id,
+        goalPrompt,
+      });
+      if (!result.ok) {
+        setError(result.error ?? 'Falha ao despachar a missão.');
+        useToastStore
+          .getState()
+          .push('error', 'Não deu pra iniciar a execução', result.error);
+        return;
+      }
+      close();
+    } catch (cause) {
+      const message =
+        cause instanceof Error ? cause.message : 'Falha ao iniciar a execução.';
+      setError(message);
     } finally {
       setSpawning(false);
     }
@@ -860,6 +1018,146 @@ export function MissionWizard() {
               onCancel={close}
               onLaunch={() => void handleLaunchSquad()}
             />
+          )}
+
+          {step === 'intent-compose' && selectedSquad && (
+            <div className="wizard__section">
+              <p className="wizard__label">{selectedSquad.name.toUpperCase()} PRONTO</p>
+              <p className="wizard__mode-desc" style={{ marginBottom: 12 }}>
+                Aguardando seu objetivo. Nenhum especialista iniciado.{' '}
+                <strong>0 tokens de modelo usados.</strong>
+              </p>
+              <textarea
+                className="wizard__input"
+                style={{ minHeight: 120, resize: 'vertical' }}
+                value={missionGoal}
+                placeholder="Descreva o objetivo da missão…"
+                onChange={(e) => setMissionGoal(e.target.value)}
+                autoFocus
+              />
+              <div
+                className="wizard__mode-desc"
+                style={{ marginTop: 12, marginBottom: 8 }}
+              >
+                <p style={{ marginBottom: 6 }}>
+                  <strong>Preparar projeto</strong> (opcional): aquece o mapa local
+                  do repositório. Não abre agentes nem inventa tarefas. Pode
+                  cancelar a qualquer momento.
+                </p>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="wizard__btn wizard__btn--ghost"
+                    disabled={prepareStatus === 'running' || !armedMissionId}
+                    onClick={() => void handlePrepareProject()}
+                  >
+                    {prepareStatus === 'running'
+                      ? 'Preparando…'
+                      : prepareStatus === 'ready'
+                        ? 'Preparar de novo'
+                        : 'Preparar projeto'}
+                  </button>
+                  {prepareStatus === 'running' && (
+                    <button
+                      type="button"
+                      className="wizard__btn wizard__btn--ghost"
+                      onClick={handleCancelPrepareProject}
+                    >
+                      Cancelar preparação
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="wizard__btn wizard__btn--ghost"
+                    onClick={handleOpenEmptyTerminal}
+                  >
+                    Abrir terminal vazio
+                  </button>
+                </div>
+                {prepareDetail && (
+                  <p style={{ marginTop: 8 }} aria-live="polite">
+                    {prepareDetail}
+                  </p>
+                )}
+              </div>
+              {error && <p className="wizard__error">{error}</p>}
+              <div className="wizard__actions">
+                <button
+                  className="wizard__btn wizard__btn--ghost"
+                  onClick={() => setStep('squad-review')}
+                >
+                  ‹ Voltar
+                </button>
+                <div className="wizard__actions-right">
+                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                    Cancelar
+                  </button>
+                  <button
+                    className="wizard__btn wizard__btn--primary"
+                    disabled={spawning || !missionGoal.trim()}
+                    onClick={() => void handleSubmitMissionGoal()}
+                  >
+                    {spawning ? 'Compilando…' : 'Continuar ›'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {step === 'intent-plan' && selectedSquad && plannedMission && (
+            <div className="wizard__section">
+              <p className="wizard__label">PLANO RESUMIDO</p>
+              <p className="wizard__mode-desc">
+                <strong>Objetivo:</strong>{' '}
+                {plannedMission.intentContract?.goal ?? plannedMission.description}
+              </p>
+              {plannedMission.intentContract && (
+                <>
+                  <p className="wizard__mode-desc">
+                    <strong>Risco:</strong> {plannedMission.intentContract.risk}
+                    {' · '}
+                    <strong>Workers máx.:</strong>{' '}
+                    {plannedMission.intentContract.budgets.maxWorkers}
+                  </p>
+                  <ul className="wizard__mode-desc">
+                    {plannedMission.intentContract.acceptanceCriteria.map((c) => (
+                      <li key={c}>{c}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {plannedMission.intentState === 'awaiting_approval' && (
+                <p className="wizard__mode-desc">
+                  Superfície sensível detectada — confirme o plano antes de
+                  despachar especialistas.
+                </p>
+              )}
+              {error && <p className="wizard__error">{error}</p>}
+              <div className="wizard__actions">
+                <button
+                  className="wizard__btn wizard__btn--ghost"
+                  onClick={() => setStep('intent-compose')}
+                >
+                  ‹ Editar objetivo
+                </button>
+                <div className="wizard__actions-right">
+                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                    Cancelar
+                  </button>
+                  <button
+                    className="wizard__btn wizard__btn--primary"
+                    disabled={spawning}
+                    onClick={() => void handleStartFromIntentPlan()}
+                  >
+                    {spawning
+                      ? 'Iniciando…'
+                      : plannedMission.intentState === 'awaiting_approval'
+                        ? 'Confirmar e começar'
+                        : 'Começar'}
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </div>

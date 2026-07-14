@@ -2,12 +2,16 @@ import { z } from 'zod';
 import type Database from 'better-sqlite3';
 import {
   canMarkMilestoneDone,
+  missionIntentContractSchema,
+  missionIntentStateSchema,
   missionMilestoneInputSchema,
   missionPatchSchema,
   missionStatusSchema,
   normalizeMilestones,
   structuralCoerceMilestones,
   type Mission,
+  type MissionIntentContract,
+  type MissionIntentState,
   type MissionMilestone,
   type MissionPatch,
   type MissionStatus,
@@ -29,6 +33,9 @@ const createMissionInputSchema = z
     squadId: z.string().min(1).max(128).optional(),
     milestones: z.array(missionMilestoneInputSchema).max(256).optional(),
     orchestratorSessionId: z.string().min(1).max(256).optional(),
+    intentState: missionIntentStateSchema.optional(),
+    intentContract: missionIntentContractSchema.optional(),
+    intentVersion: z.number().int().nonnegative().max(1_000_000).optional(),
   })
   .strict();
 
@@ -42,6 +49,9 @@ const missionRowSchema = z
     milestones_json: z.string(),
     learnings: z.string().max(65_536),
     orch_session_id: z.string().min(1).max(256).nullable(),
+    intent_state: missionIntentStateSchema.default('legacy'),
+    intent_contract_json: z.string().nullable().optional(),
+    intent_version: z.number().int().nonnegative().default(0),
     created_at: z.number().int().nonnegative(),
     updated_at: z.number().int().nonnegative(),
   })
@@ -111,7 +121,39 @@ function cloneMilestones(milestones: readonly MissionMilestone[]): MissionMilest
 }
 
 function cloneMission(mission: ScopedMission): ScopedMission {
-  return { ...mission, milestones: cloneMilestones(mission.milestones) };
+  return {
+    ...mission,
+    milestones: cloneMilestones(mission.milestones),
+    ...(mission.intentContract
+      ? {
+          intentContract: {
+            ...mission.intentContract,
+            acceptanceCriteria: [...mission.intentContract.acceptanceCriteria],
+            budgets: { ...mission.intentContract.budgets },
+          },
+        }
+      : {}),
+  };
+}
+
+function parseIntentContract(
+  raw: string | null | undefined,
+): MissionIntentContract | undefined {
+  if (raw == null || raw === '') return undefined;
+  try {
+    return missionIntentContractSchema.parse(JSON.parse(raw));
+  } catch (error) {
+    throw new ScopedStoreCorruptionError('mission intent contract', {
+      cause: error,
+    });
+  }
+}
+
+function serializeIntentContract(
+  contract: MissionIntentContract | null | undefined,
+): string | null {
+  if (contract == null) return null;
+  return JSON.stringify(contract);
 }
 
 export class ScopedMissionStore {
@@ -269,6 +311,8 @@ export class ScopedMissionStore {
   create(rawInput: CreateMissionInput): ScopedMission {
     const input = createMissionInputSchema.parse(rawInput);
     const now = this.#binding.now();
+    const intentState: MissionIntentState = input.intentState ?? 'legacy';
+    const intentVersion = input.intentVersion ?? 0;
     const mission: ScopedMission = {
       id: this.#binding.makeId('mission'),
       title: input.title,
@@ -279,6 +323,9 @@ export class ScopedMissionStore {
         normalizeMilestones(input.milestones ?? []),
       ),
       learnings: '',
+      intentState,
+      ...(input.intentContract ? { intentContract: input.intentContract } : {}),
+      intentVersion,
       orchestratorSessionId: input.orchestratorSessionId,
       createdAt: now,
       updatedAt: now,
@@ -289,8 +336,9 @@ export class ScopedMissionStore {
       .prepare(
         `INSERT INTO missions
            (id, title, description, status, squad_id, milestones_json,
-            learnings, orch_session_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            learnings, orch_session_id, intent_state, intent_contract_json,
+            intent_version, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         mission.id,
@@ -301,6 +349,9 @@ export class ScopedMissionStore {
         JSON.stringify(mission.milestones),
         mission.learnings,
         mission.orchestratorSessionId ?? null,
+        mission.intentState ?? 'legacy',
+        serializeIntentContract(mission.intentContract),
+        mission.intentVersion ?? 0,
         mission.createdAt,
         mission.updatedAt,
       );
@@ -320,7 +371,8 @@ export class ScopedMissionStore {
     const row = db
       .prepare(
         `SELECT id, title, description, status, squad_id, milestones_json,
-                learnings, orch_session_id, created_at, updated_at
+                learnings, orch_session_id, intent_state, intent_contract_json,
+                intent_version, created_at, updated_at
          FROM missions WHERE id = ?`,
       )
       .get(id);
@@ -334,7 +386,8 @@ export class ScopedMissionStore {
           .readDatabase()
           .prepare(
             `SELECT id, title, description, status, squad_id, milestones_json,
-                    learnings, orch_session_id, created_at, updated_at
+                    learnings, orch_session_id, intent_state, intent_contract_json,
+                    intent_version, created_at, updated_at
              FROM missions WHERE status = ?
              ORDER BY created_at DESC, id ASC`,
           )
@@ -343,7 +396,8 @@ export class ScopedMissionStore {
           .readDatabase()
           .prepare(
             `SELECT id, title, description, status, squad_id, milestones_json,
-                    learnings, orch_session_id, created_at, updated_at
+                    learnings, orch_session_id, intent_state, intent_contract_json,
+                    intent_version, created_at, updated_at
              FROM missions ORDER BY created_at DESC, id ASC`,
           )
           .all();
@@ -380,6 +434,12 @@ export class ScopedMissionStore {
         patch.milestones !== undefined
           ? structuralCoerceMilestones(normalizeMilestones(patch.milestones))
           : cloneMilestones(existing.milestones);
+      const nextIntentContract =
+        patch.intentContract === undefined
+          ? existing.intentContract
+          : patch.intentContract === null
+            ? undefined
+            : patch.intentContract;
       const next: ScopedMission = {
         ...existing,
         ...(patch.title !== undefined ? { title: patch.title } : {}),
@@ -387,13 +447,28 @@ export class ScopedMissionStore {
           ? { description: patch.description }
           : {}),
         ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.intentState !== undefined
+          ? { intentState: patch.intentState }
+          : {}),
+        ...(patch.intentVersion !== undefined
+          ? { intentVersion: patch.intentVersion }
+          : {}),
+        ...(patch.intentContract !== undefined
+          ? nextIntentContract
+            ? { intentContract: nextIntentContract }
+            : { intentContract: undefined }
+          : {}),
         milestones: nextMilestones,
         updatedAt: this.#binding.now(),
       };
+      if (patch.intentContract === null) {
+        delete next.intentContract;
+      }
       const result = db
         .prepare(
           `UPDATE missions
            SET title = ?, description = ?, status = ?, milestones_json = ?,
+               intent_state = ?, intent_contract_json = ?, intent_version = ?,
                updated_at = ?
            WHERE id = ?`,
         )
@@ -402,6 +477,9 @@ export class ScopedMissionStore {
           next.description,
           next.status,
           JSON.stringify(next.milestones),
+          next.intentState ?? 'legacy',
+          serializeIntentContract(next.intentContract),
+          next.intentVersion ?? 0,
           next.updatedAt,
           id,
         );
@@ -541,6 +619,7 @@ export class ScopedMissionStore {
     } catch (error) {
       throw new ScopedStoreCorruptionError('mission', { cause: error });
     }
+    const intentContract = parseIntentContract(row.intent_contract_json);
     return {
       id: row.id,
       title: row.title,
@@ -549,6 +628,9 @@ export class ScopedMissionStore {
       squadId: row.squad_id ?? undefined,
       milestones: parseMilestones(row.milestones_json),
       learnings: row.learnings,
+      intentState: row.intent_state,
+      ...(intentContract ? { intentContract } : {}),
+      intentVersion: row.intent_version,
       orchestratorSessionId: row.orch_session_id ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,

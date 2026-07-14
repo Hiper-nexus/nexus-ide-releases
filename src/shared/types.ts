@@ -826,6 +826,32 @@ export interface NexusApi {
         agentName?: string;
       };
     }): Promise<Mission>;
+    /** Intent-first: create awaiting_goal shell without orchestrator pane. */
+    armMission(input: { title: string; squadId: string }): Promise<Mission>;
+    submitMissionIntent(input: {
+      missionId: string;
+      goal: string;
+      source?: 'typed' | 'voice' | 'imported-issue' | 'automation';
+      contextPolicy?: 'none' | 'minimal' | 'on-demand' | 'prepare-project';
+      acceptanceCriteria?: string[];
+    }): Promise<Mission>;
+    approveMissionIntent(input: { missionId: string }): Promise<Mission>;
+    /** Explicit prepare-project while still awaiting a real goal. */
+    prepareMissionProject(input: { missionId: string }): Promise<Mission>;
+    bindMissionOrchestrator(input: {
+      missionId: string;
+      title: string;
+      squadId: string;
+      orchestratorPane: {
+        paneId: string;
+        adapterId?: string;
+        model?: string;
+        accountId?: string;
+        cwd?: string;
+        title?: string;
+        agentName?: string;
+      };
+    }): Promise<Mission>;
     updateMission(missionId: string, patch: MissionPatch): Promise<Mission>;
     removeMission(missionId: string): Promise<{ removed: boolean }>;
     listHandoffs(): Promise<Handoff[]>;

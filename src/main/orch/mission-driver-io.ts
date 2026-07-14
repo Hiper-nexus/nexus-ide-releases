@@ -1,4 +1,8 @@
 import {
+  isRecoveryEligibleIntentState,
+  resolveEffectiveIntentState,
+} from '../../shared/mission-intent';
+import {
   canMarkMilestoneDone,
   type MissionPaneSpec,
   type PaneSnapshot,
@@ -349,10 +353,23 @@ export function createDefaultDriveDeps(options: {
     (config.mode === 'active' ? createProductionApplyPorts() : undefined);
   return {
     listScopes: options.listScopes,
-    listRunningMissions: (scope) =>
-      getProjectDomainStores(scope)
-        .missions.list('running')
-        .map((mission) => ({ id: mission.id })),
+    listRunningMissions: (scope) => {
+      const suite = getProjectDomainStores(scope);
+      return suite.missions
+        .list('running')
+        .filter((mission) => {
+          // Intent-first: driver only scans authorized execution, never human waits.
+          const intent = resolveEffectiveIntentState({
+            mission,
+            taskCount: suite.tasks.list(mission.id).length,
+            workerPaneCount: suite.missionPanes
+              .list(mission.id)
+              .filter((pane) => pane.role === 'worker').length,
+          });
+          return isRecoveryEligibleIntentState(intent);
+        })
+        .map((mission) => ({ id: mission.id }));
+    },
     loadDriveState: (missionId, scope) =>
       loadDriveState(missionId, scope, { persistRuntime: isActive }),
     now: () => Date.now(),

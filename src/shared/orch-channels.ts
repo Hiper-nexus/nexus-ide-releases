@@ -13,6 +13,19 @@ export const ORCH_CHANNELS = {
   missionsList: 'orch:missions.list',
   missionPanesList: 'orch:missions.panes',
   missionCreate: 'orch:missions.create',
+  /** Intent-first: arm a squad mission shell without an orchestrator pane. */
+  missionArm: 'orch:missions.arm',
+  /** Intent-first: submit/compile a goal contract (bumps intentVersion). */
+  missionSubmitIntent: 'orch:missions.submitIntent',
+  /** Intent-first: authorize dispatch after plan approval. */
+  missionApproveIntent: 'orch:missions.approveIntent',
+  /** Bind a live orchestrator pane to an armed mission (no new mission row). */
+  missionBindOrchestrator: 'orch:missions.bindOrchestrator',
+  /**
+   * Explicit "Preparar projeto": allow bounded context bootstrap while still
+   * awaiting a real goal (does not dispatch workers).
+   */
+  missionPrepareProject: 'orch:missions.prepareProject',
   missionRebind: 'orch:missions.rebind',
   missionUpdate: 'orch:missions.update',
   missionRemove: 'orch:missions.remove',

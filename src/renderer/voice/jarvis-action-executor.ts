@@ -457,18 +457,34 @@ export async function executeJarvisAction(
       const adapters = await window.nexus.adapters.list();
       checkpoint(control);
       const res = await launchSquadMission(match, adapters);
-      if (res.ok) {
+      if (res.ok && res.armed && res.missionId) {
+        markEffect(control);
+        // Intent-first: shell only — open goal composer, no agent pane.
+        useMissionWizardStore
+          .getState()
+          .openForArmedMission(match.id, res.missionId);
+        sayText =
+          `Squad ${match.name} pronto. Aguardando seu objetivo — nenhum especialista iniciado, zero tokens usados.`;
+      } else if (res.ok) {
         markEffect(control);
         useMissionWizardStore.getState().close();
         sayText = `Squad ${match.name} iniciado.`;
       }
       checkpoint(control);
-      console.log(`[voice] launch squad "${match.name}" → ${res.ok ? 'NO AR' : `falhou: ${res.error}`}`);
+      console.log(
+        `[voice] launch squad "${match.name}" → ${
+          res.ok ? (res.armed ? 'ARMADO' : 'NO AR') : `falhou: ${res.error}`
+        }`,
+      );
       if (!res.ok) sayText = res.error ?? 'Não consegui subir o squad.';
       toolResult = {
         tool: action.type,
         ok: res.ok,
-        summary: res.ok ? `squad ${match.name} iniciado` : (res.error ?? 'falhou'),
+        summary: res.ok
+          ? res.armed
+            ? `squad ${match.name} armado (awaiting_goal)`
+            : `squad ${match.name} iniciado`
+          : (res.error ?? 'falhou'),
       };
     } else {
       sayText = `Não achei o squad "${action.squadName}". Os disponíveis são: ${context.squads.join(', ')}.`;

@@ -51,6 +51,10 @@ function wizardVisibleActions(
       return ['Montar time', 'Voltar'];
     case 'squad-review':
       return ['Iniciar Squad', 'Salvar', 'Voltar'];
+    case 'intent-compose':
+      return ['Continuar', 'Voltar', 'Cancelar'];
+    case 'intent-plan':
+      return ['Começar', 'Editar objetivo', 'Cancelar'];
   }
 }
 
