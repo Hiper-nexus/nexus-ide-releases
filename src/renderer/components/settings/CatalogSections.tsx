@@ -17,7 +17,7 @@ import {
 } from '../empty-cta-policy';
 import { useSettingsStore } from '../../state/settings-store';
 import { useLayoutStore } from '../../state/layout-store';
-import { writeToPane } from '../../terminal/terminal-host';
+import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 
 /**
  * CATALOG sections: locally installed components (agents/skills), the
@@ -380,26 +380,30 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
         </ul>
       )}
       {absent.length > 0 && (
-        <div style={{ marginTop: '1.5rem' }}>
-          <h4 className="settings-detail__title" style={{ fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
+        <div className="settings-installable">
+          <h4 className="settings-detail__title settings-installable__title">
             Disponíveis para Instalação
           </h4>
           <ul className="settings-list">
             {absent.map((a) => (
-              <li key={a.id} className="settings-list__item" style={{ opacity: 0.85 }}>
-                <div className="settings-list__head" style={{ alignItems: 'center' }}>
+              <li key={a.id} className="settings-list__item settings-installable__item">
+                <div className="settings-list__head settings-installable__head">
                   <span className="settings-list__title">{a.label}</span>
                   {a.installCommand ? (
                     <button
-                      className="settings-btn"
-                      style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem', gap: '4px' }}
+                      className="settings-btn settings-btn--sm"
                       onClick={() => {
+                        const command = a.installCommand;
                         const paneId = useLayoutStore.getState().addShellPane();
                         useLayoutStore.getState().focus(paneId);
                         useSettingsStore.getState().closeDrawer();
-                        setTimeout(() => {
-                          writeToPane(paneId, a.installCommand + '\n');
-                        }, 800);
+                        // addShellPane is synchronous, but the PTY spawns async.
+                        // Wait for the live session instead of guessing a fixed
+                        // delay so a cold or slow terminal never silently drops
+                        // the command.
+                        void waitForSession(paneId, 15_000).then((sessionId) => {
+                          if (sessionId) writeToPane(paneId, command + '\n');
+                        });
                       }}
                       title={`Executar comando: ${a.installCommand}`}
                     >

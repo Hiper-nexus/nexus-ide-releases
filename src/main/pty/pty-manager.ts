@@ -42,7 +42,10 @@ interface Session {
   idleTimer: ReturnType<typeof setTimeout> | null;
   idleTimeoutMs: number;
   state: PaneSessionState;
+  /** Last state an agent hook asserted; "busy" suppresses the idle timer. */
   hookState?: PaneSessionState;
+  /** Releases a stale hook "busy" if the matching idle signal never arrives. */
+  hookBusyTimer: ReturnType<typeof setTimeout> | null;
   /** Spawn cwd — workspace attribution (media output, telemetry). */
   cwd: string;
   /** Main-owned identity for cli-agent panes; never sourced from pane sync. */
@@ -424,6 +427,34 @@ function emitStateChange(
   fireTaps(stateTaps, sessionId, state);
 }
 
+/**
+ * An agent hook can assert "busy" to hold a pane out of idle during long,
+ * silent internal work. Hooks are best-effort, though: if the matching idle
+ * signal is lost (agent SIGKILLed, hook script crashed, Stop hook never ran)
+ * while the process stays alive, `hookState` would pin the pane "busy" forever.
+ * This watchdog bounds that — an actively working agent re-publishes hook
+ * events per tool call (re-arming it), while a truly abandoned "busy" is
+ * released so a quiet session can settle to idle instead of showing work that
+ * has finished.
+ */
+const HOOK_BUSY_MAX_MS = 5 * 60_000;
+
+function armHookBusyWatchdog(sessionId: string, session: Session): void {
+  if (session.hookBusyTimer) clearTimeout(session.hookBusyTimer);
+  session.hookBusyTimer = setTimeout(() => {
+    session.hookBusyTimer = null;
+    if (!sessions.has(sessionId)) return;
+    if (session.hookState !== "busy") return;
+    session.hookState = undefined;
+    // Settle now only if the PTY is already quiet (no pending idle timer);
+    // otherwise the in-flight idle timer settles once output stops.
+    if (!session.idleTimer && session.state === "busy") {
+      session.state = "idle";
+      emitStateChange(session.wc, sessionId, "idle");
+    }
+  }, HOOK_BUSY_MAX_MS);
+}
+
 function armIdleTimer(sessionId: string, session: Session): void {
   if (session.idleTimer) clearTimeout(session.idleTimer);
   if (session.idleTimeoutMs <= 0) return;
@@ -499,6 +530,7 @@ function finalizeSession(
   if (!s) return;
   sessions.delete(sessionId);
   if (s.idleTimer) clearTimeout(s.idleTimer);
+  if (s.hookBusyTimer) clearTimeout(s.hookBusyTimer);
   if (s.shellIntegrationCleanup.length > 0) {
     cleanupShellIntegrationPaths(s.shellIntegrationCleanup);
   }
@@ -548,6 +580,7 @@ export function spawnSession(
       proc,
       wc,
       idleTimer: null,
+      hookBusyTimer: null,
       idleTimeoutMs: 0,
       state: "spawning",
       cwd,
@@ -754,6 +787,7 @@ export function spawnAgentSession(
     proc,
     wc,
     idleTimer: null,
+    hookBusyTimer: null,
     idleTimeoutMs: idleMs,
     state: "spawning",
     cwd,
@@ -1072,6 +1106,12 @@ export function publishSessionActivityState(
   }
   session.hookState = state;
   session.state = state;
+  if (state === "busy") {
+    armHookBusyWatchdog(sessionId, session);
+  } else if (session.hookBusyTimer) {
+    clearTimeout(session.hookBusyTimer);
+    session.hookBusyTimer = null;
+  }
   emitStateChange(session.wc, sessionId, state);
   return true;
 }

@@ -792,4 +792,50 @@ describe("cli-agent spawn argv hardening", () => {
     killSession(owner, sessionId);
     vi.useRealTimers();
   });
+
+  it("releases a stale hook busy after the watchdog window when no idle arrives", async () => {
+    vi.useFakeTimers();
+    let handlers: PtySessionHandlers | null = null;
+    const proc: PtyProcHandle = { write: vi.fn(), resize: vi.fn(), kill: vi.fn() };
+    setPtyHost({
+      spawn(_spec, nextHandlers) {
+        handlers = nextHandlers;
+        return proc;
+      },
+    });
+
+    const owner = fakeWc();
+    const trusted = trustedSpawn();
+    const adapter = makeAdapter({
+      static: {},
+      passthrough: [],
+      ephemeralHome: false,
+    });
+
+    const { sessionId } = spawnAgentSession(
+      owner,
+      { kind: "cli-agent", cols: 80, rows: 24 },
+      adapter,
+      {},
+      trusted,
+    );
+
+    const activeHandlers = handlers as PtySessionHandlers | null;
+    if (!activeHandlers) throw new Error("PTY handlers were not registered");
+
+    activeHandlers.onData("hello");
+    publishSessionActivityState(sessionId, "busy");
+
+    // The idle timeout passes but the hook still says busy → stays busy.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(getSessionState(sessionId)).toBe("busy");
+
+    // No idle hook ever arrives (agent killed / Stop hook lost). Past the
+    // watchdog window the stuck busy is released so the quiet session settles.
+    await vi.advanceTimersByTimeAsync(6 * 60_000);
+    expect(getSessionState(sessionId)).toBe("idle");
+
+    killSession(owner, sessionId);
+    vi.useRealTimers();
+  });
 });
