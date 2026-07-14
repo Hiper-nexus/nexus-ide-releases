@@ -20,6 +20,15 @@ export function writeJsonAtomic(
   value: unknown,
   mode: number = 0o600,
 ): void {
+  writeFileAtomic(file, JSON.stringify(value, null, 2), mode);
+}
+
+/** Atomically replace a file without following a pre-planted temp symlink. */
+export function writeFileAtomic(
+  file: string,
+  value: string | NodeJS.ArrayBufferView,
+  mode: number = 0o600,
+): void {
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const tmp = `${file}.${randomBytes(8).toString('hex')}.tmp`;
@@ -30,7 +39,7 @@ export function writeJsonAtomic(
   );
   try {
     try {
-      fs.writeFileSync(fd, JSON.stringify(value, null, 2), { encoding: 'utf8' });
+      fs.writeFileSync(fd, value);
       try {
         fs.fchmodSync(fd, mode);
       } catch {
@@ -46,6 +55,44 @@ export function writeJsonAtomic(
       fs.unlinkSync(tmp);
     } catch {
       // Temp file already gone.
+    }
+    throw err;
+  }
+}
+
+/**
+ * Create an immutable sibling backup with an unguessable, exclusive name.
+ * Returns the path only after bytes and metadata have been flushed.
+ */
+export function writeTimestampedBackup(
+  file: string,
+  value: string | NodeJS.ArrayBufferView,
+  mode: number = 0o600,
+): string {
+  const backup = `${file}.${Date.now()}.${randomBytes(8).toString('hex')}.bak`;
+  const fd = fs.openSync(
+    backup,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NOFOLLOW_FLAG,
+    mode,
+  );
+  try {
+    try {
+      fs.writeFileSync(fd, value);
+      try {
+        fs.fchmodSync(fd, mode);
+      } catch {
+        // Best effort on filesystems that do not preserve POSIX mode.
+      }
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    return backup;
+  } catch (err) {
+    try {
+      fs.unlinkSync(backup);
+    } catch {
+      // Preserve the original persistence error.
     }
     throw err;
   }

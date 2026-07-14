@@ -1089,6 +1089,7 @@ export interface NexusApi {
       path: string;
       content: string;
       write?: boolean;
+      expectedContentHash?: string;
     }): Promise<unknown>;
   };
   /** GitHub / Linear / diff / SSH port-forward integrations (Sprint A–C). */

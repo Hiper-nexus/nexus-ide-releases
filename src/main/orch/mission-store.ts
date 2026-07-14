@@ -406,10 +406,11 @@ export class ScopedMissionStore {
 
   setOrchestratorSession(
     rawId: string,
-    rawSessionId: string,
+    rawSessionId: string | null,
   ): ScopedMission | null {
     const id = entityIdSchema.parse(rawId);
-    const sessionId = sessionIdSchema.parse(rawSessionId);
+    const sessionId =
+      rawSessionId === null ? null : sessionIdSchema.parse(rawSessionId);
     const result = this.#binding
       .writeDatabase()
       .prepare(

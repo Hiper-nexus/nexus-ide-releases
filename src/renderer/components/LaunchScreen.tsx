@@ -12,6 +12,8 @@ import {
 import { NexusMark } from './NexusMark';
 import { PixelIcon } from './PixelIcon';
 import { ProgressiveOnboarding } from './ProgressiveOnboarding';
+import { useProductFlags } from '../lib/use-product-flags';
+import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 
 /**
  * Launch / onboarding screen — the first surface when no workspace is open:
@@ -31,6 +33,7 @@ function timeAgo(ts: number): string {
 }
 
 export function LaunchScreen() {
+  const productFlags = useProductFlags();
   const recents = useWorkspaceStore((s) => s.recents);
   const open = useWorkspaceStore((s) => s.open);
   const pick = useWorkspaceStore((s) => s.pick);
@@ -172,7 +175,9 @@ export function LaunchScreen() {
         </header>
         <main className="launch__panel" aria-busy={busy}>
           <ProgressiveOnboarding
-            flagEnabled
+            flagEnabled={
+              productFlags[FEATURE_FLAG_IDS.progressiveOnboarding] !== false
+            }
             recents={recents.map((r) => ({ path: r.path, label: r.name }))}
             onLaunch={(plan) => void handleProgressiveLaunch(plan)}
             onSkip={skipToAdvanced}

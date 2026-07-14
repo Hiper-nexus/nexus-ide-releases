@@ -5,6 +5,15 @@ vi.mock('electron', () => ({
   ipcMain: { handle },
 }));
 
+const isSessionOwnedBy = vi.fn();
+vi.mock('../pty/pty-manager', () => ({ isSessionOwnedBy }));
+
+const listBlocks = vi.fn();
+const listByPane = vi.fn();
+vi.mock('./command-block-tracker', () => ({
+  getCommandBlockTracker: () => ({ listBlocks, listByPane }),
+}));
+
 const execute = vi.fn(
   async (
     _wc: unknown,
@@ -36,6 +45,9 @@ describe('registerTerminalBlockActionsIpc', () => {
   beforeEach(() => {
     handle.mockClear();
     execute.mockClear();
+    isSessionOwnedBy.mockReset();
+    listBlocks.mockReset();
+    listByPane.mockReset();
   });
 
   it('registers action + list channels', async () => {
@@ -76,5 +88,52 @@ describe('registerTerminalBlockActionsIpc', () => {
       expect.objectContaining({ action: 'rerun' }),
       expect.objectContaining({ writeToSession: expect.any(Function) }),
     );
+  });
+
+  it('does not expose command blocks owned by another renderer', async () => {
+    const { getFeatureFlagRegistry } = await import(
+      '../feature-flags/feature-flag-registry'
+    );
+    const { FEATURE_FLAG_IDS } = await import('../../shared/feature-flags');
+    getFeatureFlagRegistry().setOverride(
+      FEATURE_FLAG_IDS.terminalCommandBlocks,
+      true,
+    );
+    const { registerTerminalBlockActionsIpc } = await import(
+      './terminal-block-actions-ipc'
+    );
+    const { TERMINAL_BLOCK_CHANNELS } = await import('../../shared/channels');
+    const owned = {
+      id: 'owned-block',
+      sessionId: 'owned-session',
+      paneId: 'shared-pane',
+    };
+    const foreign = {
+      id: 'foreign-block',
+      sessionId: 'foreign-session',
+      paneId: 'shared-pane',
+    };
+    listBlocks.mockReturnValue([foreign]);
+    listByPane.mockReturnValue([owned, foreign]);
+    isSessionOwnedBy.mockImplementation(
+      (_sender: unknown, sessionId: string) => sessionId === 'owned-session',
+    );
+
+    registerTerminalBlockActionsIpc();
+    const listCall = handle.mock.calls.find(
+      (call) => call[0] === TERMINAL_BLOCK_CHANNELS.list,
+    );
+    const listHandler = listCall?.[1] as (
+      event: { sender: unknown },
+      raw: unknown,
+    ) => { blocks: Array<{ id: string }> };
+    const sender = { id: 99 };
+
+    expect(
+      listHandler({ sender }, { sessionId: 'foreign-session' }).blocks,
+    ).toEqual([]);
+    expect(listHandler({ sender }, { paneId: 'shared-pane' }).blocks).toEqual([
+      owned,
+    ]);
   });
 });

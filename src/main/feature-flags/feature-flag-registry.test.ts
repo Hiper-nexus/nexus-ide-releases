@@ -107,13 +107,27 @@ describe('FeatureFlagRegistry', () => {
     expect(reloaded.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(true);
   });
 
-  it('forceEnableAll turns every product flag on and clears kill switches', () => {
+  it('forceEnableAll turns product flags on but kill switch stays authoritative', () => {
     const registry = new FeatureFlagRegistry({ runtimeChannel: 'dev' });
     registry.engageKillSwitch(FEATURE_FLAG_IDS.searchMixer);
     expect(registry.isEnabled(FEATURE_FLAG_IDS.searchMixer)).toBe(false);
     registry.forceEnableAll();
     for (const def of registry.list()) {
+      if (def.id === FEATURE_FLAG_IDS.searchMixer) continue;
       expect(registry.isEnabled(def.id)).toBe(true);
     }
+    // Emergency control survives the dogfood force.
+    expect(registry.isEnabled(FEATURE_FLAG_IDS.searchMixer)).toBe(false);
+    expect(registry.resolve(FEATURE_FLAG_IDS.searchMixer).reason).toBe(
+      'kill-switch',
+    );
+  });
+
+  it('kill switch engaged after forceEnableAll still wins', () => {
+    const registry = new FeatureFlagRegistry({ runtimeChannel: 'dev' });
+    registry.forceEnableAll();
+    expect(registry.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(true);
+    registry.engageKillSwitch(FEATURE_FLAG_IDS.mcpHub);
+    expect(registry.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(false);
   });
 });

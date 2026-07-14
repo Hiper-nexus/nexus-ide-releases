@@ -6,7 +6,9 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import {
   detectDrift,
+  isMaskedSecretValue,
   maskServerForUi,
+  restoreMaskedSecrets,
   rollbackFromBackup,
   toolMatrix,
   writeConfigWithBackup,
@@ -23,6 +25,25 @@ function enableHub(): void {
 }
 
 describe('mcp hub core', () => {
+  it('does not follow a pre-planted predictable temp-file symlink', () => {
+    enableHub();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mcp-tmp-link-'));
+    dirs.push(dir);
+    const outside = path.join(dir, 'outside.txt');
+    const file = path.join(dir, 'mcp.json');
+    const predictableTemp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(outside, 'DO NOT REPLACE');
+    fs.symlinkSync(outside, predictableTemp);
+
+    writeConfigWithBackup(file, { schemaVersion: 1, servers: [] });
+
+    expect(fs.readFileSync(outside, 'utf8')).toBe('DO NOT REPLACE');
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({
+      schemaVersion: 1,
+      servers: [],
+    });
+  });
+
   it('refuses to read an existing config symlink before replacing it', () => {
     enableHub();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mcp-link-'));
@@ -122,5 +143,90 @@ describe('mcp hub core', () => {
     rollbackFromBackup(file, backupPath!);
     const restored = JSON.parse(fs.readFileSync(file, 'utf8')) as McpHubConfig;
     expect(restored.servers[0]?.name).toBe('N');
+  });
+
+  it('does not follow a destination symlink during rollback', () => {
+    enableHub();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mcp-rb-link-'));
+    dirs.push(dir);
+    const outside = path.join(dir, 'outside.json');
+    const file = path.join(dir, 'mcp.json');
+    const backup = path.join(dir, 'mcp.json.safe.bak');
+    fs.writeFileSync(outside, 'DO NOT REPLACE');
+    fs.writeFileSync(backup, '{"schemaVersion":1,"servers":[]}');
+    fs.symlinkSync(outside, file);
+
+    expect(() => rollbackFromBackup(file, backup)).toThrow(/regular file/i);
+    expect(fs.readFileSync(outside, 'utf8')).toBe('DO NOT REPLACE');
+  });
+});
+
+describe('restoreMaskedSecrets', () => {
+  const stored: McpHubConfig = {
+    schemaVersion: 1,
+    servers: [
+      {
+        id: 's1',
+        name: 'Server',
+        transport: 'streamable-http',
+        url: 'https://example.com/mcp',
+        headers: { authorization: 'Bearer real-token-value' },
+        env: { API_KEY: 'sk-real-1234567890', REGION: 'us-east-1' },
+        tools: [],
+        source: 'nexus',
+      },
+    ],
+  };
+
+  it('detects masked placeholder shapes', () => {
+    expect(isMaskedSecretValue('[REDACTED]')).toBe(true);
+    expect(isMaskedSecretValue('sk…[REDACTED]')).toBe(true);
+    expect(isMaskedSecretValue('sk-real-1234567890')).toBe(false);
+  });
+
+  it('round-trip of a masked load keeps the stored secrets', () => {
+    const masked: McpHubConfig = {
+      schemaVersion: 1,
+      servers: stored.servers.map(maskServerForUi),
+    };
+    const restored = restoreMaskedSecrets(masked, stored);
+    expect(restored.servers[0]?.headers?.authorization).toBe(
+      'Bearer real-token-value',
+    );
+    expect(restored.servers[0]?.env?.API_KEY).toBe('sk-real-1234567890');
+    // Non-secret values pass through untouched.
+    expect(restored.servers[0]?.env?.REGION).toBe('us-east-1');
+  });
+
+  it('accepts a new real secret value as-is', () => {
+    const next: McpHubConfig = {
+      schemaVersion: 1,
+      servers: [
+        {
+          ...stored.servers[0],
+          env: { API_KEY: 'sk-rotated-0987654321', REGION: 'us-east-1' },
+        },
+      ],
+    };
+    const restored = restoreMaskedSecrets(next, stored);
+    expect(restored.servers[0]?.env?.API_KEY).toBe('sk-rotated-0987654321');
+  });
+
+  it('fails closed when a masked value has no stored counterpart', () => {
+    const orphan: McpHubConfig = {
+      schemaVersion: 1,
+      servers: [
+        {
+          id: 'brand-new',
+          name: 'New',
+          transport: 'stdio',
+          command: 'run',
+          env: { TOKEN: '[REDACTED]' },
+          tools: [],
+          source: 'nexus',
+        },
+      ],
+    };
+    expect(() => restoreMaskedSecrets(orphan, stored)).toThrow(/re-enter/i);
   });
 });

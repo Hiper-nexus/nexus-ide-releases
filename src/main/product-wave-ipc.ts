@@ -30,6 +30,7 @@ import {
   detectDrift,
   maskServerForUi,
   mcpHubConfigSchema,
+  restoreMaskedSecrets,
   toolMatrix,
   writeConfigWithBackup,
   rollbackFromBackup,
@@ -40,9 +41,11 @@ import { isInsidePath } from './orch/workspace-path';
 import {
   openEditorDocument,
   applyEdit,
+  assertExpectedContentHash,
   markSaved,
   MAX_EDITOR_CHARS,
 } from './editor/editor-document';
+import { writeFileAtomic } from './util/atomic-write';
 import { runSearchMixerQuery } from './search/search-mixer-bootstrap';
 import {
   requireScopedRoot,
@@ -240,7 +243,10 @@ export function registerProductWaveIpc(): void {
         dryRun: z.boolean().optional(),
       })
       .parse(raw);
-    return writeConfigWithBackup(mcpHubPath(root), input.config, {
+    // mcpHubLoad masks secrets for the UI; saving that shape back verbatim
+    // would replace real tokens with placeholders. Restore from stored config.
+    const config = restoreMaskedSecrets(input.config, loadMcpHub(root));
+    return writeConfigWithBackup(mcpHubPath(root), config, {
       dryRun: input.dryRun,
     });
   });
@@ -363,6 +369,10 @@ export function registerProductWaveIpc(): void {
         path: z.string().min(1).max(4096),
         content: z.string().max(MAX_EDITOR_CHARS),
         write: z.boolean().default(false),
+        expectedContentHash: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
       })
       .parse(raw);
     // Re-bind absolute or relative path to sender workspace (fail-closed).
@@ -374,12 +384,18 @@ export function registerProductWaveIpc(): void {
       /* new file — still must be under scoped path */
     }
     const doc = openEditorDocument({ path: full, bytes });
+    if (input.write) {
+      if (!input.expectedContentHash) {
+        throw new Error('expectedContentHash is required when saving');
+      }
+      assertExpectedContentHash(doc, input.expectedContentHash);
+    }
     const next = applyEdit(doc, input.content);
     if (input.write && !next.binary && !next.tooLarge) {
       // Parent must already be under workspace (resolveScopedPath). Create only
       // intermediate dirs under that containment.
       fs.mkdirSync(path.dirname(full), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(full, next.content, { mode: 0o600 });
+      writeFileAtomic(full, next.content);
       return markSaved(next);
     }
     return next;

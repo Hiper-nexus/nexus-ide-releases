@@ -3,6 +3,10 @@ import path from 'node:path';
 import { z } from 'zod';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
+import {
+  writeFileAtomic,
+  writeTimestampedBackup,
+} from '../util/atomic-write';
 
 /**
  * Local MCP Hub — canonical config sync, drift, backup, masked secrets.
@@ -72,6 +76,66 @@ export function maskServerForUi(server: McpHubServer): McpHubServer {
   return { ...server, env, headers };
 }
 
+/** True when a value looks like maskSecretsInValue output, not a real secret. */
+export function isMaskedSecretValue(value: string): boolean {
+  return value === '[REDACTED]' || /^.{2}…\[REDACTED\]$/.test(value);
+}
+
+/**
+ * Never round-trip masked placeholders to disk. mcpHubLoad masks secrets for
+ * the UI; a save of that same shape must restore each masked env/header value
+ * from the currently stored config. A masked value with no stored counterpart
+ * is rejected (fail-closed) instead of silently persisting the placeholder —
+ * which would destroy the real token.
+ */
+export function restoreMaskedSecrets(
+  next: McpHubConfig,
+  current: McpHubConfig,
+): McpHubConfig {
+  const currentById = new Map(current.servers.map((s) => [s.id, s]));
+  return {
+    ...next,
+    servers: next.servers.map((server) => {
+      const existing = currentById.get(server.id);
+      const env = restoreMaskedRecord(
+        server.env,
+        existing?.env,
+        `${server.id}.env`,
+      );
+      const headers = restoreMaskedRecord(
+        server.headers,
+        existing?.headers,
+        `${server.id}.headers`,
+      );
+      return {
+        ...server,
+        ...(env !== undefined ? { env } : {}),
+        ...(headers !== undefined ? { headers } : {}),
+      };
+    }),
+  };
+}
+
+function restoreMaskedRecord(
+  next: Record<string, string> | undefined,
+  current: Record<string, string> | undefined,
+  label: string,
+): Record<string, string> | undefined {
+  if (!next) return next;
+  return Object.fromEntries(
+    Object.entries(next).map(([key, value]) => {
+      if (!isMaskedSecretValue(value)) return [key, value];
+      const stored = current?.[key];
+      if (stored === undefined || isMaskedSecretValue(stored)) {
+        throw new Error(
+          `masked secret ${label}.${key} has no stored value — re-enter the real secret before saving`,
+        );
+      }
+      return [key, stored];
+    }),
+  );
+}
+
 export function toolMatrix(
   config: McpHubConfig,
 ): ReadonlyArray<{ serverId: string; tool: string }> {
@@ -138,12 +202,9 @@ export function writeConfigWithBackup(
   }
   let backupPath: string | null = null;
   if (previous) {
-    backupPath = `${filePath}.${Date.now()}.bak`;
-    fs.writeFileSync(backupPath, previous, { mode: 0o600 });
+    backupPath = writeTimestampedBackup(filePath, previous);
   }
-  const tmp = `${filePath}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, body, { mode: 0o600 });
-  fs.renameSync(tmp, filePath);
+  writeFileAtomic(filePath, body);
   return { backupPath, wrote: true, diff };
 }
 
@@ -152,9 +213,15 @@ export function rollbackFromBackup(filePath: string, backupPath: string): void {
     throw new Error('invalid backup path');
   }
   if (!fs.existsSync(backupPath)) throw new Error('backup missing');
+  if (!fs.lstatSync(backupPath).isFile()) {
+    throw new Error('backup must be a regular file');
+  }
+  if (fs.existsSync(filePath) && !fs.lstatSync(filePath).isFile()) {
+    throw new Error('MCP Hub config must be a regular file');
+  }
   const raw = fs.readFileSync(backupPath, 'utf8');
   mcpHubConfigSchema.parse(JSON.parse(raw));
-  fs.copyFileSync(backupPath, filePath);
+  writeFileAtomic(filePath, raw);
 }
 
 /** Health stub — real transports reconnect in later iterations. */

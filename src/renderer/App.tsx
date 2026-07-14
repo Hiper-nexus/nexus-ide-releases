@@ -80,6 +80,8 @@ import { MissionJournalPanel } from './components/product/MissionJournalPanel';
 import type { LAUNCHER_MODES } from '../shared/progressive-onboarding';
 import type { ContextualTab } from '../shared/contextual-panel';
 import { applyProgressiveLaunchIfPending } from './lib/progressive-launch';
+import { useProductFlags } from './lib/use-product-flags';
+import { FEATURE_FLAG_IDS } from '../shared/feature-flags';
 
 /** Primeiro frame do cockpit: marca pulsando enquanto os instrumentos ligam. */
 function BootScreen() {
@@ -98,6 +100,7 @@ function BootScreen() {
  * shortcuts (split/close) against the currently focused pane.
  */
 export function App() {
+  const productFlags = useProductFlags();
   const hydrated = useLayoutStore((s) => s.hydrated);
   const viewKind = useLayoutStore((s) => s.viewKind);
   const workspaceHydrated = useWorkspaceStore((s) => s.hydrated);
@@ -428,7 +431,7 @@ export function App() {
         <HomeDeck />
         <OrchestrationPanel />
         <ContextualPanel
-          flagEnabled
+          flagEnabled={productFlags[FEATURE_FLAG_IDS.contextualPanel] !== false}
           workspaceId={currentWorkspace?.path}
           activeTab={ctxTabForMode(launcherMode)}
           initial={{ visible: true }}

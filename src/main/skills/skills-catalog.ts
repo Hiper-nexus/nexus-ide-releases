@@ -4,6 +4,10 @@ import path from 'node:path';
 import { z } from 'zod';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
+import {
+  writeFileAtomic,
+  writeTimestampedBackup,
+} from '../util/atomic-write';
 
 /**
  * Skills catalog + project lockfile (BridgeSkills-inspired, clean-room).
@@ -143,13 +147,10 @@ function countPhases(md: string): number {
 
 export function writeSkillsLock(filePath: string, lock: SkillsLock): void {
   const parsed = skillsLockSchema.parse(lock);
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const tmp = `${filePath}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(parsed, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  fs.renameSync(tmp, filePath);
+  if (fs.existsSync(filePath) && !fs.lstatSync(filePath).isFile()) {
+    throw new Error('skills lock must be a regular file');
+  }
+  writeFileAtomic(filePath, `${JSON.stringify(parsed, null, 2)}\n`);
 }
 
 export function readSkillsLock(filePath: string): SkillsLock | null {
@@ -197,8 +198,12 @@ export function uninstallAllSkillsLock(
   lockPath: string,
 ): { backupPath: string | null } {
   if (!fs.existsSync(lockPath)) return { backupPath: null };
-  const backupPath = `${lockPath}.${Date.now()}.bak`;
-  fs.copyFileSync(lockPath, backupPath);
+  if (!fs.lstatSync(lockPath).isFile()) {
+    throw new Error('skills lock must be a regular file');
+  }
+  const raw = fs.readFileSync(lockPath);
+  skillsLockSchema.parse(JSON.parse(raw.toString('utf8')));
+  const backupPath = writeTimestampedBackup(lockPath, raw);
   fs.unlinkSync(lockPath);
   return { backupPath };
 }

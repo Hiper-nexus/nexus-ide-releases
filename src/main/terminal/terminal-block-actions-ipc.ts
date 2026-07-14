@@ -4,6 +4,7 @@ import { TERMINAL_BLOCK_CHANNELS } from '../../shared/channels';
 import type { CommandBlock } from '../../shared/command-block';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
+import { isSessionOwnedBy } from '../pty/pty-manager';
 import {
   defaultTerminalBlockActionDeps,
   executeTerminalBlockAction,
@@ -46,7 +47,7 @@ export function registerTerminalBlockActionsIpc(): void {
   ipcMain.handle(
     TERMINAL_BLOCK_CHANNELS.list,
     (
-      _event,
+      event,
       raw,
     ): { blocks: CommandBlock[]; error?: string } => {
       try {
@@ -63,12 +64,17 @@ export function registerTerminalBlockActionsIpc(): void {
         const limit = req.limit ?? 12;
         let blocks: readonly CommandBlock[] = [];
         if (req.sessionId) {
+          if (!isSessionOwnedBy(event.sender, req.sessionId)) {
+            return { blocks: [] };
+          }
           blocks = tracker.listBlocks(req.sessionId);
           if (req.paneId) {
             blocks = blocks.filter((b) => b.paneId === req.paneId);
           }
         } else if (req.paneId) {
-          blocks = tracker.listByPane(req.paneId);
+          blocks = tracker
+            .listByPane(req.paneId)
+            .filter((block) => isSessionOwnedBy(event.sender, block.sessionId));
         }
         // Newest first for UI.
         const ordered = [...blocks].reverse().slice(0, limit);

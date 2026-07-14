@@ -58,7 +58,7 @@ describe('mission intent transitions', () => {
     ).toEqual({ ok: true, to: 'awaiting_approval' });
     expect(
       transitionIntentState({ from: 'awaiting_approval', event: 'approve' }),
-    ).toEqual({ ok: true, to: 'dispatched' });
+    ).toEqual({ ok: true, to: 'ready_to_start' });
   });
 
   it('rejects invalid transitions', () => {
@@ -70,13 +70,16 @@ describe('mission intent transitions', () => {
     ).toBe(false);
   });
 
-  it('lets a new user message preempt plan/dispatch', () => {
+  it('lets a new user message preempt a plan but not a frozen active workflow', () => {
     expect(
       transitionIntentState({ from: 'ready_to_start', event: 'submit_goal' }),
     ).toEqual({ ok: true, to: 'intent_compiling' });
     expect(
-      transitionIntentState({ from: 'dispatched', event: 'submit_goal' }),
-    ).toEqual({ ok: true, to: 'intent_compiling' });
+      transitionIntentState({ from: 'dispatched', event: 'submit_goal' }).ok,
+    ).toBe(false);
+    expect(
+      transitionIntentState({ from: 'executing', event: 'submit_goal' }).ok,
+    ).toBe(false);
   });
 });
 

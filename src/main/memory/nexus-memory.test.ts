@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import {
@@ -20,6 +20,43 @@ afterEach(() => {
 });
 
 describe('nexus memory', () => {
+  it('creates distinct notes even when timestamps collide', () => {
+    getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.nexusMemory, true);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mem-collision-'));
+    dirs.push(root);
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+
+    const first = rememberMarkdown(root, { title: 'Same', body: 'first' });
+    const second = rememberMarkdown(root, { title: 'Same', body: 'second' });
+
+    expect(first.path).not.toBe(second.path);
+    expect(fs.readFileSync(first.path, 'utf8')).toContain('first');
+    expect(fs.readFileSync(second.path, 'utf8')).toContain('second');
+    now.mockRestore();
+  });
+
+  it('does not follow a pre-planted timestamp note symlink', () => {
+    getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.nexusMemory, true);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mem-create-link-'));
+    dirs.push(root);
+    const timestamp = 1_700_000_000_000;
+    const now = vi.spyOn(Date, 'now').mockReturnValue(timestamp);
+    const memoryRoot = path.join(root, '.nexus-memory');
+    const outside = path.join(root, 'outside.txt');
+    fs.mkdirSync(memoryRoot);
+    fs.writeFileSync(outside, 'DO NOT REPLACE');
+    fs.symlinkSync(
+      outside,
+      path.join(memoryRoot, `same-${timestamp.toString(36)}.md`),
+    );
+
+    const note = rememberMarkdown(root, { title: 'Same', body: 'safe' });
+
+    expect(fs.readFileSync(outside, 'utf8')).toBe('DO NOT REPLACE');
+    expect(fs.readFileSync(note.path, 'utf8')).toContain('safe');
+    now.mockRestore();
+  });
+
   it('rejects memory dirname that escapes project (startsWith trap)', () => {
     const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mem-scope-'));
     dirs.push(base);

@@ -184,6 +184,22 @@ describe('scoped mission pane store', () => {
     expect(paneB.findByPaneId('pane-a')).toBeNull();
   });
 
+  it('removes a partially materialized pane by its scoped id', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const mission = createScopedMissionStore(runtimeManager, scope).create({ title: 'A' });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    const pane = panes.record({
+      missionId: mission.id,
+      adapterId: 'codex',
+      paneId: 'pane-partial',
+    });
+
+    expect(panes.remove(pane.id)).toBe(true);
+    expect(panes.findByPaneId('pane-partial')).toBeNull();
+    expect(panes.remove(pane.id)).toBe(false);
+  });
+
   it('rejects a row whose persisted authority claims another checkout', () => {
     const runtimeManager = manager();
     const scope = testProjectScope();

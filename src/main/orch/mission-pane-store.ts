@@ -236,6 +236,18 @@ export class ScopedMissionPaneStore {
     return this.#listFromDatabase(this.#binding.readDatabase(), missionId);
   }
 
+  /** Compensation hook for a pane whose cross-store authority bind failed. */
+  remove(rawId: string): boolean {
+    const id = entityIdSchema.parse(rawId);
+    const result = this.#binding
+      .writeDatabase()
+      .prepare('DELETE FROM mission_panes WHERE id = ?')
+      .run(id);
+    if (result.changes === 0) return false;
+    this.#binding.emitChange();
+    return true;
+  }
+
   /** Duplicate pane ids are corruption/ambiguity and therefore return null. */
   findByPaneId(rawPaneId: string): ScopedMissionPaneSpec | null {
     const paneId = entityIdSchema.parse(rawPaneId);

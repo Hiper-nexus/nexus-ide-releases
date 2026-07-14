@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyEdit,
+  assertExpectedContentHash,
   assertEditorPathInWorkspace,
   hashContent,
   markSaved,
@@ -21,6 +22,20 @@ describe('editor document', () => {
     const saved = markSaved(edited);
     expect(saved.dirty).toBe(false);
     expect(saved.contentHash).toBe(hashContent('const x = 2\n'));
+  });
+
+  it('rejects a save based on stale editor content', () => {
+    const current = openEditorDocument({
+      path: 'src/a.ts',
+      bytes: Buffer.from('externally changed\n'),
+    });
+
+    expect(() =>
+      assertExpectedContentHash(current, hashContent('original\n')),
+    ).toThrow(/changed on disk/i);
+    expect(() =>
+      assertExpectedContentHash(current, current.contentHash),
+    ).not.toThrow();
   });
 
   it('flags binary and oversized files', () => {

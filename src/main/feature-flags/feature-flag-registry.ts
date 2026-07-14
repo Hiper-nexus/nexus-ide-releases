@@ -88,14 +88,13 @@ export class FeatureFlagRegistry {
   }
 
   /**
-   * Pre-production / dogfood: clear every kill switch and force every known
-   * product flag ON via in-memory overrides. Does not rewrite definition files.
+   * Pre-production / dogfood: force every known product flag ON via in-memory
+   * overrides. Kill switch remains the final authority — the force never
+   * clears one, so the emergency-off path keeps working after boot.
    */
   forceEnableAll(): void {
     for (const [id, def] of this.#byId) {
-      if (def.killSwitch) {
-        this.#byId.set(id, { ...def, killSwitch: false });
-      }
+      if (def.killSwitch) continue;
       this.#overrides.set(id, true);
     }
   }
@@ -148,11 +147,26 @@ function detectRuntimeChannel(): FeatureFlagChannel {
 }
 
 let singleton: FeatureFlagRegistry | null = null;
+let singletonOptions: FeatureFlagRegistryOptions | null = null;
+
+/**
+ * Options for the production singleton (e.g. persistent overridesPath under
+ * userData). Must run in bootstrap before the first getFeatureFlagRegistry()
+ * call; once the singleton exists the call is a no-op — flag authority is
+ * never swapped mid-run.
+ */
+export function configureFeatureFlagRegistry(
+  options: FeatureFlagRegistryOptions,
+): void {
+  if (singleton) return;
+  singletonOptions = options;
+}
 
 export function getFeatureFlagRegistry(): FeatureFlagRegistry {
   if (!singleton) {
     singleton = new FeatureFlagRegistry({
       runtimeChannel: detectRuntimeChannel(),
+      ...singletonOptions,
     });
   }
   return singleton;
@@ -169,4 +183,5 @@ export function enableAllProductFlagsForTesting(): void {
 /** Test-only reset. */
 export function resetFeatureFlagRegistryForTests(): void {
   singleton = null;
+  singletonOptions = null;
 }

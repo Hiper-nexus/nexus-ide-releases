@@ -19,6 +19,37 @@ afterEach(() => {
 });
 
 describe('skills catalog', () => {
+  it('does not follow a pre-planted predictable lock temp symlink', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-skills-tmp-link-'));
+    dirs.push(dir);
+    const outside = path.join(dir, 'outside.txt');
+    const lockPath = path.join(dir, 'skills.lock.json');
+    fs.writeFileSync(outside, 'DO NOT REPLACE');
+    fs.symlinkSync(outside, `${lockPath}.${process.pid}.tmp`);
+
+    writeSkillsLock(lockPath, { schemaVersion: 1, skills: [] });
+
+    expect(fs.readFileSync(outside, 'utf8')).toBe('DO NOT REPLACE');
+    expect(JSON.parse(fs.readFileSync(lockPath, 'utf8'))).toEqual({
+      schemaVersion: 1,
+      skills: [],
+    });
+  });
+
+  it('refuses to replace a lockfile symlink', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-skills-lock-link-'));
+    dirs.push(dir);
+    const outside = path.join(dir, 'outside.txt');
+    const lockPath = path.join(dir, 'skills.lock.json');
+    fs.writeFileSync(outside, 'DO NOT REPLACE');
+    fs.symlinkSync(outside, lockPath);
+
+    expect(() =>
+      writeSkillsLock(lockPath, { schemaVersion: 1, skills: [] }),
+    ).toThrow(/regular file/i);
+    expect(fs.readFileSync(outside, 'utf8')).toBe('DO NOT REPLACE');
+  });
+
   it('does not follow a skill directory symlink', () => {
     getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.skillsCatalog, true);
     const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-skills-link-'));

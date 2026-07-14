@@ -211,6 +211,7 @@ export function EditorPanelBody() {
   const [relPath, setRelPath] = useState('');
   const [content, setContent] = useState('');
   const [path, setPath] = useState<string | null>(null);
+  const [contentHash, setContentHash] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -224,6 +225,7 @@ export function EditorPanelBody() {
         content?: string;
         binary?: boolean;
         tooLarge?: boolean;
+        contentHash?: string;
       };
       if (doc.binary) {
         setStatus('Binary file — not editable');
@@ -235,6 +237,7 @@ export function EditorPanelBody() {
       }
       setPath(doc.path ?? null);
       setContent(doc.content ?? '');
+      setContentHash(doc.contentHash ?? null);
       setDirty(false);
       setStatus(`Opened ${doc.path ?? relPath}`);
     } catch (err) {
@@ -243,11 +246,17 @@ export function EditorPanelBody() {
   };
 
   const save = async () => {
-    if (!path) return;
+    if (!path || !contentHash) return;
     try {
       const api = productApi();
       if (!api) return;
-      await api.editorApply({ path, content, write: true });
+      const saved = (await api.editorApply({
+        path,
+        content,
+        write: true,
+        expectedContentHash: contentHash,
+      })) as { contentHash?: string };
+      setContentHash(saved.contentHash ?? contentHash);
       setDirty(false);
       setStatus('Saved');
     } catch (err) {

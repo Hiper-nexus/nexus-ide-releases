@@ -106,6 +106,15 @@ export function applyEdit(
   });
 }
 
+export function assertExpectedContentHash(
+  current: EditorDocument,
+  expectedContentHash: string,
+): void {
+  if (current.contentHash !== expectedContentHash) {
+    throw new Error('file changed on disk; reopen it before saving');
+  }
+}
+
 export function markSaved(doc: EditorDocument): EditorDocument {
   return editorDocumentSchema.parse({
     ...doc,

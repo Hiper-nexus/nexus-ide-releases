@@ -20,6 +20,7 @@ const deps = vi.hoisted(() => ({
   updateMission: vi.fn(),
   removeMission: vi.fn(),
   recordMissionPane: vi.fn(),
+  removeMissionPane: vi.fn(),
   findMissionPaneByPaneId: vi.fn(),
   listMissionPanes: vi.fn(),
   forScope: vi.fn(),
@@ -113,6 +114,11 @@ beforeEach(() => {
   deps.getMission.mockReturnValue(mission);
   deps.setMissionOrchestratorSession.mockReturnValue(mission);
   deps.updateMission.mockReturnValue(mission);
+  deps.recordMissionPane.mockReturnValue({
+    id: "mpane-new",
+    missionId: "mission-a",
+    paneId: "pane-a",
+  });
   deps.forScope.mockReturnValue({
     missions: {
       create: deps.createMission,
@@ -123,6 +129,7 @@ beforeEach(() => {
     },
     missionPanes: {
       record: deps.recordMissionPane,
+      remove: deps.removeMissionPane,
       findByPaneId: deps.findMissionPaneByPaneId,
       list: deps.listMissionPanes,
     },
@@ -207,6 +214,168 @@ describe("renderer mission authority", () => {
       authority.approveIntentFromRenderer(owner, { missionId: "mission-a" }),
     ).toThrow(/stale.*intent|intent.*version/i);
     expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
+  it("records plan approval without claiming dispatch before a pane is bound", () => {
+    const intentContract = {
+      version: 1 as const,
+      source: "typed" as const,
+      goal: "Sensitive goal",
+      acceptanceCriteria: ["Done"],
+      risk: "elevated" as const,
+      executionMode: "autopilot" as const,
+      contextPolicy: "on-demand" as const,
+      intentVersion: 1,
+      budgets: {
+        planningTokens: 1_200,
+        executionTokens: 8_000,
+        maxWorkers: 2,
+      },
+    };
+    deps.getMission.mockReturnValueOnce({
+      ...mission,
+      orchestratorSessionId: undefined,
+      intentState: "awaiting_approval",
+      intentVersion: 1,
+      intentContract,
+    });
+    deps.updateMission.mockImplementationOnce((_id, patch) => ({
+      ...mission,
+      ...patch,
+    }));
+
+    authority.approveIntentFromRenderer(owner, { missionId: "mission-a" });
+
+    expect(deps.updateMission).toHaveBeenCalledWith(
+      "mission-a",
+      expect.objectContaining({
+        status: "pending",
+        intentState: "ready_to_start",
+        intentContract: expect.objectContaining({
+          approvedAt: expect.any(Number),
+        }),
+      }),
+    );
+    const approvedPatch = deps.updateMission.mock.calls[0]?.[1];
+    expect(approvedPatch.intentContract.dispatchedAt).toBeUndefined();
+  });
+
+  it("promotes an approved plan to dispatched only while binding a live pane", () => {
+    const approvedContract = {
+      version: 1 as const,
+      source: "typed" as const,
+      goal: "Approved goal",
+      acceptanceCriteria: ["Done"],
+      risk: "normal" as const,
+      executionMode: "autopilot" as const,
+      contextPolicy: "on-demand" as const,
+      intentVersion: 1,
+      approvedAt: 100,
+      budgets: {
+        planningTokens: 1_200,
+        executionTokens: 8_000,
+        maxWorkers: 2,
+      },
+    };
+    const approvedMission = {
+      ...mission,
+      status: "pending" as const,
+      orchestratorSessionId: undefined,
+      intentState: "ready_to_start" as const,
+      intentVersion: 1,
+      intentContract: approvedContract,
+    };
+    const dispatchedMission = {
+      ...approvedMission,
+      status: "running" as const,
+      intentState: "dispatched" as const,
+      intentContract: { ...approvedContract, dispatchedAt: 200 },
+    };
+    const boundMission = {
+      ...dispatchedMission,
+      orchestratorSessionId: "pty-a",
+    };
+    deps.getMission.mockReturnValueOnce(approvedMission).mockReturnValue(boundMission);
+    deps.updateMission.mockReturnValueOnce(dispatchedMission);
+    deps.setMissionOrchestratorSession.mockReturnValueOnce(boundMission);
+
+    expect(
+      authority.bindOrchestratorToMissionFromRenderer(owner, {
+        missionId: "mission-a",
+        title: "Review",
+        squadId: "review-squad",
+        orchestratorPane: { paneId: "pane-a" },
+      }),
+    ).toBe(boundMission);
+
+    expect(deps.updateMission).toHaveBeenCalledWith(
+      "mission-a",
+      expect.objectContaining({
+        status: "running",
+        intentState: "dispatched",
+        intentContract: expect.objectContaining({
+          approvedAt: 100,
+          dispatchedAt: expect.any(Number),
+        }),
+      }),
+    );
+  });
+
+  it("rolls dispatch and pane persistence back when live authority binding fails", () => {
+    const approvedContract = {
+      version: 1 as const,
+      source: "typed" as const,
+      goal: "Approved goal",
+      acceptanceCriteria: ["Done"],
+      risk: "normal" as const,
+      executionMode: "autopilot" as const,
+      contextPolicy: "on-demand" as const,
+      intentVersion: 1,
+      approvedAt: 100,
+      budgets: {
+        planningTokens: 1_200,
+        executionTokens: 8_000,
+        maxWorkers: 2,
+      },
+    };
+    const approvedMission = {
+      ...mission,
+      status: "pending" as const,
+      orchestratorSessionId: undefined,
+      intentState: "ready_to_start" as const,
+      intentVersion: 1,
+      intentContract: approvedContract,
+    };
+    const dispatchedMission = {
+      ...approvedMission,
+      status: "running" as const,
+      intentState: "dispatched" as const,
+      intentContract: { ...approvedContract, dispatchedAt: 200 },
+    };
+    deps.getMission.mockReturnValueOnce(approvedMission);
+    deps.updateMission
+      .mockReturnValueOnce(dispatchedMission)
+      .mockReturnValueOnce(approvedMission);
+    deps.restoreSessionAuthority.mockReturnValueOnce(false);
+
+    expect(() =>
+      authority.bindOrchestratorToMissionFromRenderer(owner, {
+        missionId: "mission-a",
+        title: "Review",
+        squadId: "review-squad",
+        orchestratorPane: { paneId: "pane-a" },
+      }),
+    ).toThrow(/failed to bind mission/i);
+
+    expect(deps.removeMissionPane).toHaveBeenCalledWith("mpane-new");
+    expect(deps.updateMission).toHaveBeenLastCalledWith(
+      "mission-a",
+      expect.objectContaining({
+        status: "pending",
+        intentState: "ready_to_start",
+        intentContract: approvedContract,
+      }),
+    );
   });
 
   it("rejects renderer-forged milestone completion and evidence", () => {

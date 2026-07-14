@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
@@ -5,6 +6,7 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { resolveSubdirUnderRoot } from '../security/scoped-workspace-fs';
 import { redactCommandLine } from '../terminal/command-redaction';
+import { writeFileAtomic } from '../util/atomic-write';
 
 /**
  * Local-first Markdown memory under `.nexus-memory/` (clean-room).
@@ -79,7 +81,7 @@ export function rememberMarkdown(
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 64) || 'note';
-  const id = `${slug}-${Date.now().toString(36)}`;
+  const id = `${slug}-${Date.now().toString(36)}-${randomUUID()}`;
   const filePath = path.join(root, `${id}.md`);
   // Redact secret-like tokens but never denylist entire memory notes.
   const scrubbed = redactCommandLine(input.body, {
@@ -89,7 +91,7 @@ export function rememberMarkdown(
   const body = scrubbed.slice(0, 64_000);
   const wikilinks = extractWikilinks(body);
   const md = `---\nid: ${id}\nkind: ${input.kind ?? 'note'}\nmissionId: ${input.missionId ?? ''}\n---\n\n# ${input.title}\n\n${body}\n`;
-  fs.writeFileSync(filePath, md, { mode: 0o600 });
+  writeFileAtomic(filePath, md);
   return memoryNoteSchema.parse({
     id,
     title: input.title,

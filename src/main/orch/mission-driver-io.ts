@@ -15,6 +15,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { onHandoffSubmitted } from './idle-delivery';
 import {
+  hasMirroredWorkspaceScope,
   listPaneSnapshots,
   requestMissionPaneRecovery,
 } from './pane-registry';
@@ -102,7 +103,23 @@ export function hasMirroredScope(
   snapshots: readonly PaneSnapshot[],
 ): boolean {
   return snapshots.some((snapshot) => {
-    const paneScope = snapshot.executionScope ?? snapshot.scope;
+    const paneScope = snapshot.scope ?? snapshot.executionScope;
+    return paneScope ? sameProjectScope(paneScope, scope) : false;
+  });
+}
+
+/**
+ * Recovery decisions must never compare mission/pane identity against panes
+ * of another project: ids repeat across workspaces, so every snapshot is
+ * scope-filtered before findDeadMissionPane sees it. Snapshots without any
+ * scope are excluded (fail-closed).
+ */
+export function snapshotsForScope(
+  scope: ProjectExecutionScope,
+  snapshots: readonly PaneSnapshot[],
+): PaneSnapshot[] {
+  return snapshots.filter((snapshot) => {
+    const paneScope = snapshot.scope ?? snapshot.executionScope;
     return paneScope ? sameProjectScope(paneScope, scope) : false;
   });
 }
@@ -141,10 +158,18 @@ export function loadDriveState(
     .filter((pane) => pane.paneId);
   const snapshots = listPaneSnapshots();
   // Absence is actionable only after the exact workspace has been mirrored.
-  // A pane in another recent workspace must never trigger recovery here.
+  // Readiness comes from the renderer sync heartbeat (covers an empty layout
+  // after crash) with the snapshot scan as fallback; dead-pane identity is
+  // compared exclusively against snapshots of this scope.
+  const mirrored =
+    hasMirroredWorkspaceScope(scope) || hasMirroredScope(scope, snapshots);
   const paneDead =
-    hasMirroredScope(scope, snapshots) &&
-    findDeadMissionPane(missionId, persistedPanes, snapshots) !== null;
+    mirrored &&
+    findDeadMissionPane(
+      missionId,
+      persistedPanes,
+      snapshotsForScope(scope, snapshots),
+    ) !== null;
   const workflowService = getContextWorkflowService(scope);
   const missionWorkflow = workflowService.getMissionWorkflow(missionId);
   const completionVerified = workflowService.isMissionDriverComplete(
@@ -244,7 +269,7 @@ export function createProductionApplyPorts(
       const persisted = stores.missionPanes
         .list(missionId)
         .filter((pane) => pane.paneId);
-      const snapshots = paneSnapshots();
+      const snapshots = snapshotsForScope(scope, paneSnapshots());
       const dead = findDeadMissionPane(missionId, persisted, snapshots);
       const target =
         dead ?? persisted.find((pane) => pane.role === 'orchestrator');

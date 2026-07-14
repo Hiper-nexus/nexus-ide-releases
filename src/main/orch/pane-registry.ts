@@ -21,7 +21,11 @@ import {
   tapSessionExit,
   tapSessionState,
 } from "../pty/pty-manager";
-import { requireLiveRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
+import {
+  getRendererWorkspaceScope,
+  requireLiveRendererWorkspaceScope,
+} from "../persistence/renderer-workspace-scope";
+import { sameProjectScope } from "./project-scoped-broadcast";
 import { canListPane, type CallerCtx, type PaneAuthzInfo } from "./pane-authz";
 import { makeId } from "./store-util";
 import type { ProjectExecutionScope } from "../../shared/types";
@@ -219,7 +223,10 @@ function rendererAvailable(): boolean {
   );
 }
 
-function rendererForMission(missionId?: string): WebContents | null {
+function rendererForMission(
+  missionId?: string,
+  scope?: ProjectExecutionScope,
+): WebContents | null {
   if (missionId) {
     const owners = new Set<WebContents>();
     for (const registered of panes) {
@@ -229,6 +236,9 @@ function rendererForMission(missionId?: string): WebContents | null {
       if (
         meta?.missionId === missionId &&
         meta.role === "orchestrator" &&
+        // Mission ids are not cross-project authority: a homonymous mission
+        // in another workspace must never select this owner.
+        (!scope || !meta.scope || sameProjectScope(meta.scope, scope)) &&
         !registered.owner.isDestroyed() &&
         !registered.owner.isCrashed()
       ) owners.add(registered.owner);
@@ -286,6 +296,32 @@ export function initPaneRegistry(): void {
   });
 }
 
+/**
+ * Renderers that completed at least one pane sync — including an empty
+ * layout. Pane absence only becomes actionable (recovery-eligible) after the
+ * renderer of that workspace scope has mirrored; a bare snapshot count cannot
+ * represent "mirrored but currently zero panes".
+ */
+const mirroredOwners = new Map<number, WebContents>();
+
+/**
+ * True once any live renderer bound to this workspace scope has synced its
+ * pane layout at least once (even `syncPanes([])`).
+ */
+export function hasMirroredWorkspaceScope(
+  scope: ProjectExecutionScope,
+): boolean {
+  for (const [id, owner] of mirroredOwners) {
+    if (owner.isDestroyed()) {
+      mirroredOwners.delete(id);
+      continue;
+    }
+    const rendererScope = getRendererWorkspaceScope(owner);
+    if (rendererScope && sameProjectScope(rendererScope, scope)) return true;
+  }
+  return false;
+}
+
 /** Renderer → main: replace the pane mirror (payload already zod-validated). */
 let panesVersion = 0;
 /** Bumped a cada sync — invalida índices derivados (ex.: pipes por sessão). */
@@ -298,6 +334,7 @@ export function syncPanes(
   owner: WebContents,
 ): void {
   panesVersion += 1;
+  mirroredOwners.set(owner.id, owner);
   const paneIdCounts = new Map<string, number>();
   for (const entry of entries) {
     paneIdCounts.set(entry.paneId, (paneIdCounts.get(entry.paneId) ?? 0) + 1);
@@ -367,11 +404,14 @@ function snapshotOf(registered: RegisteredPane): PaneSnapshot {
   const sessionScope = entry.sessionId
     ? scopeBySession.get(entry.sessionId)
     : undefined;
+  // Scope precedence is explicit: the live session binding is the authority;
+  // orch meta is only a fallback. A stale meta.scope must never override it.
+  const scope = sessionScope ?? meta?.scope;
   return {
     ...entry,
     state: paneState(entry),
-    ...(sessionScope ? { scope: sessionScope } : {}),
     ...meta,
+    ...(scope ? { scope } : {}),
   };
 }
 
@@ -793,6 +833,8 @@ export function requestMissionPaneRecovery(options: {
         registered.entry.sessionId === options.expectedSessionId) &&
       meta?.missionId === options.missionId &&
       meta.role === options.role &&
+      // Pane/mission ids repeat across projects; scope must agree when known.
+      (!meta.scope || sameProjectScope(meta.scope, options.scope)) &&
       !registered.owner.isDestroyed() &&
       !registered.owner.isCrashed()
     );
@@ -805,7 +847,8 @@ export function requestMissionPaneRecovery(options: {
       error: "mission pane recovery owner is ambiguous",
     });
   }
-  const owner = matches[0]?.owner ?? rendererForMission(options.missionId);
+  const owner =
+    matches[0]?.owner ?? rendererForMission(options.missionId, options.scope);
   if (!owner) {
     return Promise.resolve({
       requestId: "",

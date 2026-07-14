@@ -445,9 +445,7 @@ export class RendererMissionAuthority {
       if (!approved.ok) throw new Error(approved.reason);
       nextState = approved.to;
     } else if (from === "ready_to_start") {
-      const started = transitionIntentState({ from, event: "start" });
-      if (!started.ok) throw new Error(started.reason);
-      nextState = started.to;
+      nextState = from;
     } else if (from === "dispatched" || from === "executing") {
       return current;
     } else {
@@ -471,18 +469,19 @@ export class RendererMissionAuthority {
       1,
       current.intentVersion ?? current.intentContract.intentVersion ?? 1,
     );
+    const { dispatchedAt: _previousDispatch, ...unboundContract } =
+      current.intentContract;
     const contract = {
-      ...current.intentContract,
+      ...unboundContract,
       intentVersion: contractVersion,
       approvedAt,
-      dispatchedAt: approvedAt,
       acceptanceCriteria: [...current.intentContract.acceptanceCriteria],
       budgets: { ...current.intentContract.budgets },
       deniedTools: current.intentContract.deniedTools
         ? [...current.intentContract.deniedTools]
         : undefined,
     };
-    const status = missionStatusForIntent(nextState) ?? "running";
+    const status = missionStatusForIntent(nextState) ?? "pending";
     const updated = missions.update(input.missionId, {
       status,
       intentState: nextState,
@@ -539,9 +538,14 @@ export class RendererMissionAuthority {
     if (existing.squadId && existing.squadId !== input.squadId) {
       throw new Error("mission squad does not match orchestrator grant");
     }
-    // Bind is post-approve only. Never promote awaiting_approval/ready_to_start here.
+    // A ready_to_start mission is bindable only after durable approval. Main
+    // promotes it to dispatched while binding this already-live owned pane.
     const intentState = existing.intentState ?? "legacy";
+    const hasApprovedContract = hasApprovedDispatchContract(
+      existing.intentContract,
+    );
     const bindable =
+      (intentState === "ready_to_start" && hasApprovedContract) ||
       intentState === "dispatched" ||
       intentState === "executing" ||
       intentState === "validating" ||
@@ -553,7 +557,7 @@ export class RendererMissionAuthority {
     }
     if (
       intentState !== "legacy" &&
-      !hasApprovedDispatchContract(existing.intentContract)
+      !hasApprovedContract
     ) {
       throw new Error(
         "approval_required: approve the plan before binding an orchestrator",
@@ -562,9 +566,38 @@ export class RendererMissionAuthority {
 
     let gateBound = false;
     let sessionBound = false;
+    let dispatchPromoted = false;
+    let orchestratorSessionUpdated = false;
+    let recordedPaneId: string | null = null;
+    let working = existing;
     try {
-      paneStore.record({
-        missionId: existing.id,
+      if (intentState === "ready_to_start") {
+        const started = transitionIntentState({
+          from: intentState,
+          event: "start",
+        });
+        if (!started.ok) throw new Error(started.reason);
+        const dispatchedAt = Date.now();
+        const promoted = missionStore.update(existing.id, {
+          status: missionStatusForIntent(started.to) ?? "running",
+          intentState: started.to,
+          intentVersion: existing.intentVersion,
+          intentContract: {
+            ...existing.intentContract!,
+            acceptanceCriteria: [
+              ...existing.intentContract!.acceptanceCriteria,
+            ],
+            budgets: { ...existing.intentContract!.budgets },
+            dispatchedAt,
+          },
+        });
+        if (!promoted) throw new Error("mission disappeared during dispatch");
+        working = promoted;
+        dispatchPromoted = true;
+      }
+      const priorPane = paneStore.findByPaneId(owned.paneId);
+      const recordedPane = paneStore.record({
+        missionId: working.id,
         paneId: owned.paneId,
         adapterId: granted.adapterId,
         model: granted.model,
@@ -577,8 +610,9 @@ export class RendererMissionAuthority {
         allowedTools: granted.allowedTools,
         allowedSkills: granted.allowedSkills,
       });
+      recordedPaneId = priorPane ? null : recordedPane.id;
       gateBound = restoreSessionAuthority(owned.sessionId, {
-        missionId: existing.id,
+        missionId: working.id,
         role: "orchestrator",
         agentName: granted.agentName,
         allowedTools: granted.allowedTools,
@@ -586,23 +620,20 @@ export class RendererMissionAuthority {
       });
       sessionBound =
         gateBound &&
-        bindOwnedAgentSessionMission(owner, owned.sessionId, existing.id);
-      const consumed =
-        gateBound && sessionBound
-          ? consumeMissionOrchestratorGrant(
-              owner,
-              owned.sessionId,
-              input.squadId,
-            )
-          : null;
-      if (!gateBound || !sessionBound || !consumed) {
+        bindOwnedAgentSessionMission(owner, owned.sessionId, working.id);
+      if (!gateBound || !sessionBound) {
         throw new Error(
           "failed to bind mission to the authorized orchestrator session",
         );
       }
-      const updated =
-        missionStore.setOrchestratorSession(existing.id, owned.sessionId) ??
-        existing;
+      const updated = missionStore.setOrchestratorSession(
+        working.id,
+        owned.sessionId,
+      );
+      if (!updated) {
+        throw new Error("mission disappeared while binding orchestrator");
+      }
+      orchestratorSessionUpdated = true;
       if (updated.status !== "running") {
         missionStore.setStatus(existing.id, "running");
       }
@@ -615,6 +646,16 @@ export class RendererMissionAuthority {
         allowedTools: granted.allowedTools,
         allowedSkills: granted.allowedSkills,
       });
+      const consumed = consumeMissionOrchestratorGrant(
+        owner,
+        owned.sessionId,
+        input.squadId,
+      );
+      if (!consumed) {
+        throw new Error(
+          "failed to consume the orchestrator promotion grant",
+        );
+      }
       emitMissionIntentEvent({
         name: "task_dispatched",
         missionId: bound.id,
@@ -625,11 +666,26 @@ export class RendererMissionAuthority {
       });
       return bound;
     } catch (error) {
+      if (orchestratorSessionUpdated) {
+        missionStore.setOrchestratorSession(
+          existing.id,
+          existing.orchestratorSessionId ?? null,
+        );
+      }
       if (sessionBound) {
         rollbackOwnedAgentSessionMission(owner, owned.sessionId, existing.id);
       }
       if (gateBound) {
         rollbackSessionAuthorityMission(owned.sessionId, existing.id);
+      }
+      if (recordedPaneId) paneStore.remove(recordedPaneId);
+      if (dispatchPromoted) {
+        missionStore.update(existing.id, {
+          status: existing.status,
+          intentState: existing.intentState,
+          intentVersion: existing.intentVersion,
+          intentContract: existing.intentContract ?? null,
+        });
       }
       throw error;
     }

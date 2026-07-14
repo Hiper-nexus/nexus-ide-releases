@@ -223,21 +223,21 @@ const TRANSITIONS: Readonly<
     submit_goal: 'intent_compiling', // new user message preempts
   },
   awaiting_approval: {
-    approve: 'dispatched',
+    // Approval is durable before runtime materialization. Dispatch only begins
+    // when main binds a live orchestrator pane (`start` from ready_to_start).
+    approve: 'ready_to_start',
     submit_goal: 'intent_compiling',
   },
   dispatched: {
     begin_execution: 'executing',
     block_user: 'blocked_user',
     block_technical: 'blocked_technical',
-    submit_goal: 'intent_compiling',
   },
   executing: {
     begin_validation: 'validating',
     complete: 'done',
     block_user: 'blocked_user',
     block_technical: 'blocked_technical',
-    submit_goal: 'intent_compiling',
   },
   validating: {
     complete: 'done',
@@ -246,7 +246,6 @@ const TRANSITIONS: Readonly<
   },
   blocked_user: {
     user_resume: 'executing',
-    submit_goal: 'intent_compiling',
   },
   blocked_technical: {
     begin_execution: 'executing',
