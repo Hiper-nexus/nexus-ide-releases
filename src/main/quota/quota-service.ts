@@ -240,11 +240,17 @@ export class QuotaService {
     }> = [];
 
     // Only CLIs the user actually has reason to care about:
-    // enabled + (installed on PATH, vault account, or local token spend).
-    // Never invent rows for unused adapters (e.g. OpenCode never installed).
+    // enabled + (installed on PATH and has credentials/active session, vault account, or local token spend).
+    // Never invent rows for unused adapters (e.g. OpenCode/Aider installed but never configured).
     const fleet = providers.filter((p) => {
       if (p.enabled === false) return false;
-      if (p.installed) return true;
+      if (p.installed) {
+        if (p.authStrategy !== 'login-needed') return true;
+        if (accounts.some((a) => a.adapterId === p.adapterId)) return true;
+        const tok = tokens[p.adapterId];
+        if (tok && tok.inputTokens + tok.outputTokens > 0) return true;
+        return false;
+      }
       if (accounts.some((a) => a.adapterId === p.adapterId)) return true;
       const tok = tokens[p.adapterId];
       if (tok && tok.inputTokens + tok.outputTokens > 0) return true;
