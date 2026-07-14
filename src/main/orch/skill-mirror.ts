@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { PONYTAIL_RULES } from './ponytail';
 import { BUILTIN_BRIDGEMIND_SKILLS } from './bridge-mind-skills';
+import { IMPECCABLE_MANIFEST } from './impeccable-manifest';
 
 const GENERATED_PONYTAIL_SKILL = `---
 name: ponytail
@@ -57,6 +58,12 @@ function writeGeneratedSkills(root: string): string {
     const skillDir = path.join(root, skill.name);
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skill.body);
+  }
+  for (const [relPath, asset] of Object.entries(IMPECCABLE_MANIFEST)) {
+    const destPath = path.join(root, 'impeccable', relPath);
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    const buffer = Buffer.from(asset.content, asset.encoding);
+    fs.writeFileSync(destPath, buffer);
   }
   return root;
 }
