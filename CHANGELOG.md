@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.15.17 — Across Tools e Cockpit Vivo
+
+Data: 2026-07-14
+
+- MCP Across Tools observa configs locais de Nexus, Cursor, Claude Code, Codex,
+  OpenCode e Cline, mostrando presença real de servers por ferramenta sem
+  retornar segredos.
+- Sync fill-gaps nasce fail-closed: dry-run, confirmação, backup antes de write,
+  escrita atômica, nada apagado e nada inventado para configs ambíguas.
+- `feature.mcp.hub` permanece `defaultEnabled=false`; observe read-only fica
+  disponível, mas import/export exige override explícito.
+- Settings foi reorganizado em pilares Você, App, Agentes e Sistema, deixando
+  Providers, MCPs, Tools, Squads e diagnóstico mais fáceis de achar.
+- Home, rail, picker e orquestração ganharam estados vazios narrativos e feedback
+  visual leve de missão, respeitando modo sóbrio e reduced motion.
+- Contratos compartilhados foram decompostos: ProductApi, identidade de projeto,
+  payloads de superfície e IPC de MCP sync saíram do arquivo gigante de tipos.
+- Suíte completa validada: 645 arquivos de teste e 4520 testes passando.
+
 ## 0.15.16 — Orquestração Enxuta e Voz Reprodutível
 
 Data: 2026-07-14
