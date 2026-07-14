@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { syncBackOverlayAuth } from "./overlay-auth-syncback";
 import {
   hasNexusMcpCapability,
   type CliPtyAdapter,
@@ -109,7 +110,7 @@ export interface AgyMcpConfigResult {
   configPaths: [string, string];
 }
 
-const activeAgyHomes = new Map<string, string>();
+const activeAgyHomes = new Map<string, { homeDir: string; realHome: string }>();
 
 export function purgeStaleAgyMcpConfigs(
   options: AgyMcpConfigOptions = {},
@@ -120,7 +121,7 @@ export function purgeStaleAgyMcpConfigs(
   );
   return purgeOwnedSessionRoot(
     artifactRoot,
-    activeAgyHomes.values(),
+    Array.from(activeAgyHomes.values(), (s) => s.homeDir),
     options.artifactRoot ? path.dirname(artifactRoot) : home,
   );
 }
@@ -354,7 +355,7 @@ export function prepareAgyMcpConfig(
       fragment,
       geminiSource,
     );
-    activeAgyHomes.set(token, homeDir);
+    activeAgyHomes.set(token, { homeDir, realHome });
     return {
       homeDir,
       geminiHomeDir: path.join(homeDir, ".gemini"),
@@ -368,11 +369,23 @@ export function prepareAgyMcpConfig(
 
 /** Remove somente os artefatos privados associados ao token informado. */
 export function cleanupAgyMcpConfig(token: string): void {
-  const homeDir = activeAgyHomes.get(token);
-  if (!homeDir) return;
+  const session = activeAgyHomes.get(token);
+  if (!session) return;
   activeAgyHomes.delete(token);
+  // Persist a fresh in-pane AGY login (.gemini/antigravity[-cli]) before the
+  // overlay is removed, skipping the token-bearing mcp_config.json at any depth.
   try {
-    fs.rmSync(homeDir, { recursive: true, force: true });
+    syncBackOverlayAuth(
+      path.join(session.homeDir, ".gemini"),
+      path.join(session.realHome, ".gemini"),
+      new Set(),
+      new Set(["mcp_config.json"]),
+    );
+  } catch {
+    // Never let a sync-back failure block teardown.
+  }
+  try {
+    fs.rmSync(session.homeDir, { recursive: true, force: true });
   } catch {
     // Best effort on process/session teardown.
   }

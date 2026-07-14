@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+const NO_NAMES: ReadonlySet<string> = new Set();
+
 /**
  * Persist auth/session files a CLI wrote into an ephemeral overlay HOME back
  * into its real provider home before the overlay is purged.
@@ -13,9 +15,11 @@ import path from 'node:path';
  * so the provider stays "login-needed" forever even though the user just
  * authenticated in the pane.
  *
- * `excludeTop` names top-level entries to skip — the token-bearing config file
- * the overlay injected (e.g. mcp.json / config.toml) must never leak into the
- * user's real profile.
+ * `excludeTop` skips top-level entries — the token-bearing config the overlay
+ * injected at its root (e.g. kimi's mcp.json / grok's config.toml).
+ * `excludeAnywhere` skips entries by name at ANY depth — for overlays whose
+ * token config is nested (e.g. AGY's .gemini/config/mcp_config.json). Neither
+ * must ever leak into the user's real profile.
  *
  * Best-effort: never throws. Teardown must not be blocked by a copy failure.
  */
@@ -23,14 +27,16 @@ export function syncBackOverlayAuth(
   overlayDir: string,
   realHome: string,
   excludeTop: ReadonlySet<string>,
+  excludeAnywhere: ReadonlySet<string> = NO_NAMES,
 ): void {
-  copyNewEntries(overlayDir, realHome, excludeTop, true);
+  copyNewEntries(overlayDir, realHome, excludeTop, excludeAnywhere, true);
 }
 
 function copyNewEntries(
   srcDir: string,
   dstDir: string,
   excludeTop: ReadonlySet<string>,
+  excludeAnywhere: ReadonlySet<string>,
   atTop: boolean,
 ): void {
   let entries: fs.Dirent[];
@@ -40,6 +46,7 @@ function copyNewEntries(
     return;
   }
   for (const entry of entries) {
+    if (excludeAnywhere.has(entry.name)) continue;
     if (atTop && excludeTop.has(entry.name)) continue;
     const src = path.join(srcDir, entry.name);
     const dst = path.join(dstDir, entry.name);
@@ -57,7 +64,7 @@ function copyNewEntries(
       } catch {
         // Individual file copies below will surface any real failure.
       }
-      copyNewEntries(src, dst, excludeTop, false);
+      copyNewEntries(src, dst, excludeTop, excludeAnywhere, false);
       continue;
     }
     if (stat.isFile()) {

@@ -59,6 +59,28 @@ describe('syncBackOverlayAuth', () => {
     expect(fs.readFileSync(path.join(realHome, 'session.json'), 'utf8')).toBe('REAL');
   });
 
+  it('excludes a nested token config at any depth (excludeAnywhere)', () => {
+    const realHome = tmp();
+    const overlay = tmp();
+    fs.mkdirSync(path.join(overlay, 'config'), { recursive: true });
+    fs.writeFileSync(
+      path.join(overlay, 'config', 'mcp_config.json'),
+      '{"bearer":"secret"}',
+    );
+    fs.writeFileSync(path.join(overlay, 'config', 'settings.json'), 'keep');
+    fs.writeFileSync(path.join(overlay, 'antigravity'), 'AUTH');
+
+    syncBackOverlayAuth(overlay, realHome, new Set(), new Set(['mcp_config.json']));
+
+    expect(fs.readFileSync(path.join(realHome, 'antigravity'), 'utf8')).toBe('AUTH');
+    expect(
+      fs.readFileSync(path.join(realHome, 'config', 'settings.json'), 'utf8'),
+    ).toBe('keep');
+    expect(
+      fs.existsSync(path.join(realHome, 'config', 'mcp_config.json')),
+    ).toBe(false);
+  });
+
   it('is a best-effort no-op when the overlay does not exist', () => {
     const realHome = tmp();
     expect(() =>
