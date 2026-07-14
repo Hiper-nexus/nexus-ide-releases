@@ -9,6 +9,7 @@ import {
 } from '../runtime/project-runtime-schema';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { createScopedMissionStore } from './mission-store';
+import { compileIntentContract } from '../../shared/mission-intent';
 
 let baseDir = '';
 const managers: ProjectRuntimeManager[] = [];
@@ -32,6 +33,25 @@ afterEach(() => {
 });
 
 describe('scoped mission store', () => {
+  it('rejects intentVersion skew and clones nested contract arrays', () => {
+    const runtimeManager = manager();
+    const store = createScopedMissionStore(runtimeManager, testProjectScope());
+    const contract = {
+      ...compileIntentContract({ goal: 'Ship safely', intentVersion: 2 }),
+      deniedTools: ['terminal_run'],
+    };
+    expect(() => store.create({
+      title: 'Skewed', intentVersion: 1, intentContract: contract,
+    })).toThrow(/version must match/i);
+
+    const created = store.create({
+      title: 'Current', intentState: 'ready_to_start',
+      intentVersion: 2, intentContract: contract,
+    });
+    expect(created.intentContract?.deniedTools).toEqual(['terminal_run']);
+    expect(created.intentContract?.deniedTools).not.toBe(contract.deniedTools);
+  });
+
   it('physically isolates projects and returns explicit scope coordinates', () => {
     const runtimeManager = manager();
     const scopeA = testProjectScope({ projectId: 'project-a', checkoutId: 'checkout-a' });

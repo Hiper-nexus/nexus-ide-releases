@@ -129,6 +129,23 @@ describe('MissionEventJournal', () => {
     expect(valid.lastSequence).toBe(1);
   });
 
+  it('rejects conflicting reuse of an idempotency key', () => {
+    const manager = new ProjectRuntimeManager({ baseDir, appVersion: '0.15.5' });
+    managers.push(manager);
+    seedMission(manager, 'mission-fixture');
+    const journal = new MissionEventJournal(manager, testProjectScope());
+    journal.append(createMissionEventFixture({
+      idempotencyKey: 'idem-conflict-key',
+      type: 'driver.tick',
+      payload: { attempt: 1 },
+    }));
+    expect(() => journal.append(createMissionEventFixture({
+      idempotencyKey: 'idem-conflict-key',
+      type: 'agent.spawned',
+      payload: { attempt: 2 },
+    }))).toThrow(/idempotency.*conflict/i);
+  });
+
   it('rejects oversized payloads', () => {
     const manager = new ProjectRuntimeManager({ baseDir, appVersion: '0.15.5' });
     managers.push(manager);

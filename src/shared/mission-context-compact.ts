@@ -66,6 +66,9 @@ export function compactMissionContext(input: {
   readonly maxChars?: number;
 }): MissionCompact {
   const maxChars = input.maxChars ?? DEFAULT_MAX_CHARS;
+  if (!Number.isSafeInteger(maxChars) || maxChars <= 0) {
+    throw new RangeError('maxChars must be a positive safe integer');
+  }
   const goal =
     input.mission.intentContract?.goal?.trim() ||
     input.mission.description.trim() ||
@@ -164,6 +167,48 @@ export function compactMissionContext(input: {
     omittedNote: 'contexto fortemente compactado — use tools para recuperar detalhes',
   };
   rendered = renderMissionCompact(compact);
+  if (rendered.length <= maxChars) {
+    return { ...compact, charCount: rendered.length };
+  }
+
+  // Individual entries can each be large. Drop lower-priority sections before
+  // clipping the goal so the returned block obeys the caller's hard budget.
+  for (const key of [
+    'decisions',
+    'nextSteps',
+    'completed',
+    'files',
+    'learnings',
+    'constraints',
+    'inProgress',
+    'blocked',
+  ] as const) {
+    if (compact[key].length === 0) continue;
+    compact = { ...compact, [key]: [] };
+    rendered = renderMissionCompact(compact);
+    if (rendered.length <= maxChars) {
+      return { ...compact, charCount: rendered.length };
+    }
+  }
+
+  const clipGoalToBudget = (): void => {
+    const overflow = rendered.length - maxChars;
+    if (overflow <= 0) return;
+    compact = {
+      ...compact,
+      goal: compact.goal.slice(0, Math.max(0, compact.goal.length - overflow)),
+    };
+    rendered = renderMissionCompact(compact);
+  };
+  clipGoalToBudget();
+  if (rendered.length > maxChars && compact.omittedNote) {
+    compact = { ...compact, omittedNote: undefined };
+    rendered = renderMissionCompact(compact);
+    clipGoalToBudget();
+  }
+  if (rendered.length > maxChars) {
+    throw new RangeError('maxChars is too small for the compact mission envelope');
+  }
   return { ...compact, charCount: rendered.length };
 }
 

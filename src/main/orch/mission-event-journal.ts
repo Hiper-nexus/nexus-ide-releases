@@ -17,6 +17,7 @@ import {
 } from './scoped-store';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import { canonicalJson } from '../context/canonical-json';
 
 /**
  * Append-only mission event journal with consumer cursors and ACK.
@@ -80,7 +81,18 @@ export class MissionEventJournal {
       )
       .get(input.missionId, input.idempotencyKey);
     if (existing) {
-      return rowToEvent(existing);
+      const event = rowToEvent(existing);
+      const isSameEvent =
+        event.runId === input.runId &&
+        event.parentRunId === input.parentRunId &&
+        event.type === input.type &&
+        event.origin === input.origin &&
+        canonicalJson(event.payload) === canonicalJson(input.payload ?? {}) &&
+        (input.occurredAt === undefined || event.occurredAt === input.occurredAt);
+      if (!isSameEvent) {
+        throw new Error('mission event idempotency conflict');
+      }
+      return event;
     }
 
     const occurredAt = input.occurredAt ?? this.#binding.now();
@@ -184,6 +196,19 @@ export class MissionEventJournal {
           `SELECT COALESCE(MAX(sequence), 0) AS maxSequence
            FROM mission_events
            WHERE mission_id = ?`,
+        )
+        .get(missionId) as { maxSequence: number };
+      if (upToSequence > maxSequence) {
+        throw new Error(
+          `ack sequence ${upToSequence} exceeds last persisted sequence ${maxSequence}`,
+        );
+      }
+      // Reject an ACK past durable history. Clamping hides caller bugs and can
+      // make a consumer believe it acknowledged an event that never existed.
+      const { maxSequence } = db
+        .prepare(
+          `SELECT COALESCE(MAX(sequence), 0) AS maxSequence
+           FROM mission_events WHERE mission_id = ?`,
         )
         .get(missionId) as { maxSequence: number };
       if (upToSequence > maxSequence) {

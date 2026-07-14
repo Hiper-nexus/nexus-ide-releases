@@ -130,6 +130,9 @@ function cloneMission(mission: ScopedMission): ScopedMission {
             ...mission.intentContract,
             acceptanceCriteria: [...mission.intentContract.acceptanceCriteria],
             budgets: { ...mission.intentContract.budgets },
+            deniedTools: mission.intentContract.deniedTools
+              ? [...mission.intentContract.deniedTools]
+              : undefined,
           },
         }
       : {}),
@@ -154,6 +157,15 @@ function serializeIntentContract(
 ): string | null {
   if (contract == null) return null;
   return JSON.stringify(contract);
+}
+
+function assertIntentContractRevision(
+  contract: MissionIntentContract | undefined,
+  intentVersion: number,
+): void {
+  if (contract && contract.intentVersion !== intentVersion) {
+    throw new Error('mission intent contract version must match intentVersion');
+  }
 }
 
 export class ScopedMissionStore {
@@ -313,6 +325,7 @@ export class ScopedMissionStore {
     const now = this.#binding.now();
     const intentState: MissionIntentState = input.intentState ?? 'legacy';
     const intentVersion = input.intentVersion ?? 0;
+    assertIntentContractRevision(input.intentContract, intentVersion);
     const mission: ScopedMission = {
       id: this.#binding.makeId('mission'),
       title: input.title,
@@ -465,6 +478,7 @@ export class ScopedMissionStore {
       if (patch.intentContract === null) {
         delete next.intentContract;
       }
+      assertIntentContractRevision(next.intentContract, next.intentVersion ?? 0);
       const result = db
         .prepare(
           `UPDATE missions

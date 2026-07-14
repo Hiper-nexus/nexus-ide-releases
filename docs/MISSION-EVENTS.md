@@ -28,7 +28,8 @@ Complements (does **not** replace):
 
 ## Error flow
 
-- Duplicate idempotency → return existing row (no double effect).
+- Exact duplicate idempotency → return existing row (no double effect).
+- Same idempotency key with different run/type/origin/payload/time → throw conflict.
 - Oversized payload → throw, no insert.
 - Corrupt row → `ScopedStoreCorruptionError` (fail closed).
 - Core columns immutable via trigger; only `delivery_status` updates.
@@ -38,10 +39,11 @@ Complements (does **not** replace):
 ```
 consumer lastSequence = N
 replay(afterSequence: N) → events
-ack(consumer, mission, upTo) → max(cursor, upTo); mark acked
+ack(consumer, mission, upTo) → min(max(cursor, upTo), durable max sequence); mark acked
 ```
 
-Cursor is monotonic (never moves backward).
+Cursor is monotonic within durable history. A corrupt/future cursor is repaired
+down to the mission's highest durable sequence so replay cannot be skipped.
 
 ## Rollback
 

@@ -100,7 +100,29 @@ describe('mission context compaction', () => {
       handoffs: longHandoffs,
       maxChars: 800,
     });
-    expect(compact.charCount).toBeLessThanOrEqual(900);
+    expect(compact.charCount).toBeLessThanOrEqual(800);
+    expect(renderMissionCompact(compact).length).toBeLessThanOrEqual(800);
     expect(compact.omittedNote).toBeTruthy();
+  });
+
+  it('hard-trims oversized individual fields to the exact character budget', () => {
+    const compact = compactMissionContext({
+      mission: {
+        ...mission,
+        intentContract: compileIntentContract({
+          goal: 'g'.repeat(8_000),
+          intentVersion: 1,
+          acceptanceCriteria: Array.from({ length: 10 }, () => 'c'.repeat(2_000)),
+        }),
+      },
+      handoffs,
+      maxChars: 320,
+    });
+    expect(compact.charCount).toBeLessThanOrEqual(320);
+    expect(renderMissionCompact(compact).length).toBe(compact.charCount);
+  });
+
+  it('rejects an invalid or structurally impossible budget', () => {
+    expect(() => compactMissionContext({ mission, maxChars: 0 })).toThrow(/maxChars/i);
   });
 });
