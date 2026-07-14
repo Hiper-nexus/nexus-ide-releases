@@ -82,9 +82,11 @@ export type FeatureFlagId =
   (typeof FEATURE_FLAG_IDS)[keyof typeof FEATURE_FLAG_IDS];
 
 /**
- * Deferred product foundations. Every built-in remains default-off on every
- * channel until an explicit persisted override enables it. Kill switches keep
- * final authority over those overrides.
+ * Deferred product foundations. Product waves remain default-off until an
+ * explicit persisted override enables them. The scheduler flag is intentionally
+ * enabled for release configuration because its production loop is fail-closed
+ * behind approved missions and sealed task plans. Kill switches keep final
+ * authority over all overrides.
  */
 export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
   {
@@ -206,15 +208,15 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     id: FEATURE_FLAG_IDS.parallelScheduler,
     owner: 'orch',
     description:
-      'Deterministic parallel task scheduler: ready+disjoint waves via worktrees, serial MergeQueue, fail-closed ownership enforcement. Default off; enable only for independent-subset missions after P3.',
+      'Deterministic parallel task scheduler: ready+disjoint waves via worktrees, serial MergeQueue, fail-closed ownership enforcement. Enabled and operational in release configuration.',
     channel: 'dev',
     createdAt: '2026-07-14',
     removeAfter: '2027-06-30',
     killSwitch: false,
     telemetry: true,
-    // Fail-closed: stays off until independent-subset policy is trusted (P3).
-    // Override enables for missions that declare disjoint ownership.
-    defaultEnabled: false,
+    // The production loop still requires an approved mission contract and a
+    // sealed task plan before any worker pane or worktree is created.
+    defaultEnabled: true,
   },
 ] as const;
 

@@ -13,12 +13,22 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.15.17',
+  version: '0.16.1',
   date: '2026-07-14',
-  codename: 'Across Tools e Cockpit Vivo',
+  codename: 'Scheduler Operacional e Cockpit Vivo',
   summary:
-    'MCP Across Tools observa a frota local de CLIs, a sincronização nasce fail-closed, Settings ganha pilares mais claros e o cockpit passa a responder com estados narrativos e feedback visual leve.',
+    'O scheduler paralelo entra operacional em produção com worktrees isolados, ownership fail-closed e merge serial validado; a release preserva as melhorias de auth, BridgeMind, Impeccable e cockpit.',
   highlights: [
+    {
+      title: 'Scheduler paralelo operacional',
+      detail:
+        'Missões aprovadas com plano selado agora distribuem tasks prontas e disjuntas em panes isolados, respeitando dependências, orçamento e o gate de ownership antes do merge.',
+    },
+    {
+      title: 'Merge serial validado',
+      detail:
+        'Cada task concluída passa pela MergeQueue existente com sensores, revisão independente e finalização durável; conflitos, violações e grafos inválidos falham fechados.',
+    },
     {
       title: 'MCP Across Tools',
       detail:
@@ -46,6 +56,16 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [
+    {
+      title: 'Release metadata alinhada',
+      detail:
+        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.16.1, removendo o bloqueio que deixava a árvore de release inconsistente.',
+    },
+    {
+      title: 'Ownership e DAG endurecidos',
+      detail:
+        'Claims de diretório agora colidem com arquivos descendentes, e self-dependency, dependências desconhecidas e ciclos não podem prender uma missão indefinidamente.',
+    },
     {
       title: 'Feature flag fail-closed restaurada',
       detail:

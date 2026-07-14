@@ -43,9 +43,11 @@ describe('feature flags', () => {
     ).toMatchObject({ enabled: false, reason: 'unknown-flag' });
   });
 
-  it('keeps every deferred product-wave flag default off', () => {
+  it('keeps deferred product-wave flags off and scheduler release-ready', () => {
     for (const flag of BUILTIN_FEATURE_FLAGS) {
-      expect(flag.defaultEnabled).toBe(false);
+      expect(flag.defaultEnabled).toBe(
+        flag.id === 'orch.parallelScheduler',
+      );
       expect(flag.channel).toBe('dev');
     }
   });

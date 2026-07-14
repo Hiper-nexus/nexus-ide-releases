@@ -144,6 +144,12 @@ import {
   enableAllProductFlagsForTesting,
 } from "./feature-flags/feature-flag-registry";
 import {
+  configureMissionScheduler,
+  disposeMissionScheduler,
+  startMissionSchedulerLoop,
+  stopMissionSchedulerLoop,
+} from './orch/mission-scheduler-production';
+import {
   initUsageTelemetry,
   shutdownUsageTelemetry,
 } from "./usage/usage-service";
@@ -345,6 +351,7 @@ function bootstrap(): void {
   configurePtyProjectRuntimeManager(projectRuntimeManager);
   configureRendererMissionAuthority(projectRuntimeManager);
   const worktreeRuntime = configureWorktreeRuntimeRegistry(projectRuntimeManager);
+  configureMissionScheduler({ listScopes: knownCronScopes });
   configureContextWorkflowRegistry(projectRuntimeManager, {
     appVersion: app.getVersion(),
     resolveIntegratedMission: (scope, missionId, baseSha) =>
@@ -482,6 +489,9 @@ function bootstrap(): void {
   // Gamificação SÓ depois: o retro replay precisa dos stores orch hidratados
   // (senão a estreia gravaria replayDone com zero eventos).
   void initOrchestration()
+    .then(() => {
+      startMissionSchedulerLoop();
+    })
     .then(() => gamificationService.start())
     .catch((err) => {
       console.warn("[nexus] orchestration failed to start:", err);
@@ -697,6 +707,8 @@ function shutdown(): Promise<void> {
     disposeCronRuntime();
     stopMissionDriverLoop();
     disposeMissionDriverIo();
+    stopMissionSchedulerLoop();
+    disposeMissionScheduler();
     disposeSyncRuntime();
     disposeNexusDoctorRuntime();
     disposeAuditLogRuntime();

@@ -10,8 +10,6 @@
  */
 
 import {
-  hasOwnershipOverlap,
-  ownershipOverlap,
   type WorktreeOwnership,
 } from '../runtime/worktree-contract';
 
@@ -75,6 +73,11 @@ export type SchedulePlan =
       readonly kind: 'idle-failed';
       readonly reason: string;
       readonly failedTaskIds: readonly string[];
+    }
+  | {
+      readonly kind: 'idle-invalid';
+      readonly reason: string;
+      readonly invalidTaskIds: readonly string[];
     };
 
 export interface ScheduleDecision {
@@ -163,9 +166,37 @@ export function ownershipsIntersect(
   left: ScheduleOwnership,
   right: ScheduleOwnership,
 ): boolean {
-  return hasOwnershipOverlap(
-    ownershipOverlap(toWorktreeOwnership(left), toWorktreeOwnership(right)),
+  const leftFiles = left.files.map(normalizeSchedulePath);
+  const rightFiles = right.files.map(normalizeSchedulePath);
+  const fileOverlap = leftFiles.some((leftFile) =>
+    rightFiles.some((rightFile) => fileClaimsOverlap(leftFile, rightFile)),
   );
+  const exactOverlap = (a: readonly string[], b: readonly string[]) => {
+    const rightValues = new Set(b);
+    return a.some((value) => rightValues.has(value));
+  };
+  return (
+    fileOverlap ||
+    exactOverlap(left.symbols, right.symbols) ||
+    exactOverlap(left.domains, right.domains)
+  );
+}
+
+function fileClaimsOverlap(left: string, right: string): boolean {
+  const normalizedLeft = left.replace(/\/+$/, '');
+  const normalizedRight = right.replace(/\/+$/, '');
+  if (normalizedLeft === normalizedRight) return true;
+  return (
+    (isDirectoryClaim(normalizedLeft) &&
+      normalizedRight.startsWith(`${normalizedLeft}/`)) ||
+    (isDirectoryClaim(normalizedRight) &&
+      normalizedLeft.startsWith(`${normalizedRight}/`))
+  );
+}
+
+function isDirectoryClaim(file: string): boolean {
+  const basename = file.split('/').pop() ?? file;
+  return file.endsWith('/') || !basename.includes('.');
 }
 
 /**
@@ -363,6 +394,73 @@ export function computeReadySet(
   );
 }
 
+export interface DependencyValidationResult {
+  readonly valid: boolean;
+  readonly invalidTaskIds: readonly string[];
+  readonly reason: string;
+}
+
+/**
+ * Validate the mission dependency graph before readiness checks. Unknown
+ * dependencies, self-dependencies, and cycles are invalid rather than a
+ * permanent wait state.
+ */
+export function validateScheduleDependencies(
+  tasks: readonly ScheduleTask[],
+): DependencyValidationResult {
+  const byId = taskById(tasks);
+  const invalid = new Set<string>();
+  const reasons = new Set<string>();
+
+  for (const task of tasks) {
+    for (const dependencyId of task.dependsOn) {
+      if (dependencyId === task.id) {
+        invalid.add(task.id);
+        reasons.add(`self-dependency on ${task.id}`);
+      } else if (!byId.has(dependencyId)) {
+        invalid.add(task.id);
+        reasons.add(`${task.id} depends on missing ${dependencyId}`);
+      }
+    }
+  }
+
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const path: string[] = [];
+
+  const visit = (taskId: string): void => {
+    if (visiting.has(taskId)) {
+      const cycleStart = path.indexOf(taskId);
+      for (const cycleTaskId of path.slice(cycleStart)) invalid.add(cycleTaskId);
+      reasons.add(`dependency cycle involving ${taskId}`);
+      return;
+    }
+    if (visited.has(taskId)) return;
+    const task = byId.get(taskId);
+    if (!task) return;
+    visiting.add(taskId);
+    path.push(taskId);
+    for (const dependencyId of task.dependsOn) {
+      if (byId.has(dependencyId)) visit(dependencyId);
+    }
+    path.pop();
+    visiting.delete(taskId);
+    visited.add(taskId);
+  };
+
+  for (const task of tasks) visit(task.id);
+
+  const invalidTaskIds = Object.freeze([...invalid].sort((a, b) => a.localeCompare(b)));
+  return {
+    valid: invalidTaskIds.length === 0,
+    invalidTaskIds,
+    reason:
+      invalidTaskIds.length === 0
+        ? 'dependency graph valid'
+        : `invalid dependency graph: ${[...reasons].sort().join('; ')}`,
+  };
+}
+
 function expandAll(
   tasks: readonly ScheduleTask[],
   expandFiles?: (files: readonly string[]) => readonly string[],
@@ -484,6 +582,22 @@ export function decideSchedule(
       readyIds: Object.freeze([]),
       admittedIds: Object.freeze([]),
       deferredIds: Object.freeze([]),
+      at: now,
+    };
+  }
+  const dependencyValidation = validateScheduleDependencies(tasks);
+  if (!dependencyValidation.valid) {
+    return {
+      plan: {
+        kind: 'idle-invalid',
+        reason: dependencyValidation.reason,
+        invalidTaskIds: dependencyValidation.invalidTaskIds,
+      },
+      readyIds: Object.freeze([]),
+      admittedIds: Object.freeze([]),
+      deferredIds: Object.freeze(
+        tasks.filter((task) => task.status === 'pending').map((task) => task.id),
+      ),
       at: now,
     };
   }

@@ -25,8 +25,8 @@ function record(
 }
 
 describe('mission-scheduler-io', () => {
-  it('flag resolves fail-closed default off', () => {
-    expect(isParallelSchedulerFlagEnabled({})).toBe(false);
+  it('flag resolves enabled for release configuration', () => {
+    expect(isParallelSchedulerFlagEnabled({})).toBe(true);
     expect(isParallelSchedulerFlagEnabled({ override: true })).toBe(true);
   });
 

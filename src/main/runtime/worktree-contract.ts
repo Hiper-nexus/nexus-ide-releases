@@ -231,11 +231,43 @@ export function ownershipOverlap(
     const rightValues = new Set(b);
     return a.filter((value) => rightValues.has(value));
   };
+  const overlappingFiles = [
+    ...left.files.filter((leftFile) =>
+      right.files.some((rightFile) =>
+        fileOwnershipClaimsOverlap(leftFile, rightFile),
+      ),
+    ),
+    ...right.files.filter((rightFile) =>
+      left.files.some((leftFile) =>
+        fileOwnershipClaimsOverlap(leftFile, rightFile),
+      ),
+    ),
+  ];
   return Object.freeze({
-    files: Object.freeze(intersection(left.files, right.files)),
+    files: Object.freeze([...new Set(overlappingFiles)].sort()),
     symbols: Object.freeze(intersection(left.symbols, right.symbols)),
     domains: Object.freeze(intersection(left.domains, right.domains)),
   });
+}
+
+/** Directory claims overlap every repository-relative descendant. */
+export function fileOwnershipClaimsOverlap(
+  left: string,
+  right: string,
+): boolean {
+  const normalizedLeft = left.replaceAll('\\', '/').replace(/\/+$/, '');
+  const normalizedRight = right.replaceAll('\\', '/').replace(/\/+$/, '');
+  if (normalizedLeft === normalizedRight) return true;
+  const isDirectoryClaim = (file: string): boolean => {
+    const basename = file.split('/').pop() ?? file;
+    return !basename.includes('.');
+  };
+  return (
+    (isDirectoryClaim(normalizedLeft) &&
+      normalizedRight.startsWith(`${normalizedLeft}/`)) ||
+    (isDirectoryClaim(normalizedRight) &&
+      normalizedLeft.startsWith(`${normalizedRight}/`))
+  );
 }
 
 export function hasOwnershipOverlap(value: WorktreeOwnership): boolean {

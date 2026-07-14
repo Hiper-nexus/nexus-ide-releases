@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.16.1 — Scheduler Operacional e Merge Fail-Closed
+
+Data: 2026-07-14
+
+- Scheduler paralelo passa a operar após o bootstrap de orquestração: a cada
+  cinco segundos e em mudanças de missão/task, ele cria worktrees e panes reais
+  para tasks prontas, disjuntas e autorizadas.
+- A flag `orch.parallelScheduler` fica ligada na release, mas continua protegida
+  por contrato aprovado, plano selado, orçamento de workers e kill switch.
+- Tasks concluídas entram automaticamente na MergeQueue serial já existente, com
+  validação de contexto, sensores, revisão independente e finalização durável.
+- Ownership de diretório cobre arquivos descendentes; self-dependencies,
+  dependências desconhecidas e ciclos passam a falhar fechados em vez de travar.
+- Metadata de package, server, lockfile, changelog e release notes é alinhada em
+  `0.16.1`.
+
 ## 0.16.0 — Scheduler Paralelo (dormente), Impeccable Nativa e Auth Portável
 
 Data: 2026-07-14

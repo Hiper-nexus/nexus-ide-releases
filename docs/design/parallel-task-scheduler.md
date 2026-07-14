@@ -1,11 +1,12 @@
 # Parallel Task Scheduler (default fan-out of independent mission tasks)
 
-Status: **Implemented (P0–P4)** · Owner: orchestration · Flag: `orch.parallelScheduler` (default **off**; enable via override for independent-subset missions)
+Status: **Operational (P0–P4)** · Owner: orchestration · Flag: `orch.parallelScheduler` (release configuration **on**; production loop starts after orchestration bootstrap)
 
 Modules:
 - pure core: `src/main/orch/mission-scheduler.ts` (`decideSchedule`, ownership/glue, adaptive cap, telemetry, planner contract, fail-closed diff check)
 - meta codec: `src/main/orch/mission-scheduler-meta.ts`
 - runtime driver: `src/main/orch/mission-scheduler-runtime.ts` (`runSchedulerTick`, `finalizeTaskForMerge`)
+- production loop: `src/main/orch/mission-scheduler-production.ts` (5-second tick, isolated worker panes, serial merge queue)
 - IO bridge: `src/main/orch/mission-scheduler-io.ts`
 - flag: `FEATURE_FLAG_IDS.parallelScheduler` = `orch.parallelScheduler`
 
@@ -105,8 +106,8 @@ sequential chain (safe default).
 |---|---|---|---|
 | **P0** | `mission-scheduler.ts` pure core: `decideSchedule` (ready set + disjointness + cap). No IO. | Unit tests: DAG ordering, disjoint-wave selection, cap, all-sequential fallback, glue-file reservation. | **done** (`mission-scheduler.test.ts`) |
 | **P1** | Ownership-intersection util + reserved-glue list; expander hook compatible with `expandOwnershipWithBlastRadius`. | Unit tests: overlap detection incl. blast-radius, reserved files never parallel. | **done** |
-| **P2** | Runtime driver: `runSchedulerTick` → injected worktree/spawn/MergeQueue deps, flag `orch.parallelScheduler` (default off). | Integration test with fake spawn/merge: 3 disjoint → wave of 3; dependent → next wave; flag off → wave of 1. | **done** (`mission-scheduler-runtime.test.ts`) |
-| **P3** | Fail-closed: `enforceOwnershipOnDiff` + `finalizeTaskForMerge` re-run; planner `emitPlannedTasksWithContract` + `nexus_task` plan/create. Flag stays default **off**; independent subset gets `parallelEligible`. | Out-of-scope diff rejected + re-run; merge conflict serialized; planner sequential chain when ownership unknown. | **done** |
+| **P2** | Runtime driver: `runSchedulerTick` → injected worktree/spawn/MergeQueue deps, flag `orch.parallelScheduler` (release-configured on). | Integration test with fake spawn/merge: 3 disjoint → wave of 3; dependent → next wave; flag off → wave of 1. | **done** (`mission-scheduler-runtime.test.ts`) |
+| **P3** | Fail-closed: `enforceOwnershipOnDiff` + `finalizeTaskForMerge` re-run; planner `emitPlannedTasksWithContract` + `nexus_task` plan/create. Release flag is **on** and production dispatches only approved, planned tasks. | Out-of-scope diff rejected + re-run; merge conflict serialized; planner sequential chain when ownership unknown. | **done** |
 | **P4** | Telemetry counters (wave size, conflict, violation) + adaptive cap starting 2, widen after clean waves. | Tests for counters and adaptive widen/shrink. | **done** |
 
 ## Risks & rollout
@@ -115,8 +116,19 @@ sequential chain (safe default).
   safety net; never trust the declaration for correctness, only for scheduling.
 - **Glue-file contention** (lockfiles, barrels, migrations) → reserved, always sequential.
 - **Cost** (N panes + worktrees = memory/CPU/disk) → hard cap, resource-aware.
-- **Rollout**: flag default off through P2; on for the *provably-independent subset* at
-  P3; start cap 2–3, widen with P4 telemetry. Kill-switch = flip flag → pure sequential.
+- **Rollout**: release default is on for the *provably-independent subset*; the
+  production loop still requires an approved mission contract and a sealed task plan.
+  Kill-switch = flip flag → pure sequential.
+
+## Production behavior
+
+After Nexus orchestration boots, the scheduler evaluates running missions every five
+seconds and on task/mission changes. It creates one isolated worktree and worker pane
+per admitted task, respecting dependencies, ownership overlap, worker budgets, and
+the existing mission contract. A worker must mark its task `done`; the scheduler then
+queues the worktree through the existing validated serial merge barrier. A failed
+dispatch marks the task `failed` and a failed merge remains recoverable through the
+existing merge queue state.
 
 ## Open questions
 

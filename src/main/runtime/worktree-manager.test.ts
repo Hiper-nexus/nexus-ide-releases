@@ -315,6 +315,34 @@ describe('WorktreeManager', () => {
     expect(dependent.dependencies).toHaveLength(1);
   });
 
+  it('blocks a directory claim from running with a nested file claim', () => {
+    manager.create({
+      scope: projectScope(),
+      missionId: 'mission-directory-overlap',
+      taskId: 'task-directory',
+      workerId: 'worker-directory',
+      ownership: {
+        files: ['src/feature'],
+        symbols: [],
+        domains: [],
+      },
+    });
+
+    expect(() =>
+      manager.create({
+        scope: projectScope(),
+        missionId: 'mission-directory-overlap',
+        taskId: 'task-nested-file',
+        workerId: 'worker-nested-file',
+        ownership: {
+          files: ['src/feature/utils.ts'],
+          symbols: [],
+          domains: [],
+        },
+      }),
+    ).toThrow(OwnershipOverlapError);
+  });
+
   it('rejects committed files outside the declared ownership before integration', () => {
     const assignment = manager.create({
       scope: projectScope(),

@@ -10,6 +10,7 @@ import {
   type MergeQueueStateSnapshot,
   type RetryMergeInput,
 } from './merge-queue';
+import type { PreparedWorktreeIntegration } from './worktree-contract';
 import {
   SqliteMergeQueueStateStore,
   SqliteWorktreeStateStore,
@@ -98,6 +99,32 @@ export class WorktreeRuntimeRegistry {
 
   enqueue(input: EnqueueMergeInput): Promise<MergeQueueResult> {
     return this.forScope(input.scope).queue.enqueue(input);
+  }
+
+  prepareIntegration(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+  ): PreparedWorktreeIntegration {
+    return this.forScope(scope).worktrees.prepareIntegration(
+      scope,
+      missionId,
+      taskId,
+    );
+  }
+
+  markFailed(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+    reason: string,
+  ): WorktreeRecord {
+    return this.forScope(scope).worktrees.markFailed(
+      scope,
+      missionId,
+      taskId,
+      reason,
+    );
   }
 
   retry(input: RetryMergeInput): Promise<MergeQueueResult> {

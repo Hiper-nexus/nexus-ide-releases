@@ -229,6 +229,21 @@ describe('mission-scheduler P1 ownership + reserved glue', () => {
     ).toBe(false);
   });
 
+  it('treats directory ownership as overlapping nested file ownership', () => {
+    expect(
+      ownershipsIntersect(
+        { files: ['src/feature'], symbols: [], domains: [] },
+        { files: ['src/feature/utils.ts'], symbols: [], domains: [] },
+      ),
+    ).toBe(true);
+    expect(
+      ownershipsIntersect(
+        { files: ['src/feature'], symbols: [], domains: [] },
+        { files: ['src/feature-utils.ts'], symbols: [], domains: [] },
+      ),
+    ).toBe(false);
+  });
+
   it('reserved glue patterns cover lockfiles, barrels, migrations, .nexus/.context', () => {
     expect(isReservedGlueFile('package-lock.json')).toBe(true);
     expect(isReservedGlueFile('pnpm-lock.yaml')).toBe(true);
@@ -467,6 +482,45 @@ describe('mission-scheduler P3 enforcement + planner contract', () => {
     ]);
     expect(parallel.every((t) => t.parallelEligible)).toBe(true);
     expect(independentSubsetTaskIds(parallel)).toEqual(['p1', 'p2']);
+  });
+});
+
+describe('mission-scheduler dependency validation', () => {
+  it('fails closed on self-dependencies and cycles instead of waiting forever', () => {
+    const self = decideSchedule(
+      [task('self', { dependsOn: ['self'] })],
+      [],
+      CAP,
+      NOW,
+    );
+    expect(self.plan).toMatchObject({
+      kind: 'idle-invalid',
+      invalidTaskIds: ['self'],
+    });
+
+    const cycle = decideSchedule(
+      [task('a', { dependsOn: ['b'] }), task('b', { dependsOn: ['a'] })],
+      [],
+      CAP,
+      NOW,
+    );
+    expect(cycle.plan).toMatchObject({
+      kind: 'idle-invalid',
+      invalidTaskIds: ['a', 'b'],
+    });
+  });
+
+  it('fails closed on unknown dependencies', () => {
+    const decision = decideSchedule(
+      [task('orphan', { dependsOn: ['missing'] })],
+      [],
+      CAP,
+      NOW,
+    );
+    expect(decision.plan).toMatchObject({
+      kind: 'idle-invalid',
+      invalidTaskIds: ['orphan'],
+    });
   });
 });
 

@@ -2,7 +2,8 @@
  * IO bridge for the parallel scheduler: task-store records ↔ ScheduleTask,
  * feature-flag resolution, adaptive state in-memory (process-local).
  *
- * Production wiring stays optional; pure core remains free of stores.
+ * Production wiring lives in mission-scheduler-production.ts; the pure core
+ * remains free of stores.
  */
 
 import {

@@ -18,6 +18,7 @@ import {
   assertSha,
   cloneWorktreeRecord as cloneRecord,
   digest,
+  fileOwnershipClaimsOverlap,
   hasOwnershipOverlap as hasOverlap,
   normalizeFileOwnership,
   normalizeOwnership,
@@ -401,8 +402,12 @@ export class WorktreeManager {
     if (changedFiles.length === 0) {
       throw new WorktreeStateConflictError('task has no committed changes');
     }
-    const ownedFiles = new Set(record.ownership.files);
-    const undeclared = changedFiles.filter((file) => !ownedFiles.has(file));
+    const undeclared = changedFiles.filter(
+      (file) =>
+        !record.ownership.files.some((claim) =>
+          fileOwnershipClaimsOverlap(claim, file),
+        ),
+    );
     if (undeclared.length > 0) throw new OwnershipViolationError(undeclared);
     const diff = this.#git.run(record.worktreePath, [
       'diff',
