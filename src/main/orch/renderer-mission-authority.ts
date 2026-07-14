@@ -627,8 +627,8 @@ export class RendererMissionAuthority {
     if (existing.squadId && existing.squadId !== input.squadId) {
       throw new Error("mission squad does not match orchestrator grant");
     }
-    // A ready_to_start mission is bindable only after durable approval. Main
-    // promotes it to dispatched while binding this already-live owned pane.
+    // Pane binding is post-dispatch only. Approval persists dispatchedAt before
+    // the renderer may create the live CLI pane.
     const intentState = existing.intentState ?? "legacy";
     if (!hasCurrentDispatchAuthority(existing)) {
       throw new Error(
@@ -638,38 +638,12 @@ export class RendererMissionAuthority {
 
     let gateBound = false;
     let sessionBound = false;
-    let dispatchPromoted = false;
     let orchestratorSessionUpdated = false;
     let recordedPaneId: string | null = null;
-    let working = existing;
     try {
-      if (intentState === "ready_to_start") {
-        const started = transitionIntentState({
-          from: intentState,
-          event: "start",
-        });
-        if (!started.ok) throw new Error(started.reason);
-        const dispatchedAt = Date.now();
-        const promoted = missionStore.update(existing.id, {
-          status: missionStatusForIntent(started.to) ?? "running",
-          intentState: started.to,
-          intentVersion: existing.intentVersion,
-          intentContract: {
-            ...existing.intentContract!,
-            acceptanceCriteria: [
-              ...existing.intentContract!.acceptanceCriteria,
-            ],
-            budgets: { ...existing.intentContract!.budgets },
-            dispatchedAt,
-          },
-        });
-        if (!promoted) throw new Error("mission disappeared during dispatch");
-        working = promoted;
-        dispatchPromoted = true;
-      }
       const priorPane = paneStore.findByPaneId(owned.paneId);
       const recordedPane = paneStore.record({
-        missionId: working.id,
+        missionId: existing.id,
         paneId: owned.paneId,
         adapterId: granted.adapterId,
         model: granted.model,
@@ -684,7 +658,7 @@ export class RendererMissionAuthority {
       });
       recordedPaneId = priorPane ? null : recordedPane.id;
       gateBound = restoreSessionAuthority(owned.sessionId, {
-        missionId: working.id,
+        missionId: existing.id,
         role: "orchestrator",
         agentName: granted.agentName,
         allowedTools: granted.allowedTools,
@@ -692,14 +666,14 @@ export class RendererMissionAuthority {
       });
       sessionBound =
         gateBound &&
-        bindOwnedAgentSessionMission(owner, owned.sessionId, working.id);
+        bindOwnedAgentSessionMission(owner, owned.sessionId, existing.id);
       if (!gateBound || !sessionBound) {
         throw new Error(
           "failed to bind mission to the authorized orchestrator session",
         );
       }
       const updated = missionStore.setOrchestratorSession(
-        working.id,
+        existing.id,
         owned.sessionId,
       );
       if (!updated) {
@@ -751,14 +725,6 @@ export class RendererMissionAuthority {
         rollbackSessionAuthorityMission(owned.sessionId, existing.id);
       }
       if (recordedPaneId) paneStore.remove(recordedPaneId);
-      if (dispatchPromoted) {
-        missionStore.update(existing.id, {
-          status: existing.status,
-          intentState: existing.intentState,
-          intentVersion: existing.intentVersion,
-          intentContract: existing.intentContract ?? null,
-        });
-      }
       throw error;
     }
   }

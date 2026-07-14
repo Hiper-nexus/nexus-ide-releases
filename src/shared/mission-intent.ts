@@ -223,8 +223,8 @@ const TRANSITIONS: Readonly<
     submit_goal: 'intent_compiling', // new user message preempts
   },
   awaiting_approval: {
-    // Approval is durable before runtime materialization. Dispatch only begins
-    // when main binds a live orchestrator pane (`start` from ready_to_start).
+    // One explicit start action durably approves, then advances through
+    // ready_to_start before any runtime materialization is allowed.
     approve: 'ready_to_start',
     submit_goal: 'intent_compiling',
   },
