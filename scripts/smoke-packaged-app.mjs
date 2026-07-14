@@ -460,6 +460,14 @@ export function requiredNativeArtifactGlobs({ platform, arch }) {
       ],
     },
   ];
+  if (platform === 'linux') {
+    artifacts.push({
+      id: 'onnxruntime-linux-shared',
+      anyOf: [
+        `node_modules/onnxruntime-node/bin/napi-v3/linux/${arch}/libonnxruntime.so.1`,
+      ],
+    });
+  }
   // @lydell/node-pty ships spawn-helper for macOS, while its Linux prebuild
   // uses openpty directly and intentionally contains only pty.node.
   if (platform === 'darwin') {

@@ -207,7 +207,9 @@ describe('packaged legal notices', () => {
     expect(shouldPackageFile('/third_party/licenses/orca-MIT.txt')).toBe(true);
     expect(shouldPackageFile('/src/main/main.ts')).toBe(false);
     expect(shouldPackageFile('\\.vite\\build\\main.js')).toBe(true);
+    expect(shouldPackageFile('C:\\work\\nexus\\.vite\\build\\main.js')).toBe(true);
     expect(shouldPackageFile('\\node_modules\\better-sqlite3\\build\\Release\\better_sqlite3.node')).toBe(true);
+    expect(shouldPackageFile('C:\\work\\nexus\\node_modules\\onnxruntime-node\\bin\\napi-v3\\win32\\x64\\onnxruntime.dll')).toBe(true);
     // Provenance ledger is for engineers; not required in the app bundle.
     expect(shouldPackageFile('/third_party/provenance/orca-143c36e.json')).toBe(
       false,

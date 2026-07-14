@@ -442,6 +442,11 @@ describe('proofs: renderer, functional, marker, natives', () => {
         `node_modules/@lydell/node-pty-${platform}-${arch}/prebuilds/${platform}-${arch}/pty.node`,
         `node_modules/onnxruntime-node/bin/napi-v3/${platform}/${arch}/onnxruntime_binding.node`,
       ];
+      if (platform === 'linux') {
+        files.push(
+          `node_modules/onnxruntime-node/bin/napi-v3/linux/${arch}/libonnxruntime.so.1`,
+        );
+      }
       if (platform === 'darwin') {
         files.push(
           `node_modules/@lydell/node-pty-${platform}-${arch}/prebuilds/${platform}-${arch}/spawn-helper`,
@@ -626,6 +631,11 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
       `node_modules/@lydell/node-pty-${platform}-${arch}/prebuilds/${platform}-${arch}/pty.node`,
       `node_modules/onnxruntime-node/bin/napi-v3/${platform}/${arch}/onnxruntime_binding.node`,
     ];
+    if (platform === 'linux') {
+      files.push(
+        `node_modules/onnxruntime-node/bin/napi-v3/linux/${arch}/libonnxruntime.so.1`,
+      );
+    }
     if (platform === 'darwin') {
       files.push(
         `node_modules/@lydell/node-pty-${platform}-${arch}/prebuilds/${platform}-${arch}/spawn-helper`,

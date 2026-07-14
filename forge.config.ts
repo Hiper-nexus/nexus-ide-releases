@@ -70,15 +70,17 @@ export function shouldPackageFile(file: string): boolean {
   // Electron Packager passes POSIX paths on Unix and backslash paths on
   // Windows. Keep the inclusion policy identical across release runners.
   const normalized = file.replaceAll('\\', '/');
+  const rootRelative = normalized.replace(/^[A-Za-z]:/u, '');
   return (
-    normalized === '/package.json' ||
-    normalized === '/LICENSE' ||
-    normalized === '/THIRD_PARTY_NOTICES.md' ||
-    normalized === '/third_party' ||
-    normalized === '/third_party/licenses' ||
-    normalized.startsWith('/third_party/licenses/') ||
-    normalized.startsWith('/.vite') ||
-    normalized.startsWith('/node_modules')
+    rootRelative === '/package.json' ||
+    rootRelative === '/LICENSE' ||
+    rootRelative === '/THIRD_PARTY_NOTICES.md' ||
+    rootRelative === '/third_party' ||
+    rootRelative === '/third_party/licenses' ||
+    rootRelative.startsWith('/third_party/licenses/') ||
+    (rootRelative.includes('/.vite/') || rootRelative.endsWith('/.vite')) ||
+    rootRelative.includes('/node_modules/') ||
+    rootRelative === '/node_modules'
   );
 }
 
@@ -295,7 +297,7 @@ const config: ForgeConfig = {
     asar: {
       // *.dylib: onnxruntime-node (wake word) dlopens libonnxruntime beside
       // its .node binding — both must live outside the asar.
-      unpack: '**/{*.node,*.dylib,*.wasm,spawn-helper,tesseract.js/**,tesseract.js-core/**,wasm-feature-detect/**}',
+      unpack: '**/{*.node,*.dylib,*.so*,*.wasm,spawn-helper,tesseract.js/**,tesseract.js-core/**,wasm-feature-detect/**}',
       // node-pty also ships an executable helper on POSIX and multiple conpty
       // bindings on Windows. Unpack the complete platform package so runtime
       // resolution never depends on per-file glob behavior.
