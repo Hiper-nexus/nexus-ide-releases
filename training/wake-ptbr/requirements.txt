@@ -1,0 +1,10 @@
+# Run this with CPython 3.11 on macOS arm64. The app itself does not import
+# these packages; they are only for producing and validating a candidate ONNX.
+edge-tts==6.1.12
+huggingface_hub>=0.24,<1
+numpy>=1.26,<2
+onnx>=1.16,<2
+onnxruntime==1.19.2
+openwakeword==0.6.0
+scipy>=1.11,<2
+torch>=2.5,<2.7
