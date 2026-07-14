@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.15.15 — Travas de Autonomia e Revisão Humana de Missão
+
+Data: 2026-07-14
+
+- Trava de autonomia pinada por teste: `defaultDriveConfig` nasce em shadow
+  (fail-safe sem settings), congelado e com budgets finitos; a ativação do
+  driver continua decisão de runtime via `missionDriverActiveMode`.
+- TOCTOU residual do orçamento de workers fechado: a reserva de slot só é
+  liberada depois que o worker está durável em `missionPanes` — caso contrário
+  permanece retida (fail-safe) com aviso.
+- Política "soak antes de default-on" codificada em `docs/OPERATIONS.md`,
+  destilada das classes de defeito da wave intent-first de 2026-07-13.
+- Rail glanceable: pill entende espera humana ("Aguarda você", "Sem objetivo",
+  "Pronta") em vez de esconder tudo como "Na fila"; meta fala "agentes"
+  em vez de "panes" e mostra há quanto tempo a missão roda.
+- Missão nascida de issue agora é auditável: cliques em issues (rail e painel
+  de integrações) fluem `source: 'imported-issue'` até o contrato de intenção;
+  objetivos por voz fluem `source: 'voice'`.
+- Revisão humana de diff vira entrada de orquestração: as anotações do
+  DiffAnnotatePanel são submetidas (paste + Enter) ao ORQUESTRADOR da missão
+  ativa — não mais escritas sem envio no worker focado.
+
+## 0.15.14 — Missão Enxuta: Prompt Proporcional e Start em Um Clique
+
+Data: 2026-07-14
+
+- Kickoff intent-first sem duplicação: a memória compacta só entra quando a
+  missão tem progresso real, e o critério auto-derivado deixa de reencenar o
+  objetivo — missão curta deixa de repetir o goal até 3× no mesmo prompt.
+- Cartas de worker em camadas por papel/tarefa: scout/architect não pagam
+  cartas de build (~8 KB), reviewer dispensa a escada de diff e a carta de
+  design só acompanha tarefas com sinal de UI. Toggles de Configurações
+  continuam sendo o gate externo; PREVC, budgets e gates intactos.
+- Missão de risco normal inicia em um clique: "Começar missão" compila e
+  despacha direto de `ready_to_start`; "Revisar plano" preserva a revisão em
+  duas etapas e aprovação sensível/destrutiva permanece obrigatória.
+- Wizard fala humano: o estado da fila vira "Processando o objetivo…" em vez
+  de `exec=goal_compile:running`, e some quando não há nada em andamento.
+- Kickoff legado não trava mais em mapa frio: o warm de orientação tem teto de
+  4 s e cai no fallback "mapa aquecendo" (doctor recupera sob demanda).
+- Playbook com proporcionalidade explícita: missão pequena é UMA tarefa e UM
+  especialista.
+
 ## 0.15.13 — Dock-First Keychain-Safe Launch
 
 Data: 2026-07-14

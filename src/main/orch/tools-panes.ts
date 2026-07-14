@@ -86,6 +86,22 @@ export function reserveWorkerSpawnSlot(input: {
   };
 }
 
+/**
+ * Budget invariant: the in-flight reservation may only drop after the spawned
+ * worker is durably visible to the next maxWorkers check (a missionPanes row).
+ * Releasing without that row reopens the TOCTOU the reservation exists to
+ * close — a concurrent spawn would see neither the live worker nor the
+ * reservation. When the row is missing we keep the reservation (fail-safe:
+ * blocking one slot beats exceeding maxWorkers).
+ */
+export function shouldReleaseWorkerReservation(input: {
+  readonly spawnedPaneId: string | undefined;
+  readonly recordedPaneIds: readonly string[];
+}): boolean {
+  if (!input.spawnedPaneId) return true; // spawn failed — nothing to count
+  return input.recordedPaneIds.includes(input.spawnedPaneId);
+}
+
 export function activeSameCheckoutWorker(
   panes: readonly PaneSnapshot[],
   checkoutRoot: string,
@@ -200,6 +216,7 @@ const paneSpawn: McpToolDef = {
         missionId: requestedMissionId,
         contextRevision: ctx.contextRevision,
         agentName: agent.agentName,
+        agentCategory: agent.category,
         allowedTools: attenuateTools(
           ctx.allowedTools,
           agent.allowedTools ?? (role === 'orchestrator' ? null : []),
@@ -229,6 +246,7 @@ const paneSpawn: McpToolDef = {
       };
     }
     let releaseWorkerSlot: (() => void) | undefined;
+    let spawnedWorkerPaneId: string | undefined;
     try {
       if (options.role === 'worker' && options.missionId) {
         const missionId = options.missionId;
@@ -313,13 +331,42 @@ const paneSpawn: McpToolDef = {
           };
         }
       }
-      const spawned = await spawnPaneAndMaybePrompt(options);
+      const spawned = await spawnPaneAndMaybePrompt(options, {
+        // Capture the PTY identity before missionPanes.record(). If that
+        // durable write fails, the finally block must retain the reservation
+        // instead of treating the spawn as if it never happened.
+        onPaneCreated: (paneId) => {
+          spawnedWorkerPaneId = paneId;
+        },
+      });
       return {
         ...spawned,
         ...(executionMode ? { executionMode } : {}),
       };
     } finally {
-      releaseWorkerSlot?.();
+      if (releaseWorkerSlot) {
+        const missionId = options.missionId;
+        const recordedPaneIds =
+          spawnedWorkerPaneId && missionId
+            ? getProjectDomainStores(ctx.scope)
+                .missionPanes.list(missionId)
+                .map((pane) => pane.paneId)
+                .filter((paneId): paneId is string => typeof paneId === 'string')
+            : [];
+        if (
+          shouldReleaseWorkerReservation({
+            spawnedPaneId: spawnedWorkerPaneId,
+            recordedPaneIds,
+          })
+        ) {
+          releaseWorkerSlot();
+        } else {
+          console.warn(
+            '[tools-panes] worker spawned but not durably recorded; keeping ' +
+              `maxWorkers reservation (mission=${missionId}, pane=${spawnedWorkerPaneId})`,
+          );
+        }
+      }
     }
   },
 };

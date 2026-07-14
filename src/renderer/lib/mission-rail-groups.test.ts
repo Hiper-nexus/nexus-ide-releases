@@ -120,6 +120,46 @@ describe('railStatusDisplay', () => {
     expect(railStatusDisplay('done', false).label).toBe('Concluída');
     expect(railStatusDisplay('failed', false).label).toBe('Falhou');
   });
+
+  it('surfaces human-wait intent states instead of hiding them as Na fila', () => {
+    expect(railStatusDisplay('pending', false, 'awaiting_goal').label).toBe(
+      'Sem objetivo',
+    );
+    expect(railStatusDisplay('pending', false, 'intent_compiling').label).toBe(
+      'Processando',
+    );
+    expect(railStatusDisplay('pending', false, 'ready_to_start').label).toBe(
+      'Pronta',
+    );
+    expect(railStatusDisplay('pending', false, 'awaiting_approval')).toEqual({
+      label: 'Aguarda você',
+      tone: 'blocked',
+    });
+    expect(railStatusDisplay('blocked', false, 'blocked_user').label).toBe(
+      'Aguarda você',
+    );
+  });
+
+  it('keeps live grid and machine states unchanged by intentState', () => {
+    expect(railStatusDisplay('pending', true, 'awaiting_approval').label).toBe(
+      'Ao vivo',
+    );
+    expect(railStatusDisplay('running', false, 'executing').label).toBe(
+      'Em curso',
+    );
+    expect(railStatusDisplay('blocked', false, 'blocked_technical').label).toBe(
+      'Travada',
+    );
+  });
+
+  it('keeps terminal outcomes authoritative over stale intent state', () => {
+    expect(railStatusDisplay('failed', false, 'ready_to_start').label).toBe(
+      'Falhou',
+    );
+    expect(railStatusDisplay('done', false, 'awaiting_approval').label).toBe(
+      'Concluída',
+    );
+  });
 });
 
 describe('missionRailResumeCopy', () => {

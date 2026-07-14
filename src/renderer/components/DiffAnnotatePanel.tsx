@@ -24,6 +24,7 @@ export function DiffAnnotatePanel({
     null,
   );
   const [note, setNote] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -148,17 +149,22 @@ export function DiffAnnotatePanel({
           <button
             type="button"
             className="diff-panel__btn diff-panel__btn--primary"
-            disabled={annotations.length === 0}
+            disabled={annotations.length === 0 || sending}
             onClick={() => {
-              const ok = sendAnnotationsToAgent(annotations);
-              setNote(
-                ok
-                  ? 'Anotações enviadas ao agent focado'
-                  : 'Falha — foque um pane de agent CLI',
-              );
+              setSending(true);
+              setNote(null);
+              void sendAnnotationsToAgent(annotations)
+                .then((ok) => {
+                  setNote(
+                    ok
+                      ? 'Revisão entregue — a missão vai endereçar os comentários'
+                      : 'Falha — o terminal do orquestrador não está disponível',
+                  );
+                })
+                .finally(() => setSending(false));
             }}
           >
-            Enviar notas ao agent
+            {sending ? 'Enviando…' : 'Enviar revisão à missão'}
           </button>
           {note && <p className="diff-panel__status">{note}</p>}
         </aside>

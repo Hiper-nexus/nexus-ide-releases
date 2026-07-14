@@ -1,9 +1,15 @@
 /**
  * Attach file paths / dropped blobs to the focused CLI agent pane (Sprint A1).
  */
+import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
+import { useOrchStore } from '../state/orch-store';
 import { listPanes } from './split-tree';
-import { writeToPane } from '../terminal/terminal-host';
+import {
+  getPaneSessionId,
+  submitPromptToPaneConfirmed,
+  writeToPane,
+} from '../terminal/terminal-host';
 
 function shellQuote(p: string): string {
   if (/^[A-Za-z0-9_./:@+-]+$/.test(p)) return p;
@@ -29,6 +35,63 @@ export function focusedAgentPaneId(): string | null {
   }
   const agent = panes.find((p) => p.kind === 'cli-agent');
   return agent?.id ?? null;
+}
+
+/**
+ * Pure resolver: the pane that should receive a human diff review.
+ * Review feedback is orchestration input — it belongs to the mission's
+ * ORCHESTRATOR (who delegates the rework), not to whatever worker happens to
+ * hold focus. Preference order:
+ *  1. orchestrator of the focused pane's mission;
+ *  2. any live mission orchestrator;
+ *  3. focused/first cli-agent pane (solo layouts without a mission).
+ */
+export function resolveReviewTargetPaneId(input: {
+  readonly panes: readonly Pick<PaneModel, 'id' | 'kind' | 'role'>[];
+  readonly focusedPaneId: string | null;
+  readonly paneMissions: Readonly<Record<string, string>>;
+  /** Defaults to true for pure callers; the live wrapper supplies PTY state. */
+  readonly isPaneLive?: (paneId: string) => boolean;
+}): string | null {
+  const isPaneLive = input.isPaneLive ?? (() => true);
+  const orchestrators = input.panes.filter(
+    (pane) =>
+      pane.kind === 'cli-agent' &&
+      pane.role === 'orchestrator' &&
+      input.paneMissions[pane.id] &&
+      isPaneLive(pane.id),
+  );
+  if (orchestrators.length > 0) {
+    const focusedMission = input.focusedPaneId
+      ? input.paneMissions[input.focusedPaneId]
+      : undefined;
+    const ofFocusedMission = focusedMission
+      ? orchestrators.find(
+          (pane) => input.paneMissions[pane.id] === focusedMission,
+        )
+      : undefined;
+    return (ofFocusedMission ?? orchestrators[0]!).id;
+  }
+  if (input.focusedPaneId) {
+    const focused = input.panes.find((pane) => pane.id === input.focusedPaneId);
+    if (focused?.kind === 'cli-agent' && isPaneLive(focused.id)) return focused.id;
+  }
+  return (
+    input.panes.find(
+      (pane) => pane.kind === 'cli-agent' && isPaneLive(pane.id),
+    )?.id ?? null
+  );
+}
+
+/** Live resolver over the stores (thin wrapper around the pure function). */
+export function reviewTargetPaneId(): string | null {
+  const { focusedPaneId, root } = useLayoutStore.getState();
+  return resolveReviewTargetPaneId({
+    panes: listPanes(root),
+    focusedPaneId,
+    paneMissions: useOrchStore.getState().paneMissions,
+    isPaneLive: (paneId) => Boolean(getPaneSessionId(paneId)),
+  });
 }
 
 /** Inject path(s) into the focused agent as if typed into the prompt. */
@@ -80,20 +143,27 @@ export function annotationsToAgentPrompt(
     (a, i) => `${i + 1}. ${a.path}:${a.line} — ${a.body.trim()}`,
   );
   return (
-    '\n[Revisão Nexus — anotações no diff]\n' +
-    'Por favor endereça estes comentários no código:\n' +
-    lines.join('\n') +
-    '\n'
+    '[Revisão Nexus — anotações no diff]\n' +
+    'Revisão humana do diff atual. Endereça cada comentário no código; ' +
+    'delegue ao especialista adequado quando fizer sentido e valide antes de concluir:\n' +
+    lines.join('\n')
   );
 }
 
-export function sendAnnotationsToAgent(
+/**
+ * Ship the batched review to the mission orchestrator (or the focused agent
+ * when no mission is live) as ONE submitted prompt — bracketed paste + Enter,
+ * not text left unsent in the composer.
+ */
+export async function sendAnnotationsToAgent(
   annotations: Array<{ path: string; line: number; body: string }>,
   paneId?: string,
-): boolean {
+): Promise<boolean> {
   const text = annotationsToAgentPrompt(annotations);
   if (!text) return false;
-  const target = paneId ?? focusedAgentPaneId();
+  const target = paneId ?? reviewTargetPaneId();
   if (!target) return false;
-  return writeToPane(target, text);
+  const sessionId = getPaneSessionId(target);
+  if (!sessionId) return false;
+  return submitPromptToPaneConfirmed(target, text, sessionId);
 }

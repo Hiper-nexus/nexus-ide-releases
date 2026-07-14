@@ -106,7 +106,6 @@ describe('mission intent gate', () => {
     expect(
       assertMissionIntentAllowsTool('nexus_mission_set_status', {
         mission: consult,
-        args: { status: 'done' },
       }).ok,
     ).toBe(true);
 

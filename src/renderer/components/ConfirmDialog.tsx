@@ -36,18 +36,19 @@ export function ConfirmDialog() {
         decide(false);
       } else if (e.key === 'Tab') {
         e.preventDefault();
-        const focusables = [
-          pending.requireReason ? reasonRef.current : null,
-          cancelRef.current,
-          confirmRef.current,
-        ].filter((el): el is HTMLElement => Boolean(el));
+        const focusables: HTMLElement[] = [];
+        if (pending.requireReason && reasonRef.current) {
+          focusables.push(reasonRef.current);
+        }
+        if (cancelRef.current) focusables.push(cancelRef.current);
+        if (confirmRef.current) focusables.push(confirmRef.current);
         if (focusables.length === 0) return;
         const active = document.activeElement;
         const idx = focusables.findIndex((el) => el === active);
         const next = e.shiftKey
           ? focusables[(idx <= 0 ? focusables.length : idx) - 1]
           : focusables[(idx + 1) % focusables.length];
-        next.focus();
+        next?.focus();
       } else if (e.key === 'Enter' && !pending.requireReason) {
         // Enter ativa o botão focado (comportamento nativo que o stop acima
         // não deve engolir). With a reason field, Enter stays in the textarea.

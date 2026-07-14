@@ -8,6 +8,7 @@ const stubs = vi.hoisted(() => ({
     sessionId: 'session-1',
   })),
   writeSession: vi.fn(() => true),
+  missionPanesRecord: vi.fn(),
 }));
 
 vi.mock('./workspace-path', () => ({ resolveCwdForScope: stubs.resolveCwdForScope }));
@@ -22,6 +23,11 @@ vi.mock('../adapters/adapter-registry', () => ({
   getAdapter: vi.fn(() => ({ id: 'codex', quirks: {} })),
 }));
 vi.mock('./mission-pane-store', () => ({ recordMissionPane: vi.fn() }));
+vi.mock('./project-domain-store-registry', () => ({
+  getProjectDomainStores: vi.fn(() => ({
+    missionPanes: { record: stubs.missionPanesRecord },
+  })),
+}));
 vi.mock('./legacy-handoff', () => ({ LEGACY_MARKER: 'marker' }));
 vi.mock('./ponytail', () => ({ PONYTAIL_RULES: '' }));
 vi.mock('./engineering-charter', () => ({ ENGINEERING_CHARTER: '' }));
@@ -62,6 +68,23 @@ describe('agent pane workspace confinement', () => {
       /no workspace open/,
     );
     expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
+  });
+
+  it('reports the pane before later mission persistence can fail', async () => {
+    const onPaneCreated = vi.fn();
+    stubs.missionPanesRecord.mockImplementationOnce(() => {
+      expect(onPaneCreated).toHaveBeenCalledWith('pane-1', 'session-1');
+      throw new Error('database unavailable');
+    });
+
+    await expect(
+      spawnPaneAndMaybePrompt(
+        { adapterId: 'codex', missionId: 'm1', scope },
+        { onPaneCreated },
+      ),
+    ).rejects.toThrow('database unavailable');
+
+    expect(onPaneCreated).toHaveBeenCalledWith('pane-1', 'session-1');
   });
 });
 

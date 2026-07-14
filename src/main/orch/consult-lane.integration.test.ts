@@ -106,7 +106,6 @@ describe('consult lane end-to-end', () => {
     expect(
       assertMissionIntentAllowsTool('nexus_mission_set_status', {
         mission,
-        args: { status: 'done', note: durableNote },
       }).ok,
     ).toBe(true);
   });

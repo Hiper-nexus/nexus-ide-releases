@@ -33,6 +33,8 @@ import {
   summarizeMissionBudget,
   summarizeWorkspaceMissionBudgets,
 } from '../../shared/mission-budget';
+import { humanElapsed } from '../../shared/mission-glance';
+import { resolveDispatchAuthorizedAt } from '../../shared/mission-intent';
 
 /**
  * Activity Rail — missões **deste workspace** apenas:
@@ -55,12 +57,21 @@ export function MissionRail() {
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  // Re-render the elapsed mission label even when no store event arrives.
+  const [, setElapsedTick] = useState(0);
   const [pinnedIds, setPinnedIds] = useState<string[]>(() =>
     loadPinnedMissionIds(workspacePath),
   );
   const [collapsed, setCollapsed] = useState<RailSectionId[]>(() =>
     loadCollapsedSections(),
   );
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setElapsedTick((tick) => tick + 1);
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // Pins e lista só deste path — ao trocar workspace, recarrega pins locais.
   useEffect(() => {
@@ -225,14 +236,21 @@ export function MissionRail() {
       const spawningCount = ids.filter(
         (paneId) => paneStates.get(paneId) === 'spawning',
       ).length;
+      // FALE HUMANO no rail: "pane" é encanamento; a pessoa acompanha AGENTES
+      // e há quanto tempo a missão roda.
+      const elapsed = humanElapsed(
+        resolveDispatchAuthorizedAt(mission),
+        Date.now(),
+      );
+      const elapsedBit = elapsed ? ` · ${elapsed}` : '';
       if (busyCount > 0) {
-        return `${busyCount} pane${busyCount === 1 ? '' : 's'} a trabalhar${handBit}${budgetBit}`;
+        return `${busyCount} agente${busyCount === 1 ? '' : 's'} trabalhando${elapsedBit}${handBit}${budgetBit}`;
       }
       if (spawningCount > 0) {
-        return `${spawningCount} pane${spawningCount === 1 ? '' : 's'} a iniciar${handBit}${budgetBit}`;
+        return `${spawningCount} agente${spawningCount === 1 ? '' : 's'} iniciando${elapsedBit}${handBit}${budgetBit}`;
       }
       if (ids.length > 0) {
-        return `${ids.length} pane${ids.length === 1 ? '' : 's'} no grid${handBit}${budgetBit}`;
+        return `${ids.length} agente${ids.length === 1 ? '' : 's'} no grid${elapsedBit}${handBit}${budgetBit}`;
       }
     }
 
@@ -340,6 +358,7 @@ export function MissionRail() {
                     onClick={() =>
                       openAgentic(
                         `${i.provider === 'github' ? `GitHub #${i.number}` : 'Linear'}: ${i.title}\n${i.url}`,
+                        'imported-issue',
                       )
                     }
                   >
@@ -430,7 +449,11 @@ export function MissionRail() {
                       {section.missions.map((m) => {
                         const liveInGrid = openMissionIds.has(m.id);
                         const pinned = pinnedIds.includes(m.id);
-                        const statusUi = railStatusDisplay(m.status, liveInGrid);
+                        const statusUi = railStatusDisplay(
+                          m.status,
+                          liveInGrid,
+                          m.intentState,
+                        );
                         const resumeCopy = missionRailResumeCopy(
                           m.status,
                           liveInGrid,

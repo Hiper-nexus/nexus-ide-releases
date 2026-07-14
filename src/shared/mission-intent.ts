@@ -397,6 +397,16 @@ export function classifyGoalRisk(goal: string): MissionIntentRisk {
   return 'normal';
 }
 
+/**
+ * Prefix of the acceptance criterion synthesized when the user provides none.
+ * Prompt builders use it to avoid restating the goal a second time.
+ */
+export const AUTO_DERIVED_CRITERION_PREFIX = 'Objetivo concluído conforme:';
+
+export function isAutoDerivedCriterion(criterion: string): boolean {
+  return criterion.trimStart().startsWith(AUTO_DERIVED_CRITERION_PREFIX);
+}
+
 export function compileIntentContract(input: {
   goal: string;
   source?: MissionIntentSource;
@@ -415,7 +425,7 @@ export function compileIntentContract(input: {
   const criteria =
     input.acceptanceCriteria && input.acceptanceCriteria.length > 0
       ? input.acceptanceCriteria
-      : [`Objetivo concluído conforme: ${goal.slice(0, 200)}`];
+      : [`${AUTO_DERIVED_CRITERION_PREFIX} ${goal.slice(0, 200)}`];
   const lane = input.lane ?? 'standard';
   const budgets =
     lane === 'consult'

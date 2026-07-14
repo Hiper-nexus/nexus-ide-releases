@@ -307,7 +307,7 @@ describe('Jarvis MCP result propagation', () => {
       context,
     );
 
-    expect(missionWizardState.openForAgentic).toHaveBeenCalledWith('auditar os logs da Jarvis');
+    expect(missionWizardState.openForAgentic).toHaveBeenCalledWith('auditar os logs da Jarvis', 'voice');
     expect(execution.toolResult).toMatchObject({
       tool: 'new_agentic_mission',
       ok: true,
@@ -418,7 +418,7 @@ describe('Jarvis MCP result propagation', () => {
       context,
     );
 
-    expect(missionWizardState.openForAgentic).toHaveBeenCalledWith('corrigir o login');
+    expect(missionWizardState.openForAgentic).toHaveBeenCalledWith('corrigir o login', 'voice');
     expect(confirmCommand).not.toHaveBeenCalled();
     expect(writeToPane).not.toHaveBeenCalled();
     expect(execution.toolResult).toMatchObject({

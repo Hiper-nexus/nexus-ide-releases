@@ -97,4 +97,20 @@ describe('mission-wizard-store voice launches', () => {
     store.close();
     expect(useMissionWizardStore.getState().visibleStep).toBeNull();
   });
+
+  it('records the agentic goal provenance and resets it to typed', () => {
+    const store = useMissionWizardStore.getState();
+    store.openForAgentic('GitHub #42: corrigir login\nhttps://x/42', 'imported-issue');
+    expect(useMissionWizardStore.getState().agenticSource).toBe('imported-issue');
+
+    store.close();
+    expect(useMissionWizardStore.getState().agenticSource).toBe('typed');
+
+    store.openForAgentic('resolver o bug do salvar', 'voice');
+    expect(useMissionWizardStore.getState().agenticSource).toBe('voice');
+
+    // Sem proveniência explícita = digitado.
+    store.openForAgentic('outra missão');
+    expect(useMissionWizardStore.getState().agenticSource).toBe('typed');
+  });
 });

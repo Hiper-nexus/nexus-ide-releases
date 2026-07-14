@@ -5,8 +5,10 @@ import {
   initialGoalForArmedMission,
   launchSquadMission,
   materializeSquadMission,
+  orientationForKickoff,
   squadLaunchDedupeKey,
 } from './mission-launcher';
+import { AUTO_DERIVED_CRITERION_PREFIX } from '../../shared/mission-intent';
 import type { Squad } from '../../shared/orch-types';
 
 afterEach(() => {
@@ -60,7 +62,70 @@ describe('intent-first kickoff packing', () => {
     expect(prompt).toMatch(/mem[oó]ria dur[aá]vel/i);
     expect(prompt).toMatch(/context_doctor.*sob demanda/i);
   });
+  it('keeps short-mission kickoffs lean: no goal restated as criterion, plan proportional', () => {
+    const goal = 'Corrigir o botão de salvar no formulário de perfil';
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-2',
+      goal,
+      // What compileIntentContract synthesizes when the user gives no criteria.
+      acceptanceCriteria: [`${AUTO_DERIVED_CRITERION_PREFIX} ${goal}`],
+      risk: 'normal',
+      maxWorkers: 3,
+    });
+    // The goal appears once (its own section), not restated in the criteria.
+    expect(prompt.split(goal).length - 1).toBe(1);
+    expect(prompt).not.toContain(AUTO_DERIVED_CRITERION_PREFIX);
+    expect(prompt).toContain('validado pelo PREVC');
+    expect(prompt).toMatch(/proporcional ao objetivo/i);
+  });
 
+  it('keeps user-provided criteria verbatim', () => {
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-3',
+      goal: 'Corrigir o formulário de login',
+      acceptanceCriteria: ['Login funciona', 'Sessão persiste'],
+      risk: 'sensitive',
+      maxWorkers: 2,
+    });
+    expect(prompt).toContain('- Login funciona');
+    expect(prompt).toContain('- Sessão persiste');
+  });
+
+  it('omits the compact memory block when null (fresh dispatch)', () => {
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-4',
+      goal: 'Corrigir o formulário de login',
+      acceptanceCriteria: ['Login funciona'],
+      risk: 'normal',
+      maxWorkers: 3,
+      compactMemoryMarkdown: null,
+    });
+    expect(prompt).not.toContain('Memória compacta');
+  });
+});
+
+describe('orientationForKickoff', () => {
+  it('returns the map markdown when the warm resolves in time', async () => {
+    await expect(
+      orientationForKickoff(async () => ({ orientationMarkdown: '# mapa' }), 50),
+    ).resolves.toBe('# mapa');
+  });
+
+  it('falls back to null instead of holding the kickoff paste hostage', async () => {
+    const neverResolves = () => new Promise<never>(() => {});
+    await expect(orientationForKickoff(neverResolves, 20)).resolves.toBeNull();
+  });
+
+  it('swallows warm failures (kickoff has its own fallback copy)', async () => {
+    await expect(
+      orientationForKickoff(async () => {
+        throw new Error('cold cache');
+      }, 50),
+    ).resolves.toBeNull();
+  });
   it('uses a read-only consult contract when lane=consult', () => {
     const prompt = buildIntentDispatchKickoffPrompt({
       squad,

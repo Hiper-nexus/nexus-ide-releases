@@ -13,53 +13,48 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.15.13',
+  version: '0.15.15',
   date: '2026-07-14',
-  codename: 'Dock-First Keychain-Safe Launch',
+  codename: 'Autonomia Travada, Revisão Humana',
   summary:
-    'Nexus cria e mostra explicitamente a janela nativa e não consulta o Keychain de forma síncrona durante o boot do macOS.',
+    'Defaults de autonomia pinados por teste, orçamento de workers sem corrida, rail que mostra quando a missão espera VOCÊ, missão auditável desde a issue e revisão humana de diff entregue ao orquestrador.',
   highlights: [
     {
-      title: 'Intenção antes de orquestração',
+      title: 'Revisão humana chega ao orquestrador',
       detail:
-        'Selecionar um squad arma apenas a missão; objetivo, plano e aprovação vêm antes de panes, workers ou gasto de modelo.',
+        'As anotações de diff são submetidas como um prompt único ao orquestrador da missão ativa, que delega o retrabalho — revisar deixa de depender de qual pane está focado.',
     },
     {
-      title: 'Fila e orçamento de missão',
+      title: 'Rail mostra quando a missão espera você',
       detail:
-        'Prompt queue, intentVersion, preempção de preparação obsoleta e limites de workers/passos evitam que a Jarvis fique monopolizada por ciclos antigos.',
+        'Pills "Aguarda você", "Sem objetivo" e "Pronta" substituem o genérico "Na fila"; a meta fala de agentes e de há quanto tempo a missão roda.',
     },
     {
-      title: 'Operação direta e voz confiável',
+      title: 'Missão auditável desde a issue',
       detail:
-        'Sincronização Git usa fast-forward seguro; realtime mantém ferramentas curtas, socket e follow-up coerentes entre provedores.',
+        'Issues do GitHub/Linear viram missões com source imported-issue no contrato; objetivos por voz registram source voice.',
     },
     {
-      title: 'Pets e wake PT-BR no pacote',
+      title: 'Missão enxuta (0.15.14)',
       detail:
-        'Avisos dos pets aguardam clique, Nexo/Nico Code acompanham a biblioteca offline e o modelo ei-jarvis-ptbr.onnx é instalado como padrão.',
+        'Kickoff sem duplicação, cartas de worker por papel/tarefa, começo em um clique para risco normal e wizard sem jargão.',
     },
   ],
   fixes: [
     {
-      title: 'Dock e janela resilientes',
+      title: 'Autonomia pinada por teste',
       detail:
-        'A janela principal é criada antes de integrações opcionais e de todo o bootstrap síncrono; consultas Keychain bloqueantes ficam fora do caminho de inicialização.',
+        'defaultDriveConfig nasce em shadow, congelado e com budgets finitos; trocar isso agora quebra um teste em vez de re-armar autonomia em silêncio.',
     },
     {
-      title: 'Autoridade fail-closed',
+      title: 'Orçamento de workers sem corrida',
       detail:
-        'Descrição solta não autoriza execução; gates no processo principal bloqueiam bootstrap, delegação, handoff sem origem e orçamento excedido.',
+        'A reserva de slot só cai depois que o worker está durável em missionPanes; sem a linha, a reserva fica retida (fail-safe) com aviso.',
     },
     {
-      title: 'Supervisor silencioso na espera humana',
+      title: 'Soak antes de default-on',
       detail:
-        'Missões awaiting_goal/approval não são classificadas como stall; recovery exige despacho e heartbeat reais.',
-    },
-    {
-      title: 'Sem regressão silenciosa',
-      detail:
-        'App, servidor, lockfile, changelog e notas internas avançam juntos; operação Git bloqueia divergência sem stage, commit ou push implícito.',
+        'Política operacional codificada: capability autônoma nasce fail-safe, default pinado por teste, um ciclo de shadow antes do flip e inventário de todas as portas de efeito.',
     },
   ],
 };
