@@ -60,6 +60,18 @@ function workspaceRoot(sender: Electron.WebContents): string {
   return requireScopedRoot(sender).root;
 }
 
+/** Missing is a valid new document; every other read failure is fail-closed. */
+export function readEditorBytesOrEmpty(filePath: string): Buffer {
+  try {
+    return fs.readFileSync(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return Buffer.from('');
+    }
+    throw error;
+  }
+}
+
 function mcpHubPath(root: string): string {
   return path.join(resolveSubdirUnderRoot(root, '.nexus'), 'mcp-hub.json');
 }
@@ -341,18 +353,15 @@ export function registerProductWaveIpc(): void {
     const full = resolveScopedPath(event.sender, relativePath);
     try {
       const st = fs.statSync(full);
-      const bytes = fs.readFileSync(full);
+      const bytes = readEditorBytesOrEmpty(full);
       return openEditorDocument({
         path: full,
         bytes,
         mtimeMs: st.mtimeMs,
       });
     } catch (err) {
-      // If path escaped (symlink out), resolveScopedPath already threw.
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
       // Missing file after a valid in-scope path → empty document.
-      if (err instanceof Error && /escapes workspace/i.test(err.message)) {
-        throw err;
-      }
       return openEditorDocument({
         path: full,
         bytes: Buffer.from(''),
@@ -377,12 +386,7 @@ export function registerProductWaveIpc(): void {
       .parse(raw);
     // Re-bind absolute or relative path to sender workspace (fail-closed).
     const full = resolveScopedPath(event.sender, input.path);
-    let bytes = Buffer.from('');
-    try {
-      bytes = fs.readFileSync(full);
-    } catch {
-      /* new file — still must be under scoped path */
-    }
+    const bytes = readEditorBytesOrEmpty(full);
     const doc = openEditorDocument({ path: full, bytes });
     if (input.write) {
       if (!input.expectedContentHash) {

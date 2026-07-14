@@ -15,6 +15,18 @@ afterEach(() => {
 });
 
 describe('product-wave editor path containment (via scoped-workspace-fs)', () => {
+  it('treats only ENOENT as a new empty editor file', async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ed-read-'));
+    dirs.push(base);
+    const missing = path.join(base, 'missing.ts');
+    const directory = path.join(base, 'directory');
+    fs.mkdirSync(directory);
+    const { readEditorBytesOrEmpty } = await import('./product-wave-ipc');
+
+    expect(readEditorBytesOrEmpty(missing)).toEqual(Buffer.from(''));
+    expect(() => readEditorBytesOrEmpty(directory)).toThrow();
+  });
+
   it('rejects sibling-prefix and ../proj2 escapes for open and apply paths', async () => {
     const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ed-scope-'));
     dirs.push(base);
