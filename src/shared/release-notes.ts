@@ -13,12 +13,32 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.15.15',
+  version: '0.15.16',
   date: '2026-07-14',
-  codename: 'Autonomia Travada, Revisão Humana',
+  codename: 'Orquestração Enxuta e Voz Reprodutível',
   summary:
-    'Defaults de autonomia pinados por teste, orçamento de workers sem corrida, rail que mostra quando a missão espera VOCÊ, missão auditável desde a issue e revisão humana de diff entregue ao orquestrador.',
+    'Consultas somente leitura com gate real, encerramento PREVC-safe, recuperação durável, kickoff enxuto e os ativos de voz e pets necessários para uma instalação reproduzível.',
   highlights: [
+    {
+      title: 'Lane de consulta segura',
+      detail:
+        'O wizard permite escolher Código (PREVC) ou Consulta; a lane consult é propagada pelo IPC e bloqueia ferramentas mutáveis, mantendo aprendizado durável como critério de conclusão.',
+    },
+    {
+      title: 'Kickoff e recuperação sem desperdício',
+      detail:
+        'O início de missão usa prompts proporcionais, e a recuperação confirma markSubmitted e sincronização com pane livre antes de liberar o fluxo.',
+    },
+    {
+      title: 'Nico acompanha a instalação',
+      detail:
+        'O pet criado no Pet Studio foi adicionado ao catálogo embutido com spritesheet validado abaixo do limite de 2,5 MB.',
+    },
+    {
+      title: 'Wake PT-BR reproduzível',
+      detail:
+        'O pipeline sintético de treino, testes e instruções PT-BR fica versionado sem sobrescrever o modelo ativo do cliente.',
+    },
     {
       title: 'Revisão humana chega ao orquestrador',
       detail:
@@ -41,6 +61,21 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [
+    {
+      title: 'Done PREVC-safe e bloqueio acionável',
+      detail:
+        'O orquestrador não encerra missão sem PREVC; a UI oferece encerramento bloqueado com justificativa, e a lane consult tem regra testável.',
+    },
+    {
+      title: 'Entrega e sync com confirmação',
+      detail:
+        'A sincronização escolhe apenas o CLI focado ou único; múltiplos CLIs ficam ambíguos em vez de receberem uma ação no destino errado.',
+    },
+    {
+      title: 'Voz dual-audio e pane sync',
+      detail:
+        'A release inclui a sincronização via pane CLI, evita TTS Classic e Gemini simultâneos após tool e fecha os buracos de review do dual-audio.',
+    },
     {
       title: 'Autonomia pinada por teste',
       detail:

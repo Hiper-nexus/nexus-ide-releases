@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.15.16 — Orquestração Enxuta e Voz Reprodutível
+
+Data: 2026-07-14
+
+- Lane de consulta somente leitura completa: escolha no wizard, propagação por
+  IPC, gate de ferramentas mutáveis e conclusão condicionada a aprendizado
+  durável.
+- Encerramento PREVC-safe, estado bloqueado acionável e recuperação com
+  `markSubmitted`, sync para pane livre e confirmação de entrega.
+- O kickoff permanece proporcional ao objetivo, com proveniência de voz/issue,
+  rail glanceable e revisão humana encaminhada ao orquestrador.
+- Sync de repositório via pane CLI e correções de dual-audio evitam TTS Classic
+  e Gemini falando juntos após uma tool; recovery do orquestrador não faz spam
+  no PTY.
+- Pet Nico incluído no catálogo embutido; spritesheet validado abaixo de 2,5 MB.
+- Pipeline reproduzível de treino de wake PT-BR, testes e documentação de
+  arquitetura de voz versionados sem substituir o modelo ativo.
+
 ## 0.15.15 — Travas de Autonomia e Revisão Humana de Missão
 
 Data: 2026-07-14
