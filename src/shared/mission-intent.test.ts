@@ -158,21 +158,33 @@ describe('compileIntentContract', () => {
 });
 
 describe('bootstrap gate', () => {
+  const prepareContract = {
+    version: 1 as const,
+    source: 'typed' as const,
+    goal: 'Preparar contexto do projeto',
+    acceptanceCriteria: ['map'],
+    risk: 'normal' as const,
+    executionMode: 'manual' as const,
+    contextPolicy: 'prepare-project' as const,
+    intentVersion: 1,
+    budgets: { planningTokens: 1, executionTokens: 1, maxWorkers: 1 },
+  };
+
   it('denies context_doctor before dispatch unless prepare-project', () => {
     expect(canRunBootstrapEffects('awaiting_goal', null)).toBe(false);
-    expect(
-      canRunBootstrapEffects('awaiting_goal', {
-        version: 1,
-        source: 'typed',
-        goal: 'x',
-        acceptanceCriteria: ['x'],
-        risk: 'normal',
-        executionMode: 'assisted',
-        contextPolicy: 'prepare-project',
-        intentVersion: 1,
-        budgets: { planningTokens: 1, executionTokens: 1, maxWorkers: 1 },
-      }),
-    ).toBe(true);
+    expect(canRunBootstrapEffects('awaiting_goal', prepareContract)).toBe(true);
     expect(canRunBootstrapEffects('dispatched', null)).toBe(true);
+  });
+
+  it('restricts prepare-project to warm tools only', () => {
+    expect(
+      canRunBootstrapEffects('awaiting_goal', prepareContract, 'nexus_context_doctor'),
+    ).toBe(true);
+    expect(
+      canRunBootstrapEffects('awaiting_goal', prepareContract, 'nexus_mission_freeze_contract'),
+    ).toBe(false);
+    expect(
+      canRunBootstrapEffects('awaiting_goal', prepareContract, 'nexus_context_draft_apply'),
+    ).toBe(false);
   });
 });

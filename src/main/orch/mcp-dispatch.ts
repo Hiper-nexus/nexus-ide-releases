@@ -62,10 +62,26 @@ export type McpConfirmationHandler = (
   request: McpConfirmationRequest,
 ) => Promise<boolean>;
 
+export interface IntentGateMissionResolver {
+  (
+    scope: ProjectExecutionScope,
+    missionId: string,
+  ): {
+    mission: import('../../shared/orch-types').Mission;
+    taskCount: number;
+    workerPaneCount: number;
+  } | null;
+}
+
 export interface McpDispatchOptions {
   confirm?: McpConfirmationHandler;
   /** Internal seam for isolated dispatch tests; production uses PREVC. */
   resolveWorkflowAuthority?: WorkflowAuthorityResolver;
+  /**
+   * Internal seam for intent-gate tests. Production resolves via project
+   * domain stores. Missing mission always fails closed for effectful tools.
+   */
+  resolveMissionForIntentGate?: IntentGateMissionResolver;
 }
 
 export interface WorkflowEffectAuthority {
@@ -309,44 +325,93 @@ export async function dispatchToolCall(
   }
 
   // Intent-first gate: bootstrap/delegation cannot invent work without a goal.
+  // Fail closed for effectful tools — a store miss must not bypass authority.
   if (ctx.missionId && isEffectfulTool(tool.name)) {
     try {
-      const suite = getProjectDomainStores(ctx.scope);
-      const mission = suite.missions.get(ctx.missionId);
-      if (mission) {
-        const gate = assertMissionIntentAllowsTool(tool.name, {
-          mission,
-          taskCount: suite.tasks.list(mission.id).length,
-          workerPaneCount: suite.missionPanes
-            .list(mission.id)
-            .filter((pane) => pane.role === 'worker').length,
-        });
-        if (!gate.ok) {
-          const auditFailure = writeAudit(
-            () =>
-              auditDenied(
-                auditContext,
-                sessionId,
-                tool.name,
-                args,
-                Date.now() - startMs,
-                gate.error,
-                source,
-              ),
-            tool.name,
-          );
-          if (auditFailure) return auditFailure;
+      const resolveMission =
+        options.resolveMissionForIntentGate ??
+        ((scope, missionId) => {
+          const suite = getProjectDomainStores(scope);
+          const mission = suite.missions.get(missionId);
+          if (!mission) return null;
           return {
-            ok: false,
-            tool: tool.name,
-            denied: true,
-            error: gate.error,
+            mission,
+            taskCount: suite.tasks.list(mission.id).length,
+            workerPaneCount: suite.missionPanes
+              .list(mission.id)
+              .filter((pane) => pane.role === 'worker').length,
           };
-        }
+        });
+      const resolved = resolveMission(ctx.scope, ctx.missionId);
+      if (!resolved) {
+        const error =
+          'intent_required: mission not found for intent authority check';
+        const auditFailure = writeAudit(
+          () =>
+            auditDenied(
+              auditContext,
+              sessionId,
+              tool.name,
+              args,
+              Date.now() - startMs,
+              error,
+              source,
+            ),
+          tool.name,
+        );
+        if (auditFailure) return auditFailure;
+        return { ok: false, tool: tool.name, denied: true, error };
+      }
+      const gate = assertMissionIntentAllowsTool(
+        tool.name,
+        {
+          mission: resolved.mission,
+          taskCount: resolved.taskCount,
+          workerPaneCount: resolved.workerPaneCount,
+        },
+        args,
+      );
+      if (!gate.ok) {
+        const auditFailure = writeAudit(
+          () =>
+            auditDenied(
+              auditContext,
+              sessionId,
+              tool.name,
+              args,
+              Date.now() - startMs,
+              gate.error,
+              source,
+            ),
+          tool.name,
+        );
+        if (auditFailure) return auditFailure;
+        return {
+          ok: false,
+          tool: tool.name,
+          denied: true,
+          error: gate.error,
+        };
       }
     } catch (err) {
-      // Store not ready — fail open only for read-only already filtered above.
-      console.warn('[mcp-dispatch] intent gate lookup failed:', err);
+      const detail = err instanceof Error ? err.message : String(err);
+      const error = `intent_gate_unavailable: ${detail}`;
+      console.warn('[mcp-dispatch] intent gate lookup failed (deny):', err);
+      const auditFailure = writeAudit(
+        () =>
+          auditDenied(
+            auditContext,
+            sessionId,
+            tool.name,
+            args,
+            Date.now() - startMs,
+            error,
+            source,
+          ),
+        tool.name,
+      );
+      if (auditFailure) return auditFailure;
+      return { ok: false, tool: tool.name, denied: true, error };
     }
   }
 

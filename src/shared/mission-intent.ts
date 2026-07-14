@@ -110,9 +110,31 @@ export function isHumanWaitIntentState(
  * Bootstrap/delegation effects require an authorized intent.
  * `prepare-project` is the only pre-dispatch context exception (explicit UX).
  */
+/**
+ * Tools permitted under explicit "Preparar projeto" before a real goal exists.
+ * Freeze/draft-apply/commit remain denied until dispatch.
+ */
+export const PREPARE_PROJECT_BOOTSTRAP_TOOLS: ReadonlySet<string> = new Set([
+  'context_doctor',
+  'code_map_refresh',
+  'context_scaffold',
+  'nexus_context_doctor',
+  'nexus_code_map_refresh',
+  'nexus_context_scaffold',
+]);
+
+/** Placeholder goal used only while warming context — never approvable as a mission. */
+export const PREPARE_PROJECT_PLACEHOLDER_GOAL =
+  'Preparar contexto do projeto';
+
+export function isPrepareProjectPlaceholderGoal(goal: string | undefined | null): boolean {
+  return (goal?.trim() ?? '') === PREPARE_PROJECT_PLACEHOLDER_GOAL;
+}
+
 export function canRunBootstrapEffects(
   state: MissionIntentState | undefined | null,
   contract: MissionIntentContract | null | undefined,
+  toolName?: string,
 ): boolean {
   if (isRecoveryEligibleIntentState(state)) return true;
   if (
@@ -126,7 +148,12 @@ export function canRunBootstrapEffects(
     (state === 'awaiting_goal' || state === 'draft') &&
     contract?.contextPolicy === 'prepare-project'
   ) {
-    return true;
+    if (!toolName) return true;
+    const canonical = toolName.replace(/^nexus_/, '');
+    return (
+      PREPARE_PROJECT_BOOTSTRAP_TOOLS.has(toolName) ||
+      PREPARE_PROJECT_BOOTSTRAP_TOOLS.has(canonical)
+    );
   }
   return false;
 }
@@ -320,7 +347,6 @@ export function compileIntentContract(input: {
     input.acceptanceCriteria && input.acceptanceCriteria.length > 0
       ? input.acceptanceCriteria
       : [`Objetivo concluído conforme: ${goal.slice(0, 200)}`];
-  const needsApproval = risk !== 'normal';
   return missionIntentContractSchema.parse({
     version: 1,
     source: input.source ?? 'typed',
@@ -331,8 +357,16 @@ export function compileIntentContract(input: {
     contextPolicy: input.contextPolicy ?? 'on-demand',
     intentVersion: input.intentVersion,
     budgets: defaultBudgetsForRisk(risk),
-    ...(needsApproval ? {} : {}),
   });
+}
+
+/** True when the mission has a user-approved dispatch contract. */
+export function hasApprovedDispatchContract(
+  contract: MissionIntentContract | null | undefined,
+): boolean {
+  if (!contract?.goal?.trim()) return false;
+  if (isPrepareProjectPlaceholderGoal(contract.goal)) return false;
+  return typeof contract.approvedAt === 'number' && contract.approvedAt > 0;
 }
 
 export type IntentMappedMissionStatus =

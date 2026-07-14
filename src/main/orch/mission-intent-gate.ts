@@ -1,11 +1,13 @@
 import {
   canDispatchWorkers,
   canRunBootstrapEffects,
+  hasApprovedDispatchContract,
   resolveEffectiveIntentState,
   type MissionIntentContract,
   type MissionIntentState,
 } from '../../shared/mission-intent';
 import type { Mission } from '../../shared/orch-types';
+import { canonicalToolName } from './gate';
 import { effectPolicyForTool } from './mcp-effect-policy';
 import { emitMissionIntentEvent } from './mission-intent-events';
 
@@ -52,6 +54,24 @@ function effectiveContract(
   return mission.intentContract;
 }
 
+function deny(
+  code: IntentGateCode,
+  error: string,
+  ctx: IntentGateContext,
+  intentState: MissionIntentState,
+  intentVersion: number,
+  toolName: string,
+): IntentGateDenial {
+  emitMissionIntentEvent({
+    name: 'intent_gate_denied',
+    missionId: ctx.mission.id,
+    intentState,
+    intentVersion,
+    reason: `${code}:${toolName}`,
+  });
+  return { ok: false, code, error, intentState, intentVersion };
+}
+
 /**
  * Main-process authority gate: bootstrap/delegation tools may not invent work
  * before the user has a goal and dispatch authorization.
@@ -59,6 +79,7 @@ function effectiveContract(
 export function assertMissionIntentAllowsTool(
   toolName: string,
   ctx: IntentGateContext,
+  args: Readonly<Record<string, unknown>> = {},
 ): IntentGateResult {
   const policy = effectPolicyForTool(toolName);
   const intentState = resolveEffectiveIntentState({
@@ -68,35 +89,53 @@ export function assertMissionIntentAllowsTool(
   });
   const intentVersion = ctx.mission.intentVersion ?? 0;
   const contract = effectiveContract(ctx.mission);
+  const canonical = canonicalToolName(toolName);
 
   if (policy === 'read-only' || policy === 'mission-control') {
     return { ok: true, intentState, intentVersion };
   }
 
   if (policy === 'bootstrap-authority') {
-    const prepareOk =
-      ctx.allowPrepareProject ||
-      contract?.contextPolicy === 'prepare-project';
-    if (
-      canRunBootstrapEffects(
+    const prepareContract =
+      ctx.allowPrepareProject || contract?.contextPolicy === 'prepare-project'
+        ? contract
+          ? { ...contract, contextPolicy: 'prepare-project' as const }
+          : contract
+        : contract;
+
+    if (canRunBootstrapEffects(intentState, prepareContract, toolName)) {
+      return { ok: true, intentState, intentVersion };
+    }
+
+    // Shell arming only — not status promotion to running / done.
+    if (canonical === 'mission_create') {
+      return { ok: true, intentState, intentVersion };
+    }
+
+    // set_status: post-dispatch, or fail-safe demotion to blocked/failed only.
+    if (canonical === 'mission_set_status') {
+      const nextStatus =
+        typeof args.status === 'string' ? args.status : undefined;
+      const failSafe =
+        nextStatus === 'blocked' || nextStatus === 'failed';
+      if (
+        failSafe ||
+        canDispatchWorkers(intentState) ||
+        intentState === 'legacy' ||
+        hasApprovedDispatchContract(contract)
+      ) {
+        return { ok: true, intentState, intentVersion };
+      }
+      return deny(
+        'dispatch_required',
+        'dispatch_required: mission_set_status só após despacho autorizado (exceto blocked/failed)',
+        ctx,
         intentState,
-        prepareOk && contract
-          ? { ...contract, contextPolicy: 'prepare-project' }
-          : contract,
-      )
-    ) {
-      return { ok: true, intentState, intentVersion };
+        intentVersion,
+        toolName,
+      );
     }
-    // mission_create / set_status are allowed for shell arming.
-    const canonical = toolName.replace(/^nexus_/, '');
-    if (
-      canonical === 'mission_create' ||
-      canonical === 'mission_set_status' ||
-      toolName === 'nexus_mission_create' ||
-      toolName === 'nexus_mission_set_status'
-    ) {
-      return { ok: true, intentState, intentVersion };
-    }
+
     const code: IntentGateCode =
       intentState === 'awaiting_approval'
         ? 'approval_required'
@@ -105,57 +144,37 @@ export function assertMissionIntentAllowsTool(
       code === 'approval_required'
         ? 'approval_required: confirme o plano antes de bootstrap/diagnóstico'
         : 'intent_required: informe um objetivo antes de context_doctor, drafts ou freeze';
-    emitMissionIntentEvent({
-      name: 'intent_gate_denied',
-      missionId: ctx.mission.id,
-      intentState,
-      intentVersion,
-      reason: `${code}:${toolName}`,
-    });
-    return { ok: false, code, error, intentState, intentVersion };
+    return deny(code, error, ctx, intentState, intentVersion, toolName);
   }
 
   if (policy === 'delegation-authority' || policy === 'workflow-authority') {
     if (canDispatchWorkers(intentState)) {
       return { ok: true, intentState, intentVersion };
     }
-    emitMissionIntentEvent({
-      name: 'intent_gate_denied',
-      missionId: ctx.mission.id,
+    return deny(
+      'dispatch_required',
+      'dispatch_required: workers e worktrees só após início autorizado da missão',
+      ctx,
       intentState,
       intentVersion,
-      reason: `dispatch_required:${toolName}`,
-    });
-    return {
-      ok: false,
-      code: 'dispatch_required',
-      error:
-        'dispatch_required: workers e worktrees só após início autorizado da missão',
-      intentState,
-      intentVersion,
-    };
+      toolName,
+    );
   }
 
-  // execution / mission-effect / handoff — require dispatch or stay open for handoff progress
+  // Handoffs remain open so delivery receipts can complete.
   if (policy === 'handoff-authority') {
     return { ok: true, intentState, intentVersion };
   }
 
   if (!canDispatchWorkers(intentState) && intentState !== 'legacy') {
-    emitMissionIntentEvent({
-      name: 'intent_gate_denied',
-      missionId: ctx.mission.id,
+    return deny(
+      'dispatch_required',
+      'dispatch_required: execução bloqueada até a missão ser despachada',
+      ctx,
       intentState,
       intentVersion,
-      reason: `dispatch_required:${toolName}`,
-    });
-    return {
-      ok: false,
-      code: 'dispatch_required',
-      error: 'dispatch_required: execução bloqueada até a missão ser despachada',
-      intentState,
-      intentVersion,
-    };
+      toolName,
+    );
   }
 
   return { ok: true, intentState, intentVersion };

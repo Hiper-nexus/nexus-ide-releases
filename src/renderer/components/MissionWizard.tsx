@@ -256,19 +256,17 @@ export function MissionWizard() {
   const steps: Step[] = useMemo(() => {
     const prefix: Step[] = hasNewWsStep ? ['new-ws'] : [];
     if (mode === 'squad') {
-      return [
-        ...prefix,
-        'mode',
-        'squad-select',
-        'squad-review',
-        'intent-compose',
-        'intent-plan',
-      ];
+      const base: Step[] = [...prefix, 'mode', 'squad-select', 'squad-review'];
+      // Only surface intent steps once a mission shell is actually armed.
+      if (armedMissionId || step === 'intent-compose' || step === 'intent-plan') {
+        return [...base, 'intent-compose', 'intent-plan'];
+      }
+      return base;
     }
     if (mode === 'agentic') return [...prefix, 'mode', 'agentic-intent', 'squad-review'];
     if (mode === 'libre') return [...prefix, 'mode', 'libre-count', 'libre-slots'];
     return [...prefix, 'mode'];
-  }, [mode, hasNewWsStep]);
+  }, [mode, hasNewWsStep, armedMissionId, step]);
 
   const originals = squads.filter((s) => s.builtin);
   const userSquads = squads.filter((s) => !s.builtin);
