@@ -3,10 +3,10 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { builtinFlagDefaults, parseFlagList } from './use-product-flags';
 
 describe('builtinFlagDefaults', () => {
-  it('mirrors shared definitions with kill switch forcing off', () => {
+  it('mirrors the fail-closed shared definitions', () => {
     const defaults = builtinFlagDefaults();
-    expect(defaults[FEATURE_FLAG_IDS.contextualPanel]).toBe(true);
-    expect(defaults[FEATURE_FLAG_IDS.progressiveOnboarding]).toBe(true);
+    expect(defaults[FEATURE_FLAG_IDS.contextualPanel]).toBe(false);
+    expect(defaults[FEATURE_FLAG_IDS.progressiveOnboarding]).toBe(false);
   });
 });
 
