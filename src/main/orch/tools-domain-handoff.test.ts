@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   markHandoffSubmitted: vi.fn(),
   onHandoffSubmitted: vi.fn(),
+  getStores: vi.fn(),
 }));
 
 vi.mock('./gate', () => ({
@@ -19,9 +20,7 @@ vi.mock('./idle-delivery', () => ({
 }));
 
 vi.mock('./project-domain-store-registry', () => ({
-  getProjectDomainStores: vi.fn(() => ({
-    handoffs: { submit: mocks.submit, list: vi.fn() },
-  })),
+  getProjectDomainStores: mocks.getStores,
 }));
 
 import { buildDomainTools } from './tools-domain';
@@ -75,7 +74,61 @@ function submitTool() {
 }
 
 describe('handoff MCP stop receipt', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getStores.mockReturnValue({
+      missions: {
+        get: () => ({
+          id: 'mission-a',
+          title: 'Mission',
+          description: 'Authorized work',
+          status: 'running',
+          milestones: [],
+          learnings: '',
+          intentState: 'dispatched',
+          intentVersion: 1,
+          intentContract: {
+            version: 1,
+            source: 'typed',
+            goal: 'Authorized work',
+            acceptanceCriteria: ['Done'],
+            risk: 'normal',
+            executionMode: 'assisted',
+            contextPolicy: 'on-demand',
+            intentVersion: 1,
+            approvedAt: 1,
+            budgets: {
+              planningTokens: 1_200,
+              executionTokens: 8_000,
+              maxWorkers: 2,
+            },
+          },
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+      },
+      tasks: { list: () => [] },
+      missionPanes: { list: () => [] },
+      handoffs: { submit: mocks.submit, list: vi.fn() },
+    });
+  });
+
+  it('fails closed when mission authority cannot be loaded', async () => {
+    mocks.getStores.mockImplementationOnce(() => {
+      throw new Error('database at /private/runtime.sqlite failed');
+    });
+
+    await expect(
+      submitTool().handler(
+        {
+          status: 'success',
+          summary: 'Worker reports that implementation is complete.',
+        },
+        context(),
+      ),
+    ).rejects.toThrow('handoff_origin: mission authority unavailable');
+    expect(mocks.submit).not.toHaveBeenCalled();
+  });
 
   it('delivers an unverified report without satisfying the stop gate', async () => {
     const submitted = handoff('unverified');

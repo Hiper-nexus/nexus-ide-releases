@@ -1,5 +1,6 @@
 import {
   canSubmitMissionHandoff,
+  hasCurrentApprovedDispatchContract,
   resolveEffectiveIntentState,
 } from '../../shared/mission-intent';
 import { handoffStatusSchema } from '../../shared/orch-types';
@@ -32,26 +33,26 @@ const handoffSubmitTool: McpToolDef = {
     required: ['status', 'summary'],
   },
   handler: async (args, ctx) => {
-    let intentState: ReturnType<typeof resolveEffectiveIntentState> | undefined;
+    let suite: ReturnType<typeof getProjectDomainStores>;
+    let mission: ReturnType<ReturnType<typeof getProjectDomainStores>['missions']['get']>;
     try {
-      const suiteForIntent = getProjectDomainStores(ctx.scope);
-      const mission =
-        ctx.missionId && suiteForIntent.missions
-          ? suiteForIntent.missions.get(ctx.missionId)
-          : null;
-      if (mission) {
-        intentState = resolveEffectiveIntentState({
-          mission,
-          taskCount: suiteForIntent.tasks?.list(mission.id).length ?? 0,
-          workerPaneCount:
-            suiteForIntent.missionPanes
-              ?.list(mission.id)
-              .filter((p) => p.role === 'worker').length ?? 0,
-        });
-      }
-    } catch {
-      // Store not fully wired (tests / early boot) — origin still requires role+mission+session.
+      suite = getProjectDomainStores(ctx.scope);
+      mission = ctx.missionId ? suite.missions.get(ctx.missionId) : null;
+    } catch (error) {
+      console.warn('[handoff] mission authority lookup failed (deny):', error);
+      throw new Error('handoff_origin: mission authority unavailable');
     }
+    if (!mission || !hasCurrentApprovedDispatchContract(mission)) {
+      throw new Error('handoff_origin: current approved mission unavailable');
+    }
+    const intentState = resolveEffectiveIntentState({
+      mission,
+      taskCount: suite.tasks?.list(mission.id).length ?? 0,
+      workerPaneCount:
+        suite.missionPanes
+          ?.list(mission.id)
+          .filter((p) => p.role === 'worker').length ?? 0,
+    });
     const origin = canSubmitMissionHandoff({
       role: ctx.role,
       missionId: ctx.missionId,
@@ -76,7 +77,7 @@ const handoffSubmitTool: McpToolDef = {
     ) {
       throw new Error('evidenceIds must be an array of Nexus evidence IDs');
     }
-    const handoff = getProjectDomainStores(ctx.scope).handoffs.submit({
+    const handoff = suite.handoffs.submit({
       status: handoffStatusSchema.parse(args.status),
       summary,
       artifacts: Array.isArray(args.artifacts) ? args.artifacts : [],

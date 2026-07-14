@@ -23,6 +23,8 @@ import {
 } from './tool-util';
 import { canonicalToolName, type AgentGateContext } from './gate';
 import { applyWorkerSpawnPolicy } from '../../shared/mission-intent';
+import type { MissionIntentContract } from '../../shared/mission-intent';
+import type { ProjectExecutionScope } from '../../shared/types';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -33,6 +35,56 @@ const SAME_CHECKOUT_ACTIVE_STATES = new Set<PaneSnapshot['state']>([
   'spawning',
   'busy',
 ]);
+
+const pendingWorkerSpawns = new Map<string, number>();
+
+function workerReservationKey(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): string {
+  return [
+    scope.installationId,
+    scope.projectId,
+    scope.checkoutId,
+    missionId,
+  ].join('\0');
+}
+
+export function reserveWorkerSpawnSlot(input: {
+  readonly scope: ProjectExecutionScope;
+  readonly missionId: string;
+  readonly contract: MissionIntentContract | null | undefined;
+  readonly currentWorkerCount: number;
+  readonly allowedTools: readonly string[] | null | undefined;
+}):
+  | {
+      readonly ok: true;
+      readonly allowedTools?: string[];
+      readonly release: () => void;
+    }
+  | { readonly ok: false; readonly code: string; readonly error: string } {
+  const key = workerReservationKey(input.scope, input.missionId);
+  const reserved = pendingWorkerSpawns.get(key) ?? 0;
+  const policy = applyWorkerSpawnPolicy({
+    contract: input.contract,
+    currentWorkerCount: input.currentWorkerCount + reserved,
+    allowedTools: input.allowedTools,
+  });
+  if (!policy.ok) return policy;
+  pendingWorkerSpawns.set(key, reserved + 1);
+  let isReleased = false;
+  return {
+    ok: true,
+    ...(policy.allowedTools ? { allowedTools: policy.allowedTools } : {}),
+    release: () => {
+      if (isReleased) return;
+      isReleased = true;
+      const current = pendingWorkerSpawns.get(key) ?? 0;
+      if (current <= 1) pendingWorkerSpawns.delete(key);
+      else pendingWorkerSpawns.set(key, current - 1);
+    },
+  };
+}
 
 export function activeSameCheckoutWorker(
   panes: readonly PaneSnapshot[],
@@ -176,17 +228,23 @@ const paneSpawn: McpToolDef = {
         scope: ctx.scope,
       };
     }
-    if (options.role === 'worker' && options.missionId) {
-      const missionId = options.missionId;
-      // Enforce maxWorkers + parent deny attenuation (intent contract teeth).
-      {
+    let releaseWorkerSlot: (() => void) | undefined;
+    try {
+      if (options.role === 'worker' && options.missionId) {
+        const missionId = options.missionId;
+        // Enforce maxWorkers + parent deny attenuation (intent contract teeth).
         const suite = getProjectDomainStores(ctx.scope);
         const missionRow = suite.missions.get(missionId);
+        if (!missionRow?.intentContract) {
+          throw new Error('approval_required: current mission contract unavailable');
+        }
         const liveWorkers = suite.missionPanes
           .list(missionId)
           .filter((pane) => pane.role === 'worker').length;
-        const policy = applyWorkerSpawnPolicy({
-          contract: missionRow?.intentContract,
+        const policy = reserveWorkerSpawnSlot({
+          scope: ctx.scope,
+          missionId,
+          contract: missionRow.intentContract,
           currentWorkerCount: liveWorkers,
           allowedTools: options.allowedTools,
         });
@@ -196,69 +254,73 @@ const paneSpawn: McpToolDef = {
         if (policy.allowedTools) {
           options = { ...options, allowedTools: policy.allowedTools };
         }
-      }
-      const workflowService = getContextWorkflowService(ctx.scope);
-      const missionWorkflow = workflowService.getMissionWorkflow(missionId);
-      if (missionWorkflow.contract) {
-        executionMode = 'isolated_worktree';
-        const taskId = str(args, 'taskId');
-        if (!taskId) {
-          throw new Error('frozen missions require taskId and an allocated worktree');
-        }
-        const worktree = requireWorktreeRuntimeRegistry().get(
-          ctx.scope,
-          missionId,
-          taskId,
-        );
-        if (!worktree || worktree.status !== 'ready') {
-          throw new Error('task worktree is not ready');
-        }
-        if (options.agentName && worktree.workerId !== options.agentName) {
-          throw new Error('task worktree belongs to another worker');
-        }
-        options = {
-          ...options,
-          cwd: worktree.worktreePath,
-          executionScope: Object.freeze({
-            ...ctx.scope,
-            rootRealPath: worktree.worktreePath,
-          }),
-        };
-        if (options.prompt) {
-          const snapshot = workflowService.compileMissionSnapshot(missionId);
-          options.prompt =
-            `${snapshot.markdown}\n\n` +
-            `Contract hash: ${missionWorkflow.contract.contract.contractHash}\n` +
-            `Task ownership: ${JSON.stringify(worktree.ownership)}\n\n` +
-            options.prompt;
-        }
-      } else {
-        executionMode = 'same_checkout';
-        const activeWorker = activeSameCheckoutWorker(
-          listPaneSnapshots(),
-          ctx.scope.rootRealPath,
-        );
-        if (activeWorker) {
-          throw new Error(
-            `same-checkout delegation is serialized; worker ${activeWorker.paneId} ` +
-            `is still ${activeWorker.state}`,
+        releaseWorkerSlot = policy.release;
+
+        const workflowService = getContextWorkflowService(ctx.scope);
+        const missionWorkflow = workflowService.getMissionWorkflow(missionId);
+        if (missionWorkflow.contract) {
+          executionMode = 'isolated_worktree';
+          const taskId = str(args, 'taskId');
+          if (!taskId) {
+            throw new Error('frozen missions require taskId and an allocated worktree');
+          }
+          const worktree = requireWorktreeRuntimeRegistry().get(
+            ctx.scope,
+            missionId,
+            taskId,
           );
+          if (!worktree || worktree.status !== 'ready') {
+            throw new Error('task worktree is not ready');
+          }
+          if (options.agentName && worktree.workerId !== options.agentName) {
+            throw new Error('task worktree belongs to another worker');
+          }
+          options = {
+            ...options,
+            cwd: worktree.worktreePath,
+            executionScope: Object.freeze({
+              ...ctx.scope,
+              rootRealPath: worktree.worktreePath,
+            }),
+          };
+          if (options.prompt) {
+            const snapshot = workflowService.compileMissionSnapshot(missionId);
+            options.prompt =
+              `${snapshot.markdown}\n\n` +
+              `Contract hash: ${missionWorkflow.contract.contract.contractHash}\n` +
+              `Task ownership: ${JSON.stringify(worktree.ownership)}\n\n` +
+              options.prompt;
+          }
+        } else {
+          executionMode = 'same_checkout';
+          const activeWorker = activeSameCheckoutWorker(
+            listPaneSnapshots(),
+            ctx.scope.rootRealPath,
+          );
+          if (activeWorker) {
+            throw new Error(
+              `same-checkout delegation is serialized; worker ${activeWorker.paneId} ` +
+              `is still ${activeWorker.state}`,
+            );
+          }
+          options = {
+            ...options,
+            cwd: ctx.scope.rootRealPath,
+            executionScope: ctx.scope,
+            prompt: withSameCheckoutWorkerContract(
+              options.prompt ?? 'Inspecione o estado atual e aguarde uma tarefa com escopo explícito.',
+            ),
+          };
         }
-        options = {
-          ...options,
-          cwd: ctx.scope.rootRealPath,
-          executionScope: ctx.scope,
-          prompt: withSameCheckoutWorkerContract(
-            options.prompt ?? 'Inspecione o estado atual e aguarde uma tarefa com escopo explícito.',
-          ),
-        };
       }
+      const spawned = await spawnPaneAndMaybePrompt(options);
+      return {
+        ...spawned,
+        ...(executionMode ? { executionMode } : {}),
+      };
+    } finally {
+      releaseWorkerSlot?.();
     }
-    const spawned = await spawnPaneAndMaybePrompt(options);
-    return {
-      ...spawned,
-      ...(executionMode ? { executionMode } : {}),
-    };
   },
 };
 

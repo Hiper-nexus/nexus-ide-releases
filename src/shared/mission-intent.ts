@@ -738,6 +738,13 @@ export function canSubmitMissionHandoff(input: {
       error: 'handoff_origin: only worker/orchestrator roles may submit handoffs',
     };
   }
+  if (!input.intentState) {
+    return {
+      ok: false,
+      code: 'handoff_origin',
+      error: 'handoff_origin: mission authority unavailable',
+    };
+  }
   // Pre-dispatch: no agent handoffs (no work authorized).
   if (
     input.intentState &&
