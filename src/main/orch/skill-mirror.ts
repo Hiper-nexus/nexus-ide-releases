@@ -59,11 +59,28 @@ function writeGeneratedSkills(root: string): string {
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skill.body);
   }
-  for (const [relPath, asset] of Object.entries(IMPECCABLE_MANIFEST)) {
-    const destPath = path.join(root, 'impeccable', relPath);
-    fs.mkdirSync(path.dirname(destPath), { recursive: true });
-    const buffer = Buffer.from(asset.content, asset.encoding);
-    fs.writeFileSync(destPath, buffer);
+  // Impeccable is ~1.8 MB across ~30 files. Rewriting (and base64-decoding) all of
+  // it on every agent spawn is wasteful; materialize it only when it is missing or
+  // stale — bundled SKILL.md differs from the materialized one — which also keeps
+  // it fresh across app updates.
+  const bundledImpeccableSkill = IMPECCABLE_MANIFEST['SKILL.md'];
+  const materializedImpeccableSkill = path.join(root, 'impeccable', 'SKILL.md');
+  const currentImpeccableSkill = (() => {
+    try {
+      return fs.readFileSync(materializedImpeccableSkill, 'utf8');
+    } catch {
+      return null;
+    }
+  })();
+  if (
+    !bundledImpeccableSkill ||
+    currentImpeccableSkill !== bundledImpeccableSkill.content
+  ) {
+    for (const [relPath, asset] of Object.entries(IMPECCABLE_MANIFEST)) {
+      const destPath = path.join(root, 'impeccable', relPath);
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      fs.writeFileSync(destPath, Buffer.from(asset.content, asset.encoding));
+    }
   }
   return root;
 }

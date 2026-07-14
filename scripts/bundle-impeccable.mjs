@@ -36,8 +36,10 @@ for (const file of allFiles) {
   if (relPath.includes('.DS_Store')) continue;
 
   const buffer = fs.readFileSync(file);
-  // Heuristic: check for null bytes or check extension
-  const isBinary = relPath.endsWith('.png') || relPath.endsWith('.jpg') || relPath.endsWith('.pdf') || buffer.includes(0);
+  // A file is safe as utf8 only if decode+re-encode is byte-for-byte lossless;
+  // anything else (any binary, regardless of extension) is stored as base64 so the
+  // round-trip can never corrupt it — no extension allowlist to keep in sync.
+  const isBinary = !Buffer.from(buffer.toString('utf8'), 'utf8').equals(buffer);
 
   manifest[relPath] = {
     content: buffer.toString(isBinary ? 'base64' : 'utf8'),
