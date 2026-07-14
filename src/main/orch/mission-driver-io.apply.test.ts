@@ -10,6 +10,7 @@ import {
   createProductionApplyPorts,
   findDeadMissionPane,
   hasMirroredScope,
+  snapshotsForScope,
 } from './mission-driver-io';
 import type { PrevcAdvancePort } from './mission-driver-prevc';
 
@@ -449,6 +450,52 @@ describe('createProductionApplyPorts advance/complete', () => {
       ...otherWorkspace[0],
       missionId: 'mission-a',
     }])).toBe(false);
+  });
+
+  it('ignores homonymous panes of another scope when deciding pane death', () => {
+    const scopeA = testProjectScope({ projectId: 'project-a', checkoutId: 'a' });
+    const scopeB = testProjectScope({ projectId: 'project-b', checkoutId: 'b' });
+    const persisted: MissionPaneSpec[] = [{
+      id: 'spec-worker', missionId: 'mission-a', paneId: 'pane-worker',
+      adapterId: 'claude', title: 'Worker', role: 'worker', createdAt: 1,
+    }];
+    // Scope B runs a live pane with identical mission/pane/role ids. Without
+    // scope filtering it masks the missing pane in scope A.
+    const snapshots: PaneSnapshot[] = [
+      {
+        paneId: 'pane-worker', sessionId: 'session-b', title: 'Worker B',
+        kind: 'cli-agent', state: 'idle', missionId: 'mission-a',
+        role: 'worker', scope: scopeB,
+      },
+      {
+        paneId: 'shell-a', sessionId: 'session-a', title: 'Shell A',
+        kind: 'shell', state: 'idle', scope: scopeA,
+      },
+    ];
+
+    const scopedA = snapshotsForScope(scopeA, snapshots);
+    expect(scopedA.map((s) => s.paneId)).toEqual(['shell-a']);
+    expect(findDeadMissionPane('mission-a', persisted, scopedA))
+      .toMatchObject({ paneId: 'pane-worker' });
+    // In scope B the homonymous pane is alive — nothing to recover there.
+    const scopedB = snapshotsForScope(scopeB, snapshots);
+    expect(findDeadMissionPane('mission-a', persisted, scopedB)).toBeNull();
+  });
+
+  it('keeps snapshots with unknown scope to avoid fabricating dead panes', () => {
+    const scopeA = testProjectScope({ projectId: 'project-a', checkoutId: 'a' });
+    const persisted: MissionPaneSpec[] = [{
+      id: 'spec-worker', missionId: 'mission-a', paneId: 'pane-worker',
+      adapterId: 'claude', title: 'Worker', role: 'worker', createdAt: 1,
+    }];
+    const unknownScope: PaneSnapshot[] = [{
+      paneId: 'pane-worker', sessionId: 'session-x', title: 'Worker',
+      kind: 'cli-agent', state: 'idle', missionId: 'mission-a', role: 'worker',
+    }];
+
+    const scoped = snapshotsForScope(scopeA, unknownScope);
+    expect(scoped).toHaveLength(1);
+    expect(findDeadMissionPane('mission-a', persisted, scoped)).toBeNull();
   });
 
   it('recovers a missing worker and records success only after renderer ACK', async () => {

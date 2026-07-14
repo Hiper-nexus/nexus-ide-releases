@@ -177,6 +177,20 @@ export class MissionEventJournal {
     const now = this.#binding.now();
 
     const apply = db.transaction(() => {
+      // An ACK beyond the last persisted sequence would advance the cursor
+      // past events that do not exist yet, silently skipping them on replay.
+      const { maxSequence } = db
+        .prepare(
+          `SELECT COALESCE(MAX(sequence), 0) AS maxSequence
+           FROM mission_events
+           WHERE mission_id = ?`,
+        )
+        .get(missionId) as { maxSequence: number };
+      if (upToSequence > maxSequence) {
+        throw new Error(
+          `ack sequence ${upToSequence} exceeds last persisted sequence ${maxSequence}`,
+        );
+      }
       const current = this.getCursor(consumerId, missionId);
       const nextSeq = Math.max(current.lastSequence, upToSequence);
 

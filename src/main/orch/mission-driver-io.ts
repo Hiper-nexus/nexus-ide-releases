@@ -110,9 +110,11 @@ export function hasMirroredScope(
 
 /**
  * Recovery decisions must never compare mission/pane identity against panes
- * of another project: ids repeat across workspaces, so every snapshot is
- * scope-filtered before findDeadMissionPane sees it. Snapshots without any
- * scope are excluded (fail-closed).
+ * of another project: ids repeat across workspaces, so snapshots that
+ * definitively belong to a different scope are dropped before
+ * findDeadMissionPane sees them. Snapshots with unknown scope stay: treating
+ * a possibly-ours live pane as foreign would fabricate "dead pane" signals
+ * and trigger spurious respawns, which is the more destructive failure.
  */
 export function snapshotsForScope(
   scope: ProjectExecutionScope,
@@ -120,7 +122,7 @@ export function snapshotsForScope(
 ): PaneSnapshot[] {
   return snapshots.filter((snapshot) => {
     const paneScope = snapshot.scope ?? snapshot.executionScope;
-    return paneScope ? sameProjectScope(paneScope, scope) : false;
+    return paneScope ? sameProjectScope(paneScope, scope) : true;
   });
 }
 

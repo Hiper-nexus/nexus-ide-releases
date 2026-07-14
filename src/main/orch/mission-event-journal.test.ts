@@ -108,6 +108,27 @@ describe('MissionEventJournal', () => {
     expect(same.lastSequence).toBe(2);
   });
 
+  it('rejects an ack beyond the last persisted sequence', () => {
+    const manager = new ProjectRuntimeManager({ baseDir, appVersion: '0.15.5' });
+    managers.push(manager);
+    seedMission(manager, 'mission-fixture');
+    const journal = new MissionEventJournal(manager, testProjectScope(), {
+      now: () => 3000,
+    });
+
+    journal.append(
+      createMissionEventFixture({ idempotencyKey: 'idem-5555-6666' }),
+    );
+
+    expect(() => journal.ack('ui-main', 'mission-fixture', 1_000_000)).toThrow(
+      /exceeds last persisted sequence/i,
+    );
+    // Cursor unchanged — future events 2, 3, … are still replayable.
+    expect(journal.getCursor('ui-main', 'mission-fixture').lastSequence).toBe(0);
+    const valid = journal.ack('ui-main', 'mission-fixture', 1);
+    expect(valid.lastSequence).toBe(1);
+  });
+
   it('rejects oversized payloads', () => {
     const manager = new ProjectRuntimeManager({ baseDir, appVersion: '0.15.5' });
     managers.push(manager);
