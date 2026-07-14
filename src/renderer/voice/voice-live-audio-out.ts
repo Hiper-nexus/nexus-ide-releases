@@ -7,12 +7,14 @@ import { realtimeChunkSuppressionMs } from './voice-suppression-window';
 import { logVoiceEvent } from './voice-live-ipc';
 import { isResponseMuted } from './response-output-gate';
 import {
+  dropRealtimeAudioOut,
   ensureLivePlayer,
   pushPendingRealtimeAudioOut,
   realtimeAudioPlayedCounter,
   realtimeAudioSuppressedCounter,
   realtimeTurnActive,
   resetPendingRealtimeAudioOut,
+  setDropRealtimeAudioOut,
   setSuppressRealtimeAudioOut,
   suppressRealtimeAudioOut,
   takePendingRealtimeAudioOut,
@@ -44,6 +46,11 @@ export function playRealtimeAudioOut(event: JarvisLiveAudioOutEvent): void {
   // (and provider delivery accounting) do not treat intentional mute as failure.
   if (isResponseMuted()) {
     reportPlayback(event, 'started');
+    return;
+  }
+  // Hard drop after local tool-TTS fallback — never play stale Live PCM.
+  if (dropRealtimeAudioOut) {
+    reportPlayback(event, 'cancelled');
     return;
   }
   void Promise.resolve()
@@ -84,6 +91,12 @@ export function flushPendingRealtimeAudioOut(): void {
  * Call on EVERY Live-owned exit path — a stuck suppress=true is total mute.
  */
 export function openLiveAudioGate(): void {
+  // Drop any chunks held while hard-muted (local TTS fallback) so a gate open
+  // cannot replay Gemini audio from the previous tool turn.
+  if (dropRealtimeAudioOut) {
+    resetPendingRealtimeAudioOut();
+  }
+  setDropRealtimeAudioOut(false);
   setSuppressRealtimeAudioOut(false);
   flushPendingRealtimeAudioOut();
 }
@@ -91,6 +104,10 @@ export function openLiveAudioGate(): void {
 export function queuePendingRealtimeAudioOut(event: JarvisLiveAudioOutEvent): void {
   if (isResponseMuted()) {
     reportPlayback(event, 'started');
+    return;
+  }
+  if (dropRealtimeAudioOut) {
+    reportPlayback(event, 'cancelled');
     return;
   }
   if (!realtimeTurnActive) {

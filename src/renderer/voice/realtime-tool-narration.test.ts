@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   armRealtimeToolNarration,
   clearRealtimeToolNarrations,
+  discardRealtimeToolNarration,
   peekRealtimeToolNarration,
   takeSilentRealtimeToolNarration,
   waitForToolNarrationAudio,
@@ -20,6 +21,13 @@ describe('realtime tool narration fallback', () => {
   it('does not duplicate narration when provider audio already started', () => {
     armRealtimeToolNarration('call-2', 'Feito.', 20);
     expect(takeSilentRealtimeToolNarration('call-2', 21)).toBeNull();
+  });
+
+  it('discards a pending narration without inventing audio evidence', () => {
+    armRealtimeToolNarration('call-3', 'Ok.', 1);
+    discardRealtimeToolNarration('call-3');
+    expect(peekRealtimeToolNarration('call-3')).toBeNull();
+    expect(takeSilentRealtimeToolNarration('call-3', 1)).toBeNull();
   });
 
   it('waits for provider audio before declaring silence', async () => {

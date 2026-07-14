@@ -39,6 +39,11 @@ export function takeSilentRealtimeToolNarration(
   return pending.text;
 }
 
+/** Drop a pending local narration claim without inventing audio evidence. */
+export function discardRealtimeToolNarration(callId: string): void {
+  pendingNarrations.delete(callId);
+}
+
 export function clearRealtimeToolNarrations(): void {
   pendingNarrations.clear();
 }

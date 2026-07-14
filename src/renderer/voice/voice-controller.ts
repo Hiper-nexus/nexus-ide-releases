@@ -68,6 +68,7 @@ import {
   setRealtimeTurnActive,
   suppressRealtimeAudioOut,
   setSuppressRealtimeAudioOut,
+  setDropRealtimeAudioOut,
   setPendingLiveStartSettle,
   finishRealtimeCapture,
   setFinishRealtimeCapture,
@@ -91,6 +92,7 @@ import {
   speakRealtimeToolResult,
 } from './voice-realtime-tools';
 import {
+  discardRealtimeToolNarration,
   peekRealtimeToolNarration,
   takeSilentRealtimeToolNarration,
   waitForToolNarrationAudio,
@@ -1003,12 +1005,12 @@ export function useVoiceController(): void {
             },
           );
           if (audioEvidence === 'aborted' || !isCorrelated()) {
-            takeSilentRealtimeToolNarration(event.callId, realtimeAudioPlayedCounter.total);
+            discardRealtimeToolNarration(event.callId);
             return;
           }
           if (audioEvidence === 'provider') {
             // Provider is speaking — drop local narration claim and let Live own audio.
-            takeSilentRealtimeToolNarration(event.callId, realtimeAudioPlayedCounter.total + 1);
+            discardRealtimeToolNarration(event.callId);
             return;
           }
           const silentNarration = takeSilentRealtimeToolNarration(
@@ -1022,14 +1024,15 @@ export function useVoiceController(): void {
               'provider concluiu sem áudio — usando voz local',
               { callId: event.callId, chars: silentNarration.length },
             );
-            // Hard mute Live before Classic TTS so a late PCM chunk cannot race.
+            // Hard mute Live before Classic TTS so a late PCM chunk cannot race
+            // or queue for a later gate open (which would replay stale speech).
             setSuppressRealtimeAudioOut(true);
+            setDropRealtimeAudioOut(true);
             resetPendingRealtimeAudioOut();
             livePlayer?.stop();
             void window.nexus.voice.liveInterrupt('local-tool-narration-fallback').catch(() => {});
             void window.nexus.voice.recordEcho(silentNarration).catch(() => {});
             await speakRealtimeToolResult(silentNarration);
-            // Discard any chunks that arrived during TTS; do not flush them later.
             resetPendingRealtimeAudioOut();
             usedLocalNarration = true;
           }

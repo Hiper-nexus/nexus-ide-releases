@@ -27,9 +27,12 @@ function sameTurn(left: LiveToolTurnKey, right: LiveToolTurnKey): boolean {
 export class LiveToolFollowUpGate<T> {
   private readonly pending = new Map<string, { key: LiveToolTurnKey; value: T }>();
   private readonly completed = new Map<string, LiveToolTurnKey>();
+  /** Follow-up already started for this callId — ignore further arm/complete. */
+  private readonly released = new Set<string>();
 
   arm(key: LiveToolTurnKey, value: T): T | null {
     const id = keyOf(key);
+    if (this.released.has(id)) return null;
     const completed = this.completed.get(id);
     if (completed && sameTurn(completed, key)) {
       this.completed.delete(id);
@@ -53,8 +56,14 @@ export class LiveToolFollowUpGate<T> {
     return Boolean(existing && sameTurn(existing.key, key));
   }
 
+  /** True when continuity for this callId already started (or was cancelled). */
+  isReleased(key: LiveToolTurnKey): boolean {
+    return this.released.has(keyOf(key));
+  }
+
   complete(key: LiveToolTurnKey): T | null {
     const id = keyOf(key);
+    if (this.released.has(id)) return null;
     const pending = this.pending.get(id);
     if (pending && sameTurn(pending.key, key)) {
       this.pending.delete(id);
@@ -66,9 +75,19 @@ export class LiveToolFollowUpGate<T> {
     return null;
   }
 
+  /** Mark callId as fully handled so a second arm cannot re-open the mic. */
+  markReleased(key: LiveToolTurnKey): void {
+    const id = keyOf(key);
+    this.released.add(id);
+    this.pending.delete(id);
+    this.completed.delete(id);
+    this.trimReleased();
+  }
+
   clear(): void {
     this.pending.clear();
     this.completed.clear();
+    this.released.clear();
   }
 
   private trimCompleted(): void {
@@ -76,6 +95,14 @@ export class LiveToolFollowUpGate<T> {
       const oldest = this.completed.keys().next().value;
       if (oldest === undefined) return;
       this.completed.delete(oldest);
+    }
+  }
+
+  private trimReleased(): void {
+    while (this.released.size > MAX_REMEMBERED_COMPLETIONS * 2) {
+      const oldest = this.released.values().next().value;
+      if (oldest === undefined) return;
+      this.released.delete(oldest);
     }
   }
 }
