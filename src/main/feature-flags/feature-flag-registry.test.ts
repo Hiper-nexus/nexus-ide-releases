@@ -106,4 +106,14 @@ describe('FeatureFlagRegistry', () => {
     });
     expect(reloaded.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(true);
   });
+
+  it('forceEnableAll turns every product flag on and clears kill switches', () => {
+    const registry = new FeatureFlagRegistry({ runtimeChannel: 'dev' });
+    registry.engageKillSwitch(FEATURE_FLAG_IDS.searchMixer);
+    expect(registry.isEnabled(FEATURE_FLAG_IDS.searchMixer)).toBe(false);
+    registry.forceEnableAll();
+    for (const def of registry.list()) {
+      expect(registry.isEnabled(def.id)).toBe(true);
+    }
+  });
 });

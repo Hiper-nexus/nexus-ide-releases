@@ -9,6 +9,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 import {
   createProductionApplyPorts,
   findDeadMissionPane,
+  hasMirroredScope,
 } from './mission-driver-io';
 import type { PrevcAdvancePort } from './mission-driver-prevc';
 
@@ -432,6 +433,22 @@ describe('createProductionApplyPorts advance/complete', () => {
 
     expect(findDeadMissionPane('mission-a', persisted, snapshots))
       .toMatchObject({ paneId: 'pane-worker', role: 'worker' });
+  });
+
+  it('does not recover panes for an inactive workspace just because another scope is mirrored', () => {
+    const scopeA = testProjectScope({ projectId: 'project-a', checkoutId: 'a' });
+    const scopeB = testProjectScope({ projectId: 'project-b', checkoutId: 'b' });
+    const otherWorkspace: PaneSnapshot[] = [{
+      paneId: 'shell-b', sessionId: 'session-b', title: 'Shell B',
+      kind: 'shell', state: 'idle', scope: scopeB,
+    }];
+
+    expect(hasMirroredScope(scopeA, otherWorkspace)).toBe(false);
+    expect(hasMirroredScope(scopeB, otherWorkspace)).toBe(true);
+    expect(hasMirroredScope(scopeA, [{
+      ...otherWorkspace[0],
+      missionId: 'mission-a',
+    }])).toBe(false);
   });
 
   it('recovers a missing worker and records success only after renderer ACK', async () => {

@@ -87,6 +87,19 @@ export class FeatureFlagRegistry {
     this.#overrides.set(id, enabled);
   }
 
+  /**
+   * Pre-production / dogfood: clear every kill switch and force every known
+   * product flag ON via in-memory overrides. Does not rewrite definition files.
+   */
+  forceEnableAll(): void {
+    for (const [id, def] of this.#byId) {
+      if (def.killSwitch) {
+        this.#byId.set(id, { ...def, killSwitch: false });
+      }
+      this.#overrides.set(id, true);
+    }
+  }
+
   reloadOverrides(): void {
     if (!this.#overridesPath) return;
     this.#overrides.clear();
@@ -143,6 +156,14 @@ export function getFeatureFlagRegistry(): FeatureFlagRegistry {
     });
   }
   return singleton;
+}
+
+/**
+ * Enable every built-in product flag for local/unpackaged testing.
+ * Called from main bootstrap when `!app.isPackaged` or NEXUS_FORCE_ALL_FLAGS=1.
+ */
+export function enableAllProductFlagsForTesting(): void {
+  getFeatureFlagRegistry().forceEnableAll();
 }
 
 /** Test-only reset. */

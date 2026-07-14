@@ -44,6 +44,7 @@ import {
   getProjectDomainStores,
   requireProjectDomainStoreRegistry,
 } from './project-domain-store-registry';
+import { sameProjectScope } from './project-scoped-broadcast';
 
 /**
  * Camada IO do Mission Driver: monta DriveDeps a partir dos stores reais
@@ -93,6 +94,20 @@ export function findDeadMissionPane(
 }
 
 /**
+ * Pane absence is meaningful only after a renderer has mirrored the exact
+ * workspace scope. Mission ids and pane ids are not cross-project authority.
+ */
+export function hasMirroredScope(
+  scope: ProjectExecutionScope,
+  snapshots: readonly PaneSnapshot[],
+): boolean {
+  return snapshots.some((snapshot) => {
+    const paneScope = snapshot.executionScope ?? snapshot.scope;
+    return paneScope ? sameProjectScope(paneScope, scope) : false;
+  });
+}
+
+/**
  * Loader IO: monta DriveState a partir dos stores reais (mission + handoffs,
  * com steps + evidence trust). Sem mutação; o IO é só leitura scoped.
  * Current step inherits *unused* mission-level nexus-trusted evidence when
@@ -125,10 +140,10 @@ export function loadDriveState(
     .list(missionId)
     .filter((pane) => pane.paneId);
   const snapshots = listPaneSnapshots();
-  // An empty registry means the renderer has not announced itself yet. Once
-  // any pane is mirrored, a missing persisted mission pane is genuinely dead.
+  // Absence is actionable only after the exact workspace has been mirrored.
+  // A pane in another recent workspace must never trigger recovery here.
   const paneDead =
-    snapshots.length > 0 &&
+    hasMirroredScope(scope, snapshots) &&
     findDeadMissionPane(missionId, persistedPanes, snapshots) !== null;
   const workflowService = getContextWorkflowService(scope);
   const missionWorkflow = workflowService.getMissionWorkflow(missionId);

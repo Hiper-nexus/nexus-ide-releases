@@ -138,6 +138,7 @@ import { registerSearchMixerIpc } from "./search/search-mixer-ipc";
 import { getSearchMixer } from "./search/search-mixer-bootstrap";
 import { registerProductWaveIpc } from "./product-wave-ipc";
 import { startAgentLifecycleService } from "./agents/agent-lifecycle-service";
+import { enableAllProductFlagsForTesting } from "./feature-flags/feature-flag-registry";
 import {
   initUsageTelemetry,
   shutdownUsageTelemetry,
@@ -314,6 +315,12 @@ function bootstrap(): void {
   // MUST run before the adapter registry probes for installed CLIs: a
   // Finder/dmg launch has a minimal PATH that hides claude/codex/kimi/grok.
   resolveUserPath();
+  // Pre-production: keep all product-wave flags ON for local testing.
+  // (Not a production kill-switch path — user confirmed system is not in prod.)
+  if (!app.isPackaged || process.env.NEXUS_FORCE_ALL_FLAGS === '1') {
+    enableAllProductFlagsForTesting();
+    console.info('[main] product feature flags: ALL ON (test / unpackaged)');
+  }
   // Loads ~/.nexus/settings.json before any runtime reads orchestration flags.
   // The previous order configured Ralph in shadow on every restart regardless
   // of the persisted missionDriverActiveMode value.

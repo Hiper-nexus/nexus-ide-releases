@@ -363,10 +363,15 @@ function paneState(entry: PaneRegistryEntry): PaneSnapshot["state"] {
 
 function snapshotOf(registered: RegisteredPane): PaneSnapshot {
   const { entry, owner } = registered;
+  const meta = orchMetaByPane.get(paneMetaKey(owner, entry.paneId));
+  const sessionScope = entry.sessionId
+    ? scopeBySession.get(entry.sessionId)
+    : undefined;
   return {
     ...entry,
     state: paneState(entry),
-    ...orchMetaByPane.get(paneMetaKey(owner, entry.paneId)),
+    ...(sessionScope ? { scope: sessionScope } : {}),
+    ...meta,
   };
 }
 
