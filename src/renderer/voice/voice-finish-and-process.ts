@@ -87,7 +87,6 @@ import {
   shouldRearmAfterAudioOnly,
 } from './live-wake-greeting';
 import { followUpAuthority } from './follow-up-authority';
-import { isHotSessionCommandCandidate } from '../../shared/hot-session-command';
 
 /**
  * A warm socket is not authorization to keep listening. A silent follow-up
@@ -588,8 +587,12 @@ export async function finishAndProcess(
           explicitCapture,
           offeredFrames,
           captureReason: activeCaptureReason,
-          followUpAuthorized:
-            activeCaptureReason === 'reply' && followUpAuthority.isAuthorized(),
+          // A reply capture is an explicit, short-lived user turn that was
+          // opened by Jarvis herself. Its recovery must not depend on the
+          // shorter passive no-wake bridge: otherwise a valid answer spoken
+          // late in the 28s capture was dropped when Live missed its frames.
+          // Passive audio remains separately fail-closed in voice-controller.
+          followUpAuthorized: activeCaptureReason === 'reply',
         }) &&
         peekPendingDelegation(Date.now()) === null
       ) {
@@ -599,11 +602,14 @@ export async function finishAndProcess(
             ? filteredLiveRescueTranscript(cachedStt.text)
             : null;
         const pendingDelegation = peekPendingDelegation(Date.now()) !== null;
+        // The capture is already the authorization boundary. Requiring a
+        // command-shaped sentence here made ordinary answers to Jarvis (and
+        // short confirmations without a pending delegation) disappear after a
+        // transient Live miss. It is not a passive STT result.
         const authorizedReplyTranscript =
           activeCaptureReason !== 'reply' ||
           pendingDelegation ||
-          (rescueTranscript !== null &&
-            isHotSessionCommandCandidate(rescueTranscript, { requireEnergy: false }));
+          rescueTranscript !== null;
         if (rescueTranscript && authorizedReplyTranscript) {
           if (activeCaptureReason === 'reply') followUpAuthority.clear();
           const attempt = markLiveMuteRescueAttempt();

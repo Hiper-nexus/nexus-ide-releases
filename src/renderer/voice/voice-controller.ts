@@ -539,23 +539,28 @@ export function useVoiceController(): void {
           peakRms: Number(utterance.rawMaxRms.toFixed(4)),
         });
       }
-      // Overclock parity: during an explicitly armed Live follow-up, Gemini is
-      // the sole listener. Sending the same utterance to passive Groq creates
-      // duplicate ownership, extra latency and `passiveHotUnauthorized` races.
-      // Once the authority expires, passive STT resumes so saying Jarvis can
-      // wake/re-engage a still-hot session.
-      if (
+      // Overclock parity: a Live reply capture owns its full mic lifetime,
+      // not only the short no-wake bridge. The bridge intentionally expires
+      // before REPLY_FOLLOWUP_MAX_MS, so tying ownership to authority made
+      // passive STT compete halfway through a legitimate answer and discard it
+      // as `passiveHotUnauthorized`. Once the reply processing is done, status
+      // returns to idle and passive wake is allowed again.
+      const liveReplyOwnsUtterance =
         hot &&
-        voiceStatus === 'listening' &&
-        followUpAuthority.isAuthorized()
+        activeCaptureReason === 'reply' &&
+        (voiceStatus === 'listening' || voiceStatus === 'transcribing');
+      if (
+        liveReplyOwnsUtterance ||
+        (hot && voiceStatus === 'listening' && followUpAuthority.isAuthorized())
       ) {
         logVoiceEvent(
           'info',
           'wake.passiveOwnedByLive',
-          'follow-up autorizado pertence ao Gemini Live; STT passivo pulado',
+          'follow-up Live ativo pertence ao Gemini; STT passivo pulado',
           {
             durationSec: Number(utterance.durationSec.toFixed(2)),
             remainingAuthorityMs: Math.round(followUpAuthority.remainingMs()),
+            captureReason: activeCaptureReason,
           },
         );
         return;
