@@ -6,6 +6,7 @@ import {
   createEmptyPromptQueue,
   nextDeliverablePrompt,
   promptQueueSnapshot,
+  prunePromptQueueHistory,
   reducePromptQueue,
   type MissionPromptKind,
   type MissionPromptQueueState,
@@ -14,6 +15,16 @@ import {
 
 const queues = new Map<string, MissionPromptQueueState>();
 const promptAbortControllers = new Map<string, AbortController>();
+const MAX_TERMINAL_HISTORY = 128;
+
+function storeResult(
+  missionId: string,
+  result: PromptQueueReduceResult,
+): PromptQueueReduceResult {
+  const state = prunePromptQueueHistory(result.state, MAX_TERMINAL_HISTORY);
+  queues.set(missionId, state);
+  return state === result.state ? result : { ...result, state };
+}
 
 function controllerKey(missionId: string, promptId: string): string {
   return `${missionId}\0${promptId}`;
@@ -58,9 +69,9 @@ export function enqueueMissionPrompt(input: {
     now: input.now,
     id: input.id,
   });
-  queues.set(input.missionId, result.state);
+  const stored = storeResult(input.missionId, result);
   abortCancelledPrompts(input.missionId, result.cancelledIds);
-  return result;
+  return stored;
 }
 
 export function startMissionPrompt(
@@ -71,8 +82,8 @@ export function startMissionPrompt(
     type: 'start',
     id,
   });
-  queues.set(missionId, result.state);
-  const started = result.state.items.find(
+  const stored = storeResult(missionId, result);
+  const started = stored.state.items.find(
     (item) => item.id === id && item.status === 'executing',
   );
   if (started) {
@@ -81,7 +92,7 @@ export function startMissionPrompt(
       promptAbortControllers.set(key, new AbortController());
     }
   }
-  return result;
+  return stored;
 }
 
 export function completeMissionPrompt(
@@ -94,9 +105,9 @@ export function completeMissionPrompt(
     id,
     ok,
   });
-  queues.set(missionId, result.state);
+  const stored = storeResult(missionId, result);
   promptAbortControllers.delete(controllerKey(missionId, id));
-  return result;
+  return stored;
 }
 
 export function cancelMissionPrompt(
@@ -107,9 +118,9 @@ export function cancelMissionPrompt(
     type: 'cancel',
     id,
   });
-  queues.set(missionId, result.state);
+  const stored = storeResult(missionId, result);
   abortCancelledPrompts(missionId, result.cancelledIds);
-  return result;
+  return stored;
 }
 
 export function bumpMissionPromptIntent(
@@ -120,9 +131,9 @@ export function bumpMissionPromptIntent(
     type: 'bump_intent',
     intentVersion,
   });
-  queues.set(missionId, result.state);
+  const stored = storeResult(missionId, result);
   abortCancelledPrompts(missionId, result.cancelledIds);
-  return result;
+  return stored;
 }
 
 export function getMissionPromptAbortSignal(
@@ -139,6 +150,16 @@ export function peekMissionPromptQueue(missionId: string) {
 export function takeNextMissionPrompt(missionId: string) {
   const state = getMissionPromptQueue(missionId);
   return nextDeliverablePrompt(state);
+}
+
+export function deleteMissionPromptQueue(missionId: string): void {
+  queues.delete(missionId);
+  const prefix = `${missionId}\0`;
+  for (const [key, controller] of promptAbortControllers) {
+    if (!key.startsWith(prefix)) continue;
+    controller.abort();
+    promptAbortControllers.delete(key);
+  }
 }
 
 /** Test / shutdown helper. */

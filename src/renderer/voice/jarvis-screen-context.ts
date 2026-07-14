@@ -52,7 +52,13 @@ function wizardVisibleActions(
     case 'squad-review':
       return ['Iniciar Squad', 'Salvar', 'Voltar'];
     case 'intent-compose':
-      return ['Continuar', 'Voltar', 'Cancelar'];
+      return [
+        'Continuar',
+        'Preparar projeto',
+        'Abrir terminal vazio',
+        'Voltar',
+        'Cancelar',
+      ];
     case 'intent-plan':
       return ['Começar', 'Editar objetivo', 'Cancelar'];
   }
@@ -118,8 +124,12 @@ export function currentScreenSnapshot(): ScreenSnapshot {
     });
   }
   if (wizard.open) {
-    const mode = wizard.presetSquadId || wizard.visibleStep === 'squad-review'
-      ? 'revisão de squad pronto — diga sim / inicia para confirmar e disparar'
+    const mode = wizard.visibleStep === 'squad-review'
+      ? 'revisão de squad pronto — diga sim / inicia para armar a missão'
+      : wizard.visibleStep === 'intent-compose'
+        ? 'squad armado sem agentes — aguardando um objetivo explícito'
+        : wizard.visibleStep === 'intent-plan'
+          ? 'plano de missão pronto — diga sim / começa para aprovar e despachar'
       : wizard.visibleStep === 'agentic-intent'
         ? `nova missão no modo agêntico${
             wizard.agenticIntent ? ` — objetivo: ${wizard.agenticIntent.slice(0, 240)}` : ''

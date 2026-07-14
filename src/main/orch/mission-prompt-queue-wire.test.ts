@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   completeMissionPrompt,
+  deleteMissionPromptQueue,
   getMissionPromptAbortSignal,
   enqueueMissionPrompt,
   getMissionPromptQueue,
@@ -101,5 +102,19 @@ describe('mission prompt queue production wire', () => {
       getMissionPromptQueue(missionId).items.find((i) => i.id === 'prep-1')
         ?.status,
     ).toBe('delivered');
+  });
+
+  it('aborts and forgets mission queue state when the mission is removed', () => {
+    enqueueMissionPrompt({
+      missionId: 'm-removed', kind: 'preflight', body: 'warm',
+      intentVersion: 1, source: 'system', id: 'remove-me',
+    });
+    startMissionPrompt('m-removed', 'remove-me');
+    const signal = getMissionPromptAbortSignal('m-removed', 'remove-me');
+
+    deleteMissionPromptQueue('m-removed');
+
+    expect(signal?.aborted).toBe(true);
+    expect(getMissionPromptQueue('m-removed').items).toEqual([]);
   });
 });

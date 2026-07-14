@@ -286,24 +286,6 @@ export class RendererMissionAuthority {
       rawPolicy === "none" || rawPolicy === "minimal" || rawPolicy === "on-demand"
         ? rawPolicy
         : "on-demand";
-    const contract = compileIntentContract({
-      goal: input.goal,
-      source: input.source ?? "typed",
-      intentVersion: nextVersion,
-      contextPolicy,
-      acceptanceCriteria: input.acceptanceCriteria,
-    });
-    const risk = classifyGoalRisk(contract.goal);
-    const compileEvent =
-      risk === "normal" ? ("compile_ok" as const) : ("needs_approval" as const);
-    const compiled = transitionIntentState({
-      from: "intent_compiling",
-      event: compileEvent,
-    });
-    if (!compiled.ok) throw new Error(compiled.reason);
-
-    const intentState = compiled.to;
-    const status = missionStatusForIntent(intentState) ?? current.status;
     const canReplacePlannedMilestones =
       from === "legacy" ||
       from === "draft" ||
@@ -311,27 +293,67 @@ export class RendererMissionAuthority {
       from === "intent_compiling" ||
       from === "ready_to_start" ||
       from === "awaiting_approval";
-    const updated = missions.update(input.missionId, {
-      description: contract.goal,
-      status,
-      intentState,
-      intentContract: contract,
-      intentVersion: nextVersion,
-      ...(canReplacePlannedMilestones
-        ? { milestones: normalizeMilestones(contract.acceptanceCriteria) }
-        : {}),
-    });
-    if (!updated) throw new Error("mission not found");
-
-    // Preempt obsolete preflight when the user submits a newer intent.
-    bumpMissionPromptIntent(updated.id, nextVersion);
-    enqueueMissionPrompt({
-      missionId: updated.id,
+    // The synchronous compiler is the queue consumer for goal prompts. Mark
+    // that delivery explicitly so snapshots never expose already-compiled
+    // goals as permanently queued work.
+    bumpMissionPromptIntent(current.id, nextVersion);
+    const queued = enqueueMissionPrompt({
+      missionId: current.id,
       kind: input.source === "voice" ? "voice_goal" : "user_goal",
-      body: contract.goal,
+      body: input.goal,
       intentVersion: nextVersion,
       source: input.source === "voice" ? "voice" : "typed",
     });
+    const prompt = queued.state.items.at(-1);
+    if (!prompt || prompt.status !== "queued") {
+      throw new Error("intent prompt was preempted before compilation");
+    }
+    const started = startMissionPrompt(current.id, prompt.id);
+    if (started.state.executingId !== prompt.id) {
+      cancelMissionPrompt(current.id, prompt.id);
+      throw new Error("intent prompt queue is busy");
+    }
+
+    let contract: ReturnType<typeof compileIntentContract>;
+    let risk: ReturnType<typeof classifyGoalRisk>;
+    let updated: Mission | null;
+    try {
+      contract = compileIntentContract({
+        goal: input.goal,
+        source: input.source ?? "typed",
+        intentVersion: nextVersion,
+        contextPolicy,
+        acceptanceCriteria: input.acceptanceCriteria,
+      });
+      risk = classifyGoalRisk(contract.goal);
+      const compileEvent =
+        risk === "normal"
+          ? ("compile_ok" as const)
+          : ("needs_approval" as const);
+      const compiled = transitionIntentState({
+        from: "intent_compiling",
+        event: compileEvent,
+      });
+      if (!compiled.ok) throw new Error(compiled.reason);
+
+      const intentState = compiled.to;
+      const status = missionStatusForIntent(intentState) ?? current.status;
+      updated = missions.update(input.missionId, {
+        description: contract.goal,
+        status,
+        intentState,
+        intentContract: contract,
+        intentVersion: nextVersion,
+        ...(canReplacePlannedMilestones
+          ? { milestones: normalizeMilestones(contract.acceptanceCriteria) }
+          : {}),
+      });
+      if (!updated) throw new Error("mission not found");
+      completeMissionPrompt(current.id, prompt.id, true);
+    } catch (error) {
+      completeMissionPrompt(current.id, prompt.id, false);
+      throw error;
+    }
 
     emitMissionIntentEvent({
       name: "goal_submitted",
@@ -344,7 +366,7 @@ export class RendererMissionAuthority {
       name: "intent_compiled",
       missionId: updated.id,
       squadId: updated.squadId,
-      intentState,
+      intentState: updated.intentState ?? "intent_compiling",
       intentVersion: nextVersion,
       reason: risk,
     });
@@ -507,14 +529,24 @@ export class RendererMissionAuthority {
       const approved = transitionIntentState({ from, event: "approve" });
       if (!approved.ok) throw new Error(approved.reason);
       nextState = approved.to;
-    } else if (from === "ready_to_start") {
-      nextState = from;
-    } else if (from === "dispatched" || from === "executing") {
-      return current;
-    } else {
+    } else if (from !== "ready_to_start") {
+      if (from === "dispatched" || from === "executing") {
+        if (!hasCurrentDispatchAuthority(current)) {
+          throw new Error("approval_required: current intent is not authorized");
+        }
+        return current;
+      }
       throw new Error(
         `approval_required: cannot dispatch from intent state ${from}`,
       );
+    }
+    if (nextState === "ready_to_start") {
+      const started = transitionIntentState({
+        from: nextState,
+        event: "start",
+      });
+      if (!started.ok) throw new Error(started.reason);
+      nextState = started.to;
     }
 
     if (!current.intentContract?.goal) {
@@ -532,19 +564,18 @@ export class RendererMissionAuthority {
       1,
       current.intentVersion ?? current.intentContract.intentVersion ?? 1,
     );
-    const { dispatchedAt: _previousDispatch, ...unboundContract } =
-      current.intentContract;
     const contract = {
-      ...unboundContract,
+      ...current.intentContract,
       intentVersion: contractVersion,
       approvedAt,
+      dispatchedAt: approvedAt,
       acceptanceCriteria: [...current.intentContract.acceptanceCriteria],
       budgets: { ...current.intentContract.budgets },
       deniedTools: current.intentContract.deniedTools
         ? [...current.intentContract.deniedTools]
         : undefined,
     };
-    const status = missionStatusForIntent(nextState) ?? "pending";
+    const status = missionStatusForIntent(nextState) ?? "running";
     const updated = missions.update(input.missionId, {
       status,
       intentState: nextState,
@@ -554,14 +585,9 @@ export class RendererMissionAuthority {
     if (!updated) throw new Error("mission not found");
 
     // Preempt any stale preflight/bootstrap queued for a prior intentVersion.
+    // The goal itself was synchronously delivered by submitIntentFromRenderer;
+    // approval must not enqueue a duplicate prompt.
     bumpMissionPromptIntent(updated.id, contractVersion);
-    enqueueMissionPrompt({
-      missionId: updated.id,
-      kind: "user_goal",
-      body: contract.goal,
-      intentVersion: contractVersion,
-      source: "typed",
-    });
 
     emitMissionIntentEvent({
       name: "plan_approved",

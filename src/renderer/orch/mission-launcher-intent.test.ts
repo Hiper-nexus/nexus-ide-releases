@@ -131,6 +131,45 @@ describe('materializeSquadMission with existingMissionId', () => {
   });
 });
 
+describe('legacy mission materialization compensation', () => {
+  it('removes a newly created mission when running status publication fails', async () => {
+    const mission = {
+      id: 'mission-legacy',
+      title: 'Legacy',
+      description: 'Legacy',
+      status: 'pending' as const,
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const removeMission = vi.fn(async () => ({ removed: true }));
+
+    await expect(
+      materializeSquadMission(
+        {
+          paneId: 'pane-legacy',
+          title: 'Legacy',
+          squadId: 'legacy-squad',
+          orchestratorPane: {
+            paneId: 'pane-legacy',
+            adapterId: 'claude',
+          },
+        },
+        {
+          waitForSession: async () => 'session-legacy',
+          createMission: async () => mission,
+          updateMission: async () => {
+            throw new Error('status store unavailable');
+          },
+          removeMission,
+        },
+      ),
+    ).rejects.toThrow(/status store unavailable/i);
+    expect(removeMission).toHaveBeenCalledWith('mission-legacy');
+  });
+});
+
 vi.mock('../state/home-store', () => ({
   useHomeStore: {
     getState: () => ({ hide: vi.fn() }),
@@ -178,6 +217,7 @@ describe('intent-first arming dependencies', () => {
         },
         accounts: { list: vi.fn(async () => []) },
         quota: { snapshot: vi.fn(async () => null) },
+        orch: { bindMissionOrchestrator: vi.fn() },
       },
     });
 
@@ -189,5 +229,36 @@ describe('intent-first arming dependencies', () => {
       }),
     ).resolves.toMatchObject({ ok: false });
     expect(authorizeDispatch).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when approved dispatch has no goal-scoped kickoff', async () => {
+    vi.stubGlobal('window', { nexus: {} });
+
+    await expect(
+      launchSquadMission(squad, [], { existingMissionId: 'mission-approved' }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/kickoff.*objetivo atual/i),
+    });
+  });
+
+  it('does not let the renderer force legacy launch while main intent-first is enabled', async () => {
+    const accountsList = vi.fn();
+    vi.stubGlobal('window', {
+      nexus: {
+        settings: {
+          orchGet: vi.fn(async () => ({ intentFirstMissionRuntimeV1: true })),
+        },
+        accounts: { list: accountsList },
+      },
+    });
+
+    await expect(
+      launchSquadMission(squad, [], { forceLegacyLaunch: true }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/lan[cç]amento legado.*intent-first/i),
+    });
+    expect(accountsList).not.toHaveBeenCalled();
   });
 });

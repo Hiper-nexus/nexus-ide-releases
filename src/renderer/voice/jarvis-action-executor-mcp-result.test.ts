@@ -20,7 +20,12 @@ const {
   waitForSession: vi.fn(),
   writeToPane: vi.fn(),
   missionWizardState: {
+    open: false,
+    presetSquadId: null as string | null,
+    armedMissionId: null as string | null,
+    visibleStep: null as string | null,
     openForAgentic: vi.fn(),
+    requestVoiceLaunch: vi.fn(),
   },
   layoutState: {
     focusedPaneId: null as string | null,
@@ -108,6 +113,10 @@ describe('Jarvis MCP result propagation', () => {
     vi.unstubAllGlobals();
     layoutState.focusedPaneId = null;
     layoutState.panes = [];
+    missionWizardState.open = false;
+    missionWizardState.presetSquadId = null;
+    missionWizardState.armedMissionId = null;
+    missionWizardState.visibleStep = null;
     vi.stubGlobal('window', {
       nexus: { voice: { confirmCommand, logVoice: vi.fn() } },
     });
@@ -280,6 +289,76 @@ describe('Jarvis MCP result propagation', () => {
     expect(execution.toolResult).toMatchObject({
       tool: 'new_agentic_mission',
       ok: true,
+    });
+  });
+
+  it('submits a spoken goal through intent authority when a mission is armed', async () => {
+    missionWizardState.armedMissionId = 'mission-armed';
+    const submitMissionIntent = vi.fn(async () => ({
+      id: 'mission-armed',
+      intentState: 'ready_to_start',
+      intentVersion: 1,
+    }));
+    vi.stubGlobal('window', {
+      nexus: {
+        voice: { confirmCommand, logVoice: vi.fn() },
+        orch: { submitMissionIntent },
+      },
+    });
+
+    const execution = await executeJarvisAction(
+      {
+        say: '',
+        action: { type: 'new_agentic_mission', intent: 'corrigir a busca local' },
+      },
+      context,
+    );
+
+    expect(submitMissionIntent).toHaveBeenCalledWith({
+      missionId: 'mission-armed',
+      goal: 'corrigir a busca local',
+      source: 'voice',
+    });
+    expect(missionWizardState.openForAgentic).not.toHaveBeenCalled();
+    expect(execution.toolResult).toMatchObject({
+      ok: true,
+      output: { missionId: 'mission-armed', intentVersion: 1 },
+    });
+  });
+
+  it('does not treat squad confirmation as dispatch while still awaiting a goal', async () => {
+    missionWizardState.open = true;
+    missionWizardState.presetSquadId = 'navalha';
+    missionWizardState.armedMissionId = 'mission-armed';
+    missionWizardState.visibleStep = 'intent-compose';
+
+    const execution = await executeJarvisAction(
+      { say: '', action: { type: 'confirm_squad' } },
+      context,
+    );
+
+    expect(missionWizardState.requestVoiceLaunch).not.toHaveBeenCalled();
+    expect(execution.expectReply).toBe(true);
+    expect(execution.toolResult).toMatchObject({
+      ok: false,
+      summary: expect.stringMatching(/aguardando objetivo/i),
+    });
+  });
+
+  it('forwards voice confirmation when an intent plan is ready', async () => {
+    missionWizardState.open = true;
+    missionWizardState.presetSquadId = 'navalha';
+    missionWizardState.visibleStep = 'intent-plan';
+
+    const execution = await executeJarvisAction(
+      { say: '', action: { type: 'confirm_squad' } },
+      context,
+    );
+
+    expect(missionWizardState.requestVoiceLaunch).toHaveBeenCalledOnce();
+    expect(execution.toolResult).toMatchObject({
+      ok: true,
+      summary: expect.stringMatching(/plano confirmado/i),
     });
   });
 

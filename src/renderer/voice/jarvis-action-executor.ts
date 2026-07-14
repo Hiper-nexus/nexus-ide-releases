@@ -566,16 +566,38 @@ export async function executeJarvisAction(
     }
   } else if (action.type === 'confirm_squad') {
     const wizard = useMissionWizardStore.getState();
-    if (!wizard.open || !wizard.presetSquadId) {
+    const canConfirm =
+      wizard.visibleStep === 'squad-review' ||
+      wizard.visibleStep === 'intent-plan';
+    if (wizard.open && wizard.visibleStep === 'intent-compose') {
+      sayText =
+        'O squad está pronto, mas ainda preciso do objetivo antes de iniciar qualquer especialista.';
+      expectReply = true;
+      toolResult = {
+        tool: action.type,
+        ok: false,
+        summary: 'missão armada ainda aguardando objetivo',
+      };
+    } else if (!wizard.open || !wizard.presetSquadId || !canConfirm) {
       sayText =
         'Não tem um squad na revisão agora. Diga "iniciar squad" pra eu montar um primeiro.';
       expectReply = true;
       toolResult = { tool: action.type, ok: false, summary: 'wizard de squad fechado' };
     } else {
       wizard.requestVoiceLaunch();
-      sayText = 'Confirmado — iniciando o squad.';
+      sayText =
+        wizard.visibleStep === 'intent-plan'
+          ? 'Plano confirmado — iniciando a missão autorizada.'
+          : 'Confirmado — iniciando o fluxo do squad.';
       expectReply = false;
-      toolResult = { tool: action.type, ok: true, summary: 'squad confirmado e iniciando' };
+      toolResult = {
+        tool: action.type,
+        ok: true,
+        summary:
+          wizard.visibleStep === 'intent-plan'
+            ? 'plano confirmado e missão iniciando'
+            : 'squad confirmado',
+      };
     }
   } else if (action.type === 'new_agentic_mission') {
     const wizard = useMissionWizardStore.getState();

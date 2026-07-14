@@ -4,6 +4,7 @@ import {
   createEmptyPromptQueue,
   nextDeliverablePrompt,
   promptQueueSnapshot,
+  prunePromptQueueHistory,
   reducePromptQueue,
 } from './mission-prompt-queue';
 
@@ -190,5 +191,28 @@ describe('MissionPromptQueue', () => {
       type: 'enqueue', kind: 'system', body: 'different',
       intentVersion: 1, source: 'system', id: 'same-id',
     })).toThrow(/duplicate prompt id/i);
+  });
+
+  it('bounds terminal history without dropping active prompts', () => {
+    let q = createEmptyPromptQueue('m-history');
+    for (let i = 0; i < 5; i += 1) {
+      const id = `done-${i}`;
+      q = reducePromptQueue(q, {
+        type: 'enqueue', kind: 'system', body: id,
+        intentVersion: 1, source: 'system', id,
+      }).state;
+      q = reducePromptQueue(q, { type: 'start', id }).state;
+      q = reducePromptQueue(q, { type: 'complete', id, ok: true }).state;
+    }
+    q = reducePromptQueue(q, {
+      type: 'enqueue', kind: 'user_message', body: 'still queued',
+      intentVersion: 1, source: 'typed', id: 'active',
+    }).state;
+
+    const pruned = prunePromptQueueHistory(q, 2);
+    expect(pruned.items.map((item) => item.id)).toEqual([
+      'done-3', 'done-4', 'active',
+    ]);
+    expect(pruned.nextSeq).toBe(q.nextSeq);
   });
 });

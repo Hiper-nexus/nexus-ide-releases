@@ -113,6 +113,11 @@ export function MissionWizard() {
   const [armedMissionId, setArmedMissionId] = useState<string | null>(null);
   const [missionGoal, setMissionGoal] = useState('');
   const [plannedMission, setPlannedMission] = useState<Mission | null>(null);
+  const armedMissionSnapshot = useOrchStore((state) =>
+    armedMissionId
+      ? state.missions.find((mission) => mission.id === armedMissionId) ?? null
+      : null,
+  );
   const [prepareStatus, setPrepareStatus] = useState<
     'idle' | 'running' | 'ready' | 'cancelled' | 'error'
   >('idle');
@@ -129,6 +134,35 @@ export function MissionWizard() {
   const [highlightedAgentId, setHighlightedAgentId] = useState<string | null>(null);
   const designRequestRef = useRef(0);
   const designInFlightRef = useRef(false);
+
+  // Voice submits through main authority too. Follow the project-scoped
+  // mission broadcast so that an externally submitted goal reaches the same
+  // review screen instead of leaving the wizard on a stale composer.
+  useEffect(() => {
+    const snapshot = armedMissionSnapshot;
+    const isReviewable =
+      snapshot?.intentState === 'ready_to_start' ||
+      snapshot?.intentState === 'awaiting_approval';
+    const isCurrent =
+      snapshot?.intentContract?.intentVersion === snapshot?.intentVersion;
+    if (
+      !open ||
+      !snapshot ||
+      !isReviewable ||
+      !isCurrent ||
+      !snapshot.intentContract?.goal ||
+      plannedMission?.intentVersion === snapshot.intentVersion
+    ) {
+      return;
+    }
+    setMissionGoal(snapshot.intentContract.goal);
+    setPlannedMission(snapshot);
+    setStep('intent-plan');
+  }, [
+    open,
+    armedMissionSnapshot,
+    plannedMission?.intentVersion,
+  ]);
 
   // Surface prompt-queue state (executing / queued / cancelled) while composing.
   useEffect(() => {
@@ -370,8 +404,12 @@ export function MissionWizard() {
   // MUST live before any early return so the hook count is stable every render.
   useEffect(() => {
     if (!open || voiceLaunchNonce <= 0) return;
-    if (step !== 'squad-review' || !selectedSquad || spawning) return;
-    void handleLaunchSquad();
+    if (!selectedSquad || spawning) return;
+    if (step === 'squad-review') {
+      void handleLaunchSquad();
+    } else if (step === 'intent-plan' && plannedMission) {
+      void handleStartFromIntentPlan();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fire only on nonce
   }, [voiceLaunchNonce]);
 

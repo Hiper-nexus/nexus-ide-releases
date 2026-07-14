@@ -45,6 +45,7 @@ import {
   unregisterOrchRenderer,
 } from "./pane-registry";
 import { RendererMissionAuthority } from "./renderer-mission-authority";
+import { deleteMissionPromptQueue } from "./mission-prompt-queue-registry";
 import {
   ProjectDomainStoreRegistry,
   configureProjectDomainStoreRegistry,
@@ -541,7 +542,9 @@ export function registerOrchIpc(): void {
     const stores = requireProjectStores(event.sender);
     const missionId = typeof raw === "string" ? raw : "";
     if (!missionId) throw new Error("invalid mission id");
-    return { removed: stores.missions.remove(missionId) };
+    const removed = stores.missions.remove(missionId);
+    if (removed) deleteMissionPromptQueue(missionId);
+    return { removed };
   });
 
   ipcMain.handle(ORCH_CHANNELS.handoffsList, (event) =>

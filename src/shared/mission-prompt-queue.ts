@@ -295,3 +295,34 @@ export function promptQueueSnapshot(state: MissionPromptQueueState): {
     cancelled: state.items.filter((item) => item.status === 'cancelled'),
   };
 }
+
+/** Bound terminal history while preserving every queued/executing item. */
+export function prunePromptQueueHistory(
+  state: MissionPromptQueueState,
+  maxTerminalItems = 128,
+): MissionPromptQueueState {
+  if (!Number.isSafeInteger(maxTerminalItems) || maxTerminalItems < 0) {
+    throw new RangeError('maxTerminalItems must be a non-negative safe integer');
+  }
+  const terminal = state.items.filter(
+    (item) =>
+      item.status === 'cancelled' ||
+      item.status === 'delivered' ||
+      item.status === 'failed',
+  );
+  if (terminal.length <= maxTerminalItems) return state;
+  const retainedTerminalIds = new Set(
+    (maxTerminalItems === 0 ? [] : terminal.slice(-maxTerminalItems)).map(
+      (item) => item.id,
+    ),
+  );
+  return {
+    ...state,
+    items: state.items.filter(
+      (item) =>
+        item.status === 'queued' ||
+        item.status === 'executing' ||
+        retainedTerminalIds.has(item.id),
+    ),
+  };
+}

@@ -56,6 +56,7 @@ vi.mock("../context/orientation/orientation-service", () => ({
 
 import { RendererMissionAuthority } from "./renderer-mission-authority";
 import {
+  getMissionPromptQueue,
   peekMissionPromptQueue,
   resetMissionPromptQueues,
 } from "./mission-prompt-queue-registry";
@@ -128,6 +129,7 @@ beforeEach(() => {
   resetMissionPromptQueues();
   deps.getMission.mockReset();
   deps.setMissionOrchestratorSession.mockReset();
+  deps.updateMission.mockReset();
   deps.findPaneOwnedBy.mockReturnValue({
     paneId: "pane-a",
     sessionId: "pty-a",
@@ -200,6 +202,76 @@ describe("renderer mission authority", () => {
             evidenceIds: [],
           },
         ],
+      }),
+    );
+  });
+
+  it("delivers a submitted goal through the synchronous compiler queue", () => {
+    const plannedMission = {
+      ...mission,
+      description: "Review the authentication flow",
+      intentState: "awaiting_approval" as const,
+      intentVersion: 1,
+    };
+    deps.updateMission.mockReturnValueOnce(plannedMission);
+
+    expect(
+      authority.submitIntentFromRenderer(owner, {
+        missionId: mission.id,
+        goal: "Review the authentication flow",
+        source: "typed",
+      }),
+    ).toBe(plannedMission);
+
+    const queue = getMissionPromptQueue(mission.id);
+    expect(queue.executingId).toBeNull();
+    expect(queue.items).toEqual([
+      expect.objectContaining({
+        kind: "user_goal",
+        intentVersion: 1,
+        status: "delivered",
+      }),
+    ]);
+    expect(peekMissionPromptQueue(mission.id).queued).toHaveLength(0);
+  });
+
+  it("approves and dispatches a sensitive goal in one user action", () => {
+    const awaitingApproval = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    };
+    deps.getMission.mockReturnValueOnce(awaitingApproval);
+    deps.updateMission.mockImplementationOnce(
+      (_missionId: string, patch: Record<string, unknown>) => ({
+        ...awaitingApproval,
+        ...patch,
+      }),
+    );
+
+    const result = authority.approveIntentFromRenderer(owner, {
+      missionId: mission.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "running",
+      intentState: "dispatched",
+      intentContract: {
+        intentVersion: 1,
+        approvedAt: expect.any(Number),
+        dispatchedAt: expect.any(Number),
+      },
+    });
+    expect(deps.updateMission).toHaveBeenCalledWith(
+      mission.id,
+      expect.objectContaining({
+        status: "running",
+        intentState: "dispatched",
       }),
     );
   });

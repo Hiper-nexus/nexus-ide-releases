@@ -366,6 +366,9 @@ interface MissionMaterializationDeps {
     missionId: string,
     patch: { status: 'running' },
   ): ReturnType<typeof window.nexus.orch.updateMission>;
+  removeMission?(
+    missionId: string,
+  ): ReturnType<typeof window.nexus.orch.removeMission>;
 }
 
 /** Autoridade só existe quando o PTY concreto e o registro persistido existem. */
@@ -379,6 +382,7 @@ export async function materializeSquadMission(
       window.nexus.orch.bindMissionOrchestrator(bindInput),
     updateMission: (missionId, patch) =>
       window.nexus.orch.updateMission(missionId, patch),
+    removeMission: (missionId) => window.nexus.orch.removeMission(missionId),
   },
 ) {
   const sessionId = await deps.waitForSession(input.paneId);
@@ -402,8 +406,16 @@ export async function materializeSquadMission(
     squadId: input.squadId,
     orchestratorPane: input.orchestratorPane,
   });
-  await deps.updateMission(mission.id, { status: 'running' });
-  return { sessionId, mission };
+  try {
+    const running = await deps.updateMission(mission.id, { status: 'running' });
+    return { sessionId, mission: running };
+  } catch (error) {
+    // Immediate legacy/pet creation is a two-IPC materialization. Compensate
+    // the first write if status publication fails so no authorized orphan row
+    // survives without the pane that launchSquadMission is about to kill.
+    await deps.removeMission?.(mission.id).catch(() => undefined);
+    throw error;
+  }
 }
 
 /**
@@ -443,8 +455,31 @@ export async function launchSquadMission(
   if (!orchestrator) {
     return { ok: false, error: "Este squad não tem agentes." };
   }
+  if (options.existingMissionId && !options.goalPrompt?.trim()) {
+    return {
+      ok: false,
+      error: "Uma missão aprovada exige um kickoff vinculado ao objetivo atual.",
+    };
+  }
+  if (options.goalPrompt && !options.existingMissionId) {
+    return {
+      ok: false,
+      error: "Um kickoff de objetivo exige uma missão aprovada vinculada.",
+    };
+  }
 
   const orchDefaults = await window.nexus.settings.orchGet();
+  if (
+    options.forceLegacyLaunch &&
+    profile !== 'pet-studio' &&
+    orchDefaults.intentFirstMissionRuntimeV1 !== false
+  ) {
+    return {
+      ok: false,
+      error:
+        'O lançamento legado exige a exceção principal intent-first desativada nas configurações.',
+    };
+  }
 
   // Intent-first: selecting a squad arms a shell only — zero panes, zero tokens.
   // Pet Studio and explicit legacy/dispatch paths keep the full launch.
