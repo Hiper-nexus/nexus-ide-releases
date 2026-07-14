@@ -67,15 +67,18 @@ function packagedMacApps(outputPaths: readonly string[]): string[] {
 
 export function shouldPackageFile(file: string): boolean {
   if (!file) return true;
+  // Electron Packager passes POSIX paths on Unix and backslash paths on
+  // Windows. Keep the inclusion policy identical across release runners.
+  const normalized = file.replaceAll('\\', '/');
   return (
-    file === '/package.json' ||
-    file === '/LICENSE' ||
-    file === '/THIRD_PARTY_NOTICES.md' ||
-    file === '/third_party' ||
-    file === '/third_party/licenses' ||
-    file.startsWith('/third_party/licenses/') ||
-    file.startsWith('/.vite') ||
-    file.startsWith('/node_modules')
+    normalized === '/package.json' ||
+    normalized === '/LICENSE' ||
+    normalized === '/THIRD_PARTY_NOTICES.md' ||
+    normalized === '/third_party' ||
+    normalized === '/third_party/licenses' ||
+    normalized.startsWith('/third_party/licenses/') ||
+    normalized.startsWith('/.vite') ||
+    normalized.startsWith('/node_modules')
   );
 }
 

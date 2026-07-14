@@ -206,6 +206,8 @@ describe('packaged legal notices', () => {
     // Orca MIT attribution must ship in closed-source packages.
     expect(shouldPackageFile('/third_party/licenses/orca-MIT.txt')).toBe(true);
     expect(shouldPackageFile('/src/main/main.ts')).toBe(false);
+    expect(shouldPackageFile('\\.vite\\build\\main.js')).toBe(true);
+    expect(shouldPackageFile('\\node_modules\\better-sqlite3\\build\\Release\\better_sqlite3.node')).toBe(true);
     // Provenance ledger is for engineers; not required in the app bundle.
     expect(shouldPackageFile('/third_party/provenance/orca-143c36e.json')).toBe(
       false,

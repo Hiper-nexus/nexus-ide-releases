@@ -453,7 +453,9 @@ export function requiredNativeArtifactGlobs({ platform, arch }) {
       ],
     },
   ];
-  if (platform !== 'win32') {
+  // @lydell/node-pty ships spawn-helper for macOS, while its Linux prebuild
+  // uses openpty directly and intentionally contains only pty.node.
+  if (platform === 'darwin') {
     artifacts.push({
       id: 'node-pty-spawn-helper',
       anyOf: [`${prebuildDir}/spawn-helper`],

@@ -77,6 +77,11 @@ export const CURRENT_RELEASE: AppRelease = {
         'A release inclui a sincronização via pane CLI, evita TTS Classic e Gemini simultâneos após tool e fecha os buracos de review do dual-audio.',
     },
     {
+      title: 'Empacotamento multiplataforma confiável',
+      detail:
+        'O filtro do Forge normaliza caminhos Windows, e o smoke respeita os artefatos reais do node-pty em cada sistema operacional.',
+    },
+    {
       title: 'Autonomia pinada por teste',
       detail:
         'defaultDriveConfig nasce em shadow, congelado e com budgets finitos; trocar isso agora quebra um teste em vez de re-armar autonomia em silêncio.',

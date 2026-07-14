@@ -17,6 +17,9 @@ Data: 2026-07-14
 - Pet Nico incluído no catálogo embutido; spritesheet validado abaixo de 2,5 MB.
 - Pipeline reproduzível de treino de wake PT-BR, testes e documentação de
   arquitetura de voz versionados sem substituir o modelo ativo.
+- Smoke de release corrigido para os artefatos reais do `node-pty` no Linux e
+  para o filtro de caminhos Windows do Forge, evitando pacotes sem o bundle
+  principal.
 
 ## 0.15.15 — Travas de Autonomia e Revisão Humana de Missão
 

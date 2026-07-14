@@ -385,7 +385,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
     await expect(assertFunctionalMarker(userData)).rejects.toThrow(/mismatch/);
   });
 
-  it('lists required native artifacts per platform (spawn-helper only on POSIX)', () => {
+  it('lists required native artifacts per platform (spawn-helper only on macOS)', () => {
     const darwin = requiredNativeArtifactGlobs({
       platform: 'darwin',
       arch: 'arm64',
@@ -411,7 +411,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
         'onnxruntime-node',
       ]),
     );
-    expect(linux).toContain('node-pty-spawn-helper');
+    expect(linux).not.toContain('node-pty-spawn-helper');
     expect(win).not.toContain('node-pty-spawn-helper');
     expect(win).toEqual(
       expect.arrayContaining(['webrtc-aec3-wasm', 'tesseract-worker', 'tesseract-core', 'tesseract-wasm-feature-detect', 'better-sqlite3', 'node-pty', 'onnxruntime-node']),
@@ -434,7 +434,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
         `node_modules/@lydell/node-pty-${platform}-${arch}/prebuilds/${platform}-${arch}/pty.node`,
         `node_modules/onnxruntime-node/bin/napi-v3/${platform}/${arch}/onnxruntime_binding.node`,
       ];
-      if (platform !== 'win32') {
+      if (platform === 'darwin') {
         files.push(
           `node_modules/@lydell/node-pty-${platform}-${arch}/prebuilds/${platform}-${arch}/spawn-helper`,
         );
@@ -448,7 +448,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
       expect(found['webrtc-aec3-wasm']).toMatch(/webrtcaec3-0\.3\.0\.wasm$/);
       expect(found['node-pty']).toMatch(/pty\.node$/);
       expect(found['onnxruntime-node']).toMatch(/onnxruntime_binding\.node$/);
-      if (platform !== 'win32') {
+      if (platform === 'darwin') {
         expect(found['node-pty-spawn-helper']).toMatch(/spawn-helper$/);
       }
     }
@@ -471,25 +471,25 @@ describe('proofs: renderer, functional, marker, natives', () => {
     ).rejects.toThrow(/missing/);
   });
 
-  it('fails when the POSIX node-pty helper is not executable', async () => {
+  it('fails when the macOS node-pty helper is not executable', async () => {
     const unpacked = makeTemp();
     writeTree(unpacked, [
       'node_modules/better-sqlite3/build/Release/better_sqlite3.node',
-      'node_modules/@lydell/node-pty-linux-x64/prebuilds/linux-x64/pty.node',
-      'node_modules/@lydell/node-pty-linux-x64/prebuilds/linux-x64/spawn-helper',
-      'node_modules/onnxruntime-node/bin/napi-v3/linux/x64/onnxruntime_binding.node',
+      'node_modules/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/pty.node',
+      'node_modules/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/spawn-helper',
+      'node_modules/onnxruntime-node/bin/napi-v3/darwin/arm64/onnxruntime_binding.node',
     ]);
     fs.chmodSync(
       path.join(
         unpacked,
-        'node_modules/@lydell/node-pty-linux-x64/prebuilds/linux-x64/spawn-helper',
+        'node_modules/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/spawn-helper',
       ),
       0o644,
     );
     await expect(
       assertNativeArtifactsPresent(unpacked, {
-        platform: 'linux',
-        arch: 'x64',
+        platform: 'darwin',
+        arch: 'arm64',
       }),
     ).rejects.toThrow(/not executable/);
   });
@@ -618,7 +618,7 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
       `node_modules/@lydell/node-pty-${platform}-${arch}/prebuilds/${platform}-${arch}/pty.node`,
       `node_modules/onnxruntime-node/bin/napi-v3/${platform}/${arch}/onnxruntime_binding.node`,
     ];
-    if (platform !== 'win32') {
+    if (platform === 'darwin') {
       files.push(
         `node_modules/@lydell/node-pty-${platform}-${arch}/prebuilds/${platform}-${arch}/spawn-helper`,
       );
