@@ -38,6 +38,8 @@ import {
 import { buildHandoffTools } from './tools-handoff';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { canCompleteConsultLane } from '../../shared/mission-intent';
+import { emitPlannedTasksWithContract } from './mission-scheduler';
+import { encodeTaskScheduleDetail } from './mission-scheduler-meta';
 
 /**
  * MCP tools for handoffs (2), agents (3), missions (5), squad/catalog/task
@@ -526,11 +528,16 @@ const taskTool: McpToolDef = {
   name: 'nexus_task',
   description:
     'Tracked background work items. action "create" {title, detail?, ' +
-    'missionId?}, "update" {taskId, status?, detail?}, "list" {missionId?}.',
+    'missionId?, ownership?, dependsOn?}, "update" {taskId, status?, detail?}, ' +
+    '"list" {missionId?}, "plan" {missionId, tasks[]} emits ownership+dependsOn ' +
+    'contract (sequential chain when ownership unknown).',
   inputSchema: {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: ['create', 'update', 'list'] },
+      action: {
+        type: 'string',
+        enum: ['create', 'update', 'list', 'plan'],
+      },
       title: { type: 'string' },
       detail: { type: 'string' },
       taskId: { type: 'string' },
@@ -539,6 +546,9 @@ const taskTool: McpToolDef = {
         type: 'string',
         enum: ['pending', 'running', 'done', 'failed'],
       },
+      ownership: { type: 'object' },
+      dependsOn: { type: 'array', items: { type: 'string' } },
+      tasks: { type: 'array', items: { type: 'object' } },
     },
     required: ['action'],
   },
@@ -553,10 +563,174 @@ const taskTool: McpToolDef = {
             throw new Error('mission task plan is sealed after the first worktree allocation');
           }
         }
+        const body = str(args, 'detail') ?? '';
+        const rawOwnership = args.ownership;
+        const rawDepends = args.dependsOn;
+        let detail = body;
+        if (
+          (rawOwnership && typeof rawOwnership === 'object') ||
+          (Array.isArray(rawDepends) && rawDepends.length > 0)
+        ) {
+          const ownershipObj =
+            rawOwnership && typeof rawOwnership === 'object'
+              ? (rawOwnership as {
+                  files?: unknown;
+                  symbols?: unknown;
+                  domains?: unknown;
+                })
+              : {};
+          const files = Array.isArray(ownershipObj.files)
+            ? ownershipObj.files.filter((f): f is string => typeof f === 'string')
+            : [];
+          const symbols = Array.isArray(ownershipObj.symbols)
+            ? ownershipObj.symbols.filter(
+                (s): s is string => typeof s === 'string',
+              )
+            : [];
+          const domains = Array.isArray(ownershipObj.domains)
+            ? ownershipObj.domains.filter(
+                (d): d is string => typeof d === 'string',
+              )
+            : [];
+          const dependsOn = Array.isArray(rawDepends)
+            ? rawDepends.filter((d): d is string => typeof d === 'string')
+            : [];
+          const planned = emitPlannedTasksWithContract([
+            {
+              id: 'pending',
+              title: requireStr(args, 'title'),
+              detail: body,
+              ownership:
+                files.length > 0
+                  ? { files, symbols, domains }
+                  : undefined,
+              dependsOn,
+            },
+          ])[0]!;
+          detail = encodeTaskScheduleDetail(body, {
+            dependsOn: planned.dependsOn,
+            ownership: planned.ownership,
+            merged: false,
+            parallelEligible: planned.parallelEligible,
+          });
+        }
         return tasks.create({
           title: requireStr(args, 'title'),
-          detail: str(args, 'detail'),
+          detail,
           missionId,
+        });
+      }
+      case 'plan': {
+        if (ctx.role === 'worker') {
+          throw new Error('only an orchestrator can plan mission tasks');
+        }
+        const missionId = str(args, 'missionId') ?? ctx.missionId;
+        if (!missionId) throw new Error('missionId is required for plan');
+        if (requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId).length > 0) {
+          throw new Error('mission task plan is sealed after the first worktree allocation');
+        }
+        const rawTasks = Array.isArray(args.tasks) ? args.tasks : [];
+        if (rawTasks.length === 0) throw new Error('tasks[] is required for plan');
+        if (rawTasks.length > 64) throw new Error('at most 64 tasks per plan');
+        const inputs = rawTasks.map((raw, index) => {
+          if (!raw || typeof raw !== 'object') {
+            throw new Error(`invalid task at index ${index}`);
+          }
+          const row = raw as {
+            id?: unknown;
+            title?: unknown;
+            detail?: unknown;
+            ownership?: {
+              files?: unknown;
+              symbols?: unknown;
+              domains?: unknown;
+            };
+            dependsOn?: unknown;
+          };
+          const id =
+            typeof row.id === 'string' && row.id.trim().length > 0
+              ? row.id.trim()
+              : `task-${index + 1}`;
+          const title =
+            typeof row.title === 'string' && row.title.trim().length > 0
+              ? row.title.trim()
+              : id;
+          const ownershipFiles = Array.isArray(row.ownership?.files)
+            ? row.ownership!.files!.filter(
+                (f): f is string => typeof f === 'string',
+              )
+            : [];
+          const ownership =
+            ownershipFiles.length > 0
+              ? {
+                  files: ownershipFiles,
+                  symbols: Array.isArray(row.ownership?.symbols)
+                    ? row.ownership!.symbols!.filter(
+                        (s): s is string => typeof s === 'string',
+                      )
+                    : [],
+                  domains: Array.isArray(row.ownership?.domains)
+                    ? row.ownership!.domains!.filter(
+                        (d): d is string => typeof d === 'string',
+                      )
+                    : [],
+                }
+              : undefined;
+          const dependsOn = Array.isArray(row.dependsOn)
+            ? row.dependsOn.filter((d): d is string => typeof d === 'string')
+            : undefined;
+          return {
+            id,
+            title,
+            detail: typeof row.detail === 'string' ? row.detail : '',
+            ownership,
+            dependsOn,
+          };
+        });
+        const planned = emitPlannedTasksWithContract(inputs);
+        // Create first so store ids exist, then remap dependsOn planner ids → store ids.
+        const createdDraft = planned.map((p) =>
+          tasks.create({
+            title: p.title,
+            missionId,
+            detail: p.detail,
+          }),
+        );
+        const idMap = new Map(
+          planned.map((p, i) => [p.id, createdDraft[i]!.id] as const),
+        );
+        const created = planned.map((p, i) => {
+          const storeId = createdDraft[i]!.id;
+          const dependsOn = p.dependsOn
+            .map((dep) => idMap.get(dep) ?? dep)
+            .filter((dep) => dep !== storeId);
+          const detail = encodeTaskScheduleDetail(p.detail, {
+            dependsOn,
+            ownership: p.ownership,
+            merged: false,
+            parallelEligible: p.parallelEligible,
+          });
+          return (
+            tasks.update(storeId, { detail }) ?? {
+              ...createdDraft[i]!,
+              detail,
+            }
+          );
+        });
+        return Object.freeze({
+          missionId,
+          tasks: created,
+          planned: planned.map((p, i) =>
+            Object.freeze({
+              plannerId: p.id,
+              taskId: created[i]!.id,
+              dependsOn: p.dependsOn
+                .map((dep) => idMap.get(dep) ?? dep)
+                .filter((dep) => dep !== created[i]!.id),
+              ownership: p.ownership,
+              parallelEligible: p.parallelEligible,
+            }),
+          ),
         });
       }
       case 'update': {

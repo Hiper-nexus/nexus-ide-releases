@@ -74,6 +74,8 @@ export const FEATURE_FLAG_IDS = {
   skillsCatalog: 'feature.skills.catalog',
   nexusMemory: 'feature.memory.nexusMemory',
   autonomyProfiles: 'feature.autonomy.profiles',
+  /** Deterministic parallel mission task scheduler (worktree fan-out). */
+  parallelScheduler: 'orch.parallelScheduler',
 } as const;
 
 export type FeatureFlagId =
@@ -198,6 +200,20 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
+    defaultEnabled: false,
+  },
+  {
+    id: FEATURE_FLAG_IDS.parallelScheduler,
+    owner: 'orch',
+    description:
+      'Deterministic parallel task scheduler: ready+disjoint waves via worktrees, serial MergeQueue, fail-closed ownership enforcement. Default off; enable only for independent-subset missions after P3.',
+    channel: 'dev',
+    createdAt: '2026-07-14',
+    removeAfter: '2027-06-30',
+    killSwitch: false,
+    telemetry: true,
+    // Fail-closed: stays off until independent-subset policy is trusted (P3).
+    // Override enables for missions that declare disjoint ownership.
     defaultEnabled: false,
   },
 ] as const;
