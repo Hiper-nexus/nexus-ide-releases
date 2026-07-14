@@ -5,15 +5,19 @@ const {
   confirmCommand,
   invokeMcpWithConfirm,
   layoutState,
+  launchSquadMission,
   missionWizardState,
+  orchState,
   resolveSendToPaneTarget,
   setPendingDelegation,
   submitPromptToPane,
   waitForSession,
+  workspaceState,
   writeToPane,
 } = vi.hoisted(() => ({
   confirmCommand: vi.fn(),
   invokeMcpWithConfirm: vi.fn(),
+  launchSquadMission: vi.fn(),
   resolveSendToPaneTarget: vi.fn(),
   setPendingDelegation: vi.fn(),
   submitPromptToPane: vi.fn(),
@@ -24,8 +28,17 @@ const {
     presetSquadId: null as string | null,
     armedMissionId: null as string | null,
     visibleStep: null as string | null,
+    close: vi.fn(),
     openForAgentic: vi.fn(),
+    openForArmedMission: vi.fn(),
+    openSquadPicker: vi.fn(),
     requestVoiceLaunch: vi.fn(),
+  },
+  orchState: {
+    squads: [] as Array<{ id: string; name: string; agents: unknown[] }>,
+  },
+  workspaceState: {
+    current: null as { path: string } | null,
   },
   layoutState: {
     focusedPaneId: null as string | null,
@@ -43,9 +56,9 @@ vi.mock('../state/layout-store', () => ({
 }));
 vi.mock('../lib/split-tree', () => ({ listPanes: () => layoutState.panes }));
 vi.mock('../state/workspace-store', () => ({
-  useWorkspaceStore: { getState: vi.fn() },
+  useWorkspaceStore: { getState: () => workspaceState },
 }));
-vi.mock('../state/orch-store', () => ({ useOrchStore: { getState: vi.fn() } }));
+vi.mock('../state/orch-store', () => ({ useOrchStore: { getState: () => orchState } }));
 vi.mock('../state/mission-wizard-store', () => ({
   useMissionWizardStore: { getState: () => missionWizardState },
 }));
@@ -63,7 +76,7 @@ vi.mock('../terminal/terminal-host', () => ({
   writeToPane,
 }));
 vi.mock('../browser/browser-host', () => ({ waitForBrowserPaneCreated: vi.fn() }));
-vi.mock('../orch/mission-launcher', () => ({ launchSquadMission: vi.fn() }));
+vi.mock('../orch/mission-launcher', () => ({ launchSquadMission }));
 vi.mock('../lib/credential-errors', () => ({ isMissingModelKeyError: () => false }));
 vi.mock('./voice-playback', () => ({
   playAudioBase64: vi.fn(),
@@ -117,8 +130,17 @@ describe('Jarvis MCP result propagation', () => {
     missionWizardState.presetSquadId = null;
     missionWizardState.armedMissionId = null;
     missionWizardState.visibleStep = null;
+    missionWizardState.openSquadPicker.mockImplementation(() => {
+      missionWizardState.open = true;
+      missionWizardState.visibleStep = 'squad-select';
+    });
+    orchState.squads = [];
+    workspaceState.current = null;
     vi.stubGlobal('window', {
-      nexus: { voice: { confirmCommand, logVoice: vi.fn() } },
+      nexus: {
+        adapters: { list: vi.fn(async () => []) },
+        voice: { confirmCommand, logVoice: vi.fn() },
+      },
     });
   });
 
@@ -386,6 +408,61 @@ describe('Jarvis MCP result propagation', () => {
       ok: true,
       summary: expect.stringContaining('submetida ao pane'),
     });
+  });
+
+  it('opens intent-first mission compose when delegation has no live agent pane', async () => {
+    resolveSendToPaneTarget.mockReturnValueOnce({ kind: 'no-agent-pane' });
+
+    const execution = await executeJarvisAction(
+      { say: '', action: { type: 'send_to_pane', text: 'corrigir o login' } },
+      context,
+    );
+
+    expect(missionWizardState.openForAgentic).toHaveBeenCalledWith('corrigir o login');
+    expect(confirmCommand).not.toHaveBeenCalled();
+    expect(writeToPane).not.toHaveBeenCalled();
+    expect(execution.toolResult).toMatchObject({
+      tool: 'send_to_pane',
+      ok: true,
+    });
+  });
+
+  it('opens the saved squad picker without launching a squad', async () => {
+    workspaceState.current = { path: '/tmp/nexus' };
+    orchState.squads = [{ id: 'navalha', name: 'Navalha', agents: [] }];
+
+    const execution = await executeJarvisAction(
+      { say: '', action: { type: 'open_squad_picker' } },
+      context,
+    );
+
+    expect(missionWizardState.openSquadPicker).toHaveBeenCalledOnce();
+    expect(launchSquadMission).not.toHaveBeenCalled();
+    expect(execution.toolResult).toMatchObject({ ok: true });
+  });
+
+  it('opens goal compose after a named squad is armed', async () => {
+    workspaceState.current = { path: '/tmp/nexus' };
+    const squad = { id: 'navalha', name: 'Navalha', agents: [] };
+    orchState.squads = [squad];
+    launchSquadMission.mockResolvedValueOnce({
+      ok: true,
+      armed: true,
+      missionId: 'mission-armed',
+    });
+
+    const execution = await executeJarvisAction(
+      { say: '', action: { type: 'open_squad', squadName: 'Navalha' } },
+      context,
+    );
+
+    expect(launchSquadMission).toHaveBeenCalledWith(squad, []);
+    expect(missionWizardState.openForArmedMission).toHaveBeenCalledWith(
+      'navalha',
+      'mission-armed',
+    );
+    expect(missionWizardState.close).not.toHaveBeenCalled();
+    expect(execution.toolResult).toMatchObject({ ok: true });
   });
 
   it('reroutes a structured mission mislabeled as run_command to the orchestrator', async () => {

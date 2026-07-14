@@ -918,11 +918,14 @@ export async function executeJarvisAction(
       // intent-first mission flow; explicit shell requests still use the
       // dedicated run_command branch and retain its confirmation guardrail.
       useMissionWizardStore.getState().openForAgentic(action.text);
-      sayText = 'Não havia um agente aberto, então preparei a missão para você revisar e iniciar.';
+      markEffect(control);
+      sayText =
+        'Abrindo uma missão agêntica com esse objetivo. Nenhum agente foi iniciado ainda.';
       toolResult = {
         tool: action.type,
         ok: true,
-        summary: 'missão preservada no fluxo agêntico (sem executar como shell)',
+        summary: 'objetivo encaminhado ao fluxo intent-first',
+        output: { intent: action.text },
       };
     } else {
       const missionPrompt = prepareDelegationPrompt(action.text);
