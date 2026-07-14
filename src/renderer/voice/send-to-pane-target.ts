@@ -79,12 +79,21 @@ export function resolveSyncRepoViaPaneTarget(
   if (requestedPaneId) {
     return resolveSendToPaneTarget(requestedPaneId, panes, focusedPaneId);
   }
+  // Prefer the focused CLI only — never silently pick an arbitrary first pane.
   const focusedCli = panes.find(
     (pane) => pane.id === focusedPaneId && pane.kind === 'cli-agent',
   );
   if (focusedCli) return { kind: 'asking-pane', paneId: focusedCli.id };
-  const anyCli = panes.find((pane) => pane.kind === 'cli-agent');
-  if (anyCli) return { kind: 'asking-pane', paneId: anyCli.id };
+  const cliPanes = panes.filter((pane) => pane.kind === 'cli-agent');
+  if (cliPanes.length === 1) {
+    return { kind: 'asking-pane', paneId: cliPanes[0].id };
+  }
+  if (cliPanes.length > 1) {
+    return {
+      kind: 'asking-pane-ambiguous',
+      titles: cliPanes.map((pane) => pane.title),
+    };
+  }
   return resolveSendToPaneTarget(undefined, panes, focusedPaneId);
 }
 

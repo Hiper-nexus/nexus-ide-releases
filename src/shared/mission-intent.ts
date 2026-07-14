@@ -449,6 +449,26 @@ export function isConsultLane(mission: {
   return mission.intentContract?.lane === 'consult';
 }
 
+/** Minimum durable learning size for consult-lane done (not code PREVC green). */
+export const CONSULT_DONE_MIN_LEARNING_CHARS = 40;
+
+/**
+ * Consult-lane done is allowed only with a durable learning note (existing
+ * learnings and/or the status note), never as a silent green shortcut.
+ */
+export function canCompleteConsultLane(input: {
+  readonly learnings?: string | null;
+  readonly note?: string | null;
+}): boolean {
+  const learnings = input.learnings?.trim() ?? '';
+  const note = input.note?.trim() ?? '';
+  const combined =
+    learnings.length > 0 && note.length > 0
+      ? learnings.length + 2 + note.length
+      : learnings.length + note.length;
+  return combined >= CONSULT_DONE_MIN_LEARNING_CHARS;
+}
+
 /** True when the mission has a user-approved dispatch contract. */
 export function hasApprovedDispatchContract(
   contract: MissionIntentContract | null | undefined,

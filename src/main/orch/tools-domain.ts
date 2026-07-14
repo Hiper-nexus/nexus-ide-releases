@@ -37,6 +37,7 @@ import {
 } from './tool-util';
 import { buildHandoffTools } from './tools-handoff';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
+import { canCompleteConsultLane } from '../../shared/mission-intent';
 
 /**
  * MCP tools for handoffs (2), agents (3), missions (5), squad/catalog/task
@@ -252,9 +253,10 @@ const missionSetStatusTool: McpToolDef = {
         current.milestones.map((milestone) => milestone.id),
       )) {
         const lane = current.intentContract?.lane ?? 'standard';
-        const learningsLen =
-          current.learnings.trim().length + (note.length > 0 ? note.length + 2 : 0);
-        if (lane === 'consult' && learningsLen >= 40) {
+        if (
+          lane === 'consult' &&
+          canCompleteConsultLane({ learnings: current.learnings, note })
+        ) {
           // Consult lane: allow done when a durable learning note exists —
           // not a code-change PREVC green. Standard missions still hard-require PREVC.
         } else if (lane === 'consult') {

@@ -86,10 +86,20 @@ describe('resolveSyncRepoViaPaneTarget', () => {
     });
   });
 
-  it('prefers any cli-agent when focus is not an agent', () => {
+  it('uses the sole cli-agent when focus is not an agent', () => {
     expect(resolveSyncRepoViaPaneTarget(undefined, panes, 'p-shell')).toEqual({
       kind: 'asking-pane',
       paneId: 'p-agent',
+    });
+  });
+
+  it('asks which cli-agent when multiple exist and none is focused', () => {
+    const second = { id: 'p-agent-2', title: 'codex · worker', kind: 'cli-agent' };
+    expect(
+      resolveSyncRepoViaPaneTarget(undefined, [...panes, second], 'p-shell'),
+    ).toEqual({
+      kind: 'asking-pane-ambiguous',
+      titles: ['claude · worker', 'codex · worker'],
     });
   });
 

@@ -2,11 +2,8 @@ import { useEffect, useState } from 'react';
 import type { Mission, MissionStatus } from '../../shared/orch-types';
 import { useOrchStore } from '../state/orch-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
-import {
-  appendBlockedMissionDescription,
-  askConfirm,
-  askConfirmWithReason,
-} from '../state/confirm-store';
+import { askConfirm } from '../state/confirm-store';
+import { confirmAndBlockMission } from '../orch/block-mission';
 import { useGamificationStore } from '../state/gamification-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { ChosenPetPortrait } from './ChosenPetPortrait';
@@ -113,41 +110,11 @@ export function OpsBoard() {
   }
 
   async function encerrarComoBloqueada(m: Mission) {
-    if (m.status === 'done' || m.status === 'failed' || m.status === 'blocked') {
-      return;
-    }
-    const decision = await askConfirmWithReason({
-      title: `Encerrar "${m.title}" como bloqueada?`,
-      body:
-        'Use quando o ambiente não está pronto ou o PREVC nunca começou. ' +
-        'Não marca done — evita green falso. A justificativa fica na descrição.',
-      confirmLabel: 'Encerrar como bloqueada',
-      danger: true,
-      reasonLabel: 'Justificativa (obrigatória)',
-      reasonPlaceholder:
-        'Ex.: PREVC não iniciou; ambiente sem credencial; consulta bloqueada…',
-      reasonMinLength: 8,
-    });
-    if (!decision.ok) return;
     setBusy(m.id);
     setNote(null);
-    try {
-      await window.nexus.orch.updateMission(m.id, {
-        status: 'blocked',
-        description: appendBlockedMissionDescription(
-          m.description,
-          decision.reason,
-        ),
-      });
-    } catch (err) {
-      setNote(
-        err instanceof Error
-          ? err.message
-          : 'Falha ao encerrar a missão como bloqueada.',
-      );
-    } finally {
-      setBusy(null);
-    }
+    const result = await confirmAndBlockMission(m);
+    if (!result.ok && !result.cancelled && result.error) setNote(result.error);
+    setBusy(null);
   }
 
   return (

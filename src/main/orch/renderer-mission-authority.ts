@@ -76,6 +76,11 @@ export interface RendererMissionSubmitIntentInput {
   /** prepare-project is NOT accepted here — use prepareProjectFromRenderer. */
   contextPolicy?: "none" | "minimal" | "on-demand";
   acceptanceCriteria?: string[];
+  /**
+   * Delivery lane. `consult` = read-only investigation (no code PREVC).
+   * Default / omitted = standard.
+   */
+  lane?: "standard" | "consult";
 }
 
 export interface RendererMissionApproveIntentInput {
@@ -324,6 +329,7 @@ export class RendererMissionAuthority {
         intentVersion: nextVersion,
         contextPolicy,
         acceptanceCriteria: input.acceptanceCriteria,
+        lane: input.lane === "consult" ? "consult" : "standard",
       });
       risk = classifyGoalRisk(contract.goal);
       const compileEvent =

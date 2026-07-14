@@ -13,6 +13,7 @@ import {
   compileIntentContract,
   estimateEffectfulToolTokens,
   isConsultLane,
+  canCompleteConsultLane,
   hasApprovedDispatchContract,
   hasCurrentDispatchAuthority,
   isHumanWaitIntentState,
@@ -237,6 +238,12 @@ describe('compileIntentContract', () => {
     expect(consult.budgets.maxWorkers).toBe(0);
     expect(isConsultLane({ intentContract: consult })).toBe(true);
     expect(isConsultLane({ intentContract: undefined })).toBe(false);
+    expect(canCompleteConsultLane({ note: 'curto' })).toBe(false);
+    expect(
+      canCompleteConsultLane({
+        note: 'Resumo: 3 deploys falharam por timeout no build step de TypeScript.',
+      }),
+    ).toBe(true);
   });
 });
 
