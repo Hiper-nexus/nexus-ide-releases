@@ -3,6 +3,14 @@
  * Uses window.nexus.product / searchMixer IPC. Fail-soft when API missing.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { McpAcrossToolsReport } from '../../../shared/mcp-across-tools';
+import { McpAcrossToolsMatrix } from '../McpAcrossToolsMatrix';
+import {
+  exportToolsFromPlan,
+  McpAcrossSyncControls,
+  type McpExportToolId,
+  type McpSyncPlan,
+} from '../McpAcrossSyncControls';
 
 type Hit = {
   id: string;
@@ -307,36 +315,97 @@ export function EditorPanelBody() {
 }
 
 export function McpHubPanelBody() {
-  const [summary, setSummary] = useState<string>('Carregando…');
+  const [across, setAcross] = useState<McpAcrossToolsReport | null>(null);
+  const [plan, setPlan] = useState<McpSyncPlan | null>(null);
+  const [exportTools, setExportTools] = useState<McpExportToolId[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const reloadGen = useRef(0);
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        const api = productApi();
-        if (!api) {
-          setSummary('API do MCP Hub indisponível');
-          return;
-        }
-        const loaded = (await api.mcpHubLoad()) as {
-          config?: { servers?: unknown[] };
-          matrix?: unknown[];
-        };
-        const n = loaded.config?.servers?.length ?? 0;
-        const tools = Array.isArray(loaded.matrix) ? loaded.matrix.length : 0;
-        setSummary(`${n} servidor(es) · ${tools} linha(s) na matriz de tools`);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'falha ao carregar MCP hub');
+  const reload = useCallback(async () => {
+    const gen = ++reloadGen.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const api = productApi();
+      if (!api?.mcpHubObserve) {
+        if (gen !== reloadGen.current) return;
+        setError('API de observe indisponível — reinicie o app');
+        return;
       }
-    })();
+      const report = (await api.mcpHubObserve()) as McpAcrossToolsReport;
+      if (gen !== reloadGen.current) return;
+      setAcross(report);
+      try {
+        if (api.mcpHubSyncPlan) {
+          const next = (await api.mcpHubSyncPlan()) as McpSyncPlan;
+          if (gen !== reloadGen.current) return;
+          setPlan(next);
+          setExportTools(exportToolsFromPlan(next));
+        }
+      } catch {
+        if (gen !== reloadGen.current) return;
+        setPlan(null);
+      }
+    } catch (err) {
+      if (gen !== reloadGen.current) return;
+      setAcross(null);
+      setError(err instanceof Error ? err.message : 'falha ao observar MCP');
+    } finally {
+      if (gen === reloadGen.current) setBusy(false);
+    }
   }, []);
 
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const ritualTone =
+    across == null
+      ? ('idle' as const)
+      : across.driftCount === 0
+        ? ('ok' as const)
+        : ('drift' as const);
+
   return (
-    <div className="product-pane" data-testid="product-mcp">
+    <div className="product-pane mcp-ritual" data-testid="product-mcp">
+      <McpAcrossSyncControls
+        tone={ritualTone}
+        plan={plan}
+        exportTools={exportTools}
+        onExportToolsChange={setExportTools}
+        busy={busy}
+        onObserve={reload}
+        onSynced={reload}
+        status={
+          <>
+            <span className="mcp-ritual__banner-kicker">
+              <span className="mcp-ritual__banner-label">Across Tools</span>
+              {across ? (
+                across.driftCount > 0 ? (
+                  <span className="mcp-ritual__pill mcp-ritual__pill--drift">
+                    {across.driftCount} drift
+                  </span>
+                ) : (
+                  <span className="mcp-ritual__pill mcp-ritual__pill--ok">
+                    alinhado
+                  </span>
+                )
+              ) : null}
+            </span>
+            <span className="mcp-ritual__banner-line">
+              {across?.bannerLine ??
+                plan?.summary ??
+                'Observe + Sync fill-gaps'}
+            </span>
+          </>
+        }
+      />
       {error && <p className="product-pane__error">{error}</p>}
-      <p className="product-pane__meta">{summary}</p>
+      {across ? <McpAcrossToolsMatrix report={across} hideBanner /> : null}
       <p className="product-pane__snip">
-        Config em <code>.nexus/mcp-hub.json</code>. Segredos mascarados na UI.
+        Hub: <code>.nexus/mcp-hub.json</code>. Fill-gaps never deletes ·
+        Simular antes de Sync.
       </p>
     </div>
   );

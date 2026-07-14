@@ -1,0 +1,341 @@
+/* MCP Across Tools ritual + matrix — Settings MCPs / Hub panel.
+   Kept out of endorphin.css (Akita 800-line gate). */
+
+/* MCP ritual — one story: status → CTAs → export chips */
+.mcp-ritual {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.mcp-ritual__story {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mcp-ritual__banner {
+  padding: 16px 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--bg-elevated) 92%, var(--bg));
+}
+
+.mcp-ritual__banner--drift {
+  border-color: color-mix(in srgb, var(--warn) 38%, var(--border));
+  background: color-mix(in srgb, var(--warn) 7%, var(--bg-elevated));
+}
+
+.mcp-ritual__banner--ok {
+  border-color: color-mix(in srgb, var(--live) 36%, var(--border));
+  background: color-mix(in srgb, var(--live) 8%, var(--bg-elevated));
+}
+
+.mcp-ritual__banner-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px 20px;
+}
+
+.mcp-ritual__banner-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: min(240px, 100%);
+  flex: 1 1 220px;
+}
+
+.mcp-ritual__banner-kicker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.mcp-ritual__banner-label {
+  font-family: var(--font-pixel);
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+}
+
+.mcp-ritual__banner--ok .mcp-ritual__banner-label {
+  color: color-mix(in srgb, var(--live) 65%, var(--text-dim));
+}
+
+.mcp-ritual__banner-line {
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 550;
+  line-height: 1.45;
+  max-width: 48ch;
+}
+
+.mcp-ritual__cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+}
+
+.mcp-ritual__btn {
+  appearance: none;
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mcp-ritual__btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mcp-ritual__btn--ghost {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.mcp-ritual__btn--ghost:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-strong));
+}
+
+.mcp-ritual__btn--primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+.mcp-ritual__btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.mcp-ritual__export {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 0 2px;
+}
+
+.mcp-ritual__export-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+
+.mcp-ritual__export-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 auto;
+}
+
+.mcp-ritual__chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: var(--radius-round);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.mcp-ritual__chip em {
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+.mcp-ritual__chip:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+  color: var(--text);
+}
+
+.mcp-ritual__chip--on {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+
+.mcp-ritual__chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mcp-ritual__dry {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.mcp-ritual__sources {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.mcp-ritual__source {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+
+.mcp-ritual__source strong {
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+.mcp-ritual__source span {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mcp-ritual__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: var(--radius-round);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.mcp-ritual__pill--drift {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+
+.mcp-ritual__pill--ok {
+  background: color-mix(in srgb, var(--live) 14%, transparent);
+  color: var(--live);
+}
+
+.mcp-ritual__pill--miss {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+/* Across Tools matrix */
+.mcp-matrix {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.mcp-matrix__tools {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.mcp-matrix__tool--missing strong,
+.mcp-matrix__tool--error strong {
+  color: var(--text-dim);
+}
+
+.mcp-matrix__scroll {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.mcp-matrix__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.mcp-matrix__table th,
+.mcp-matrix__table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.mcp-matrix__table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.mcp-matrix__table tbody th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mcp-matrix__row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-matrix__cell--present {
+  color: var(--live);
+  font-weight: 700;
+}
+
+.mcp-matrix__cell--absent {
+  color: var(--text-dim);
+}
+
+.mcp-matrix__cell--unknown {
+  color: color-mix(in srgb, var(--text-dim) 55%, transparent);
+}
+
+.mcp-matrix__row--drift th {
+  color: var(--warn);
+}
+
+.mcp-matrix__empty {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-md);
+}
