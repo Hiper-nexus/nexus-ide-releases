@@ -208,12 +208,22 @@ export function releaseAfterLiveToolAnswer(opts: ToolFollowUpRequest): void {
   const store = useVoiceStore.getState();
   if (store.status !== 'speaking') store.setStatus('idle');
   opts.busy.current = false;
-  const ready = toolFollowUpGate.arm(
-    { sessionId: opts.sessionId, turnId: opts.turnId, callId: opts.callId },
-    opts,
-  );
+  const key = {
+    sessionId: opts.sessionId,
+    turnId: opts.turnId,
+    callId: opts.callId,
+  };
+  const alreadyWaiting = toolFollowUpGate.isArmed(key);
+  const ready = toolFollowUpGate.arm(key, opts);
   if (ready) {
     startToolFollowUp(ready, 'cached-complete');
+    return;
+  }
+  if (alreadyWaiting) {
+    logVoiceEvent('info', 'jarvis.liveToolFollowUpPendingRefresh', 'continuidade já armada — payload atualizado', {
+      turnId: opts.turnId,
+      callId: opts.callId,
+    });
     return;
   }
   logVoiceEvent('info', 'jarvis.liveToolFollowUpPending', 'aguardando fim da narração da ferramenta', {

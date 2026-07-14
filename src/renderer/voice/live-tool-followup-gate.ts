@@ -35,8 +35,22 @@ export class LiveToolFollowUpGate<T> {
       this.completed.delete(id);
       return value;
     }
+    // Re-arm of the same tool turn only refreshes the payload — do not fork a
+    // second follow-up mic for one callId (logs showed Pending→Ready→Pending).
+    const existing = this.pending.get(id);
+    if (existing && sameTurn(existing.key, key)) {
+      this.pending.set(id, { key, value });
+      return null;
+    }
     this.pending.set(id, { key, value });
     return null;
+  }
+
+  /** True when this tool turn is already waiting for provider completion. */
+  isArmed(key: LiveToolTurnKey): boolean {
+    const id = keyOf(key);
+    const existing = this.pending.get(id);
+    return Boolean(existing && sameTurn(existing.key, key));
   }
 
   complete(key: LiveToolTurnKey): T | null {
