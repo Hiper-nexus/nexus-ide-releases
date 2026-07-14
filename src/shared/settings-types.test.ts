@@ -89,6 +89,8 @@ describe('orchSettingsSchema', () => {
     expect(DEFAULT_ORCH_SETTINGS.agentRestorePolicy).toBe('ask');
     // Intent-first is on by default: squad select does not burn tokens.
     expect(DEFAULT_ORCH_SETTINGS.intentFirstMissionRuntimeV1).toBe(true);
+    // Ralph coordinates autopilot missions unless the user explicitly opts out.
+    expect(DEFAULT_ORCH_SETTINGS.missionDriverActiveMode).toBe(true);
   });
 
   it('accepts agent restore policies used on every platform', () => {

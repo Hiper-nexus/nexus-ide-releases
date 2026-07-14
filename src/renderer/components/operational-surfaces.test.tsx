@@ -80,6 +80,7 @@ function mount(element: React.ReactElement): {
 
 describe('operational Home and Launch surfaces', () => {
   beforeEach(() => {
+    sessionStorage.setItem('nexus.progressiveOnboarding.skipped', '1');
     setNexusApi();
     useOrchStore.setState({
       missions: [],
@@ -90,6 +91,7 @@ describe('operational Home and Launch surfaces', () => {
   });
 
   afterEach(() => {
+    sessionStorage.clear();
     useHomeStore.setState(initialHome);
     useLayoutStore.setState(initialLayout);
     useMissionWizardStore.setState(initialWizard);

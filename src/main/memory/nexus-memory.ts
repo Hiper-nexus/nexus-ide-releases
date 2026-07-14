@@ -137,6 +137,8 @@ export function listMemoryNotes(
     if (!name.endsWith('.md')) continue;
     const filePath = path.join(root, name);
     try {
+      const stat = fs.lstatSync(filePath);
+      if (!stat.isFile()) continue;
       const raw = fs.readFileSync(filePath, 'utf8');
       const fm = parseFrontmatter(raw);
       const title =
@@ -152,7 +154,7 @@ export function listMemoryNotes(
           wikilinks: extractWikilinks(body),
           missionId: fm.missionId,
           path: filePath,
-          updatedAt: Math.floor(fs.statSync(filePath).mtimeMs),
+          updatedAt: Math.floor(stat.mtimeMs),
         }),
       );
     } catch {

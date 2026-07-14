@@ -1,4 +1,5 @@
 import type { WebContents } from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
@@ -86,8 +87,42 @@ export function resolveSubdirUnderRoot(
   ) {
     throw new Error('directory must not escape project');
   }
-  const root = path.resolve(projectRoot);
-  const full = path.resolve(root, normalized);
+  let root: string;
+  try {
+    root = fs.realpathSync(path.resolve(projectRoot));
+  } catch (err) {
+    throw new Error(
+      `project root cannot be resolved: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const lexical = path.resolve(root, normalized);
+  let existingAncestor = lexical;
+  const missingSegments: string[] = [];
+  while (!fs.existsSync(existingAncestor)) {
+    const parent = path.dirname(existingAncestor);
+    if (parent === existingAncestor) {
+      throw new Error('directory escaped project');
+    }
+    missingSegments.unshift(path.basename(existingAncestor));
+    existingAncestor = parent;
+  }
+  // Refuse to walk through a symlink ancestor that leaves the project.
+  try {
+    const ancestorLstat = fs.lstatSync(existingAncestor);
+    if (ancestorLstat.isSymbolicLink()) {
+      const real = fs.realpathSync(existingAncestor);
+      if (!isInsidePath(root, real)) {
+        throw new Error('directory escaped project');
+      }
+    }
+  } catch (err) {
+    if (err instanceof Error && /escaped/.test(err.message)) throw err;
+  }
+  const realAncestor = fs.realpathSync(existingAncestor);
+  if (!isInsidePath(root, realAncestor)) {
+    throw new Error('directory escaped project');
+  }
+  const full = path.resolve(realAncestor, ...missingSegments);
   if (!isInsidePath(root, full) || full === root) {
     throw new Error(
       full === root
@@ -96,4 +131,19 @@ export function resolveSubdirUnderRoot(
     );
   }
   return full;
+}
+
+/**
+ * Like resolveSubdirUnderRoot but returns null instead of throwing — for
+ * optional catalog roots that may not exist yet.
+ */
+export function tryResolveSubdirUnderRoot(
+  projectRoot: string,
+  relativeDir: string,
+): string | null {
+  try {
+    return resolveSubdirUnderRoot(projectRoot, relativeDir);
+  } catch {
+    return null;
+  }
 }

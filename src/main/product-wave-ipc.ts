@@ -4,7 +4,6 @@
  */
 import { ipcMain } from 'electron';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { PRODUCT_WAVE_CHANNELS } from '../shared/channels';
@@ -24,6 +23,7 @@ import {
 import {
   scanSkillsDirectory,
   skillsLockSchema,
+  writeSkillsLock,
   type SkillsLock,
 } from './skills/skills-catalog';
 import {
@@ -32,9 +32,11 @@ import {
   mcpHubConfigSchema,
   toolMatrix,
   writeConfigWithBackup,
+  rollbackFromBackup,
   healthForServer,
   type McpHubConfig,
 } from './mcp-hub/mcp-hub-core';
+import { isInsidePath } from './orch/workspace-path';
 import {
   openEditorDocument,
   applyEdit,
@@ -45,6 +47,8 @@ import { runSearchMixerQuery } from './search/search-mixer-bootstrap';
 import {
   requireScopedRoot,
   resolveScopedPath,
+  resolveSubdirUnderRoot,
+  tryResolveSubdirUnderRoot,
 } from './security/scoped-workspace-fs';
 
 export { PRODUCT_WAVE_CHANNELS };
@@ -54,15 +58,53 @@ function workspaceRoot(sender: Electron.WebContents): string {
 }
 
 function mcpHubPath(root: string): string {
-  return path.join(root, '.nexus', 'mcp-hub.json');
+  return path.join(resolveSubdirUnderRoot(root, '.nexus'), 'mcp-hub.json');
 }
 
+/**
+ * Fail-closed: .bak must be a regular file under the workspace `.nexus/` dir
+ * and must be a backup of the hub config (basename prefix of mcp-hub.json).
+ * Exported for unit tests of the product rollback path.
+ */
+export function assertWorkspaceMcpHubBackup(
+  workspaceRoot: string,
+  backupPath: string,
+): string {
+  const root = fs.realpathSync(path.resolve(workspaceRoot));
+  const hubPath = mcpHubPath(root);
+  const nexusDir = fs.realpathSync(path.dirname(hubPath));
+  let resolvedBak = path.resolve(backupPath);
+  if (!resolvedBak.endsWith('.bak')) {
+    throw new Error('invalid backup path for workspace MCP hub');
+  }
+  if (!fs.existsSync(resolvedBak) || !fs.lstatSync(resolvedBak).isFile()) {
+    throw new Error('backup missing');
+  }
+  resolvedBak = fs.realpathSync(resolvedBak);
+  const hubBase = path.basename(hubPath); // mcp-hub.json
+  const bakBase = path.basename(resolvedBak);
+  if (
+    !bakBase.startsWith(`${hubBase}.`) ||
+    !isInsidePath(nexusDir, resolvedBak) ||
+    !isInsidePath(root, resolvedBak)
+  ) {
+    throw new Error('invalid backup path for workspace MCP hub');
+  }
+  return resolvedBak;
+}
+
+/** Workspace-scoped skill roots only — never $HOME (cross-project leak). */
 function skillsDirs(root: string): string[] {
   return [
-    path.join(root, '.claude', 'skills'),
-    path.join(root, '.nexus', 'skills'),
-    path.join(os.homedir(), '.claude', 'skills'),
-  ];
+    tryResolveSubdirUnderRoot(root, path.join('.claude', 'skills')),
+    tryResolveSubdirUnderRoot(root, path.join('.nexus', 'skills')),
+  ].filter((d): d is string => d != null);
+}
+
+function requireFlag(id: string, label: string): void {
+  if (!getFeatureFlagRegistry().isEnabled(id)) {
+    throw new Error(`${label} is disabled`);
+  }
 }
 
 function loadMcpHub(root: string): McpHubConfig {
@@ -71,6 +113,9 @@ function loadMcpHub(root: string): McpHubConfig {
     return mcpHubConfigSchema.parse({ schemaVersion: 1, servers: [] });
   }
   try {
+    if (!fs.lstatSync(file).isFile()) {
+      return mcpHubConfigSchema.parse({ schemaVersion: 1, servers: [] });
+    }
     return mcpHubConfigSchema.parse(
       JSON.parse(fs.readFileSync(file, 'utf8') as string),
     );
@@ -92,11 +137,13 @@ export function registerProductWaveIpc(): void {
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryList, (event) => {
+    requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
     const root = workspaceRoot(event.sender);
     return listMemoryNotes(root);
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryRemember, (event, raw) => {
+    requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
     const root = workspaceRoot(event.sender);
     const input = z
       .object({
@@ -110,35 +157,46 @@ export function registerProductWaveIpc(): void {
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memorySearch, (event, raw) => {
+    requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
     const root = workspaceRoot(event.sender);
     const { query } = z.object({ query: z.string().max(512) }).parse(raw);
     return searchMemory(root, query);
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryBacklinks, (event, raw) => {
+    requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
     const root = workspaceRoot(event.sender);
     const { title } = z.object({ title: z.string().min(1).max(256) }).parse(raw);
     return backlinks(root, title);
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryComplete, (event, raw) => {
+    requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
     const root = workspaceRoot(event.sender);
     const { prefix } = z.object({ prefix: z.string().max(128) }).parse(raw);
     return wikilinkCompletions(root, prefix);
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.skillsList, (event) => {
+    requireFlag(FEATURE_FLAG_IDS.skillsCatalog, 'feature.skills.catalog');
     const root = workspaceRoot(event.sender);
     return skillsDirs(root).flatMap((d) => scanSkillsDirectory(d));
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.skillsLockRead, (event) => {
+    requireFlag(FEATURE_FLAG_IDS.skillsCatalog, 'feature.skills.catalog');
     const root = workspaceRoot(event.sender);
-    const lockPath = path.join(root, '.nexus', 'skills-lock.json');
+    const lockPath = path.join(
+      resolveSubdirUnderRoot(root, '.nexus'),
+      'skills-lock.json',
+    );
     if (!fs.existsSync(lockPath)) {
       return skillsLockSchema.parse({ schemaVersion: 1, skills: [] });
     }
     try {
+      if (!fs.lstatSync(lockPath).isFile()) {
+        return skillsLockSchema.parse({ schemaVersion: 1, skills: [] });
+      }
       return skillsLockSchema.parse(
         JSON.parse(fs.readFileSync(lockPath, 'utf8')),
       );
@@ -148,20 +206,19 @@ export function registerProductWaveIpc(): void {
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.skillsLockWrite, (event, raw) => {
-    if (!getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.skillsCatalog)) {
-      throw new Error('feature.skills.catalog is disabled');
-    }
+    requireFlag(FEATURE_FLAG_IDS.skillsCatalog, 'feature.skills.catalog');
     const root = workspaceRoot(event.sender);
     const lock = skillsLockSchema.parse(raw) as SkillsLock;
-    const lockPath = path.join(root, '.nexus', 'skills-lock.json');
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, {
-      mode: 0o600,
-    });
+    const lockPath = path.join(
+      resolveSubdirUnderRoot(root, '.nexus'),
+      'skills-lock.json',
+    );
+    writeSkillsLock(lockPath, lock);
     return { ok: true, path: lockPath };
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.mcpHubLoad, (event) => {
+    requireFlag(FEATURE_FLAG_IDS.mcpHub, 'feature.mcp.hub');
     const root = workspaceRoot(event.sender);
     const config = loadMcpHub(root);
     return {
@@ -175,6 +232,7 @@ export function registerProductWaveIpc(): void {
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.mcpHubSave, (event, raw) => {
+    requireFlag(FEATURE_FLAG_IDS.mcpHub, 'feature.mcp.hub');
     const root = workspaceRoot(event.sender);
     const input = z
       .object({
@@ -188,6 +246,7 @@ export function registerProductWaveIpc(): void {
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.mcpHubDrift, (event, raw) => {
+    requireFlag(FEATURE_FLAG_IDS.mcpHub, 'feature.mcp.hub');
     const root = workspaceRoot(event.sender);
     const input = z
       .object({ observed: mcpHubConfigSchema })
@@ -196,26 +255,58 @@ export function registerProductWaveIpc(): void {
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.mcpHubHealth, (event) => {
+    requireFlag(FEATURE_FLAG_IDS.mcpHub, 'feature.mcp.hub');
     const root = workspaceRoot(event.sender);
     return loadMcpHub(root).servers.map(healthForServer);
   });
 
-  ipcMain.handle(PRODUCT_WAVE_CHANNELS.autonomyDecide, (_event, raw) => {
+  /**
+   * Restore mcp-hub.json from a workspace-local `.bak` produced by save.
+   * Fail-closed: backup must live under project `.nexus/` and end with `.bak`.
+   */
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.mcpHubRollback, (event, raw) => {
+    requireFlag(FEATURE_FLAG_IDS.mcpHub, 'feature.mcp.hub');
+    const root = workspaceRoot(event.sender);
+    const { backupPath } = z
+      .object({ backupPath: z.string().min(1).max(4096) })
+      .parse(raw);
+    const hubPath = mcpHubPath(root);
+    const resolvedBak = assertWorkspaceMcpHubBackup(root, backupPath);
+    rollbackFromBackup(hubPath, resolvedBak);
+    const config = loadMcpHub(root);
+    return {
+      ok: true as const,
+      path: hubPath,
+      config: {
+        ...config,
+        servers: config.servers.map(maskServerForUi),
+      },
+    };
+  });
+
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.autonomyDecide, (event, raw) => {
+    requireFlag(FEATURE_FLAG_IDS.autonomyProfiles, 'feature.autonomy.profiles');
+    const root = workspaceRoot(event.sender);
     const input = z
       .object({
         profile: autonomyProfileSchema,
         tool: z.string().min(1).max(128),
         action: z.string().min(1).max(128),
-        scope: z.string().min(1).max(512),
         missionId: z.string().max(128).optional(),
         reason: z.string().max(1024).optional(),
-        inIsolatedWorktree: z.boolean().optional(),
       })
       .parse(raw);
-    return decideAutonomy(input);
+    // Renderer input cannot claim another workspace or self-attest worktree
+    // isolation. The production effect gate must derive both in main.
+    return decideAutonomy({
+      ...input,
+      scope: root,
+      inIsolatedWorktree: false,
+    });
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.searchQuery, async (event, raw) => {
+    requireFlag(FEATURE_FLAG_IDS.searchMixer, 'feature.search.mixer');
     // Single SearchMixer path (same as search-mixer:search) — always bind root.
     const root = workspaceRoot(event.sender);
     const input = z

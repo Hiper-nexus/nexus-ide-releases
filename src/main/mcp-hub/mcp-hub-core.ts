@@ -126,6 +126,9 @@ export function writeConfigWithBackup(
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   let previous = '';
   if (fs.existsSync(filePath)) {
+    if (!fs.lstatSync(filePath).isFile()) {
+      throw new Error('MCP Hub config must be a regular file');
+    }
     previous = fs.readFileSync(filePath, 'utf8');
   }
   const body = `${JSON.stringify(parsed, null, 2)}\n`;

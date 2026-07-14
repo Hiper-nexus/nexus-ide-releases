@@ -6,6 +6,12 @@ import {
   type ContextualPanelState,
   type ContextualTab,
 } from '../../shared/contextual-panel';
+import {
+  browserLocalStorage,
+  loadContextualPanelState,
+  saveContextualPanelState,
+  type KeyValueStorage,
+} from '../../shared/contextual-panel-persist';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 
 export interface ContextualPanelProps {
@@ -16,11 +22,31 @@ export interface ContextualPanelProps {
   readonly activeTab?: ContextualTab;
   readonly onStateChange?: (state: ContextualPanelState) => void;
   readonly children?: Partial<Record<ContextualTab, React.ReactNode>>;
+  /** Inject storage for tests; defaults to localStorage when available. */
+  readonly storage?: KeyValueStorage | null;
+}
+
+function initialState(
+  workspaceId: string | undefined,
+  initial: Partial<ContextualPanelState> | undefined,
+  controlledTab: ContextualTab | undefined,
+  storage: KeyValueStorage | null,
+): ContextualPanelState {
+  const persisted =
+    workspaceId && storage
+      ? loadContextualPanelState(workspaceId, storage)
+      : null;
+  return contextualPanelStateSchema.parse({
+    ...initial,
+    ...persisted,
+    workspaceId,
+    ...(controlledTab ? { activeTab: controlledTab } : {}),
+  });
 }
 
 /**
  * Unified right panel: Browser / Editor / Git / Skills / Memory / Mission / Handoff / Search.
- * Splitter width via CSS resize; hide/show with Alt+].
+ * Tab/width/visible persist per workspace via contextual-panel-persist helpers.
  * Opening a tab never implies extra permissions.
  */
 export function ContextualPanel({
@@ -30,31 +56,43 @@ export function ContextualPanel({
   activeTab: controlledTab,
   onStateChange,
   children,
+  storage: storageProp,
 }: ContextualPanelProps) {
+  const storage =
+    storageProp === undefined ? browserLocalStorage() : storageProp;
+
   const [state, setState] = useState<ContextualPanelState>(() =>
-    contextualPanelStateSchema.parse({
-      ...initial,
-      workspaceId,
-      ...(controlledTab ? { activeTab: controlledTab } : {}),
-    }),
+    initialState(workspaceId, initial, controlledTab, storage),
   );
+
+  // Rehydrate when workspace changes (real product path).
+  useEffect(() => {
+    setState(initialState(workspaceId, initial, controlledTab, storage));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on workspaceId
+  }, [workspaceId]);
 
   const update = useCallback(
     (patch: Partial<ContextualPanelState>) => {
       setState((prev) => {
-        const next = contextualPanelStateSchema.parse({ ...prev, ...patch });
+        const next = contextualPanelStateSchema.parse({
+          ...prev,
+          ...patch,
+          workspaceId: workspaceId ?? prev.workspaceId,
+        });
+        if (workspaceId && storage) {
+          saveContextualPanelState(workspaceId, next, storage);
+        }
         onStateChange?.(next);
         return next;
       });
     },
-    [onStateChange],
+    [onStateChange, workspaceId, storage],
   );
 
   useEffect(() => {
     if (controlledTab && controlledTab !== state.activeTab) {
       update({ activeTab: controlledTab, visible: true });
     }
-    // Only re-sync when parent drives tab changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional controlled prop
   }, [controlledTab]);
 
@@ -144,7 +182,9 @@ export function ContextualPanel({
           const startX = e.clientX;
           const startW = state.widthPx;
           const onMove = (ev: MouseEvent) => {
-            update({ widthPx: Math.min(900, Math.max(200, startW + (startX - ev.clientX))) });
+            update({
+              widthPx: Math.min(900, Math.max(200, startW + (startX - ev.clientX))),
+            });
           };
           const onUp = () => {
             window.removeEventListener('mousemove', onMove);

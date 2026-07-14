@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — Waves 3→final product shell
+
+Data: 2026-07-13
+
+### Shell UX
+- Progressive onboarding with **open without AI** default; ModeLauncher
+  (Terminal/Missions/Swarm/Board/Memory/Skills); ContextualPanel tabs.
+- Progressive launch plan stash/apply after workspace hydrate.
+
+### Editor / Search / MCP / Skills / Memory / Autonomy
+- Secure editor model path (CM6 formal eval deferred — docs/EDITOR-CODEMIRROR-EVAL.md).
+- SearchMixer live IPC with workspace-bound projectRoot + ripgrep fallback.
+- MCP hub backup/drift/mask/rollback; skills lock + symlink-safe catalog;
+  `.nexus-memory/` wikilinks; autonomy profiles; agent reap finished-only.
+
+### Security
+- Unified scoped-workspace-fs; no startsWith(path.resolve) containment gate.
+
+
 ## Unreleased — Full product enablement (not production-gated)
 
 Data: 2026-07-13

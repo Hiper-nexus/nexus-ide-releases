@@ -82,9 +82,9 @@ export const orchSettingsSchema = z.object({
    *  continua acumulando em silêncio). */
   soberMode: z.boolean().default(false),
   /** Mission driver ativo (Fase C): aplica efeitos autônomos (advance/complete/
-   *  signal-stall/respawn) com budget. Default false = SHADOW (só observa/loga).
-   *  Ative só após validação runtime; exige restart para aplicar. */
-  missionDriverActiveMode: z.boolean().default(false),
+   *  signal-stall/respawn) com budget. Default true: o Ralph coordena missões
+   *  autopilot; false permanece como opt-out/shadow. Exige restart para aplicar. */
+  missionDriverActiveMode: z.boolean().default(true),
   /**
    * When a saved layout with mission agents is restored (app start, workspace
    * open, any OS — macOS / Linux / Windows, same code path):

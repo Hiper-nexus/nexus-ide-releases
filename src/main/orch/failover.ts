@@ -26,6 +26,7 @@ import {
   requireQuotaService,
 } from '../quota/quota-service';
 import { quotaAvailabilityScore } from '../quota/quota-policy';
+import { requestMissionDriverTick } from './mission-driver-runtime';
 
 /**
  * Automatic account failover. Watches each pane's output for a limit signature
@@ -187,6 +188,7 @@ function emitFailover(
     ACCOUNT_CHANNELS.failover,
     event,
   );
+  requestMissionDriverTick();
 }
 
 function handleChunk(sessionId: string, data: string, now: number): void {

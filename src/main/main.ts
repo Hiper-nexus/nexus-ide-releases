@@ -137,6 +137,7 @@ import { registerTerminalBlockActionsIpc } from "./terminal/terminal-block-actio
 import { registerSearchMixerIpc } from "./search/search-mixer-ipc";
 import { getSearchMixer } from "./search/search-mixer-bootstrap";
 import { registerProductWaveIpc } from "./product-wave-ipc";
+import { startAgentLifecycleService } from "./agents/agent-lifecycle-service";
 import {
   initUsageTelemetry,
   shutdownUsageTelemetry,
@@ -348,8 +349,9 @@ function bootstrap(): void {
     scheduleBackend: cronBackend ?? undefined,
     listScopes: knownCronScopes,
   });
-  // Mission driver: default SHADOW (só observa/loga). Ativa efeitos autônomos
-  // (Fase C, budgetado) via settings missionDriverActiveMode. Spec 2026-07-13.
+  // Mission driver: ACTIVE por padrão para missões autopilot, com opt-out
+  // explícito para shadow via missionDriverActiveMode. Efeitos continuam
+  // budgetados e subordinados a PREVC/evidência. Spec 2026-07-13.
   configureMissionDriver({
     listScopes: knownCronScopes,
     config: {
@@ -384,6 +386,8 @@ function bootstrap(): void {
   getSearchMixer(); // ensure ripgrep + multi-source providers on the live mixer
   registerSearchMixerIpc();
   registerProductWaveIpc();
+  // Agent lifecycle: record finished/needs-input; reap finished only (never running).
+  startAgentLifecycleService();
   registerBrowserIpc(projectRuntimeManager);
   registerDesignWritebackIpc({ allowSourceMutation: !app.isPackaged });
   registerPerfIpc();

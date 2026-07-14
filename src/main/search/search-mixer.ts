@@ -43,6 +43,11 @@ export class SearchMixer {
     this.#providers.delete(source);
   }
 
+  /** Registered source keys (one provider per source — last register wins). */
+  sources(): readonly SearchSource[] {
+    return [...this.#providers.keys()];
+  }
+
   get generation(): number {
     return this.#generation;
   }

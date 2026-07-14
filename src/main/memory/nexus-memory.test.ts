@@ -21,15 +21,39 @@ afterEach(() => {
 
 describe('nexus memory', () => {
   it('rejects memory dirname that escapes project (startsWith trap)', () => {
-    const project = '/tmp/proj';
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mem-scope-'));
+    dirs.push(base);
+    const project = path.join(base, 'proj');
+    const sibling = path.join(base, 'proj2');
+    fs.mkdirSync(project);
+    fs.mkdirSync(sibling);
     // Sibling path that would pass naive startsWith('/tmp/proj') for /tmp/proj2
     expect(() => resolveMemoryRoot(project, '../proj2')).toThrow(/escape|must not/i);
     expect(() => resolveMemoryRoot(project, '/etc')).toThrow(/relative/i);
     expect(() => resolveMemoryRoot(project, '..')).toThrow();
     // Legitimate subdir still works
     expect(resolveMemoryRoot(project, '.nexus-memory')).toBe(
-      path.resolve(project, '.nexus-memory'),
+      path.join(fs.realpathSync(project), '.nexus-memory'),
     );
+
+    fs.symlinkSync(
+      sibling,
+      path.join(project, '.nexus-memory'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    expect(() => resolveMemoryRoot(project, '.nexus-memory')).toThrow(/escape/i);
+  });
+
+  it('does not index a markdown symlink outside the memory directory', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mem-link-'));
+    dirs.push(root);
+    const memoryRoot = path.join(root, '.nexus-memory');
+    fs.mkdirSync(memoryRoot);
+    const secret = path.join(root, 'secret.md');
+    fs.writeFileSync(secret, '# Outside\n\nsecret');
+    fs.symlinkSync(secret, path.join(memoryRoot, 'leak.md'));
+
+    expect(listMemoryNotes(root)).toEqual([]);
   });
 
   it('writes markdown, resolves wikilinks, searches, backlinks', () => {

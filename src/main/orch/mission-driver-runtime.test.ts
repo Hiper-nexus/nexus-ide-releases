@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
   applyDriveAction,
@@ -6,12 +6,20 @@ import {
 } from './mission-driver-apply';
 import { defaultDriveConfig, type DriveState } from './mission-drive';
 import {
+  requestMissionDriverTick,
   runDriveTick,
+  startMissionDriverLoop,
+  stopMissionDriverLoop,
   type DriveDeps,
   type DriveSnapshot,
 } from './mission-driver-runtime';
 
 const NOW = 1_000_000;
+
+afterEach(() => {
+  stopMissionDriverLoop();
+  vi.useRealTimers();
+});
 
 function baseState(overrides: Partial<DriveState> = {}): DriveState {
   return {
@@ -131,6 +139,28 @@ function fakePorts(log: string[]): ApplyActionPorts {
     },
   };
 }
+
+describe('mission driver loop coordination', () => {
+  it('ticks immediately and coalesces event-driven wake bursts', async () => {
+    vi.useFakeTimers();
+    const decisions: DriveSnapshot[] = [];
+    const deps = makeDeps({
+      missionsByScope: new Map([['p1', [{ id: 'm-fresh' }]]]),
+      statesById: new Map([['m-fresh', FRESH]]),
+      onDecision: (snapshot) => decisions.push(snapshot),
+    });
+
+    startMissionDriverLoop(deps, { ...defaultDriveConfig, mode: 'shadow' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decisions).toHaveLength(1);
+
+    expect(requestMissionDriverTick()).toBe(true);
+    expect(requestMissionDriverTick()).toBe(true);
+    expect(requestMissionDriverTick()).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decisions).toHaveLength(2);
+  });
+});
 
 describe('runDriveTick', () => {
   it('itera missões running de cada scope e chama onDecision para cada', async () => {

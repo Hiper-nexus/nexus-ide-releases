@@ -1061,6 +1061,7 @@ export interface NexusApi {
     mcpHubSave(input: { config: unknown; dryRun?: boolean }): Promise<unknown>;
     mcpHubDrift(observed: unknown): Promise<unknown>;
     mcpHubHealth(): Promise<unknown[]>;
+    mcpHubRollback(input: { backupPath: string }): Promise<unknown>;
     autonomyDecide(input: unknown): Promise<unknown>;
     searchQuery(input: { text: string; limit?: number }): Promise<unknown>;
     editorOpen(relativePath: string): Promise<unknown>;

@@ -33,8 +33,11 @@ describe('MissionDriverSettings', () => {
     vi.restoreAllMocks();
   });
 
-  it('loads shadow mode and persists the active opt-in', async () => {
-    let saved: OrchSettings = { ...DEFAULT_ORCH_SETTINGS };
+  it('loads an explicit shadow opt-out and persists the active opt-in', async () => {
+    let saved: OrchSettings = {
+      ...DEFAULT_ORCH_SETTINGS,
+      missionDriverActiveMode: false,
+    };
     const orchSet = vi.fn(async (patch: Partial<OrchSettings>) => {
       saved = { ...saved, ...patch };
       return saved;
@@ -75,7 +78,10 @@ describe('MissionDriverSettings', () => {
       configurable: true,
       value: {
         settings: {
-          orchGet: vi.fn(async () => ({ ...DEFAULT_ORCH_SETTINGS })),
+          orchGet: vi.fn(async () => ({
+            ...DEFAULT_ORCH_SETTINGS,
+            missionDriverActiveMode: false,
+          })),
           orchSet: vi.fn(async () => {
             throw new Error('disk full');
           }),

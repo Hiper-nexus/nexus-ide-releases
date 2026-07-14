@@ -23,6 +23,20 @@ function enableHub(): void {
 }
 
 describe('mcp hub core', () => {
+  it('refuses to read an existing config symlink before replacing it', () => {
+    enableHub();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mcp-link-'));
+    dirs.push(dir);
+    const outside = path.join(dir, 'outside.json');
+    const file = path.join(dir, 'mcp.json');
+    fs.writeFileSync(outside, '{"secret":"outside"}');
+    fs.symlinkSync(outside, file);
+
+    expect(() =>
+      writeConfigWithBackup(file, { schemaVersion: 1, servers: [] }),
+    ).toThrow(/regular file/i);
+  });
+
   it('masks secrets in UI projection', () => {
     const masked = maskServerForUi({
       id: 's1',

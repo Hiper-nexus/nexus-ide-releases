@@ -19,6 +19,41 @@ afterEach(() => {
 });
 
 describe('skills catalog', () => {
+  it('does not follow a skill directory symlink', () => {
+    getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.skillsCatalog, true);
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-skills-link-'));
+    dirs.push(base);
+    const catalogDir = path.join(base, 'catalog');
+    const outsideDir = path.join(base, 'outside-skill');
+    fs.mkdirSync(catalogDir);
+    fs.mkdirSync(outsideDir);
+    fs.writeFileSync(path.join(outsideDir, 'SKILL.md'), '# Secret skill');
+    fs.symlinkSync(
+      outsideDir,
+      path.join(catalogDir, 'leak'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+
+    expect(scanSkillsDirectory(catalogDir)).toEqual([]);
+  });
+
+  it('does not read SKILL.md when it is a symlink to outside content', () => {
+    getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.skillsCatalog, true);
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-skills-mdlink-'));
+    dirs.push(base);
+    const catalogDir = path.join(base, 'catalog');
+    const outside = path.join(base, 'secret.md');
+    fs.mkdirSync(catalogDir);
+    fs.writeFileSync(outside, 'LEAKED_SKILL_SECRET\n');
+    const skillDir = path.join(catalogDir, 'evil');
+    fs.mkdirSync(skillDir);
+    fs.symlinkSync(outside, path.join(skillDir, 'SKILL.md'));
+
+    const entries = scanSkillsDirectory(catalogDir);
+    expect(entries).toEqual([]);
+    expect(JSON.stringify(entries)).not.toContain('LEAKED');
+  });
+
   it('scans SKILL.md, locks digests, detects drift, uninstalls with backup', () => {
     getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.skillsCatalog, true);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-skills-'));

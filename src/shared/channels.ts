@@ -90,10 +90,18 @@ export const PRODUCT_WAVE_CHANNELS = {
   mcpHubSave: 'product:mcpHub.save',
   mcpHubDrift: 'product:mcpHub.drift',
   mcpHubHealth: 'product:mcpHub.health',
+  mcpHubRollback: 'product:mcpHub.rollback',
   autonomyDecide: 'product:autonomy.decide',
   searchQuery: 'product:search.query',
   editorOpen: 'product:editor.open',
   editorApply: 'product:editor.apply',
+} as const;
+
+/** Agent lifecycle observability (record / list / reap finished only). */
+export const AGENT_LIFECYCLE_CHANNELS = {
+  record: 'agent-lifecycle:record',
+  list: 'agent-lifecycle:list',
+  reap: 'agent-lifecycle:reap',
 } as const;
 
 export const MCP_CHANNELS = {

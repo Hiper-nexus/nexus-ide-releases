@@ -89,6 +89,7 @@ import { DesignMdApiClient } from "../design/designmd-api-client";
 import { buildDesignSystemTools } from "./tools-design-system";
 import type { AgentGateContext } from "./gate";
 import { reconcileCompletedPetStudioMissions } from "./pet-studio-completion";
+import { requestMissionDriverTick } from "./mission-driver-runtime";
 import { z } from "zod";
 
 /**
@@ -318,17 +319,24 @@ export function registerOrchIpc(): void {
           pane.paneId,
         );
       }
+      requestMissionDriverTick();
     }
   });
 
   ipcMain.on(ORCH_CHANNELS.paneSpawnResult, (event, raw) => {
     const parsed = orchPaneSpawnResultSchema.safeParse(raw);
-    if (parsed.success) resolvePaneSpawn(parsed.data, event.sender);
+    if (parsed.success) {
+      resolvePaneSpawn(parsed.data, event.sender);
+      requestMissionDriverTick();
+    }
   });
 
   ipcMain.on(ORCH_CHANNELS.paneRecoveryResult, (event, raw) => {
     const parsed = missionPaneRecoveryResultSchema.safeParse(raw);
-    if (parsed.success) resolveMissionPaneRecovery(parsed.data, event.sender);
+    if (parsed.success) {
+      resolveMissionPaneRecovery(parsed.data, event.sender);
+      requestMissionDriverTick();
+    }
   });
 
   ipcMain.on(ORCH_CHANNELS.browserOpenResult, (event, raw) => {

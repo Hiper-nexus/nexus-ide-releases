@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type {
@@ -11,6 +10,10 @@ import type {
 import { searchQuerySchema } from '../../shared/search-mixer-types';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { listMemoryNotes } from '../memory/nexus-memory';
+import {
+  isInsidePath,
+} from '../orch/workspace-path';
+import { tryResolveSubdirUnderRoot } from '../security/scoped-workspace-fs';
 import { scanSkillsDirectory } from '../skills/skills-catalog';
 import { createRipgrepSearchProvider } from './ripgrep-fallback';
 import { SearchMixer } from './search-mixer';
@@ -22,16 +25,17 @@ import { SearchMixer } from './search-mixer';
 
 let mixer: SearchMixer | null = null;
 
+/** Workspace-scoped only — never $HOME. */
 function skillsDirs(root: string): string[] {
   return [
-    path.join(root, '.claude', 'skills'),
-    path.join(root, '.nexus', 'skills'),
-    path.join(os.homedir(), '.claude', 'skills'),
-  ];
+    tryResolveSubdirUnderRoot(root, path.join('.claude', 'skills')),
+    tryResolveSubdirUnderRoot(root, path.join('.nexus', 'skills')),
+  ].filter((d): d is string => d != null);
 }
 
 function createMissionsProvider(): SearchSourceProvider {
   return {
+    // Memory notes tagged kind=mission (not live mission store).
     source: 'missions',
     async search(query, signal) {
       if (signal.aborted || !query.projectRoot) return [];
@@ -51,7 +55,7 @@ function createMissionsProvider(): SearchSourceProvider {
             id: `mission-note:${n.id}`,
             source: 'missions',
             title: n.title,
-            subtitle: n.kind,
+            subtitle: 'memory:mission',
             score: 0.85,
             snippet: n.body.slice(0, 160),
             path: n.path,
@@ -65,8 +69,8 @@ function createSkillsProvider(): SearchSourceProvider {
   return {
     source: 'skills',
     async search(query, signal) {
-      if (signal.aborted) return [];
-      const root = query.projectRoot ?? process.cwd();
+      if (signal.aborted || !query.projectRoot) return [];
+      const root = query.projectRoot;
       const q = query.text.toLowerCase();
       const skills = skillsDirs(root).flatMap((d) => {
         try {
@@ -97,16 +101,21 @@ function createSkillsProvider(): SearchSourceProvider {
   };
 }
 
-function createShallowFilesProvider(): SearchSourceProvider {
+/**
+ * Filename walk as source `workspaces` — MUST NOT use `files`, which would
+ * overwrite the ripgrep provider in SearchMixer's Map (one provider per source).
+ */
+function createShallowFilenameProvider(): SearchSourceProvider {
   return {
     source: 'workspaces',
     async search(query, signal) {
       if (signal.aborted || !query.projectRoot) return [];
       const hits: SearchHit[] = [];
       const q = query.text.toLowerCase();
-      const root = query.projectRoot;
+      const root = path.resolve(query.projectRoot);
       const walk = (dir: string, depth: number) => {
         if (depth > 2 || hits.length >= query.limit) return;
+        if (!isInsidePath(root, dir)) return;
         let names: string[] = [];
         try {
           names = fs.readdirSync(dir);
@@ -114,23 +123,36 @@ function createShallowFilesProvider(): SearchSourceProvider {
           return;
         }
         for (const name of names) {
-          if (name === 'node_modules' || name === '.git' || name.startsWith('.'))
+          if (
+            !name ||
+            name === '.' ||
+            name === '..' ||
+            name === 'node_modules' ||
+            name === '.git' ||
+            name.startsWith('.')
+          ) {
             continue;
+          }
           const full = path.join(dir, name);
+          let st: fs.Stats;
+          try {
+            st = fs.lstatSync(full);
+          } catch {
+            continue;
+          }
+          // Never follow or surface symlinks (could escape workspace).
+          if (st.isSymbolicLink()) continue;
+          if (!isInsidePath(root, full)) continue;
           if (name.toLowerCase().includes(q)) {
             hits.push({
-              id: `ws-file:${full}`,
+              id: `ws-name:${full}`,
               source: 'workspaces',
               title: name,
               score: 0.55,
               path: full,
             });
           }
-          try {
-            if (fs.statSync(full).isDirectory()) walk(full, depth + 1);
-          } catch {
-            /* skip */
-          }
+          if (st.isDirectory()) walk(full, depth + 1);
           if (hits.length >= query.limit) return;
         }
       };
@@ -143,10 +165,11 @@ function createShallowFilesProvider(): SearchSourceProvider {
 export function getSearchMixer(): SearchMixer {
   if (!mixer) {
     mixer = new SearchMixer({ debounceMs: 80, defaultLimit: 30 });
+    // Order: ripgrep owns `files`; shallow walk is `workspaces` (never same key).
     mixer.register(createRipgrepSearchProvider());
     mixer.register(createMissionsProvider());
     mixer.register(createSkillsProvider());
-    mixer.register(createShallowFilesProvider());
+    mixer.register(createShallowFilenameProvider());
   }
   return mixer;
 }

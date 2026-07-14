@@ -38,8 +38,12 @@ import {
   type DriveConfig,
   type DriveDeps,
   defaultDriveConfig,
+  requestMissionDriverTick,
 } from './mission-driver-runtime';
-import { getProjectDomainStores } from './project-domain-store-registry';
+import {
+  getProjectDomainStores,
+  requireProjectDomainStoreRegistry,
+} from './project-domain-store-registry';
 
 /**
  * Camada IO do Mission Driver: monta DriveDeps a partir dos stores reais
@@ -58,6 +62,7 @@ const driveSignalMemory = new Map<string, number>();
  * memory. Active mode uses mission_drive_state and survives app restarts.
  */
 const driveStartedAtMemory = new Map<string, number>();
+let unsubscribeDriveStoreChanges: (() => void) | null = null;
 
 function snapshotForPersistedPane(
   missionId: string,
@@ -125,11 +130,27 @@ export function loadDriveState(
   const paneDead =
     snapshots.length > 0 &&
     findDeadMissionPane(missionId, persistedPanes, snapshots) !== null;
-  const completionVerified = getContextWorkflowService(scope)
-    .isMissionDriverComplete(
-      missionId,
-      mission.milestones.map((milestone) => milestone.id),
-    );
+  const workflowService = getContextWorkflowService(scope);
+  const missionWorkflow = workflowService.getMissionWorkflow(missionId);
+  const completionVerified = workflowService.isMissionDriverComplete(
+    missionId,
+    mission.milestones.map((milestone) => milestone.id),
+  );
+  let contextRot = false;
+  if (missionWorkflow.contract) {
+    try {
+      const readiness = workflowService.inspectReadiness();
+      contextRot =
+        !readiness.ready ||
+        !readiness.contextRevision ||
+        readiness.contextRevision !==
+          missionWorkflow.contract.contract.contextRevision;
+    } catch {
+      // A frozen mission whose current context cannot be inspected must recover
+      // into a fresh context, never keep executing against stale authority.
+      contextRot = true;
+    }
+  }
   return deriveDriveState({
     mission: {
       id: mission.id,
@@ -148,6 +169,7 @@ export function loadDriveState(
       iteration,
       startedAt,
       paneDead,
+      contextRot,
       completionVerified,
       ...(lastActionAt !== undefined ? { lastActionAt } : {}),
     },
@@ -472,6 +494,14 @@ export function configureMissionDriver(options: {
     }),
     config,
   });
+  unsubscribeDriveStoreChanges?.();
+  unsubscribeDriveStoreChanges = requireProjectDomainStoreRegistry().onChange(
+    (_scope, store) => {
+      // Todos do usuário não alteram a autoridade de execução. As demais
+      // fontes duráveis alimentam imediatamente a reconciliação do Ralph.
+      if (store !== 'todos') requestMissionDriverTick();
+    },
+  );
 }
 
 export {
@@ -489,6 +519,8 @@ export function resetDriveIoMemoryForTests(): void {
 
 /** Called from dispose path so multi-session restarts don't leak maps. */
 export function disposeMissionDriverIo(): void {
+  unsubscribeDriveStoreChanges?.();
+  unsubscribeDriveStoreChanges = null;
   resetDriveIoMemoryForTests();
   disposeMissionDriverRuntime();
 }

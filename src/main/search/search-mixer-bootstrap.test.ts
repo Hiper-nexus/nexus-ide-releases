@@ -12,10 +12,17 @@ afterEach(() => {
 });
 
 describe('search mixer bootstrap', () => {
-  it('registers the ripgrep files provider on the live singleton', () => {
+  it('registers ripgrep files AND shallow workspaces without overwrite', () => {
     const mixer = getSearchMixer();
-    // Provider map is private; prove via search with projectRoot (provider runs).
     expect(mixer).toBe(getSearchMixer());
+    // Critical: one provider per source key — shallow must not clobber ripgrep.
+    const sources = mixer.sources();
+    expect(sources).toContain('files');
+    expect(sources).toContain('workspaces');
+    expect(sources).toContain('missions');
+    expect(sources).toContain('skills');
+    // uniqueness
+    expect(new Set(sources).size).toBe(sources.length);
   });
 
   it('returns empty when flag off; runs when flag on', async () => {

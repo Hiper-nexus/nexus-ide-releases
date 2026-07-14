@@ -13,53 +13,33 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.15.3',
+  version: '0.15.4',
   date: '2026-07-13',
-  codename: 'Reliable Orchestration',
+  codename: 'Jarvis Wake Safety',
   summary:
-    'Ralph Loop, Doctor, panes e Jarvis agora compartilham autoridade durável, evidência verificável e recuperação em tempo real.',
+    'O wake da Jarvis agora preserva somente a fala ligada ao comando e nunca inicia trabalho sem intenção explícita.',
   highlights: [
     {
-      title: 'Ralph Loop verificável',
+      title: 'Wake sem contexto ambiente',
       detail:
-        'O Mission Driver persiste tentativas e só conclui marcos por receipts PREVC ligados a evidência Nexus atual e confiável.',
+        'O pre-roll encaminha apenas a fala contígua à palavra de ativação, evitando que televisão ou conversas anteriores virem comando.',
     },
     {
-      title: 'Recuperação atômica de panes',
+      title: 'Intenção explícita antes da ação',
       detail:
-        'Panes mortos renascem na mesma identidade; recap e Enter são confirmados na nova sessão antes de o orquestrador ser religado.',
-    },
-    {
-      title: 'Jarvis realmente realtime',
-      detail:
-        'Wake descarta sockets Live zumbis, preserva áudio pendente e transforma fala natural em briefing executável para o squad correto.',
+        'Detectar o wake não inicia nem retoma missões; mudanças de estado continuam passando pela rota auditada da Jarvis.',
     },
   ],
   fixes: [
     {
-      title: 'Autopilot com evidência',
+      title: 'Terminal PT-BR seguro',
       detail:
-        'Sensores e revisão final publicam um handoff idempotente, e cada marco recebe apenas sua própria evidência antes de avançar.',
+        'Comandos acentuados continuam classificados como shell, enquanto entradas com quebra de linha são bloqueadas antes da confirmação.',
     },
     {
-      title: 'Supervisão sem falsos travamentos',
+      title: 'Distribuição alinhada',
       detail:
-        'O Doctor respeita panes vivos e atividade real, com timeouts finitos e sem fechar ou duplicar trabalho que continua operando.',
-    },
-    {
-      title: 'Wake PT-BR instalado',
-      detail:
-        'O pacote treinado é verificado e instalado por padrão como custom.onnx; modelos treinados localmente pelo usuário permanecem intactos.',
-    },
-    {
-      title: 'Squads e pets operacionais',
-      detail:
-        'Seleção de squads usa nomes reais e fuzzy matching; galeria de pets mantém preview, compactação e Pet Studio com dependências disponíveis.',
-    },
-    {
-      title: 'Versões alinhadas',
-      detail:
-        'Aplicativo, servidor, lockfile, changelog e notas internas avançam juntos para impedir releases mistos.',
+        'Aplicativo, servidor, lockfile, changelog e notas internas apontam para a versão 0.15.4.',
     },
   ],
 };

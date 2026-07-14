@@ -55,26 +55,57 @@ export function digestSkillContent(content: string): string {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
+/**
+ * Scan a skills directory. Never follows symlinks for skill folders or
+ * SKILL.md (avoids reading outside the intended catalog root).
+ */
 export function scanSkillsDirectory(dir: string): SkillEntry[] {
   if (!getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.skillsCatalog)) {
     return [];
   }
   if (!fs.existsSync(dir)) return [];
+  let rootReal: string;
+  try {
+    rootReal = fs.realpathSync(dir);
+  } catch {
+    return [];
+  }
   const entries: SkillEntry[] = [];
   for (const name of fs.readdirSync(dir)) {
+    // Reject path components that could escape when joined.
+    if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\\') || name.includes('\0')) {
+      continue;
+    }
     const skillDir = path.join(dir, name);
     let st: fs.Stats;
     try {
-      st = fs.statSync(skillDir);
+      st = fs.lstatSync(skillDir);
     } catch {
       continue;
     }
-    if (!st.isDirectory()) continue;
+    // Only real directories — skip symlinks (even to directories).
+    if (st.isSymbolicLink() || !st.isDirectory()) continue;
     const md = path.join(skillDir, 'SKILL.md');
-    if (!fs.existsSync(md)) continue;
+    let mdStat: fs.Stats;
+    try {
+      mdStat = fs.lstatSync(md);
+    } catch {
+      continue;
+    }
+    if (mdStat.isSymbolicLink() || !mdStat.isFile()) continue;
+    // realpath must stay under the catalog root.
+    let mdReal: string;
+    try {
+      mdReal = fs.realpathSync(md);
+    } catch {
+      continue;
+    }
+    const rel = path.relative(rootReal, mdReal);
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) continue;
+
     let content = '';
     try {
-      content = fs.readFileSync(md, 'utf8').slice(0, 16_384);
+      content = fs.readFileSync(mdReal, 'utf8').slice(0, 16_384);
     } catch {
       continue;
     }
@@ -91,7 +122,7 @@ export function scanSkillsDirectory(dir: string): SkillEntry[] {
         digest,
         status: 'importable',
         contentPreview: content.slice(0, 512),
-        path: md,
+        path: mdReal,
       }),
     );
   }

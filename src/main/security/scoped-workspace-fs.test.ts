@@ -23,6 +23,7 @@ import {
   resolveScopedPath,
   resolveScopedPathCandidate,
   resolveSubdirUnderRoot,
+  tryResolveSubdirUnderRoot,
 } from './scoped-workspace-fs';
 
 const dirs: string[] = [];
@@ -71,6 +72,16 @@ describe('scoped-workspace-fs (single containment contract)', () => {
     expect(() => resolveSubdirUnderRoot(project, '..')).toThrow();
     expect(() => resolveSubdirUnderRoot(project, 'a/../../proj2')).toThrow();
 
+    fs.symlinkSync(
+      sibling,
+      path.join(project, '.nexus-memory'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    expect(() => resolveSubdirUnderRoot(project, '.nexus-memory')).toThrow(
+      /escaped/i,
+    );
+    fs.unlinkSync(path.join(project, '.nexus-memory'));
+
     expect(resolveSubdirUnderRoot(project, '.nexus-memory')).toBe(
       path.join(project, '.nexus-memory'),
     );
@@ -99,5 +110,13 @@ describe('scoped-workspace-fs (single containment contract)', () => {
     expect(() =>
       resolveScopedPath(sender, path.join(sibling, 'secret.txt')),
     ).toThrow(/escapes/);
+  });
+
+  it('tryResolveSubdirUnderRoot returns null instead of throwing', () => {
+    const { project } = makeProject();
+    expect(tryResolveSubdirUnderRoot(project, '../proj2')).toBeNull();
+    expect(tryResolveSubdirUnderRoot(project, '.nexus')).toBe(
+      path.join(project, '.nexus'),
+    );
   });
 });

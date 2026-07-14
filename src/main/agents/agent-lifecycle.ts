@@ -1,6 +1,4 @@
 import { z } from 'zod';
-import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
-import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 
 /**
  * Agent lifecycle: finished / needs-input events, resume, reap finished only.
@@ -79,16 +77,11 @@ export function assertExplicitAccountSwitch(
   fromAccountId: string | undefined,
   toAccountId: string,
 ): void {
-  if (!toAccountId) throw new Error('account id required');
-  if (fromAccountId && fromAccountId === toAccountId) return;
-  // Caller must have obtained explicit UI confirmation; we only record the gate.
-  if (
-    getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.autonomyProfiles) ||
-    true
-  ) {
-    // Always require non-empty explicit target — silent auto-switch forbidden.
-    if (!toAccountId.trim()) throw new Error('explicit account switch required');
+  if (!toAccountId?.trim()) {
+    throw new Error('explicit account switch required');
   }
+  // Same-account is a no-op; any other switch must be explicit non-empty target.
+  if (fromAccountId && fromAccountId === toAccountId) return;
 }
 
 /** Test-only. */
