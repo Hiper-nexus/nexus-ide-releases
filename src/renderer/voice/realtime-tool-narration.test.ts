@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   armRealtimeToolNarration,
   clearRealtimeToolNarrations,
+  discardRealtimeToolNarration,
+  peekRealtimeToolNarration,
   takeSilentRealtimeToolNarration,
+  waitForToolNarrationAudio,
 } from './realtime-tool-narration';
 
 beforeEach(clearRealtimeToolNarrations);
@@ -10,6 +13,7 @@ beforeEach(clearRealtimeToolNarrations);
 describe('realtime tool narration fallback', () => {
   it('returns local narration when the provider completed without audio', () => {
     armRealtimeToolNarration('call-1', 'Confirmo?', 10);
+    expect(peekRealtimeToolNarration('call-1')?.text).toBe('Confirmo?');
     expect(takeSilentRealtimeToolNarration('call-1', 10)).toBe('Confirmo?');
     expect(takeSilentRealtimeToolNarration('call-1', 10)).toBeNull();
   });
@@ -17,5 +21,37 @@ describe('realtime tool narration fallback', () => {
   it('does not duplicate narration when provider audio already started', () => {
     armRealtimeToolNarration('call-2', 'Feito.', 20);
     expect(takeSilentRealtimeToolNarration('call-2', 21)).toBeNull();
+  });
+
+  it('discards a pending narration without inventing audio evidence', () => {
+    armRealtimeToolNarration('call-3', 'Ok.', 1);
+    discardRealtimeToolNarration('call-3');
+    expect(peekRealtimeToolNarration('call-3')).toBeNull();
+    expect(takeSilentRealtimeToolNarration('call-3', 1)).toBeNull();
+  });
+
+  it('waits for provider audio before declaring silence', async () => {
+    let played = 10;
+    const delay = vi.fn(async () => {
+      played = 11;
+    });
+    await expect(
+      waitForToolNarrationAudio(10, () => played, {
+        graceMs: 200,
+        pollMs: 50,
+        delay,
+      }),
+    ).resolves.toBe('provider');
+  });
+
+  it('returns silent when no audio arrives in the grace window', async () => {
+    const delay = vi.fn(async () => {});
+    await expect(
+      waitForToolNarrationAudio(5, () => 5, {
+        graceMs: 80,
+        pollMs: 20,
+        delay,
+      }),
+    ).resolves.toBe('silent');
   });
 });

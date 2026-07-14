@@ -235,6 +235,42 @@ describe('delegation supervisor policy', () => {
     ).toBe(0);
   });
 
+  it('does not supervise a mission already blocked after stage-2', () => {
+    expect(
+      isDelegationSupervisable({
+        mission: { ...dispatchedEmpty, status: 'blocked' },
+        expectedWorkers: 3,
+        workerPanes: 0,
+        tasks: 0,
+        recoveries: [],
+        hasBoundOrchestrator: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('does not supervise consult-lane missions (read-only contract)', () => {
+    expect(
+      isDelegationSupervisable({
+        mission: {
+          ...dispatchedEmpty,
+          intentContract: {
+            ...dispatchedEmpty.intentContract!,
+            lane: 'consult',
+            budgets: {
+              ...dispatchedEmpty.intentContract!.budgets,
+              maxWorkers: 0,
+            },
+          },
+        },
+        expectedWorkers: 3,
+        workerPanes: 0,
+        tasks: 0,
+        recoveries: [],
+        hasBoundOrchestrator: true,
+      }),
+    ).toBe(false);
+  });
+
   it('does not interfere with squads that have no workers or terminal missions', () => {
     expect(
       delegationRecoveryStage(

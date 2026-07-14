@@ -838,6 +838,8 @@ export interface NexusApi {
       source?: 'typed' | 'voice' | 'imported-issue' | 'automation';
       contextPolicy?: 'none' | 'minimal' | 'on-demand';
       acceptanceCriteria?: string[];
+      /** standard (default) = code PREVC; consult = read-only investigation. */
+      lane?: 'standard' | 'consult';
     }): Promise<Mission>;
     approveMissionIntent(input: { missionId: string }): Promise<Mission>;
     /** Explicit prepare-project while still awaiting a real goal. */

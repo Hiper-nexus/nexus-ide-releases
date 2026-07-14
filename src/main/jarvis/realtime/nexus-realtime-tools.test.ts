@@ -24,8 +24,12 @@ describe('nexus realtime tools', () => {
         'mcp_tool',
         'new_agentic_mission',
         'sync_repository',
+        'sync_repo_via_pane',
       ]),
     );
+    expect(
+      (params.properties as { mode?: { enum: string[] } }).mode?.enum,
+    ).toEqual(['pull', 'status', 'push']);
     expect(params.properties.text.description).toContain('Objective');
     expect(params.properties.text.description).toContain('Acceptance criteria');
   });
@@ -73,6 +77,26 @@ describe('nexus realtime tools', () => {
       type: 'run_command',
       command: 'npm test -- --run',
     });
+  });
+
+  it('maps sync_repo_via_pane with mode defaults', () => {
+    expect(
+      realtimeArgsToJarvisAction({ action: 'sync_repo_via_pane' }),
+    ).toEqual({ type: 'sync_repo_via_pane', mode: 'pull' });
+    expect(
+      realtimeArgsToJarvisAction({
+        action: 'sync_repo_via_pane',
+        mode: 'status',
+        paneId: 'pane-1',
+      }),
+    ).toEqual({
+      type: 'sync_repo_via_pane',
+      mode: 'status',
+      paneId: 'pane-1',
+    });
+    expect(summarizeNexusRealtimeAction({ action: 'sync_repo_via_pane', mode: 'pull' })).toMatch(
+      /atualizar repositório/i,
+    );
   });
 
   it('maps pane focus operations into the shared executor contract', () => {

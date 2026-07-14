@@ -66,6 +66,37 @@ export function resolveSendToPaneTarget(
   return { kind: 'no-agent-pane' };
 }
 
+/**
+ * Everyday repo sync prefers a real AI CLI pane over the orchestrator so the
+ * product prompt runs where users already do git (Claude/Codex/…), not as a
+ * squad mission rewrite.
+ */
+export function resolveSyncRepoViaPaneTarget(
+  requestedPaneId: string | undefined,
+  panes: SendToPanePaneLike[],
+  focusedPaneId?: string | null,
+): SendToPaneTarget {
+  if (requestedPaneId) {
+    return resolveSendToPaneTarget(requestedPaneId, panes, focusedPaneId);
+  }
+  // Prefer the focused CLI only — never silently pick an arbitrary first pane.
+  const focusedCli = panes.find(
+    (pane) => pane.id === focusedPaneId && pane.kind === 'cli-agent',
+  );
+  if (focusedCli) return { kind: 'asking-pane', paneId: focusedCli.id };
+  const cliPanes = panes.filter((pane) => pane.kind === 'cli-agent');
+  if (cliPanes.length === 1) {
+    return { kind: 'asking-pane', paneId: cliPanes[0].id };
+  }
+  if (cliPanes.length > 1) {
+    return {
+      kind: 'asking-pane-ambiguous',
+      titles: cliPanes.map((pane) => pane.title),
+    };
+  }
+  return resolveSendToPaneTarget(undefined, panes, focusedPaneId);
+}
+
 function normalizePaneName(value: string): string {
   return value
     .normalize('NFD')

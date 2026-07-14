@@ -48,6 +48,16 @@ export const missionExecutionModeSchema = z.enum([
 ]);
 export type MissionExecutionMode = z.infer<typeof missionExecutionModeSchema>;
 
+/**
+ * Delivery lane (orthogonal to executionMode):
+ * - standard: code-changing PREVC path (default)
+ * - consult: read-only investigation (logs, doctor, status) — no worktrees /
+ *   multi-worker expectation; completion via learnings note, not fake green
+ *   without a consult-lane contract.
+ */
+export const missionLaneSchema = z.enum(['standard', 'consult']);
+export type MissionLane = z.infer<typeof missionLaneSchema>;
+
 export const missionContextPolicySchema = z.enum([
   'none',
   'minimal',
@@ -73,6 +83,8 @@ export const missionIntentContractSchema = z.object({
   acceptanceCriteria: z.array(z.string().min(1).max(2_048)).max(32),
   risk: missionIntentRiskSchema,
   executionMode: missionExecutionModeSchema,
+  /** Optional; missing/legacy contracts default to standard. */
+  lane: missionLaneSchema.optional(),
   contextPolicy: missionContextPolicySchema,
   approvedAt: z.number().int().nonnegative().optional(),
   /** Wall-clock when execution was authorized (approve/start). SLA anchor. */
@@ -402,6 +414,8 @@ export function compileIntentContract(input: {
   executionMode?: MissionExecutionMode;
   contextPolicy?: MissionContextPolicy;
   acceptanceCriteria?: string[];
+  /** Explicit delivery lane; default standard (code PREVC). */
+  lane?: MissionLane;
 }): MissionIntentContract {
   const goal = input.goal.trim();
   if (!goal) {
@@ -412,6 +426,16 @@ export function compileIntentContract(input: {
     input.acceptanceCriteria && input.acceptanceCriteria.length > 0
       ? input.acceptanceCriteria
       : [`${AUTO_DERIVED_CRITERION_PREFIX} ${goal.slice(0, 200)}`];
+  const lane = input.lane ?? 'standard';
+  const budgets =
+    lane === 'consult'
+      ? {
+          planningTokens: 2_000,
+          executionTokens: 4_000,
+          maxWorkers: 0,
+          maxSteps: 32,
+        }
+      : defaultBudgetsForRisk(risk);
   return missionIntentContractSchema.parse({
     version: 1,
     source: input.source ?? 'typed',
@@ -421,10 +445,38 @@ export function compileIntentContract(input: {
     // Clicking Start authorizes the bounded Nexus autopilot. Sensitive work
     // still requires approval, and every effect remains behind PREVC/budgets.
     executionMode: input.executionMode ?? 'autopilot',
+    lane,
     contextPolicy: input.contextPolicy ?? 'on-demand',
     intentVersion: input.intentVersion,
-    budgets: defaultBudgetsForRisk(risk),
+    budgets,
   });
+}
+
+/** True when the mission contract is the read-only consult lane. */
+export function isConsultLane(mission: {
+  readonly intentContract?: { readonly lane?: MissionLane | null } | null;
+}): boolean {
+  return mission.intentContract?.lane === 'consult';
+}
+
+/** Minimum durable learning size for consult-lane done (not code PREVC green). */
+export const CONSULT_DONE_MIN_LEARNING_CHARS = 40;
+
+/**
+ * Consult-lane done is allowed only with a durable learning note (existing
+ * learnings and/or the status note), never as a silent green shortcut.
+ */
+export function canCompleteConsultLane(input: {
+  readonly learnings?: string | null;
+  readonly note?: string | null;
+}): boolean {
+  const learnings = input.learnings?.trim() ?? '';
+  const note = input.note?.trim() ?? '';
+  const combined =
+    learnings.length > 0 && note.length > 0
+      ? learnings.length + 2 + note.length
+      : learnings.length + note.length;
+  return combined >= CONSULT_DONE_MIN_LEARNING_CHARS;
 }
 
 /** True when the mission has a user-approved dispatch contract. */

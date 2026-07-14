@@ -139,6 +139,20 @@ export function assertMissionIntentAllowsTool(
     );
   }
 
+  // Consult lane: hard read-only. Only status transitions (blocked/failed/done
+  // with durable note) may mutate mission metadata — never code/worktree/merge.
+  if (contract?.lane === 'consult' && canonical !== 'mission_set_status') {
+    return deny(
+      'tool_denied',
+      `tool_denied: consult lane is read-only; ${toolName} is not allowed ` +
+        '(use read tools or mission_set_status with a durable note)',
+      ctx,
+      intentState,
+      intentVersion,
+      toolName,
+    );
+  }
+
   // Step/token budgets after dispatch.
   if (isDispatchAuthorized) {
     const budget = assertStepAndTokenBudget(contract);

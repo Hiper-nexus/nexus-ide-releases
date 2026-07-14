@@ -68,6 +68,7 @@ import {
   setRealtimeTurnActive,
   suppressRealtimeAudioOut,
   setSuppressRealtimeAudioOut,
+  setDropRealtimeAudioOut,
   setPendingLiveStartSettle,
   finishRealtimeCapture,
   setFinishRealtimeCapture,
@@ -90,7 +91,12 @@ import {
   executeRealtimeToolCall,
   speakRealtimeToolResult,
 } from './voice-realtime-tools';
-import { takeSilentRealtimeToolNarration } from './realtime-tool-narration';
+import {
+  discardRealtimeToolNarration,
+  peekRealtimeToolNarration,
+  takeSilentRealtimeToolNarration,
+  waitForToolNarrationAudio,
+} from './realtime-tool-narration';
 import { cancelRealtimeToolExecution } from './realtime-tool-execution';
 import { finishAndProcess, type FinishAndProcessDeps } from './voice-finish-and-process';
 import {
@@ -943,14 +949,13 @@ export function useVoiceController(): void {
     });
     const unsubLiveTranscript = window.nexus.voice.onLiveTranscript((event) => {
       useVoiceStore.getState().addLiveTranscript(event);
-      if (
-        event.role === 'assistant' &&
-        event.final &&
-        event.text.trim() &&
-        !suppressRealtimeAudioOut
-      ) {
-        useVoiceStore.getState().setSpoken(event.text.trim());
+      if (event.role === 'assistant' && event.final && event.text.trim()) {
+        // Always record echo for assistant finals — even when speaker output is
+        // suppressed — so STT/wake do not treat late Gemini text as the user.
         void window.nexus.voice.recordEcho(event.text).catch(() => {});
+        if (!suppressRealtimeAudioOut) {
+          useVoiceStore.getState().setSpoken(event.text.trim());
+        }
       }
       onRealtimeTranscriptForActionBridge(event);
     });
@@ -989,12 +994,28 @@ export function useVoiceController(): void {
       void (async () => {
         let usedLocalNarration = false;
         try {
-          // IPC completion can overtake WebAudio scheduling by a few frames.
-          // Give the first real PCM chunk a short chance to prove narration
-          // before choosing local TTS, avoiding two voices.
-          await delay(250);
-          if (!isCorrelated()) {
-            takeSilentRealtimeToolNarration(event.callId, realtimeAudioPlayedCounter.total);
+          // IPC completion can overtake WebAudio scheduling. Wait a grace window
+          // for the first Live PCM chunk; only then fall back to Classic TTS.
+          // A fixed 250ms was too short — Gemini often starts audio later, so
+          // local TTS + Live PCM overlapped (two voices).
+          const pendingNarration = peekRealtimeToolNarration(event.callId);
+          const audioBaseline =
+            pendingNarration?.audioPlayedBaseline ?? realtimeAudioPlayedCounter.total;
+          const audioEvidence = await waitForToolNarrationAudio(
+            audioBaseline,
+            () => realtimeAudioPlayedCounter.total,
+            {
+              delay,
+              shouldAbort: () => !isCorrelated(),
+            },
+          );
+          if (audioEvidence === 'aborted' || !isCorrelated()) {
+            discardRealtimeToolNarration(event.callId);
+            return;
+          }
+          if (audioEvidence === 'provider') {
+            // Provider is speaking — drop local narration claim and let Live own audio.
+            discardRealtimeToolNarration(event.callId);
             return;
           }
           const silentNarration = takeSilentRealtimeToolNarration(
@@ -1008,7 +1029,16 @@ export function useVoiceController(): void {
               'provider concluiu sem áudio — usando voz local',
               { callId: event.callId, chars: silentNarration.length },
             );
+            // Hard mute Live before Classic TTS so a late PCM chunk cannot race
+            // or queue for a later gate open (which would replay stale speech).
+            setSuppressRealtimeAudioOut(true);
+            setDropRealtimeAudioOut(true);
+            resetPendingRealtimeAudioOut();
+            livePlayer?.stop();
+            void window.nexus.voice.liveInterrupt('local-tool-narration-fallback').catch(() => {});
+            void window.nexus.voice.recordEcho(silentNarration).catch(() => {});
             await speakRealtimeToolResult(silentNarration);
+            resetPendingRealtimeAudioOut();
             usedLocalNarration = true;
           }
         } catch (error) {

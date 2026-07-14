@@ -130,6 +130,10 @@ export function MissionWizard() {
   // Intent-first: armed mission shell awaiting an explicit goal (0 tokens).
   const [armedMissionId, setArmedMissionId] = useState<string | null>(null);
   const [missionGoal, setMissionGoal] = useState('');
+  /** standard = code PREVC; consult = read-only investigation contract. */
+  const [missionLane, setMissionLane] = useState<'standard' | 'consult'>(
+    'standard',
+  );
   const [plannedMission, setPlannedMission] = useState<Mission | null>(null);
   const armedMissionSnapshot = useOrchStore((state) =>
     armedMissionId
@@ -284,6 +288,7 @@ export function MissionWizard() {
       setSquadId(presetSquadId);
       setArmedMissionId(storeArmedMissionId);
       setMissionGoal('');
+      setMissionLane('standard');
       setPlannedMission(null);
       setIntent('');
       setStep('intent-compose');
@@ -700,6 +705,7 @@ export function MissionWizard() {
         // Proveniência real do objetivo: issue importada e voz não são
         // "digitado" — o contrato registra de onde a missão nasceu.
         source: mode === 'agentic' ? agenticSource : 'typed',
+        lane: missionLane,
       });
       setPlannedMission(planned);
       if (!options?.reviewPlan && planned.intentState === 'ready_to_start') {
@@ -806,6 +812,7 @@ export function MissionWizard() {
       compactMemoryMarkdown: missionCompactHasProgress(compact)
         ? renderMissionCompact(compact)
         : null,
+      lane: contract.lane ?? 'standard',
     });
     const result = await launchSquadMission(effectiveSquad, adapters, {
       existingMissionId: planned.id,
@@ -1212,6 +1219,42 @@ export function MissionWizard() {
                 onChange={(e) => setMissionGoal(e.target.value)}
                 autoFocus
               />
+              <fieldset
+                className="wizard__mode-desc"
+                style={{
+                  marginTop: 12,
+                  marginBottom: 4,
+                  border: '1px solid var(--border)',
+                  borderRadius: 8,
+                  padding: '10px 12px',
+                }}
+              >
+                <legend style={{ padding: '0 4px' }}>Tipo de entrega</legend>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
+                  <input
+                    type="radio"
+                    name="mission-lane"
+                    checked={missionLane === 'standard'}
+                    onChange={() => setMissionLane('standard')}
+                  />
+                  <span>
+                    <strong>Código (PREVC)</strong> — worktrees, workers e
+                    conclusão só com receipts imutáveis.
+                  </span>
+                </label>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <input
+                    type="radio"
+                    name="mission-lane"
+                    checked={missionLane === 'consult'}
+                    onChange={() => setMissionLane('consult')}
+                  />
+                  <span>
+                    <strong>Consulta (somente leitura)</strong> — logs, status,
+                    doctor; sem editar código. Done exige learning durável.
+                  </span>
+                </label>
+              </fieldset>
               <div
                 className="wizard__mode-desc"
                 style={{ marginTop: 12, marginBottom: 8 }}
@@ -1298,6 +1341,11 @@ export function MissionWizard() {
               {plannedMission.intentContract && (
                 <>
                   <p className="wizard__mode-desc">
+                    <strong>Lane:</strong>{' '}
+                    {plannedMission.intentContract.lane === 'consult'
+                      ? 'consulta (somente leitura)'
+                      : 'código (PREVC)'}
+                    {' · '}
                     <strong>Risco:</strong> {plannedMission.intentContract.risk}
                     {' · '}
                     <strong>Workers máx.:</strong>{' '}

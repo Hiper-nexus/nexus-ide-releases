@@ -3,6 +3,7 @@ import type { Mission, MissionStatus } from '../../shared/orch-types';
 import { useOrchStore } from '../state/orch-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { askConfirm } from '../state/confirm-store';
+import { confirmAndBlockMission } from '../orch/block-mission';
 import { useGamificationStore } from '../state/gamification-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { ChosenPetPortrait } from './ChosenPetPortrait';
@@ -106,6 +107,14 @@ export function OpsBoard() {
     void window.nexus.orch.removeMission(m.id).then((r) => {
       if (!r.removed) setNote('Missão já não estava na lista.');
     });
+  }
+
+  async function encerrarComoBloqueada(m: Mission) {
+    setBusy(m.id);
+    setNote(null);
+    const result = await confirmAndBlockMission(m);
+    if (!result.ok && !result.cancelled && result.error) setNote(result.error);
+    setBusy(null);
   }
 
   return (
@@ -344,6 +353,16 @@ export function OpsBoard() {
                                     <PixelIcon name="mission" size={8} /> retomar
                                   </span>
                                 )}
+                              </button>
+                            )}
+                            {(m.status === 'pending' || m.status === 'running') && (
+                              <button
+                                className="ops-board__card-btn ops-board__card-btn--danger"
+                                disabled={busy !== null}
+                                onClick={() => void encerrarComoBloqueada(m)}
+                                title="Encerrar como bloqueada (com justificativa; não é done)"
+                              >
+                                bloquear
                               </button>
                             )}
                             <button

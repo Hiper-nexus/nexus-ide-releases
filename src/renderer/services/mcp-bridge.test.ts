@@ -98,10 +98,10 @@ describe('mcp-bridge action mapping', () => {
   });
 
   it('routes repository sync through its narrow Git operation', () => {
-    expect(mapActionToTool({ type: 'sync_repository' })).toEqual({
-      tool: 'nexus_git_sync',
-      args: {},
-    });
+    // Legacy sync_repository is rewritten by the executor to sync_repo_via_pane;
+    // it must never hit nexus_git_sync (fails on executable local git config).
+    expect(mapActionToTool({ type: 'sync_repository' })).toBeNull();
+    expect(mapActionToTool({ type: 'sync_repo_via_pane', mode: 'pull' })).toBeNull();
   });
 
   it('confirms denied MCP calls and retries after native approval', async () => {

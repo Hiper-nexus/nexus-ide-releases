@@ -6,7 +6,11 @@ import { ipcMain } from 'electron';
 import { PROVIDER_CHANNELS } from '../../shared/provider-settings-types';
 import type { AdapterAuthStatus, AuthState } from '../../shared/provider-settings-types';
 import { listProviderSettings } from '../persistence/provider-config-store';
-import { hasSubscriptionAuth } from './subscription-auth';
+import {
+  claudeOauthEmail,
+  detectSubscriptionAuth,
+  hasSubscriptionAuth,
+} from './subscription-auth';
 
 /**
  * Sonda de login das CLIs — SEM navegador. Cada CLI guarda a sessão OAuth
@@ -15,6 +19,9 @@ import { hasSubscriptionAuth } from './subscription-auth';
  * falso). Para providers de API pura, a chave no cofre é o próprio estado.
  * Logar de novo também dispensa navegador embutido: abrir um pane com a CLI
  * dispara o fluxo dela, que abre o navegador DO SISTEMA já logado.
+ *
+ * Claude: MUST match `detectSubscriptionAuth` — file-backed ~/.claude.json
+ * oauthAccount is authoritative when Keychain is unreadable from Electron.
  */
 
 const HOME = os.homedir();
@@ -47,11 +54,20 @@ const OAUTH_PROBES: Record<
   () => Promise<{ state: AuthState; detail: string }>
 > = {
   claude: async () => {
+    // Same truth as spawn/readiness: ~/.claude.json oauthAccount first.
+    // Keychain-only probes false-negative inside packaged Electron (TCC).
+    const email = claudeOauthEmail(HOME);
+    if (email) {
+      return { state: 'ok', detail: `sessão Claude: ${email}` };
+    }
+    if (fileExists(path.join(HOME, '.claude', '.credentials.json'))) {
+      return { state: 'ok', detail: 'sessão OAuth local (.credentials.json)' };
+    }
     if (await keychainHas('Claude Code-credentials')) {
       return { state: 'ok', detail: 'sessão OAuth no Keychain' };
     }
-    if (fileExists(path.join(HOME, '.claude', '.credentials.json'))) {
-      return { state: 'ok', detail: 'sessão OAuth local' };
+    if (detectSubscriptionAuth('claude', HOME)) {
+      return { state: 'ok', detail: 'sessão Claude detectada' };
     }
     return { state: 'missing', detail: 'sem sessão — rode a CLI e faça /login' };
   },

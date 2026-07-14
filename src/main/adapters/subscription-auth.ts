@@ -73,19 +73,26 @@ function claudeKeychainHas(): boolean {
     );
     return true;
   } catch {
+    // Keychain can fail inside packaged Electron (TCC) even when the CLI works.
     return false;
   }
 }
 
-function claudeOauthAccount(home = os.homedir()): boolean {
+/** Email of the active Claude OAuth account from ~/.claude.json, if any. */
+export function claudeOauthEmail(home = os.homedir()): string | null {
   try {
     const raw = JSON.parse(
       fs.readFileSync(path.join(home, '.claude.json'), 'utf8'),
-    );
-    return Boolean(raw?.oauthAccount?.emailAddress);
+    ) as { oauthAccount?: { emailAddress?: unknown } };
+    const email = raw?.oauthAccount?.emailAddress;
+    return typeof email === 'string' && email.includes('@') ? email : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function claudeOauthAccount(home = os.homedir()): boolean {
+  return claudeOauthEmail(home) !== null;
 }
 
 export function detectSubscriptionAuth(
@@ -95,10 +102,13 @@ export function detectSubscriptionAuth(
   const exists = (...segments: string[]) => existsAt(home, ...segments);
   switch (adapterId) {
     case 'claude':
+      // Prefer file-backed oauthAccount: Keychain probes often fail from
+      // packaged Electron (TCC / no user keychain prompt) even when the
+      // terminal CLI is fully logged in.
       return (
-        claudeKeychainHas() ||
         claudeOauthAccount(home) ||
-        exists('.claude', '.credentials.json')
+        exists('.claude', '.credentials.json') ||
+        claudeKeychainHas()
       );
     case 'codex':
       // ChatGPT session file (the launcher's xconta model swaps this file).

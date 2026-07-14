@@ -705,6 +705,8 @@ const api: NexusApi = {
       /** prepare-project is NOT accepted — use prepareMissionProject. */
       contextPolicy?: 'none' | 'minimal' | 'on-demand';
       acceptanceCriteria?: string[];
+      /** standard (default) = code PREVC; consult = read-only investigation. */
+      lane?: 'standard' | 'consult';
     }) => ipcRenderer.invoke(ORCH_CHANNELS.missionSubmitIntent, input),
     approveMissionIntent: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionApproveIntent, input),

@@ -176,6 +176,32 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.shutdownIdleDelivery();
   });
 
+  it('labels nexus-delegation-supervisor recovery as system (not untrusted spam)', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    const systemHandoff = handoff({
+      id: 'handoff-system',
+      fromAgent: 'nexus-delegation-supervisor',
+      status: 'progress',
+      summary: 'Recuperação de orquestração (sistema Nexus)',
+    });
+    storeMocks.handoffs.set(systemHandoff.id, systemHandoff);
+    delivery.onHandoffSubmitted(systemHandoff, scope);
+
+    expect(ptyMocks.writes).toHaveBeenCalledWith(
+      'orchestrator-session',
+      expect.stringMatching(
+        /from=nexus-delegation-supervisor.*claim_trust=system.*evidence=nexus_system/i,
+      ),
+    );
+    expect(ptyMocks.writes.mock.calls[0][1]).not.toMatch(/claim_trust=untrusted/);
+    delivery.shutdownIdleDelivery();
+  });
+
   it('rechecks queued evidence and labels it stale after the workflow changes', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();

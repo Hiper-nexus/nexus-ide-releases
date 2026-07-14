@@ -96,6 +96,10 @@ function actionSummary(action: JarvisAction): string {
       return action.alvo ? `restaurar missão ${action.alvo}` : 'restaurar missão';
     case 'ask_pane':
       return 'perguntar ao pane';
+    case 'sync_repo_via_pane':
+      if (action.mode === 'status') return 'checar status do repositório via pane';
+      if (action.mode === 'push') return 'enviar repositório via pane';
+      return 'atualizar repositório via pane';
   }
 }
 

@@ -187,7 +187,10 @@ describe("renderer mission authority", () => {
     expect(deps.updateMission).toHaveBeenCalledWith(
       "mission-a",
       expect.objectContaining({
-        intentContract: expect.objectContaining({ executionMode: "autopilot" }),
+        intentContract: expect.objectContaining({
+          executionMode: "autopilot",
+          lane: "standard",
+        }),
         milestones: [
           {
             id: "step-1",
@@ -202,6 +205,24 @@ describe("renderer mission authority", () => {
             evidenceIds: [],
           },
         ],
+      }),
+    );
+  });
+
+  it("propagates lane=consult into the intent contract (read-only delivery)", () => {
+    authority.submitIntentFromRenderer(owner, {
+      missionId: "mission-a",
+      goal: "Ler logs da Vercel e resumir erros de deploy",
+      lane: "consult",
+    });
+
+    expect(deps.updateMission).toHaveBeenCalledWith(
+      "mission-a",
+      expect.objectContaining({
+        intentContract: expect.objectContaining({
+          lane: "consult",
+          budgets: expect.objectContaining({ maxWorkers: 0 }),
+        }),
       }),
     );
   });

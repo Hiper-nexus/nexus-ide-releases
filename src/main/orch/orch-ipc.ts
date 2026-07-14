@@ -405,6 +405,8 @@ export function registerOrchIpc(): void {
     // prepare-project is intentionally excluded — only prepareMissionProject IPC.
     contextPolicy: z.enum(["none", "minimal", "on-demand"]).optional(),
     acceptanceCriteria: z.array(z.string().min(1).max(2_048)).max(32).optional(),
+    /** standard (default) = code PREVC; consult = read-only investigation. */
+    lane: z.enum(["standard", "consult"]).optional(),
   });
   ipcMain.handle(ORCH_CHANNELS.missionSubmitIntent, (event, raw) => {
     const parsed = missionSubmitIntentSchema.safeParse(raw);

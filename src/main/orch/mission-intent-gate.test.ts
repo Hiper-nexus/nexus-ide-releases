@@ -77,6 +77,55 @@ describe('mission intent gate', () => {
     ).toBe(true);
   });
 
+  it('consult lane allows reads and set_status but rejects mutable tools', () => {
+    const consult: Mission = {
+      ...dispatched,
+      description: 'Ler logs da Vercel',
+      intentContract: {
+        ...dispatched.intentContract!,
+        goal: 'Ler logs da Vercel',
+        lane: 'consult',
+        budgets: {
+          planningTokens: 2000,
+          executionTokens: 4000,
+          maxWorkers: 0,
+          maxSteps: 32,
+        },
+      },
+    };
+
+    expect(
+      assertMissionIntentAllowsTool('nexus_file_read', { mission: consult }).ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_git_status', { mission: consult }).ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_mission_get', { mission: consult }).ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_mission_set_status', {
+        mission: consult,
+      }).ok,
+    ).toBe(true);
+
+    for (const tool of [
+      'nexus_pane_spawn',
+      'nexus_worktree_create',
+      'nexus_merge_task',
+      'nexus_context_doctor',
+      'nexus_mission_freeze_contract',
+      'nexus_file_write',
+    ] as const) {
+      const result = assertMissionIntentAllowsTool(tool, { mission: consult });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('tool_denied');
+        expect(result.error).toMatch(/consult lane is read-only/i);
+      }
+    }
+  });
+
   it('allows prepare-project warm tools only while awaiting goal', () => {
     const prepare: Mission = {
       ...awaitingGoal,

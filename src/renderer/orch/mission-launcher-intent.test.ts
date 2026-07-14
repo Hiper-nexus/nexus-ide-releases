@@ -55,11 +55,13 @@ describe('intent-first kickoff packing', () => {
     expect(prompt).toContain('nexus_mission_freeze_contract');
     expect(prompt).toContain('nexus_merge_task');
     expect(prompt).toContain('PREVC');
+    expect(prompt).toContain('NUNCA chame nexus_mission_set_status com done sem PREVC');
+    expect(prompt).toMatch(/Use blocked/);
+    expect(prompt).toMatch(/use failed/i);
     expect(prompt).toMatch(/revis[aã]o independente/i);
     expect(prompt).toMatch(/mem[oó]ria dur[aá]vel/i);
     expect(prompt).toMatch(/context_doctor.*sob demanda/i);
   });
-
   it('keeps short-mission kickoffs lean: no goal restated as criterion, plan proportional', () => {
     const goal = 'Corrigir o botão de salvar no formulário de perfil';
     const prompt = buildIntentDispatchKickoffPrompt({
@@ -123,6 +125,22 @@ describe('orientationForKickoff', () => {
         throw new Error('cold cache');
       }, 50),
     ).resolves.toBeNull();
+  });
+  it('uses a read-only consult contract when lane=consult', () => {
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-consult',
+      goal: 'Checar logs da Vercel',
+      acceptanceCriteria: ['Resumo dos erros'],
+      risk: 'normal',
+      maxWorkers: 0,
+      lane: 'consult',
+    });
+    expect(prompt).toContain('lane=consult');
+    expect(prompt).toContain('somente leitura');
+    expect(prompt).not.toContain('nexus_mission_freeze_contract');
+    expect(prompt).not.toContain('nexus_merge_task');
+    expect(prompt).toMatch(/status=blocked/);
   });
 });
 

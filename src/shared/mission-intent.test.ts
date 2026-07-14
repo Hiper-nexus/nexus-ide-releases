@@ -12,6 +12,8 @@ import {
   classifyGoalRisk,
   compileIntentContract,
   estimateEffectfulToolTokens,
+  isConsultLane,
+  canCompleteConsultLane,
   hasApprovedDispatchContract,
   hasCurrentDispatchAuthority,
   isAutoDerivedCriterion,
@@ -226,7 +228,6 @@ describe('compileIntentContract', () => {
       compileIntentContract({ goal: '   ', intentVersion: 1 }),
     ).toThrow(/intent_required/);
   });
-
   it('marks the synthesized criterion so prompt builders can dedupe it', () => {
     const derived = compileIntentContract({
       goal: 'Corrigir o botão de salvar',
@@ -241,6 +242,24 @@ describe('compileIntentContract', () => {
       acceptanceCriteria: ['Formulário salva sem erro'],
     });
     expect(explicit.acceptanceCriteria.some(isAutoDerivedCriterion)).toBe(false);
+  });
+
+  it('builds a consult-lane contract with zero workers and explicit lane', () => {
+    const consult = compileIntentContract({
+      goal: 'Ler logs da Vercel e resumir erros',
+      intentVersion: 1,
+      lane: 'consult',
+    });
+    expect(consult.lane).toBe('consult');
+    expect(consult.budgets.maxWorkers).toBe(0);
+    expect(isConsultLane({ intentContract: consult })).toBe(true);
+    expect(isConsultLane({ intentContract: undefined })).toBe(false);
+    expect(canCompleteConsultLane({ note: 'curto' })).toBe(false);
+    expect(
+      canCompleteConsultLane({
+        note: 'Resumo: 3 deploys falharam por timeout no build step de TypeScript.',
+      }),
+    ).toBe(true);
   });
 });
 

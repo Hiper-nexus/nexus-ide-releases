@@ -47,6 +47,8 @@ export interface DelegationProgress {
  */
 export function isDelegationSupervisable(progress: DelegationProgress): boolean {
   if (progress.expectedWorkers === 0) return false;
+  // Consult lane is read-only investigation — no worker/worktree expectation.
+  if (progress.mission.intentContract?.lane === 'consult') return false;
   if (!['pending', 'running'].includes(progress.mission.status)) return false;
   if (progress.hasBoundOrchestrator === false) return false;
   const intentState = resolveEffectiveIntentState({
@@ -120,21 +122,19 @@ export function delegationRecoveryStage(
 function recoverySummary(missionId: string, stage: 1 | 2): string {
   const key = recoveryHandoffIdempotencyKey(missionId, stage);
   if (stage === 1) {
+    // Keep short: long PREVC dumps make the orchestrator treat recovery as
+    // injection and refuse. Role = plan + spawn workers only, never implement.
     return (
-      `incidente de orquestração: a missão ${missionId} já foi despachada e ` +
-      'excedeu o prazo sem registrar tarefas nem colocar especialistas para ' +
-      'trabalhar. Retome o plano já aprovado: registre as tarefas pendentes e ' +
-      'delegue as independentes. Só use nexus_context_doctor se o contrato ' +
-      'permitir e o mapa estiver frio. Não invente objetivo novo, não contorne ' +
-      `PREVC e não execute o trabalho no orquestrador. [${key}]`
+      `Recuperação de orquestração (sistema Nexus) [${key}]: missão ${missionId} ` +
+      'despachada sem tasks/workers no prazo. Seu papel é SÓ orquestrar: registre ' +
+      'as tarefas do objetivo já aprovado e despache specialists. Não implemente ' +
+      'código no orquestrador. Não invente objetivo novo.'
     );
   }
+  // Stage 2 is audit-only (no PTY inject) — summary stays durable for UI/board.
   return (
-    `recuperação final de orquestração: a missão ${missionId} continua sem ` +
-    'tarefas ou especialistas após a primeira recuperação. Leia o resultado ' +
-    'estruturado do último tool call, tente somente o próximo passo determinístico ' +
-    'uma vez e, se ainda falhar, preserve a missão e marque-a blocked com o erro ' +
-    `exato. Não peça ao usuário para liberar shell nem repita o ciclo. [${key}]`
+    `Missão ${missionId} bloqueada automaticamente: ainda sem tasks/workers após ` +
+    `uma recuperação. [${key}]`
   );
 }
 
@@ -174,10 +174,44 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
     if (recoveries.some((h) => h.summary.includes(stageKey))) continue;
 
     if (mission.status === 'pending') suite.missions.setStatus(mission.id, 'running');
+
+    // Stage 2: stop nagging the orchestrator PTY. Mark blocked for the UI and
+    // keep an audit handoff without idle-delivery injection (agents treated
+    // untrusted stage-2 dumps as suspicious spam mid-conversation).
+    if (stage === 2) {
+      suite.missions.setStatus(mission.id, 'blocked');
+      // Audit-only handoff: mark submitted immediately so redeliverPendingHandoffs
+      // after restart cannot re-inject a stage-2 recovery into the PTY.
+      const stage2Handoff = suite.handoffs.submit({
+        missionId: mission.id,
+        status: 'stalled',
+        summary: recoverySummary(mission.id, 2),
+        fromAgent: DELEGATION_SUPERVISOR_AGENT,
+      });
+      suite.handoffs.markSubmitted(stage2Handoff.id);
+      emitMissionIntentEvent({
+        name: 'automatic_recovery',
+        missionId: mission.id,
+        squadId: mission.squadId,
+        intentState: resolveEffectiveIntentState({
+          mission,
+          taskCount: suite.tasks.list(mission.id).length,
+          workerPaneCount: panes.filter((pane) => pane.role === 'worker').length,
+        }),
+        intentVersion: mission.intentVersion,
+        reason: 'delegation_supervisor_stage_2_blocked',
+        meta: { stage: 2, deliveredToPty: false, deliveryState: 'submitted' },
+      });
+      console.warn(
+        `[delegation-supervisor] stage 2 — mission ${mission.id} blocked (no PTY inject, marked submitted)`,
+      );
+      continue;
+    }
+
     const handoff = suite.handoffs.submit({
       missionId: mission.id,
-      status: stage === 1 ? 'progress' : 'stalled',
-      summary: recoverySummary(mission.id, stage),
+      status: 'progress',
+      summary: recoverySummary(mission.id, 1),
       fromAgent: DELEGATION_SUPERVISOR_AGENT,
     });
     onHandoffSubmitted(handoff, suite.scope);
@@ -191,11 +225,11 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
         workerPaneCount: panes.filter((pane) => pane.role === 'worker').length,
       }),
       intentVersion: mission.intentVersion,
-      reason: `delegation_supervisor_stage_${stage}`,
-      meta: { stage },
+      reason: 'delegation_supervisor_stage_1',
+      meta: { stage: 1, deliveredToPty: true },
     });
     console.warn(
-      `[delegation-supervisor] recovery ${stage}/2 submitted for ${mission.id}`,
+      `[delegation-supervisor] recovery 1/2 submitted for ${mission.id}`,
     );
   }
 }

@@ -25,6 +25,7 @@ import { PixelIcon } from './PixelIcon';
 import { ActionCard, EmptyState } from './ActionCard';
 import { OperatorHud } from './OperatorHud';
 import { askConfirm } from '../state/confirm-store';
+import { confirmAndBlockMission } from '../orch/block-mission';
 import { AgentDropZone } from './AgentDropZone';
 import type { ExternalIssue } from '../../shared/integrations-types';
 import { useMissionWizardStore as useWizard } from '../state/mission-wizard-store';
@@ -191,6 +192,15 @@ export function MissionRail() {
           cause instanceof Error ? cause.message : 'Falha ao remover a missão.',
         );
       });
+  }
+
+  async function blockMission(m: Mission) {
+    setBusy(m.id);
+    setNote(null);
+    const result = await confirmAndBlockMission(m);
+    if (result.ok) setNote('Missão encerrada como bloqueada.');
+    else if (!result.cancelled && result.error) setNote(result.error);
+    setBusy(null);
   }
 
   function missionMeta(mission: Mission, liveInGrid: boolean): string {
@@ -496,6 +506,22 @@ export function MissionRail() {
                                 </span>
                               </span>
                             </button>
+                            {(m.status === 'pending' ||
+                              m.status === 'running') && (
+                              <button
+                                type="button"
+                                className="mission-rail__block"
+                                disabled={busy !== null}
+                                title="Encerrar como bloqueada (com justificativa)"
+                                aria-label={`Encerrar missão ${m.title} como bloqueada`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void blockMission(m);
+                                }}
+                              >
+                                <PixelIcon name="warn" size={10} />
+                              </button>
+                            )}
                             <button
                               type="button"
                               className="mission-rail__pin"

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  claudeOauthEmail,
   detectSubscriptionAuth,
   resolveAuthStrategy,
 } from './subscription-auth';
@@ -140,5 +141,19 @@ describe('detectSubscriptionAuth', () => {
 
   it('fails closed for a custom adapter without an auth detector', () => {
     expect(detectSubscriptionAuth('unknown-provider', tempHome())).toBe(false);
+  });
+
+  it('reads Claude email from ~/.claude.json oauthAccount (file-backed login)', () => {
+    const home = tempHome();
+    expect(claudeOauthEmail(home)).toBeNull();
+    fs.writeFileSync(
+      path.join(home, '.claude.json'),
+      JSON.stringify({
+        oauthAccount: { emailAddress: 'user@example.com' },
+      }),
+    );
+    expect(claudeOauthEmail(home)).toBe('user@example.com');
+    // File-backed account alone is enough even if Keychain probe fails.
+    expect(detectSubscriptionAuth('claude', home)).toBe(true);
   });
 });
