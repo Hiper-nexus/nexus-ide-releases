@@ -40,14 +40,15 @@ describe('materializeSquadMission', () => {
       updatedAt: 1,
     };
     const createMission = vi.fn(async () => mission);
-    const updateMission = vi.fn(async () => ({ ...mission, status: 'running' as const }));
+    const runningMission = { ...mission, status: 'running' as const };
+    const updateMission = vi.fn(async () => runningMission);
     const result = await materializeSquadMission(input, {
       waitForSession: async () => 'session-1',
       createMission,
       updateMission,
     });
 
-    expect(result).toEqual({ sessionId: 'session-1', mission });
+    expect(result).toEqual({ sessionId: 'session-1', mission: runningMission });
     expect(createMission).toHaveBeenCalledWith({
       title: 'Pet Hatch',
       squadId: 'pet-squad',
