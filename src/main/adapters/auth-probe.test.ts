@@ -6,6 +6,7 @@ vi.mock('electron', () => ({
 
 vi.mock('../persistence/provider-config-store', () => ({
   listProviderSettings: () => [
+    { adapterId: 'claude', installed: true, hasKey: false },
     { adapterId: 'grok', installed: true, hasKey: false },
     { adapterId: 'kimi', installed: true, hasKey: false },
     { adapterId: 'opencode', installed: true, hasKey: false },
@@ -15,6 +16,8 @@ vi.mock('../persistence/provider-config-store', () => ({
 
 vi.mock('./subscription-auth', () => ({
   hasSubscriptionAuth: (adapterId: string) => adapterId === 'grok',
+  detectSubscriptionAuth: (adapterId: string) => adapterId === 'grok',
+  claudeOauthEmail: () => 'retornoja@gmail.com',
 }));
 
 import { probeAdapterAuth } from './auth-probe';
@@ -24,6 +27,10 @@ describe('probeAdapterAuth provider-specific diagnostics', () => {
     const result = await probeAdapterAuth();
     const byId = Object.fromEntries(result.map((entry) => [entry.adapterId, entry]));
 
+    expect(byId.claude).toMatchObject({
+      state: 'ok',
+      detail: expect.stringContaining('retornoja@gmail.com'),
+    });
     expect(byId.grok).toMatchObject({ state: 'ok' });
     expect(byId.kimi).toMatchObject({
       state: 'missing',
