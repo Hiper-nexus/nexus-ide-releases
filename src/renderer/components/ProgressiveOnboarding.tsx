@@ -67,7 +67,7 @@ export function ProgressiveOnboarding({
   }
 
   return (
-    <div className="prog-onb" data-testid="progressive-onboarding">
+    <div className="prog-onb prog-onb--launch" data-testid="progressive-onboarding">
       <header className="prog-onb__header">
         <h1 className="prog-onb__title">Start</h1>
         <button type="button" className="prog-onb__escape" onClick={onSkip}>

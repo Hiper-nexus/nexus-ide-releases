@@ -32,9 +32,17 @@ Data: 2026-07-13
 - `docs/TERMINAL-BLOCKS.md`, `docs/MISSION-EVENTS.md`, `docs/SEARCH-MIXER.md`
 - SECURITY, OPERATIONS, MCP-HUB, SKILLS, MEMORY, EDITOR.
 
-### Non-goals this wave
-- Full UI onboarding/launcher, CodeMirror editor, MCP Hub, skills catalog,
-  BridgeMemory MD, autonomy profiles (flagged for later waves).
+### Shell polish (follow-up)
+- App body layout restored: mission-rail / files / grid as **direct**
+  `.app__body` children so home-deck z-index and flex growth work again;
+  ContextualPanel is a flex sibling on the right.
+- **Progressive onboarding** mounted as default launch (no workspace); skip
+  falls back to classic LaunchScreen; plan applies pane count / mode after
+  layout hydrate.
+
+### Deferred (honest)
+- CodeMirror 6 package install; MCP OAuth/SSE live clients; autonomy enforce
+  in mcp-dispatch; CommandBlock terminal UI; journal consumer UI.
 
 ## 0.15.4 — Jarvis Wake Safety
 

@@ -78,6 +78,7 @@ import {
 } from './components/product/ProductPanelBodies';
 import type { LAUNCHER_MODES } from '../shared/progressive-onboarding';
 import type { ContextualTab } from '../shared/contextual-panel';
+import { applyProgressiveLaunchIfPending } from './lib/progressive-launch';
 
 /** Primeiro frame do cockpit: marca pulsando enquanto os instrumentos ligam. */
 function BootScreen() {
@@ -269,6 +270,12 @@ export function App() {
     return () => setBrowserPaneSuppression('modal-overlay', false);
   }, []);
 
+  // Progressive onboarding: apply stashed plan after workspace layout hydrates.
+  useEffect(() => {
+    if (!workspaceHydrated || !currentWorkspace || !hydrated) return;
+    applyProgressiveLaunchIfPending();
+  }, [workspaceHydrated, currentWorkspace, hydrated]);
+
   // Deep link nexus://open?path=… / abrir-com no Finder: abre o workspace
   // (diretório) ou o workspace-pai do arquivo. Validado no main (path absoluto).
   useEffect(() => {
@@ -408,16 +415,17 @@ export function App() {
         onOpenIntegrations={() => setIntegrationsOpen(true)}
       />
       <ModeLauncher activeId={launcherMode} onSelect={onModeSelect} />
+      {/*
+        Direct children of .app__body must stay: mission-rail, files, grid/canvas.
+        Existing CSS (home-deck z-index, flex growth) targets those selectors.
+        ContextualPanel is an extra flex sibling on the right.
+      */}
       <main className="app__body app__body--with-ctx">
-        <div className="app__main-col">
-          <div className="app__body-inner" style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-            <MissionRail />
-            <FilesPanel />
-            {viewKind === 'canvas' ? <CanvasView /> : <PaneGrid />}
-            <HomeDeck />
-            <OrchestrationPanel />
-          </div>
-        </div>
+        <MissionRail />
+        <FilesPanel />
+        {viewKind === 'canvas' ? <CanvasView /> : <PaneGrid />}
+        <HomeDeck />
+        <OrchestrationPanel />
         <ContextualPanel
           flagEnabled
           workspaceId={currentWorkspace?.path}

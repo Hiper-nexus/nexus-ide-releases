@@ -1,17 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AdapterInfo } from '../../shared/types';
+import type { ProgressiveLaunch } from '../../shared/progressive-onboarding';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useOrchStore } from '../state/orch-store';
+import {
+  clearProgressiveLaunch,
+  stashProgressiveLaunch,
+} from '../lib/progressive-launch';
 import { NexusMark } from './NexusMark';
 import { PixelIcon } from './PixelIcon';
+import { ProgressiveOnboarding } from './ProgressiveOnboarding';
 
 /**
  * Launch / onboarding screen — the first surface when no workspace is open:
- * open a folder (picker), or reopen a recent workspace.
+ * progressive Start flow by default, with skip → classic advanced launcher.
  * Choosing a workspace roots every new pane/mission at that folder.
  */
+
+const SKIP_KEY = 'nexus.progressiveOnboarding.skipped';
 
 function timeAgo(ts: number): string {
   const mins = Math.max(0, Math.floor((Date.now() - ts) / 60000));
@@ -25,6 +33,7 @@ function timeAgo(ts: number): string {
 export function LaunchScreen() {
   const recents = useWorkspaceStore((s) => s.recents);
   const open = useWorkspaceStore((s) => s.open);
+  const pick = useWorkspaceStore((s) => s.pick);
   const remove = useWorkspaceStore((s) => s.remove);
   const openSettings = useSettingsStore((s) => s.toggleDrawer);
   const openWizard = useMissionWizardStore((s) => s.openForNewWorkspace);
@@ -34,6 +43,13 @@ export function LaunchScreen() {
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [adaptersLoaded, setAdaptersLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [advanced, setAdvanced] = useState(() => {
+    try {
+      return sessionStorage.getItem(SKIP_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
 
   const installed = useMemo(
     () => adapters.filter((adapter) => adapter.installed),
@@ -98,6 +114,94 @@ export function LaunchScreen() {
     await openPath(path);
   }
 
+  async function handleProgressiveLaunch(plan: ProgressiveLaunch) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      stashProgressiveLaunch(plan);
+      if (plan.recentWorkspacePath) {
+        await open(plan.recentWorkspacePath);
+        return;
+      }
+      // Folder picker opens a workspace; plan applies after layout hydrate.
+      const before = useWorkspaceStore.getState().current?.path ?? null;
+      await pick();
+      const after = useWorkspaceStore.getState().current?.path ?? null;
+      if (!after || after === before) {
+        // User cancelled the dialog — drop stashed plan.
+        clearProgressiveLaunch();
+      }
+    } catch (cause) {
+      clearProgressiveLaunch();
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : 'Não foi possível abrir este workspace.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function skipToAdvanced() {
+    try {
+      sessionStorage.setItem(SKIP_KEY, '1');
+    } catch {
+      /* ignore */
+    }
+    setAdvanced(true);
+  }
+
+  if (!advanced) {
+    return (
+      <div className="launch launch--progressive" data-testid="launch-progressive">
+        <header className="launch__topbar">
+          <div className="workspace-bar__brand">
+            <NexusMark size={15} className="workspace-bar__logo" />
+            <span className="workspace-bar__name">NexusIDE</span>
+          </div>
+          <button
+            className="workspace-bar__btn"
+            onClick={openSettings}
+            title="Providers, keys, catálogo e temas"
+          >
+            <PixelIcon name="config" />
+            Configurações
+          </button>
+        </header>
+        <main className="launch__panel" aria-busy={busy}>
+          <ProgressiveOnboarding
+            flagEnabled
+            recents={recents.map((r) => ({ path: r.path, label: r.name }))}
+            onLaunch={(plan) => void handleProgressiveLaunch(plan)}
+            onSkip={skipToAdvanced}
+            onOpenTerminalOnly={() => {
+              stashProgressiveLaunch({
+                mode: 'terminal-only',
+                paneCount: 1,
+                agentDistribution: 'none',
+                openWithoutAi: true,
+              });
+              void pick().catch((cause) => {
+                setError(
+                  cause instanceof Error
+                    ? cause.message
+                    : 'Não foi possível abrir este workspace.',
+                );
+              });
+            }}
+          />
+          {error && (
+            <p className="launch__error" role="alert" style={{ marginTop: 12 }}>
+              {error}
+            </p>
+          )}
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="launch">
       <header className="launch__topbar">
@@ -105,6 +209,20 @@ export function LaunchScreen() {
           <NexusMark size={15} className="workspace-bar__logo" />
           <span className="workspace-bar__name">NexusIDE</span>
         </div>
+        <button
+          className="workspace-bar__btn"
+          onClick={() => {
+            try {
+              sessionStorage.removeItem(SKIP_KEY);
+            } catch {
+              /* ignore */
+            }
+            setAdvanced(false);
+          }}
+          title="Voltar ao início guiado"
+        >
+          Início guiado
+        </button>
         <button
           className="workspace-bar__btn"
           onClick={openSettings}

@@ -223,47 +223,257 @@
   word-break: break-all;
 }
 
+/* Contextual panel rides as a flex sibling of rail/files/grid (see App.tsx). */
 .app__body--with-ctx {
-  display: flex;
+  /* display:flex already on .app__body; keep min-height for nested panes */
   min-height: 0;
 }
 
-.app__main-col {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+.app__body--with-ctx > .ctx-panel {
+  margin: 0;
+  max-height: 100%;
+  overflow: hidden;
 }
 
+/* ---- Progressive onboarding (launch / no workspace) ---- */
 .prog-onb {
-  max-width: 520px;
-  margin: 48px auto;
-  padding: 24px;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 28px 28px 24px;
   border-radius: 12px;
-  background: var(--surface-1, #0d0d0f);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-elevated, #0d0d0f);
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.08));
+  box-shadow: var(--shadow-2, 0 12px 40px rgba(0, 0, 0, 0.35));
+  color: var(--text, #fafafa);
+}
+
+.prog-onb--launch {
+  margin: 32px auto;
 }
 
 .prog-onb__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  gap: 12px;
+  margin-bottom: 20px;
 }
 
 .prog-onb__title {
   margin: 0;
-  font-size: 18px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.prog-onb__escape {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #a1a1aa);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.prog-onb__step h2 {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.prog-onb__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.prog-onb__card {
+  appearance: none;
+  text-align: left;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  border-radius: 10px;
+  padding: 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 72px;
+}
+
+.prog-onb__card strong {
+  font-size: 13px;
+}
+
+.prog-onb__card span {
+  font-size: 11px;
+  color: var(--text-secondary, #a1a1aa);
+  line-height: 1.35;
+}
+
+.prog-onb__card.is-active {
+  border-color: color-mix(in srgb, var(--accent, #fafafa) 55%, transparent);
+  background: color-mix(in srgb, var(--accent, #fafafa) 10%, transparent);
+}
+
+.prog-onb__pane-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.prog-onb__pane {
+  appearance: none;
+  min-width: 40px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.prog-onb__pane.is-active {
+  background: #fafafa;
+  color: #0a0a0a;
+  border-color: #fafafa;
+}
+
+.prog-onb__recents {
+  margin-top: 16px;
+}
+
+.prog-onb__recents h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #a1a1aa);
+  font-weight: 500;
+}
+
+.prog-onb__recents ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.prog-onb__recents button {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prog-onb__recents button:hover {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.prog-onb__check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 8px 0 12px;
+  cursor: pointer;
+}
+
+.prog-onb__agent-ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.prog-onb__agent-ops button {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: inherit;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.prog-onb__agent-ops button.is-active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.prog-onb__summary {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--text-secondary, #a1a1aa);
+  line-height: 1.45;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.prog-onb__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.prog-onb__actions > button {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: inherit;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .prog-onb__primary {
   appearance: none;
-  border: none;
-  background: #fafafa;
-  color: #0a0a0a;
+  border: none !important;
+  background: #fafafa !important;
+  color: #0a0a0a !important;
   border-radius: 8px;
   padding: 8px 14px;
   font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+}
+
+.prog-onb--disabled {
+  text-align: center;
+}
+
+.launch--progressive {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.launch--progressive .launch__topbar {
+  flex: 0 0 auto;
+}
+
+.launch--progressive .launch__panel {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px 16px 48px;
 }
