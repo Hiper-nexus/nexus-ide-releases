@@ -57,4 +57,22 @@ describe('missionEndorphinForTransition', () => {
     );
     expect(hit?.kind).toBe('failed');
   });
+
+  it('dispara "launched" quando a missão começa a rodar (pending → running)', () => {
+    const hit = missionEndorphinForTransition('pending', mission({ status: 'running' }));
+    expect(hit?.kind).toBe('launched');
+    expect(hit?.kicker).toMatch(/lançad|frota|em campo/i);
+  });
+
+  it('não re-dispara launched em running → running', () => {
+    expect(
+      missionEndorphinForTransition('running', mission({ status: 'running' })),
+    ).toBeNull();
+  });
+
+  it('retomar de blocked para running também é um launched', () => {
+    const hit = missionEndorphinForTransition('blocked', mission({ status: 'running' }));
+    expect(hit?.kind).toBe('launched');
+  });
 });
+

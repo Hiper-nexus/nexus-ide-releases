@@ -1,6 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MissionStatus } from '../../shared/orch-types';
-import { missionEndorphinForTransition } from '../../shared/mission-endorphin';
+import {
+  handoffEndorphin,
+  missionEndorphinForTransition,
+  type MissionEndorphinKind,
+} from '../../shared/mission-endorphin';
 import { useOrchStore } from '../state/orch-store';
 import { useGamificationStore } from '../state/gamification-store';
 import { useToastStore } from '../state/toast-store';
@@ -15,10 +19,17 @@ const BURST_MS = 2_400;
 
 interface Burst {
   id: number;
-  kind: 'green' | 'done' | 'failed';
+  kind: MissionEndorphinKind;
   kicker: string;
   label: string;
 }
+
+const CELEBRATING_KINDS: ReadonlySet<MissionEndorphinKind> = new Set([
+  'green',
+  'launched',
+  'milestone',
+  'handoff',
+]);
 
 let seq = 0;
 
@@ -31,10 +42,12 @@ function reducedMotion(): boolean {
 
 export function MissionEndorphinFx() {
   const missions = useOrchStore((s) => s.missions);
+  const handoffs = useOrchStore((s) => s.handoffs);
   const sober = useGamificationStore((s) => s.sober);
   const snapshot = useGamificationStore((s) => s.snapshot);
   const pushToast = useToastStore((s) => s.push);
   const prev = useRef<Map<string, MissionStatus>>(new Map());
+  const seenHandoffs = useRef<Set<string> | null>(null);
   // DOM timer id is `number` — not NodeJS.Timeout (tsc DOM vs @types/node).
   const dismissRef = useRef<number | null>(null);
   const [burst, setBurst] = useState<Burst | null>(null);
@@ -47,6 +60,20 @@ export function MissionEndorphinFx() {
     };
   }, []);
 
+  const fireBurst = useCallback(
+    (kind: MissionEndorphinKind, kicker: string, label: string) => {
+      if (sober || kind === 'failed') return;
+      const id = ++seq;
+      setBurst({ id, kind, kicker, label });
+      if (dismissRef.current !== null) window.clearTimeout(dismissRef.current);
+      dismissRef.current = window.setTimeout(
+        () => setBurst((b) => (b?.id === id ? null : b)),
+        BURST_MS,
+      );
+    },
+    [sober],
+  );
+
   useEffect(() => {
     const before = prev.current;
     const next = new Map<string, MissionStatus>();
@@ -55,32 +82,32 @@ export function MissionEndorphinFx() {
       const prior = before.get(m.id);
       const hit = missionEndorphinForTransition(prior, m);
       if (!hit) continue;
-
-      if (hit.kind === 'failed') {
-        pushToast('warn', hit.kicker, hit.label);
-      } else {
-        pushToast('success', hit.kicker, hit.label);
-      }
-
-      if (!sober && hit.kind !== 'failed') {
-        const id = ++seq;
-        setBurst({
-          id,
-          kind: hit.kind,
-          kicker: hit.kicker,
-          label: hit.label,
-        });
-        if (dismissRef.current !== null) {
-          window.clearTimeout(dismissRef.current);
-        }
-        dismissRef.current = window.setTimeout(
-          () => setBurst((b) => (b?.id === id ? null : b)),
-          BURST_MS,
-        );
-      }
+      pushToast(hit.kind === 'failed' ? 'warn' : 'success', hit.kicker, hit.label);
+      fireBurst(hit.kind, hit.kicker, hit.label);
     }
     prev.current = next;
-  }, [missions, sober, pushToast]);
+  }, [missions, pushToast, fireBurst]);
+
+  useEffect(() => {
+    // First render just seeds the baseline — never celebrate the backlog.
+    if (seenHandoffs.current === null) {
+      seenHandoffs.current = new Set(handoffs.map((h) => h.id));
+      return;
+    }
+    const seen = seenHandoffs.current;
+    for (const h of handoffs) {
+      if (seen.has(h.id)) continue;
+      seen.add(h.id);
+      const hit = handoffEndorphin({
+        status: h.status,
+        agentName: h.fromAgent ?? 'worker',
+        summary: h.summary,
+      });
+      if (!hit) continue;
+      pushToast('success', hit.kicker, hit.label);
+      fireBurst(hit.kind, hit.kicker, hit.label);
+    }
+  }, [handoffs, pushToast, fireBurst]);
 
   if (sober || !burst) return null;
 
@@ -97,7 +124,7 @@ export function MissionEndorphinFx() {
       <span className="mission-fx__pet" aria-hidden="true">
         <ChosenPetPortrait
           size={72}
-          mood={burst.kind === 'green' ? 'celebrating' : 'idle'}
+          mood={CELEBRATING_KINDS.has(burst.kind) ? 'celebrating' : 'idle'}
           fallbackTier={snapshot.tier}
           fallbackBranch={snapshot.branch}
           fallbackSkin={snapshot.selectedSkin}
