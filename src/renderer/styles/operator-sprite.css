@@ -1,0 +1,34 @@
+/* Companion motion: alive enough to feel present, quiet enough for a workbench. */
+
+.operator-sprite {
+  display: block;
+  transform-origin: 50% 88%;
+  will-change: transform;
+}
+
+.operator-sprite--idle:not(.operator-sprite--still) {
+  animation: operator-companion-breathe 4.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes operator-companion-breathe {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(-0.35deg);
+  }
+  28% {
+    transform: translate3d(0, -0.6px, 0) rotate(0.2deg);
+  }
+  52% {
+    transform: translate3d(0, -1px, 0) rotate(0.45deg);
+  }
+  76% {
+    transform: translate3d(0, -0.35px, 0) rotate(-0.05deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .operator-sprite {
+    animation: none !important;
+    transform: none;
+  }
+}

@@ -1,5 +1,11 @@
+import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { operatorFrameMs, shouldAnimateOperatorMood } from './operator-motion';
+
+const spriteCss = fs.readFileSync(
+  new URL('../styles/operator-sprite.css', import.meta.url),
+  'utf8',
+);
 
 describe('operator sprite motion budget', () => {
   it('idle breathes but sleeping stays static', () => {
@@ -22,5 +28,10 @@ describe('operator sprite motion budget', () => {
   it('idle uses a slower cadence than action moods', () => {
     expect(operatorFrameMs('idle')).toBeGreaterThan(operatorFrameMs('celebrating'));
     expect(operatorFrameMs('celebrating')).toBe(operatorFrameMs('evolving'));
+  });
+
+  it('uses a calm compositor motion with a reduced-motion escape hatch', () => {
+    expect(spriteCss).toContain('operator-companion-breathe');
+    expect(spriteCss).toContain('prefers-reduced-motion: reduce');
   });
 });

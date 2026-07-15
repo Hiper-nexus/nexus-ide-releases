@@ -77,7 +77,9 @@ export function OperatorSprite({
   );
 
   useEffect(() => {
-    if (!animated) {
+    // Idle is animated by the compositor below. Keeping its canvas on one
+    // frame avoids the hard one-pixel jumps that read as blinking at 32–52px.
+    if (!animated || mood === 'idle') {
       setFrame(0);
       return;
     }
@@ -106,9 +108,10 @@ export function OperatorSprite({
 
     ctx.clearRect(0, 0, px, px);
     ctx.globalAlpha = mood === 'sleeping' ? 0.55 : 1;
-    const bodyBob = frame === 1 || frame === 2 ? -scale : 0;
-    const accentNudge = frame === 2 ? scale : 0;
-    const auraOn = mood !== 'idle' || frame !== 2;
+    const frameDriven = mood !== 'idle';
+    const bodyBob = frameDriven && (frame === 1 || frame === 2) ? -scale : 0;
+    const accentNudge = frameDriven && frame === 2 ? scale : 0;
+    const auraOn = mood === 'idle' || frame !== 2;
     for (let y = 0; y < GRID_SIZE; y += 1) {
       for (let x = 0; x < GRID_SIZE; x += 1) {
         const idx = OPERATOR_GRID[y][x];
@@ -128,7 +131,7 @@ export function OperatorSprite({
   return (
     <canvas
       ref={canvasRef}
-      className="operator-sprite"
+      className={`operator-sprite operator-sprite--${mood} ${animated ? '' : 'operator-sprite--still'}`}
       style={{ width: size, height: size, imageRendering: 'pixelated' }}
       aria-hidden="true"
     />

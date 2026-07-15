@@ -5,6 +5,7 @@
 
 @import './base.css';
 @import './agent-avatar.css';
+@import './operator-sprite.css';
 @import './provider-logo.css';
 @import './overlays.css';
 @import './canvas-cockpit.css';

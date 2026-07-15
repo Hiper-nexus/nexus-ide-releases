@@ -30,6 +30,8 @@ interface SheetPetSpriteProps {
 }
 
 const FRAME_MS = 140;
+/** Idle sheets need a readable pose, not a rapid flipbook. */
+const IDLE_FRAME_MS = 480;
 /** Corrida — packs petdex têm frames bem distintos. */
 const RUN_FRAME_MS = 100;
 
@@ -360,7 +362,8 @@ export function SheetPetSprite({
     if (paused || isLooking || spec.frames <= 1 || prefersReducedMotion()) {
       return undefined;
     }
-    const cadence = family === "run" ? RUN_FRAME_MS : FRAME_MS;
+    const cadence =
+      family === "run" ? RUN_FRAME_MS : anim === "idle" ? IDLE_FRAME_MS : FRAME_MS;
     const timer = window.setInterval(
       () => setFrame((f) => (f + 1) % spec.frames),
       cadence,
