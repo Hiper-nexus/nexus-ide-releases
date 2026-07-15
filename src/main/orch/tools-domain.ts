@@ -4,6 +4,7 @@ import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
 import { recordRouteDecision } from './route-provenance';
+import { recordRouteLog, recentRouteLog } from './route-log';
 import { missionStatusSchema } from '../../shared/orch-types';
 import { findAgent, listAgents, saveSquad } from './squad-store';
 import { DEFAULT_TODO_LIST } from './todo-store';
@@ -809,6 +810,31 @@ const todoManagerTool: McpToolDef = {
 
 const TIERS: TaskTier[] = ['trivial', 'easy', 'medium', 'hard', 'critical'];
 
+const routeLogTool: McpToolDef = {
+  name: 'nexus_route_log',
+  description:
+    'Inspect the recent nexus_route_task decisions with their reason — so ' +
+    'the adapter/model choice is auditable instead of invisible. Returns the ' +
+    'most-recent-first list of {seq, tier, adapterId, model, effort, reason, ' +
+    'taskPreview}. Read-only; useful to explain why a provider was (not) used.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      limit: {
+        type: 'number',
+        description: 'Max entries to return (default 20)',
+      },
+    },
+  },
+  handler: async (args) => {
+    const limitRaw = args.limit;
+    const limit = typeof limitRaw === 'number' && Number.isFinite(limitRaw)
+      ? Math.max(1, Math.min(50, Math.floor(limitRaw)))
+      : 20;
+    return { decisions: recentRouteLog(limit) };
+  },
+};
+
 const routeTaskTool: McpToolDef = {
   name: 'nexus_route_task',
   description:
@@ -865,6 +891,16 @@ const routeTaskTool: McpToolDef = {
     // Proveniência: o spawn ad-hoc de modelos com warning de catálogo exige
     // uma decisão recente do router (ver adHocSpawnGateError em tools-panes).
     recordRouteDecision({ adapterId: decision.adapterId, model: decision.model });
+    // Observabilidade ("ver para crer"): registra a decisão + motivo para
+    // inspeção, já que o reason antes só existia no retorno consumido pelo LLM.
+    recordRouteLog({
+      task,
+      tier: decision.tier,
+      adapterId: decision.adapterId,
+      model: decision.model,
+      effort: decision.effort,
+      reason: decision.reason,
+    });
     return decision;
   },
 };
@@ -960,6 +996,7 @@ const cronTool: McpToolDef = {
 export function buildDomainTools(): McpToolDef[] {
   return [
     routeTaskTool,
+    routeLogTool,
     ...buildHandoffTools(),
     agentInvokeTool,
     agentListTool,

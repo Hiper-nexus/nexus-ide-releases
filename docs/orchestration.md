@@ -26,6 +26,7 @@ Aliases aceitos em `tools/call`: `nexus_pane_spawn` ≡ `pane_spawn` (o
 | Missões (5) | `nexus_mission_create`, `nexus_mission_get`, `nexus_mission_list`, `nexus_mission_set_status`, `nexus_mission_spawn_pane` |
 | Squad/Catálogo/Task (3) | `nexus_squad_save`, `nexus_catalog_install`, `nexus_task` |
 | Todos (1) | `nexus_todo_manager` |
+| Roteamento (2) | `nexus_route_task` (decide adapter/model/effort por tier+catálogo), `nexus_route_log` (auditoria read-only das últimas decisões com o motivo — "ver para crer") |
 
 ## Handoffs (SQLite + IPC — melhoria sobre marker files)
 
