@@ -106,6 +106,18 @@ export function HomeDeck() {
       ? homeCliBeat()
       : homeWarmingBeat();
 
+  function openTerminalFromHome(): void {
+    const panes = listPanes(useLayoutStore.getState().root);
+    const loneShell =
+      panes.length === 1 && panes[0]?.kind === 'shell' && !panes[0].orchRequestId;
+    hide();
+    if (loneShell) {
+      useLayoutStore.getState().focus(panes[0]!.id);
+      return;
+    }
+    addShellPane();
+  }
+
   if (!visible) return null;
 
   return (
@@ -224,10 +236,7 @@ export function HomeDeck() {
             </button>
             <button
               className="home-deck__btn"
-              onClick={() => {
-                hide();
-                addShellPane();
-              }}
+              onClick={openTerminalFromHome}
             >
               <PixelIcon name="terminal" />
               Abrir terminal

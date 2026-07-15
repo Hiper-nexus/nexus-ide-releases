@@ -15,7 +15,7 @@ import { useSessionStateStore } from '../state/session-state-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { setActiveWorkspacePath } from '../state/active-workspace';
-import { buildGridTree } from '../lib/split-tree';
+import { buildGridTree, listPanes } from '../lib/split-tree';
 
 vi.mock('../terminal/terminal-host', () => ({
   applyTerminalSettings: vi.fn(),
@@ -174,6 +174,34 @@ describe('operational Home and Launch surfaces', () => {
     expect(host.textContent).toContain('MCP online · 71 ferramentas');
     expect(host.textContent).toContain('Próxima ação');
     expect(host.textContent).toContain('Iniciar missão');
+
+    act(() => root.unmount());
+  });
+
+  it('reuses the hidden placeholder shell when opening the terminal from Home', async () => {
+    const pane = { id: 'shell-1', kind: 'shell' as const, title: 'shell' };
+    useHomeStore.setState({ visible: true });
+    useWorkspaceStore.setState({
+      current: {
+        name: 'nexus-ide',
+        path: '/Users/test/nexus-ide',
+        lastOpenedAt: Date.now(),
+      },
+    });
+    useLayoutStore.setState({ root: buildGridTree([pane]), focusedPaneId: pane.id });
+
+    const { host, root } = mount(<HomeDeck />);
+    await act(async () => {});
+
+    const terminal = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Abrir terminal'),
+    );
+    await act(async () => terminal?.click());
+
+    expect(useHomeStore.getState().visible).toBe(false);
+    expect(listPanes(useLayoutStore.getState().root).map((item) => item.id)).toEqual([
+      'shell-1',
+    ]);
 
     act(() => root.unmount());
   });

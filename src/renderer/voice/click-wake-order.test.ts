@@ -37,4 +37,12 @@ describe('click wake order', () => {
     expect(source).toContain('const CLICK_WAKE_MIN_LISTEN_MS = 1_125');
     expect(source).toContain('const CLICK_WAKE_MAX_MS = 22_000');
   });
+
+  it('serializes repeated manual clicks while a turn is active', () => {
+    expect(source).toContain("source === 'click'");
+    expect(source).toContain('busy.current');
+    expect(source).toContain("'jarvis.clickIgnoredBusy'");
+    // Voice wake remains the explicit barge-in path while Jarvis is speaking.
+    expect(source).toContain("voiceStatus !== 'speaking' || isListening(capture.current)");
+  });
 });

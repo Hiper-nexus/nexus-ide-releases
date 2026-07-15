@@ -386,6 +386,23 @@ export function useVoiceController(): void {
         return;
       }
       const voiceStatus = useVoiceStore.getState().status;
+      // A barra da Jarvis pode receber cliques repetidos enquanto o primeiro
+      // turno ainda está abrindo, transcrevendo ou fazendo fallback para o
+      // Classic. Reabrir nesse intervalo desmonta/recria o Live em paralelo
+      // e pode cruzar o teardown da captura com a reconexão do provider.
+      // Barge-in acústico durante fala continua permitido; só o clique manual
+      // fica serializado até o turno atual liberar `busy`.
+      if (
+        source === 'click' &&
+        busy.current &&
+        (voiceStatus !== 'speaking' || isListening(capture.current))
+      ) {
+        console.log('[voice] clique ignorado (turno manual em andamento)');
+        logVoiceEvent('info', 'jarvis.clickIgnoredBusy', 'clique manual ignorado durante turno ativo', {
+          status: voiceStatus,
+        });
+        return;
+      }
       // Barge-in while she speaks is intentional full-duplex (voice → voice-barge).
       // Only ignore in fragile gaps (routing / suppressed burst) via the gate.
       if (
