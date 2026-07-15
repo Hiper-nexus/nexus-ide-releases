@@ -7,6 +7,7 @@ import {
   HUD_MAX_WIDTH,
   HUD_MIN_WIDTH,
   hudPositionStyle,
+  isHudMini,
   loadHudPrefs,
   nearestCorner,
   saveHudPrefs,
@@ -24,6 +25,11 @@ function fakeStorage(initial: Record<string, string> = {}) {
 }
 
 describe('hud-prefs', () => {
+  it('preserva o modo expandido quando a Jarvis está pronta para clique', () => {
+    expect(isHudMini('expanded')).toBe(false);
+    expect(isHudMini('mini')).toBe(true);
+  });
+
   it('clampa a largura dentro dos limites', () => {
     expect(clampHudWidth(100)).toBe(HUD_MIN_WIDTH);
     expect(clampHudWidth(9999)).toBe(HUD_MAX_WIDTH);

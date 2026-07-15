@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useVoiceStore, type VoiceUiStatus } from '../voice/voice-store';
-import { anchorFromDrag, hudPositionStyle } from '../voice/hud-prefs';
+import { anchorFromDrag, hudPositionStyle, isHudMini } from '../voice/hud-prefs';
 import { requestJarvisWake } from '../voice/manual-wake';
 import {
   powerOffJarvis,
@@ -109,7 +109,7 @@ export function VoiceHud() {
       ? `Jarvis ${liveLabel}`
       : PHASE_LABEL[status];
   const isError = status === 'error';
-  const isMini = hud.mode === 'mini' || canClickWake;
+  const isMini = isHudMini(hud.mode);
 
   // In toggle mode the send edge is a SECOND keypress — say so, or users
   // hold-release and think voice broke.

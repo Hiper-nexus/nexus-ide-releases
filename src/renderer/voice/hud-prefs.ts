@@ -37,6 +37,11 @@ export const DEFAULT_HUD_PREFS: HudPrefs = {
   width: 300,
 };
 
+/** The selected HUD mode is authoritative, including while Jarvis is idle. */
+export function isHudMini(mode: HudMode): boolean {
+  return mode === 'mini';
+}
+
 const STORAGE_KEY = 'nexus.voiceHud';
 
 export function clampHudWidth(width: number): number {
