@@ -62,6 +62,16 @@ describe('Live mute degradation', () => {
     expect(source).toContain('jarvis.realtimeMuteDegraded');
   });
 
+  it('wires a silent authorized Live rescue into the Classic fallback path', () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, 'voice-finish-and-process.ts'),
+      'utf-8',
+    );
+    expect(source).toContain('liveAnswerOutcomeFromEvidence(evidence)');
+    expect(source).toContain('rescueShouldDegradeToClassic = true');
+    expect(source).toContain('!rescueShouldDegradeToClassic');
+  });
+
   it('keeps Gemini warm until local STT proves a muted wake is meaningful', () => {
     const source = fs.readFileSync(
       path.join(__dirname, 'voice-finish-and-process.ts'),

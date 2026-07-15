@@ -112,6 +112,11 @@ export const CURRENT_RELEASE: AppRelease = {
         'A mensagem de espera ganha prioridade quando faltam prints ou áudios, e o mesmo detector libera imediatamente o fluxo quando a interação já trouxe um anexo.',
     },
     {
+      title: 'Live mudo entrega a resposta pelo Classic',
+      detail:
+        'Se uma transcrição de resgate já autorizada não recebe áudio nem tool-call do provider Live, o Nexus transfere o turno para cérebro e TTS Classic em vez de voltar ao usuário em silêncio.',
+    },
+    {
       title: 'Ownership e DAG endurecidos',
       detail:
         'Claims de diretório agora colidem com arquivos descendentes, e self-dependency, dependências desconhecidas e ciclos não podem prender uma missão indefinidamente.',

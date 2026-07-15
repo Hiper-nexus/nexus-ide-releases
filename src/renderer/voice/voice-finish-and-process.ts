@@ -84,6 +84,7 @@ import {
 } from './live-followup';
 import {
   hasRealtimeProviderAudioAnswer,
+  liveAnswerOutcomeFromEvidence,
   shouldRearmAfterAudioOnly,
 } from './live-wake-greeting';
 import { followUpAuthority } from './follow-up-authority';
@@ -580,6 +581,7 @@ export async function finishAndProcess(
       const explicitCapture = shouldFallbackClassicAfterRealtimeMute(
         activeCaptureReason,
       );
+      let rescueShouldDegradeToClassic = false;
       if (
         shouldAttemptLiveMuteRescue({
           realtimeIsOwner,
@@ -652,8 +654,9 @@ export async function finishAndProcess(
                 lastToolAt: lastRealtimeNativeToolAt,
               }),
             });
-            if (evidence === 'superseded') return;
-            if (evidence === 'audio' || evidence === 'tool') {
+            const rescueOutcome = liveAnswerOutcomeFromEvidence(evidence);
+            if (rescueOutcome === 'abort') return;
+            if (rescueOutcome === 'commit') {
               const claimedRealtimeAudio =
                 evidence === 'audio' && turnExecution.claim('realtime-audio', turnToken);
               resetLiveMuteRescues();
@@ -680,6 +683,11 @@ export async function finishAndProcess(
               }
               return;
             }
+            rescueShouldDegradeToClassic = true;
+          } else {
+            // The provider refused the already-authorized local transcript;
+            // Classic must own it instead of returning the user to silence.
+            rescueShouldDegradeToClassic = true;
           }
           logVoiceEvent(
             'warn',
@@ -701,7 +709,8 @@ export async function finishAndProcess(
       // however, must degrade when Live produced neither audio nor transcript.
       if (
         realtimeIsOwner &&
-        !explicitCapture
+        !explicitCapture &&
+        !rescueShouldDegradeToClassic
       ) {
         // Continuidade: reabre escuta enquanto Live está quente. Nunca desligar
         // realtimeTurnActive com socket vivo — isso era "cade o realtime".
@@ -745,9 +754,9 @@ export async function finishAndProcess(
         }
         return;
       }
-      // No realtime response for an explicit user capture. Keep the socket warm
-      // until local STT proves this was meaningful speech: a bare wake/noise
-      // (for example Whisper's "[risos]") must not tear down Gemini or invoke
+      // No realtime response for an explicit capture, or an authorized reply
+      // rescue timed out. Keep the socket warm until local STT proves this was
+      // meaningful speech: a bare wake/noise must not tear down Gemini or invoke
       // Classic TTS just because the provider missed that one turn.
       realtimeMuteDegrade = true;
       quiesceLiveBeforeClassic = true;

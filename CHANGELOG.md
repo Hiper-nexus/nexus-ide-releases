@@ -26,7 +26,10 @@ Data: 2026-07-15
 - A fala de espera por prints/áudios agora vence respostas otimistas quando a
   missão realmente está aguardando evidência; anexos já presentes liberam o
   fluxo sem falso bloqueio.
-- Suíte completa validada: 664 arquivos de teste e 4.641 testes passando.
+- Quando o Live aceita uma transcrição local de resgate mas não produz áudio
+  nem tool-call no prazo, o turno autorizado passa para o cérebro/TTS Classic
+  em vez de terminar em silêncio; turnos superseded continuam abortando.
+- Suíte completa validada: 665 arquivos de teste e 4.648 testes passando.
 - Package, server, lockfile, changelog e release notes ficam alinhados em
   `0.16.5`.
 
