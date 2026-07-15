@@ -913,15 +913,20 @@ const routeTaskTool: McpToolDef = {
     // Failover de rate limit: o orquestrador re-roteia excluindo a CLI que
     // acabou de estourar cota/quebrar, em vez de insistir nela.
     const excluded = new Set(strArray(args, 'exclude'));
-    const adapters = listProviderSettings().map((a) => ({
-      id: a.adapterId,
-      installed:
-        !excluded.has(a.adapterId) &&
-        a.enabled &&
-        a.installed &&
-        a.authStrategy !== 'login-needed',
-      models: a.models,
-    }));
+    const adapters = listProviderSettings()
+      // 'shell' não é um provider roteável (sem modelos avaliados); incluí-lo
+      // mantinha o gate de cobertura do task-router sempre falso, matando a
+      // avaliação por dimensão. Alinha com o filtro id!=='shell' do architect.
+      .filter((a) => a.adapterId !== 'shell')
+      .map((a) => ({
+        id: a.adapterId,
+        installed:
+          !excluded.has(a.adapterId) &&
+          a.enabled &&
+          a.installed &&
+          a.authStrategy !== 'login-needed',
+        models: a.models,
+      }));
     // reserveClaude=true: workers nunca no binário claude OAuth — evita
     // corromper o keychain compartilhado com o orquestrador.
     const decision = routeTask(task, adapters, undefined, tier, true);

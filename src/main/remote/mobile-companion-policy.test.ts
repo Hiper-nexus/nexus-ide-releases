@@ -60,8 +60,20 @@ describe('mobileRpcKindForBridgeType', () => {
 
   it('mapeia tipos destrutivos futuros para o kind gateado', () => {
     expect(mobileRpcKindForBridgeType('git.push')).toBe('git.push');
+    expect(mobileRpcKindForBridgeType('git.reset')).toBe('git.reset');
+    expect(mobileRpcKindForBridgeType('worktree.remove')).toBe('worktree.remove');
+    expect(mobileRpcKindForBridgeType('fs.write')).toBe('fs.write');
     expect(mobileRpcKindForBridgeType('fs.delete')).toBe('fs.delete');
     expect(mobileRpcKindForBridgeType('mission.complete')).toBe('mission.complete');
+  });
+
+  it('cada destrutivo mapeado exige confirmação do device', () => {
+    for (const type of ['git.reset', 'worktree.remove', 'fs.write']) {
+      const kind = mobileRpcKindForBridgeType(type);
+      expect(kind).not.toBeNull();
+      expect(authorizeMobileRpc({ kind: kind!, deviceActive: true, deviceConfirmed: false }).allowed).toBe(false);
+      expect(authorizeMobileRpc({ kind: kind!, deviceActive: true, deviceConfirmed: true }).allowed).toBe(true);
+    }
   });
 
   it('retorna null para frames internos e controle não-modelado', () => {

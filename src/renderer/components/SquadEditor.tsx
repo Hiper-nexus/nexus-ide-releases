@@ -95,7 +95,15 @@ export function SquadEditor({ squad, onClose, onSaved }: Props) {
   }
 
   return (
-    <div className="squad-editor" role="dialog" aria-label={`Editar ${squad.name}`}>
+    <div
+      className="squad-editor"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Editar ${squad.name}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose();
+      }}
+    >
       <header className="squad-editor__head">
         <strong>
           {squad.builtin ? 'Duplicar e personalizar' : 'Editar squad'}

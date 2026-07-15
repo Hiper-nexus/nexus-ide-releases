@@ -91,12 +91,13 @@ const CRITICAL_SIGNALS = [
   // Com o match por prefixo-de-palavra, compostos genuínos precisam de
   // entrada própria: 'encrypt'/'unauthorized'/'cybersecurity'/'reautentic'
   // não começam com os sinais base ('crypt', 'authoriza', 'security', …).
-  'security', 'cybersecurity', 'segurança', 'vulnerab', 'auth', 'oauth',
-  'unauthorized', 'não autorizado', 'nao autorizado', 'autentica',
-  'reautentic', 'authoriza', 'autoriza', 'payment', 'pagamento', 'billing',
-  'cobrança', 'migration', 'migração', 'migracao', 'cript', 'crypt',
-  'encrypt', 'decrypt', 'encripta', 'desencripta', 'descriptografa',
-  'descriptografia', 'tenant', 'rls',
+  'security', 'cybersecurity', 'ciberseg', 'ciberata', 'segurança',
+  'vulnerab', 'auth', 'oauth', 'unauthorized', 'não autorizado',
+  'nao autorizado', 'desautoriz', 'autentica', 'reautentic', 'authoriza',
+  'autoriza', 'payment', 'pagamento', 'billing', 'cobrança', 'migration',
+  'migração', 'migracao', 'cript', 'crypt', 'encrypt', 'decrypt', 'encripta',
+  'reencript', 'desencripta', 'descriptografa', 'descriptografia',
+  'tenant', 'multitenant', 'rls',
   'produção', 'producao', 'production', 'data loss', 'perda de dados',
   'race condition', 'concorrência', 'concorrencia', 'deadlock', 'webhook',
   'secret', 'token',

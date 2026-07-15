@@ -223,6 +223,24 @@ describe('remote bridge', () => {
     socket.close();
   });
 
+  it('nega mission.complete do mobile (regra inviolável do companion gate)', async () => {
+    const token = await issueToken();
+    const socket = await authenticate(token);
+    const res = await rpc(socket, { id: 'mc', type: 'mission.complete' });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain('not authorized');
+    socket.close();
+  });
+
+  it('nega escrita destrutiva do mobile sem confirmação do device', async () => {
+    const token = await issueToken();
+    const socket = await authenticate(token);
+    const res = await rpc(socket, { id: 'gp', type: 'git.push' });
+    expect(res.ok).toBe(false);
+    expect(String(res.error)).toContain('not authorized');
+    socket.close();
+  });
+
   it('drops oversized frames via maxPayload', async () => {
     const socket = await connect();
     const closed = new Promise<void>((resolve) => {

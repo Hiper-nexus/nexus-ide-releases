@@ -13,19 +13,6 @@ import { findAgentInSquad } from './squad-store';
 import { adHocSpawnGateError } from './route-provenance';
 import { loadModelCatalog, modelCatalogInfo } from '../adapters/model-catalog';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
-
-// Default de model por adapter para o gate de proveniência: registry vivo
-// primeiro (respeita override do usuário), defs builtin como fallback (o
-// registry só é populado no boot do main — nunca em unit test).
-function defaultModelForAdapter(adapterId: string): string | undefined {
-  const live = listAdapterInfos().find((adapter) => adapter.id === adapterId);
-  if (live?.models.default) return live.models.default;
-  for (const raw of BUILTIN_ADAPTERS) {
-    const def = raw as { id?: string; models?: { default?: string } };
-    if (def.id === adapterId) return def.models?.default;
-  }
-  return undefined;
-}
 import {
   authorizePaneRef,
   authorizedSessionIdOf,
@@ -46,6 +33,19 @@ import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-regi
 import { getProjectDomainStores } from './project-domain-store-registry';
 
 /** The 11 pane tools of the embedded MCP server (tool group 1). */
+
+// Default de model por adapter para o gate de proveniência: registry vivo
+// primeiro (respeita override do usuário), defs builtin como fallback (o
+// registry só é populado no boot do main — nunca em unit test).
+function defaultModelForAdapter(adapterId: string): string | undefined {
+  const live = listAdapterInfos().find((adapter) => adapter.id === adapterId);
+  if (live?.models.default) return live.models.default;
+  for (const raw of BUILTIN_ADAPTERS) {
+    const def = raw as { id?: string; models?: { default?: string } };
+    if (def.id === adapterId) return def.models?.default;
+  }
+  return undefined;
+}
 
 const SAME_CHECKOUT_ACTIVE_STATES = new Set<PaneSnapshot['state']>([
   'spawning',

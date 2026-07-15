@@ -66,16 +66,3 @@ export function applySquadEdit(
     agents: agents.map((a) => ({ ...a })),
   };
 }
-
-/** Edit-as-copy shortcut: clone a squad (usually a built-in) for the user. */
-export function duplicateSquad(source: EditableSquad, newId: string): EditableSquad {
-  return {
-    id: newId,
-    name: `${source.name} (cópia)`,
-    createdAt: source.createdAt,
-    builtin: false,
-    orchestratorInstructions: source.orchestratorInstructions,
-    nativeInstructions: source.nativeInstructions,
-    agents: source.agents.map((a) => ({ ...a })),
-  };
-}

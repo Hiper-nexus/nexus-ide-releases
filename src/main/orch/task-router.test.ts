@@ -298,6 +298,15 @@ describe('classifyTask com fronteira de palavra (regressão: TypeScript ≠ crip
     );
   });
 
+  it('compostos PT glued de segurança mantêm o floor critical', () => {
+    expect(classifyTask('melhorar a cibersegurança do produto').tier).toBe('critical');
+    expect(classifyTask('mitigar um ciberataque em andamento').tier).toBe('critical');
+    expect(classifyTask('refatorar o schema multitenant com isolamento').tier).toBe(
+      'critical',
+    );
+    expect(classifyTask('reencriptar os segredos rotacionados').tier).toBe('critical');
+  });
+
   it('variantes PT de criptografia e autorização mantêm o floor critical', () => {
     expect(classifyTask('encriptar os dados do usuário em repouso').tier).toBe(
       'critical',

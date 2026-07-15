@@ -39,6 +39,7 @@ import {
   gitUnstage,
   parseGithubRepo,
 } from './git-workspace';
+import { orchestratePrCreation } from './pr-orchestration';
 import {
   getGithubToken,
   getLinearKey,
@@ -170,28 +171,24 @@ export function registerIntegrationsIpc(): void {
       const cwd = workspaceCwd(event);
       const repo = parseGithubRepo(gitRemoteOrigin(cwd));
       if (!repo) return { ok: false, error: 'origin is not a GitHub remote' };
-      const branch = parsed.data.sourceBranch ?? gitCurrentBranch(cwd);
-      if (!branch) return { ok: false, error: 'cannot resolve current branch' };
-      // Real default branch — never hardcode 'main' (repos use trunk/master…).
-      const target = parsed.data.targetBranch ?? gitDefaultBranch(cwd);
-      if (branch === target) {
-        return {
-          ok: false,
-          error: `branch atual "${branch}" é o alvo do PR — troque de branch antes de abrir o PR`,
-        };
-      }
-      // Push the head branch first: GitHub 422s on a branch it has never seen.
-      const pushed = gitPushCurrentBranch(cwd, branch);
-      if (!pushed.ok) {
-        return { ok: false, error: `falha ao dar push em "${branch}": ${pushed.error}` };
-      }
-      return createGithubPr(token, repo.owner, repo.name, {
-        title: parsed.data.title,
-        body: parsed.data.body ?? '',
-        sourceBranch: branch,
-        targetBranch: target,
-        draft: parsed.data.draft,
-      });
+      // Regras de PR (no-self-target + push-antes-de-criar) vivem na função
+      // pura orchestratePrCreation, testada em pr-orchestration.test.ts.
+      return orchestratePrCreation(
+        { sourceBranch: parsed.data.sourceBranch, targetBranch: parsed.data.targetBranch },
+        {
+          currentBranch: () => gitCurrentBranch(cwd),
+          defaultBranch: () => gitDefaultBranch(cwd),
+          push: (branch) => gitPushCurrentBranch(cwd, branch),
+          createPr: ({ sourceBranch, targetBranch }) =>
+            createGithubPr(token, repo.owner, repo.name, {
+              title: parsed.data.title,
+              body: parsed.data.body ?? '',
+              sourceBranch,
+              targetBranch,
+              draft: parsed.data.draft,
+            }),
+        },
+      );
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

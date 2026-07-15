@@ -56,4 +56,16 @@ describe('route log', () => {
     expect(recentRouteLog(3).length).toBe(3);
     expect(recentRouteLog(0)).toEqual([]);
   });
+
+  it('preserva model e effort opcionais', () => {
+    recordRouteLog(input({ model: 'glm-5.2', effort: 'high' }));
+    expect(recentRouteLog()[0]).toMatchObject({ model: 'glm-5.2', effort: 'high' });
+  });
+
+  it('model/effort ausentes ficam undefined', () => {
+    recordRouteLog({ task: 't', tier: 'easy', adapterId: 'kimi', reason: 'r' });
+    const e = recentRouteLog()[0];
+    expect(e.model).toBeUndefined();
+    expect(e.effort).toBeUndefined();
+  });
 });

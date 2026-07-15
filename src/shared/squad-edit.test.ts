@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applySquadEdit, duplicateSquad, type EditableSquad } from './squad-edit';
+import { applySquadEdit, type EditableSquad } from './squad-edit';
 
 const builtin: EditableSquad = {
   id: 'nexus-full',
@@ -57,16 +57,5 @@ describe('applySquadEdit', () => {
 
   it('rejeita nome vazio', () => {
     expect(() => applySquadEdit(userSquad, { name: '   ' }, 'x')).toThrow(/nome/i);
-  });
-});
-
-describe('duplicateSquad', () => {
-  it('duplica com novo id, builtin false e sufixo no nome', () => {
-    const out = duplicateSquad(builtin, 'dup-1');
-    expect(out.id).toBe('dup-1');
-    expect(out.builtin).toBe(false);
-    expect(out.name).toContain('Full-Stack');
-    expect(out.name).not.toBe('Full-Stack'); // sufixo distingue
-    expect(out.agents).toEqual(builtin.agents);
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ExternalIssue, ForgePrSummary, PortForwardInfo } from '../../shared/integrations-types';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useLayoutStore } from '../state/layout-store';
@@ -33,19 +33,26 @@ export function IntegrationsPanel({
   const [prTitle, setPrTitle] = useState('');
   const [pfPort, setPfPort] = useState('3000');
   const [busy, setBusy] = useState(false);
+  // Epoch monotônico: um refresh mais novo invalida o commit de um mais antigo,
+  // evitando estado fora de ordem quando dois refreshes correm em paralelo.
+  const refreshEpoch = useRef(0);
 
   async function refresh() {
+    const epoch = ++refreshEpoch.current;
+    const live = () => epoch === refreshEpoch.current;
     const [g, l, pf] = await Promise.all([
       window.nexus.integrations.hasGithubToken(),
       window.nexus.integrations.hasLinearKey(),
       window.nexus.integrations.listPortForwards(),
     ]);
+    if (!live()) return;
     setHasGh(g);
     setHasLin(l);
     setForwards(pf);
     if (g) {
       const pr = await window.nexus.integrations.listPrs();
       const issues = await window.nexus.integrations.listGithubIssues({ limit: 15 });
+      if (!live()) return;
       setPrs(pr.ok ? pr.prs : []);
       setGhIssues(issues.ok ? issues.issues : []);
       // Mostra o primeiro erro real (PRs e issues compartilham token/origin).
@@ -57,6 +64,7 @@ export function IntegrationsPanel({
     }
     if (l) {
       const issues = await window.nexus.integrations.listLinearIssues({ limit: 15 });
+      if (!live()) return;
       setLinIssues(issues.ok ? issues.issues : []);
       setLinError(issues.ok ? null : issues.error);
     } else {
@@ -68,12 +76,22 @@ export function IntegrationsPanel({
   useEffect(() => {
     if (!open) return;
     void refresh();
+    // refresh usa refs/setters estáveis; roda ao abrir.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   if (!open) return null;
 
   return (
-    <div className="int-panel" role="dialog" aria-label="Integrações">
+    <div
+      className="int-panel"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Integrações"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose();
+      }}
+    >
       <header className="int-panel__head">
         <strong>Integrações</strong>
         <CloseButton onClick={onClose} label="Fechar integrações" />

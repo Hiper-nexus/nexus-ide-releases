@@ -90,6 +90,20 @@ describe('gitDefaultBranch / gitPushCurrentBranch (real git)', () => {
     expect(gitPushCurrentBranch(clone, '').ok).toBe(false);
   });
 
+  it('rejects refspec-injection branch names (: + ~ .. metacharacters)', () => {
+    // Sem esta guarda, 'a:refs/heads/b' viraria um refspec empurrando um ref
+    // local para uma branch remota arbitrária; '+a:b' faria force-push.
+    expect(gitPushCurrentBranch(clone, 'main:refs/heads/production').ok).toBe(false);
+    expect(gitPushCurrentBranch(clone, '+main:refs/heads/x').ok).toBe(false);
+    expect(gitPushCurrentBranch(clone, 'feature~1').ok).toBe(false);
+    expect(gitPushCurrentBranch(clone, 'a b').ok).toBe(false);
+    expect(gitPushCurrentBranch(clone, 'foo/../bar').ok).toBe(false);
+    // Nome válido com barra e ponto passa da validação (falha depois no
+    // transporte file: do runner endurecido, não na validação de nome).
+    const r = gitPushCurrentBranch(clone, 'feature/x.1');
+    if (!r.ok) expect(r.error.toLowerCase()).not.toContain('inválido');
+  });
+
   it('returns a structured error when there is no origin remote', () => {
     const noRemote = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-noremote-'));
     run(noRemote, ['init', '-b', 'main']);

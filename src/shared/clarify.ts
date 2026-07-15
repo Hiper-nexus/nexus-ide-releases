@@ -1,10 +1,11 @@
 /**
  * Clarify contract (inspired by Overclock's overclock_clarify): a structured
- * question with suggestion chips and DETERMINISTIC answer routing, so a
- * clarification round doesn't dead-end into free-text parsing. Pure logic —
- * the MCP tool builds the request; the answer is resolved back to a canonical
- * option here regardless of whether the user clicked a chip, typed its text,
- * or typed its number.
+ * question with suggestion chips. `buildClarify` is what the `nexus_clarify`
+ * MCP tool returns. `resolveClarifyAnswer` is the canonical routing spec for
+ * the reply — it maps a raw answer (chip id, exact label, or 1-based number)
+ * to a chip, or freeform when allowed. It's the reference the orchestrator
+ * applies in-context today and the ready hook for a future server-side
+ * resolve tool / chip UI. Pure logic — no electron/DOM.
  */
 
 const MAX_OPTIONS = 6;

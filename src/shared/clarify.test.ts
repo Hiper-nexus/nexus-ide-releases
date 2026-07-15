@@ -67,4 +67,15 @@ describe('resolveClarifyAnswer', () => {
   it('resposta vazia é unmatched', () => {
     expect(resolveClarifyAnswer(clarify, '   ')).toEqual({ kind: 'unmatched' });
   });
+
+  it('índice fora do range cai em freeform quando permitido', () => {
+    expect(resolveClarifyAnswer(clarify, '9')).toEqual({ kind: 'freeform', value: '9' });
+    expect(resolveClarifyAnswer(clarify, '0')).toEqual({ kind: 'freeform', value: '0' });
+  });
+
+  it('índice fora do range é unmatched quando allowFreeform=false', () => {
+    const strict = buildClarify({ question: 'x', options: ['a', 'b'], allowFreeform: false });
+    expect(resolveClarifyAnswer(strict, '9')).toEqual({ kind: 'unmatched' });
+    expect(resolveClarifyAnswer(strict, '0')).toEqual({ kind: 'unmatched' });
+  });
 });

@@ -523,6 +523,7 @@ export function OrchestrationPanel() {
             )}
             {editing && (
               <SquadEditor
+                key={editing.id}
                 squad={editing}
                 onClose={() => setEditing(null)}
                 onSaved={(message) => setNotice(message)}

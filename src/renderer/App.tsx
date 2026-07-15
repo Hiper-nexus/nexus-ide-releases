@@ -117,6 +117,9 @@ export function App() {
   const closeWorkspaceOpen = useCloseWorkspaceStore((s) => s.open);
   const voiceSettingsOpen = useVoiceStore((s) => s.settingsOpen);
   const opsBoardOpen = useOrchStore((s) => s.boardOpen);
+  // Remonta o FX de endorfina por workspace — reseta as baselines de missão/
+  // handoff no switch, senão o backlog do novo workspace seria "celebrado".
+  const endorphinWorkspaceKey = useOrchStore((s) => s.boundWorkspacePath ?? '∅');
   const [diffOpen, setDiffOpen] = useState(false);
   const integrationsOpen = useIntegrationsStore((s) => s.open);
   const onboardingVisible = useOnboardingStore(
@@ -465,7 +468,7 @@ export function App() {
       <MissionWizard />
       <OperatorProfile />
       <OperatorFx />
-      <MissionEndorphinFx />
+      <MissionEndorphinFx key={endorphinWorkspaceKey} />
       <CloseWorkspaceDialog />
       <Onboarding />
       <CommandPalette />
