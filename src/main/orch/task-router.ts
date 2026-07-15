@@ -74,6 +74,12 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'xhigh' },
     { adapterId: 'codex', model: 'gpt-5.5', effort: 'xhigh' },
     { adapterId: 'glm', model: 'glm-5.2', effort: 'xhigh' },
+    // Diversidade também no crítico: sem estes, uma máquina sem claude/codex/
+    // glm empresta de outro tier e o worker crítico colapsa num só provider.
+    // agy antes de kimi preserva a preferência efetiva anterior (o empréstimo
+    // do tier hard escolhia gemini-3.1-pro-high quando ambos instalados).
+    { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'xhigh' },
+    { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'xhigh' },
   ],
 };
 
@@ -82,11 +88,18 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
  * the strongest matched bucket wins, then size nudges the tier up or down.
  */
 const CRITICAL_SIGNALS = [
-  'security', 'segurança', 'vulnerab', 'auth', 'autentica', 'authoriza',
-  'autoriza', 'payment', 'pagamento', 'billing', 'cobrança', 'migration',
-  'migração', 'migracao', 'cript', 'crypt', 'tenant', 'rls', 'produção',
-  'producao', 'production', 'data loss', 'perda de dados', 'race condition',
-  'concorrência', 'concorrencia', 'deadlock', 'webhook', 'secret', 'token',
+  // Com o match por prefixo-de-palavra, compostos genuínos precisam de
+  // entrada própria: 'encrypt'/'unauthorized'/'cybersecurity'/'reautentic'
+  // não começam com os sinais base ('crypt', 'authoriza', 'security', …).
+  'security', 'cybersecurity', 'segurança', 'vulnerab', 'auth', 'oauth',
+  'unauthorized', 'não autorizado', 'nao autorizado', 'autentica',
+  'reautentic', 'authoriza', 'autoriza', 'payment', 'pagamento', 'billing',
+  'cobrança', 'migration', 'migração', 'migracao', 'cript', 'crypt',
+  'encrypt', 'decrypt', 'encripta', 'desencripta', 'descriptografa',
+  'descriptografia', 'tenant', 'rls',
+  'produção', 'producao', 'production', 'data loss', 'perda de dados',
+  'race condition', 'concorrência', 'concorrencia', 'deadlock', 'webhook',
+  'secret', 'token',
 ];
 
 const HARD_SIGNALS = [
@@ -112,8 +125,23 @@ const TRIVIAL_SIGNALS = [
 
 const TIER_ORDER: TaskTier[] = ['trivial', 'easy', 'medium', 'hard', 'critical'];
 
+// Sinais casam como PREFIXO DE PALAVRA ('autentica' → 'autenticação'), nunca
+// no meio de outra palavra ('cript' NÃO pode casar 'typescript'). Substring
+// pura inflava tasks rotineiras de TypeScript para tier critical.
+const signalMatchers = new Map<string, RegExp>();
+
+function signalMatcher(signal: string): RegExp {
+  let matcher = signalMatchers.get(signal);
+  if (!matcher) {
+    const escaped = signal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    matcher = new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}`, 'u');
+    signalMatchers.set(signal, matcher);
+  }
+  return matcher;
+}
+
 function matchSignals(text: string, signals: string[]): string[] {
-  return signals.filter((signal) => text.includes(signal));
+  return signals.filter((signal) => signalMatcher(signal).test(text));
 }
 
 function bumpTier(tier: TaskTier, delta: number): TaskTier {
@@ -256,7 +284,21 @@ export function routeTask(
 
   const classification = classifyTask(taskText);
   const tier = tierOverride ?? classification.tier;
-  const evaluated = evaluatedCandidates(taskText, tier, available, modelCatalog);
+  // A avaliação por dimensão só pode PRÉ-EMPTAR a tabela de diversidade
+  // quando TODO adapter instalado tem ≥1 modelo avaliado. Com cobertura
+  // parcial (ex.: kimi/agy sem nota nexus-eval), rankear só os avaliados
+  // colapsaria o roteamento nos providers com nota — a tabela é que manda,
+  // como o contrato declarado abaixo ("o catálogo só bloqueia riscos e anota
+  // custo") sempre prometeu.
+  const evaluationCoversAllInstalled = [...available.values()].every((adapter) =>
+    (adapter.models ?? []).some((model) => {
+      const info = modelCatalogInfo(modelCatalog, adapter.id, model);
+      return Boolean(info?.quality) && !isModelBlockedForAutoRouting(info);
+    }),
+  );
+  const evaluated = evaluationCoversAllInstalled
+    ? evaluatedCandidates(taskText, tier, available, modelCatalog)
+    : [];
   const why =
     classification.signals.length > 0
       ? `sinais: ${classification.signals.slice(0, 5).join(', ')}`

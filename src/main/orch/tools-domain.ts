@@ -3,6 +3,7 @@ import type { McpToolDef } from './mcp-protocol';
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
+import { recordRouteDecision } from './route-provenance';
 import { missionStatusSchema } from '../../shared/orch-types';
 import { findAgent, listAgents, saveSquad } from './squad-store';
 import { DEFAULT_TODO_LIST } from './todo-store';
@@ -861,6 +862,9 @@ const routeTaskTool: McpToolDef = {
     // corromper o keychain compartilhado com o orquestrador.
     const decision = routeTask(task, adapters, undefined, tier, true);
     if (!decision) throw new Error('no installed adapters to route to');
+    // Proveniência: o spawn ad-hoc de modelos com warning de catálogo exige
+    // uma decisão recente do router (ver adHocSpawnGateError em tools-panes).
+    recordRouteDecision({ adapterId: decision.adapterId, model: decision.model });
     return decision;
   },
 };

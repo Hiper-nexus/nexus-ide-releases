@@ -264,6 +264,206 @@ describe('routeTask', () => {
   });
 });
 
+describe('classifyTask com fronteira de palavra (regressão: TypeScript ≠ cript)', () => {
+  it('não infla tarefas TypeScript para critical por substring', () => {
+    const c = classifyTask(
+      'Corrigir dois bugs concretos na assistente de voz Jarvis em TypeScript no Electron',
+    );
+    expect(c.signals).not.toContain('cript');
+    expect(c.tier).not.toBe('critical');
+  });
+
+  it('criptografia continua critical (prefixo legítimo)', () => {
+    expect(
+      classifyTask('implementar criptografia de ponta a ponta dos dados').tier,
+    ).toBe('critical');
+  });
+
+  it('OAuth continua critical após a fronteira de palavra', () => {
+    expect(
+      classifyTask('revisar o fluxo de login OAuth do aplicativo').tier,
+    ).toBe('critical');
+  });
+
+  it('compostos genuínos de segurança mantêm o floor critical', () => {
+    expect(classifyTask('encrypt the exported backup files').tier).toBe('critical');
+    expect(classifyTask('handle unauthorized access in the admin panel').tier).toBe(
+      'critical',
+    );
+    expect(classifyTask('improve our cybersecurity posture review').tier).toBe(
+      'critical',
+    );
+    expect(classifyTask('reautenticar o usuário depois do refresh').tier).toBe(
+      'critical',
+    );
+  });
+
+  it('variantes PT de criptografia e autorização mantêm o floor critical', () => {
+    expect(classifyTask('encriptar os dados do usuário em repouso').tier).toBe(
+      'critical',
+    );
+    expect(classifyTask('descriptografar o payload recebido do parceiro').tier).toBe(
+      'critical',
+    );
+    expect(
+      classifyTask('tratar acesso não autorizado no painel de administração').tier,
+    ).toBe('critical');
+  });
+});
+
+describe('diversidade com cobertura parcial de avaliação (regressão: só codex/grok)', () => {
+  // Runtime real: tools-domain passa a lista de models descoberta por CLI e
+  // kimi/agy não têm nota nexus-eval no catálogo default. A avaliação só pode
+  // pré-emptar a tabela de diversidade quando TODO adapter instalado tem ≥1
+  // modelo avaliado; com cobertura parcial, a tabela manda.
+  const liveAdapters: AdapterAvailability[] = [
+    {
+      id: 'claude',
+      installed: true,
+      models: ['claude-opus-4-8', 'claude-sonnet-5', 'claude-haiku-4-5'],
+    },
+    { id: 'codex', installed: true, models: ['gpt-5.5', 'gpt-5.4'] },
+    { id: 'grok', installed: true, models: ['grok-4.1', 'grok-4-fast'] },
+    { id: 'kimi', installed: true, models: ['kimi-code/kimi-for-coding'] },
+    {
+      id: 'agy',
+      installed: true,
+      models: ['gemini-3.1-pro-high', 'gemini-3.5-flash-low'],
+    },
+  ];
+
+  it('worker medium segue a tabela (kimi lidera sem glm/longcat), não colapsa em codex/grok', () => {
+    const decision = routeTask(
+      'tarefa de complexidade média',
+      liveAdapters,
+      DEFAULT_ROUTING_TABLE,
+      'medium',
+      true,
+    );
+    expect(decision!.adapterId).toBe('kimi');
+    expect(decision!.model).toBe('kimi-code/kimi-for-coding');
+    expect(decision!.reason).not.toContain('avaliação Nexus por dimensão');
+  });
+
+  it('worker easy segue a tabela (kimi lidera o tier easy)', () => {
+    const decision = routeTask(
+      'corrigir typo no README do projeto agora',
+      liveAdapters,
+      DEFAULT_ROUTING_TABLE,
+      'easy',
+      true,
+    );
+    expect(decision!.adapterId).toBe('kimi');
+  });
+});
+
+describe('tier critical com diversidade instalada', () => {
+  it('kimi/agy são candidatos do próprio tier critical (sem empréstimo)', () => {
+    // agy antes de kimi: preserva a preferência efetiva anterior (o empréstimo
+    // do tier hard escolhia gemini-3.1-pro-high quando ambos instalados).
+    const decision = routeTask(
+      'auditar a segurança da autenticação',
+      adapters('kimi', 'agy'),
+    );
+    expect(decision!.tier).toBe('critical');
+    expect(decision!.adapterId).toBe('agy');
+    expect(decision!.reason).not.toContain('melhor opção instalada');
+  });
+
+  it('kimi sozinho também é candidato do próprio tier critical', () => {
+    const decision = routeTask(
+      'auditar a segurança da autenticação',
+      adapters('kimi'),
+    );
+    expect(decision!.adapterId).toBe('kimi');
+    expect(decision!.reason).not.toContain('melhor opção instalada');
+  });
+
+  it('agy também é candidato do próprio tier critical', () => {
+    const decision = routeTask(
+      'auditar a segurança da autenticação',
+      adapters('agy'),
+    );
+    expect(decision!.tier).toBe('critical');
+    expect(decision!.adapterId).toBe('agy');
+    expect(decision!.model).toBe('gemini-3.1-pro-high');
+    expect(decision!.reason).not.toContain('melhor opção instalada');
+  });
+});
+
+describe('gate de cobertura da avaliação — bordas', () => {
+  it('adapter sem lista de models conta como NÃO coberto (tabela manda)', () => {
+    // claude sem models descobertos + grok/codex avaliados: cobertura parcial,
+    // então worker easy segue a tabela (kimi lidera) em vez do rank avaliado.
+    const decision = routeTask(
+      'corrigir typo no README do projeto agora',
+      [
+        { id: 'claude', installed: true },
+        { id: 'grok', installed: true, models: ['grok-4.1', 'grok-4-fast'] },
+        { id: 'kimi', installed: true, models: ['kimi-code/kimi-for-coding'] },
+      ],
+      DEFAULT_ROUTING_TABLE,
+      'easy',
+      true,
+    );
+    expect(decision!.adapterId).toBe('kimi');
+    expect(decision!.reason).not.toContain('avaliação Nexus por dimensão');
+  });
+
+  it('adapter cujo único modelo avaliado está bloqueado para auto-rota conta como NÃO coberto', () => {
+    const evaluatedAt = '2026-07-11T21:00:00.000Z';
+    const catalog = {
+      version: 1,
+      adapters: {
+        grok: {
+          models: [
+            {
+              id: 'grok-4.1',
+              availability: 'paid' as const,
+              costTier: 'medium' as const,
+              quality: {
+                overall: 90,
+                coding: 90,
+                evaluatedAt,
+                source: 'nexus-eval/v1/test',
+              },
+            },
+          ],
+        },
+        kimi: {
+          models: [
+            {
+              // Avaliado, porém api-only: bloqueado para auto-rota — não pode
+              // contar como cobertura, senão o gate liga sem candidato real.
+              id: 'kimi-code/kimi-for-coding',
+              availability: 'api-only' as const,
+              costTier: 'low' as const,
+              quality: {
+                overall: 80,
+                coding: 80,
+                evaluatedAt,
+                source: 'nexus-eval/v1/test',
+              },
+            },
+          ],
+        },
+      },
+    };
+    const decision = routeTask(
+      'tarefa de complexidade média',
+      [
+        { id: 'grok', installed: true, models: ['grok-4.1'] },
+        { id: 'kimi', installed: true, models: ['kimi-code/kimi-for-coding'] },
+      ],
+      DEFAULT_ROUTING_TABLE,
+      'medium',
+      true,
+      catalog,
+    );
+    expect(decision!.reason).not.toContain('avaliação Nexus por dimensão');
+  });
+});
+
 describe('routeTask quality-driven motor (shipped router + real catalog quality)', () => {
   const evaluatedAt = '2026-07-11T21:00:00.000Z';
   const source = 'nexus-eval/v1/fixture';
