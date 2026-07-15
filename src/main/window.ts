@@ -207,6 +207,10 @@ export function createMainWindow(): BrowserWindow {
   // Dock item. The early call in main.ts handles launch classification; this
   // call covers launches that inherited an accessory policy from the shell.
   ensureMacDockPresence();
+  // Some packaged launches let AppKit restore the accessory policy while the
+  // renderer is booting. Re-apply the user-facing policy at the native UI
+  // readiness boundary, after all startup modules have run.
+  win.webContents.once('did-finish-load', ensureMacDockPresence);
 
   // The native window is the availability boundary: integrations must not be
   // able to prevent the Dock item from existing. Register optional IPC/CSP
