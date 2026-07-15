@@ -1,6 +1,11 @@
 import { PCM_WORKLET_NODE_NAME, pcmWorkletBlobUrl } from './pcm-worklet';
 import { rmsToLevel } from './voice-level';
 import { preferredInputConstraints } from './audio-device-preferences';
+import {
+  DEFAULT_DUPLEX_MODE,
+  resolveDuplexStatus,
+  type DuplexStatus,
+} from './duplex-mode-policy';
 
 /**
  * Microphone capture for push-to-talk. Opens a 16 kHz mono getUserMedia stream,
@@ -66,6 +71,13 @@ export class VoiceCapture {
   private heardSpeech = false;
   private lastSpeechAt = 0;
   private startedAt = 0;
+  /**
+   * Resolved Chromium AEC status for the active capture stream. Full-duplex
+   * barge-in is only safe when the browser actually applied echo cancellation;
+   * `chromium-aec-unavailable` must gate the live mic while she speaks so her
+   * TTS echo cannot trip Gemini's VAD and mute the turn. See liveMicFullDuplex.
+   */
+  private _duplexStatus: DuplexStatus = 'chromium-aec-pending';
 
   /**
    * Live mic level [0,1] per frame — alimenta o visualizador do orb. Opcional:
@@ -77,6 +89,11 @@ export class VoiceCapture {
 
   isCapturing(): boolean {
     return this.capturing;
+  }
+
+  /** Resolved Chromium AEC status for the active capture stream. */
+  get duplexStatus(): DuplexStatus {
+    return this._duplexStatus;
   }
 
   async start(autoStop?: AutoStopOptions): Promise<void> {
@@ -95,6 +112,24 @@ export class VoiceCapture {
         noiseSuppression: true,
       }),
     });
+    // Resolve the REAL AEC status: full-duplex barge-in is only safe when
+    // Chromium actually applied echo cancellation. If it did not, the live mic
+    // gate falls back to half-duplex (liveMicFullDuplex) so her own TTS echo
+    // cannot trip Gemini's VAD and cut the generation into a silent turn.
+    const trackSettings = this.stream.getAudioTracks()[0]?.getSettings();
+    this._duplexStatus = trackSettings
+      ? resolveDuplexStatus(DEFAULT_DUPLEX_MODE, {
+          echoCancellation: trackSettings.echoCancellation === true,
+        })
+      : 'chromium-aec-pending';
+    if (this._duplexStatus === 'chromium-aec-unavailable') {
+      window.nexus.voice.logVoice({
+        level: 'warn',
+        event: 'capture.aecUnavailable',
+        msg: 'Chromium não aplicou AEC — mic em half-duplex (anti-eco)',
+        data: { duplexStatus: this._duplexStatus },
+      });
+    }
     this.ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
     if (this.ctx.state === 'suspended') {
       await this.ctx.resume().catch(() => {});

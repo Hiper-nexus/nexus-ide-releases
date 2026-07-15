@@ -90,6 +90,25 @@ export function duplexModePolicy(
 }
 
 /**
+ * Whether the Live mic should keep flowing to the provider while she speaks
+ * (full-duplex barge-in), given the mode AND the real resolved AEC status.
+ *
+ * The mode default alone is not enough: when Chromium reports the requested
+ * echo cancellation was NOT applied (`chromium-aec-unavailable`), a full-duplex
+ * mic feeds the echo of her own TTS back into Gemini's high-sensitivity VAD,
+ * which trips `START_OF_ACTIVITY_INTERRUPTS` and cuts the generation before it
+ * vocalizes — a silent turn. In that case fall back to the gated (half-duplex)
+ * mic. `pending`/active keep the mode's barge-in behaviour untouched.
+ */
+export function liveMicFullDuplex(opts: {
+  mode: DuplexMode;
+  aecStatus: DuplexStatus;
+}): boolean {
+  if (opts.aecStatus === 'chromium-aec-unavailable') return false;
+  return !duplexModePolicy(opts.mode).keepHalfDuplexMicGate;
+}
+
+/**
  * Traduz `MediaTrackSettings.echoCancellation` para um estado exibível. A
  * ausência de settings significa que o getUserMedia ainda não concluiu; um
  * objeto sem o campo indica que o Chromium não confirmou o AEC solicitado.

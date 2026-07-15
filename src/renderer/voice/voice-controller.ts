@@ -122,7 +122,7 @@ import {
   HOT_COMMAND_MIN_PEAK_RMS,
   isHotSessionCommandCandidate,
 } from '../../shared/hot-session-command';
-import { DEFAULT_DUPLEX_MODE, duplexModePolicy } from './duplex-mode-policy';
+import { DEFAULT_DUPLEX_MODE, liveMicFullDuplex } from './duplex-mode-policy';
 import { WorkNarrationSupervisor } from './work-narration-supervisor';
 import { FOLLOW_UP_AUTHORITY_MS, followUpAuthority } from './follow-up-authority';
 import { startLiveContextSync } from './live-context-sync';
@@ -268,8 +268,13 @@ export function useVoiceController(): void {
         !followUpAuthority.isAuthorized()
       ) return;
       // Full-duplex product default: keep offering frames while she speaks so
-      // Gemini can barge-in. Half-duplex only if policy keeps the mic gate.
-      const fullDuplex = !duplexModePolicy(DEFAULT_DUPLEX_MODE).keepHalfDuplexMicGate;
+      // Gemini can barge-in. But only when Chromium actually applied AEC — if
+      // the real track reports it unavailable, gate the mic (half-duplex) so her
+      // TTS echo cannot trip the VAD and mute the turn.
+      const fullDuplex = liveMicFullDuplex({
+        mode: DEFAULT_DUPLEX_MODE,
+        aecStatus: capture.current?.duplexStatus ?? 'chromium-aec-pending',
+      });
       if (
         shouldOfferLiveMicFrame({
           realtimeActive: shouldStreamToRealtime(),

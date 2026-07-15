@@ -5,6 +5,7 @@ import {
   FULL_DUPLEX_INPUT_CONSTRAINTS,
   HALF_DUPLEX_INPUT_CONSTRAINTS,
   duplexModePolicy,
+  liveMicFullDuplex,
   resolveDuplexStatus,
 } from './duplex-mode-policy';
 
@@ -68,5 +69,27 @@ describe('duplex mode policy', () => {
     expect(duplexModePolicy('full-duplex').keepHalfDuplexMicGate).toBe(false);
     expect(duplexModePolicy('chromium-aec-probe').keepHalfDuplexMicGate).toBe(true);
     expect(duplexModePolicy('half-duplex').keepHalfDuplexMicGate).toBe(true);
+  });
+});
+
+describe('liveMicFullDuplex honours the real AEC status', () => {
+  it('keeps full-duplex (open mic for barge-in) when Chromium AEC is active', () => {
+    expect(liveMicFullDuplex({ mode: 'full-duplex', aecStatus: 'full-duplex' })).toBe(true);
+    expect(liveMicFullDuplex({ mode: 'full-duplex', aecStatus: 'chromium-aec-active' })).toBe(true);
+  });
+
+  it('drops to a gated mic when AEC is confirmed unavailable', () => {
+    // Core bug: the mic kept flowing to Gemini while she spoke; without AEC the
+    // echo of her own voice tripped START_OF_ACTIVITY_INTERRUPTS and cut the
+    // generation (silent turn). A gated mic while speaking prevents that.
+    expect(liveMicFullDuplex({ mode: 'full-duplex', aecStatus: 'chromium-aec-unavailable' })).toBe(false);
+  });
+
+  it('keeps the mode default while the AEC probe is still pending', () => {
+    expect(liveMicFullDuplex({ mode: 'full-duplex', aecStatus: 'chromium-aec-pending' })).toBe(true);
+  });
+
+  it('stays gated in half-duplex mode regardless of status', () => {
+    expect(liveMicFullDuplex({ mode: 'half-duplex', aecStatus: 'half-duplex' })).toBe(false);
   });
 });
