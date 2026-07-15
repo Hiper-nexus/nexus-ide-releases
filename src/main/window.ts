@@ -164,11 +164,16 @@ function ensureMacDockPresence(): void {
     // born while Electron is accessory/background-only, macOS can keep the
     // process out of the Dock for the rest of that launch.
     app.setActivationPolicy?.('regular');
-    app.dock?.show();
+    const dockShow = app.dock?.show();
     // A packaged launch can otherwise remain an inactive UIElement even after
     // the policy changes. Activating the user-facing window materializes the
     // regular app entry in the Dock (same behavior as opening from Finder).
     app.focus?.({ steal: true });
+    void dockShow
+      ?.then(() => app.focus?.({ steal: true }))
+      .catch((error) => {
+        console.warn('[window] macOS Dock item unavailable:', error);
+      });
   } catch (error) {
     console.warn('[window] macOS activation policy unavailable:', error);
   }
