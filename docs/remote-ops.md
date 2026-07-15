@@ -8,7 +8,7 @@ Nexus **não** embute o React Native do Orca. O caminho de produto é o **thin c
 |------|------|
 | Bridge TLS + WS | `src/main/remote/remote-bridge.ts` |
 | Thin client HTML | `src/main/remote/remote-client-page.ts` |
-| Policy mobile RPCs | `src/main/remote/mobile-companion-policy.ts` |
+| Policy mobile RPCs | `src/main/remote/mobile-companion-policy.ts` (ligada em `handleAuthedMessage` via `mobileRpcKindForBridgeType`) |
 | Pairing | `src/main/remote/device-pairing.ts` |
 | IPC desktop | `src/main/remote/remote-ipc.ts` |
 

@@ -77,3 +77,38 @@ export function authorizeMobileRpc(input: MobileAuthorizeInput): MobileAuthorize
 export function isDestructiveMobileRpc(kind: MobileRpcKind): boolean {
   return DESTRUCTIVE.has(kind);
 }
+
+/**
+ * Map a remote-bridge message `type` to the policy's RPC kind, so the bridge
+ * can gate each authed message. Returns null for bridge-internal frames
+ * (ping/pair/auth) and control ops the policy does not model — those keep
+ * their existing per-message authorization. This is what makes the policy a
+ * live gate instead of dead code.
+ */
+export function mobileRpcKindForBridgeType(type: string): MobileRpcKind | null {
+  switch (type) {
+    case 'panes.list':
+      return 'pane.list';
+    case 'pane.read':
+      return 'pane.read';
+    case 'pane.stream.open':
+      return 'pane.stream.subscribe';
+    case 'pane.input':
+    case 'pane.stream.frame':
+      return 'pane.input';
+    case 'mission.complete':
+      return 'mission.complete';
+    case 'git.push':
+      return 'git.push';
+    case 'git.reset':
+      return 'git.reset';
+    case 'worktree.remove':
+      return 'worktree.remove';
+    case 'fs.write':
+      return 'fs.write';
+    case 'fs.delete':
+      return 'fs.delete';
+    default:
+      return null;
+  }
+}
