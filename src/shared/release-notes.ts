@@ -13,11 +13,11 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.16.5',
+  version: '0.16.6',
   date: '2026-07-15',
-  codename: 'Atualização Direta',
+  codename: 'Live sem Silêncio',
   summary:
-    'Instalações antigas saltam direto para a maior release compatível, enquanto janelas lentas, terminais e formulários permanecem estáveis durante o uso.',
+    'O Live só assume uma resposta quando há áudio ou tool-call real; instalações antigas continuam saltando direto para a maior release compatível.',
   highlights: [
     {
       title: 'Uma única atualização até a versão mais nova',
@@ -89,12 +89,12 @@ export const CURRENT_RELEASE: AppRelease = {
     {
       title: 'Oferta cacheada não instala versão intermediária',
       detail:
-        'O clique em baixar reconsulta o GitHub antes de escolher o asset; uma oferta 0.16.1 aberta antes da publicação de 0.16.5 passa a baixar 0.16.5 no mesmo fluxo.',
+        'O clique em baixar reconsulta o GitHub antes de escolher o asset; qualquer oferta intermediária aberta passa a baixar a maior release estável compatível no mesmo fluxo.',
     },
     {
       title: 'Release metadata alinhada',
       detail:
-        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.16.5, removendo o bloqueio que deixava a árvore de release inconsistente.',
+        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.16.6, removendo o bloqueio que deixava a árvore de release inconsistente.',
     },
     {
       title: 'Carga lenta não entra em loop de recarregamento',
@@ -112,9 +112,9 @@ export const CURRENT_RELEASE: AppRelease = {
         'A mensagem de espera ganha prioridade quando faltam prints ou áudios, e o mesmo detector libera imediatamente o fluxo quando a interação já trouxe um anexo.',
     },
     {
-      title: 'Live mudo entrega a resposta pelo Classic',
+      title: 'Live só assume com evidência real',
       detail:
-        'Se uma transcrição de resgate já autorizada não recebe áudio nem tool-call do provider Live, o Nexus transfere o turno para cérebro e TTS Classic em vez de voltar ao usuário em silêncio.',
+        'Depois de uma transcrição final ou de um resgate autorizado, o Nexus espera áudio ou tool-call do provider. Se o Live permanecer mudo, o mesmo turno segue para cérebro e TTS Classic em vez de terminar em silêncio.',
     },
     {
       title: 'Ownership e DAG endurecidos',

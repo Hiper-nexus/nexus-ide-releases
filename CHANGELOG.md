@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.16.6 — Live sem Silêncio
+
+Data: 2026-07-15
+
+- O caminho de transcrição final do Gemini Live não assume mais que o provider
+  respondeu: ele espera evidência real de áudio ou tool-call antes de encerrar o
+  turno como realtime.
+- Se o prazo termina sem evidência, o mesmo texto segue para cérebro e TTS
+  Classic, com Live silenciado e quiescido antes da fala para evitar silêncio ou
+  duas respostas concorrentes.
+- A janela de evidência considera áudio recebido desde o início do turno, não só
+  depois do transcript final; uma resposta curta que já tocou não dispara um
+  segundo fallback por engano.
+- Turnos superseded continuam abortando, e tools nativas preservam ownership e a
+  continuidade do socket Live.
+- O atualizador direto da 0.16.5 continua ativo: instalações 0.15 ou 0.16.x
+  selecionam a 0.16.6 em uma única atualização, com asset da arquitetura atual.
+- Suíte completa validada: 665 arquivos de teste e 4.649 testes passando.
+- Package, server, lockfile, changelog e release notes ficam alinhados em
+  `0.16.6`.
+
 ## 0.16.5 — Atualização Direta
 
 Data: 2026-07-15

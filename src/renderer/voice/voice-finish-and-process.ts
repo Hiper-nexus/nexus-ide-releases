@@ -71,6 +71,7 @@ import { realtimeTranscriptWaitMs } from './realtime-transcript-wait';
 import {
   hasInsufficientLiveMicFrames,
   INSUFFICIENT_LIVE_MIC_FRAMES_TRANSCRIPT_WAIT_MS,
+  LIVE_RESCUE_RESPONSE_TIMEOUT_MS,
   markLiveMuteRescueAttempt,
   offeredLiveMicFramesThisTurn,
   resetLiveMuteRescues,
@@ -449,40 +450,78 @@ export async function finishAndProcess(
           shouldLetRealtimeProviderAnswer(transcript, { isRealtimeLive: isRealtimeLive() }) &&
           isRealtimeLive()
         ) {
-          const claimed = turnExecution.claim('realtime-audio', turnToken);
-          // Even if tool/classic already claimed: Live must stay audible.
+          // Open the gate so provider audio plays the instant it arrives.
           openLiveAudioGate();
-          if (!claimed) {
-            console.log(
-              '[voice] turno já reivindicado (tool/classic) — Live audio gate aberto, sem Classic',
-            );
-            logVoiceEvent('info', 'jarvis.liveAudioGateRecovered', 'claim perdido — gate aberto', {
-              owner: turnExecution.owner,
-              reason: activeCaptureReason,
-            });
-          } else {
-            wakeMic.suppressWakeDetection(MIN_WAKE_SUPPRESSION_MS);
-            logVoiceEvent('info', 'jarvis.liveProviderAnswer', 'provider realtime', {
-              reason: activeCaptureReason,
-              transcript: transcript.slice(0, 180),
-            });
+          // ANTI-MUTE (final-transcript path): never ASSUME the provider will
+          // speak. Measured runs showed ~89% of final-transcript turns closing
+          // with zero audio while this path claimed 'realtime-audio' and returned
+          // into silence. Wait for real audio/tool evidence first; on a mute
+          // (timeout) fall through to the Classic degrade path below — the same
+          // liveAnswerOutcomeFromEvidence contract the rescue path already uses.
+          const answerStartedAt = Date.now();
+          const answerEvidence = await waitForLiveRescueEvidence({
+            turnToken,
+            startedAt: answerStartedAt,
+            playedBaseline: playedChunksBaseline,
+            heldBaseline: heldChunksBaseline,
+            read: () => ({
+              turnToken: turnExecution.currentToken,
+              playedAudioChunks: realtimeAudioPlayedCounter.total,
+              heldAudioChunks: realtimeAudioSuppressedCounter.total,
+              toolInFlight: realtimeNativeToolInFlight,
+              lastToolAt: lastRealtimeNativeToolAt,
+            }),
+            timeoutMs: LIVE_RESCUE_RESPONSE_TIMEOUT_MS,
+          });
+          const answerOutcome = liveAnswerOutcomeFromEvidence(answerEvidence);
+          if (answerOutcome === 'abort') return;
+          if (answerOutcome === 'commit') {
+            const claimed = turnExecution.claim('realtime-audio', turnToken);
+            // Even if tool/classic already claimed: Live must stay audible.
+            openLiveAudioGate();
+            if (!claimed) {
+              console.log(
+                '[voice] turno já reivindicado (tool/classic) — Live audio gate aberto, sem Classic',
+              );
+              logVoiceEvent('info', 'jarvis.liveAudioGateRecovered', 'claim perdido — gate aberto', {
+                owner: turnExecution.owner,
+                reason: activeCaptureReason,
+              });
+            } else {
+              wakeMic.suppressWakeDetection(MIN_WAKE_SUPPRESSION_MS);
+              logVoiceEvent('info', 'jarvis.liveProviderAnswer', 'provider realtime', {
+                reason: activeCaptureReason,
+                transcript: transcript.slice(0, 180),
+                evidence: answerEvidence,
+              });
+            }
+            // FIX B+C: keep realtimeTurnActive=true (chunks keep arriving),
+            // release busy and arm follow-up instead of liveEndTurn.
+            if (!claimed && turnExecution.owner === 'realtime-tool') {
+              releaseAfterRealtimeTool();
+            } else {
+              releaseAfterLiveProviderAnswer({
+                busy,
+                capture,
+                beginListening: deps.beginListening,
+                wakeAutoStop: deps.wakeAutoStop,
+                armFollowUp: claimed,
+                followUpSkipReason: 'turn-owned-before-audio',
+                canReopen: canReopenLiveFollowUp,
+              });
+            }
+            return;
           }
-          // FIX B+C: keep realtimeTurnActive=true (chunks keep arriving),
-          // release busy and arm follow-up instead of liveEndTurn.
-          if (!claimed && turnExecution.owner === 'realtime-tool') {
-            releaseAfterRealtimeTool();
-          } else {
-            releaseAfterLiveProviderAnswer({
-              busy,
-              capture,
-              beginListening: deps.beginListening,
-              wakeAutoStop: deps.wakeAutoStop,
-              armFollowUp: claimed,
-              followUpSkipReason: 'turn-owned-before-audio',
-              canReopen: canReopenLiveFollowUp,
-            });
-          }
-          return;
+          // answerOutcome === 'degrade': the provider stayed silent past the
+          // deadline despite a final transcript. Fall through to the Classic
+          // degrade path below (quiesce Live + runJarvisTurn speaks via Classic
+          // TTS) instead of returning the user into silence.
+          logVoiceEvent(
+            'warn',
+            'jarvis.liveProviderMuteDegraded',
+            'provider mudo após transcript final — degradando pro Classic',
+            { reason: activeCaptureReason, waitedMs: Date.now() - answerStartedAt },
+          );
         }
 
         const delegationOwnershipTransferred =

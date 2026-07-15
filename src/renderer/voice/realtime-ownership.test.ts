@@ -72,6 +72,33 @@ describe('Live mute degradation', () => {
     expect(source).toContain('!rescueShouldDegradeToClassic');
   });
 
+  it('requires answer evidence before final-transcript Live ownership commits', () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, 'voice-finish-and-process.ts'),
+      'utf-8',
+    );
+    const providerGate = source.indexOf(
+      'shouldLetRealtimeProviderAnswer(transcript',
+    );
+    const evidenceWait = source.indexOf(
+      'const answerEvidence = await waitForLiveRescueEvidence',
+      providerGate,
+    );
+    const classicBridge = source.indexOf(
+      "await quiesceLiveForClassic('classic-live-bridge')",
+      evidenceWait,
+    );
+    const evidenceBlock = source.slice(evidenceWait, classicBridge);
+
+    expect(providerGate).toBeGreaterThanOrEqual(0);
+    expect(evidenceWait).toBeGreaterThan(providerGate);
+    expect(classicBridge).toBeGreaterThan(evidenceWait);
+    expect(evidenceBlock).toContain('playedBaseline: playedChunksBaseline');
+    expect(evidenceBlock).toContain('heldBaseline: heldChunksBaseline');
+    expect(evidenceBlock).toContain('liveAnswerOutcomeFromEvidence(answerEvidence)');
+    expect(evidenceBlock).toContain('jarvis.liveProviderMuteDegraded');
+  });
+
   it('keeps Gemini warm until local STT proves a muted wake is meaningful', () => {
     const source = fs.readFileSync(
       path.join(__dirname, 'voice-finish-and-process.ts'),
