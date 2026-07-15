@@ -11,6 +11,10 @@ import {
   DEFAULT_RENDERER_RECOVERY_WINDOW_MS,
   RendererRecoveryCircuitBreaker,
 } from './reliability/renderer-recovery-circuit-breaker';
+import {
+  decideRendererLoadWatchdog,
+  RENDERER_LOAD_STALL_MS,
+} from './reliability/renderer-load-watchdog';
 import { handleRenderProcessGone } from './agent-runtime/agent-runtime-bridge';
 import {
   applyMacOSDockIcon,
@@ -375,16 +379,22 @@ export function createMainWindow(): BrowserWindow {
   // janela abria preta e exigia fechar/reabrir). Auto-retry até carregar; o
   // backoff curto cobre o boot do Vite sem atrasar o caso saudável.
   let loadRetries = 0;
+  let loadStartedAt = Date.now();
+  let suppressAbortedLoadUntil = 0;
   const MAX_LOAD_RETRIES = 20;
+  const WATCHDOG_ABORT_GRACE_MS = 1_000;
+  const WATCHDOG_RESTART_DELAY_MS = 100;
   const load = () => {
     // Rejeições são esperadas durante o boot do Vite (ERR_ABORTED em reload
     // concorrente) — o watchdog cuida do retry; nunca deixar virar unhandled.
+    loadStartedAt = Date.now();
     win.loadURL(rendererUrl).catch((err) => {
       console.warn('[window] load failed:', err);
     });
   };
   wc.on('did-fail-load', (_e, code, desc) => {
     if (win.isDestroyed()) return;
+    if (code === -3 && Date.now() < suppressAbortedLoadUntil) return;
     loadRetries += 1;
     if (loadRetries > MAX_LOAD_RETRIES) {
       console.error(
@@ -414,10 +424,25 @@ export function createMainWindow(): BrowserWindow {
       clearInterval(watchdog);
       return;
     }
-    if (!finished) {
-      console.warn('[window] renderer ainda não carregou — recarregando');
-      load();
+    const action = decideRendererLoadWatchdog({
+      isFinished: finished,
+      isLoading: wc.isLoading(),
+      loadAgeMs: Date.now() - loadStartedAt,
+    });
+    if (action === 'wait') return;
+    if (action === 'restart-stalled-load') {
+      console.warn(
+        `[window] renderer travado por ${RENDERER_LOAD_STALL_MS / 1000}s — reiniciando carga`,
+      );
+      suppressAbortedLoadUntil = Date.now() + WATCHDOG_ABORT_GRACE_MS;
+      wc.stop();
+      setTimeout(() => {
+        if (!win.isDestroyed() && !finished) load();
+      }, WATCHDOG_RESTART_DELAY_MS);
+      return;
     }
+    console.warn('[window] renderer sem navegação ativa — tentando novamente');
+    load();
   }, 3_000);
   const MOUNT_POLL_MS = 2_000;
   const MOUNT_EMPTY_CHECKS = 10; // ~20s de root vazio antes de recarregar

@@ -23,7 +23,11 @@ function normalize(text: string): string {
  * available print must still dispatch normally. The gate only trips when the
  * text contains evidence plus a future/transfer action in the same objective.
  */
-export function missionGoalNeedsFutureEvidence(goal: string): boolean {
+export function missionGoalNeedsFutureEvidence(
+  goal: string,
+  hasAttachedEvidence = false,
+): boolean {
+  if (hasAttachedEvidence) return false;
   const normalized = normalize(goal);
   if (!normalized || !EVIDENCE_TERMS.test(normalized)) return false;
   if (!FUTURE_TERMS.test(normalized)) return false;

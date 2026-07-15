@@ -1,8 +1,30 @@
+import type { LiveRescueEvidence } from './live-mute-rescue';
+
 export function hasRealtimeProviderAudioAnswer(opts: {
   heldChunks: number;
   playedChunks: number;
 }): boolean {
   return opts.heldChunks > 0 || opts.playedChunks > 0;
+}
+
+export type LiveAnswerOutcome = 'commit' | 'degrade' | 'abort';
+
+/**
+ * After a final user transcript on a hot Live session, the pipeline waits
+ * briefly for evidence that the provider is actually answering. Measured runs
+ * showed ~89% of final-transcript turns closing with no audio, yet the code
+ * committed to the provider and returned into silence. Map that wait's evidence
+ * to an action so a mute (`timeout`) degrades to Classic TTS instead:
+ * - `audio`/`tool` → commit to the realtime provider (it is answering)
+ * - `timeout`      → degrade to the Classic STT→brain→TTS path (provider muted)
+ * - `superseded`   → abort; a newer turn already owns the session
+ */
+export function liveAnswerOutcomeFromEvidence(
+  evidence: LiveRescueEvidence,
+): LiveAnswerOutcome {
+  if (evidence === 'audio' || evidence === 'tool') return 'commit';
+  if (evidence === 'superseded') return 'abort';
+  return 'degrade';
 }
 
 /**

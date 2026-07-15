@@ -1105,13 +1105,16 @@ export function publishSessionActivityState(
     return false;
   }
   session.hookState = state;
-  session.state = state;
   if (state === "busy") {
     armHookBusyWatchdog(sessionId, session);
   } else if (session.hookBusyTimer) {
     clearTimeout(session.hookBusyTimer);
     session.hookBusyTimer = null;
   }
+  // Skip IPC when the pane already shows this state — rapid hook re-asserts
+  // (tool loop) used to thrash the toolbar/terminal chrome.
+  if (session.state === state) return true;
+  session.state = state;
   emitStateChange(session.wc, sessionId, state);
   return true;
 }

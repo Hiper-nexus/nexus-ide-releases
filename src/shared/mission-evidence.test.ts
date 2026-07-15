@@ -31,6 +31,15 @@ describe('missionGoalNeedsFutureEvidence', () => {
     ).toBe(false);
   });
 
+  it('does not hold a future-evidence phrase when evidence is already attached', () => {
+    expect(
+      missionGoalNeedsFutureEvidence(
+        'Anexei um print e vou montar a missão com essa captura.',
+        true,
+      ),
+    ).toBe(false);
+  });
+
   it('exposes the user-facing wait message', () => {
     expect(MISSION_EVIDENCE_WAIT_MESSAGE).toMatch(/Anexe os prints ou áudios/);
   });

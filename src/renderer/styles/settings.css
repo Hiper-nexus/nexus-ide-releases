@@ -5,9 +5,13 @@
 /* ---- Settings drawer (módulos + catálogo) ---- */
 .settings__overlay {
   position: fixed;
-  inset: 0;
+  /* Below workspace bar so soft-dismiss never steals Jarvis/config clicks. */
+  top: var(--bar-height);
+  right: 0;
+  bottom: 0;
+  left: 0;
   background: rgba(4, 6, 10, 0.55);
-  z-index: 40;
+  z-index: var(--z-soft-overlay);
 }
 
 .settings__drawer {
@@ -24,7 +28,7 @@
   background-size: 24px 24px, 24px 24px, auto;
   border-right: 0;
   box-shadow: none;
-  z-index: 41;
+  z-index: var(--z-soft-panel);
   animation: settings-in 180ms var(--ease-out-expo);
 }
 

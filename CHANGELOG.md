@@ -14,6 +14,19 @@ Data: 2026-07-15
   instalações em sequência.
 - Cobertura de regressão reproduz o fluxo `0.15.0 → 0.16.1` cacheado e confirma
   que o download final usa somente o release mais novo.
+- O watchdog da janela não reinicia mais uma navegação ainda ativa após três
+  segundos. Cargas lentas — inclusive no build Intel sob Rosetta — podem
+  concluir sem entrar em ciclo de `ERR_ABORTED` e piscar a interface.
+- Estado visual de terminal usa histerese curta e elimina reemissões idênticas;
+  bordas, toolbar e contagem da frota deixam de piscar entre pausas breves de
+  output, sem atrasar o estado real usado pela orquestração.
+- Objetivos, anexos, chaves de voz, anotações de diff, seleção de agente e
+  navegação de Settings sobrevivem a fechamento acidental/Jarvis. Cancelar ou
+  concluir continua descartando explicitamente o rascunho.
+- A fala de espera por prints/áudios agora vence respostas otimistas quando a
+  missão realmente está aguardando evidência; anexos já presentes liberam o
+  fluxo sem falso bloqueio.
+- Suíte completa validada: 664 arquivos de teste e 4.641 testes passando.
 - Package, server, lockfile, changelog e release notes ficam alinhados em
   `0.16.5`.
 

@@ -5,8 +5,11 @@ import { DEFAULT_ORCH_SETTINGS } from '../../shared/settings-types';
 import { useOrchStore } from '../state/orch-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import {
+  isMissionWizardDraftDirty,
   useMissionWizardStore,
+  type MissionWizardDraft,
   type MissionWizardStep,
+  type WizardMode,
 } from '../state/mission-wizard-store';
 import { useProviderStore } from '../state/provider-store';
 import { switchWorkspaceLayout } from '../state/layout-store';
@@ -17,6 +20,7 @@ import {
   buildMissionAttachmentsContext,
   type MissionAttachment,
 } from '../lib/mission-attachments';
+import { createDraftHydrationBarrier } from '../lib/ui-overlay-policy';
 import {
   buildIntentDispatchKickoffPrompt,
   initialGoalForArmedMission,
@@ -45,8 +49,17 @@ import {
  * wizard cai direto na revisão do roster para disparar.
  */
 
-type Mode = 'libre' | 'squad' | 'agentic';
+type Mode = WizardMode;
 type Step = MissionWizardStep;
+
+/** Soft-close (keeps draft) vs discard (Cancelar / launch ok). */
+function softClose(): void {
+  useMissionWizardStore.getState().close();
+}
+
+function discardAndClose(): void {
+  useMissionWizardStore.getState().close({ discard: true });
+}
 
 const PANE_COUNTS = [1, 2, 3, 4, 6];
 
@@ -103,6 +116,7 @@ function humanPromptQueueActivity(kind: string): string {
 }
 
 export function MissionWizard() {
+  const draftHydrationBarrier = useRef(createDraftHydrationBarrier()).current;
   const open = useMissionWizardStore((s) => s.open);
   const variant = useMissionWizardStore((s) => s.variant);
   const presetSquadId = useMissionWizardStore((s) => s.presetSquadId);
@@ -112,7 +126,6 @@ export function MissionWizard() {
   const agenticLaunchNonce = useMissionWizardStore((s) => s.agenticLaunchNonce);
   const squadPickerNonce = useMissionWizardStore((s) => s.squadPickerNonce);
   const voiceLaunchNonce = useMissionWizardStore((s) => s.voiceLaunchNonce);
-  const close = useMissionWizardStore((s) => s.close);
   const squads = useOrchStore((s) => s.squads);
   const providers = useProviderStore((s) => s.providers);
   const recents = useWorkspaceStore((s) => s.recents);
@@ -240,6 +253,7 @@ export function MissionWizard() {
 
   useEffect(() => {
     if (!open) return;
+    draftHydrationBarrier.markHydrating();
     let cancelled = false;
     void window.nexus.adapters
       .list()
@@ -273,8 +287,30 @@ export function MissionWizard() {
           );
         }
       });
+
+    const workspaceState = useWorkspaceStore.getState();
+    const defaultWsPath = hasNewWsStep
+      ? workspaceState.current?.path ?? workspaceState.recents[0]?.path ?? ''
+      : '';
+    const draft = useMissionWizardStore.getState().draft;
+    const restoreDraft = (d: MissionWizardDraft) => {
+      setStep(d.step);
+      setMode(d.mode);
+      setSquadId(d.squadId);
+      setArmedMissionId(d.armedMissionId);
+      setIntent(d.intent);
+      setMissionGoal(d.missionGoal);
+      setMissionLane(d.missionLane);
+      setCount(d.count);
+      setSlots(d.slots);
+      setWsPath(d.wsPath || defaultWsPath);
+      setMissionAttachments(d.missionAttachments);
+      setPlannedMission(null);
+    };
+
     // Voice may target Modo Agêntico directly. The nonce matters when this
     // wizard was already open on another mode or with a previous objective.
+    // Never clobber a longer draft when voice only re-opens agentic empty.
     if (
       agenticLaunchNonce > handledAgenticLaunchRef.current &&
       stepRef.current !== 'squad-review'
@@ -282,8 +318,28 @@ export function MissionWizard() {
       handledAgenticLaunchRef.current = agenticLaunchNonce;
       setMode('agentic');
       setSquadId('');
-      setIntent(agenticIntent ?? '');
+      setArmedMissionId(null);
+      const seed =
+        (agenticIntent ?? '').trim() ||
+        (draft?.variant === variant ? draft.intent : '') ||
+        '';
+      setIntent(seed);
       setStep('agentic-intent');
+      if (!(draft?.variant === variant && isMissionWizardDraftDirty(draft))) {
+        setMissionGoal('');
+        setMissionLane('standard');
+        setCount(2);
+        setSlots([]);
+        setWsPath(defaultWsPath);
+        setMissionAttachments([]);
+      } else {
+        setMissionGoal(draft.missionGoal);
+        setMissionLane(draft.missionLane);
+        setCount(draft.count);
+        setSlots(draft.slots);
+        setWsPath(draft.wsPath || defaultWsPath);
+        setMissionAttachments(draft.missionAttachments);
+      }
     // Selecting an existing squad is a distinct intent from designing one.
     // A monotonic nonce also switches an already-open wizard reliably.
     } else if (squadPickerNonce > handledSquadPickerRef.current) {
@@ -292,16 +348,33 @@ export function MissionWizard() {
       setSquadId('');
       setIntent('');
       setStep('squad-select');
+      setWsPath(defaultWsPath);
+      setCount(2);
+      setSlots([]);
+      setMissionAttachments([]);
     // Intent-first: already-armed mission jumps to the goal composer.
     } else if (presetSquadId && storeArmedMissionId) {
       setMode('squad');
       setSquadId(presetSquadId);
       setArmedMissionId(storeArmedMissionId);
-      setMissionGoal('');
-      setMissionLane('standard');
+      // Restore goal if this is the same armed shell we were composing.
+      if (
+        draft?.variant === variant &&
+        draft.armedMissionId === storeArmedMissionId &&
+        draft.missionGoal.trim()
+      ) {
+        setMissionGoal(draft.missionGoal);
+        setMissionLane(draft.missionLane);
+        setMissionAttachments(draft.missionAttachments);
+      } else {
+        setMissionGoal('');
+        setMissionLane('standard');
+        setMissionAttachments([]);
+      }
+      setStep('intent-compose');
       setPlannedMission(null);
       setIntent('');
-      setStep('intent-compose');
+      setWsPath(defaultWsPath);
     // A preset squad (Home deck shortcut) skips MODO/SQUAD straight to review.
     } else if (presetSquadId) {
       setMode('squad');
@@ -309,23 +382,27 @@ export function MissionWizard() {
       setArmedMissionId(null);
       setIntent('');
       setStep('squad-review');
+      setWsPath(defaultWsPath);
+      setCount(2);
+      setSlots([]);
+      setMissionAttachments([]);
+    } else if (draft && draft.variant === variant && isMissionWizardDraftDirty(draft)) {
+      // Soft-close recovery: reopen Nova Missão with the typed objective intact.
+      restoreDraft(draft);
     } else {
       setStep(hasNewWsStep ? 'new-ws' : 'mode');
       setMode(null);
       setSquadId('');
       setArmedMissionId(null);
       setIntent('');
+      setMissionGoal('');
+      setMissionLane('standard');
+      setWsPath(defaultWsPath);
+      setCount(2);
+      setSlots([]);
+      setMissionAttachments([]);
     }
-    const workspaceState = useWorkspaceStore.getState();
-    setWsPath(
-      hasNewWsStep
-        ? workspaceState.current?.path ?? workspaceState.recents[0]?.path ?? ''
-        : '',
-    );
-    setCount(2);
-    setSlots([]);
     setError(null);
-    setMissionAttachments([]);
     // A previous design request may have hung or completed after the modal was
     // closed. Every fresh open must be interactive again.
     setDesigning(false);
@@ -336,11 +413,47 @@ export function MissionWizard() {
   }, [
     open,
     hasNewWsStep,
+    variant,
     presetSquadId,
     storeArmedMissionId,
     agenticIntent,
     agenticLaunchNonce,
     squadPickerNonce,
+  ]);
+
+  // Persist in-progress form continuously so overlay/Jarvis mis-clicks don't
+  // nuke the objective the user was typing.
+  useEffect(() => {
+    if (!open) return;
+    if (draftHydrationBarrier.shouldSkipPersist()) return;
+    useMissionWizardStore.getState().saveDraft({
+      variant,
+      step,
+      mode,
+      intent,
+      missionGoal,
+      missionLane,
+      squadId,
+      armedMissionId,
+      count,
+      slots,
+      wsPath,
+      missionAttachments,
+    });
+  }, [
+    open,
+    variant,
+    step,
+    mode,
+    intent,
+    missionGoal,
+    missionLane,
+    squadId,
+    armedMissionId,
+    count,
+    slots,
+    wsPath,
+    missionAttachments,
   ]);
 
   useEffect(() => {
@@ -351,11 +464,12 @@ export function MissionWizard() {
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
+      // Escape soft-closes — draft stays for the next open.
+      if (event.key === 'Escape') softClose();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, close]);
+  }, [open]);
 
   const installed = useMemo(
     () => adapters.filter((a) => a.installed),
@@ -650,7 +764,7 @@ export function MissionWizard() {
     try {
       if (!(await ensureWorkspaceOpen())) return;
       launchLibrePanes(slots.slice(0, count), adapters);
-      close();
+      discardAndClose();
     } finally {
       setSpawning(false);
     }
@@ -694,7 +808,7 @@ export function MissionWizard() {
           );
         return;
       }
-      close();
+      discardAndClose();
     } finally {
       setSpawning(false);
     }
@@ -725,7 +839,7 @@ export function MissionWizard() {
         lane: missionLane,
       });
       const waitingForEvidence =
-        missionGoalNeedsFutureEvidence(missionGoal) && missionAttachments.length === 0;
+        missionGoalNeedsFutureEvidence(missionGoal, missionAttachments.length > 0);
       if (waitingForEvidence) {
         setPlannedMission(null);
         setStep('intent-compose');
@@ -803,7 +917,7 @@ export function MissionWizard() {
 
   function handleOpenEmptyTerminal() {
     launchLibrePanes(['shell'], adapters);
-    close();
+    discardAndClose();
   }
 
   /** Shared dispatch core (plan step and one-click start). True = launched. */
@@ -867,7 +981,7 @@ export function MissionWizard() {
         .push('error', 'Não deu pra iniciar a execução', result.error);
       return false;
     }
-    close();
+    discardAndClose();
     return true;
   }
 
@@ -893,14 +1007,15 @@ export function MissionWizard() {
       aria-modal="true"
       aria-label={hasNewWsStep ? 'Novo workspace' : 'Nova missão'}
     >
-      <div className="wizard__overlay" onClick={close} />
+      {/* Soft-close: keeps typed objective. Hard discard only via Cancelar. */}
+      <div className="wizard__overlay" onClick={softClose} />
       <div className="wizard__panel">
         <header className="wizard__header">
           <span className="wizard__logo">&gt;_</span>
           <span className="wizard__title">
             {hasNewWsStep ? 'Novo workspace' : 'Nova Missão'}
           </span>
-          <CloseButton className="wizard__close" onClick={close} label="Fechar" />
+          <CloseButton className="wizard__close" onClick={softClose} label="Fechar" />
         </header>
         <StepsBar steps={steps} current={step} />
 
@@ -940,7 +1055,7 @@ export function MissionWizard() {
               <div className="wizard__actions">
                 <span />
                 <div className="wizard__actions-right">
-                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                  <button className="wizard__btn wizard__btn--ghost" onClick={discardAndClose}>
                     Cancelar
                   </button>
                   <button
@@ -1006,7 +1121,7 @@ export function MissionWizard() {
                 ) : (
                   <span />
                 )}
-                <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                <button className="wizard__btn wizard__btn--ghost" onClick={discardAndClose}>
                   Cancelar
                 </button>
               </div>
@@ -1043,7 +1158,7 @@ export function MissionWizard() {
                   ‹ Voltar
                 </button>
                 <div className="wizard__actions-right">
-                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                  <button className="wizard__btn wizard__btn--ghost" onClick={discardAndClose}>
                     Cancelar
                   </button>
                   <button
@@ -1084,7 +1199,7 @@ export function MissionWizard() {
                   ‹ Voltar
                 </button>
                 <div className="wizard__actions-right">
-                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                  <button className="wizard__btn wizard__btn--ghost" onClick={discardAndClose}>
                     Cancelar
                   </button>
                   <button
@@ -1131,7 +1246,7 @@ export function MissionWizard() {
                   ‹ Voltar
                 </button>
                 <div className="wizard__actions-right">
-                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                  <button className="wizard__btn wizard__btn--ghost" onClick={discardAndClose}>
                     Cancelar
                   </button>
                   <button
@@ -1194,7 +1309,7 @@ export function MissionWizard() {
                   ‹ Voltar
                 </button>
                 <div className="wizard__actions-right">
-                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                  <button className="wizard__btn wizard__btn--ghost" onClick={discardAndClose}>
                     Cancelar
                   </button>
                   <button
@@ -1226,7 +1341,7 @@ export function MissionWizard() {
               onBack={() =>
                 setStep(mode === 'agentic' ? 'agentic-intent' : 'squad-select')
               }
-              onCancel={close}
+              onCancel={discardAndClose}
               onLaunch={() => void handleLaunchSquad()}
             />
           )}
@@ -1260,8 +1375,10 @@ export function MissionWizard() {
                 onChange={setMissionAttachments}
                 disabled={spawning}
               />
-              {missionGoalNeedsFutureEvidence(missionGoal) &&
-                missionAttachments.length === 0 && (
+              {missionGoalNeedsFutureEvidence(
+                missionGoal,
+                missionAttachments.length > 0,
+              ) && (
                   <p
                     className="wizard__mode-desc"
                     style={{ marginTop: 8, color: 'var(--accent-cyan)' }}
@@ -1361,7 +1478,7 @@ export function MissionWizard() {
                   ‹ Voltar
                 </button>
                 <div className="wizard__actions-right">
-                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                  <button className="wizard__btn wizard__btn--ghost" onClick={discardAndClose}>
                     Cancelar
                   </button>
                   <button
@@ -1430,7 +1547,7 @@ export function MissionWizard() {
                   ‹ Editar objetivo
                 </button>
                 <div className="wizard__actions-right">
-                  <button className="wizard__btn wizard__btn--ghost" onClick={close}>
+                  <button className="wizard__btn wizard__btn--ghost" onClick={discardAndClose}>
                     Cancelar
                   </button>
                   <button

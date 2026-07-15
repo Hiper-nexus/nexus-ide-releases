@@ -5,8 +5,12 @@
 /* ---- Agent picker dialog ---- */
 .agent-picker {
   position: fixed;
-  inset: 0;
-  z-index: 1000;
+  /* Hard modal, but leave the top chrome free so Jarvis stays reachable. */
+  top: var(--bar-height);
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: var(--z-hard-modal);
   display: flex;
   align-items: center;
   justify-content: center;

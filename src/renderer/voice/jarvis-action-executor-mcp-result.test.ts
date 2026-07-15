@@ -348,6 +348,40 @@ describe('Jarvis MCP result propagation', () => {
     });
   });
 
+  it('prioritizes evidence wait message over brain speech for armed voice goals', async () => {
+    missionWizardState.armedMissionId = 'mission-armed';
+    const submitMissionIntent = vi.fn(async () => ({
+      id: 'mission-armed',
+      intentState: 'awaiting_goal',
+      intentVersion: 2,
+    }));
+    vi.stubGlobal('window', {
+      nexus: {
+        voice: { confirmCommand, logVoice: vi.fn() },
+        orch: { submitMissionIntent },
+      },
+    });
+
+    const execution = await executeJarvisAction(
+      {
+        say: 'Vou montar a missão agora.',
+        action: {
+          type: 'new_agentic_mission',
+          intent: 'Corrija o bug quando eu enviar o áudio e a captura.',
+        },
+      },
+      context,
+    );
+
+    expect(execution.sayText).toMatch(/Anexe os prints ou áudios/);
+    expect(execution.sayText).not.toBe('Vou montar a missão agora.');
+    expect(execution.toolResult).toMatchObject({
+      ok: true,
+      summary: 'objetivo aguardando evidências antes do dispatch',
+      output: { intentState: 'awaiting_goal', intentVersion: 2 },
+    });
+  });
+
   it('does not treat squad confirmation as dispatch while still awaiting a goal', async () => {
     missionWizardState.open = true;
     missionWizardState.presetSquadId = 'navalha';
@@ -462,6 +496,21 @@ describe('Jarvis MCP result propagation', () => {
       'mission-armed',
     );
     expect(missionWizardState.close).not.toHaveBeenCalled();
+    expect(execution.toolResult).toMatchObject({ ok: true });
+  });
+
+  it('hard-discards the wizard draft after a named squad starts', async () => {
+    workspaceState.current = { path: '/tmp/nexus' };
+    const squad = { id: 'navalha', name: 'Navalha', agents: [] };
+    orchState.squads = [squad];
+    launchSquadMission.mockResolvedValueOnce({ ok: true, armed: false });
+
+    const execution = await executeJarvisAction(
+      { say: '', action: { type: 'open_squad', squadName: 'Navalha' } },
+      context,
+    );
+
+    expect(missionWizardState.close).toHaveBeenCalledWith({ discard: true });
     expect(execution.toolResult).toMatchObject({ ok: true });
   });
 

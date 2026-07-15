@@ -137,15 +137,22 @@ function repositorySyncNarration(result: {
   return null;
 }
 
-/** Fecha overlays que cobrem a área de panes (perfil, home, settings…). */
+/**
+ * Soft-dismiss overlays that occlude panes so Jarvis-driven navigation is
+ * visible. NEVER hard-discards user drafts (mission objective, voice form,
+ * diff notes…) — those live in mission-wizard draft / ephemeral-draft-store.
+ * See ui-overlay-policy.ts.
+ */
 function dismissBlockingOverlays(): void {
   useGamificationStore.getState().closeProfile();
   useHomeStore.getState().hide();
+  // Soft close — keeps mission-wizard draft for re-open.
   useMissionWizardStore.getState().close();
   useOrchStore.getState().closeBoard();
+  // Soft close — voice-settings form is pocketed in ephemeral-draft-store.
   useVoiceStore.getState().closeSettings();
   const settings = useSettingsStore.getState();
-  if (settings.drawerOpen) settings.toggleDrawer();
+  if (settings.drawerOpen) settings.closeDrawer();
 }
 
 /** Garante que o pane recém-aberto fique visível (grade + foco). */
@@ -511,7 +518,7 @@ export async function executeJarvisAction(
           `Squad ${match.name} pronto. Aguardando seu objetivo — nenhum especialista iniciado, zero tokens usados.`;
       } else if (res.ok) {
         markEffect(control);
-        useMissionWizardStore.getState().close();
+        useMissionWizardStore.getState().close({ discard: true });
         sayText = `Squad ${match.name} iniciado.`;
       }
       checkpoint(control);
@@ -677,14 +684,15 @@ export async function executeJarvisAction(
           source: 'voice',
         });
         markEffect(control);
+        // Voice IPC currently carries no attachment/evidence signal.
         const waitingForEvidence =
           planned.intentState === 'awaiting_goal' &&
-          missionGoalNeedsFutureEvidence(voiceGoal);
+          missionGoalNeedsFutureEvidence(voiceGoal, false);
         sayText =
-          sayText.trim() ||
-          (waitingForEvidence
+          waitingForEvidence
             ? MISSION_EVIDENCE_WAIT_MESSAGE
-            : `Objetivo registrado para a missão armada: ${voiceGoal.slice(0, 80)}.`);
+            : sayText.trim() ||
+              `Objetivo registrado para a missão armada: ${voiceGoal.slice(0, 80)}.`;
         toolResult = {
           tool: action.type,
           ok: true,

@@ -28,6 +28,11 @@ import {
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { statusLabel } from '../lib/mission-rail-groups';
 import { FleetChip } from './FleetChip';
+import {
+  clearEphemeralDraft,
+  peekEphemeralDraft,
+  saveEphemeralDraft,
+} from '../state/ephemeral-draft-store';
 
 const AGENT_PICKER_EMPTY = agentPickerEmptyBeat();
 
@@ -196,20 +201,44 @@ export function WorkspaceBar({
   const installedAdapters = adapters.filter((a) => a.installed);
 
   function openPicker() {
-    const first = installedAdapters[0] ?? null;
+    const draft = peekEphemeralDraft<{ adapterId: string; model: string }>(
+      'agent-picker',
+    );
+    const fromDraft = draft
+      ? installedAdapters.find((a) => a.id === draft.adapterId) ?? null
+      : null;
+    const first = fromDraft ?? installedAdapters[0] ?? null;
     setSelectedAdapter(first);
-    setSelectedModel(first?.models.default ?? '');
+    setSelectedModel(
+      fromDraft && draft
+        ? draft.model || first?.models.default || ''
+        : first?.models.default ?? '',
+    );
     setPickerOpen(true);
   }
 
-  function closePicker() {
+  /** Soft-close: keep adapter/model selection for the next open. */
+  function softClosePicker() {
+    if (selectedAdapter) {
+      saveEphemeralDraft('agent-picker', {
+        adapterId: selectedAdapter.id,
+        model: selectedModel,
+      });
+    }
+    setPickerOpen(false);
+  }
+
+  /** Explicit cancel discards the selection draft. */
+  function discardClosePicker() {
+    clearEphemeralDraft('agent-picker');
     setPickerOpen(false);
   }
 
   function confirmSpawn() {
     if (!selectedAdapter) return;
     spawnAgent(selectedAdapter.id, selectedModel || selectedAdapter.models.default);
-    closePicker();
+    clearEphemeralDraft('agent-picker');
+    setPickerOpen(false);
   }
 
   function handleAdapterChange(id: string) {
@@ -646,7 +675,7 @@ export function WorkspaceBar({
 
       {pickerOpen && (
         <div className="agent-picker" role="dialog" aria-label="Abrir agente">
-          <div className="agent-picker__overlay" onClick={closePicker} />
+          <div className="agent-picker__overlay" onClick={softClosePicker} />
           <div className="agent-picker__panel">
             <h3 className="agent-picker__title">Abrir agente</h3>
 
@@ -678,7 +707,7 @@ export function WorkspaceBar({
                     subtitle="chaves · CLIs"
                     variant="primary"
                     onClick={() => {
-                      closePicker();
+                      softClosePicker();
                       useSettingsStore.getState().openDrawer('providers');
                     }}
                   />
@@ -733,7 +762,7 @@ export function WorkspaceBar({
                 )}
 
                 <div className="agent-picker__actions">
-                  <button className="agent-picker__btn" onClick={closePicker}>
+                  <button className="agent-picker__btn" onClick={discardClosePicker}>
                     Cancelar
                   </button>
                   <button

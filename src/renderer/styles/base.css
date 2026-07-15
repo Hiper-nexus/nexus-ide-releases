@@ -60,6 +60,17 @@
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 
+  /* Overlay ladder — keep app chrome (bar + Jarvis) ABOVE soft dimmers so
+     mid-form clicks on voice/config never hit the backdrop and wipe drafts.
+     Hard modals (confirm, agent-picker, update) still cover chrome.
+     See src/renderer/lib/ui-overlay-policy.ts. */
+  --z-soft-overlay: 45;
+  --z-soft-panel: 46;
+  --z-app-chrome: 55;
+  --z-hard-modal: 1000;
+  --z-voice-hud: 1200;
+  --z-confirm: 1300;
+
   /* Escalas — fonte única de espaçamento, tipo, raio e sombra. Valores fora
      da escala são exceção deliberada, não default. */
   --space-1: 4px;
@@ -278,7 +289,8 @@ body {
   user-select: none;
   overflow: visible; /* menus drop below the bar */
   position: relative;
-  z-index: 40;
+  /* Above soft modal dimmers (wizard/settings) so Jarvis/config stay clickable. */
+  z-index: var(--z-app-chrome);
 }
 
 .workspace-bar__brand {
@@ -864,12 +876,12 @@ body {
 }
 
 /* Estado da frota legível de LONGE, não só no glifo de 10px: agente
-   trabalhando respira ciano na borda do pane; morto tinge de vermelho —
-   o evento mais crítico deixa de ser o mais silencioso. O pane focado
-   mantém prioridade visual (regra acima vence por ordem). */
+   trabalhando marca ciano na borda; morto tinge de vermelho.
+   Sem animação de box-shadow no pane — em Electron isso repinta o
+   canvas do xterm e parece o terminal “piscando” a cada busy↔idle. */
 .pane--state-busy:not(.pane--focused) {
   border-color: color-mix(in srgb, var(--state-running) 55%, var(--border));
-  animation: pane-breathe 2.2s ease-in-out infinite;
+  box-shadow: 0 0 12px -8px var(--accent-glow);
 }
 
 .pane--state-exited:not(.pane--focused) {
@@ -885,23 +897,6 @@ body {
 .pane--state-hibernated:not(.pane--focused) {
   border-style: dashed;
   border-color: color-mix(in srgb, var(--text-dim) 40%, var(--border));
-}
-
-@keyframes pane-breathe {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 transparent;
-  }
-  50% {
-    box-shadow: 0 0 16px -7px var(--accent-glow);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pane--state-busy:not(.pane--focused) {
-    animation: none;
-    box-shadow: 0 0 12px -7px var(--accent-glow);
-  }
 }
 
 .toolbar {
@@ -1031,8 +1026,9 @@ body {
   box-shadow: 0 0 8px var(--accent);
 }
 
-/* Estado do agente no toolbar: o glifo COMUNICA (busy respira, spawning pisca
-   devagar, idle assenta com um pop único). Sinal operacional, não decoração. */
+/* Estado do agente no toolbar: cor + borda comunicam; motion leve só no
+   glifo (opacity). Evitar scale pop e opacity 0.35 — reiniciavam a cada
+   busy↔idle e faziam a barra inteira “piscar”. */
 .toolbar__state {
   position: relative;
   flex: 0 0 auto;
@@ -1040,18 +1036,19 @@ body {
   line-height: 1;
   display: inline-flex;
   align-items: center;
+  transition:
+    color 160ms var(--ease-out-quart),
+    border-color 160ms var(--ease-out-quart),
+    background-color 160ms var(--ease-out-quart);
 }
 .toolbar__state--idle {
   color: var(--state-ready);
-  animation: state-settle 250ms var(--ease-out-quart);
 }
 .toolbar__state--busy {
   color: var(--state-running);
-  animation: state-breathe 1.4s ease-in-out infinite;
 }
 .toolbar__state--spawning {
   color: var(--state-pending);
-  animation: state-breathe 0.9s ease-in-out infinite;
 }
 .toolbar__state--exited {
   color: var(--state-failed);
@@ -1059,18 +1056,18 @@ body {
 .toolbar__state--hibernated {
   color: var(--state-pending);
 }
+/* Só o ícone respira — o chip/label fica estável e não apaga o texto. */
+.toolbar__state--busy > .pixel-icon,
+.toolbar__state--spawning > .pixel-icon {
+  animation: state-breathe 1.6s ease-in-out infinite;
+}
 @keyframes state-breathe {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-@keyframes state-settle {
-  from { transform: scale(1.4); }
-  to { transform: scale(1); }
+  50% { opacity: 0.55; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .toolbar__state--busy,
-  .toolbar__state--spawning,
-  .toolbar__state--idle {
+  .toolbar__state--busy > .pixel-icon,
+  .toolbar__state--spawning > .pixel-icon {
     animation: none;
   }
 }

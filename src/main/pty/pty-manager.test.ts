@@ -793,6 +793,46 @@ describe("cli-agent spawn argv hardening", () => {
     vi.useRealTimers();
   });
 
+  it("does not re-emit stateChange when hook re-asserts the same state", () => {
+    let handlers: PtySessionHandlers | null = null;
+    const proc: PtyProcHandle = { write: vi.fn(), resize: vi.fn(), kill: vi.fn() };
+    setPtyHost({
+      spawn(_spec, nextHandlers) {
+        handlers = nextHandlers;
+        return proc;
+      },
+    });
+
+    const send = vi.fn();
+    const owner = {
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send,
+    } as unknown as WebContents;
+    const { sessionId } = spawnAgentSession(
+      owner,
+      { kind: "cli-agent", cols: 80, rows: 24 },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      {},
+      trustedSpawn(),
+    );
+
+    const activeHandlers = handlers as PtySessionHandlers | null;
+    if (!activeHandlers) throw new Error("PTY handlers were not registered");
+    activeHandlers.onData("hello");
+    expect(getSessionState(sessionId)).toBe("busy");
+
+    send.mockClear();
+    expect(publishSessionActivityState(sessionId, "busy")).toBe(true);
+    expect(publishSessionActivityState(sessionId, "busy")).toBe(true);
+    const stateSends = send.mock.calls.filter(
+      (call) => call[0] === "pty:stateChange",
+    );
+    expect(stateSends).toHaveLength(0);
+
+    killSession(owner, sessionId);
+  });
+
   it("releases a stale hook busy after the watchdog window when no idle arrives", async () => {
     vi.useFakeTimers();
     let handlers: PtySessionHandlers | null = null;

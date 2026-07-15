@@ -109,11 +109,12 @@
 
 /* ---- Voice HUD ---- */
 .voice-hud {
+  /* Always above soft dimmers; confirm modals may still cover when needed. */
   /* Painel COMPACTO, arrastável e ancorável por canto (posição vem inline de
      hud-prefs). O HUD antigo era um bloco fixo de 440px que tampava o
      terminal; agora ele é pequeno, move, encolhe (pill) e some (só-áudio). */
   position: fixed;
-  z-index: 1200;
+  z-index: var(--z-voice-hud);
   pointer-events: auto;
   user-select: none;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);

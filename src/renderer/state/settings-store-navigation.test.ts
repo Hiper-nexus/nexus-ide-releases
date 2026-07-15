@@ -14,30 +14,36 @@ describe('settings drawer navigation target', () => {
     });
   });
 
-  it('does not reuse a targeted section for a generic open', () => {
+  it('soft-close keeps the last section so reopen resumes the same panel', () => {
     useSettingsStore.getState().openDrawer('providers');
-    useSettingsStore.getState().closeDrawer();
-    useSettingsStore.getState().openDrawer();
-    expect(useSettingsStore.getState().drawerSection).toBeNull();
-    // Panel resolution after generic reopen is tested in settings-drawer-section.test.ts
-    // (resolveOpenDrawerSection(null) → account), matching SettingsDrawer effect.
-  });
-
-  it('closeDrawer clears drawerSection', () => {
-    useSettingsStore.getState().openDrawer('ranking');
     useSettingsStore.getState().closeDrawer();
     expect(useSettingsStore.getState()).toMatchObject({
       drawerOpen: false,
-      drawerSection: null,
+      drawerSection: 'providers',
+    });
+    useSettingsStore.getState().openDrawer();
+    expect(useSettingsStore.getState()).toMatchObject({
+      drawerOpen: true,
+      drawerSection: 'providers',
     });
   });
 
-  it('toggleDrawer close also clears drawerSection', () => {
+  it('explicit openDrawer(section) still retargets', () => {
+    useSettingsStore.getState().openDrawer('ranking');
+    useSettingsStore.getState().closeDrawer();
+    useSettingsStore.getState().openDrawer('providers');
+    expect(useSettingsStore.getState()).toMatchObject({
+      drawerOpen: true,
+      drawerSection: 'providers',
+    });
+  });
+
+  it('toggleDrawer soft-close also keeps drawerSection', () => {
     useSettingsStore.getState().openDrawer('providers');
     useSettingsStore.getState().toggleDrawer();
     expect(useSettingsStore.getState()).toMatchObject({
       drawerOpen: false,
-      drawerSection: null,
+      drawerSection: 'providers',
     });
   });
 
@@ -47,6 +53,6 @@ describe('settings drawer navigation target', () => {
     useSettingsStore.setState({ drawerSection: 'providers' });
     expect(useSettingsStore.getState().drawerSection).toBe('providers');
     useSettingsStore.getState().closeDrawer();
-    expect(useSettingsStore.getState().drawerSection).toBeNull();
+    expect(useSettingsStore.getState().drawerSection).toBe('providers');
   });
 });

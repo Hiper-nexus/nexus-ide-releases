@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   hasRealtimeProviderAudioAnswer,
+  liveAnswerOutcomeFromEvidence,
   shouldRearmAfterAudioOnly,
 } from './live-wake-greeting';
 
@@ -15,5 +16,22 @@ describe('Live wake greeting / provider answer gate', () => {
     expect(shouldRearmAfterAudioOnly('reply')).toBe(false);
     expect(shouldRearmAfterAudioOnly('wake')).toBe(true);
     expect(shouldRearmAfterAudioOnly('click')).toBe(true);
+  });
+});
+
+describe('live provider answer outcome (anti-mute after final transcript)', () => {
+  it('commits to the realtime provider when it produced audio or a native tool', () => {
+    expect(liveAnswerOutcomeFromEvidence('audio')).toBe('commit');
+    expect(liveAnswerOutcomeFromEvidence('tool')).toBe('commit');
+  });
+
+  it('degrades to Classic when the provider stayed silent past the deadline', () => {
+    // The core bug: ~89% of final-transcript turns closed with no audio and the
+    // code returned into silence. A timeout must now fall back to Classic TTS.
+    expect(liveAnswerOutcomeFromEvidence('timeout')).toBe('degrade');
+  });
+
+  it('aborts (does nothing) when a newer turn superseded this one', () => {
+    expect(liveAnswerOutcomeFromEvidence('superseded')).toBe('abort');
   });
 });

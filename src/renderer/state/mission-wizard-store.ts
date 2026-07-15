@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { MissionIntentSource } from '../../shared/mission-intent';
+import type { MissionAttachment } from '../lib/mission-attachments';
 
 /**
  * Open/close state for the workspace/mission wizard.
@@ -7,9 +8,14 @@ import type { MissionIntentSource } from '../../shared/mission-intent';
  *    (launched from the launch screen).
  *  - 'mission': "Nova Missão" inside the current workspace, starting at MODO
  *    (launched from ＋ Missão or automatically when entering a folder).
+ *
+ * Draft persistence: accidental close (overlay / Escape / clicar na Jarvis
+ * sob o overlay) must NOT wipe the objective the user was typing. Only an
+ * explicit Cancelar or a successful launch discards the draft.
  */
 
 export type WizardVariant = 'workspace' | 'mission';
+export type WizardMode = 'libre' | 'squad' | 'agentic';
 export type MissionWizardStep =
   | 'new-ws'
   | 'mode'
@@ -22,6 +28,26 @@ export type MissionWizardStep =
   | 'intent-compose'
   /** Intent-first: short plan ready for user start/approval. */
   | 'intent-plan';
+
+export interface MissionWizardDraft {
+  variant: WizardVariant;
+  step: MissionWizardStep;
+  mode: WizardMode | null;
+  intent: string;
+  missionGoal: string;
+  missionLane: 'standard' | 'consult';
+  squadId: string;
+  armedMissionId: string | null;
+  count: number;
+  slots: string[];
+  wsPath: string;
+  missionAttachments: MissionAttachment[];
+}
+
+export type MissionWizardCloseOptions = {
+  /** true = user cancelled or launch finished; wipe draft. Default keeps draft. */
+  discard?: boolean;
+};
 
 interface MissionWizardStore {
   open: boolean;
@@ -52,6 +78,11 @@ interface MissionWizardStore {
    * squad currently on the review step (Overclock navegar wizard-fire).
    */
   voiceLaunchNonce: number;
+  /**
+   * Last in-progress form. Survives soft close so reopening restores the
+   * objective the user was typing (anti-loss vs overlay / Jarvis click).
+   */
+  draft: MissionWizardDraft | null;
   openForNewWorkspace(): void;
   openForMission(): void;
   /** Open Nova Missão already on Modo Agêntico, optionally with its objective. */
@@ -68,8 +99,17 @@ interface MissionWizardStore {
   /** Request launch of the open squad-review (confirm_squad / voice "sim"). */
   requestVoiceLaunch(): void;
   setVisibleStep(step: MissionWizardStep): void;
-  close(): void;
+  saveDraft(draft: MissionWizardDraft): void;
+  clearDraft(): void;
+  close(options?: MissionWizardCloseOptions): void;
 }
+
+const closedFields = {
+  open: false as const,
+  presetSquadId: null as string | null,
+  voiceLaunchNonce: 0,
+  visibleStep: null as MissionWizardStep | null,
+};
 
 export const useMissionWizardStore = create<MissionWizardStore>((set) => ({
   open: false,
@@ -82,6 +122,7 @@ export const useMissionWizardStore = create<MissionWizardStore>((set) => ({
   squadPickerNonce: 0,
   visibleStep: null,
   voiceLaunchNonce: 0,
+  draft: null,
   openForNewWorkspace: () =>
     set({
       open: true,
@@ -93,27 +134,59 @@ export const useMissionWizardStore = create<MissionWizardStore>((set) => ({
       visibleStep: 'new-ws',
     }),
   openForMission: () =>
-    set({
-      open: true,
-      variant: 'mission',
-      presetSquadId: null,
-      armedMissionId: null,
-      agenticIntent: null,
-      voiceLaunchNonce: 0,
-      visibleStep: 'mode',
-    }),
-  openForAgentic: (intent, source) =>
     set((state) => ({
       open: true,
       variant: 'mission',
       presetSquadId: null,
-      armedMissionId: null,
-      agenticIntent: intent?.trim() || null,
-      agenticSource: source ?? 'typed',
-      agenticLaunchNonce: state.agenticLaunchNonce + 1,
+      // Resume only a shell bound to the saved draft. A bare store id is stale
+      // authority and must not capture the next voice objective.
+      armedMissionId:
+        state.draft?.variant === 'mission' ? state.draft.armedMissionId : null,
+      agenticIntent: null,
       voiceLaunchNonce: 0,
-      visibleStep: 'agentic-intent',
+      visibleStep: 'mode',
     })),
+  openForAgentic: (intent, source) =>
+    set((state) => {
+      const spoken = intent?.trim() || null;
+      // Voice may open agentic without a spoken objective — never wipe a draft
+      // the user already typed in the composer.
+      const preserved = spoken ?? (state.draft?.intent?.trim() || null);
+      const nextDraft: MissionWizardDraft | null = spoken
+        ? {
+            variant: 'mission',
+            step: 'agentic-intent',
+            mode: 'agentic',
+            intent: spoken,
+            missionGoal: state.draft?.missionGoal ?? '',
+            missionLane: state.draft?.missionLane ?? 'standard',
+            squadId: '',
+            armedMissionId: null,
+            count: state.draft?.count ?? 2,
+            slots: state.draft?.slots ?? [],
+            wsPath: state.draft?.wsPath ?? '',
+            missionAttachments: state.draft?.missionAttachments ?? [],
+          }
+        : state.draft && state.draft.variant === 'mission'
+          ? {
+              ...state.draft,
+              step: 'agentic-intent',
+              mode: 'agentic',
+            }
+          : state.draft;
+      return {
+        open: true,
+        variant: 'mission',
+        presetSquadId: null,
+        armedMissionId: null,
+        agenticIntent: preserved,
+        agenticSource: source ?? (spoken ? 'voice' : state.agenticSource),
+        agenticLaunchNonce: state.agenticLaunchNonce + 1,
+        voiceLaunchNonce: 0,
+        visibleStep: 'agentic-intent',
+        draft: nextDraft,
+      };
+    }),
   openSquadPicker: () =>
     set((state) => ({
       open: true,
@@ -147,14 +220,54 @@ export const useMissionWizardStore = create<MissionWizardStore>((set) => ({
   requestVoiceLaunch: () =>
     set((s) => ({ voiceLaunchNonce: s.voiceLaunchNonce + 1 })),
   setVisibleStep: (visibleStep) => set({ visibleStep }),
-  close: () =>
-    set({
-      open: false,
-      presetSquadId: null,
-      armedMissionId: null,
-      agenticIntent: null,
-      agenticSource: 'typed',
-      voiceLaunchNonce: 0,
-      visibleStep: null,
+  saveDraft: (draft) =>
+    set((state) => {
+      const existing = state.draft;
+      // Don't clobber a dirty mission objective with a sparse workspace shell
+      // when the user opens "Novo workspace" while a mission draft is parked.
+      if (
+        existing &&
+        existing.variant !== draft.variant &&
+        isMissionWizardDraftDirty(existing) &&
+        !isMissionWizardDraftDirty(draft)
+      ) {
+        return state;
+      }
+      return { draft };
     }),
+  clearDraft: () => set({ draft: null }),
+  close: (options) =>
+    set((state) => ({
+      ...closedFields,
+      // Soft-close keeps the draft (and agentic seed) so a mis-click on Jarvis
+      // / overlay does not nuke the objective mid-type.
+      draft: options?.discard ? null : state.draft,
+      armedMissionId: options?.discard ? null : state.armedMissionId,
+      agenticIntent: options?.discard ? null : state.agenticIntent,
+      agenticSource: options?.discard ? 'typed' : state.agenticSource,
+    })),
 }));
+
+/** True when the draft has user-authored content worth restoring. */
+export function isMissionWizardDraftDirty(
+  draft: MissionWizardDraft | null | undefined,
+): boolean {
+  if (!draft) return false;
+  // Mode alone (user only tapped a card) is not enough — require authored
+  // content or a step past the empty mode/pasta shell.
+  if (
+    draft.intent.trim().length > 0 ||
+    draft.missionGoal.trim().length > 0 ||
+    draft.missionAttachments.length > 0 ||
+    draft.wsPath.trim().length > 0 ||
+    draft.squadId.trim().length > 0 ||
+    draft.armedMissionId != null
+  ) {
+    return true;
+  }
+  return (
+    draft.step !== 'mode' &&
+    draft.step !== 'new-ws' &&
+    draft.step !== 'agentic-intent'
+  );
+}

@@ -6,7 +6,8 @@ export const SETTINGS_DRAWER_DEFAULT_SECTION: SettingsSection = 'account';
 /**
  * Resolve which settings panel to show when the drawer is open.
  * - Targeted open (openDrawer('providers')) → that section
- * - Generic open (openDrawer() / null target) → default, never a stale local panel
+ * - Soft-reopen after close keeps last section in the store → resume there
+ * - Truly null target (first open) → default account panel
  *
  * Pure; used by SettingsDrawer so tests drive the same function as production.
  */

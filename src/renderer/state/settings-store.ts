@@ -131,12 +131,18 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   toggleDrawer: () =>
     set((s) => ({
       drawerOpen: !s.drawerOpen,
-      // Closing via toggle clears the targeted section so the next open is fresh.
-      drawerSection: s.drawerOpen ? null : s.drawerSection,
+      // Soft-close keeps the section so reopening resumes the same panel
+      // (Jarvis/overlay must not reset navigation mid-settings).
+      drawerSection: s.drawerSection,
     })),
   openDrawer: (section) =>
-    set({ drawerOpen: true, drawerSection: section ?? null }),
-  closeDrawer: () => set({ drawerOpen: false, drawerSection: null }),
+    set((s) => ({
+      drawerOpen: true,
+      // Explicit target wins; generic open reuses last soft section if any.
+      drawerSection: section !== undefined ? section : s.drawerSection,
+    })),
+  // Soft-close: hide only. Section + search draft survive for the next open.
+  closeDrawer: () => set({ drawerOpen: false }),
 }));
 
 /** Boot hook: hydrate once and follow main-process broadcasts. */

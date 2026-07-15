@@ -19,27 +19,25 @@ describe('resolveOpenDrawerSection (SettingsDrawer panel selection)', () => {
     expect(resolveOpenDrawerSection('ranking')).toBe('ranking');
   });
 
-  it('store path: providers → close → generic open does not keep providers target', () => {
+  it('store path: providers → soft close → generic open resumes providers', () => {
     useSettingsStore.setState({ drawerOpen: false, drawerSection: null });
     useSettingsStore.getState().openDrawer('providers');
     expect(useSettingsStore.getState().drawerSection).toBe('providers');
-    // What SettingsDrawer would show while open with target:
     expect(
       resolveOpenDrawerSection(useSettingsStore.getState().drawerSection),
     ).toBe('providers');
 
     useSettingsStore.getState().closeDrawer();
-    expect(useSettingsStore.getState().drawerSection).toBeNull();
+    // Soft-close keeps the section (overlay / Jarvis must not reset nav).
+    expect(useSettingsStore.getState().drawerSection).toBe('providers');
 
     useSettingsStore.getState().openDrawer();
     expect(useSettingsStore.getState()).toMatchObject({
       drawerOpen: true,
-      drawerSection: null,
+      drawerSection: 'providers',
     });
-    // Local useState would have been "providers" before fix; production resolver
-    // must force default so the panel is fresh.
     expect(
       resolveOpenDrawerSection(useSettingsStore.getState().drawerSection),
-    ).toBe('account');
+    ).toBe('providers');
   });
 });

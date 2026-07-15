@@ -3,6 +3,11 @@ import type { AdapterInfo } from '../../../shared/types';
 import { useOrchStore } from '../../state/orch-store';
 import { useSettingsStore } from '../../state/settings-store';
 import {
+  peekEphemeralDraft,
+  saveEphemeralDraft,
+} from '../../state/ephemeral-draft-store';
+import { createDraftHydrationBarrier } from '../../lib/ui-overlay-policy';
+import {
   SETTINGS_GROUPS,
   SETTINGS_PRIMARY_GROUPS,
   SETTINGS_ADVANCED_GROUPS,
@@ -163,6 +168,7 @@ function AdvancedGroupNav({
 }
 
 export function SettingsDrawer() {
+  const draftHydrationBarrier = useRef(createDraftHydrationBarrier()).current;
   const open = useSettingsStore((s) => s.drawerOpen);
   const requestedSection = useSettingsStore((s) => s.drawerSection);
   const close = useSettingsStore((s) => s.closeDrawer);
@@ -203,12 +209,37 @@ export function SettingsDrawer() {
     if (isAdvancedSettingsSection(section)) setAdvancedOpen(true);
   }, [section]);
 
-  // On open: apply targeted section, or default — never keep a stale local panel
-  // after closeDrawer() + openDrawer() with no arg (requestedSection null).
+  // Section target can change while open (openDrawer('providers') / nav).
   useEffect(() => {
     if (!open) return;
     setSection(resolveOpenDrawerSection(requestedSection));
   }, [open, requestedSection]);
+
+  // Restore search only on open edge — not on every section change (that
+  // wiped in-progress query when the user navigated mid-type).
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      wasOpenRef.current = false;
+      return;
+    }
+    if (wasOpenRef.current) return;
+    wasOpenRef.current = true;
+    draftHydrationBarrier.markHydrating();
+    const nav = peekEphemeralDraft<{ query: string; advancedOpen: boolean }>(
+      'settings-nav',
+    );
+    if (nav) {
+      setQuery(nav.query);
+      setAdvancedOpen(nav.advancedOpen);
+    }
+  }, [open, draftHydrationBarrier]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (draftHydrationBarrier.shouldSkipPersist()) return;
+    saveEphemeralDraft('settings-nav', { query, advancedOpen });
+  }, [open, query, advancedOpen, draftHydrationBarrier]);
 
   useEffect(() => {
     if (!open) return undefined;

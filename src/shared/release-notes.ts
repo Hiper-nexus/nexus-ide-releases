@@ -17,7 +17,7 @@ export const CURRENT_RELEASE: AppRelease = {
   date: '2026-07-15',
   codename: 'Atualização Direta',
   summary:
-    'Instalações antigas agora saltam direto para a maior release compatível, e a oferta é revalidada imediatamente antes do download.',
+    'Instalações antigas saltam direto para a maior release compatível, enquanto janelas lentas, terminais e formulários permanecem estáveis durante o uso.',
   highlights: [
     {
       title: 'Uma única atualização até a versão mais nova',
@@ -28,6 +28,11 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Ícone do Dock estável com o pet ativo',
       detail:
         'O companion usa skipTransformProcessType e nunca chama dock.show() no hot path. O app fixa o ícone do bundle no tile e só pede show quando o Dock está realmente oculto.',
+    },
+    {
+      title: 'Rascunhos resistem a fechamento acidental',
+      detail:
+        'Objetivos e anexos de missão, chaves de voz, anotações de diff, seleção de agente e navegação de Settings voltam intactos após Escape, overlay ou uma ação da Jarvis; Cancelar e concluir continuam descartando de forma explícita.',
     },
     {
       title: 'Gate de evidências antes do handoff',
@@ -90,6 +95,21 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Release metadata alinhada',
       detail:
         'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.16.5, removendo o bloqueio que deixava a árvore de release inconsistente.',
+    },
+    {
+      title: 'Carga lenta não entra em loop de recarregamento',
+      detail:
+        'O watchdog espera a navegação ativa e só reinicia uma carga realmente travada após 30 segundos, evitando ERR_ABORTED, tela piscando e falha de boot no pacote Intel.',
+    },
+    {
+      title: 'Terminal e toolbar sem piscar',
+      detail:
+        'Reemissões idênticas são suprimidas e o estado visual mantém busy por uma janela curta entre pausas de output; o estado real continua imediato para guards e orquestração.',
+    },
+    {
+      title: 'Evidência anexada não fica presa no gate',
+      detail:
+        'A mensagem de espera ganha prioridade quando faltam prints ou áudios, e o mesmo detector libera imediatamente o fluxo quando a interação já trouxe um anexo.',
     },
     {
       title: 'Ownership e DAG endurecidos',

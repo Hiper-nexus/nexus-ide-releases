@@ -1,5 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useVoiceStore } from '../voice/voice-store';
+import {
+  clearEphemeralDraft,
+  peekEphemeralDraft,
+  saveEphemeralDraft,
+} from '../state/ephemeral-draft-store';
 import {
   accelFromCode,
   normalizeKeyCode,
@@ -20,6 +25,7 @@ import {
   liveSmokeFailureMessage,
   providerOption,
 } from './voice-settings-helpers';
+import { createDraftHydrationBarrier } from '../lib/ui-overlay-policy';
 
 type RealtimeTransport = Exclude<JarvisLiveTransport, 'classic'>;
 
@@ -31,6 +37,29 @@ type VoiceSettingsTab =
   | 'fallback'
   | 'persona'
   | 'credenciais';
+
+/** Session-only pocket for soft-close recovery (may include unsaved key fields). */
+type VoiceSettingsDraft = {
+  sttProvider: string;
+  ttsProvider: string;
+  jarvisBrainProvider: string;
+  speakMode: string;
+  routing: string;
+  triggerKey: string;
+  triggerAccel: string;
+  wakeWordOn: boolean;
+  jarvisLiveOn: boolean;
+  liveRealtime: boolean;
+  realtimeTransport: RealtimeTransport;
+  assistantName: string;
+  userName: string;
+  customInstructions: string;
+  openaiVoice: string;
+  geminiVoice: string;
+  ttsVoice: string;
+  keyInputs: Record<string, string>;
+  activeTab: VoiceSettingsTab;
+};
 
 const VOICE_TABS: Array<{
   id: VoiceSettingsTab;
@@ -96,6 +125,7 @@ function comboFromKeyboardEvent(
 }
 
 export function VoiceSettings() {
+  const draftHydrationBarrier = useRef(createDraftHydrationBarrier()).current;
   const open = useVoiceStore((s) => s.settingsOpen);
   const info = useVoiceStore((s) => s.info);
   const liveState = useVoiceStore((s) => s.liveState);
@@ -161,12 +191,50 @@ export function VoiceSettings() {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [capturingKey]);
 
+  // Hydrate once per open session. Do NOT re-run when `info` changes mid-edit
+  // (live toggle / setInfo) — that used to re-apply a stale draft and undo the
+  // user's in-progress changes (HIGH: soft-draft vs optimistic live config).
+  const hydratedForOpenRef = useRef(false);
   useEffect(() => {
     if (!open) {
+      hydratedForOpenRef.current = false;
       setCapturingKey(false);
       return;
     }
+    if (hydratedForOpenRef.current) return;
+
+    const draft = peekEphemeralDraft<VoiceSettingsDraft>('voice-settings');
+    if (draft) {
+      draftHydrationBarrier.markHydrating();
+      hydratedForOpenRef.current = true;
+      setSttProvider(draft.sttProvider);
+      setTtsProvider(draft.ttsProvider);
+      setJarvisBrainProvider(draft.jarvisBrainProvider);
+      setSpeakMode(draft.speakMode);
+      setRouting(draft.routing);
+      setTriggerKey(draft.triggerKey);
+      setTriggerAccel(draft.triggerAccel);
+      setWakeWordOn(draft.wakeWordOn);
+      setJarvisLiveOn(draft.jarvisLiveOn);
+      setLiveRealtime(draft.liveRealtime);
+      setRealtimeTransport(draft.realtimeTransport);
+      setAssistantName(draft.assistantName);
+      setUserName(draft.userName);
+      setCustomInstructions(draft.customInstructions);
+      setOpenaiVoice(draft.openaiVoice);
+      setGeminiVoice(draft.geminiVoice);
+      setTtsVoice(draft.ttsVoice);
+      setKeyInputs(draft.keyInputs);
+      setActiveTab(draft.activeTab);
+      setCaptureHint(null);
+      setError(null);
+      setTestResult(null);
+      return;
+    }
+    // Wait for runtime info before first hydrate from disk.
     if (!info) return;
+    draftHydrationBarrier.markHydrating();
+    hydratedForOpenRef.current = true;
     setSttProvider(info.stt.active?.provider ?? info.stt.chain[0]?.provider ?? '');
     setTtsProvider(info.tts.active?.provider ?? info.tts.chain[0]?.provider ?? '');
     setJarvisBrainProvider(
@@ -198,7 +266,55 @@ export function VoiceSettings() {
     );
     setError(null);
     setTestResult(null);
-  }, [open, info]);
+  }, [open, info, draftHydrationBarrier]);
+
+  // Persist in-progress edits continuously (session only).
+  useEffect(() => {
+    if (!open) return;
+    if (draftHydrationBarrier.shouldSkipPersist()) return;
+    saveEphemeralDraft<VoiceSettingsDraft>('voice-settings', {
+      sttProvider,
+      ttsProvider,
+      jarvisBrainProvider,
+      speakMode,
+      routing,
+      triggerKey,
+      triggerAccel,
+      wakeWordOn,
+      jarvisLiveOn,
+      liveRealtime,
+      realtimeTransport,
+      assistantName,
+      userName,
+      customInstructions,
+      openaiVoice,
+      geminiVoice,
+      ttsVoice,
+      keyInputs,
+      activeTab,
+    });
+  }, [
+    open,
+    sttProvider,
+    ttsProvider,
+    jarvisBrainProvider,
+    speakMode,
+    routing,
+    triggerKey,
+    triggerAccel,
+    wakeWordOn,
+    jarvisLiveOn,
+    liveRealtime,
+    realtimeTransport,
+    assistantName,
+    userName,
+    customInstructions,
+    openaiVoice,
+    geminiVoice,
+    ttsVoice,
+    keyInputs,
+    activeTab,
+  ]);
 
   if (!open) return null;
 
@@ -257,6 +373,7 @@ export function VoiceSettings() {
         ttsVoice,
       });
       setInfo(next);
+      clearEphemeralDraft('voice-settings');
       close();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

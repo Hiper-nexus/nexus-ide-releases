@@ -1,11 +1,25 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { sendAnnotationsToAgent } from '../lib/agent-attach';
+import {
+  clearEphemeralDraft,
+  peekEphemeralDraft,
+  saveEphemeralDraft,
+} from '../state/ephemeral-draft-store';
+import { createDraftHydrationBarrier } from '../lib/ui-overlay-policy';
 import { CloseButton } from './CloseButton';
 
 type Annotation = { path: string; line: number; body: string; id: string };
 
+type DiffAnnotateDraft = {
+  annotations: Annotation[];
+  draft: string;
+  selected: { path: string; line: number } | null;
+};
+
 /**
  * Minimal AI-diff review: load git diff, click a line to annotate, send to agent (A3).
+ * Annotations + draft text soft-persist so closing the panel / Jarvis mis-click
+ * does not wipe review notes mid-write.
  */
 export function DiffAnnotatePanel({
   open,
@@ -14,6 +28,7 @@ export function DiffAnnotatePanel({
   open: boolean;
   onClose: () => void;
 }) {
+  const draftHydrationBarrier = useRef(createDraftHydrationBarrier()).current;
   const [diff, setDiff] = useState('');
   const [branch, setBranch] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,6 +43,20 @@ export function DiffAnnotatePanel({
 
   useEffect(() => {
     if (!open) return;
+    draftHydrationBarrier.markHydrating();
+    const saved = peekEphemeralDraft<DiffAnnotateDraft>('diff-annotate');
+    if (saved) {
+      setAnnotations(saved.annotations);
+      setDraft(saved.draft);
+      setSelected(saved.selected);
+    } else {
+      // Fresh open without pocketed notes — clear local leftovers from a
+      // previous hard-cleared session in the same mounted panel instance.
+      setAnnotations([]);
+      setDraft('');
+      setSelected(null);
+    }
+    setNote(null);
     setLoading(true);
     setError(null);
     void window.nexus.integrations
@@ -42,7 +71,17 @@ export function DiffAnnotatePanel({
         setBranch(r.branch);
       })
       .finally(() => setLoading(false));
-  }, [open]);
+  }, [open, draftHydrationBarrier]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (draftHydrationBarrier.shouldSkipPersist()) return;
+    saveEphemeralDraft<DiffAnnotateDraft>('diff-annotate', {
+      annotations,
+      draft,
+      selected,
+    });
+  }, [open, annotations, draft, selected, draftHydrationBarrier]);
 
   const lines = useMemo(() => diff.split('\n'), [diff]);
 
@@ -160,6 +199,12 @@ export function DiffAnnotatePanel({
                       ? 'Revisão entregue — a missão vai endereçar os comentários'
                       : 'Falha — o terminal do orquestrador não está disponível',
                   );
+                  if (ok) {
+                    setAnnotations([]);
+                    setDraft('');
+                    setSelected(null);
+                    clearEphemeralDraft('diff-annotate');
+                  }
                 })
                 .finally(() => setSending(false));
             }}

@@ -66,7 +66,8 @@ function StateIndicator({
   /** Só ícone quando a toolbar está no modo mais apertado. */
   compact: boolean;
 }) {
-  const state = useSessionStateStore((s) => s.paneStates.get(paneId));
+  // displayStates lags busy→idle so Trabalho↔Pronto does not flash every quiet gap.
+  const state = useSessionStateStore((s) => s.displayStates.get(paneId));
   if (!state) return null;
 
   const view = paneSessionView(state);
@@ -138,7 +139,9 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
   const toggleMaximizePane = useLayoutStore((s) => s.toggleMaximizePane);
   const renameTitle = useLayoutStore((s) => s.renameTitle);
+  // True state for actions (dormir/reiniciar guards); display for avatar chrome.
   const paneState = useSessionStateStore((s) => s.paneStates.get(pane.id));
+  const displayState = useSessionStateStore((s) => s.displayStates.get(pane.id));
   const agentCategory = useOrchStore((s) =>
     resolveAgentCategory(s.squads, pane.agentName, pane.role),
   );
@@ -350,7 +353,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         {pane.kind === 'cli-agent' && (
           <AgentAvatar
             category={agentCategory}
-            state={paneState ?? 'spawning'}
+            state={displayState ?? paneState ?? 'spawning'}
             size="micro"
             label={pane.agentName ?? pane.title}
             className="toolbar__agent-avatar"

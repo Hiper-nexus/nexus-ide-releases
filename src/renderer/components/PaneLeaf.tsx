@@ -26,9 +26,9 @@ export function PaneLeaf({ pane }: Props) {
 function TerminalPaneLeaf({ pane }: Props) {
   const slotRef = useRef<HTMLDivElement>(null);
   const isFocused = useLayoutStore((s) => s.focusedPaneId === pane.id);
-  // Estado da sessão vira modificador visual do pane: a frota é legível na
-  // visão periférica (busy respira, exited tinge), não só no glifo do toolbar.
-  const sessionState = useSessionStateStore((s) => s.paneStates.get(pane.id));
+  // Display state (busy sticky) — true state flips on short PTY gaps; using it
+  // here restarts border animations and reads as terminal flicker.
+  const sessionState = useSessionStateStore((s) => s.displayStates.get(pane.id));
 
   useEffect(() => {
     const slot = slotRef.current;

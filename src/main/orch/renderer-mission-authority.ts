@@ -340,7 +340,10 @@ export class RendererMissionAuthority {
         lane: input.lane === "consult" ? "consult" : "standard",
       });
       const evidenceAttached = input.evidenceAttached === true;
-      const needsFutureEvidence = missionGoalNeedsFutureEvidence(contract.goal);
+      const needsFutureEvidence = missionGoalNeedsFutureEvidence(
+        contract.goal,
+        evidenceAttached,
+      );
       risk = classifyGoalRisk(contract.goal);
       const compileEvent =
         risk === "normal"
@@ -389,8 +392,7 @@ export class RendererMissionAuthority {
       intentState: updated.intentState ?? "intent_compiling",
       intentVersion: nextVersion,
       reason:
-        missionGoalNeedsFutureEvidence(contract.goal) &&
-        input.evidenceAttached !== true
+        missionGoalNeedsFutureEvidence(contract.goal, input.evidenceAttached === true)
           ? "awaiting_evidence"
           : risk,
     });
@@ -582,8 +584,10 @@ export class RendererMissionAuthority {
       );
     }
     if (
-      missionGoalNeedsFutureEvidence(current.intentContract.goal) &&
-      input.evidenceAttached !== true
+      missionGoalNeedsFutureEvidence(
+        current.intentContract.goal,
+        input.evidenceAttached === true,
+      )
     ) {
       throw new Error(`evidence_required: ${MISSION_EVIDENCE_WAIT_MESSAGE}`);
     }

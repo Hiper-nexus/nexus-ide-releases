@@ -9,7 +9,8 @@ import { FLEET_SEG_LABEL } from '../../shared/pane-session-view';
  */
 
 export function FleetChip() {
-  const paneStates = useSessionStateStore((s) => s.paneStates);
+  // Use displayStates so "1 trab · 3 ok" does not thrash on short busy↔idle gaps.
+  const paneStates = useSessionStateStore((s) => s.displayStates);
   const root = useLayoutStore((s) => s.root);
   const focus = useLayoutStore((s) => s.focus);
 

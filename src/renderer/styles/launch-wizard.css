@@ -1,9 +1,14 @@
 /* ---- Mission wizard ---- */
 .wizard__overlay {
   position: fixed;
-  inset: 0;
+  /* Leave the top chrome strip clear so Jarvis/config stay interactive
+     without soft-dismissing the mission form (see ui-overlay-policy). */
+  top: var(--bar-height);
+  right: 0;
+  bottom: 0;
+  left: 0;
   background: rgba(4, 6, 10, 0.6);
-  z-index: 50;
+  z-index: var(--z-soft-overlay);
 }
 
 .wizard__panel {
@@ -20,7 +25,7 @@
   /* Um dialeto de raio só: token (o pixel-mode zera a escala inteira). */
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-3);
-  z-index: 51;
+  z-index: var(--z-soft-panel);
   overflow: hidden;
 }
 
