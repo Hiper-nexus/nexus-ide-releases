@@ -19,6 +19,18 @@ import {
 } from "./smoke-core";
 import { shouldCreateWindowOnActivate } from "./app-lifecycle";
 
+// Electron documents activation-policy setup as an early, synchronous macOS
+// operation. If the app is launched from a helper/deep link while AppKit still
+// sees an accessory policy, it is classified as a UIElement and never gets a
+// Dock item even after a BrowserWindow is created.
+if (process.platform === "darwin") {
+  try {
+    app.setActivationPolicy("regular");
+  } catch (error) {
+    console.warn("[main] macOS activation policy unavailable:", error);
+  }
+}
+
 // Must run before Electron emits `ready`. The handler itself is installed in
 // bootstrap (after ready), before the first BrowserWindow is created.
 registerRendererProtocolScheme(protocol);

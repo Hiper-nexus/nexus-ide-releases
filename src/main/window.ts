@@ -199,6 +199,10 @@ export function createMainWindow(): BrowserWindow {
   });
 
   win.show();
+  // Re-assert after the native window exists and ask AppKit to materialize the
+  // Dock item. The early call in main.ts handles launch classification; this
+  // call covers launches that inherited an accessory policy from the shell.
+  ensureMacDockPresence();
 
   // The native window is the availability boundary: integrations must not be
   // able to prevent the Dock item from existing. Register optional IPC/CSP

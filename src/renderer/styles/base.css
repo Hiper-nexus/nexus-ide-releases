@@ -394,7 +394,9 @@ body {
   min-width: 0;
   justify-content: flex-end;
   overflow: visible;
-  -webkit-app-region: no-drag;
+  /* Keep the flexible empty track draggable. Interactive zones below opt out
+     explicitly, so dragging the chrome cannot get lost between controls. */
+  -webkit-app-region: drag;
 }
 
 .workspace-bar__zone {
@@ -403,6 +405,7 @@ body {
   gap: 6px;
   flex: 0 0 auto;
   min-width: 0;
+  -webkit-app-region: no-drag;
 }
 
 .workspace-bar__zone--status {
