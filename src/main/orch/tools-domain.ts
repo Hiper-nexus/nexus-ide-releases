@@ -6,6 +6,7 @@ import { routeTask, type TaskTier } from './task-router';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
 import { missionStatusSchema } from '../../shared/orch-types';
+import { buildClarify } from '../../shared/clarify';
 import { findAgent, listAgents, saveSquad } from './squad-store';
 import { DEFAULT_TODO_LIST } from './todo-store';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -810,6 +811,43 @@ const todoManagerTool: McpToolDef = {
 
 const TIERS: TaskTier[] = ['trivial', 'easy', 'medium', 'hard', 'critical'];
 
+const clarifyTool: McpToolDef = {
+  name: 'nexus_clarify',
+  description:
+    'Ask the user ONE clarifying question with 2-6 suggestion chips instead ' +
+    'of a vague free-text prompt. Returns {question, chips:[{id,label}], ' +
+    'allowFreeform} — present the chips to the user; when they reply, route ' +
+    'their answer with the chip id/label/number. Use before spawning work ' +
+    'when a decision is genuinely ambiguous — not for confirmations.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      question: { type: 'string', description: 'The single question to ask' },
+      options: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '2-6 suggested answers, shown as clickable chips',
+      },
+      allowFreeform: {
+        type: 'boolean',
+        description: 'Whether a typed answer outside the chips is accepted (default true)',
+      },
+    },
+    required: ['question', 'options'],
+  },
+  handler: async (args) => {
+    const question = requireStr(args, 'question');
+    const options = strArray(args, 'options');
+    const allowFreeformRaw = args.allowFreeform;
+    return buildClarify({
+      question,
+      options,
+      allowFreeform:
+        typeof allowFreeformRaw === 'boolean' ? allowFreeformRaw : undefined,
+    });
+  },
+};
+
 const routeLogTool: McpToolDef = {
   name: 'nexus_route_log',
   description:
@@ -997,6 +1035,7 @@ export function buildDomainTools(): McpToolDef[] {
   return [
     routeTaskTool,
     routeLogTool,
+    clarifyTool,
     ...buildHandoffTools(),
     agentInvokeTool,
     agentListTool,

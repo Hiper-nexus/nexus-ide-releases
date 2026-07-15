@@ -27,6 +27,7 @@ Aliases aceitos em `tools/call`: `nexus_pane_spawn` ≡ `pane_spawn` (o
 | Squad/Catálogo/Task (3) | `nexus_squad_save`, `nexus_catalog_install`, `nexus_task` |
 | Todos (1) | `nexus_todo_manager` |
 | Roteamento (2) | `nexus_route_task` (decide adapter/model/effort por tier+catálogo), `nexus_route_log` (auditoria read-only das últimas decisões com o motivo — "ver para crer") |
+| Clarify (1) | `nexus_clarify` (pergunta única com 2-6 chips de sugestão + roteamento determinístico da resposta por id/label/número) |
 
 ## Handoffs (SQLite + IPC — melhoria sobre marker files)
 
