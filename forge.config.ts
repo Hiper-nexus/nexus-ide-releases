@@ -315,6 +315,10 @@ const config: ForgeConfig = {
     extendInfo: {
       CFBundleName: 'NexusIDE',
       CFBundleDisplayName: 'NexusIDE',
+      // Keep AppKit's launch classification explicit. Without this key, some
+      // macOS launches inherit an accessory/UIElement policy even after the main
+      // process calls app.setActivationPolicy('regular').
+      LSUIElement: false,
       // Keep ATS active for all remote traffic. The app uses loopback HTTP for
       // its embedded MCP endpoint and the verified local Squirrel feed only.
       // `NSAllowsLocalNetworking` preserves those local product services
