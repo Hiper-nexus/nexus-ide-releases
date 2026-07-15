@@ -324,8 +324,18 @@ export function RemoteSection() {
           onClick={async () => {
             setInfo(await window.nexus.remote.bridgeStart());
           }}
+          title="Só este computador (127.0.0.1)"
         >
-          Iniciar
+          Iniciar (local)
+        </button>
+        <button
+          className="settings-btn settings-btn--primary"
+          onClick={async () => {
+            setInfo(await window.nexus.remote.bridgeStart({ host: '0.0.0.0' }));
+          }}
+          title="Expõe na rede local para o celular conectar — só faça em redes de confiança"
+        >
+          Iniciar (LAN — celular)
         </button>
         <button
           className="settings-btn"

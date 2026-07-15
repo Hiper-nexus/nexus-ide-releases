@@ -8,6 +8,7 @@ import { useSettingsStore } from '../state/settings-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useFilesStore } from '../state/files-store';
 import { useHomeStore } from '../state/home-store';
+import { useIntegrationsStore } from '../state/integrations-store';
 import { listPanes } from '../lib/split-tree';
 import { filterPaletteActions } from '../lib/command-palette-filter';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
@@ -131,6 +132,14 @@ export function CommandPalette() {
       () => useHomeStore.getState().show(),
       '',
       'home deck inicio',
+    );
+    tool(
+      'integrations',
+      'GitHub e integrações',
+      'bolt',
+      () => useIntegrationsStore.getState().show(),
+      '',
+      'github pr pull request issues linear git apps port forward',
     );
     tool(
       'settings',

@@ -28,9 +28,11 @@ import { listLinearIssues } from './linear-api';
 import {
   gitCommitMessage,
   gitCurrentBranch,
+  gitDefaultBranch,
   gitDiff,
   gitFileDiff,
   gitLogOneline,
+  gitPushCurrentBranch,
   gitRemoteOrigin,
   gitScmStatus,
   gitStage,
@@ -170,7 +172,19 @@ export function registerIntegrationsIpc(): void {
       if (!repo) return { ok: false, error: 'origin is not a GitHub remote' };
       const branch = parsed.data.sourceBranch ?? gitCurrentBranch(cwd);
       if (!branch) return { ok: false, error: 'cannot resolve current branch' };
-      const target = parsed.data.targetBranch ?? 'main';
+      // Real default branch — never hardcode 'main' (repos use trunk/master…).
+      const target = parsed.data.targetBranch ?? gitDefaultBranch(cwd);
+      if (branch === target) {
+        return {
+          ok: false,
+          error: `branch atual "${branch}" é o alvo do PR — troque de branch antes de abrir o PR`,
+        };
+      }
+      // Push the head branch first: GitHub 422s on a branch it has never seen.
+      const pushed = gitPushCurrentBranch(cwd, branch);
+      if (!pushed.ok) {
+        return { ok: false, error: `falha ao dar push em "${branch}": ${pushed.error}` };
+      }
       return createGithubPr(token, repo.owner, repo.name, {
         title: parsed.data.title,
         body: parsed.data.body ?? '',
