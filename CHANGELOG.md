@@ -4,19 +4,15 @@
 
 Data: 2026-07-15
 
-- Causa real do ícone que aparece e some: o companion chama
-  `setVisibleOnAllWorkspaces(true)` para ficar em todos os Spaces. No macOS,
-  o Electron (por padrão) transforma o processo em `UIElementApplication` e
-  remove o Dock. Isolado em repro: com `skipTransformProcessType: true` o
-  processo permanece `Foreground`; sem a flag vira `UIElement` na hora.
-- `raisePetAboveAll` usa `skipTransformProcessType: true`, impedindo a troca de
-  política na origem. Ele não chama `dock.show()` no ciclo do pet, evitando um
-  loop de ativação que fazia a janela e os botões piscarem.
-- O pet também deixa de usar `skipTaskbar: true` no macOS (Windows/Linux
-  continuam fora da taskbar). Nota: `skipTaskbar` sozinho **não** era o
-  gatilho do flip UIElement no Electron 43 — o gatilho era all-workspaces.
-- A janela principal continua oculta durante retries recuperáveis do protocolo,
-  evitando o flicker de inicialização sem usar um watchdog permanente.
+- Causa 1 (classificação): o companion chamava `setVisibleOnAllWorkspaces(true)`
+  e o Electron transformava o processo em `UIElementApplication`. Agora usa
+  `skipTransformProcessType: true` e permanece `Foreground`.
+- Causa 2 (tile fantasma): vários `dock.show()` no thrash deixavam um item
+  "NexusIDE" no Dock com tamanho AX `12×0` — listado, mas **invisível** até
+  `killall Dock`. Agora o app aplica o ícone do bundle (`dock.setIcon`) e só
+  chama `show()` se o Dock estiver escondido.
+- O pet não chama `dock.show()` no hot path (evita loop de foco/piscar).
+- A janela principal continua oculta durante retries recuperáveis do protocolo.
 
 ## 0.16.3 — Dock em Primeiro Plano
 

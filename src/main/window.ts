@@ -12,7 +12,11 @@ import {
   RendererRecoveryCircuitBreaker,
 } from './reliability/renderer-recovery-circuit-breaker';
 import { handleRenderProcessGone } from './agent-runtime/agent-runtime-bridge';
-import { ensureRegularMacOSActivation } from './macos-activation-policy';
+import {
+  applyMacOSDockIcon,
+  ensureRegularMacOSActivation,
+  reassertMacOSDockPresence,
+} from './macos-activation-policy';
 
 /**
  * Last-resort recovery screen: if React never mounts after repeated reloads (or
@@ -158,17 +162,9 @@ function registerCsp(devServerUrl: string | undefined): void {
 }
 
 export function ensureMacDockPresence(): void {
-  if (process.platform !== 'darwin') return;
-
-  try {
-    ensureRegularMacOSActivation();
-    const dockShow = app.dock?.show();
-    void dockShow?.catch((error) => {
-        console.warn('[window] macOS Dock item unavailable:', error);
-    });
-  } catch (error) {
-    console.warn('[window] macOS activation policy unavailable:', error);
-  }
+  // Single path for policy + icon + show-if-hidden. Avoids repeated dock.show()
+  // which can leave a zero-height ghost tile after UIElement thrashing.
+  reassertMacOSDockPresence();
 }
 
 export function createMainWindow(): BrowserWindow {
@@ -202,13 +198,11 @@ export function createMainWindow(): BrowserWindow {
     },
   });
 
-  // Re-assert after the native window exists and ask AppKit to materialize the
-  // Dock item. The early call in main.ts handles launch classification; this
-  // call covers launches that inherited an accessory policy from the shell.
-  ensureMacDockPresence();
-  // Some packaged launches let AppKit restore the accessory policy while the
-  // renderer is booting. Re-apply the user-facing policy at the native UI
-  // readiness boundary, after all startup modules have run.
+  // Policy already set before construction; only re-apply the icon now that
+  // Electron has a live Dock controller. Avoid a second dock.show() here —
+  // show() thrash is what left a 12×0 ghost tile on some launches.
+  applyMacOSDockIcon();
+  // Final presence check once the renderer has actually loaded.
   win.webContents.once('did-finish-load', ensureMacDockPresence);
 
   // The native window is the availability boundary: integrations must not be
@@ -280,15 +274,18 @@ export function createMainWindow(): BrowserWindow {
     if (nativeWindowShown || win.isDestroyed()) return;
     nativeWindowShown = true;
     win.show();
-    // app.dock.show() is asynchronous. Focusing before AppKit has materialized
-    // the Dock item can leave the process classified as an accessory app after
-    // launch, so the icon briefly appears and then disappears. Do this once,
-    // after the renderer has mounted, instead of polling/focusing continuously.
+    // Materialize Dock once the native window is actually shown. Focus only
+    // after show resolves so we don't leave a ghost accessory tile.
+    ensureRegularMacOSActivation();
+    applyMacOSDockIcon();
     const dockReady =
-      process.platform === 'darwin' ? app.dock?.show() : undefined;
-    void dockReady
-      ?.then(() => {
+      process.platform === 'darwin' && app.dock && !app.dock.isVisible?.()
+        ? app.dock.show()
+        : undefined;
+    void Promise.resolve(dockReady)
+      .then(() => {
         ensureRegularMacOSActivation();
+        applyMacOSDockIcon();
         app.focus?.({ steal: true });
         if (!win.isDestroyed()) win.focus();
       })
@@ -296,7 +293,6 @@ export function createMainWindow(): BrowserWindow {
         console.warn('[window] macOS Dock activation failed:', error);
         if (!win.isDestroyed()) win.focus();
       });
-    if (!dockReady) win.focus();
   };
   let mountReloads = 0;
   const MAX_MOUNT_RELOADS = 5;

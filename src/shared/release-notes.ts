@@ -13,16 +13,16 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.16.3',
+  version: '0.16.4',
   date: '2026-07-15',
-  codename: 'Dock em Primeiro Plano',
+  codename: 'Dock Persistente com Pet',
   summary:
-    'Correção do ciclo de vida do macOS mantém o NexusIDE como aplicativo de primeiro plano com ícone persistente no Dock.',
+    'O companion preserva a classificação Foreground e o NexusIDE reaplica o ícone do bundle sem criar loops de ativação no Dock.',
   highlights: [
     {
-      title: 'Ícone do Dock persistente no macOS',
+      title: 'Ícone do Dock estável com o pet ativo',
       detail:
-        'O bootstrap aplica a política regular antes do carregamento do runtime pesado, e três rechecagens curtas de boot confirmam a presença no Dock sem roubar foco nem piscar a janela.',
+        'O companion usa skipTransformProcessType e nunca chama dock.show() no hot path. O app fixa o ícone do bundle no tile e só pede show quando o Dock está realmente oculto.',
     },
     {
       title: 'Gate de evidências antes do handoff',

@@ -23,7 +23,8 @@ describe('macOS activate lifecycle', () => {
 
   it('sets regular macOS activation before creating the first window', () => {
     const source = fs.readFileSync(path.join(__dirname, 'window.ts'), 'utf-8');
-    const policyStart = source.indexOf('ensureRegularMacOSActivation();');
+    // ensureMacDockPresence → reassertMacOSDockPresence → setActivationPolicy
+    const policyStart = source.indexOf('ensureMacDockPresence();');
     const windowStart = source.indexOf('const win = new BrowserWindow({');
 
     expect(policyStart).toBeGreaterThanOrEqual(0);
@@ -64,7 +65,18 @@ describe('macOS activate lifecycle', () => {
     expect(source).toContain("skipTaskbar: process.platform !== 'darwin'");
     expect(source).toContain('skipTransformProcessType: true');
     expect(source).not.toContain('skipTaskbar: true');
+    // Hot path must NOT spam dock.show() (creates 12×0 ghost tiles).
     expect(source).not.toContain('reassertMacOSDockPresence();');
+  });
+
+  it('applies the product Dock icon and avoids show() spam', () => {
+    const policy = fs.readFileSync(
+      path.join(__dirname, 'macos-activation-policy.ts'),
+      'utf-8',
+    );
+    expect(policy).toContain('app.dock.setIcon');
+    expect(policy).toContain('isVisible');
+    expect(policy).toContain('electron.icns');
   });
 
   it('creates a window only while the app runtime is live', () => {

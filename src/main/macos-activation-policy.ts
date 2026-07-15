@@ -1,6 +1,9 @@
-import { app } from 'electron';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { app, nativeImage } from 'electron';
 
 const dockReassertTimers: NodeJS.Timeout[] = [];
+let dockIconApplied = false;
 
 /**
  * Keep NexusIDE classified as a normal foreground macOS application.
@@ -19,19 +22,64 @@ export function ensureRegularMacOSActivation(): void {
 }
 
 /**
- * Restore Dock presence during the bounded launch checks.
+ * Pin the product icon onto the Dock tile once.
  *
- * Empirically (Electron 43 / macOS): BrowserWindow.setVisibleOnAllWorkspaces(true)
- * reclassifies the whole app as UIElement even when LSUIElement is false and
- * skipTaskbar is false. The pet prevents that transform at the source with
- * skipTransformProcessType. Do not call this from pet/window hot paths:
- * dock.show() can emit activation again and create a visible focus loop.
+ * After an UIElement → regular thrash, AppKit can leave a zero-height Dock
+ * tile (AX size 12x0) that stays listed as "NexusIDE" but is invisible until
+ * the Dock process restarts. Re-applying the bundle icon after we are regular
+ * forces a real tile to materialize without `killall Dock`.
+ */
+export function applyMacOSDockIcon(): void {
+  if (process.platform !== 'darwin' || dockIconApplied) return;
+  if (!app.dock) return;
+
+  const candidates = [
+    // electron-packager ships the product icns under this fixed name.
+    path.join(process.resourcesPath, 'electron.icns'),
+    path.join(process.resourcesPath, 'icon.icns'),
+    path.join(process.resourcesPath, 'icon.png'),
+    // Dev / unpackaged.
+    path.join(app.getAppPath(), 'assets', 'icon.png'),
+    path.join(app.getAppPath(), 'assets', 'icon.icns'),
+    path.join(process.cwd(), 'assets', 'icon.png'),
+    path.join(process.cwd(), 'assets', 'icon.icns'),
+  ];
+
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    try {
+      const image = nativeImage.createFromPath(candidate);
+      if (image.isEmpty()) continue;
+      app.dock.setIcon(image);
+      dockIconApplied = true;
+      return;
+    } catch (error) {
+      console.warn('[macos] dock setIcon failed for', candidate, error);
+    }
+  }
+}
+
+/**
+ * Restore Dock presence after policy races.
+ *
+ * Empirically (Electron 43 / macOS):
+ * - setVisibleOnAllWorkspaces(true) without skipTransformProcessType flips the
+ *   process to UIElement (pet fixes that at the call site).
+ * - Repeated dock.show() while the policy is thrashing can leave a ghost tile
+ *   with AX size 12×0 — listed in the Dock but invisible. Only call show()
+ *   when the Dock item is actually hidden, and always re-apply the icon.
  */
 export function reassertMacOSDockPresence(): void {
   if (process.platform !== 'darwin') return;
   ensureRegularMacOSActivation();
+  applyMacOSDockIcon();
   try {
-    void app.dock?.show()?.catch((error) => {
+    if (!app.dock) return;
+    // Avoid show() spam: it re-triggers activation and can re-corrupt the tile.
+    if (typeof app.dock.isVisible === 'function' && app.dock.isVisible()) {
+      return;
+    }
+    void app.dock.show()?.catch((error) => {
       console.warn('[macos] Dock item unavailable:', error);
     });
   } catch (error) {
