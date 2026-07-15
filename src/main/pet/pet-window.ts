@@ -391,11 +391,29 @@ function raisePetAboveAll(force = false): void {
     }
   }
   try {
-    petWindow.setVisibleOnAllWorkspaces(true, {
-      visibleOnFullScreen: true,
-    });
-  } catch {
-    petWindow.setVisibleOnAllWorkspaces(true);
+    if (process.platform === 'darwin') {
+      // Without skipTransformProcessType, Electron toggles the process to
+      // UIElementApplication (Dock icon vanishes). Isolated: Foreground stays
+      // only when this flag is true; default options flip to UIElement.
+      petWindow.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true,
+        skipTransformProcessType: true,
+      });
+    } else {
+      petWindow.setVisibleOnAllWorkspaces(true);
+    }
+  } catch (error) {
+    // Never use the option-less fallback on macOS: Electron documents that it
+    // transforms the process type and briefly hides both the Dock and window.
+    if (process.platform !== 'darwin') {
+      try {
+        petWindow.setVisibleOnAllWorkspaces(true);
+      } catch {
+        // Best effort on window managers without all-workspaces support.
+      }
+    } else {
+      console.warn('[pet] all-workspaces pin unavailable:', error);
+    }
   }
   // moveTop só quando demovido — a cada tick recompõe e pisca.
   if (force || demoted) {
@@ -785,7 +803,12 @@ function createPetWindow(): void {
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
-    skipTaskbar: true,
+    // On macOS the Dock is app-scoped. Keep skipTaskbar false so the pet never
+    // participates in process-level Dock/taskbar policy; Windows/Linux can
+    // still hide only this companion from the taskbar. (The UIElement flip that
+    // hid the Dock icon was setVisibleOnAllWorkspaces without
+    // skipTransformProcessType — fixed in raisePetAboveAll.)
+    skipTaskbar: process.platform !== 'darwin',
     hasShadow: false,
     // Nunca rouba o foco do terminal do usuário: pet é presença, não janela.
     focusable: false,

@@ -19,6 +19,27 @@ export function ensureRegularMacOSActivation(): void {
 }
 
 /**
+ * Restore Dock presence during the bounded launch checks.
+ *
+ * Empirically (Electron 43 / macOS): BrowserWindow.setVisibleOnAllWorkspaces(true)
+ * reclassifies the whole app as UIElement even when LSUIElement is false and
+ * skipTaskbar is false. The pet prevents that transform at the source with
+ * skipTransformProcessType. Do not call this from pet/window hot paths:
+ * dock.show() can emit activation again and create a visible focus loop.
+ */
+export function reassertMacOSDockPresence(): void {
+  if (process.platform !== 'darwin') return;
+  ensureRegularMacOSActivation();
+  try {
+    void app.dock?.show()?.catch((error) => {
+      console.warn('[macos] Dock item unavailable:', error);
+    });
+  } catch (error) {
+    console.warn('[macos] Dock policy unavailable:', error);
+  }
+}
+
+/**
  * AppKit can briefly re-apply the launch policy while auxiliary windows or the
  * renderer are created. Reassert during the boot window only; a permanent
  * timer makes AppKit repeatedly recompute the activation state and can make the
@@ -27,22 +48,11 @@ export function ensureRegularMacOSActivation(): void {
 export function startMacOSDockWatchdog(): void {
   if (process.platform !== 'darwin' || dockReassertTimers.length > 0) return;
 
-  const reassert = (): void => {
-    ensureRegularMacOSActivation();
-    try {
-      void app.dock?.show()?.catch((error) => {
-        console.warn('[macos] Dock item unavailable:', error);
-      });
-    } catch (error) {
-      console.warn('[macos] Dock policy unavailable:', error);
-    }
-  };
-
-  reassert();
+  reassertMacOSDockPresence();
   for (const delayMs of [250, 1_000, 2_500]) {
     dockReassertTimers.push(
       setTimeout(() => {
-        reassert();
+        reassertMacOSDockPresence();
         if (delayMs === 2_500) dockReassertTimers.length = 0;
       }, delayMs),
     );

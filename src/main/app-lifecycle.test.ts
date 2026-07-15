@@ -55,6 +55,18 @@ describe('macOS activate lifecycle', () => {
     expect(runtimeImport).toBeGreaterThan(policyCall);
   });
 
+  it('does not let the desktop pet hide the whole app from the macOS Dock', () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, 'pet', 'pet-window.ts'),
+      'utf-8',
+    );
+
+    expect(source).toContain("skipTaskbar: process.platform !== 'darwin'");
+    expect(source).toContain('skipTransformProcessType: true');
+    expect(source).not.toContain('skipTaskbar: true');
+    expect(source).not.toContain('reassertMacOSDockPresence();');
+  });
+
   it('creates a window only while the app runtime is live', () => {
     expect(
       shouldCreateWindowOnActivate({
