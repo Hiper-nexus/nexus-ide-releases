@@ -165,6 +165,10 @@ function ensureMacDockPresence(): void {
     // process out of the Dock for the rest of that launch.
     app.setActivationPolicy?.('regular');
     app.dock?.show();
+    // A packaged launch can otherwise remain an inactive UIElement even after
+    // the policy changes. Activating the user-facing window materializes the
+    // regular app entry in the Dock (same behavior as opening from Finder).
+    app.focus?.({ steal: true });
   } catch (error) {
     console.warn('[window] macOS activation policy unavailable:', error);
   }

@@ -18,6 +18,7 @@ describe('macOS activate lifecycle', () => {
     expect(source).toContain('show: true');
     expect(source).toContain('win.show();');
     expect(source).toContain("app.setActivationPolicy?.('regular')");
+    expect(source).toContain("app.focus?.({ steal: true })");
   });
 
   it('sets regular macOS activation before creating the first window', () => {
