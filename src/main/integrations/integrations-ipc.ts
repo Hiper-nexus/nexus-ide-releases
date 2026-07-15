@@ -40,6 +40,7 @@ import {
   parseGithubRepo,
 } from './git-workspace';
 import { orchestratePrCreation } from './pr-orchestration';
+import { selectForge } from '../source-control/forge-registry';
 import {
   getGithubToken,
   getLinearKey,
@@ -169,8 +170,19 @@ export function registerIntegrationsIpc(): void {
     if (!token) return { ok: false, error: 'GitHub token missing — set in Integrations' };
     try {
       const cwd = workspaceCwd(event);
-      const repo = parseGithubRepo(gitRemoteOrigin(cwd));
-      if (!repo) return { ok: false, error: 'origin is not a GitHub remote' };
+      // Seleção de forge por remote (github/gitlab/bitbucket) — mensagem clara
+      // por provider em vez do genérico "não é GitHub".
+      const forge = selectForge(gitRemoteOrigin(cwd));
+      if (!forge) {
+        return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
+      }
+      if (forge.providerId !== 'github') {
+        return {
+          ok: false,
+          error: `origin é ${forge.host} (${forge.providerId}); criação de PR só suporta GitHub por enquanto`,
+        };
+      }
+      const repo = { owner: forge.owner, name: forge.name };
       // Regras de PR (no-self-target + push-antes-de-criar) vivem na função
       // pura orchestratePrCreation, testada em pr-orchestration.test.ts.
       return orchestratePrCreation(
