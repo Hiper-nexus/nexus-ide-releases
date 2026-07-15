@@ -1,5 +1,6 @@
 import type { AccountInfo } from '../../shared/account-types';
 import type { AdapterInfo } from '../../shared/types';
+import { defaultSquadModelForAdapter } from '../../shared/squad-model-defaults';
 
 /** The adapter registry derives this capability from its validated MCP metadata. */
 export function hasOrchestratorMcpRoute(adapter: AdapterInfo): boolean {
@@ -34,7 +35,10 @@ export function resolveOrchestratorRuntime(
       !account.onCooldown,
   );
   return {
-    model: input.squadModel || input.defaultModel || undefined,
+    model:
+      input.squadModel ||
+      input.defaultModel ||
+      defaultSquadModelForAdapter(input.adapterId),
     accountId: selectedAccount?.id,
   };
 }

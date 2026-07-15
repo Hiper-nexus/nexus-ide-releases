@@ -3,6 +3,7 @@ import {
   PET_STUDIO_SQUAD,
   PET_STUDIO_SQUAD_ID,
 } from '../../shared/pet-studio';
+import { applySquadModelDefault } from '../../shared/squad-model-defaults';
 
 /**
  * NEXUS ORIGINALS — squads embutidos, semeados no primeiro run (marcados
@@ -47,7 +48,7 @@ const SPEAK_HUMAN =
  */
 export function withAllowlists(agents: SquadAgent[]): SquadAgent[] {
   return agents.map((agent) => ({
-    ...agent,
+    ...applySquadModelDefault(agent),
     allowedTools:
       agent.allowedTools ?? (agent.category === 'orchestrator' ? null : []),
   }));

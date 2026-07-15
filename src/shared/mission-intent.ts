@@ -99,6 +99,8 @@ export const missionIntentContractSchema = z.object({
   spentSteps: z.number().int().nonnegative().max(100_000).optional(),
   /** Approximate token spend tracked for budget ceilings. */
   spentTokens: z.number().int().nonnegative().max(10_000_000).optional(),
+  /** True only when the current submission included the promised evidence. */
+  evidenceAttached: z.boolean().optional(),
 });
 export type MissionIntentContract = z.infer<typeof missionIntentContractSchema>;
 

@@ -1,6 +1,7 @@
 import type { AdapterInfo } from '../../shared/types';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
+import { defaultSquadModelForAdapter } from '../../shared/squad-model-defaults';
 import { AgentAvatar } from './AgentAvatar';
 import { ProviderLogo } from './ProviderLogo';
 
@@ -135,7 +136,7 @@ export function MissionWizardReview({
                         onChange={(e) =>
                           onUpdateAgent(a.id, {
                             cli: e.target.value,
-                            model: undefined,
+                            model: defaultSquadModelForAdapter(e.target.value),
                           })
                         }
                       >

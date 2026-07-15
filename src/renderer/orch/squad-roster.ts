@@ -1,5 +1,6 @@
 import type { AdapterInfo } from '../../shared/types';
 import type { SquadAgent } from '../../shared/orch-types';
+import { defaultSquadModelForAdapter } from '../../shared/squad-model-defaults';
 
 const LEGACY_ORCHESTRATOR_CLI = 'claude';
 
@@ -58,15 +59,29 @@ export function balanceSquadRosterCli(
   return agents.map((agent) => {
     if (agent.category === 'orchestrator') {
       return agent.cli === orchestratorAdapterId
-        ? { ...agent }
-        : { ...agent, cli: orchestratorAdapterId, model: undefined };
+        ? {
+            ...agent,
+            model: agent.model ?? defaultSquadModelForAdapter(agent.cli),
+          }
+        : {
+            ...agent,
+            cli: orchestratorAdapterId,
+            model: defaultSquadModelForAdapter(orchestratorAdapterId),
+          };
     }
 
     const nextCli = pool[workerIndex % pool.length] ?? agent.cli;
     workerIndex += 1;
 
     return nextCli === agent.cli
-      ? { ...agent }
-      : { ...agent, cli: nextCli, model: undefined };
+      ? {
+          ...agent,
+          model: agent.model ?? defaultSquadModelForAdapter(nextCli),
+        }
+      : {
+          ...agent,
+          cli: nextCli,
+          model: defaultSquadModelForAdapter(nextCli),
+        };
   });
 }

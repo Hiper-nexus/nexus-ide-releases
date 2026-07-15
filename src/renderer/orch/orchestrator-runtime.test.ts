@@ -79,6 +79,25 @@ describe('resolveOrchestratorRuntime', () => {
     ).toEqual({ model: undefined, accountId: undefined });
   });
 
+  it('uses the product defaults for Grok and AGY when no squad/global model is set', () => {
+    expect(
+      resolveOrchestratorRuntime({
+        adapterId: 'grok',
+        defaultModel: '',
+        defaultAccountId: '',
+        accounts: [],
+      }).model,
+    ).toBe('grok-4.5');
+    expect(
+      resolveOrchestratorRuntime({
+        adapterId: 'agy',
+        defaultModel: '',
+        defaultAccountId: '',
+        accounts: [],
+      }).model,
+    ).toBe('gemini-3.5-flash-high');
+  });
+
   it('uses only an available credentialed account owned by the selected provider', () => {
     expect(
       resolveOrchestratorRuntime({

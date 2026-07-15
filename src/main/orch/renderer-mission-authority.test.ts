@@ -256,6 +256,31 @@ describe("renderer mission authority", () => {
     expect(peekMissionPromptQueue(mission.id).queued).toHaveLength(0);
   });
 
+  it("keeps a goal waiting when it promises evidence in a later step", () => {
+    const waitingMission = {
+      ...mission,
+      description: "Corrigir bugs que vou apontar na próxima etapa com prints",
+      intentState: "awaiting_goal" as const,
+      intentVersion: 1,
+    };
+    deps.updateMission.mockReturnValueOnce(waitingMission);
+
+    const result = authority.submitIntentFromRenderer(owner, {
+      missionId: mission.id,
+      goal: "Corrigir bugs que vou apontar na próxima etapa com prints",
+    });
+
+    expect(result.intentState).toBe("awaiting_goal");
+    expect(deps.updateMission).toHaveBeenCalledWith(
+      mission.id,
+      expect.objectContaining({
+        intentState: "awaiting_goal",
+        status: "pending",
+        intentContract: expect.objectContaining({ evidenceAttached: false }),
+      }),
+    );
+  });
+
   it("approves and dispatches a sensitive goal in one user action", () => {
     const awaitingApproval = {
       ...approvedMission,
@@ -295,6 +320,23 @@ describe("renderer mission authority", () => {
         intentState: "dispatched",
       }),
     );
+  });
+
+  it("blocks final approval when promised evidence is still missing", () => {
+    deps.getMission.mockReturnValueOnce({
+      ...approvedMission,
+      intentState: "ready_to_start" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        goal: "Corrigir bugs que vou apontar depois com prints",
+        evidenceAttached: false,
+      },
+    });
+
+    expect(() =>
+      authority.approveIntentFromRenderer(owner, { missionId: mission.id }),
+    ).toThrow(/evidence_required|Anexe os prints ou áudios/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
   });
 
   it("keeps prepare-project executing until the main-owned warm completes", async () => {

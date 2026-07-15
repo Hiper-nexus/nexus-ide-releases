@@ -29,6 +29,10 @@ import { MissionWizardReview } from './MissionWizardReview';
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 import { PixelIcon } from './PixelIcon';
 import type { Mission } from '../../shared/orch-types';
+import {
+  missionGoalNeedsFutureEvidence,
+  MISSION_EVIDENCE_WAIT_MESSAGE,
+} from '../../shared/mission-evidence';
 
 /**
  * "Novo workspace" / "Nova Missão" wizard — the full flow:
@@ -714,11 +718,20 @@ export function MissionWizard() {
       const planned = await window.nexus.orch.submitMissionIntent({
         missionId: armedMissionId,
         goal: missionGoal.trim(),
+        evidenceAttached: missionAttachments.length > 0,
         // Proveniência real do objetivo: issue importada e voz não são
         // "digitado" — o contrato registra de onde a missão nasceu.
         source: mode === 'agentic' ? agenticSource : 'typed',
         lane: missionLane,
       });
+      const waitingForEvidence =
+        missionGoalNeedsFutureEvidence(missionGoal) && missionAttachments.length === 0;
+      if (waitingForEvidence) {
+        setPlannedMission(null);
+        setStep('intent-compose');
+        setError(MISSION_EVIDENCE_WAIT_MESSAGE);
+        return;
+      }
       setPlannedMission(planned);
       if (!options?.reviewPlan && planned.intentState === 'ready_to_start') {
         autoDispatchingRef.current = true;
@@ -837,6 +850,7 @@ export function MissionWizard() {
       authorizeDispatch: async () => {
         const approved = await window.nexus.orch.approveMissionIntent({
           missionId: planned.id,
+          evidenceAttached: missionAttachments.length > 0,
         });
         if (
           approved.intentVersion !== planned.intentVersion ||
@@ -1246,6 +1260,17 @@ export function MissionWizard() {
                 onChange={setMissionAttachments}
                 disabled={spawning}
               />
+              {missionGoalNeedsFutureEvidence(missionGoal) &&
+                missionAttachments.length === 0 && (
+                  <p
+                    className="wizard__mode-desc"
+                    style={{ marginTop: 8, color: 'var(--accent-cyan)' }}
+                    role="status"
+                  >
+                    A missão ficará aguardando os anexos. O Nexus não vai
+                    despachar especialistas enquanto os prints/áudios não chegarem.
+                  </p>
+                )}
               <fieldset
                 className="wizard__mode-desc"
                 style={{

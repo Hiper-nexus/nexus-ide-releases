@@ -77,7 +77,12 @@ describe('balanceSquadRosterCli', () => {
       'codex',
     ]);
     expect(balanced[0].model).toBeUndefined();
-    expect(balanced.slice(1).every((item) => item.model == null)).toBe(true);
+    expect(balanced.slice(1).map((item) => item.model)).toEqual([
+      undefined,
+      'gemini-3.5-flash-high',
+      'grok-4.5',
+      undefined,
+    ]);
   });
 
   it('moves the orchestrator to the configured MCP provider and preserves its matching model', () => {

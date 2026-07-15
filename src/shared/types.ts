@@ -467,8 +467,13 @@ export interface NexusApi {
       acceptanceCriteria?: string[];
       /** standard (default) = code PREVC; consult = read-only investigation. */
       lane?: 'standard' | 'consult';
+      /** Current print/audio evidence must be present before dispatch. */
+      evidenceAttached?: boolean;
     }): Promise<Mission>;
-    approveMissionIntent(input: { missionId: string }): Promise<Mission>;
+    approveMissionIntent(input: {
+      missionId: string;
+      evidenceAttached?: boolean;
+    }): Promise<Mission>;
     /** Explicit prepare-project while still awaiting a real goal. */
     prepareMissionProject(input: { missionId: string }): Promise<Mission>;
     cancelMissionPreparation(input: {

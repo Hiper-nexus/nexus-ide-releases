@@ -21,6 +21,10 @@ import {
 } from './terminal-visibility';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { launchSquadMission } from '../orch/mission-launcher';
+import {
+  missionGoalNeedsFutureEvidence,
+  MISSION_EVIDENCE_WAIT_MESSAGE,
+} from '../../shared/mission-evidence';
 import { isMissingModelKeyError } from '../lib/credential-errors';
 import { invokeMcpWithConfirm, mapActionToTool } from '../services/mcp-bridge';
 import { reopenMission } from '../orch/mission-reopen';
@@ -673,13 +677,20 @@ export async function executeJarvisAction(
           source: 'voice',
         });
         markEffect(control);
+        const waitingForEvidence =
+          planned.intentState === 'awaiting_goal' &&
+          missionGoalNeedsFutureEvidence(voiceGoal);
         sayText =
           sayText.trim() ||
-          `Objetivo registrado para a missão armada: ${voiceGoal.slice(0, 80)}.`;
+          (waitingForEvidence
+            ? MISSION_EVIDENCE_WAIT_MESSAGE
+            : `Objetivo registrado para a missão armada: ${voiceGoal.slice(0, 80)}.`);
         toolResult = {
           tool: action.type,
           ok: true,
-          summary: 'objetivo de voz enviado à missão armada (intent queue)',
+          summary: waitingForEvidence
+            ? 'objetivo aguardando evidências antes do dispatch'
+            : 'objetivo de voz enviado à missão armada (intent queue)',
           output: {
             missionId: planned.id,
             intentState: planned.intentState,

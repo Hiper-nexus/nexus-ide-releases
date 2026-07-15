@@ -10,6 +10,10 @@ import {
   transitionIntentState,
   type MissionIntentSource,
 } from "../../shared/mission-intent";
+import {
+  missionGoalNeedsFutureEvidence,
+  MISSION_EVIDENCE_WAIT_MESSAGE,
+} from "../../shared/mission-evidence";
 import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
 import {
   bumpMissionPromptIntent,
@@ -81,10 +85,14 @@ export interface RendererMissionSubmitIntentInput {
    * Default / omitted = standard.
    */
   lane?: "standard" | "consult";
+  /** Set by the renderer only when current print/audio files are attached. */
+  evidenceAttached?: boolean;
 }
 
 export interface RendererMissionApproveIntentInput {
   missionId: string;
+  /** Rechecked at the final pre-pane dispatch boundary. */
+  evidenceAttached?: boolean;
 }
 
 function sameScope(
@@ -331,6 +339,8 @@ export class RendererMissionAuthority {
         acceptanceCriteria: input.acceptanceCriteria,
         lane: input.lane === "consult" ? "consult" : "standard",
       });
+      const evidenceAttached = input.evidenceAttached === true;
+      const needsFutureEvidence = missionGoalNeedsFutureEvidence(contract.goal);
       risk = classifyGoalRisk(contract.goal);
       const compileEvent =
         risk === "normal"
@@ -342,13 +352,17 @@ export class RendererMissionAuthority {
       });
       if (!compiled.ok) throw new Error(compiled.reason);
 
-      const intentState = compiled.to;
+      // A sentence such as "vou mandar os prints na próxima etapa" is not a
+      // dispatchable objective yet. Keep the mission human-waiting so recovery
+      // and handoff supervisors cannot mistake it for authorized work.
+      const intentState =
+        needsFutureEvidence && !evidenceAttached ? "awaiting_goal" : compiled.to;
       const status = missionStatusForIntent(intentState) ?? current.status;
       updated = missions.update(input.missionId, {
         description: contract.goal,
         status,
         intentState,
-        intentContract: contract,
+        intentContract: { ...contract, evidenceAttached },
         intentVersion: nextVersion,
         ...(canReplacePlannedMilestones
           ? { milestones: normalizeMilestones(contract.acceptanceCriteria) }
@@ -374,7 +388,11 @@ export class RendererMissionAuthority {
       squadId: updated.squadId,
       intentState: updated.intentState ?? "intent_compiling",
       intentVersion: nextVersion,
-      reason: risk,
+      reason:
+        missionGoalNeedsFutureEvidence(contract.goal) &&
+        input.evidenceAttached !== true
+          ? "awaiting_evidence"
+          : risk,
     });
     return updated;
   }
@@ -563,6 +581,12 @@ export class RendererMissionAuthority {
         "intent_required: prepare-project is not a dispatchable goal — submit a real objective first",
       );
     }
+    if (
+      missionGoalNeedsFutureEvidence(current.intentContract.goal) &&
+      input.evidenceAttached !== true
+    ) {
+      throw new Error(`evidence_required: ${MISSION_EVIDENCE_WAIT_MESSAGE}`);
+    }
 
     const approvedAt = Date.now();
     // Keep contract.intentVersion locked to the mission revision being approved.
@@ -572,6 +596,7 @@ export class RendererMissionAuthority {
     );
     const contract = {
       ...current.intentContract,
+      evidenceAttached: input.evidenceAttached === true,
       intentVersion: contractVersion,
       approvedAt,
       dispatchedAt: approvedAt,
