@@ -100,6 +100,157 @@
   line-height: 1.5;
 }
 
+/* Evidências de missão: uma faixa compacta, sempre visível, sem competir com
+   o objetivo. O drop target usa apenas borda/cor para manter a interface calma. */
+.mission-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg) 78%, var(--accent) 4%);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.mission-attachments--active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.mission-attachments__head,
+.mission-attachments__actions,
+.mission-attachments__item {
+  display: flex;
+  align-items: center;
+}
+
+.mission-attachments__head {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mission-attachments__title {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.13em;
+}
+
+.mission-attachments__hint,
+.mission-attachments__empty,
+.mission-attachments__drop-hint,
+.mission-attachments__error {
+  margin: 3px 0 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.mission-attachments__limit {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.mission-attachments__actions {
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.mission-attachments__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.mission-attachments__drop-hint {
+  margin: 0 0 0 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.mission-attachments__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mission-attachments__item {
+  min-width: 0;
+  gap: 7px;
+  padding: 6px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+
+.mission-attachments__kind {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.mission-attachments__file {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mission-attachments__file strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-attachments__file small {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.mission-attachments__remove {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.mission-attachments__remove:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.mission-attachments__error {
+  color: var(--danger);
+}
+
+@media (max-width: 650px) {
+  .mission-attachments__drop-hint {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+}
+
 /* Harness enrich — barra de ação + filtros de tier no arsenal. */
 .settings-enrich {
   display: flex;

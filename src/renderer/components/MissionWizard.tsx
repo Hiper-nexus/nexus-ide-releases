@@ -14,6 +14,10 @@ import { useToastStore } from '../state/toast-store';
 import { useVoiceStore } from '../voice/voice-store';
 import { isMissingModelKeyError } from '../lib/credential-errors';
 import {
+  buildMissionAttachmentsContext,
+  type MissionAttachment,
+} from '../lib/mission-attachments';
+import {
   buildIntentDispatchKickoffPrompt,
   initialGoalForArmedMission,
   launchLibrePanes,
@@ -22,6 +26,7 @@ import {
 import { balanceSquadRosterCli } from '../orch/squad-roster';
 import { CloseButton } from './CloseButton';
 import { MissionWizardReview } from './MissionWizardReview';
+import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 import { PixelIcon } from './PixelIcon';
 import type { Mission } from '../../shared/orch-types';
 
@@ -130,6 +135,7 @@ export function MissionWizard() {
   // Intent-first: armed mission shell awaiting an explicit goal (0 tokens).
   const [armedMissionId, setArmedMissionId] = useState<string | null>(null);
   const [missionGoal, setMissionGoal] = useState('');
+  const [missionAttachments, setMissionAttachments] = useState<MissionAttachment[]>([]);
   /** standard = code PREVC; consult = read-only investigation contract. */
   const [missionLane, setMissionLane] = useState<'standard' | 'consult'>(
     'standard',
@@ -315,6 +321,7 @@ export function MissionWizard() {
     setCount(2);
     setSlots([]);
     setError(null);
+    setMissionAttachments([]);
     // A previous design request may have hung or completed after the modal was
     // closed. Every fresh open must be interactive again.
     setDesigning(false);
@@ -548,7 +555,12 @@ export function MissionWizard() {
         let timeout: ReturnType<typeof setTimeout> | null = null;
         try {
           return await Promise.race([
-            window.nexus.orch.designSquad(workspacePath, intent.trim()),
+            window.nexus.orch.designSquad(
+              workspacePath,
+              [intent.trim(), buildMissionAttachmentsContext(missionAttachments)]
+                .filter(Boolean)
+                .join('\n\n'),
+            ),
             new Promise<never>((_, reject) => {
               timeout = setTimeout(
                 () => reject(new Error('O arquiteto demorou demais. Tente novamente.')),
@@ -799,21 +811,26 @@ export function MissionWizard() {
       mission: planned,
       handoffs: [],
     });
-    const goalPrompt = buildIntentDispatchKickoffPrompt({
-      squad: effectiveSquad,
-      missionId: planned.id,
-      goal: contract.goal,
-      acceptanceCriteria: contract.acceptanceCriteria,
-      risk: contract.risk,
-      maxWorkers: contract.budgets.maxWorkers,
-      // First dispatch has no progress yet — the compact would only restate
-      // goal/criteria that the kickoff already carries. Include it only when
-      // it adds durable memory (resumes, learnings, files).
-      compactMemoryMarkdown: missionCompactHasProgress(compact)
-        ? renderMissionCompact(compact)
-        : null,
-      lane: contract.lane ?? 'standard',
-    });
+    const goalPrompt = [
+      buildIntentDispatchKickoffPrompt({
+        squad: effectiveSquad,
+        missionId: planned.id,
+        goal: contract.goal,
+        acceptanceCriteria: contract.acceptanceCriteria,
+        risk: contract.risk,
+        maxWorkers: contract.budgets.maxWorkers,
+        // First dispatch has no progress yet — the compact would only restate
+        // goal/criteria that the kickoff already carries. Include it only when
+        // it adds durable memory (resumes, learnings, files).
+        compactMemoryMarkdown: missionCompactHasProgress(compact)
+          ? renderMissionCompact(compact)
+          : null,
+        lane: contract.lane ?? 'standard',
+      }),
+      buildMissionAttachmentsContext(missionAttachments),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
     const result = await launchSquadMission(effectiveSquad, adapters, {
       existingMissionId: planned.id,
       goalPrompt,
@@ -1002,6 +1019,11 @@ export function MissionWizard() {
                 time sob medida (QA, security e UX entram quando o objetivo
                 pede). Você revisa o roster antes de disparar.
               </p>
+              <MissionAttachmentPicker
+                attachments={missionAttachments}
+                onChange={setMissionAttachments}
+                disabled={designing}
+              />
               <div className="wizard__actions">
                 <button className="wizard__btn" onClick={() => setStep('mode')}>
                   ‹ Voltar
@@ -1218,6 +1240,11 @@ export function MissionWizard() {
                 placeholder="Descreva o objetivo da missão…"
                 onChange={(e) => setMissionGoal(e.target.value)}
                 autoFocus
+              />
+              <MissionAttachmentPicker
+                attachments={missionAttachments}
+                onChange={setMissionAttachments}
+                disabled={spawning}
               />
               <fieldset
                 className="wizard__mode-desc"
