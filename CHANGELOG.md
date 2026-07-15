@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.16.3 — Dock em Primeiro Plano
+
+Data: 2026-07-15
+
+- Corrige o desaparecimento do NexusIDE do Dock no macOS: a política `regular`
+  agora é aplicada pelo bootstrap mínimo antes do runtime pesado/native ser
+  carregado.
+- Três rechecagens curtas de boot confirmam a política e a presença do Dock sem
+  roubar foco nem recompor a janela continuamente.
+- Testado em app empacotado Apple Silicon: macOS reporta `Foreground` durante
+  todo o boot, em vez de `UIElement`.
+
 ## 0.16.2 — Evidências e Squads Afinados
 
 Data: 2026-07-15

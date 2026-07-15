@@ -1,3 +1,4 @@
+import './macos-activation-policy';
 import path from "node:path";
 import {
   app,
@@ -18,18 +19,10 @@ import {
   shouldUseUserDataOverride,
 } from "./smoke-core";
 import { shouldCreateWindowOnActivate } from "./app-lifecycle";
-
-// Electron documents activation-policy setup as an early, synchronous macOS
-// operation. If the app is launched from a helper/deep link while AppKit still
-// sees an accessory policy, it is classified as a UIElement and never gets a
-// Dock item even after a BrowserWindow is created.
-if (process.platform === "darwin") {
-  try {
-    app.setActivationPolicy("regular");
-  } catch (error) {
-    console.warn("[main] macOS activation policy unavailable:", error);
-  }
-}
+import {
+  startMacOSDockWatchdog,
+  stopMacOSDockWatchdog,
+} from './macos-activation-policy';
 
 // Must run before Electron emits `ready`. The handler itself is installed in
 // bootstrap (after ready), before the first BrowserWindow is created.
@@ -533,6 +526,7 @@ if (!wireDeepLinks()) {
     // (notably Keychain-backed providers) can block the Electron main thread;
     // the native window/Dock item must already exist before touching them.
     createMainWindow();
+    startMacOSDockWatchdog();
 
     // Agent awake: prevent sleep while provider hooks report working.
     getAgentAwakeService();
@@ -550,6 +544,13 @@ if (!wireDeepLinks()) {
     // database, or keychain setup can otherwise classify the process as a
     // background UIElement before macOS has a window/Dock item to display.
     bootstrap();
+
+    // Bootstrap can create auxiliary native windows after the main window is
+    // visible. Re-arm the short Dock check after that graph has settled; the
+    // pre-bootstrap check alone can finish too early and be followed by a late
+    // AppKit reclassification.
+    stopMacOSDockWatchdog();
+    startMacOSDockWatchdog();
 
     // Gap A: register Claude+Codex managed hook installers. Installing edits the
     // user's GLOBAL ~/.claude & ~/.codex config (affects those tools even outside
@@ -639,6 +640,7 @@ let shutdownComplete = false;
 let shutdownPromise: Promise<void> | null = null;
 
 app.on("activate", () => {
+  startMacOSDockWatchdog();
   if (
     shouldCreateWindowOnActivate({
       isShutdownInProgress: shutdownPromise !== null,
@@ -655,6 +657,7 @@ app.on("activate", () => {
 });
 
 app.on("browser-window-created", (_event, win) => {
+  startMacOSDockWatchdog();
   // Capture the webContents reference NOW, while the window is alive. By the time
   // the 'closed' event fires the native BrowserWindow is already destroyed, and
   // the `win.webContents` getter throws "Object has been destroyed" — which, as an
@@ -702,6 +705,7 @@ function shutdown(): Promise<void> {
   if (shutdownComplete) return Promise.resolve();
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
+    stopMacOSDockWatchdog();
     killAllSessions();
     shutdownPtyHost();
     await closeAllDesignWritebacks();

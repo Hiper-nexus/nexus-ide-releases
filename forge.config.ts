@@ -412,7 +412,7 @@ const config: ForgeConfig = {
   plugins: [
     new VitePlugin({
       build: [
-        { entry: 'src/main/main.ts', config: 'vite.main.config.ts', target: 'main' },
+        { entry: 'src/main/main-bootstrap.ts', config: 'vite.main.config.ts', target: 'main' },
         // PTY host: separate utilityProcess entry, built beside main.js as
         // .vite/build/pty-host-entry.js (docs/ARCHITECTURE.md §B.2).
         { entry: 'src/main/pty/pty-host-entry.ts', config: 'vite.pty-host.config.ts', target: 'main' },

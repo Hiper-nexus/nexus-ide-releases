@@ -13,12 +13,17 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.16.2',
+  version: '0.16.3',
   date: '2026-07-15',
-  codename: 'Evidências e Squads Afinados',
+  codename: 'Dock em Primeiro Plano',
   summary:
-    'Missões que aguardam prints ou áudios não disparam handoffs antes da hora, e squads usam Grok 4.5 e Gemini 3.5 Flash High como padrões fortes por provider.',
+    'Correção do ciclo de vida do macOS mantém o NexusIDE como aplicativo de primeiro plano com ícone persistente no Dock.',
   highlights: [
+    {
+      title: 'Ícone do Dock persistente no macOS',
+      detail:
+        'O bootstrap aplica a política regular antes do carregamento do runtime pesado, e três rechecagens curtas de boot confirmam a presença no Dock sem roubar foco nem piscar a janela.',
+    },
     {
       title: 'Gate de evidências antes do handoff',
       detail:
@@ -74,7 +79,7 @@ export const CURRENT_RELEASE: AppRelease = {
     {
       title: 'Release metadata alinhada',
       detail:
-        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.16.2, removendo o bloqueio que deixava a árvore de release inconsistente.',
+        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.16.3, removendo o bloqueio que deixava a árvore de release inconsistente.',
     },
     {
       title: 'Ownership e DAG endurecidos',

@@ -17,14 +17,13 @@ describe('macOS activate lifecycle', () => {
     const source = fs.readFileSync(path.join(__dirname, 'window.ts'), 'utf-8');
     expect(source).toContain('show: true');
     expect(source).toContain('win.show();');
-    expect(source).toContain("app.setActivationPolicy?.('regular')");
-    expect(source).toContain("app.focus?.({ steal: true })");
+    expect(source).toContain('ensureRegularMacOSActivation();');
     expect(source).toContain("win.webContents.once('did-finish-load', ensureMacDockPresence)");
   });
 
   it('sets regular macOS activation before creating the first window', () => {
     const source = fs.readFileSync(path.join(__dirname, 'window.ts'), 'utf-8');
-    const policyStart = source.indexOf("app.setActivationPolicy?.('regular')");
+    const policyStart = source.indexOf('ensureRegularMacOSActivation();');
     const windowStart = source.indexOf('const win = new BrowserWindow({');
 
     expect(policyStart).toBeGreaterThanOrEqual(0);
@@ -32,12 +31,28 @@ describe('macOS activate lifecycle', () => {
   });
 
   it('configures regular activation synchronously before app ready', () => {
-    const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
-    const policyStart = source.indexOf('app.setActivationPolicy("regular")');
-    const readyStart = source.indexOf('app.whenReady()');
+    const source = fs.readFileSync(
+      path.join(__dirname, 'macos-activation-policy.ts'),
+      'utf-8',
+    );
+    const policyStart = source.indexOf("app.setActivationPolicy('regular')");
+    const sideEffectStart = source.indexOf('ensureRegularMacOSActivation();', policyStart);
 
     expect(policyStart).toBeGreaterThanOrEqual(0);
-    expect(policyStart).toBeLessThan(readyStart);
+    expect(sideEffectStart).toBeGreaterThan(policyStart);
+  });
+
+  it('uses a tiny bootstrap before loading the runtime graph', () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, 'main-bootstrap.ts'),
+      'utf-8',
+    );
+    expect(source.indexOf("import { app } from 'electron';")).toBeGreaterThanOrEqual(0);
+    const policyCall = source.indexOf('ensureRegularMacOSActivation();');
+    const runtimeImport = source.indexOf("import('./main')");
+
+    expect(policyCall).toBeGreaterThanOrEqual(0);
+    expect(runtimeImport).toBeGreaterThan(policyCall);
   });
 
   it('creates a window only while the app runtime is live', () => {

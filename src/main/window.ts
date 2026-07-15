@@ -12,6 +12,7 @@ import {
   RendererRecoveryCircuitBreaker,
 } from './reliability/renderer-recovery-circuit-breaker';
 import { handleRenderProcessGone } from './agent-runtime/agent-runtime-bridge';
+import { ensureRegularMacOSActivation } from './macos-activation-policy';
 
 /**
  * Last-resort recovery screen: if React never mounts after repeated reloads (or
@@ -156,24 +157,15 @@ function registerCsp(devServerUrl: string | undefined): void {
   });
 }
 
-function ensureMacDockPresence(): void {
+export function ensureMacDockPresence(): void {
   if (process.platform !== 'darwin') return;
 
   try {
-    // Set the policy before AppKit creates any window. If the first window is
-    // born while Electron is accessory/background-only, macOS can keep the
-    // process out of the Dock for the rest of that launch.
-    app.setActivationPolicy?.('regular');
+    ensureRegularMacOSActivation();
     const dockShow = app.dock?.show();
-    // A packaged launch can otherwise remain an inactive UIElement even after
-    // the policy changes. Activating the user-facing window materializes the
-    // regular app entry in the Dock (same behavior as opening from Finder).
-    app.focus?.({ steal: true });
-    void dockShow
-      ?.then(() => app.focus?.({ steal: true }))
-      .catch((error) => {
+    void dockShow?.catch((error) => {
         console.warn('[window] macOS Dock item unavailable:', error);
-      });
+    });
   } catch (error) {
     console.warn('[window] macOS activation policy unavailable:', error);
   }
