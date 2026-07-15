@@ -156,9 +156,28 @@ function registerCsp(devServerUrl: string | undefined): void {
   });
 }
 
+function ensureMacDockPresence(): void {
+  if (process.platform !== 'darwin') return;
+
+  try {
+    // Set the policy before AppKit creates any window. If the first window is
+    // born while Electron is accessory/background-only, macOS can keep the
+    // process out of the Dock for the rest of that launch.
+    app.setActivationPolicy?.('regular');
+    app.dock?.show();
+  } catch (error) {
+    console.warn('[window] macOS activation policy unavailable:', error);
+  }
+}
+
 export function createMainWindow(): BrowserWindow {
   const devServerUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL;
   const rendererUrl = devServerUrl ?? RENDERER_PROTOCOL_ENTRY_URL;
+
+  // Establish the user-facing application policy before the first native
+  // window exists. This keeps launches from helpers/deep links visible in the
+  // Dock instead of inheriting an accessory/background-only policy.
+  ensureMacDockPresence();
 
   const win = new BrowserWindow({
     width: 1280,
@@ -179,18 +198,6 @@ export function createMainWindow(): BrowserWindow {
     },
   });
 
-  // Electron can inherit an accessory/background activation policy when the
-  // app was launched by a helper, deep link, or a stale single-instance lock.
-  // Make the user-facing shell explicit: the Dock item and native window must
-  // be visible even while the renderer/protocol finishes loading.
-  if (process.platform === 'darwin') {
-    try {
-      app.setActivationPolicy?.('regular');
-      app.dock?.show();
-    } catch (error) {
-      console.warn('[window] macOS activation policy unavailable:', error);
-    }
-  }
   win.show();
 
   // The native window is the availability boundary: integrations must not be

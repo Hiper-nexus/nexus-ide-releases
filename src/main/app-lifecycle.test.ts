@@ -20,6 +20,15 @@ describe('macOS activate lifecycle', () => {
     expect(source).toContain("app.setActivationPolicy?.('regular')");
   });
 
+  it('sets regular macOS activation before creating the first window', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'window.ts'), 'utf-8');
+    const policyStart = source.indexOf("app.setActivationPolicy?.('regular')");
+    const windowStart = source.indexOf('const win = new BrowserWindow({');
+
+    expect(policyStart).toBeGreaterThanOrEqual(0);
+    expect(policyStart).toBeLessThan(windowStart);
+  });
+
   it('creates a window only while the app runtime is live', () => {
     expect(
       shouldCreateWindowOnActivate({
