@@ -15,8 +15,8 @@ describe('macOS activate lifecycle', () => {
 
   it('keeps the native window explicitly visible on launch', () => {
     const source = fs.readFileSync(path.join(__dirname, 'window.ts'), 'utf-8');
-    expect(source).toContain('show: true');
-    expect(source).toContain('win.show();');
+    expect(source).toContain('show: false');
+    expect(source).toContain('showNativeWindow();');
     expect(source).toContain('ensureRegularMacOSActivation();');
     expect(source).toContain("win.webContents.once('did-finish-load', ensureMacDockPresence)");
   });

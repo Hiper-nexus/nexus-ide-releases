@@ -188,7 +188,10 @@ export function createMainWindow(): BrowserWindow {
     // Precisa casar com --bg (base.css) — cor de pré-paint da janela.
     backgroundColor: '#0a0e15',
     title: 'NexusIDE',
-    show: true,
+    // Do not expose the native surface while the custom protocol is still
+    // retrying. A first ERR_FAILED is recoverable, but showing each retry makes
+    // the entire Nexus window visibly blink during startup.
+    show: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -199,7 +202,6 @@ export function createMainWindow(): BrowserWindow {
     },
   });
 
-  win.show();
   // Re-assert after the native window exists and ask AppKit to materialize the
   // Dock item. The early call in main.ts handles launch classification; this
   // call covers launches that inherited an accessory policy from the shell.
@@ -273,6 +275,29 @@ export function createMainWindow(): BrowserWindow {
   // Boot watchdog state, shared by the load + mount phases below.
   let finished = false;
   let mounted = false;
+  let nativeWindowShown = false;
+  const showNativeWindow = (): void => {
+    if (nativeWindowShown || win.isDestroyed()) return;
+    nativeWindowShown = true;
+    win.show();
+    // app.dock.show() is asynchronous. Focusing before AppKit has materialized
+    // the Dock item can leave the process classified as an accessory app after
+    // launch, so the icon briefly appears and then disappears. Do this once,
+    // after the renderer has mounted, instead of polling/focusing continuously.
+    const dockReady =
+      process.platform === 'darwin' ? app.dock?.show() : undefined;
+    void dockReady
+      ?.then(() => {
+        ensureRegularMacOSActivation();
+        app.focus?.({ steal: true });
+        if (!win.isDestroyed()) win.focus();
+      })
+      .catch((error) => {
+        console.warn('[window] macOS Dock activation failed:', error);
+        if (!win.isDestroyed()) win.focus();
+      });
+    if (!dockReady) win.focus();
+  };
   let mountReloads = 0;
   const MAX_MOUNT_RELOADS = 5;
   // Sliding-window circuit breaker (ORCA harvest): caps auto-reloads so a
@@ -288,7 +313,10 @@ export function createMainWindow(): BrowserWindow {
   // THIS window's sender. This — not a console log — is how the mount watchdog
   // knows React actually painted, in dev AND in the packaged app.
   const onMounted = (event: IpcMainEvent) => {
-    if (event.sender === wc) mounted = true;
+    if (event.sender === wc) {
+      mounted = true;
+      showNativeWindow();
+    }
   };
   ipcMain.on(WINDOW_CHANNELS.mounted, onMounted);
   // Capture wc up front: inside 'destroyed' the win.webContents getter can
@@ -334,6 +362,7 @@ export function createMainWindow(): BrowserWindow {
     });
     if (win.isDestroyed()) return;
     if (decision.showRecoveryScreen) {
+      showNativeWindow();
       recoveryScreenShown = true;
       showRecoveryScreen(wc);
       return;
@@ -423,6 +452,7 @@ export function createMainWindow(): BrowserWindow {
           if (win.isDestroyed() || mounted || mountPoll !== poll) return;
           if (hasContent) {
             mounted = true;
+            showNativeWindow();
             clearInterval(poll);
             return;
           }
@@ -432,6 +462,7 @@ export function createMainWindow(): BrowserWindow {
           if (mountReloads >= MAX_MOUNT_RELOADS) {
             // Same recovery surface as crash-loop exhaustion; mark so the next
             // did-finish-load (user "Recarregar") resets the crash breaker too.
+            showNativeWindow();
             recoveryScreenShown = true;
             showRecoveryScreen(wc);
             return;
