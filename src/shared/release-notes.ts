@@ -13,12 +13,27 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.16.1',
-  date: '2026-07-14',
-  codename: 'Scheduler Operacional e Cockpit Vivo',
+  version: '0.16.2',
+  date: '2026-07-15',
+  codename: 'Evidências e Squads Afinados',
   summary:
-    'O scheduler paralelo entra operacional em produção com worktrees isolados, ownership fail-closed e merge serial validado; a release preserva as melhorias de auth, BridgeMind, Impeccable e cockpit.',
+    'Missões que aguardam prints ou áudios não disparam handoffs antes da hora, e squads usam Grok 4.5 e Gemini 3.5 Flash High como padrões fortes por provider.',
   highlights: [
+    {
+      title: 'Gate de evidências antes do handoff',
+      detail:
+        'Objetivos que prometem prints, capturas ou áudios em uma etapa futura ficam em awaiting_goal; a Jarvis, o wizard e o preflight final mantêm a missão sem panes e sem especialistas até os anexos chegarem.',
+    },
+    {
+      title: 'Anexos de prints e áudio no objetivo',
+      detail:
+        'O wizard aceita imagens e áudios com limite por arquivo e total, salva os arquivos no workspace e injeta os caminhos no kickoff para a investigação reproduzir o problema.',
+    },
+    {
+      title: 'Modelos fortes como padrão dos squads',
+      detail:
+        'Agentes Grok passam a usar grok-4.5 e agentes AGY/Gemini usam gemini-3.5-flash-high ao criar, carregar ou trocar o provider de um squad; uma escolha manual continua preservada.',
+    },
     {
       title: 'Scheduler paralelo operacional',
       detail:
@@ -59,7 +74,7 @@ export const CURRENT_RELEASE: AppRelease = {
     {
       title: 'Release metadata alinhada',
       detail:
-        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.16.1, removendo o bloqueio que deixava a árvore de release inconsistente.',
+        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.16.2, removendo o bloqueio que deixava a árvore de release inconsistente.',
     },
     {
       title: 'Ownership e DAG endurecidos',
@@ -84,7 +99,7 @@ export const CURRENT_RELEASE: AppRelease = {
     {
       title: 'Release hygiene',
       detail:
-        'Versão, changelog, lockfile e release notes ficam sincronizados em 0.15.17, com o gate de feature flags e a suíte completa verdes.',
+        'Versão, changelog, lockfile e release notes permanecem sincronizados, com o gate de feature flags e a suíte completa verdes.',
     },
   ],
 };

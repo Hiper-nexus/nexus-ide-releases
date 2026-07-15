@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.16.2 — Evidências e Squads Afinados
+
+Data: 2026-07-15
+
+- Objetivos que dizem que prints, capturas ou áudios serão enviados depois ficam
+  aguardando evidências e não geram handoff, pane ou especialistas antes da hora.
+- Jarvis, wizard e o preflight principal revalidam o gate; remover os anexos
+  antes de começar também bloqueia o dispatch.
+- Squads aceitam prints e áudios no objetivo, com limites de quantidade/tamanho
+  e caminhos injetados no kickoff para o time investigar os arquivos reais.
+- Grok usa `grok-4.5` e AGY/Gemini usa `gemini-3.5-flash-high` como padrão em
+  squads embutidos, persistidos, importados e novos; escolhas manuais continuam
+  preservadas.
+- Suíte completa validada: 660 arquivos de teste e 4610 testes passando.
+
 ## 0.16.1 — Scheduler Operacional e Merge Fail-Closed
 
 Data: 2026-07-14
