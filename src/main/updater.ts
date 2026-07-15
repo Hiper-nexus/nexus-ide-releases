@@ -8,7 +8,7 @@ import { UPDATE_CHANNELS, type UpdateState } from '../shared/update-ipc';
 import {
   buildSquirrelFeed,
   isMacUpdatePlatform,
-  parseGhRelease,
+  parseGhReleases,
   type ParsedRelease,
 } from './update-source';
 import { validateUpdateFeedUrl } from './update-feed-policy';
@@ -22,8 +22,8 @@ import { createSingleFlight } from './single-flight';
  * Duas fontes, em ordem:
  *  1. NEXUS_UPDATE_FEED — feed Squirrel direto (o caminho do SaaS futuro).
  *  2. `gh` CLI — o repo é PRIVADO, então feed público não existe e token
- *     embutido vazaria; o gh autenticado da máquina checa o último release e
- *     baixa o zip. O zip baixado é servido num feed Squirrel em 127.0.0.1
+ *     embutido vazaria; o gh autenticado da máquina escolhe o maior release
+ *     compatível e baixa o zip. O zip baixado é servido em 127.0.0.1
  *     para o Squirrel.Mac validar a assinatura e fazer o swap seguro + relaunch
  *     (nunca troque o .app na mão).
  *
@@ -36,6 +36,7 @@ const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const BOOT_CHECK_DELAY_MS = 20_000;
 const GH_CHECK_TIMEOUT_MS = 15_000;
 const GH_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
+const GH_RELEASES_PER_PAGE = 100;
 
 type UpdateLogLevel = 'info' | 'warn';
 
@@ -125,17 +126,34 @@ function ghExec(args: string[], timeoutMs: number): Promise<string> {
   });
 }
 
-class UpdateManager {
+type GhExecutor = (args: string[], timeoutMs: number) => Promise<string>;
+
+export interface UpdateManagerDependencies {
+  runGh?: GhExecutor;
+  runtimeArch?: string;
+  runtimePlatform?: string;
+}
+
+export class UpdateManager {
   private state: UpdateState;
   private release: ParsedRelease | null = null;
   private server: http.Server | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private squirrelWired = false;
+  private readonly runGh: GhExecutor;
+  private readonly runtimeArch: string;
+  private readonly runtimePlatform: string;
   /** 'feed' = NEXUS_UPDATE_FEED direto; 'gh' = release privado via gh. */
   private mode: 'feed' | 'gh' | 'none' = 'none';
   private readonly checkSingleFlight = createSingleFlight(() => this.performCheck());
 
-  constructor(private readonly networkEnabled = true) {
+  constructor(
+    private readonly networkEnabled = true,
+    dependencies: UpdateManagerDependencies = {},
+  ) {
+    this.runGh = dependencies.runGh ?? ghExec;
+    this.runtimeArch = dependencies.runtimeArch ?? process.arch;
+    this.runtimePlatform = dependencies.runtimePlatform ?? process.platform;
     // Override dev-only para exercitar a UI ("finge" que a versão atual é
     // antiga) — nunca ativo empacotado.
     const fakeCurrent = !app.isPackaged
@@ -145,13 +163,13 @@ class UpdateManager {
       phase: 'idle',
       currentVersion: fakeCurrent || app.getVersion(),
       source: 'none',
-      canInstall: app.isPackaged && isMacUpdatePlatform(process.platform),
+      canInstall: app.isPackaged && isMacUpdatePlatform(this.runtimePlatform),
     };
   }
 
   init(): void {
     this.registerIpcHandlers();
-    if (!isMacUpdatePlatform(process.platform)) {
+    if (!isMacUpdatePlatform(this.runtimePlatform)) {
       this.patch({
         phase: 'unsupported',
         source: 'none',
@@ -159,7 +177,7 @@ class UpdateManager {
         error: undefined,
       });
       writeUpdateLog('info', 'init:unsupported-platform', {
-        platform: process.platform,
+        platform: this.runtimePlatform,
         packaged: app.isPackaged,
         currentVersion: this.state.currentVersion,
       });
@@ -278,18 +296,21 @@ class UpdateManager {
     }
     this.patch({ phase: 'checking', error: undefined });
     try {
-      const raw = await ghExec(
+      const raw = await this.runGh(
         [
-          'release',
-          'view',
-          '--repo',
-          REPO,
-          '--json',
-          'tagName,publishedAt,assets,body',
+          'api',
+          '--method',
+          'GET',
+          `repos/${REPO}/releases?per_page=${GH_RELEASES_PER_PAGE}`,
         ],
         GH_CHECK_TIMEOUT_MS,
       );
-      const release = parseGhRelease(raw, this.state.currentVersion);
+      const release = parseGhReleases(
+        raw,
+        this.state.currentVersion,
+        this.runtimeArch,
+        this.runtimePlatform,
+      );
       this.release = release;
       if (release) {
         writeUpdateLog('info', 'check:available', {
@@ -342,6 +363,21 @@ class UpdateManager {
       return;
     }
     if (this.mode === 'feed') return; // no modo feed o Squirrel baixa sozinho
+
+    // A oferta pode ter ficado aberta por horas enquanto um release mais novo
+    // foi publicado. Revalida imediatamente antes do download para evitar uma
+    // cadeia 0.15 → 0.16.1 → 0.16.4 em duas instalações.
+    writeUpdateLog('info', 'install:refresh-latest');
+    await this.check();
+    if (this.state.phase !== 'available' || !this.release) {
+      writeUpdateLog(
+        'warn',
+        'install:refresh-blocked',
+        summarizeState(this.state),
+      );
+      return;
+    }
+
     const release = this.release;
     writeUpdateLog('info', 'install:start', {
       tag: release.tag,
@@ -350,7 +386,7 @@ class UpdateManager {
     this.patch({ phase: 'downloading', error: undefined });
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-update-'));
     try {
-      await ghExec(
+      await this.runGh(
         [
           'release',
           'download',

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.16.5 — Atualização Direta
+
+Data: 2026-07-15
+
+- O fallback autenticado do atualizador consulta a lista de releases e escolhe
+  a maior versão semântica estável com ZIP compatível, sem depender da ordem da
+  API nem do marcador `latest` do GitHub.
+- Drafts, prereleases, tags inválidas e artefatos de outra arquitetura/versão
+  são ignorados; Apple Silicon recebe arm64 e Mac Intel recebe x64.
+- Antes de baixar, o app revalida a oferta. Se `0.16.1` ficou aberta e `0.16.5`
+  foi publicada depois, o mesmo clique passa a baixar `0.16.5`, evitando duas
+  instalações em sequência.
+- Cobertura de regressão reproduz o fluxo `0.15.0 → 0.16.1` cacheado e confirma
+  que o download final usa somente o release mais novo.
+- Package, server, lockfile, changelog e release notes ficam alinhados em
+  `0.16.5`.
+
 ## 0.16.4 — Dock Persistente com Pet
 
 Data: 2026-07-15

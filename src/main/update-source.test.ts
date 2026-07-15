@@ -4,6 +4,7 @@ import {
   cmpSemver,
   macUpdateArchitecture,
   parseGhRelease,
+  parseGhReleases,
 } from './update-source';
 
 const RELEASE = {
@@ -123,6 +124,71 @@ describe('parseGhRelease', () => {
       'darwin',
     );
     expect(parsed?.notes?.length).toBeLessThanOrEqual(600);
+  });
+});
+
+describe('parseGhReleases', () => {
+  const apiRelease = (
+    version: string,
+    options: {
+      draft?: boolean;
+      prerelease?: boolean;
+      arches?: Array<'arm64' | 'x64'>;
+    } = {},
+  ) => ({
+    tag_name: `v${version}`,
+    published_at: `2026-07-${version === '0.16.4' ? '15' : '14'}T20:00:00Z`,
+    body: `Notas ${version}`,
+    draft: options.draft ?? false,
+    prerelease: options.prerelease ?? false,
+    assets: (options.arches ?? ['arm64', 'x64']).map((arch) => ({
+      name: `NexusIDE-darwin-${arch}-${version}.zip`,
+    })),
+  });
+
+  it('leva uma instalação antiga direto à maior versão compatível, independentemente da ordem', () => {
+    const releases = [
+      apiRelease('0.16.1'),
+      apiRelease('0.15.17'),
+      apiRelease('0.16.4'),
+      apiRelease('0.16.3'),
+    ];
+
+    expect(
+      parseGhReleases(JSON.stringify(releases), '0.15.0', 'arm64', 'darwin'),
+    ).toMatchObject({
+      version: '0.16.4',
+      tag: 'v0.16.4',
+      zipAsset: 'NexusIDE-darwin-arm64-0.16.4.zip',
+    });
+    expect(
+      parseGhReleases(
+        JSON.stringify(releases.reverse()),
+        '0.15.0',
+        'arm64',
+        'darwin',
+      ),
+    ).toMatchObject({ version: '0.16.4' });
+  });
+
+  it('ignora drafts, prereleases e releases sem payload da arquitetura atual', () => {
+    const releases = [
+      apiRelease('0.99.0', { draft: true }),
+      apiRelease('0.18.0', { prerelease: true }),
+      {
+        ...apiRelease('0.17.1'),
+        assets: [{ name: 'NexusIDE-darwin-x64-0.16.4.zip' }],
+      },
+      apiRelease('0.17.0', { arches: ['arm64'] }),
+      apiRelease('0.16.4'),
+    ];
+
+    expect(
+      parseGhReleases(JSON.stringify(releases), '0.15.0', 'x64', 'darwin'),
+    ).toMatchObject({
+      version: '0.16.4',
+      zipAsset: 'NexusIDE-darwin-x64-0.16.4.zip',
+    });
   });
 });
 

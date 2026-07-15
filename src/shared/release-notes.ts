@@ -13,12 +13,17 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.16.4',
+  version: '0.16.5',
   date: '2026-07-15',
-  codename: 'Dock Persistente com Pet',
+  codename: 'Atualização Direta',
   summary:
-    'O companion preserva a classificação Foreground e o NexusIDE reaplica o ícone do bundle sem criar loops de ativação no Dock.',
+    'Instalações antigas agora saltam direto para a maior release compatível, e a oferta é revalidada imediatamente antes do download.',
   highlights: [
+    {
+      title: 'Uma única atualização até a versão mais nova',
+      detail:
+        'O Nexus consulta os releases estáveis, escolhe a maior versão semântica com ZIP da arquitetura atual e atualiza a oferta antes de baixar, mesmo quando uma versão intermediária ficou aberta na tela.',
+    },
     {
       title: 'Ícone do Dock estável com o pet ativo',
       detail:
@@ -77,9 +82,14 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     {
+      title: 'Oferta cacheada não instala versão intermediária',
+      detail:
+        'O clique em baixar reconsulta o GitHub antes de escolher o asset; uma oferta 0.16.1 aberta antes da publicação de 0.16.5 passa a baixar 0.16.5 no mesmo fluxo.',
+    },
+    {
       title: 'Release metadata alinhada',
       detail:
-        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.16.3, removendo o bloqueio que deixava a árvore de release inconsistente.',
+        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.16.5, removendo o bloqueio que deixava a árvore de release inconsistente.',
     },
     {
       title: 'Ownership e DAG endurecidos',

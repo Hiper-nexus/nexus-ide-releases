@@ -27,8 +27,14 @@ export function cmpSemver(a: string, b: string): number {
 
 interface GhReleaseJson {
   tagName?: string;
+  tag_name?: string;
   publishedAt?: string;
+  published_at?: string;
   body?: string;
+  isDraft?: boolean;
+  draft?: boolean;
+  isPrerelease?: boolean;
+  prerelease?: boolean;
   assets?: Array<{ name?: string; url?: string }>;
 }
 
@@ -38,6 +44,7 @@ export interface ParsedRelease extends UpdateAvailableInfo {
 }
 
 const NOTES_MAX_CHARS = 600;
+const STABLE_RELEASE_TAG_RE = /^v?\d+\.\d+\.\d+$/i;
 
 export type MacUpdateArchitecture = 'arm64' | 'x64';
 
@@ -49,10 +56,49 @@ export function macUpdateArchitecture(arch: string): MacUpdateArchitecture | nul
   return arch === 'arm64' || arch === 'x64' ? arch : null;
 }
 
+function parseReleaseCandidate(
+  json: GhReleaseJson,
+  currentVersion: string,
+  arch: MacUpdateArchitecture,
+): ParsedRelease | null {
+  if (
+    json.draft === true ||
+    json.isDraft === true ||
+    json.prerelease === true ||
+    json.isPrerelease === true
+  ) {
+    return null;
+  }
+  const tagValue = json.tagName ?? json.tag_name;
+  const tag = typeof tagValue === 'string' ? tagValue.trim() : '';
+  if (!STABLE_RELEASE_TAG_RE.test(tag)) return null;
+  const version = tag.replace(/^v/i, '');
+  if (cmpSemver(version, currentVersion) <= 0) return null;
+  const zip = json.assets?.find(
+    (asset) =>
+      typeof asset.name === 'string' &&
+      asset.name.endsWith(`darwin-${arch}-${version}.zip`),
+  );
+  if (!zip?.name) return null;
+  const notes = typeof json.body === 'string' && json.body.trim()
+    ? json.body.trim().slice(0, NOTES_MAX_CHARS)
+    : undefined;
+  const publishedAtValue = json.publishedAt ?? json.published_at;
+  const publishedAt = typeof publishedAtValue === 'string'
+    ? publishedAtValue
+    : undefined;
+  return {
+    version,
+    tag,
+    zipAsset: zip.name,
+    ...(publishedAt ? { publishedAt } : {}),
+    ...(notes ? { notes } : {}),
+  };
+}
+
 /**
- * `gh release view --json tagName,publishedAt,assets,body` → release mais
- * novo que a versão atual, com o zip Squirrel da arquitetura atual. null = sem
- * update (mesma versão ou mais velho), JSON inválido ou release sem payload
+ * Interpreta um único release do `gh`, com o ZIP Squirrel da arquitetura
+ * atual. null = mesma versão/mais velho, JSON inválido ou release sem payload
  * compatível. Nunca baixa um ZIP ARM em um Mac Intel (ou o inverso).
  */
 export function parseGhRelease(
@@ -70,27 +116,45 @@ export function parseGhRelease(
   } catch {
     return null;
   }
-  const tag = json.tagName?.trim();
-  if (!tag) return null;
-  const version = tag.replace(/^v/i, '');
-  if (cmpSemver(version, currentVersion) <= 0) return null;
-  const zip = json.assets?.find(
-    (a) =>
-      typeof a.name === 'string' &&
-      a.name.includes(`darwin-${arch}`) &&
-      a.name.endsWith('.zip'),
-  );
-  if (!zip?.name) return null;
-  const notes = json.body?.trim()
-    ? json.body.trim().slice(0, NOTES_MAX_CHARS)
-    : undefined;
-  return {
-    version,
-    tag,
-    zipAsset: zip.name,
-    publishedAt: json.publishedAt,
-    ...(notes ? { notes } : {}),
-  };
+  if (!json || typeof json !== 'object' || Array.isArray(json)) return null;
+  return parseReleaseCandidate(json, currentVersion, arch);
+}
+
+/**
+ * Resposta de `gh api repos/<repo>/releases?per_page=100` → maior versão
+ * estável que tenha o ZIP da arquitetura atual. A ordem da API e o marcador
+ * "latest" não influenciam a decisão.
+ */
+export function parseGhReleases(
+  raw: string,
+  currentVersion: string,
+  runtimeArch: string = process.arch,
+  runtimePlatform: string = process.platform,
+): ParsedRelease | null {
+  if (!isMacUpdatePlatform(runtimePlatform)) return null;
+  const arch = macUpdateArchitecture(runtimeArch);
+  if (!arch) return null;
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(json)) return null;
+
+  let best: ParsedRelease | null = null;
+  for (const value of json) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const candidate = parseReleaseCandidate(
+      value as GhReleaseJson,
+      currentVersion,
+      arch,
+    );
+    if (candidate && (!best || cmpSemver(candidate.version, best.version) > 0)) {
+      best = candidate;
+    }
+  }
+  return best;
 }
 
 /**
