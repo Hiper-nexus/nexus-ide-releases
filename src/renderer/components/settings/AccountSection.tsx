@@ -286,6 +286,11 @@ export function AccountSection() {
               {loginError}
             </p>
           )}
+          <p className="account__zone-hint">
+            “Entrar com GitHub” conecta sua conta Nexus. Para PRs e issues no
+            IDE (API do GitHub), configure um PAT no botão GitHub da barra do
+            workspace.
+          </p>
         </div>
       )}
 

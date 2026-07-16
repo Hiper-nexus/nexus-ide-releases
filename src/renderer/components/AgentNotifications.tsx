@@ -64,7 +64,9 @@ function NotificationRow({
       </span>
       <div className="agent-notif__body">
         <div className="agent-notif__row-top">
-          <span className="agent-notif__agent">{item.agentLabel}</span>
+          <span className="agent-notif__agent" title={item.agentLabel}>
+            {item.agentLabel}
+          </span>
           <span className={`agent-notif__badge agent-notif__badge--${item.kind}`}>
             {status}
           </span>

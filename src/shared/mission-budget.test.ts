@@ -83,5 +83,7 @@ describe('mission budget dashboard', () => {
     expect(agg.activeCount).toBe(1);
     expect(agg.totalSpentTokens).toBe(1000);
     expect(agg.label).toMatch(/1 missões/);
+    expect(agg.shortLabel).toMatch(/tok/);
+    expect(agg.shortLabel).toMatch(/1\.0k|1000/);
   });
 });

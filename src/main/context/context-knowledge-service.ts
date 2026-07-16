@@ -40,12 +40,30 @@ export interface ContextKnowledgeServiceOptions extends ScopedStoreOptions {
   readonly gitRunner?: GitRunner;
 }
 
+/**
+ * Fonte proposta pelo agente. sourceHash é opcional: agentes hospedados não
+ * têm tool de hash, então o Nexus computa o sha256 do arquivo do workspace no
+ * propose — o binding continua exato (verifySources re-verifica sempre a
+ * partir do disco em review/apply). Quando o agente FORNECE o hash, ele é
+ * tratado como afirmação de conteúdo exato e divergência rejeita a proposta.
+ */
+export interface ProposedContextSource {
+  readonly type: ContextAttestationSource['type'];
+  readonly locator: string;
+  readonly sourceHash?: string;
+}
+
 export interface ProposeKnowledgeDraftInput {
   readonly missionId?: string | null;
   readonly targetPath: string;
   readonly content: string;
-  readonly expectedTargetHash: string | null;
-  readonly sources: readonly ContextAttestationSource[];
+  /**
+   * CAS opcional do alvo: string = hash exato esperado; null = o alvo não
+   * pode existir; omitido = vincular ao estado ATUAL do alvo (agentes não
+   * conseguem computar hashes — o Nexus observa e registra o binding).
+   */
+  readonly expectedTargetHash?: string | null;
+  readonly sources: readonly ProposedContextSource[];
 }
 
 export interface ReviewKnowledgeDraftInput {
@@ -205,9 +223,21 @@ export class ContextKnowledgeService {
     author: ContextAttestationActor,
   ): ContextDraftRecord {
     validateContextAuthorityContent(input.targetPath, input.content);
-    verifySources(this.scope, input.sources);
+    const sources: ContextAttestationSource[] = input.sources.map((source) =>
+      source.sourceHash !== undefined
+        ? { type: source.type, locator: source.locator, sourceHash: source.sourceHash }
+        : {
+            type: source.type,
+            locator: source.locator,
+            sourceHash: workspaceFileHash(this.scope, source.locator).hash,
+          },
+    );
+    verifySources(this.scope, sources);
     const actualTargetHash = workspaceFileHashOrNull(this.scope, input.targetPath);
-    if (actualTargetHash !== input.expectedTargetHash) {
+    if (
+      input.expectedTargetHash !== undefined &&
+      actualTargetHash !== input.expectedTargetHash
+    ) {
       throw new Error(`context target changed before proposal: ${input.targetPath}`);
     }
     return this.#store.propose({
@@ -215,7 +245,7 @@ export class ContextKnowledgeService {
       targetPath: input.targetPath,
       content: input.content,
       expectedTargetHash: actualTargetHash,
-      sources: input.sources,
+      sources,
       author,
     });
   }

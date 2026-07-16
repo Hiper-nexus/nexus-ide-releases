@@ -64,7 +64,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'high' },
     { adapterId: 'glm', model: 'glm-5.2', effort: 'high' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'high' },
-    { adapterId: 'codex', model: 'gpt-5.5', effort: 'high' },
+    { adapterId: 'codex', model: 'gpt-5.6', effort: 'high' },
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'high' },
     { adapterId: 'grok', model: 'grok-4.1', effort: 'high' },
@@ -72,7 +72,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   critical: [
     { adapterId: 'claude', model: 'claude-fable-5', effort: 'xhigh' },
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'xhigh' },
-    { adapterId: 'codex', model: 'gpt-5.5', effort: 'xhigh' },
+    { adapterId: 'codex', model: 'gpt-5.6', effort: 'xhigh' },
     { adapterId: 'glm', model: 'glm-5.2', effort: 'xhigh' },
     // Diversidade também no crítico: sem estes, uma máquina sem claude/codex/
     // glm empresta de outro tier e o worker crítico colapsa num só provider.

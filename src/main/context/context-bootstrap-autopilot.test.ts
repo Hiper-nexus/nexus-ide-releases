@@ -533,4 +533,30 @@ describe('runContextBootstrapAutopilot', () => {
     expect(mocks.reviewerRun).not.toHaveBeenCalled();
     expect(result.bootstrapProposals[0]?.autoReviewable).toBe(false);
   });
+
+  it('teaches the sanctioned invariants path when that is the blocker', async () => {
+    // Sem isto o orquestrador fica num beco sem saída: o blocker exige
+    // invariantes, o autopilot "não inventa regras de negócio" e ninguém diz
+    // qual é o movimento sancionado (fact file observado + revisão).
+    mocks.inspectReadiness.mockReturnValue({
+      ...mocks.readiness,
+      blockers: [
+        {
+          code: 'missing-structured-invariants' as const,
+          message: 'faltam invariantes',
+        },
+      ],
+    });
+
+    const result = await runContextBootstrapAutopilot({
+      scope,
+      author,
+      autoCommit: false,
+      createReviewer: () => ({ run: mocks.reviewerRun }),
+    });
+
+    expect(result.autopilotHint).toMatch(/\.context\/nexus\/invariants/);
+    expect(result.autopilotHint).toMatch(/observed/i);
+    expect(result.autopilotHint).toMatch(/review/i);
+  });
 });

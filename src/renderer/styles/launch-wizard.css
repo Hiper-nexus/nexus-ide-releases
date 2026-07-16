@@ -89,6 +89,16 @@
   gap: 14px;
 }
 
+.wizard__modes--featured {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 720px) {
+  .wizard__modes--featured {
+    grid-template-columns: 1fr;
+  }
+}
+
 .wizard__mode {
   display: flex;
   flex-direction: column;
@@ -101,12 +111,24 @@
   background: var(--bg);
   color: var(--text);
   cursor: pointer;
-  transition: border-color 120ms ease, transform 120ms ease;
+  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.wizard__mode--featured {
+  min-height: 168px;
+  position: relative;
+  padding-top: 16px;
 }
 
 .wizard__mode:hover:not(:disabled) {
   border-color: var(--accent);
   transform: translateY(-2px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+
+.wizard__mode--active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
 }
 
 .wizard__mode:disabled {
@@ -114,21 +136,62 @@
   cursor: default;
 }
 
+.wizard__mode-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.wizard__mode-badge--rec {
+  color: #1a7f4b;
+  border-color: color-mix(in srgb, #3dd68c 45%, transparent);
+  background: color-mix(in srgb, #3dd68c 16%, transparent);
+}
+
+.wizard__mode-badge--ai {
+  color: color-mix(in srgb, var(--accent) 90%, #fff);
+}
+
 .wizard__mode-icon {
   font-size: 24px;
   color: var(--accent);
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .wizard__mode-title {
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 650;
   color: var(--text);
+  letter-spacing: -0.01em;
 }
 
 .wizard__mode-desc {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-dim);
   line-height: 1.5;
+  flex: 1;
+}
+
+.wizard__mode-cta {
+  margin-top: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
 }
 
 .wizard__section {

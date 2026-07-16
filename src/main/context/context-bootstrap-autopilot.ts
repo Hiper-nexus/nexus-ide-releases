@@ -111,6 +111,30 @@ function freezeOutcomes(
   return Object.freeze(outcomes.map((item) => Object.freeze({ ...item })));
 }
 
+/**
+ * missing-structured-invariants era um beco sem saída: o blocker exige
+ * invariantes, o autopilot não inventa regras de negócio e nada dizia qual é
+ * o movimento sancionado. Invariantes OBSERVADAS de fontes reais (schema,
+ * testes, configs) são evidência com proveniência — não invenção — e passam
+ * pela mesma revisão independente de qualquer draft.
+ */
+const STRUCTURED_INVARIANTS_HINT =
+  'For missing-structured-invariants: propose a draft targeting ' +
+  '.context/nexus/invariants/<slug>.json with ' +
+  '{"schemaVersion":1,"facts":[{"id","statement","claimKey","value",' +
+  '"kind":"observed","category":"invariant"}]} derived from REAL sources ' +
+  '(schema constraints, tests, configs) — observed evidence, never invented ' +
+  'business rules. It goes through the same independent review.';
+
+function invariantsGuidance(
+  readiness: ContextBootstrapAutopilotResult['readiness'],
+): string {
+  const blocked = readiness.blockers.some(
+    (blocker) => blocker.code === 'missing-structured-invariants',
+  );
+  return blocked ? ` ${STRUCTURED_INVARIANTS_HINT}` : '';
+}
+
 function hintFor(result: Omit<ContextBootstrapAutopilotResult, 'autopilotHint'>): string {
   if (result.blockingError) {
     return (
@@ -150,7 +174,8 @@ function hintFor(result: Omit<ContextBootstrapAutopilotResult, 'autopilotHint'>)
     return (
       `Applied ${result.appliedDraftIds.length} draft(s); readiness still blocked: ` +
       `${result.readiness.blockers.map((b) => b.code).join(', ')}. ` +
-      'Fill remaining product docs (e.g. business-model) with source-bound drafts.'
+      'Fill remaining product docs (e.g. business-model) with source-bound drafts.' +
+      invariantsGuidance(result.readiness)
     );
   }
   if (result.proposedDraftIds.length > 0) {
@@ -158,7 +183,8 @@ function hintFor(result: Omit<ContextBootstrapAutopilotResult, 'autopilotHint'>)
   }
   return (
     'Context not ready. Use orientation hubs as evidence and propose source-bound drafts. ' +
-    'Never invent business rules.'
+    'Never invent business rules.' +
+    invariantsGuidance(result.readiness)
   );
 }
 

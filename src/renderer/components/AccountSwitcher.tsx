@@ -200,10 +200,13 @@ export function AccountSwitcher({
     }
   };
 
+  // "Login do CLI" lia como "você não está logado" — o estado vazio significa
+  // apenas que não há CONTA RESERVA salva para troca automática; o login
+  // normal do CLI segue valendo nos panes.
   const label = active
     ? active.label
     : visible.length === 0
-      ? 'Login do CLI'
+      ? 'Contas reserva'
       : 'Nenhuma ativa';
   const sub = active
     ? `${active.adapterId}${active.onCooldown ? ' · cooldown' : ''}`

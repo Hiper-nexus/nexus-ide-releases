@@ -32,6 +32,87 @@ export function syncBackOverlayAuth(
   copyNewEntries(overlayDir, realHome, excludeTop, excludeAnywhere, true);
 }
 
+/**
+ * Chaves de ~/.claude.json que carregam a IDENTIDADE de login do CLI Claude.
+ * O segredo OAuth vive no Keychain (macOS) ou em ~/.claude/.credentials.json
+ * (Linux/Windows), mas o CLI decide "logado" pela presença de oauthAccount no
+ * arquivo — sem ela, pede /login mesmo com o segredo disponível.
+ */
+export const CLAUDE_AUTH_IDENTITY_KEYS = ['oauthAccount', 'userID'] as const;
+
+/**
+ * Contraparte Claude-nativa de syncBackOverlayAuth. O HOME efêmero do Claude
+ * NÃO é um overlay de symlinks — o Nexus escreve ali um .claude.json stub,
+ * hooks e o config MCP — então o sync-back genérico de copiar-tudo destruiria
+ * o perfil real (stub sobre o ~/.claude.json de verdade) e vazaria os
+ * artefatos nexus-*. Persistimos apenas os dois artefatos que um /login fresco
+ * dentro do pane pode produzir:
+ *  - .claude/.credentials.json quando o CLI o materializou como ARQUIVO real
+ *    (um rename atômico substitui o symlink projetado no spawn);
+ *  - oauthAccount/userID do .claude.json do overlay, e somente quando o
+ *    .claude.json REAL ainda não tem oauthAccount — resgate de login fresco;
+ *    um login nativo existente nunca é sobrescrito.
+ * Best-effort: nunca lança. Teardown não pode ser bloqueado por cópia.
+ */
+export function syncBackClaudeEphemeralAuth(
+  overlayDir: string,
+  realHome: string,
+): void {
+  syncBackClaudeCredentialsFile(overlayDir, realHome);
+  syncBackClaudeAuthIdentity(overlayDir, realHome);
+}
+
+function readJsonObject(file: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function syncBackClaudeCredentialsFile(
+  overlayDir: string,
+  realHome: string,
+): void {
+  const src = path.join(overlayDir, '.claude', '.credentials.json');
+  try {
+    // Symlink já escreve direto no perfil real — só arquivo real é novidade.
+    if (!fs.lstatSync(src).isFile()) return;
+    const dst = path.join(realHome, '.claude', '.credentials.json');
+    fs.mkdirSync(path.dirname(dst), { recursive: true, mode: 0o700 });
+    fs.copyFileSync(src, dst);
+    fs.chmodSync(dst, 0o600);
+  } catch {
+    // Best effort per file.
+  }
+}
+
+function syncBackClaudeAuthIdentity(
+  overlayDir: string,
+  realHome: string,
+): void {
+  try {
+    const overlay = readJsonObject(path.join(overlayDir, '.claude.json'));
+    if (!overlay || overlay.oauthAccount === undefined) return;
+    const realPath = path.join(realHome, '.claude.json');
+    const real = readJsonObject(realPath) ?? {};
+    if (real.oauthAccount !== undefined) return;
+    const merged: Record<string, unknown> = { ...real };
+    for (const key of CLAUDE_AUTH_IDENTITY_KEYS) {
+      if (overlay[key] !== undefined) merged[key] = overlay[key];
+    }
+    fs.writeFileSync(realPath, JSON.stringify(merged, null, 2), {
+      mode: 0o600,
+    });
+  } catch {
+    // Best effort.
+  }
+}
+
 function copyNewEntries(
   srcDir: string,
   dstDir: string,

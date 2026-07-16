@@ -348,14 +348,17 @@ export function WorkspaceBar({
   if (onOpenIntegrations) {
     secondaryTools.push({
       id: 'apps',
-      label: 'GitHub e integrações',
+      label: 'GitHub',
       icon: 'bolt',
       title: 'GitHub (PRs, issues), Linear e port forward — também no ⌘K',
       onClick: onOpenIntegrations,
     });
   }
-  const inlineTools = secondaryTools.filter((t) => t.id === 'terminal');
-  const overflowTools = secondaryTools.filter((t) => t.id !== 'terminal');
+  // Achado de operador: enterrado no ⋯, o GitHub lia como "não existe" mesmo
+  // implementado. Sobe para inline ao lado do Terminal; o resto segue na dieta.
+  const INLINE_TOOL_IDS = new Set(['terminal', 'apps']);
+  const inlineTools = secondaryTools.filter((t) => INLINE_TOOL_IDS.has(t.id));
+  const overflowTools = secondaryTools.filter((t) => !INLINE_TOOL_IDS.has(t.id));
 
   function renderToolBtn(tool: ToolDef, opts?: { menu?: boolean }) {
     if (opts?.menu) {
