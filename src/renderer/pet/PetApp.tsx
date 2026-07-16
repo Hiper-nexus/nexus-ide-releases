@@ -255,6 +255,7 @@ export function PetApp() {
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerup', onUp);
       el.removeEventListener('pointercancel', onCancel);
+      el.removeEventListener('lostpointercapture', onLostCapture);
       if (el.hasPointerCapture(e.pointerId)) {
         try {
           el.releasePointerCapture(e.pointerId);
@@ -321,9 +322,16 @@ export function PetApp() {
     const onUp = () => finish(false);
     // NÃO terminar no blur — matava o drag a meio do ecrã.
     const onCancel = () => finish(true);
+    // Captura implícita perdida (botão solto fora da janela, OS roubou o
+    // ponteiro): sem isto o pet ficava GRUDADO no mouse até o watchdog do
+    // main. É o sinal canônico de "o drag morreu por fora".
+    // Sempre como cancelamento: sem pointerup real não é clique — abrir o
+    // menu aqui seria fantasma.
+    const onLostCapture = () => finish(true);
     el.addEventListener('pointermove', onMove);
     el.addEventListener('pointerup', onUp);
     el.addEventListener('pointercancel', onCancel);
+    el.addEventListener('lostpointercapture', onLostCapture);
   }, [markInteractive]);
 
   if (!prefs) return null;

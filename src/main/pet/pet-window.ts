@@ -77,7 +77,11 @@ export const PET_DRAG_ENGINE = 'compositor-v10';
  */
 const DRAG_TICK_MS = 8;
 /** Teto de um arrasto: além disso o watchdog assenta a janela sozinho. */
-const DRAG_MAX_MS = 30_000;
+// Teto do watchdog: é o resgate quando o pointerup se perde de vez — 30s
+// deixava o pet "grudado no mouse" por meio minuto. O fim normal do drag vem
+// do pointerup/lostpointercapture do renderer; 10s cobre qualquer arrasto
+// legítimo entre monitores.
+const DRAG_MAX_MS = 10_000;
 /** Cadência do look (cursor → direção do olhar). 16 passos não pedem 60fps. */
 const LOOK_TICK_MS = 180;
 /** Cursor parado além disso = o pet volta a digitar (idle). */
@@ -1343,6 +1347,17 @@ export function initDesktopPet(): void {
     win.on('closed', () => {
       if (mainAppWindows().length === 0) destroyPetWindow();
     });
+    // Fullscreen nativo cria um Space dedicado no macOS — sem re-afirmar o
+    // pin de all-workspaces + topo, o pet fica no Space antigo ("sumiu da
+    // tela"). Reforça na entrada E na saída, e reclampa para área visível.
+    const onFullScreenTransition = () => {
+      petPinnedTop = false;
+      raisePetAboveAll(true);
+      assertPetVisible(true);
+      scheduleReclampPet();
+    };
+    win.on('enter-full-screen', onFullScreenTransition);
+    win.on('leave-full-screen', onFullScreenTransition);
   };
 
   // A janela principal nasce ANTES deste init (bootstrap): cobrir as vivas e
