@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   suppressWakeDetection: vi.fn(),
   playedTick: vi.fn(() => ({ fire: true, count: 1 })),
   suppressedTick: vi.fn(() => ({ fire: false, count: 0 })),
+  turnLog: vi.fn(),
 }));
 
 vi.mock('./voice-store', () => ({
@@ -36,6 +37,7 @@ vi.mock('./voice-session-state', () => ({
   setSuppressRealtimeAudioOut: vi.fn(),
   suppressRealtimeAudioOut: false,
   takePendingRealtimeAudioOut: () => [],
+  turnExecution: { currentToken: 42 },
   wakeMic: { suppressWakeDetection: mocks.suppressWakeDetection },
 }));
 
@@ -47,7 +49,10 @@ describe('Live renderer playback evidence', () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
-        voice: { liveAudioPlayback: mocks.playbackReport },
+        voice: {
+          liveAudioPlayback: mocks.playbackReport,
+          logVoice: mocks.turnLog,
+        },
       },
     });
   });
@@ -79,6 +84,9 @@ describe('Live renderer playback evidence', () => {
     );
 
     expect(mocks.playedTick).toHaveBeenCalledOnce();
+    expect(mocks.turnLog).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'voice.turn.first_audio' }),
+    );
     expect(mocks.setStatus).toHaveBeenCalledWith('speaking');
     expect(mocks.suppressWakeDetection).toHaveBeenCalledOnce();
   });

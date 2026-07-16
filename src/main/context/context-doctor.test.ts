@@ -156,7 +156,7 @@ describe('Context Doctor', () => {
     expect(report.sensorIds).toEqual(expect.arrayContaining(['typecheck', 'unit']));
   });
 
-  it('invalidates reviewed authority when its source bytes change', () => {
+  it('warns when only source bytes drift and the reviewed target is identical', () => {
     const { root, scope } = fixture();
     write(root, 'README.md', '# Product v1');
     write(root, '.context/docs/business-model.md', '# Business v1');
@@ -165,9 +165,36 @@ describe('Context Doctor', () => {
 
     const report = inspectContextReadiness(scope, { knownSymbols: new Set() });
 
-    expect(report.ready).toBe(false);
-    expect(report.blockers).toContainEqual(
+    expect(report.blockers).not.toContainEqual(
       expect.objectContaining({ code: 'invalid-context-attestation' }),
+    );
+    expect(report.blockers).not.toContainEqual(
+      expect.objectContaining({
+        code: 'missing-context-attestation',
+        details: expect.arrayContaining(['.context/docs/business-model.md']),
+      }),
+    );
+    expect(report.warnings).toContainEqual(
+      expect.objectContaining({ code: 'invalid-context-attestation' }),
+    );
+  });
+
+  it('blocks when an attested target is absent', () => {
+    const { root, scope } = fixture();
+    write(root, 'README.md', '# Product v1');
+    write(root, '.context/docs/business-model.md', '# Business v1');
+    attest(root, scope, '.context/docs/business-model.md', 'README.md');
+    fs.rmSync(path.join(root, '.context/docs/business-model.md'));
+
+    const report = inspectContextReadiness(scope, { knownSymbols: new Set() });
+
+    expect(report.blockers).toContainEqual(
+      expect.objectContaining({
+        code: 'invalid-context-attestation',
+        details: expect.arrayContaining([
+          expect.stringContaining('attested target is unavailable'),
+        ]),
+      }),
     );
   });
 

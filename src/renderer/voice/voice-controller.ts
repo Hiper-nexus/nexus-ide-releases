@@ -123,6 +123,7 @@ import {
   isHotSessionCommandCandidate,
 } from '../../shared/hot-session-command';
 import { DEFAULT_DUPLEX_MODE, liveMicFullDuplex } from './duplex-mode-policy';
+import { logVoiceTurnMilestone } from './voice-turn-telemetry';
 import { WorkNarrationSupervisor } from './work-narration-supervisor';
 import { FOLLOW_UP_AUTHORITY_MS, followUpAuthority } from './follow-up-authority';
 import { startLiveContextSync } from './live-context-sync';
@@ -971,6 +972,13 @@ export function useVoiceController(): void {
     });
     const unsubLiveTranscript = window.nexus.voice.onLiveTranscript((event) => {
       useVoiceStore.getState().addLiveTranscript(event);
+      if (event.role === 'user' && event.final && event.text.trim()) {
+        logVoiceTurnMilestone(
+          event.turnId ?? String(turnExecution.currentToken),
+          'turn_committed',
+          { path: 'realtime', transcriptChars: event.text.trim().length },
+        );
+      }
       if (event.role === 'assistant' && event.final && event.text.trim()) {
         // Always record echo for assistant finals — even when speaker output is
         // suppressed — so STT/wake do not treat late Gemini text as the user.
@@ -1276,6 +1284,7 @@ async function beginListening(
     realtimeTranscriptWaiter.beginTurn(turnId);
     window.nexus.voice.liveTurnBegin(turnId);
     setActiveCaptureReason(reason);
+    logVoiceTurnMilestone(turnId, 'wake', { reason });
     // C3 (follow-up 4a): a pendência de missão NÃO é mais limpa aqui — "Hey
     // Jarvis, sim" agora CONFIRMA em vez de descartar mudo. As guardas contra
     // despacho espúrio são o matcher estrito (afirmativa isolada), o consumo
@@ -1362,6 +1371,7 @@ async function beginListening(
     } else {
       await capture.start(captureAutoStop);
     }
+    logVoiceTurnMilestone(turnId, 'speech_start', { reason });
     store.setStatus('listening');
     liveStatus('listening');
   } catch (err) {

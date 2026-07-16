@@ -11,7 +11,10 @@ import {
 } from '../orch/workspace-file';
 import { detectContextConflicts } from './ambiguity-engine';
 import { canonicalJson } from './canonical-json';
-import { inspectContextAttestations } from './context-attestation';
+import {
+  inspectContextAttestations,
+  type ContextAttestationDiagnostic,
+} from './context-attestation';
 import { ingestProjectContext } from './context-ingestor';
 import type { SensorDefinition } from './sensor-broker';
 
@@ -313,6 +316,37 @@ function addMissingDocs(
   }
 }
 
+function partitionAttestationDiagnostics(
+  diagnostics: readonly ContextAttestationDiagnostic[],
+): {
+  readonly blocking: readonly ContextAttestationDiagnostic[];
+  readonly sourceDrift: readonly ContextAttestationDiagnostic[];
+  readonly sourceDriftTargets: ReadonlySet<string>;
+} {
+  const byPath = new Map<string, ContextAttestationDiagnostic[]>();
+  const blocking = diagnostics.filter((item) => {
+    if (!item.attestationPath) return true;
+    const group = byPath.get(item.attestationPath) ?? [];
+    group.push(item);
+    byPath.set(item.attestationPath, group);
+    return false;
+  });
+  const sourceDrift: ContextAttestationDiagnostic[] = [];
+  const sourceDriftTargets = new Set<string>();
+  for (const group of byPath.values()) {
+    const isSourceDriftOnly = group.every(
+      (item) => item.code === 'source-hash-mismatch' && item.targetPath,
+    );
+    if (!isSourceDriftOnly) {
+      blocking.push(...group);
+      continue;
+    }
+    sourceDrift.push(...group);
+    for (const item of group) sourceDriftTargets.add(item.targetPath!);
+  }
+  return { blocking, sourceDrift, sourceDriftTargets };
+}
+
 export function ensureContextScaffold(
   scope: ProjectExecutionScope,
 ): ContextScaffoldResult {
@@ -397,11 +431,21 @@ export function inspectContextReadiness(
 
   let corpusRevision: string | undefined;
   const attestationInspection = inspectContextAttestations(scope);
-  if (attestationInspection.diagnostics.length > 0) {
+  const attestationDiagnostics = partitionAttestationDiagnostics(
+    attestationInspection.diagnostics,
+  );
+  if (attestationDiagnostics.blocking.length > 0) {
     blockers.push({
       code: 'invalid-context-attestation',
       message: 'Uma autoridade de contexto perdeu o vínculo com suas fontes revisadas.',
-      details: attestationInspection.diagnostics.map((item) => item.message),
+      details: attestationDiagnostics.blocking.map((item) => item.message),
+    });
+  }
+  if (attestationDiagnostics.sourceDrift.length > 0) {
+    warnings.push({
+      code: 'invalid-context-attestation',
+      message: 'A fonte revisada mudou, mas o conteúdo do alvo permanece idêntico.',
+      details: attestationDiagnostics.sourceDrift.map((item) => item.message),
     });
   }
   try {
@@ -418,7 +462,12 @@ export function inspectContextReadiness(
       });
     }
     const reviewedTargets = new Set(
-      attestationInspection.attestations.map((attestation) => attestation.targetPath),
+      [
+        ...attestationInspection.attestations.map(
+          (attestation) => attestation.targetPath,
+        ),
+        ...attestationDiagnostics.sourceDriftTargets,
+      ],
     );
     const authorityTargets = new Set<string>([
       ...REQUIRED_BUSINESS_DOCS.filter((relative) => fileExistsWithoutFollowing(scope, relative)),

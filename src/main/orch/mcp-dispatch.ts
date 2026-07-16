@@ -710,7 +710,7 @@ export async function dispatchToolCall(
     /context_doctor|code_map_refresh|context_scaffold|context_draft|mission_freeze/i.test(
       tool.name,
     );
-  if (ctx.missionId && warmBootstrap) {
+  if (ctx.missionId && warmBootstrap && !ctx.readOnly) {
     try {
       const intentVersion = finalIntent.resolved?.mission.intentVersion ?? 1;
       const enq = enqueueMissionPrompt({

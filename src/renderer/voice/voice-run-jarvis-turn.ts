@@ -60,6 +60,7 @@ import type { VoiceCapture, AutoStopOptions } from './voice-capture';
 import { resolveDelegationReply } from './delegation-confirm';
 import { isClassicActionGrounded } from './classic-action-grounding';
 import { followUpAuthority } from './follow-up-authority';
+import { logVoiceTurnMilestone } from './voice-turn-telemetry';
 
 const BRAIN_DEADLINE_MS_LOCAL = 35_000;
 const JARVIS_MEMORY_MS_LOCAL = 300_000;
@@ -91,6 +92,12 @@ export async function runJarvisTurn(
 ): Promise<void> {
   const store = useVoiceStore.getState();
   const isTurnCurrent = (): boolean => turnExecution.currentToken === turnToken;
+  const turnId = String(turnToken);
+  logVoiceTurnMilestone(turnId, 'turn_committed', {
+    path: 'classic',
+    reason: activeCaptureReason,
+    transcriptChars: transcript.length,
+  });
 
   // C3: se há missão aguardando "Confirmo?", esta fala é a resposta — resolve
   // ANTES do cérebro (o cérebro veria "sim" solto e responderia qualquer coisa).
@@ -106,6 +113,10 @@ export async function runJarvisTurn(
   } else if (delegationReply.kind !== 'none') {
     let say = 'Cancelei a missão.';
     if (delegationReply.kind === 'dispatch') {
+      logVoiceTurnMilestone(turnId, 'first_tool_call', {
+        path: 'classic',
+        tool: 'send_to_pane',
+      });
       const ok = submitPromptToPane(
         delegationReply.delegation.targetPaneId,
         delegationReply.delegation.text,
@@ -117,6 +128,12 @@ export async function runJarvisTurn(
         ok,
         chars: delegationReply.delegation.text.length,
       });
+      if (ok) {
+        logVoiceTurnMilestone(turnId, 'effect_confirmed', {
+          path: 'classic',
+          tool: 'send_to_pane',
+        });
+      }
     } else {
       logVoiceEvent('info', 'jarvis.delegationCancelled', 'usuário recusou a missão', {});
     }
@@ -124,7 +141,9 @@ export async function runJarvisTurn(
     livePlayer?.stop();
     await quiesceLiveForClassic('classic-delegation-tts');
     store.setStatus('speaking');
-    const spoken = await speakAndPlayPipelined(say, isTurnCurrent);
+    const spoken = await speakAndPlayPipelined(say, isTurnCurrent, () => {
+      logVoiceTurnMilestone(turnId, 'first_audio', { path: 'classic' });
+    });
     if (spoken.ok && !spoken.cancelled) {
       store.setSpoken(say);
       void window.nexus.voice.recordEcho(say);
@@ -180,6 +199,12 @@ export async function runJarvisTurn(
     reply.expectReply = false;
     reply.say = 'Não executei nenhuma ação porque não identifiquei um pedido claro.';
   }
+  if (reply.action.type !== 'none') {
+    logVoiceTurnMilestone(turnId, 'first_tool_call', {
+      path: 'classic',
+      tool: reply.action.type,
+    });
+  }
   const exec = await executeJarvisActionForTurn(reply, context);
   let sayText = exec.sayText;
   if (exec.expectReply !== undefined) reply.expectReply = exec.expectReply;
@@ -189,6 +214,12 @@ export async function runJarvisTurn(
       tool: toolResult.tool,
       ok: toolResult.ok,
     });
+    if (toolResult.ok) {
+      logVoiceTurnMilestone(turnId, 'effect_confirmed', {
+        path: 'classic',
+        tool: toolResult.tool,
+      });
+    }
   }
 
   // Follow-up 4a: se este turno começou com um drop de delegação, a nota de
@@ -252,7 +283,9 @@ export async function runJarvisTurn(
   store.setStatus('speaking');
   liveStatus('speaking');
   const tTts = Date.now();
-  const spoken = await speakAndPlayPipelined(sayText, isTurnCurrent);
+  const spoken = await speakAndPlayPipelined(sayText, isTurnCurrent, () => {
+    logVoiceTurnMilestone(turnId, 'first_audio', { path: 'classic' });
+  });
   console.log(`[voice] tts: ${Date.now() - tTts}ms`);
   if (!spoken.ok) {
     store.setError(spoken.error);

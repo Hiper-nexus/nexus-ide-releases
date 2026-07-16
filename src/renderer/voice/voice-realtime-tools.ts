@@ -52,6 +52,7 @@ import {
 } from './runtime-incident-supervisor';
 import { useToastStore } from '../state/toast-store';
 import { armRealtimeToolNarration } from './realtime-tool-narration';
+import { logVoiceTurnMilestone } from './voice-turn-telemetry';
 
 export async function executeJarvisActionForTurn(
   ...args: Parameters<typeof executeJarvisAction>
@@ -103,7 +104,11 @@ export async function speakRealtimeToolResult(text: string): Promise<void> {
   stopAllPlayback();
   store.setStatus('speaking');
   liveStatus('speaking');
-  const spoken = await speakAndPlayPipelined(trimmed);
+  const spoken = await speakAndPlayPipelined(trimmed, undefined, () => {
+    logVoiceTurnMilestone(String(turnExecution.currentToken), 'first_audio', {
+      path: 'classic-tool-fallback',
+    });
+  });
   if (!spoken.ok) {
     store.setError(spoken.error);
     return;
@@ -232,6 +237,12 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
     // later, so invalidate that pending reply mic before executing the action.
     cancelLiveFollowUp();
     setLastRealtimeNativeToolCallId(event.callId);
+    const turnId = String(turnExecution.currentToken);
+    logVoiceTurnMilestone(turnId, 'first_tool_call', {
+      path: 'realtime',
+      tool: action.type,
+      callId: event.callId,
+    });
 
     store.setStatus('routing');
     liveStatus('thinking');
@@ -247,7 +258,14 @@ export async function executeRealtimeToolCall(event: JarvisLiveToolEvent): Promi
       ok: true,
       summary: exec.sayText.trim() || 'executado',
     };
-    if (toolResult.ok) execution.markEffectMayHaveCommitted();
+    if (toolResult.ok) {
+      execution.markEffectMayHaveCommitted();
+      logVoiceTurnMilestone(turnId, 'effect_confirmed', {
+        path: 'realtime',
+        tool: toolResult.tool,
+        callId: event.callId,
+      });
+    }
     execution.checkpoint();
     logVoiceEvent(
       toolResult.ok ? 'info' : 'warn',

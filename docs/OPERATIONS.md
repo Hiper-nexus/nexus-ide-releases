@@ -60,6 +60,13 @@ ativo, recovery, auto-merge, journal ACK, novos gates):
 
 Startup/shutdown via existing perf IPC; mission driver tick counters.
 
+## Doctor: execução multi-PC
+
+O bootstrap deriva a promessa de execução compartilhada dos backends reais:
+sem lease e sem sync, a instalação é single-device e as ausências são warnings.
+Se qualquer backend compartilhado estiver configurado, o Doctor exige o par
+lease+sync e mantém a ausência complementar como blocker.
+
 ## How to test
 
 ```bash
