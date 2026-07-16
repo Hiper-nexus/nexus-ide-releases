@@ -442,6 +442,9 @@ function createLiveTransport(
       ? createScopedJarvisMemory(requireVoiceRuntimeManager(), scope)
       : undefined,
     nativeAecRuntime.processor,
+    scope
+      ? createScopedJarvisConversation(requireVoiceRuntimeManager(), scope)
+      : undefined,
   );
 }
 

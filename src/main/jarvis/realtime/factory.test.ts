@@ -236,4 +236,33 @@ describe('createRealtimeProvider', () => {
     );
     vi.doUnmock('../../voice/voice-secrets');
   });
+
+  it('appends the Nexus-only contract to OpenAI and Gemini instructions', async () => {
+    vi.resetModules();
+    vi.doMock('../../voice/voice-secrets', () => ({
+      resolveVoiceApiKey: () => 'voice-key',
+    }));
+    const { createRealtimeProviderCandidates } = await import('./factory');
+    const candidates = createRealtimeProviderCandidates({
+      config: {
+        ...DEFAULT_VOICE_CONFIG,
+        jarvisLive: {
+          ...DEFAULT_VOICE_CONFIG.jarvisLive,
+          transport: 'openai-realtime',
+        },
+      },
+      instructions: 'Custom provider prompt.',
+    });
+    const openai = candidates.find((candidate) => candidate.id === 'openai');
+    const gemini = candidates.find((candidate) => candidate.id === 'gemini');
+
+    expect(
+      (openai?.provider as unknown as { instructions: string }).instructions,
+    ).toContain('NEXUS VOICE OPERATING CONTRACT');
+    expect(
+      (gemini?.provider as unknown as { options: { instructions: string } }).options
+        .instructions,
+    ).toContain('NEXUS VOICE OPERATING CONTRACT');
+    vi.doUnmock('../../voice/voice-secrets');
+  });
 });

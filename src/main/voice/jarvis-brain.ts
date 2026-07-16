@@ -10,6 +10,7 @@ import {
   flattenJarvisBrainProviders,
 } from '../../shared/voice-config';
 import { isLikelyNoiseTranscript } from '../../shared/voice-noise';
+import { NEXUS_VOICE_POLICY } from './jarvis-voice-policy';
 import type {
   JarvisContext,
   JarvisReply,
@@ -702,6 +703,7 @@ export async function jarvisThink(
           content: `Remembered project facts (current checkout only):\n${facts}`,
         }]
       : []),
+    { role: 'system', content: NEXUS_VOICE_POLICY },
     ...history.slice(-8).map((t) => ({ role: t.role, content: t.content })),
     { role: 'user', content: transcript },
   ];
