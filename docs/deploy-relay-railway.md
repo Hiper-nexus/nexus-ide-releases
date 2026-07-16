@@ -6,12 +6,12 @@ selados e nunca deve receber chave, token, link de sala ou payload em logs.
 ## Serviço
 
 No mesmo projeto Railway, crie o serviço `nexus-relay` a partir deste repositório.
-Defina o diretório raiz como `server` e use:
+Mantenha a raiz do repositório e use o Dockerfile `Dockerfile.relay`. Isso evita
+que o `railway.toml` do backend SaaS seja aplicado ao relay:
 
 ```text
-Build command: npm run relay:build
-Start command: npm run relay:start
-Healthcheck: / (espera HTTP 404; não use como healthcheck HTTP)
+Builder: Dockerfile
+Dockerfile path: Dockerfile.relay
 ```
 
 Não configure um healthcheck HTTP no Railway para este serviço: o relay aceita
