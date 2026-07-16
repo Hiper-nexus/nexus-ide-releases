@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.19.3 — Operacional para o Cliente
+
+Data: 2026-07-16
+
+Lote de correções guiado por bugs de operador no 0.19.2 — cada fricção
+reportada virou fluxo funcional, com foco em máquina de cliente fresca.
+
+### Contas e providers
+
+- **Conta por login dispara o fluxo de auth** (P0): "Entrar com nova conta"
+  (e "Fazer login agora" no status Login necessário) abre um terminal já
+  rodando o login da própria CLI — `claude /login`, `codex login`,
+  `grok login`, `kimi login`, `opencode auth login`, `agy` — e o CLI abre o
+  navegador na URL do provider. Nada de URL hardcodeada; GLM/LongCat (token)
+  ficam de fora por design.
+- **Instalador 1-clique de CLIs**: provider ausente ganha "Instalar
+  automaticamente" (e o painel OMP, "Instalar omp automaticamente" com retry).
+  Receitas em código de fontes oficiais confirmadas (claude/codex/gemini via
+  npm; opencode e omp via brew), confirmação NATIVA mostrando o comando exato,
+  pré-check do runner com instrução honesta.
+- **GitHub sem setup**: sem PAT, o Nexus usa a sessão do `gh` CLI
+  (`gh auth token`, cache 60s, nunca persistido) — PRs/issues funcionam na
+  hora em máquina com gh logado.
+- **Kimi K3 + descoberta viva de modelos**: K3 e highspeed no catálogo, e o
+  "Atualizar modelos" agora pergunta à própria CLI o que ela conhece
+  (`kimi provider list --json`) — modelo novo aparece sem esperar release.
+
+### Modo Design
+
+- **Desligar nunca mais falha**: SPA ocupada que não confirmava o
+  design_disable deixava a barra presa em "ON + erro"; o desligamento local
+  virou autoridade.
+- **Erros legíveis**: o wrapper cru do Electron ("Error invoking remote
+  method 'br…'") vira texto curto e acionável, com tooltip da mensagem
+  completa; erros de lifecycle benigno resetam a barra em silêncio.
+- **Preview mobile sempre visível**: 📱 375 / ▯ 768 / 🖥 1440 / ⛶ saem de trás
+  do toggle do Design e vivem na barra do browser pane, com rótulos.
+
+### Infra de release
+
+- CURRENT_RELEASE (notas internas) e server/package.json passam a acompanhar
+  a versão — invariante que o bump 0.19.2 tinha furado (achado da suíte).
+
 ## 0.19.2 — Orquestração Destravada
 
 Data: 2026-07-16
