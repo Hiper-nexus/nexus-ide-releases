@@ -18,7 +18,12 @@ afterEach(() => {
 });
 
 describe('shell integration env', () => {
-  it('is disabled by default', () => {
+  it('is enabled by default and disableable by override', () => {
+    expect(isShellIntegrationEnabled()).toBe(true);
+    getFeatureFlagRegistry().setOverride(
+      FEATURE_FLAG_IDS.terminalCommandBlocks,
+      false,
+    );
     expect(isShellIntegrationEnabled()).toBe(false);
   });
 

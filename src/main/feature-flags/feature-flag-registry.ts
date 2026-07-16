@@ -87,6 +87,14 @@ export class FeatureFlagRegistry {
     this.#overrides.set(id, enabled);
   }
 
+  /** Remove o override do id — a resolução volta ao default embutido. */
+  clearOverride(id: string): void {
+    if (!this.#byId.has(id)) {
+      throw new Error(`unknown feature flag: ${id}`);
+    }
+    this.#overrides.delete(id);
+  }
+
   /**
    * Pre-production / dogfood: force every known product flag ON via in-memory
    * overrides. Kill switch remains the final authority — the force never

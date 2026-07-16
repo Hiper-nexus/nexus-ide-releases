@@ -28,19 +28,26 @@ describe('FeatureFlagRegistry', () => {
     );
   });
 
-  it('keeps product-wave flags off by default on every channel', () => {
+  it('resolves builtin defaults consistently on every channel', () => {
     for (const channel of ['dev', 'dogfood', 'preview', 'stable'] as const) {
       const registry = new FeatureFlagRegistry({ runtimeChannel: channel });
+      // Superfícies prontas nascem ON (fase de operador único)…
       expect(registry.isEnabled(FEATURE_FLAG_IDS.terminalCommandBlocks)).toBe(
-        false,
+        true,
       );
       expect(
         registry.resolve(FEATURE_FLAG_IDS.terminalCommandBlocks).reason,
       ).toBe('default');
-      expect(registry.isEnabled(FEATURE_FLAG_IDS.searchMixer)).toBe(false);
+      expect(registry.isEnabled(FEATURE_FLAG_IDS.searchMixer)).toBe(true);
       expect(registry.isEnabled(FEATURE_FLAG_IDS.missionEventJournal)).toBe(
+        true,
+      );
+      // …e as de maior blast radius / sem consumidor continuam fail-closed.
+      expect(registry.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(false);
+      expect(registry.isEnabled(FEATURE_FLAG_IDS.remoteRelayTransport)).toBe(
         false,
       );
+      expect(registry.isEnabled(FEATURE_FLAG_IDS.autonomyProfiles)).toBe(false);
     }
   });
 
@@ -89,10 +96,9 @@ describe('FeatureFlagRegistry', () => {
       runtimeChannel: 'dev',
       overridesPath,
     });
-    // Corrupt overrides are ignored — product defaults stay fail-closed.
-    expect(registry.isEnabled(FEATURE_FLAG_IDS.missionEventJournal)).toBe(
-      false,
-    );
+    // Corrupt overrides are ignored — builtin defaults stay authoritative.
+    expect(registry.isEnabled(FEATURE_FLAG_IDS.missionEventJournal)).toBe(true);
+    expect(registry.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(false);
   });
 
   it('persists overrides atomically', () => {
@@ -145,15 +151,46 @@ describe('FeatureFlagRegistry', () => {
       overridesPath,
       JSON.stringify({
         schemaVersion: 1,
-        overrides: [{ id: FEATURE_FLAG_IDS.searchMixer, enabled: true }],
+        overrides: [{ id: FEATURE_FLAG_IDS.mcpHub, enabled: true }],
       }),
       'utf8',
     );
 
     configureFeatureFlagRegistry({ runtimeChannel: 'dev', overridesPath });
 
-    expect(getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.searchMixer)).toBe(
+    expect(getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(
       true,
+    );
+  });
+
+  it('clearOverride returns the flag to its builtin default and persists', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ff-'));
+    tempDirs.push(dir);
+    const overridesPath = path.join(dir, 'feature-flags.json');
+    const registry = new FeatureFlagRegistry({
+      runtimeChannel: 'dev',
+      overridesPath,
+    });
+
+    registry.setOverride(FEATURE_FLAG_IDS.searchMixer, false);
+    expect(registry.isEnabled(FEATURE_FLAG_IDS.searchMixer)).toBe(false);
+    expect(registry.resolve(FEATURE_FLAG_IDS.searchMixer).reason).toBe(
+      'override',
+    );
+
+    registry.clearOverride(FEATURE_FLAG_IDS.searchMixer);
+    registry.persistOverrides();
+    expect(registry.isEnabled(FEATURE_FLAG_IDS.searchMixer)).toBe(true);
+    expect(registry.resolve(FEATURE_FLAG_IDS.searchMixer).reason).toBe(
+      'default',
+    );
+
+    const reloaded = new FeatureFlagRegistry({
+      runtimeChannel: 'dev',
+      overridesPath,
+    });
+    expect(reloaded.resolve(FEATURE_FLAG_IDS.searchMixer).reason).toBe(
+      'default',
     );
   });
 });

@@ -1,5 +1,33 @@
 # Changelog
 
+## Não lançado — Labs + superfícies prontas ligadas por default
+
+Fase de operador único: capability pronta atrás de flag invisível não é
+maturidade, é estoque. Este lote torna as flags visíveis/operáveis na UI e
+liga por default o que já tem superfície completa e efeito contido.
+
+- **Configurações → Sistema → Labs**: painel com TODAS as feature flags do
+  produto — estado real resolvido pelo main (kill switch > override > canal >
+  default), descrição PT-BR, switch persistido e "Restaurar padrão" quando há
+  override. Antes, o único caminho era editar `feature-flags.json` à mão no
+  userData; agora é um clique, com push ao vivo para a UI gateada
+  (`product:flags.setOverride` + broadcast `product:flags.changed`).
+- **Default-ON** (9 flips, decisão revisada pinada em teste): blocos de
+  comando do terminal (OSC 133), journal de eventos de missão, busca
+  unificada, onboarding progressivo, painel contextual, editor de workspace
+  (caminho textarea + guarda de hash), catálogo de skills, memória Markdown
+  `.nexus-memory/` e memória agentic por workspace (FTS5).
+- **Continuam default-OFF, agora ligáveis pelo Labs**: MCP Hub sync (escreve
+  configs de outras ferramentas no HOME — ligar é decisão deliberada), relay
+  E2E do companion (exige relay hospedado + URL `wss://` explícita) e perfis
+  de autonomia (sem consumidor na UI ainda).
+- Registry ganha `clearOverride` (voltar ao default) e o hook
+  `useProductFlags` passa a reagir ao push de mudanças sem reiniciar o app.
+- TDD: override aplicado/limpo/persistido e fail-closed para id desconhecido
+  (3), contrato de defaults por flag re-pinado (shared + registry), hook com
+  defaults novos, seção Labs (5: render, toggle, restaurar, kill switch,
+  reasons). `tsc` limpo.
+
 ## Não lançado — Perfil de design no motor automático
 
 - O motor que injeta a Carta de Design nos workers de UI ganha um **perfil de

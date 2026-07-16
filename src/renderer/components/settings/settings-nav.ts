@@ -7,6 +7,7 @@ export type SettingsSection =
   | 'vision'
   | 'diagnostics'
   | 'audit'
+  | 'labs'
   | 'media'
   | 'providers'
   | 'usage-quota'
@@ -246,6 +247,14 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
         subtitle: 'bridge · ssh',
         aliases: ['ssh', 'remote'],
       },
+      {
+        id: 'labs',
+        icon: 'LAB',
+        pixelIcon: 'sparkle',
+        title: 'Labs',
+        subtitle: 'feature flags',
+        aliases: ['labs', 'flags', 'feature flags', 'experimentos'],
+      },
     ],
   },
   {
@@ -416,6 +425,7 @@ const SETTINGS_SECTION_PILLAR: Record<SettingsSection, SettingsNavPillarId> = {
   vision: 'system',
   audit: 'system',
   remote: 'system',
+  labs: 'system',
 };
 
 export function settingsSectionPillar(

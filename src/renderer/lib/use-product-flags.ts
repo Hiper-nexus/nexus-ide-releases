@@ -57,8 +57,17 @@ export function useProductFlags(): ProductFlagMap {
         // IPC unavailable (tests, degraded preload) — keep built-in defaults.
       }
     })();
+    // Toggles do painel Labs re-resolvem no main e chegam por push — a UI
+    // gateada reage sem reiniciar o app.
+    const unsubscribe = window.nexus?.product?.onFlagsChanged?.((list) => {
+      const parsed = parseFlagList(list);
+      if (!cancelled && parsed) {
+        setFlags((prev) => ({ ...prev, ...parsed }));
+      }
+    });
     return () => {
       cancelled = true;
+      unsubscribe?.();
     };
   }, []);
 

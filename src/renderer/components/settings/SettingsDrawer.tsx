@@ -61,6 +61,7 @@ import {
 } from './CatalogSections';
 import { DesignSystemsSection } from './DesignSystemsSection';
 import { HarnessSection } from './HarnessSection';
+import { LabsSection } from './LabsSection';
 
 /**
  * Settings drawer — nav emocional Você · App · Agentes · Sistema (pilares
@@ -464,6 +465,7 @@ export function SettingsDrawer() {
           {section === 'marketplace' && <MarketplaceSection />}
           {section === 'design-systems' && <DesignSystemsSection />}
           {section === 'remote' && <RemoteSection />}
+          {section === 'labs' && <LabsSection />}
           {section === 'agents' && <AgentsSection />}
           {section === 'skills' && <SkillsSection />}
           {section === 'media-catalog' && <MediaCatalogSection />}
