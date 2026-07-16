@@ -128,6 +128,7 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'browser_click',
   'browser_fill',
   'browser_navigate',
+  'editor_apply_patch',
   'editor_insert',
   'editor_replace_selection',
   'file_write',
