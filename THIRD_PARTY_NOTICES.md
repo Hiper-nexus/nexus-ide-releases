@@ -168,6 +168,25 @@ secret redaction. The fast path (`#id` for a simple-css-ident id) is preserved.
 License text: `third_party/licenses/orca-MIT.txt`. Provenance ledger:
 `third_party/provenance/orca-5e1009.json`.
 
+## can1357/oh-my-pi (omp crossover harvest)
+
+Modules vendored/adapted from [can1357/oh-my-pi](https://github.com/can1357/oh-my-pi)
+at commit `03c48d073` (MIT, Copyright (c) 2025 Mario Zechner, Copyright (c)
+2025-2026 Can Bölük). Analysis: `docs/analysis/2026-07-15-oh-my-pi-crossover-senior.md`.
+
+- `src/vendor/omp/catalog/` — model catalog subset (pricing/context/capabilities) + identity classifier
+- `src/vendor/omp/rate-limit/` — rate-limit reason taxonomy + retry-after text parsing (adapted for PTY output)
+- `src/vendor/omp/hashline/` — hash-anchored patch language (applier, recovery, tests; xxHash32 reimplemented in TS)
+- `src/vendor/omp/discovery/` + `src/main/discovery/` — multi-ecosystem agent-config discovery (subset)
+- `src/vendor/omp/wire/` + `src/main/remote/relay/` — E2E collab wire protocol + content-blind relay (Bun→Node port)
+- `src/main/orch/review-findings.ts` + builtin squad `review-p0p3` — review pipeline schema/prompts (derived)
+- `src/main/adapters/omp-rpc-*.ts` — RPC mode frame types (derived; omp binary is consumed as an external
+  user-installed process and is NEVER redistributed with Nexus — upstream binary embeds AGPL-3.0 mupdf)
+
+License text: `third_party/licenses/oh-my-pi-MIT.txt`. Provenance ledger:
+`third_party/provenance/oh-my-pi-03c48d0.json`. Vendoring policy: pinned copy,
+never a live npm dependency; `src/markit`/mupdf-adjacent code excluded.
+
 ## DESIGN.md workspace convention (Google Stitch / VoltAgent awesome-design-md)
 
 Design mode reads a `DESIGN.md` file from the project root (the visual
