@@ -5,7 +5,7 @@ import type {
   CompanionRelayTransportInfo,
 } from '../../../shared/companion-relay-types';
 import { useProductFlags } from '../../lib/use-product-flags';
-import { QrCode } from '../QrCode';
+import { MainGeneratedQr } from '../MainGeneratedQr';
 
 /**
  * Companion mobile relay (transporte E2E via relay cego). A sala é selada com
@@ -102,7 +102,7 @@ export function CompanionRelaySection() {
   const flagOn = flags[FEATURE_FLAG_IDS.remoteRelayTransport] === true;
 
   const [info, setInfo] = useState<CompanionRelayTransportInfo | null>(null);
-  const [relayUrl, setRelayUrl] = useState('');
+  const [relayUrl, setRelayUrl] = useState('wss://relay.nexuside.app');
   const [busy, setBusy] = useState(false);
   const [uiError, setUiError] = useState<string | null>(null);
   const [bridgeMissing, setBridgeMissing] = useState(false);
@@ -314,8 +314,8 @@ export function CompanionRelaySection() {
               >
                 <figure style={{ margin: 0 }}>
                   <div className="settings-qr">
-                    <QrCode
-                      value={info.fullLink}
+                    <MainGeneratedQr
+                      svg={info.qrSvgFull}
                       size={168}
                       label="QR do link full (controle da sessão)"
                     />
@@ -326,8 +326,8 @@ export function CompanionRelaySection() {
                 </figure>
                 <figure style={{ margin: 0 }}>
                   <div className="settings-qr">
-                    <QrCode
-                      value={info.viewLink}
+                    <MainGeneratedQr
+                      svg={info.qrSvgView}
                       size={168}
                       label="QR do link view (somente leitura)"
                     />
