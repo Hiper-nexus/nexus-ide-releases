@@ -9,6 +9,59 @@ companion mobile, subsistema SSH e backend de auth/billing.
 paralelas, com validação em primeira mão dos achados de maior severidade contra
 o código real. Sem execução dinâmica (ver "Riscos residuais").
 
+> **Atualização — correções aplicadas (mesmo branch).** As correções abaixo foram
+> implementadas de forma **preservadora de comportamento**: o full-auto dos
+> agentes permanece intocado. Ver §11 para o status por achado.
+
+---
+
+## 11. Status de implementação
+
+Todas as correções são preservadoras de comportamento — nenhuma adiciona prompt/
+sandbox/gate de runtime ao agente nem reduz sua autonomia. Cada uma tem testes.
+
+**Corrigido (código + testes):**
+- **H1** — scan de conteúdo no install de skills/agents (bloqueia exfiltração de
+  credencial/reverse-shell/pipe-to-shell; fail-closed, sem prompt). `skill-threat-scan.ts`
+- **H2 (input-trust)** — H1 fecha a via de entrada; nenhuma mudança na autonomia.
+- **H4** — port-forward resolve+pina destino e bloqueia metadata/link-local/reserved. `ssrf-guard.ts`
+- **M2** — tools do agente negam ler `.nexus/mcp-hub.json` e afins. `agent-path-policy.ts`
+- **M4** — redação de histórico cobre Gemini/Groq/xAI/GLM + headers/`--key`.
+- **M5** — `agent-hook:ingestStatus` exige ownership da sessão.
+- **M6** — import do pet valida host + `redirect:'error'`.
+- **M8** — diálogo de `catalog_install` explicita "código de terceiro não verificado".
+- **L3** — `webSecurity`/`allowRunningInsecureContent` explícitos.
+- **L6** — `NEXUS_BACKEND_URL` só https (loopback em dev). `backend-url.ts`
+- **L7** — `providers.json` 0600.
+- **L10** — `handoff_list` confina não-orquestrador à própria missão.
+- **L13** — segredos de alto valor removidos do `process.env` no backend.
+- **L14** — convites de time 8→12 chars (~60 bits).
+- **L16** — lockout de pareamento por-IP (não rotaciona o código do usuário) + checagem de Origin no WS.
+- **L17** — filtro de identidade SSH case-sensitive (+ semântica de wildcard explícita).
+
+**Parcial + documentado (parte segura aplicada; resto exigiria mudança que quebraria função/UX):**
+- **H3** — filtro de identidade corrigido; enforcement completo do ssh2-agent
+  deferido (intestável aqui; risco de quebrar auth SSH).
+- **H5/H6/M12** — mobile: aplicado lockout por-IP + Origin. Confirmação vinda do
+  desktop, pinning de cert (app nativo) e aprovação de device mudam a UX do
+  controle remoto → recomendação, não imposição.
+- **M7/M9** — o objetivo do atacante (conteúdo malicioso / shadowing sob nome
+  confiável) é neutralizado por H1; gate por-allowlist adicionaria fricção ao
+  install autônomo → substituído por H1.
+
+**Deferido + documentado (refactor de ciclo-de-vida / API nativa / deploy — não
+seguro de fechar sem validação que este ambiente não permite):**
+- **M1** — remoção de conta já limpa o managed-home (`removeAccount`→`removeManagedHome`);
+  reduzir a janela plaintext durante sessões ativas exige materialização efêmera
+  (o CLL precisa do arquivo em runtime; quebraria spawns).
+- **M3** — credencial Claude via argv: fix real requer binding nativo de Keychain
+  (`SecItemAdd`/keytar) não validável em Linux; trocar às cegas quebraria a auth/failover.
+- **M10** — rate-limit compartilhado (Redis) é config de deploy.
+- **M11** — bind do auth-code ao PKCE exige mudança coordenada cliente+servidor.
+- **L1/L4/L5/L8/L9/L11/L12/L15** — ver notas; a maioria quebraria função (ex.:
+  estreitar o ro-bind do `terminal_run` quebra comandos do agente) ou é inerente
+  (licença offline).
+
 ---
 
 ## 1. Sumário executivo
