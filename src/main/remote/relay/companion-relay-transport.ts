@@ -31,6 +31,7 @@ import {
   type RelayRoomSecrets,
 } from './room-link';
 import { RelaySocket } from './relay-socket';
+import { formatCompanionWebUrl } from './companion-web-link';
 
 /** Mensagem autenticada no shape que o dispatch da bridge espera. */
 export interface CompanionDispatchMessage {
@@ -100,8 +101,8 @@ export class CompanionRelayHost {
       secrets.roomId,
       secrets.roomKey,
     );
-    this.#qrSvgFull = encodeQrSvg(this.#fullLink);
-    this.#qrSvgView = encodeQrSvg(this.#viewLink);
+    this.#qrSvgFull = encodeQrSvg(formatCompanionWebUrl(this.#fullLink));
+    this.#qrSvgView = encodeQrSvg(formatCompanionWebUrl(this.#viewLink));
     const key = await importRoomKey(secrets.roomKey);
     const socket = new RelaySocket({
       wsUrl: `${normalized.origin}/r/${secrets.roomId}`,
