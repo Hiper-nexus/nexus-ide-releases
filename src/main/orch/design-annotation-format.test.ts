@@ -118,4 +118,87 @@ describe('formatDesignAnnotationsPrompt', () => {
       /no design annotations/,
     );
   });
+
+  it('NUNCA corta as notas confiáveis: envelope e DESIGN.md encolhem primeiro', () => {
+    // Pior caso: 20 anotações com comentários longos + payloads de página
+    // gordos + DESIGN.md no teto — o orçamento aperta em todas as seções.
+    const heavy = Array.from({ length: 20 }, (_, i) =>
+      annotation({
+        id: `a${i}`,
+        comment: `nota ${i + 1} ${'c'.repeat(1_900)}`,
+        selection: {
+          ...SELECTION,
+          outerHtml: '<section>'.padEnd(4_000, 'z'),
+          text: 'texto '.repeat(80),
+        },
+      }),
+    );
+    const prompt = formatDesignAnnotationsPrompt({
+      annotations: heavy,
+      designSystem: '# Tokens\n' + 'regra de design\n'.repeat(700),
+    });
+
+    expect(prompt.length).toBeLessThanOrEqual(24_000);
+    // TODAS as 20 notas numeradas presentes, com a instrução final intacta.
+    for (let i = 1; i <= 20; i += 1) {
+      expect(prompt).toContain(`${i}. [corrigir] nota ${i}`);
+    }
+    expect(prompt).toContain('Responda ponto a ponto');
+    // O envelope permaneceu bem-formado (marcadores balanceados).
+    expect(prompt).toContain('BEGIN_UNTRUSTED_PAGE_DATA');
+    expect(prompt).toContain('END_UNTRUSTED_PAGE_DATA');
+    const envelope = prompt.slice(
+      prompt.indexOf('BEGIN_UNTRUSTED_PAGE_DATA') + 'BEGIN_UNTRUSTED_PAGE_DATA\n'.length,
+      prompt.indexOf('\nEND_UNTRUSTED_PAGE_DATA'),
+    );
+    const parsed = JSON.parse(envelope) as {
+      annotations: unknown[];
+      omittedEntries?: number;
+    };
+    // O ajuste degrada o envelope (menos entradas/campos), nunca as notas.
+    expect(
+      parsed.annotations.length + (parsed.omittedEntries ?? 0),
+    ).toBe(20);
+  });
+
+  it('encaixa o envelope medindo a string real (sem inflação de escapes)', () => {
+    // Conteúdo denso em aspas/backslashes: um re-embrulho ingênuo do preview
+    // truncado dobraria os escapes e estouraria o teto.
+    const quoteDense = Array.from({ length: 20 }, (_, i) =>
+      annotation({
+        id: `q${i}`,
+        selection: {
+          ...SELECTION,
+          selector: '#a "\\"'.repeat(60),
+          outerHtml: '<div data-x="\\"quoted\\"">'.repeat(120),
+          text: '"\\" '.repeat(30),
+        },
+      }),
+    );
+    const prompt = formatDesignAnnotationsPrompt({ annotations: quoteDense });
+    expect(prompt.length).toBeLessThanOrEqual(24_000);
+    const envelope = prompt.slice(
+      prompt.indexOf('BEGIN_UNTRUSTED_PAGE_DATA') + 'BEGIN_UNTRUSTED_PAGE_DATA\n'.length,
+      prompt.indexOf('\nEND_UNTRUSTED_PAGE_DATA'),
+    );
+    expect(() => JSON.parse(envelope)).not.toThrow();
+    expect(prompt).toContain('Responda ponto a ponto');
+  });
+
+  it('outerHtml do envelope passa pela poda de valores de formulário (safeOuterHtml)', () => {
+    const prompt = formatDesignAnnotationsPrompt({
+      annotations: [
+        annotation({
+          selection: {
+            ...SELECTION,
+            outerHtml:
+              '<form><input value="user@bank.com"><textarea>meu segredo</textarea></form>',
+          },
+        }),
+      ],
+    });
+    expect(prompt).not.toContain('user@bank.com');
+    expect(prompt).not.toContain('meu segredo');
+    expect(prompt).toContain('[FORM_VALUE_REDACTED]');
+  });
 });

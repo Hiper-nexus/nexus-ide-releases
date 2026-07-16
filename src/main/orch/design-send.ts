@@ -186,7 +186,8 @@ export async function sendDesignSelectionToAgent(
 
 export interface DesignAnnotationsSendInput {
   paneId: string;
-  targetPaneRef: string;
+  /** Required for a real send; a dry run (clipboard copy) needs no target. */
+  targetPaneRef?: string;
   dryRun?: boolean;
   designSystem?: string;
 }
@@ -217,22 +218,30 @@ export async function sendDesignAnnotationsToAgent(
       'no design annotations for this pane: annotate elements in design mode first',
     );
   }
-  const target = deps.findPane(input.targetPaneRef);
-  if (!target) throw new Error(`unknown target pane: ${input.targetPaneRef}`);
-  if (!target.sessionId) {
-    throw new Error(`target pane has no live session: ${input.targetPaneRef}`);
+  // A dry run only formats for clipboard copy — it never injects, so it must
+  // not demand a live agent target (copy works with zero agent panes open).
+  let target: { paneId: string; sessionId?: string } | null = null;
+  if (!input.dryRun || input.targetPaneRef) {
+    if (!input.targetPaneRef) {
+      throw new Error('design annotations send requires a target pane');
+    }
+    target = deps.findPane(input.targetPaneRef);
+    if (!target) throw new Error(`unknown target pane: ${input.targetPaneRef}`);
+    if (!input.dryRun && !target.sessionId) {
+      throw new Error(`target pane has no live session: ${input.targetPaneRef}`);
+    }
   }
   const prompt = formatDesignAnnotationsPrompt({
     annotations,
     designSystem: input.designSystem,
   });
   if (!input.dryRun) {
-    await deps.inject(target.sessionId, prompt);
+    await deps.inject(target!.sessionId!, prompt);
   }
   return {
     ok: true,
-    targetPaneId: target.paneId,
-    targetSessionId: target.sessionId,
+    targetPaneId: target?.paneId ?? '',
+    targetSessionId: target?.sessionId ?? '',
     promptChars: prompt.length,
     annotations: annotations.length,
     ...(input.dryRun ? { prompt } : {}),

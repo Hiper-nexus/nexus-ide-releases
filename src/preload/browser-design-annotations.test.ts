@@ -114,7 +114,58 @@ describe('createAnnotationMarkerLayer', () => {
     const result = layer.set([]);
     expect(result).toEqual({ applied: true, markers: 0 });
     expect(win.document.getElementById(DESIGN_ANNOTATION_HOST_ID)).toBeNull();
-    expect(layer.count()).toBe(0);
+  });
+
+  it('tracks the LIVE element box when the selector resolves (reflow-safe)', () => {
+    const { win, shadows } = fixture();
+    Object.defineProperty(win, 'innerWidth', { value: 800, configurable: true });
+    Object.defineProperty(win, 'innerHeight', { value: 600, configurable: true });
+    const target = win.document.createElement('button');
+    target.id = 'cta';
+    win.document.body.appendChild(target);
+    // jsdom has no layout: stub the live box the element reports.
+    let box = { x: 100, y: 100, width: 50, height: 20 };
+    target.getBoundingClientRect = () =>
+      ({ ...box, top: box.y, left: box.x, right: box.x + box.width, bottom: box.y + box.height }) as DOMRect;
+    const layer = createAnnotationMarkerLayer(win);
+
+    layer.set([
+      marker('live', 0, {
+        selector: '#cta',
+        // Frozen rects deliberately elsewhere — the live box must win.
+        rectPage: { x: 0, y: 0, width: 10, height: 10 },
+        rectViewport: { x: 0, y: 0, width: 10, height: 10 },
+      }),
+    ]);
+    const badge = badgesOf(shadows[0])[0];
+    // live: x = 100 + 50/2 - 12 = 113 ; y = 100 + 20 - 12 = 108
+    expect(badge.style.transform).toBe('translate(113px, 108px)');
+
+    // The page reflows (element moves): the badge follows on the next paint.
+    box = { x: 300, y: 40, width: 50, height: 20 };
+    win.dispatchEvent(new win.Event('resize'));
+    return new Promise<void>((resolve) => {
+      win.requestAnimationFrame(() => {
+        expect(badge.style.transform).toBe('translate(313px, 48px)');
+        resolve();
+      });
+    });
+  });
+
+  it('falls back to frozen geometry when the selector no longer resolves', () => {
+    const { win, shadows } = fixture();
+    Object.defineProperty(win, 'innerWidth', { value: 800, configurable: true });
+    Object.defineProperty(win, 'innerHeight', { value: 600, configurable: true });
+    const layer = createAnnotationMarkerLayer(win);
+
+    layer.set([
+      marker('gone', 0, {
+        selector: '#does-not-exist',
+        rectPage: { x: 40, y: 300, width: 120, height: 30 },
+      }),
+    ]);
+    // frozen: x = 40 + 120/2 - 12 = 88 ; y = 300 + 30 - 12 = 318
+    expect(badgesOf(shadows[0])[0].style.transform).toBe('translate(88px, 318px)');
   });
 });
 
@@ -127,7 +178,7 @@ describe('parseAnnotationMarkers', () => {
     expect(parsed[0].isFixed).toBe(false);
   });
 
-  it('rejects oversized lists, bad ids, bad indexes and bad rects', () => {
+  it('rejects oversized lists, bad ids, bad indexes, bad rects and bad selectors', () => {
     const tooMany = Array.from({ length: 21 }, (_, i) => marker(`m${i}`, i));
     expect(() => parseAnnotationMarkers(tooMany)).toThrow(/at most 20/);
     expect(() => parseAnnotationMarkers([{ ...marker('a', 0), id: '' }])).toThrow(
@@ -141,9 +192,19 @@ describe('parseAnnotationMarkers', () => {
         { ...marker('a', 0), rectPage: { x: Number.NaN, y: 0, width: 1, height: 1 } },
       ]),
     ).toThrow(/rect is invalid/);
+    expect(() =>
+      parseAnnotationMarkers([
+        { ...marker('a', 0), selector: 'x'.repeat(1_025) },
+      ]),
+    ).toThrow(/selector is invalid/);
     expect(() => parseAnnotationMarkers({} as unknown as [])).toThrow(
       /must be an array/,
     );
+    // A valid selector passes through untouched.
+    expect(
+      parseAnnotationMarkers([{ ...marker('a', 0), selector: '#cta' }])[0]
+        .selector,
+    ).toBe('#cta');
   });
 });
 

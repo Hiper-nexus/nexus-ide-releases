@@ -90,11 +90,12 @@ const designSelectionGetTool: McpToolDef = {
     return {
       paneId,
       designModeActive: isDesignModeActive(sessionKey),
-      ...(selection ? { selection } : {}),
+      // Stable shape: consumers branch on VALUES, not key existence.
+      selection: selection ?? null,
       // Multi-selection set (F4); a single click yields a one-element list.
       ...(selections.length > 1 ? { selections } : {}),
       candidates,
-      ...(annotations.length > 0 ? { annotations } : {}),
+      annotations,
       ...(screenshot ? { screenshot } : {}),
     };
   },

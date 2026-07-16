@@ -2,19 +2,30 @@
 
 ## Não lançado — Anotações de Design (paridade Orca Design Mode)
 
-- Design Mode ganha **anotações**: com um elemento selecionado, "＋ anotar" fixa
-  o comentário digitado com uma intenção (corrigir/mudar/pergunta/aprovado) no
-  elemento — badge numerado aparece na própria página e acompanha o scroll
-  (elementos fixed/sticky são pinados ao viewport). Teto de 20 por página.
+- Design Mode ganha **anotações**: com um elemento selecionado, "＋ anotar" abre
+  um composer próprio (comentário + intenção corrigir/mudar/pergunta/aprovado;
+  Enter no composer anota — nunca envia nada ao agente) e fixa a nota no
+  elemento — badge numerado aparece na própria página. Os badges seguem o
+  elemento VIVO pelo selector (sobrevivem a reflow, breakpoints da própria
+  design bar e sticky), com fallback para a geometria congelada. Teto de 20
+  por página.
 - Tray "📝 N" na design bar lista as anotações (excluir uma, limpar todas),
-  **copia** o feedback consolidado ou **envia tudo de uma vez** pro agente:
-  um prompt único numerado igual aos badges, com os dados da página no envelope
-  não confiável padrão e DESIGN.md anexado como contexto confiável quando
-  existir. Itens [pergunta] pedem resposta; [aprovado] são registro.
+  **copia** o feedback consolidado (funciona sem nenhum agente aberto — dry
+  run não exige alvo) ou **envia tudo de uma vez** pro agente: um prompt único
+  numerado igual aos badges, com os dados da página no envelope não confiável
+  padrão e DESIGN.md anexado como contexto confiável quando existir. As notas
+  do usuário NUNCA são cortadas pelo orçamento do prompt — envelope e
+  DESIGN.md encolhem primeiro (com `omittedEntries` explícito). Itens
+  [pergunta] pedem resposta; [aprovado] são registro.
 - Anotações sobrevivem ao toggle do modo Design (dá pra navegar a página e
-  enviar depois) e morrem com o documento: navegação limpa main, badges e
-  renderer juntos — a design bar agora também desarma via evento `navigation`
-  sintetizado pelo main (antes ficava "ON" fantasma após reload).
+  enviar depois) e morrem com o documento — por UM caminho único de
+  invalidação que cobre navegação real, **rota SPA (pushState)**, crash do
+  renderer da página e destruição do pane (troca de workspace): main, badges
+  na página e renderer resetam juntos via evento `navigation` sintetizado
+  (antes a design bar ficava "ON" fantasma após reload). Saltos só de hash
+  preservam as anotações.
+- O sync dos badges é enfileirado e nunca bloqueia a resposta das ações do
+  tray (a página ocupada não congela mais o "＋ anotar" por até 7s).
 - O store é main-owned: o renderer só envia a nota digitada; o contexto do
   elemento é o snapshot da seleção já validada por Zod. Os badges na página
   recebem SÓ geometria — comentários nunca chegam ao lado da página.

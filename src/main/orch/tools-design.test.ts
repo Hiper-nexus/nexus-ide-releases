@@ -207,20 +207,21 @@ describe('nexus_design_selection_get — annotations', () => {
     addDesignAnnotation('pane-1', { comment: 'trocar a cor', intent: 'change' });
     clearDesignSession('pane-1');
     const result = (await getTool().handler({ paneId: 'pane-1' }, CTX)) as {
-      selection?: unknown;
-      annotations?: unknown[];
+      selection: unknown;
+      annotations: unknown[];
       candidates: unknown[];
     };
-    expect(result.selection).toBeUndefined();
+    // Stable shape: consumers branch on VALUES, never on key existence.
+    expect(result.selection).toBeNull();
     expect(result.annotations).toHaveLength(1);
     expect(result.candidates).toEqual([]);
   });
 
-  it('omits the annotations key when the pane has none', async () => {
+  it('always ships an annotations array (empty when the pane has none)', async () => {
     ingestSelection('pane-1');
     const result = (await getTool().handler({ paneId: 'pane-1' }, CTX)) as {
-      annotations?: unknown[];
+      annotations: unknown[];
     };
-    expect(result.annotations).toBeUndefined();
+    expect(result.annotations).toEqual([]);
   });
 });

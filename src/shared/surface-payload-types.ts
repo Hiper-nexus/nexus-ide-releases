@@ -199,7 +199,8 @@ export interface BrowserDesignAnnotationsResult {
 }
 
 export interface BrowserDesignAnnotationsSendPayload {
-  targetPaneId: string;
+  /** Required for a real send; a dry run (clipboard copy) needs no target. */
+  targetPaneId?: string;
   dir?: string;
   /** Prepare the prompt without injecting into the target PTY (for clipboard copy). */
   dryRun?: boolean;
@@ -207,6 +208,7 @@ export interface BrowserDesignAnnotationsSendPayload {
 
 export interface BrowserDesignAnnotationsSendResult {
   ok: true;
+  /** Empty string on a targetless dry run. */
   targetPaneId: string;
   targetSessionId: string;
   promptChars: number;

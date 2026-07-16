@@ -322,6 +322,19 @@ describe('sendDesignAnnotationsToAgent (batch, Orca Design Mode parity)', () => 
     expect(result.promptChars).toBe(result.prompt!.length);
   });
 
+  it('dryRun works WITHOUT any target pane (copy needs no live agent)', async () => {
+    const deps = makeBatchDeps({ findPane: vi.fn(() => null) });
+    const result = await sendDesignAnnotationsToAgent(
+      { paneId: 'pane-browser', dryRun: true },
+      deps,
+    );
+    expect(deps.findPane).not.toHaveBeenCalled();
+    expect(deps.inject).not.toHaveBeenCalled();
+    expect(result.prompt).toContain('1. [corrigir] aumentar o contraste');
+    expect(result.targetPaneId).toBe('');
+    expect(result.targetSessionId).toBe('');
+  });
+
   it('attaches DESIGN.md as trusted context and flags it', async () => {
     const deps = makeBatchDeps();
     const result = await sendDesignAnnotationsToAgent(

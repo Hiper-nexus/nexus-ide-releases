@@ -1561,9 +1561,20 @@ body {
   font-size: 11px;
 }
 
-/* Strip em FLUXO (como .browser-pane__error): a surface do browser é um
+/* Strips em FLUXO (como .browser-pane__error): a surface do browser é um
  * WebContentsView nativo pintado acima do DOM — um dropdown sobreposto
- * ficaria invisível; o tray empurra a surface para baixo. */
+ * ficaria invisível; composer e tray empurram a surface para baixo. */
+.design-annotations-composer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--design) 8%, var(--bg));
+  font-size: 12px;
+}
+
 .design-annotations-tray {
   flex: 0 0 auto;
   max-height: 180px;

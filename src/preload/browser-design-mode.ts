@@ -590,13 +590,15 @@ export function createDesignMode(
   }
 
   function isViewportPinned(element: Element): boolean {
-    // fixed/sticky anywhere in the chain pins the box to the viewport, so a
-    // page-relative badge would drift on scroll. Bounded, best-effort walk.
+    // Only position:fixed pins the box to the viewport for good. Sticky is
+    // deliberately NOT pinned: a sticky element scrolls in-flow until stuck,
+    // so freezing its viewport rect would be wrong most of the time — the
+    // marker layer re-measures live elements by selector anyway, and its
+    // frozen-rect fallback is closer with page-relative math. Bounded walk.
     let current: Element | null = element;
     for (let depth = 0; current && depth < MAX_CONTEXT_DEPTH; depth += 1) {
       try {
-        const position = win.getComputedStyle(current).position;
-        if (position === 'fixed' || position === 'sticky') return true;
+        if (win.getComputedStyle(current).position === 'fixed') return true;
       } catch {
         return false;
       }

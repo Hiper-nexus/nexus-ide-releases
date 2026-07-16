@@ -331,40 +331,60 @@ describe('BrowserDesignBar', () => {
 });
 
 describe('BrowserDesignBar — anotações (paridade Orca)', () => {
-  function typeInstruction(text: string): void {
-    const input = container.querySelector<HTMLInputElement>(
-      'input[data-testid="design-instruction"]',
-    )!;
-    const setter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      'value',
-    )!.set!;
+  function setFieldValue(
+    element: HTMLInputElement | HTMLSelectElement,
+    value: string,
+    eventName: 'input' | 'change',
+  ): void {
+    const proto =
+      element instanceof window.HTMLSelectElement
+        ? window.HTMLSelectElement.prototype
+        : window.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')!.set!;
     act(() => {
-      setter.call(input, text);
-      input.dispatchEvent(new window.Event('input', { bubbles: true }));
+      setter.call(element, value);
+      element.dispatchEvent(new window.Event(eventName, { bubbles: true }));
     });
   }
 
-  async function annotate(comment: string, intent = 'fix'): Promise<void> {
-    typeInstruction(comment);
-    if (intent !== 'fix') {
-      const select = container.querySelector<HTMLSelectElement>(
-        '[data-testid="design-annotation-intent"]',
-      )!;
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLSelectElement.prototype,
-        'value',
-      )!.set!;
-      act(() => {
-        setter.call(select, intent);
-        select.dispatchEvent(new window.Event('change', { bubbles: true }));
-      });
-    }
-    const button = container.querySelector<HTMLButtonElement>(
+  function openComposer(): void {
+    const toggle = container.querySelector<HTMLButtonElement>(
       '[data-testid="design-annotate"]',
     )!;
+    if (toggle.getAttribute('aria-pressed') !== 'true') {
+      act(() => {
+        toggle.click();
+      });
+    }
+  }
+
+  function typeComment(text: string): void {
+    openComposer();
+    setFieldValue(
+      container.querySelector<HTMLInputElement>(
+        'input[data-testid="design-annotation-comment"]',
+      )!,
+      text,
+      'input',
+    );
+  }
+
+  async function annotate(comment: string, intent = 'fix'): Promise<void> {
+    typeComment(comment);
+    if (intent !== 'fix') {
+      setFieldValue(
+        container.querySelector<HTMLSelectElement>(
+          '[data-testid="design-annotation-intent"]',
+        )!,
+        intent,
+        'change',
+      );
+    }
+    const add = container.querySelector<HTMLButtonElement>(
+      '[data-testid="design-annotation-add"]',
+    )!;
     await act(async () => {
-      button.click();
+      add.click();
     });
   }
 
@@ -382,22 +402,43 @@ describe('BrowserDesignBar — anotações (paridade Orca)', () => {
     const tray = container.querySelector('[data-testid="design-annotations-tray"]')!;
     expect(tray.textContent).toContain('aumentar o contraste');
     expect(tray.textContent).toContain('[mudar]');
-    // O campo de instrução é reaproveitado como comentário e limpa após anotar.
+    // O campo do composer limpa após anotar (pronto para a próxima nota).
     expect(
       container.querySelector<HTMLInputElement>(
-        'input[data-testid="design-instruction"]',
+        'input[data-testid="design-annotation-comment"]',
       )!.value,
     ).toBe('');
+  });
+
+  it('Enter no composer ANOTA — nunca dispara o envio pro agente', async () => {
+    emit(modeEvent(true));
+    emit(selectionEvent());
+    typeComment('esse botão deveria ser secundário?');
+    const comment = container.querySelector<HTMLInputElement>(
+      'input[data-testid="design-annotation-comment"]',
+    )!;
+    await act(async () => {
+      comment.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      );
+    });
+    expect(designAnnotate).toHaveBeenCalledWith(PANE_ID, {
+      comment: 'esse botão deveria ser secundário?',
+      intent: 'fix',
+    });
+    // O gesto de confirmar o comentário JAMAIS injeta prompt no agente.
+    expect(sendDesignSelection).not.toHaveBeenCalled();
   });
 
   it('recusa anotar sem comentário (status orienta o usuário)', async () => {
     emit(modeEvent(true));
     emit(selectionEvent());
-    const button = container.querySelector<HTMLButtonElement>(
-      '[data-testid="design-annotate"]',
+    openComposer();
+    const add = container.querySelector<HTMLButtonElement>(
+      '[data-testid="design-annotation-add"]',
     )!;
     await act(async () => {
-      button.click();
+      add.click();
     });
     expect(designAnnotate).not.toHaveBeenCalled();
     expect(container.textContent).toContain('escreva o comentário');
@@ -425,6 +466,43 @@ describe('BrowserDesignBar — anotações (paridade Orca)', () => {
       targetPaneId: 'pane-cli',
     });
     expect(container.textContent).toContain('feedback enviado (1) ✓');
+  });
+
+  it('copiar feedback funciona SEM nenhum pane de agente (dryRun sem alvo)', async () => {
+    emit(modeEvent(true));
+    emit(selectionEvent());
+    await annotate('nota para copiar');
+    // Remove o único agente do layout: copiar continua habilitado.
+    act(() => {
+      useLayoutStore.getState().setPanes([
+        { id: PANE_ID, kind: 'browser', title: 'browser' },
+      ]);
+    });
+    sendDesignAnnotations.mockResolvedValueOnce({
+      ok: true,
+      targetPaneId: '',
+      targetSessionId: '',
+      promptChars: 320,
+      annotations: 1,
+      prompt: 'BEGIN_UNTRUSTED_PAGE_DATA…',
+    });
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(window.navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    const copy = container.querySelector<HTMLButtonElement>(
+      '[data-testid="design-annotations-copy"]',
+    )!;
+    expect(copy.disabled).toBe(false);
+    await act(async () => {
+      copy.click();
+    });
+    expect(sendDesignAnnotations).toHaveBeenCalledWith(PANE_ID, {
+      dryRun: true,
+    });
+    expect(writeText).toHaveBeenCalled();
   });
 
   it('excluir e limpar atualizam a lista pela resposta do main', async () => {

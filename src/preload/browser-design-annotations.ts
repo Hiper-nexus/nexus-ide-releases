@@ -2,6 +2,7 @@ import type {
   BrowserDesignAnnotationMarker,
   BrowserDesignRect,
 } from '../shared/browser-design';
+import { DESIGN_ANNOTATION_LIMITS } from '../shared/browser-design';
 
 /**
  * In-page numbered badges for design annotations (Orca Design Mode parity).
@@ -11,11 +12,13 @@ import type {
  * (`src/shared/browser-annotation-viewport-bridge.ts` — the persisted-badge
  * overlay). Copyright (c) 2026 Lovecast Inc. Licensed under the MIT License;
  * see third_party/licenses/orca-MIT.txt. Nexus changes: Orca injects a JS
- * string template into the page and mirrors viewport geometry back over
- * console messages; Nexus keeps its preload-module architecture — the layer
- * is a TypeScript module in the pane's ISOLATED world, driven only by the
- * closed automation channel, and carries geometry ONLY (no comments, no
- * element data ever reach the page side).
+ * string template into the page and mirrors viewport geometry over console
+ * messages; Nexus keeps its preload-module architecture — the layer is a
+ * TypeScript module in the pane's ISOLATED world, driven only by the closed
+ * automation channel, and carries geometry plus an advisory selector ONLY
+ * (no comments, no element data ever reach the page side). Badges track the
+ * LIVE element box when the selector still resolves (reflow/breakpoint/sticky
+ * safe) and fall back to the frozen selection-time rects otherwise.
  *
  * Deliberately independent from the design-mode picker overlay: annotations
  * survive toggling the picker off, so their badges must too.
@@ -25,9 +28,9 @@ type BrowserDomWindow = Window & typeof globalThis;
 
 export const DESIGN_ANNOTATION_HOST_ID = 'nexus-design-annotation-host';
 
-/** Mirrors DESIGN_ANNOTATION_LIMITS.maxPerPane; enforced page-side too. */
-const MAX_MARKERS = 20;
+const MAX_MARKERS = DESIGN_ANNOTATION_LIMITS.maxPerPane;
 const MAX_MARKER_ID_CHARS = 64;
+const MAX_MARKER_SELECTOR_CHARS = 1_024;
 const MARKER_SIZE = 24;
 const MAX_COORD = 10_000_000;
 
@@ -36,7 +39,6 @@ export interface AnnotationMarkerLayer {
     applied: true;
     markers: number;
   };
-  count(): number;
 }
 
 function finiteCoord(value: unknown): value is number {
@@ -76,7 +78,9 @@ export function parseAnnotationMarkers(
   raw: unknown,
 ): BrowserDesignAnnotationMarker[] {
   if (!Array.isArray(raw) || raw.length > MAX_MARKERS) {
-    throw new Error('annotation markers must be an array of at most 20');
+    throw new Error(
+      `annotation markers must be an array of at most ${MAX_MARKERS}`,
+    );
   }
   return raw.map((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -98,12 +102,20 @@ export function parseAnnotationMarkers(
     ) {
       throw new Error('annotation marker index is invalid');
     }
+    if (
+      marker.selector !== undefined &&
+      (typeof marker.selector !== 'string' ||
+        marker.selector.length > MAX_MARKER_SELECTOR_CHARS)
+    ) {
+      throw new Error('annotation marker selector is invalid');
+    }
     return {
       id: marker.id,
       index: marker.index,
       rectPage: parseRect(marker.rectPage),
       rectViewport: parseRect(marker.rectViewport),
       isFixed: marker.isFixed === true,
+      ...(marker.selector ? { selector: marker.selector } : {}),
     };
   });
 }
@@ -115,23 +127,24 @@ export function createAnnotationMarkerLayer(
   let shadow: ShadowRoot | null = null;
   let markers: BrowserDesignAnnotationMarker[] = [];
   const badges = new Map<string, HTMLElement>();
+  /** Live element per marker id — null after a failed resolution. */
+  const elements = new Map<string, Element | null>();
   let raf = 0;
-  let listening = false;
 
   function teardown(): void {
     if (raf) {
       win.cancelAnimationFrame?.(raf);
       raf = 0;
     }
-    if (listening) {
+    if (host) {
       win.removeEventListener('scroll', requestUpdate, true);
       win.removeEventListener('resize', requestUpdate, true);
-      listening = false;
     }
     host?.remove();
     host = null;
     shadow = null;
     badges.clear();
+    elements.clear();
     markers = [];
   }
 
@@ -160,6 +173,10 @@ export function createAnnotationMarkerLayer(
     ].join('');
     shadow.appendChild(style);
     root.appendChild(host);
+    // Listener lifetime == host lifetime (attached on mount, removed in
+    // teardown) — no separate flag to fall out of sync.
+    win.addEventListener('scroll', requestUpdate, true);
+    win.addEventListener('resize', requestUpdate, true);
     return shadow;
   }
 
@@ -172,6 +189,45 @@ export function createAnnotationMarkerLayer(
     };
   }
 
+  function resolveElement(marker: BrowserDesignAnnotationMarker): Element | null {
+    const cached = elements.get(marker.id);
+    if (cached && cached.isConnected) return cached;
+    if (!marker.selector) return null;
+    try {
+      const element = win.document.querySelector(marker.selector);
+      elements.set(marker.id, element);
+      return element;
+    } catch {
+      elements.set(marker.id, null);
+      return null;
+    }
+  }
+
+  /** Viewport-space box for a marker: the LIVE element when it resolves
+   * (reflow/sticky safe), else the frozen selection-time geometry. */
+  function viewportBox(
+    marker: BrowserDesignAnnotationMarker,
+    scroll: { x: number; y: number },
+  ): { x: number; y: number; width: number; height: number } {
+    const element = resolveElement(marker);
+    if (element) {
+      const rect = element.getBoundingClientRect();
+      // Zero-size boxes mean "hidden/unmounted" far more often than a real
+      // 0×0 element — fall back to the frozen rect instead of stacking
+      // badges at a collapsed point.
+      if (rect.width > 0 || rect.height > 0) {
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+      }
+    }
+    const source = marker.isFixed ? marker.rectViewport : marker.rectPage;
+    return {
+      x: marker.isFixed ? source.x : source.x - scroll.x,
+      y: marker.isFixed ? source.y : source.y - scroll.y,
+      width: source.width,
+      height: source.height,
+    };
+  }
+
   function position(): void {
     if (!markers.length) return;
     const scroll = scrollOffsets();
@@ -180,22 +236,20 @@ export function createAnnotationMarkerLayer(
     for (const marker of markers) {
       const badge = badges.get(marker.id);
       if (!badge) continue;
-      const source = marker.isFixed ? marker.rectViewport : marker.rectPage;
-      const x = marker.isFixed ? source.x : source.x - scroll.x;
-      const y = marker.isFixed ? source.y : source.y - scroll.y;
+      const box = viewportBox(marker, scroll);
       const visible =
-        x + source.width >= 0 &&
-        y + source.height >= 0 &&
-        x <= viewportWidth &&
-        y <= viewportHeight;
+        box.x + box.width >= 0 &&
+        box.y + box.height >= 0 &&
+        box.x <= viewportWidth &&
+        box.y <= viewportHeight;
       if (!visible) {
         badge.style.display = 'none';
         continue;
       }
       badge.style.display = 'flex';
       // Bottom-center of the element, like Orca's badge anchoring.
-      const bx = x + source.width / 2 - MARKER_SIZE / 2;
-      const by = y + source.height - MARKER_SIZE / 2;
+      const bx = box.x + box.width / 2 - MARKER_SIZE / 2;
+      const by = box.y + box.height - MARKER_SIZE / 2;
       badge.style.transform = `translate(${bx}px, ${by}px)`;
     }
   }
@@ -240,19 +294,12 @@ export function createAnnotationMarkerLayer(
       if (!live.has(id)) {
         badge.remove();
         badges.delete(id);
+        elements.delete(id);
       }
-    }
-    if (!listening) {
-      win.addEventListener('scroll', requestUpdate, true);
-      win.addEventListener('resize', requestUpdate, true);
-      listening = true;
     }
     position();
     return { applied: true, markers: markers.length };
   }
 
-  return {
-    set,
-    count: () => markers.length,
-  };
+  return { set };
 }

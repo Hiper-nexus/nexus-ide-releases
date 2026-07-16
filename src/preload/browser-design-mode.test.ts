@@ -649,12 +649,17 @@ describe('picker selection (L0 context)', () => {
     pinned.id = 'toast';
     pinned.style.position = 'fixed';
     win.document.body.appendChild(pinned);
+    const sticky = win.document.createElement('div');
+    sticky.id = 'stuck-header';
+    sticky.style.position = 'sticky';
+    win.document.body.appendChild(sticky);
 
     await automation.run('design_enable', DESIGN_ARGS);
     hoverAndClick(win, win.document.getElementById('save')!);
     hoverAndClick(win, pinned);
+    hoverAndClick(win, sticky);
 
-    const [flow, fixed] = events
+    const [flow, fixed, stickySelection] = events
       .filter((e) => e.type === 'selection')
       .map((e) => e.selection!);
     expect(flow.rectPage).toEqual({
@@ -665,6 +670,9 @@ describe('picker selection (L0 context)', () => {
     });
     expect(flow.isFixed).toBe(false);
     expect(fixed.isFixed).toBe(true);
+    // Sticky scrolls in-flow until stuck — pinning it to the viewport would
+    // be wrong most of the time; the marker layer re-measures it live.
+    expect(stickySelection.isFixed).toBe(false);
     // The enriched payload still validates against the main-process schema.
     expect(() =>
       browserDesignEventSchema.parse(

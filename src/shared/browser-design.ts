@@ -156,6 +156,21 @@ export type BrowserDesignAnnotationPriority =
   | 'important'
   | 'suggestion';
 
+/**
+ * Rótulos PT-BR canônicos das intenções — usados pelo tray (renderer) e pelo
+ * prompt consolidado (main). Uma fonte única: o contrato numerado depende de
+ * tray e prompt dizerem a mesma coisa sobre a mesma anotação.
+ */
+export const DESIGN_ANNOTATION_INTENT_LABELS: Record<
+  BrowserDesignAnnotationIntent,
+  string
+> = {
+  fix: 'corrigir',
+  change: 'mudar',
+  question: 'pergunta',
+  approve: 'aprovado',
+};
+
 export const DESIGN_ANNOTATION_LIMITS = {
   /** Hard cap of live annotations per browser pane (Orca: 20/page). */
   maxPerPane: 20,
@@ -189,8 +204,8 @@ export interface BrowserDesignAnnotationSummary {
 }
 
 /**
- * In-page numbered badge for one annotation. Geometry-only by design: the
- * preload marker layer never sees comments or element data.
+ * In-page numbered badge for one annotation. Geometry + an advisory selector
+ * only: the preload marker layer never sees comments or element data.
  */
 export interface BrowserDesignAnnotationMarker {
   id: string;
@@ -199,4 +214,11 @@ export interface BrowserDesignAnnotationMarker {
   rectPage: BrowserDesignRect;
   rectViewport: BrowserDesignRect;
   isFixed: boolean;
+  /**
+   * The annotation's frozen CSS selector. When it still resolves in the live
+   * document, the badge tracks the element's REAL box (survives reflow,
+   * breakpoint previews and sticky positioning); the rects above are the
+   * fallback for elements that no longer resolve.
+   */
+  selector?: string;
 }
