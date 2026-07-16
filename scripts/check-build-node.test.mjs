@@ -15,3 +15,31 @@ describe('release Node version contract', () => {
     },
   );
 });
+
+describe('release node_modules layout contract', () => {
+  it('flags a symlinked node_modules and accepts a real directory', async () => {
+    const { mkdtempSync, mkdirSync, symlinkSync, rmSync } = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { isNodeModulesSymlink } = await import('./check-build-node.mjs');
+
+    const root = mkdtempSync(path.join(os.tmpdir(), 'check-build-node-'));
+    try {
+      const realTree = path.join(root, 'real');
+      mkdirSync(path.join(realTree, 'node_modules'), { recursive: true });
+      expect(isNodeModulesSymlink(realTree)).toBe(false);
+
+      const linkedTree = path.join(root, 'linked');
+      mkdirSync(linkedTree, { recursive: true });
+      symlinkSync(
+        path.join(realTree, 'node_modules'),
+        path.join(linkedTree, 'node_modules'),
+      );
+      expect(isNodeModulesSymlink(linkedTree)).toBe(true);
+
+      expect(isNodeModulesSymlink(path.join(root, 'missing'))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

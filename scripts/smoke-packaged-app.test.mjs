@@ -799,3 +799,53 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
     expect(killTree).toHaveBeenCalledWith(778, { platform: 'linux' });
   });
 });
+
+describe('detectPackagedTargetArch', () => {
+  const lipoReporting = (stdout, status = 0) => () => ({ status, stdout });
+
+  it('validates a cross-built darwin/x64 app as x64 on an arm64 host', async () => {
+    const { detectPackagedTargetArch } = await import('./smoke-packaged-app.mjs');
+    const arch = detectPackagedTargetArch('/tmp/NexusIDE.app/Contents/MacOS/nexus-ide', {
+      platform: 'darwin',
+      fallbackArch: 'arm64',
+      runLipo: lipoReporting('x86_64\n'),
+    });
+    expect(arch).toBe('x64');
+  });
+
+  it('keeps the host arch for a universal binary so the launch stays native', async () => {
+    const { detectPackagedTargetArch } = await import('./smoke-packaged-app.mjs');
+    const arch = detectPackagedTargetArch('/tmp/bin', {
+      platform: 'darwin',
+      fallbackArch: 'arm64',
+      runLipo: lipoReporting('x86_64 arm64\n'),
+    });
+    expect(arch).toBe('arm64');
+  });
+
+  it('falls back to the host arch when lipo fails or reports nothing usable', async () => {
+    const { detectPackagedTargetArch } = await import('./smoke-packaged-app.mjs');
+    expect(detectPackagedTargetArch('/tmp/bin', {
+      platform: 'darwin',
+      fallbackArch: 'arm64',
+      runLipo: lipoReporting('', 1),
+    })).toBe('arm64');
+    expect(detectPackagedTargetArch('/tmp/bin', {
+      platform: 'darwin',
+      fallbackArch: 'arm64',
+      runLipo: lipoReporting('ppc64\n'),
+    })).toBe('arm64');
+  });
+
+  it('is a no-op outside darwin', async () => {
+    const { detectPackagedTargetArch } = await import('./smoke-packaged-app.mjs');
+    const arch = detectPackagedTargetArch('/tmp/bin', {
+      platform: 'linux',
+      fallbackArch: 'x64',
+      runLipo: () => {
+        throw new Error('must not be called');
+      },
+    });
+    expect(arch).toBe('x64');
+  });
+});
