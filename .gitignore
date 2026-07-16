@@ -3,6 +3,7 @@ node_modules/
 
 # Build outputs
 dist/
+server/dist-relay/
 out/
 build/*
 # ...but keep the source-controlled macOS packaging/signing configuration.
