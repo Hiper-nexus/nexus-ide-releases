@@ -1,0 +1,352 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import WebSocket, { type RawData } from 'ws';
+import {
+  COMPANION_RELAY_PROTO,
+  type CompanionHostFrame,
+} from '../../../shared/companion-relay-types';
+import {
+  importRoomKey,
+  open,
+  packEnvelope,
+  seal,
+  unpackEnvelope,
+} from '../../../vendor/omp/wire/codec';
+import {
+  decodeTerminalStreamFrame,
+  TerminalStreamOpcode,
+} from '../../../shared/terminal-stream-protocol';
+import { clearRemoteTerminalStreams } from '../remote-terminal-streams';
+import { startBlindRelay, type BlindRelay } from './blind-relay';
+import { parseRelayRoomLink } from './room-link';
+import {
+  CompanionRelayHost,
+  type CompanionDispatchMessage,
+} from './companion-relay-transport';
+
+const projectScope = {
+  version: 1 as const,
+  installationId: 'install-test',
+  projectId: 'project-a',
+  checkoutId: 'checkout-a',
+  rootRealPath: '/workspace/a',
+  identitySource: 'manifest' as const,
+};
+
+interface TestGuest {
+  ws: WebSocket;
+  writeToken: string | undefined;
+  send(frame: unknown): Promise<void>;
+  next(timeoutMs?: number): Promise<CompanionHostFrame>;
+  close(): void;
+}
+
+function toBuffer(data: RawData): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  if (Array.isArray(data)) return Buffer.concat(data);
+  return Buffer.from(data);
+}
+
+/** Simula um guest mobile: WebSocket cru + codec vendorado (mesma wire). */
+async function connectGuest(link: string): Promise<TestGuest> {
+  const parsed = parseRelayRoomLink(link);
+  if ('error' in parsed) throw new Error(parsed.error);
+  const key = await importRoomKey(parsed.roomKey);
+  const ws = new WebSocket(`${parsed.wsUrl}?role=guest`);
+  ws.binaryType = 'nodebuffer';
+  const queue: CompanionHostFrame[] = [];
+  const waiters: Array<(frame: CompanionHostFrame) => void> = [];
+  // Serializa open() para preservar a ordem de chegada dos frames.
+  let recvChain: Promise<void> = Promise.resolve();
+  ws.on('message', (data: RawData, isBinary: boolean) => {
+    if (!isBinary) return; // Controle TEXT (room-closed) fora do escopo aqui.
+    const envelope = unpackEnvelope(new Uint8Array(toBuffer(data)));
+    if (!envelope) return;
+    recvChain = recvChain.then(async () => {
+      const frame = (await open(key, envelope.payload)) as CompanionHostFrame;
+      const waiter = waiters.shift();
+      if (waiter) waiter(frame);
+      else queue.push(frame);
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    ws.once('open', () => resolve());
+    ws.once('error', reject);
+  });
+  return {
+    ws,
+    writeToken: parsed.writeToken
+      ? Buffer.from(parsed.writeToken).toString('base64url')
+      : undefined,
+    async send(frame: unknown): Promise<void> {
+      const sealed = await seal(key, frame);
+      ws.send(packEnvelope(0, sealed));
+    },
+    next(timeoutMs = 5_000): Promise<CompanionHostFrame> {
+      const queued = queue.shift();
+      if (queued) return Promise.resolve(queued);
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('frame timeout')),
+          timeoutMs,
+        );
+        waiters.push((frame) => {
+          clearTimeout(timer);
+          resolve(frame);
+        });
+      });
+    },
+    close(): void {
+      try {
+        ws.terminate();
+      } catch {
+        // Já fechado.
+      }
+    },
+  };
+}
+
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitFor timeout');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+describe('companion-relay-transport', () => {
+  let relay: BlindRelay | null = null;
+  let transport: CompanionRelayHost | null = null;
+  const guests: TestGuest[] = [];
+
+  afterEach(async () => {
+    for (const guest of guests.splice(0)) guest.close();
+    transport?.stop();
+    transport = null;
+    await relay?.stop();
+    relay = null;
+    clearRemoteTerminalStreams();
+  });
+
+  async function startTransport(
+    dispatch: (
+      msg: CompanionDispatchMessage,
+    ) => Promise<unknown> = async (msg) => ({ echo: msg.type }),
+  ): Promise<{
+    dispatchSpy: ReturnType<typeof vi.fn>;
+    fullLink: string;
+    viewLink: string;
+  }> {
+    relay = await startBlindRelay();
+    const dispatchSpy = vi.fn(
+      async (msg: CompanionDispatchMessage, _scope: unknown) => dispatch(msg),
+    );
+    transport = new CompanionRelayHost({
+      relayUrl: relay.url,
+      scope: projectScope,
+      dispatch: dispatchSpy,
+      sessionName: 'nexus-test',
+    });
+    const info = await transport.start();
+    expect(info.running).toBe(true);
+    expect(info.fullLink).toBeDefined();
+    expect(info.viewLink).toBeDefined();
+    expect(info.qrSvgFull).toContain('<svg');
+    expect(info.qrSvgView).toContain('<svg');
+    // Espera o socket host→relay abrir para a sala existir no relay.
+    await waitFor(() => transport!.info().connected);
+    return {
+      dispatchSpy,
+      fullLink: info.fullLink!,
+      viewLink: info.viewLink!,
+    };
+  }
+
+  async function joinGuest(link: string, name: string): Promise<TestGuest> {
+    const guest = await connectGuest(link);
+    guests.push(guest);
+    await guest.send({
+      t: 'hello',
+      proto: COMPANION_RELAY_PROTO,
+      name,
+      ...(guest.writeToken ? { writeToken: guest.writeToken } : {}),
+    });
+    return guest;
+  }
+
+  it('links full/view apontam para a mesma sala; QR presente', async () => {
+    const { fullLink, viewLink } = await startTransport();
+    const full = parseRelayRoomLink(fullLink);
+    const view = parseRelayRoomLink(viewLink);
+    if ('error' in full || 'error' in view) throw new Error('link inválido');
+    expect(full.roomId).toBe(view.roomId);
+    expect(full.writeToken).toBeDefined();
+    expect(view.writeToken).toBeUndefined();
+    expect(Buffer.from(full.roomKey)).toEqual(Buffer.from(view.roomKey));
+  });
+
+  it('guest com writeToken recebe welcome com escrita e RPC é despachado', async () => {
+    const { dispatchSpy, fullLink } = await startTransport();
+    const guest = await joinGuest(fullLink, 'phone');
+    const welcome = await guest.next();
+    expect(welcome).toMatchObject({
+      t: 'welcome',
+      proto: COMPANION_RELAY_PROTO,
+      readOnly: false,
+      sessionName: 'nexus-test',
+    });
+    await guest.send({ t: 'rpc', rpc: { id: 'r1', type: 'panes.list' } });
+    const result = await guest.next();
+    expect(result).toEqual({
+      t: 'rpc-result',
+      id: 'r1',
+      ok: true,
+      result: { echo: 'panes.list' },
+    });
+    expect(dispatchSpy).toHaveBeenCalledTimes(1);
+    expect(dispatchSpy.mock.calls[0]![0]).toEqual({ type: 'panes.list' });
+    expect(dispatchSpy.mock.calls[0]![1]).toEqual(projectScope);
+  });
+
+  it('guest view-only: welcome read-only, RPC mutante rejeitado ANTES do dispatch', async () => {
+    const { dispatchSpy, viewLink } = await startTransport();
+    const guest = await joinGuest(viewLink, 'viewer');
+    const welcome = await guest.next();
+    expect(welcome).toMatchObject({ t: 'welcome', readOnly: true });
+
+    await guest.send({
+      t: 'rpc',
+      rpc: { id: 'w1', type: 'pane.input', paneId: 'p1', data: 'rm -rf /' },
+    });
+    const rejected = await guest.next();
+    expect(rejected).toMatchObject({ t: 'rpc-result', id: 'w1', ok: false });
+    expect((rejected as { error?: string }).error).toMatch(/read-only/);
+    expect(dispatchSpy).not.toHaveBeenCalled();
+
+    // RPC read-only continua liberado para view-only (policy decide depois).
+    await guest.send({ t: 'rpc', rpc: { id: 'w2', type: 'ops.snapshot' } });
+    const allowed = await guest.next();
+    expect(allowed).toMatchObject({ t: 'rpc-result', id: 'w2', ok: true });
+    expect(dispatchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('writeToken forjado (mesmo tamanho) não dá escrita', async () => {
+    const { dispatchSpy, viewLink } = await startTransport();
+    const guest = await connectGuest(viewLink);
+    guests.push(guest);
+    await guest.send({
+      t: 'hello',
+      proto: COMPANION_RELAY_PROTO,
+      name: 'forger',
+      writeToken: Buffer.alloc(16, 7).toString('base64url'),
+    });
+    const welcome = await guest.next();
+    expect(welcome).toMatchObject({ t: 'welcome', readOnly: true });
+    await guest.send({
+      t: 'rpc',
+      rpc: { id: 'f1', type: 'pane.input', data: 'x' },
+    });
+    const rejected = await guest.next();
+    expect(rejected).toMatchObject({ t: 'rpc-result', id: 'f1', ok: false });
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
+  it('frame pty selado chega ao guest e abre corretamente', async () => {
+    const { fullLink } = await startTransport();
+    const guest = await joinGuest(fullLink, 'phone');
+    await guest.next(); // welcome
+    transport!.pushPaneOutput('pane-7', 'session-7', 'hello-pty');
+    const frame = await guest.next();
+    expect(frame.t).toBe('pty');
+    const pty = frame as Extract<CompanionHostFrame, { t: 'pty' }>;
+    expect(pty.pane).toBe('pane-7');
+    expect(typeof pty.seq).toBe('number');
+    const decoded = decodeTerminalStreamFrame(
+      new Uint8Array(Buffer.from(pty.data, 'base64')),
+    );
+    expect(decoded).not.toBeNull();
+    expect(decoded!.opcode).toBe(TerminalStreamOpcode.Output);
+    expect(new TextDecoder().decode(decoded!.payload)).toBe('hello-pty');
+  });
+
+  it('view-only também recebe streams pty (estado flui; mutação não)', async () => {
+    const { viewLink } = await startTransport();
+    const guest = await joinGuest(viewLink, 'viewer');
+    await guest.next(); // welcome
+    transport!.pushPaneOutput('pane-9', 'session-9', 'observa');
+    const frame = await guest.next();
+    expect(frame).toMatchObject({ t: 'pty', pane: 'pane-9' });
+  });
+
+  it('RPC antes do hello é rejeitado', async () => {
+    const { dispatchSpy, fullLink } = await startTransport();
+    const guest = await connectGuest(fullLink);
+    guests.push(guest);
+    await guest.send({ t: 'rpc', rpc: { id: 'n1', type: 'panes.list' } });
+    const rejected = await guest.next();
+    expect(rejected).toMatchObject({ t: 'rpc-result', id: 'n1', ok: false });
+    expect((rejected as { error?: string }).error).toMatch(/hello required/);
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
+  it('hello com protocolo errado recebe erro e não vira peer', async () => {
+    const { dispatchSpy, fullLink } = await startTransport();
+    const guest = await connectGuest(fullLink);
+    guests.push(guest);
+    await guest.send({ t: 'hello', proto: 999, name: 'future' });
+    const error = await guest.next();
+    expect(error.t).toBe('error');
+    expect((error as { message: string }).message).toMatch(/protocol mismatch/);
+    await guest.send({ t: 'rpc', rpc: { id: 'p1', type: 'panes.list' } });
+    const rejected = await guest.next();
+    expect(rejected).toMatchObject({ t: 'rpc-result', ok: false });
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
+  it('ping responde pong sem passar pelo dispatch', async () => {
+    const { dispatchSpy, fullLink } = await startTransport();
+    const guest = await joinGuest(fullLink, 'phone');
+    await guest.next(); // welcome
+    await guest.send({ t: 'rpc', rpc: { id: 'pg', type: 'ping' } });
+    const result = await guest.next();
+    expect(result).toEqual({
+      t: 'rpc-result',
+      id: 'pg',
+      ok: true,
+      result: { pong: true },
+    });
+    expect(dispatchSpy).not.toHaveBeenCalled();
+  });
+
+  it('erro do dispatch vira rpc-result ok:false (nunca derruba o transporte)', async () => {
+    const { fullLink } = await startTransport(async () => {
+      throw new Error('not authorized: destructive-confirmation-required');
+    });
+    const guest = await joinGuest(fullLink, 'phone');
+    await guest.next(); // welcome
+    await guest.send({
+      t: 'rpc',
+      rpc: { id: 'd1', type: 'git.push' },
+    });
+    const result = await guest.next();
+    expect(result).toEqual({
+      t: 'rpc-result',
+      id: 'd1',
+      ok: false,
+      error: 'not authorized: destructive-confirmation-required',
+    });
+    expect(transport!.info().running).toBe(true);
+  });
+
+  it('frame malformado recebe error sem derrubar o host', async () => {
+    const { fullLink } = await startTransport();
+    const guest = await connectGuest(fullLink);
+    guests.push(guest);
+    await guest.send({ t: 'nonsense', payload: 1 });
+    const error = await guest.next();
+    expect(error).toMatchObject({ t: 'error', message: 'malformed frame' });
+    expect(transport!.info().running).toBe(true);
+  });
+});
