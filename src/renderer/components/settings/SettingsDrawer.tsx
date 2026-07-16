@@ -61,6 +61,8 @@ import {
 } from './CatalogSections';
 import { DesignSystemsSection } from './DesignSystemsSection';
 import { HarnessSection } from './HarnessSection';
+import { CrossoverFlagsSection } from './CrossoverFlagsSection';
+import { CompanionRelaySection } from './CompanionRelaySection';
 
 /**
  * Settings drawer — nav emocional Você · App · Agentes · Sistema (pilares
@@ -453,7 +455,12 @@ export function SettingsDrawer() {
           {section === 'terminal' && <TerminalSection />}
           {section === 'voice' && <VoiceSection onNavigate={close} />}
           {section === 'vision' && <VisionSection />}
-          {section === 'diagnostics' && <DiagnosticsSection />}
+          {section === 'diagnostics' && (
+            <>
+              <DiagnosticsSection />
+              <CrossoverFlagsSection />
+            </>
+          )}
           {section === 'audit' && <AuditSection />}
           {section === 'media' && <MediaSection />}
           {section === 'providers' && <ProvidersPanel />}
@@ -464,6 +471,7 @@ export function SettingsDrawer() {
           {section === 'marketplace' && <MarketplaceSection />}
           {section === 'design-systems' && <DesignSystemsSection />}
           {section === 'remote' && <RemoteSection />}
+          {section === 'companion-relay' && <CompanionRelaySection />}
           {section === 'agents' && <AgentsSection />}
           {section === 'skills' && <SkillsSection />}
           {section === 'media-catalog' && <MediaCatalogSection />}

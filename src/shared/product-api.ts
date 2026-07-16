@@ -3,6 +3,10 @@
  * Wired as NexusApi.product in types.ts (mcpHubSyncApply uses McpHubSyncApplyInput).
  */
 import type { McpHubSyncApplyInput } from './mcp-hub-sync-api';
+import type {
+  CrossoverFlagSetRequest,
+  CrossoverFlagSetResult,
+} from './crossover-flags';
 
 export interface ProductApi {
   flagsList(): Promise<
@@ -44,4 +48,12 @@ export interface ProductApi {
     write?: boolean;
     expectedContentHash?: string;
   }): Promise<unknown>;
+  /**
+   * Liga/desliga uma feature flag do crossover conscientemente (entrega G4).
+   * Opcional para não quebrar o contrato antes da costura; canal
+   * product:flags.setOverride.
+   */
+  flagsSetOverride?(
+    input: CrossoverFlagSetRequest,
+  ): Promise<CrossoverFlagSetResult>;
 }
