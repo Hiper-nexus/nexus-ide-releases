@@ -28,6 +28,7 @@ import {
 } from '../orch/account-restart-controller';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { statusLabel } from '../lib/mission-rail-groups';
+import { AgentNotifications } from './AgentNotifications';
 import { FleetChip } from './FleetChip';
 import {
   clearEphemeralDraft,
@@ -443,6 +444,7 @@ export function WorkspaceBar({
         {/* Status: frota + cost (capped width). O OperatorHud (XP) mora no
             rail — a zona de status da bar é só sinal operacional. */}
         <div className="workspace-bar__zone workspace-bar__zone--status">
+          <AgentNotifications />
           <FleetChip />
           <QuotaChip />
           {!compact && <CostSummary />}

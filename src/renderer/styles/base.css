@@ -1800,6 +1800,7 @@ body {
 }
 
 /* ---- Status cluster (frota · cota · custo) — altura e raio unificados ---- */
+.workspace-bar__zone--status > .agent-notif,
 .workspace-bar__zone--status > .fleet-chip,
 .workspace-bar__zone--status > .quota-chip,
 .workspace-bar__zone--status > .cost-summary {
@@ -1809,6 +1810,285 @@ body {
   white-space: nowrap;
   border-radius: 999px;
 }
+
+/* ---- Agent notifications inbox (BridgeMind-style) ---- */
+.agent-notif {
+  position: relative;
+  height: 26px;
+}
+
+.agent-notif__bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.agent-notif__bell:hover,
+.agent-notif__bell[aria-expanded='true'] {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.agent-notif__bell--hot {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+}
+
+.agent-notif__count {
+  position: absolute;
+  top: -5px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink, #fff);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 1px var(--bg);
+}
+
+.agent-notif__panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 80;
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(420px, 70vh);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-3, 0 16px 48px rgba(0, 0, 0, 0.4));
+  overflow: hidden;
+}
+
+.agent-notif__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-notif__head-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+}
+
+.agent-notif__title {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.agent-notif__unread-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.agent-notif__head-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.agent-notif__icon-btn {
+  appearance: none;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.agent-notif__icon-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.agent-notif__icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.agent-notif__empty {
+  margin: 0;
+  padding: 28px 18px;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.agent-notif__list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-notif__item {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 8px;
+  padding: 10px 10px 9px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 45%, transparent);
+  border: 1px solid transparent;
+}
+
+.agent-notif__item--unread {
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.agent-notif__status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.agent-notif__item--completed .agent-notif__status-icon {
+  color: #1a7f4b;
+  background: color-mix(in srgb, #3dd68c 18%, transparent);
+}
+
+.agent-notif__item--needs .agent-notif__status-icon {
+  color: #b45309;
+  background: color-mix(in srgb, #fbbf24 20%, transparent);
+}
+
+.agent-notif__item--exited .agent-notif__status-icon {
+  color: var(--danger, #f7768e);
+  background: color-mix(in srgb, var(--danger, #f7768e) 16%, transparent);
+}
+
+.agent-notif__body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-notif__row-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.agent-notif__agent {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-notif__badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.agent-notif__badge--completed {
+  color: #1a7f4b;
+  background: color-mix(in srgb, #3dd68c 14%, transparent);
+}
+
+.agent-notif__badge--needs_input {
+  color: #b45309;
+  background: color-mix(in srgb, #fbbf24 16%, transparent);
+}
+
+.agent-notif__badge--exited {
+  color: var(--danger, #f7768e);
+  background: color-mix(in srgb, var(--danger, #f7768e) 12%, transparent);
+}
+
+.agent-notif__ago {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-notif__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agent-notif__action {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: 8px;
+  padding: 4px 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.agent-notif__action:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.agent-notif__action--primary {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.agent-notif__action--primary:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 
 /* ---- Fleet chip: rollup da frota na zona de status ---- */
 /* Responde "quantos trabalhando / prontos / mortos" sem caçar pane por pane.
