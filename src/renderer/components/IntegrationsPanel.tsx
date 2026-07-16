@@ -99,6 +99,13 @@ export function IntegrationsPanel({
       <div className="int-panel__body">
         <section className="int-panel__sec">
           <h4>Tokens</h4>
+          {!hasGh && (
+            <p className="int-panel__dim">
+              O “Entrar com GitHub” das Configurações conecta sua conta Nexus —
+              ele NÃO dá acesso à API do GitHub. Para PRs e issues aqui, cole um
+              Personal Access Token (github.com/settings/tokens).
+            </p>
+          )}
           <label className="int-panel__field">
             GitHub PAT {hasGh ? '✓' : '—'}
             <input
