@@ -726,7 +726,40 @@ function resolveProvisionalCheckoutId(
       return match.checkoutId;
     }
     const checkoutId = digestId('checkout', installationId, rootRealPath);
-    if (registry.entries.some((entry) => entry.checkoutId === checkoutId)) {
+    const colliding = registry.entries.filter(
+      (entry) => entry.checkoutId === checkoutId,
+    );
+    // O digest é determinístico no path: quando a pasta é apagada e recriada
+    // no MESMO lugar (tmp de teste, re-clone, restore de backup), a
+    // fingerprint muda mas o id não — a entrada antiga é o MESMO checkout,
+    // não uma colisão de identidade. Sem esta cura o path fica preso para
+    // sempre em "checkout id collision". Paths diferentes seguem fail-closed.
+    if (
+      colliding.length > 0 &&
+      colliding.every(
+        (entry) =>
+          entry.kind === 'legacy-fs' && entry.rootRealPath === rootRealPath,
+      )
+    ) {
+      const previous = colliding[0] as LegacyFsCheckoutEntry;
+      const refreshed: LegacyFsCheckoutEntry = {
+        kind: 'legacy-fs',
+        checkoutId,
+        projectId,
+        rootRealPath,
+        ...fingerprint,
+        createdAt: previous.createdAt,
+        lastSeenAt: now,
+      };
+      writeCheckoutRegistry(file, {
+        ...registry,
+        entries: registry.entries.map((entry) =>
+          entry === previous ? refreshed : entry,
+        ),
+      });
+      return checkoutId;
+    }
+    if (colliding.length > 0) {
       throw new Error('invalid checkout registry: checkout id collision');
     }
     const entry: LegacyFsCheckoutEntry = {

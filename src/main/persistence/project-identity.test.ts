@@ -489,4 +489,58 @@ describe('project identity', () => {
       /invalid project manifest/i,
     );
   });
+
+  it('keeps the same provisional checkout id when the folder is recreated', () => {
+    // Cenário de produção: pasta sem git/manifest apagada e recriada no MESMO
+    // path (tmp de teste, re-clone, restore). A fingerprint muda, o digest do
+    // path não — sem a cura, o workspace fica preso em "checkout id collision".
+    const workspace = path.join(root, 'meu-workspace');
+    fs.mkdirSync(workspace, { recursive: true });
+    const opts = options(root);
+
+    const first = resolveProjectExecutionScope(workspace, opts);
+    expect(first.identitySource).toBe('provisional');
+
+    fs.rmSync(workspace, { recursive: true, force: true });
+    fs.mkdirSync(workspace, { recursive: true });
+
+    const second = resolveProjectExecutionScope(workspace, opts);
+    expect(second.checkoutId).toBe(first.checkoutId);
+    expect(second.projectId).toBe(first.projectId);
+
+    // A entrada foi refrescada, não duplicada.
+    const registry = JSON.parse(
+      fs.readFileSync(opts.checkoutRegistryFile, 'utf8'),
+    ) as { entries: { checkoutId: string; rootRealPath: string }[] };
+    const entriesForPath = registry.entries.filter(
+      (entry) => entry.checkoutId === first.checkoutId,
+    );
+    expect(entriesForPath).toHaveLength(1);
+  });
+
+  it('still fails closed on a checkout id collision from a DIFFERENT path', () => {
+    const workspace = path.join(root, 'workspace-b');
+    fs.mkdirSync(workspace, { recursive: true });
+    const opts = options(root);
+    const scope = resolveProjectExecutionScope(workspace, opts);
+
+    // Forja uma entrada com o MESMO checkoutId apontando para outro path —
+    // colisão real de identidade, não uma recriação da mesma pasta.
+    const registry = JSON.parse(
+      fs.readFileSync(opts.checkoutRegistryFile, 'utf8'),
+    ) as {
+      entries: { checkoutId: string; rootRealPath: string; inode: string }[];
+    };
+    for (const entry of registry.entries) {
+      if (entry.checkoutId === scope.checkoutId) {
+        entry.rootRealPath = path.join(root, 'outro-lugar');
+        entry.inode = '999999999';
+      }
+    }
+    fs.writeFileSync(opts.checkoutRegistryFile, JSON.stringify(registry));
+
+    expect(() => resolveProjectExecutionScope(workspace, opts)).toThrow(
+      /checkout id collision/i,
+    );
+  });
 });
