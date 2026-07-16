@@ -8,15 +8,31 @@
  * Callers supply fingerprints already derived from IdentityFile keys —
  * this module never invokes agent signing APIs itself.
  */
+
+const WILDCARD = '*';
+
+/** Normalize only the `SHA256:` prefix and surrounding whitespace. */
+function normalizeFingerprint(fingerprint: string): string {
+  return fingerprint.trim().replace(/^SHA256:/i, '');
+}
+
+/** True when the allowlist opts into offering every available identity. */
+export function identityAllowlistIsWildcard(allowed: readonly string[]): boolean {
+  return allowed.some((f) => f.trim() === WILDCARD);
+}
+
 export function filterAllowedIdentityFingerprints(
   available: readonly string[],
   allowed: readonly string[],
 ): string[] {
-  const allow = new Set(allowed.map((f) => f.toLowerCase()));
-  return available.filter((f) => allow.has(f.toLowerCase()));
+  // Wildcard = explicit "offer all identities" (unchanged legacy semantics).
+  if (identityAllowlistIsWildcard(allowed)) return [...available];
+  // SHA-256 fingerprints are case-sensitive base64 — compare exactly (H3/L17).
+  const allow = new Set(allowed.map(normalizeFingerprint));
+  return available.filter((f) => allow.has(normalizeFingerprint(f)));
 }
 
-/** Reject empty or wildcard-all agent usage when policy requires pin. */
+/** Reject empty agent usage when policy requires a pin. */
 export function assertIdentityAllowlistNonEmpty(
   allowed: readonly string[],
 ): void {

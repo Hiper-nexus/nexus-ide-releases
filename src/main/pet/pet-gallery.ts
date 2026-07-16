@@ -7,6 +7,8 @@
  * A arte é licenciada por submissão: o import é escolha explícita do usuário.
  */
 
+import { checkNetworkTarget, type HostLookup } from '../net/ssrf-guard';
+
 /** petdex.dev primeiro: o codex-pets.net responde 404 nas rotas /install. */
 export const GALLERY_BASES = [
   'https://petdex.dev',
@@ -201,11 +203,23 @@ export function extractPetShareRef(
 async function importPetShareInstance(
   ref: { origin: string; id: string },
   fetchImpl: typeof fetch,
+  lookupImpl?: HostLookup,
 ): Promise<GalleryImportResult> {
+  // SSRF guard (M6): the origin host is renderer-controlled and fetched by the
+  // main process. Reject metadata/link-local/reserved destinations before any
+  // request, and forbid redirects (a 302 → 169.254.169.254 would otherwise
+  // bounce the fetch into the cloud-metadata service).
+  const guard = await checkNetworkTarget(
+    new URL(ref.origin).hostname,
+    lookupImpl,
+  );
+  if (!guard.ok) {
+    return { ok: false, error: 'Instância bloqueada por política de rede.' };
+  }
   let name = ref.id;
   try {
     const res = await fetchImpl(`${ref.origin}/api/pets/${ref.id}`, {
-      redirect: 'follow',
+      redirect: 'error',
       headers: { accept: 'application/json' },
     });
     if (res.ok) {
@@ -226,7 +240,7 @@ async function importPetShareInstance(
   }
   try {
     const res = await fetchImpl(`${ref.origin}/api/pets/${ref.id}/spritesheet`, {
-      redirect: 'follow',
+      redirect: 'error',
       headers: { referer: `${ref.origin}/` },
     });
     if (!res.ok) {
@@ -264,11 +278,12 @@ async function importPetShareInstance(
 export async function importGalleryPet(
   input: string,
   fetchImpl: typeof fetch = fetch,
+  lookupImpl?: HostLookup,
 ): Promise<GalleryImportResult> {
   // Instância própria (codex-pet-share self-host) tem prioridade quando a
   // URL não é das bases comunitárias.
   const shareRef = extractPetShareRef(input);
-  if (shareRef) return importPetShareInstance(shareRef, fetchImpl);
+  if (shareRef) return importPetShareInstance(shareRef, fetchImpl, lookupImpl);
 
   const slug = extractPetSlug(input);
   if (!slug) {

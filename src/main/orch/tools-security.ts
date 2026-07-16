@@ -3,6 +3,7 @@ import type { McpToolDef } from './mcp-protocol';
 import { executionScopeFor } from './gate';
 import { str } from './tool-util';
 import { openWorkspaceFileForRead } from './workspace-file';
+import { assertAgentReadablePath } from './agent-path-policy';
 import {
   auditContent,
   CONTENT_PROVENANCES,
@@ -29,6 +30,7 @@ function resolveAuditInput(
     throw new Error('provide either path or content, not both');
   }
   if (relativePath) {
+    assertAgentReadablePath(relativePath);
     const handle = openWorkspaceFileForRead(executionScopeFor(ctx), relativePath);
     try {
       if (handle.stat.size > MAX_AUDIT_BYTES) {

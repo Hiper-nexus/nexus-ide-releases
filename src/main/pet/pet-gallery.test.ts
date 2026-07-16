@@ -236,9 +236,11 @@ describe('instância self-host (codex-pet-share)', () => {
       }
       return new Response('nope', { status: 404 });
     }) as unknown as typeof fetch;
+    const publicLookup = async () => ['93.184.216.34'];
     const result = await importGalleryPet(
       'https://pets.acme.dev/pets/aurora',
       mock,
+      publicLookup,
     );
     expect(result.ok).toBe(true);
     expect(result.name).toBe('Aurora');
@@ -259,8 +261,36 @@ describe('instância self-host (codex-pet-share)', () => {
       }
       return new Response('down', { status: 500 });
     }) as unknown as typeof fetch;
-    const result = await importGalleryPet('https://p.acme.dev/pets/solo', mock);
+    const result = await importGalleryPet('https://p.acme.dev/pets/solo', mock, async () => [
+      '93.184.216.34',
+    ]);
     expect(result.ok).toBe(true);
     expect(result.name).toBe('solo');
+  });
+
+  it('bloqueia SSRF: instância que resolve para metadata/link-local (M6)', async () => {
+    const { importGalleryPet } = await import('./pet-gallery');
+    const mock = (async () =>
+      new Response('should-not-be-called', { status: 200 })) as unknown as typeof fetch;
+    const metadataLookup = async () => ['169.254.169.254'];
+    const result = await importGalleryPet(
+      'https://evil.acme.dev/pets/x',
+      mock,
+      metadataLookup,
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('bloqueia SSRF: hostname de metadata literal (M6)', async () => {
+    const { importGalleryPet } = await import('./pet-gallery');
+    const mock = (async () =>
+      new Response('nope', { status: 200 })) as unknown as typeof fetch;
+    const result = await importGalleryPet(
+      'https://metadata.google.internal/pets/x',
+      mock,
+    );
+    // metadata.google.internal is a gallery-external https host in /pets/<id>
+    // form, so it reaches the share path and is blocked by the SSRF guard.
+    expect(result.ok).toBe(false);
   });
 });
