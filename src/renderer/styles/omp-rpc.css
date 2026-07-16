@@ -7,15 +7,31 @@
   top: 8px;
   right: 8px;
   bottom: 8px;
-  width: 380px;
+  /* Mesma largura do .orch-panel: os dois drawers direitos partilham o slot. */
+  width: 340px;
   display: flex;
   flex-direction: column;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: var(--shadow-2);
+  /* Right-drawer tier — par do .orch-panel (z-index:30) e acima do .home-deck
+     (31). Não há token --z-* para esta camada (a escala do repo começa em 45,
+     p/ overlays) e base.css está fora do território deste worktree; por isso o
+     número fica, alinhado à convenção existente (ops-board=34 acima destes).
+     TODO(a11y): os dois drawers direitos deveriam ser mutuamente exclusivos —
+     hoje ambos abrem no mesmo slot (App.tsx) e o OMP, por vir depois no DOM,
+     cobre o orch. A exclusão mútua exige o store/App (fora deste território). */
   z-index: 31;
   animation: omp-panel-in 160ms var(--ease-out-expo);
+}
+
+/* Espelha o clamp responsivo do .orch-panel: em telas estreitas o drawer
+   nunca ultrapassa a viewport. */
+@media (max-width: 760px) {
+  .omp-panel {
+    width: min(340px, calc(100vw - 16px));
+  }
 }
 
 @keyframes omp-panel-in {
@@ -287,6 +303,20 @@
   .omp-caret {
     animation: none;
   }
+}
+
+/* Só para leitores de tela — padrão canônico sr-only (o repo tinha apenas a
+   variante settings-*, de outro módulo). Usado no desfecho da tool (M6). */
+.omp-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Card compacto de tool: nome + status ✓/✗/spinner. */

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { OmpRpcSessionLifecycle } from '../../../shared/omp-rpc-types';
 import {
   useOmpRpcStore,
@@ -27,11 +27,26 @@ function contextTone(percent: number): 'ok' | 'warn' | 'danger' {
   return 'ok';
 }
 
+// Desfecho da tool em texto, para leitores de tela — o glyph ✓/✗/spinner é
+// puramente visual (aria-hidden). Cobre running→ok/error.
+const TOOL_STATUS_LABEL: Record<'running' | 'ok' | 'error', string> = {
+  running: 'em execução',
+  ok: 'concluída',
+  error: 'falhou',
+};
+
 function ToolCard({ entry }: { entry: Extract<OmpTranscriptEntry, { kind: 'tool' }> }) {
   const glyph =
     entry.status === 'ok' ? '✓' : entry.status === 'error' ? '✗' : null;
+  const statusLabel = TOOL_STATUS_LABEL[entry.status];
   return (
-    <div className={`omp-tool omp-tool--${entry.status}`}>
+    // aria-live/atomic: cada card é sua própria região viva, então a transição
+    // running→ok/error é anunciada sem varrer o transcript inteiro (evita spam).
+    <div
+      className={`omp-tool omp-tool--${entry.status}`}
+      aria-live="polite"
+      aria-atomic="true"
+    >
       <span className="omp-tool__status" aria-hidden="true">
         {glyph ?? <span className="omp-tool__spinner" />}
       </span>
@@ -41,6 +56,7 @@ function ToolCard({ entry }: { entry: Extract<OmpTranscriptEntry, { kind: 'tool'
           {entry.argsPreview}
         </span>
       ) : null}
+      <span className="omp-sr-only">{statusLabel}</span>
     </div>
   );
 }
@@ -48,11 +64,87 @@ function ToolCard({ entry }: { entry: Extract<OmpTranscriptEntry, { kind: 'tool'
 function ApprovalDialog({ request }: { request: OmpPendingUiRequest }) {
   const respondUi = useOmpRpcStore((s) => s.respondUi);
   const [text, setText] = useState('');
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const messageId = useId();
+
+  // Modal real (não só role="alertdialog"): o foco entra ao montar, circula
+  // dentro do dialog (Tab/Shift+Tab), Esc escolhe o desfecho seguro e o foco
+  // volta ao gatilho ao fechar. Sem libs — só um useEffect com cleanup.
+  useEffect(() => {
+    const node = dialogRef.current;
+    if (!node) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
+    const focusable = () =>
+      Array.from(
+        node.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => el.offsetParent !== null || el === document.activeElement);
+
+    // Foco inicial no primeiro alvo acionável (Permitir/Negar/opção/textarea).
+    const initial = focusable();
+    (initial[0] ?? node).focus();
+
+    // Esc = opção segura: negar (confirm) ou cancelar (select/input/editor).
+    const cancel = () => {
+      if (request.method === 'confirm') {
+        void respondUi(request.requestId, { confirmed: false });
+      } else {
+        void respondUi(request.requestId, { cancelled: true });
+      }
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cancel();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      if (items.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey) {
+        if (active === first || !node.contains(active)) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (active === last || !node.contains(active)) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    node.addEventListener('keydown', onKeyDown);
+    return () => {
+      node.removeEventListener('keydown', onKeyDown);
+      // Foco retorna ao elemento anterior ao dialog ao fechar.
+      previouslyFocused?.focus?.();
+    };
+    // requestId/method/respondUi são estáveis por instância → roda uma vez.
+  }, [request.requestId, request.method, respondUi]);
+
   return (
-    <div className="omp-approval" role="alertdialog" aria-label={request.title}>
+    <div
+      className="omp-approval"
+      role="alertdialog"
+      aria-modal="true"
+      aria-label={request.title}
+      aria-describedby={request.message ? messageId : undefined}
+      ref={dialogRef}
+      tabIndex={-1}
+    >
       <div className="omp-approval__title">{request.title}</div>
       {request.message ? (
-        <div className="omp-approval__message">{request.message}</div>
+        <div className="omp-approval__message" id={messageId}>
+          {request.message}
+        </div>
       ) : null}
       {request.method === 'confirm' ? (
         <div className="omp-approval__actions">
