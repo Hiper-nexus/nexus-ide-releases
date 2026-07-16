@@ -1,6 +1,51 @@
 # Changelog
 
-<<<<<<< HEAD
+## 0.19.1 — Cockpit Endurecido
+
+Data: 2026-07-16
+
+Correções de um review senior adversarial (2 frentes) sobre o pacote Labs +
+inbox de agentes recém-integrado à 0.19, com todos os achados até LOW fechados
+e teste de regressão por achado.
+
+### Inbox de notificações de agentes
+
+- **Fim do "CONCLUÍDO" falso no respawn** (HIGH): a época de atividade passa a
+  registrar sua origem — só um turno real (idle→busy) pode concluir; boot e
+  respawn (spawning→busy) nunca contam. Reabrir um workspace com N agentes não
+  gera mais N avisos fantasmas.
+- **Painel volta a aparecer** (HIGH): a zona de status da barra é
+  `overflow:hidden` e recortava 100% do popover; ele passa a `position:fixed`
+  ancorado ao sino, escapando do clip.
+- **Alinhado ao que a tela mostra** (MEDIUM): o bridge consome `displayStates`
+  (hold de ~1,4 s), então um gap silencioso no meio de um turno não emite
+  "concluído" prematuro.
+- a11y: foco devolvido ao sino ao fechar; `role="status"`/`aria-live` anuncia
+  avisos novos; `Esc`/`Tab` não vazam para overlays por baixo
+  (`stopImmediatePropagation`); ícone de sino próprio (era o raio duplicado); os
+  botões de ação carregam o nome do agente. Jump lê o layout vivo. Fecha ao
+  abrir qualquer drawer maior. Teste de componente novo.
+
+### Labs / feature flags
+
+- **Desligar a flag do companion derruba o relay ativo** (HIGH): antes, desligar
+  `feature.remote.relayTransport` com sessão aberta era fail-open (o celular
+  seguia conectado); agora o override encerra o transporte, e a seção Companion
+  mostra o controle **Parar** quando há sessão viva mesmo com a flag off.
+- **Persistência robusta** (MEDIUM/LOW): rollback do estado vivo quando o disco
+  falha (main nunca diverge do arquivo); o modo de força de dogfood
+  (`NEXUS_FORCE_ALL_FLAGS`) virou camada efêmera e não vaza mais para o arquivo
+  de overrides; overrides de flags que o build não conhece sobrevivem a
+  downgrade→upgrade.
+- **Só a janela do app altera flags** (MEDIUM): os canais de flag passam a
+  validar o sender — um WebContentsView de pane de browser não muta mais o
+  estado global.
+- LOW: `Labs` promovido à navegação primária (o painel de descoberta não podia
+  viver atrás do "Avançado"); precedência de resolução corrigida na copy
+  (kill switch > canal > override > default); hints atualizados (memória tem
+  painel; relay abre a seção Companion); pending por-id (Set) no toggle; uma
+  única resolução por flag no list; painel de Memória re-busca ao mudar a flag.
+
 ## Não lançado — Mobile em tempo real com sessão persistente
 
 Fecha os dois últimos degraus operacionais do companion no device (dossiê

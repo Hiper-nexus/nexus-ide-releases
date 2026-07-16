@@ -192,7 +192,7 @@ export function CompanionRelaySection() {
         compartilhe pelo QR ou copie o link. Nada de chave/token aparece em log.
       </p>
 
-      {!flagOn ? (
+      {!flagOn && !running ? (
         <div className="settings-field">
           <div className="settings-pill-row">
             <span className="settings-chip settings-chip--warn">recurso desligado</span>
@@ -215,6 +215,13 @@ export function CompanionRelaySection() {
         </div>
       ) : (
         <>
+          {!flagOn && running && (
+            <p className="settings-field__note settings-field__note--warning">
+              A flag do transporte foi desligada com uma sessão ativa. Ela
+              bloqueia novas sessões; use <strong>Parar</strong> abaixo para
+              encerrar a atual agora.
+            </p>
+          )}
           <div className="settings-pill-row">
             <span className={`settings-chip settings-chip--${chip.tone}`}>{chip.label}</span>
             {running && (

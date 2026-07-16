@@ -13,12 +13,22 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.19.0',
+  version: '0.19.1',
   date: '2026-07-16',
   codename: 'Oh My Pi — na tela',
   summary:
-    'A segunda leva do crossover Oh My Pi: as capacidades que só viviam no backend agora têm interface de primeira classe — painel de memória com busca, inventário de configs por workspace, preço e janela no seletor de modelo, companion mobile criptografado com QR, e drawers direitos mutuamente exclusivos. Motor testado (0.17.0/0.18.0), agora operacional na tela.',
+    'Endurece a 0.19 após review senior adversarial: o inbox de agentes deixa de mentir "concluído" em todo respawn e volta a abrir (não era mais recortado pela barra), o Labs em Configurações, e desligar a flag do companion agora derruba de fato o relay ativo. A segunda leva do crossover Oh My Pi — memória, inventário de configs, preço no seletor de modelo, companion criptografado — segue operacional na tela.',
   highlights: [
+    {
+      title: 'Inbox de agentes correto e visível',
+      detail:
+        'O sininho de notificações não dispara mais "CONCLUÍDO" falso ao reabrir um workspace (boot/respawn deixou de contar como turno) e o painel voltou a aparecer — antes era 100% recortado pela barra de status. Foco devolvido ao sino ao fechar, anúncio para leitor de tela e ícone de sino próprio.',
+    },
+    {
+      title: 'Labs endurecido',
+      detail:
+        'Desligar a flag do companion com uma sessão ativa agora encerra o relay na hora; overrides sobrevivem a falha de disco (rollback) e a downgrades; só a janela do app altera flags; e o modo de força de dogfood nunca mais vaza para o arquivo de overrides.',
+    },
     {
       title: 'Painel de Memória do workspace',
       detail:

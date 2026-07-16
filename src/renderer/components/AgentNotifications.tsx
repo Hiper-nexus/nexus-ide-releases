@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   agentNotificationStatusLabel,
   countUnread,
@@ -10,11 +10,21 @@ import { listPanes } from '../lib/split-tree';
 import { useAgentNotificationStore } from '../state/agent-notification-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useToastStore } from '../state/toast-store';
+import { useSettingsStore } from '../state/settings-store';
+import { useOrchStore } from '../state/orch-store';
+import { useOmpRpcStore } from '../state/omp-rpc-store';
+import { useMemoryStore } from '../state/memory-store';
+import { useConfigInventoryStore } from '../state/config-inventory-store';
+import { useFilesStore } from '../state/files-store';
 import { PixelIcon } from './PixelIcon';
 
 /**
  * Workspace-bar agent notification inbox (BridgeMind-style):
  * completed / needs-input / exited with jump-to-pane + mark read.
+ *
+ * O painel é `position: fixed` ancorado abaixo do sino: a zona de status da
+ * barra é `overflow:hidden` (trunca os chips), então um popover absoluto lá
+ * dentro seria recortado — fixed escapa do clip.
  */
 
 function kindClass(kind: AgentNotificationKind): string {
@@ -40,6 +50,7 @@ function NotificationRow({
   onJump: (paneId: string) => void;
   onMarkRead: (id: string) => void;
 }) {
+  const status = agentNotificationStatusLabel(item.kind);
   return (
     <li
       className={[
@@ -55,7 +66,7 @@ function NotificationRow({
         <div className="agent-notif__row-top">
           <span className="agent-notif__agent">{item.agentLabel}</span>
           <span className={`agent-notif__badge agent-notif__badge--${item.kind}`}>
-            {agentNotificationStatusLabel(item.kind)}
+            {status}
           </span>
           <span className="agent-notif__ago">
             {formatNotificationAgo(now, item.createdAt)}
@@ -65,6 +76,7 @@ function NotificationRow({
           <button
             type="button"
             className="agent-notif__action agent-notif__action--primary"
+            aria-label={`Ir ao pane de ${item.agentLabel}`}
             onClick={() => {
               onJump(item.paneId);
               onMarkRead(item.id);
@@ -76,6 +88,7 @@ function NotificationRow({
             <button
               type="button"
               className="agent-notif__action"
+              aria-label={`Marcar notificação de ${item.agentLabel} como lida`}
               onClick={() => onMarkRead(item.id)}
             >
               Marcar lida
@@ -96,14 +109,62 @@ export function AgentNotifications() {
   const markAllRead = useAgentNotificationStore((s) => s.markAllRead);
   const clear = useAgentNotificationStore((s) => s.clear);
   const focus = useLayoutStore((s) => s.focus);
-  const root = useLayoutStore((s) => s.root);
   const pushToast = useToastStore((s) => s.push);
+
+  // Popover é efêmero: qualquer drawer/painel maior que abra o fecha, para não
+  // ficar flutuando por cima de uma superfície que tomou a tela.
+  const anyDrawerOpen = useSettingsStore(
+    (s) => s.drawerOpen,
+  );
+  const orchPanel = useOrchStore((s) => s.panelOpen);
+  const boardOpen = useOrchStore((s) => s.boardOpen);
+  const ompPanel = useOmpRpcStore((s) => s.panelOpen);
+  const memoryPanel = useMemoryStore((s) => s.panelOpen);
+  const configInv = useConfigInventoryStore((s) => s.open);
+  const filesOpen = useFilesStore((s) => s.open);
+  const surfaceOpen =
+    anyDrawerOpen ||
+    orchPanel ||
+    boardOpen ||
+    ompPanel ||
+    memoryPanel ||
+    configInv ||
+    filesOpen;
+
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const bellRef = useRef<HTMLButtonElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusRef = useRef(true);
   const [now, setNow] = useState(() => Date.now());
+  const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(
+    null,
+  );
 
   const unread = useMemo(() => countUnread(items), [items]);
+
+  // aria-live: anuncia só quando um item NOVO entra no topo (não em marcar-lida).
+  const [announce, setAnnounce] = useState('');
+  const lastAnnouncedId = useRef<string | null>(null);
+  const inited = useRef(false);
+  useEffect(() => {
+    const top = items[0];
+    if (!inited.current) {
+      inited.current = true;
+      lastAnnouncedId.current = top?.id ?? null;
+      return;
+    }
+    if (top && top.id !== lastAnnouncedId.current) {
+      lastAnnouncedId.current = top.id;
+      setAnnounce(
+        `${top.agentLabel}: ${agentNotificationStatusLabel(top.kind)}`,
+      );
+    }
+  }, [items]);
+
+  useEffect(() => {
+    if (surfaceOpen && open) setOpen(false);
+  }, [surfaceOpen, open, setOpen]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -112,20 +173,48 @@ export function AgentNotifications() {
     return () => clearInterval(t);
   }, [open]);
 
+  // Posição fixed ancorada ao sino; recalcula em resize (e fecha em scroll do
+  // conteúdo, que invalidaria a âncora).
+  useLayoutEffect(() => {
+    if (!open) {
+      setAnchor(null);
+      return undefined;
+    }
+    const compute = () => {
+      const r = rootRef.current?.getBoundingClientRect();
+      if (r) {
+        setAnchor({
+          top: Math.round(r.bottom + 8),
+          right: Math.max(8, Math.round(window.innerWidth - r.right)),
+        });
+      }
+    };
+    compute();
+    window.addEventListener('resize', compute);
+    return () => window.removeEventListener('resize', compute);
+  }, [open]);
+
   useEffect(() => {
     if (!open) return undefined;
+    restoreFocusRef.current = true;
     closeBtnRef.current?.focus();
     const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(e.target as Node) &&
+          !panelRef.current?.contains(e.target as Node)) {
+        setOpen(false);
+      }
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // Nada atravessa o popover: um Esc fecha só ele, não o overlay de cima.
+        e.stopImmediatePropagation();
         e.stopPropagation();
         e.preventDefault();
         setOpen(false);
         return;
       }
       if (e.key !== 'Tab' || !panelRef.current) return;
+      e.stopImmediatePropagation();
       e.stopPropagation();
       const focusables = panelRef.current.querySelectorAll<HTMLElement>(
         'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
@@ -147,10 +236,14 @@ export function AgentNotifications() {
     return () => {
       document.removeEventListener('mousedown', onDoc);
       window.removeEventListener('keydown', onKey, true);
+      // Devolve o foco ao sino ao fechar — exceto quando pulamos para um pane.
+      if (restoreFocusRef.current) bellRef.current?.focus();
     };
   }, [open, setOpen]);
 
   function jumpToPane(paneId: string) {
+    // Lê o root VIVO: o pane pode ter fechado entre o push e este clique.
+    const root = useLayoutStore.getState().root;
     const exists = listPanes(root).some((p) => p.id === paneId);
     if (!exists) {
       pushToast(
@@ -160,6 +253,7 @@ export function AgentNotifications() {
       );
       return false;
     }
+    restoreFocusRef.current = false; // foco vai para o pane, não volta ao sino
     focus(paneId);
     setOpen(false);
     return true;
@@ -167,7 +261,11 @@ export function AgentNotifications() {
 
   return (
     <div className="agent-notif" ref={rootRef}>
+      <span className="agent-notif__sr" role="status" aria-live="polite">
+        {announce}
+      </span>
       <button
+        ref={bellRef}
         type="button"
         className={`agent-notif__bell ${unread > 0 ? 'agent-notif__bell--hot' : ''}`}
         title={
@@ -184,7 +282,7 @@ export function AgentNotifications() {
         aria-expanded={open}
         onClick={() => toggle()}
       >
-        <PixelIcon name="bolt" size={12} />
+        <PixelIcon name="bell" size={12} />
         {unread > 0 && (
           <span className="agent-notif__count" aria-hidden="true">
             {unread > 9 ? '9+' : unread}
@@ -197,12 +295,16 @@ export function AgentNotifications() {
           ref={panelRef}
           className="agent-notif__panel"
           role="dialog"
-          aria-modal="true"
           aria-label="Notificações de agentes"
+          style={
+            anchor
+              ? { position: 'fixed', top: anchor.top, right: anchor.right }
+              : undefined
+          }
         >
           <header className="agent-notif__head">
             <div className="agent-notif__head-left">
-              <PixelIcon name="bolt" size={12} />
+              <PixelIcon name="bell" size={12} />
               <span className="agent-notif__title">Notificações</span>
               {unread > 0 && (
                 <span className="agent-notif__unread-pill">

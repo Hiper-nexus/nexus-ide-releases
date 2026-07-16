@@ -77,6 +77,27 @@ describe('applyFlagOverride (Labs)', () => {
     expect(mixer).toMatchObject({ enabled: true, reason: 'default' });
   });
 
+  it('rolls back the live override when persist fails (disk/perm error)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-labs-'));
+    tempDirs.push(dir);
+    // Pai do arquivo de overrides é um ARQUIVO → mkdir/rename falham no persist.
+    const blocker = path.join(dir, 'blocker');
+    fs.writeFileSync(blocker, 'x');
+    const overridesPath = path.join(blocker, 'feature-flags.json');
+    configureFeatureFlagRegistry({ runtimeChannel: 'stable', overridesPath });
+    const { applyFlagOverride } = await import('./product-wave-ipc');
+    const reg = getFeatureFlagRegistry();
+
+    expect(reg.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(true); // default-on
+    expect(() =>
+      applyFlagOverride({ id: FEATURE_FLAG_IDS.mcpHub, enabled: false }),
+    ).toThrow();
+
+    // Rollback: o estado vivo voltou ao anterior (sem override) — main == disco.
+    expect(reg.resolve(FEATURE_FLAG_IDS.mcpHub).reason).toBe('default');
+    expect(reg.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(true);
+  });
+
   it('fails closed on unknown ids and malformed payloads', async () => {
     configureTempRegistry();
     const { applyFlagOverride } = await import('./product-wave-ipc');

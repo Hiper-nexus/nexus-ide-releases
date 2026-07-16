@@ -24,7 +24,16 @@ export interface FeatureFlagRegistryOptions {
  */
 export class FeatureFlagRegistry {
   readonly #byId = new Map<string, FeatureFlagDefinition>();
+  /** Overrides explícitos (setOverride/reload) — persistidos em disco. */
   readonly #overrides = new Map<string, boolean>();
+  /** Force blanket (NEXUS_FORCE_ALL_FLAGS / smoke) — efêmero, NUNCA persistido. */
+  readonly #forced = new Set<string>();
+  /**
+   * Overrides de ids não reconhecidos por este build (ex.: flag nova salva por
+   * uma versão futura). Preservados na reescrita para um downgrade→upgrade não
+   * perder a preferência silenciosamente.
+   */
+  #unknownOverrides: Array<{ id: string; enabled: boolean }> = [];
   readonly #runtimeChannel: FeatureFlagChannel;
   readonly #overridesPath: string | null;
   readonly #onEval?: (resolution: FeatureFlagResolution) => void;
@@ -56,9 +65,12 @@ export class FeatureFlagRegistry {
 
   resolve(id: string): FeatureFlagResolution {
     const definition = this.#byId.get(id);
+    // Precedência de override: explícito (usuário) > force blanket > nenhum.
     const override = this.#overrides.has(id)
       ? this.#overrides.get(id)
-      : undefined;
+      : this.#forced.has(id)
+        ? true
+        : undefined;
     const resolution = resolveFeatureFlag(definition, {
       runtimeChannel: this.#runtimeChannel,
       override,
@@ -95,21 +107,29 @@ export class FeatureFlagRegistry {
     this.#overrides.delete(id);
   }
 
+  /** Override explícito corrente (undefined = sem override) — para rollback. */
+  peekOverride(id: string): boolean | undefined {
+    return this.#overrides.has(id) ? this.#overrides.get(id) : undefined;
+  }
+
   /**
-   * Pre-production / dogfood: force every known product flag ON via in-memory
-   * overrides. Kill switch remains the final authority — the force never
-   * clears one, so the emergency-off path keeps working after boot.
+   * Pre-production / dogfood: force every known product flag ON. Efêmero por
+   * construção — vive em `#forced`, fora do conjunto persistido, então um
+   * `persistOverrides()` disparado enquanto o force está ativo NÃO grava as
+   * flags forçadas em disco (senão o próximo launch sem o env var continuaria
+   * tudo ON). Kill switch continua sendo a autoridade final.
    */
   forceEnableAll(): void {
     for (const [id, def] of this.#byId) {
       if (def.killSwitch) continue;
-      this.#overrides.set(id, true);
+      this.#forced.add(id);
     }
   }
 
   reloadOverrides(): void {
     if (!this.#overridesPath) return;
     this.#overrides.clear();
+    this.#unknownOverrides = [];
     if (!fs.existsSync(this.#overridesPath)) return;
     try {
       const raw = fs.readFileSync(this.#overridesPath, 'utf8');
@@ -117,6 +137,10 @@ export class FeatureFlagRegistry {
       for (const item of parsed.overrides) {
         if (this.#byId.has(item.id)) {
           this.#overrides.set(item.id, item.enabled);
+        } else {
+          // Flag que este build não conhece (salva por versão futura) —
+          // preserva para não sumir num downgrade→upgrade.
+          this.#unknownOverrides.push({ id: item.id, enabled: item.enabled });
         }
       }
     } catch {
@@ -128,10 +152,16 @@ export class FeatureFlagRegistry {
     if (!this.#overridesPath) return;
     const payload = featureFlagOverridesFileSchema.parse({
       schemaVersion: 1,
-      overrides: [...this.#overrides.entries()].map(([id, enabled]) => ({
-        id,
-        enabled,
-      })),
+      overrides: [
+        ...[...this.#overrides.entries()].map(([id, enabled]) => ({
+          id,
+          enabled,
+        })),
+        // Reemite entradas de ids desconhecidos ao build atual.
+        ...this.#unknownOverrides.filter(
+          (u) => !this.#overrides.has(u.id) && !this.#byId.has(u.id),
+        ),
+      ],
     });
     const dir = path.dirname(this.#overridesPath);
     fs.mkdirSync(dir, { recursive: true });

@@ -7,41 +7,71 @@ import {
   formatNotificationAgo,
   MIN_BUSY_MS_FOR_COMPLETED,
   AGENT_NOTIFICATION_MAX,
-  notificationKindFromTransition,
+  type BusyEpoch,
   pushAgentNotification,
 } from './agent-notification';
 
 describe('agent-notification domain', () => {
-  it('requires sustained busy before completed (anti-spam)', () => {
+  it('requires sustained busy from a real turn before completed (anti-spam)', () => {
     const t0 = 10_000;
-    // Enter busy — track epoch
+    // idle→busy abre época elegível (turno real do usuário)
     const start = evaluatePaneTransition({
       prev: 'idle',
       next: 'busy',
-      busyStartedAt: undefined,
+      busyEpoch: undefined,
       now: t0,
     });
     expect(start.kind).toBeNull();
-    expect(start.busyStartedAt).toBe(t0);
+    expect(start.busyEpoch).toEqual({ startedAt: t0, fromIdle: true });
 
     // Short blip idle — no completed
     const blip = evaluatePaneTransition({
       prev: 'busy',
       next: 'idle',
-      busyStartedAt: t0,
+      busyEpoch: start.busyEpoch,
       now: t0 + 200,
     });
     expect(blip.kind).toBeNull();
-    expect(blip.busyStartedAt).toBeUndefined();
+    expect(blip.busyEpoch).toBeUndefined();
 
     // Sustained busy then idle → completed
     const long = evaluatePaneTransition({
       prev: 'busy',
       next: 'idle',
-      busyStartedAt: t0,
+      busyEpoch: start.busyEpoch,
       now: t0 + MIN_BUSY_MS_FOR_COMPLETED + 50,
     });
     expect(long.kind).toBe('completed');
+  });
+
+  it('never completes a boot/respawn epoch (spawning→busy→idle)', () => {
+    const t0 = 5_000;
+    // spawning nunca abre época
+    const spawn = evaluatePaneTransition({
+      prev: undefined,
+      next: 'spawning',
+      busyEpoch: undefined,
+      now: t0,
+    });
+    expect(spawn.busyEpoch).toBeUndefined();
+
+    // spawning→busy abre época NÃO-elegível (fromIdle=false)
+    const busy = evaluatePaneTransition({
+      prev: 'spawning',
+      next: 'busy',
+      busyEpoch: spawn.busyEpoch,
+      now: t0,
+    });
+    expect(busy.busyEpoch).toEqual({ startedAt: t0, fromIdle: false });
+
+    // Boot leva muito mais que o mínimo — ainda assim NÃO completa
+    const idle = evaluatePaneTransition({
+      prev: 'busy',
+      next: 'idle',
+      busyEpoch: busy.busyEpoch,
+      now: t0 + MIN_BUSY_MS_FOR_COMPLETED + 5_000,
+    });
+    expect(idle.kind).toBeNull();
   });
 
   it('never maps hibernate→idle to needs_input (hooks own that signal)', () => {
@@ -49,21 +79,19 @@ describe('agent-notification domain', () => {
       evaluatePaneTransition({
         prev: 'hibernated',
         next: 'idle',
-        busyStartedAt: undefined,
+        busyEpoch: undefined,
         now: 1,
       }).kind,
-    ).toBeNull();
-    expect(
-      notificationKindFromTransition('hibernated', 'idle', { now: 1 }),
     ).toBeNull();
   });
 
   it('maps exit and formats labels', () => {
+    const epoch: BusyEpoch = { startedAt: 1, fromIdle: true };
     expect(
       evaluatePaneTransition({
         prev: 'busy',
         next: 'exited',
-        busyStartedAt: 1,
+        busyEpoch: epoch,
         now: 2,
       }).kind,
     ).toBe('exited');
