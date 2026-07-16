@@ -13,6 +13,27 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.6',
+  date: '2026-07-16',
+  codename: 'Pet Obediente',
+  summary:
+    'O pet de desktop deixa de grudar no mouse quando o botão é solto fora da janelinha (fim do arrasto instantâneo via lostpointercapture) e deixa de sumir quando o app entra em fullscreen — o pin de Spaces é re-afirmado e ele volta para a área visível.',
+  highlights: [
+    {
+      title: 'Arrasto do pet confiável',
+      detail:
+        'Soltar o mouse em qualquer lugar encerra o arrasto na hora; o watchdog de emergência caiu de 30s para 10s.',
+    },
+    {
+      title: 'Pet presente no fullscreen',
+      detail:
+        'Entrar/sair do fullscreen nativo re-fixa o pet em todos os Spaces e o reclampa para dentro da tela.',
+    },
+  ],
+  fixes: [],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.5',
   date: '2026-07-16',
   codename: 'Frota Completa',
@@ -35,43 +56,6 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Painel de orquestração legível',
       detail:
         'Mais largura e respiro, tab ativa com âncora, toolbar fixa ao rolar, cards com hover e roster do editor em cartões com focus ring.',
-    },
-  ],
-};
-
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.4',
-  date: '2026-07-16',
-  codename: 'Paridade Viva',
-  summary:
-    'O modo Design ganha emulação mobile de verdade (o site serve o layout de celular, não só a largura), a camada forge liga GitLab MR e o "PR desta branch" no painel, e o instalador 1-clique passa a cobrir agy, kimi e grok com canais oficiais verificados — 8 das 9 CLIs instalam pelo app.',
-  highlights: [
-    {
-      title: 'Modo mobile de verdade',
-      detail:
-        'O breakpoint 📱 emula um iPhone (user agent + métricas) com reload — menu hambúrguer e media queries reais. ⛶ restaura o navegador normal.',
-    },
-    {
-      title: 'Forge multi-provider',
-      detail:
-        'GitHub e GitLab criam PR/MR pelo mesmo caminho autorizado e auditado; o painel mostra o PR aberto da branch atual, clicável. Token GitLab via glab CLI ou NEXUS_GITLAB_TOKEN.',
-    },
-    {
-      title: 'Instalador cobre quase tudo',
-      detail:
-        'agy (instalador oficial do Google, baixado por HTTPS sem pipe), kimi (brew/npm oficiais) e grok (npm oficial xAI) entram no 1-clique com confirmação nativa.',
-    },
-  ],
-  fixes: [
-    {
-      title: 'Painéis não abrem mais atrás das Configurações',
-      detail:
-        'Ativar OMP RPC/Memória/Configs com o drawer aberto fecha o drawer primeiro — o clique deixa de parecer morto.',
-    },
-    {
-      title: 'OMP RPC explica a morte',
-      detail:
-        'Saída com código ≠0 mostra o motivo real (ex.: sem /login) e oferece abrir o omp no terminal para autenticar.',
     },
   ],
 };

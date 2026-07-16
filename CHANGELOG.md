@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.19.6 — Pet Obediente
+
+Data: 2026-07-16
+
+- **Pet não gruda mais no mouse**: soltar o botão fora da janelinha (ou o OS
+  roubar o ponteiro) encerra o arrasto na hora via lostpointercapture; o
+  watchdog de resgate caiu de 30s para 10s.
+- **Pet não some mais em fullscreen**: entrar/sair do fullscreen nativo
+  re-afirma o pin de all-workspaces (visibleOnFullScreen), garante
+  visibilidade e reclampa o pet para a área visível.
+
 ## 0.19.5 — Frota Completa
 
 Data: 2026-07-16
