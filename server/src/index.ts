@@ -203,9 +203,25 @@ async function loadProductionDependencies(): Promise<ServerBootDependencies> {
   };
 }
 
+/**
+ * High-value secrets that must not remain ambiently readable on `process.env`
+ * for the process lifetime (L13). `startServer` reads its config from the
+ * `runtimeEnvironment` COPY, so clearing these from the global env does not
+ * affect boot — it only shrinks the blast radius of a later dependency/RCE
+ * compromise (e.g. the license-signing key or Stripe key being scraped).
+ */
+const SENSITIVE_ENV_KEYS = [
+  'GITHUB_PERSONAL_ACCESS_TOKEN',
+  'LICENSE_PRIVATE_KEY',
+  'STRIPE_SECRET_KEY',
+  'STRIPE_WEBHOOK_SECRET',
+  'GITHUB_OAUTH_SECRET',
+  'GOOGLE_OAUTH_SECRET',
+] as const;
+
 async function runProductionServer(): Promise<void> {
   const runtimeEnvironment = sanitizeRuntimeEnvironment(process.env);
-  delete process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+  for (const key of SENSITIVE_ENV_KEYS) delete process.env[key];
   const dependencies = await loadProductionDependencies();
   const server = await startServer(runtimeEnvironment, dependencies);
   const address = server.address();

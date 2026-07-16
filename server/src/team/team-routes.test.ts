@@ -91,7 +91,7 @@ describe('team-routes', () => {
 
     const invite = await request(app).post('/v1/team/invites').set('authorization', ownerBearer);
     expect(invite.status).toBe(200);
-    expect(invite.body.data.code).toMatch(/^[A-Z2-7]{4}-[A-Z2-7]{4}$/);
+    expect(invite.body.data.code).toMatch(/^[A-Z2-7]{4}-[A-Z2-7]{4}-[A-Z2-7]{4}$/);
     expect(invite.body.data.url).toContain('/join/');
     const join = await request(app).post('/v1/team/join')
       .set('authorization', memberBearer)
