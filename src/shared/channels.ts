@@ -100,6 +100,16 @@ export const PRODUCT_WAVE_CHANNELS = {
   editorApply: 'product:editor.apply',
 } as const;
 
+/**
+ * Descoberta universal de configs de ecossistemas de agente (read-only).
+ * Registrado em main/discovery/discovery-ipc.ts.
+ */
+export const DISCOVERY_CHANNELS = {
+  /** invoke: renderer → main. Inventário do workspace: MCP servers,
+   * context/rule files, skills e slash commands, com source/level/path. */
+  workspaceConfigs: 'discovery:workspace-configs',
+} as const;
+
 /** Agent lifecycle observability (record / list / reap finished only). */
 export const AGENT_LIFECYCLE_CHANNELS = {
   record: 'agent-lifecycle:record',

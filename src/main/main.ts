@@ -106,6 +106,10 @@ import {
   closeAdapterRegistry,
 } from "./adapters/adapter-registry";
 import {
+  registerOmpRpcIpc,
+  disposeAllOmpRpcSessions,
+} from "./adapters/omp-rpc-ipc";
+import {
   initOrchestration,
   registerOrchIpc,
   registerOrchListener,
@@ -142,6 +146,7 @@ import { registerTerminalBlockActionsIpc } from "./terminal/terminal-block-actio
 import { registerSearchMixerIpc } from "./search/search-mixer-ipc";
 import { getSearchMixer } from "./search/search-mixer-bootstrap";
 import { registerProductWaveIpc } from "./product-wave-ipc";
+import { registerDiscoveryIpc } from "./discovery/discovery-ipc";
 import { registerMissionEventIpc } from "./orch/mission-event-ipc";
 import { startAgentLifecycleService } from "./agents/agent-lifecycle-service";
 import {
@@ -417,6 +422,8 @@ function bootstrap(): void {
   getSearchMixer(); // ensure ripgrep + multi-source providers on the live mixer
   registerSearchMixerIpc();
   registerProductWaveIpc();
+  // Descoberta universal de configs de ecossistemas de agente (read-only, B4).
+  registerDiscoveryIpc();
   // Agent lifecycle: record finished/needs-input; reap finished only (never running).
   startAgentLifecycleService();
   registerBrowserIpc(projectRuntimeManager);
@@ -484,6 +491,8 @@ function bootstrap(): void {
   }
   registerOnboardingIpc();
   registerPipeIpc(); // also calls initPanePipes()
+  // Sessões omp --mode rpc-ui como agentes de primeira classe (sem PTY).
+  registerOmpRpcIpc();
   registerRemoteIpc();
   registerIntegrationsIpc();
   // Desktop pet (opt-in): companion flutuante que reage à frota. Depois da
@@ -707,6 +716,7 @@ function shutdown(): Promise<void> {
   shutdownPromise = (async () => {
     stopMacOSDockWatchdog();
     killAllSessions();
+    disposeAllOmpRpcSessions();
     shutdownPtyHost();
     await closeAllDesignWritebacks();
     stopRemoteBridge();

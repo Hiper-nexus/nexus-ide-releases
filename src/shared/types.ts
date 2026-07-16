@@ -102,6 +102,7 @@ import type {
   MediaUsageTotals,
 } from './media-types';
 import type { NotesApi } from './note-types';
+import type { OmpRpcApi } from './omp-rpc-types';
 import type { PipeApi } from './pipe-types';
 import type { VisionApi } from './vision-ipc';
 import type {
@@ -698,6 +699,14 @@ export interface NexusApi {
    * switch remains authoritative.
    */
   product: ProductApi;
+  /**
+   * Descoberta read-only de configs de ecossistemas de agente do workspace
+   * (MCP servers, context/rule files, skills, slash commands). Segredos em
+   * env/headers chegam mascarados. Canal: discovery:workspace-configs.
+   */
+  discovery: {
+    workspaceConfigs(): Promise<unknown>;
+  };
   /** GitHub / Linear / git SCM / SSH (see integrations-api.ts). */
   integrations: IntegrationsApi;
   accounts: {
@@ -787,6 +796,8 @@ export interface NexusApi {
     usageTotals(): Promise<MediaUsageTotals>;
   };
   notes: NotesApi;
+  /** Sessões oh-my-pi via RPC nativo (omp --mode rpc-ui, sem PTY). */
+  ompRpc: OmpRpcApi;
   pipes: PipeApi;
   /** Fase 5 — Jarvis Vision: screen capture + AX tree + OCR */
   vision: VisionApi;
