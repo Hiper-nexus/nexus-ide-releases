@@ -314,9 +314,9 @@ export function WorkspaceBar({
   if (onOpenIntegrations) {
     secondaryTools.push({
       id: 'apps',
-      label: 'Apps',
-      icon: 'config',
-      title: 'GitHub, Linear e port forward',
+      label: 'GitHub e integrações',
+      icon: 'bolt',
+      title: 'GitHub (PRs, issues), Linear e port forward — também no ⌘K',
       onClick: onOpenIntegrations,
     });
   }

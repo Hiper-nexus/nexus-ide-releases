@@ -10,6 +10,9 @@ import {
 import { orchWriteSession } from '../pty/pty-manager';
 import { listAdapterInfos } from '../adapters/adapter-registry';
 import { findAgentInSquad } from './squad-store';
+import { adHocSpawnGateError } from './route-provenance';
+import { loadModelCatalog, modelCatalogInfo } from '../adapters/model-catalog';
+import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import {
   authorizePaneRef,
   authorizedSessionIdOf,
@@ -30,6 +33,19 @@ import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-regi
 import { getProjectDomainStores } from './project-domain-store-registry';
 
 /** The 11 pane tools of the embedded MCP server (tool group 1). */
+
+// Default de model por adapter para o gate de proveniência: registry vivo
+// primeiro (respeita override do usuário), defs builtin como fallback (o
+// registry só é populado no boot do main — nunca em unit test).
+function defaultModelForAdapter(adapterId: string): string | undefined {
+  const live = listAdapterInfos().find((adapter) => adapter.id === adapterId);
+  if (live?.models.default) return live.models.default;
+  for (const raw of BUILTIN_ADAPTERS) {
+    const def = raw as { id?: string; models?: { default?: string } };
+    if (def.id === adapterId) return def.models?.default;
+  }
+  return undefined;
+}
 
 const SAME_CHECKOUT_ACTIVE_STATES = new Set<PaneSnapshot['state']>([
   'spawning',
@@ -227,9 +243,22 @@ const paneSpawn: McpToolDef = {
         scope: ctx.scope,
       };
     } else {
+      const adHocAdapterId = requireStr(args, 'adapterId');
+      const adHocModel = str(args, 'model');
+      // Spawn ad-hoc (sem agentName): modelo com warning de catálogo (ex.:
+      // grok-4.5) só entra se veio de uma decisão real do nexus_route_task.
+      // Omitir o model NÃO contorna o gate: sem model explícito, o que roda é
+      // o default do adapter — é ele que precisa passar na checagem.
+      const gateModel = adHocModel ?? defaultModelForAdapter(adHocAdapterId);
+      const gateError = adHocSpawnGateError(
+        adHocAdapterId,
+        gateModel,
+        modelCatalogInfo(loadModelCatalog(), adHocAdapterId, gateModel),
+      );
+      if (gateError) throw new Error(gateError);
       options = {
-        adapterId: requireStr(args, 'adapterId'),
-        model: str(args, 'model'),
+        adapterId: adHocAdapterId,
+        model: adHocModel,
         effort: str(args, 'effort'),
         cwd: str(args, 'cwd'),
         title: str(args, 'title'),

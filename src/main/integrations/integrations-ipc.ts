@@ -28,15 +28,19 @@ import { listLinearIssues } from './linear-api';
 import {
   gitCommitMessage,
   gitCurrentBranch,
+  gitDefaultBranch,
   gitDiff,
   gitFileDiff,
   gitLogOneline,
+  gitPushCurrentBranch,
   gitRemoteOrigin,
   gitScmStatus,
   gitStage,
   gitUnstage,
   parseGithubRepo,
 } from './git-workspace';
+import { orchestratePrCreation } from './pr-orchestration';
+import { selectForge } from '../source-control/forge-registry';
 import {
   getGithubToken,
   getLinearKey,
@@ -166,18 +170,37 @@ export function registerIntegrationsIpc(): void {
     if (!token) return { ok: false, error: 'GitHub token missing — set in Integrations' };
     try {
       const cwd = workspaceCwd(event);
-      const repo = parseGithubRepo(gitRemoteOrigin(cwd));
-      if (!repo) return { ok: false, error: 'origin is not a GitHub remote' };
-      const branch = parsed.data.sourceBranch ?? gitCurrentBranch(cwd);
-      if (!branch) return { ok: false, error: 'cannot resolve current branch' };
-      const target = parsed.data.targetBranch ?? 'main';
-      return createGithubPr(token, repo.owner, repo.name, {
-        title: parsed.data.title,
-        body: parsed.data.body ?? '',
-        sourceBranch: branch,
-        targetBranch: target,
-        draft: parsed.data.draft,
-      });
+      // Seleção de forge por remote (github/gitlab/bitbucket) — mensagem clara
+      // por provider em vez do genérico "não é GitHub".
+      const forge = selectForge(gitRemoteOrigin(cwd));
+      if (!forge) {
+        return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
+      }
+      if (forge.providerId !== 'github') {
+        return {
+          ok: false,
+          error: `origin é ${forge.host} (${forge.providerId}); criação de PR só suporta GitHub por enquanto`,
+        };
+      }
+      const repo = { owner: forge.owner, name: forge.name };
+      // Regras de PR (no-self-target + push-antes-de-criar) vivem na função
+      // pura orchestratePrCreation, testada em pr-orchestration.test.ts.
+      return orchestratePrCreation(
+        { sourceBranch: parsed.data.sourceBranch, targetBranch: parsed.data.targetBranch },
+        {
+          currentBranch: () => gitCurrentBranch(cwd),
+          defaultBranch: () => gitDefaultBranch(cwd),
+          push: (branch) => gitPushCurrentBranch(cwd, branch),
+          createPr: ({ sourceBranch, targetBranch }) =>
+            createGithubPr(token, repo.owner, repo.name, {
+              title: parsed.data.title,
+              body: parsed.data.body ?? '',
+              sourceBranch,
+              targetBranch,
+              draft: parsed.data.draft,
+            }),
+        },
+      );
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

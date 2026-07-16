@@ -32,6 +32,10 @@ import {
   receiveRemoteTerminalFrame,
 } from './remote-terminal-streams';
 import { TerminalStreamOpcode } from '../../shared/terminal-stream-protocol';
+import {
+  authorizeMobileRpc,
+  mobileRpcKindForBridgeType,
+} from './mobile-companion-policy';
 
 interface TlsRecord {
   key: string;
@@ -425,6 +429,21 @@ async function handleAuthedMessage(
   msg: ReturnType<typeof command>,
   scope: ProjectExecutionScope,
 ) {
+  // Defesa em profundidade do companion mobile: RPCs modelados pela política
+  // passam pelo gate (destrutivos exigem confirmação do device; mission.complete
+  // é sempre negado do mobile). Frames de controle não-modelados (resize/close)
+  // seguem com a sua autorização por-pane existente.
+  const rpcKind = mobileRpcKindForBridgeType(msg.type);
+  if (rpcKind) {
+    const decision = authorizeMobileRpc({
+      kind: rpcKind,
+      deviceActive: true, // a mensagem já passou pela autenticação da bridge
+      deviceConfirmed: msg.confirm === true,
+    });
+    if (!decision.allowed) {
+      throw new Error(`not authorized: ${decision.reason}`);
+    }
+  }
   switch (msg.type) {
     case 'panes.list':
       return listVisiblePaneSnapshots(remoteCaller(scope));

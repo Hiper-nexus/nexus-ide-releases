@@ -28,6 +28,7 @@ import { askConfirm } from '../state/confirm-store';
 import { confirmAndBlockMission } from '../orch/block-mission';
 import { AgentDropZone } from './AgentDropZone';
 import type { ExternalIssue } from '../../shared/integrations-types';
+import { INTEGRATIONS_CHANGED_EVENT } from '../lib/integrations-events';
 import { useMissionWizardStore as useWizard } from '../state/mission-wizard-store';
 import {
   summarizeMissionBudget,
@@ -85,6 +86,15 @@ export function MissionRail() {
     setNote(null);
   }, [workspacePath]);
 
+  const [issuesRefreshKey, setIssuesRefreshKey] = useState(0);
+  // Reage a mudança de credencial (salvar token no painel de integrações):
+  // sem isto, a seção Issues só populava ao trocar de workspace e ficava stale.
+  useEffect(() => {
+    const onChanged = () => setIssuesRefreshKey((k) => k + 1);
+    window.addEventListener(INTEGRATIONS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(INTEGRATIONS_CHANGED_EVENT, onChanged);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -106,7 +116,7 @@ export function MissionRail() {
     return () => {
       cancelled = true;
     };
-  }, [workspace?.path]);
+  }, [workspace?.path, issuesRefreshKey]);
 
   // Layout no dep: livePaneIds filtra panes mortos do tree — sem isso, o
   // useMemo ficava stale e missão com terminal vivo sumia do “Em progresso”.

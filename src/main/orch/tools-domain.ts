@@ -3,7 +3,10 @@ import type { McpToolDef } from './mcp-protocol';
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
+import { recordRouteDecision } from './route-provenance';
+import { recordRouteLog, recentRouteLog } from './route-log';
 import { missionStatusSchema } from '../../shared/orch-types';
+import { buildClarify } from '../../shared/clarify';
 import { findAgent, listAgents, saveSquad } from './squad-store';
 import { DEFAULT_TODO_LIST } from './todo-store';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -808,6 +811,68 @@ const todoManagerTool: McpToolDef = {
 
 const TIERS: TaskTier[] = ['trivial', 'easy', 'medium', 'hard', 'critical'];
 
+const clarifyTool: McpToolDef = {
+  name: 'nexus_clarify',
+  description:
+    'Ask the user ONE clarifying question with 2-6 suggestion chips instead ' +
+    'of a vague free-text prompt. Returns {question, chips:[{id,label}], ' +
+    'allowFreeform} — present the chips to the user; when they reply, route ' +
+    'their answer with the chip id/label/number. Use before spawning work ' +
+    'when a decision is genuinely ambiguous — not for confirmations.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      question: { type: 'string', description: 'The single question to ask' },
+      options: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '2-6 suggested answers, shown as clickable chips',
+      },
+      allowFreeform: {
+        type: 'boolean',
+        description: 'Whether a typed answer outside the chips is accepted (default true)',
+      },
+    },
+    required: ['question', 'options'],
+  },
+  handler: async (args) => {
+    const question = requireStr(args, 'question');
+    const options = strArray(args, 'options');
+    const allowFreeformRaw = args.allowFreeform;
+    return buildClarify({
+      question,
+      options,
+      allowFreeform:
+        typeof allowFreeformRaw === 'boolean' ? allowFreeformRaw : undefined,
+    });
+  },
+};
+
+const routeLogTool: McpToolDef = {
+  name: 'nexus_route_log',
+  description:
+    'Inspect the recent nexus_route_task decisions with their reason — so ' +
+    'the adapter/model choice is auditable instead of invisible. Returns the ' +
+    'most-recent-first list of {seq, tier, adapterId, model, effort, reason, ' +
+    'taskPreview}. Read-only; useful to explain why a provider was (not) used.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      limit: {
+        type: 'number',
+        description: 'Max entries to return (default 20)',
+      },
+    },
+  },
+  handler: async (args) => {
+    const limitRaw = args.limit;
+    const limit = typeof limitRaw === 'number' && Number.isFinite(limitRaw)
+      ? Math.max(1, Math.min(50, Math.floor(limitRaw)))
+      : 20;
+    return { decisions: recentRouteLog(limit) };
+  },
+};
+
 const routeTaskTool: McpToolDef = {
   name: 'nexus_route_task',
   description:
@@ -848,19 +913,37 @@ const routeTaskTool: McpToolDef = {
     // Failover de rate limit: o orquestrador re-roteia excluindo a CLI que
     // acabou de estourar cota/quebrar, em vez de insistir nela.
     const excluded = new Set(strArray(args, 'exclude'));
-    const adapters = listProviderSettings().map((a) => ({
-      id: a.adapterId,
-      installed:
-        !excluded.has(a.adapterId) &&
-        a.enabled &&
-        a.installed &&
-        a.authStrategy !== 'login-needed',
-      models: a.models,
-    }));
+    const adapters = listProviderSettings()
+      // 'shell' não é um provider roteável (sem modelos avaliados); incluí-lo
+      // mantinha o gate de cobertura do task-router sempre falso, matando a
+      // avaliação por dimensão. Alinha com o filtro id!=='shell' do architect.
+      .filter((a) => a.adapterId !== 'shell')
+      .map((a) => ({
+        id: a.adapterId,
+        installed:
+          !excluded.has(a.adapterId) &&
+          a.enabled &&
+          a.installed &&
+          a.authStrategy !== 'login-needed',
+        models: a.models,
+      }));
     // reserveClaude=true: workers nunca no binário claude OAuth — evita
     // corromper o keychain compartilhado com o orquestrador.
     const decision = routeTask(task, adapters, undefined, tier, true);
     if (!decision) throw new Error('no installed adapters to route to');
+    // Proveniência: o spawn ad-hoc de modelos com warning de catálogo exige
+    // uma decisão recente do router (ver adHocSpawnGateError em tools-panes).
+    recordRouteDecision({ adapterId: decision.adapterId, model: decision.model });
+    // Observabilidade ("ver para crer"): registra a decisão + motivo para
+    // inspeção, já que o reason antes só existia no retorno consumido pelo LLM.
+    recordRouteLog({
+      task,
+      tier: decision.tier,
+      adapterId: decision.adapterId,
+      model: decision.model,
+      effort: decision.effort,
+      reason: decision.reason,
+    });
     return decision;
   },
 };
@@ -956,6 +1039,8 @@ const cronTool: McpToolDef = {
 export function buildDomainTools(): McpToolDef[] {
   return [
     routeTaskTool,
+    routeLogTool,
+    clarifyTool,
     ...buildHandoffTools(),
     agentInvokeTool,
     agentListTool,

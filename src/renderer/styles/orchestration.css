@@ -184,6 +184,90 @@
   gap: 6px;
 }
 
+.orch-item__actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Squad editor */
+.squad-editor {
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid var(--border, oklch(30% 0.01 250));
+  border-radius: 10px;
+  background: var(--surface-raised, oklch(20% 0.01 250));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.squad-editor__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.squad-editor__hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.squad-editor__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.squad-editor__input,
+.squad-editor__textarea {
+  background: var(--surface, oklch(16% 0.01 250));
+  border: 1px solid var(--border, oklch(30% 0.01 250));
+  border-radius: 6px;
+  color: var(--text, oklch(92% 0 0));
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.squad-editor__textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.squad-editor__roster {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.squad-editor__roster-label {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.squad-editor__agent {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr 1.4fr;
+  gap: 6px;
+}
+
+.squad-editor__error {
+  font-size: 11px;
+  color: var(--state-error, oklch(64% 0.2 25));
+  margin: 0;
+}
+
+.squad-editor__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .orch-item__title {
   font-size: 12px;
   font-weight: 600;

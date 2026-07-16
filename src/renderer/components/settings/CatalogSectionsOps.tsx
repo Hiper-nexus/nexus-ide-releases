@@ -9,6 +9,7 @@ import { useOrchStore } from '../../state/orch-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { useLayoutStore } from '../../state/layout-store';
 import { askConfirm } from '../../state/confirm-store';
+import { QrCode } from '../QrCode';
 import { waitForSession } from '../../terminal/terminal-host';
 
 /**
@@ -324,8 +325,18 @@ export function RemoteSection() {
           onClick={async () => {
             setInfo(await window.nexus.remote.bridgeStart());
           }}
+          title="Só este computador (127.0.0.1)"
         >
-          Iniciar
+          Iniciar (local)
+        </button>
+        <button
+          className="settings-btn settings-btn--primary"
+          onClick={async () => {
+            setInfo(await window.nexus.remote.bridgeStart({ host: '0.0.0.0' }));
+          }}
+          title="Expõe na rede local para o celular conectar — só faça em redes de confiança"
+        >
+          Iniciar (LAN — celular)
         </button>
         <button
           className="settings-btn"
@@ -357,15 +368,28 @@ export function RemoteSection() {
             <p className="settings-list__detail">
               {info.urls.join(' · ') || 'sem URL ativa'}
             </p>
-            {info.urls.length > 0 && (
-              <p className="settings-list__detail">
-                📱 abra no celular:{' '}
-                {info.urls
-                  .filter((u) => !u.includes('127.0.0.1'))
-                  .map((u) => u.replace('wss://', 'https://'))
-                  .join(' · ') || 'só localhost — conecte na mesma rede'}
-              </p>
-            )}
+            {info.urls.length > 0 && (() => {
+              const lanUrl = info.urls
+                .filter((u) => !u.includes('127.0.0.1'))
+                .map((u) => u.replace('wss://', 'https://'))[0];
+              return (
+                <>
+                  <p className="settings-list__detail">
+                    📱 abra no celular:{' '}
+                    {lanUrl ?? 'só localhost — inicie em LAN e conecte na mesma rede'}
+                  </p>
+                  {lanUrl && (
+                    <div className="settings-qr">
+                      <QrCode
+                        value={`${lanUrl}#code=${info.pairingCode ?? ''}`}
+                        size={180}
+                        label="QR code para parear o celular"
+                      />
+                    </div>
+                  )}
+                </>
+              );
+            })()}
             <p className="settings-list__detail">
               cert: {info.certFingerprint ?? '—'} · clients: {info.clientCount}
             </p>

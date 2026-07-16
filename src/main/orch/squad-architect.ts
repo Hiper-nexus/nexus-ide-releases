@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chatViaBrainChain } from '../voice/jarvis-brain';
 import { listAdapterInfos } from '../adapters/adapter-registry';
-import { saveSquad } from './squad-store';
+import { listSquads, saveSquad } from './squad-store';
+import { pickReusableSquad } from './squad-reuse';
 import {
   enrichedBlockForArchitect,
   loadEnrichedCatalog,
@@ -263,6 +264,23 @@ export async function designSquadFromIntent(
 ): Promise<ArchitectResult> {
   const clean = intent.trim();
   if (!clean) return { ok: false, error: 'descreva o objetivo da missão' };
+  // O roster que o usuário salvou vem ANTES de qualquer síntese: um squad de
+  // usuário com todos os clis instalados assume a missão como está (o wizard
+  // deixa revisar na tela seguinte). Só sem candidato é que o fallback
+  // determinístico monta um time novo.
+  const installed = new Set(
+    listAdapterInfos()
+      .filter((adapter) => adapter.installed && adapter.id !== 'shell')
+      .map((adapter) => adapter.id),
+  );
+  const saved = pickReusableSquad(listSquads(), installed);
+  if (saved) {
+    return {
+      ok: true,
+      squad: saved,
+      warning: `Reusando o squad salvo "${saved.name}" — edite o roster na próxima tela se quiser outro time.`,
+    };
+  }
   // Interactive UX must not wait for a remote model/Doctor. The deterministic
   // router already uses live installed adapters and mission capabilities; the
   // user can review/edit the roster on the next screen immediately.

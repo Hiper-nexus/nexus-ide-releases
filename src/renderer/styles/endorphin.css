@@ -311,6 +311,15 @@
   background: color-mix(in srgb, var(--bg-elevated) 92%, var(--danger));
 }
 
+/* Novos picos de dopamina: lançamento, milestone e handoff usam o acento
+   "vivo" (operacional), distinto do verde de conclusão. */
+.mission-fx--launched,
+.mission-fx--milestone,
+.mission-fx--handoff {
+  border-color: color-mix(in srgb, var(--live) 45%, var(--border-strong));
+  background: color-mix(in srgb, var(--bg-elevated) 90%, var(--live));
+}
+
 .mission-fx__kicker {
   display: block;
   font-family: var(--font-pixel);

@@ -40,6 +40,7 @@ import { useWorkspaceController, useWorkspaceStore } from './state/workspace-sto
 import { useProviderController } from './state/provider-store';
 import { useMissionWizardStore } from './state/mission-wizard-store';
 import { useHomeStore } from './state/home-store';
+import { useIntegrationsStore } from './state/integrations-store';
 import { reconcileHosts } from './terminal/terminal-host';
 import {
   gateRestoredAgents,
@@ -116,8 +117,11 @@ export function App() {
   const closeWorkspaceOpen = useCloseWorkspaceStore((s) => s.open);
   const voiceSettingsOpen = useVoiceStore((s) => s.settingsOpen);
   const opsBoardOpen = useOrchStore((s) => s.boardOpen);
+  // Remonta o FX de endorfina por workspace — reseta as baselines de missão/
+  // handoff no switch, senão o backlog do novo workspace seria "celebrado".
+  const endorphinWorkspaceKey = useOrchStore((s) => s.boundWorkspacePath ?? '∅');
   const [diffOpen, setDiffOpen] = useState(false);
-  const [integrationsOpen, setIntegrationsOpen] = useState(false);
+  const integrationsOpen = useIntegrationsStore((s) => s.open);
   const onboardingVisible = useOnboardingStore(
     (s) => s.loaded && !s.state.completed && !s.state.skipped,
   );
@@ -422,7 +426,7 @@ export function App() {
     <div className="app">
       <WorkspaceBar
         onOpenDiff={() => setDiffOpen(true)}
-        onOpenIntegrations={() => setIntegrationsOpen(true)}
+        onOpenIntegrations={() => useIntegrationsStore.getState().show()}
       />
       <ModeLauncher activeId={launcherMode} onSelect={onModeSelect} />
       {/*
@@ -456,7 +460,7 @@ export function App() {
       <DiffAnnotatePanel open={diffOpen} onClose={() => setDiffOpen(false)} />
       <IntegrationsPanel
         open={integrationsOpen}
-        onClose={() => setIntegrationsOpen(false)}
+        onClose={() => useIntegrationsStore.getState().hide()}
       />
       {!suppressBrowserPanes && <VoiceHud />}
       <VoiceSettings />
@@ -464,7 +468,7 @@ export function App() {
       <MissionWizard />
       <OperatorProfile />
       <OperatorFx />
-      <MissionEndorphinFx />
+      <MissionEndorphinFx key={endorphinWorkspaceKey} />
       <CloseWorkspaceDialog />
       <Onboarding />
       <CommandPalette />

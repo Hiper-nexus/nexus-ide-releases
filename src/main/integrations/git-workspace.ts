@@ -82,6 +82,46 @@ export function gitRemoteOrigin(cwd: string): string | null {
   return r.stdout.trim() || null;
 }
 
+/**
+ * The repo's real default branch, so "create PR" never hardcodes 'main'.
+ * Prefers the cached origin/HEAD symbolic ref (no network); falls back to
+ * 'main' when the remote head is unknown (fresh clone / no remote).
+ */
+export function gitDefaultBranch(cwd: string): string {
+  const symbolic = git(cwd, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
+  if (symbolic.ok) {
+    const ref = symbolic.stdout.trim().replace(/^origin\//, '');
+    if (ref) return ref;
+  }
+  return 'main';
+}
+
+/**
+ * Push the current branch to origin with upstream tracking. Required before a
+ * PR: GitHub 422s when the head branch was never pushed. Returns a structured
+ * result so the UI can surface the real git error instead of a cryptic HTTP.
+ */
+// git branch names that are safe as a push TARGET: no refspec metacharacters.
+// A pathspec validator is not enough here — ':' would let 'a:refs/heads/b'
+// become a refspec pushing a local ref to an arbitrary remote branch, and a
+// leading '+' would force-push. Restrict to the plain ref-name charset.
+const SAFE_BRANCH_NAME = /^[A-Za-z0-9._/-]+$/;
+
+export function gitPushCurrentBranch(cwd: string, branch: string): GitMutateResult {
+  const unsafe = refuseUnsafeConfig(cwd);
+  if (unsafe) return { ok: false, error: unsafe };
+  const name = branch.trim();
+  if (!name || name === 'HEAD') return { ok: false, error: 'no branch to push' };
+  if (!SAFE_BRANCH_NAME.test(name) || name.startsWith('-') || name.includes('..')) {
+    return { ok: false, error: `nome de branch inválido para push: ${name}` };
+  }
+  const r = git(cwd, ['push', '--set-upstream', 'origin', name]);
+  if (!r.ok) {
+    return { ok: false, error: r.stderr.trim() || r.stdout.trim() || `git push exit ${r.code}` };
+  }
+  return { ok: true };
+}
+
 export function gitDiff(cwd: string, staged = false): { ok: true; diff: string } | { ok: false; error: string } {
   const unsafe = refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, error: unsafe };

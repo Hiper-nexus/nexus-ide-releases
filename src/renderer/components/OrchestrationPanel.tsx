@@ -11,6 +11,7 @@ import { askConfirm } from '../state/confirm-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { EmptyState, ActionCard } from './ActionCard';
+import { SquadEditor } from './SquadEditor';
 import { EndorphinPresence } from './EndorphinPresence';
 import {
   orchHandoffsEmptyBeat,
@@ -193,9 +194,11 @@ function TodoListBlock({ list }: { list: TodoList }) {
 function SquadRow({
   squad,
   onDelete,
+  onEdit,
 }: {
   squad: Squad;
   onDelete: (id: string) => void;
+  onEdit: (squad: Squad) => void;
 }) {
   const root = useLayoutStore((s) => s.root);
   const paneStates = useSessionStateStore((s) => s.paneStates);
@@ -205,13 +208,28 @@ function SquadRow({
     <li className="orch-item">
       <div className="orch-item__head">
         <span className="orch-item__title">{squad.name}</span>
-        <button
-          className="orch-panel__btn orch-panel__btn--danger"
-          onClick={() => onDelete(squad.id)}
-          title="Remover este squad"
-        >
-          Remover
-        </button>
+        <div className="orch-item__actions">
+          <button
+            className="orch-panel__btn"
+            onClick={() => onEdit(squad)}
+            title={
+              squad.builtin
+                ? 'Duplicar este squad interno para personalizar'
+                : 'Editar nome, roster e modelos'
+            }
+          >
+            {squad.builtin ? 'Personalizar' : 'Editar'}
+          </button>
+          {!squad.builtin && (
+            <button
+              className="orch-panel__btn orch-panel__btn--danger"
+              onClick={() => onDelete(squad.id)}
+              title="Remover este squad"
+            >
+              Remover
+            </button>
+          )}
+        </div>
       </div>
       <ul className="orch-agent-roster" aria-label={`${squad.agents.length} agentes`}>
         {squad.agents.map((agent) => {
@@ -256,6 +274,7 @@ export function OrchestrationPanel() {
   const tab = useOrchStore((s) => s.panelTab);
   const setTab = useOrchStore((s) => s.setPanelTab);
   const [notice, setNotice] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Squad | null>(null);
 
   if (!panelOpen) return null;
 
@@ -493,9 +512,22 @@ export function OrchestrationPanel() {
             ) : (
               <ul className="orch-list">
                 {squads.map((s) => (
-                  <SquadRow key={s.id} squad={s} onDelete={onDeleteSquad} />
+                  <SquadRow
+                    key={s.id}
+                    squad={s}
+                    onDelete={onDeleteSquad}
+                    onEdit={setEditing}
+                  />
                 ))}
               </ul>
+            )}
+            {editing && (
+              <SquadEditor
+                key={editing.id}
+                squad={editing}
+                onClose={() => setEditing(null)}
+                onSaved={(message) => setNotice(message)}
+              />
             )}
           </>
         )}
