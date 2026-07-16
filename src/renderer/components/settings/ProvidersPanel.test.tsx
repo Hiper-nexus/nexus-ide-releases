@@ -22,6 +22,7 @@ function provider(
     kind: 'cli-pty',
     enabled: true,
     installed: true,
+    canAutoInstall: false,
     binPath: '',
     detectedBin: adapterId,
     defaultModel: `${adapterId}-default`,

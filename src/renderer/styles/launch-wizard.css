@@ -563,6 +563,18 @@
   line-height: 1.4;
 }
 
+.prov-detail__install {
+  margin-top: 8px;
+  padding: 4px 12px;
+  font-size: 11.5px;
+}
+
+.prov-detail__install-error {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--danger);
+}
+
 .prov-advanced {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

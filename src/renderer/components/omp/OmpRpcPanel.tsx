@@ -367,7 +367,25 @@ export function OmpRpcPanel() {
         )}
       </div>
 
-      {startError ? <div className="omp-panel__error">{startError}</div> : null}
+      {startError ? (
+        <div className="omp-panel__error">
+          {startError}
+          {/não encontrado no PATH/i.test(startError) && (
+            <button
+              type="button"
+              className="settings-btn settings-btn--primary omp-panel__install"
+              onClick={() => {
+                void window.nexus.providers.installCli('omp').then((r) => {
+                  if (r.ok) void start();
+                });
+              }}
+              title="Instala o omp pela fonte oficial (confirmação nativa mostra o comando exato)"
+            >
+              Instalar omp automaticamente
+            </button>
+          )}
+        </div>
+      ) : null}
 
       <div className="omp-panel__body" ref={bodyRef}>
         {transcript.length === 0 ? (

@@ -19,6 +19,7 @@ function provider(
     icon: '◆',
     enabled: true,
     installed: true,
+    canAutoInstall: false,
     binPath: '',
     detectedBin: partial.adapterId,
     defaultModel: `${partial.adapterId}-default`,
@@ -50,6 +51,7 @@ describe('providers-panel-view', () => {
     label: 'Claude',
     kind: 'cli-pty',
     installed: true,
+    canAutoInstall: false,
     models: ['a', 'b', 'c'],
     authStrategy: 'subscription',
   });
@@ -58,6 +60,7 @@ describe('providers-panel-view', () => {
     label: 'Shell',
     kind: 'cli-pty',
     installed: true,
+    canAutoInstall: false,
     authStrategy: 'api-key',
     authMethod: 'cli',
   });
@@ -73,6 +76,7 @@ describe('providers-panel-view', () => {
     label: 'GLM',
     kind: 'api-provider',
     installed: true,
+    canAutoInstall: false,
   });
 
   it('counts only installed local CLIs', () => {

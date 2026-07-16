@@ -30,6 +30,7 @@ function provider(overrides: Partial<ProviderSettingsInfo> = {}): ProviderSettin
     kind: 'cli-pty',
     enabled: true,
     installed: true,
+    canAutoInstall: false,
     binPath: '',
     detectedBin: 'codex',
     defaultModel: 'default',
