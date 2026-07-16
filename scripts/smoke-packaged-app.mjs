@@ -90,6 +90,39 @@ function assertSupportedTarget(platform, arch) {
   }
 }
 
+const DARWIN_ARCH_ALIASES = new Map([
+  ['arm64', 'arm64'],
+  ['x86_64', 'x64'],
+]);
+
+/**
+ * A cross-built app must be validated against ITS architecture, not the
+ * host's: packaging prunes foreign-arch native payloads, so probing a
+ * darwin/x64 bundle for the arm64 host's artifacts demands files that are
+ * correctly absent. Read the arch from the Mach-O binary; a universal binary
+ * keeps the fallback so the smoke launch stays native.
+ */
+export function detectPackagedTargetArch(
+  binaryPath,
+  {
+    platform = process.platform,
+    fallbackArch = process.arch,
+    runLipo = (target) =>
+      spawnSync('/usr/bin/lipo', ['-archs', target], { encoding: 'utf8' }),
+  } = {},
+) {
+  if (platform !== 'darwin') return fallbackArch;
+  const result = runLipo(binaryPath);
+  if (result.status !== 0 || !result.stdout) return fallbackArch;
+  const archs = result.stdout
+    .trim()
+    .split(/\s+/u)
+    .map((name) => DARWIN_ARCH_ALIASES.get(name))
+    .filter((name) => name && SUPPORTED_ARCHES.has(name));
+  if (archs.length === 0) return fallbackArch;
+  return archs.includes(fallbackArch) ? fallbackArch : archs[0];
+}
+
 /**
  * Resolve a CLI/default target into binary + resource roots for the platform.
  * Accepts the forge package directory, the .app bundle, or the main executable.
@@ -779,8 +812,19 @@ async function main() {
   }
 
   const explicit = resolveAppArgument(process.argv.slice(2));
-  const targetPath = explicit ?? defaultPackagedTargetPath({ platform, arch });
-  await runPackagedSmoke(targetPath, { platform, arch });
+  if (explicit) {
+    const probe = resolvePackagedTarget(explicit, { platform, arch });
+    const targetArch = detectPackagedTargetArch(probe.binary, {
+      platform,
+      fallbackArch: arch,
+    });
+    await runPackagedSmoke(explicit, { platform, arch: targetArch });
+    return;
+  }
+  await runPackagedSmoke(defaultPackagedTargetPath({ platform, arch }), {
+    platform,
+    arch,
+  });
 }
 
 const isDirectRun = process.argv[1]
