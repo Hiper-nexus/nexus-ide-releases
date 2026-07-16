@@ -13,7 +13,10 @@ const CONTEXT_REMEDIATION: Readonly<Record<string, string>> = Object.freeze({
   'missing-technical-context':
     'Documente architecture.md e testing.md em .context/docs/.',
   'missing-structured-invariants':
-    'Adicione invariantes estruturadas com proveniência em .context/nexus/invariants/.',
+    'Proponha um draft para .context/nexus/invariants/<slug>.json ' +
+    '({"schemaVersion":1,"facts":[…]}, kind "observed", category "invariant") ' +
+    'derivado de fontes REAIS (schema, testes, configs) e aprove via revisão ' +
+    'independente — evidência observada, nunca regra de negócio inventada.',
   'missing-policy':
     'Crie .context/config/policy.json (scaffold via ensureContextScaffold) e versionar no Git.',
   'invalid-policy':

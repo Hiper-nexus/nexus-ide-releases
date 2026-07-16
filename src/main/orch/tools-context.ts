@@ -131,10 +131,13 @@ const findingSchema = z
   })
   .strict();
 const contentHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
+// sourceHash opcional: agentes hospedados não têm tool de hash — o Nexus
+// computa o sha256 do arquivo no propose e re-verifica em review/apply.
+// Hash fornecido é afirmação de conteúdo exato (divergência rejeita).
 const contextSourceSchema = z.object({
   type: z.enum(['file', 'git', 'test', 'schema', 'connector', 'decision']),
   locator: z.string().trim().min(1).max(4_096),
-  sourceHash: contentHashSchema,
+  sourceHash: contentHashSchema.optional(),
 }).strict();
 
 function missionIdentity(ctx: AgentGateContext) {
@@ -436,24 +439,46 @@ const scaffoldTool: McpToolDef = {
 const contextDraftProposeTool: McpToolDef = {
   name: 'nexus_context_draft_propose',
   description:
-    'Propose a source-bound business/technical context document or structured fact. This records a draft only; it cannot write authority before independent review.',
+    'Propose a source-bound business/technical context document or structured fact. This records a draft only; it cannot write authority before independent review. Nexus computes sourceHash/expectedTargetHash from the workspace when omitted — you never need a hashing tool.',
   inputSchema: {
     type: 'object',
     properties: {
       missionId: { type: 'string' },
       targetPath: { type: 'string' },
       content: { type: 'string' },
-      expectedTargetHash: { type: ['string', 'null'] },
-      sources: { type: 'array', items: { type: 'object' } },
+      expectedTargetHash: {
+        type: ['string', 'null'],
+        description:
+          'Optional CAS: omit to bind to the current target state (Nexus observes it); null asserts the target must not exist; a sha256 asserts the exact expected state.',
+      },
+      sources: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            type: {
+              type: 'string',
+              enum: ['file', 'git', 'test', 'schema', 'connector', 'decision'],
+            },
+            locator: { type: 'string' },
+            sourceHash: {
+              type: 'string',
+              description:
+                'Optional sha256 of the source file. Omit it — Nexus hashes the workspace file itself and re-verifies at review/apply.',
+            },
+          },
+          required: ['type', 'locator'],
+        },
+      },
     },
-    required: ['targetPath', 'content', 'expectedTargetHash', 'sources'],
+    required: ['targetPath', 'content', 'sources'],
   },
   handler: async (args, ctx) => {
     const input = z.object({
       missionId: identifier.optional(),
       targetPath: z.string().trim().min(1).max(4_096),
       content: z.string().min(1).max(1024 * 1024),
-      expectedTargetHash: contentHashSchema.nullable(),
+      expectedTargetHash: contentHashSchema.nullable().optional(),
       sources: z.array(contextSourceSchema).min(1).max(256),
     }).strict().parse(args);
     const missionId = input.missionId ?? ctx.missionId;
@@ -598,10 +623,31 @@ const contextDraftReviewRunTool: McpToolDef = {
     const draft = service.get(draftId);
     if (!draft) throw new Error('context draft not found');
     if (draft.missionId) assertMission(ctx, draft.missionId);
-    const reviewed = await new CliContextDraftReviewer().run({
-      scope: ctx.scope,
-      draftId,
-    });
+    let reviewed;
+    try {
+      reviewed = await new CliContextDraftReviewer().run({
+        scope: ctx.scope,
+        draftId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/timed out/i.test(message)) throw error;
+      // O pane revisor sobrevive ao poll inicial (semântica de recuperação de
+      // mission-pane) e persiste o veredito via nexus_context_draft_review
+      // quando terminar. Timeout aqui é revisão EM ANDAMENTO, não falha —
+      // reportar erro fazia o orquestrador desistir de um review saudável.
+      const current = service.get(draftId);
+      return Object.freeze({
+        reviewed: null,
+        applied: current?.status === 'approved' ? service.apply(draftId) : null,
+        pending: !current || current.status === 'proposed',
+        status: current?.status ?? 'proposed',
+        reason:
+          'Reviewer pane is still working past the initial poll window; it stays ' +
+          'alive and will persist its verdict. Poll nexus_context_draft_get and ' +
+          'call nexus_context_draft_apply once approved.',
+      });
+    }
     if (reviewed.status === 'approved') {
       return Object.freeze({ reviewed, applied: service.apply(draftId) });
     }

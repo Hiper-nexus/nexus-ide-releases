@@ -21,6 +21,22 @@ vi.mock('../context/context-bootstrap-autopilot', () => ({
   runContextBootstrapAutopilot: doctorMocks.run,
 }));
 
+const reviewerMocks = vi.hoisted(() => ({
+  run: vi.fn(),
+}));
+
+vi.mock('../context/cli-context-draft-reviewer', async () => {
+  const actual = await vi.importActual<
+    typeof import('../context/cli-context-draft-reviewer')
+  >('../context/cli-context-draft-reviewer');
+  return {
+    ...actual,
+    CliContextDraftReviewer: class {
+      run = reviewerMocks.run;
+    },
+  };
+});
+
 let baseDir = '';
 let root = '';
 let manager: ProjectRuntimeManager;
@@ -177,6 +193,70 @@ describe('native context knowledge MCP tools', () => {
     });
     expect(fs.readFileSync(path.join(root, '.context/docs/testing.md'), 'utf8'))
       .toContain('Run unit tests');
+  });
+
+  it('computes sourceHash and target binding server-side when omitted', async () => {
+    // Agentes hospedados não têm tool de hash — exigir sha256 deles era um
+    // beco sem saída (o orquestrador não conseguia propor contexto nenhum).
+    const source = '# Fonte real\nConteúdo verificável.\n';
+    fs.writeFileSync(path.join(root, 'README.md'), source);
+    const proposed = await tool('nexus_context_draft_propose').handler({
+      targetPath: '.context/docs/architecture.md',
+      content: '# Arquitetura\nDerivada do README.\n',
+      sources: [{ type: 'file', locator: 'README.md' }],
+    }, context('codex', 'author-session')) as {
+      id: string;
+      sources: readonly { sourceHash: string }[];
+    };
+
+    expect(proposed.sources[0].sourceHash).toBe(
+      createHash('sha256').update(source).digest('hex'),
+    );
+
+    await expect(tool('nexus_context_draft_review').handler({
+      draftId: proposed.id,
+      decision: 'approve',
+      rationale: 'Fontes re-verificadas pelo Nexus a partir do disco.',
+    }, context('claude', 'reviewer-session', 'worker'))).resolves.toMatchObject({
+      status: 'approved',
+    });
+  });
+
+  it('still rejects a source hash that does not match the workspace file', async () => {
+    fs.writeFileSync(path.join(root, 'README.md'), '# Fonte\n');
+    await expect(tool('nexus_context_draft_propose').handler({
+      targetPath: '.context/docs/testing.md',
+      content: '# Testing\n',
+      sources: [{
+        type: 'file',
+        locator: 'README.md',
+        sourceHash: 'f'.repeat(64),
+      }],
+    }, context('codex', 'author-session'))).rejects.toThrow(
+      /hash changed or is false/i,
+    );
+  });
+
+  it('reports an in-flight review as pending instead of failing on timeout', async () => {
+    const source = '# Fonte\n';
+    fs.writeFileSync(path.join(root, 'README.md'), source);
+    const proposed = await tool('nexus_context_draft_propose').handler({
+      targetPath: '.context/docs/testing.md',
+      content: '# Testing\n',
+      sources: [{ type: 'file', locator: 'README.md' }],
+    }, context('codex', 'author-session')) as { id: string };
+
+    reviewerMocks.run.mockRejectedValue(
+      new Error('context draft review timed out'),
+    );
+
+    await expect(tool('nexus_context_draft_review_run').handler({
+      draftId: proposed.id,
+    }, context('codex', 'orchestrator-session'))).resolves.toMatchObject({
+      pending: true,
+      status: 'proposed',
+      reason: expect.stringContaining('nexus_context_draft_get'),
+    });
   });
 
   it('never lets a worker materialize approved authority', async () => {
