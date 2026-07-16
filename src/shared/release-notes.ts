@@ -13,6 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.4',
+  date: '2026-07-16',
+  codename: 'Paridade Viva',
+  summary:
+    'O modo Design ganha emulação mobile de verdade (o site serve o layout de celular, não só a largura), a camada forge liga GitLab MR e o "PR desta branch" no painel, e o instalador 1-clique passa a cobrir agy, kimi e grok com canais oficiais verificados — 8 das 9 CLIs instalam pelo app.',
+  highlights: [
+    {
+      title: 'Modo mobile de verdade',
+      detail:
+        'O breakpoint 📱 emula um iPhone (user agent + métricas) com reload — menu hambúrguer e media queries reais. ⛶ restaura o navegador normal.',
+    },
+    {
+      title: 'Forge multi-provider',
+      detail:
+        'GitHub e GitLab criam PR/MR pelo mesmo caminho autorizado e auditado; o painel mostra o PR aberto da branch atual, clicável. Token GitLab via glab CLI ou NEXUS_GITLAB_TOKEN.',
+    },
+    {
+      title: 'Instalador cobre quase tudo',
+      detail:
+        'agy (instalador oficial do Google, baixado por HTTPS sem pipe), kimi (brew/npm oficiais) e grok (npm oficial xAI) entram no 1-clique com confirmação nativa.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Painéis não abrem mais atrás das Configurações',
+      detail:
+        'Ativar OMP RPC/Memória/Configs com o drawer aberto fecha o drawer primeiro — o clique deixa de parecer morto.',
+    },
+    {
+      title: 'OMP RPC explica a morte',
+      detail:
+        'Saída com código ≠0 mostra o motivo real (ex.: sem /login) e oferece abrir o omp no terminal para autenticar.',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.3',
   date: '2026-07-16',
   codename: 'Operacional para o Cliente',
@@ -50,54 +87,6 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Metadata de release consistente',
       detail:
         'Notas internas e versão do servidor acompanham o pacote — o invariante furado no bump anterior agora é coberto pela suíte.',
-    },
-  ],
-};
-
-
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.2',
-  date: '2026-07-16',
-  codename: 'Orquestração Destravada',
-  summary:
-    'Auditoria senior sobre o runtime real corrigiu a cadeia inteira que fazia toda missão morrer no bootstrap de contexto, o falso "não logado" nos panes do Claude, o bloqueio permanente do workspace no seletor de pasta — e entregou o restyle visual que estava preso fora do main (onboarding centrado com presença, chips no rail, GitHub na barra).',
-  highlights: [
-    {
-      title: 'Missões passam do bootstrap',
-      detail:
-        'O reviewer independente de contexto deixou de ser bloqueado pelo gate, o Nexus computa os hashes de fonte sozinho (agente não precisa de tool de hash) e review em andamento não é mais tratado como timeout. Drafts aprovam, contrato congela, workers trabalham.',
-    },
-    {
-      title: 'Panes do Claude sem /login fantasma',
-      detail:
-        'A identidade OAuth nativa agora viaja para o HOME efêmero dos panes gated (e login fresco feito dentro do pane é resgatado no teardown). GLM/LongCat continuam isolados da conta nativa.',
-    },
-    {
-      title: 'Workspace não trava mais no seletor',
-      detail:
-        'Pasta apagada e recriada no mesmo caminho não gera mais "checkout id collision" permanente — o registro se auto-cura para o mesmo path e segue fail-closed para paths diferentes.',
-    },
-    {
-      title: 'Visual novo de verdade',
-      detail:
-        'Onboarding Bridge-inspired centrado com a presença endorfinada, chips de meta no rail de missões, GitHub inline na barra do workspace, notificações sem nome cortado e gpt-5.6 nos tiers altos do roteador.',
-    },
-  ],
-  fixes: [
-    {
-      title: 'Review de contexto não morre mais em timeout',
-      detail:
-        'O pane revisor continua vivo após a janela de poll e a tool reporta "pendente" com instrução de acompanhamento em vez de falha.',
-    },
-    {
-      title: 'Invariantes estruturadas com caminho sancionado',
-      detail:
-        'O doctor agora ensina exatamente como propor uma invariante observada de fontes reais (.context/nexus/invariants) com revisão independente — o bloqueio deixou de ser beco sem saída.',
-    },
-    {
-      title: 'git_status em pasta que não é repositório',
-      detail:
-        'Raiz de workspace multi-projeto responde {isRepo:false} com orientação, em vez de "Git executable-config inspection failed".',
     },
   ],
 };

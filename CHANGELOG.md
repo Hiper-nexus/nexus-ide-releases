@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.19.4 — Paridade Viva
+
+Data: 2026-07-16
+
+### Modo Design
+
+- **Emulação mobile real**: o breakpoint 📱 ≤480px agora troca user agent e
+  métricas de tela (com reload) — o site serve o layout mobile de verdade
+  (menu hambúrguer, media queries), não só a largura estreitada. Voltar para
+  ▯/🖥/⛶ restaura o navegador normal.
+
+### Forge (GitHub/GitLab)
+
+- **GitLab MR ligado**: criar PR/MR usa a camada forge com autorização
+  explícita (escopo + expiração) e auditoria para GitHub E GitLab — token via
+  NEXUS_GITLAB_TOKEN ou sessão do glab CLI.
+- **"PR desta branch"**: o painel de integrações mostra o PR/MR aberto da
+  branch atual, clicável — read-side getReviewForBranch finalmente com UI.
+
+### Instalador de CLIs
+
+- **agy, kimi e grok** entram no 1-clique com canais oficiais verificados:
+  kimi via brew kimi-code / npm @moonshot-ai/kimi-code; grok via npm
+  @xai-official/grok; agy pelo instalador oficial de antigravity.google,
+  baixado por HTTPS e executado sem pipe de shell. 8 das 9 CLIs instalam
+  pelo app.
+
+### UX
+
+- **Ferramentas da barra fecham as Configurações**: painéis não abrem mais
+  atrás do drawer (parecia clique morto).
+- **OMP RPC diz por que morreu**: saída prematura mostra o motivo real
+  (ex.: falta de /login) e oferece "Abrir omp no terminal (/login)".
+
 ## 0.19.3 — Operacional para o Cliente
 
 Data: 2026-07-16
