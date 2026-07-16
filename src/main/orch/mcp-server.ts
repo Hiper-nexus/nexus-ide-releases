@@ -359,7 +359,11 @@ function installSpawnHook(): void {
 
     try {
       if (shouldUseEphemeralHome(adapter, gated)) {
-        const home = prepareEphemeralHome(ctx.token, mcpConfig);
+        // Só o Claude NATIVO carrega a identidade OAuth da assinatura para o
+        // overlay; GLM/LongCat (base URL de terceiro) jamais podem recebê-la.
+        const home = prepareEphemeralHome(ctx.token, mcpConfig, {
+          carryNativeClaudeAuth: !isThirdPartyClaudeFamily(adapter),
+        });
         env.HOME = home.dir;
         ephemeralHomeDir = home.dir;
         extraArgs.push('--mcp-config', home.mcpConfigPath);

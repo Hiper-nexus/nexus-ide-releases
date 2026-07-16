@@ -1,6 +1,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  CLAUDE_AUTH_IDENTITY_KEYS,
+  syncBackClaudeEphemeralAuth,
+} from './overlay-auth-syncback';
 
 /**
  * Client-side half of the dual skill-gate (docs/ARCHITECTURE.md §E.4).
@@ -63,6 +67,46 @@ export interface EphemeralHome {
   mcpConfigPath: string;
 }
 
+export interface EphemeralHomeOptions {
+  /**
+   * Projetar a identidade OAuth NATIVA no overlay (oauthAccount/userID do
+   * ~/.claude.json real + symlink de ~/.claude/.credentials.json). Só para o
+   * adapter Claude nativo: adapters third-party (GLM/LongCat) autenticam por
+   * token injetado contra ANTHROPIC_BASE_URL estrangeiro e nunca podem receber
+   * a identidade da assinatura — o binário poderia apresentá-la ao endpoint de
+   * terceiro. Default fail-closed: sem projeção.
+   */
+  readonly carryNativeClaudeAuth?: boolean;
+}
+
+/**
+ * Marcador gravado no overlay quando ele carregou a identidade NATIVA. O
+ * teardown só faz sync-back de auth para o perfil real na presença dele —
+ * um /login feito num pane GLM/LongCat jamais pode poluir o ~/.claude nativo.
+ */
+export const CLAUDE_AUTH_SYNCBACK_MARKER = 'nexus-claude-auth-syncback';
+
+function readNativeClaudeAuthIdentity(
+  realHome: string,
+): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(
+      fs.readFileSync(path.join(realHome, '.claude.json'), 'utf8'),
+    );
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+    const source = parsed as Record<string, unknown>;
+    const identity: Record<string, unknown> = {};
+    for (const key of CLAUDE_AUTH_IDENTITY_KEYS) {
+      if (source[key] !== undefined) identity[key] = source[key];
+    }
+    return identity;
+  } catch {
+    return {};
+  }
+}
+
 /**
  * System default for every Claude-family shell (Claude, GLM, Longcat): never
  * stop on the interactive Bypass Permissions / workflow opt-in dialogs.
@@ -89,12 +133,14 @@ export function writeClaudeFamilyZeroClickSettings(tokenId: string): string {
 /**
  * Create an isolated $HOME for a gated worker: hook settings, minimal
  * onboarding marker, and the MCP server config file. Returns the paths the
- * spawn decoration needs. macOS Keychain credentials are user-scoped, so CLI
- * auth survives the HOME switch.
+ * spawn decoration needs. O Keychain (macOS) guarda apenas o SEGREDO OAuth —
+ * a IDENTIDADE de login é file-backed em ~/.claude.json, então o adapter
+ * nativo precisa de carryNativeClaudeAuth para não cair em /login no pane.
  */
 export function prepareEphemeralHome(
   tokenId: string,
   mcpConfig: object,
+  options: EphemeralHomeOptions = {},
 ): EphemeralHome {
   const dir = path.join(
     os.homedir(),
@@ -146,12 +192,45 @@ export function prepareEphemeralHome(
     JSON.stringify(settings, null, 2),
     { mode: 0o600 },
   );
-  // Skip the first-run onboarding flow inside the ephemeral home.
+  // Skip the first-run onboarding flow inside the ephemeral home. Para o
+  // adapter Claude NATIVO, a identidade da conta viaja junto: o CLI decide
+  // "logado" pelo oauthAccount de ~/.claude.json — o segredo do Keychain
+  // sozinho não basta, então um stub vazio força /login com a máquina
+  // autenticada. Third-party family (GLM/LongCat) nunca recebe a identidade.
+  const nativeAuth = options.carryNativeClaudeAuth
+    ? readNativeClaudeAuthIdentity(os.homedir())
+    : {};
   fs.writeFileSync(
     path.join(dir, '.claude.json'),
-    JSON.stringify({ hasCompletedOnboarding: true }),
+    JSON.stringify({ hasCompletedOnboarding: true, ...nativeAuth }),
     { mode: 0o600 },
   );
+  if (options.carryNativeClaudeAuth) {
+    // Linux/Windows mantêm o segredo OAuth em arquivo; symlink faz o refresh
+    // de token dentro do pane escrever direto no perfil real.
+    const realCredentials = path.join(
+      os.homedir(),
+      '.claude',
+      '.credentials.json',
+    );
+    if (fs.existsSync(realCredentials)) {
+      const overlayCredentials = path.join(claudeDir, '.credentials.json');
+      try {
+        fs.rmSync(overlayCredentials, { force: true });
+        fs.symlinkSync(realCredentials, overlayCredentials);
+      } catch {
+        try {
+          fs.copyFileSync(realCredentials, overlayCredentials);
+          fs.chmodSync(overlayCredentials, 0o600);
+        } catch {
+          // Best effort — no macOS o segredo vive no Keychain.
+        }
+      }
+    }
+    fs.writeFileSync(path.join(dir, CLAUDE_AUTH_SYNCBACK_MARKER), '1', {
+      mode: 0o600,
+    });
+  }
 
   // Contains the bearer token — 0600.
   const mcpConfigPath = path.join(dir, 'nexus-mcp.json');
@@ -213,8 +292,18 @@ export function writeMcpConfigFile(tokenId: string, mcpConfig: object): string {
 /** Remove per-session artifacts once the session dies (best effort). */
 export function cleanupSessionArtifacts(tokenId: string): void {
   const short = tokenId.slice(0, 12);
+  const overlay = path.join(os.homedir(), '.nexus', 'ephemeral', short);
+  try {
+    // Resgata um /login fresco feito dentro do pane antes do rm — apenas para
+    // overlays que carregaram a identidade NATIVA (marcador presente).
+    if (fs.existsSync(path.join(overlay, CLAUDE_AUTH_SYNCBACK_MARKER))) {
+      syncBackClaudeEphemeralAuth(overlay, os.homedir());
+    }
+  } catch {
+    // Best effort only.
+  }
   for (const target of [
-    path.join(os.homedir(), '.nexus', 'ephemeral', short),
+    overlay,
     path.join(os.homedir(), '.nexus', 'mcp-configs', `${short}.json`),
     path.join(os.homedir(), '.nexus', 'mcp-configs', `${short}.settings.json`),
   ]) {
